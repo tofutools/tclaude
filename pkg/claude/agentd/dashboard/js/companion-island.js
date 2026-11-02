@@ -56,6 +56,7 @@ import { registerStewardDoor } from './voice-wake.js';
 import { VOICE_PREF, createSpeaker, dictationOpen, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { useDismissablePopover } from './hover-popover.js';
+import { matchesShortcut, shortcutText, withShortcut } from './keybindings.js';
 
 const html = htm.bind(h);
 
@@ -664,18 +665,18 @@ export function CompanionApp({
     else if (window) { openOverlayWindow(activeTabOf(window)); focusOverlayWindow(window.active); } else putStart();
   }, [holder?.id, holder?.minimized, steward?.agentId, steward?.online, shutDown, showAgent]);
 
-  // Ctrl+. toggles the window from anywhere, including from inside a focused
+  // Ctrl . toggles the window from anywhere, including from inside a focused
   // terminal: capture phase, before xterm sees the key.
   useEffect(() => {
     const onKey = (event) => {
       // Show all windows covers the companion's window and marks: Escape first.
       if (overlayExposeOpen.peek()) return;
-      if (event.ctrlKey && !event.altKey && !event.metaKey && event.key === '.') {
+      if (matchesShortcut(event, 'steward')) {
         event.preventDefault();
         event.stopPropagation();
         toggle();
-      } else if (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.code === 'Period') {
-        // Ctrl+Shift+. marks up the page for the agent in the window.
+      } else if (matchesShortcut(event, 'annotate')) {
+        // Ctrl Shift . marks up the page for the agent in the window.
         event.preventDefault();
         event.stopPropagation();
         startAnnotating(chatOf(event.target) || frontAgent());
@@ -1168,7 +1169,7 @@ export function CompanionApp({
       return html`<button key=${chipAgent.agentId} type="button"
         class=${`companion-chip ${status}`}
         ref=${(node) => { if (node) chipRects.current.set(chipAgent.agentId, node.getBoundingClientRect()); }}
-        aria-label=${behind ? `${behind.name}: ${companionStatusLabel('needs')}, in the window of ${chipAgent.name}. Open it` : `${chipAgent.name}: ${companionStatusLabel(status)}. Open companion (Ctrl+.)`}
+        aria-label=${behind ? `${behind.name}: ${companionStatusLabel('needs')}, in the window of ${chipAgent.name}. Open it` : `${chipAgent.name}: ${companionStatusLabel(status)}. Open companion (${shortcutText('steward')})`}
         onMouseEnter=${(event) => startPeek(peekAt, event.currentTarget)}
         onMouseLeave=${stopPeek}
         onFocus=${(event) => startPeek(peekAt, event.currentTarget)}
@@ -1193,7 +1194,7 @@ export function CompanionApp({
       <span aria-hidden="true">🔑</span><span class="companion-chip-name">${elsewhere.length} to approve</span>
     </button>`}
     ${!chipAgent && html`<button type="button" class="companion-chip companion-chip-steward"
-      aria-label="Open the companion (Ctrl+.)" title=${`${customName || 'Steward'}: your helper for all of tclaude (Ctrl+.)`}
+      aria-label=${withShortcut('Open the companion', 'steward')} title=${`${customName || 'Steward'}: your helper for all of tclaude (${shortcutText('steward')})`}
       onClick=${(event) => onChipClick('', event)}>
       <span class="companion-avatar steward" aria-hidden="true">✦</span><span class="companion-chip-name">${customName || 'Steward'}</span>
     </button>`}

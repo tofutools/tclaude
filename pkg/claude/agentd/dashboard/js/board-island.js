@@ -32,6 +32,7 @@ import { BoardMinimap } from './board-minimap.js';
 import { BoardQuickMenu, QUICK_MENU_SIZE } from './board-quick-menu.js';
 import { companionAgents } from './companion-model.js';
 import { useDismissablePopover } from './hover-popover.js';
+import { shortcutText, withShortcut } from './keybindings.js';
 
 const html = htm.bind(h);
 
@@ -1334,15 +1335,14 @@ export function BoardEditor({
   // contextItems offers what applies to what was clicked, through the same
   // actions as the toolbar and the keys.
   function contextItems(menu, sels) {
-    const mod = /mac/i.test(win?.navigator?.platform || '') ? 'Cmd' : 'Ctrl';
-    const history = [{ label: 'Undo', keys: `${mod}+Z`, run: () => undo(false) }, { label: 'Redo', keys: `${mod}+Shift+Z`, run: () => undo(true) }];
+    const history = [{ label: 'Undo', keys: shortcutText('board-undo'), run: () => undo(false) }, { label: 'Redo', keys: shortcutText('board-redo'), run: () => undo(true) }];
     if (menu.empty || !sels.length) {
       return [
         ...QUICK_SHAPES.map(({ id, label }) => ({ label: `Add ${label.toLowerCase()} here`, run: () => addShape(id, menu.p) })),
         { label: 'Add text here', keys: 'Double-click', run: () => beginText(null, menu.p) },
         'separator',
-        pasteItem(menu.p, `${mod}+V`),
-        { label: 'Select all', keys: `${mod}+A`, disabled: !live.length, run: selectAll },
+        pasteItem(menu.p, shortcutText('board-paste')),
+        { label: 'Select all', keys: shortcutText('board-select-all'), disabled: !live.length, run: selectAll },
         { label: 'Fit board to view', disabled: !live.length, run: fitView },
         'separator',
         ...history,
@@ -1372,9 +1372,9 @@ export function BoardEditor({
       items.push(...ALIGNMENTS.filter((a) => arrangeable >= (a.min || 2)).map((a) => ({ label: a.label, run: () => align(a.id) })), 'separator');
     }
     items.push(
-      { label: 'Duplicate', keys: `${mod}+D`, run: duplicate },
-      { label: 'Copy', keys: `${mod}+C`, run: copySelection },
-      { label: 'Cut', keys: `${mod}+X`, run: () => { copySelection(); remove(selected); } },
+      { label: 'Duplicate', keys: shortcutText('board-duplicate'), run: duplicate },
+      { label: 'Copy', keys: shortcutText('board-copy'), run: copySelection },
+      { label: 'Cut', keys: shortcutText('board-cut'), run: () => { copySelection(); remove(selected); } },
       'separator',
       { label: 'Bring to front', run: () => commit(stackOrder(elements.current, selected, 'front')) },
       { label: 'Send to back', run: () => commit(stackOrder(elements.current, selected, 'back')) },
@@ -1764,7 +1764,7 @@ export function BoardEditor({
           <button type="button" class="board-invite" aria-expanded=${invite ? 'true' : 'false'} onClick=${() => setInvite((v) => !v)}>＋ Invite agent</button>
           ${invite && html`<div class="board-invite-menu" role="menu">
             ${candidates.length ? candidates.slice(0, 30).map((a) => html`<button key=${a.agentId} type="button" role="menuitem" onClick=${() => addParticipant(a.agentId)}>${a.steward ? '✦ ' : ''}${a.name}</button>`)
-              : html`<div class="board-invite-empty">No other live agents. Summon the Steward from the companion (Ctrl+.).</div>`}
+              : html`<div class="board-invite-empty">No other live agents. Summon the Steward from the companion (${shortcutText('steward')}).</div>`}
           </div>`}
         </span>
         <select class="board-group" aria-label="The board's group" title="A group's members are on its board without invitations"
@@ -1811,8 +1811,8 @@ export function BoardEditor({
             onMouseDown=${(event) => event.preventDefault()} onClick=${() => chooseTextStyle({ fontStyle: shownText.fontStyle ? undefined : 'italic' }, texts)}><i>I</i></button>
         </span>`}
       <span class="board-sep"></span>
-      <button type="button" class="board-tool" title="Undo (Ctrl+Z)" aria-label="Undo" onClick=${() => undo(false)}>↶</button>
-      <button type="button" class="board-tool" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" onClick=${() => undo(true)}>↷</button>
+      <button type="button" class="board-tool" title=${withShortcut('Undo', 'board-undo')} aria-label="Undo" onClick=${() => undo(false)}>↶</button>
+      <button type="button" class="board-tool" title=${withShortcut('Redo', 'board-redo')} aria-label="Redo" onClick=${() => undo(true)}>↷</button>
       ${sels.length > 0 && html`<button type="button" class="board-tool" title="Delete (Del)" aria-label="Delete selection" onClick=${() => remove(selected)}>🗑</button>`}
       ${arrangeable >= 2 && html`<span class="board-sep"></span>${ALIGNMENTS.filter((a) => arrangeable >= (a.min || 2)).map((a) => html`<button key=${a.id} type="button" class="board-tool"
         title=${a.label} aria-label=${a.label} onClick=${() => align(a.id)}>${a.icon}</button>`)}`}

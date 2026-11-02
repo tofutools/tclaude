@@ -83,6 +83,7 @@ import {
   RESOLVED_DEFAULTS_CHAIN, SANDBOX_PROFILE_COMPOSITION,
   resolvedDefaultOption, harnessBuiltinModeOptionLabel,
 } from './resolved-defaults.js';
+import { shortcutText, withShortcut } from './keybindings.js';
 
 const html = htm.bind(h);
 // A harness change clears context trims, which no field shows, so a fill of it waits.
@@ -1427,7 +1428,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           <button type="button" id="agent-spawn-attach-btn" disabled=${busy} onClick=${() => fileRef.current?.click()}>📎 Attach files…</button>
           <input ref=${fileRef} type="file" id="agent-spawn-attach-input" multiple hidden disabled=${busy}
             onChange=${(event) => { addAttachments(event.currentTarget.files); event.currentTarget.value = ''; }} />
-          <span class="spawn-attachments-hint">…or drag files here / paste (⌘/Ctrl-V)</span>
+          <span class="spawn-attachments-hint">…or drag files here / paste (${shortcutText('terminal-paste')})</span>
         </div>
         <${AttachmentList} attachments=${attachments} remove=${removeAttachment} busy=${busy} />
       </div>
@@ -1955,14 +1956,14 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <span class="spacer"></span>
       <button id="agent-spawn-queue" class="agent-spawn-queue-btn" type="button" disabled=${busy}
         title=${queued
-          ? 'Save changes and keep it queued (Ctrl/⌘+Enter)'
-          : 'Prepare this agent without starting it — launch it later from ⏸ queued. Worktree creation, branch fetch and the spawn itself happen at launch. (Ctrl/⌘+Shift+Enter)'}
+          ? withShortcut('Save changes and keep it queued', 'dialog-submit')
+          : 'Prepare this agent without starting it — launch it later from ⏸ queued. Worktree creation, branch fetch and the spawn itself happen at launch. (' + shortcutText('dialog-queue') + ')'}
         onClick=${() => { void saveQueued(); }}>
         ${queued ? 'Save' : '⏸ Add to queue'}
       </button>
       <button id="agent-spawn-submit" class=${`${queued ? 'agent-spawn-launch-btn' : 'primary'}${busy ? ' slop-pull-active' : ''}`} type="button"
         disabled=${busy} aria-busy=${busy ? 'true' : undefined}
-        title=${queued ? 'Launch it now and remove it from the queue' : requestOnly ? `Send the request to ${remote.node}'s operator (Ctrl/⌘+Enter)` : 'Spawn the agent now (Ctrl/⌘+Enter)'}
+        title=${queued ? 'Launch it now and remove it from the queue' : requestOnly ? withShortcut(`Send the request to ${remote.node}'s operator`, 'dialog-submit') : withShortcut('Spawn the agent now', 'dialog-submit')}
         onClick=${() => { void submit(); }}>
         ${busy && !queueing ? (requestOnly ? 'Sending…' : 'Spawning…') : (queued ? '▶ Spawn now' : requestOnly ? 'Send request' : 'Spawn')}
       </button>

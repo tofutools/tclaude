@@ -38,7 +38,7 @@ that says what it does and, for a terminal, shows the directory.
 
 - **A group:** `✉ message` in the group's ⚙ menu, to the whole group or a ticked
   subset, with role filtering and attachments.
-- **One agent:** ✉ Message (Ctrl/Cmd+M) on its pane in
+- **One agent:** ✉ Message (Ctrl M) on its pane in
   [Terminals](dashboard-terminals.md#sending-things-to-an-agent), or ✉ in the
   [companion](companion.md#title-bar-buttons).
 - **Everyone live:** **Announce to all live agents…** in the command palette.

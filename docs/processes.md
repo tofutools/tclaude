@@ -414,7 +414,7 @@ things there are specific to processes:
   dashboard that opened it is still open, and asks before closing with
   unsaved edits. If it closes before it has the draft, the editor comes back
   to the dashboard. A template is edited in one place at a time: opening it
-  from the list while it is elsewhere brings that window forward. Ctrl/Cmd+S
+  from the list while it is elsewhere brings that window forward. Ctrl S (⌘ S on a Mac)
   saves a floating editor while its window has the keyboard, and ⌘K serves
   the editor you last clicked in. Closing a floating editor
   from the dock asks first when it has unsaved edits. A reload reopens an
@@ -423,7 +423,7 @@ things there are specific to processes:
   [Subprocess nodes](#what-executes-today)). Double-click it to edit its body
   in place: a breadcrumb and a minimap of the parent show where you are, the
   dashed port nodes are its contract (⇄ ports binds body params and maps body
-  ends onto the ▣ node's outcomes), and Esc or Alt+↑ goes back up. The
+  ends onto the ▣ node's outcomes), and Esc or Alt ↑ goes back up. The
   palette's outline lists every nested body. *⇪ extract as template* saves a
   body as its own template and turns the node into a reference to it. A
   reference is not edited in place, since other templates may share it. While

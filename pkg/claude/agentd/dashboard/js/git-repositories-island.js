@@ -4,6 +4,7 @@ import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { registerGitRepositoriesController } from './git-repositories-controller.js';
 import { gitRepoRequests, matchingGitRepos, readGitConcurrency, rememberGitConcurrency } from './git-repositories-actions.js';
+import { withShortcut } from './keybindings.js';
 
 const html = htm.bind(h);
 function Words({ plain, wizard = plain }) {
@@ -116,7 +117,7 @@ export function GitRepositoriesDialog({ current, state, actions }) {
       <span role="status" aria-live="polite">${busy || done ? `${completed.length} / ${selected.size} completed · ${completed.filter((o) => o.status === 'updated').length} updated · ${completed.filter((o) => o.status === 'skipped').length} skipped · ${completed.filter((o) => o.status === 'failed').length} failed` : `${selected.size} of ${repos.length} selected`}</span>
       <div>${!done ? html`<button type="button" disabled=${loading || busy} onClick=${() => setGeneration((n) => n + 1)}><${Words} plain="Rescan" wizard="Seek again" /></button>` : null}
         <button type="button" disabled=${busy} onClick=${state.close}><${Words} plain=${done ? 'Done' : 'Cancel'} /></button>
-        ${!done ? html`<button type="button" class=${`primary${discard ? ' danger' : ''}`} disabled=${locked || !selected.size} onClick=${submit} aria-keyshortcuts="Control+Enter Meta+Enter" title="Submit selected repositories (Ctrl/Cmd+Enter)">
+        ${!done ? html`<button type="button" class=${`primary${discard ? ' danger' : ''}`} disabled=${locked || !selected.size} onClick=${submit} aria-keyshortcuts="Control+Enter Meta+Enter" title=${withShortcut('Submit selected repositories', 'dialog-submit')}>
           <${Words} plain=${busy ? `${verb === 'Sync' ? 'Syncing' : 'Pulling'}…` : `${verb} ${selected.size} ${selected.size === 1 ? 'repository' : 'repositories'}`}
             wizard=${busy ? 'Channeling…' : `${wizardVerb} ${selected.size} ${selected.size === 1 ? 'repository' : 'repositories'}`} /></button>` : null}</div>
     </div>

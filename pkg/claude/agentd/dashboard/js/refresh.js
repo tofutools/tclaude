@@ -46,6 +46,7 @@ import { setStayOnTerminalsAfterLastClose } from './terminal-close-nav.js';
 import { setToolbarFixedNode } from './toolbar-node.js';
 import { peerViewTabUsable } from './peer-view-limits.js';
 import { automationsNavTarget, noteAutomationsSection } from './automations-nav.js';
+import { matchesShortcut } from './keybindings.js';
 
 // groupsTabActive reports whether the Groups tab is the visible one — used to
 // skip the (default-hidden, expensive) conversations/replaced sub-fetches when
@@ -562,11 +563,13 @@ function bindTabHotkeys() {
 
     // Bare [ / ] anywhere on the page — except while typing or with a modal
     // open (a modal traps interaction; cycling tabs behind it is surprising).
-    // Compared against e.key (not e.code) so it follows the user's layout.
-    if ((e.key === '[' || e.key === ']') && !isEditableTarget(e.target) &&
+    // Matched by key position through the registry (tab-next / tab-prev);
+    // the Config list labels it with what the key types on this layout.
+    const step = matchesShortcut(e, 'tab-next') ? 1 : matchesShortcut(e, 'tab-prev') ? -1 : 0;
+    if (step && !isEditableTarget(e.target) &&
         !document.querySelector('.modal-overlay.show, .manage-overlay.show')) {
       e.preventDefault();
-      cycleTab(e.key === ']' ? 1 : -1);
+      cycleTab(step);
     }
   };
   document.addEventListener('keydown', onKeyDown);

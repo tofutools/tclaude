@@ -313,7 +313,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"<${EditableTitle} controller=${controller} view=${view} />",
 		"controller.setSelection({ type: 'template' })",
 		"controller.setTemplateMeta({ name })",
-		"params…", "⌘K commands",
+		"params…", "${shortcutText('process-commands')} commands",
 		"Review changes", "Keep editing",
 		"Keep editing preserves this draft; Save still uses CAS and will stop on a 409 conflict.",
 		"process-issues-panel",

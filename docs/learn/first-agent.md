@@ -86,13 +86,13 @@ terminal in **Terminals**. This is the real session, not a copy: the agent's
 answer is there, and what you type reaches the agent. Ask a follow-up
 question.
 
-Use focus whenever you want to see an agent or answer it. Ctrl/Cmd-click
+Use focus whenever you want to see an agent or answer it. Ctrl-click (⌘-click on a Mac)
 opens the terminal without leaving **Groups**. Focus and **✉ Message**,
 next, are the two things you will do most with any agent.
 
 ## 5. Send it a message
 
-In the terminal pane, click **✉ Message** (Ctrl/Cmd+M). This queues a
+In the terminal pane, click **✉ Message** (Ctrl M). This queues a
 message for the agent rather than typing into its terminal, so it never
 interrupts what the agent is typing. Send:
 

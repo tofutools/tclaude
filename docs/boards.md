@@ -68,9 +68,9 @@ and with three or more, space them evenly.
   bold and italic. They change what is selected or being typed, and hold for the
   next text you add. The style is saved with the board.
 - **Right-click** for what applies to what is under the pointer; see below.
-- **Select:** Shift-click or drag a rectangle. Ctrl+A selects everything, Ctrl+D
+- **Select:** Shift-click or drag a rectangle. Ctrl A selects everything, Ctrl D
   duplicates, Del deletes.
-- **Undo:** Ctrl/Cmd+Z, and Ctrl+Shift+Z or Ctrl+Y to redo.
+- **Undo:** Ctrl Z (⌘ Z on a Mac), and Ctrl Shift Z or Ctrl Y to redo.
 - **Zoom:** the mouse wheel, Ctrl+wheel or a trackpad pinch zooms from 20% to 400%,
   around the pointer. The controls by
   the zoom level in the toolbar zoom out, zoom in, reset to 100% and fit everything
@@ -79,7 +79,7 @@ and with three or more, space them evenly.
   Shift+wheel. Browsers report a mouse wheel and a touchpad scroll as the same
   event, so the board tells them apart by their steps: a free-spinning or smoothed
   mouse wheel can read as a touchpad and pan instead of zooming.
-- **Copy and paste:** Ctrl+C, X and V use Excalidraw's clipboard format, so they work
+- **Copy and paste:** Ctrl C, X and V use Excalidraw's clipboard format, so they work
   with excalidraw.com. Plain text pastes as a text element.
 
 The chip beside the title shows `synced`, `saving…`, `not saved` or `offline`. Click a

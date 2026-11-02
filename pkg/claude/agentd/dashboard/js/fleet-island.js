@@ -19,6 +19,7 @@ import { toPath } from './nav-history-core.js';
 import { LockReason } from './lock-reason.js';
 import { nodeSnapshot } from './node-api.js';
 import { useDismissablePopover } from './hover-popover.js';
+import { matchesShortcut } from './keybindings.js';
 
 const html = htm.bind(h);
 
@@ -956,8 +957,7 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
 // while typing, and never while a web terminal has focus (the shell owns the
 // keyboard there, Alt+digit included).
 export function switchKeyAllowed(event) {
-  if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.repeat) return false;
-  if (!/^Digit[1-9]$/.test(event.code || '')) return false;
+  if (event.repeat || !/^Digit[1-9]$/.test(event.code || '') || !matchesShortcut(event, 'node-switch')) return false;
   const t = event.target;
   if (t?.closest?.('.xterm, .terminal-view, [data-terminal], input, textarea, select, [contenteditable=""], [contenteditable="true"]')) return false;
   return true;
