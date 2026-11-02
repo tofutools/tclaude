@@ -8,7 +8,7 @@
 // the saved set of windows.
 
 import { h, render } from 'preact';
-import { useEffect } from 'preact/hooks';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { BoardEditor, BoardsGate } from './board-island.js';
 import { onBoardDeleted } from './board-manage.js';
@@ -26,6 +26,8 @@ import { BOARD_OVERLAY_PLACEMENT_PREF, dockEntriesOf } from './overlay-tab-model
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { detachSeedWindow } from './terminals-tab.js';
 import { POPUP_BLOCKED, TO_COLLAB_LABEL, TO_WINDOW_LABEL, registerTabMoves, tabMoves } from './overlay-tab-moves.js';
+import { buildOverlayBulkCommands, overlayBulkActions } from './overlay-window-bulk.js';
+import { registerCommandProvider } from './command-registry.js';
 
 const html = htm.bind(h);
 
@@ -112,12 +114,16 @@ function OverlayDock({ snapshot }) {
   const seated = stewardAgent(agents)?.agentId;
   const onChip = ({ kind, agent }) => kind === START_WINDOW_KIND || (kind === CHAT_WINDOW_KIND && agent === seated);
   const entries = dockEntriesOf(overlayWindows.value, minimizedOverlayTabs.value).filter(({ tabs }) => !(overlayHostUp.value && (tabs.every(onChip) || tabs.some(({ kind, agent }) => kind === CHAT_WINDOW_KIND && agent === seated))));
-  if (!entries.length) return null;
+  const actions = overlayBulkActions.value;
+  const [menuAt, setMenuAt] = useState(null);
+  const closeMenu = useCallback(() => setMenuAt(null), []);
+  if (!entries.length && !actions.length) return null;
   const needs = ({ kind, agent }) => {
     const row = kind === CHAT_WINDOW_KIND ? agents.get(agent) : null;
     return !!row && (companionStatus(row) === 'needs' || approvalsFor(snapshot.value, row).length + decisionsFor(snapshot.value, row).length > 0);
   };
   return html`<div class="overlay-dock" role="group" aria-label="Minimized windows">
+    ${actions.length > 0 && html`<${OverlayDockMenu} open=${!!menuAt} onOpen=${setMenuAt} />`}
     ${entries.map(({ key, tab, tabs }) => {
       const removes = tabs.length === 1 && !onChip(tab) && tab.kind !== DECIDE_WINDOW_KIND && REMOVE_TITLES[tab.kind];
       const peeks = tab.kind === CHAT_WINDOW_KIND ? {
@@ -132,6 +138,42 @@ function OverlayDock({ snapshot }) {
         ${removes && html`<button type="button" class="overlay-dock-remove" aria-label=${`${removes[0]} ${tab.label}`} title=${removes[1]} onClick=${() => closeOverlayTab(tab.id)}>×</button>`}
       </span>`;
     })}
+  </div>
+  ${menuAt && actions.length > 0 && html`<${OverlayDockActions} at=${menuAt} actions=${actions} onClose=${closeMenu} />`}`;
+}
+
+// OverlayDockMenu is the dock's first button: actions on every window at once,
+// in the palette's words. Where its menu opens, from the button, is up to it.
+function OverlayDockMenu({ open, onOpen }) {
+  return html`<span class="overlay-dock-menu">
+    <button type="button" class="overlay-dock-menu-button" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
+      title="All windows" aria-label="All windows" onClick=${(event) => {
+        if (open) { onOpen(null); return; }
+        const rect = event.currentTarget.getBoundingClientRect();
+        const height = event.currentTarget.ownerDocument.defaultView?.innerHeight || 0;
+        onOpen({ left: rect.left, bottom: height - rect.top + 6 });
+      }}>☰</button>
+  </span>`;
+}
+
+// OverlayDockActions is that menu. It renders beside the dock, not in it: the
+// dock's transform would place a fixed menu by the dock, and its scrolling clip it.
+function OverlayDockActions({ at, actions, onClose }) {
+  const root = useRef(null);
+  useEffect(() => {
+    const doc = root.current?.ownerDocument;
+    const away = (event) => { if (!event.target?.closest?.('.overlay-dock-menu, .overlay-dock-actions')) onClose(); };
+    const key = (event) => { if (event.key === 'Escape') onClose(); };
+    doc?.addEventListener('pointerdown', away, true);
+    doc?.addEventListener('keydown', key, true);
+    return () => {
+      doc?.removeEventListener('pointerdown', away, true);
+      doc?.removeEventListener('keydown', key, true);
+    };
+  }, [onClose]);
+  return html`<div ref=${root} class="overlay-dock-actions" role="menu" style=${`left:${at.left}px;bottom:${at.bottom}px`}>
+    ${actions.map(({ key, icon, label, hint, run }) => html`<button key=${key} type="button" role="menuitem" class=${`overlay-dock-action overlay-dock-action-${key}`}
+      title=${hint} onClick=${() => { onClose(); run(); }}>${icon} ${label}</button>`)}
   </div>`;
 }
 
@@ -149,9 +191,11 @@ function validWindow(window) {
 
 export function mountBoardOverlayIsland({ host, registerCleanup, snapshot, win = globalThis.window }) {
   const stopKeeping = keepOverlayWindows(win, validWindow);
+  const stopCommands = registerCommandProvider('overlay-windows', buildOverlayBulkCommands);
   render(html`<${BoardOverlay} snapshot=${snapshot} />`, host);
   registerCleanup(() => {
     render(null, host);
+    stopCommands();
     stopKeeping();
     overlayStackReset();
   });

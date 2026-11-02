@@ -64,8 +64,10 @@ blocking it, and comes back when you reload the tab.
   and the line is shared again, or press **Esc** to leave things as they were. The
   other lines of a nested split or a quad stay as they are. A window that leaves
   never moves the others. Minimized or maximized, it keeps its cell and goes back into
-  it. Closed or dragged out by its title bar, it leaves its cell empty, and you can
-  drop any window there. The last window stays where it is. Pairs fill the room while it holds both windows at their
+  it. Closed or dragged out, by its title bar or by its tab when it has only one, it
+  leaves its cell empty and floats where you let it go, even over the cell it left: a
+  dashed outline shows that it will float. A later drag can drop any window into the
+  empty cell. The last window stays where it is. Pairs fill the room while it holds both windows at their
   minimum size.
 - **Snap it** by dragging against the left, right or bottom edge to make a side
   panel or drawer, or into a corner to fill a quarter. Pull a snapped window's free
@@ -156,6 +158,18 @@ returns to it while the group lasts. A group goes with its last tab.
 
 A window is what tiles, minimizes and takes focus. A tiled window keeps its cell as tabs
 come and go, until the last tab leaves.
+
+The dock's ☰ menu and the command palette offer the same actions on every window at
+once, each only when there is something for it to do:
+
+- **Untile all windows** floats every tiled window where it is, so nothing moves on
+  screen, and takes it out of the split. A minimized window keeps its cell, and a
+  maximized window stays maximized.
+- **Minimize all windows** sends every window to the dock. A tiled window keeps its cell.
+- **Restore all windows** brings every minimized window back, into its cell if it had one.
+  A tab minimized on its own stays on the dock.
+
+While any window is open, the dock shows its ☰ menu even with nothing minimized.
 
 A tab's × minimizes that tab to the dock and stops nothing, and so does `Minimize tab` on its
 menu, beside `Minimize other tabs` and `Minimize all tabs`. These never ask, even for a Steward,

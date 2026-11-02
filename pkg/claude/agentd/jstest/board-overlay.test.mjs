@@ -347,7 +347,7 @@ scenario('a board minimizes to the dock and comes back', async ({ harness, overl
   assert.match(item.textContent, /Release plan/);
   await harness.act(async () => { item.click(); await wait(); });
   assert.ok(overlayHost.querySelector('.board-overlay'));
-  assertAbsent(overlayHost.querySelector('.overlay-dock'));
+  assertAbsent(overlayHost.querySelector('.overlay-dock-item'));
 });
 
 scenario('opening the board the overlay shows brings the window forward, not a second editor', async ({ harness, host, overlayHost, overlayState }) => {
@@ -928,7 +928,27 @@ scenario('a tab × minimizes only that tab, and it comes back to its window', as
   assert.equal(overlayState.boardOverlays.value.length, 2, 'it keeps its one place');
   await harness.act(async () => { overlayHost.querySelector('.overlay-dock-item').click(); await wait(); await wait(); });
   assert.deepEqual(tabsByWindow(overlayHost), [['Team map', 'Release plan']]);
-  assert.equal(overlayHost.querySelector('.overlay-dock'), null);
+  assert.equal(overlayHost.querySelector('.overlay-dock-item'), null);
+});
+
+scenario('the dock\'s ☰ menu opens beside the dock, and minimize all and restore all work from it', async ({ harness, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  const menu = () => overlayHost.querySelector('.overlay-dock-actions');
+  await harness.act(async () => { overlayHost.querySelector('.overlay-dock-menu-button').click(); await wait(); });
+  assert.ok(menu(), 'the menu opens');
+  // Inside the dock, its transform would place the fixed menu and its scrolling clip it.
+  assert.equal(menu().closest('.overlay-dock'), null, 'the menu is not inside the dock');
+  await harness.act(async () => { menu().querySelector('.overlay-dock-action-minimize').click(); await wait(); await wait(); });
+  assert.equal(menu(), null, 'choosing an action closes the menu');
+  assert.deepEqual(tabsByWindow(overlayHost), []);
+  assert.equal(overlayHost.querySelectorAll('.overlay-dock-pill').length, 1);
+  await harness.act(async () => { overlayHost.querySelector('.overlay-dock-menu-button').click(); await wait(); });
+  assert.equal(menu().querySelector('.overlay-dock-action-minimize'), null, 'nothing is left to minimize');
+  await harness.act(async () => { menu().querySelector('.overlay-dock-action-restore').click(); await wait(); await wait(); });
+  assert.equal(tabsByWindow(overlayHost).length, 1, 'the window is back');
+  await harness.act(async () => { overlayHost.querySelector('.overlay-dock-menu-button').click(); await wait(); });
+  await harness.act(async () => { harness.window.document.dispatchEvent(Object.assign(new harness.window.Event('keydown', { bubbles: true }), { key: 'Escape' })); await wait(); });
+  assert.equal(menu(), null, 'Escape closes it');
 });
 
 scenario('a minimized window of several tabs is one pill, with a count and no way to lose them all', async ({ harness, overlayHost, overlayState, windows }) => {
