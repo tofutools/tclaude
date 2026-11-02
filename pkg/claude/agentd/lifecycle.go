@@ -4935,9 +4935,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		dirs = appendUniqueDirs(dirs, gitWorktreeWriteDirs...)
 		var resolved map[string]string
 		var ok bool
+		token := strings.TrimSpace(body.WriteProofToken)
 		if queued := spawnQueueReplayFrom(r); queued != nil && len(queued.ProofDirs) > 0 {
-			// Proved when the spawn was queued; its marker files are gone.
-			resolved, ok = queueDirWriteProof(w, queued, dirs)
+			// Proved when the spawn was queued; the launch carries a fresh
+			// daemon-minted proof over exactly those canonical directories.
+			resolved, token, ok = queueDirWriteProof(w, queued, dirs)
 		} else {
 			resolved, ok = requireDirWriteProof(w, r, spawnerConvID, body.WriteProofToken, dirs)
 		}
@@ -4945,9 +4947,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			return
 		}
 		if resolved != nil {
-			if spawnQueueReplayFrom(r) == nil {
-				proofToken = strings.TrimSpace(body.WriteProofToken)
-			}
+			proofToken = token
 			if v := resolved[cwd]; v != "" {
 				cwd = v
 			}
@@ -5233,10 +5233,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if p.ClaudeSubscription.peer != "" && p.ClaudeSubscription.token == "" {
 		p.NoLaunch = true
 	}
+	p.capacityPreAdmitted, _ = r.Context().Value(capacityPreAdmittedKey{}).(bool)
 	if teleportAuthority != nil {
 		p.launchAuthority = teleportAuthority.check
 		p.nodeCapacityReserved = true
+		p.capacityPreAdmitted = true
 	} else if offer, _ := r.Context().Value(teleportOfferContextKey{}).(*db.FederationBundleOffer); offer != nil && offer.Descriptor.Teleport != nil {
+		// The admitting teleport row already holds this agent's capacity.
+		p.capacityPreAdmitted = true
 		row, err := db.GetFederationTeleport("in", offer.Peer, offer.Descriptor.ID)
 		if err != nil || row == nil {
 			writeError(w, 503, "teleport_provenance", "teleport provenance unavailable")
@@ -5831,6 +5835,10 @@ type spawnParams struct {
 	// capacityQueueHead marks the launch of the capacity queue's head entry:
 	// the one launch allowed past waiting spawns, and one that always reserves.
 	capacityQueueHead bool
+	// capacityPreAdmitted marks a launch whose capacity is already counted by a
+	// durable reservation (a federation spawn request, an admitting teleport),
+	// so it does not wait behind the local spawn queue.
+	capacityPreAdmitted bool
 	// privateAttachmentRootReserved says the deferred pass atomically claimed
 	// pendingSpawnLabel's private root before publishing the Pending row. The
 	// continuation may reuse that exact root; every fresh inline spawn must

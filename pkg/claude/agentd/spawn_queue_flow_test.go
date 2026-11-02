@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -229,4 +230,39 @@ func TestSpawnQueue_RestartReconcilesLaunchingEntries(t *testing.T) {
 	e2, err := db.GetSpawnQueueEntry(id2)
 	require.NoError(t, err)
 	assert.Equal(t, db.SpawnQueueLaunched, e2.State)
+}
+
+// Scenario: a sandboxed agent proves its directory and asks for a trusted
+// child there while the node is full. The queued launch keeps that proof: the
+// child launches with --trust-dir instead of failing as an unproved request.
+func TestSpawnQueue_QueuedAgentSpawnKeepsDirProof(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	const parent = "parent-queue-proof-aaaa-1111111111"
+	workspace, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	haveAgentCallerInDir(t, f, "squad", parent, workspace)
+	setCapacity(t, config.CapacityConfig{MaxLiveAgents: 1, WhenFull: config.CapacityWhenFullQueue})
+	occupant := f.AsHuman().Spawn("squad", "occupant")
+
+	rec := agentReqProof(t, f, parent, http.MethodPost, "/v1/groups/squad/spawn", map[string]any{
+		"name": "trusted", "cwd": workspace, "trust_dir": true,
+	})
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+	var q agent.SpawnResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &q))
+	markers, _ := filepath.Glob(filepath.Join(workspace, ".tclaude-write-proof-*"))
+	assert.Empty(t, markers, "the requester's proof markers go when the spawn queues")
+
+	f.MarkOffline(occupant.TmuxSession)
+	agentd.RunSpawnQueueForTest()
+	e, err := db.GetSpawnQueueEntry(q.QueueID)
+	require.NoError(t, err)
+	require.Equal(t, db.SpawnQueueLaunched, e.State, e.Reason)
+	a, err := db.GetAgent(e.ReservedAgent)
+	require.NoError(t, err)
+	require.NotNil(t, a)
+	got, ok := f.World.SpawnTrustDir(a.CurrentConvID)
+	require.True(t, ok)
+	assert.True(t, got, "the queued launch still threads --trust-dir")
 }

@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -204,21 +205,57 @@ func convInGroup(conv string, groupID int64) bool {
 
 // queueDirWriteProof checks a queued launch's directories against the ones
 // proved when it was queued: the same canonical set, nothing added. The
-// spawner re-asserts each is still that canonical directory before the fork.
-func queueDirWriteProof(w http.ResponseWriter, e *db.SpawnQueueEntry, rawDirs []string) (map[string]string, bool) {
+// requester's own marker files were removed when it queued, so the daemon
+// writes markers under a fresh token for those already-proved directories. The
+// launch then carries a proof like any direct spawn (worktree git grants, the
+// caller-owned trust check, the in-pane cwd check), and executeSpawn removes
+// the markers when the launch ends, as for a direct spawn.
+func queueDirWriteProof(w http.ResponseWriter, e *db.SpawnQueueEntry, rawDirs []string) (map[string]string, string, bool) {
 	resolved, mapping, err := resolveDirWriteProofDirs(rawDirs)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
-		return nil, false
+		return nil, "", false
 	}
 	for _, dir := range resolved {
 		if !slices.Contains(e.ProofDirs, dir) {
 			writeError(w, http.StatusForbidden, "write_proof_failed",
 				"launch directory "+dir+" was not proved writable when this spawn was queued")
-			return nil, false
+			return nil, "", false
 		}
 	}
-	return mapping, true
+	token := newDirWriteProofToken()
+	for i, dir := range resolved {
+		marker := filepath.Join(dir, dirWriteProofFilePrefix+token)
+		if err := os.WriteFile(marker, nil, 0o600); err != nil {
+			cleanupDirWriteProofMarkers(token, resolved[:i])
+			writeError(w, http.StatusInternalServerError, "io", "queued write proof: "+err.Error())
+			return nil, "", false
+		}
+	}
+	spawnQueueProofTokens.Lock()
+	spawnQueueProofTokens.byEntry[e.ID] = queueProof{token: token, dirs: resolved}
+	spawnQueueProofTokens.Unlock()
+	return mapping, token, true
+}
+
+type queueProof struct {
+	token string
+	dirs  []string
+}
+
+// spawnQueueProofTokens lets the launcher remove a replay's markers when the
+// launch was refused before executeSpawn took ownership of them.
+var spawnQueueProofTokens = struct {
+	sync.Mutex
+	byEntry map[int64]queueProof
+}{byEntry: map[int64]queueProof{}}
+
+func takeSpawnQueueProof(id int64) (queueProof, bool) {
+	spawnQueueProofTokens.Lock()
+	defer spawnQueueProofTokens.Unlock()
+	p, ok := spawnQueueProofTokens.byEntry[id]
+	delete(spawnQueueProofTokens.byEntry, id)
+	return p, ok
 }
 
 var spawnQueueWake = make(chan struct{}, 1)
@@ -345,12 +382,14 @@ func launchSpawnQueueHead(e *db.SpawnQueueEntry) bool {
 		return true
 	}
 	if limits.Limited() {
-		cwd := ""
-		if len(e.ProofDirs) > 0 {
-			cwd = e.ProofDirs[0]
-		} else {
-			cwd = g.DefaultCwd
+		// The directory this launch will use: the request's own, else the group's.
+		var requested struct {
+			Cwd string `json:"cwd"`
 		}
+		if body, err := db.SpawnQueueBody(e.ID); err == nil {
+			_ = json.Unmarshal([]byte(body), &requested)
+		}
+		cwd := cmp.Or(strings.TrimSpace(requested.Cwd), g.DefaultCwd)
 		if reason, err := nodeCapacityFull(limits, []string{cwd}); err != nil || reason != "" {
 			return false
 		}
@@ -369,6 +408,13 @@ func launchSpawnQueueHead(e *db.SpawnQueueEntry) bool {
 	req = req.WithContext(context.WithValue(req.Context(), reservedAgentIDContextKey{}, reserved))
 	rec := httptest.NewRecorder()
 	handleGroupSpawn(rec, req, g)
+	proof, minted := takeSpawnQueueProof(e.ID)
+	if minted && rec.Code >= 300 && !strings.Contains(rec.Body.String(), spawnUnconfirmedKind) {
+		// Refused before or by the spawn core, nothing will run there: drop the
+		// markers. A launched or possibly-running child keeps them until
+		// executeSpawn's own cleanup.
+		cleanupDirWriteProofMarkers(proof.token, proof.dirs)
+	}
 	if rec.Code >= 200 && rec.Code <= 299 {
 		var out agent.SpawnResponse
 		_ = json.Unmarshal(rec.Body.Bytes(), &out)

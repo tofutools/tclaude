@@ -107,6 +107,10 @@ func nodeCapacityUsed(exclude string) (int, error) {
 	delete(used, exclude)
 	return len(used), nil
 }
+// capacityPreAdmittedKey marks an in-process launch whose capacity a durable
+// reservation already counts (see spawnParams.capacityPreAdmitted).
+type capacityPreAdmittedKey struct{}
+
 func acquireNodeLaunch(p *spawnParams) (func(), *spawnFailure) {
 	nodeAdmission.Lock()
 	defer nodeAdmission.Unlock()
@@ -123,10 +127,10 @@ func acquireNodeLaunch(p *spawnParams) (func(), *spawnFailure) {
 	if !limits.Limited() && queued == 0 && !p.capacityQueueHead {
 		return func() {}, nil
 	}
-	// One line for everyone: while spawns wait, a fresh launch that holds no
-	// earlier reservation (federation and teleport launches reserved theirs
-	// when admitted) does not take a slot ahead of the queue's head.
-	if queued > 0 && !p.capacityQueueHead && p.AgentID == "" {
+	// One line for everyone: while spawns wait, a launch whose capacity no
+	// durable reservation already counts (triggers, templates, AWB pickups,
+	// bundle imports) does not take a slot ahead of the queue's head.
+	if queued > 0 && !p.capacityQueueHead && !p.capacityPreAdmitted && p.pendingSpawnLabel == "" {
 		return nil, &spawnFailure{Status: 409, Kind: fedCodeNodeBusy,
 			Msg: fmt.Sprintf("node capacity reached: %d queued spawn(s) wait ahead", queued)}
 	}

@@ -660,6 +660,8 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 		return
 	}
 	inner := r.Clone(context.WithValue(r.Context(), reservedAgentIDContextKey{}, reservedID))
+	// The stored request has held this worker's capacity since it was admitted.
+	inner = inner.WithContext(context.WithValue(inner.Context(), capacityPreAdmittedKey{}, true))
 	if subscription.token != "" {
 		inner = inner.WithContext(withClaudeSubscription(inner.Context(), subscription))
 	}

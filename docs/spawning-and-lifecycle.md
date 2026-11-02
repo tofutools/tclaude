@@ -299,8 +299,10 @@ Queued spawn #12 in group "builders" at position 2 (no ETA): node capacity reach
 ```
 
 While spawns wait, a new spawn queues behind them even if a slot is free, and
-other launch paths that hold no earlier reservation (triggers, templates,
-waves, process steps) are refused rather than jumping the line. When capacity
+other launch paths whose capacity no earlier reservation already counts
+(triggers, templates, waves, process steps, AWB pickups, agent imports) are
+refused rather than jumping the line. Approved federation spawn requests and
+incoming teleports reserved their place when admitted and are not held back. When capacity
 frees, agentd launches the head entry, then the next, in order. The launch
 replays the stored request as the original requester, so permissions, group
 membership, group state and profiles are checked again at launch time. A
