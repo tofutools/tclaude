@@ -608,6 +608,23 @@ test('the Open MRs model filters merge requests like PRs and keeps only safe ins
   assert.equal(authoredOpenMRsView({}).available, false, 'no list, no indicator');
 });
 
+test('Open MRs project tabs that share a name show their full paths', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { authoredOpenMRsView } = await harness.importDashboardModule('js/shell-model.js');
+  const tab = (host, project) => ({ host, project, total: 1, items: [] });
+  const view = authoredOpenMRsView({ authored_open_mrs: { available: true, total: 0, items: [], projects: [
+    tab('gitlab.example.test', 'team-a/api'),
+    tab('gitlab.example.test', 'team-b/api'),
+    tab('gitlab.example.test', 'acme/web'),
+    tab('gitlab.example.test', 'acme/tools/cli'),
+    tab('other.example.test', 'acme/tools/cli'),
+  ] } });
+  assert.deepEqual(view.projects.map((p) => p.label), [
+    'team-a/api', 'team-b/api', 'web',
+    'gitlab.example.test/acme/tools/cli', 'other.example.test/acme/tools/cli',
+  ], 'a unique name stays short; a shared one shows its path, and its host when the path is shared too');
+});
+
 test('the Open MRs model keeps your list on top and serves project tabs from everyone\'s', async (t) => {
   const harness = await createPreactHarness(t);
   const { authoredOpenMRsView } = await harness.importDashboardModule('js/shell-model.js');

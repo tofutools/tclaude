@@ -453,6 +453,7 @@ export function authoredOpenMRsView(snapshot, filter = 'all', includeDraftsInAtt
         project: name,
         host: entry.host.slice(0, 255),
         // The tab names the project; the hover title names it in full.
+        // Projects that share a name are told apart below.
         label: name.split('/').pop(),
         url: MR_PROJECT_URL_RE.test(entry.url || '') ? entry.url : '',
         total: Math.max(0, Number(entry.total || 0)),
@@ -461,6 +462,14 @@ export function authoredOpenMRsView(snapshot, filter = 'all', includeDraftsInAtt
         items: Array.isArray(entry.items) ? entry.items : [],
       };
     });
+  // A tab's short name is the project's last path segment. Two projects that
+  // share it (team-a/api, team-b/api) show their full paths instead, and the
+  // same path on two instances adds its host.
+  for (const longer of [(entry) => entry.project, (entry) => `${entry.host}/${entry.project}`]) {
+    const seen = new Map();
+    for (const entry of projects) seen.set(entry.label, (seen.get(entry.label) || 0) + 1);
+    for (const entry of projects) if (seen.get(entry.label) > 1) entry.label = longer(entry);
+  }
   const selected = project ? projects.find((entry) => entry.key === project) || null : null;
   const panel = selected
     ? authoredOpenPRsView({ authored_open_prs: {
