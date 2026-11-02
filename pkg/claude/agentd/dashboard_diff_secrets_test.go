@@ -21,8 +21,9 @@ var diffSensitive = regexp.MustCompile(`(?i)pass|secret|tok|cred|key|auth|cert|p
 // diffNotSecret lists keys that look sensitive but are not, and free-form values
 // that hold no secret. Each says what it holds.
 var diffNotSecret = map[string]string{
-	"config.session":       "session settings",
-	"config.session_watch": "session watch settings",
+	"config.agent.git_proxy.gitlab_hosts":                             "remote host to GitLab instance base URL",
+	"config.session":                                                  "session settings",
+	"config.session_watch":                                            "session watch settings",
 	"config.dashboard.close_terminal_tabs.session_ended":              "when to close a terminal tab",
 	"config.processes.refuse_unsigned_imports":                        "a switch",
 	"config.agent.http_proxies.*.model_policy.session_daily_requests": "a request limit",

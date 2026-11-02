@@ -163,12 +163,29 @@ func TestDashboardOpenPRsThemed(t *testing.T) {
 		}
 	}
 
-	list := strings.Index(island, "? html`<ul class=\"open-pr-list\">")
-	empty := strings.Index(island, ": html`<p class=\"open-prs-empty\">")
-	filters := strings.Index(island, `<div class="open-prs-filters"`)
-	footer := strings.Index(island, `<div class="open-prs-foot">`)
-	if list < 0 || empty < 0 || filters < 0 || footer < 0 || list >= filters || empty >= filters || filters >= footer {
-		t.Errorf("open PR filters must follow both result variants and precede the footer")
+	// The filter row is a component both footer popovers share
+	// (FooterListFilters); each popover must still place it after both result
+	// variants and before its footer.
+	if !strings.Contains(island, `<div class="open-prs-filters" role="group" aria-label=${label}>`) {
+		t.Errorf("the shared filter row must keep its open-prs-filters group")
+	}
+	for _, popover := range []struct{ start, end, filters string }{
+		{"function OpenPRs(", "function OpenMRs(", "<${FooterListFilters} label=\"Filter pull requests\""},
+		{"function OpenMRs(", "function Disconnect(", "<${FooterListFilters} label=\"Filter merge requests\""},
+	} {
+		from, to := strings.Index(island, popover.start), strings.Index(island, popover.end)
+		if from < 0 || to <= from {
+			t.Errorf("%s not found ahead of %s", popover.start, popover.end)
+			continue
+		}
+		body := island[from:to]
+		list := strings.Index(body, "? html`<ul class=\"open-pr-list\">")
+		empty := strings.Index(body, ": html`<p class=\"open-prs-empty\">")
+		filters := strings.Index(body, popover.filters)
+		footer := strings.Index(body, `<div class="open-prs-foot">`)
+		if list < 0 || empty < 0 || filters < 0 || footer < 0 || list >= filters || empty >= filters || filters >= footer {
+			t.Errorf("%s: filters must follow both result variants and precede the footer", popover.start)
+		}
 	}
 	for _, want := range []string{
 		"const [showFinalCI, setShowFinalCI] = useState(false);",
