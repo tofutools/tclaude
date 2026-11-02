@@ -415,6 +415,17 @@ test('Escape ends Snap Assist, and with it off nothing asks', async (t) => {
   assert.deepEqual(s.cards(), [], 'Config turned it off');
 });
 
+test('Escape gives the keyboard back to the window just snapped (tcl-1bzjw3)', async (t) => {
+  const s = await floating(t);
+  await dragBar(s.harness, s.mounted, 'a', { x: 400, y: 210 }, { x: 1, y: 400 });
+  await s.harness.act(() => new Promise((resolve) => setTimeout(resolve, 5)));
+  assert.ok(s.mounted.container.querySelector('.snap-assist').contains(s.harness.document.activeElement), 'the cards have the keyboard while it asks');
+  await s.harness.act(() => s.harness.document.dispatchEvent(Object.assign(new s.harness.window.Event('keydown', { cancelable: true }), { key: 'Escape' })));
+  assert.deepEqual(s.cards(), []);
+  assert.equal(s.harness.document.activeElement, s.mounted.container.querySelector('.w-a'), 'a has it back');
+  assert.ok(s.instances.overlayWindows.value.find((window) => window.id === 'a').focusAsked > 0, 'and its tab is asked to take it, as a terminal does');
+});
+
 test('a lone snap beside another window snapped alone asks nothing, rather than offer its space', async (t) => {
   const s = await floating(t);
   await dragBar(s.harness, s.mounted, 'a', { x: 400, y: 210 }, { x: 1, y: 400 });
