@@ -37,7 +37,7 @@ func TestDeriveTaskLabel(t *testing.T) {
 		{"github lookalike host", "https://github.com.example.com/foo/bar", "github.com.example.com"},
 		{"github non-numeric tail is not a pr", "https://github.com/tofutools/tclaude/pulls", "github.com"},
 		{"gitlab merge request", "https://gitlab.com/acme/app/-/merge_requests/157", "!157"},
-		{"gitlab merge request on a self-hosted port", "https://gitlab.yamzz.test:6080/yamzz/sub/pp/-/merge_requests/7/diffs", "!7"},
+		{"gitlab merge request on a self-hosted port", "https://gitlab.contoso.test:8929/contoso/sub/pp/-/merge_requests/7/diffs", "!7"},
 		{"gitlab issue", "https://gitlab.com/acme/app/-/issues/12", "#12"},
 		{"gitlab project without the marker", "https://gitlab.com/acme/app", "gitlab.com"},
 		{"gitlab marker needs a group and project before it", "https://gitlab.com/app/-/merge_requests/1", "gitlab.com"},

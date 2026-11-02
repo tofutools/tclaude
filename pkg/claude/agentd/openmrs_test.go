@@ -23,7 +23,7 @@ import (
 // against a stubbed GitLab transport. openmrs_flow_test.go reads the result
 // through the real dashboard snapshot.
 
-const testMRBase = "https://gitlab.example.test:6080"
+const testMRBase = "https://gitlab.example.test:8929"
 
 func testMRNode(iid int, mutate func(*glOpenMRNode)) glOpenMRNode {
 	n := glOpenMRNode{
@@ -85,7 +85,7 @@ func TestAuthoredOpenMRItem_MapsAMergeRequestOntoAFooterRow(t *testing.T) {
 
 	refused := map[string]glOpenMRNode{
 		"another host": testMRNode(9, func(n *glOpenMRNode) {
-			n.WebURL = "https://evil.example.test:6080/acme/sub/app/-/merge_requests/9"
+			n.WebURL = "https://evil.example.test:8929/acme/sub/app/-/merge_requests/9"
 		}),
 		"another port": testMRNode(9, func(n *glOpenMRNode) {
 			n.WebURL = "https://gitlab.example.test:9999/acme/sub/app/-/merge_requests/9"
@@ -202,7 +202,7 @@ func TestPollAuthoredOpenMRs_MergesInstancesAndKeepsTheLastGoodList(t *testing.T
 			if fail {
 				return glAPIResult{Status: http.StatusBadGateway, Body: []byte(`{"message":"bad gateway"}`)}
 			}
-			return graphQLAnswer(t, "yorick", 3, testMRNode(7, nil), testMRNode(8, nil))
+			return graphQLAnswer(t, "jdoe", 3, testMRNode(7, nil), testMRNode(8, nil))
 		})
 
 	wait, err := pollAuthoredOpenMRs(context.Background())
@@ -224,9 +224,9 @@ func TestPollAuthoredOpenMRs_MergesInstancesAndKeepsTheLastGoodList(t *testing.T
 	for _, inst := range view.Instances {
 		byBase[inst.Base] = inst
 	}
-	assert.Equal(t, "yorick", byBase[testMRBase].Username)
-	assert.Equal(t, testMRBase+"/dashboard/merge_requests?state=opened&author_username=yorick", byBase[testMRBase].URL)
-	assert.Equal(t, "gitlab.example.test:6080", byBase[testMRBase].Host)
+	assert.Equal(t, "jdoe", byBase[testMRBase].Username)
+	assert.Equal(t, testMRBase+"/dashboard/merge_requests?state=opened&author_username=jdoe", byBase[testMRBase].URL)
+	assert.Equal(t, "gitlab.example.test:8929", byBase[testMRBase].Host)
 	assert.Contains(t, byBase[other].Error, "rate limit")
 	assert.Empty(t, byBase[other].URL)
 
@@ -240,7 +240,7 @@ func TestPollAuthoredOpenMRs_MergesInstancesAndKeepsTheLastGoodList(t *testing.T
 
 func TestAuthoredOpenMRsSnapshot_ShowsOnlyForTheCurrentConfiguration(t *testing.T) {
 	openMRsWorld(t, map[string]string{"gitlab.example.test": testMRBase}, func(string) glAPIResult {
-		return graphQLAnswer(t, "yorick", 1, testMRNode(7, nil))
+		return graphQLAnswer(t, "jdoe", 1, testMRNode(7, nil))
 	})
 	require.Nil(t, authoredOpenMRsSnapshot(loadCfg(t), nil), "nothing until an instance answers")
 	_, err := pollAuthoredOpenMRs(context.Background())
@@ -323,8 +323,8 @@ func TestEveryoneOpenMRs_GroupsTheInstancesOpenMergeRequestsByProject(t *testing
 			require.Equal(t, "merge_requests", req.Path)
 			discovery = append(discovery, req.Query)
 			list := []map[string]any{
-				{"web_url": testMRBase + "/yamzz/previewplayback/-/merge_requests/249"},
-				{"web_url": testMRBase + "/yamzz/previewplayback/-/merge_requests/250"},
+				{"web_url": testMRBase + "/contoso/player/-/merge_requests/249"},
+				{"web_url": testMRBase + "/contoso/player/-/merge_requests/250"},
 				{"web_url": testMRBase + "/tools/ci/-/merge_requests/3"},
 				{"web_url": "https://elsewhere.example.test/x/y/-/merge_requests/1"},
 			}
@@ -333,7 +333,7 @@ func TestEveryoneOpenMRs_GroupsTheInstancesOpenMergeRequestsByProject(t *testing
 		}
 		body, _ := json.Marshal(req.Body)
 		if strings.Contains(string(body), "authoredMergeRequests") {
-			return graphQLAnswer(t, "yorick", 1, testMRNode(7, func(n *glOpenMRNode) {
+			return graphQLAnswer(t, "jdoe", 1, testMRNode(7, func(n *glOpenMRNode) {
 				n.WebURL = testMRBase + "/tools/ci/-/merge_requests/7"
 			})), nil
 		}
@@ -343,19 +343,19 @@ func TestEveryoneOpenMRs_GroupsTheInstancesOpenMergeRequestsByProject(t *testing
 		}
 		require.NoError(t, json.Unmarshal(body, &payload))
 		projectQueries = append(projectQueries, payload.Variables)
-		assert.NotContains(t, payload.Query, "previewplayback", "project paths travel as variables, never in the query text")
+		assert.NotContains(t, payload.Query, "player", "project paths travel as variables, never in the query text")
 		data := map[string]any{}
 		for alias, path := range payload.Variables {
 			switch path {
-			case "yamzz/previewplayback":
+			case "contoso/player":
 				data[alias] = map[string]any{"mergeRequests": map[string]any{"count": 2, "nodes": []any{
-					mr("yamzz/previewplayback", 249, "martin", nil),
-					mr("yamzz/previewplayback", 250, "agent-bot", func(n map[string]any) { n["conflicts"] = true }),
+					mr("contoso/player", 249, "martin", nil),
+					mr("contoso/player", 250, "agent-bot", func(n map[string]any) { n["conflicts"] = true }),
 				}}}
 			case "tools/ci":
 				data[alias] = map[string]any{"mergeRequests": map[string]any{"count": 3, "nodes": []any{
 					mr("tools/ci", 3, "ann", nil),
-					mr("tools/ci", 7, "yorick", nil),
+					mr("tools/ci", 7, "jdoe", nil),
 					mr("tools/ci", 8, "bob", nil),
 				}}}
 			}
@@ -372,16 +372,16 @@ func TestEveryoneOpenMRs_GroupsTheInstancesOpenMergeRequestsByProject(t *testing
 	require.Len(t, projectQueries, 1, "two projects fit one GraphQL query")
 
 	agents := []dashboardAgent{{AgentID: "agt_pp", Title: "builder", repoLinksView: repoLinksView{
-		BranchURL: testMRBase + "/yamzz/previewplayback/-/tree/headless"}}}
+		BranchURL: testMRBase + "/contoso/player/-/tree/headless"}}}
 	view := authoredOpenMRsSnapshot(loadCfg(t), agents)
 	require.NotNil(t, view)
 	assert.Equal(t, 1, view.Total, "the footer's first number stays yours")
 	assert.Equal(t, 5, view.EveryoneTotal, "the second counts everyone's")
 	require.Len(t, view.Projects, 2)
-	assert.Equal(t, "yamzz/previewplayback", view.Projects[0].Project, "the project an agent works in comes first")
+	assert.Equal(t, "contoso/player", view.Projects[0].Project, "the project an agent works in comes first")
 	assert.True(t, view.Projects[0].Agents)
 	assert.Equal(t, "tools/ci", view.Projects[1].Project, "busier, but no agent works in it")
-	assert.Equal(t, testMRBase+"/yamzz/previewplayback/-/merge_requests", view.Projects[0].URL)
+	assert.Equal(t, testMRBase+"/contoso/player/-/merge_requests", view.Projects[0].URL)
 	pp := view.Projects[0].Items
 	require.Len(t, pp, 2)
 	assert.Equal(t, "martin", pp[0].Author)
@@ -462,14 +462,14 @@ func TestFetchEveryoneOpenMRs_CapsTheProjectsReadAgentsFirst(t *testing.T) {
 func TestPollAuthoredOpenMRs_AFailedEveryoneStepKeepsTheTabsAndTheInstance(t *testing.T) {
 	limited := false
 	openMRsWorld(t, map[string]string{"gitlab.example.test": testMRBase}, func(string) glAPIResult {
-		return graphQLAnswer(t, "yorick", 0)
+		return graphQLAnswer(t, "jdoe", 0)
 	})
 	// Replace the world's default everyone answers: one project, then a 429.
 	t.Cleanup(SetGitLabTransportForTest(func(_ context.Context, _, _ string, req glAPIRequest) (glAPIResult, error) {
 		body, _ := json.Marshal(req.Body)
 		switch {
 		case req.GraphQL && strings.Contains(string(body), "authoredMergeRequests"):
-			return graphQLAnswer(t, "yorick", 0), nil
+			return graphQLAnswer(t, "jdoe", 0), nil
 		case limited:
 			return glAPIResult{Status: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"90"}}}, nil
 		case !req.GraphQL:

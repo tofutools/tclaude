@@ -21,8 +21,8 @@ import (
 // through `gh`.
 
 const (
-	presentMRTestRemote = "git@gitlab.yamzz.test:yamzz/sub/previewplayback.git"
-	presentMRTestURL    = "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/157"
+	presentMRTestRemote = "git@gitlab.contoso.test:contoso/sub/player.git"
+	presentMRTestURL    = "https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/157"
 )
 
 // saveGitLabPresentedPRPolicy writes a policy that recognises the test
@@ -33,7 +33,7 @@ func saveGitLabPresentedPRPolicy(t *testing.T, allowed ...string) {
 	require.NoError(t, os.WriteFile(tokenPath, []byte(glTestToken+"\n"), 0o600))
 	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{GitProxy: &config.GitProxyConfig{
 		AllowedRemotes:  allowed,
-		GitLabHosts:     map[string]string{"gitlab.yamzz.test": glTestBase},
+		GitLabHosts:     map[string]string{"gitlab.contoso.test": glTestBase},
 		GitLabTokenFile: tokenPath,
 	}}}))
 }
@@ -45,8 +45,8 @@ func TestPresentPR_GitLabMergeRequestIsValidatedAgainstTheCallersRemote(t *testi
 		const worker = "ppgl-aaaa-bbbb-cccc-dddd"
 		f.HaveGroup("alpha")
 		f.HaveConvWithTitle(worker, "worker")
-		repo := presentedPRTestRepo(t, f, "ppgl", presentMRTestRemote, "gitlab.yamzz.test/yamzz")
-		saveGitLabPresentedPRPolicy(t, "gitlab.yamzz.test/yamzz")
+		repo := presentedPRTestRepo(t, f, "ppgl", presentMRTestRemote, "gitlab.contoso.test/contoso")
+		saveGitLabPresentedPRPolicy(t, "gitlab.contoso.test/contoso")
 		f.HaveAliveSession(worker, "lbl-ppgl", "tmux-ppgl", repo)
 		f.HaveMember("alpha", worker)
 		require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
@@ -74,14 +74,14 @@ func TestPresentPR_GitLabMergeRequestIsValidatedAgainstTheCallersRemote(t *testi
 		f := newFlow(t)
 		const worker = "ppgm-aaaa-bbbb-cccc-dddd"
 		f.HaveConvWithTitle(worker, "worker")
-		repo := presentedPRTestRepo(t, f, "ppgm", presentMRTestRemote, "gitlab.yamzz.test")
-		saveGitLabPresentedPRPolicy(t, "gitlab.yamzz.test")
+		repo := presentedPRTestRepo(t, f, "ppgm", presentMRTestRemote, "gitlab.contoso.test")
+		saveGitLabPresentedPRPolicy(t, "gitlab.contoso.test")
 		f.HaveAliveSession(worker, "lbl-ppgm", "tmux-ppgm", repo)
 		require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
 
 		rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
 			testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/prs",
-				map[string]any{"url": "https://gitlab.yamzz.test:6080/yamzz/other/-/merge_requests/1"}), worker))
+				map[string]any{"url": "https://gitlab.contoso.test:8929/contoso/other/-/merge_requests/1"}), worker))
 		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 		assert.Contains(t, rec.Body.String(), "pr_repo_refused")
 	})
@@ -90,14 +90,14 @@ func TestPresentPR_GitLabMergeRequestIsValidatedAgainstTheCallersRemote(t *testi
 		f := newFlow(t)
 		const worker = "ppgn-aaaa-bbbb-cccc-dddd"
 		f.HaveConvWithTitle(worker, "worker")
-		repo := presentedPRTestRepo(t, f, "ppgn", "git@gitlab.other.test:yamzz/app.git", "gitlab.other.test")
+		repo := presentedPRTestRepo(t, f, "ppgn", "git@gitlab.other.test:contoso/app.git", "gitlab.other.test")
 		saveGitLabPresentedPRPolicy(t, "gitlab.other.test")
 		f.HaveAliveSession(worker, "lbl-ppgn", "tmux-ppgn", repo)
 		require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
 
 		rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
 			testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/prs",
-				map[string]any{"url": "https://gitlab.other.test/yamzz/app/-/merge_requests/1"}), worker))
+				map[string]any{"url": "https://gitlab.other.test/contoso/app/-/merge_requests/1"}), worker))
 		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 		assert.Contains(t, rec.Body.String(), "not a configured GitLab instance")
 	})
@@ -121,8 +121,8 @@ func TestPresentPR_GitLabMergeRequestRefreshesThroughTheAPI(t *testing.T) {
 	const worker = "ppgr-aaaa-bbbb-cccc-dddd"
 	f.HaveGroup("alpha")
 	f.HaveConvWithTitle(worker, "worker")
-	repo := presentedPRTestRepo(t, f, "ppgr", presentMRTestRemote, "gitlab.yamzz.test/yamzz")
-	saveGitLabPresentedPRPolicy(t, "gitlab.yamzz.test/yamzz")
+	repo := presentedPRTestRepo(t, f, "ppgr", presentMRTestRemote, "gitlab.contoso.test/contoso")
+	saveGitLabPresentedPRPolicy(t, "gitlab.contoso.test/contoso")
 	f.HaveAliveSession(worker, "lbl-ppgr", "tmux-ppgr", repo)
 	f.HaveMember("alpha", worker)
 	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))

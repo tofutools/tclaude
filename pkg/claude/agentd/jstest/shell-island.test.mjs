@@ -780,7 +780,7 @@ test('footer open MRs lists GitLab merge requests next to open PRs', async (t) =
   await harness.act(() => state.commitRequest(1, { authored_open_prs: { available: true, total: 0, items: [] } }));
   assert.equal(mounted.container.querySelector('.open-mrs'), null, 'absent until the daemon has a GitLab list');
 
-  const base = 'https://gitlab.example.test:6080/acme/app/-/merge_requests/';
+  const base = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/';
   state.beginRequest();
   await harness.act(() => state.commitRequest(2, { authored_open_mrs: {
     available: true, total: 2, updated_at: '2026-11-02T10:00:00Z',
@@ -791,7 +791,7 @@ test('footer open MRs lists GitLab merge requests next to open PRs', async (t) =
         checks: { total: 1, pending: 1, state: 'pending' }, reviews: { approved: 0 } },
     ],
     instances: [
-      { host: 'gitlab.example.test:6080', url: 'https://gitlab.example.test:6080/dashboard/merge_requests?state=opened&author_username=yorick' },
+      { host: 'gitlab.example.test:8929', url: 'https://gitlab.example.test:8929/dashboard/merge_requests?state=opened&author_username=jdoe' },
       { host: 'other.example.test', error: 'GitLab applied a rate limit; retry in 2m0s' },
     ],
   } }));
@@ -805,8 +805,8 @@ test('footer open MRs lists GitLab merge requests next to open PRs', async (t) =
   assert.match(rows[1].textContent, /!8 · conflict · no active agent/);
   assert.equal(rows[0].querySelector('.ci-count').textContent, 'pipeline', 'one head pipeline, not a check count');
   assert.equal(mounted.container.querySelector('.rv-hover, .pr-review-badge'), null, 'the GitHub review pill is not shown');
-  const link = getByRole(mounted.container, 'link', { name: /Open all on gitlab\.example\.test:6080/ });
-  assert.equal(link.getAttribute('href'), 'https://gitlab.example.test:6080/dashboard/merge_requests?state=opened&author_username=yorick');
+  const link = getByRole(mounted.container, 'link', { name: /Open all on gitlab\.example\.test:8929/ });
+  assert.equal(link.getAttribute('href'), 'https://gitlab.example.test:8929/dashboard/merge_requests?state=opened&author_username=jdoe');
   assert.match(mounted.container.querySelector('.open-prs-stale').textContent, /other\.example\.test: GitLab applied a rate limit/);
 
   await harness.act(() => getByRole(mounted.container, 'button', { name: /Ready to merge 1/ }).click());
@@ -828,17 +828,17 @@ test('footer open MRs shows mine and all, and a tab per project for everyone\'s'
   ]);
   const state = createDashboardState();
   const mounted = await harness.mount(harness.html`<${OpenMRs} state=${state} />`);
-  const base = 'https://gitlab.example.test:6080';
+  const base = 'https://gitlab.example.test:8929';
   state.beginRequest();
   await harness.act(() => state.commitRequest(1, { authored_open_mrs: {
     available: true, total: 0, items: [], everyone_total: 2,
-    instances: [{ host: 'gitlab.example.test:6080', url: `${base}/dashboard/merge_requests?state=opened&author_username=yorick`,
+    instances: [{ host: 'gitlab.example.test:8929', url: `${base}/dashboard/merge_requests?state=opened&author_username=jdoe`,
       everyone_error: 'GitLab applied a rate limit; retry in 1m30s' }],
-    projects: [{ host: 'gitlab.example.test:6080', project: 'yamzz/previewplayback', url: `${base}/yamzz/previewplayback/-/merge_requests`,
+    projects: [{ host: 'gitlab.example.test:8929', project: 'contoso/player', url: `${base}/contoso/player/-/merge_requests`,
       total: 2, agents: true, items: [
-        { number: 249, url: `${base}/yamzz/previewplayback/-/merge_requests/249`, title: 'Merge 1st', repository: 'yamzz/previewplayback',
+        { number: 249, url: `${base}/contoso/player/-/merge_requests/249`, title: 'Merge 1st', repository: 'contoso/player',
           author: 'martin', agent_title: 'builder', agent_id: 'agt_1', checks: { total: 1, passed: 1, state: 'passing' }, reviews: { approved: 1 } },
-        { number: 250, url: `${base}/yamzz/previewplayback/-/merge_requests/250`, title: 'Merge 2nd', repository: 'yamzz/previewplayback',
+        { number: 250, url: `${base}/contoso/player/-/merge_requests/250`, title: 'Merge 2nd', repository: 'contoso/player',
           author: 'agent-bot', conflicts: true, checks: { total: 1, pending: 1, state: 'pending' } },
       ] }],
   } }));
@@ -851,19 +851,19 @@ test('footer open MRs shows mine and all, and a tab per project for everyone\'s'
   assert.match(mounted.container.querySelector('.open-prs-empty').textContent, /No open merge requests/);
   assert.equal(mounted.container.querySelector('.open-prs-stale'), null,
     'a failed project-wide read is not an instance failure on Mine');
-  const tab = getByRole(mounted.container, 'tab', { name: /previewplayback 2/ });
+  const tab = getByRole(mounted.container, 'tab', { name: /player 2/ });
   assert.equal(getByRole(mounted.container, 'tab', { name: /Mine 0/ }).getAttribute('aria-selected'), 'true');
   await harness.act(() => tab.click());
   assert.equal(tab.getAttribute('aria-selected'), 'true');
-  assert.match(mounted.container.querySelector('.open-prs-head').textContent, /Open merge requests in yamzz\/previewplayback/);
+  assert.match(mounted.container.querySelector('.open-prs-head').textContent, /Open merge requests in contoso\/player/);
   assert.match(mounted.container.querySelector('.open-prs-stale').textContent,
-    /Everyone's merge requests on gitlab\.example\.test:6080 are from an earlier read: GitLab applied a rate limit/);
+    /Everyone's merge requests on gitlab\.example\.test:8929 are from an earlier read: GitLab applied a rate limit/);
   const rows = [...mounted.container.querySelectorAll('.open-pr-row')];
   assert.equal(rows.length, 2);
   assert.match(rows[0].textContent, /!249 · by martin · 1 approval · builder/);
   assert.match(rows[1].textContent, /!250 · by agent-bot · conflict · no active agent/);
   const link = getByRole(mounted.container, 'link', { name: /Open in GitLab/ });
-  assert.equal(link.getAttribute('href'), `${base}/yamzz/previewplayback/-/merge_requests`);
+  assert.equal(link.getAttribute('href'), `${base}/contoso/player/-/merge_requests`);
   await harness.act(() => getByRole(mounted.container, 'button', { name: /Ready to merge 1/ }).click());
   assert.deepEqual([...mounted.container.querySelectorAll('.open-pr-title')].map((node) => node.textContent), ['Merge 1st']);
   await mounted.unmount();
@@ -877,7 +877,7 @@ test('include drafts is one setting across Open PRs and Open MRs', async (t) => 
   ]);
   const state = createDashboardState();
   const mounted = await harness.mount(harness.html`<div><${OpenPRs} state=${state} /><${OpenMRs} state=${state} /></div>`);
-  const mr = 'https://gitlab.example.test:6080/acme/app/-/merge_requests/';
+  const mr = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/';
   state.beginRequest();
   await harness.act(() => state.commitRequest(1, {
     authored_open_prs: { available: true, total: 1, items: [
@@ -906,20 +906,20 @@ test('a project-wide read that never answered says so on Mine, and all reads ?',
   ]);
   const state = createDashboardState();
   const mounted = await harness.mount(harness.html`<${OpenMRs} state=${state} />`);
-  const base = 'https://gitlab.example.test:6080';
+  const base = 'https://gitlab.example.test:8929';
   state.beginRequest();
   await harness.act(() => state.commitRequest(1, { authored_open_mrs: {
     available: true, total: 1, everyone_total: 0, projects: [],
     items: [{ number: 7, url: `${base}/acme/app/-/merge_requests/7`, title: 'Mine', repository: 'acme/app',
       checks: { total: 1, passed: 1, state: 'passing' } }],
-    instances: [{ host: 'gitlab.example.test:6080', url: `${base}/dashboard/merge_requests?state=opened&author_username=yorick`,
+    instances: [{ host: 'gitlab.example.test:8929', url: `${base}/dashboard/merge_requests?state=opened&author_username=jdoe`,
       everyone_error: 'context deadline exceeded' }],
   } }));
   const trigger = getByRole(mounted.container, 'button', { name: /Open MRs/ });
   assert.equal(mounted.container.querySelector('.open-mrs-all-count').textContent, '?', 'unknown, not zero');
   await harness.act(() => trigger.click());
   assert.match(mounted.container.querySelector('.open-prs-stale').textContent,
-    /Everyone's merge requests on gitlab\.example\.test:6080 could not be read: context deadline exceeded/);
+    /Everyone's merge requests on gitlab\.example\.test:8929 could not be read: context deadline exceeded/);
   assert.match(mounted.container.querySelector('.ci-badge').getAttribute('aria-label'), /Opens the pipeline on GitLab/,
     'a merge request badge names GitLab');
   await mounted.unmount();

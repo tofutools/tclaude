@@ -1576,8 +1576,8 @@ func parseRemoteURL(raw string) (remoteRef, error) {
 // parseRemoteURLFor is parseRemoteURL under the operator's policy. It admits
 // one port the plain parser refuses: an https remote whose scheme, host and
 // port are EXACTLY a configured GitLab instance's base (gitlab_hosts), as in
-// https://gitlab.example.com:6080/group/project.git against
-// {"gitlab.example.com": "https://gitlab.example.com:6080"}. The operator wrote
+// https://gitlab.example.com:8929/group/project.git against
+// {"gitlab.example.com": "https://gitlab.example.com:8929"}. The operator wrote
 // that destination down, so admitting it widens nothing. Any other port is
 // still refused, including another port on the same host, and the ref it
 // returns is the same host/path key an SSH remote for the project yields, so

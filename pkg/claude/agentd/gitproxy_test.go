@@ -133,16 +133,16 @@ func TestParseRemoteURL_AcceptsOrdinaryForms(t *testing.T) {
 // host/path key the SSH form of the project yields.
 func TestParseRemoteURLFor_AdmitsOnlyTheGitLabInstancesOwnPort(t *testing.T) {
 	policy := config.GitProxyConfig{GitLabHosts: map[string]string{
-		"gitlab.example.test":  "https://gitlab.example.test:6080",
+		"gitlab.example.test":  "https://gitlab.example.test:8929",
 		"plain.example.test":   "https://plain.example.test",
-		"mounted.example.test": "https://mounted.example.test:6080/gitlab",
+		"mounted.example.test": "https://mounted.example.test:8929/gitlab",
 	}}
 
 	t.Run("admitted", func(t *testing.T) {
 		for _, raw := range []string{
-			"https://gitlab.example.test:6080/acme/sub/app.git",
-			"https://GitLab.Example.test:6080/acme/sub/app",
-			"https://user@gitlab.example.test:6080/acme/sub/app.git",
+			"https://gitlab.example.test:8929/acme/sub/app.git",
+			"https://GitLab.Example.test:8929/acme/sub/app",
+			"https://user@gitlab.example.test:8929/acme/sub/app.git",
 		} {
 			ref, err := parseRemoteURLFor(raw, policy)
 			require.NoError(t, err, raw)
@@ -152,7 +152,7 @@ func TestParseRemoteURLFor_AdmitsOnlyTheGitLabInstancesOwnPort(t *testing.T) {
 		}
 		ssh, err := parseRemoteURLFor("git@gitlab.example.test:acme/sub/app.git", policy)
 		require.NoError(t, err)
-		https, err := parseRemoteURLFor("https://gitlab.example.test:6080/acme/sub/app.git", policy)
+		https, err := parseRemoteURLFor("https://gitlab.example.test:8929/acme/sub/app.git", policy)
 		require.NoError(t, err)
 		assert.Equal(t, ssh.Key(), https.Key())
 
@@ -163,11 +163,11 @@ func TestParseRemoteURLFor_AdmitsOnlyTheGitLabInstancesOwnPort(t *testing.T) {
 
 	refused := []struct{ name, url string }{
 		{"another port on the instance's host", "https://gitlab.example.test:9999/acme/app.git"},
-		{"the instance's port over ssh", "ssh://git@gitlab.example.test:6080/acme/app.git"},
-		{"an instance configured without a port", "https://plain.example.test:6080/acme/app.git"},
-		{"a host that is not a configured instance", "https://other.example.test:6080/acme/app.git"},
+		{"the instance's port over ssh", "ssh://git@gitlab.example.test:8929/acme/app.git"},
+		{"an instance configured without a port", "https://plain.example.test:8929/acme/app.git"},
+		{"a host that is not a configured instance", "https://other.example.test:8929/acme/app.git"},
 		{"a gitlab.com default never names a port", "https://gitlab.com:8443/acme/app.git"},
-		{"an instance mounted under a path", "https://mounted.example.test:6080/gitlab/acme/app.git"},
+		{"an instance mounted under a path", "https://mounted.example.test:8929/gitlab/acme/app.git"},
 		{"a github remote with a port", "https://github.com:8443/o/r.git"},
 	}
 	for _, tc := range refused {
@@ -180,16 +180,16 @@ func TestParseRemoteURLFor_AdmitsOnlyTheGitLabInstancesOwnPort(t *testing.T) {
 	}
 
 	t.Run("without a policy the port is refused as before", func(t *testing.T) {
-		_, err := parseRemoteURL("https://gitlab.example.test:6080/acme/app.git")
+		_, err := parseRemoteURL("https://gitlab.example.test:8929/acme/app.git")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "explicit port")
 	})
 
 	t.Run("the other refusals still come first", func(t *testing.T) {
-		_, err := parseRemoteURLFor("http://gitlab.example.test:6080/acme/app.git", policy)
+		_, err := parseRemoteURLFor("http://gitlab.example.test:8929/acme/app.git", policy)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "clear text")
-		_, err = parseRemoteURLFor("https://u:secret@gitlab.example.test:6080/acme/app.git", policy)
+		_, err = parseRemoteURLFor("https://u:secret@gitlab.example.test:8929/acme/app.git", policy)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "embedded password")
 	})
@@ -200,17 +200,17 @@ func TestParseRemoteURLFor_AdmitsOnlyTheGitLabInstancesOwnPort(t *testing.T) {
 // PATH and never the token.
 func TestGitLabCredentialHelpers(t *testing.T) {
 	assert.Empty(t, gitLabCredentialHelpers(config.GitProxyConfig{
-		GitLabHosts: map[string]string{"gitlab.example.test": "https://gitlab.example.test:6080"},
+		GitLabHosts: map[string]string{"gitlab.example.test": "https://gitlab.example.test:8929"},
 	}), "no token file, no helper")
 
 	pins := gitLabCredentialHelpers(config.GitProxyConfig{
-		GitLabHosts:     map[string]string{"gitlab.example.test": "https://GitLab.example.test:6080"},
+		GitLabHosts:     map[string]string{"gitlab.example.test": "https://GitLab.example.test:8929"},
 		GitLabTokenFile: "/etc/tclaude/gitlab token",
 	})
 	require.Len(t, pins, 2, "only the listed instance: gitlab.com is not attached to a self-hosted token")
-	assert.Equal(t, "credential.https://gitlab.example.test:6080.helper=", pins[0],
+	assert.Equal(t, "credential.https://gitlab.example.test:8929.helper=", pins[0],
 		"a scoped reset first: the operator's helpers are cleared for this origin only")
-	assert.True(t, strings.HasPrefix(pins[1], "credential.https://gitlab.example.test:6080.helper=!"),
+	assert.True(t, strings.HasPrefix(pins[1], "credential.https://gitlab.example.test:8929.helper=!"),
 		"then the token helper, keyed by exact origin, host lower-cased, port kept: %s", pins[1])
 	assert.Contains(t, pins[1], `'/etc/tclaude/gitlab token'`, "the path is single-quoted for the shell")
 	assert.Contains(t, pins[1], "username=oauth2")
@@ -228,8 +228,8 @@ func TestGitLabCredentialHelpers(t *testing.T) {
 // its scoped reset clears them for that origin (and only that origin).
 func TestGitProxyConfigPinsScoped_ScopedHelpersFollowTheOperators(t *testing.T) {
 	args := gitProxyConfigPinsScoped("/h", "ssh", []string{
-		"credential.https://gitlab.example.test:6080.helper=",
-		"credential.https://gitlab.example.test:6080.helper=!scoped",
+		"credential.https://gitlab.example.test:8929.helper=",
+		"credential.https://gitlab.example.test:8929.helper=!scoped",
 	}, []string{"osxkeychain"})
 	var credential []string
 	for i := 0; i+1 < len(args); i++ {
@@ -240,8 +240,8 @@ func TestGitProxyConfigPinsScoped_ScopedHelpersFollowTheOperators(t *testing.T) 
 	assert.Equal(t, []string{
 		"credential.helper=",
 		"credential.helper=osxkeychain",
-		"credential.https://gitlab.example.test:6080.helper=",
-		"credential.https://gitlab.example.test:6080.helper=!scoped",
+		"credential.https://gitlab.example.test:8929.helper=",
+		"credential.https://gitlab.example.test:8929.helper=!scoped",
 	}, credential)
 }
 

@@ -88,7 +88,7 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
       { number: 4, url: 'https://github.com/acme/app/pull/4' },
       { number: 5, url: 'https://github.com/acme/app/pull/5', draft: true, checks: { total: 0, state: 'none' } },
       // A GitLab merge request on a self-hosted port survives the URL filter.
-      { number: 6, url: 'https://gitlab.example.test:6080/acme/sub/app/-/merge_requests/6', checks: { total: 1, failed: 1, state: 'failing' } },
+      { number: 6, url: 'https://gitlab.example.test:8929/acme/sub/app/-/merge_requests/6', checks: { total: 1, failed: 1, state: 'failing' } },
       // Anything else does not.
       { number: 7, url: 'https://example.com/review/7', checks: { total: 1, failed: 1, state: 'failing' } },
     ],
@@ -574,7 +574,7 @@ test('ignored PRs leave every open list and count until they expire or come back
 test('the Open MRs model filters merge requests like PRs and keeps only safe instance links', async (t) => {
   const harness = await createPreactHarness(t);
   const { authoredOpenMRsView } = await harness.importDashboardModule('js/shell-model.js');
-  const base = 'https://gitlab.example.test:6080/acme/app/-/merge_requests/';
+  const base = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/';
   const snapshot = { authored_open_mrs: {
     available: true, total: 5,
     items: [
@@ -586,7 +586,7 @@ test('the Open MRs model filters merge requests like PRs and keeps only safe ins
       { number: 6, url: 'https://example.com/not-a-merge-request/6' },
     ],
     instances: [
-      { host: 'gitlab.example.test:6080', url: 'https://gitlab.example.test:6080/dashboard/merge_requests?state=opened&author_username=yorick' },
+      { host: 'gitlab.example.test:8929', url: 'https://gitlab.example.test:8929/dashboard/merge_requests?state=opened&author_username=jdoe' },
       { host: 'evil.example.test', url: 'javascript:alert(1)' },
       { host: 'down.example.test', error: 'GitLab returned HTTP 502' },
     ],
@@ -601,7 +601,7 @@ test('the Open MRs model filters merge requests like PRs and keeps only safe ins
   assert.deepEqual(authoredOpenMRsView(snapshot, 'ready').items.map((mr) => mr.number), [1]);
   assert.equal(authoredOpenMRsView(snapshot, 'recent').filter, 'all', 'filters it does not offer fall back to Open');
   assert.deepEqual(all.instances, [
-    { host: 'gitlab.example.test:6080', url: 'https://gitlab.example.test:6080/dashboard/merge_requests?state=opened&author_username=yorick', error: '', everyoneError: '' },
+    { host: 'gitlab.example.test:8929', url: 'https://gitlab.example.test:8929/dashboard/merge_requests?state=opened&author_username=jdoe', error: '', everyoneError: '' },
     { host: 'evil.example.test', url: '', error: '', everyoneError: '' },
     { host: 'down.example.test', url: '', error: 'GitLab returned HTTP 502', everyoneError: '' },
   ]);
@@ -628,19 +628,19 @@ test('Open MRs project tabs that share a name show their full paths', async (t) 
 test('the Open MRs model keeps your list on top and serves project tabs from everyone\'s', async (t) => {
   const harness = await createPreactHarness(t);
   const { authoredOpenMRsView } = await harness.importDashboardModule('js/shell-model.js');
-  const base = 'https://gitlab.example.test:6080';
+  const base = 'https://gitlab.example.test:8929';
   const mr = (project, n, extra = {}) => ({ number: n, url: `${base}/${project}/-/merge_requests/${n}`, ...extra });
   const snapshot = { authored_open_mrs: {
     available: true, total: 1, items: [mr('acme/app', 1, { checks: { total: 1, failed: 1, state: 'failing' } })],
     everyone_total: 4, everyone_truncated: true,
     projects: [
-      { host: 'gitlab.example.test:6080', project: 'yamzz/previewplayback', url: `${base}/yamzz/previewplayback/-/merge_requests`,
+      { host: 'gitlab.example.test:8929', project: 'contoso/player', url: `${base}/contoso/player/-/merge_requests`,
         total: 3, agents: true, items: [
-          mr('yamzz/previewplayback', 249, { author: 'martin', checks: { total: 1, passed: 1, state: 'passing' }, reviews: { approved: 1 } }),
-          mr('yamzz/previewplayback', 250, { author: 'ann', checks: { total: 1, pending: 1, state: 'pending' } }),
-          mr('yamzz/previewplayback', 251, { author: 'bob', draft: true }),
+          mr('contoso/player', 249, { author: 'martin', checks: { total: 1, passed: 1, state: 'passing' }, reviews: { approved: 1 } }),
+          mr('contoso/player', 250, { author: 'ann', checks: { total: 1, pending: 1, state: 'pending' } }),
+          mr('contoso/player', 251, { author: 'bob', draft: true }),
         ] },
-      { host: 'gitlab.example.test:6080', project: 'acme/app', url: 'javascript:alert(1)', total: 1, items: [mr('acme/app', 1)] },
+      { host: 'gitlab.example.test:8929', project: 'acme/app', url: 'javascript:alert(1)', total: 1, items: [mr('acme/app', 1)] },
     ],
   } };
   const mine = authoredOpenMRsView(snapshot);
@@ -650,18 +650,18 @@ test('the Open MRs model keeps your list on top and serves project tabs from eve
   assert.equal(mine.everyoneTruncated, true);
   assert.equal(mine.panel.total, 1, 'no project selected: the panel is yours');
   assert.deepEqual(mine.projects.map((p) => [p.key, p.label, p.total, p.agents]), [
-    ['gitlab.example.test:6080/yamzz/previewplayback', 'previewplayback', 3, true],
-    ['gitlab.example.test:6080/acme/app', 'app', 1, false],
+    ['gitlab.example.test:8929/contoso/player', 'player', 3, true],
+    ['gitlab.example.test:8929/acme/app', 'app', 1, false],
   ]);
   assert.equal(mine.projects[1].url, '', 'an unsafe project link is dropped');
 
-  const pp = authoredOpenMRsView(snapshot, 'all', false, 'gitlab.example.test:6080/yamzz/previewplayback');
+  const pp = authoredOpenMRsView(snapshot, 'all', false, 'gitlab.example.test:8929/contoso/player');
   assert.equal(pp.total, 1, 'the footer number does not follow the tab');
-  assert.equal(pp.project, 'gitlab.example.test:6080/yamzz/previewplayback');
+  assert.equal(pp.project, 'gitlab.example.test:8929/contoso/player');
   assert.deepEqual(pp.panel.items.map((x) => x.number), [249, 250, 251]);
   assert.equal(pp.panel.ready, 1);
   assert.equal(pp.panel.attention, 1, 'green needs attention; running and draft do not');
-  assert.deepEqual(authoredOpenMRsView(snapshot, 'ready', false, 'gitlab.example.test:6080/yamzz/previewplayback')
+  assert.deepEqual(authoredOpenMRsView(snapshot, 'ready', false, 'gitlab.example.test:8929/contoso/player')
     .panel.items.map((x) => x.number), [249]);
   assert.equal(authoredOpenMRsView(snapshot, 'all', false, 'gone/project').panel.total, 1,
     'a tab that disappeared falls back to your list');
@@ -670,7 +670,7 @@ test('the Open MRs model keeps your list on top and serves project tabs from eve
 test('a conflicting merge request is never ready to merge, however green and approved', async (t) => {
   const harness = await createPreactHarness(t);
   const { authoredOpenMRsView } = await harness.importDashboardModule('js/shell-model.js');
-  const base = 'https://gitlab.example.test:6080/acme/app/-/merge_requests/';
+  const base = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/';
   const green = { checks: { total: 1, passed: 1, state: 'passing' }, reviews: { approved: 1 } };
   const snapshot = { authored_open_mrs: { available: true, total: 2, items: [
     { number: 1, url: `${base}1`, ...green },
@@ -686,7 +686,7 @@ test('a conflicting merge request is never ready to merge, however green and app
 test('a merge request still missing required approvals is not ready, whatever its count', async (t) => {
   const harness = await createPreactHarness(t);
   const { authoredOpenMRsView } = await harness.importDashboardModule('js/shell-model.js');
-  const base = 'https://gitlab.example.test:6080/acme/app/-/merge_requests/';
+  const base = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/';
   const passing = { total: 1, passed: 1, state: 'passing' };
   const view = authoredOpenMRsView({ authored_open_mrs: { available: true, total: 2, items: [
     { number: 1, url: `${base}1`, checks: passing, reviews: { approved: 1 } },

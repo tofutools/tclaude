@@ -112,7 +112,7 @@ daemon state; migrated automatically from the legacy `~/.tclaude/config.json`):
 - `github_token_file` — the GitHub token source (GitHub proxy only); empty
   falls back to `gh auth token`, and that is the entire token chain.
 - `gitlab_hosts` — a map from a remote host to the base URL of the GitLab
-  instance that serves it, `{"gitlab.example.com": "https://gitlab.example.com:6080"}`.
+  instance that serves it, `{"gitlab.example.com": "https://gitlab.example.com:8929"}`.
   It does two jobs: it is how the daemon *recognises* a remote as a GitLab
   project at all (a self-hosted instance cannot be told apart from any other
   git server by its name), and it is where the web/API root lives, which may
@@ -195,11 +195,11 @@ To authorise some projects and not others, write them out:
 "agent": {
   "git_proxy": {
     "allowed_remotes": [
-      "gitlab.example.com/acme/previewplayback",
-      "gitlab.example.com/acme/previewplayback-dashboard",
+      "gitlab.example.com/acme/player",
+      "gitlab.example.com/acme/player-dashboard",
       "gitlab.example.com/acme/tools/*"
     ],
-    "gitlab_hosts": {"gitlab.example.com": "https://gitlab.example.com:6080"},
+    "gitlab_hosts": {"gitlab.example.com": "https://gitlab.example.com:8929"},
     "gitlab_token_file": "~/.config/tclaude/gitlab-token"
   }
 }
@@ -239,7 +239,7 @@ An agent's remote can take either form GitLab's clone button offers:
 - SSH, `git@gitlab.example.com:acme/app.git`. Pushes and fetches use the
   daemon's SSH key (`ssh_key`, or its ssh-agent).
 - `https`, with the instance's port when it has one:
-  `https://gitlab.example.com:6080/acme/app.git`. The git proxy otherwise
+  `https://gitlab.example.com:8929/acme/app.git`. The git proxy otherwise
   refuses a remote URL that names a port, because the allow-list cannot
   express one. It accepts this one because the scheme, host and port are
   exactly the `gitlab_hosts` base, a destination the operator has already

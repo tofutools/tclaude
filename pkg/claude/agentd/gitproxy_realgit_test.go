@@ -260,7 +260,7 @@ func TestRealGit_GitLabTokenHelperAnswersOnlyItsInstance(t *testing.T) {
 	require.NoError(t, os.WriteFile(tokenPath, []byte("glpat-real-git-test\n"), 0o600))
 	policy := config.GitProxyConfig{
 		GitLabHosts: map[string]string{
-			"gitlab.example.test": "https://gitlab.example.test:6080",
+			"gitlab.example.test": "https://gitlab.example.test:8929",
 			"plain.example.test":  "https://plain.example.test",
 		},
 		GitLabTokenFile: tokenPath,
@@ -299,7 +299,7 @@ func TestRealGit_GitLabTokenHelperAnswersOnlyItsInstance(t *testing.T) {
 		assert.True(t, os.IsNotExist(err), "git reached an askpass prompt; a test must never prompt")
 	})
 
-	out := fill("gitlab.example.test:6080")
+	out := fill("gitlab.example.test:8929")
 	assert.Contains(t, out, "username=oauth2\npassword=glpat-real-git-test\n", "the instance's origin gets the token")
 	assert.Empty(t, operator(), "the operator's helper is not asked for the instance")
 
@@ -307,7 +307,7 @@ func TestRealGit_GitLabTokenHelperAnswersOnlyItsInstance(t *testing.T) {
 	assert.Contains(t, out, "password=glpat-real-git-test\n", ":443 is the same origin as a portless base, to git as to the proxy")
 	assert.Empty(t, operator())
 
-	for _, host := range []string{"gitlab.example.test", "gitlab.example.test:9999", "evil.example.test:6080"} {
+	for _, host := range []string{"gitlab.example.test", "gitlab.example.test:9999", "evil.example.test:8929"} {
 		out := fill(host)
 		assert.Contains(t, out, "password=op-secret\n", "%s keeps the operator's helper", host)
 		assert.NotContains(t, out, "glpat-real-git-test", "%s must never see the token", host)
@@ -315,7 +315,7 @@ func TestRealGit_GitLabTokenHelperAnswersOnlyItsInstance(t *testing.T) {
 	}
 
 	t.Run("a rejected token is not erased from the operator's helper", func(t *testing.T) {
-		_, err := gitCredential("reject", "protocol=https\nhost=gitlab.example.test:6080\nusername=oauth2\npassword=glpat-real-git-test\n\n")
+		_, err := gitCredential("reject", "protocol=https\nhost=gitlab.example.test:8929\nusername=oauth2\npassword=glpat-real-git-test\n\n")
 		require.NoError(t, err)
 		assert.Empty(t, operator(), "erase never reaches the operator's helper for the instance")
 		_, err = gitCredential("reject", "protocol=https\nhost=other.example.test\nusername=op\npassword=op-secret\n\n")
@@ -330,7 +330,7 @@ func TestRealGit_GitLabTokenHelperAnswersOnlyItsInstance(t *testing.T) {
 		// GIT_ASKPASS or SSH_ASKPASS is forwarded, and core.askPass is pinned
 		// empty. So this case runs with exactly that, and must end at git's
 		// "terminal prompts disabled" rather than at any prompt.
-		out, err := gitCredentialEnv(realGitEnv(home), "fill", "protocol=https\nhost=gitlab.example.test:6080\n\n")
+		out, err := gitCredentialEnv(realGitEnv(home), "fill", "protocol=https\nhost=gitlab.example.test:8929\n\n")
 		require.Error(t, err, "no credential for the instance: %s", out)
 		assert.Contains(t, out, "terminal prompts disabled", "git stops instead of prompting")
 		assert.NotContains(t, out, "op-secret")

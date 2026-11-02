@@ -17,7 +17,7 @@ import (
 // covers every page of the head pipeline's jobs, and an incomplete read
 // never reads as a green pipeline.
 
-const jobsTestBase = "https://gitlab.yamzz.test:6080"
+const jobsTestBase = "https://gitlab.contoso.test:8929"
 
 func jobsPage(t *testing.T, from, n int, status string) []byte {
 	t.Helper()
@@ -33,12 +33,12 @@ func jobsPage(t *testing.T, from, n int, status string) []byte {
 // nextLink is the Link header GitLab sends for another page on the instance.
 func nextLink(page int) http.Header {
 	return http.Header{"Link": []string{fmt.Sprintf(
-		`<%s/api/v4/projects/yamzz%%2Fapp/pipelines/99/jobs?per_page=100&page=%d>; rel="next"`, jobsTestBase, page)}}
+		`<%s/api/v4/projects/contoso%%2Fapp/pipelines/99/jobs?per_page=100&page=%d>; rel="next"`, jobsTestBase, page)}}
 }
 
 func jobsRef(t *testing.T) gitlabMRRef {
 	t.Helper()
-	ref, ok := gitlabMRRefFromURL(jobsTestBase + "/yamzz/app/-/merge_requests/7")
+	ref, ok := gitlabMRRefFromURL(jobsTestBase + "/contoso/app/-/merge_requests/7")
 	require.True(t, ok)
 	return ref
 }
@@ -54,7 +54,7 @@ func TestGitLabPipelineChecks_ReadsEveryPageOfJobs(t *testing.T) {
 		return glAPIResult{Status: http.StatusOK, Body: jobsPage(t, 101, 1, "failed"), Header: http.Header{}}, nil
 	}))
 	info := gitlabPipelineChecks(context.Background(), jobsTestBase, "glpat", jobsRef(t),
-		&glPipeline{ID: 99, Status: "failed", WebURL: jobsTestBase + "/yamzz/app/-/pipelines/99"}, time.Now())
+		&glPipeline{ID: 99, Status: "failed", WebURL: jobsTestBase + "/contoso/app/-/pipelines/99"}, time.Now())
 	assert.Equal(t, 2, calls, "the second page is read")
 	assert.Equal(t, "failing", info.Summary.State, "a failure on page two turns the badge red")
 	assert.Equal(t, 101, info.Summary.Total)

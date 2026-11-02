@@ -3219,7 +3219,7 @@ type GitProxyConfig struct {
 	// the agent's remote URL, without a port) to the base URL of the GitLab
 	// instance that serves it:
 	//
-	//   "gitlab_hosts": {"gitlab.example.com": "https://gitlab.example.com:6080"}
+	//   "gitlab_hosts": {"gitlab.example.com": "https://gitlab.example.com:8929"}
 	//
 	// The map does two jobs. It is how the daemon RECOGNISES a remote as a
 	// GitLab project — a self-hosted instance cannot be told apart from any

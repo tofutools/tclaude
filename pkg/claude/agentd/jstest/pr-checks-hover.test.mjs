@@ -147,7 +147,7 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
     // No run could be named (external CI app only) — the PR's checks tab is
     // still a useful landing place, so the badge is never a dead pill.
     assert.equal(badgeHref({ state: 'passing' }, PR), `${PR}/checks`);
-    const MR = 'https://gitlab.example.test:6080/acme/sub/app/-/merge_requests/157';
+    const MR = 'https://gitlab.example.test:8929/acme/sub/app/-/merge_requests/157';
     assert.equal(badgeHref({ state: 'passing' }, MR), `${MR}/pipelines`,
       'a merge request keeps its CI on the pipelines tab');
     assert.equal(badgeHref({ run_url: 'javascript:alert(1)' }, PR), `${PR}/checks`,
@@ -509,7 +509,7 @@ test('the measured panel is positioned and follows the viewport', async (t) => {
 test('a merge request CI badge names GitLab and links its pipelines from any sub-page', async (t) => {
   const harness = await createPreactHarness(t);
   const { prChecksPageURL } = await harness.importDashboardModule('js/pr-checks-hover.js');
-  const MR = 'https://gitlab.example.test:6080/acme/app/-/merge_requests/7';
+  const MR = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/7';
   assert.equal(prChecksPageURL(MR), `${MR}/pipelines`);
   assert.equal(prChecksPageURL(`${MR}/diffs`), `${MR}/pipelines`, 'a sub-page still leads to the pipelines tab');
   assert.equal(prChecksPageURL('https://github.com/acme/app/pull/2'), 'https://github.com/acme/app/pull/2/checks');
@@ -518,7 +518,7 @@ test('a merge request CI badge names GitLab and links its pipelines from any sub
 test('a merge request URL with a query or fragment is still GitLab', async (t) => {
   const harness = await createPreactHarness(t);
   const { prChecksPageURL } = await harness.importDashboardModule('js/pr-checks-hover.js');
-  const MR = 'https://gitlab.example.test:6080/acme/app/-/merge_requests/7';
+  const MR = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/7';
   assert.equal(prChecksPageURL(`${MR}?view=parallel`), `${MR}/pipelines`);
   assert.equal(prChecksPageURL(`${MR}#note_3`), `${MR}/pipelines`);
 });
@@ -526,7 +526,7 @@ test('a merge request URL with a query or fragment is still GitLab', async (t) =
 test('a merge request checks panel names it !N, links its pipelines, and says GitLab', async (t) => {
   const harness = await createPreactHarness(t);
   const { PRChecksBadge } = await harness.importDashboardModule('js/pr-checks-hover.js');
-  const MR = 'https://gitlab.example.test:6080/acme/app/-/merge_requests/7';
+  const MR = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/7';
   stubFetch(t, () => ({
     url: MR,
     summary: { total: 1, passed: 0, failed: 1, pending: 0, skipped: 0, state: 'failing' },

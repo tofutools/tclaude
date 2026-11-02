@@ -35,9 +35,9 @@ import (
 //   - the token travels as a header and nowhere else.
 
 const (
-	glTestConvRemote = "git@gitlab.yamzz.test:yamzz/sub/previewplayback.git"
-	glTestBase       = "https://gitlab.yamzz.test:6080"
-	glTestProjectID  = "yamzz%2Fsub%2Fpreviewplayback"
+	glTestConvRemote = "git@gitlab.contoso.test:contoso/sub/player.git"
+	glTestBase       = "https://gitlab.contoso.test:8929"
+	glTestProjectID  = "contoso%2Fsub%2Fplayer"
 	glTestToken      = "glpat-test-token-from-file"
 )
 
@@ -149,7 +149,7 @@ func glWorld(t *testing.T, allowed []string) (*testharness.Flow, *gitProxyRecord
 	tokenPath := filepath.Join(t.TempDir(), "gitlab-token")
 	require.NoError(t, os.WriteFile(tokenPath, []byte(glTestToken+"\n"), 0o600))
 	writeGitProxyConfig(t, allowed, func(c *gitProxyConfigPatch) {
-		c.GitLabHosts = map[string]string{"gitlab.yamzz.test": glTestBase}
+		c.GitLabHosts = map[string]string{"gitlab.contoso.test": glTestBase}
 		c.GitLabTokenFile = tokenPath
 	})
 	gl := newGLRecorder()
@@ -172,10 +172,10 @@ func glOutcome(t *testing.T, body []byte) (exit int, stdout, stderr string, doc 
 }
 
 const glCannedMR = `{"iid":7,"title":"Add a thing","description":"why","state":"opened","draft":false,
-"source_branch":"feat/thing","target_branch":"main","web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/7",
+"source_branch":"feat/thing","target_branch":"main","web_url":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/7",
 "created_at":"2026-10-01T10:00:00Z","updated_at":"2026-10-02T10:00:00Z","sha":"abc123","has_conflicts":false,
 "detailed_merge_status":"mergeable","author":{"id":3,"username":"agent-bot","name":"Agent Bot"},
-"head_pipeline":{"id":99,"sha":"abc123","ref":"feat/thing","status":"failed","web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/pipelines/99"}}`
+"head_pipeline":{"id":99,"sha":"abc123","ref":"feat/thing","status":"failed","web_url":"https://gitlab.contoso.test:8929/contoso/sub/player/-/pipelines/99"}}`
 
 // ---------------------------------------------------------------------------
 // Permission gating and the allow-list
@@ -183,7 +183,7 @@ const glCannedMR = `{"iid":7,"title":"Add a thing","description":"why","state":"
 
 func TestGLProxy_WriteRequiresItsOwnSlug(t *testing.T) {
 	t.Run("proxy.gitlab.read does not confer proxy.gitlab.write", func(t *testing.T) {
-		f, git, gl := glWorld(t, []string{"gitlab.yamzz.test/yamzz"})
+		f, git, gl := glWorld(t, []string{"gitlab.contoso.test/contoso"})
 		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 
 		res := gitProxyPost(t, f, "/v1/gitlab/mr/create", map[string]any{"title": "Add a thing", "base": "main"})
@@ -193,7 +193,7 @@ func TestGLProxy_WriteRequiresItsOwnSlug(t *testing.T) {
 	})
 
 	t.Run("granted", func(t *testing.T) {
-		f, _, gl := glWorld(t, []string{"gitlab.yamzz.test/yamzz"})
+		f, _, gl := glWorld(t, []string{"gitlab.contoso.test/contoso"})
 		gl.def = glCanned{Status: 201, Body: glCannedMR}
 		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabWrite, "test"))
 
@@ -214,7 +214,7 @@ func TestGLProxy_WriteRequiresItsOwnSlug(t *testing.T) {
 		assert.Contains(t, stdout, "/-/merge_requests/7")
 		agentID, err := db.AgentIDForConv(gitProxyTestConv)
 		require.NoError(t, err)
-		presented, err := db.GetAgentPR(agentID, "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/7")
+		presented, err := db.GetAgentPR(agentID, "https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/7")
 		require.NoError(t, err)
 		assert.NotEmpty(t, presented.ValidatedRepoRoot, "a created MR is recorded like a created PR")
 		assert.Equal(t, "open", presented.State)
@@ -230,12 +230,12 @@ func TestGLProxy_OnlyAllowListedProjects(t *testing.T) {
 		allowed []string
 		want    int
 	}{
-		{"the exact project", []string{"gitlab.yamzz.test/yamzz/sub/previewplayback"}, http.StatusOK},
-		{"its group", []string{"gitlab.yamzz.test/yamzz"}, http.StatusOK},
-		{"a wildcard subgroup", []string{"gitlab.yamzz.test/yamzz/*/previewplayback"}, http.StatusOK},
-		{"a sibling project only", []string{"gitlab.yamzz.test/yamzz/sub/other"}, http.StatusForbidden},
-		{"the same name outside the subgroup", []string{"gitlab.yamzz.test/yamzz/previewplayback"}, http.StatusForbidden},
-		{"another instance", []string{"gitlab.com/yamzz"}, http.StatusForbidden},
+		{"the exact project", []string{"gitlab.contoso.test/contoso/sub/player"}, http.StatusOK},
+		{"its group", []string{"gitlab.contoso.test/contoso"}, http.StatusOK},
+		{"a wildcard subgroup", []string{"gitlab.contoso.test/contoso/*/player"}, http.StatusOK},
+		{"a sibling project only", []string{"gitlab.contoso.test/contoso/sub/other"}, http.StatusForbidden},
+		{"the same name outside the subgroup", []string{"gitlab.contoso.test/contoso/player"}, http.StatusForbidden},
+		{"another instance", []string{"gitlab.com/contoso"}, http.StatusForbidden},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -254,19 +254,19 @@ func TestGLProxy_OnlyAllowListedProjects(t *testing.T) {
 
 func TestGLProxy_RemoteScopedRead(t *testing.T) {
 	t.Run("matching scope passes", func(t *testing.T) {
-		f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+		f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 		gl.def = glCanned{Status: 200, Body: "[]"}
 		require.NoError(t, db.GrantAgentPermissionWithScope(gitProxyTestConv, agentd.PermGitLabRead,
-			`{"remote":["gitlab.yamzz.test/yamzz/*/*"]}`, "test"))
+			`{"remote":["gitlab.contoso.test/contoso/*/*"]}`, "test"))
 		res := gitProxyPost(t, f, "/v1/gitlab/mr/list", map[string]any{})
 		require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
 		assert.Equal(t, 1, gl.count())
 	})
 	t.Run("another project on the same instance is refused", func(t *testing.T) {
-		f, git, gl := glWorld(t, []string{"gitlab.yamzz.test"})
-		git.remotes["origin"] = "git@gitlab.yamzz.test:other/repo.git"
+		f, git, gl := glWorld(t, []string{"gitlab.contoso.test"})
+		git.remotes["origin"] = "git@gitlab.contoso.test:other/repo.git"
 		require.NoError(t, db.GrantAgentPermissionWithScope(gitProxyTestConv, agentd.PermGitLabRead,
-			`{"remote":["gitlab.yamzz.test/yamzz/*/*"]}`, "test"))
+			`{"remote":["gitlab.contoso.test/contoso/*/*"]}`, "test"))
 		res := gitProxyPost(t, f, "/v1/gitlab/mr/list", map[string]any{})
 		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
 		assert.Equal(t, 0, gl.count())
@@ -278,8 +278,8 @@ func TestGLProxy_RemoteScopedRead(t *testing.T) {
 // through gitlab_hosts, and a GitHub remote is pointed at the other command.
 func TestGLProxy_HostMustBeAConfiguredInstance(t *testing.T) {
 	t.Run("an allow-listed host with no gitlab_hosts entry", func(t *testing.T) {
-		f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
-		writeGitProxyConfig(t, []string{"gitlab.yamzz.test"}, func(c *gitProxyConfigPatch) {
+		f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
+		writeGitProxyConfig(t, []string{"gitlab.contoso.test"}, func(c *gitProxyConfigPatch) {
 			c.GitLabTokenFile = "/nonexistent" // never reached: the host gate comes first
 		})
 		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
@@ -290,7 +290,7 @@ func TestGLProxy_HostMustBeAConfiguredInstance(t *testing.T) {
 		assert.Equal(t, 0, gl.count())
 	})
 	t.Run("a github remote", func(t *testing.T) {
-		f, git, gl := glWorld(t, []string{"github.com", "gitlab.yamzz.test"})
+		f, git, gl := glWorld(t, []string{"github.com", "gitlab.contoso.test"})
 		git.remotes["origin"] = gitProxyTestRemote
 		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 		res := gitProxyPost(t, f, "/v1/gitlab/mr/list", map[string]any{})
@@ -299,9 +299,9 @@ func TestGLProxy_HostMustBeAConfiguredInstance(t *testing.T) {
 		assert.Equal(t, 0, gl.count())
 	})
 	t.Run("no token file configured", func(t *testing.T) {
-		f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
-		writeGitProxyConfig(t, []string{"gitlab.yamzz.test"}, func(c *gitProxyConfigPatch) {
-			c.GitLabHosts = map[string]string{"gitlab.yamzz.test": glTestBase}
+		f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
+		writeGitProxyConfig(t, []string{"gitlab.contoso.test"}, func(c *gitProxyConfigPatch) {
+			c.GitLabHosts = map[string]string{"gitlab.contoso.test": glTestBase}
 		})
 		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 		res := gitProxyPost(t, f, "/v1/gitlab/mr/list", map[string]any{})
@@ -316,10 +316,10 @@ func TestGLProxy_HostMustBeAConfiguredInstance(t *testing.T) {
 // self-hosted instance on a non-default port) is the same project as its SSH
 // form. Any other port is still refused before a credential is spent.
 func TestGLProxy_HTTPSRemoteOnTheInstancesPort(t *testing.T) {
-	const httpsRemote = "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback.git"
+	const httpsRemote = "https://gitlab.contoso.test:8929/contoso/sub/player.git"
 
 	t.Run("the instance's own port is admitted and resolves the project", func(t *testing.T) {
-		f, git, gl := glWorld(t, []string{"gitlab.yamzz.test/yamzz"})
+		f, git, gl := glWorld(t, []string{"gitlab.contoso.test/contoso"})
 		git.remotes["origin"] = httpsRemote
 		gl.def = glCanned{Status: 200, Body: "[]"}
 		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
@@ -332,8 +332,8 @@ func TestGLProxy_HTTPSRemoteOnTheInstancesPort(t *testing.T) {
 	})
 
 	t.Run("another port on the same host is refused before the credential", func(t *testing.T) {
-		f, git, gl := glWorld(t, []string{"gitlab.yamzz.test/yamzz"})
-		git.remotes["origin"] = "https://gitlab.yamzz.test:9999/yamzz/sub/previewplayback.git"
+		f, git, gl := glWorld(t, []string{"gitlab.contoso.test/contoso"})
+		git.remotes["origin"] = "https://gitlab.contoso.test:9999/contoso/sub/player.git"
 		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 
 		res := gitProxyPost(t, f, "/v1/gitlab/mr/list", map[string]any{})
@@ -343,8 +343,8 @@ func TestGLProxy_HTTPSRemoteOnTheInstancesPort(t *testing.T) {
 	})
 
 	t.Run("the instance's port over ssh is refused", func(t *testing.T) {
-		f, git, gl := glWorld(t, []string{"gitlab.yamzz.test/yamzz"})
-		git.remotes["origin"] = "ssh://git@gitlab.yamzz.test:6080/yamzz/sub/previewplayback.git"
+		f, git, gl := glWorld(t, []string{"gitlab.contoso.test/contoso"})
+		git.remotes["origin"] = "ssh://git@gitlab.contoso.test:8929/contoso/sub/player.git"
 		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 
 		res := gitProxyPost(t, f, "/v1/gitlab/mr/list", map[string]any{})
@@ -353,9 +353,9 @@ func TestGLProxy_HTTPSRemoteOnTheInstancesPort(t *testing.T) {
 	})
 
 	t.Run("the remotes view admits it", func(t *testing.T) {
-		f, git, _ := glWorld(t, []string{"gitlab.yamzz.test/yamzz"})
+		f, git, _ := glWorld(t, []string{"gitlab.contoso.test/contoso"})
 		git.remotes["origin"] = httpsRemote
-		git.remotes["mirror"] = "https://gitlab.yamzz.test:9999/yamzz/sub/previewplayback.git"
+		git.remotes["mirror"] = "https://gitlab.contoso.test:9999/contoso/sub/player.git"
 		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitRead, "test"))
 
 		res := serveAsProxyAgent(t, f, http.MethodGet, "/v1/git/remotes", nil)
@@ -374,7 +374,7 @@ func TestGLProxy_HTTPSRemoteOnTheInstancesPort(t *testing.T) {
 	})
 
 	t.Run("a push goes to the validated https URL with the token helper scoped to the instance", func(t *testing.T) {
-		f, git, _ := glWorld(t, []string{"gitlab.yamzz.test/yamzz"})
+		f, git, _ := glWorld(t, []string{"gitlab.contoso.test/contoso"})
 		git.remotes["origin"] = httpsRemote
 		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitPush, "test"))
 
@@ -385,7 +385,7 @@ func TestGLProxy_HTTPSRemoteOnTheInstancesPort(t *testing.T) {
 		push := calls[0]
 		assert.Contains(t, push.Args, httpsRemote, "the destination is the validated URL, port included")
 		joined := strings.Join(push.Args, " ")
-		assert.Contains(t, joined, "-c credential.https://gitlab.yamzz.test:6080.helper=!",
+		assert.Contains(t, joined, "-c credential.https://gitlab.contoso.test:8929.helper=!",
 			"the GitLab token answers for the instance's exact origin")
 		assert.NotContains(t, joined+strings.Join(push.Env, " "), glTestToken,
 			"the helper reads the token file; the token is never in argv or the environment")
@@ -395,7 +395,7 @@ func TestGLProxy_HTTPSRemoteOnTheInstancesPort(t *testing.T) {
 // TestGLProxy_TokenTravelsInAHeaderAndNowhereElse — the token reaches the
 // transport as a value and never a path, query or body.
 func TestGLProxy_TokenTravelsInAHeaderAndNowhereElse(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	gl.def = glCanned{Status: 200, Body: "[]"}
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 
@@ -414,7 +414,7 @@ func TestGLProxy_TokenTravelsInAHeaderAndNowhereElse(t *testing.T) {
 
 // TestGLProxy_ProjectIsDerivedNotNamed — there is no project parameter.
 func TestGLProxy_ProjectIsDerivedNotNamed(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	gl.def = glCanned{Status: 200, Body: "[]"}
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 
@@ -428,7 +428,7 @@ func TestGLProxy_ProjectIsDerivedNotNamed(t *testing.T) {
 }
 
 func TestGLProxy_ReadsArePostOnly(t *testing.T) {
-	f, _, _ := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, _ := glWorld(t, []string{"gitlab.contoso.test"})
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 	res := serveAsProxyAgent(t, f, http.MethodGet, "/v1/gitlab/mr/list", nil)
 	assert.Equal(t, http.StatusMethodNotAllowed, res.Code)
@@ -439,7 +439,7 @@ func TestGLProxy_ReadsArePostOnly(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGLProxy_MRListTranslatesTheFilters(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	gl.def = glCanned{Status: 200, Body: "[" + glCannedMR + "]"}
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 
@@ -467,19 +467,19 @@ func TestGLProxy_MRListTranslatesTheFilters(t *testing.T) {
 // TestGLProxy_MRListHeadReadsPastAPageOfForks: forks' merge requests reusing
 // the branch name can fill a whole page; --head reads on to the project's own.
 func TestGLProxy_MRListHeadReadsPastAPageOfForks(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 	var perPage string
 	gl.route = func(req agentd.GitLabRequestForTest) (glCanned, bool) {
 		if strings.Contains(req.Path, "page=2") {
 			return glCanned{Status: http.StatusOK, Body: `[{"iid":8,"title":"Ours","state":"opened","source_branch":"feat/thing",
-				"source_project_id":1,"target_project_id":1,"web_url":"` + glTestBase + `/yamzz/sub/previewplayback/-/merge_requests/8"}]`}, true
+				"source_project_id":1,"target_project_id":1,"web_url":"` + glTestBase + `/contoso/sub/player/-/merge_requests/8"}]`}, true
 		}
 		perPage = req.Query.Get("per_page")
 		var forks []string
 		for i := range 3 {
 			forks = append(forks, fmt.Sprintf(`{"iid":%d,"title":"From a fork","state":"opened","source_branch":"feat/thing",
-				"source_project_id":%d,"target_project_id":1,"web_url":"%s/yamzz/sub/previewplayback/-/merge_requests/%d"}`, 20+i, 50+i, glTestBase, 20+i))
+				"source_project_id":%d,"target_project_id":1,"web_url":"%s/contoso/sub/player/-/merge_requests/%d"}`, 20+i, 50+i, glTestBase, 20+i))
 		}
 		return glCanned{Status: http.StatusOK, Body: "[" + strings.Join(forks, ",") + "]",
 			Header: http.Header{"Link": {`<` + glTestBase + `/api/v4/projects/` + glTestProjectID + `/merge_requests?page=2>; rel="next"`}}}, true
@@ -499,12 +499,12 @@ func TestGLProxy_MRListHeadReadsPastAPageOfForks(t *testing.T) {
 // TestGLProxy_MRListHeadLeavesOutForks: --head names this project's branch,
 // so a fork's merge request with the same branch name is not returned.
 func TestGLProxy_MRListHeadLeavesOutForks(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	gl.def = glCanned{Status: 200, Body: `[
 		{"iid":9,"title":"From a fork","state":"opened","source_branch":"feat/thing","source_project_id":5,"target_project_id":1,
-		 "web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/9"},
+		 "web_url":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/9"},
 		{"iid":8,"title":"Ours","state":"opened","source_branch":"feat/thing","source_project_id":1,"target_project_id":1,
-		 "web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/8"}]`}
+		 "web_url":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/8"}]`}
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 	res := gitProxyPost(t, f, "/v1/gitlab/mr/list", map[string]any{"head": "feat/thing"})
 	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
@@ -524,7 +524,7 @@ func TestGLProxy_MRListHeadLeavesOutForks(t *testing.T) {
 }
 
 func TestGLProxy_MRListRefusesAnUnknownState(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 	res := gitProxyPost(t, f, "/v1/gitlab/mr/list", map[string]any{"state": "locked"})
 	assert.Equal(t, http.StatusBadRequest, res.Code, "body=%s", res.Body.String())
@@ -532,7 +532,7 @@ func TestGLProxy_MRListRefusesAnUnknownState(t *testing.T) {
 }
 
 func TestGLProxy_MRViewProjectsGitLabFields(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	gl.def = glCanned{Status: 200, Body: glCannedMR}
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 
@@ -549,14 +549,14 @@ func TestGLProxy_MRViewProjectsGitLabFields(t *testing.T) {
 }
 
 func TestGLProxy_MRChecksReadsTheHeadPipelinesJobs(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	gl.route = func(req agentd.GitLabRequestForTest) (glCanned, bool) {
 		switch req.Path {
 		case "projects/" + glTestProjectID + "/merge_requests/7":
 			return glCanned{Status: 200, Body: glCannedMR}, true
 		case "projects/" + glTestProjectID + "/pipelines/99/jobs":
 			return glCanned{Status: 200, Body: `[{"id":501,"name":"build","stage":"build","status":"success"},
-				{"id":502,"name":"test","stage":"test","status":"failed","allow_failure":false,"web_url":"https://gitlab.yamzz.test:6080/j/502"}]`}, true
+				{"id":502,"name":"test","stage":"test","status":"failed","allow_failure":false,"web_url":"https://gitlab.contoso.test:8929/j/502"}]`}, true
 		}
 		return glCanned{}, false
 	}
@@ -589,7 +589,7 @@ func TestGLProxy_MRChecksReadsTheHeadPipelinesJobs(t *testing.T) {
 // TestGLProxy_MRChecksSaysWhenTheJobsAreTruncated: a pipeline with more jobs
 // than the proxy reads must not look complete.
 func TestGLProxy_MRChecksSaysWhenTheJobsAreTruncated(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 	gl.route = func(req agentd.GitLabRequestForTest) (glCanned, bool) {
 		if strings.HasSuffix(req.Path, "/jobs") || strings.Contains(req.Path, "/jobs?") {
@@ -615,13 +615,13 @@ func TestGLProxy_MRChecksSaysWhenTheJobsAreTruncated(t *testing.T) {
 // exists, so the answer is still a success with its URL, but the agent is told
 // the dashboard missed it and how to show it there.
 func TestGLProxy_MRCreateSaysWhenTheDashboardCouldNotRecordIt(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	gl.def = glCanned{Status: 201, Body: glCannedMR}
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabWrite, "test"))
 	t.Cleanup(agentd.SetGitLabCreatedMRRecorderForTest(func(string, string, string, string, string, bool, string) (db.AgentPR, error) {
 		return db.AgentPR{}, errors.New("database is locked")
 	}))
-	const url = "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/7"
+	const url = "https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/7"
 
 	res := gitProxyPost(t, f, "/v1/gitlab/mr/create", map[string]any{"title": "Add a thing", "base": "main"})
 	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
@@ -633,7 +633,7 @@ func TestGLProxy_MRCreateSaysWhenTheDashboardCouldNotRecordIt(t *testing.T) {
 }
 
 func TestGLProxy_MRCreateDraftIsATitleMarker(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	gl.def = glCanned{Status: 201, Body: strings.Replace(glCannedMR, `"title":"Add a thing"`, `"title":"Draft: Add a thing","draft":true`, 1)}
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabWrite, "test"))
 
@@ -642,14 +642,14 @@ func TestGLProxy_MRCreateDraftIsATitleMarker(t *testing.T) {
 	assert.Equal(t, "Draft: Add a thing", glJSONBody(t, gl.only(t))["title"])
 	agentID, err := db.AgentIDForConv(gitProxyTestConv)
 	require.NoError(t, err)
-	presented, err := db.GetAgentPR(agentID, "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/7")
+	presented, err := db.GetAgentPR(agentID, "https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/7")
 	require.NoError(t, err)
 	assert.Equal(t, "draft", presented.State)
 	assert.Equal(t, "Add a thing", presented.Summary, "the recorded title loses the marker")
 }
 
 func TestGLProxy_MRCreateResolvesTheDefaultBranch(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	gl.route = func(req agentd.GitLabRequestForTest) (glCanned, bool) {
 		if req.Path == "projects/"+glTestProjectID {
 			return glCanned{Status: 200, Body: `{"default_branch":"integration"}`}, true
@@ -667,14 +667,14 @@ func TestGLProxy_MRCreateResolvesTheDefaultBranch(t *testing.T) {
 
 func TestGLProxy_MergeRequiresItsOwnSlugAndNamesTheCase(t *testing.T) {
 	t.Run("proxy.gitlab.write does not confer merge", func(t *testing.T) {
-		f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+		f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabWrite, "test"))
 		res := gitProxyPost(t, f, "/v1/gitlab/mr/merge", map[string]any{"number": 7})
 		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
 		assert.Equal(t, 0, gl.count())
 	})
 	t.Run("a draft is refused before the merge call", func(t *testing.T) {
-		f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+		f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 		gl.def = glCanned{Status: 200, Body: strings.Replace(glCannedMR, `"draft":false`, `"draft":true`, 1)}
 		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabMerge, "test"))
 		res := gitProxyPost(t, f, "/v1/gitlab/mr/merge", map[string]any{"number": 7})
@@ -685,7 +685,7 @@ func TestGLProxy_MergeRequiresItsOwnSlugAndNamesTheCase(t *testing.T) {
 		assert.Equal(t, 1, gl.count(), "the state read only; nothing was merged")
 	})
 	t.Run("squash merge", func(t *testing.T) {
-		f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+		f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 		gl.route = func(req agentd.GitLabRequestForTest) (glCanned, bool) {
 			if req.Method == http.MethodPut {
 				return glCanned{Status: 200, Body: strings.Replace(glCannedMR, `"state":"opened"`, `"state":"merged","squash_commit_sha":"feedface"`, 1)}, true
@@ -707,7 +707,7 @@ func TestGLProxy_MergeRequiresItsOwnSlugAndNamesTheCase(t *testing.T) {
 		assert.Contains(t, stdout, "merged !7 into main as feedface")
 	})
 	t.Run("rebase is not a merge method here", func(t *testing.T) {
-		f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+		f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabMerge, "test"))
 		res := gitProxyPost(t, f, "/v1/gitlab/mr/merge", map[string]any{"number": 7, "method": "rebase"})
 		assert.Equal(t, http.StatusBadRequest, res.Code, "body=%s", res.Body.String())
@@ -716,7 +716,7 @@ func TestGLProxy_MergeRequiresItsOwnSlugAndNamesTheCase(t *testing.T) {
 }
 
 func TestGLProxy_MRReadyStripsTheMarker(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	gl.route = func(req agentd.GitLabRequestForTest) (glCanned, bool) {
 		if req.Method == http.MethodPut {
 			return glCanned{Status: 200, Body: glCannedMR}, true
@@ -735,7 +735,7 @@ func TestGLProxy_MRReadyStripsTheMarker(t *testing.T) {
 // TestGLProxy_MRReadyRecordsTheNewState: the dashboard row of a merge request
 // created as a draft reads open as soon as it is marked ready.
 func TestGLProxy_MRReadyRecordsTheNewState(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	draft := strings.Replace(glCannedMR, `"title":"Add a thing","description":"why","state":"opened","draft":false`,
 		`"title":"Draft: Add a thing","description":"why","state":"opened","draft":true`, 1)
 	gl.route = func(req agentd.GitLabRequestForTest) (glCanned, bool) {
@@ -747,7 +747,7 @@ func TestGLProxy_MRReadyRecordsTheNewState(t *testing.T) {
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabWrite, "test"))
 	agentID, err := db.AgentIDForConv(gitProxyTestConv)
 	require.NoError(t, err)
-	const url = "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/7"
+	const url = "https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/7"
 
 	res := gitProxyPost(t, f, "/v1/gitlab/mr/create", map[string]any{"title": "Add a thing", "base": "main", "draft": true})
 	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
@@ -763,7 +763,7 @@ func TestGLProxy_MRReadyRecordsTheNewState(t *testing.T) {
 }
 
 func TestGLProxy_MRCommentsSplitsInlineNotes(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	// Newest first, as the proxy asks for; the output reads oldest first.
 	gl.def = glCanned{Status: 200, Body: `[
 		{"id":4,"body":"Second thought: rename it","system":false,"author":{"username":"martin"},"created_at":"2026-10-01T11:10:00Z","updated_at":"2026-10-01T11:10:00Z"},
@@ -789,7 +789,7 @@ func TestGLProxy_MRCommentsSplitsInlineNotes(t *testing.T) {
 }
 
 func TestGLProxy_CommentPostsANote(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	gl.def = glCanned{Status: 201, Body: `{"id":77,"body":"thanks"}`}
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabWrite, "test"))
 	res := gitProxyPost(t, f, "/v1/gitlab/issue/comment", map[string]any{"number": 12, "body": "thanks"})
@@ -798,11 +798,11 @@ func TestGLProxy_CommentPostsANote(t *testing.T) {
 	assert.Equal(t, "projects/"+glTestProjectID+"/issues/12/notes", call.Path)
 	assert.Equal(t, "thanks", glJSONBody(t, call)["body"])
 	_, stdout, _, _ := glOutcome(t, res.Body.Bytes())
-	assert.Equal(t, glTestBase+"/yamzz/sub/previewplayback/-/issues/12#note_77\n", stdout)
+	assert.Equal(t, glTestBase+"/contoso/sub/player/-/issues/12#note_77\n", stdout)
 }
 
 func TestGLProxy_GitLabErrorsReachTheAgentVerbatim(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	gl.def = glCanned{Status: 400, Body: `{"message":{"title":["can't be blank"],"source_branch":["is invalid"]}}`}
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabWrite, "test"))
 	res := gitProxyPost(t, f, "/v1/gitlab/mr/edit", map[string]any{"number": 7, "title": "x"})
@@ -818,7 +818,7 @@ func TestGLProxy_GitLabErrorsReachTheAgentVerbatim(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGLProxy_PipelineListFilters(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	gl.def = glCanned{Status: 200, Body: `[{"id":99,"sha":"abc","ref":"feat/thing","status":"failed","web_url":"u"}]`}
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 
@@ -836,7 +836,7 @@ func TestGLProxy_PipelineListFilters(t *testing.T) {
 // TestGLProxy_JobLogFailedSaysWhenATraceCouldNotBeRead: an unreadable trace
 // keeps its placeholder, and the run fails with the reason on stderr.
 func TestGLProxy_JobLogFailedSaysWhenATraceCouldNotBeRead(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	gl.def = glCanned{Status: 200, Body: `[{"id":502,"name":"test","stage":"test","status":"failed"},
 		{"id":504,"name":"e2e","stage":"test","status":"failed"}]`}
 	gl.bodies["projects/"+glTestProjectID+"/jobs/502/trace"] = []byte("FAIL: tst_sessioncontroller\n")
@@ -855,7 +855,7 @@ func TestGLProxy_JobLogFailedSaysWhenATraceCouldNotBeRead(t *testing.T) {
 // TestGLProxy_JobLogFailedSaysWhenATraceWasTrimmed: a trace kept only by its
 // tail is a truncated answer, even when the assembled output then fits.
 func TestGLProxy_JobLogFailedSaysWhenATraceWasTrimmed(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	gl.def = glCanned{Status: 200, Body: `[{"id":502,"name":"test","stage":"test","status":"failed"}]`}
 	gl.bodies["projects/"+glTestProjectID+"/jobs/502/trace"] = []byte(strings.Repeat("x", 300*1024) + "\nFAIL: the end\n")
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
@@ -874,7 +874,7 @@ func TestGLProxy_JobLogFailedSaysWhenATraceWasTrimmed(t *testing.T) {
 // traces still answer within the output cap, keeping the last job's failure
 // and starting on a whole line.
 func TestGLProxy_JobLogFailedKeepsTheEndOfManyTraces(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	var jobs []string
 	for i := 1; i <= 8; i++ {
 		jobs = append(jobs, fmt.Sprintf(`{"id":%d,"name":"job%d","stage":"test","status":"failed"}`, 600+i, i))
@@ -901,7 +901,7 @@ func TestGLProxy_JobLogFailedKeepsTheEndOfManyTraces(t *testing.T) {
 // TestGLProxy_JobLogFailedFlagsAPartialJobWalk: a pipeline with more jobs than
 // the proxy reads answers with its note, exit 0, and the truncated flag.
 func TestGLProxy_JobLogFailedFlagsAPartialJobWalk(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 	gl.route = func(req agentd.GitLabRequestForTest) (glCanned, bool) {
 		// Always another page: the proxy reads up to its cap and stops.
@@ -923,7 +923,7 @@ func TestGLProxy_JobLogFailedFlagsAPartialJobWalk(t *testing.T) {
 
 // TestGLProxy_IssueViewTellsAnUnreadableAnswerFromAMissingIssue.
 func TestGLProxy_IssueViewTellsAnUnreadableAnswerFromAMissingIssue(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 
 	gl.def = glCanned{Status: 200, Body: `not json`}
@@ -940,7 +940,7 @@ func TestGLProxy_IssueViewTellsAnUnreadableAnswerFromAMissingIssue(t *testing.T)
 }
 
 func TestGLProxy_JobLogFailedReadsOnlyTheFailedTraces(t *testing.T) {
-	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	gl.def = glCanned{Status: 200, Body: `[{"id":501,"name":"build","stage":"build","status":"success"},
 		{"id":502,"name":"test","stage":"test","status":"failed"},
 		{"id":503,"name":"lint","stage":"test","status":"failed","allow_failure":true}]`}
@@ -959,7 +959,7 @@ func TestGLProxy_JobLogFailedReadsOnlyTheFailedTraces(t *testing.T) {
 }
 
 func TestGLProxy_JobDownloadLandsInTheWorkTree(t *testing.T) {
-	f, git, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	f, git, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	gl.def = glCanned{Status: 200, Body: `{"id":502,"name":"test","stage":"test","status":"failed",
 		"artifacts_file":{"filename":"artifacts.zip","size":123},"artifacts":[{"file_type":"archive","filename":"artifacts.zip","size":123}]}`}
 	var archive bytes.Buffer
@@ -983,7 +983,7 @@ func TestGLProxy_JobDownloadLandsInTheWorkTree(t *testing.T) {
 
 func TestGLProxy_JobDownloadRefusesAnExpiredOrOversizedArchive(t *testing.T) {
 	t.Run("expired", func(t *testing.T) {
-		f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+		f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 		gl.def = glCanned{Status: 200, Body: `{"id":502,"name":"test","status":"failed",
 			"artifacts_file":{"filename":"artifacts.zip","size":5},"artifacts_expire_at":"2020-01-01T00:00:00Z"}`}
 		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
@@ -993,7 +993,7 @@ func TestGLProxy_JobDownloadRefusesAnExpiredOrOversizedArchive(t *testing.T) {
 		assert.Empty(t, gl.streamed())
 	})
 	t.Run("oversized", func(t *testing.T) {
-		f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+		f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 		gl.def = glCanned{Status: 200, Body: `{"id":502,"name":"test","status":"failed",
 			"artifacts_file":{"filename":"artifacts.zip","size":9999999999}}`}
 		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))

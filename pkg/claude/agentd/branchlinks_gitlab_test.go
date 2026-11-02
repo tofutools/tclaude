@@ -31,7 +31,7 @@ func gitlabBranchLinkFixture(t *testing.T, allowedRemotes ...string) (string, st
 	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{
 		GitProxy: &config.GitProxyConfig{
 			AllowedRemotes:  allowedRemotes,
-			GitLabHosts:     map[string]string{"gitlab.yamzz.test": "https://gitlab.yamzz.test:6080"},
+			GitLabHosts:     map[string]string{"gitlab.contoso.test": "https://gitlab.contoso.test:8929"},
 			GitLabTokenFile: tokenPath,
 		},
 	}}))
@@ -41,22 +41,22 @@ func gitlabBranchLinkFixture(t *testing.T, allowedRemotes ...string) (string, st
 }
 
 func TestBranchLinkRepoResolvesAConfiguredGitLabInstance(t *testing.T) {
-	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.yamzz.test/yamzz")
+	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.contoso.test/contoso")
 	repoDir := branchLinkGitRepo(t, gitPath, filepath.Join(root, "work"),
-		"git@gitlab.yamzz.test:yamzz/sub/previewplayback.git")
+		"git@gitlab.contoso.test:contoso/sub/player.git")
 
 	repo, ok := resolveBranchLinkRepo(context.Background(), branchLinkPolicy(t), repoDir)
 	require.True(t, ok)
 	assert.Equal(t, "gitlab", repo.Forge)
-	assert.Equal(t, "https://gitlab.yamzz.test:6080", repo.Base, "the web root is the configured base, port included")
-	assert.Equal(t, "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback", repo.RepoURL)
-	assert.Equal(t, "yamzz/sub/previewplayback", repo.OwnerRepo, "the project is the full nested path")
+	assert.Equal(t, "https://gitlab.contoso.test:8929", repo.Base, "the web root is the configured base, port included")
+	assert.Equal(t, "https://gitlab.contoso.test:8929/contoso/sub/player", repo.RepoURL)
+	assert.Equal(t, "contoso/sub/player", repo.OwnerRepo, "the project is the full nested path")
 	assert.Equal(t, "main", repo.DefaultBranch)
 
 	t.Run("web links use the GitLab grammar", func(t *testing.T) {
-		assert.Equal(t, "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/compare/main...feat",
+		assert.Equal(t, "https://gitlab.contoso.test:8929/contoso/sub/player/-/compare/main...feat",
 			branchWebURL(repo.RepoURL, "main", "feat"))
-		assert.Equal(t, "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/tree/main",
+		assert.Equal(t, "https://gitlab.contoso.test:8929/contoso/sub/player/-/tree/main",
 			branchWebURL(repo.RepoURL, "main", "main"))
 		assert.Equal(t, "https://github.com/tofutools/tclaude/compare/main...feat",
 			branchWebURL("https://github.com/tofutools/tclaude", "main", "feat"), "GitHub keeps its own")
@@ -67,20 +67,20 @@ func TestBranchLinkRepoResolvesAConfiguredGitLabInstance(t *testing.T) {
 // the same project, on the configured instance's own port, gives the same
 // Branch-column repository as the SSH form. Another port gives none.
 func TestBranchLinkRepoReadsAnHTTPSRemoteOnTheInstancesPort(t *testing.T) {
-	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.yamzz.test/yamzz")
+	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.contoso.test/contoso")
 	repoDir := branchLinkGitRepo(t, gitPath, filepath.Join(root, "work"),
-		"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback.git")
+		"https://gitlab.contoso.test:8929/contoso/sub/player.git")
 
 	repo, ok := resolveBranchLinkRepo(context.Background(), branchLinkPolicy(t), repoDir)
 	require.True(t, ok)
 	assert.Equal(t, "gitlab", repo.Forge)
-	assert.Equal(t, "https://gitlab.yamzz.test:6080", repo.Base)
-	assert.Equal(t, "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback", repo.RepoURL)
-	assert.Equal(t, "yamzz/sub/previewplayback", repo.OwnerRepo)
+	assert.Equal(t, "https://gitlab.contoso.test:8929", repo.Base)
+	assert.Equal(t, "https://gitlab.contoso.test:8929/contoso/sub/player", repo.RepoURL)
+	assert.Equal(t, "contoso/sub/player", repo.OwnerRepo)
 
 	t.Run("another port on the same host", func(t *testing.T) {
 		otherDir := branchLinkGitRepo(t, gitPath, filepath.Join(root, "other"),
-			"https://gitlab.yamzz.test:9999/yamzz/sub/previewplayback.git")
+			"https://gitlab.contoso.test:9999/contoso/sub/player.git")
 		_, ok := resolveBranchLinkRepo(context.Background(), branchLinkPolicy(t), otherDir)
 		assert.False(t, ok, "a port the operator never configured links nothing")
 	})
@@ -89,7 +89,7 @@ func TestBranchLinkRepoReadsAnHTTPSRemoteOnTheInstancesPort(t *testing.T) {
 func TestBranchLinkRepoRefusesAGitLabHostThatIsNotConfigured(t *testing.T) {
 	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.other.test")
 	repoDir := branchLinkGitRepo(t, gitPath, filepath.Join(root, "work"),
-		"git@gitlab.other.test:yamzz/sub/previewplayback.git")
+		"git@gitlab.other.test:contoso/sub/player.git")
 	// Allow-listed, but no gitlab_hosts entry: the host is neither GitHub nor a
 	// known GitLab instance, and a nested path fails the GitHub rule anyway.
 	_, ok := resolveBranchLinkRepo(context.Background(), branchLinkPolicy(t), repoDir)
@@ -97,9 +97,9 @@ func TestBranchLinkRepoRefusesAGitLabHostThatIsNotConfigured(t *testing.T) {
 }
 
 func TestHardenedGitInfoReadsTheMergeRequestFromGitLab(t *testing.T) {
-	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.yamzz.test/yamzz")
+	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.contoso.test/contoso")
 	repoDir := branchLinkGitRepo(t, gitPath, filepath.Join(root, "work"),
-		"git@gitlab.yamzz.test:yamzz/sub/previewplayback.git")
+		"git@gitlab.contoso.test:contoso/sub/player.git")
 
 	var mu sync.Mutex
 	var calls []glAPIRequest
@@ -111,15 +111,15 @@ func TestHardenedGitInfoReadsTheMergeRequestFromGitLab(t *testing.T) {
 		mu.Unlock()
 		assert.Equal(t, "glpat-branch-links", token)
 		switch req.Path {
-		case "projects/yamzz%2Fsub%2Fpreviewplayback/merge_requests":
+		case "projects/contoso%2Fsub%2Fplayer/merge_requests":
 			return glAPIResult{Status: http.StatusOK, Header: http.Header{}, Body: []byte(`[
-				{"iid":3,"state":"merged","draft":false,"web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/3"},
-				{"iid":7,"state":"opened","draft":true,"web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/7"}]`)}, nil
-		case "projects/yamzz%2Fsub%2Fpreviewplayback/merge_requests/7":
+				{"iid":3,"state":"merged","draft":false,"web_url":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/3"},
+				{"iid":7,"state":"opened","draft":true,"web_url":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/7"}]`)}, nil
+		case "projects/contoso%2Fsub%2Fplayer/merge_requests/7":
 			return glAPIResult{Status: http.StatusOK, Header: http.Header{}, Body: []byte(`{"iid":7,"state":"opened","draft":true,
-				"web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/7",
-				"head_pipeline":{"id":99,"status":"running","web_url":"https://gitlab.yamzz.test:6080/p/99"}}`)}, nil
-		case "projects/yamzz%2Fsub%2Fpreviewplayback/pipelines/99/jobs":
+				"web_url":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/7",
+				"head_pipeline":{"id":99,"status":"running","web_url":"https://gitlab.contoso.test:8929/p/99"}}`)}, nil
+		case "projects/contoso%2Fsub%2Fplayer/pipelines/99/jobs":
 			return glAPIResult{Status: http.StatusOK, Header: http.Header{}, Body: []byte(`[
 				{"id":1,"name":"build","stage":"build","status":"success"},
 				{"id":2,"name":"test","stage":"test","status":"running"}]`)}, nil
@@ -129,10 +129,10 @@ func TestHardenedGitInfoReadsTheMergeRequestFromGitLab(t *testing.T) {
 
 	info, ok := hardenedGitInfo(branchLinkPolicy(t), repoDir, "feat")
 	require.True(t, ok)
-	assert.Equal(t, "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback", info.RepoURL)
+	assert.Equal(t, "https://gitlab.contoso.test:8929/contoso/sub/player", info.RepoURL)
 	assert.Equal(t, 7, info.PRNumber, "the open merge request wins over the merged one")
 	assert.Equal(t, "draft", info.PRState)
-	assert.Equal(t, "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/7", info.PRURL)
+	assert.Equal(t, "https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/7", info.PRURL)
 	require.NotNil(t, info.Checks)
 	assert.Equal(t, "pending", info.Checks.Summary.State)
 	assert.Equal(t, 2, info.Checks.Summary.Total)
@@ -142,7 +142,7 @@ func TestHardenedGitInfoReadsTheMergeRequestFromGitLab(t *testing.T) {
 	require.NotEmpty(t, calls)
 	assert.Equal(t, "feat", calls[0].Query.Get("source_branch"), "the branch is a query value, never a path")
 	for _, base := range bases {
-		assert.Equal(t, "https://gitlab.yamzz.test:6080", base)
+		assert.Equal(t, "https://gitlab.contoso.test:8929", base)
 	}
 
 	t.Run("the default branch asks GitLab nothing", func(t *testing.T) {
@@ -160,10 +160,10 @@ func TestHardenedGitInfoReadsTheMergeRequestFromGitLab(t *testing.T) {
 // source branch name, so a fork's merge request into this project can share
 // it; and an open one must be found even behind newer merged ones.
 func TestHardenedGitInfoPicksTheProjectsOwnOpenMergeRequest(t *testing.T) {
-	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.yamzz.test/yamzz")
+	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.contoso.test/contoso")
 	repoDir := branchLinkGitRepo(t, gitPath, filepath.Join(root, "work"),
-		"git@gitlab.yamzz.test:yamzz/sub/previewplayback.git")
-	const list = "projects/yamzz%2Fsub%2Fpreviewplayback/merge_requests"
+		"git@gitlab.contoso.test:contoso/sub/player.git")
+	const list = "projects/contoso%2Fsub%2Fplayer/merge_requests"
 	answer := func(opened, all string) {
 		t.Cleanup(SetGitLabTransportForTest(func(_ context.Context, _, _ string, req glAPIRequest) (glAPIResult, error) {
 			if req.Path == list {
@@ -183,9 +183,9 @@ func TestHardenedGitInfoPicksTheProjectsOwnOpenMergeRequest(t *testing.T) {
 	t.Run("a fork's merge request with the same branch name is skipped", func(t *testing.T) {
 		answer(`[
 			{"iid":9,"state":"opened","title":"From a fork","source_project_id":5,"target_project_id":1,
-			 "web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/9"},
+			 "web_url":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/9"},
 			{"iid":8,"state":"opened","title":"Our own","source_project_id":1,"target_project_id":1,
-			 "web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/8"}]`, `[]`)
+			 "web_url":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/8"}]`, `[]`)
 		info, ok := hardenedGitInfo(branchLinkPolicy(t), repoDir, "feat")
 		require.True(t, ok)
 		assert.Equal(t, 8, info.PRNumber)
@@ -195,9 +195,9 @@ func TestHardenedGitInfoPicksTheProjectsOwnOpenMergeRequest(t *testing.T) {
 	t.Run("no open one: the newest of the project's own in any state", func(t *testing.T) {
 		answer(`[]`, `[
 			{"iid":4,"state":"closed","title":"Fork","source_project_id":5,"target_project_id":1,
-			 "web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/4"},
+			 "web_url":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/4"},
 			{"iid":3,"state":"merged","title":"Merged","source_project_id":1,"target_project_id":1,
-			 "web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/3"}]`)
+			 "web_url":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/3"}]`)
 		info, ok := hardenedGitInfo(branchLinkPolicy(t), repoDir, "feat")
 		require.True(t, ok)
 		assert.Equal(t, 3, info.PRNumber)
@@ -206,21 +206,21 @@ func TestHardenedGitInfoPicksTheProjectsOwnOpenMergeRequest(t *testing.T) {
 }
 
 func TestBranchWebURLEscapesTheBranchName(t *testing.T) {
-	const repo = "https://gitlab.yamzz.test:6080/yamzz/app"
+	const repo = "https://gitlab.contoso.test:8929/contoso/app"
 	assert.Equal(t, repo+"/-/compare/main...feat/%231%3Fx", branchWebURL(repo, "main", "feat/#1?x"),
 		"a '#' or '?' stays in the path; slashes stay separators")
 	assert.Equal(t, repo+"/-/tree/feat/thing", branchWebURL(repo, "", "feat/thing"))
 }
 
 func TestHardenedGitInfoKeepsTheCachedChecksWhenTheDetailReadFails(t *testing.T) {
-	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.yamzz.test/yamzz")
+	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.contoso.test/contoso")
 	repoDir := branchLinkGitRepo(t, gitPath, filepath.Join(root, "work"),
-		"git@gitlab.yamzz.test:yamzz/sub/previewplayback.git")
-	const list = "projects/yamzz%2Fsub%2Fpreviewplayback/merge_requests"
+		"git@gitlab.contoso.test:contoso/sub/player.git")
+	const list = "projects/contoso%2Fsub%2Fplayer/merge_requests"
 	t.Cleanup(SetGitLabTransportForTest(func(_ context.Context, _, _ string, req glAPIRequest) (glAPIResult, error) {
 		if req.Path == list {
 			return glAPIResult{Status: http.StatusOK, Header: http.Header{}, Body: []byte(`[{"iid":8,"state":"opened",
-				"web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/8"}]`)}, nil
+				"web_url":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/8"}]`)}, nil
 		}
 		return glAPIResult{Status: http.StatusBadGateway, Header: http.Header{}, Body: []byte(`{"message":"bad gateway"}`)}, nil
 	}))
@@ -231,12 +231,12 @@ func TestHardenedGitInfoKeepsTheCachedChecksWhenTheDetailReadFails(t *testing.T)
 }
 
 func TestHardenedGitInfoLooksPastForksForTheProjectsOwnMergeRequest(t *testing.T) {
-	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.yamzz.test/yamzz")
+	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.contoso.test/contoso")
 	repoDir := branchLinkGitRepo(t, gitPath, filepath.Join(root, "work"),
-		"git@gitlab.yamzz.test:yamzz/sub/previewplayback.git")
-	const list = "projects/yamzz%2Fsub%2Fpreviewplayback/merge_requests"
+		"git@gitlab.contoso.test:contoso/sub/player.git")
+	const list = "projects/contoso%2Fsub%2Fplayer/merge_requests"
 	mrURL := func(n int) string {
-		return "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/" + strconv.Itoa(n)
+		return "https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/" + strconv.Itoa(n)
 	}
 	perPage := ""
 	t.Cleanup(SetGitLabTransportForTest(func(_ context.Context, _, _ string, req glAPIRequest) (glAPIResult, error) {

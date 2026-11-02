@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
-const MR = 'https://gitlab.example.test:6080/acme/app/-/merge_requests/7';
+const MR = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/7';
 const PR = 'https://github.com/acme/app/pull/42';
 
 test('a merge request is !N, coloured by state, with its title in the tooltip', async (t) => {

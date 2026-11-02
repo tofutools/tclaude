@@ -9,16 +9,16 @@ import (
 )
 
 func TestGitLabMRRefFromURL(t *testing.T) {
-	ref, ok := gitlabMRRefFromURL("https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/157")
+	ref, ok := gitlabMRRefFromURL("https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/157")
 	require.True(t, ok)
-	assert.Equal(t, "https://gitlab.yamzz.test:6080", ref.base)
-	assert.Equal(t, "gitlab.yamzz.test", ref.host, "the host carries no port, as the allow-list spells it")
-	assert.Equal(t, "yamzz/sub/previewplayback", ref.project)
+	assert.Equal(t, "https://gitlab.contoso.test:8929", ref.base)
+	assert.Equal(t, "gitlab.contoso.test", ref.host, "the host carries no port, as the allow-list spells it")
+	assert.Equal(t, "contoso/sub/player", ref.project)
 	assert.Equal(t, 157, ref.number)
-	assert.Equal(t, "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback!157", ref.key(),
+	assert.Equal(t, "https://gitlab.contoso.test:8929/contoso/sub/player!157", ref.key(),
 		"the whole origin, so two instances on one host never share state")
-	assert.Equal(t, "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/157", ref.canonical())
-	assert.Equal(t, "gitlab.yamzz.test/yamzz/sub/previewplayback", ref.remote().Key())
+	assert.Equal(t, "https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/157", ref.canonical())
+	assert.Equal(t, "gitlab.contoso.test/contoso/sub/player", ref.remote().Key())
 
 	t.Run("a sub-page still identifies the merge request", func(t *testing.T) {
 		ref, ok := gitlabMRRefFromURL("https://gitlab.com/acme/app/-/merge_requests/42/diffs?x=1")
@@ -44,9 +44,9 @@ func TestGitLabMRRefFromURL(t *testing.T) {
 }
 
 func TestPRStateKeyAndNumberCoverGitLab(t *testing.T) {
-	const mr = "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/157"
-	assert.Equal(t, "gitlab:https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback!157", prStateKey(mr))
-	other, ok := gitlabMRRefFromURL("https://gitlab.yamzz.test:7080/yamzz/sub/previewplayback/-/merge_requests/157")
+	const mr = "https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/157"
+	assert.Equal(t, "gitlab:https://gitlab.contoso.test:8929/contoso/sub/player!157", prStateKey(mr))
+	other, ok := gitlabMRRefFromURL("https://gitlab.contoso.test:7080/contoso/sub/player/-/merge_requests/157")
 	require.True(t, ok)
 	assert.NotEqual(t, prStateKey(mr), prStateKey(other.canonical()), "another port is another instance")
 	assert.Equal(t, prStateKey(mr), prStateKey(mr+"/diffs"), "sub-pages share one identity")
@@ -59,7 +59,7 @@ func TestPRStateKeyAndNumberCoverGitLab(t *testing.T) {
 }
 
 func TestValidateAgentPRURLAcceptsACanonicalMergeRequest(t *testing.T) {
-	require.NoError(t, validateAgentPRURL("https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/157", true))
+	require.NoError(t, validateAgentPRURL("https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/157", true))
 	require.NoError(t, validateAgentPRURL("https://gitlab.com/acme/app/-/merge_requests/1", true))
 	for _, rawURL := range []string{
 		"https://gitlab.com/acme/app/-/merge_requests/1/diffs",
@@ -75,27 +75,27 @@ func TestValidateAgentPRURLAcceptsACanonicalMergeRequest(t *testing.T) {
 
 func TestGitLabMRPolicyBase(t *testing.T) {
 	policy := config.GitProxyConfig{
-		AllowedRemotes: []string{"gitlab.yamzz.test/yamzz"},
-		GitLabHosts:    map[string]string{"gitlab.yamzz.test": "https://gitlab.yamzz.test:6080"},
+		AllowedRemotes: []string{"gitlab.contoso.test/contoso"},
+		GitLabHosts:    map[string]string{"gitlab.contoso.test": "https://gitlab.contoso.test:8929"},
 	}
-	ref, ok := gitlabMRRefFromURL("https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/157")
+	ref, ok := gitlabMRRefFromURL("https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/157")
 	require.True(t, ok)
 	base, err := gitlabMRPolicyBase(ref, policy)
 	require.NoError(t, err)
-	assert.Equal(t, "https://gitlab.yamzz.test:6080", base)
+	assert.Equal(t, "https://gitlab.contoso.test:8929", base)
 
 	t.Run("the URL must spell the configured base", func(t *testing.T) {
-		ref, _ := gitlabMRRefFromURL("https://gitlab.yamzz.test/yamzz/sub/previewplayback/-/merge_requests/157")
+		ref, _ := gitlabMRRefFromURL("https://gitlab.contoso.test/contoso/sub/player/-/merge_requests/157")
 		_, err := gitlabMRPolicyBase(ref, policy)
 		assert.ErrorContains(t, err, "does not match the configured instance base")
 	})
 	t.Run("an unconfigured instance", func(t *testing.T) {
-		ref, _ := gitlabMRRefFromURL("https://gitlab.other.test/yamzz/app/-/merge_requests/1")
+		ref, _ := gitlabMRRefFromURL("https://gitlab.other.test/contoso/app/-/merge_requests/1")
 		_, err := gitlabMRPolicyBase(ref, policy)
 		assert.ErrorContains(t, err, "not a configured GitLab instance")
 	})
 	t.Run("a project outside the allow-list", func(t *testing.T) {
-		ref, _ := gitlabMRRefFromURL("https://gitlab.yamzz.test:6080/other/app/-/merge_requests/1")
+		ref, _ := gitlabMRRefFromURL("https://gitlab.contoso.test:8929/other/app/-/merge_requests/1")
 		_, err := gitlabMRPolicyBase(ref, policy)
 		assert.ErrorContains(t, err, "allowed_remotes")
 	})

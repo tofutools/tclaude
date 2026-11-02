@@ -18,22 +18,22 @@ import (
 // document shapes.
 
 func TestGLRequestURL(t *testing.T) {
-	base := "https://gitlab.example.com:6080"
+	base := "https://gitlab.example.com:8929"
 
 	t.Run("relative paths join under the API prefix, port kept", func(t *testing.T) {
 		got, err := glRequestURL(base, glAPIRequest{Path: "projects/a%2Fb/merge_requests", Query: url.Values{"state": {"opened"}}})
 		require.NoError(t, err)
-		assert.Equal(t, "https://gitlab.example.com:6080/api/v4/projects/a%2Fb/merge_requests?state=opened", got)
+		assert.Equal(t, "https://gitlab.example.com:8929/api/v4/projects/a%2Fb/merge_requests?state=opened", got)
 	})
 	t.Run("a pagination link on the same instance is followed as given", func(t *testing.T) {
-		got, err := glRequestURL(base, glAPIRequest{Path: "https://gitlab.example.com:6080/api/v4/projects/1/notes?page=2&per_page=100"})
+		got, err := glRequestURL(base, glAPIRequest{Path: "https://gitlab.example.com:8929/api/v4/projects/1/notes?page=2&per_page=100"})
 		require.NoError(t, err)
-		assert.Equal(t, "https://gitlab.example.com:6080/api/v4/projects/1/notes?page=2&per_page=100", got)
+		assert.Equal(t, "https://gitlab.example.com:8929/api/v4/projects/1/notes?page=2&per_page=100", got)
 	})
 	t.Run("a link to another host is refused", func(t *testing.T) {
 		_, err := glRequestURL(base, glAPIRequest{Path: "https://gitlab.com/api/v4/projects/1/notes?page=2"})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "outside gitlab.example.com:6080")
+		assert.Contains(t, err.Error(), "outside gitlab.example.com:8929")
 	})
 	t.Run("the same host on another port is another instance", func(t *testing.T) {
 		_, err := glRequestURL(base, glAPIRequest{Path: "https://gitlab.example.com/api/v4/projects/1"})
@@ -45,11 +45,11 @@ func TestGLRequestURL(t *testing.T) {
 	})
 	t.Run("a caller query key replaces one the link carried", func(t *testing.T) {
 		got, err := glRequestURL(base, glAPIRequest{
-			Path:  "https://gitlab.example.com:6080/api/v4/projects/1/notes?page=2",
+			Path:  "https://gitlab.example.com:8929/api/v4/projects/1/notes?page=2",
 			Query: url.Values{"page": {"3"}},
 		})
 		require.NoError(t, err)
-		assert.Equal(t, "https://gitlab.example.com:6080/api/v4/projects/1/notes?page=3", got)
+		assert.Equal(t, "https://gitlab.example.com:8929/api/v4/projects/1/notes?page=3", got)
 	})
 }
 
@@ -58,13 +58,13 @@ func TestGLRequestURL(t *testing.T) {
 // real instance (every call then read as anonymous), and Go forwards a custom
 // header across a cross-host redirect where it strips Authorization.
 func TestNewGitLabHTTPRequest_TokenRidesTheBearerHeader(t *testing.T) {
-	req, err := newGitLabHTTPRequest(context.Background(), "https://gitlab.example.com:6080",
+	req, err := newGitLabHTTPRequest(context.Background(), "https://gitlab.example.com:8929",
 		"glpat-secret", glAPIRequest{Path: "user"})
 	require.NoError(t, err)
 	assert.Equal(t, "Bearer glpat-secret", req.Header.Get("Authorization"))
 	assert.Empty(t, req.Header.Get("PRIVATE-TOKEN"), "the token travels in one header only")
 	assert.NotContains(t, req.URL.String(), "glpat-secret", "never in the URL")
-	assert.Equal(t, "https://gitlab.example.com:6080/api/v4/user", req.URL.String())
+	assert.Equal(t, "https://gitlab.example.com:8929/api/v4/user", req.URL.String())
 }
 
 func TestGLStripDraftPrefix(t *testing.T) {
@@ -87,7 +87,7 @@ func TestGLStripDraftPrefix(t *testing.T) {
 }
 
 func TestIsGitLabPathSegment(t *testing.T) {
-	for _, ok := range []string{"yamzz", "previewplayback-dashboard", "glfield_plugin", "a.b", "1337", "_x"} {
+	for _, ok := range []string{"contoso", "player-dashboard", "glfield_plugin", "a.b", "1337", "_x"} {
 		assert.True(t, isGitLabPathSegment(ok), ok)
 	}
 	for _, bad := range []string{"", "-lead", ".lead", "sp ace", "a/b", "ümlaut", "a%2Fb", "x;y"} {
