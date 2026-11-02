@@ -416,8 +416,8 @@ things there are specific to processes:
   to the dashboard. A template is edited in one place at a time: opening it
   from the list while it is elsewhere brings that window forward. Ctrl S (⌘ S on a Mac)
   saves a floating editor while its window has the keyboard, and ⌘K serves
-  the editor you last clicked in. Closing a floating editor
-  from the dock asks first when it has unsaved edits. A reload reopens an
+  the editor you last clicked in. Closing a floating editor, from the dock
+  or with its window's close button, asks first when it has unsaved edits. A reload reopens an
   overlay tab on the last saved version.
 - **Subprocesses.** A ▣ node runs a nested graph (see
   [Subprocess nodes](#what-executes-today)). Double-click it to edit its body

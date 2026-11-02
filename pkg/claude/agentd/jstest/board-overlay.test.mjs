@@ -589,10 +589,8 @@ scenario('the overlay has the native controls, and classic keeps its ×', async 
   await harness.act(async () => { dashboardState.publishLocalEdit({ ...COLLAB_ON, window_controls: 'linux' }); await wait(); });
   await harness.act(async () => { overlayHost.querySelector('.overlay-wc-close').click(); await wait(); });
   assert.equal(overlayHost.querySelector('.board-overlay'), null);
-  assert.equal(overlayHost.querySelector('.overlay-dock-item').textContent.trim(), '✎ Release plan', 'closing sends it to the dock');
-  await harness.act(async () => { overlayHost.querySelector('.overlay-dock-remove').click(); await wait(); });
-  assert.equal(overlayState.boardOverlays.value.length, 0, 'and the pill takes it off for good');
-  assert.equal(overlayHost.querySelector('.overlay-dock'), null);
+  assert.equal(overlayState.boardOverlays.value.length, 0, 'closing takes it off for good');
+  assert.equal(overlayHost.querySelector('.overlay-dock-pill'), null, 'with no pill left on the dock');
 });
 
 scenario('Ctrl+wheel over the title bar goes to the board, not the page', async ({ harness, overlayHost, overlayState }) => {
@@ -966,13 +964,20 @@ scenario('a minimized window of several tabs is one pill, with a count and no wa
   assert.deepEqual(tabsByWindow(overlayHost), [['Release plan', 'Team map']]);
 });
 
-scenario('a window closed with several tabs leaves one pill for each', async ({ harness, overlayHost, overlayState, windows, dashboardState }) => {
+scenario('a window closed with several tabs leaves no pill', async ({ harness, overlayHost, overlayState, windows, dashboardState }) => {
   dashboardState.publishLocalEdit({ ...COLLAB_ON, window_controls: 'linux' });
   await twoInOne(harness, overlayState, windows);
   await harness.act(async () => { overlayHost.querySelector('.overlay-wc-close').click(); await wait(); await wait(); });
   assert.deepEqual(windows.overlayWindows.value, []);
-  assert.equal(overlayHost.querySelectorAll('.overlay-dock-pill').length, 2);
-  assert.equal(overlayHost.querySelectorAll('.overlay-dock-remove').length, 2);
+  assert.deepEqual(windows.minimizedOverlayTabs.value, []);
+  assert.equal(overlayHost.querySelectorAll('.overlay-dock-pill').length, 0, 'nothing waits on the dock');
+});
+
+scenario('a tab × still sends that tab to the dock', async ({ harness, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  await harness.act(async () => { windows.minimizeOverlayTab('board:map'); await wait(); await wait(); });
+  assert.deepEqual(tabsByWindow(overlayHost), [['Release plan']]);
+  assert.equal(overlayHost.querySelectorAll('.overlay-dock-pill').length, 1);
 });
 
 scenario('a deleted board leaves the window it shared', async ({ harness, overlayHost, overlayState, windows }) => {

@@ -280,6 +280,52 @@ test('a floated agent that is no Steward still closes at once', async (t) => {
   assert.equal(floated(), null);
 });
 
+test('the window ✕ on several agents takes them all off the dock, still running, and they open again', async (t) => {
+  const { view, harness, controller, requests } = await setup(t);
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  await harness.act(() => controller().open(A));
+  await harness.act(() => controller().open(B));
+  assert.deepEqual(overlays.overlayWindows.peek().map((window) => window.tabs.length), [2], 'one window, two tabs');
+  const close = view.container.querySelector('.overlay-wc-close');
+  assert.match(close.title, /keeps running in the background/);
+  await harness.act(async () => { close.click(); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(overlays.overlayWindows.peek(), []);
+  assert.deepEqual(overlays.minimizedOverlayTabs.peek(), [], 'no pill is left on the dock');
+  assert.ok(!view.container.querySelector('.steward-shutdown-confirm'), 'nothing asked');
+  assert.deepEqual(requests.filter(({ url }) => /\/(stop|retire)$/.test(url)), [], 'nothing stopped');
+  await harness.act(() => controller().open(A));
+  assert.ok(view.container.querySelector(`${SHOWN_WINDOW} [data-chat-agent="${A}"]`), 'it opens again from where agents open');
+});
+
+test('a tab × still sends that agent to the dock', async (t) => {
+  const { view, harness, controller } = await setup(t);
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  await harness.act(() => controller().open(A));
+  await harness.act(() => controller().open(B));
+  const tabClose = [...view.container.querySelectorAll('.companion-tab')].find((tab) => tab.textContent.includes('bravo')).querySelector('.companion-tab-close');
+  await harness.act(() => tabClose.click());
+  assert.deepEqual(overlays.minimizedOverlayTabs.peek().map(({ tab }) => tab.id), [`chat:${B}`]);
+  assert.deepEqual(overlays.overlayWindows.peek().map((window) => window.tabs.map((tab) => tab.id)), [[`chat:${A}`]]);
+});
+
+test('the window ✕ beside a running Steward takes the others off, and the Steward still asks', async (t) => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => { calls.push([options.method, url]); return { ok: true, text: async () => '', json: async () => ({}) }; };
+  const { view, harness, controller } = await setup(t, { fetchImpl, snapshot: snapshotWith({ steward: true }) });
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  await harness.act(() => controller().open(S));
+  await harness.act(() => controller().open(A));
+  const tabsOf = () => overlays.overlayWindows.peek().map((window) => window.tabs.map((tab) => tab.id));
+  assert.deepEqual(tabsOf(), [[`chat:${S}`, `chat:${A}`]]);
+  const close = view.container.querySelector('.overlay-wc-close');
+  assert.match(close.title, /Steward shuts down, after asking/);
+  await harness.act(() => close.click());
+  assert.deepEqual(tabsOf(), [[`chat:${S}`]], 'the worker left');
+  assert.deepEqual(overlays.minimizedOverlayTabs.peek(), [], 'with no pill');
+  assert.match(view.container.querySelector('.steward-shutdown-confirm').textContent, /keeps its conversation/, 'the Steward asks, as before');
+  assert.deepEqual(calls.filter(([, url]) => url.endsWith('/stop')), []);
+});
+
 test('a refused shut-down stays on the Steward and says why', async (t) => {
   const fetchImpl = async () => ({ ok: false, status: 409, text: async () => '{"message":"nothing to retire"}', json: async () => ({}) });
   const { view, harness, controller } = await setup(t, { fetchImpl, snapshot: snapshotWith({ steward: true }) });

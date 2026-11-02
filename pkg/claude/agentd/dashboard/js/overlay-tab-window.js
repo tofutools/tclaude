@@ -14,9 +14,10 @@ import { ProcessOverlayWindow, processStartPlacement } from './process-overlay.j
 import { ChatWindow } from './chat-window.js';
 import { CHAT_WINDOW_KIND } from './chat-window-model.js';
 import { defaultPlacement } from './companion-model.js';
-import { askOverlayClose, minimizeEveryTab, useDropPoint } from './overlay-instances.js';
+import { askOverlayClose, closeEveryTab, useDropPoint } from './overlay-instances.js';
 import { tabJoin } from './overlay-tab-drag.js';
 import { activeTabOf } from './overlay-tab-model.js';
+import { tabMoves } from './overlay-tab-moves.js';
 import { OverlayTabStrip } from './overlay-tab-strip.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { OverlayWindow, useOverlayWindow } from './overlay-window.js';
@@ -56,8 +57,8 @@ export const plainView = ({ kind, label }) => ({ label: label || 'Terminal', lea
 export const tabViewOf = (kinds) => (tab) => (kinds[tab.kind]?.view || plainView)(tab);
 
 const closeTitle = (window, stewardInside) => {
-  if (stewardInside) return window.tabs.length > 1 ? 'Close: other tabs go to the dock, and the Steward shuts down, after asking' : 'Close: shut it down, after asking';
-  return window.tabs.length > 1 ? 'Close: every tab goes to the dock, and keeps running' : 'Close: it goes to the dock, and keeps running';
+  if (stewardInside) return window.tabs.length > 1 ? 'Close: other tabs leave and keep running, and the Steward shuts down, after asking' : 'Close: shut it down, after asking';
+  return window.tabs.length > 1 ? 'Close: every tab leaves and keeps running in the background' : 'Close: it leaves and keeps running in the background';
 };
 
 export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = null, add = null }) {
@@ -77,7 +78,7 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = n
   const close = {
     title: closeTitle(window, !!asking),
     onClose: () => {
-      minimizeEveryTab(window.id, asking?.id);
+      closeEveryTab(window.id, { asking: asking?.id, closeOf: (candidate) => tabMoves(candidate).close });
       if (asking) askOverlayClose(asking.id);
     },
   };

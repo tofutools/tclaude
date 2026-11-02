@@ -119,7 +119,7 @@ otherwise open a terminal.
 | ⚙ | Everything else, listed below. Type to filter it |
 | – | Minimize (Ctrl .) |
 | □ | Maximize, or restore the size it had |
-| × | Send every tab in the window to the dock. They keep running. On a window holding a running Steward it asks first, then shuts the Steward down, like **Shut down…** |
+| × | Close the window. Its tabs leave the overlay and the dock, and keep running in the background: open them again from the Groups tab, the palette or Collab. On a window holding a running Steward the Steward asks first, then shuts down, like **Shut down…** |
 
 Under **⚙**, each shown when it applies:
 
@@ -224,9 +224,15 @@ overlay window.
 A tab's × minimizes that tab to the dock and stops nothing, and so does `Minimize tab` on its
 menu, beside `Minimize other tabs` and `Minimize all tabs`. These never ask, even for a Steward,
 because nothing stops. Its pill brings it back to the
-window it left, or to a new window where that one stood. The window's close button does the
-same for each of its tabs, except that a running Steward asks first and shuts down.
+window it left, or to a new window where that one stood.
 The window's – keeps its tabs together on one pill, showing the active tab and a count.
+
+The window's close button is different: it closes the window, and its tabs leave the
+dock too, as the × on a pill takes them. Nothing stops. Agents and shells keep running
+in the background, and a reload does not bring the window back. Open them again from
+wherever you opened them: the Groups tab, the palette, the Terminals or Collab tab.
+A floating process editor with unsaved edits asks first, and stays if you keep them.
+A running Steward is the exception: it asks first, then shuts down.
 
 To take something off for good, use the × on its pill: it unpins an agent, which keeps
 running, and closes a shell's or board's window. A pill for several tabs has no ×, so bring
