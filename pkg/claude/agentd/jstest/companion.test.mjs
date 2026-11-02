@@ -2848,6 +2848,11 @@ test('a prompt behind the chip shows past a decision, and a shown tab stays out 
   assert.ok(harness.getByRole(view.container, 'button', { name: /alpha: .*in the window of steward-k3x/ }), 'the Steward only asked');
   await harness.act(() => controller().open(A));
   assert.ok(harness.getByRole(view.container, 'button', { name: /^steward-k3x: / }), 'alpha is on screen, and the chip is the Steward again');
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  await harness.act(async () => {
+    overlays.openTabInWindow('companion', '', { id: 'term:a', kind: 'terminal', agent: A, paneKey: 'p', ws: '/x', label: 'shell' }, { activate: false });
+  });
+  assert.ok(harness.getByRole(view.container, 'button', { name: /^steward-k3x: / }), 'a shell of alpha, out of sight, says nothing about its chat');
 });
 
 test('a minimized shell of the Steward keeps its pill', async (t) => {

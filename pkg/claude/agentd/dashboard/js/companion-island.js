@@ -1124,7 +1124,7 @@ export function CompanionApp({
       // Its window has no pill, so the chip speaks for the tabs waiting out of
       // sight. A prompt or an approval holds an agent up, and a decision need not,
       // so one never hides behind the other.
-      const unseen = (holder?.tabs || []).filter((tab) => holder.minimized || tab.id !== holder.active).map((tab) => agents.get(tab.agent)).filter((agent) => agent && agent !== chipAgent);
+      const unseen = (holder?.tabs || []).filter((tab) => tab.kind === CHAT_WINDOW_KIND && (holder.minimized || tab.id !== holder.active)).map((tab) => agents.get(tab.agent)).filter((agent) => agent && agent !== chipAgent);
       const stopped = (agent) => approvals(agent).length > 0 || companionStatus(agent) === 'needs';
       const behind = stopped(chipAgent) ? null : unseen.find(stopped) || (own === 'needs' ? null : unseen.find((agent) => statusOf(agent) === 'needs'));
       const status = behind ? 'needs' : own;
