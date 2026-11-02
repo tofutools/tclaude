@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import './assert-dom-safe.mjs';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, sep } from 'node:path';
 import { tmpdir } from 'node:os';

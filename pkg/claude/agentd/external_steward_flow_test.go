@@ -38,6 +38,9 @@ type externalStewardFlow struct {
 func newExternalStewardFlow(t *testing.T, enabled bool) *externalStewardFlow {
 	t.Helper()
 	f := newFlow(t)
+	// Every credential shares one proof-rate bucket per wall-clock second, so
+	// this suite's fast tests would otherwise spend each other's budget.
+	t.Cleanup(agentd.ResetBrokerLimiterForTest())
 	enableCollab(t)
 	setExternalStewards(t, enabled)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
