@@ -44,13 +44,57 @@ function IssuedCredential({ issued, onDone, copy }) {
   </div>`;
 }
 
-function StewardRow({ steward, act, busy, renewable }) {
+function selected(event) {
+  return [...event.currentTarget.selectedOptions].map(option => option.value);
+}
+
+// Only the groups and profiles the daemon would accept are offered, so a choice
+// here can't fail for a reason the operator could have seen. Its workers still stop
+// for the human, which the Config page says beside this.
+function WorkerPin({ steward, choices, busy, onSave, onClose }) {
+  const [groups, setGroups] = useState(steward.spawn?.groups || []);
+  const [spawnProfile, setSpawnProfile] = useState(steward.spawn?.spawn_profile || '');
+  const [sandboxProfile, setSandboxProfile] = useState(steward.spawn?.sandbox_profile || '');
+  const ready = groups.length > 0 && spawnProfile && sandboxProfile;
+  const options = (values, chosen) => values.map(value => html`<option key=${value} value=${value} selected=${chosen.includes(value)}>${value}</option>`);
+  return html`<form class="cfg-steward-pin" onSubmit=${(event) => {
+    event.preventDefault();
+    onSave({ groups, spawn_profile: spawnProfile, sandbox_profile: sandboxProfile });
+  }}>
+    <label>Groups <select multiple aria-label="Groups it can start workers in" onChange=${event => setGroups(selected(event))}>
+      ${options(choices.groups || [], groups)}</select></label>
+    <label>Spawn profile <select aria-label="Spawn profile for its workers" onChange=${event => setSpawnProfile(event.currentTarget.value)}>
+      <option value="">Choose</option>${options(choices.spawn_profiles || [], [spawnProfile])}</select></label>
+    <label>Sandbox profile <select aria-label="Sandbox profile for its workers" onChange=${event => setSandboxProfile(event.currentTarget.value)}>
+      <option value="">Choose</option>${options(choices.sandbox_profiles || [], [sandboxProfile])}</select></label>
+    <div class="cfg-steward-row-actions">
+      <button type="submit" class="cfg-list-add" disabled=${busy || !ready}>Save</button>
+      ${steward.spawn && html`<button type="button" class="cfg-list-add" disabled=${busy} onClick=${() => onSave({ off: true })}>Turn off</button>`}
+      <button type="button" class="cfg-list-add" onClick=${onClose}>Cancel</button>
+    </div>
+  </form>`;
+}
+
+function workerSummary(steward) {
+  const running = (steward.children || []).filter(child => child.online).length;
+  const where = steward.spawn ? steward.spawn.groups.join(', ') : 'Off';
+  return running ? `${where}. ${running} running` : where;
+}
+
+function StewardRow({ steward, act, busy, renewable, choices, onPin }) {
   const live = steward.credentials.some(credential => credential.live);
+  const [editing, setEditing] = useState(false);
   return html`<tr>
     <td>${steward.name}${steward.retired ? ' (retired)' : ''}</td>
     <td>${steward.credentials.length
       ? steward.credentials.map(credential => html`<div key=${credential.token_id}>${expiryLabel(credential)}</div>`)
       : 'None'}</td>
+    <td>
+      ${workerSummary(steward)}
+      ${!steward.retired && !editing && html` <button type="button" class="cfg-list-add" disabled=${busy} onClick=${() => setEditing(true)}>Choose</button>`}
+      ${editing && html`<${WorkerPin} steward=${steward} choices=${choices} busy=${busy} onClose=${() => setEditing(false)}
+        onSave=${async (pin) => { if (await onPin(steward.name, pin)) setEditing(false); }} />`}
+    </td>
     <td class="cfg-steward-row-actions">${!steward.retired && html`
       <button type="button" class="cfg-list-add" disabled=${busy || !renewable} title="Make a new credential. The old ones keep working until they expire."
         onClick=${() => act(steward.name, 'renew')}>Renew</button>
@@ -62,6 +106,7 @@ function StewardRow({ steward, act, busy, renewable }) {
 
 export function ExternalStewardManager({ enabled, fetchImpl = globalThis.fetch, copy = writeClipboard, confirm = shellConfirm }) {
   const [stewards, setStewards] = useState([]);
+  const [choices, setChoices] = useState({});
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [issued, setIssued] = useState(null);
@@ -72,7 +117,10 @@ export function ExternalStewardManager({ enabled, fetchImpl = globalThis.fetch, 
 
   const refresh = useCallback(async () => {
     const data = await call(fetchImpl, ROOT);
-    if (mounted.current) setStewards(data.external_stewards || []);
+    if (mounted.current) {
+      setStewards(data.external_stewards || []);
+      setChoices(data.spawn_choices || {});
+    }
   }, [fetchImpl]);
   useEffect(() => { refresh().catch(e => setError(e.message)); }, [refresh, enabled]);
 
@@ -92,13 +140,25 @@ export function ExternalStewardManager({ enabled, fetchImpl = globalThis.fetch, 
     }
   };
   const act = async (label, verb) => {
-    if (verb === 'revoke' && !await confirm({
+    if (verb !== 'revoke') {
+      void run(`${ROOT}/${encodeURIComponent(label)}/${verb}`, {}, label);
+      return;
+    }
+    if (!await confirm({
       title: `Revoke ${label}?`,
       body: 'All of its credentials end, and its assistant stops working on its next request.',
       okLabel: 'Revoke',
     })) return;
-    void run(`${ROOT}/${encodeURIComponent(label)}/${verb}`, {}, label);
+    const running = (stewards.find(steward => steward.name === label)?.children || []).filter(child => child.online);
+    const stop = running.length > 0 && await confirm({
+      title: `Stop ${label}'s workers too?`,
+      body: `These keep running unless you stop them: ${running.map(child => child.title || child.agent_id).join(', ')}.`,
+      okLabel: 'Stop them',
+      cancelLabel: 'Leave them running',
+    });
+    void run(`${ROOT}/${encodeURIComponent(label)}/revoke`, { stop_children: !!stop }, label);
   };
+  const pin = (label, body) => run(`${ROOT}/${encodeURIComponent(label)}/spawn`, body, label);
   const add = async (event) => {
     event.preventDefault();
     // A second credential would replace the one on screen, which can't be shown again.
@@ -113,8 +173,8 @@ export function ExternalStewardManager({ enabled, fetchImpl = globalThis.fetch, 
     ${issued && html`<${IssuedCredential} key=${issued.credential} issued=${issued} copy=${copy} onDone=${() => setIssued(null)} />`}
     ${error && html`<div class="cfg-steward-error" role="alert">${error}</div>`}
     ${stewards.length > 0 && html`<table class="cfg-tool-list">
-      <thead><tr><th scope="col">Name</th><th scope="col">Credentials</th><th scope="col">Actions</th></tr></thead>
-      <tbody>${stewards.map(steward => html`<${StewardRow} key=${steward.agent_id} steward=${steward} act=${act} busy=${busy} renewable=${enabled && !issued} />`)}</tbody>
+      <thead><tr><th scope="col">Name</th><th scope="col">Credentials</th><th scope="col">Workers</th><th scope="col">Actions</th></tr></thead>
+      <tbody>${stewards.map(steward => html`<${StewardRow} key=${steward.agent_id} steward=${steward} act=${act} onPin=${pin} choices=${choices} busy=${busy} renewable=${enabled && !issued} />`)}</tbody>
     </table>`}
     ${enabled
       ? html`<form class="cfg-steward-add" onSubmit=${add}>

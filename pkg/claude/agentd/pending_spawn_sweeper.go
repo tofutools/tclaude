@@ -214,6 +214,14 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 			requeuePendingSpawn(ps.Label, ps)
 			return
 		}
+		if db.IsExternalStewardConv(ps.SpawnedByConv) {
+			if err := writeExternalStewardChildDenies(convID, ps.SpawnedByConv); err != nil {
+				slog.Warn("pending-spawn sweeper: external steward denies repair failed",
+					"label", ps.Label, "conv", convID, "error", err)
+				requeuePendingSpawn(ps.Label, ps)
+				return
+			}
+		}
 		attachRouteHelperConversation(ps.AgentID, convID, routeHelperGenerationForSession(ps.Label))
 		slog.Info("pending-spawn sweeper: already enrolled; cleared pending row",
 			"label", ps.Label, "conv", convID)

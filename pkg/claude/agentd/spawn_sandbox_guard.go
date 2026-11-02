@@ -707,7 +707,19 @@ func normalizeLineageImplementation(raw string) sandboxpolicy.Implementation {
 	return implementation
 }
 
+// externalStewardLineage is what an external steward may delegate. It has no launch
+// of its own, so it answers as a confined agent would: the pin's sandbox profile is
+// only a bound on a child whose launch enforces one.
+var externalStewardLineage = spawnLineageSandbox{
+	Harness:            harness.DefaultName,
+	HarnessBuiltinMode: harness.ClaudeSandboxOn,
+	Implementation:     sandboxpolicy.ImplementationHarnessBuiltin,
+}
+
 func spawnLineageParentSandbox(convID string) (spawnLineageSandbox, error) {
+	if db.IsExternalStewardConv(convID) {
+		return externalStewardLineage, nil
+	}
 	row, err := db.FindSessionByConvID(convID)
 	if err != nil {
 		return spawnLineageSandbox{}, err

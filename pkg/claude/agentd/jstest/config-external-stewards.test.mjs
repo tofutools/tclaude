@@ -152,3 +152,44 @@ test('palette offline commands pass over an external steward, which only looks o
     agents: [worker], ungrouped: [worker], groups: [{ name: 'crew', members: [worker] }],
   }).includes('Retire offline agents in crew'), 'an ordinary offline agent keeps its commands');
 });
+
+test('a worker pin offers only what the daemon takes, and revoke asks about running workers', async (t) => {
+  const posts = [];
+  const steward = {
+    ...row,
+    children: [{ agent_id: 'agt_2', title: 'builder', online: true }, { agent_id: 'agt_3', title: 'done', online: false }],
+  };
+  const fetchImpl = async (path, options = {}) => {
+    if (options.body) posts.push([path, JSON.parse(options.body)]);
+    return { ok: true, json: async () => ({
+      external_stewards: [steward],
+      spawn_choices: { groups: ['crew'], spawn_profiles: ['worker'], sandbox_profiles: ['locked'] },
+    }) };
+  };
+  const confirms = [];
+  const confirm = async (options) => { confirms.push(options); return true; };
+  const harness = await createPreactHarness(t);
+  const { ExternalStewardManager } = await harness.importDashboardModule('js/config-external-stewards.js');
+  const mounted = await harness.mount(harness.html`<${ExternalStewardManager} enabled=${true}
+    fetchImpl=${fetchImpl} confirm=${confirm} copy=${async () => true} />`);
+  const settle = async (fn) => {
+    await harness.act(async () => { await fn(); });
+    await harness.act(async () => { await new Promise(resolve => setTimeout(resolve)); });
+  };
+  await settle(() => {});
+  const button = (label) => [...mounted.container.querySelectorAll('button')].find(b => b.textContent === label);
+  assert.match(mounted.container.textContent, /Off\. 1 running/);
+
+  await settle(() => button('Choose').click());
+  assert.equal(button('Save').disabled, true, 'all three are required');
+  assert.deepEqual([...mounted.container.querySelectorAll('.cfg-steward-pin option')].map(o => o.value),
+    ['crew', '', 'worker', '', 'locked']);
+
+  await settle(() => button('Cancel').click());
+  await settle(() => button('Revoke').click());
+  assert.equal(confirms.length, 2);
+  assert.match(confirms[1].body, /builder/);
+  assert.doesNotMatch(confirms[1].body, /done/, 'only what is running');
+  assert.equal(confirms[1].cancelLabel, 'Leave them running');
+  assert.deepEqual(posts.at(-1), ['/api/external-stewards/assistant/revoke', { stop_children: true }]);
+});

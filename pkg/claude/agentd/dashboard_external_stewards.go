@@ -11,6 +11,7 @@ func registerDashboardExternalStewardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/external-stewards", dashboardExternalStewardRoute(handleExternalStewardCreate))
 	mux.HandleFunc("POST /api/external-stewards/{name}/renew", dashboardExternalStewardRoute(handleExternalStewardRenew))
 	mux.HandleFunc("POST /api/external-stewards/{name}/revoke", dashboardExternalStewardRoute(handleExternalStewardRevoke))
+	mux.HandleFunc("POST /api/external-stewards/{name}/spawn", dashboardExternalStewardRoute(handleExternalStewardSpawnPin))
 }
 
 func dashboardExternalStewardRoute(next http.HandlerFunc) http.HandlerFunc {

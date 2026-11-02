@@ -772,6 +772,10 @@ func runServe(p *serveParams) error {
 	// spawning a subprocess. Shares the daemon-wide stop channel.
 	startPluginChecker(cronStop)
 
+	// Tells the operator when an external steward's credential runs out with its
+	// workers still running. Shares the daemon-wide stop channel.
+	startExternalStewardExpiryWatch(cronStop)
+
 	// One cross-repository PR poll feeds the footer and every Groups PR badge.
 	// The GraphQL response carries open/recent state plus CI rollups into the
 	// canonical per-PR caches; the 2s snapshot only reads those shared caches.
@@ -1354,6 +1358,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/external-stewards", collabRoute(handleExternalStewardCreate))
 	mux.HandleFunc("POST /v1/external-stewards/{name}/renew", collabRoute(handleExternalStewardRenew))
 	mux.HandleFunc("POST /v1/external-stewards/{name}/revoke", collabRoute(handleExternalStewardRevoke))
+	mux.HandleFunc("POST /v1/external-stewards/{name}/spawn", collabRoute(handleExternalStewardSpawnPin))
 	mux.HandleFunc("GET /v1/dashboard/view", collabRoute(handleDashboardViewRead))
 	mux.HandleFunc("POST /v1/dashboard/cue", collabRoute(handleDashboardCue))
 	mux.HandleFunc("POST /v1/dashboard/capture", collabRoute(handleDashboardCapture))

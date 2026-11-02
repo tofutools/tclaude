@@ -42,6 +42,7 @@ const (
 	DashboardCue     = "dashboard_cue"
 	DashboardCapture = "dashboard_capture"
 	SetTaskLink      = "set_task_link"
+	SpawnAgent       = "spawn_agent"
 )
 
 // List returns the tools in the order they are offered.
@@ -171,6 +172,15 @@ func List() []Tool {
 			Routes:      []string{"POST /v1/agent/{agent}/task"},
 			Access:      "Needs agent.task, which comes with the Workers level, or owning every group that agent is in",
 			Permissions: []string{"agent.task"},
+			Writes:      true,
+		},
+		{
+			Name: SpawnAgent,
+			Description: "Start a worker in a group the human chose. The worker stops at its first action that isn't " +
+				"read-only until the human answers, and this assistant can't answer for them.",
+			Routes:      []string{"POST /v1/groups/{name}/spawn"},
+			Access:      "Off until you set agent.spawn for it here, naming its groups, spawn profile and sandbox profile",
+			Permissions: []string{"agent.spawn"},
 			Writes:      true,
 		},
 	}

@@ -72,13 +72,24 @@ var externalStewardNever = []string{
 	// after its credentials are revoked.
 	PermSelfSchedule, PermAgentSchedule, PermGroupsMembersSchedule, PermGroupsMessagesSchedule,
 	PermTriggersManage, PermGroupsTriggersManage,
+	// Starting or changing a launch by any way but a pinned agent.spawn. A group
+	// spawn comes with owning a group and names no sandbox. A clone, morph or resume
+	// would run a posture this principal could never set, and a resume is past the
+	// cap. A worker's directory and environment come from its group, and its
+	// confinement from a sandbox profile, so changing those would change the launch
+	// the operator pinned. Moving an agent would take it off this instance.
+	PermGroupsMembersSpawn, PermAgentClone, PermGroupsMembersClone, PermGroupsClone,
+	PermAgentMorph, PermGroupsMembersMorph, PermAgentResume, PermGroupsMembersResume,
+	PermGroupsSettingsDefaultDir, PermGroupsSettingsEnvironment, PermGroupsSettingsDefaultSpawnTarget,
+	PermGroupsSettingsDefaultProfile, PermSandboxProfilesManage, PermAgentSandboxImplementation,
+	PermAgentMove, PermAgentShare, PermTemplatesUse, PermGroupsImport,
 }
 
 // externalStewardOptIn are level slugs a principal does not start with. A capture
 // can show anything the operator has open, and it would leave for the assistant's
-// own provider, so the operator grants it deliberately. Spawning needs a parent
-// with a recorded launch posture, which a principal does not have, so issuing it
-// would promise something the spawn guard refuses.
+// own provider, so the operator grants it deliberately. Spawning has to name its
+// groups and profiles, which only the operator can choose. See
+// external_steward_spawn.go.
 var externalStewardOptIn = []string{PermDashboardCapture, PermAgentSpawn}
 
 func externalStewardRefuses(slug string) bool {
@@ -310,6 +321,8 @@ type externalStewardView struct {
 	Name        string                          `json:"name"`
 	Retired     bool                            `json:"retired,omitempty"`
 	Credentials []externalStewardCredentialView `json:"credentials"`
+	Spawn       *externalStewardSpawnPin        `json:"spawn,omitempty"`
+	Children    []externalStewardSpawnChild     `json:"children,omitempty"`
 }
 
 func externalStewardTimeView(t time.Time) *time.Time {
@@ -327,6 +340,13 @@ func externalStewardViewOf(s db.ExternalSteward, now time.Time) externalStewardV
 			RevokedAt: externalStewardTimeView(c.RevokedAt), LastUsedAt: externalStewardTimeView(c.LastUsedAt),
 			Live: c.Live(now) && !s.Retired,
 		})
+	}
+	var err error
+	if view.Spawn, err = externalStewardSpawnPinOf(s.ConvID); err != nil {
+		slog.Warn("external steward: read its spawn pin failed", "name", s.Name, "error", err)
+	}
+	if view.Children, err = externalStewardChildren(s.AgentID); err != nil {
+		slog.Warn("external steward: list its workers failed", "name", s.Name, "error", err)
 	}
 	return view
 }
@@ -424,7 +444,7 @@ func handleExternalStewardsList(w http.ResponseWriter, r *http.Request) {
 	for _, s := range stewards {
 		out = append(out, externalStewardViewOf(s, now))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"external_stewards": out})
+	writeJSON(w, http.StatusOK, map[string]any{"external_stewards": out, "spawn_choices": externalStewardSpawnChoices()})
 }
 
 // POST /v1/external-stewards: a new principal and its first credential.
@@ -542,7 +562,8 @@ func handleExternalStewardRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		TokenID string `json:"token_id"`
+		TokenID      string `json:"token_id"`
+		StopChildren bool   `json:"stop_children"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -553,7 +574,22 @@ func handleExternalStewardRevoke(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"revoked": revoked})
+	// Workers keep running unless the operator says otherwise: stopping one
+	// mid-edit does damage, and at the baseline posture it can't act without them.
+	children, err := externalStewardChildren(s.AgentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	var stopped []memberOpResult
+	if body.StopChildren {
+		for _, child := range children {
+			if child.Online {
+				stopped = append(stopped, stopOneConvWithIntent(child.ConvID, false, db.AgentExitActionStop, auditRequestEventID(r)))
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"revoked": revoked, "children": children, "stopped": stopped})
 }
 
 // takeExternalStewardCredential reads the presented credential and removes it

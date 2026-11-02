@@ -2568,3 +2568,49 @@ func identitySocketClientForTest(t *testing.T, h http.Handler) *http.Client {
 		},
 	}}
 }
+
+// ExternalStewardChildDeniesForTest is what a principal's child is denied at birth.
+func ExternalStewardChildDeniesForTest() []string { return externalStewardChildDenies() }
+
+// ExecuteSpawnAsForTest runs executeSpawn without handleGroupSpawn's gate, the way
+// any other caller of it would, and returns the refusal's kind.
+func ExecuteSpawnAsForTest(group, spawnedByConv string) string {
+	g, err := db.GetAgentGroupByName(group)
+	if err != nil || g == nil {
+		return "no group"
+	}
+	if _, failure := executeSpawn(g, spawnParams{SpawnedByConv: spawnedByConv}); failure != nil {
+		return failure.Kind
+	}
+	return ""
+}
+
+// HoldExternalStewardSpawnForTest stands in for a spawn on its way, which no
+// conversation or pending row shows yet. The returned function ends it.
+func HoldExternalStewardSpawnForTest(agentID string) func() {
+	externalStewardSpawning.Lock()
+	defer externalStewardSpawning.Unlock()
+	externalStewardSpawning.active[agentID]++
+	return func() {
+		externalStewardSpawning.Lock()
+		defer externalStewardSpawning.Unlock()
+		delete(externalStewardSpawning.active, agentID)
+	}
+}
+
+// ExternalStewardSpawningForTest counts the holds left under the cap.
+func ExternalStewardSpawningForTest(agentID string) int {
+	externalStewardSpawning.Lock()
+	defer externalStewardSpawning.Unlock()
+	return externalStewardSpawning.active[agentID]
+}
+
+// PlacementSpawnAllowedForTest reports whether conv may place a spawn at a peer.
+func PlacementSpawnAllowedForTest(r *http.Request, conv, peer, group string) bool {
+	return placementSpawnAllowed(r, conv, peer, group)
+}
+
+// NotifyExternalStewardExpiriesForTest runs one pass of the expiry watch.
+func NotifyExternalStewardExpiriesForTest(now time.Time) {
+	notifyExternalStewardExpiries(now)
+}

@@ -2463,6 +2463,15 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, refusal, http.StatusConflict)
 			return
 		}
+		scope, err := permissionScopeForEval(scopeJSON[slug])
+		if err != nil {
+			http.Error(w, "invalid scope for slug "+slug+": "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if refusal := refuseExternalStewardSpawnGrant(res.ConvID, slug, scope); refusal != "" {
+			http.Error(w, refusal, http.StatusConflict)
+			return
+		}
 	}
 	steward := isLiveSteward(res.ConvID)
 	var overridesBefore map[string]db.PermissionOverride
