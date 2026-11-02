@@ -406,21 +406,35 @@ func handleGLProxyMRCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	// The same pr.opened edge the GitHub proxy and `present-pr` record, so the
 	// dashboard shows the merge request and the triggers see it.
+	var recordFailure error
 	if agentID, lookupErr := db.AgentIDForConv(g.convID); lookupErr != nil {
 		slog.Warn("gitlab proxy: resolve MR author for trigger", "conv", g.convID, "error", lookupErr)
+		recordFailure = lookupErr
 	} else if agentID != "" {
 		state := "open"
 		if created.Draft || body.Draft {
 			state = "draft"
 		}
-		if _, persistErr := db.UpsertValidatedAgentPRDetails(agentID, created.WebURL,
+		if _, persistErr := glRecordCreatedMR(agentID, created.WebURL,
 			glStripDraftPrefix(created.Title), state, head, state == "draft", g.repoRoot); persistErr != nil {
 			slog.Warn("gitlab proxy: persist created MR for trigger reconciliation",
 				"conv", g.convID, "mr", created.WebURL, "error", persistErr)
+			recordFailure = persistErr
 		}
 	}
-	g.respond(w, r, "mr.create", ProxyResult{Stdout: created.WebURL + "\n"}, nil)
+	out := ProxyResult{Stdout: created.WebURL + "\n"}
+	if recordFailure != nil {
+		// The merge request exists, so this is still a success; only the
+		// dashboard's record of it failed, and the agent can repair that.
+		out.Stderr = fmt.Sprintf("the merge request was created, but the dashboard could not record it (%v); "+
+			"run `tclaude agent present-pr %s` to show it there\n", recordFailure, created.WebURL)
+	}
+	g.respond(w, r, "mr.create", out, nil)
 }
+
+// glRecordCreatedMR records a created merge request for the dashboard and the
+// triggers; a variable so a test can make the record fail.
+var glRecordCreatedMR = db.UpsertValidatedAgentPRDetails
 
 // handleGLProxyMRList serves POST /v1/gitlab/mr/list.
 func handleGLProxyMRList(w http.ResponseWriter, r *http.Request) {

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -608,6 +609,27 @@ func TestGLProxy_MRChecksSaysWhenTheJobsAreTruncated(t *testing.T) {
 	require.NoError(t, json.Unmarshal(doc, &out), "doc=%s", doc)
 	assert.True(t, out.JobsTruncated)
 	assert.NotEmpty(t, out.Jobs)
+}
+
+// TestGLProxy_MRCreateSaysWhenTheDashboardCouldNotRecordIt: the merge request
+// exists, so the answer is still a success with its URL, but the agent is told
+// the dashboard missed it and how to show it there.
+func TestGLProxy_MRCreateSaysWhenTheDashboardCouldNotRecordIt(t *testing.T) {
+	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	gl.def = glCanned{Status: 201, Body: glCannedMR}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabWrite, "test"))
+	t.Cleanup(agentd.SetGitLabCreatedMRRecorderForTest(func(string, string, string, string, string, bool, string) (db.AgentPR, error) {
+		return db.AgentPR{}, errors.New("database is locked")
+	}))
+	const url = "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/7"
+
+	res := gitProxyPost(t, f, "/v1/gitlab/mr/create", map[string]any{"title": "Add a thing", "base": "main"})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	exit, stdout, stderr, _ := glOutcome(t, res.Body.Bytes())
+	assert.Zero(t, exit, "the merge request was created")
+	assert.Equal(t, url+"\n", stdout)
+	assert.Contains(t, stderr, "the dashboard could not record it (database is locked)")
+	assert.Contains(t, stderr, "tclaude agent present-pr "+url)
 }
 
 func TestGLProxy_MRCreateDraftIsATitleMarker(t *testing.T) {
