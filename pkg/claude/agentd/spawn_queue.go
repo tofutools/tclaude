@@ -670,6 +670,16 @@ func handleSpawnQueueCancel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	if e != nil && conv != "" && e.FedRequestID != 0 {
+		// Cancelling a remote request denies it, which is the operator's call
+		// (as `federation requests deny`), whoever owns the group.
+		if !spawnQueueVisible(e, "", map[int64]bool{e.GroupID: convInGroup(conv, e.GroupID)}) {
+			e = nil
+		} else {
+			writeError(w, http.StatusForbidden, "permission", "only the operator may cancel a queued remote spawn request")
+			return
+		}
+	}
 	if e != nil && conv != "" {
 		callerAgent, _ := db.AgentIDForConv(conv)
 		owner, _ := db.IsAgentGroupOwner(e.GroupID, conv)
@@ -768,8 +778,15 @@ func settleFederationQueueEntries(entries []*db.SpawnQueueEntry) bool {
 		switch {
 		case req == nil:
 			reason = "the remote spawn request is gone"
-		case req.Status == db.FedSpawnPending || req.Status == db.FedSpawnLaunching || req.Status == db.FedSpawnApproved:
-			// A promotion whose entry update was lost (a daemon crash between the two).
+		case req.Status == db.FedSpawnPending:
+			// Promoted, but a daemon crash cut the hand-off short: do it again.
+			// Automatic approval re-checks the request; at worst the operator
+			// is told twice.
+			handOffPromotedFederationRequest(req)
+			finishSpawnQueueEntry(e, db.SpawnQueueLaunched, fmt.Sprintf("handed on as remote spawn request #%d", req.ID), "")
+			changed = true
+			continue
+		case req.Status == db.FedSpawnLaunching || req.Status == db.FedSpawnApproved:
 			finishSpawnQueueEntry(e, db.SpawnQueueLaunched, fmt.Sprintf("handed on as remote spawn request #%d", req.ID), "")
 			changed = true
 			continue
@@ -820,20 +837,28 @@ func promoteFederationQueueHead(e *db.SpawnQueueEntry) bool {
 	if err != nil || !promoted {
 		return false
 	}
-	finishSpawnQueueEntry(e, db.SpawnQueueLaunched, fmt.Sprintf("handed on as remote spawn request #%d", req.ID), "")
 	req.Status = db.FedSpawnPending
+	// Hand off before the entry ends, so a crash in between is redone by
+	// settleFederationQueueEntries rather than lost.
+	handOffPromotedFederationRequest(req)
+	finishSpawnQueueEntry(e, db.SpawnQueueLaunched, fmt.Sprintf("handed on as remote spawn request #%d", req.ID), "")
+	return true
+}
+
+// handOffPromotedFederationRequest gives a request the queue made pending to
+// automatic approval or the operator, as on arrival.
+func handOffPromotedFederationRequest(req *db.FederationSpawnRequest) {
 	peer, _ := db.GetFederationPeer(req.FromInstance)
 	if peer == nil {
 		// Trust went in between; the pending request now waits for the
 		// operator's deny like any request from a peer that was removed.
-		return true
+		return
 	}
 	if fedPeerAllows(peer.InstanceID, req.GroupID, PermGroupsMembersSpawn) {
 		goBackground(func() { autoApproveFederationSpawn(req, peer) })
 	} else {
 		notifyFederationSpawnRequest(peer, req, req.FromName)
 	}
-	return true
 }
 
 // endQueuedFederationRequest denies a remote request that waited in the

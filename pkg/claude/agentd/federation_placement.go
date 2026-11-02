@@ -24,8 +24,6 @@ type fedPlacementCandidate struct {
 	LoadPerCore  *float64 `json:"load_per_core,omitempty"`
 	RAMAvailable *uint64  `json:"ram_available_bytes,omitempty"`
 	Attempt      string   `json:"attempt,omitempty"`
-	// Note is the receiver's word on an accepted attempt, e.g. "queued at peer (#2)".
-	Note string `json:"note,omitempty"`
 }
 type fedPlacementExplanation struct {
 	Selector   string                  `json:"selector"`
@@ -256,9 +254,6 @@ func handleFederationPlacement(w http.ResponseWriter, r *http.Request, req fedSp
 			row.Eligible = false
 			row.Reason = "receiver terminally refused: busy"
 			continue
-		}
-		if settled.State == db.FedOutboxAccepted && strings.HasPrefix(settled.LastError, "queued at peer") {
-			row.Note = settled.LastError
 		}
 		explanation.Selected = p.InstanceID
 		via := ""
