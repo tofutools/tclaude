@@ -566,3 +566,22 @@ func TestOpenMRProjectsSnapshot_APresentedMergeRequestMarksTheAgentsProject(t *t
 	assert.Equal(t, "acme/app", projects[0].Project, "an agent known only by a presented merge request still counts")
 	assert.True(t, projects[0].Agents)
 }
+
+// TestRunServeStartsTheOpenMRsPoller pins the daemon wiring: nothing else
+// starts the poller, so a lost call would leave the footer silently empty.
+// It reads serve.go, as the proxy audit tests do, rather than booting a
+// daemon.
+func TestRunServeStartsTheOpenMRsPoller(t *testing.T) {
+	source, err := os.ReadFile("serve.go")
+	require.NoError(t, err)
+	text := string(source)
+	start := strings.Index(text, "\nfunc runServe(")
+	require.GreaterOrEqual(t, start, 0, "runServe has moved")
+	body := text[start+1:]
+	if end := strings.Index(body, "\nfunc "); end >= 0 {
+		body = body[:end]
+	}
+	assert.Contains(t, body, "startAuthoredOpenPRPoller(cronStop)")
+	assert.Contains(t, body, "startAuthoredOpenMRPoller(cronStop)",
+		"the Open MRs poller starts with the daemon, beside the Open PRs one")
+}

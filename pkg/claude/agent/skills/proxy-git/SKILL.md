@@ -273,8 +273,11 @@ commits you have not seen.
 you. If your branch has diverged, you get told so and you resolve it yourself
 (rebase or merge) — the daemon will not merge for you.
 
-**Everything you create on GitHub or GitLab is attributed to the operator's
-account.** A PR or MR you open is one they opened. Write accordingly.
+**Everything you create on GitHub or GitLab is attributed to the token's
+owner, never to you.** That is the operator's own account for a personal
+token. On GitLab, a project or group access token posts as that token's bot
+user instead. Either way, a PR or MR you open is one the operator's
+credential opened. Write accordingly.
 
 ## Reading the result
 
