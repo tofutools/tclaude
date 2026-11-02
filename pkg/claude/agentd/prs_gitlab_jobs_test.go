@@ -115,3 +115,13 @@ func TestGitLabPipelineChecks_ACancelledPipelineIsNotGreen(t *testing.T) {
 		&glPipeline{ID: 99, Status: "canceled"}, time.Now())
 	assert.Equal(t, "failing", info.Summary.State, "GitLab's 'canceled', wholesale, is not a pass")
 }
+
+func TestGitLabPipelineChecks_AFailedPipelineWithNoFailingJobIsFailing(t *testing.T) {
+	// A CI config error fails the pipeline without creating any job.
+	t.Cleanup(SetGitLabTransportForTest(func(_ context.Context, _, _ string, _ glAPIRequest) (glAPIResult, error) {
+		return glAPIResult{Status: http.StatusOK, Body: []byte(`[]`), Header: http.Header{}}, nil
+	}))
+	info := gitlabPipelineChecks(context.Background(), jobsTestBase, "glpat", jobsRef(t),
+		&glPipeline{ID: 99, Status: "failed"}, time.Now())
+	assert.Equal(t, "failing", info.Summary.State)
+}

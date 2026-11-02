@@ -327,7 +327,7 @@ export function summaryLine(summary) {
 // lie to anyone who presses Enter and lands on GitHub instead.
 // GITLAB_MR_RE recognises a GitLab merge request URL, sub-page and all, so
 // the badge can name the right forge and link its pipelines tab.
-const GITLAB_MR_RE = /^(https:\/\/[^/]+\/(?:[^/]+\/)+-\/merge_requests\/[0-9]+)(?:\/.*)?$/;
+const GITLAB_MR_RE = /^(https:\/\/[^/?#]+\/(?:[^/?#]+\/)+-\/merge_requests\/[0-9]+)(?:[/?#].*)?$/;
 
 function badgeTitle(summary, prNumber, url = '') {
   if (GITLAB_MR_RE.test(url || '')) {

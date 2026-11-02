@@ -647,12 +647,14 @@ func TestGLProxy_MRReadyStripsTheMarker(t *testing.T) {
 
 func TestGLProxy_MRCommentsSplitsInlineNotes(t *testing.T) {
 	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	// Newest first, as the proxy asks for; the output reads oldest first.
 	gl.def = glCanned{Status: 200, Body: `[
-		{"id":1,"body":"added 2 commits","system":true,"author":{"username":"agent-bot"},"created_at":"2026-10-01T10:00:00Z","updated_at":"2026-10-01T10:00:00Z"},
-		{"id":2,"body":"Looks good overall","system":false,"author":{"username":"martin"},"created_at":"2026-10-01T11:00:00Z","updated_at":"2026-10-01T11:00:00Z"},
+		{"id":4,"body":"Second thought: rename it","system":false,"author":{"username":"martin"},"created_at":"2026-10-01T11:10:00Z","updated_at":"2026-10-01T11:10:00Z"},
 		{"id":3,"body":"this pointer is never initialised","system":false,"type":"DiffNote","resolvable":true,"resolved":false,
 		 "author":{"username":"martin"},"created_at":"2026-10-01T11:05:00Z","updated_at":"2026-10-01T11:05:00Z",
-		 "position":{"new_path":"src/Audio.cpp","new_line":42}}
+		 "position":{"new_path":"src/Audio.cpp","new_line":42}},
+		{"id":2,"body":"Looks good overall","system":false,"author":{"username":"martin"},"created_at":"2026-10-01T11:00:00Z","updated_at":"2026-10-01T11:00:00Z"},
+		{"id":1,"body":"added 2 commits","system":true,"author":{"username":"agent-bot"},"created_at":"2026-10-01T10:00:00Z","updated_at":"2026-10-01T10:00:00Z"}
 	]`}
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 	res := gitProxyPost(t, f, "/v1/gitlab/mr/comments", map[string]any{"number": 7})
@@ -663,8 +665,10 @@ func TestGLProxy_MRCommentsSplitsInlineNotes(t *testing.T) {
 	assert.Contains(t, stdout, "this pointer is never initialised")
 	assert.Contains(t, stdout, "#note_3")
 	assert.NotContains(t, stdout, "added 2 commits", "system notes are bookkeeping, not feedback")
+	assert.Less(t, strings.Index(stdout, "Looks good overall"), strings.Index(stdout, "Second thought"),
+		"notes read oldest first")
 	call := gl.only(t)
-	assert.Equal(t, "asc", call.Query.Get("sort"))
+	assert.Equal(t, "desc", call.Query.Get("sort"), "newest first, so a capped read keeps the newest notes")
 }
 
 func TestGLProxy_CommentPostsANote(t *testing.T) {

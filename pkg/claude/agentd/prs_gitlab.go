@@ -265,13 +265,22 @@ func gitlabPipelineChecks(ctx context.Context, base, token string, ref gitlabMRR
 		}
 	}
 	summary := summarizePRChecks(checks, now)
-	if !complete {
-		summary.State = "pending"
-		if verdict := glPipelineChecks(&struct {
+	var verdict *prChecksSummary
+	if pipeline != nil {
+		verdict = glPipelineChecks(&struct {
 			Status string `json:"status"`
-		}{Status: pipeline.Status}, ""); verdict != nil {
+		}{Status: pipeline.Status}, "")
+	}
+	switch {
+	case !complete:
+		summary.State = "pending"
+		if verdict != nil {
 			summary.State = verdict.State
 		}
+	case verdict != nil && verdict.State == "failing":
+		// A pipeline can fail with no failing job in it (a CI config error
+		// creates no jobs at all); GitLab's verdict wins over a green list.
+		summary.State = "failing"
 	}
 	if len(checks) > prChecksMaxRuns {
 		checks = checks[:prChecksMaxRuns]
@@ -311,12 +320,23 @@ func gitlabJobCheckRun(job glJob, pipelineURL string) (prCheckRun, bool) {
 		run.Bucket, run.Conclusion = "skipped", status
 	case "":
 		run.Bucket, run.Conclusion = "pending", "pending"
+	case "running":
+		// The dashboard's own word for a running check, which is what
+		// starts its live elapsed-time display.
+		run.Bucket, run.Conclusion = "pending", "in progress"
 	default:
 		// created, pending, running, manual, scheduled, waiting_for_resource,
 		// preparing: all still to come.
 		run.Bucket, run.Conclusion = "pending", strings.ReplaceAll(status, "_", " ")
 	}
 	return run, run.Name != ""
+}
+
+// glMRFromOwnProject reports whether a merge request's source branch lives in
+// the project it targets, rather than in a fork. A listing that omits the ids
+// is given the benefit of the doubt.
+func glMRFromOwnProject(mr glMR) bool {
+	return mr.SourceProjectID == 0 || mr.TargetProjectID == 0 || mr.SourceProjectID == mr.TargetProjectID
 }
 
 // prStateFromGitLab folds GitLab's state and draft flag into the dashboard's
@@ -363,9 +383,11 @@ func gitlabMRForBranch(policy config.GitProxyConfig, repo branchLinkRepo, branch
 			Query: url.Values{
 				"source_branch": []string{branch},
 				"state":         []string{state},
-				"per_page":      []string{"10"},
-				"order_by":      []string{"created_at"},
-				"sort":          []string{"desc"},
+				// Generous, so a few fork merge requests reusing the branch
+				// name cannot push the project's own off the page.
+				"per_page": []string{"100"},
+				"order_by": []string{"created_at"},
+				"sort":     []string{"desc"},
 			},
 		})
 		if err != nil || res.Status < 200 || res.Status > 299 {
@@ -380,9 +402,7 @@ func gitlabMRForBranch(policy config.GitProxyConfig, repo branchLinkRepo, branch
 	// The project's own branch only: a merge request INTO this project from a
 	// fork can carry the same branch name (the GitHub path skips a fork's
 	// head for the same reason).
-	ownBranch := func(mr glMR) bool {
-		return mr.SourceProjectID == 0 || mr.TargetProjectID == 0 || mr.SourceProjectID == mr.TargetProjectID
-	}
+	ownBranch := glMRFromOwnProject
 	// Open first, so an open merge request is never hidden behind newer
 	// merged or closed ones; otherwise the newest in any state.
 	pick := -1
@@ -409,12 +429,13 @@ func gitlabMRForBranch(policy config.GitProxyConfig, repo branchLinkRepo, branch
 	// The listing carries no head pipeline; one more read fetches it, and the
 	// jobs follow. A merge request with no pipeline parses to zero checks.
 	ref := gitlabMRRef{base: repo.Base, host: strings.ToLower(strings.TrimSpace(hostOf(repo.Base))), project: repo.OwnerRepo, number: mr.IID}
-	var checks prChecksInfo
-	if full, ok := gitlabReadMR(ctx, repo.Base, token, ref); ok {
-		checks = gitlabPipelineChecks(ctx, repo.Base, token, ref, full.HeadPipeline, time.Now())
-	} else {
-		checks = gitlabPipelineChecks(ctx, repo.Base, token, ref, nil, time.Now())
+	full, ok := gitlabReadMR(ctx, repo.Base, token, ref)
+	if !ok {
+		// No checks rather than zero checks: the caller keeps the cached CI
+		// summary instead of blanking it on one failed read.
+		return mr.IID, mr.WebURL, prStateFromGitLab(mr.State, mr.Draft), truncateAuthoredPRTitle(mr.Title), nil
 	}
+	checks := gitlabPipelineChecks(ctx, repo.Base, token, ref, full.HeadPipeline, time.Now())
 	return mr.IID, mr.WebURL, prStateFromGitLab(mr.State, mr.Draft), truncateAuthoredPRTitle(mr.Title), &checks
 }
 

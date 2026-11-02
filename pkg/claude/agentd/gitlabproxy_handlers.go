@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -461,8 +462,14 @@ func handleGLProxyMRList(w http.ResponseWriter, r *http.Request) {
 		g.respond(w, r, "mr.list", ProxyResult{}, fmt.Errorf("could not read the merge-request listing: %w", err))
 		return
 	}
+	head := strings.TrimSpace(body.Head)
 	out := make([]glMRListEntry, 0, len(mrs))
 	for _, mr := range mrs {
+		// --head means THIS project's branch: a fork's merge request into
+		// the project can carry the same branch name.
+		if head != "" && !glMRFromOwnProject(mr) {
+			continue
+		}
 		out = append(out, projectGLMRListEntry(mr))
 	}
 	g.respondJSON(w, r, "mr.list", out)
@@ -993,7 +1000,9 @@ func handleGLProxyMRComments(w http.ResponseWriter, r *http.Request) {
 		Query: url.Values{
 			"per_page": []string{"100"},
 			"order_by": []string{"created_at"},
-			"sort":     []string{"asc"},
+			// Newest first, so a read stopped by the page cap keeps the
+			// newest notes; reversed below into reading order.
+			"sort": []string{"desc"},
 		},
 	}, func(page []byte) error {
 		var batch []glNote
@@ -1007,6 +1016,7 @@ func handleGLProxyMRComments(w http.ResponseWriter, r *http.Request) {
 		g.respondOrFail(w, r, "mr.comments", failure, err)
 		return
 	}
+	slices.Reverse(notes)
 
 	var conversation, inline strings.Builder
 	for _, n := range notes {
