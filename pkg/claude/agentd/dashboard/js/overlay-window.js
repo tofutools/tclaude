@@ -402,9 +402,10 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
       return { edges, tree: savedTree, ...dropTargets(savedTree, bounds, id, { here: shownNow, alive: keepsCell, vacated, reach }) };
     }
     const inTree = (other) => leavesOf(savedTree).includes(other);
-    const alone = [...snappedWindows.peek()].filter(([other]) => other !== id && !inTree(other)).map(([other, { zone }]) => [other, zone]);
-    const tree = alone.length ? roomTree(alone) : null;
-    return { edges, tree, ...(tree ? dropTargets(tree, bounds, id, { here: shownNow, vacated, reach }) : { gaps: [], markers: [] }) };
+    const loners = [...snappedWindows.peek()].filter(([other]) => other !== id && !inTree(other));
+    const tree = loners.length ? roomTree(loners.map(([other, { zone }]) => [other, zone])) : null;
+    const drawn = new Map(loners.map(([other, { rect }]) => [other, rect()]));
+    return { edges, tree, ...(tree ? dropTargets(tree, bounds, id, { here: shownNow, vacated, reach, drawn }) : { gaps: [], markers: [] }) };
   }
 
   // Where a drop at pointer lands: { zone, tree?, guide }, or null to float. At

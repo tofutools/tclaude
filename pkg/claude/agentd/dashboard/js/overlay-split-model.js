@@ -484,22 +484,54 @@ export function splitMarkers(rect, area, reach) {
   return SPLIT_SIDES.filter((side) => !onRoomEdge[side]).map((zone) => ({ zone, rect: at[zone] }));
 }
 
-const overlaps = (a, b) => !!a && !!b && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+const holds = (rect, point) => !!rect && point.x >= rect.x && point.x < rect.x + rect.w && point.y >= rect.y && point.y < rect.y + rect.h;
+const centreOf = (rect) => ({ x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 });
+
+// asDrawn is an empty cell as it shows beside windows drawn elsewhere than the
+// tree lays them out: each edge it shares with one of their cells moves to
+// that window's drawn edge, so the cell grows into what a narrower window leaves
+// and gives up what a wider one takes.
+function asDrawn(rect, cells, drawn) {
+  let [left, top, right, bottom] = [rect.x, rect.y, rect.x + rect.w, rect.y + rect.h];
+  const across = (a, b) => a.y < b.y + b.h && b.y < a.y + a.h;
+  const along = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w;
+  for (const [id, shown] of drawn) {
+    const cell = cells[id];
+    if (!cell || !shown) continue;
+    if (cell.x + cell.w === rect.x && across(cell, rect)) left = shown.x + shown.w;
+    if (rect.x + rect.w === cell.x && across(cell, rect)) right = shown.x;
+    if (cell.y + cell.h === rect.y && along(cell, rect)) top = shown.y + shown.h;
+    if (rect.y + rect.h === cell.y && along(cell, rect)) bottom = shown.y;
+  }
+  return { x: left, y: top, w: Math.max(0, right - left), h: Math.max(0, bottom - top) };
+}
 
 // dropTargets is every target a drag of id shows over tree laid out in area,
 // with the windows in here showing: { gaps: [{ gap, rect }], markers: [{ window,
-// zone, rect }] }. A cell held for a window in alive that is away takes no drop,
-// and neither does the cell this drag tore the window out of (vacated): let go
-// there, it floats. It reads nothing but its arguments.
-export function dropTargets(tree, area, id, { here, alive = new Set(), vacated = null, reach = 0 }) {
+// zone, rect }] }. Each is offered only where its drop makes a tree that fits.
+// A cell held for a window in alive that is away takes no drop, and neither does
+// the cell this drag tore the window out of (vacated): let go there, it floats.
+// drawn gives windows drawn elsewhere than tree lays them out, as windows
+// snapped alone are: their markers sit on them, and a box keeps clear of them.
+// It reads nothing but its arguments.
+export function dropTargets(tree, area, id, { here, alive = new Set(), vacated = null, reach = 0, drawn = null }) {
   const live = keepingWindows(tree, here);
   if (!live || !fits(live, area)) return { gaps: [], markers: [] };
   const { rects, gaps } = splitLayout(live, area);
+  const after = new Set([...here, id]);
+  const fitsAfter = (made) => {
+    const next = keepingWindows(normalized(made), after);
+    return !!next && fits(next, area) && !!splitLayout(next, area).rects[id];
+  };
+  const shownAt = (other) => drawn?.get(other) || rects[other];
   return {
     gaps: gaps.filter((cell) => !(cell.held && cell.held !== id && alive.has(cell.held)))
-      .map((gap) => ({ gap, rect: gapTarget(gap.rect) })).filter(({ rect }) => !overlaps(rect, vacated)),
+      .map((gap) => ({ gap, rect: gapTarget(drawn ? asDrawn(gap.rect, rects, drawn) : gap.rect) }))
+      .filter(({ rect }) => !holds(vacated, centreOf(rect)))
+      .filter(({ gap }) => fitsAfter(withinGap(tree, gap, centreOf(gap.rect), id, '', area))),
     markers: leavesOf(live).filter((other) => other !== id)
-      .flatMap((other) => splitMarkers(rects[other], area, reach).map(({ zone, rect }) => ({ window: other, zone, rect }))),
+      .flatMap((other) => splitMarkers(shownAt(other), area, reach).map(({ zone, rect }) => ({ window: other, zone, rect })))
+      .filter(({ window, zone }) => fitsAfter(withWindow(tree, window, zone, id))),
   };
 }
 

@@ -2139,7 +2139,7 @@ body.companion-annotating :is(.overlay-split-line, .overlay-split-cross, .overla
 .overlay-snap-targets { position: fixed; inset: 0; z-index: calc(var(--z-window) + 95); pointer-events: none; }
 .overlay-snap-edge, .overlay-snap-target { position: absolute; box-sizing: border-box; border: 1.5px solid rgba(88, 166, 255, .45); background: rgba(88, 166, 255, .07); }
 .overlay-snap-edge { border-radius: 4px; }
-.overlay-snap-target { border-color: rgba(88, 166, 255, .6); background: rgba(13, 17, 23, .55); border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, .35); }
+.overlay-snap-target { border-color: rgba(88, 166, 255, .6); background: rgba(13, 17, 23, .85); border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, .35); }
 .overlay-snap-target::after { content: ""; position: absolute; inset: 9px; border: 1.5px dashed rgba(88, 166, 255, .8); border-radius: 3px; }
 .overlay-snap-target.split::after { inset: 7px; }
 .overlay-snap-target.split.left::after { right: 50%; }

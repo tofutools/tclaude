@@ -503,3 +503,28 @@ test('edge strips: each lies where snapZone names its zone', async (t) => {
     }
   }
 });
+
+test('targets: none whose drop would not fit, so nothing lights up that does nothing', async (t) => {
+  const { dropTargets } = await model(t);
+  const narrow = { x: 0, y: 40, w: 900, h: 800 };
+  const { markers } = dropTargets(pair('x', 'a', 'b'), narrow, 'c', { here: new Set(['a', 'b']), reach: 48 });
+  assert.deepEqual(markers.map(({ window, zone }) => `${window}:${zone}`), ['a:top', 'b:top'], 'three across do not fit in 900px; one above another does');
+});
+
+test('targets: a tear-off that merges into an empty neighbour leaves that space its box', async (t) => {
+  const { dropTargets, withoutWindow } = await model(t);
+  const quadWithGap = { x: 0.5, y: 0.5, cells: [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { gap: true }] };
+  const torn = withoutWindow(quadWithGap, 'b');
+  const { gaps } = dropTargets(torn, AREA, 'b', { here: new Set(['a', 'c']), vacated: { x: 800, y: 40, w: 800, h: 400 } });
+  assert.equal(gaps.length, 1, 'the merged half keeps a box, though it straddles the quarter just left');
+});
+
+test('targets: windows drawn elsewhere than the tree lays them out get their markers where they are, and the box keeps clear of them', async (t) => {
+  const { dropTargets } = await model(t);
+  const tree = { axis: 'x', at: 0.5, a: { id: 'a' }, b: { gap: true } };
+  const drawn = new Map([['a', { x: 0, y: 40, w: 672, h: 800 }]]);
+  const { gaps, markers } = dropTargets(tree, AREA, 'c', { here: new Set(['a']), reach: 48, drawn });
+  const right = markers.find(({ zone }) => zone === 'right').rect;
+  assert.ok(right.x + right.w <= 672, `the right marker (${right.x}) lies on a as drawn`);
+  assert.equal(gaps[0].rect.x + gaps[0].rect.w / 2, Math.round((672 + 1600) / 2), 'the box is centred in the space a leaves');
+});
