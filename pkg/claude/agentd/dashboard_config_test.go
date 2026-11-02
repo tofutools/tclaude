@@ -552,3 +552,18 @@ func TestDashboardConfig_ExternalStewardToolList(t *testing.T) {
 	setCollab(false)
 	assert.NotContains(t, load(), "external_steward")
 }
+
+func TestDashboardConfig_Keybindings(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	w, resp := postConfig(t, "/api/config", wrapBody(`{"dashboard":{"keybindings":{"expose":"Ctrl+Alt+Key<E>"}}}`, ""))
+	require.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
+	assertErrorContains(t, resp.Errors, "dashboard.keybindings")
+
+	w, _ = postConfig(t, "/api/config", wrapBody(`{"dashboard":{"keybindings":{"expose":"Ctrl+Alt+KeyE"}}}`, ""))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"expose": "Ctrl+Alt+KeyE"}, cfg.DashboardKeybindings())
+}

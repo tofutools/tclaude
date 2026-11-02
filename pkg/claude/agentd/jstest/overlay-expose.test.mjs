@@ -157,3 +157,92 @@ test('the view going away with its host does not leave it open to come back unas
   const again = await s.harness.mount(s.harness.html`<${s.expose.OverlayExpose} win=${s.harness.window} />`);
   assert.equal(again.container.querySelector('.overlay-expose'), null, 'with Collab off it does not show');
 });
+
+test('model: the spread lays windows out without overlap, scaled down to fit, never up', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { spreadLayout } = await harness.importDashboardModule('js/overlay-expose.js');
+  const area = { x: 0, y: 100, width: 1000, height: 600 };
+  const spots = spreadLayout([{ w: 800, h: 600 }, { w: 800, h: 600 }, { w: 400, h: 300 }], area, 20);
+  const rects = spots.map(({ x, y, scale }, index) => {
+    const [w, h] = [[800, 600], [800, 600], [400, 300]][index].map((side) => side * scale);
+    return { left: x - w / 2, right: x + w / 2, top: y - h / 2, bottom: y + h / 2 };
+  });
+  for (const rect of rects) {
+    assert.ok(rect.left >= area.x - 0.01 && rect.right <= area.x + area.width + 0.01 && rect.top >= area.y - 0.01 && rect.bottom <= area.y + area.height + 0.01, 'inside the stage');
+  }
+  for (let i = 0; i < rects.length; i++) {
+    for (let j = i + 1; j < rects.length; j++) {
+      const [a, b] = [rects[i], rects[j]];
+      assert.ok(a.right <= b.left + 0.01 || b.right <= a.left + 0.01 || a.bottom <= b.top + 0.01 || b.bottom <= a.top + 0.01, `${i} and ${j} don't overlap`);
+    }
+  }
+  assert.deepEqual(spreadLayout([{ w: 200, h: 100 }], area), [{ x: 500, y: 400, scale: 1 }], 'a small window is not blown up');
+});
+
+// Windows on the page, as overlay-window.js draws them, with the layout boxes a
+// browser would give them, and a stage the spread has 1000 × 600 of.
+function liveWindows(s, boxes) {
+  const doc = s.harness.window.document;
+  const nodes = Object.entries(boxes).map(([id, [x, y, w, h]]) => {
+    const node = doc.body.appendChild(doc.createElement('section'));
+    node.dataset.overlayWindow = id;
+    for (const [key, value] of Object.entries({ offsetLeft: x, offsetTop: y, offsetWidth: w, offsetHeight: h })) Object.defineProperty(node, key, { value });
+    return node;
+  });
+  const proto = s.harness.window.Element.prototype;
+  const original = proto.getBoundingClientRect;
+  proto.getBoundingClientRect = function rect() {
+    return this.classList.contains('overlay-expose-stage') ? { left: 0, top: 80, right: 1000, bottom: 680, width: 1000, height: 600, x: 0, y: 80 } : original.call(this);
+  };
+  return () => { proto.getBoundingClientRect = original; for (const node of nodes) node.remove(); };
+}
+
+const sheet = (s) => s.harness.window.document.querySelector('style[data-overlay-expose]')?.textContent || '';
+
+test('the open windows themselves spread out, live, and the minimized ones are cards beneath', async (t) => {
+  const s = await setup(t);
+  await threeWindows(s);
+  const ids = Object.fromEntries(s.instances.overlayWindows.peek().map((window) => [window.active, window.id]));
+  t.after(liveWindows(s, { [ids.b2]: [40, 60, 700, 500], [ids.c]: [500, 200, 600, 400] }));
+  const before = JSON.stringify(s.instances.overlayWindows.value);
+  await s.key({ key: ',', ctrlKey: true });
+  const targets = () => [...s.mounted.container.querySelectorAll('.overlay-expose-live')].map((target) => target.querySelector('.overlay-expose-live-label').textContent.trim());
+  assert.deepEqual(targets(), ['✎ Board two 2', '💬 Charlie'], 'a target over each spread window, in reading order, with its tab count');
+  assert.deepEqual(s.cards(), ['Alpha'], 'the minimized window is a card');
+  assert.ok(s.mounted.container.querySelector('.overlay-expose-grid.row'), 'in a row along the bottom');
+  assert.match(sheet(s), new RegExp(`\\[data-overlay-window="${ids.b2}"\\] \\{[^}]*transform: translate\\(`), 'each window moves by a transform');
+  assert.match(sheet(s), /:not\(\[data-overlay-window="b"\], \[data-overlay-window="c"\]\) \{ visibility: hidden/, 'one that has no place in the spread stays out of sight');
+  assert.match(sheet(s), /pointer-events: none/, 'and takes no input while spread');
+  assert.equal(JSON.stringify(s.instances.overlayWindows.value), before, 'nothing about the windows changes');
+
+  const filter = s.mounted.container.querySelector('.overlay-expose-filter');
+  await s.harness.input(filter, 'charl');
+  assert.match(sheet(s), new RegExp(`\\[data-overlay-window="${ids.b2}"\\][^}]*opacity: \\.25`), 'a window that does not match dims');
+  assert.deepEqual(targets(), ['💬 Charlie'], 'and cannot be picked');
+  await s.harness.input(filter, '');
+
+  await s.key({ key: 'Escape' }, filter);
+  assert.equal(s.view(), null);
+  assert.doesNotMatch(sheet(s), /transform: translate/, 'leaving takes the transforms away, so the windows glide back');
+  assert.equal(JSON.stringify(s.instances.overlayWindows.value), before, 'Escape changes nothing');
+
+  await s.key({ key: ',', ctrlKey: true });
+  await s.harness.act(() => s.mounted.container.querySelectorAll('.overlay-expose-live')[1].click());
+  assert.equal(s.view(), null);
+  assert.ok(s.instances.overlayWindows.value.find((window) => window.active === 'c').focusAsked > 0, 'a click on a spread window picks it');
+});
+
+test('with reduced motion the windows jump to the same spread, and back', async (t) => {
+  const s = await setup(t);
+  await threeWindows(s);
+  const ids = Object.fromEntries(s.instances.overlayWindows.peek().map((window) => [window.active, window.id]));
+  t.after(liveWindows(s, { [ids.b2]: [40, 60, 700, 500], [ids.c]: [500, 200, 600, 400] }));
+  const previous = s.harness.window.matchMedia;
+  s.harness.window.matchMedia = (query) => ({ matches: query.includes('reduce'), addEventListener() {}, removeEventListener() {} });
+  t.after(() => { s.harness.window.matchMedia = previous; });
+  await s.key({ key: ',', ctrlKey: true });
+  assert.match(sheet(s), /transform: translate/);
+  assert.doesNotMatch(sheet(s), /transition/);
+  await s.key({ key: 'Escape' }, s.mounted.container.querySelector('.overlay-expose-filter'));
+  assert.equal(s.harness.window.document.querySelector('style[data-overlay-expose]'), null, 'gone at once');
+});

@@ -56,8 +56,8 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 
 	// The Ctrl/Cmd-K trigger: a modifier + the "k" key, claimed with
 	// preventDefault. Pressing it again toggles closed.
-	must(`(event.key || '').toLowerCase() === 'k'`, "the trigger is the K key")
-	must("event.ctrlKey || event.metaKey", "the trigger requires Ctrl or Cmd")
+	must("S('palette', 'global', 'Mod+KeyK'", "the registry pins the trigger to Ctrl/Cmd and the K key position")
+	must("matchesShortcut(event, 'palette')", "the trigger matches through the shortcut registry")
 	must("isCommandPaletteShortcutTarget(event.target)",
 		"the global trigger yields to inputs and embedded editors")
 	must("requestPalette = requestCommandPalette",

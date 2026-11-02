@@ -1,5 +1,6 @@
 import { pickDirectory, shortId } from './helpers.js';
 import { applySlopThemeIfRequested, bindSlopHotkey, bindWizardHotkey, wizWord } from './slop.js';
+import { loadKeyboardLayout } from './keybindings.js';
 import {
   bindWizardCursorTrail, bindWizardCastFx, bindWizardStatusWatch,
   bindWizardMarquee, bindWizardSpectacle, bindWizardEnterBanner, wizardSummon,
@@ -76,7 +77,7 @@ import {
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
 import { startSnapshotPoll, waitForInitialSnapshot } from './snapshot-poll.js';
-import { onFleetOverviewChange, fleetOverviewShown } from './snapshot-store.js';
+import { bindShortcutOverrides, onFleetOverviewChange, fleetOverviewShown } from './snapshot-store.js';
 import { startBrowserNotifyPoll } from './browser-notify.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
@@ -383,6 +384,9 @@ async function settleInitialLayout() {
   // starts an interval) once. They no-op while slop is off and the
   // body-class check inside each handler is what actually gates the
   // effect, so toggling slop mid-session needs no re-binding.
+  // Shortcut labels show what each key position types on this layout.
+  void loadKeyboardLayout();
+  bindShortcutOverrides();
   bindSlopHotkey();
   bindSlopClickFx();
   bindSlopMachineClicks();

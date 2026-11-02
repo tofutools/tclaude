@@ -92,18 +92,33 @@ func TestFederation_TrustDowngradeCatalogOrdering(t *testing.T) {
 		release()
 		restoreAfterBackgroundDrain(restore)
 	})
+	// Only catalogs built after the upgrade count. One built under the old
+	// restricted trust can still be on its way to the peer when the held build
+	// starts, and is empty just like the downgrade's, so it is told apart by
+	// when it was built.
+	upgraded := time.Now().UTC()
+	sinceUpgrade := func() []proto.CatalogPayload {
+		var out []proto.CatalogPayload
+		for _, env := range p.envelopes(proto.KindCatalog) {
+			var cat proto.CatalogPayload
+			require.NoError(t, env.DecodePayload(&cat))
+			if !cat.NodeAt.Before(upgraded) {
+				out = append(out, cat)
+			}
+		}
+		return out
+	}
 	setFedTrustLevel(t, fh, "unrestricted")
 	select {
 	case <-building:
 	case <-time.After(5 * time.Second):
 		t.Fatal("unrestricted catalog was not built")
 	}
-	before := len(p.envelopes(proto.KindCatalog))
 	setFedTrustLevel(t, fh, "restricted")
 	// With the first build held, a replacement must wait. This bounded window
 	// catches the old path's empty catalog overtaking the unrestricted build.
 	require.Never(t, func() bool {
-		return len(p.envelopes(proto.KindCatalog)) > before
+		return len(sinceUpgrade()) > 0
 	}, 200*time.Millisecond, 5*time.Millisecond, "downgrade catalog overtook the in-flight build")
 	release()
 
@@ -115,12 +130,10 @@ func TestFederation_TrustDowngradeCatalogOrdering(t *testing.T) {
 		t.Fatal("catalog sends did not finish after releasing the build")
 	}
 	fedEventually(t, "ordered trust catalogs received", func() bool {
-		return len(p.envelopes(proto.KindCatalog)) >= before+2
+		return len(sinceUpgrade()) >= 2
 	})
-	cats := p.envelopes(proto.KindCatalog)[before:]
-	var first, last proto.CatalogPayload
-	require.NoError(t, cats[0].DecodePayload(&first))
-	require.NoError(t, cats[len(cats)-1].DecodePayload(&last))
+	cats := sinceUpgrade()
+	first, last := cats[0], cats[len(cats)-1]
 	require.Len(t, first.Groups, 1)
 	require.Empty(t, last.Groups, "the final catalog must reflect restricted trust")
 }

@@ -38,6 +38,9 @@ type dashboardTerminalAgentStatus struct {
 	// whether its mic can talk to the agent, and how.
 	CollabEnabled bool               `json:"collab_enabled"`
 	Voice         config.VoiceConfig `json:"voice"`
+	// Keybindings carries dashboard.keybindings, so a detached window's
+	// shortcuts follow the operator's rebindings too.
+	Keybindings map[string]string `json:"keybindings,omitempty"`
 }
 
 // terminalStatusForSessions is the status-only counterpart of
@@ -153,5 +156,6 @@ func writeDashboardTerminalAgentStatus(w http.ResponseWriter, selector string) {
 
 		CollabEnabled: cfg.CollabEnabled(),
 		Voice:         cfg.Voice(),
+		Keybindings:   cfg.DashboardKeybindings(),
 	})
 }

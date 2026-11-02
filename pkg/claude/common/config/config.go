@@ -546,6 +546,11 @@ type DashboardConfig struct {
 	// ends, agent windows and every detach keep the tab. See
 	// TerminalTabCloseConfig and (*Config).CloseTerminalTab.
 	CloseTerminalTabs *TerminalTabCloseConfig `json:"close_terminal_tabs,omitempty"`
+	// Keybindings rebinds dashboard keyboard shortcuts: shortcut id (from the
+	// dashboard's registry, js/keybindings.js) to a chord such as
+	// "Ctrl+Alt+KeyK". Absent ids keep their default. The dashboard owns the
+	// meaning; the daemon only checks the shape. See (*Config).DashboardKeybindings.
+	Keybindings map[string]string `json:"keybindings,omitempty"`
 	// ActivityBots selects the style of the per-group + global "activity
 	// bot" indicator — the deduped row of robot icons that rides in each
 	// group <summary> header (visible even when the group is folded) and in
@@ -2010,6 +2015,39 @@ func (c *Config) ShowGroupDescription() bool {
 // dashboard.show_final_pr_checks. Default false. Nil-safe on the receiver.
 func (c *Config) ShowFinalPRChecks() bool {
 	return c != nil && c.Dashboard != nil && c.Dashboard.ShowFinalPRChecks
+}
+
+// keybindingIDPattern and keybindingChordPattern bound dashboard.keybindings
+// to the registry's id shape and to modifier+KeyboardEvent.code chords.
+var (
+	keybindingIDPattern    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
+	keybindingChordPattern = regexp.MustCompile(`^((Ctrl|Meta|Alt|Shift|Mod)\+){0,5}[A-Za-z0-9-]{1,32}$`)
+)
+
+// maxKeybindings caps dashboard.keybindings well above the registry's size.
+const maxKeybindings = 256
+
+func validKeybinding(id, chord string) bool {
+	return keybindingIDPattern.MatchString(id) && keybindingChordPattern.MatchString(chord)
+}
+
+// DashboardKeybindings returns the operator's shortcut overrides from
+// dashboard.keybindings, dropping any entry whose id or chord is malformed.
+// Nil when there are none. Nil-safe on the receiver.
+func (c *Config) DashboardKeybindings() map[string]string {
+	if c == nil || c.Dashboard == nil || len(c.Dashboard.Keybindings) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(c.Dashboard.Keybindings))
+	for id, chord := range c.Dashboard.Keybindings {
+		if validKeybinding(id, chord) {
+			out[id] = chord
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // StayOnTerminalsAfterLastClose reports whether the dashboard should stay on
@@ -4260,6 +4298,16 @@ func Validate(c *Config) []string {
 		errs = append(errs, "status_snapshot.freshness_ms must be 0 (default) or 1..60000")
 	}
 	errs = append(errs, c.Updates.Validate()...)
+	if c.Dashboard != nil {
+		if len(c.Dashboard.Keybindings) > maxKeybindings {
+			errs = append(errs, fmt.Sprintf("dashboard.keybindings has more than %d entries", maxKeybindings))
+		}
+		for id, chord := range c.Dashboard.Keybindings {
+			if !validKeybinding(id, chord) {
+				errs = append(errs, fmt.Sprintf("dashboard.keybindings: %q → %q is not a shortcut id and a chord like Ctrl+Alt+KeyK", id, chord))
+			}
+		}
+	}
 	if f := c.Federation; f != nil {
 		if f.Teleport != nil {
 			if err := f.Teleport.Backup.Validate(); err != nil {

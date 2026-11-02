@@ -55,9 +55,11 @@ import { agentRunBounds } from './process-agent-stepper.js';
 import { useDismissablePopover } from './hover-popover.js';
 import { PaneDictation } from './terminal-dictation.js';
 import { ShellHere, paneShellAgent } from './terminal-here.js';
+import { matchesShortcut, shortcutText, withShortcut } from './keybindings.js';
 
 const html = htm.bind(h);
-const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
+// Read at render time, so the label follows the keyboard layout once it loads.
+const interactionHint = () => `Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: ${shortcutText('terminal-copy')}`;
 const TERMINAL_TAB_DRAG_MIME = 'application/x-tclaude-terminal-tab';
 const TERMINAL_GROUP_DRAG_MIME = 'application/x-tclaude-terminal-group';
 // A pointer click on a group pill waits this long before collapsing so a
@@ -66,9 +68,8 @@ const TERMINAL_GROUP_DRAG_MIME = 'application/x-tclaude-terminal-group';
 
 export function terminalTabReorderOffset(event) {
   if (event?.type !== 'keydown' || event.target?.closest?.('button')) return null;
-  if (!event.shiftKey || !event.altKey) return null;
-  if (event.key === 'ArrowLeft') return -1;
-  if (event.key === 'ArrowRight') return 1;
+  if (matchesShortcut(event, 'terminal-tab-left')) return -1;
+  if (matchesShortcut(event, 'terminal-tab-right')) return 1;
   return null;
 }
 
@@ -243,8 +244,8 @@ function OpaqueTerminalHost({
 
 function CopyButton({ className, id, hasSelection, actions, runtimeID }) {
   const label = hasSelection
-    ? 'Copy selected terminal text (Ctrl/Cmd+Shift+C)'
-    : `Copy terminal text. ${INTERACTION_HINT}`;
+    ? withShortcut('Copy selected terminal text', 'terminal-copy')
+    : `Copy terminal text. ${interactionHint()}`;
   return html`
     <button
       type="button"
@@ -388,14 +389,14 @@ function TerminalPane({
         <${RemoteBadge} seed=${pane.seed} remote=${remote} node=${scope?.node} />
         ${!pane.seed.remote && pane.seed.agent ? html`<${ViewersBadge} agentId=${pane.seed.agent} className="term-viewers-badge" />` : null}
         <span class="mux-pane-status" role="status" aria-live="polite" aria-atomic="true">${status}</span>
-        <span class="terminal-interaction-hint">${INTERACTION_HINT}</span>
+        <span class="terminal-interaction-hint">${interactionHint()}</span>
         ${reconnect ? html`<button type="button" class="mux-btn" onClick=${reconnectPane}>Reconnect</button>` : null}
         ${filesOK ? html`<button type="button" class="mux-btn" data-term-files aria-pressed=${files ? 'true' : 'false'} title="Browse the agent's project files on the peer: preview or download" onClick=${() => setFiles(!files)}>Files</button>` : null}
         <${CopyButton} className="mux-btn" hasSelection=${hasSelection} actions=${actions} runtimeID=${pane.id} />
         ${liveSteward && !stewardDown ? html`<${StewardShutdown} agent=${{ agentId: pane.seed.agent, name: pane.label || 'the Steward' }}
           fetchImpl=${fetchFromPage} onDown=${() => setStewardDown(true)} />` : null}
         ${composeMessage ? html`
-          <button type="button" class="mux-btn" title="Send a queued message to this agent (Ctrl/Cmd+M)" onClick=${composeMessage}>✉ Message</button>
+          <button type="button" class="mux-btn" title=${withShortcut('Send a queued message to this agent', 'compose')} onClick=${composeMessage}>✉ Message</button>
         ` : null}
         <label
           class="mux-palette-toggle"
@@ -989,10 +990,11 @@ function GroupStack({
     }
     // Alt+Shift+Left/Right moves the whole stack among its neighbours — the
     // keyboard mirror of dragging the pill.
-    if (event.altKey && event.shiftKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+    const step = matchesShortcut(event, 'terminal-tab-right') ? 1 : matchesShortcut(event, 'terminal-tab-left') ? -1 : 0;
+    if (step) {
       event.preventDefault();
       event.stopPropagation();
-      onKeyboardMove(group.id, event.key === 'ArrowRight' ? 1 : -1);
+      onKeyboardMove(group.id, step);
       return;
     }
     openMenuAt(event);

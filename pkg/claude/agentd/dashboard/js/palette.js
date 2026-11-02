@@ -591,6 +591,7 @@ export function buildCommands(snapshot) {
     hint: wiz('toggle the dashboard theme', 'trade the Tower for the slot-machine halls'),
     keywords: 'toggle switch theme slop regular vegas casino mode appearance'
       + ' descend leave depart halls machine',
+    shortcut: 'slop',
     run: () => toggleSlop(),
   });
   const wizardOn = isWizardActive();
@@ -603,6 +604,7 @@ export function buildCommands(snapshot) {
     hint: wiz('toggle the dashboard theme', 'doff the robes and return to the plain dashboard'),
     keywords: 'toggle switch theme wizard magic arcane dnd dungeon fantasy mode appearance'
       + ' robes tower doff leave depart spellbook',
+    shortcut: 'wizard',
     run: () => toggleWizard(),
   });
 

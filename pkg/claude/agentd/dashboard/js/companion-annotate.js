@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { COMPANION_CHROME, TARGET_SELECTOR, textOf } from './companion-guide.js';
 import { terminalRow } from './dashboard-capture.js';
+import { withShortcut } from './keybindings.js';
 
 const html = htm.bind(h);
 
@@ -371,7 +372,7 @@ export function AnnotateOverlay({ agentName, onSend, onCancel, win = globalThis.
       <span class="annotate-title">✎ Mark up this view for <b>${agentName}</b>: circle, underline, point with an arrow or write</span>
       ${ANNOTATE_COLORS.map((c) => html`<button key=${c} type="button" class=${`annotate-swatch${color === c ? ' on' : ''}`}
         style=${`background:${c}`} aria-label=${`Pen ${c}`} aria-pressed=${color === c ? 'true' : 'false'} onClick=${() => setColor(c)}></button>`)}
-      <button type="button" class="annotate-btn" title="Undo (Ctrl+Z)" disabled=${!strokes.length} onClick=${() => setStrokes((list) => list.slice(0, -1))}>↶</button>
+      <button type="button" class="annotate-btn" title=${withShortcut('Undo', 'mini-undo')} disabled=${!strokes.length} onClick=${() => setStrokes((list) => list.slice(0, -1))}>↶</button>
       <textarea class="annotate-note" ref=${noteRef} rows="1" maxLength=${ANNOTATE_NOTE_MAX} placeholder="Add a note (optional)" aria-label="Note" value=${note}
         onInput=${(event) => setNote(event.currentTarget.value)}
         onKeyDown=${(event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) send(event); }}></textarea>

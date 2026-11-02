@@ -27,12 +27,11 @@ func TestDashboardHTML_SlopHotkey(t *testing.T) {
 	// The shortcut's identity: physical S key (layout-independent),
 	// Shift + Alt, and either Ctrl or Cmd. Pin each clause so a refactor
 	// can't quietly drop a modifier and widen the accident surface.
-	must("e.code !== 'KeyS'", "matches the physical S key, not the layout-dependent e.key")
-	must("!e.shiftKey || !e.altKey", "requires both Shift and Alt")
-	must("!e.ctrlKey && !e.metaKey", "requires Ctrl (Win/Linux) or Cmd (macOS)")
+	must("S('slop', 'global', 'Mod+Alt+Shift+KeyS'", "the registry pins the physical S key with Shift, Alt and Ctrl/Cmd")
+	must("matchesShortcut(e, 'slop')", "the hotkey matches through the shortcut registry")
 
 	// Holding the keys must not strobe the toggle, and the shortcut must
 	// actually flip slop mode.
-	must("if (e.repeat) return;", "auto-repeat is ignored so a held key doesn't strobe the toggle")
+	must("if (e.repeat || !matchesShortcut(e, 'slop')) return;", "auto-repeat is ignored so a held key doesn't strobe the toggle")
 	must("toggleSlop();", "the hotkey flips slop mode")
 }

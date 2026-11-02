@@ -27,6 +27,7 @@ import { PROCESS_WINDOW_KIND } from './process-editor-place.js';
 import { dockEntriesOf } from './overlay-tab-model.js';
 import { tabMoves } from './overlay-tab-moves.js';
 import { overlayBulkActions } from './overlay-window-bulk.js';
+import { withShortcut } from './keybindings.js';
 
 const html = htm.bind(h);
 
@@ -227,8 +228,8 @@ export function OverlayDockPopup({ snapshot, win }) {
   if (!popup || empty) return null;
   const close = () => { dockPopup.value = null; };
   return html`<div ref=${node} class="ui-menu overlay-dock-actions" role="menu" style=${`left:${left ?? popup.at.left}px;bottom:${popup.at.bottom}px`}>
-    ${shownActions.map(({ key, icon, label, hint, run }) => html`<button key=${key} type="button" role="menuitem" class=${`ui-menu-item overlay-dock-action overlay-dock-action-${key}`}
-      title=${hint} onClick=${() => { close(); run(); }}>${icon} ${label}</button>`)}
+    ${shownActions.map(({ key, icon, label, hint, shortcut, run }) => html`<button key=${key} type="button" role="menuitem" class=${`ui-menu-item overlay-dock-action overlay-dock-action-${key}`}
+      title=${shortcut ? withShortcut(hint, shortcut) : hint} onClick=${() => { close(); run(); }}>${icon} ${label}</button>`)}
     ${shownActions.length > 0 && listed.length > 0 && html`<hr class="ui-menu-sep" />`}
     ${listed.map(({ key, tab, tabs }) => html`<button key=${key} type="button" role="menuitem" class=${`ui-menu-item overlay-dock-action overlay-dock-entry${tabs.some(needs) ? ' needs' : ''}`}
       title=${`Bring back ${tab.label}`} ...${peeksOf(tab)} onClick=${() => { close(); bringBack(tab); }}>

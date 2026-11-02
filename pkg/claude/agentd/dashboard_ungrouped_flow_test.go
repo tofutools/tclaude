@@ -37,6 +37,7 @@ type dashSnapshot struct {
 	GroupsRouteMapEnabled     bool               `json:"groups_route_map_enabled"`
 	GroupAttachmentsMode      string             `json:"group_attachments_mode"`
 	TerminalPaletteShortcut   bool               `json:"terminal_command_palette_shortcut_enabled"`
+	Keybindings               map[string]string  `json:"keybindings"`
 	RecordedSandboxDetails    bool               `json:"recorded_sandbox_details_enabled"`
 	RetiredTotal              int                `json:"retired_total"`
 	RemoteAccess              dashRemoteAccess   `json:"remote_access"`

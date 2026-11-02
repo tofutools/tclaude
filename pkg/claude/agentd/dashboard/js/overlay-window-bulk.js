@@ -6,11 +6,11 @@
 
 import { batch, computed } from '@preact/signals';
 import { minimizeOverlayWindow, overlayWindows } from './overlay-instances.js';
-import { OVERLAY_EXPOSE_LABEL, OVERLAY_EXPOSE_SHORTCUT, overlayExposeAvailable, showAllOverlayWindows } from './overlay-expose.js';
+import { OVERLAY_EXPOSE_LABEL, overlayExposeAvailable, showAllOverlayWindows } from './overlay-expose.js';
 import { tiledOverlayWindowCount, untileOverlayWindows } from './overlay-window.js';
 
 export const OVERLAY_BULK_ACTIONS = {
-  expose: { icon: '⧉', label: OVERLAY_EXPOSE_LABEL, hint: `Spread out every overlay window, minimized ones too, to pick one (${OVERLAY_EXPOSE_SHORTCUT})` },
+  expose: { icon: '⧉', label: OVERLAY_EXPOSE_LABEL, hint: 'Spread out every overlay window, minimized ones too, to pick one', shortcut: 'expose' },
   untile: { icon: '⊟', label: 'Untile all windows', hint: 'Float every tiled window where it is, and end the split' },
   minimize: { icon: '▁', label: 'Minimize all windows', hint: 'Send every overlay window to the dock; tiled ones keep their cells' },
   restore: { icon: '▣', label: 'Restore all windows', hint: 'Bring every minimized overlay window back' },
@@ -47,12 +47,13 @@ export const overlayBulkActions = computed(() => {
 
 // buildOverlayBulkCommands is the palette's view of the same actions.
 export function buildOverlayBulkCommands() {
-  return overlayBulkActions.peek().map(({ key, icon, label, hint, run }) => ({
+  return overlayBulkActions.peek().map(({ key, icon, label, hint, shortcut, run }) => ({
     id: `overlay.${key}-all`,
     scope: 'overlay-windows',
     icon,
     label,
     hint,
+    shortcut,
     keywords: `overlay windows window ${key} all tile tiling split dock${key === 'expose' ? ' expose exposé overview spread switch' : ''}`,
     run,
   }));

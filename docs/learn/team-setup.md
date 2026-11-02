@@ -63,7 +63,7 @@ Further down, the editor's spawn defaults are worth a look:
 - **Group owner**: whether the agent owns its group. The next tutorial uses
   it.
 
-To change a profile later, press **Ctrl/Cmd+K** and choose
+To change a profile later, press **Ctrl K (⌘ K on a Mac)** and choose
 **Manage spawn profiles…**.
 
 ## 3. Start an agent from the profile
@@ -76,7 +76,7 @@ A few shortcuts make this faster:
 
 - **Spawn profile** in **⚙ settings…** makes a profile the group's default,
   so the spawn dialog starts from it.
-- **Ctrl/Cmd+K** opens the command palette. Type `spawn worker` to open the
+- **Ctrl K (⌘ K on a Mac)** opens the command palette. Type `spawn worker` to open the
   spawn dialog with the profile already picked.
 
 !!! info "Go deeper"
