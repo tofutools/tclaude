@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -494,8 +495,17 @@ func derivePRNumber(raw string) int {
 	if len(parts) < 4 || (parts[len(parts)-2] != "pull" && parts[len(parts)-2] != "merge_requests") {
 		return 0
 	}
-	var n int
-	_, _ = fmt.Sscanf(parts[len(parts)-1], "%d", &n)
+	// The whole segment must be the number: Sscanf would read "7suffix" as 7.
+	last := parts[len(parts)-1]
+	for _, r := range last {
+		if r < '0' || r > '9' {
+			return 0
+		}
+	}
+	n, err := strconv.Atoi(last)
+	if err != nil || n <= 0 {
+		return 0
+	}
 	return n
 }
 
