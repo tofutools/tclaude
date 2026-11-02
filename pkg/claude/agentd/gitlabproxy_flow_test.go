@@ -674,12 +674,15 @@ func TestGLProxy_MRReadyStripsTheMarker(t *testing.T) {
 
 func TestGLProxy_MRCommentsSplitsInlineNotes(t *testing.T) {
 	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	// GitLab answers newest first, as asked: the page cap must drop the
+	// oldest notes, not the latest feedback.
 	gl.def = glCanned{Status: 200, Body: `[
-		{"id":1,"body":"added 2 commits","system":true,"author":{"username":"agent-bot"},"created_at":"2026-10-01T10:00:00Z","updated_at":"2026-10-01T10:00:00Z"},
-		{"id":2,"body":"Looks good overall","system":false,"author":{"username":"martin"},"created_at":"2026-10-01T11:00:00Z","updated_at":"2026-10-01T11:00:00Z"},
+		{"id":4,"body":"One more thing","system":false,"author":{"username":"ann"},"created_at":"2026-10-01T12:00:00Z","updated_at":"2026-10-01T12:00:00Z"},
 		{"id":3,"body":"this pointer is never initialised","system":false,"type":"DiffNote","resolvable":true,"resolved":false,
 		 "author":{"username":"martin"},"created_at":"2026-10-01T11:05:00Z","updated_at":"2026-10-01T11:05:00Z",
-		 "position":{"new_path":"src/Audio.cpp","new_line":42}}
+		 "position":{"new_path":"src/Audio.cpp","new_line":42}},
+		{"id":2,"body":"Looks good overall","system":false,"author":{"username":"martin"},"created_at":"2026-10-01T11:00:00Z","updated_at":"2026-10-01T11:00:00Z"},
+		{"id":1,"body":"added 2 commits","system":true,"author":{"username":"agent-bot"},"created_at":"2026-10-01T10:00:00Z","updated_at":"2026-10-01T10:00:00Z"}
 	]`}
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
 	res := gitProxyPost(t, f, "/v1/gitlab/mr/comments", map[string]any{"number": 7})
@@ -690,8 +693,10 @@ func TestGLProxy_MRCommentsSplitsInlineNotes(t *testing.T) {
 	assert.Contains(t, stdout, "this pointer is never initialised")
 	assert.Contains(t, stdout, "#note_3")
 	assert.NotContains(t, stdout, "added 2 commits", "system notes are bookkeeping, not feedback")
+	assert.Less(t, strings.Index(stdout, "Looks good overall"), strings.Index(stdout, "One more thing"),
+		"read newest first, printed oldest first")
 	call := gl.only(t)
-	assert.Equal(t, "asc", call.Query.Get("sort"))
+	assert.Equal(t, "desc", call.Query.Get("sort"))
 }
 
 func TestGLProxy_CommentPostsANote(t *testing.T) {
@@ -756,6 +761,24 @@ func TestGLProxy_JobLogFailedSaysWhenATraceCouldNotBeRead(t *testing.T) {
 	assert.Contains(t, stdout, "e2e\ttest\t(the trace for this failed job could not be read)")
 	assert.Equal(t, 1, exit, "a missing trace is not a clean answer")
 	assert.Contains(t, stderr, "e2e (504)")
+}
+
+// TestGLProxy_JobLogFailedSaysWhenATraceWasTrimmed: a trace kept only by its
+// tail is a truncated answer, even when the assembled output then fits.
+func TestGLProxy_JobLogFailedSaysWhenATraceWasTrimmed(t *testing.T) {
+	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	gl.def = glCanned{Status: 200, Body: `[{"id":502,"name":"test","stage":"test","status":"failed"}]`}
+	gl.bodies["projects/"+glTestProjectID+"/jobs/502/trace"] = []byte(strings.Repeat("x", 300*1024) + "\nFAIL: the end\n")
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
+	res := gitProxyPost(t, f, "/v1/gitlab/job/log-failed", map[string]any{"pipeline_id": 99})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	var out struct {
+		Stdout    string `json:"stdout"`
+		Truncated bool   `json:"truncated"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+	assert.Contains(t, out.Stdout, "FAIL: the end", "the tail, where the failure is, is kept")
+	assert.True(t, out.Truncated, "the trace's start was dropped")
 }
 
 // TestGLProxy_IssueViewTellsAnUnreadableAnswerFromAMissingIssue.

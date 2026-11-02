@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -1000,7 +1001,9 @@ func handleGLProxyMRComments(w http.ResponseWriter, r *http.Request) {
 		Query: url.Values{
 			"per_page": []string{"100"},
 			"order_by": []string{"created_at"},
-			"sort":     []string{"asc"},
+			// Newest first, so the page cap drops the OLDEST notes on a busy
+			// merge request, not the latest feedback; reversed below.
+			"sort": []string{"desc"},
 		},
 	}, func(page []byte) error {
 		var batch []glNote
@@ -1014,6 +1017,7 @@ func handleGLProxyMRComments(w http.ResponseWriter, r *http.Request) {
 		g.respondOrFail(w, r, "mr.comments", failure, err)
 		return
 	}
+	slices.Reverse(notes) // read newest first, printed oldest first
 
 	var conversation, inline strings.Builder
 	for _, n := range notes {

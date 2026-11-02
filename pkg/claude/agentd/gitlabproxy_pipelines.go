@@ -171,6 +171,7 @@ func handleGLProxyJobLogFailed(w http.ResponseWriter, r *http.Request) {
 	// fails: exit 0 would tell the agent it has every failure's trace.
 	unreadable := 0
 	var firstUnreadable string
+	traceTrimmed := false
 	for _, job := range jobs {
 		switch strings.ToLower(job.Status) {
 		case "running", "pending", "created", "waiting_for_resource", "preparing":
@@ -183,7 +184,8 @@ func handleGLProxyJobLogFailed(w http.ResponseWriter, r *http.Request) {
 		if job.AllowFailure {
 			label += " (allowed to fail)"
 		}
-		text, failure, err := g.jobTrace(ctx, job.ID)
+		text, trimmed, failure, err := g.jobTrace(ctx, job.ID)
+		traceTrimmed = traceTrimmed || trimmed
 		if err != nil || failure != nil {
 			fmt.Fprintf(&b, "%s\t%s\t(the trace for this failed job could not be read)\n", job.Name, label)
 			if unreadable == 0 {
@@ -208,7 +210,7 @@ func handleGLProxyJobLogFailed(w http.ResponseWriter, r *http.Request) {
 			maxGLPaginatedPages*glJobsPerPage)
 	}
 	tail, truncated := ghTailText(b.String(), maxGHProxyTextBytes)
-	out := ProxyResult{Stdout: tail, Truncated: truncated}
+	out := ProxyResult{Stdout: tail, Truncated: truncated || traceTrimmed}
 	if unreadable > 0 {
 		out.ExitCode = ghExitFailure
 		out.Stderr = firstUnreadable
@@ -222,7 +224,7 @@ func handleGLProxyJobLogFailed(w http.ResponseWriter, r *http.Request) {
 // jobTrace reads one job's trace, keeping the tail, through the stream seam
 // for the reason jobLog does: a trace has no size limit and the failure is at
 // the end.
-func (g *glProxySession) jobTrace(ctx context.Context, jobID int64) (string, *ProxyResult, error) {
+func (g *glProxySession) jobTrace(ctx context.Context, jobID int64) (string, bool, *ProxyResult, error) {
 	runCtx, cancel := ghCallContext(ctx, glProxyTimeout)
 	defer cancel()
 
@@ -232,21 +234,24 @@ func (g *glProxySession) jobTrace(ctx context.Context, jobID int64) (string, *Pr
 		Accept: "text/plain",
 	}, tail, maxGLTraceTransferBytes)
 	if err != nil {
-		return "", nil, fmt.Errorf("could not read the job's trace: %w", err)
+		return "", false, nil, fmt.Errorf("could not read the job's trace: %w", err)
 	}
 	if res.Status < 200 || res.Status > 299 {
-		return "", glFailureFor(glAPIResult{Status: res.Status, Body: res.Body, Header: http.Header{}}), nil
+		return "", false, glFailureFor(glAPIResult{Status: res.Status, Body: res.Body, Header: http.Header{}}), nil
 	}
-	return tail.String(), nil, nil
+	// The tail keeps the END of the trace; whether it dropped the start is
+	// the caller's to report, since the text it returns no longer shows it.
+	return tail.String(), tail.Truncated(), nil, nil
 }
 
 // ---------------------------------------------------------------------------
 // job artifacts
 // ---------------------------------------------------------------------------
 
-// glJobArtifactsOut is what a job uploaded: the archive GitLab serves as one
-// zip, and the files it lists inside it, with sizes, so a caller can decide
-// before downloading.
+// glJobArtifactsOut is what a job uploaded: GitLab's per-type artifact
+// entries for it (the archive, its metadata, the trace, a junit report…) with
+// sizes, so a caller can decide before downloading. It does not open the
+// archive to list the files inside.
 type glJobArtifactsOut struct {
 	JobID     int64  `json:"jobId"`
 	Name      string `json:"name"`
