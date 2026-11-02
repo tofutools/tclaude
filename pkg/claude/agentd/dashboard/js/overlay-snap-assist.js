@@ -21,14 +21,16 @@ export function snapAssistChoices(windows, tiled) {
 
 export function SnapAssist({ win, viewOf }) {
   const assist = snapAssist.value;
-  const choices = assist ? snapAssistChoices(overlayWindows.value, tiledOverlayIds()) : [];
+  // The window just snapped may not have joined the tiling yet.
+  const choices = assist ? snapAssistChoices(overlayWindows.value, tiledOverlayIds()).filter((window) => window.id !== assist.from) : [];
   const panel = useRef(null);
   const asking = !!assist && choices.length > 0;
   // Nothing to offer is no question.
   useEffect(() => { if (assist && !choices.length) endSnapAssist(); }, [assist, choices.length]);
   useEffect(() => {
     if (!asking) return undefined;
-    panel.current?.querySelector?.('.snap-assist-card')?.focus?.();
+    // After the release that snapped, which hands focus to its window.
+    const focus = setTimeout(() => panel.current?.querySelector?.('.snap-assist-card')?.focus?.(), 0);
     const doc = win?.document;
     const press = (event) => { if (!panel.current?.contains(event.target)) endSnapAssist(); };
     const key = (event) => {
@@ -40,6 +42,7 @@ export function SnapAssist({ win, viewOf }) {
     doc?.addEventListener?.('pointerdown', press, true);
     doc?.addEventListener?.('keydown', key, true);
     return () => {
+      clearTimeout(focus);
       doc?.removeEventListener?.('pointerdown', press, true);
       doc?.removeEventListener?.('keydown', key, true);
     };

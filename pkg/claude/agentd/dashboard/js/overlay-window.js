@@ -145,7 +145,7 @@ export function endSnapAssist() {
 
 // tiledOverlayIds is every window in the split or snapped alone.
 export function tiledOverlayIds() {
-  return new Set([...leavesOf(splitTree.peek()), ...snappedWindows.peek().keys()]);
+  return new Set([...leavesOf(splitTree.value), ...snappedWindows.value.keys()]);
 }
 
 // offerSnapAssist asks for the largest empty cell of tree, if there is one.
