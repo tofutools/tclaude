@@ -59,6 +59,20 @@ async function postTrackedAuthor(action, login) {
 
 // PeopleTabs switches the popover between the operator's own pull requests
 // and each tracked colleague's, and adds or removes colleagues inline.
+// ListTab is one tab of a footer popover's tab strip (whose pull requests,
+// which project's merge requests), with an optional control after it.
+function ListTab({ active, label, count, title = '', onSelect, extra = null }) {
+  return html`
+    <span class=${`open-prs-person${active ? ' active' : ''}`}>
+      <button type="button" role="tab" aria-selected=${active ? 'true' : 'false'} title=${title || undefined}
+        onClick=${onSelect}>
+        ${label} <span class="open-prs-person-n">${count ?? '…'}</span>
+      </button>
+      ${extra}
+    </span>
+  `;
+}
+
 function PeopleTabs({ active, mine, people, onSelect, onAdd, onRemove }) {
   const [adding, setAdding] = useState(false);
   const [login, setLogin] = useState('');
@@ -85,15 +99,9 @@ function PeopleTabs({ active, mine, people, onSelect, onAdd, onRemove }) {
       setBusy(false);
     }
   };
-  const tab = (key, label, count, extra = null) => html`
-    <span key=${key || 'self'} class=${`open-prs-person${active.toLowerCase() === key.toLowerCase() ? ' active' : ''}`}>
-      <button type="button" role="tab" aria-selected=${active.toLowerCase() === key.toLowerCase() ? 'true' : 'false'}
-        onClick=${() => onSelect(key)}>
-        ${label} <span class="open-prs-person-n">${count ?? '…'}</span>
-      </button>
-      ${extra}
-    </span>
-  `;
+  const tab = (key, label, count, extra = null) => html`<${ListTab} key=${key || 'self'}
+    active=${active.toLowerCase() === key.toLowerCase()} label=${label} count=${count}
+    onSelect=${() => onSelect(key)} extra=${extra} />`;
   return html`
     <div class="open-prs-people">
       <div role="tablist" aria-label="Whose pull requests" class="open-prs-people-tabs">
@@ -333,6 +341,7 @@ function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = nu
           : html`<a class="open-pr-title" href=${pr.url} target="_blank" rel="noopener noreferrer">${titleText}</a>`}
         <span class="open-pr-meta">
           <span>${pr.repository}</span><span> · ${ref}</span>
+          ${mr && pr.author ? html`<span> · by ${pr.author}</span>` : null}
           ${mr && approvals > 0 ? html`<span> · ${approvals} approval${approvals === 1 ? '' : 's'}</span>` : null}
           ${mr && Number(pr.reviews?.changes_requested || 0) > 0 ? html`<span> · changes requested</span>` : null}
           ${mr && pr.conflicts ? html`<span> · conflict</span>` : null}
@@ -415,13 +424,15 @@ function IgnorePRDialog({ pr, onCancel, onConfirm }) {
 // FooterListTrigger and FooterListFilters are the parts the Open PRs and Open
 // MRs popovers share: the footer button that opens a list, and its row of
 // filter chips (each { key, text, active, onClick, title? }).
-function FooterListTrigger({ label, total, open, controls, onClick }) {
+// totalLabel names the count when a trigger carries more than one (Open MRs:
+// "mine" and, in extra, "all").
+function FooterListTrigger({ label, total, open, controls, onClick, totalLabel = '', extra = null, title = '' }) {
   return html`
     <button type="button" class="open-prs-trigger" aria-haspopup="dialog"
-      aria-expanded=${open ? 'true' : 'false'} aria-controls=${controls}
+      aria-expanded=${open ? 'true' : 'false'} aria-controls=${controls} title=${title || undefined}
       onClick=${onClick}>
       <span class="open-prs-dot" aria-hidden="true"></span>
-      <span>${label}</span><span class="open-prs-count">${total}</span>
+      <span>${label}</span>${totalLabel ? html`<span class="open-mrs-scope">${totalLabel}</span>` : null}<span class="open-prs-count">${total}</span>${extra}
       <span class="open-prs-chevron" aria-hidden="true">⌃</span>
     </button>
   `;
@@ -668,14 +679,17 @@ function OpenPRs({ state }) {
 // list and the details card are GitHub's and are not offered here.
 function OpenMRs({ state }) {
   const [filter, setFilter] = useState('all');
+  // '' is your own list; otherwise a project tab's key.
+  const [project, setProject] = useState('');
   const [includeDraftsInAttention, setIncludeDraftsInAttention] = useState(
     () => dashPrefs.getItem(OPEN_PRS_INCLUDE_DRAFTS_PREF) === '1',
   );
   const [hovered, setHovered] = useState(false);
   const [pinned, setPinned] = useState(false);
   const rootRef = useRef(null);
-  const view = authoredOpenMRsView(state.snapshot.value, filter, includeDraftsInAttention);
-  const visible = view.available && (view.total > 0 || view.alwaysShow);
+  const view = authoredOpenMRsView(state.snapshot.value, filter, includeDraftsInAttention, project);
+  const panel = view.panel;
+  const visible = view.available && (view.total > 0 || view.everyoneTotal > 0 || view.alwaysShow);
   const open = visible && (hovered || pinned);
 
   const hoverClose = useLeaveGrace(() => setHovered(false));
@@ -706,30 +720,48 @@ function OpenMRs({ state }) {
   if (!visible) return null;
   const age = view.updatedAt ? new Date(view.updatedAt).toLocaleTimeString() : '';
   const failed = view.instances.filter((entry) => entry.error);
+  const everyone = `${view.everyoneTotal}${view.everyoneTruncated ? '+' : ''}`;
+  const where = view.projectEntry;
+  const heading = where ? `Open merge requests in ${where.project}` : 'Your merge requests';
   return html`
     <span ref=${rootRef} class=${`open-prs open-mrs${open ? ' is-open' : ''}${view.total > 0 ? '' : ' is-empty'}${view.attention > 0 ? ' has-attention' : ''}`}
       onMouseEnter=${enter} onMouseLeave=${hoverClose.schedule}>
-      <${FooterListTrigger} label="Open MRs" total=${view.total} open=${open}
-        controls="open-mrs-popover" onClick=${() => setPinned((value) => !value)} />
+      <${FooterListTrigger} label="Open MRs" totalLabel="mine" total=${view.total} open=${open}
+        controls="open-mrs-popover" onClick=${() => setPinned((value) => !value)}
+        title=${`Open merge requests: ${view.total} of yours, ${everyone} by everyone`}
+        extra=${html`<span class="open-mrs-scope">all</span><span class="open-prs-count open-mrs-all-count">${everyone}</span>`} />
       ${open ? html`
-        <div id="open-mrs-popover" class="open-prs-popover" role="dialog" aria-label="Your merge requests">
-          <div class="open-prs-head"><strong>Your merge requests</strong><span class="open-prs-count">${view.total}</span>${age ? html`<span class="open-prs-age">updated ${age}</span>` : null}</div>
+        <div id="open-mrs-popover" class="open-prs-popover" role="dialog" aria-label=${heading}>
+          <div class="open-prs-head"><strong>${heading}</strong><span class="open-prs-count">${panel.total}</span>${age ? html`<span class="open-prs-age">updated ${age}</span>` : null}</div>
+          ${view.projects.length ? html`
+            <div class="open-prs-people">
+              <div role="tablist" aria-label="Whose merge requests" class="open-prs-people-tabs">
+                <${ListTab} active=${!where} label="Mine" count=${view.total} onSelect=${() => setProject('')} />
+                ${view.projects.map((entry) => html`<${ListTab} key=${entry.key} active=${where?.key === entry.key}
+                  label=${entry.label} count=${`${entry.total}${entry.truncated ? '+' : ''}`}
+                  title=${`Everyone's open merge requests in ${entry.host}/${entry.project}${entry.agents ? ' (your agents work here)' : ''}`}
+                  onSelect=${() => setProject(entry.key)} />`)}
+              </div>
+            </div>
+          ` : null}
           ${failed.map((entry) => html`<p key=${entry.host} class="open-prs-stale" role="status">${entry.host}: ${entry.error}</p>`)}
-          ${view.items.length
-            ? html`<ul class="open-pr-list">${view.items.map((mr) => html`<${OpenPRRow} key=${mr.url} pr=${mr} kind="mr" titleDetails=${false} />`)}</ul>`
+          ${panel.items.length
+            ? html`<ul class="open-pr-list">${panel.items.map((mr) => html`<${OpenPRRow} key=${mr.url} pr=${mr} kind="mr" titleDetails=${false} />`)}</ul>`
             : html`<p class="open-prs-empty">${view.filter === 'all' ? 'No open merge requests.' : 'No merge requests match this filter.'}</p>`}
           <${FooterListFilters} label="Filter merge requests" filters=${[
-            { key: 'all', text: `Open ${view.total}`, active: view.filter === 'all', onClick: () => setFilter('all') },
-            { key: 'attention', text: `Needs attention ${view.attention}`, active: view.filter === 'attention', onClick: () => setFilter('attention') },
-            { key: 'ready', text: `Ready to merge ${view.ready}`, active: view.filter === 'ready',
+            { key: 'all', text: `Open ${panel.total}`, active: view.filter === 'all', onClick: () => setFilter('all') },
+            { key: 'attention', text: `Needs attention ${panel.attention}`, active: view.filter === 'attention', onClick: () => setFilter('attention') },
+            { key: 'ready', text: `Ready to merge ${panel.ready}`, active: view.filter === 'ready',
               title: 'At least one approval and a passing head pipeline', onClick: () => setFilter('ready') },
-            { key: 'unattached', text: `Unattached ${view.unattached}`, active: view.filter === 'unattached', onClick: () => setFilter('unattached') },
+            { key: 'unattached', text: `Unattached ${panel.unattached}`, active: view.filter === 'unattached', onClick: () => setFilter('unattached') },
           ]} />
           <div class="open-prs-foot">
-            <span class="open-mrs-links">${view.truncated ? html`<span>Showing the first ${view.items.length} · </span>` : null}${view.instances
-              .filter((entry) => entry.url)
-              .map((entry, index) => html`${index > 0 ? ' · ' : null}<a key=${entry.host} href=${entry.url} target="_blank" rel="noopener noreferrer">Open all on ${entry.host} ↗</a>`)}</span>
-            ${view.filter === 'attention' && view.hasDrafts ? html`<label class="open-prs-include-drafts"
+            <span class="open-mrs-links">${panel.truncated ? html`<span>Showing the first ${panel.items.length} · </span>` : null}${where
+              ? (where.url ? html`<a href=${where.url} target="_blank" rel="noopener noreferrer">Open in GitLab ↗</a>` : null)
+              : view.instances
+                .filter((entry) => entry.url)
+                .map((entry, index) => html`${index > 0 ? ' · ' : null}<a key=${entry.host} href=${entry.url} target="_blank" rel="noopener noreferrer">Open all on ${entry.host} ↗</a>`)}</span>
+            ${view.filter === 'attention' && panel.hasDrafts ? html`<label class="open-prs-include-drafts"
               title="Include draft merge requests in Needs attention">
               <input type="checkbox" checked=${includeDraftsInAttention}
                 onChange=${(event) => {

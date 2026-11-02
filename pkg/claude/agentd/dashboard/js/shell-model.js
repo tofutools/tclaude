@@ -424,8 +424,15 @@ export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAtt
 // recently closed list, plus each instance's "Open all" link. A link is kept
 // only when it is an https merge request list; an instance that failed
 // carries its error instead.
+//
+// The top level is always the token user's own list: it drives the footer's
+// first number and its attention colour. projects are the popover's
+// project tabs (everyone's open merge requests, one per project), and
+// everyoneTotal is the footer's second number. panel is the list the popover
+// shows: the selected project's, or your own when project is '' or gone.
 const MR_LIST_URL_RE = /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?\/dashboard\/merge_requests\?[A-Za-z0-9_.=&%-]*$/;
-export function authoredOpenMRsView(snapshot, filter = 'all', includeDraftsInAttention = false) {
+const MR_PROJECT_URL_RE = /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?\/(?:[A-Za-z0-9_.-]+\/)+-\/merge_requests$/;
+export function authoredOpenMRsView(snapshot, filter = 'all', includeDraftsInAttention = false, project = '') {
   const source = snapshot?.authored_open_mrs;
   const known = filter === 'attention' || filter === 'ready' || filter === 'unattached' ? filter : 'all';
   const view = authoredOpenPRsView({ authored_open_prs: source }, known, includeDraftsInAttention);
@@ -436,7 +443,41 @@ export function authoredOpenMRsView(snapshot, filter = 'all', includeDraftsInAtt
       error: entry?.error ? String(entry.error).slice(0, 300) : '',
     }))
     .filter((entry) => entry.host);
-  return { ...view, filter: known, instances };
+  const projects = (Array.isArray(source?.projects) ? source.projects : [])
+    .filter((entry) => typeof entry?.project === 'string' && entry.project && typeof entry?.host === 'string')
+    .map((entry) => {
+      const name = entry.project.slice(0, 255);
+      return {
+        key: `${entry.host}/${name}`,
+        project: name,
+        host: entry.host.slice(0, 255),
+        // The tab names the project; the hover title names it in full.
+        label: name.split('/').pop(),
+        url: MR_PROJECT_URL_RE.test(entry.url || '') ? entry.url : '',
+        total: Math.max(0, Number(entry.total || 0)),
+        truncated: !!entry.truncated,
+        agents: !!entry.agents,
+        items: Array.isArray(entry.items) ? entry.items : [],
+      };
+    });
+  const selected = project ? projects.find((entry) => entry.key === project) || null : null;
+  const panel = selected
+    ? authoredOpenPRsView({ authored_open_prs: {
+      available: true, total: selected.total, truncated: selected.truncated,
+      updated_at: source?.updated_at, items: selected.items,
+    } }, known, includeDraftsInAttention)
+    : view;
+  return {
+    ...view,
+    filter: known,
+    instances,
+    projects: projects.map(({ items, ...entry }) => entry),
+    project: selected ? selected.key : '',
+    projectEntry: selected ? { key: selected.key, project: selected.project, host: selected.host, url: selected.url } : null,
+    everyoneTotal: Math.max(0, Number(source?.everyone_total || 0)),
+    everyoneTruncated: !!source?.everyone_truncated,
+    panel,
+  };
 }
 
 // activityMembersForVisibility preserves the top bar's status overview while

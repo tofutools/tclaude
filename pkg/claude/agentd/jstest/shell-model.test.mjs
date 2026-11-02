@@ -607,3 +607,45 @@ test('the Open MRs model filters merge requests like PRs and keeps only safe ins
   ]);
   assert.equal(authoredOpenMRsView({}).available, false, 'no list, no indicator');
 });
+
+test('the Open MRs model keeps your list on top and serves project tabs from everyone\'s', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { authoredOpenMRsView } = await harness.importDashboardModule('js/shell-model.js');
+  const base = 'https://gitlab.example.test:6080';
+  const mr = (project, n, extra = {}) => ({ number: n, url: `${base}/${project}/-/merge_requests/${n}`, ...extra });
+  const snapshot = { authored_open_mrs: {
+    available: true, total: 1, items: [mr('acme/app', 1, { checks: { total: 1, failed: 1, state: 'failing' } })],
+    everyone_total: 4, everyone_truncated: true,
+    projects: [
+      { host: 'gitlab.example.test:6080', project: 'yamzz/previewplayback', url: `${base}/yamzz/previewplayback/-/merge_requests`,
+        total: 3, agents: true, items: [
+          mr('yamzz/previewplayback', 249, { author: 'martin', checks: { total: 1, passed: 1, state: 'passing' }, reviews: { approved: 1 } }),
+          mr('yamzz/previewplayback', 250, { author: 'ann', checks: { total: 1, pending: 1, state: 'pending' } }),
+          mr('yamzz/previewplayback', 251, { author: 'bob', draft: true }),
+        ] },
+      { host: 'gitlab.example.test:6080', project: 'acme/app', url: 'javascript:alert(1)', total: 1, items: [mr('acme/app', 1)] },
+    ],
+  } };
+  const mine = authoredOpenMRsView(snapshot);
+  assert.equal(mine.total, 1, 'the top level is always yours');
+  assert.equal(mine.attention, 1);
+  assert.equal(mine.everyoneTotal, 4);
+  assert.equal(mine.everyoneTruncated, true);
+  assert.equal(mine.panel.total, 1, 'no project selected: the panel is yours');
+  assert.deepEqual(mine.projects.map((p) => [p.key, p.label, p.total, p.agents]), [
+    ['gitlab.example.test:6080/yamzz/previewplayback', 'previewplayback', 3, true],
+    ['gitlab.example.test:6080/acme/app', 'app', 1, false],
+  ]);
+  assert.equal(mine.projects[1].url, '', 'an unsafe project link is dropped');
+
+  const pp = authoredOpenMRsView(snapshot, 'all', false, 'gitlab.example.test:6080/yamzz/previewplayback');
+  assert.equal(pp.total, 1, 'the footer number does not follow the tab');
+  assert.equal(pp.project, 'gitlab.example.test:6080/yamzz/previewplayback');
+  assert.deepEqual(pp.panel.items.map((x) => x.number), [249, 250, 251]);
+  assert.equal(pp.panel.ready, 1);
+  assert.equal(pp.panel.attention, 1, 'green needs attention; running and draft do not');
+  assert.deepEqual(authoredOpenMRsView(snapshot, 'ready', false, 'gitlab.example.test:6080/yamzz/previewplayback')
+    .panel.items.map((x) => x.number), [249]);
+  assert.equal(authoredOpenMRsView(snapshot, 'all', false, 'gone/project').panel.total, 1,
+    'a tab that disappeared falls back to your list');
+});

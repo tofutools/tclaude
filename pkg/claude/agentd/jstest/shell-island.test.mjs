@@ -819,3 +819,47 @@ test('footer open MRs lists GitLab merge requests next to open PRs', async (t) =
   assertSameNode(harness.document.activeElement, trigger);
   await mounted.unmount();
 });
+
+test('footer open MRs shows mine and all, and a tab per project for everyone\'s', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenMRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenMRs} state=${state} />`);
+  const base = 'https://gitlab.example.test:6080';
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_mrs: {
+    available: true, total: 0, items: [], everyone_total: 2,
+    instances: [{ host: 'gitlab.example.test:6080', url: `${base}/dashboard/merge_requests?state=opened&author_username=yorick` }],
+    projects: [{ host: 'gitlab.example.test:6080', project: 'yamzz/previewplayback', url: `${base}/yamzz/previewplayback/-/merge_requests`,
+      total: 2, agents: true, items: [
+        { number: 249, url: `${base}/yamzz/previewplayback/-/merge_requests/249`, title: 'Merge 1st', repository: 'yamzz/previewplayback',
+          author: 'martin', agent_title: 'builder', agent_id: 'agt_1', checks: { total: 1, passed: 1, state: 'passing' }, reviews: { approved: 1 } },
+        { number: 250, url: `${base}/yamzz/previewplayback/-/merge_requests/250`, title: 'Merge 2nd', repository: 'yamzz/previewplayback',
+          author: 'agent-bot', conflicts: true, checks: { total: 1, pending: 1, state: 'pending' } },
+      ] }],
+  } }));
+  const trigger = getByRole(mounted.container, 'button', { name: /Open MRs/ });
+  assert.match(trigger.textContent, /Open MRs\s*mine\s*0\s*all\s*2/, 'two numbers, each named');
+  assert.ok(mounted.container.querySelector('.open-mrs.is-empty'), 'nothing of yours: the dot stays grey');
+  assert.equal(mounted.container.querySelector('.open-mrs-all-count').textContent, '2');
+
+  await harness.act(() => trigger.click());
+  assert.match(mounted.container.querySelector('.open-prs-empty').textContent, /No open merge requests/);
+  const tab = getByRole(mounted.container, 'tab', { name: /previewplayback 2/ });
+  assert.equal(getByRole(mounted.container, 'tab', { name: /Mine 0/ }).getAttribute('aria-selected'), 'true');
+  await harness.act(() => tab.click());
+  assert.equal(tab.getAttribute('aria-selected'), 'true');
+  assert.match(mounted.container.querySelector('.open-prs-head').textContent, /Open merge requests in yamzz\/previewplayback/);
+  const rows = [...mounted.container.querySelectorAll('.open-pr-row')];
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].textContent, /!249 · by martin · 1 approval · builder/);
+  assert.match(rows[1].textContent, /!250 · by agent-bot · conflict · no active agent/);
+  const link = getByRole(mounted.container, 'link', { name: /Open in GitLab/ });
+  assert.equal(link.getAttribute('href'), `${base}/yamzz/previewplayback/-/merge_requests`);
+  await harness.act(() => getByRole(mounted.container, 'button', { name: /Ready to merge 1/ }).click());
+  assert.deepEqual([...mounted.container.querySelectorAll('.open-pr-title')].map((node) => node.textContent), ['Merge 1st']);
+  await mounted.unmount();
+});

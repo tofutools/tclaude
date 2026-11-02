@@ -296,13 +296,22 @@ its background GitHub calls for 5 minutes, up to 30 while the limit holds.
 
 ### Open MRs
 
-**Open MRs** sits next to **Open PRs** and lists your open GitLab merge requests
-on every instance in `agent.git_proxy.gitlab_hosts` (see
-[GitLab proxy](proxies.md#gitlab-proxy)). "Your" means the user that
-`gitlab_token_file` belongs to. It shows once a configured instance has
-answered, whether or not `gh` is installed. Without a `gitlab_hosts` entry or
-a token it does not show at all; a gitlab.com project needs a
-`"gitlab.com": "https://gitlab.com"` entry to be listed.
+**Open MRs** sits next to **Open PRs** and covers the GitLab instances in
+`agent.git_proxy.gitlab_hosts` (see [GitLab proxy](proxies.md#gitlab-proxy)).
+It shows once a configured instance has answered, whether or not `gh` is
+installed. Without a `gitlab_hosts` entry or a token it does not show at all;
+a gitlab.com project needs a `"gitlab.com": "https://gitlab.com"` entry.
+
+The footer carries two numbers. **mine** counts your open merge requests,
+where "your" means the user that `gitlab_token_file` belongs to; it turns blue
+when one of them needs attention. **all** counts everyone's open merge
+requests that the token can see. For an admin token that is every project on
+the instance.
+
+The popover opens on **Mine**. Next to it is one tab per project with open
+merge requests, holding everyone's: projects your agents work in come first,
+then the busiest. A project tab's rows also say who wrote each merge request,
+and **Open in GitLab** opens the project's own list.
 
 - **Filters:** **Open**, **Needs attention**, **Ready to merge** and
   **Unattached**, with counts. **Ready to merge** is at least one approval and
@@ -313,15 +322,20 @@ a token it does not show at all; a gitlab.com project needs a
 - **Rows** read `!7` for merge request 7, and note approvals, requested changes
   and conflicts. The CI pill shows the head pipeline's state. Hover it for the
   pipeline's jobs.
-- **Open all on _host_** opens that instance's list of your merge requests.
-  An instance that could not be read says why, above the list.
+- **Open all on _host_** (on **Mine**) opens that instance's list of your
+  merge requests. An instance that could not be read says why, above the list.
 
-agentd asks each instance once every 30 seconds, in a single GraphQL query.
-That needs a GitLab recent enough to have `detailedMergeStatus` (16.x is
-safe); an older one reports the missing field instead of a list. A
-rate-limited instance is retried after the wait GitLab names, up to 5 minutes,
-and keeps showing its last list meanwhile. Ignoring, colleagues' tabs, the
-recently closed list and the details card are Open PRs only.
+agentd asks each instance once every 30 seconds. Your own list is a single
+GraphQL query. Everyone's list starts with GitLab's REST merge request list,
+which names the projects and covers the 500 most recently updated open merge
+requests. With more than that, a project with only older merge requests can be
+missing, and the **all** count ends in `+`. Each project is then read through
+GraphQL, five projects per query. That needs a GitLab recent enough to have
+`detailedMergeStatus` (16.x is safe); an older one reports the missing field
+instead of a list. A rate-limited instance is retried after the wait GitLab
+names, up to 5 minutes, and keeps showing its last list meanwhile. Ignoring,
+the people tabs, the recently closed list and the details card are Open PRs
+only.
 
 ## Starting agents
 
