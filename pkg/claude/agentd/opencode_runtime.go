@@ -137,6 +137,11 @@ func newOpenCodeProjectorApplyLock() *openCodeProjectorApplyLock {
 type openCodeSSEGenerationKey struct{}
 
 var openCodeHTTPClient = &http.Client{Timeout: 5 * time.Second}
+
+// openCodeServeLogLevel is the --log-level every managed `opencode serve`
+// runs with. Real-OpenCode smokes raise it so a failure leaves the server's
+// own account of where it stalled in its log directory.
+var openCodeServeLogLevel = "ERROR"
 var openCodeHealthHTTPClient = &http.Client{Timeout: time.Second}
 
 // openCodeSSEHTTPClient is the bounded client for the long-lived /event stream.
@@ -1429,7 +1434,7 @@ func openCodeServeProcessExecWithAuthority(
 	}
 	serveArgs := []string{
 		"serve", "--hostname", "127.0.0.1",
-		"--port", port, "--log-level", "ERROR",
+		"--port", port, "--log-level", openCodeServeLogLevel,
 	}
 	listenerFD, relayExecutableFD, err :=
 		session.TclaudeLayerUnixRelayServerFDs(*sandboxSpec)
@@ -1774,7 +1779,7 @@ func openCodeServeExecWithAuthority(
 ) (string, []string, error) {
 	serveArgs := []string{
 		"serve", "--hostname", "127.0.0.1",
-		"--port", port, "--log-level", "ERROR",
+		"--port", port, "--log-level", openCodeServeLogLevel,
 	}
 	serveCommand := shellJoinOpenCodeCommand(executable, serveArgs)
 	httpBridge := false

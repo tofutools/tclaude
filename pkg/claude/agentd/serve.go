@@ -430,6 +430,18 @@ func runServe(p *serveParams) error {
 		slog.Warn("dashboard session: could not restore restart grace cookies", "error", err)
 	}
 
+	// Config drives the dashboard-port resolution below, the auto-launch
+	// decision, the clone cooldown, and the spawn guardrails. Load it once
+	// up front so every startup knob reads the same snapshot.
+	//
+	// Resolve the Collab default BEFORE binding the socket. It stores its key
+	// by read-modify-write of config.json, and a client that sees the socket
+	// answer (tclaude config set, the dashboard Config form, the setup wizard)
+	// may write config.json at once; a store still in flight would replace
+	// that write with its earlier read. It needs the database, opened above.
+	cfg, _ := config.Load()
+	resolveCollabDefault(cfg)
+
 	listeners, createdSocketPaths, err := listenUnixSockets(sockPath, optionalSockPaths, skipOptionalSocket)
 	if err != nil {
 		return err
@@ -469,11 +481,6 @@ func runServe(p *serveParams) error {
 		},
 	}
 
-	// Config drives the dashboard-port resolution below, the auto-launch
-	// decision, the clone cooldown, and the spawn guardrails. Load it once
-	// up front so every startup knob reads the same snapshot.
-	cfg, _ := config.Load()
-	resolveCollabDefault(cfg)
 	resourceDelegationDir, resourceDelegationSource := resolveResourceDelegationDir(
 		p.ResourceDelegationDir, cfg)
 	if resourceDelegationDir != "" {
