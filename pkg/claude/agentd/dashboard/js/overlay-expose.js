@@ -111,14 +111,17 @@ const selectorFor = (windowId) => `[data-overlay-window="${String(windowId).repl
 // to its place, and one that does not match the filter dims.
 function spreadSheet(placed, dimmed, motion) {
   const moving = motion ? `transition: transform ${SPREAD_MS}ms ease, opacity ${SPREAD_MS}ms ease;` : '';
+  // A window that came or went while the view shows has no place in the spread,
+  // and stays out of sight rather than land on it.
   const rules = [
-    `[data-overlay-window] { z-index: calc(var(--overlay-level, 930) + 41) !important; pointer-events: none !important; transform-origin: center center; ${moving} }`,
+    `[data-overlay-window] { pointer-events: none !important; transform-origin: center center; ${moving} }`,
     ':is(.window-resize-frame, .overlay-split-line, .overlay-split-cross, .overlay-split-detach, .overlay-snap-guide) { visibility: hidden !important; }',
   ];
+  if (placed.length) rules.push(`[data-overlay-window]:not(${placed.map(({ windowId }) => selectorFor(windowId)).join(', ')}) { visibility: hidden !important; }`);
   for (const { windowId, box, spot } of placed) {
     const dx = spot.x - (box.x + box.w / 2);
     const dy = spot.y - (box.y + box.h / 2);
-    rules.push(`${selectorFor(windowId)} { transform: translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) scale(${spot.scale.toFixed(4)}) !important;${dimmed.has(windowId) ? ' opacity: .25;' : ''} }`);
+    rules.push(`${selectorFor(windowId)} { z-index: calc(var(--overlay-level, 930) + 41) !important; transform: translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) scale(${spot.scale.toFixed(4)}) !important;${dimmed.has(windowId) ? ' opacity: .25;' : ''} }`);
   }
   return rules.join('\n');
 }
@@ -165,36 +168,51 @@ function ExposeView({ win }) {
   const [stack] = useState(() => overlayWindowsByStack());
   const [returnTo] = useState(() => win?.document?.activeElement || null);
   const entries = exposeEntriesOf(overlayWindows.value, minimizedOverlayTabs.value, stack);
-  // Read once on entry, where each open window stands: the view changes nothing,
-  // so nothing moves under it. One that can't be measured is shown as a card.
-  const [boxes] = useState(() => Object.fromEntries(entries.filter((entry) => entry.windowId && !entry.minimized)
-    .map((entry) => [entry.key, boxOf(win, entry.windowId)]).filter(([, box]) => box)));
+  // Where each open window stands, from its layout box, which the spread's
+  // transform leaves alone: read on entry, and again when the page resizes and
+  // the windows keep themselves on it. One that can't be measured is a card.
+  const readBoxes = () => Object.fromEntries(exposeEntriesOf(overlayWindows.peek(), [], stack).filter((entry) => !entry.minimized)
+    .map((entry) => [entry.key, boxOf(win, entry.windowId)]).filter(([, box]) => box));
+  const [boxes, setBoxes] = useState(readBoxes);
   const [area, setArea] = useState(null);
   const needle = query.trim().toLowerCase();
   // The live windows in reading order of where they stand, so each moves a short way.
-  const live = entries.filter((entry) => boxes[entry.key])
+  const live = entries.filter((entry) => !entry.minimized && boxes[entry.key])
     .sort((a, b) => (boxes[a.key].y + boxes[a.key].h / 2) - (boxes[b.key].y + boxes[b.key].h / 2) || boxes[a.key].x - boxes[b.key].x);
   const spots = area ? spreadLayout(live.map((entry) => boxes[entry.key]), area) : [];
   const placed = live.map((entry, index) => ({ entry, windowId: entry.windowId, box: boxes[entry.key], spot: spots[index] })).filter(({ spot }) => spot);
-  const cards = entries.filter((entry) => !boxes[entry.key]);
-  // Until the stage is measured, or with no room for it, every window is a card.
-  const shown = (area ? [...live, ...cards] : entries).filter((entry) => matches(entry, needle));
+  const cards = entries.filter((entry) => !live.includes(entry));
+  // With no room measured for the spread, every window is a card.
+  const spreading = live.length > 0;
+  const shown = (spreading ? [...(area ? live : []), ...cards] : entries).filter((entry) => matches(entry, needle));
   const at = Math.min(chosen, Math.max(0, shown.length - 1));
   const dimmed = new Set(live.filter((entry) => !matches(entry, needle)).map((entry) => entry.windowId));
   const leave = () => { overlayExposeOpen.value = false; };
 
   useSpreadSheet(win, spreadSheet(placed, dimmed, motion), motion);
-  // The room the spread has: the stage between the filter and the cards.
+  // The room the spread has: the stage between the filter and the cards, which
+  // changes with the page and with the row of cards.
   useLayoutEffect(() => {
-    if (!live.length) return undefined;
+    if (!spreading) return undefined;
     const measure = () => {
       const rect = stage.current?.getBoundingClientRect?.();
-      setArea(rect?.width && rect.height ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null);
+      setArea((now) => {
+        const next = rect?.width && rect.height ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null;
+        return JSON.stringify(now) === JSON.stringify(next) ? now : next;
+      });
     };
     measure();
-    win?.addEventListener?.('resize', measure);
-    return () => win?.removeEventListener?.('resize', measure);
-  }, [cards.length > 0]);
+    const observer = typeof win?.ResizeObserver === 'function' ? new win.ResizeObserver(measure) : null;
+    if (stage.current) observer?.observe(stage.current);
+    // The windows keep themselves on the page in their own resize handlers: read
+    // them after those.
+    const resized = () => win.requestAnimationFrame?.(() => { setBoxes(readBoxes()); measure(); });
+    win?.addEventListener?.('resize', resized);
+    return () => {
+      observer?.disconnect();
+      win?.removeEventListener?.('resize', resized);
+    };
+  }, [spreading]);
 
   // However the view goes, the flag goes with it, so it never comes back unasked.
   // Leaving with nothing chosen puts focus back, as into a terminal it came from:
@@ -225,7 +243,7 @@ function ExposeView({ win }) {
     key: entry.key, id: optionId(index), type: 'button', role: 'option', 'aria-selected': index === at ? 'true' : 'false',
     title: `Raise ${titleOf(entry.tab)}`, onMouseEnter: () => setChosen(index), onClick: () => pick(entry), ...extra,
   });
-  const cardList = area ? shown.filter((entry) => !boxes[entry.key]) : shown;
+  const cardList = spreading ? shown.filter((entry) => cards.includes(entry)) : shown;
   const spread = placed.length > 0;
   // The windows themselves can't take a click while spread: a target over each
   // one does, above the windows and so outside the dimmed view, whose level they
@@ -237,7 +255,10 @@ function ExposeView({ win }) {
       const w = box.w * spot.scale;
       const h = box.h * spot.scale;
       const { tab, tabs } = entry;
+      // The filter keeps the keyboard: a press here that never becomes a click
+      // must not leave focus outside the view's keys.
       return html`<button ...${option(entry, index)} class=${`overlay-expose-live${index === at ? ' chosen' : ''}`} data-ui-exempt
+        onPointerDown=${(event) => event.preventDefault()}
         style=${`left:${(spot.x - w / 2).toFixed(1)}px;top:${(spot.y - h / 2).toFixed(1)}px;width:${w.toFixed(1)}px;height:${h.toFixed(1)}px`}>
         <span class="overlay-expose-live-label">${KIND_GLYPHS[tab.kind] || '▣'} ${titleOf(tab)}${tabs.length > 1 && html` <span class="overlay-expose-count" aria-label=${`${tabs.length} tabs`}>${tabs.length}</span>`}</span>
       </button>`;
@@ -252,8 +273,8 @@ function ExposeView({ win }) {
         value=${query} onInput=${(event) => { setQuery(event.currentTarget.value); setChosen(0); }} />
       <span class="overlay-expose-hint">Enter or a click raises · Esc leaves</span>
     </div>
-    ${live.length > 0 && html`<div ref=${stage} class="overlay-expose-stage" onPointerDown=${away}></div>`}
-    <div class=${`overlay-expose-grid${live.length > 0 ? ' row' : ''}`} id="overlay-expose-list" role="listbox" aria-label=${live.length > 0 ? 'Minimized windows' : 'Windows'}
+    ${spreading && html`<div ref=${stage} class="overlay-expose-stage" onPointerDown=${away}></div>`}
+    <div class=${`overlay-expose-grid${spreading ? ' row' : ''}`} id="overlay-expose-list" role="listbox" aria-label=${spreading ? 'Minimized windows' : 'Windows'}
       onPointerDown=${away}>
       ${shown.length === 0 && html`<p class="overlay-expose-empty">No window matches “${query.trim()}”.</p>`}
       ${cardList.map((entry) => {

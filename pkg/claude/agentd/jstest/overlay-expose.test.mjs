@@ -210,7 +210,8 @@ test('the open windows themselves spread out, live, and the minimized ones are c
   assert.deepEqual(targets(), ['✎ Board two 2', '💬 Charlie'], 'a target over each spread window, in reading order, with its tab count');
   assert.deepEqual(s.cards(), ['Alpha'], 'the minimized window is a card');
   assert.ok(s.mounted.container.querySelector('.overlay-expose-grid.row'), 'in a row along the bottom');
-  assert.match(sheet(s), new RegExp(`\\[data-overlay-window="${ids.b2}"\\] \\{ transform: translate\\(`), 'each window moves by a transform');
+  assert.match(sheet(s), new RegExp(`\\[data-overlay-window="${ids.b2}"\\] \\{[^}]*transform: translate\\(`), 'each window moves by a transform');
+  assert.match(sheet(s), /:not\(\[data-overlay-window="b"\], \[data-overlay-window="c"\]\) \{ visibility: hidden/, 'one that has no place in the spread stays out of sight');
   assert.match(sheet(s), /pointer-events: none/, 'and takes no input while spread');
   assert.equal(JSON.stringify(s.instances.overlayWindows.value), before, 'nothing about the windows changes');
 

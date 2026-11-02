@@ -2148,7 +2148,7 @@ body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) 
 }
 .overlay-expose-live.chosen, .overlay-expose-live:focus-visible { border-color: #58a6ff; box-shadow: 0 0 0 4px rgba(88, 166, 255, .25), 0 18px 40px rgba(0, 0, 0, .5); outline: none; }
 .overlay-expose-live-label {
-  position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%); display: none; align-items: center; gap: 6px;
+  position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%); display: none; align-items: center; gap: 6px; pointer-events: none;
   max-width: 100%; padding: 3px 10px; overflow: hidden; border: 1px solid var(--cmp-line, #30363d); border-radius: 12px;
   background: var(--cmp-bar, #161b22); color: var(--cmp-text, #e6edf3); font-size: 12px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis;
 }
