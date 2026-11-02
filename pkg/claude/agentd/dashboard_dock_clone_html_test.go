@@ -65,8 +65,8 @@ func TestDashboardHTML_DockCardCloneMenu(t *testing.T) {
 	must("removeRole(rl.name).then(() => refresh())", "role delete reuses removeRole + refreshes the dock")
 	must("onDeleteItem: (t) => deleteTemplate(t.name).then((removed) => {", "template delete reuses deleteTemplate (which self-refreshes)")
 	// The Delete item is styled destructive (red), distinct from Edit / Clone.
-	must("class=${`dock-card-menu-item${danger ? ' danger' : ''}`}", "the Delete menu item is marked destructive")
-	must(".dock-card-menu-item.danger {", "the destructive Delete item has a red skin")
+	must("class=${`ui-menu-item dock-card-menu-item${danger ? ' ui-btn-danger danger' : ''}`}", "the Delete menu item is a standard destructive menu row")
+	must(".dock-card-menu-item.danger:where(:not(.ui-menu-item)) {", "a raw destructive Delete item keeps its red skin")
 	must("body.wizard #agent-dock .dock-card-menu-item.danger", "the Delete item's destructive skin re-skins in wizard mode")
 
 	// Keyed Preact card and Groups menus survive snapshot publishes, so neither

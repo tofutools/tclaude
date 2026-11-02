@@ -3,6 +3,7 @@ import {
   useCallback, useEffect, useId, useLayoutEffect, useRef, useState,
 } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { wizWord } from './slop.js';
 import { DockProcesses } from './dock-processes.js';
 import { dashPrefs } from './prefs.js';
@@ -48,7 +49,7 @@ export function DockMenuItem({ act, kind, name, danger = false, onRun, setOpenMe
   return html`<button
     type="button"
     role="menuitem"
-    class=${`dock-card-menu-item${danger ? ' danger' : ''}`}
+    class=${`ui-menu-item dock-card-menu-item${danger ? ' ui-btn-danger danger' : ''}`}
     data-dock-act=${act}
     data-dock-kind=${kind}
     data-dock-name=${name}
@@ -82,7 +83,7 @@ function DockWhere({ entry, nodes, pick, onPick, copyOf, onCopy }) {
           return html`<span key=${node.id} class="dock-where-pill is-missing is-locked" style=${style}
             title=${WHERE_TITLES.missing(node)} data-dock-node=${node.id}>${node.name}<${LockReason} why=${route.why} /></span>`;
         }
-        return html`<button
+        return html`<button data-ui-exempt
           key=${node.id}
           type="button"
           class="dock-where-pill is-missing"
@@ -94,6 +95,7 @@ function DockWhere({ entry, nodes, pick, onPick, copyOf, onCopy }) {
         >+ ${node.name}</button>`;
       }
       return html`<button
+        data-ui-exempt
         key=${node.id}
         type="button"
         class=${`dock-where-pill is-${state}${pick === node.id ? ' is-picked' : ''}`}
@@ -325,9 +327,8 @@ function DockCard({
         ${entry ? html`<${DockWhere} entry=${entry} nodes=${fused.nodes} pick=${pick} onPick=${setPicked} copyOf=${copyOf} onCopy=${runCopy} />` : null}
       </span>
       <span class="dock-card-actions">
-        <button
-          ref=${cogRef}
-          type="button"
+        <${Button} size="sm" variant="ghost"
+          domRef=${cogRef}
           class="dock-card-manage"
           data-dock-act="card-menu"
           data-dock-kind=${section.key}
@@ -341,7 +342,7 @@ function DockCard({
             event.preventDefault();
             setOpenMenu(menuOpen ? null : menuKey);
           }}
-        >⚙</button>
+        >⚙<//>
         <div
           ref=${menuRef}
           class=${`dock-card-menu${menuOpen ? ' open' : ''}${placement.up ? ' opens-up' : ''}`}
@@ -533,17 +534,15 @@ function DockSection({
         </span>
         ${fused ? html`<${DockWithheld} nodes=${fused.nodes} withheld=${many.withheld} />` : null}
         <span class="dock-section-tools">
-          ${section.onNew ? html`<button
-            type="button"
+          ${section.onNew ? html`<${Button} size="sm" variant="ghost"
             class="dock-section-manage"
             data-dock-act="new-item"
             data-dock-kind=${section.key}
             title=${`New ${section.title().toLowerCase().replace(/s$/, '')}`}
             aria-label=${`New in ${section.title()}`}
             onClick=${(event) => { event.preventDefault(); section.onNew(); }}
-          >＋</button>` : null}
-          <button
-            type="button"
+          >＋<//>` : null}
+          <${Button} size="sm" variant="ghost"
             class="dock-section-manage"
             data-dock-act="manage-all"
             data-dock-kind=${section.key}
@@ -552,10 +551,9 @@ function DockSection({
               event.preventDefault();
               section.onManageAll();
             }}
-          >⧉</button>
+          >⧉<//>
           ${section.onExportAll || section.onImportFile ? html`<span class="dock-card-actions">
-            <button
-              type="button"
+            <${Button} size="sm" variant="ghost"
               class="dock-section-manage"
               data-dock-act="section-menu"
               data-dock-kind=${section.key}
@@ -564,7 +562,7 @@ function DockSection({
               aria-label=${`More for ${section.title()}`}
               title="Import or export"
               onClick=${(event) => { event.preventDefault(); setOpenMenu(sectionMenuOpen ? null : sectionMenuKey); }}
-            >⋯</button>
+            >⋯<//>
             <div class=${`dock-card-menu${sectionMenuOpen ? ' open' : ''}`} role="menu" aria-label=${`${section.title()} actions`}>
               ${section.onImportFile ? html`<${DockMenuItem} act="import" kind=${section.key} setOpenMenu=${setOpenMenu}
                 onRun=${() => fileRef.current?.click()}>Import…</${DockMenuItem}>` : null}

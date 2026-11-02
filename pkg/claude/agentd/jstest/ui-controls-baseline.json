@@ -1,5 +1,5 @@
 {
-  "dashboard.html": 14,
+  "dashboard.html": 12,
   "js/action-dialog-island.js": 12,
   "js/activity-hover.js": 1,
   "js/activity-node.js": 1,
@@ -16,8 +16,6 @@
   "js/dialog-resize.js": 1,
   "js/dictation-tools.js": 5,
   "js/directory-picker-island.js": 7,
-  "js/dock-island.js": 7,
-  "js/dock-processes.js": 16,
   "js/doctor-island.js": 8,
   "js/fleet-island.js": 31,
   "js/fleet-move-drop.js": 1,
