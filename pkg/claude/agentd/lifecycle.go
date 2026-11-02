@@ -4933,12 +4933,21 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		dirs := []string{cwd}
 		dirs = appendUniqueDirs(dirs, worktreePath)
 		dirs = appendUniqueDirs(dirs, gitWorktreeWriteDirs...)
-		resolved, ok := requireDirWriteProof(w, r, spawnerConvID, body.WriteProofToken, dirs)
+		var resolved map[string]string
+		var ok bool
+		if queued := spawnQueueReplayFrom(r); queued != nil && len(queued.ProofDirs) > 0 {
+			// Proved when the spawn was queued; its marker files are gone.
+			resolved, ok = queueDirWriteProof(w, queued, dirs)
+		} else {
+			resolved, ok = requireDirWriteProof(w, r, spawnerConvID, body.WriteProofToken, dirs)
+		}
 		if !ok {
 			return
 		}
 		if resolved != nil {
-			proofToken = strings.TrimSpace(body.WriteProofToken)
+			if spawnQueueReplayFrom(r) == nil {
+				proofToken = strings.TrimSpace(body.WriteProofToken)
+			}
 			if v := resolved[cwd]; v != "" {
 				cwd = v
 			}
@@ -5105,11 +5114,21 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// intended runaway-prevention behaviour.
 	// Grant-authorized federation auto-spawns resolve launch settings as the
 	// operator but retain the spawn rate limit under a durable daemon principal.
+	//
+	// Capacity comes first: a spawn that does not fit and may wait is queued
+	// here, after every validation gate, and claims its rate slot when queued.
+	// Its later launch from the queue claims none.
+	if queueSpawnIfFull(w, r, g, spawnQueueCandidate{
+		body: &body, rawBody: requestedSpawnConfigJSON, spawnerConv: spawnerConvID, sudoGrant: spawnSudoGrant,
+		proofToken: proofToken, proofDirs: proofDirs, cwd: cwd, attachments: attachments, externalPeer: externalSpawn,
+	}) {
+		return
+	}
 	if remotePrincipal, _ := r.Context().Value(federationSpawnRateKey{}).(string); remotePrincipal != "" {
 		if !claimDaemonSpawnRateSlot(w, remotePrincipal) {
 			return
 		}
-	} else if !claimSpawnRateSlot(w, spawnerConvID) {
+	} else if spawnQueueReplayFrom(r) == nil && !claimSpawnRateSlot(w, spawnerConvID) {
 		return
 	}
 
@@ -5205,6 +5224,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		// (it needs the conv-id for owner/permission grants).
 		Async: true,
 	}
+	p.capacityQueueHead = spawnQueueReplayFrom(r) != nil
 	p.BundleHistory, _ = r.Context().Value(bundleHistoryContextKey{}).(*bundleHistoryLaunch)
 	p.ManagedInstructionResources, _ = r.Context().Value(managedInstructionLaunchContextKey{}).([]db.ManagedInstruction)
 	p.NoLaunch, _ = r.Context().Value(bundleNoLaunchContextKey{}).(bool)
@@ -5808,6 +5828,9 @@ type spawnParams struct {
 	pendingSpawnLabel string
 	// Set only by node admission: uncertain launches need durable reservations.
 	nodeCapacityReserved bool
+	// capacityQueueHead marks the launch of the capacity queue's head entry:
+	// the one launch allowed past waiting spawns, and one that always reserves.
+	capacityQueueHead bool
 	// privateAttachmentRootReserved says the deferred pass atomically claimed
 	// pendingSpawnLabel's private root before publishing the Pending row. The
 	// continuation may reuse that exact root; every fresh inline spawn must

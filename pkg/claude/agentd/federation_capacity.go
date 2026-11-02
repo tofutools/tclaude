@@ -4,12 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/hostmetrics"
 )
 
 // A single node-wide gate covers every peer, human/automatic approval, and
@@ -21,14 +23,18 @@ var nodeAdmission = struct {
 }{launches: map[string]string{}}
 
 func nodeCapacityLimit() (int, error) {
+	limits, err := nodeCapacityLimits()
+	return limits.MaxLiveAgents, err
+}
+
+// nodeCapacityLimits is the resolved capacity policy: capacity.* with the
+// legacy federation.max_live_agents as the fallback agent cap.
+func nodeCapacityLimits() (config.CapacityLimits, error) {
 	cfg, err := config.Load()
 	if err != nil {
-		return 0, err
+		return config.CapacityLimits{}, err
 	}
-	if cfg == nil || cfg.Federation == nil {
-		return 0, nil
-	}
-	return cfg.Federation.MaxLiveAgents, nil
+	return cfg.ResolvedCapacity(), nil
 }
 func nodeCapacityUsed(exclude string) (int, error) {
 	// Read durable reservations before live bindings. Enrollment atomically
@@ -104,27 +110,124 @@ func nodeCapacityUsed(exclude string) (int, error) {
 func acquireNodeLaunch(p *spawnParams) (func(), *spawnFailure) {
 	nodeAdmission.Lock()
 	defer nodeAdmission.Unlock()
-	limit, err := nodeCapacityLimit()
+	limits, err := nodeCapacityLimits()
 	if err != nil {
 		return nil, &spawnFailure{Status: 503, Kind: "node_capacity_unknown", Msg: "cannot read node capacity"}
 	}
-	if limit == 0 {
+	queued, err := db.CountActiveSpawnQueue()
+	if err != nil {
+		return nil, &spawnFailure{Status: 503, Kind: "node_capacity_unknown", Msg: "cannot read the spawn queue"}
+	}
+	// A launch from the queue always reserves, so restart recovery can tell a
+	// launched entry from one that never reached the spawner.
+	if !limits.Limited() && queued == 0 && !p.capacityQueueHead {
 		return func() {}, nil
+	}
+	// One line for everyone: while spawns wait, a fresh launch that holds no
+	// earlier reservation (federation and teleport launches reserved theirs
+	// when admitted) does not take a slot ahead of the queue's head.
+	if queued > 0 && !p.capacityQueueHead && p.AgentID == "" {
+		return nil, &spawnFailure{Status: 409, Kind: fedCodeNodeBusy,
+			Msg: fmt.Sprintf("node capacity reached: %d queued spawn(s) wait ahead", queued)}
 	}
 	if p.AgentID == "" {
 		p.AgentID = db.NewAgentID()
 	}
-	used, err := nodeCapacityUsed(p.AgentID)
-	if err != nil {
-		return nil, &spawnFailure{Status: 503, Kind: "node_capacity_unknown", Msg: "cannot observe node capacity"}
-	}
-	if used >= limit {
-		return nil, &spawnFailure{Status: 409, Kind: fedCodeNodeBusy, Msg: "node live and reserved agent capacity reached"}
+	if reason, err := nodeCapacityFullLocked(limits, p.AgentID, []string{p.Cwd}); err != nil {
+		return nil, &spawnFailure{Status: 503, Kind: "node_capacity_unknown", Msg: "cannot observe node capacity: " + err.Error()}
+	} else if reason != "" {
+		return nil, &spawnFailure{Status: 409, Kind: fedCodeNodeBusy, Msg: reason}
 	}
 	p.nodeCapacityReserved = true
 	launchID := p.AgentID
 	nodeAdmission.launches[launchID] = config.DataDir()
 	return func() { nodeAdmission.Lock(); delete(nodeAdmission.launches, launchID); nodeAdmission.Unlock() }, nil
+}
+
+// capacityResources is what the free-RAM and free-disk thresholds read.
+// A nil RAMAvailable means the reading failed; a disk entry with Error set
+// likewise. Unknown readings fail closed: the launch waits or is refused.
+type capacityResources struct {
+	RAMAvailable *uint64
+	RAMError     string
+	Disks        []hostmetrics.Disk
+}
+
+// capacityProbe samples free RAM and free space on dirs at admission time,
+// never from the 15-second host cache. Tests swap it.
+var capacityProbe = func(dirs []string) capacityResources {
+	paths := make([]hostmetrics.Path, 0, len(dirs))
+	for _, d := range dirs {
+		paths = append(paths, hostmetrics.Path{Kind: "capacity", Path: d})
+	}
+	s := hostmetrics.Read(paths)
+	out := capacityResources{Disks: s.Disks}
+	if s.RAM != nil {
+		avail := s.RAM.AvailableBytes
+		out.RAMAvailable = &avail
+	} else {
+		out.RAMError = "RAM reading unavailable"
+		for _, e := range s.Errors {
+			if strings.HasPrefix(e, "RAM: ") {
+				out.RAMError = e
+			}
+		}
+	}
+	return out
+}
+
+// nodeCapacityFullLocked returns why a new launch does not fit right now, or
+// "" when it does. exclude is the launch's own reservation. The caller holds
+// nodeAdmission.
+func nodeCapacityFullLocked(limits config.CapacityLimits, exclude string, launchDirs []string) (string, error) {
+	if limits.MaxLiveAgents > 0 {
+		used, err := nodeCapacityUsed(exclude)
+		if err != nil {
+			return "", err
+		}
+		if used >= limits.MaxLiveAgents {
+			return fmt.Sprintf("node capacity reached: %d of %d live and reserved agents", used, limits.MaxLiveAgents), nil
+		}
+	}
+	if limits.MinFreeRAMMB <= 0 && limits.MinFreeDiskMB <= 0 {
+		return "", nil
+	}
+	dirs := []string{config.DataDir()}
+	if limits.MinFreeDiskMB > 0 {
+		for _, d := range launchDirs {
+			if strings.TrimSpace(d) != "" {
+				dirs = append(dirs, d)
+			}
+		}
+	}
+	res := capacityProbe(dirs)
+	const mb = 1 << 20
+	if limits.MinFreeRAMMB > 0 {
+		if res.RAMAvailable == nil {
+			return "free RAM unknown (" + res.RAMError + "); capacity.min_free_ram_mb cannot be checked", nil
+		}
+		if *res.RAMAvailable < uint64(limits.MinFreeRAMMB)*mb {
+			return fmt.Sprintf("free RAM %d MB is below capacity.min_free_ram_mb %d", *res.RAMAvailable/mb, limits.MinFreeRAMMB), nil
+		}
+	}
+	if limits.MinFreeDiskMB > 0 {
+		for _, d := range res.Disks {
+			if d.Error != "" {
+				return fmt.Sprintf("free disk at %s unknown (%s); capacity.min_free_disk_mb cannot be checked", d.Path.Path, d.Error), nil
+			}
+			if d.AvailableBytes < uint64(limits.MinFreeDiskMB)*mb {
+				return fmt.Sprintf("free disk at %s %d MB is below capacity.min_free_disk_mb %d", d.Path.Path, d.AvailableBytes/mb, limits.MinFreeDiskMB), nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// nodeCapacityFull is nodeCapacityFullLocked for callers outside the gate.
+func nodeCapacityFull(limits config.CapacityLimits, launchDirs []string) (string, error) {
+	nodeAdmission.Lock()
+	defer nodeAdmission.Unlock()
+	return nodeCapacityFullLocked(limits, "", launchDirs)
 }
 
 var errNodeBusy = errors.New("node live and reserved agent capacity reached")

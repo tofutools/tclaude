@@ -625,7 +625,9 @@ actual launch harness and node settings. They never override its profile,
 harness, directory or model. An incompatible automatic policy refuses the
 request; a human approval must choose a compatible harness.
 
-The receiver authoritatively enforces `federation.max_live_agents` across live
+The receiver authoritatively enforces `federation.max_live_agents` (or
+`capacity.max_live_agents`, see
+[Capacity limits](spawning-and-lifecycle.md#capacity-limits-and-the-spawn-queue)) across live
 agents and reserved launches, including pending remote requests, all peers and
 both manual and automatic approvals. Local managed launches use the same gate.
 Zero means unlimited. Pending requests hold capacity until decided or expired;

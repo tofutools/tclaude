@@ -28,6 +28,7 @@ import (
 type Config struct {
 	StatusSnapshot  *StatusSnapshotConfig  `json:"status_snapshot,omitempty"`
 	Host            *HostConfig            `json:"host,omitempty"`
+	Capacity        *CapacityConfig        `json:"capacity,omitempty"`
 	Notifications   *NotificationConfig    `json:"notifications,omitempty"`
 	PreCompactGuard *PreCompactGuardConfig `json:"pre_compact_guard,omitempty"`
 	LogLevel        string                 `json:"log_level,omitempty"`
@@ -4351,6 +4352,7 @@ func Validate(c *Config) []string {
 			}
 		}
 	}
+	errs = append(errs, validateCapacity(c.Capacity)...)
 	if h := c.Host; h != nil {
 		for _, entry := range []struct {
 			name  string

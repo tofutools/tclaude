@@ -91,6 +91,9 @@ func confirmSoloWithoutDaemon(in io.Reader, out io.Writer) bool {
 
 func spawnParamsForJoinedSession(params *session.NewParams, group string) *SpawnParams {
 	spawn := &SpawnParams{
+		// The caller attaches to the session at once; waiting in the
+		// capacity queue would leave it nothing to attach to.
+		NoQueue:                true,
 		Group:                  group,
 		Name:                   params.Name,
 		Role:                   params.Role,
