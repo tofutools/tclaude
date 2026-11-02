@@ -8,6 +8,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/stewardtools"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -96,6 +97,13 @@ func handleDashboardConfigGet(w http.ResponseWriter, _ *http.Request) {
 	}
 	if unknown := unknownConfigKeys(); len(unknown) > 0 {
 		resp["unknown_keys"] = unknown
+	}
+	// The Config page shows this before the feature can be turned on.
+	if cfg.CollabEnabled() {
+		resp["external_steward"] = map[string]any{
+			"enabled": cfg.ExternalStewardsEnabled(),
+			"tools":   stewardtools.List(),
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

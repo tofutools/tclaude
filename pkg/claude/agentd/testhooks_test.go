@@ -2489,6 +2489,12 @@ func AsExternalStewardPeer(r *http.Request, convID string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), peerKey{}, p))
 }
 
+// FleetIdleLongerForTest is the fleet brief's attention kind for a long idle.
+const FleetIdleLongerForTest = fleetIdleLonger
+
+// ExternalStewardRefusesForTest reports whether slug is on the never-list.
+func ExternalStewardRefusesForTest(slug string) bool { return externalStewardRefuses(slug) }
+
 // SetExternalDaemonPIDForTest changes which pid counts as the daemon in the
 // external steward's managed check, returning the restore function.
 func SetExternalDaemonPIDForTest(pid int) func() {
