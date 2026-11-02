@@ -15,7 +15,8 @@ func TestResolvedGitProxyGitLabHosts(t *testing.T) {
 		AllowedRemotes: []string{"GitLab.Example.com/acme"},
 		GitLabHosts: map[string]string{
 			" GitLab.Example.com ": " https://gitlab.example.com:6080/ ",
-			"plain.example.com":    "http://plain.example.com", // not https: dropped, never a token destination
+			"plain.example.com":    "http://plain.example.com",           // not https: dropped, never a token destination
+			"mounted.example.com":  "https://mounted.example.com/gitlab", // a path: dropped, not half-served
 			"":                     "https://nowhere.example.com",
 		},
 		GitLabTokenFile: " ~/gitlab-token ",
@@ -28,6 +29,7 @@ func TestResolvedGitProxyGitLabHosts(t *testing.T) {
 	assert.Equal(t, "https://gitlab.example.com:6080", policy.GitLabBase("GITLAB.example.com"),
 		"the host is matched case-insensitively, as the allow-list spells it")
 	assert.Equal(t, "", policy.GitLabBase("plain.example.com"), "an http base was dropped")
+	assert.Equal(t, "", policy.GitLabBase("mounted.example.com"), "a path-mounted base was dropped")
 	assert.Equal(t, "", policy.GitLabBase("gitlab.com"),
 		"with an instance listed, gitlab.com is not recognised (and gets no token) until it is listed too")
 	explicit := GitProxyConfig{GitLabHosts: map[string]string{

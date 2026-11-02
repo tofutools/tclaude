@@ -120,8 +120,10 @@ daemon state; migrated automatically from the legacy `~/.tclaude/config.json`):
   while this map is empty. Once you list any instance, list `gitlab.com` too
   if you use it, because the one `gitlab_token_file` is sent only to listed
   instances, never to a third party you did not name. The footer's Open MRs
-  indicator always needs an entry. The base must be `https`; the GitLab token
-  is only ever sent to it. It is
+  indicator always needs an entry. The base must be an `https` origin,
+  `https://host[:port]` with no path; the GitLab token is only ever sent to
+  it. An instance served under a path (a GitLab "relative URL root") is not
+  supported, and its entry is ignored with a warning. It is
   also the one way a remote URL may name a port: an `https` remote whose
   scheme, host and port are exactly a base here is accepted (see
   [GitLab proxy](#gitlab-proxy)).

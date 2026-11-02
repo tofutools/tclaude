@@ -3503,6 +3503,17 @@ func normalizeGitLabHosts(in map[string]string) map[string]string {
 		if host == "" || !strings.HasPrefix(strings.ToLower(base), "https://") {
 			continue
 		}
+		// A base is an origin: https://host[:port]. An instance mounted
+		// under a path (a GitLab "relative URL root") is refused rather than
+		// half-served: its merge request URLs carry the mount in the path,
+		// which every merge request, allow-list and project read here would
+		// misread as part of the project.
+		if u, err := url.Parse(base); err != nil || u.Host == "" || u.Path != "" ||
+			u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+			slog.Warn("agent.git_proxy.gitlab_hosts: ignoring a base that is not an https origin (no path)",
+				"host", host, "base", base)
+			continue
+		}
 		out[host] = base
 	}
 	if len(out) == 0 {
