@@ -322,7 +322,6 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
         <span class="spacer"></span
         ><${Button}
           id="templates-manage-close"
-         
           onClick=${state.closeTemplateManager}
         >
           Close
@@ -414,7 +413,6 @@ export function TemplateDuplicateDialog({
           Cancel</${Button}><span class="spacer"></span
         ><${Button} variant="primary"
           id="template-duplicate-submit"
-         
           disabled=${busy}
           onClick=${submit}
         >
@@ -527,7 +525,6 @@ export function TemplateImportDialog({ initialRaw = '', state, actions, confirmD
           Cancel</${Button}><span class="spacer"></span
         ><${Button} variant="primary"
           id="template-import-submit"
-         
           disabled=${busy}
           onClick=${submit}
         >
@@ -648,7 +645,6 @@ export function TemplateFromGroupDialog({
           Cancel</${Button}><span class="spacer"></span
         ><${Button} variant="primary"
           id="template-from-group-submit"
-         
           disabled=${busy}
           onClick=${submit}
         >
@@ -1113,7 +1109,6 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
           Import & start
         </${Button}>`}<${Button} variant="primary"
           id="group-import-submit"
-         
           disabled=${!ready || busy || !!offlineBlocker}
           title=${kind === 'agent' && !choices.group ? 'Pick the group the agent joins' : offlineBlocker || (kind === 'agent' ? 'Import the agent offline with its conversation; wake it to start' : '')}
           onClick=${() => submit(false)}
@@ -1196,7 +1191,6 @@ export function GroupContextDialog({
           Cancel</${Button}><span class="spacer"></span
         ><${Button} variant="primary"
           id="group-context-submit"
-         
           disabled=${busy}
           onClick=${submit}
         >
@@ -1958,7 +1952,6 @@ export function TemplateDeployDialog({
           Cancel</${Button}><span class="spacer"></span
         ><${Button} variant="primary"
           id="template-deploy-submit"
-         
           disabled=${busy || worktreeLoading}
           onClick=${submit}
         >
@@ -3018,13 +3011,11 @@ export function TemplateEditor({
       <div class="modal-buttons">
         <${Button}
           id="template-editor-cancel"
-         
           disabled=${saving}
           onClick=${() => { void requestClose(); }}
         >
           Cancel</${Button}><${Button}
           id="scribe-editor-open"
-         
           hidden=${!!actions.catalogNode}
           disabled=${saving}
           onClick=${handoff}
@@ -3035,8 +3026,6 @@ export function TemplateEditor({
           /></${Button}><span class="spacer"></span
         ><${Button} variant="primary"
           id="template-editor-submit"
-         
-         
           disabled=${saving}
           onClick=${submit}
         >
