@@ -171,6 +171,7 @@ body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: c
 .companion-controls .companion-cog-menu button.companion-cog-item { display: flex; align-items: center; justify-content: flex-start; gap: 10px; text-align: left; flex: 0 0 auto; width: 100%; height: auto; min-width: 0; padding: 3px 8px; border: 0; border-radius: 4px; background: none; color: var(--ui-text); font-size: 12px; white-space: nowrap; }
 .companion-controls .companion-cog-menu button.companion-cog-item:hover:not(:disabled), .companion-controls .companion-cog-menu button.companion-cog-item[data-menu-active] { background: var(--ui-menu-hover); color: var(--ui-text-strong); }
 .companion-controls .companion-cog-menu button.companion-cog-item.ui-btn-danger { color: var(--ui-danger-text); }
+.companion-controls .companion-cog-menu button.companion-cog-item.ui-btn-danger:is(:hover, [data-menu-active]):not(:disabled) { color: var(--ui-danger); }
 .companion-controls .companion-cog-menu button.companion-cog-item[data-menu-filtered-out] { display: none; }
 .companion-cog-glyph { width: 16px; text-align: center; flex: 0 0 auto; }
 .companion-cog-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }

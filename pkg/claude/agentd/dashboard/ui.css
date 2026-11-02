@@ -226,8 +226,8 @@ body.slop {
 /* Warn: reversible but disruptive (retire, revoke owner, restart without the
    sandbox). Danger stays for what cannot be undone. */
 .ui-menu-item.ui-menu-warn { color: var(--ui-warn-text); }
-.ui-menu-item.ui-menu-warn:hover:not(:disabled) { background: rgba(210, 153, 34, 0.15); color: var(--ui-warn-text); }
-.ui-menu-item.ui-btn-danger:hover:not(:disabled) { background: rgba(248, 81, 73, 0.15); color: var(--ui-danger); }
+.ui-menu-item.ui-menu-warn:is(:hover, [data-menu-active]):not(:disabled) { background: rgba(210, 153, 34, 0.15); color: var(--ui-warn-text); }
+.ui-menu-item.ui-btn-danger:is(:hover, [data-menu-active]):not(:disabled) { background: rgba(248, 81, 73, 0.15); color: var(--ui-danger); }
 .ui-menu-item > input { margin: 0; accent-color: var(--ui-focus); }
 .ui-menu-sep { flex: none; height: 1px; margin: 3px 2px; border: 0; background: var(--ui-line); }
 .ui-menu-heading {

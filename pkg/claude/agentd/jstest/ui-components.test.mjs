@@ -143,3 +143,13 @@ test('Menu renders a menu of items, separators and headings', async (t) => {
   assert.equal(menu.querySelector('.ui-menu-heading').textContent, 'Reach');
   mounted.unmount();
 });
+
+test('a danger or warn menu row keeps its tone under the keyboard cursor, not only under hover', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const css = await readFile(new URL('../dashboard/ui.css', import.meta.url), 'utf8');
+  // menu-filter.js marks the cursor with data-menu-active and no :hover; the
+  // plain cursor rule would otherwise turn the row white.
+  for (const tone of ['ui-btn-danger', 'ui-menu-warn']) {
+    assert.match(css, new RegExp(`\\.ui-menu-item\\.${tone}:is\\(:hover, \\[data-menu-active\\]\\):not\\(:disabled\\) \\{[^}]*color:`), tone);
+  }
+});
