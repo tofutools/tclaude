@@ -73,9 +73,13 @@ test('the footer\'s PR popover opens above overlay windows, and the footer chips
   const top = Number(windows.match(/const OVERLAY_TOP_LEVEL = (\d+);/)[1]) + 2;
   const footer = zOf('body:not(:has(.modal-overlay.show, .manage-overlay.show)) footer:has(.open-prs.is-open)');
   assert.ok(footer > top, `the footer carries the popover over the windows (${footer} > ${top})`);
-  assert.ok(footer > zOf('.overlay-dock-actions'), 'and over the overlay dock and its menu');
+  assert.ok(footer > zOf('.ui-menu.overlay-dock-actions'), 'and over the overlay dock\'s menu');
   assert.ok(zOf('body:has(.open-prs.is-open):not(:has(.modal-overlay.show, .manage-overlay.show)) .companion-chips.compact:not(.dragging)') > footer, 'chips in the footer stay above the lifted bar');
   // Under a dialog the bar keeps its old lift, so the dialog's backdrop covers a pinned popover.
   assert.ok(zOf('footer:has(.open-prs.is-open)') < 100, 'a dialog still covers it');
+  const lifted = zOf('body:has([data-overlay-window]):not(:has(.modal-overlay.show, .manage-overlay.show)) footer');
+  assert.ok(lifted > top, `with overlay windows open the footer, holding their dock, rises over them (${lifted} > ${top})`);
+  assert.ok(lifted < footer, 'and under its own lifted PR popover');
+  assert.ok(zOf('body:has([data-overlay-window]):not(:has(.modal-overlay.show, .manage-overlay.show)) .companion-chips.compact:not(.dragging)') > lifted, 'the chips resting on it rise with it');
   assert.ok(zOf('body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging)') > zOf('footer:has(.open-prs.is-open)'));
 });

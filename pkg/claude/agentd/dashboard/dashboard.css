@@ -203,6 +203,10 @@ footer {
    opened over a pinned popover still covers it. */
 footer:has(.open-prs.is-open) { z-index: 46; }
 body:not(:has(.modal-overlay.show, .manage-overlay.show)) footer:has(.open-prs.is-open) { z-index: 952; }
+/* With overlay windows on the page, the footer holds their dock and the chips:
+   it rises over the windows (930-949), which may reach down over the bar, so
+   nothing there is ever covered. A dialog still covers it. */
+body:has([data-overlay-window]):not(:has(.modal-overlay.show, .manage-overlay.show)) footer { z-index: 950; }
 body.dock-open .open-prs-popover { right: calc(var(--dock-w) + 12px); }
 body.dock-open .open-prs.is-open::before {
   right: 12px; width: calc(var(--dock-w) + min(470px, calc(100vw - 24px)));
@@ -2088,7 +2092,7 @@ body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) 
 /* The dock's menus: ☰'s actions on every window, and the pills that did not fit.
    They open upwards from their button, fixed and outside the footer: inside, the
    footer's level would put them under the overlay windows (930-949). */
-.overlay-dock-actions { position: fixed; z-index: 951; min-width: 190px; max-height: calc(100vh - var(--footer-h, 29px) - 24px); overflow: auto; box-sizing: border-box; }
+.ui-menu.overlay-dock-actions { position: fixed; z-index: 951; min-width: 190px; max-height: calc(100vh - var(--footer-h, 29px) - 24px); overflow: auto; box-sizing: border-box; }
 .overlay-dock-actions .ui-menu-item { white-space: nowrap; }
 .overlay-dock-entry-note { color: var(--ui-muted); }
 .overlay-dock-entry-needs { color: var(--cmp-amber-text); font-weight: 600; }

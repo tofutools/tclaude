@@ -162,7 +162,7 @@ export function FooterDock({ snapshot, win }) {
     observer.observe(node);
     return () => observer.disconnect();
   }, [win]);
-  useEffect(() => () => { dockShown.value = Infinity; }, []);
+  useEffect(() => () => { dockShown.value = Infinity; dockPopup.value = null; }, []);
   const visible = entries.slice(0, shown);
   const hidden = entries.slice(visible.length);
   const folded = visible.length ? [] : hidden;
@@ -189,7 +189,8 @@ export function OverlayDockPopup({ snapshot, win }) {
   const hidden = entries.slice(Math.min(dockShown.value, entries.length));
   const listed = popup?.kind === 'more' || (popup?.kind === 'actions' && dockShown.value === 0) ? hidden : [];
   const shownActions = popup?.kind === 'actions' ? actions : [];
-  const empty = !shownActions.length && !listed.length;
+  // "+N" gone from the bar takes its list with it; ☰ lists them now.
+  const empty = (!shownActions.length && !listed.length) || (popup?.kind === 'more' && dockShown.value === 0);
   useEffect(() => {
     if (popup && empty) dockPopup.value = null;
   }, [popup, empty]);
@@ -198,6 +199,8 @@ export function OverlayDockPopup({ snapshot, win }) {
     const room = win?.innerWidth || 0;
     setLeft(box?.width && room && popup ? Math.max(8, Math.min(popup.at.left, room - box.width - 8)) : null);
   }, [popup, listed.length, shownActions.length]);
+  // A menu open when the last window goes, or Collab with it, is not open when one comes back.
+  useEffect(() => () => { dockPopup.value = null; }, []);
   useEffect(() => {
     if (!popup) return undefined;
     const doc = win?.document;
