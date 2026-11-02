@@ -2651,3 +2651,35 @@ test('a Classic chat can be minimized, and a pill brings it back with the keyboa
   await flushed(harness);
   assert.ok(mounted.at(-1).focused > focused);
 });
+
+test('marking up from a chat tab draws above the windows, which step aside', async (t) => {
+  const { view, harness } = await floated(t, { snapshot: mailable() });
+  await harness.act(() => view.container.querySelector('.chat-window .companion-annotate').click());
+  await flushed(harness);
+  const root = view.container.querySelector('.annotate-root');
+  assert.equal(root.closest('.companion-window'), null, 'a hidden window would hide it too');
+  assert.equal(harness.document.body.classList.contains('companion-annotating'), true);
+});
+
+test('a reply landing leaves the operator typing in another window', async (t) => {
+  const fake = fakeDictation();
+  let answer = null;
+  const fetchImpl = async (url) => {
+    if (String(url) !== '/api/operator-message') return { ok: true, status: 202, json: async () => ({}) };
+    return new Promise((resolve) => { answer = resolve; });
+  };
+  const { view, harness, mounted } = await floated(t, { fetchImpl, dictationImpl: fake.impl, snapshot: mailable() });
+  await fake.say(harness, view, 'over to you');
+  await harness.act(async () => { view.container.querySelector('.chat-window .companion-input').dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true })); await new Promise((r) => setTimeout(r, 0)); });
+  const elsewhere = harness.document.createElement('textarea');
+  elsewhere.className = 'companion-draft';
+  harness.document.body.append(elsewhere);
+  t.after(() => elsewhere.remove());
+  elsewhere.focus();
+  const focused = mounted.at(-1).focused;
+  await harness.act(async () => { answer({ ok: true, status: 202, json: async () => ({ id: 1 }) }); await new Promise((r) => setTimeout(r, 0)); });
+  await flushed(harness);
+  assert.equal(harness.document.activeElement, elsewhere);
+  assert.equal(mounted.at(-1).focused, focused);
+  assert.equal(view.container.querySelector('.chat-window .companion-draft'), null, 'and the message did go');
+});

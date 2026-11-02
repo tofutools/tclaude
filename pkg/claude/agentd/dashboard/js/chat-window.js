@@ -34,7 +34,7 @@ export const chatHasDraft = (tabId) => !!kept.drafts.get(tabId)?.trim();
 
 export function ChatWindow({
   instance, overlay, focusRef, strip, close, snapshot, prefs, win, fetchImpl, notify, widgetFactory, loadRuntime, closeTerminalPanes, onBackToTab, onSeparateWindow = null, onStewardDown, stewardRoster = [], openPermissions = null, openSudo = null, openStewardHandover = null, openMorph = null, showAgent = null, Terminal, DecisionCard,
-  statusOf = companionStatus, starting = () => false, offlineActions = () => null, voice = null, onCompose = null, onTerminals = null, dictationImpl = null, viewTab,
+  statusOf = companionStatus, starting = () => false, offlineActions = () => null, voice = null, onCompose = null, onTerminals = null, dictationImpl = null, annotate, viewTab,
 }) {
   const agentId = instance.agent;
   const agents = companionAgents(snapshot.value);
@@ -139,7 +139,7 @@ export function ChatWindow({
         : html`<div class="companion-empty"><p><b>${name}</b> is ${agent ? 'offline' : 'gone'}.</p>${agent && offlineActions(agent)}</div>`)}
       ${shown && html`
         ${needsYou && html`<div class="companion-needs-bar" role="status">${name} is waiting for you${agent.detail ? `: ${agent.detail}` : ''}</div>`}
-        <${PaneDictation} pane=${pane} active=${open} solo=${true} status=${status} canType=${true} target=${{ agent: agentId }} snapshot=${snapshot} actions=${actions} win=${win} notify=${notify} keep=${kept} dictationImpl=${dictationImpl} viewTab=${viewTab} quietSpeech=${voice?.quiet} fetchImpl=${fetchImpl}>
+        <${PaneDictation} pane=${pane} active=${open} solo=${true} status=${status} canType=${true} target=${{ agent: agentId }} snapshot=${snapshot} actions=${actions} win=${win} notify=${notify} keep=${kept} onAnnotate=${annotate ? () => annotate(agentId) : null} dictationImpl=${dictationImpl} viewTab=${viewTab} quietSpeech=${voice?.quiet} fetchImpl=${fetchImpl}>
           <${ShellHere} agent=${agentId} name=${name} snapshot=${snapshot.value} notify=${notify} />
           <${TerminalZoom} font=${font} widget=${() => widgetRef.current} />
         <//>

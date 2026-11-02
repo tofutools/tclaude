@@ -60,7 +60,7 @@ export function terminalDraftText(text) {
 }
 
 export function PaneDictation({
-  pane, active, solo, status, canType, target, snapshot, actions, win = globalThis.window, notify = shellToast, children = null, keep = null, dictationImpl = null, viewTab = () => 'terminals', quietSpeech = () => {}, fetchImpl = null,
+  pane, active, solo, status, canType, target, snapshot, actions, win = globalThis.window, notify = shellToast, children = null, keep = null, onAnnotate = null, dictationImpl = null, viewTab = () => 'terminals', quietSpeech = () => {}, fetchImpl = null,
 }) {
   const [draft, setDraftText] = useState(() => keep?.drafts.get(pane.key) || '');
   useEffect(() => {
@@ -69,7 +69,8 @@ export function PaneDictation({
   }, [draft]);
   const [sending, setSending] = useState(false);
   const [fieldFocused, setFieldFocused] = useState(false);
-  const fieldRef = useCallback((element) => { if (!element) setFieldFocused(false); }, []);
+  const field = useRef(null);
+  const fieldRef = useCallback((element) => { field.current = element; if (!element) setFieldFocused(false); }, []);
   const [withContext, setContext] = useState(() => !keep?.viewOff.has(pane.key));
   const setWithContext = (on) => {
     setContext(on);
@@ -117,8 +118,9 @@ export function PaneDictation({
     // delivered must not come back with it.
     if (keep?.drafts.get(pane.key) === text) keep.drafts.delete(pane.key);
     setDraftText((current) => (current === text ? '' : current));
+    // A field in another window is the operator typing there.
     const focused = win?.document?.activeElement;
-    if (!focused || focused === win.document.body || focused.matches?.('.companion-draft, .companion-input button[type="submit"]')) toTerminal();
+    if (!focused || focused === win.document.body || field.current?.closest('.companion-input')?.contains(focused)) toTerminal();
   }
 
   async function mailAgent(text) {
@@ -175,7 +177,7 @@ export function PaneDictation({
         contextNote=${talks && (snapshot?.value?.steward_access?.capture_off || []).includes(target.agent)
           ? `${name} can't capture your screen: that permission is off for it. The attached view says where you are, not what is on screen.` : ''}
         annotateLabel=${`Mark up this page for ${name}`}
-        onAnnotate=${talks ? () => annotation.start({ agentId: target.agent, name, fetchImpl: agentFetch(), remote: !!target.node }) : null}>${children}<//>
+        onAnnotate=${talks ? onAnnotate || (() => annotation.start({ agentId: target.agent, name, fetchImpl: agentFetch(), remote: !!target.node })) : null}>${children}<//>
       ${notice && html`<button type="button" class="companion-pane-notice" role="alert" title="Dismiss" onClick=${() => setNotice('')}>${notice}</button>`}
     </div>
     ${showField && html`<${DraftField} dictation=${dictation} draft=${draft} sending=${sending} fieldRef=${fieldRef}
