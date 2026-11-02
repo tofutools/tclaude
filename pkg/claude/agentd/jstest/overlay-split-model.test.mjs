@@ -347,14 +347,13 @@ test('an empty cell offers itself whole, its halves and its quarters, as a blank
   assert.deepEqual(rectOf({ x: 980, y: 120 }, '', room), { x: 500, y: 100, w: 500, h: 400 }, 'and its corner takes the top half');
 });
 
-test('a cell held for a window that is away is kept, and one that no longer exists is not', async (t) => {
+test('a cell held for a window that is away waits for it, and one for a window that no longer exists takes a drop', async (t) => {
   const { dropTree, normalized } = await model(t);
   const saved = pair('x', 'a', 'b');
   const into = (alive) => dropTree(saved, room, { x: 750, y: 500 }, 'c', { here: new Set(['a']), alive: new Set(alive) });
   assert.deepEqual(into(['a', 'c']).tree, pair('x', 'a', 'c'), 'b is gone: its cell takes c');
   assert.equal(into(['a', 'b', 'c'])?.tree, undefined, 'b is minimized: the cell waits for it');
-  assert.deepEqual(normalized(saved, new Set(['a'])), { ...saved, b: gap }, 'an operation drops a window that is gone');
-  assert.equal(normalized(saved, new Set()), null);
+  assert.deepEqual(normalized(saved), saved, 'its leaf stays, for if it comes back late');
 });
 
 test('a quad with an empty half is the other half beside a gap, on load too', async (t) => {
@@ -437,4 +436,15 @@ test('the same split, however it was reached, offers the same drops', async (t) 
   const leftDrops = dropsOver(m, left);
   assert.deepEqual(dropsOver(m, halves[0]), leftDrops);
   assert.deepEqual(dropsOver(m, halves[1]), leftDrops);
+});
+
+test('a window torn off floats where it left, even where its cell joined an empty one', async (t) => {
+  const { dropTree, withoutWindow } = await model(t);
+  const saved = { x: 0.5, y: 0.5, cells: [{ id: 'a' }, { id: 'b' }, { id: 'c' }, gap] };
+  const torn = withoutWindow(saved, 'b');
+  assert.deepEqual(torn, { axis: 'x', at: 0.5, a: pair('y', 'a', 'c'), b: gap }, 'b\u2019s quarter and the empty one are one half now');
+  const vacated = { x: 500, y: 100, w: 500, h: 400 };
+  const here = new Set(['a', 'c']);
+  assert.deepEqual(dropTree(torn, room, { x: 520, y: 150 }, 'b', { here, alive: here, vacated }), { float: true });
+  assert.deepEqual(dropTree(torn, room, { x: 750, y: 700 }, 'b', { here, alive: here, vacated }).tree.cells, [{ id: 'a' }, gap, { id: 'c' }, { id: 'b' }], 'below it, the rest of the half takes it');
 });

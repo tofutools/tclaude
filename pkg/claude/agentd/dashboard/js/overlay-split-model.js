@@ -264,17 +264,12 @@ function tidied(node) {
   return empty ? tidied(empty.half(node, kept)) : { ...node, cells: kept };
 }
 
-// normalized is the tree as every operation keeps it: tidied, and with keep, a
-// window not in it leaves its cell empty, as one that no longer exists can't
-// come back to it. Null with no window left.
-export function normalized(tree, keep = null) {
+// normalized is the tree as every operation keeps it, tidied. A window that no
+// longer exists keeps its leaf, so it finds its cell if it comes back late, but
+// every operation treats that cell as empty. Null with no window left.
+export function normalized(tree) {
   if (!tree) return null;
-  const pruned = (node) => {
-    if (isLeaf(node)) return !keep || keep.has(node.id) ? node : GAP;
-    if (isGap(node)) return GAP;
-    return childrenOf(node).reduce((next, child, index) => withChild(next, index, pruned(child)), node);
-  };
-  const next = tidied(pruned(tree));
+  const next = tidied(tree);
   return leavesOf(next).length ? next : null;
 }
 
@@ -418,7 +413,6 @@ export function withWindow(tree, target, zone, id) {
 }
 
 const inside = (pointer, rect) => !!rect && pointer.x >= rect.x && pointer.x < rect.x + rect.w && pointer.y >= rect.y && pointer.y < rect.y + rect.h;
-const sameRect = (a, b) => !!a && !!b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
 
 // dropTree is what a drop of id at pointer does to the saved split, laid out in
 // area with the windows in here showing: { tree, zone } for the split it makes,
@@ -430,10 +424,12 @@ const sameRect = (a, b) => !!a && !!b && a.x === b.x && a.y === b.y && a.w === b
 export function dropTree(saved, area, pointer, id, { here, alive, room = '', vacated = null }) {
   const live = keepingWindows(saved, here);
   if (!live || !fits(live, area)) return null;
-  const { rects, gaps } = splitLayout(live, area);
-  const gap = gaps.find((cell) => inside(pointer, cell.rect) && !sameRect(cell.rect, vacated) && !(cell.held && cell.held !== id && alive.has(cell.held)));
-  if (gap) return { tree: withinGap(saved, gap, pointer, id, room, area), zone: '' };
+  // The cell just left is empty space now, even where it joined an empty
+  // neighbour into one larger cell.
   if (inside(pointer, vacated)) return { float: true };
+  const { rects, gaps } = splitLayout(live, area);
+  const gap = gaps.find((cell) => inside(pointer, cell.rect) && !(cell.held && cell.held !== id && alive.has(cell.held)));
+  if (gap) return { tree: withinGap(saved, gap, pointer, id, room, area), zone: '' };
   for (const other of leavesOf(live)) {
     const zone = other === id ? '' : dropZone(pointer, rects[other]);
     if (zone) return { tree: withWindow(saved, other, zone, id), zone };

@@ -152,9 +152,11 @@ export function tiledOverlayIds() {
   return new Set([...leavesOf(splitTree.value), ...snappedWindows.value.keys()]);
 }
 
-// offerSnapAssist asks for the largest empty cell of tree, if there is one.
+// offerSnapAssist asks for the largest empty cell of tree, if there is one. A
+// cell kept for a window that no longer exists is empty to it too.
 function offerSnapAssist(tree, area, from) {
-  const cells = snapAssistOn && tree && fits(tree, area) ? splitLayout(tree, area).gaps.filter((gap) => !gap.held) : [];
+  const shown = tree && keepingWindows(tree, aliveWindows);
+  const cells = snapAssistOn && shown && fits(shown, area) ? splitLayout(shown, area).gaps : [];
   const size = ({ rect }) => rect.w * rect.h;
   const gap = cells.sort((a, b) => size(b) - size(a))[0];
   snapAssist.value = gap ? { tree, gap, area, from, base: splitTree.peek() } : null;
@@ -384,9 +386,8 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     const savedTree = splitTree.peek();
     const others = [...snappedWindows.peek()].filter(([other]) => other !== id);
     const here = new Set([...others.map(([other]) => other), id]);
-    // A window that no longer exists gives its cell up to the drop.
     const planned = (made, zone = '') => {
-      const tree = normalized(made, new Set([...aliveWindows, id]));
+      const tree = normalized(made);
       const next = tree && layoutOf(keepingWindows(tree, here));
       const rect = next?.rects[id];
       return rect ? { zone: zone === 'top' ? 'top-left' : zone || rectZone(rect, bounds), tree, guide: rect } : null;
