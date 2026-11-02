@@ -59,7 +59,7 @@ test('a row\'s action dialogs step a window aside; an editor stays beneath it', 
   const rule = css.match(/body:has\(([^{}]*)\) :is\(\.companion-window, \.companion-resize-frame\) \{ z-index: 90; \}/);
   assert.ok(rule, 'the window has a rule that steps aside');
   const selectors = rule[1].split(',').map((selector) => selector.trim());
-  for (const id of ['term-chooser-modal', 'term-modal', 'sandbox-impl-modal', 'clone-modal', 'export-agent-modal', 'reincarnate-agent-modal', 'task-link-modal']) {
+  for (const id of ['term-chooser-modal', 'term-modal', 'sandbox-impl-modal', 'clone-modal', 'export-agent-modal', 'reincarnate-agent-modal', 'task-link-modal', 'command-palette-modal']) {
     assert.ok(selectors.includes(`#${id}.show`), `${id} must not open under a window`);
   }
   assert.ok(!selectors.includes('#profile-editor-modal.show'), 'an agent can still be used beside an editor');
@@ -71,8 +71,11 @@ test('the footer\'s PR popover opens above overlay windows, and the footer chips
   const windows = await readFile(new URL('../dashboard/js/overlay-window.js', import.meta.url), 'utf8');
   // A window's level tops out at OVERLAY_TOP_LEVEL, and its split lines sit two above it.
   const top = Number(windows.match(/const OVERLAY_TOP_LEVEL = (\d+);/)[1]) + 2;
-  const footer = zOf('footer:has(.open-prs.is-open)');
+  const footer = zOf('body:not(:has(.modal-overlay.show, .manage-overlay.show)) footer:has(.open-prs.is-open)');
   assert.ok(footer > top, `the footer carries the popover over the windows (${footer} > ${top})`);
   assert.ok(footer > zOf('.overlay-dock-actions'), 'and over the overlay dock and its menu');
-  assert.ok(zOf('body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging)') > footer, 'chips in the footer stay above the lifted bar');
+  assert.ok(zOf('body:has(.open-prs.is-open):not(:has(.modal-overlay.show, .manage-overlay.show)) .companion-chips.compact:not(.dragging)') > footer, 'chips in the footer stay above the lifted bar');
+  // Under a dialog the bar keeps its old lift, so the dialog's backdrop covers a pinned popover.
+  assert.ok(zOf('footer:has(.open-prs.is-open)') < 100, 'a dialog still covers it');
+  assert.ok(zOf('body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging)') > zOf('footer:has(.open-prs.is-open)'));
 });
