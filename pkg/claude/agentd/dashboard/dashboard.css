@@ -10249,7 +10249,12 @@ label.cfg-label { cursor: pointer; }
 }
 .shortcut-or { color: #8b949e; font-size: 12px; }
 .cfg-shortcut-list th.is-here, .cfg-shortcut-list td.is-here { background: rgba(88, 166, 255, 0.06); }
-.cfg-shortcut-list td:first-child { width: 40%; }
+.cfg-shortcut-list { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+.cfg-shortcut-list th { text-align: left; font-weight: 600; color: #8b949e; }
+.cfg-shortcut-list th, .cfg-shortcut-list td { padding: 6px 12px 6px 0; vertical-align: top; border-bottom: 1px solid var(--border); }
+.cfg-shortcut-list th:first-child { width: 38%; }
+.cfg-shortcut-list th:nth-child(2), .cfg-shortcut-list th:nth-child(3) { width: 24%; }
+@media (max-width: 640px) { .cfg-shortcut-list { table-layout: auto; } .cfg-shortcut-list th { width: auto; } }
 .cfg-steward-manager { display: flex; flex-direction: column; gap: 10px; width: 100%; min-width: 0; }
 .cfg-steward-issued { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
 .cfg-steward-secret { display: block; padding: 6px 8px; font-size: 12px; overflow-wrap: anywhere; user-select: all; }

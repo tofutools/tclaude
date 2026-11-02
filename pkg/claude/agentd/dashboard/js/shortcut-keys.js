@@ -40,7 +40,7 @@ export function KeyboardShortcutList({ Setting, collab = dashboardState.snapshot
     return html`<div class="cfg-section" key=${scope.id} data-shortcut-scope=${scope.id}>
       <h3>${scope.title}</h3>
       <${Setting} title=${`${scope.title}: ${rows.length} shortcut${rows.length === 1 ? '' : 's'}`} wide summary=${scope.summary}>
-        <table class="cfg-tool-list cfg-shortcut-list">
+        <table class="cfg-shortcut-list">
           <thead><tr>
             <th scope="col">Action</th>
             <th scope="col" class=${here === 'pc' ? 'is-here' : ''}>Windows & Linux${here === 'pc' ? ' (this browser)' : ''}</th>
