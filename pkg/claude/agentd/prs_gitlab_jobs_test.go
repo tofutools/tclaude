@@ -94,3 +94,24 @@ func TestGitLabPipelineChecks_IncompleteReadTakesThePipelinesVerdict(t *testing.
 		assert.Equal(t, 100, info.Summary.Total)
 	})
 }
+
+func TestResolvedChecksSummary_KeepsTheResolversOwn(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	green := []prCheckRun{{Name: "a", Bucket: "pass"}, {Name: "b", Bucket: "pass"}}
+	kept := resolvedChecksSummary(prChecksInfo{Checks: green, Summary: prChecksSummary{Total: 2001, Passed: 2000, Failed: 1, State: "failing"}}, now)
+	assert.Equal(t, "failing", kept.State, "a capped display list never overrides the resolver's verdict")
+	assert.Equal(t, 2001, kept.Total)
+	assert.Equal(t, now.Format(time.RFC3339), kept.FetchedAt, "re-stamped with the fetch time")
+	computed := resolvedChecksSummary(prChecksInfo{Checks: green}, now)
+	assert.Equal(t, "passing", computed.State, "an empty summary is computed from the checks")
+	assert.Equal(t, 2, computed.Total)
+}
+
+func TestGitLabPipelineChecks_ACancelledPipelineIsNotGreen(t *testing.T) {
+	t.Cleanup(SetGitLabTransportForTest(func(_ context.Context, _, _ string, _ glAPIRequest) (glAPIResult, error) {
+		return glAPIResult{Status: http.StatusOK, Body: jobsPage(t, 1, 3, "canceled"), Header: http.Header{}}, nil
+	}))
+	info := gitlabPipelineChecks(context.Background(), jobsTestBase, "glpat", jobsRef(t),
+		&glPipeline{ID: 99, Status: "canceled"}, time.Now())
+	assert.Equal(t, "failing", info.Summary.State, "GitLab's 'canceled', wholesale, is not a pass")
+}

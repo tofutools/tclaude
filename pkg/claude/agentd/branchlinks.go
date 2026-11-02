@@ -477,7 +477,7 @@ func refreshBranchLink(repoDir, branch, key string) {
 		checks := *info.Checks
 		checks.PRState = info.PRState
 		checks.FetchedAt = info.FetchedAt
-		checks.Summary = summarizePRChecks(checks.Checks, checks.FetchedAt)
+		checks.Summary = resolvedChecksSummary(checks, checks.FetchedAt)
 		savePRChecks(info.PRURL, checks)
 	}
 	if info.PRURL != "" && info.Reviews != nil {

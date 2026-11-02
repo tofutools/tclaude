@@ -536,6 +536,10 @@ type glMRChecksOut struct {
 	URL      string          `json:"url"`
 	Pipeline *glPipelineOut  `json:"pipeline"`
 	Jobs     json.RawMessage `json:"jobs"`
+	// JobsTruncated says the pipeline has more jobs than the proxy reads
+	// (maxGLPaginatedPages pages); jobs is then not the whole pipeline, and
+	// the pipeline's own status is the verdict.
+	JobsTruncated bool `json:"jobs_truncated,omitempty"`
 }
 
 // handleGLProxyMRChecks serves POST /v1/gitlab/mr/checks.
@@ -560,11 +564,12 @@ func handleGLProxyMRChecks(w http.ResponseWriter, r *http.Request) {
 	}
 	out := glMRChecksOut{Number: mr.IID, URL: mr.WebURL, Pipeline: mr.HeadPipeline.project(), Jobs: json.RawMessage("null")}
 	if out.Pipeline != nil {
-		jobs, _, failure, err := g.pipelineJobs(ctx, out.Pipeline.ID)
+		jobs, truncated, failure, err := g.pipelineJobs(ctx, out.Pipeline.ID)
 		if failure != nil || err != nil {
 			g.respondOrFail(w, r, "mr.checks", failure, err)
 			return
 		}
+		out.JobsTruncated = truncated
 		projected := make([]glJobOut, 0, len(jobs))
 		for _, j := range jobs {
 			projected = append(projected, projectGLJob(j))

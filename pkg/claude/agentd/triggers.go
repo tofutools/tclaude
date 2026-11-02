@@ -217,7 +217,7 @@ func pollTriggerCITransitions(now time.Time) {
 			continue
 		}
 		info.FetchedAt = now
-		info.Summary = summarizePRChecks(info.Checks, now)
+		info.Summary = resolvedChecksSummary(info, now)
 		savePRChecks(pr.PRURL, info)
 		state := strings.ToLower(strings.TrimSpace(info.PRState))
 		if state != "" {

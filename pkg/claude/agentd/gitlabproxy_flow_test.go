@@ -520,6 +520,31 @@ func TestGLProxy_MRChecksReadsTheHeadPipelinesJobs(t *testing.T) {
 	assert.Equal(t, "failed", out.Jobs[1].Status)
 }
 
+// TestGLProxy_MRChecksSaysWhenTheJobsAreTruncated: a pipeline with more jobs
+// than the proxy reads must not look complete.
+func TestGLProxy_MRChecksSaysWhenTheJobsAreTruncated(t *testing.T) {
+	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
+	gl.route = func(req agentd.GitLabRequestForTest) (glCanned, bool) {
+		if strings.HasSuffix(req.Path, "/jobs") || strings.Contains(req.Path, "/jobs?") {
+			// Always another page: the proxy reads up to its cap and stops.
+			return glCanned{Status: http.StatusOK, Body: `[{"id":1,"name":"build","stage":"build","status":"success"}]`,
+				Header: http.Header{"Link": {`<` + glTestBase + `/api/v4/projects/` + glTestProjectID + `/pipelines/99/jobs?page=2>; rel="next"`}}}, true
+		}
+		return glCanned{Status: http.StatusOK, Body: glCannedMR}, true
+	}
+	res := gitProxyPost(t, f, "/v1/gitlab/mr/checks", map[string]any{"number": 7})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	_, _, _, doc := glOutcome(t, res.Body.Bytes())
+	var out struct {
+		JobsTruncated bool              `json:"jobs_truncated"`
+		Jobs          []json.RawMessage `json:"jobs"`
+	}
+	require.NoError(t, json.Unmarshal(doc, &out), "doc=%s", doc)
+	assert.True(t, out.JobsTruncated)
+	assert.NotEmpty(t, out.Jobs)
+}
+
 func TestGLProxy_MRCreateDraftIsATitleMarker(t *testing.T) {
 	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
 	gl.def = glCanned{Status: 201, Body: strings.Replace(glCannedMR, `"title":"Add a thing"`, `"title":"Draft: Add a thing","draft":true`, 1)}

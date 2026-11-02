@@ -299,7 +299,12 @@ func gitlabJobCheckRun(job glJob, pipelineURL string) (prCheckRun, bool) {
 		} else {
 			run.Bucket, run.Conclusion = "fail", "failed"
 		}
-	case "canceled", "cancelled", "skipped":
+	case "canceled", "cancelled":
+		// GitLab spells it "canceled"; the summary counts a cancelled run
+		// under the one spelling, so a pipeline cancelled wholesale is not
+		// read as green.
+		run.Bucket, run.Conclusion = "skipped", "cancelled"
+	case "skipped":
 		run.Bucket, run.Conclusion = "skipped", status
 	case "":
 		run.Bucket, run.Conclusion = "pending", "pending"

@@ -203,7 +203,8 @@ func gitlabMRViewCmd() *cobra.Command {
 
 func gitlabMRChecksCmd() *cobra.Command {
 	return gitlabNumberCmd("checks", "Show the head pipeline and its jobs for a merge request",
-		"Reports the merge request's head pipeline and every job in it. A running pipeline is an answer, "+
+		"Reports the merge request's head pipeline and its jobs. A pipeline with more jobs than the proxy "+
+			"reads sets jobs_truncated, and its own status is then the verdict. A running pipeline is an answer, "+
 			"not a failure — the command succeeds and the state is in the output. The pipeline `id` is what "+
 			"`job log-failed` takes; a job's `id` is what `job artifacts` and `job download` take.",
 		"/v1/gitlab/mr/checks", "mr checks", false)
