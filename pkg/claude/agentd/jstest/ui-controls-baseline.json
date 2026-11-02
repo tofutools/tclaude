@@ -119,7 +119,7 @@
   "js/process-workflow-share.js": 6,
   "js/processes-island.js": 17,
   "js/profiles-island.js": 2,
-  "js/proposal-reader.js": 4,
+  "js/proposal-reader.js": 1,
   "js/queued-spawns-island.js": 1,
   "js/queued-spawns.js": 2,
   "js/remote-files-panel.js": 8,

@@ -380,9 +380,9 @@ export function GroupsNotificationReader({
       </div>
     </header>
     <nav class="human-notification-drawer-nav" aria-label="Notifications from this agent">
-      <${Button} disabled=${!previous}
+      <${Button} icon=${true} disabled=${!previous}
         onClick=${() => previous && onSelect(previous.id)} aria-label="Newer notification" title="Newer notification">‹<//>
-      <${Button} disabled=${!next}
+      <${Button} icon=${true} disabled=${!next}
         onClick=${() => next && onSelect(next.id)} aria-label="Older notification" title="Older notification">›<//>
       <span>${index + 1} of ${messages.length} from this agent</span>
       <span class="human-notification-drawer-order">newest first</span>

@@ -1884,12 +1884,12 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
   border-top: 1px solid #30363d; background: #161b22;
 }
 .human-notification-drawer-actions-break { flex-basis: 100%; height: 0; }
-.human-notification-drawer-actions button:where(:not(.ui-btn)) {
+.human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)) {
   padding: 7px 10px; border: 1px solid #30363d; border-radius: 5px;
   background: #21262d; color: #c9d1d9; cursor: pointer; font: inherit; font-size: 12px;
   line-height: 16px; white-space: nowrap;
 }
-.human-notification-drawer-actions button:where(:not(.ui-btn)):disabled { opacity: .45; cursor: default; }
+.human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):disabled { opacity: .45; cursor: default; }
 .human-notification-drawer-actions .human-notification-drawer-delete { margin-left: auto; }
 /* The shared split button, joined and left-aligned on the second row. Its menu
    opens UPWARD here: the bar sits at the drawer's bottom edge. */
@@ -1911,8 +1911,8 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
 .human-notification-drawer-actions .mail-download-menu button[role="menuitem"][type]:where(:not(.ui-menu-item)):focus-visible {
   background: #263445; color: #f0f6fc; outline: none;
 }
-.human-notification-drawer-actions button:where(:not(.ui-btn)):hover:not(:disabled) { border-color: #58a6ff; color: #f0f6fc; }
-.human-notification-drawer-actions button:where(:not(.ui-btn)).primary {
+.human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):hover:not(:disabled) { border-color: #58a6ff; color: #f0f6fc; }
+.human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)).primary {
   border-color: #1f6feb; background: #0d3a66; color: #dbeafe;
 }
 
@@ -2875,11 +2875,11 @@ body.wizard .human-notification-drawer-file-link:focus-visible { outline-color: 
 body.wizard .human-notification-drawer-file-icon { background: #241a3a; color: #d8cff0; }
 body.wizard .human-notification-drawer-download { border-color: #7c5cc4; color: #b39ddb; }
 body.wizard .human-notification-drawer-download:hover { background: rgba(124, 92, 196, .16); }
-body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn)) {
+body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)) {
   background: #1d1730; border-color: #3a2f57; color: #d8cff0;
 }
-body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn)):hover:not(:disabled) { border-color: #7c5cc4; color: #e6dcff; }
-body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn)).primary {
+body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):hover:not(:disabled) { border-color: #7c5cc4; color: #e6dcff; }
+body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)).primary {
   background: #3b2a63; border-color: #7c5cc4; color: #f0e9ff;
 }
 
@@ -2919,11 +2919,11 @@ body.slop .human-notification-drawer-file-link:focus-visible { outline-color: #f
 body.slop .human-notification-drawer-file-icon { background: #4a0a0a; color: #f0dcc0; }
 body.slop .human-notification-drawer-download { border-color: #ffd700; color: #ffd700; }
 body.slop .human-notification-drawer-download:hover { background: rgba(255, 215, 0, .13); }
-body.slop .human-notification-drawer-actions button:where(:not(.ui-btn)) {
+body.slop .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)) {
   background: #2a0a0a; border-color: #8b0000; color: #f0dcc0;
 }
-body.slop .human-notification-drawer-actions button:where(:not(.ui-btn)):hover:not(:disabled) { border-color: #ffd700; color: #ffe88c; }
-body.slop .human-notification-drawer-actions button:where(:not(.ui-btn)).primary {
+body.slop .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):hover:not(:disabled) { border-color: #ffd700; color: #ffe88c; }
+body.slop .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)).primary {
   background: #4a0a0a; border-color: #ffd700; color: #ffe88c;
 }
 
@@ -7217,7 +7217,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .sbx-section select,
 .cron-create-row input[type=number],
 .cron-create-row input[type=url],
-.cron-create-row select,
+.cron-create-row select:where(:not(.ui-select)),
 .cron-create-row textarea {
   flex: 1;
   /* min-width:0 lets these flex children shrink below their intrinsic
@@ -8488,7 +8488,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .sbx-section select:focus,
 .cron-create-row input[type=number]:focus,
 .cron-create-row input[type=url]:focus,
-.cron-create-row select:focus,
+.cron-create-row select:where(:not(.ui-select)):focus,
 .cron-create-row textarea:focus { outline: none; border-color: #58a6ff; }
 .cron-create-row textarea {
   min-height: 80px; max-height: 220px; resize: vertical;
@@ -8606,11 +8606,11 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .spawn-attachments-controls {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
-.spawn-attachments-controls button {
+.spawn-attachments-controls button:where(:not(.ui-btn)) {
   background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
   color: #c9d1d9; padding: 5px 10px; font-size: 12px; cursor: pointer;
 }
-.spawn-attachments-controls button:hover { border-color: #58a6ff; }
+.spawn-attachments-controls button:where(:not(.ui-btn)):hover { border-color: #58a6ff; }
 .spawn-attachments-hint { font-size: 11px; color: #7d8590; }
 .spawn-attachments-list {
   list-style: none; margin: 0; padding: 0; display: flex;
@@ -8664,12 +8664,12 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .cron-create-target .cron-target-input-row select {
   flex: 1;
 }
-.cron-create-target .cron-target-input-row button {
+.cron-create-target .cron-target-input-row button:where(:not(.ui-btn)) {
   background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
   padding: 5px 10px; font-size: 12px; color: #c9d1d9;
   font-family: inherit; cursor: pointer;
 }
-.cron-create-target .cron-target-input-row button:hover:not(:disabled) { background: #2d333b; }
+.cron-create-target .cron-target-input-row button:where(:not(.ui-btn)):hover:not(:disabled) { background: #2d333b; }
 .cron-create-target .cron-target-input-row:not(.locked-field) button:disabled { opacity: .5; cursor: not-allowed; }
 /* Saved-prompt picker: one line — the insert select takes the width and the
    Manage button stays its natural size beside it. */
@@ -9724,8 +9724,8 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 #message-create-members .recipient-prs { margin-left: auto; display: flex; gap: 10px; flex: 0 0 auto; }
 #message-create-members .recipient-prs .pr-link { margin-left: 0; }
 .recipient-picks { flex-wrap: wrap; row-gap: 6px; }
-.recipient-picks button:disabled { opacity: 0.45; cursor: default; }
-.recipient-picks button.active { border-color: #1f6feb; color: #58a6ff; }
+.recipient-picks button:where(:not(.ui-btn)):disabled { opacity: 0.45; cursor: default; }
+.recipient-picks button:where(:not(.ui-btn)).active { border-color: #1f6feb; color: #58a6ff; }
 .recipient-pick-count { color: #7d8590; margin-left: 2px; }
 .recipient-picks-hint { margin-top: 4px; }
 .cleanup-badge.removed, .cleanup-badge.deleted, .cleanup-badge.retired,
@@ -12378,7 +12378,7 @@ body.wizard #agent-spawn-modal .spawn-field-hint.info { color: #58a6ff; }
 body.wizard #agent-spawn-modal .cron-create-row input[type=text],
 body.wizard #agent-spawn-modal .cron-create-row input[type=url],
 body.wizard #agent-spawn-modal .cron-create-row input:not([type]),
-body.wizard #agent-spawn-modal .cron-create-row select,
+body.wizard #agent-spawn-modal .cron-create-row select:where(:not(.ui-select)),
 body.wizard #agent-spawn-modal .cron-create-row textarea {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
@@ -12387,13 +12387,13 @@ body.wizard #agent-spawn-modal .cron-create-row textarea {
 body.wizard #agent-spawn-modal .cron-create-row input[type=text]:focus,
 body.wizard #agent-spawn-modal .cron-create-row input[type=url]:focus,
 body.wizard #agent-spawn-modal .cron-create-row input:not([type]):focus,
-body.wizard #agent-spawn-modal .cron-create-row select:focus,
+body.wizard #agent-spawn-modal .cron-create-row select:where(:not(.ui-select)):focus,
 body.wizard #agent-spawn-modal .cron-create-row textarea:focus {
   border-color: #a97bd6;
 }
 /* Open <select> / <datalist> options render on the OS layer — keep them dark
    text on parchment so they stay readable (mirrors the music picker). */
-body.wizard #agent-spawn-modal .cron-create-row select option {
+body.wizard #agent-spawn-modal .cron-create-row select:where(:not(.ui-select)) option {
   color: #1a1330; background: #e7d9f5;
 }
 body.wizard #agent-spawn-modal .muted { color: #b39ddb; }
@@ -12564,7 +12564,7 @@ body.wizard #group-settings-modal .cron-create-row :is(input:not([type]), input[
 body.wizard #group-settings-modal .cron-create-row :is(input:not([type]), input[type=url], input[type=number], select, textarea):focus {
   border-color: #a97bd6;
 }
-body.wizard #group-settings-modal .cron-create-row select option {
+body.wizard #group-settings-modal .cron-create-row select:where(:not(.ui-select)) option {
   color: #1a1330;
   background: #e7d9f5;
 }
@@ -12885,7 +12885,7 @@ body.wizard #cron-create-modal .cron-create-label,
 body.wizard #cron-create-modal .cron-create-enabled { color: #b39ddb; }
 body.wizard #cron-create-modal .cron-create-row input[type=text],
 body.wizard #cron-create-modal .cron-create-row input[type=number],
-body.wizard #cron-create-modal .cron-create-row select,
+body.wizard #cron-create-modal .cron-create-row select:where(:not(.ui-select)),
 body.wizard #cron-create-modal .cron-create-row textarea {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
@@ -12893,13 +12893,13 @@ body.wizard #cron-create-modal .cron-create-row textarea {
 }
 body.wizard #cron-create-modal .cron-create-row input[type=text]:focus,
 body.wizard #cron-create-modal .cron-create-row input[type=number]:focus,
-body.wizard #cron-create-modal .cron-create-row select:focus,
+body.wizard #cron-create-modal .cron-create-row select:where(:not(.ui-select)):focus,
 body.wizard #cron-create-modal .cron-create-row textarea:focus {
   border-color: #a97bd6;
 }
 /* Open <select> options render on the OS layer — keep them dark-on-parchment
    so the group dropdown stays readable (mirrors the Summon dialog). */
-body.wizard #cron-create-modal .cron-create-row select option {
+body.wizard #cron-create-modal .cron-create-row select:where(:not(.ui-select)) option {
   color: #1a1330; background: #e7d9f5;
 }
 /* Every non-primary button (Cancel / Save & create another / the 🔍 owner
@@ -13038,14 +13038,14 @@ body.wizard #message-create-modal .cron-target-modes { color: #e7d9f5; }
 body.wizard #message-create-modal input[type=radio],
 body.wizard #message-create-modal input[type=checkbox] { accent-color: #a97bd6; }
 body.wizard #message-create-modal .cron-create-row input[type=text],
-body.wizard #message-create-modal .cron-create-row select,
+body.wizard #message-create-modal .cron-create-row select:where(:not(.ui-select)),
 body.wizard #message-create-modal .cron-create-row textarea {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
 body.wizard #message-create-modal .cron-create-row input[type=text]:focus,
-body.wizard #message-create-modal .cron-create-row select:focus,
+body.wizard #message-create-modal .cron-create-row select:where(:not(.ui-select)):focus,
 body.wizard #message-create-modal .cron-create-row textarea:focus { border-color: #a97bd6; }
-body.wizard #message-create-modal .cron-create-row select option {
+body.wizard #message-create-modal .cron-create-row select:where(:not(.ui-select)) option {
   color: #1a1330; background: #e7d9f5;
 }
 body.wizard #message-create-modal button:where(:not(.ui-btn)):not(.primary) {
@@ -13098,7 +13098,7 @@ body.wizard .operator-message-overlay .cron-create-row :is(input[type=text], tex
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
 body.wizard .operator-message-overlay .cron-create-row :is(input[type=text], textarea, select):focus { border-color: #a97bd6; }
-body.wizard .operator-message-overlay .cron-create-row select:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
+body.wizard .operator-message-overlay .cron-create-row select:where(:not(.ui-select)):where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
 body.wizard .operator-message-overlay .spawn-attachments-list li {
   background: #120c24; border-color: rgba(122, 93, 176, 0.5);
 }
@@ -13359,14 +13359,14 @@ body.wizard #group-create-modal #group-create-submit:disabled::before { content:
 /* Wizard skin for the party-profile <select> + its options (mirrors the cron
    dialog's select re-skin — the group-create modal gained its first <select>
    with this feature, so these rules are new rather than an extension). */
-body.wizard #group-create-modal .cron-create-row select {
+body.wizard #group-create-modal .cron-create-row select:where(:not(.ui-select)) {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
   color: #f3e6c0;
 }
-body.wizard #group-create-modal .cron-create-row select:focus { border-color: #a97bd6; }
+body.wizard #group-create-modal .cron-create-row select:where(:not(.ui-select)):focus { border-color: #a97bd6; }
 /* Open <select> options render on the OS layer — keep them dark-on-parchment. */
-body.wizard #group-create-modal .cron-create-row select option {
+body.wizard #group-create-modal .cron-create-row select:where(:not(.ui-select)) option {
   color: #1a1330; background: #e7d9f5;
 }
 /* The roster readback: violet void, gilt names, gold owner-star — same palette
@@ -14282,7 +14282,7 @@ body.wizard #profile-editor-modal .spawn-perms-indicator,
 body.wizard #profile-editor-modal .spawn-field-hint { color: #b39ddb; }
 body.wizard #profile-editor-modal .cron-create-row input[type=text],
 body.wizard #profile-editor-modal .cron-create-row input:not([type]),
-body.wizard #profile-editor-modal .cron-create-row select,
+body.wizard #profile-editor-modal .cron-create-row select:where(:not(.ui-select)),
 body.wizard #profile-editor-modal .cron-create-row textarea {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
@@ -14290,13 +14290,13 @@ body.wizard #profile-editor-modal .cron-create-row textarea {
 }
 body.wizard #profile-editor-modal .cron-create-row input[type=text]:focus,
 body.wizard #profile-editor-modal .cron-create-row input:not([type]):focus,
-body.wizard #profile-editor-modal .cron-create-row select:focus,
+body.wizard #profile-editor-modal .cron-create-row select:where(:not(.ui-select)):focus,
 body.wizard #profile-editor-modal .cron-create-row textarea:focus {
   border-color: #a97bd6;
 }
 /* Open <select> options render on the OS layer — keep them dark text on
    parchment so they stay readable (mirrors the spawn dialog). */
-body.wizard #profile-editor-modal .cron-create-row select option {
+body.wizard #profile-editor-modal .cron-create-row select:where(:not(.ui-select)) option {
   color: #1a1330; background: #e7d9f5;
 }
 /* Secondary + inline buttons (Cancel / Permissions…). The
@@ -14392,20 +14392,20 @@ body.wizard #export-agent-modal .modal-meta {
 body.wizard #export-agent-modal .export-intro { color: #b39ddb; }
 body.wizard #export-agent-modal .cron-create-label { color: #b39ddb; }
 body.wizard #export-agent-modal .cron-create-row input[type=text],
-body.wizard #export-agent-modal .cron-create-row select,
+body.wizard #export-agent-modal .cron-create-row select:where(:not(.ui-select)),
 body.wizard #export-agent-modal .cron-create-row textarea {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
   color: #f3e6c0;
 }
 body.wizard #export-agent-modal .cron-create-row input[type=text]:focus,
-body.wizard #export-agent-modal .cron-create-row select:focus,
+body.wizard #export-agent-modal .cron-create-row select:where(:not(.ui-select)):focus,
 body.wizard #export-agent-modal .cron-create-row textarea:focus {
   border-color: #a97bd6;
 }
 /* Open <select> options render on the OS layer — keep them dark-on-parchment
    so the format picker stays readable (mirrors the Summon dialog). */
-body.wizard #export-agent-modal .cron-create-row select option {
+body.wizard #export-agent-modal .cron-create-row select:where(:not(.ui-select)) option {
   color: #1a1330; background: #e7d9f5;
 }
 /* "Clone into the same group" toggle + its hint. */
@@ -14911,11 +14911,11 @@ body.wizard #link-modal .modal-meta {
 body.wizard #link-modal .cron-create-label { color: #b39ddb; }
 body.wizard #link-modal .cron-create-enabled { color: #e7d9f5; }
 body.wizard #link-modal .cron-create-enabled input[type=checkbox] { accent-color: #a97bd6; }
-body.wizard #link-modal .cron-create-row select {
+body.wizard #link-modal .cron-create-row select:where(:not(.ui-select)) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
-body.wizard #link-modal .cron-create-row select:focus { border-color: #a97bd6; }
-body.wizard #link-modal .cron-create-row select option { color: #1a1330; background: #e7d9f5; }
+body.wizard #link-modal .cron-create-row select:where(:not(.ui-select)):focus { border-color: #a97bd6; }
+body.wizard #link-modal .cron-create-row select:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
 body.wizard #link-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 body.wizard #link-modal button:where(:not(.ui-btn)):not(#link-modal-submit) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
@@ -15224,18 +15224,18 @@ body.wizard #template-deploy-modal .cron-create-modal h3 {
 }
 body.wizard #template-deploy-modal .cron-create-label { color: #b39ddb; }
 body.wizard #template-deploy-modal .cron-create-row input[type=text],
-body.wizard #template-deploy-modal .cron-create-row select,
+body.wizard #template-deploy-modal .cron-create-row select:where(:not(.ui-select)),
 body.wizard #template-deploy-modal .cron-create-row textarea {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
   color: #f3e6c0;
 }
 body.wizard #template-deploy-modal .cron-create-row input[type=text]:focus,
-body.wizard #template-deploy-modal .cron-create-row select:focus,
+body.wizard #template-deploy-modal .cron-create-row select:where(:not(.ui-select)):focus,
 body.wizard #template-deploy-modal .cron-create-row textarea:focus {
   border-color: #a97bd6;
 }
-body.wizard #template-deploy-modal .cron-create-row select option {
+body.wizard #template-deploy-modal .cron-create-row select:where(:not(.ui-select)) option {
   color: #1a1330; background: #e7d9f5;
 }
 body.wizard #template-deploy-modal .template-preview {
@@ -15316,16 +15316,16 @@ body.wizard #template-from-group-modal .modal-meta {
   color: #b39ddb;
 }
 body.wizard #template-from-group-modal .cron-create-row input[type=text],
-body.wizard #template-from-group-modal .cron-create-row select {
+body.wizard #template-from-group-modal .cron-create-row select:where(:not(.ui-select)) {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
   color: #f3e6c0;
 }
 body.wizard #template-from-group-modal .cron-create-row input[type=text]:focus,
-body.wizard #template-from-group-modal .cron-create-row select:focus {
+body.wizard #template-from-group-modal .cron-create-row select:where(:not(.ui-select)):focus {
   border-color: #a97bd6;
 }
-body.wizard #template-from-group-modal .cron-create-row select option {
+body.wizard #template-from-group-modal .cron-create-row select:where(:not(.ui-select)) option {
   color: #1a1330; background: #e7d9f5;
 }
 body.wizard #template-from-group-modal button:where(:not(.ui-btn)):not(#template-from-group-submit) {
@@ -16035,7 +16035,7 @@ body.wizard #role-editor-modal .cron-create-modal h3 {
 body.wizard #role-editor-modal .cron-create-label { color: #b39ddb; }
 body.wizard #role-editor-modal .cron-create-row input[type=text],
 body.wizard #role-editor-modal .cron-create-row input:not([type]),
-body.wizard #role-editor-modal .cron-create-row select,
+body.wizard #role-editor-modal .cron-create-row select:where(:not(.ui-select)),
 body.wizard #role-editor-modal .cron-create-row textarea {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
@@ -16043,10 +16043,10 @@ body.wizard #role-editor-modal .cron-create-row textarea {
 }
 body.wizard #role-editor-modal .cron-create-row input[type=text]:focus,
 body.wizard #role-editor-modal .cron-create-row input:not([type]):focus,
-body.wizard #role-editor-modal .cron-create-row select:focus,
+body.wizard #role-editor-modal .cron-create-row select:where(:not(.ui-select)):focus,
 body.wizard #role-editor-modal .cron-create-row textarea:focus { border-color: #a97bd6; }
 /* Open <select> options render on the OS layer — dark ink on parchment. */
-body.wizard #role-editor-modal .cron-create-row select option { color: #1a1330; background: #e7d9f5; }
+body.wizard #role-editor-modal .cron-create-row select:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
 /* Secondary + inline buttons (Cancel): tarnished-gold; the exclusion keeps the
    Save lever below out of reach. */
 body.wizard #role-editor-modal button:where(:not(.ui-btn)):not(#role-editor-submit) {
@@ -16188,11 +16188,11 @@ body.wizard #context-features-modal .perm-edit-toolbar input[type=text] {
 body.wizard #perm-edit-modal .perm-edit-toolbar input[type=text]:focus,
 body.wizard #context-features-modal .perm-edit-toolbar input[type=text]:focus { border-color: #a97bd6; }
 body.wizard #perm-edit-modal .perm-edit-toolbar button:where(:not(.ui-btn)),
-body.wizard #context-features-modal .perm-edit-toolbar button:where(:not(.ui-btn)):where(:not(.ui-btn)) {
+body.wizard #context-features-modal .perm-edit-toolbar button:where(:not(.ui-btn)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
 body.wizard #perm-edit-modal .perm-edit-toolbar button:where(:not(.ui-btn)):hover,
-body.wizard #context-features-modal .perm-edit-toolbar button:where(:not(.ui-btn)):where(:not(.ui-btn)):hover { background: #3a2a63; }
+body.wizard #context-features-modal .perm-edit-toolbar button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 body.wizard #perm-edit-modal .perm-edit-toolbar .perm-edit-filter button { background: none; border: none; }
 body.wizard #perm-edit-modal .perm-edit-toolbar .perm-edit-filter button:hover { background: #3a2a63; }
 /* Slug list: violet frame + dividers, gilt slug label, violet description. */
@@ -21754,7 +21754,7 @@ body.wizard #saved-prompts-manage-modal .cron-create-row :is(input:not([type]), 
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
 body.wizard #saved-prompts-manage-modal .cron-create-row :is(input:not([type]), input[type=text], textarea, select):focus { border-color: #a97bd6; }
-body.wizard #saved-prompts-manage-modal .cron-create-row select option { color: #1a1330; background: #e7d9f5; }
+body.wizard #saved-prompts-manage-modal .cron-create-row select:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
 body.wizard #saved-prompts-manage-modal#saved-prompts-manage-modal button:where(:not(.ui-btn)):not(.primary) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }

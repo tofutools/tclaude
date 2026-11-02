@@ -448,7 +448,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
         : `Group “${scopedGroup}” is missing; sending is blocked.`}</p>
       <div class="cleanup-toolbar recipient-picks" id="message-create-picks"><${Button} size="sm" id="message-create-members-all" onClick=${() => setPreset('all')}>all<//>
         <${Button} size="sm" id="message-create-members-none" onClick=${() => choose([])}>none<//>
-        ${RECIPIENT_PICKS.map((pick) => html`<${Button} size="sm" key=${pick.key} id=${`message-create-pick-${pick.key}`}
+        ${RECIPIENT_PICKS.map((pick) => html`<${Button} size="sm" key=${pick.key} pressed=${preset === pick.key} id=${`message-create-pick-${pick.key}`}
           class=${`recipient-pick${preset === pick.key ? ' active' : ''}`} disabled=${!pickCounts.get(pick.key)}
           title=${`${pick.title}. Click: only these · Shift-click: add · Ctrl/⌘-click: narrow`}
           onClick=${(event) => applyPick(pick, event)}>${pick.label} <span class="recipient-pick-count">${pickCounts.get(pick.key)}</span><//>`)}
