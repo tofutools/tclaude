@@ -14,7 +14,7 @@ import { dashboardState } from './snapshot-store.js';
 import { DICTATED_MARKER } from './companion-model.js';
 import { COMMA_PAUSE_DEFAULT, CONTINUOUS_IDLE_DEFAULT, CONTINUOUS_IDLE_MAX, CONTINUOUS_IDLE_MIN, PERIOD_PAUSE_DEFAULT, SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS, VOICE_PAUSE_MAX, VOICE_PAUSE_MIN } from './voice-config.js';
 import { LocalSpeechRow, syncVoiceSection } from './voice-config-section.js';
-import { shortcutText } from './keybindings.js';
+import { KEYBINDINGS_LIST, shortcutText } from './keybindings.js';
 import { KeyboardShortcutList, Keys } from './shortcut-keys.js';
 
 const html = htm.bind(h);
@@ -143,7 +143,7 @@ function ThresholdList({ values = [], onChange }) {
 export const CONFIG_PANELS = Object.freeze([
   { id: 'appearance', icon: '🎨', title: 'Appearance', lede: 'How the dashboard looks: activity bots, which tabs show, and header and row chrome.' },
   { id: 'terminals', icon: '🖥️', title: 'Terminals & windows', lede: 'Which terminal opens, how agent windows are focused and tiled, and how web terminals attach.' },
-  { id: 'keyboard', icon: '⌨️', title: 'Keyboard', lede: 'Every dashboard keyboard shortcut, where it works, and its keys on each platform.' },
+  { id: 'keyboard', icon: '⌨️', title: 'Keyboard', lede: 'Every dashboard keyboard shortcut, where it works and its keys on each platform. Change the ones marked Change by pressing new keys; changes apply after Save.' },
   { id: 'voice', icon: '🎙️', title: 'Voice', lede: 'Spoken phrases and the opt-in hands-free settings for dictating to terminals and chat windows. Hands-free settings are off by default.' },
   { id: 'notifications', icon: '🔔', title: 'Notifications', lede: 'When and how tclaude tells you an agent needs attention. Everything still lands in the Messages tab.' },
   { id: 'agents', icon: '🤖', title: 'Agents & spawning', lede: 'Group joining, spawn guardrails, naming and the permissions every agent starts with.' },
@@ -1132,7 +1132,8 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     </${Panel}>
 
     <${Panel} id="keyboard" active=${active}>
-      <${KeyboardShortcutList} Setting=${Setting} />
+      <${KeyboardShortcutList} Setting=${Setting} drafts=${lists[KEYBINDINGS_LIST]}
+        onChange=${(values) => onListChange(KEYBINDINGS_LIST, values)} />
     </${Panel}>
 
     <${Panel} id="advanced" active=${active}>

@@ -5,6 +5,7 @@ import { $, $$ } from './helpers.js';
 import { lineDiff as configLineDiff } from './line-diff.js';
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS, closeTabsChecked, closeTabsStored } from './terminal-close-tabs.js';
 import { dashboardState } from './snapshot-store.js';
+import { KEYBINDINGS_LIST } from './keybindings.js';
 import { loadProfiles, findProfileByHandle, profileChoices } from './profiles.js';
 import { loadSandboxProfiles } from './sandbox-profiles-data.js';
 
@@ -591,6 +592,10 @@ function populateConfigForm(cfg) {
   $('#cfg-terminal-attach-pre-delay').value = terminalAttach.pre_attach_delay_ms != null
     ? terminalAttach.pre_attach_delay_ms : '';
 
+  // Keyboard shortcut rebindings, drafted in Config › Keyboard.
+  configDependencies.lists.set(KEYBINDINGS_LIST, Object.entries((cfg.dashboard && cfg.dashboard.keybindings) || {})
+    .map(([id, chord]) => ({ id, chord })));
+
   // Auto-close terminal tabs matrix; absent cells show their default.
   const closeTabs = closeTabsChecked(cfg.dashboard && cfg.dashboard.close_terminal_tabs);
   for (const [event] of CLOSE_TAB_EVENTS) {
@@ -1004,6 +1009,11 @@ function assembleConfig() {
   }
   if (Object.keys(terminalAttach).length) dashboard.terminal_attach = terminalAttach;
   else delete dashboard.terminal_attach;
+  // keybindings: only shortcuts moved off their default persist.
+  const keybindings = Object.fromEntries(configDependencies.lists.get(KEYBINDINGS_LIST)
+    .filter(item => item && item.id && item.chord).map(({ id, chord }) => [id, chord]));
+  if (Object.keys(keybindings).length) dashboard.keybindings = keybindings;
+  else delete dashboard.keybindings;
   // close_terminal_tabs: only cells that differ from the Go defaults persist.
   const closeTabsMatrix = {};
   for (const [event] of CLOSE_TAB_EVENTS) {

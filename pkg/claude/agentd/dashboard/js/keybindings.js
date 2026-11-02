@@ -94,11 +94,57 @@ export const SHORTCUTS = Object.freeze([
 
 const BY_ID = new Map(SHORTCUTS.map(entry => [entry.id, entry]));
 
-export function shortcut(id) {
+// The operator's rebindings (dashboard.keybindings), applied from the
+// snapshot. An override replaces the default chord and its alternates.
+let overrides = new Map();
+let effective = new Map();
+const changeListeners = new Set();
+
+// shortcutDefault is the registry entry as shipped, ignoring rebindings.
+export function shortcutDefault(id) {
   const entry = BY_ID.get(id);
   if (!entry) throw new Error(`unknown shortcut ${id}`);
   return entry;
 }
+
+// shortcut is the entry as it works now: a rebound one carries its new chord.
+export function shortcut(id) {
+  return effective.get(id) || shortcutDefault(id);
+}
+
+export const isRebindable = (id) => !shortcutDefault(id).fixed;
+
+// setShortcutOverrides applies a rebinding map ({ id: chord }). Entries for
+// unknown or fixed shortcuts, or with a chord that does not parse, are
+// ignored, so a stale config never breaks a handler. Returns whether anything
+// changed.
+export function setShortcutOverrides(map) {
+  const next = new Map();
+  for (const [id, chord] of Object.entries(map || {})) {
+    if (!BY_ID.has(id) || !isRebindable(id) || typeof chord !== 'string') continue;
+    try { parseChord(chord); } catch { continue; }
+    if (chord !== shortcutDefault(id).chord) next.set(id, chord);
+  }
+  const same = next.size === overrides.size && [...next].every(([id, chord]) => overrides.get(id) === chord);
+  if (same) return false;
+  overrides = next;
+  effective = new Map([...next].map(([id, chord]) => [id, Object.freeze({ ...shortcutDefault(id), chord, also: undefined, rebound: true })]));
+  for (const fn of changeListeners) fn();
+  return true;
+}
+
+export function shortcutOverrides() { return Object.fromEntries(overrides); }
+
+// onShortcutsChange calls fn after the rebindings change; returns unsubscribe.
+export function onShortcutsChange(fn) {
+  changeListeners.add(fn);
+  return () => changeListeners.delete(fn);
+}
+
+// While Config records a new chord, no shortcut fires: the keys belong to
+// the recorder.
+let recording = false;
+export function setShortcutRecording(on) { recording = !!on; }
 
 // ---- platform -------------------------------------------------------------
 
@@ -188,13 +234,13 @@ export function chordMatches(event, chord, os) {
   return !!event.ctrlKey === want.ctrl && !!event.metaKey === want.meta;
 }
 
-export function shortcutChords(id) {
-  const entry = shortcut(id);
+export function shortcutChords(id, { defaults = false } = {}) {
+  const entry = defaults ? shortcutDefault(id) : shortcut(id);
   return [entry.chord, ...(entry.also || [])];
 }
 
 export function matchesShortcut(event, id, os) {
-  if (!event || event.isComposing || event.keyCode === 229) return false;
+  if (recording || !event || event.isComposing || event.keyCode === 229) return false;
   return shortcutChords(id).some(chord => chordMatches(event, chord, os));
 }
 
@@ -291,7 +337,7 @@ export function ariaKeyShortcuts(id, os) {
 //   node -e "import('./pkg/claude/agentd/dashboard/js/keybindings.js').then(m => process.stdout.write(m.shortcutDocsTable()))"
 export function shortcutDocsTable(scopes = ['global', 'terminal', 'dialog']) {
   const kbd = (chord, os) => chordParts(chord, os).map(part => `<kbd>${part === '|' ? '&#124;' : part}</kbd>`).join(' ');
-  const keys = (id, os) => shortcutChords(id).map(chord => kbd(chord, os)).join(' or ');
+  const keys = (id, os) => shortcutChords(id, { defaults: true }).map(chord => kbd(chord, os)).join(' or ');
   const where = { true: 'yes', false: 'no', setting: 'with **Command palette in terminals**' };
   const lines = ['| Action | Windows & Linux | macOS | In a terminal |', '|---|---|---|---|'];
   for (const scope of SHORTCUT_SCOPES.filter(item => scopes.includes(item.id))) {
@@ -301,4 +347,114 @@ export function shortcutDocsTable(scopes = ['global', 'terminal', 'dialog']) {
     }
   }
   return `${lines.join('\n')}\n`;
+}
+
+// ---- rebinding ------------------------------------------------------------
+
+// KEYBINDINGS_LIST is the Config list id holding the draft rebindings as
+// [{ id, chord }]; the config adapter loads and saves it as
+// dashboard.keybindings.
+export const KEYBINDINGS_LIST = 'cfg-keybindings';
+
+const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta', 'AltGraph', 'CapsLock', 'Fn', 'OS']);
+
+// chordFromEvent records a keydown as a chord, exactly as pressed: Ctrl stays
+// Ctrl and ⌘ is Meta, so what was recorded is what fires. Null while only
+// modifiers are down, or for a key with no position (event.code).
+export function chordFromEvent(event) {
+  if (!event || MODIFIER_KEYS.has(event.key) || !event.code) return null;
+  const mods = [event.ctrlKey && 'Ctrl', event.metaKey && 'Meta', event.altKey && 'Alt', event.shiftKey && 'Shift'].filter(Boolean);
+  return [...mods, event.code].join('+');
+}
+
+// concreteCombos expands a chord into the exact key combinations that fire
+// it: Mod is either Ctrl or ⌘, and a digit range is each digit.
+function concreteCombos(chord) {
+  const { mods, code } = parseChord(chord);
+  const range = /^Digit(\d)-(\d)$/.exec(code);
+  const codes = range ? Array.from({ length: Number(range[2]) - Number(range[1]) + 1 }, (_, i) => `Digit${Number(range[1]) + i}`) : [code];
+  const base = { alt: mods.has('Alt'), shift: mods.has('Shift') };
+  const variants = mods.has('Mod')
+    ? [{ ctrl: true, meta: false }, { ctrl: false, meta: true }]
+    : [{ ctrl: mods.has('Ctrl'), meta: mods.has('Meta') }];
+  return codes.flatMap(c => variants.map(v => `${+v.ctrl}${+v.meta}${+base.alt}${+base.shift}:${c}`));
+}
+
+const overlaps = (a, b) => { const set = new Set(concreteCombos(a)); return concreteCombos(b).some(k => set.has(k)); };
+
+// Scopes that can be live at once: a global shortcut collides with every
+// scope, the rest only with their own.
+const scopesMeet = (a, b) => a === b || a === 'global' || b === 'global';
+
+// Known browser and OS chords. reserved: the browser or OS takes the keys
+// and the page never sees them. Otherwise the dashboard takes them over from
+// the browser. os limits an entry to one platform.
+const BROWSER_CHORDS = [
+  ['Ctrl+KeyT', 'opens a new browser tab', true, 'pc'], ['Ctrl+KeyW', 'closes the browser tab', true, 'pc'],
+  ['Ctrl+KeyN', 'opens a new browser window', true, 'pc'], ['Ctrl+Shift+KeyN', 'opens an incognito window', true, 'pc'],
+  ['Ctrl+Shift+KeyT', 'reopens a closed tab', true, 'pc'], ['Ctrl+Shift+KeyW', 'closes the browser window', true, 'pc'],
+  ['Ctrl+Tab', 'switches browser tabs', true], ['Ctrl+Shift+Tab', 'switches browser tabs', true],
+  ['Ctrl+PageUp', 'switches browser tabs', true, 'pc'], ['Ctrl+PageDown', 'switches browser tabs', true, 'pc'],
+  ['Meta+KeyT', 'opens a new browser tab', true, 'macos'], ['Meta+KeyW', 'closes the browser tab', true, 'macos'],
+  ['Meta+KeyN', 'opens a new browser window', true, 'macos'], ['Meta+KeyQ', 'quits the browser', true, 'macos'],
+  ['Meta+KeyM', 'minimizes the window', true, 'macos'], ['Meta+KeyH', 'hides the browser', true, 'macos'],
+  ['Meta+Tab', 'switches apps', true, 'macos'], ['Meta+Space', 'opens Spotlight', true, 'macos'],
+  ['Meta+Comma', 'opens browser settings', true, 'macos'], ['Meta+Shift+KeyT', 'reopens a closed tab', true, 'macos'],
+  ['Alt+F4', 'closes the window', true, 'pc'],
+  ['Mod+KeyL', 'focuses the address bar'], ['Mod+KeyR', 'reloads the page'], ['Mod+KeyF', 'finds in the page'],
+  ['Mod+KeyP', 'prints'], ['Mod+KeyS', 'saves the page'], ['Mod+KeyD', 'bookmarks the page'], ['Mod+KeyO', 'opens a file'],
+  ['Mod+KeyH', 'opens history', false, 'pc'], ['Mod+KeyJ', 'opens downloads'], ['Mod+KeyU', 'shows the page source', false, 'pc'],
+  ['Mod+Equal', 'zooms the page'], ['Mod+Minus', 'zooms the page'], ['Mod+Digit0', 'resets the page zoom'],
+  ['Mod+Digit1-9', 'switches browser tabs'], ['Alt+Digit1-9', 'switches browser tabs', false, 'pc'],
+  ['Mod+KeyC', 'copies'], ['Mod+KeyV', 'pastes'], ['Mod+KeyX', 'cuts'], ['Mod+KeyA', 'selects all'], ['Mod+KeyZ', 'undoes'],
+  ['F5', 'reloads the page'], ['F11', 'toggles full screen'], ['F12', 'opens developer tools'],
+];
+
+// Keys a terminal program reads, for shortcuts that fire inside a terminal.
+const TERMINAL_CHORDS = [
+  ['Ctrl+KeyA', 'moves to the start of the line'], ['Ctrl+KeyB', 'is the tmux prefix'], ['Ctrl+KeyC', 'interrupts the program'],
+  ['Ctrl+KeyD', 'ends input'], ['Ctrl+KeyE', 'moves to the end of the line'], ['Ctrl+KeyK', 'clears to the end of the line'],
+  ['Ctrl+KeyL', 'clears the screen'], ['Ctrl+KeyR', 'searches history'], ['Ctrl+KeyU', 'clears the line'],
+  ['Ctrl+KeyW', 'deletes a word'], ['Ctrl+KeyZ', 'suspends the program'], ['Ctrl+KeyJ', 'inserts a newline'],
+];
+
+const browserChordApplies = (os, platform) => !platform || (platform === 'macos' ? os === 'macos' : os !== 'macos');
+
+// rebindProblems checks a proposed chord for shortcut id against the other
+// shortcuts (with the draft rebindings in drafts), known browser and OS
+// chords, and terminal keys. Each problem: { kind: 'invalid' | 'shortcut' |
+// 'browser' | 'terminal', text, blocking }. A blocking problem means the
+// chord can't work; the others are warnings.
+export function rebindProblems(id, chord, drafts = shortcutOverrides(), os = shortcutPlatform()) {
+  const entry = shortcutDefault(id);
+  const problems = [];
+  let parsed;
+  try { parsed = parseChord(chord); } catch { return [{ kind: 'invalid', text: 'Not a key combination.', blocking: true }]; }
+  const { mods, code } = parsed;
+  if (code === 'Escape' || code === 'Tab' && !mods.size) {
+    problems.push({ kind: 'invalid', text: `${keyLabel(code)} can't be a shortcut on its own: it closes and moves focus everywhere.`, blocking: true });
+  }
+  const strong = mods.has('Ctrl') || mods.has('Meta') || mods.has('Mod') || mods.has('Alt');
+  if (entry.terminal && !strong && !/^F\d+$/.test(code)) {
+    problems.push({ kind: 'invalid', text: 'This one also works inside terminals, so it needs Ctrl, Alt or ⌘; otherwise it would take keys you type.', blocking: true });
+  }
+  for (const other of SHORTCUTS) {
+    if (other.id === id || !scopesMeet(entry.scope, other.scope)) continue;
+    const chords = drafts[other.id] ? [drafts[other.id]] : shortcutChords(other.id, { defaults: true });
+    if (chords.some(c => overlaps(c, chord))) {
+      problems.push({ kind: 'shortcut', id: other.id, text: `Taken by “${other.label}” (${SHORTCUT_SCOPES.find(s => s.id === other.scope)?.title}).`, blocking: true });
+    }
+  }
+  for (const [browserChord, what, reserved, platform] of BROWSER_CHORDS) {
+    if (!browserChordApplies(os, platform) || !overlaps(browserChord, chord)) continue;
+    problems.push(reserved
+      ? { kind: 'browser', text: `The browser or OS ${what} with these keys; the page never sees them.`, blocking: true }
+      : { kind: 'browser', text: `Normally ${what}; the dashboard would take that over.`, blocking: false });
+  }
+  if (entry.terminal) {
+    for (const [termChord, what] of TERMINAL_CHORDS) {
+      if (overlaps(termChord, chord)) problems.push({ kind: 'terminal', text: `In a terminal this ${what}; the shortcut would take it.`, blocking: false });
+    }
+  }
+  return problems;
 }

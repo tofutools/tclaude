@@ -25,3 +25,17 @@ func TestDashboardSnapshotDynamicallyGatesTerminalCommandPaletteShortcut(t *test
 	assert.True(t, snap.TerminalPaletteShortcut,
 		"an explicit opt-in reaches the live dashboard snapshot")
 }
+
+func TestDashboardSnapshotCarriesKeybindings(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+	handler := agentd.BuildDashboardHandlerForTest()
+
+	assert.Empty(t, fetchSnapshotOnly(t, handler).Keybindings, "no rebindings by default")
+
+	require.NoError(t, config.Save(&config.Config{Dashboard: &config.DashboardConfig{
+		Keybindings: map[string]string{"expose": "Ctrl+Alt+KeyE", "bad id!": "Ctrl+KeyE"},
+	}}))
+	assert.Equal(t, map[string]string{"expose": "Ctrl+Alt+KeyE"}, fetchSnapshotOnly(t, handler).Keybindings,
+		"a saved rebinding reaches the live dashboard; a malformed entry is dropped")
+}

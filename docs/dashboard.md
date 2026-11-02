@@ -99,7 +99,8 @@ On a peer's page, it runs on that peer, limited to what the peer allows.
 
 **Config › Keyboard** lists every shortcut, including those of the process
 editor, boards and the image viewer, with its keys on Windows and Linux and on
-macOS. Keys are written one name at a time: **Ctrl ,** is Ctrl and the comma
+macOS, and lets you [rebind](dashboard-config.md#keyboard) the dashboard-wide and
+terminal ones. The table below shows the defaults. Keys are written one name at a time: **Ctrl ,** is Ctrl and the comma
 key, not a plus. Shortcuts follow the key's position, so they sit on the same
 keys on any keyboard layout, and the list labels them with what those keys type
 on yours. Shortcuts marked (Collab) belong to features that need

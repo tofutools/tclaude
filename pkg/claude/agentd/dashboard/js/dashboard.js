@@ -77,7 +77,7 @@ import {
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
 import { startSnapshotPoll, waitForInitialSnapshot } from './snapshot-poll.js';
-import { onFleetOverviewChange, fleetOverviewShown } from './snapshot-store.js';
+import { bindShortcutOverrides, onFleetOverviewChange, fleetOverviewShown } from './snapshot-store.js';
 import { startBrowserNotifyPoll } from './browser-notify.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
@@ -386,6 +386,7 @@ async function settleInitialLayout() {
   // effect, so toggling slop mid-session needs no re-binding.
   // Shortcut labels show what each key position types on this layout.
   void loadKeyboardLayout();
+  bindShortcutOverrides();
   bindSlopHotkey();
   bindSlopClickFx();
   bindSlopMachineClicks();
