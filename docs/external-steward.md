@@ -116,8 +116,8 @@ It does **not** protect against:
   That includes agents' messages and anything else you let it read.
 
 An agent running in a tclaude terminal that gets hold of a credential is still refused,
-because tclaude looks for one of its terminals above the caller. This covers one-shot
-agents, and a background process inside a sandbox that has its own process namespace. It
+because tclaude looks for itself or one of its terminals above the caller. This covers
+one-shot agents, OpenCode tools, and a background process inside a sandbox that has its own process namespace. It
 can't catch a process that has left its terminal with no such namespace, as an agent can
 under a sandbox that doesn't isolate processes. So keep the credential where sandboxed
 agents can't read it: the check is a second line, not the boundary.

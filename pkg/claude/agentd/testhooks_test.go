@@ -2489,6 +2489,14 @@ func AsExternalStewardPeer(r *http.Request, convID string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), peerKey{}, p))
 }
 
+// SetExternalDaemonPIDForTest changes which pid counts as the daemon in the
+// external steward's managed check, returning the restore function.
+func SetExternalDaemonPIDForTest(pid int) func() {
+	prev := externalDaemonPID
+	externalDaemonPID = func() int { return pid }
+	return func() { externalDaemonPID = prev }
+}
+
 // SetExternalCallerManagedForTest says whether the socket peer counts as a
 // tclaude-managed agent.
 func SetExternalCallerManagedForTest(managed bool) (restore func()) {

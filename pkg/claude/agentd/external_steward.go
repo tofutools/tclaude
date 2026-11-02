@@ -10,6 +10,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
 	"os/exec"
 	"regexp"
 	"slices"
@@ -183,28 +184,42 @@ func verifyExternalStewardCredential(credential string, now time.Time) (auth *db
 	return row, ""
 }
 
-// externalCallerUnderPane reports whether any ancestor is a pane on tclaude's own
-// tmux server. That server is dedicated (-L tclaude), so any pane on it is
-// something tclaude runs, one-shots included, which have no session row. It goes
-// by tmux's pane pids because sessions.pid moves to the harness at the first
-// hook, and a process that double-forked in a sandbox is a sibling of the harness,
-// still under the pane through the sandbox's init. An orphan with no PID namespace
-// reparents to host init and escapes this; the docs say so. Anything that cannot
-// be answered counts as under a pane, including a peer that has already exited,
-// whose ancestry is gone: this check only ever refuses.
-func externalCallerUnderPane(pid int) bool {
+// externalDaemonPID is this daemon's pid. Swapped by tests, whose socket peer is
+// the process running the daemon.
+var externalDaemonPID = os.Getpid
+
+// externalCallerUnderTclaude reports whether any ancestor is a process tclaude
+// runs: the daemon, a recorded OpenCode server, or a pane on tclaude's own tmux
+// server. That server is dedicated (-L tclaude), so any pane on it is something
+// tclaude runs, one-shots included, which have no session row. OpenCode needs the
+// other two: its server is a child of the daemon, so its tools sit under no pane,
+// and it can outlive a daemon restart. Panes come from tmux because sessions.pid
+// moves to the harness at the first hook, and a process that double-forked in a
+// sandbox is a sibling of the harness, still under the pane through the sandbox's
+// init. An orphan with no PID namespace reparents to host init and escapes this;
+// the docs say so. Anything that cannot be answered counts as tclaude's, including
+// a peer that has already exited, whose ancestry is gone: this check only ever
+// refuses.
+func externalCallerUnderTclaude(pid int) bool {
 	out, err := tmuxOutputWithTimeout("list-panes", "-a", "-F", brokerPaneListFormat)
 	if err != nil && !externalNoTmuxPanes(err) {
 		return true
 	}
-	panes := map[int]bool{}
+	runtimes, err := db.ListOpenCodeRuntimes()
+	if err != nil {
+		return true
+	}
+	ours := map[int]bool{externalDaemonPID(): true}
+	for _, runtime := range runtimes {
+		ours[runtime.PID] = true
+	}
 	for _, line := range strings.Split(string(out), "\n") {
 		parts := strings.Split(strings.TrimSpace(line), "|")
 		if len(parts) != 5 {
 			continue
 		}
 		if panePID, err := strconv.Atoi(parts[2]); err == nil {
-			panes[panePID] = true
+			ours[panePID] = true
 		}
 	}
 	const maxHops = 256
@@ -212,7 +227,7 @@ func externalCallerUnderPane(pid int) bool {
 		if pid == 1 {
 			return false
 		}
-		if panes[pid] {
+		if ours[pid] {
 			return true
 		}
 		if pid = procParent(pid); pid == 0 {
@@ -223,11 +238,13 @@ func externalCallerUnderPane(pid int) bool {
 }
 
 // externalNoTmuxPanes reports a failed pane listing that still answers the
-// question: tmux missing, or exiting non-zero because no server runs, which is
-// the normal state with no agent up. A wedged tmux does not answer it.
+// question: tmux missing, no server running, which is the normal state with no
+// agent up, or a server kept alive with no sessions. Any other failure says
+// nothing about panes that may be live, such as a client and server of different
+// versions after an upgrade.
 func externalNoTmuxPanes(err error) bool {
-	var exitErr *exec.ExitError
-	return errors.Is(err, exec.ErrNotFound) || errors.As(err, &exitErr)
+	return errors.Is(err, exec.ErrNotFound) || tmuxServerNotRunning(err) ||
+		(err != nil && strings.Contains(err.Error(), "no current target"))
 }
 
 // externalCallerManaged reports whether the socket peer is an agent tclaude
@@ -239,7 +256,7 @@ func externalNoTmuxPanes(err error) bool {
 // Session rows do not decide this: installed hooks can register a plain claude
 // with some agent's tmux session. Swapped by tests.
 var externalCallerManaged = func(pid int, claimedID string) bool {
-	if claimedID != "" || externalCallerUnderPane(pid) {
+	if claimedID != "" || externalCallerUnderTclaude(pid) {
 		return true
 	}
 	_, _, selectedLayer := legacyIdentityForPID(pid)

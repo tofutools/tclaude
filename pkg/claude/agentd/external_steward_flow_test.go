@@ -296,6 +296,26 @@ func TestExternalSteward_ManagedCheckIgnoresSessionRows(t *testing.T) {
 	assert.False(t, agentd.ExternalCallerManagedForTest(assistant, ""))
 }
 
+// An OpenCode agent's tools run under the server the daemon started, under no pane
+// at all, whether or not the server is still the daemon's child.
+func TestExternalSteward_ManagedCheckRefusesOpenCodeTools(t *testing.T) {
+	newFlow(t)
+	const server, tool = 6200, 6201
+	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
+		SessionID: "oc-session", ConvID: "oc-conv", PID: server,
+		ServerURL: "http://127.0.0.1:1", Cwd: "/w",
+	}))
+	t.Cleanup(agentd.SetProcTreeForTest(map[int]string{server: "opencode", tool: "bash"}, map[int]int{tool: server, server: 1}))
+	assert.True(t, agentd.ExternalCallerManagedForTest(tool, ""), "a server with a runtime row")
+
+	const daemon, unrecorded, child = 6302, 6300, 6301
+	t.Cleanup(agentd.SetExternalDaemonPIDForTest(daemon))
+	t.Cleanup(agentd.SetProcTreeForTest(
+		map[int]string{unrecorded: "opencode", child: "bash"},
+		map[int]int{child: unrecorded, unrecorded: daemon, daemon: 1}))
+	assert.True(t, agentd.ExternalCallerManagedForTest(child, ""), "a child of the daemon")
+}
+
 // A peer can connect and exit, leaving a live socket and no ancestry to read.
 func TestExternalSteward_ManagedCheckRefusesAGonePeer(t *testing.T) {
 	newFlow(t)

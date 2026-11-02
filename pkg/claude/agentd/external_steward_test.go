@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -200,9 +201,11 @@ func TestExternalSteward_RefusedByEveryHumanAndApprovalRoute(t *testing.T) {
 
 func TestExternalNoTmuxPanes(t *testing.T) {
 	assert.True(t, externalNoTmuxPanes(fmt.Errorf("run: %w", exec.ErrNotFound)), "tmux is not installed")
-	exitErr := exec.Command("false").Run()
-	require.Error(t, exitErr)
-	assert.True(t, externalNoTmuxPanes(fmt.Errorf("list-panes: %w", exitErr)), "no server is running")
+	assert.True(t, externalNoTmuxPanes(errors.New("exit status 1: no server running on /tmp/tmux-1000/tclaude")))
+	assert.True(t, externalNoTmuxPanes(errors.New("exit status 1: error connecting to /tmp/tmux-1000/tclaude")))
+	assert.True(t, externalNoTmuxPanes(errors.New("exit status 1: no current target")), "an idle server")
+	assert.False(t, externalNoTmuxPanes(errors.New("exit status 1: protocol version mismatch (client 8, server 7)")),
+		"a live server this client cannot read")
 	assert.False(t, externalNoTmuxPanes(errTmuxCommandTimeout), "a wedged tmux proves nothing")
 }
 
