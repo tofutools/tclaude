@@ -324,7 +324,7 @@ export function MiniGraphEditor({
       <${Button} size="sm" data-mini-full disabled=${!!busy} title=${dirty ? 'Save, then open it in the full editor' : 'Open it in the full editor'} onClick=${fullEditor}>⤢ full editor<//>
       ${discarding
     ? html`<span class="gq-confirm">Discard ${summary.length || 'the'} change${summary.length === 1 ? '' : 's'}?
-        <${Button} size="sm" data-mini-discard onClick=${onClose}>discard<//>
+        <${Button} size="sm" variant="danger" data-mini-discard onClick=${onClose}>discard<//>
         <${Button} size="sm" variant="link" class="gq-link" onClick=${() => setDiscarding(false)}>keep<//></span>`
     : html`<${Button} size="sm" data-mini-cancel onClick=${() => (dirty ? setDiscarding(true) : onClose())}>cancel<//>`}
       <${Button} size="sm" variant="primary" data-mini-save disabled=${!!busy || !dirty} title=${dirty ? 'Save as a new version' : 'Nothing changed'}

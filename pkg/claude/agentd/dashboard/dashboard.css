@@ -20970,7 +20970,7 @@ body.wizard .gq-btn.primary { background: #3a2f16; border-color: #d4af37; color:
 body.wizard .gq-btn.primary:disabled { background: #1f1833; border-color: rgba(122, 93, 176, 0.4); color: #9a8bb5; }
 body.wizard .gq-ask-in, body.wizard .gq-step-text, body.wizard .gq-param input, body.wizard .gq-answers-in input { background: #1a1430; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
 body.wizard .gq-fallback { background: #1a1430; border-color: rgba(122, 93, 176, 0.35); }
-body.wizard .gq-link { color: #d4af37; }
+body.wizard .gq-link:where(:not(.ui-btn)) { color: #d4af37; }
 /* The inline mini editor (mock M1): a saved process as an editable graph. */
 .gm-card { display: block; margin: 4px 0 12px 18px; border: 1px solid #2a3340; border-radius: 10px; background: #11161d; }
 .gm-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 14px; border-bottom: 1px solid #21262d; }

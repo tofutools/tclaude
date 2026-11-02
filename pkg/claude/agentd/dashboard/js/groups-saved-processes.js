@@ -155,9 +155,9 @@ function StartStrip({ group, process, api, source, wizard, notify, editing = '',
     ${removing
     ? html`<span class="gq-confirm" role="group" aria-label="Confirm removal">
         ${process.listed ? `Remove from ${group.name}? It stays in the template library.` : `Remove from ${group.name}? It is not in the template library, so publish it first to keep it.`}
-        <${Button} size="sm" data-saved-remove-confirm disabled=${!!busy} onClick=${remove}>remove<//>
+        <${Button} size="sm" variant="danger" data-saved-remove-confirm disabled=${!!busy} onClick=${remove}>remove<//>
         <${Button} size="sm" variant="link" class="gq-link" onClick=${() => onRemoving(false)}>keep<//></span>`
-    : html`<${Button} size="sm" variant="link" class="gq-link" data-saved-remove disabled=${!!busy} onClick=${() => onRemoving(true)}
+    : html`<${Button} size="sm" variant="link danger" class="gq-link" data-saved-remove disabled=${!!busy} onClick=${() => onRemoving(true)}
       title=${`Remove ${process.name} from ${group.name}'s processes`}>remove<//>`}
     </span>
     <span class="gq-spacer"></span>
