@@ -6668,9 +6668,13 @@ body.wizard .group-pending-title-wizard { display: inline; }
    trigger; an "N" badge surfaces when any toggle deviates from
    default so a user can tell at a glance whether anything is hidden. */
 .filter-bar .view-popover-wrap { position: relative; display: inline-flex; align-items: center; }
-/* The trigger is a standard small button; while its popover is open it keeps
-   the hover frame so the open state stays legible. */
-.filter-bar .view-btn.ui-btn[aria-expanded="true"] { border-color: var(--ui-btn-hover-line); color: var(--ui-text-strong); }
+/* "search conversations" and "▾ view" are ghost buttons by operator exception
+   (buttons are bordered by default): quiet grey text, no fill, a blue frame
+   only on hover or while open. */
+.filter-bar .view-btn.ui-btn { color: #7d8590; font-size: 11px; background: transparent; border-color: transparent; }
+.filter-bar .view-btn.ui-btn:is(:hover:not(:disabled), [aria-expanded="true"]) { color: #d4d4d4; background: transparent; border-color: #58a6ff; }
+body.wizard .filter-bar .view-btn.ui-btn { color: #b39ddb; }
+body.wizard .filter-bar .view-btn.ui-btn:is(:hover:not(:disabled), [aria-expanded="true"]) { color: #f3e6c0; border-color: #a97bd6; }
 /* Subtle grey count — matches the Terminals tab's .tab-badge.count so a
    deviation-from-default reads as a quiet informational number, not an alert. */
 .filter-bar .view-badge {
@@ -9724,7 +9728,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   cursor: pointer; min-width: 0;
 }
 .cleanup-row input[type=checkbox] { cursor: pointer; flex: 0 0 auto; }
-.cleanup-row.disabled label { cursor: default; opacity: 0.5; }
+.cleanup-row.disabled label { cursor: not-allowed; opacity: 0.5; }
 .cleanup-row .title { color: #d4d4d4; font-weight: bold; flex: 0 0 auto; }
 .cleanup-row .id { color: #7d8590; font-size: 11px; flex: 0 0 auto; }
 .cleanup-row .meta {
@@ -9822,7 +9826,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .cleanup-options label {
   display: flex; gap: 6px; align-items: baseline; cursor: pointer;
 }
-.cleanup-options label.disabled { opacity: 0.5; cursor: default; }
+.cleanup-options label.disabled { opacity: 0.5; cursor: not-allowed; }
 .cleanup-options .opt-note { font-size: 11px; color: #7d8590; }
 .cleanup-related {
   display: flex; gap: 7px; align-items: baseline; margin-top: 3px;
@@ -9852,7 +9856,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 }
 .delete-agent-wt.disabled { opacity: 0.55; }
 .delete-agent-wt input[type=checkbox] { cursor: pointer; flex: 0 0 auto; }
-.delete-agent-wt.disabled input[type=checkbox] { cursor: default; }
+.delete-agent-wt.disabled input[type=checkbox] { cursor: not-allowed; }
 .delete-agent-wt .wt-note { color: #7d8590; font-size: 11px; }
 #retire-modal .delete-agent-wt .wt-note { margin-left: 6px; }
 #worktree-cleanup-modal .delete-agent-wt .wt-note { margin-left: 6px; }
@@ -10997,10 +11001,11 @@ body:has(#tab-terminals.active) > nav {
 .cost-toggle:hover { color: #56d364; }
 .cost-toggle.off { color: #737c86; }
 .cost-toggle.off:hover { color: #c9d1d9; }
-/* The Groups toolbar's $ is a standard small icon button; the id outranks
-   .ui-btn.ui-sm so the glyph keeps its size and state colours. */
-#groups-cost-toggle.ui-btn { font-size: 16px; color: #3fb950; }
-#groups-cost-toggle.ui-btn:hover:not(:disabled) { color: #56d364; }
+/* The Groups toolbar's $ is a ghost icon button by operator exception (buttons
+   are bordered by default): a quiet glyph with no frame or fill, even on hover.
+   The id outranks .ui-btn.ui-sm so it keeps its size and state colours. */
+#groups-cost-toggle.ui-btn { font-size: 16px; color: #3fb950; background: none; border-color: transparent; }
+#groups-cost-toggle.ui-btn:hover:not(:disabled) { color: #56d364; background: none; border-color: transparent; }
 #groups-cost-toggle.ui-btn.off { color: #737c86; }
 #groups-cost-toggle.ui-btn.off:hover:not(:disabled) { color: #c9d1d9; }
 

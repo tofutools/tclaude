@@ -341,7 +341,8 @@
       <!-- Preact owns the Groups query, visibility menu and column controls.
            display:contents keeps their existing filter-bar flex geometry. -->
       <div id="groups-filter-root"></div>
-      <button id="groups-cost-toggle" aria-label="Show agent costs" class="ui-btn ui-sm ui-btn-icon cost-toggle" type="button" aria-pressed="true" title="Show or hide the per-agent cost badge on each row. On a subscription this shows the hypothetical pay-per-token-equivalent cost (WHAT-IF); on pay-per-token it shows the real spend.">$</button>
+      <!-- Ghost by operator exception: the $ toggle stays a quiet glyph. -->
+      <button id="groups-cost-toggle" aria-label="Show agent costs" class="ui-btn ui-btn-ghost ui-sm ui-btn-icon cost-toggle" type="button" aria-pressed="true" title="Show or hide the per-agent cost badge on each row. On a subscription this shows the hypothetical pay-per-token-equivalent cost (WHAT-IF); on pay-per-token it shows the real spend.">$</button>
       <span class="spacer"></span>
       <span id="dashboard-default-profile-control" class="toolbar-profile-control"></span>
       <span id="dashboard-default-sandbox-profile-control" class="toolbar-profile-control"></span>
