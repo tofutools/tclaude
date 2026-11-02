@@ -25,14 +25,16 @@ function markFields(root, fields) {
 // form reloads, read here so that no larger part of a form subscribes to it, and
 // a form with one takes no fill until it has loaded. A form that is not fillable
 // has no watch, so a fill finds it closed.
-export function FormFillBar({ form, generation, keepValues = false, fillable = true, claims = [], win = globalThis.window }) {
+// provenance is the form's own record of where values came from (form-fill.js),
+// put back by a full undo. It must keep one identity while the form is open.
+export function FormFillBar({ form, generation, keepValues = false, fillable = true, claims = [], provenance = null, win = globalThis.window }) {
   const ref = useRef(null);
   const rootOf = () => ref.current?.closest(FILL_FORMS[form].root) || null;
   const loaded = generation?.value;
   useEffect(() => {
     const root = rootOf();
     const waiting = generation && !loaded;
-    return root && fillable && !waiting ? watchForm(form, root, { win, keepValues }) : undefined;
+    return root && fillable && !waiting ? watchForm(form, root, { win, keepValues, provenance }) : undefined;
   }, [form, loaded, fillable]);
   // After the watch starts: these are fields the operator holds through something
   // that is not a field.

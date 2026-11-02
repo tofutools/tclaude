@@ -1389,3 +1389,53 @@ export function formatAttachmentSize(size) {
   }
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+// The spawn form's record of where its values came from, flat, for a fill's undo
+// (form-fill.js): which fields are touched, set by the operator, or overrides
+// that survive a profile switch, and the draft's own cwdOrigin and wtRepoEdited.
+const PROVENANCE_SETS = ['touched', 'operatorSet', 'profileOverrides'];
+const PROVENANCE_DRAFT = { cwdOrigin: 'cwd', wtRepoEdited: 'wtRepo' };
+
+export function spawnProvenance(sets, draft) {
+  const entries = {};
+  for (const name of PROVENANCE_SETS) for (const key of sets[name]) entries[`${name}:${key}`] = true;
+  for (const key of Object.keys(PROVENANCE_DRAFT)) entries[key] = draft[key];
+  return entries;
+}
+
+// A field's id names its draft key, but for these.
+const PROVENANCE_ID_ALIASES = {
+  'init-msg': ['initialMessage'], 'model-codex': ['model'], 'model-custom': ['model', 'customModel'],
+  'wt-base': ['worktreeBase'], 'wt-branch': ['worktreeBranch'], 'wt-sync': ['syncWorktree'], 'wt-fetch': ['fetchLatestWorktree'],
+  focus: ['autoFocus'], 'group-context': ['includeGroupContext'], 'copilot-api': ['copilotAPI'],
+};
+const camel = (name) => name.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+
+function ownedDraftKeys(ownedIds) {
+  const keys = new Set();
+  for (const id of ownedIds) {
+    if (!id.startsWith('agent-spawn-')) continue;
+    const name = id.slice('agent-spawn-'.length);
+    for (const key of PROVENANCE_ID_ALIASES[name] || [camel(name)]) keys.add(key);
+  }
+  return keys;
+}
+
+// restoreSpawnProvenance puts entries back into the sets, and answers the draft
+// fields to patch. An entry for a field the operator has since touched stays as
+// it is: the field is theirs now.
+export function restoreSpawnProvenance(sets, entries, ownedIds = new Set()) {
+  const owned = ownedDraftKeys(ownedIds);
+  const draft = {};
+  for (const [entry, value] of Object.entries(entries)) {
+    if (entry in PROVENANCE_DRAFT) {
+      if (!owned.has(PROVENANCE_DRAFT[entry])) draft[entry] = value;
+      continue;
+    }
+    const [name, key] = entry.split(':');
+    if (!PROVENANCE_SETS.includes(name) || owned.has(key)) continue;
+    if (value) sets[name].add(key);
+    else sets[name].delete(key);
+  }
+  return draft;
+}

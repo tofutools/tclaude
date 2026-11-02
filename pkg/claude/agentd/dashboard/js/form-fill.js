@@ -108,6 +108,59 @@ function writeField(win, watch, el, value) {
   }
 }
 
+// A form can say where each value came from beyond the value itself, such as
+// whether the operator chose it or a group's default put it there (the spawn
+// form's touched fields and directory origin). A fill writes through the form's
+// handlers, so it moves that too, and undoing only the values would leave the
+// fields reading as chosen by hand. provenance is { snapshot(), restore(entries,
+// ownedIds) }, snapshot a flat object of what the form tracks. The watch keeps
+// what it was before the first fill, and which entries a write moved and which
+// the operator did between writes. A full undo puts back what only writes moved.
+function provenanceOf(watch) {
+  const read = watch.provenance?.snapshot;
+  return read ? read() : null;
+}
+
+const movedEntries = (before, after) => [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((key) => before[key] !== after[key]);
+
+// trace starts a fill's record of provenance, before its first write.
+function trace(watch) {
+  if (watch.trace || filledIn(watch.name).length) return;
+  const base = provenanceOf(watch);
+  if (base) watch.trace = { base, last: base, written: new Set(), operator: new Set() };
+}
+
+// Whatever moved since the last write was the operator's.
+function catchUp(watch) {
+  const now = watch.trace && provenanceOf(watch);
+  if (!now) return null;
+  for (const key of movedEntries(watch.trace.last, now)) watch.trace.operator.add(key);
+  watch.trace.last = now;
+  return now;
+}
+
+// write sends a value and waits for it to settle, noting what it moved.
+async function write(win, watch, el, value, tick) {
+  const before = catchUp(watch);
+  writeField(win, watch, el, value);
+  await tick();
+  const after = before && provenanceOf(watch);
+  if (!after) return;
+  for (const key of movedEntries(before, after)) watch.trace.written.add(key);
+  watch.trace.last = after;
+}
+
+// restoreProvenance ends a fill that was undone in full: what only writes moved
+// goes back, and what the operator did since stays.
+function restoreProvenance(watch) {
+  const now = catchUp(watch);
+  const { trace } = watch;
+  watch.trace = null;
+  if (!now) return;
+  const back = [...trace.written].filter((key) => !trace.operator.has(key) && now[key] !== trace.base[key]);
+  if (back.length) watch.provenance.restore(Object.fromEntries(back.map((key) => [key, trace.base[key]])), new Set(watch.owned));
+}
+
 // optionValue accepts what a capture prints, an option's label, or its value.
 function optionValue(el, value) {
   // An option that opens something rather than holding a value is not one.
@@ -134,13 +187,17 @@ export function onFillsChange(fn) {
 function setFilled(form, fields) {
   if (fields.length) fills.set(form, fields);
   else fills.delete(form);
+  // Once nothing is filled, the operator has taken every field over: there is no
+  // fill left to undo, and the next one starts a new record. An undo restores first.
+  const watch = watches.get(form);
+  if (!fields.length && watch && !watch.undoing) watch.trace = null;
   for (const fn of listeners) fn();
 }
 
 // watchForm starts tracking who owns a form's fields. It returns a stop function,
 // which forgets the fill. keepValues is for a form reopened with the operator's
 // own earlier values: they are theirs from the start.
-export function watchForm(form, root, { win = globalThis.window, setTimeoutImpl = (fn) => win.setTimeout(fn, SETTLE_MS), keepValues = false } = {}) {
+export function watchForm(form, root, { win = globalThis.window, setTimeoutImpl = (fn) => win.setTimeout(fn, SETTLE_MS), keepValues = false, provenance = null } = {}) {
   const owned = new Set();
   const seen = new Map();
   const look = () => { for (const el of fieldsIn(root)) seen.set(el.id, readField(el)); };
@@ -162,7 +219,7 @@ export function watchForm(form, root, { win = globalThis.window, setTimeoutImpl 
     }
     look();
   };
-  const watch = { root, owned, look, sweep, writing: false, kept: null };
+  const watch = { name: form, root, owned, look, sweep, writing: false, kept: null, provenance, trace: null, undoing: false };
   const onEdit = (event) => {
     if (!event.isTrusted || watch.writing || !event.target?.id) return;
     look();
@@ -229,8 +286,7 @@ async function keepOwned(win, watch, tick) {
   for (const id of watch.owned) {
     const el = win.document.getElementById(id);
     if (el && watch.kept.has(id) && readField(el) !== watch.kept.get(id)) {
-      writeField(win, watch, el, watch.kept.get(id));
-      await tick();
+      await write(win, watch, el, watch.kept.get(id), tick);
       watch.look();
     }
   }
@@ -281,8 +337,8 @@ async function fillForm(win, request, tick) {
     }
     const before = valuesIn(watch.root);
     watch.kept = before;
-    writeField(win, watch, el, value);
-    await tick();
+    trace(watch);
+    await write(win, watch, el, value, tick);
     if (!isOpen(request.form, watch)) {
       outcomes.push({ field: id, status: 'form_closed' });
       break;
@@ -330,6 +386,16 @@ export const undoFill = (name, { win = globalThis.window, tick = defaultTick } =
 async function undoForm(name, win, tick) {
   const watch = watches.get(name);
   if (!watch) return;
+  watch.undoing = true;
+  try {
+    await undoValues(name, watch, win, tick);
+  } finally {
+    watch.undoing = false;
+  }
+  if (!filledIn(name).length) restoreProvenance(watch);
+}
+
+async function undoValues(name, watch, win, tick) {
   const form = FILL_FORMS[name];
   const left = (field) => field.cascade && form.rederives(field.id, win.document);
   watch.sweep();
@@ -338,8 +404,7 @@ async function undoForm(name, win, tick) {
   const restore = async (field) => {
     const el = win.document.getElementById(field.id);
     if (!el || watch.owned.has(field.id) || left(field) || readField(el) === field.before) return;
-    writeField(win, watch, el, field.before);
-    await tick();
+    await write(win, watch, el, field.before, tick);
     watch.look();
   };
   for (const field of held.filter((each) => !each.cascade).reverse()) await restore(field);
