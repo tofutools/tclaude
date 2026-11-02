@@ -1424,6 +1424,31 @@ func TestCollabEnabled(t *testing.T) {
 	assert.False(t, loaded.CollabEnabled(), "explicit false survives Save/Load")
 }
 
+// StoreCollabDefault writes only features.collab, only when it is absent, and
+// leaves a malformed file alone.
+func TestStoreCollabDefault(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, os.MkdirAll(filepath.Dir(ConfigPath()), 0o700))
+	never := func() (bool, error) { t.Fatal("decide ran with the key present"); return false, nil }
+
+	require.NoError(t, os.WriteFile(ConfigPath(), []byte(`{"features":`), 0o600))
+	_, err := StoreCollabDefault(func() (bool, error) { return true, nil })
+	require.Error(t, err)
+	data, _ := os.ReadFile(ConfigPath())
+	assert.Equal(t, `{"features":`, string(data), "a malformed file is left alone")
+
+	require.NoError(t, os.WriteFile(ConfigPath(), []byte(`{"log_level":"debug","x_unknown":[1,2]}`), 0o600))
+	on, err := StoreCollabDefault(func() (bool, error) { return false, nil })
+	require.NoError(t, err)
+	assert.False(t, on)
+	data, _ = os.ReadFile(ConfigPath())
+	assert.JSONEq(t, `{"log_level":"debug","x_unknown":[1,2],"features":{"collab":false}}`, string(data))
+
+	on, err = StoreCollabDefault(never)
+	require.NoError(t, err)
+	assert.False(t, on, "a stored value is found, not decided again")
+}
+
 // TestAlwaysShowOpenPRs covers the dashboard.always_show_open_prs resolver:
 // nil config / absent block / nil pointer all default to a permanent footer
 // indicator (true); only an explicit false hides it at zero. A default config

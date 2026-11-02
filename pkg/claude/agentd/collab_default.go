@@ -14,32 +14,18 @@ import (
 // traces left behind (Steward settings, a Steward, boards) means the operator
 // turned Collab on and then off again, and it stays off. An absent key with no
 // traces means Collab was never used, and it turns on, which only shows UI.
-// Either way the value is stored, so this decides only once. A failed read
-// decides nothing and leaves the key for the next start. It runs before the
-// daemon serves anything, and cfg is updated to match what was stored.
+// Either way the value is stored, so this decides only once; only that key is
+// written. A failed read decides nothing and leaves the key for the next start.
+// It runs before the daemon serves anything, and cfg is updated to match.
 func resolveCollabDefault(cfg *config.Config) {
 	if cfg == nil || (cfg.Features != nil && cfg.Features.Collab != nil) {
 		return
 	}
-	traces, err := collabTraces(cfg)
+	on, err := config.StoreCollabDefault(func() (bool, error) {
+		traces, err := collabTraces(cfg)
+		return !traces, err
+	})
 	if err != nil {
-		slog.Warn("collab: read traces for the default failed; deciding next start", "error", err)
-		return
-	}
-	on := !traces
-	if _, err := config.Update(func(saved *config.Config, loadErr error) error {
-		if loadErr != nil {
-			return loadErr
-		}
-		if saved.Features == nil {
-			saved.Features = &config.FeaturesConfig{}
-		}
-		if saved.Features.Collab == nil {
-			saved.Features.Collab = &on
-		}
-		on = *saved.Features.Collab
-		return nil
-	}); err != nil {
 		slog.Warn("collab: store the default failed; deciding next start", "error", err)
 		return
 	}
@@ -47,7 +33,7 @@ func resolveCollabDefault(cfg *config.Config) {
 		cfg.Features = &config.FeaturesConfig{}
 	}
 	cfg.Features.Collab = &on
-	slog.Info("collab: stored features.collab", "on", on, "traces", traces)
+	slog.Info("collab: stored features.collab", "on", on)
 }
 
 // collabTraces reports whether anything only Collab could have made exists.

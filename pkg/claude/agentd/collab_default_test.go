@@ -37,6 +37,9 @@ func TestResolveCollabDefault(t *testing.T) {
 		setupTestDB(t)
 		_, stored := resolve(t)
 		assert.True(t, stored.CollabEnabled())
+		// Only the key is written: a default notifications block would read to
+		// tclaude setup as the operator's choice and skip its first-run offer.
+		assert.False(t, config.NotificationsPresent(), "no defaults are written")
 	})
 	t.Run("config without the key, no traces: on", func(t *testing.T) {
 		setupTestDB(t)
@@ -44,6 +47,9 @@ func TestResolveCollabDefault(t *testing.T) {
 		_, stored := resolve(t)
 		assert.True(t, stored.CollabEnabled())
 		assert.True(t, stored.ProcessesEnabled(), "the rest of the config is kept")
+		raw, err := os.ReadFile(config.ConfigPath())
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"features":{"processes":true,"collab":true},"steward":{}}`, string(raw), "only the key is added")
 	})
 	t.Run("steward settings: off", func(t *testing.T) {
 		setupTestDB(t)
