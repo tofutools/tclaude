@@ -15,10 +15,8 @@ import (
 // ls`. Nil when no capacity limit is set and nothing waits, so the block stays
 // hidden for everyone who does not use capacity limits.
 func collectCapacityQueueSnapshot() *spawnQueueListJSON {
-	limits, err := nodeCapacityLimits()
-	if err != nil {
-		return nil
-	}
+	// An unreadable config still lists what waits, so it can be cancelled.
+	limits, _ := nodeCapacityLimits()
 	entries, err := db.ListSpawnQueue(false)
 	if err != nil || (!limits.Limited() && len(entries) == 0) {
 		return nil

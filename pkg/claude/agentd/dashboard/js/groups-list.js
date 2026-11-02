@@ -858,8 +858,10 @@ function GroupNode({ node, snapshot, actions, triggers, hoveredGroupKey }) {
 // CapacityQueuedChip counts this node's spawns waiting for capacity into the
 // group; the Spawn queue block above the groups lists them in order.
 function CapacityQueuedChip({ group, snapshot }) {
-  if (group.fleet_node) return null;
-  const n = groupCapacityQueued(snapshot, group.name);
+  // The snapshot's queue is the page node's own; the fused view names its
+  // groups with a node suffix.
+  if (group.fleet_node && !group.fleet_node.page) return null;
+  const n = groupCapacityQueued(snapshot, group.fleet_node ? fleetOwnName(group) : group.name);
   if (!n) return null;
   return html`<span class="group-capacity-queued-chip" title=${`${n} spawn${n === 1 ? '' : 's'} into this group waiting for capacity — see the Spawn queue above the groups`}>⌛ ${n} queued</span>`;
 }
