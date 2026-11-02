@@ -710,6 +710,36 @@ func TestGLProxy_MRReadyStripsTheMarker(t *testing.T) {
 	assert.Equal(t, "Add a thing", glJSONBody(t, calls[1])["title"])
 }
 
+// TestGLProxy_MRReadyRecordsTheNewState: the dashboard row of a merge request
+// created as a draft reads open as soon as it is marked ready.
+func TestGLProxy_MRReadyRecordsTheNewState(t *testing.T) {
+	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	draft := strings.Replace(glCannedMR, `"title":"Add a thing","description":"why","state":"opened","draft":false`,
+		`"title":"Draft: Add a thing","description":"why","state":"opened","draft":true`, 1)
+	gl.route = func(req agentd.GitLabRequestForTest) (glCanned, bool) {
+		if req.Method == http.MethodPut {
+			return glCanned{Status: 200, Body: glCannedMR}, true
+		}
+		return glCanned{Status: 200, Body: draft}, true
+	}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabWrite, "test"))
+	agentID, err := db.AgentIDForConv(gitProxyTestConv)
+	require.NoError(t, err)
+	const url = "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/7"
+
+	res := gitProxyPost(t, f, "/v1/gitlab/mr/create", map[string]any{"title": "Add a thing", "base": "main", "draft": true})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	row, err := db.GetAgentPR(agentID, url)
+	require.NoError(t, err)
+	require.Equal(t, "draft", row.State)
+
+	res = gitProxyPost(t, f, "/v1/gitlab/mr/ready", map[string]any{"number": 7})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	row, err = db.GetAgentPR(agentID, url)
+	require.NoError(t, err)
+	assert.Equal(t, "open", row.State, "the row follows the merge request out of draft")
+}
+
 func TestGLProxy_MRCommentsSplitsInlineNotes(t *testing.T) {
 	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
 	// Newest first, as the proxy asks for; the output reads oldest first.
