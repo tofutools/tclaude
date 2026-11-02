@@ -94,6 +94,13 @@ type dashboardAuthoredOpenMRInstance struct {
 type dashboardAuthoredOpenMRs struct {
 	dashboardAuthoredOpenPRs
 	Instances []dashboardAuthoredOpenMRInstance `json:"instances"`
+	// Projects are the popover's project tabs: everyone's open merge
+	// requests on the configured instances, one entry per project.
+	Projects []dashboardOpenMRProject `json:"projects"`
+	// EveryoneTotal is the footer's second number: every open merge request
+	// across Projects. EveryoneTruncated says it is a floor.
+	EveryoneTotal     int  `json:"everyone_total"`
+	EveryoneTruncated bool `json:"everyone_truncated,omitempty"`
 }
 
 // authoredOpenMRState is the poller's last result. key names the configuration
@@ -108,12 +115,40 @@ var authoredOpenMRState struct {
 	// good is each instance's last successful answer, kept through a failed
 	// poll so one bad response does not empty the popover.
 	good map[string]authoredOpenMRAnswer
+	// everyone is each instance's last successful project-wide answer, kept
+	// the same way.
+	everyone map[string]authoredOpenMREveryone
 }
 
 type authoredOpenMRAnswer struct {
 	items     []dashboardAuthoredOpenPR
 	total     int
 	truncated bool
+}
+
+// authoredOpenMREveryone is one instance's project-wide answer: every open
+// merge request the token can see, grouped by project.
+type authoredOpenMREveryone struct {
+	projects []dashboardOpenMRProject
+	// truncated is set when discovery stopped at its page cap, so projects
+	// beyond it are missing.
+	truncated bool
+}
+
+// dashboardOpenMRProject is one project tab in the Open MRs popover: every
+// open merge request in the project, whoever wrote it.
+type dashboardOpenMRProject struct {
+	Base    string `json:"base"`
+	Host    string `json:"host"`
+	Project string `json:"project"`
+	// URL is the project's own merge request list.
+	URL       string `json:"url"`
+	Total     int    `json:"total"`
+	Truncated bool   `json:"truncated,omitempty"`
+	// Agents marks a project an agent in this fleet is working in; those
+	// tabs come first.
+	Agents bool                      `json:"agents,omitempty"`
+	Items  []dashboardAuthoredOpenPR `json:"items"`
 }
 
 // authoredOpenMRBases is the instance set the indicator covers: the explicit
@@ -210,9 +245,13 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 
 	authoredOpenMRState.RLock()
 	good := map[string]authoredOpenMRAnswer{}
+	everyone := map[string]authoredOpenMREveryone{}
 	if authoredOpenMRState.key == key {
 		for base, answer := range authoredOpenMRState.good {
 			good[base] = answer
+		}
+		for base, answer := range authoredOpenMRState.everyone {
+			everyone[base] = answer
 		}
 	}
 	authoredOpenMRState.RUnlock()
@@ -233,6 +272,15 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 			good[base] = answer
 			inst.Username = username
 			inst.URL = base + "/dashboard/merge_requests?state=opened&author_username=" + url.QueryEscape(username)
+			// Everyone's merge requests only once the token has resolved a
+			// user here; a failure keeps the last good project lists.
+			all, retry, err := fetchEveryoneOpenMRs(ctx, base, token)
+			if err != nil {
+				inst.Error = "could not list everyone's merge requests: " + err.Error()
+				wait = max(wait, retry)
+			} else {
+				everyone[base] = all
+			}
 		}
 		instances = append(instances, inst)
 	}
@@ -240,6 +288,7 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 	authoredOpenMRState.Lock()
 	authoredOpenMRState.key = key
 	authoredOpenMRState.good = good
+	authoredOpenMRState.everyone = everyone
 	authoredOpenMRState.instances = instances
 	if answered > 0 {
 		authoredOpenMRState.updatedAt = time.Now()
@@ -256,6 +305,7 @@ func resetAuthoredOpenMRs(key string) {
 	authoredOpenMRState.Lock()
 	authoredOpenMRState.key = key
 	authoredOpenMRState.good = nil
+	authoredOpenMRState.everyone = nil
 	authoredOpenMRState.instances = nil
 	authoredOpenMRState.updatedAt = time.Time{}
 	authoredOpenMRState.Unlock()
@@ -289,6 +339,10 @@ type glOpenMRNode struct {
 			Username string `json:"username"`
 		} `json:"nodes"`
 	} `json:"approvedBy"`
+	// Author is asked for by the project-wide query only.
+	Author struct {
+		Username string `json:"username"`
+	} `json:"author"`
 }
 
 // fetchAuthoredOpenMRs runs the query against one instance.
@@ -386,6 +440,157 @@ func authoredOpenMRItem(base string, node glOpenMRNode, fetchedAt string) (dashb
 	return item, true
 }
 
+const (
+	// everyoneOpenMRPages caps discovery: at 100 merge requests a page, the
+	// project-wide view covers the 500 most recently updated open ones.
+	everyoneOpenMRPages = 5
+	// everyoneOpenMRPerProject is the page each project tab asks for.
+	everyoneOpenMRPerProject = 100
+	// everyoneOpenMRChunk is how many projects one GraphQL query reads.
+	everyoneOpenMRChunk = 5
+)
+
+// fetchEveryoneOpenMRs reads every open merge request the token can see on
+// one instance, grouped by project. GitLab's GraphQL has no instance-wide
+// merge request list, so discovery is the REST list (scope=all), which names
+// the projects. Each project is then read through GraphQL with the same fields
+// as the Mine list, so pipelines and approvals mean the same thing in both.
+func fetchEveryoneOpenMRs(ctx context.Context, base, token string) (authoredOpenMREveryone, time.Duration, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*authoredOpenMRTimeout)
+	defer cancel()
+	var projects []string
+	seen := map[string]bool{}
+	truncated := false
+	for page := 1; page <= everyoneOpenMRPages; page++ {
+		res, err := glDo(ctx, base, token, glAPIRequest{
+			Method: http.MethodGet,
+			Path:   "merge_requests",
+			Query: url.Values{
+				"scope": {"all"}, "state": {"opened"}, "order_by": {"updated_at"},
+				"per_page": {"100"}, "page": {strconv.Itoa(page)},
+			},
+		})
+		if err != nil {
+			return authoredOpenMREveryone{}, 0, err
+		}
+		if res.Status == http.StatusTooManyRequests {
+			return authoredOpenMREveryone{}, glRetryAfter(res, time.Now()), errors.New(glRateLimitText(res))
+		}
+		if res.Status != http.StatusOK {
+			return authoredOpenMREveryone{}, 0, errors.New(glErrorText(res))
+		}
+		var list []struct {
+			WebURL string `json:"web_url"`
+		}
+		if err := json.Unmarshal(res.Body, &list); err != nil {
+			return authoredOpenMREveryone{}, 0, fmt.Errorf("decode GitLab response: %w", err)
+		}
+		for _, mr := range list {
+			ref, ok := gitlabMRRefFromURL(mr.WebURL)
+			if !ok || !strings.EqualFold(ref.base, base) || seen[ref.project] {
+				continue
+			}
+			seen[ref.project] = true
+			projects = append(projects, ref.project)
+		}
+		if len(list) < 100 {
+			break
+		}
+		truncated = page == everyoneOpenMRPages
+	}
+
+	out := authoredOpenMREveryone{truncated: truncated}
+	fetchedAt := time.Now().UTC().Format(time.RFC3339)
+	for start := 0; start < len(projects); start += everyoneOpenMRChunk {
+		chunk := projects[start:min(start+everyoneOpenMRChunk, len(projects))]
+		got, retry, err := fetchOpenMRProjects(ctx, base, token, chunk, fetchedAt)
+		if err != nil {
+			return authoredOpenMREveryone{}, retry, err
+		}
+		out.projects = append(out.projects, got...)
+	}
+	return out, 0, nil
+}
+
+// fetchOpenMRProjects reads up to everyoneOpenMRChunk projects' open merge
+// requests in one GraphQL query, one alias per project. The query text is
+// built here from a count; every project path travels as a variable.
+func fetchOpenMRProjects(ctx context.Context, base, token string, projects []string, fetchedAt string) ([]dashboardOpenMRProject, time.Duration, error) {
+	var params, fields strings.Builder
+	variables := map[string]any{}
+	for i, project := range projects {
+		if i > 0 {
+			params.WriteString(", ")
+		}
+		fmt.Fprintf(&params, "$p%d: ID!", i)
+		fmt.Fprintf(&fields, "  p%d: project(fullPath: $p%d) { mergeRequests(state: opened, first: %d) { count nodes { ...mr } } }\n",
+			i, i, everyoneOpenMRPerProject)
+		variables["p"+strconv.Itoa(i)] = project
+	}
+	query := "query(" + params.String() + ") {\n" + fields.String() + "}\n" +
+		"fragment mr on MergeRequest { iid title webUrl draft updatedAt conflicts detailedMergeStatus " +
+		"author { username } headPipeline { status } approvedBy { nodes { username } } }"
+	res, err := glDo(ctx, base, token, glAPIRequest{
+		Method:  http.MethodPost,
+		GraphQL: true,
+		Body:    map[string]any{"query": query, "variables": variables},
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	if res.Status == http.StatusTooManyRequests {
+		return nil, glRetryAfter(res, time.Now()), errors.New(glRateLimitText(res))
+	}
+	if res.Status != http.StatusOK {
+		return nil, 0, errors.New(glErrorText(res))
+	}
+	var doc struct {
+		Data map[string]*struct {
+			MergeRequests struct {
+				Count int            `json:"count"`
+				Nodes []glOpenMRNode `json:"nodes"`
+			} `json:"mergeRequests"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(res.Body, &doc); err != nil {
+		return nil, 0, fmt.Errorf("decode GitLab response: %w", err)
+	}
+	if len(doc.Errors) > 0 {
+		return nil, 0, fmt.Errorf("GitLab GraphQL: %s", truncateAuthoredPRTitle(doc.Errors[0].Message))
+	}
+	var out []dashboardOpenMRProject
+	for i, project := range projects {
+		got := doc.Data["p"+strconv.Itoa(i)]
+		if got == nil {
+			continue // not visible to the token any more
+		}
+		entry := dashboardOpenMRProject{
+			Base: base, Host: gitlabBaseHost(base), Project: project,
+			URL:   base + "/" + project + "/-/merge_requests",
+			Items: []dashboardAuthoredOpenPR{},
+		}
+		for _, node := range got.MergeRequests.Nodes {
+			item, ok := authoredOpenMRItem(base, node, fetchedAt)
+			if !ok || !strings.EqualFold(item.Repository, project) {
+				continue
+			}
+			if glUsernameRE.MatchString(node.Author.Username) {
+				item.Author = node.Author.Username
+			}
+			entry.Items = append(entry.Items, item)
+		}
+		entry.Total = max(got.MergeRequests.Count, len(entry.Items))
+		entry.Truncated = got.MergeRequests.Count > len(got.MergeRequests.Nodes)
+		if entry.Total > 0 {
+			out = append(out, entry)
+		}
+	}
+	return out, 0, nil
+}
+
 // glPipelineChecks renders a head pipeline as one pipeline-level check. No
 // pipeline is no checks (nil): the footer treats that as needing attention,
 // as it does a PR without CI. A skipped pipeline ran nothing, so it reads the
@@ -462,5 +667,53 @@ func authoredOpenMRsSnapshot(cfg *config.Config, agents []dashboardAgent) *dashb
 	}
 	sortAuthoredOpenPRs(view.Items)
 	view.dashboardAuthoredOpenPRs = associateAuthoredOpenPRs(view.dashboardAuthoredOpenPRs, agents)
+	view.Projects, view.EveryoneTotal, view.EveryoneTruncated = openMRProjectsSnapshot(authoredOpenMRState.everyone, agents)
 	return &view
+}
+
+// openMRProjectsSnapshot is the project tabs: a copy of every instance's
+// project lists, matched to agents, with the projects agents work in first,
+// then the busiest. Each tab carries its own rows; the shared state is never
+// written.
+func openMRProjectsSnapshot(everyone map[string]authoredOpenMREveryone, agents []dashboardAgent) ([]dashboardOpenMRProject, int, bool) {
+	// An agent's project is read off its branch links: a GitLab web link is
+	// <base>/<project>/-/tree/<branch> (or /-/compare/…, or a merge
+	// request), so the project root is everything before "/-/".
+	agentRepos := map[string]bool{}
+	for _, agent := range agents {
+		for _, link := range []string{agent.BranchURL, agent.StartupBranchURL, agent.BranchPRURL, agent.StartupPRURL} {
+			if root, _, ok := strings.Cut(link, "/-/"); ok && strings.HasPrefix(root, "https://") {
+				agentRepos[strings.ToLower(root)] = true
+			}
+		}
+	}
+	projects := []dashboardOpenMRProject{}
+	total := 0
+	truncated := false
+	for _, answer := range everyone {
+		truncated = truncated || answer.truncated
+		for _, project := range answer.projects {
+			copied := project
+			view := associateAuthoredOpenPRs(dashboardAuthoredOpenPRs{
+				Items: append([]dashboardAuthoredOpenPR(nil), project.Items...),
+			}, agents)
+			copied.Items = view.Items
+			sortAuthoredOpenPRs(copied.Items)
+			copied.Agents = agentRepos[strings.ToLower(copied.Base+"/"+copied.Project)]
+			total += copied.Total
+			truncated = truncated || copied.Truncated
+			projects = append(projects, copied)
+		}
+	}
+	sort.SliceStable(projects, func(i, j int) bool {
+		a, b := projects[i], projects[j]
+		if a.Agents != b.Agents {
+			return a.Agents
+		}
+		if a.Total != b.Total {
+			return a.Total > b.Total
+		}
+		return strings.ToLower(a.Base+"/"+a.Project) < strings.ToLower(b.Base+"/"+b.Project)
+	})
+	return projects, total, truncated
 }

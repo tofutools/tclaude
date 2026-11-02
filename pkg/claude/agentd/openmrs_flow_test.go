@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,8 +31,13 @@ func TestOpenMRs_SnapshotCarriesTheTokenUsersMergeRequests(t *testing.T) {
 	_, _, gl := glWorld(t, []string{"gitlab.yamzz.test/yamzz"})
 	t.Cleanup(agentd.ResetAuthoredOpenMRsForTest)
 	gl.route = func(req agentd.GitLabRequestForTest) (glCanned, bool) {
-		if req.GraphQL {
+		switch {
+		case !req.GraphQL && req.Path == "merge_requests":
+			return glCanned{Status: http.StatusOK, Body: glEveryoneDiscovery}, true
+		case req.GraphQL && strings.Contains(string(req.Body), "authoredMergeRequests"):
 			return glCanned{Status: http.StatusOK, Body: glOpenMRsAnswer}, true
+		case req.GraphQL:
+			return glCanned{Status: http.StatusOK, Body: glEveryoneProjects}, true
 		}
 		return glCanned{}, false
 	}
@@ -43,11 +49,17 @@ func TestOpenMRs_SnapshotCarriesTheTokenUsersMergeRequests(t *testing.T) {
 	_, err := agentd.PollAuthoredOpenMRsForTest()
 	require.NoError(t, err)
 
-	call := gl.only(t)
-	assert.True(t, call.GraphQL)
-	assert.Equal(t, glTestBase, call.Base, "the self-hosted instance, port included")
-	assert.Equal(t, "POST", call.Method)
-	assert.Equal(t, []string{glTestToken}, gl.tokens)
+	calls := gl.requests()
+	require.Len(t, calls, 3, "mine, discovery, and one query for the project")
+	for _, call := range calls {
+		assert.Equal(t, glTestBase, call.Base, "the self-hosted instance, port included")
+	}
+	assert.True(t, calls[0].GraphQL)
+	assert.Equal(t, "POST", calls[0].Method)
+	assert.Equal(t, "merge_requests", calls[1].Path)
+	assert.Equal(t, "all", calls[1].Query.Get("scope"))
+	assert.Contains(t, string(calls[2].Body), `"p0":"yamzz/sub/previewplayback"`)
+	assert.Equal(t, []string{glTestToken, glTestToken, glTestToken}, gl.tokens)
 
 	snap = snapshotJSON(t, agentd.BuildDashboardHandlerForTest(), "/api/snapshot")
 	mrs, ok := snap["authored_open_mrs"].(map[string]any)
@@ -75,4 +87,29 @@ func TestOpenMRs_SnapshotCarriesTheTokenUsersMergeRequests(t *testing.T) {
 	assert.Equal(t, "gitlab.yamzz.test:6080", inst["host"])
 	assert.Equal(t, glTestBase+"/dashboard/merge_requests?state=opened&author_username=yorick", inst["url"])
 	assert.NotContains(t, inst, "error")
+
+	assert.EqualValues(t, 3, mrs["everyone_total"], "the footer's second number: everyone's")
+	projects, ok := mrs["projects"].([]any)
+	require.True(t, ok)
+	require.Len(t, projects, 1)
+	project := projects[0].(map[string]any)
+	assert.Equal(t, "yamzz/sub/previewplayback", project["project"])
+	assert.Equal(t, glTestBase+"/yamzz/sub/previewplayback/-/merge_requests", project["url"])
+	rows := project["items"].([]any)
+	require.Len(t, rows, 3)
+	assert.Equal(t, "martin", rows[2].(map[string]any)["author"])
 }
+
+const glEveryoneDiscovery = `[
+{"web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/9"},
+{"web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/8"},
+{"web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/7"}]`
+
+const glEveryoneProjects = `{"data":{"p0":{"mergeRequests":{"count":3,"nodes":[
+{"iid":"7","title":"Add a thing","webUrl":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/7",
+ "draft":false,"updatedAt":"2026-11-02T10:00:00Z","author":{"username":"yorick"},"headPipeline":{"status":"SUCCESS"},"approvedBy":{"nodes":[]}},
+{"iid":"8","title":"Draft: Try a thing","webUrl":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/8",
+ "draft":true,"updatedAt":"2026-11-02T11:00:00Z","author":{"username":"yorick"},"headPipeline":{"status":"RUNNING"},"approvedBy":{"nodes":[]}},
+{"iid":"9","title":"Someone else's","webUrl":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/9",
+ "draft":false,"updatedAt":"2026-11-02T12:00:00Z","author":{"username":"martin"},"headPipeline":null,"approvedBy":{"nodes":[]}}
+]}}}}`

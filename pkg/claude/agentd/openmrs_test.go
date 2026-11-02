@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -151,10 +153,17 @@ func openMRsWorld(t *testing.T, hosts map[string]string, answer func(base string
 		bases = append(bases, base)
 		mu.Unlock()
 		require.Equal(t, "glpat-open-mrs", token)
-		require.True(t, req.GraphQL)
 		body, _ := json.Marshal(req.Body)
-		require.Contains(t, string(body), "authoredMergeRequests")
-		res := answer(base)
+		var res glAPIResult
+		switch {
+		case !req.GraphQL:
+			// Project-wide discovery: nobody else has open merge requests.
+			res = glAPIResult{Status: http.StatusOK, Body: []byte("[]")}
+		case strings.Contains(string(body), "authoredMergeRequests"):
+			res = answer(base)
+		default:
+			res = glAPIResult{Status: http.StatusOK, Body: []byte(`{"data":{}}`)}
+		}
 		if res.Header == nil {
 			res.Header = http.Header{}
 		}
@@ -276,4 +285,126 @@ func TestPollAuthoredOpenMRs_NoTokenFileIsNotAFailure(t *testing.T) {
 	assert.Zero(t, wait)
 	assert.False(t, called, "no token, no request")
 	assert.Nil(t, authoredOpenMRsSnapshot(loadCfg(t), nil))
+}
+
+// TestEveryoneOpenMRs_GroupsTheInstancesOpenMergeRequestsByProject drives the
+// project-wide half: REST discovery names the projects, one GraphQL query per
+// chunk reads them, and the snapshot orders the tabs with the projects agents
+// work in first.
+func TestEveryoneOpenMRs_GroupsTheInstancesOpenMergeRequestsByProject(t *testing.T) {
+	setupTestDB(t)
+	tokenPath := filepath.Join(t.TempDir(), "gitlab-token")
+	require.NoError(t, os.WriteFile(tokenPath, []byte("glpat-open-mrs\n"), 0o600))
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{GitProxy: &config.GitProxyConfig{
+		AllowedRemotes:  []string{"gitlab.example.test"},
+		GitLabHosts:     map[string]string{"gitlab.example.test": testMRBase},
+		GitLabTokenFile: tokenPath,
+	}}}))
+	t.Cleanup(func() { resetAuthoredOpenMRs("") })
+
+	mr := func(project string, iid int, author string, mutate func(map[string]any)) map[string]any {
+		n := map[string]any{
+			"iid": strconv.Itoa(iid), "title": "Change " + strconv.Itoa(iid),
+			"webUrl": testMRBase + "/" + project + "/-/merge_requests/" + strconv.Itoa(iid),
+			"draft":  false, "updatedAt": "2026-11-02T10:00:00Z", "author": map[string]any{"username": author},
+			"headPipeline": map[string]any{"status": "SUCCESS"}, "approvedBy": map[string]any{"nodes": []any{}},
+		}
+		if mutate != nil {
+			mutate(n)
+		}
+		return n
+	}
+	var discovery []url.Values
+	var projectQueries []map[string]any
+	t.Cleanup(SetGitLabTransportForTest(func(_ context.Context, base, token string, req glAPIRequest) (glAPIResult, error) {
+		require.Equal(t, testMRBase, base)
+		if !req.GraphQL {
+			require.Equal(t, "merge_requests", req.Path)
+			discovery = append(discovery, req.Query)
+			list := []map[string]any{
+				{"web_url": testMRBase + "/yamzz/previewplayback/-/merge_requests/249"},
+				{"web_url": testMRBase + "/yamzz/previewplayback/-/merge_requests/250"},
+				{"web_url": testMRBase + "/tools/ci/-/merge_requests/3"},
+				{"web_url": "https://elsewhere.example.test/x/y/-/merge_requests/1"},
+			}
+			body, _ := json.Marshal(list)
+			return glAPIResult{Status: http.StatusOK, Body: body}, nil
+		}
+		body, _ := json.Marshal(req.Body)
+		if strings.Contains(string(body), "authoredMergeRequests") {
+			return graphQLAnswer(t, "yorick", 1, testMRNode(7, func(n *glOpenMRNode) {
+				n.WebURL = testMRBase + "/tools/ci/-/merge_requests/7"
+			})), nil
+		}
+		var payload struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		require.NoError(t, json.Unmarshal(body, &payload))
+		projectQueries = append(projectQueries, payload.Variables)
+		assert.NotContains(t, payload.Query, "previewplayback", "project paths travel as variables, never in the query text")
+		data := map[string]any{}
+		for alias, path := range payload.Variables {
+			switch path {
+			case "yamzz/previewplayback":
+				data[alias] = map[string]any{"mergeRequests": map[string]any{"count": 2, "nodes": []any{
+					mr("yamzz/previewplayback", 249, "martin", nil),
+					mr("yamzz/previewplayback", 250, "agent-bot", func(n map[string]any) { n["conflicts"] = true }),
+				}}}
+			case "tools/ci":
+				data[alias] = map[string]any{"mergeRequests": map[string]any{"count": 3, "nodes": []any{
+					mr("tools/ci", 3, "ann", nil),
+					mr("tools/ci", 7, "yorick", nil),
+					mr("tools/ci", 8, "bob", nil),
+				}}}
+			}
+		}
+		out, _ := json.Marshal(map[string]any{"data": data})
+		return glAPIResult{Status: http.StatusOK, Body: out}, nil
+	}))
+
+	_, err := pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err)
+	require.Len(t, discovery, 1, "a short page ends discovery")
+	assert.Equal(t, "all", discovery[0].Get("scope"))
+	assert.Equal(t, "opened", discovery[0].Get("state"))
+	require.Len(t, projectQueries, 1, "two projects fit one GraphQL query")
+
+	agents := []dashboardAgent{{AgentID: "agt_pp", Title: "builder", repoLinksView: repoLinksView{
+		BranchURL: testMRBase + "/yamzz/previewplayback/-/tree/headless"}}}
+	view := authoredOpenMRsSnapshot(loadCfg(t), agents)
+	require.NotNil(t, view)
+	assert.Equal(t, 1, view.Total, "the footer's first number stays yours")
+	assert.Equal(t, 5, view.EveryoneTotal, "the second counts everyone's")
+	require.Len(t, view.Projects, 2)
+	assert.Equal(t, "yamzz/previewplayback", view.Projects[0].Project, "the project an agent works in comes first")
+	assert.True(t, view.Projects[0].Agents)
+	assert.Equal(t, "tools/ci", view.Projects[1].Project, "busier, but no agent works in it")
+	assert.Equal(t, testMRBase+"/yamzz/previewplayback/-/merge_requests", view.Projects[0].URL)
+	pp := view.Projects[0].Items
+	require.Len(t, pp, 2)
+	assert.Equal(t, "martin", pp[0].Author)
+	assert.Equal(t, "agent-bot", pp[1].Author)
+	assert.True(t, pp[1].Conflicts)
+	assert.Equal(t, "passing", pp[0].Checks.State)
+}
+
+func TestFetchEveryoneOpenMRs_StopsDiscoveryAtItsCap(t *testing.T) {
+	pages := 0
+	t.Cleanup(SetGitLabTransportForTest(func(_ context.Context, _, _ string, req glAPIRequest) (glAPIResult, error) {
+		if req.GraphQL {
+			return glAPIResult{Status: http.StatusOK, Body: []byte(`{"data":{}}`)}, nil
+		}
+		pages++
+		list := make([]map[string]any, 100)
+		for i := range list {
+			list[i] = map[string]any{"web_url": testMRBase + "/acme/app/-/merge_requests/" + strconv.Itoa(pages*1000+i+1)}
+		}
+		body, _ := json.Marshal(list)
+		return glAPIResult{Status: http.StatusOK, Body: body}, nil
+	}))
+	got, _, err := fetchEveryoneOpenMRs(context.Background(), testMRBase, "glpat")
+	require.NoError(t, err)
+	assert.Equal(t, everyoneOpenMRPages, pages)
+	assert.True(t, got.truncated, "full pages up to the cap mean there may be more")
 }
