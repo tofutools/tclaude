@@ -28,12 +28,16 @@ test('ui.css gives every disabled control a not-allowed cursor', () => {
   const css = uncommented(read('ui.css'));
   const rule = css.match(/:is\(button, select, input, textarea, \[role="button"\], \[role="menuitem"\], \[role="tab"\], \[role="option"\]\):is\(:disabled, \[aria-disabled="true"\]\),\s*label:has\(> input:disabled\) \{ cursor: not-allowed !important; \}/);
   assert.ok(rule, 'the global disabled-cursor rule is in ui.css');
-  assert.ok(css.lastIndexOf('cursor: not-allowed !important') > css.lastIndexOf('cursor: default'), 'and it comes after any default cursor in ui.css');
   for (const part of ['.ui-btn:disabled', '.ui-select:disabled', '.ui-input:disabled', '.ui-menu-item:disabled', '.ui-switch:disabled']) {
     const own = rules().find((r) => r.sheet === 'ui.css' && r.selector.split(', ').includes(part));
     assert.ok(own, `ui.css styles ${part}`);
     assert.match(own.body, /cursor: not-allowed/, `${part} says not-allowed on its own`);
   }
+});
+
+test('no ui.css disabled state falls back to a default cursor', () => {
+  const soft = rules().filter((r) => r.sheet === 'ui.css' && DISABLED.test(r.selector) && /cursor:\s*(default|auto|pointer)/.test(r.body));
+  assert.deepEqual(soft.map((r) => r.selector), []);
 });
 
 test('no sheet hides or overrides the disabled cursor', () => {

@@ -19673,7 +19673,7 @@ body.wizard .psd-resize:hover, body.wizard .psd-resize:focus-visible, body.wizar
 .process-node-detail.is-readonly .process-node-input:disabled,
 .process-node-detail.is-readonly .process-node-textarea:disabled,
 .process-node-detail.is-readonly .process-node-select:disabled,
-.process-node-detail.is-readonly .process-node-toggle:disabled { opacity: .65; cursor: default; }
+.process-node-detail.is-readonly .process-node-toggle:disabled { opacity: .65; cursor: not-allowed; }
 .process-performer-editor {
   display: flex;
   flex-direction: column;
