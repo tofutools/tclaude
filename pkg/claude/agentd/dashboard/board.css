@@ -295,3 +295,4 @@ body.slop, body.vegas {
 .board-overlay .board-canvas-wrap { min-height: 80px; margin: 0 8px 8px; }
 /* As for the companion: it steps aside while the operator annotates the page. */
 body.companion-annotating :is(.board-overlay, .board-overlay-resize-frame) { visibility: hidden; }
+/* CI classifier demo: dashboard-only change */
