@@ -6960,7 +6960,6 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
    group-clone hints used to carry inline; a class so theme re-skins can
    recolor them (an inline style would always win). */
 .modal-hint { margin: 4px 0; font-size: 12px; color: #7d8590; }
-.modal-hint-small { margin: 4px 0 0 0; font-size: 11px; }
 /* The shared group-creation modal uses this compact source summary for both
    inherited subgroup fields and exact group clones. Clone-only rows update
    live with the member and owner checkboxes. */
@@ -7492,7 +7491,6 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .sbx-inline-check {
   white-space: nowrap;
 }
-.sbx-axis-help,
 .sbx-preview-status {
   color: var(--text-muted);
   font-size: .85rem;
@@ -8209,7 +8207,6 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 }
 .sbx-common-rule-dismiss:hover { color: #e6edf3; }
 /* Advanced raw-JSON disclosure. */
-.sbx-advanced { display: flex; flex-direction: column; gap: 8px; }
 .sbx-advanced-toggle {
   align-self: flex-start; background: transparent; border: none;
   color: #58a6ff; font-family: inherit; font-size: 12px; padding: 0; cursor: pointer;
@@ -9256,11 +9253,6 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 }
 .role-inspect-vals { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
 .role-inspect-muted { color: #6e7681; }
-.role-inspect-chip {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 3px;
-  padding: 1px 6px; color: #c9d1d9;
-}
-.role-inspect-chip b { color: #7d8590; font-weight: 600; }
 .role-inspect-slug {
   background: #12261a; border: 1px solid #1f5a37; border-radius: 3px;
   padding: 1px 6px; color: #7ee2a8; font-family: ui-monospace, monospace; font-size: 10px;
@@ -9927,12 +9919,11 @@ label.cfg-label { cursor: pointer; }
 }
 .cfg-intro { font-size: 12px; color: #7d8590; margin: 0 0 14px; line-height: 1.55; }
 .cfg-intro code { background: #161b22; padding: 1px 5px; border-radius: 4px; color: #c9d1d9; }
-/* Config-tab live section filter. The bar itself reuses .filter-bar; these
-   add the muted reassurance note and the no-match line. Filtered-out sections
+/* Config-tab live section filter. The bar itself reuses .filter-bar; this
+   adds the no-match line. Filtered-out sections
    use the [hidden] attribute — .cfg-section / details.cfg-advanced set no
    display of their own, so the browser default already hid them; the global
    `[hidden] { display: none !important }` rule at the top now backs that too. */
-.cfg-filter-note { font-size: 11px; color: #7d8590; white-space: nowrap; }
 .cfg-filter-empty {
   font-size: 12px; color: #7d8590; font-style: italic;
   border: 1px dashed #30363d; border-radius: 8px;
@@ -9976,11 +9967,6 @@ label.cfg-label { cursor: pointer; }
 .cfg-terminal-attach-field {
   align-items: flex-start; border-top: 1px solid #30363d;
   margin-top: 17px; padding-top: 15px;
-}
-.cfg-terminal-attach-intro { flex-basis: 100%; margin-bottom: 3px; }
-.cfg-terminal-attach-intro strong { display: block; color: #c9d1d9; font-size: 12px; }
-.cfg-terminal-attach-intro span {
-  display: block; color: #7d8590; font-size: 11px; margin-top: 4px;
 }
 .cfg-terminal-attach-field > select { min-width: 230px; }
 .cfg-terminal-attach-timings {
@@ -10640,13 +10626,12 @@ body.wizard nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #f
   display: flex; align-items: center; gap: 6px; margin-bottom: 12px;
 }
 .process-subnav .jobs-subnav { margin: 0; }
-.process-subtab, .process-action:where(:not(.ui-btn)) {
+.process-action:where(:not(.ui-btn)) {
   border: 1px solid #30363d; border-radius: 6px; background: #161b22;
   color: #c9d1d9; padding: 6px 12px; cursor: pointer; font: inherit;
   text-decoration: none;
 }
-.process-subtab:hover, .process-action:where(:not(.ui-btn)):hover { background: var(--ui-bg-hover); }
-.process-subtab.active { color: #fff; background: #1f6feb; border-color: #388bfd; }
+.process-action:where(:not(.ui-btn)):hover { background: var(--ui-bg-hover); }
 .process-action:where(:not(.ui-btn)).primary { color: #fff; background: #238636; border-color: #2ea043; }
 .process-action:where(:not(.ui-btn)).primary:hover { background: #2ea043; }
 /* Auto layout + its flow-direction picker read as one segmented control. */
@@ -10695,7 +10680,6 @@ body.wizard #tab-processes .process-scribe-wizard { display: inline; }
 .process-list .process-actions .process-action + .process-action { margin-left: 6px; }
 .process-hash { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #79c0ff; }
 .process-description, .process-secondary { color: #8b949e; font-size: 12px; }
-.process-status { display: inline-block; padding: 2px 7px; border-radius: 10px; background: #21262d; color: #c9d1d9; }
 .process-placeholder { padding: 30px; text-align: center; border: 1px dashed #30363d; border-radius: 8px; color: #8b949e; }
 .process-canvas-view { min-height: 0; }
 .process-canvas-mount { min-height: 0; margin-top: 10px; border: 1px dashed #30363d; border-radius: 8px; padding: 20px; color: #8b949e; }
@@ -14913,10 +14897,6 @@ body.wizard #template-editor-modal .role-inspect-missing { color: #d9b45a; }
 body.wizard #template-editor-modal .role-inspect-descr { color: #c9b6e6; }
 body.wizard #template-editor-modal .role-inspect-key { color: #b39ddb; }
 body.wizard #template-editor-modal .role-inspect-muted { color: #9d86c9; }
-body.wizard #template-editor-modal .role-inspect-chip {
-  background: #1b1338; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5;
-}
-body.wizard #template-editor-modal .role-inspect-chip b { color: #b39ddb; }
 body.wizard #template-editor-modal .role-inspect-slug {
   background: #241b3d; border-color: #7a5db0; color: #f3e6c0;
 }
@@ -15147,12 +15127,6 @@ body.wizard #template-from-group-modal #template-from-group-submit:active {
 }
 body.wizard #template-from-group-modal #template-from-group-submit:disabled { opacity: 0.7; }
 body.wizard #template-from-group-modal #template-from-group-submit:disabled::before { content: "🕯 Tracing…"; }
-/* Update-in-place mode (.tfg-updating — the JS mode flag set while the
-   typed name already belongs to a circle, like the cron dialog's
-   .cron-editing): the lever reads Re-trace. The extra class out-specifies
-   the base ::before rules above, so no ordering dependence. */
-body.wizard #template-from-group-modal.tfg-updating #template-from-group-submit::before { content: "🕯 Re-trace it!"; }
-body.wizard #template-from-group-modal.tfg-updating #template-from-group-submit:disabled::before { content: "🕯 Re-tracing…"; }
 
 /* ─── Wizard mirror dialog — "🪞 Mirror the circle" ──────────────────
    Duplicate-a-template: chalk an identical twin of a circle under a new
@@ -17000,8 +16974,7 @@ body.wizard #tab-config .filter-bar input:where(:not(.ui-input)) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
 body.wizard #tab-config .filter-bar input:where(:not(.ui-input)):focus { border-color: #a97bd6; }
-body.wizard #tab-config .filter-bar .filter-count,
-body.wizard #tab-config .cfg-filter-note { color: #b39ddb; }
+body.wizard #tab-config .filter-bar .filter-count { color: #b39ddb; }
 body.wizard #tab-config .filter-bar button.clear-filter { color: #b39ddb; }
 body.wizard #tab-config .filter-bar button.clear-filter:hover { color: #f3e6c0; }
 body.wizard #tab-config .cfg-filter-empty {
@@ -17056,8 +17029,6 @@ body.wizard #tab-config .cfg-hint,
 body.wizard #tab-config .cfg-list-row .cfg-arrow,
 body.wizard #tab-config .cfg-field details.cfg-advanced > summary { color: #b39ddb; }
 body.wizard #tab-config .cfg-terminal-attach-field { border-top-color: rgba(122, 93, 176, 0.4); }
-body.wizard #tab-config .cfg-terminal-attach-intro strong { color: #e7d9f5; }
-body.wizard #tab-config .cfg-terminal-attach-intro span,
 body.wizard #tab-config .cfg-terminal-attach-note,
 body.wizard #tab-config .cfg-terminal-attach-unit { color: #b39ddb; }
 body.wizard #tab-config .cfg-terminal-attach-timings {
@@ -18248,7 +18219,6 @@ body.process-solo #companion-root, body.process-solo #board-overlay-root { displ
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.process-editor-id-input,
 .process-inspector-input,
 .process-inspector-select {
   background: #0d1117;
@@ -18258,10 +18228,8 @@ body.process-solo #companion-root, body.process-solo #board-overlay-root { displ
   padding: 4px 8px;
   font-size: 13px;
 }
-.process-editor-id-input:focus,
 .process-inspector-input:focus,
 .process-inspector-select:where(:not(.ui-select)):focus { border-color: #58a6ff; outline: none; }
-.process-editor-id-input:disabled { color: #8b949e; }
 /* The id is orientation only, not an editable field. Specificity keeps it muted
    over the later generic .process-inspector-id colour. */
 .process-editor-inspector .process-template-id-locked {
@@ -19669,9 +19637,8 @@ body.wizard .git-repos-concurrency select:focus-visible { outline-color: #bb86fc
 }
 /* The row is always there (tcl-lt1fyt); :empty only covers the first paint. */
 .node-chips-host:empty { display: none; }
-.node-chip:disabled, nav [data-tab].node-chip.node-chip-off { opacity: 0.45; cursor: not-allowed; }
+.node-chip:disabled { opacity: 0.45; cursor: not-allowed; }
 .node-chip:disabled:hover { border-color: #2a3340; color: #c9d1d9; }
-nav [data-tab].node-chip.node-chip-off { pointer-events: none; }
 .node-chips { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
 .node-chip, nav [data-tab].node-chip {
   position: relative; box-sizing: border-box; height: 24px; min-width: 24px; align-self: center;
@@ -20674,7 +20641,6 @@ body.wizard .groups-processes-placeholder-glyph { color: #d4af37; }
 /* A file dragged over a group: it takes a .pwf (Groups › Processes). */
 .gp-group.gp-pwf-over { outline: 1.5px dashed #58a6ff; outline-offset: 2px; }
 .gp-group-head { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
-.gp-group-name { font-weight: 700; font-size: 15px; color: #e6edf3; }
 .gp-avatar-strip { display: inline-flex; align-items: center; gap: 8px; }
 /* Avatar availability: a process step (blue ring) wins over the agent's own
    status, which matches the Agents perspective's state pills: working green,
@@ -20797,7 +20763,7 @@ body.wizard .gf-section-head { border-bottom-color: rgba(122, 93, 176, 0.35); }
 body.wizard .gf-label { color: #f3e6c0; }
 body.wizard .gp-card { background: #1a1430; border-color: rgba(122, 93, 176, 0.4); }
 body.wizard .gp-card-head { border-bottom-color: rgba(122, 93, 176, 0.4); }
-body.wizard .gp-group-name, body.wizard .gp-card-name { color: #f3e6c0; }
+body.wizard .gp-card-name { color: #f3e6c0; }
 body.wizard .gp-member.busy { box-shadow: 0 0 0 2px #a97bd6; }
 body.wizard .gp-member-count { background: #2c2248; color: #e7d9f5; box-shadow: 0 0 0 1.5px #0f0a1f; }
 .gp-start, .gp-start-form button, .gp-start-form select { font: inherit; font-size: 12px; border: 1px solid #30363d; border-radius: 6px; padding: 3px 10px; background: #21262d; color: #e6edf3; cursor: pointer; }
