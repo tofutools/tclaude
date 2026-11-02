@@ -216,7 +216,6 @@ body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: c
   flex: none; background: #da3633; border: 0; border-radius: 6px; color: #fff; cursor: pointer; font: inherit; padding: 3px 10px;
 }
 .companion-elevated button:disabled { opacity: 0.6; cursor: default; }
-.companion-tab-elevated { font-size: 11px; }
 .companion-needs-bar {
   flex: none; padding: 4px 10px; font-size: 12px; color: #1b1300; background: var(--cmp-amber);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -551,9 +550,6 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
 .companion-decide-mark { color: var(--cmp-blue); }
 .companion-chip-decide { border-color: var(--cmp-blue); }
 .companion-chip-decide .companion-decide-mark { width: 22px; height: 22px; display: inline-grid; place-items: center; }
-.companion-decide-tab button { color: var(--cmp-blue); }
-.companion-decide-note { margin: 8px 10px 0; color: var(--cmp-amber-text); font-size: 12px; }
-.companion-decide-note button { background: none; border: 0; color: var(--cmp-blue); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
 
 /* The quick permissions panel takes the notification drawer's shape, above the
    companion window it is usually raised from. */
