@@ -126,6 +126,20 @@ func TestGitLabPipelineChecks_AFailedPipelineWithNoFailingJobIsFailing(t *testin
 	assert.Equal(t, "failing", info.Summary.State)
 }
 
+func TestGitLabPipelineChecks_ThePipelinesVerdictCanOnlyMakeACompleteReadWorse(t *testing.T) {
+	run := func(t *testing.T, pipelineStatus string) string {
+		t.Helper()
+		t.Cleanup(SetGitLabTransportForTest(func(_ context.Context, _, _ string, _ glAPIRequest) (glAPIResult, error) {
+			return glAPIResult{Status: http.StatusOK, Body: jobsPage(t, 1, 3, "success"), Header: http.Header{}}, nil
+		}))
+		return gitlabPipelineChecks(context.Background(), jobsTestBase, "glpat", jobsRef(t),
+			&glPipeline{ID: 99, Status: pipelineStatus}, time.Now()).Summary.State
+	}
+	assert.Equal(t, "failing", run(t, "failed"), "a failed bridge job is in no job list, only in the pipeline's status")
+	assert.Equal(t, "pending", run(t, "running"), "a downstream pipeline still running")
+	assert.Equal(t, "passing", run(t, "success"))
+}
+
 // An optional manual job nobody has played (allow_failure, the default for
 // `when: manual`) does not hold the pill at pending: GitLab shows its pipeline
 // as passed. A required one blocks the pipeline, and the pill says so.
@@ -151,7 +165,8 @@ func TestGitLabPipelineChecks_AnOptionalManualJobDoesNotHoldThePillAtPending(t *
 	}
 
 	passed := run(t, "success", job{"success", false}, job{"success", false}, job{"manual", true})
-	assert.Equal(t, "passing", passed.Summary.State, "GitLab says passed; an optional deploy waiting to be played is not CI")
+	assert.Equal(t, "passing", passed.Summary.State,
+		"GitLab says passed; an optional deploy waiting to be played is not CI, and the pipeline's verdict agrees")
 	assert.Equal(t, 2, passed.Summary.Passed)
 	assert.Equal(t, 1, passed.Summary.Skipped)
 	assert.Zero(t, passed.Summary.Pending)

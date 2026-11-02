@@ -277,15 +277,33 @@ func gitlabPipelineChecks(ctx context.Context, base, token string, ref gitlabMRR
 		if verdict != nil {
 			summary.State = verdict.State
 		}
-	case verdict != nil && verdict.State == "failing":
-		// A pipeline can fail with no failing job in it (a CI config error
-		// creates no jobs at all); GitLab's verdict wins over a green list.
-		summary.State = "failing"
+	case verdict != nil && checkStateRank(verdict.State) > checkStateRank(summary.State):
+		// Even a complete job list is not the whole pipeline. A pipeline can
+		// fail with no failing job in it (a CI config error creates no jobs
+		// at all), and the Jobs API leaves out trigger (bridge) jobs, so a
+		// downstream pipeline that failed or is still running shows only in
+		// the pipeline's own status. That status can make the summary worse,
+		// never better.
+		summary.State = verdict.State
 	}
 	if len(checks) > prChecksMaxRuns {
 		checks = checks[:prChecksMaxRuns]
 	}
 	return prChecksInfo{Summary: summary, Checks: checks, FetchedAt: now}
+}
+
+// checkStateRank orders summary states from good to bad, so the pipeline's
+// own verdict overrides a summary only towards worse.
+func checkStateRank(state string) int {
+	switch state {
+	case "failing":
+		return 3
+	case "pending":
+		return 2
+	case "passing":
+		return 1
+	}
+	return 0
 }
 
 // gitlabJobCheckRun maps one CI job onto a check row. Buckets follow the
