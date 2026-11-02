@@ -47,6 +47,9 @@ export const OVERLAY_BOTTOM_LEVEL = 930;
 const overlayStack = signal([]);
 export const frontOverlayWindow = computed(() => overlayStack.value[overlayStack.value.length - 1] || '');
 
+// overlayWindowsByStack is every window id that has been shown, the front last.
+export const overlayWindowsByStack = () => overlayStack.peek();
+
 export function raiseOverlayWindow(id) {
   overlayStack.value = [...overlayStack.peek().filter((other) => other !== id), ...(id ? [id] : [])];
 }

@@ -60,17 +60,18 @@ export function openOverlayWindow(instance) {
 }
 
 // openTabInWindow shows a tab that has a place already, or else adds it to the
-// window called windowId, which starts with it if there is none yet, at place.
-// With activate false it arrives without taking the window over.
+// window called windowId. With none of that name, or none named, it gets a window
+// of its own, saving where it goes as place. With activate false it arrives
+// without taking the window over, and a window of its own starts minimized.
 export function openTabInWindow(windowId, place, tab, { activate = true } = {}) {
   const held = overlayTabs.peek().some((other) => other.id === tab.id);
-  const home = overlayWindows.peek().find((window) => window.id === windowId);
+  const into = windowId && overlayWindows.peek().find((window) => window.id === windowId);
   if (held) {
     if (activate) openOverlayWindow(tab);
     return;
   }
-  if (home) commit({ windows: addedTab(overlayWindows.peek(), windowId, tab, activate) });
-  else overlayWindows.value = [...overlayWindows.peek(), { ...windowAround(overlayWindows.peek(), tab, { id: windowId, place }), minimized: !activate }];
+  if (into) commit({ windows: addedTab(overlayWindows.peek(), windowId, tab, activate) });
+  else overlayWindows.value = [...overlayWindows.peek(), { ...windowAround(overlayWindows.peek(), tab, { id: windowId || tab.id, place }), minimized: !activate }];
   if (activate) raiseOverlayTab(tab.id);
 }
 

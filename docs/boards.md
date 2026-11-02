@@ -21,7 +21,7 @@ exists opens it. `/boards/<id>` opens that board's tab, and `/boards` opens the
 list. A board tab behaves like a terminal
 tab: it reorders, joins tab groups, and moves between a tab, an overlay window and a
 browser window of its own, with **Open in overlay**, **Open in separate window** and
-**Back to a tab**. Dragging it off the strip floats it where you drop it. Like a
+**Open in the Collab tab**. Dragging it off the strip floats it where you drop it. Like a
 terminal tab it lasts as long as its page: a reload brings back the board the
 URL names and any board in the overlay, and a new browser window starts with none. The URL of a deleted
 board opens nothing and becomes `/terminals`.
@@ -49,7 +49,7 @@ the bottom of the page; with the Classic look it has a plain × instead. Several
 boards can float at once, and a window can hold several as
 [tabs](companion.md#overlay-tabs), mixed with chats and shells. The open windows
 come back after a reload. Clicking the overlay
-or the companion brings that one forward. **Back to a tab** returns the board to the strip, and **Open in separate window** moves it to a browser window.
+or the companion brings that one forward. **Open in the Collab tab** returns the board to the strip, and **Open in separate window** moves it to a browser window.
 
 ### Drawing
 

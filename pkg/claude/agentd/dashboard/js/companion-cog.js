@@ -11,6 +11,7 @@ import { ClearContext, StewardShutdown } from './companion-approval.js';
 import { useDismissablePopover } from './hover-popover.js';
 import { MENU_FILTER_PLACEHOLDER, MENU_FILTER_WIZARD_PLACEHOLDER, applyMenuFilter, bindMenuHover, handleMenuFilterKeyDown, setMenuActive } from './menu-filter.js';
 import { StewardRoster } from './steward-roster.js';
+import { TO_COLLAB_LABEL, TO_WINDOW_LABEL } from './overlay-tab-moves.js';
 import { isWizardActive } from './slop.js';
 
 const html = htm.bind(h);
@@ -51,7 +52,7 @@ export function agentCogSections({
   const thisAgent = [
     onCollab && collabItem(onCollab),
     running && onFloat && { key: 'float', glyph: '▣', label: 'Open in overlay', className: 'companion-float', ariaLabel: `Open ${agent.name} in an overlay window`, run: onFloat },
-    running && onDetach && !parked && { key: 'detach', glyph: '⧉', label: 'Open in separate window', className: 'companion-detach', ariaLabel: `Open ${agent.name} in a separate window`, run: onDetach },
+    running && onDetach && !parked && { key: 'detach', glyph: '⧉', label: TO_WINDOW_LABEL, className: 'companion-detach', ariaLabel: `Open ${agent.name} in a separate window`, run: onDetach },
     running && onMorph && { key: 'morph', glyph: '⇄', label: 'Morph', hint: 'harness, model, profile', className: 'companion-morph', ariaLabel: `Morph ${agent.name}`, run: onMorph },
     running && agent.harness !== 'shell' && { key: 'clear', glyph: '⟲', label: 'Clear context', className: 'companion-clear-open', ariaLabel: `Clear ${agent.name}'s context`, run: onClearContext },
   ];
@@ -71,7 +72,7 @@ export function agentCogSections({
 }
 
 function collabItem(onCollab) {
-  return { key: 'collab', glyph: '⤢', label: 'Open in the Collab tab', ariaLabel: 'Open in the Collab tab', run: onCollab };
+  return { key: 'collab', glyph: '⤢', label: TO_COLLAB_LABEL, ariaLabel: TO_COLLAB_LABEL, run: onCollab };
 }
 
 // CompanionCog is the button and its menu. Choosing an item closes the menu first,

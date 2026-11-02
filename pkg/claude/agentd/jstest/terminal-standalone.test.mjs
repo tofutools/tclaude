@@ -621,7 +621,7 @@ test('dragging the solo header title off the header sends the terminal back to t
     await Promise.resolve();
   });
   assert.deepEqual(reattached, ['solo'],
-    'the drag runs the same reattach path as the Back to a tab button');
+    'the drag runs the same reattach path as the button back to the dashboard');
 
   await harness.act(() => harness.fireEvent(title, 'dragstart', { dataTransfer: transfer }));
   await harness.act(async () => {

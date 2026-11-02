@@ -11,6 +11,7 @@ import { hasShownOverlay } from './overlay-stack.js';
 import { loadXtermRuntime } from './xterm-loader.js';
 import { bindTerminalHandoffReceiver } from './terminal-handoff.js';
 import { dragLeftRegion, dragScreenPoint } from './terminal-drag-out.js';
+import { toTabsLabel } from './overlay-tab-moves.js';
 import { TabContextMenu, TabGroupRename, useArmedCollapse } from './tab-controls.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
@@ -377,7 +378,7 @@ function TerminalPane({
           <span
             class=${`mux-pane-title mux-pane-title-drag${dragging ? ' dragging' : ''}`}
             draggable="true"
-            title="Drag off this header — or click Back to a tab — to move this terminal back to the dashboard's Terminals tab"
+            title="Drag off this header, or use the button beside it, to move this terminal back to the dashboard"
             onDragStart=${startTitleDrag}
             onDragEnd=${endTitleDrag}
           >${paneTitle(pane)}</span>
@@ -409,7 +410,7 @@ function TerminalPane({
           <span>Arcane palette</span>
         </label>
         ${solo ? html`
-          <button type="button" class="mux-btn" title="Move this terminal back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>Back to a tab</button>
+          <button type="button" class="mux-btn" title="Move this terminal back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${toTabsLabel(!!pane.seed.floats)}</button>
           ${soloFloats(pane) ? html`<button type="button" class="mux-btn" title="Float this terminal in a window over the dashboard" onClick=${() => void actions.reattachPane(pane.key, { overlay: true })}>Open in overlay</button>` : null}
         ` : html`
           ${paneFloats(pane, processSnapshot?.value) ? html`<button type="button" class="mux-btn" title="Float this terminal in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay</button>` : null}
@@ -529,7 +530,7 @@ function BoardPane({ pane, active, solo, manageTitle, actions, snapshot, scope =
     fetchImpl=${fetchFromPage} notify=${shellToast} onOpenAgent=${(agent) => openInCompanion(agent)}
     onTitle=${(title) => actions.setPaneLabel(pane.key, title)}
     headActions=${solo
-      ? html`<button type="button" class="mux-btn" title="Move this board back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>Back to a tab</button>
+      ? html`<button type="button" class="mux-btn" title="Move this board back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${toTabsLabel(true)}</button>
         ${soloFloats(pane) ? html`<button type="button" class="mux-btn" title="Float this board in a window over the dashboard" onClick=${() => void actions.reattachPane(pane.key, { overlay: true })}>Open in overlay</button>` : null}`
       : html`
         <button type="button" class="mux-btn" title="Float this board in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay</button>
@@ -1612,7 +1613,7 @@ function TerminalTabs({
     widget.focus();
   }, [current.revealRequest, solo]);
 
-  // A board pop-out goes away by script after Back to a tab, which must not prompt.
+  // A board pop-out goes away by script after its move back to the dashboard, which must not prompt.
   const confirmsReload = solo ? current.panes.some((pane) => !pane.seed.board) : hasPanes;
   useEffect(() => {
     if (!confirmsReload) return undefined;

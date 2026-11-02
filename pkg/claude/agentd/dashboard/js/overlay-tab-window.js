@@ -63,7 +63,7 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = n
   const overlay = useOverlayWindow({
     id: window.id, win, prefs, prefKey: window.place, defaultPlacement: start, snaps: true, open: !window.minimized,
     onRefocus: () => focusRef.current?.(),
-    ...(window.id === home?.id && { spotted: home.spotted, onPlaced: home.onPlaced }),
+    ...(window.place === home?.place && { spotted: home.spotted, onPlaced: home.onPlaced }),
     join: window.tabs.length === 1 ? tabJoin(win, tab.id, window.id) : null,
   });
   const asking = window.tabs.find((candidate) => kinds[candidate.kind]?.asksToClose?.(candidate));

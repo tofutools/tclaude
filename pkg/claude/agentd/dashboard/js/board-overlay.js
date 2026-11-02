@@ -25,6 +25,7 @@ import { OverlayWindow, overlayStackReset, readPref } from './overlay-window.js'
 import { BOARD_OVERLAY_PLACEMENT_PREF, dockEntriesOf } from './overlay-tab-model.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { detachSeedWindow } from './terminals-tab.js';
+import { POPUP_BLOCKED, TO_COLLAB_LABEL, TO_WINDOW_LABEL, registerTabMoves, tabMoves } from './overlay-tab-moves.js';
 
 const html = htm.bind(h);
 
@@ -52,17 +53,23 @@ export function boardStartPlacement(prefs, index) {
   };
 }
 
+// A board goes back to its tab of the Collab view, or out to a window of its own;
+// a blocked pop-up leaves it where it is.
+registerTabMoves(BOARD_WINDOW_KIND, (tab) => ({
+  toCollab: () => void returnBoardToTab(tab.board),
+  toWindow: ({ rect, win, notify }) => {
+    if (detachSeedWindow({ ...boardPaneSeed(tab.board, tab.label), floats: true }, { size: rect, at: elementScreenPoint(win, rect) })) closeOverlayTab(tab.id);
+    else notify?.(POPUP_BLOCKED, true);
+  },
+}));
+
 export function BoardOverlayWindow({ instance, overlay, strip, close, snapshot, fetchImpl, notify, win }) {
   const board = { id: instance.board, label: instance.label };
   const open = !instance.minimized;
   const look = windowControlsLook(snapshot.value?.window_controls);
   const leave = () => closeOverlayTab(instance.id);
-  // A blocked pop-up leaves it where it is.
-  const toSeparateWindow = () => {
-    const rect = overlay.windowRef.current?.getBoundingClientRect?.();
-    if (detachSeedWindow({ ...boardPaneSeed(board.id, board.label), floats: true }, { size: rect, at: elementScreenPoint(win, rect) })) leave();
-    else notify('Could not open a separate window: allow pop-ups for this dashboard.', true);
-  };
+  const { toCollab, toWindow } = tabMoves(instance);
+  const toSeparateWindow = () => toWindow({ rect: overlay.windowRef.current?.getBoundingClientRect?.(), win, notify });
   useEffect(() => onBoardDeleted((id) => {
     if (id === instance.board) leave();
   }), [instance.id, instance.board]);
@@ -75,9 +82,8 @@ export function BoardOverlayWindow({ instance, overlay, strip, close, snapshot, 
     overlay.windowRef.current?.querySelector?.('.board-editor')?.dispatchEvent(new win.WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY, ctrlKey, metaKey }));
   }
   const title = html`${strip}
-    <button type="button" class="board-overlay-action" title="Move this board back to a tab of the Collab view"
-      onClick=${() => void returnBoardToTab(board.id)}>Back to a tab</button>
-    <button type="button" class="board-overlay-action" title="Move this board to a browser window of its own" onClick=${toSeparateWindow}>Open in separate window</button>
+    <button type="button" class="board-overlay-action" title="Move this board to a tab of the Collab view" onClick=${toCollab}>${TO_COLLAB_LABEL}</button>
+    <button type="button" class="board-overlay-action" title="Move this board to a browser window of its own" onClick=${toSeparateWindow}>${TO_WINDOW_LABEL}</button>
     ${look === 'classic' && html`<button type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${board.label}`}
       onClick=${close.onClose}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="board-overlay" frameClass="board-overlay-resize-frame"

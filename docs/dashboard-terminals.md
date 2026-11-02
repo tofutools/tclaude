@@ -37,22 +37,23 @@ pending permission request, a **🔑** opens the
   `Ungroup tabs` and `Close tabs in group`. Double-click or press F2 to rename.
 - **Move** a terminal between three places, one at a time: a tab, an overlay window
   and a separate browser window. Each place offers the other two. A tab has **Open in
-  overlay** and **Open in separate window**, an overlay window has **Back to a tab**
-  and **Open in separate window**, and a separate window has **Back to a tab** and
-  **Open in overlay**. Dragging a separate window's header back works like **Back to a
-  tab**. A separate window offers **Open in overlay** only while the dashboard that
+  overlay** and **Open in separate window**, an overlay window has **Open in the Collab
+  tab** and **Open in separate window**, and a separate window has **Open in the Collab
+  tab** (**Open in the Terminals tab** with Collab off) and **Open in overlay**. Every
+  overlay tab's right-click menu has the same two. Dragging a separate window's header
+  back works like its button back to the dashboard. A separate window offers **Open in overlay** only while the dashboard that
   opened it is there to take it, and a terminal that can't float any more lands in a tab.
 - **Drag a tab off the strip** to float it where you drop it. What can't float opens in
   a separate window instead: a peer's terminal, an offline agent, and anything with
   Collab off.
 - **Float** a directory or group shell with **Open in overlay** (needs Collab). It
   moves, snaps and splits like a board's window, on the same tmux session, and
-  **Back to a tab** returns it. Closing the window leaves the shell running. A peer's
+  **Open in the Collab tab** returns it. Closing the window leaves the shell running. A peer's
   terminal stays a tab.
 - **Float** a running local agent with **Open in overlay** (needs Collab). It moves to the
   same chat window a tab dragged off the companion gets, and leaves the Terminals tab: a
-  terminal is in one place at a time. The window's **Back to a tab** returns it to a
-  companion tab, and **⤢** there returns it to the Terminals tab.
+  terminal is in one place at a time. **⚙ > Open in the Collab tab**, or the same item on
+  its tab's menu, returns it to the Terminals tab.
 - **`$`** after the last tab shows or hides costs next to agent names. It works
   separately from the one in Groups. Green is API spend, and muted italic `≈$…` is
   a subscription what-if estimate. A tab's tooltip always has its cost.
