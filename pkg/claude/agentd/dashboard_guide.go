@@ -344,14 +344,7 @@ func handleDashboardCue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cue := companionCue{Tab: tab, Path: path, Target: target, Note: note, Marks: marks, Open: open}
-	if convID != "" {
-		if res, _, err := agent.ResolveSelector(convID); err == nil {
-			cue.AgentID = res.AgentID
-			if res.Row != nil {
-				cue.AgentName = guideText(res.Row.CustomTitle, 80)
-			}
-		}
-	}
+	cue.AgentID, cue.AgentName = callerIdentity(convID)
 	now := guideNow()
 	guideState.Lock()
 	guideState.nextID++
@@ -363,5 +356,10 @@ func handleDashboardCue(w http.ResponseWriter, r *http.Request) {
 		guideState.cues = guideState.cues[len(guideState.cues)-guideMaxCues:]
 	}
 	guideState.Unlock()
-	writeJSON(w, http.StatusOK, map[string]any{"id": cue.ID, "expires_at": cue.ExpiresAt})
+	captureState.Lock()
+	_, dashboardOpen := captureTarget(now)
+	_, polled := dashboardLiveness()
+	captureState.Unlock()
+	dashboardOpen = dashboardOpen || (!polled.IsZero() && now.Sub(polled) <= capturePollWindow)
+	writeJSON(w, http.StatusOK, map[string]any{"id": cue.ID, "expires_at": cue.ExpiresAt, "dashboard_open": dashboardOpen})
 }

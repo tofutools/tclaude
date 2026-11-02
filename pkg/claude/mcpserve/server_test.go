@@ -132,6 +132,9 @@ func TestTool_ArgumentsReachTheRoute(t *testing.T) {
 	callTool(t, session, stewardtools.SendMessage, map[string]any{"to": "worker", "body": "go"})
 	callTool(t, session, stewardtools.Reply, map[string]any{"id": 7, "body": "ok"})
 	callTool(t, session, stewardtools.NotifyHuman, map[string]any{"subject": "s", "body": "b"})
+	callTool(t, session, stewardtools.ReadBoard, map[string]any{"id": "a/b", "since": 3})
+	callTool(t, session, stewardtools.UpdateBoard, map[string]any{"id": "plan", "elements": []map[string]any{{"id": "e"}}})
+	callTool(t, session, stewardtools.SetTaskLink, map[string]any{"agent": "a/b", "url": "https://e.example"})
 	assert.Equal(t, []string{
 		"GET /v1/peers?group=a+b%26c",
 		"GET /v1/inbox?limit=100&unread=1",
@@ -139,8 +142,11 @@ func TestTool_ArgumentsReachTheRoute(t *testing.T) {
 		"POST /v1/messages",
 		"POST /v1/messages/7/reply",
 		"POST /v1/notify-human",
+		"GET /v1/boards/a%2Fb?since=3",
+		"PATCH /v1/boards/plan",
+		"POST /v1/agent/a%2Fb/task",
 	}, paths)
-	require.Len(t, bodies, 3)
+	require.Len(t, bodies, 5)
 	assert.Equal(t, "worker", bodies[0]["to"])
 	assert.Equal(t, "ok", bodies[1]["body"])
 	assert.Equal(t, "b", bodies[2]["body"])

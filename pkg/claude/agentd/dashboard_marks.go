@@ -186,6 +186,9 @@ func callerIdentity(convID string) (agentID, name string) {
 	if convID == "" {
 		return "", ""
 	}
+	if db.IsExternalStewardConv(convID) {
+		return externalStewardIdentity(convID)
+	}
 	if res, _, err := agent.ResolveSelector(convID); err == nil {
 		agentID = res.AgentID
 		if res.Row != nil {

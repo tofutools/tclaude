@@ -53,6 +53,34 @@ type notifyHumanInput struct {
 	Body    string `json:"body" jsonschema:"The message for the human"`
 }
 
+type readBoardInput struct {
+	ID    string `json:"id" jsonschema:"The board's ID"`
+	Since int64  `json:"since,omitempty" jsonschema:"Only elements changed after this board version, tombstones included"`
+}
+
+type createBoardInput struct {
+	Title string `json:"title" jsonschema:"The board's title"`
+	Group string `json:"group,omitempty" jsonschema:"The group it belongs to, if any"`
+}
+
+type updateBoardInput struct {
+	ID       string           `json:"id" jsonschema:"The board's ID"`
+	Elements []map[string]any `json:"elements" jsonschema:"Excalidraw-style elements: id, type, x, y, width, height, text, version and so on"`
+}
+
+type dashboardCueInput struct {
+	Tab    string `json:"tab,omitempty" jsonschema:"The dashboard tab to open, such as groups or processes"`
+	Path   string `json:"path,omitempty" jsonschema:"A dashboard path to open, such as /processes/templates"`
+	Target string `json:"target,omitempty" jsonschema:"The visible text of the control to highlight"`
+	Note   string `json:"note,omitempty" jsonschema:"A short note shown beside it"`
+}
+
+type setTaskLinkInput struct {
+	Agent string `json:"agent" jsonschema:"The agent's name or ID"`
+	URL   string `json:"url,omitempty" jsonschema:"The http(s) link. Leave it out to clear the link"`
+	Label string `json:"label,omitempty" jsonschema:"Short text to show in place of the link"`
+}
+
 // NewServer returns an MCP server offering exactly stewardtools.List.
 func NewServer(client *Client, version string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "tclaude", Version: version}, nil)
@@ -96,9 +124,41 @@ func register(server *mcp.Server, c *Client, tool stewardtools.Tool) {
 		}))
 	case stewardtools.WaitForActivity:
 		mcp.AddTool(server, def, c.waitForActivity)
+	case stewardtools.ListBoards:
+		mcp.AddTool(server, def, get[noInput](c, func(noInput) string { return "/v1/boards" }))
+	case stewardtools.ReadBoard:
+		mcp.AddTool(server, def, get[readBoardInput](c, boardPath))
+	case stewardtools.CreateBoard:
+		mcp.AddTool(server, def, post(c, func(in createBoardInput) (string, any) {
+			return "/v1/boards", map[string]any{"title": in.Title, "group": in.Group}
+		}))
+	case stewardtools.UpdateBoard:
+		mcp.AddTool(server, def, send(c, http.MethodPatch, func(in updateBoardInput) (string, any) {
+			return "/v1/boards/" + url.PathEscape(in.ID), map[string]any{"elements": in.Elements}
+		}))
+	case stewardtools.DashboardView:
+		mcp.AddTool(server, def, get[noInput](c, func(noInput) string { return "/v1/dashboard/view" }))
+	case stewardtools.DashboardCue:
+		mcp.AddTool(server, def, post(c, func(in dashboardCueInput) (string, any) {
+			return "/v1/dashboard/cue", in
+		}))
+	case stewardtools.DashboardCapture:
+		mcp.AddTool(server, def, c.dashboardCapture)
+	case stewardtools.SetTaskLink:
+		mcp.AddTool(server, def, post(c, func(in setTaskLinkInput) (string, any) {
+			return "/v1/agent/" + url.PathEscape(in.Agent) + "/task", map[string]any{"url": in.URL, "label": in.Label}
+		}))
 	default:
 		panic("stewardtools lists a tool with no handler: " + tool.Name)
 	}
+}
+
+func boardPath(in readBoardInput) string {
+	path := "/v1/boards/" + url.PathEscape(in.ID)
+	if in.Since > 0 {
+		path += "?since=" + strconv.FormatInt(in.Since, 10)
+	}
+	return path
 }
 
 func peersPath(in listAgentsInput) string {
@@ -134,14 +194,39 @@ func get[In any](c *Client, path func(In) string) mcp.ToolHandlerFor[In, any] {
 }
 
 func post[In any](c *Client, request func(In) (string, any)) mcp.ToolHandlerFor[In, any] {
+	return send(c, http.MethodPost, request)
+}
+
+func send[In any](c *Client, method string, request func(In) (string, any)) mcp.ToolHandlerFor[In, any] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		path, body := request(in)
-		raw, err := c.call(ctx, http.MethodPost, path, body)
+		raw, err := c.call(ctx, method, path, body)
 		if err != nil {
 			return nil, nil, err
 		}
 		return textResult(raw), nil, nil
 	}
+}
+
+// dashboardCapture hands the screen over as an image, the form an assistant can
+// look at. The form text is a separate grant and this tool never asks for it.
+func (c *Client) dashboardCapture(ctx context.Context, _ *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, any, error) {
+	raw, err := c.call(ctx, http.MethodPost, "/v1/dashboard/capture", map[string]any{})
+	if err != nil {
+		return nil, nil, err
+	}
+	var capture struct {
+		PNG     []byte          `json:"png"`
+		Context json.RawMessage `json:"context"`
+	}
+	if err := json.Unmarshal(raw, &capture); err != nil {
+		return nil, nil, fmt.Errorf("read the capture: %w", err)
+	}
+	content := []mcp.Content{&mcp.ImageContent{Data: capture.PNG, MIMEType: "image/png"}}
+	if len(capture.Context) > 0 {
+		content = append(content, &mcp.TextContent{Text: string(capture.Context)})
+	}
+	return &mcp.CallToolResult{Content: content}, nil, nil
 }
 
 func textResult(raw []byte) *mcp.CallToolResult {
