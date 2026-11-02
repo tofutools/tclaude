@@ -160,7 +160,7 @@ the editor rather than saving a grant that does nothing:
 | Acting later without a credential, because a schedule or trigger would keep firing after you revoke it | `self.schedule`, `agent.schedule`, `groups.members.schedule`, `groups.messages.schedule`, `triggers.manage`, `groups.triggers.manage` |
 | Receiving your harness credentials | `node.credentials.receive` |
 | Starting or changing a launch any other way than [below](#starting-workers) | `groups.members.spawn`, `agent.clone`, `groups.members.clone`, `groups.clone`, `agent.morph`, `groups.members.morph`, `agent.resume`, `groups.members.resume` |
-| Changing what a worker's launch means | `groups.settings.default-dir`, `groups.settings.environment`, `groups.settings.default-spawn-target`, `sandbox-profiles.manage`, `agent.sandbox-impl` |
+| Changing what a worker's launch means | `groups.settings.default-dir`, `groups.settings.environment`, `groups.settings.default-spawn-target`, `groups.settings.default-profile`, `sandbox-profiles.manage`, `agent.sandbox-impl`, `templates.instantiate`, `groups.import` |
 | Moving an agent to a linked instance | `agent.move`, `agent.share` |
 
 Password fields and fields marked secret are masked in the page before a capture
@@ -184,17 +184,19 @@ and they are checked when you set them and again at every spawn.
   on OpenCode or pi. A worker stops at the first action that isn't read-only until you
   answer, and the assistant can't answer for you. Copilot and a shell have no such mode, so
   they can't be used.
-- **The sandbox holds.** The spawn profile also has to make the harness enforce the sandbox
-  profile: `sandbox` set to `on` for Claude, `read-only` or `workspace-write` for Codex, and
-  tclaude's pane sandbox otherwise. A profile that gives its agents ownership or permissions
-  can't be used either.
+- **The sandbox holds.** The spawn profile also has to enforce the sandbox profile while
+  still asking you: `sandbox_implementation` set to `tclaude-layer` for Claude, Gemini,
+  OpenCode or pi, and `sandbox` set to `read-only` or `workspace-write` for Codex. Claude's
+  own sandbox can't be used, because it runs Bash without asking. Check your own Claude
+  settings too: a `permissions.allow` entry there applies to a worker as well. A profile
+  that gives its agents ownership, permissions or a trusted directory can't be used either.
 - **A request can't change the launch.** The assistant chooses the group, a name, the first
   message and a task link. Everything else comes from what you chose, and a request that
   sets anything else is refused. A worker starts in the group's default directory, so a
   group without one can't be chosen. A directory the harness doesn't trust yet waits at its
   dialog for you.
 - **Workers can't do what it can't.** Each is denied everything in the table above, plus
-  `agent.spawn`, `self.clone`, `self.teleport` and `templates.instantiate`, at birth, ahead of what its group or `agent.default_permissions` would give
+  `agent.spawn`, `self.clone` and `self.teleport`, at birth, ahead of what its group or `agent.default_permissions` would give
   it. So they can't start workers of their own or schedule anything. You can still lift a
   deny, grant sudo or approve a one-off request for a worker yourself.
 - **There's a cap.** Each external steward can have 3 workers running, or the number you

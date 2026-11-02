@@ -4769,6 +4769,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 				"and the resolved launch mode would not enforce it", sandboxProfileForScope))
 		return
 	}
+	if externalSpawn && !externalStewardApprovalHolds(h.Name, childLaunchSandbox) {
+		writeError(w, http.StatusForbidden, externalStewardCeilingCode,
+			"this spawn profile uses Claude's own sandbox, which runs commands without asking; an external steward's worker needs tclaude's pane sandbox")
+		return
+	}
 	effectiveSandbox := sandboxpolicy.OmittedProfilesSnapshot()
 	var policyErr error
 	if !sandboxProfilesDisabled(h.Name, harnessBuiltinMode, body.SandboxImplementation) &&

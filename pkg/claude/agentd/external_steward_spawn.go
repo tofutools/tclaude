@@ -14,6 +14,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -55,7 +56,7 @@ var externalStewardSpawnFields = map[string]bool{
 // hold what its parent never may, and go on acting after the credential ended. The
 // spawn slugs keep the tree one level deep.
 func externalStewardChildDenies() []string {
-	return append(slices.Clone(externalStewardNever), PermAgentSpawn, PermSelfClone, PermSelfTeleport, PermTemplatesUse)
+	return append(slices.Clone(externalStewardNever), PermAgentSpawn, PermSelfClone, PermSelfTeleport)
 }
 
 // externalStewardSpawnPin is what an agent.spawn grant to a principal has to name.
@@ -134,22 +135,39 @@ func externalStewardProfileProblem(profile *db.SpawnProfile) error {
 	if fail := profileSpawnFailure(profile, "external-steward"); fail != nil {
 		return fmt.Errorf("%s", fail.Msg)
 	}
-	if !harness.ApprovalIsBaseline(harnessOrDefault(profile.Harness), profile.Approval, false) {
+	if !harness.ApprovalIsBaseline(harnessOrDefault(profile.Harness), profile.Approval, profile.AutoReview != nil && *profile.AutoReview) {
 		return fmt.Errorf("spawn profile %q has to set an approval mode where a human answers every action, such as default on Claude or untrusted on Codex; Copilot and a shell have none",
 			profile.Name)
 	}
 	if (profile.IsOwner != nil && *profile.IsOwner) || len(profile.PermissionOverrides) > 0 {
 		return fmt.Errorf("spawn profile %q gives its agents ownership or permissions, which an external steward can't hand out", profile.Name)
 	}
-	if !spawnSandboxLineageAllowed(externalStewardLineage, spawnLineageSandbox{
-		Harness:            harnessOrDefault(profile.Harness),
-		HarnessBuiltinMode: strings.TrimSpace(profile.Sandbox),
-		Implementation:     normalizeLineageImplementation(profile.SandboxImplementation),
-	}) {
-		return fmt.Errorf("spawn profile %q has to confine its agents, or the sandbox profile won't be enforced: sandbox on for Claude, read-only or workspace-write for Codex, tclaude's pane sandbox otherwise",
+	if profile.TrustDir != nil && *profile.TrustDir {
+		return fmt.Errorf("spawn profile %q trusts the directory for its agents, which an external steward can't do", profile.Name)
+	}
+	implementation := normalizeLineageImplementation(profile.SandboxImplementation)
+	mode := strings.TrimSpace(profile.Sandbox)
+	h, ok := harness.Get(harnessOrDefault(profile.Harness))
+	if !ok {
+		return fmt.Errorf("spawn profile %q names an unknown harness", profile.Name)
+	}
+	if mode == "" && implementation == sandboxpolicy.ImplementationTclaudeLayer {
+		mode = h.TclaudeLayerMode
+	}
+	child := spawnLineageSandbox{Harness: h.Name, HarnessBuiltinMode: mode, Implementation: implementation}
+	if !spawnSandboxLineageAllowed(externalStewardLineage, child) || !externalStewardApprovalHolds(h.Name, mode) {
+		return fmt.Errorf("spawn profile %q has to confine its agents with a sandbox that still asks a human: tclaude's pane sandbox for Claude, Gemini, OpenCode and pi, read-only or workspace-write for Codex",
 			profile.Name)
 	}
 	return nil
+}
+
+// externalStewardApprovalHolds says whether the approval mode still decides. Claude
+// runs Bash without asking inside its own sandbox unless told otherwise, whatever
+// the approval mode, so a worker that has to stop for a human can't use that
+// sandbox: tclaude's wall confines it instead, with Claude's own switched off.
+func externalStewardApprovalHolds(harnessName, builtinMode string) bool {
+	return harnessOrDefault(harnessName) != harness.DefaultName || strings.TrimSpace(builtinMode) == harness.ClaudeSandboxOff
 }
 
 // refuseExternalStewardSpawnGrant answers a direct grant of agent.spawn to a

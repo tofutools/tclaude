@@ -34,7 +34,7 @@ func newSpawnSetup(t *testing.T) *spawnSetup {
 	dir := testutil.CanonicalTempDir(t)
 	_, err := db.SetAgentGroupDefaultCwd("crew", dir)
 	require.NoError(t, err)
-	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "worker", Harness: harness.DefaultName, Approval: "default", Sandbox: harness.ClaudeSandboxOn})
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "worker", Harness: harness.DefaultName, Approval: "default", SandboxImplementation: "tclaude-layer"})
 	require.NoError(t, err)
 	_, err = db.CreateSandboxProfile(&db.SandboxProfile{Name: "locked"})
 	require.NoError(t, err)
@@ -134,8 +134,14 @@ func TestExternalStewardSpawn_PinIsCheckedWhenGranted(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "opencode", Harness: harness.OpenCodeName, Approval: "ask"})
 	require.NoError(t, err)
-	owner := true
-	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "owner", Harness: harness.DefaultName, Approval: "default", Sandbox: harness.ClaudeSandboxOn, IsOwner: &owner})
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "own-sandbox", Harness: harness.DefaultName, Approval: "default", Sandbox: harness.ClaudeSandboxOn})
+	require.NoError(t, err)
+	yes := true
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "reviewed", Harness: harness.DefaultName, Approval: "default", SandboxImplementation: "tclaude-layer", AutoReview: &yes})
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "trusting", Harness: harness.DefaultName, Approval: "default", SandboxImplementation: "tclaude-layer", TrustDir: &yes})
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "owner", Harness: harness.DefaultName, Approval: "default", SandboxImplementation: "tclaude-layer", IsOwner: &yes})
 	require.NoError(t, err)
 	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "theirs", Harness: harness.DefaultName, Approval: "default", OperatorOnly: true})
 	require.NoError(t, err)
@@ -159,6 +165,9 @@ func TestExternalStewardSpawn_PinIsCheckedWhenGranted(t *testing.T) {
 		"unconfined":    pin([]string{"crew"}, "unconfined", "locked"),
 		"not enforced":  pin([]string{"crew"}, "opencode", "locked"),
 		"gives owner":   pin([]string{"crew"}, "owner", "locked"),
+		"own sandbox":   pin([]string{"crew"}, "own-sandbox", "locked"),
+		"auto review":   pin([]string{"crew"}, "reviewed", "locked"),
+		"trusts dir":    pin([]string{"crew"}, "trusting", "locked"),
 		"operator-only": pin([]string{"crew"}, "theirs", "locked"),
 		"unknown box":   pin([]string{"crew"}, "worker", "ghost"),
 	} {
@@ -210,7 +219,7 @@ func TestExternalStewardSpawn_PinIsCheckedAtSpawn(t *testing.T) {
 	s.f.HaveGroup("other")
 	_, err := db.SetAgentGroupDefaultCwd("other", s.dir)
 	require.NoError(t, err)
-	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "second", Harness: harness.DefaultName, Approval: "default", Sandbox: harness.ClaudeSandboxOn})
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "second", Harness: harness.DefaultName, Approval: "default", SandboxImplementation: "tclaude-layer"})
 	require.NoError(t, err)
 
 	code, body := s.spawn("other", map[string]any{"name": "w"})
@@ -225,11 +234,17 @@ func TestExternalStewardSpawn_PinIsCheckedAtSpawn(t *testing.T) {
 	code, body = s.spawn("crew", map[string]any{"name": "w"})
 	assert.Equal(t, http.StatusForbidden, code, "the profile moved off the baseline: %s", body)
 	profile.Approval = "default"
-	profile.Sandbox = ""
+	profile.SandboxImplementation = ""
 	require.NoError(t, db.UpdateSpawnProfile(profile))
 	code, body = s.spawn("crew", map[string]any{"name": "w"})
 	assert.Equal(t, http.StatusForbidden, code, "settings.json would decide whether the sandbox holds: %s", body)
 	profile.Sandbox = harness.ClaudeSandboxOn
+	require.NoError(t, db.UpdateSpawnProfile(profile))
+	code, body = s.spawn("crew", map[string]any{"name": "w"})
+	assert.Equal(t, http.StatusForbidden, code, "Claude's own sandbox runs Bash without asking: %s", body)
+	assert.Contains(t, body, "without asking")
+	profile.Sandbox = ""
+	profile.SandboxImplementation = "tclaude-layer"
 	require.NoError(t, db.UpdateSpawnProfile(profile))
 
 	_, err = db.SetAgentGroupDefaultCwd("crew", "")

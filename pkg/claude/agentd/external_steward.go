@@ -81,7 +81,8 @@ var externalStewardNever = []string{
 	PermGroupsMembersSpawn, PermAgentClone, PermGroupsMembersClone, PermGroupsClone,
 	PermAgentMorph, PermGroupsMembersMorph, PermAgentResume, PermGroupsMembersResume,
 	PermGroupsSettingsDefaultDir, PermGroupsSettingsEnvironment, PermGroupsSettingsDefaultSpawnTarget,
-	PermSandboxProfilesManage, PermAgentSandboxImplementation, PermAgentMove, PermAgentShare,
+	PermGroupsSettingsDefaultProfile, PermSandboxProfilesManage, PermAgentSandboxImplementation,
+	PermAgentMove, PermAgentShare, PermTemplatesUse, PermGroupsImport,
 }
 
 // externalStewardOptIn are level slugs a principal does not start with. A capture
