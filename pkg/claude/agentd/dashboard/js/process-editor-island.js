@@ -272,7 +272,7 @@ function Palette({ controller, hidden, snippets, view }) {
     ${view.templateRefs.map((item) => card({ kind: 'template', id: item.id, name: item.name }, `▣ ${item.name}`, `Run template ${item.id} as a subprocess${item.versions ? ` · ${item.versions} version${item.versions === 1 ? '' : 's'}` : ''}`))}`}
     <div class="process-palette-section">Built-in snippets</div>
     ${PALETTE_SNIPPETS.map((item) => card({ kind: 'snippet', key: item.key }, item.label, item.hint))}
-    <div class="process-palette-section process-palette-custom-heading"><span>Custom snippets</span><${Button} class="process-palette-save" disabled=${!snippets.canSaveSelection || snippets.creating}
+    <div class="process-palette-section process-palette-custom-heading"><span>Custom snippets</span><${Button} size="sm" class="process-palette-save" disabled=${!snippets.canSaveSelection || snippets.creating}
       title=${snippets.canSaveSelection ? 'Save the selected nodes and their internal edges as a reusable snippet' : 'Select one or more nodes in an editable template first.'}
       onClick=${() => controller.saveSelectionAsSnippet()}>${snippets.creating ? 'Saving…' : 'Save selection…'}<//></div>
     ${snippets.loading && html`<p class="process-palette-state" role="status">Loading custom snippets…</p>`}

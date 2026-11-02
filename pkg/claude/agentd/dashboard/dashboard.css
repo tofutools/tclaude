@@ -10639,8 +10639,9 @@ body.wizard nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #f
 .process-auto-layout-group > .process-action:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
 .process-auto-layout-group > .process-action:last-child { border-radius: 0 6px 6px 0; }
 .process-auto-layout-group > .process-layout-direction { padding: 6px 7px; min-width: 26px; }
-.process-auto-layout-group > .process-layout-direction.is-active {
-  position: relative; color: #fff; background: #1f6feb33; border-color: #388bfd;
+.process-auto-layout-group > .process-layout-direction:is(.is-active, [aria-pressed="true"]) { position: relative; }
+.process-auto-layout-group > .process-layout-direction:where(:not(.ui-btn)).is-active {
+  color: #fff; background: #1f6feb33; border-color: #388bfd;
 }
 .process-panel { display: none; }
 .process-panel.active { display: block; }
@@ -18344,19 +18345,18 @@ body.process-solo #companion-root, body.process-solo #board-overlay-root { displ
 .process-palette-card[draggable="false"] { cursor: default; }
 .process-palette-card-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
 .process-palette-card-actions { display: inline-flex; align-items: center; gap: 4px; }
-.process-palette-card-actions button,
-.process-palette-save,
+.process-palette-card-actions button:where(:not(.ui-btn)),
+.process-palette-save:where(:not(.ui-btn)),
 .process-palette-state button:where(:not(.ui-btn)) {
   border: 1px solid #30363d; border-radius: 5px; background: #21262d; color: #c9d1d9;
   font: inherit; font-size: 11px; padding: 3px 6px; cursor: pointer;
 }
-.process-palette-card-actions button:hover:not(:disabled),
-.process-palette-save:hover:not(:disabled),
+.process-palette-card-actions button:where(:not(.ui-btn)):hover:not(:disabled),
+.process-palette-save:where(:not(.ui-btn)):hover:not(:disabled),
 .process-palette-state button:where(:not(.ui-btn)):hover:not(:disabled) { color: #f0f6fc; background: var(--ui-bg-hover); }
-.process-palette-card-actions button:disabled,
-.process-palette-save:disabled { opacity: .45; cursor: default; }
+.process-palette-card-actions button:where(:not(.ui-btn)):disabled,
+.process-palette-save:where(:not(.ui-btn)):disabled { opacity: .45; cursor: default; }
 .process-palette-manage { width: 24px; padding-inline: 0 !important; }
-.process-palette-delete:hover:not(:disabled) { border-color: #f85149 !important; color: #ff7b72 !important; }
 .process-palette-custom-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .process-palette-state { display: flex; align-items: center; gap: 6px; color: #8b949e; font-size: 11px; line-height: 1.35; margin: 6px 0; }
 .process-palette-state.is-error { color: #ff7b72; }
@@ -18825,16 +18825,16 @@ body.wizard .process-editor .process-inspector-input {
 body.wizard .process-editor .process-action:where(:not(.ui-btn)):hover,
 body.wizard .process-editor .process-inspector-input:focus { border-color: #d4af37; }
 body.wizard .process-editor .process-action:where(:not(.ui-btn)).primary { background: #6d4aa2; border-color: #d4af37; }
-body.wizard .process-editor .process-layout-direction.is-active { background: #4a3270; border-color: #d4af37; color: #ffe9a8; }
+body.wizard .process-editor .process-layout-direction:where(:not(.ui-btn)).is-active { background: #4a3270; border-color: #d4af37; color: #ffe9a8; }
 body.wizard .process-palette-card { background: #2c2042; border-color: #4a3d6b; }
 body.wizard .process-palette-card:hover { border-color: #d4af37; }
 body.wizard .process-palette-card.is-built-in { border-left-color: #8b6fb3; }
 body.wizard .process-palette-card.is-custom { border-left-color: #d4af37; }
-body.wizard .process-palette-card-actions button,
-body.wizard .process-palette-save,
+body.wizard .process-palette-card-actions button:where(:not(.ui-btn)),
+body.wizard .process-palette-save:where(:not(.ui-btn)),
 body.wizard .process-palette-state button:where(:not(.ui-btn)) { background: #211832; border-color: #6d568f; color: #f3e6c0; }
-body.wizard .process-palette-card-actions button:hover:not(:disabled),
-body.wizard .process-palette-save:hover:not(:disabled),
+body.wizard .process-palette-card-actions button:where(:not(.ui-btn)):hover:not(:disabled),
+body.wizard .process-palette-save:where(:not(.ui-btn)):hover:not(:disabled),
 body.wizard .process-palette-state button:where(:not(.ui-btn)):hover:not(:disabled) { background: #3a2a63; }
 body.wizard .process-editor-band { stroke: #d4af37; }
 body.wizard .process-node-chooser {
@@ -18948,7 +18948,7 @@ body.wizard .process-param-check { color: #f3e6c0; }
 body.wizard .process-node-inspector { background: #140f28; border-left-color: #4a3d6b; }
 body.wizard .pni-block { background: #181226; border-color: #4a3d6b; }
 body.wizard .pni-block-head { border-bottom-color: #4a3d6b; }
-body.wizard .pni-add, body.wizard .pni-add-block { border-color: #4a3d6b; }
+body.wizard .pni-add, body.wizard .pni-add-block:where(:not(.ui-btn)) { border-color: #4a3d6b; }
 @media (max-width: 900px) { .process-node-inspector { width: 280px; } }
 /* Proposal review overlay (E4): another author's saved version painted over
    the live draft. Added = green, changed = amber, removed = red dashed; the
@@ -19075,7 +19075,7 @@ body.wizard .psd-log { border-color: #4a3d6b; background: #120d1f; }
 .psd-input:focus-visible { outline: 2px solid #58a6ff; outline-offset: -1px; }
 .psd-compose-row { display: flex; align-items: center; gap: 6px; }
 .psd-compose-row .spacer { flex: 1; }
-.process-scribe-action.is-active { border-color: #58a6ff; color: #a5d6ff; }
+.process-scribe-action:where(:not(.ui-btn)).is-active { border-color: #58a6ff; color: #a5d6ff; }
 body.wizard .process-scribe-dock { background: #140f28; border-left-color: #4a3d6b; }
 body.wizard .psd-msg-body { background: #181226; border-color: #4a3d6b; }
 body.wizard .psd-msg.is-human .psd-msg-body { background: #2a1f4f; border-color: #7c5cff; }
