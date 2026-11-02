@@ -76,8 +76,8 @@ Before you use them, the list shows what they would collide with:
   keys a terminal program reads (Ctrl C, Ctrl R…) for a shortcut that works in
   terminals, which only warn.
 
-A shortcut that works inside terminals needs Ctrl, Alt or ⌘, so it can't take
-keys you type. **Reset** puts one back and **Reset all to defaults** puts all of
+New keys need Ctrl, Alt or ⌘ (or an F-key), so they can't take keys you type.
+Only tab cycling can be a single letter, digit or punctuation key. **Reset** puts one back and **Reset all to defaults** puts all of
 them back. Changes are saved with the rest of the form as
 `dashboard.keybindings` and apply on the next refresh of the dashboard data.
 Shortcuts marked *fixed* (the browser's own, the dialog keys, and the process
