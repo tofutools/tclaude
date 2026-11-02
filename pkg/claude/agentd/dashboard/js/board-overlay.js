@@ -15,7 +15,7 @@ import { onBoardDeleted } from './board-manage.js';
 import { BOARD_WINDOW_KIND, returnBoardToTab, setBoardOverlayLabel } from './board-overlay-state.js';
 import { boardPaneSeed, isBoardId } from './board-model.js';
 import { OVERLAY_FOOTER_ROOM, clampPlacement, parsePlacement } from './overlay-window-model.js';
-import { companionAgents, companionStatus, decisionsFor, approvalsFor, isAgentId } from './companion-model.js';
+import { companionAgents, companionStatus, decisionsFor, approvalsFor, isAgentId, stewardAgent } from './companion-model.js';
 import { endCompanionPeek, openInCompanion, peekInCompanion } from './companion-facade.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { closeOverlayTab, focusOverlayWindow, keepOverlayWindows, minimizeOverlayWindow, minimizedOverlayTabs, openOverlayWindow, overlayHostUp, overlayWindows } from './overlay-instances.js';
@@ -102,9 +102,10 @@ const REMOVE_TITLES = {
 // it never looks silently busy.
 function OverlayDock({ snapshot }) {
   const agents = companionAgents(snapshot.value);
-  // The Steward's chip stands for the window holding it.
-  const onChip = ({ kind, agent }) => kind === START_WINDOW_KIND || kind === DECIDE_WINDOW_KIND || (kind === CHAT_WINDOW_KIND && !!agents.get(agent)?.steward);
-  const entries = dockEntriesOf(overlayWindows.value, minimizedOverlayTabs.value).filter(({ tabs }) => !(overlayHostUp.value && tabs.some(onChip)));
+  // The chip stands for the seated Steward's window, and for the page summoning one.
+  const seated = stewardAgent(agents)?.agentId;
+  const onChip = ({ kind, agent }) => kind === START_WINDOW_KIND || (kind === CHAT_WINDOW_KIND && agent === seated);
+  const entries = dockEntriesOf(overlayWindows.value, minimizedOverlayTabs.value).filter(({ tabs }) => !(overlayHostUp.value && (tabs.every(onChip) || tabs.some(({ agent }) => agent && agent === seated))));
   if (!entries.length) return null;
   const needs = ({ kind, agent }) => {
     const row = kind === CHAT_WINDOW_KIND ? agents.get(agent) : null;
@@ -112,7 +113,7 @@ function OverlayDock({ snapshot }) {
   };
   return html`<div class="overlay-dock" role="group" aria-label="Minimized windows">
     ${entries.map(({ key, tab, tabs }) => {
-      const removes = tabs.length === 1 && !onChip(tab) && REMOVE_TITLES[tab.kind];
+      const removes = tabs.length === 1 && !onChip(tab) && tab.kind !== DECIDE_WINDOW_KIND && REMOVE_TITLES[tab.kind];
       const peeks = tab.kind === CHAT_WINDOW_KIND ? {
         onMouseEnter: (event) => peekInCompanion(tab.agent, event.currentTarget),
         onMouseLeave: endCompanionPeek,

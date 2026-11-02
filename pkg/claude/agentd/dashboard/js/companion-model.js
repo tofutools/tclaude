@@ -186,11 +186,11 @@ export function companionStatusLabel(status) {
   }
 }
 
-export function parseTabs(raw) {
+export function parseTabs(raw, most = COMPANION_MAX_TABS) {
   try {
     const list = JSON.parse(raw || '[]');
     if (!Array.isArray(list)) return [];
-    return [...new Set(list.filter(isAgentId))].slice(0, COMPANION_MAX_TABS);
+    return [...new Set(list.filter(isAgentId))].slice(0, most);
   } catch {
     return [];
   }

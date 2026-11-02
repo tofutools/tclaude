@@ -136,7 +136,7 @@ function without(set, value) {
 
 // The agent of the chat window target is in, null outside one.
 function chatAgentOf(target, snapshotValue) {
-  const id = target?.closest?.('.chat-window')?.querySelector?.('[data-companion-terminal]')?.dataset?.companionTerminal;
+  const id = target?.closest?.('.chat-window')?.querySelector?.('[data-chat-agent]')?.dataset?.chatAgent;
   return id ? companionAgents(snapshotValue).get(id) || null : null;
 }
 
@@ -233,7 +233,9 @@ function AddTab({ window, ...menu }) {
   const trigger = useRef(null);
   return html`<button ref=${trigger} type="button" class="companion-add" aria-label="Add a companion" aria-expanded=${shown ? 'true' : 'false'}
     title=${`Summon ${menu.stewardLabel} or pin a live agent`} onClick=${() => setShown((v) => !v)}>＋</button>
-    ${shown && html`<${AddMenu} ...${menu} onPin=${(id) => { setShown(false); menu.onPin(id); }} onClose=${() => setShown(false)} trigger=${trigger} />`}`;
+    ${shown && html`<${AddMenu} ...${menu} onPin=${(id) => { setShown(false); menu.onPin(id); }}
+      onResumeSteward=${() => { setShown(false); menu.onResumeSteward(); }} onSummonSteward=${() => { setShown(false); menu.onSummonSteward(); }}
+      onClose=${() => setShown(false)} trigger=${trigger} />`}`;
 }
 
 export function CompanionApp({
@@ -278,7 +280,7 @@ export function CompanionApp({
     writePref(sessionPrefs, COMPANION_SEEDED_PREF, '1');
     const inWindows = new Set(parseTabs(readPref(sessionPrefs, COMPANION_DETACHED_PREF)));
     const gone = new Set(parseTabs(readPref(sessionPrefs, COMPANION_PARKED_PREF)).filter((id) => !inWindows.has(id)));
-    const held = parseTabs(readPref(prefs, COMPANION_TABS_PREF)).filter((id) => !gone.has(id) && agents.has(id) && !overlayTabs.peek().some((tab) => tab.id === chatWindowId(id)));
+    const held = parseTabs(readPref(prefs, COMPANION_TABS_PREF), Infinity).filter((id) => !gone.has(id) && agents.has(id) && !overlayTabs.peek().some((tab) => tab.id === chatWindowId(id)));
     const saved = readPref(sessionPrefs, COMPANION_ACTIVE_PREF) || readPref(prefs, COMPANION_ACTIVE_PREF);
     const shown = held.includes(saved) ? saved : held[0];
     for (const id of held) openTabInWindow(HOME_WINDOW, COMPANION_PLACEMENT_PREF, chatTab(id, agents.get(id).name), { activate: false });
@@ -421,12 +423,14 @@ export function CompanionApp({
   // However an agent stops being held here, voice stops with it, as Unpin says,
   // and a helper the operator let go of stays gone.
   const heldBefore = useRef(new Set());
+  const ended = useRef(new Set());
   useEffect(() => {
     const now = new Set(held);
     for (const id of heldBefore.current) {
       if (now.has(id)) continue;
       silence(id);
-      if (agents.get(id)?.scribe) setHelperClosed(id, true);
+      if (agents.get(id)?.scribe && !ended.current.has(id)) setHelperClosed(id, true);
+      ended.current.delete(id);
     }
     heldBefore.current = now;
   }, [heldKey]);
@@ -437,7 +441,11 @@ export function CompanionApp({
     const keep = new Set([...pending.current.keys(), ...resuming, ...shownChats.map((tab) => tab.agent)]);
     const next = syncHelperTabs(held, agents, closedList(), keep);
     if (next === held) return;
-    for (const id of held) if (!next.includes(id)) closeOverlayTab(chatWindowId(id));
+    for (const id of held) {
+      if (next.includes(id)) continue;
+      ended.current.add(id);
+      closeOverlayTab(chatWindowId(id));
+    }
     for (const id of next) if (!held.includes(id)) openTabInWindow(HOME_WINDOW, COMPANION_PLACEMENT_PREF, chatTab(id, agents.get(id).name), { activate: false });
   }, [agents, snapshot.value, heldKey, shownKey, resuming]);
 
@@ -512,8 +520,9 @@ export function CompanionApp({
       return true;
     }
     const chat = overlayTabs.peek().find((tab) => tab.id === chatWindowId(agentId));
-    // One on the dock has let go of the session, which a Terminals pane may have.
-    if (!chat || (chat.minimized && !orTab)) return false;
+    // One not showing has let go of the session, which a Terminals pane may have.
+    const showing = overlayWindows.peek().some((window) => !window.minimized && window.active === chat?.id);
+    if (!chat || (!showing && !orTab)) return false;
     openOverlayWindow(chat);
     focusOverlayWindow(chat.id);
     return true;
@@ -527,7 +536,7 @@ export function CompanionApp({
     peek: (agentId, element) => peekRef.current?.(agentId, element),
     endPeek: () => stopPeek(),
   }), [showAgent]);
-  peekRef.current = (agentId, element) => { if (agents.has(agentId)) startPeek(agentId, element); };
+  peekRef.current = (agentId, element) => { if (agents.has(agentId)) startPeek(agentId, element, DEFAULT_CHIP_SPOT); };
 
   // A shut-down Steward can come back without this window: from the Agents tab,
   // the CLI, or by the seat going to another agent. Then there is nothing left
@@ -607,7 +616,8 @@ export function CompanionApp({
     detachedWindows.current.delete(agent.agentId);
     setParked((current) => without(current, agent.agentId));
     setDetached((current) => without(current, agent.agentId));
-    if (closing) closeOverlayTab(tabId);
+    // A window already offering the way back only loses the tab.
+    if (closing || overlayTabs.peek().some((tab) => tab.id === startTab().id)) closeOverlayTab(tabId);
     else swapOverlayTab(tabId, startTab());
     setShutDown({ agentId: agent.agentId, name: agent.name });
     notify(`${agent.name} is shut down.`);
@@ -618,7 +628,8 @@ export function CompanionApp({
   const toggle = useCallback(() => {
     stopPeek();
     const window = overlayWindows.peek().find((candidate) => candidate.id === (holder?.id || HOME_WINDOW));
-    if (window && !window.minimized) {
+    const docked = !holder && !!steward && overlayTabs.peek().some((tab) => tab.id === chatWindowId(steward.agentId));
+    if (window && !window.minimized && !docked) {
       const shrinks = home.shrinks(window, homeOverlay.current);
       if (shrinks && homeOverlay.current) shrinks();
       else minimizeOverlayWindow(window.active);
@@ -645,7 +656,7 @@ export function CompanionApp({
     };
     win?.addEventListener?.('keydown', onKey, true);
     return () => win?.removeEventListener?.('keydown', onKey, true);
-  }, [toggle, win, shownKey]);
+  }, [toggle, win, shownKey, agents]);
 
   function moveChips(spot) {
     setChipSpot(spot);
@@ -680,13 +691,13 @@ export function CompanionApp({
       if (peekAgent.current === agentId) setPeek((current) => (current ? { ...current, lines: [] } : current));
     }
   }
-  function startPeek(agentId, chip) {
+  function startPeek(agentId, chip, spot = shownSpot) {
     stopPeek();
     peekAgent.current = agentId;
     peekTimer.current = setTimeout(() => {
       const rect = chip.getBoundingClientRect();
       const vp = viewportOf(win);
-      setPeek({ agentId, lines: null, anchor: peekAnchor(shownSpot, rect, vp) });
+      setPeek({ agentId, lines: null, anchor: peekAnchor(spot, rect, vp) });
       void readPeek(agentId);
       peekRefresh.current = setInterval(() => void readPeek(agentId), PEEK_REFRESH_MS);
     }, PEEK_DELAY_MS);
@@ -1091,14 +1102,15 @@ export function CompanionApp({
   const needsCount = hidden.filter((agent) => statusOf(agent) === 'needs').length;
   const peekTarget = peek ? agents.get(peek.agentId) : null;
 
-  // The queue is a tab of the home window while that shows, as the chips are not.
-  const homeUp = !!homeWindow && !homeWindow.minimized;
+  // The queue is a tab of the Steward's window while that shows, as the chips are not.
+  const queueWindow = holder?.id || HOME_WINDOW;
+  const queueUp = holder ? !holder.minimized : !!homeWindow && !homeWindow.minimized;
   useEffect(() => {
     const tab = decideTab();
     const there = overlayTabs.peek().some((other) => other.id === tab.id);
     if (!queue.length && there) closeOverlayTab(tab.id);
-    if (queue.length && !there && homeUp) openTabInWindow(HOME_WINDOW, COMPANION_PLACEMENT_PREF, tab, { activate: false });
-  }, [queue.length, homeUp]);
+    if (queue.length && !there && queueUp) openTabInWindow(queueWindow, COMPANION_PLACEMENT_PREF, tab, { activate: false });
+  }, [queue.length, queueUp, queueWindow]);
 
   const chipSlots = !stewardShown && chipDrag.slots && chipDrag.slots.map(({ spot, near, width, height, left }) => html`<div key=${spot}
     class=${`companion-chip-slot companion-spot-${spot}${near ? ' near' : ''}`} data-chip-spot=${spot}
@@ -1108,26 +1120,30 @@ export function CompanionApp({
     style=${inFooter ? `left:${footerSpotLeft(shownSpot, footerRest.room, footerRest.width)}px` : null}
     role="toolbar" aria-label="Companions" onPointerDown=${chipDrag.onPointerDown} onClickCapture=${chipDrag.onClickCapture}>
     ${chipAgent && (() => {
-      const status = statusOf(chipAgent);
+      const own = statusOf(chipAgent);
+      // Its window has no pill, so the chip speaks for the tabs waiting behind it.
+      const behind = own === 'needs' ? null : (holder?.tabs || []).map((tab) => agents.get(tab.agent)).find((agent) => agent && agent !== chipAgent && statusOf(agent) === 'needs');
+      const status = behind ? 'needs' : own;
+      const peekAt = (behind || chipAgent).agentId;
       return html`<button key=${chipAgent.agentId} type="button"
         class=${`companion-chip ${status}`}
         ref=${(node) => { if (node) chipRects.current.set(chipAgent.agentId, node.getBoundingClientRect()); }}
-        aria-label=${`${chipAgent.name}: ${companionStatusLabel(status)}. Open companion (Ctrl+.)`}
-        onMouseEnter=${(event) => startPeek(chipAgent.agentId, event.currentTarget)}
+        aria-label=${behind ? `${behind.name}: ${companionStatusLabel('needs')}, in the window of ${chipAgent.name}. Open it (Ctrl+.)` : `${chipAgent.name}: ${companionStatusLabel(status)}. Open companion (Ctrl+.)`}
+        onMouseEnter=${(event) => startPeek(peekAt, event.currentTarget)}
         onMouseLeave=${stopPeek}
-        onFocus=${(event) => startPeek(chipAgent.agentId, event.currentTarget)}
+        onFocus=${(event) => startPeek(peekAt, event.currentTarget)}
         onBlur=${stopPeek}
-        onClick=${(event) => onChipClick(chipAgent.agentId, event)}>
+        onClick=${(event) => onChipClick(peekAt, event)}>
         <${Avatar} agent=${chipAgent} />
-        <span class="companion-chip-name">${chipAgent.name}</span>
+        <span class="companion-chip-name">${behind ? behind.name : chipAgent.name}</span>
         ${elevatedAccess(snapshot.value, chipAgent) && html`<span title="Elevated access">🔓</span>`}
-        ${status === 'needs' ? html`<span class="companion-chip-needs">${approvals(chipAgent).length ? '🔑 approval' : decisions(chipAgent).length ? 'decide' : 'needs you'}</span>` : html`<${StatusDot} status=${status} />`}
+        ${status === 'needs' ? html`<span class="companion-chip-needs">${behind ? 'needs you' : approvals(chipAgent).length ? '🔑 approval' : decisions(chipAgent).length ? 'decide' : 'needs you'}</span>` : html`<${StatusDot} status=${status} />`}
       </button>`;
     })()}
     ${queue.length > 0 && html`<button type="button" class="companion-chip companion-chip-decide"
       aria-label=${`${queue.length} ${queue.length === 1 ? 'decision' : 'decisions'} to make. Open them`}
       title="Agents are waiting for you to choose"
-      onClick=${() => { stopPeek(); openTabInWindow(HOME_WINDOW, COMPANION_PLACEMENT_PREF, decideTab()); }}>
+      onClick=${() => { stopPeek(); openTabInWindow(queueWindow, COMPANION_PLACEMENT_PREF, decideTab()); }}>
       <span class="companion-decide-mark" aria-hidden="true">◆</span><span class="companion-chip-name">${queue.length} to decide</span>
     </button>`}
     ${elsewhere.length > 0 && html`<button type="button" class="companion-chip companion-chip-decide"

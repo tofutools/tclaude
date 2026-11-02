@@ -31,7 +31,7 @@ const kept = { drafts: new Map(), dictated: new Set(), viewOff: new Set() };
 export const chatHasDraft = (tabId) => !!kept.drafts.get(tabId)?.trim();
 
 export function ChatWindow({
-  instance, overlay, focusRef, strip, close, snapshot, prefs, win, fetchImpl, notify, widgetFactory, loadRuntime, closeTerminalPanes, onSeparateWindow = null, onFloat = null, parked = () => false, onReclaim = null, onMic = null, minimize = null, onStewardDown, stewardRoster = [], openPermissions = null, openSudo = null, openStewardHandover = null, openMorph = null, showAgent = null, Terminal, DecisionCard,
+  instance, overlay, focusRef, strip, close, snapshot, prefs, win, fetchImpl, notify, widgetFactory, loadRuntime, closeTerminalPanes, onSeparateWindow = null, onFloat = null, parked = () => false, onReclaim = null, onMic = null, minimize = null, tabCount = 1, onStewardDown, stewardRoster = [], openPermissions = null, openSudo = null, openStewardHandover = null, openMorph = null, showAgent = null, Terminal, DecisionCard,
   statusOf = companionStatus, starting = () => false, offlineActions = () => null, voice = null, onCompose = null, onTerminals = null, dictationImpl = null, annotate, viewTab,
 }) {
   const agentId = instance.agent;
@@ -114,7 +114,7 @@ export function ChatWindow({
       ${agent?.online && onCompose && html`<button type="button" class="companion-compose" aria-label=${`Message ${name}`} title="Send a queued message (Ctrl/Cmd+M)" onClick=${() => onCompose(agent, refocus)}>✉</button>`}
       <${AgentCog} agent=${agent} parked=${away} roster=${stewardRoster} canShutDown=${closeShutsDown} showRoster=${showRoster}
         onCollab=${agent && onTerminals && !away ? () => onTerminals(instance, agent) : null}
-        onFloat=${onFloat ? () => onFloat(agent) : null} onDetach=${onSeparateWindow ? () => onSeparateWindow(agent, overlay.windowRef.current?.getBoundingClientRect?.()) : null} onMorph=${agent && openMorph ? () => openMorph(agent) : null}
+        onFloat=${onFloat && (tabCount > 1 || away) ? () => onFloat(agent) : null} onDetach=${onSeparateWindow ? () => onSeparateWindow(agent, overlay.windowRef.current?.getBoundingClientRect?.()) : null} onMorph=${agent && openMorph ? () => openMorph(agent) : null}
         openPermissions=${openPermissions} openSudo=${openSudo} openHandover=${openStewardHandover} agents=${agents} showAgent=${showAgent}
         fetchImpl=${fetchImpl} notify=${notify} onDown=${stewardDown} askShutDownRef=${askShutDown} rosterRef=${rosterRef} />
     </div>
@@ -125,7 +125,7 @@ export function ChatWindow({
     className=${`companion-window chat-window${open ? '' : ' companion-window-warm'}`} frameClass="companion-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Chat with ${name}`} title=${title}
     controls=${{ look, closeLabel: `Close ${name}`, closeTitle: close.title, onClose: close.onClose, onMinimize }}>
-    <div class=${`companion-body${approvals.length + decisions.length + actionMessages.length ? ' has-cards' : ''}`} id=${instance.id}>
+    <div class=${`companion-body${approvals.length + decisions.length + actionMessages.length ? ' has-cards' : ''}`} id=${instance.id} data-chat-agent=${agentId}>
       ${approvals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${decisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}
       <${ActionCards} messages=${actionMessages} fetchImpl=${fetchImpl} notify=${notify} />

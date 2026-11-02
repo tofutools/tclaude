@@ -88,6 +88,6 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = n
     <//>`;
   };
   return html`<${TabBoundary} key=${tab.id} fallback=${fallback}>
-    <${Body} instance=${tab} overlay=${overlay} focusRef=${focusRef} strip=${strip} close=${close} minimize=${minimize} ...${kinds[tab.kind]} />
+    <${Body} instance=${tab} overlay=${overlay} focusRef=${focusRef} strip=${strip} close=${close} minimize=${minimize} tabCount=${window.tabs.length} ...${kinds[tab.kind]} />
   <//>`;
 }

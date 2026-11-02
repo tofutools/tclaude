@@ -188,7 +188,6 @@ test('a floated Steward: its window ✕ asks too, and Cancel keeps it running', 
   const fetchImpl = async (url, options = {}) => { calls.push([options.method, url]); return { ok: true, text: async () => '', json: async () => ({}) }; };
   const { view, harness, controller } = await setup(t, { fetchImpl, snapshot: snapshotWith({ steward: true }) });
   await harness.act(() => controller().open(S));
-  await harness.act(() => view.container.querySelector('.companion-float').click());
   const floated = () => view.container.querySelector('.chat-window');
   const stops = () => calls.filter(([, url]) => url.endsWith('/stop'));
   assert.match(floated().querySelector('.overlay-wc-close').title, /shut it down/);
@@ -274,7 +273,6 @@ test('a detached tab has no Collab move: its way back is Bring it back here', as
 test('a floated agent that is no Steward still closes at once', async (t) => {
   const { view, harness, controller } = await setup(t);
   await harness.act(() => controller().open(A));
-  await harness.act(() => view.container.querySelector('.companion-float').click());
   const floated = () => view.container.querySelector('.chat-window');
   assert.match(floated().querySelector('.overlay-wc-close').title, /keeps running/);
   assert.ok(!floated().querySelector('.steward-shutdown-open'));
@@ -2208,6 +2206,7 @@ test('a Steward in its own window gets focus and keeps its terminal', async (t) 
 
 test('the title bar keeps voice, Message and ⚙; the rest is under the cog', async (t) => {
   const { view, harness, controller } = await setup(t, { onComposeMessage: () => {}, detachWindow: () => null, openMorph: () => {}, openTerminalsPane: () => {} });
+  await harness.act(() => controller().open(B));
   await harness.act(() => controller().open(A));
   const bar = view.container.querySelector('.companion-controls');
   const outside = (selector) => [...bar.querySelectorAll(selector)].filter((node) => !node.closest('.companion-cog-menu'));
@@ -2282,7 +2281,6 @@ test('with no agent showing the companion has no cog', async (t) => {
 test('a floated Steward keeps its tools under the cog', async (t) => {
   const { view, harness, controller } = await setup(t, { snapshot: snapshotWith({ steward: true }), openPermissions: () => {}, openSudo: () => {} });
   await harness.act(() => controller().open(S));
-  await harness.act(() => view.container.querySelector('.companion-float').click());
   const win = () => view.container.querySelector('.chat-window');
   assert.ok(win().querySelector('.companion-cog-menu .companion-steward-sudo'));
   await harness.act(() => win().querySelector('.companion-cog-button').click());
@@ -2782,4 +2780,62 @@ test('a send landing with the terminal lost leaves the field for the next messag
   await flushed(harness);
   assert.equal(field().value, '', 'it went');
   assert.equal(harness.document.activeElement, field(), 'and the keyboard stays to write the next');
+});
+
+test('a helper that only stopped gets its tab back when it returns', async (t) => {
+  const P = `agt_${'d'.repeat(32)}`;
+  const withScribe = (online) => {
+    const snapshot = snapshotWith();
+    snapshot.groups.push({ name: 'process-scribe', scribe: true, members: [{ agent_id: P, conv_id: 'conv-p', title: 'scribe', online, state: { status: 'idle' } }] });
+    return snapshot;
+  };
+  const prefs = memoryPrefs();
+  const { harness, snap } = await setup(t, { prefs, snapshot: withScribe(true) });
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  const has = () => overlays.overlayTabs.value.some((tab) => tab.agent === P);
+  assert.ok(has());
+  await harness.act(async () => { snap.value = withScribe(false); });
+  assert.equal(has(), false);
+  await harness.act(async () => { snap.value = withScribe(true); });
+  assert.ok(has(), 'the operator never closed it');
+});
+
+test('a tab waiting behind the Steward shows on its chip, and every kept agent comes back', async (t) => {
+  const many = [...'0123467890'.slice(0, 9), 'c'].map((digit) => `agt_${digit.repeat(32)}`);
+  const snapshot = snapshotWith({ steward: true, aStatus: 'awaiting_permission' });
+  snapshot.groups[0].members.push(...many.map((id, i) => ({ agent_id: id, conv_id: `c${i}`, title: `n${i}`, online: true, state: { status: 'idle', harness: 'claude' } })));
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([S, A, ...many]) });
+  const { view, harness } = await setup(t, { prefs, snapshot });
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  assert.equal(overlays.overlayWindows.value[0].tabs.length, 12);
+  const chip = harness.getByRole(view.container, 'button', { name: /alpha: .*in the window of steward-k3x/ });
+  assert.ok(chip.classList.contains('needs'));
+  await harness.act(() => chip.click());
+  assert.match(view.container.querySelector('.chat-window').getAttribute('aria-label'), /alpha/);
+  assert.equal(JSON.parse(prefs.store.get('tclaude.dash.companion.tabs')).length, 12);
+});
+
+test('decisions join the window holding the Steward, wherever it went', async (t) => {
+  const snapshot = snapshotWith({ steward: true });
+  snapshot.messages = [{ id: 9, from_agent: B, subject: 'Which?', options: ['x', 'y'] }];
+  const { view, harness, controller } = await setup(t, { snapshot });
+  await harness.act(() => controller().float(S));
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  const window = overlays.overlayWindows.value.find((candidate) => candidate.tabs.some((tab) => tab.agent === S));
+  assert.ok(window.tabs.some((tab) => tab.kind === 'decide'));
+  assert.ok(view.container.querySelector('[data-tab-strip] [data-tab-id="companion-decide"]'));
+});
+
+test('a Steward out of the seat keeps its pill', async (t) => {
+  const S2 = `agt_${'e'.repeat(32)}`;
+  const snapshot = snapshotWith({ steward: true });
+  snapshot.groups[1].members.push({ agent_id: S2, conv_id: 'conv-s2', title: 'steward-old', online: true, state: { status: 'idle' } });
+  snapshot.steward_roster = [{ agent_id: S, name: 'steward-k3x', seat: 'active', online: true }, { agent_id: S2, name: 'steward-old', seat: 'standby', online: true }];
+  const { harness, snap } = await setup(t, { snapshot });
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  await harness.act(async () => { overlays.closeOverlayTab(`chat:${S}`); overlays.minimizeOverlayTab(`chat:${S2}`); });
+  const { BoardOverlay } = await harness.importDashboardModule('js/board-overlay.js');
+  const dock = await harness.mount(harness.html`<${BoardOverlay} snapshot=${snap} />`);
+  const seated = (await harness.importDashboardModule('js/companion-model.js')).stewardAgent((await harness.importDashboardModule('js/companion-model.js')).companionAgents(snapshot)).agentId;
+  assert.equal(dock.container.querySelectorAll('.overlay-dock-pill').length, seated === S2 ? 0 : 1);
 });
