@@ -2463,8 +2463,12 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, refusal, http.StatusConflict)
 			return
 		}
-		// This route carries no scope, so it can't make the pin spawning needs.
-		if refusal := refuseExternalStewardSpawnGrant(res.ConvID, slug, nil); refusal != "" {
+		scope, err := permissionScopeForEval(scopeJSON[slug])
+		if err != nil {
+			http.Error(w, "invalid scope for slug "+slug+": "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if refusal := refuseExternalStewardSpawnGrant(res.ConvID, slug, scope); refusal != "" {
 			http.Error(w, refusal, http.StatusConflict)
 			return
 		}

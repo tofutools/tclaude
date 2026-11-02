@@ -93,6 +93,12 @@ func TestExternalStewardSpawn_ThroughTheToolAtTheBaselineUnderThePin(t *testing.
 	require.NotNil(t, row)
 	assert.Equal(t, "default", row.ApprovalPolicy, "the baseline, from the pinned spawn profile")
 	assert.Equal(t, s.dir, row.Cwd, "the group's own directory")
+	sandbox, err := db.AgentEffectiveSandboxConfigForConv(out.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, sandbox)
+	snapshotJSON, err := json.Marshal(sandbox)
+	require.NoError(t, err)
+	assert.Contains(t, string(snapshotJSON), "locked", "the pinned sandbox profile, which the request can't name")
 
 	stewards, err := db.ListExternalStewards()
 	require.NoError(t, err)
@@ -165,6 +171,26 @@ func TestExternalStewardSpawn_PinIsCheckedWhenGranted(t *testing.T) {
 }
 
 // What was fine when granted can stop being fine, so it is all checked again.
+// The dashboard's permission editor writes the same override, so it holds the same line.
+func TestExternalStewardSpawn_PermissionEditorChecksThePin(t *testing.T) {
+	s := newSpawnSetup(t)
+	dash := dashMessageMux(t)
+	edit := func(scope map[string]any) (int, string) {
+		body := map[string]any{"conv": s.issued.AgentID, "overrides": map[string]string{agentd.PermAgentSpawn: "grant"}}
+		if scope != nil {
+			body["scopes"] = map[string]any{agentd.PermAgentSpawn: scope}
+		}
+		rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost, "/api/permissions", body))
+		return rec.Code, rec.Body.String()
+	}
+	code, body := edit(nil)
+	assert.Equal(t, http.StatusConflict, code, body)
+	code, body = edit(map[string]any{"group": []string{"crew"}})
+	assert.Equal(t, http.StatusConflict, code, body)
+	code, body = edit(map[string]any{"group": []string{"crew"}, "spawn_profile": []string{"worker"}, "sandbox_profile": []string{"locked"}})
+	assert.Equal(t, http.StatusOK, code, body)
+}
+
 func TestExternalStewardSpawn_PinIsCheckedAtSpawn(t *testing.T) {
 	s := newSpawnSetup(t)
 	s.pinned()
@@ -219,6 +245,11 @@ func TestExternalStewardSpawn_OtherDoorsAreShut(t *testing.T) {
 		"name": "s", "scope": map[string]any{"kind": "steward"}, "brief": "x",
 	})
 	assert.Equal(t, http.StatusForbidden, code, body)
+	code, body = s.call(s.issued.Credential, http.MethodPost, "/v1/federation/spawn-requests", map[string]any{
+		"peer": "anywhere", "group": "crew", "brief": "x",
+	})
+	assert.Equal(t, http.StatusForbidden, code, body)
+	assert.Contains(t, body, "only on this instance")
 }
 
 // B's condition. The child stands where it would otherwise get these slugs from

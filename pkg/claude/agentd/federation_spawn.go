@@ -62,6 +62,10 @@ func handleFederationSpawnRequestSend(w http.ResponseWriter, r *http.Request) {
 	if isHuman {
 		fromConv = ""
 	}
+	if db.IsExternalStewardConv(fromConv) {
+		writeError(w, http.StatusForbidden, externalStewardCeilingCode, "an external steward can start workers only on this instance")
+		return
+	}
 	var req fedSpawnSendReq
 	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -111,10 +115,6 @@ func handleFederationSpawnRequestSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	via := ""
-	if db.IsExternalStewardConv(fromConv) {
-		writeError(w, http.StatusForbidden, externalStewardCeilingCode, "an external steward can start workers only on this instance")
-		return
-	}
 	if fromConv != "" {
 		actx := ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: req.Group}
 		global, _, _ := permissionAllowsAction(r, fromConv, PermAgentSpawn, actx)
