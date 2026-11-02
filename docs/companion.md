@@ -163,7 +163,8 @@ The dock's ☰ menu and the command palette offer the same actions on every wind
 once, each only when there is something for it to do:
 
 - **Untile all windows** floats every tiled window where it is, so nothing moves on
-  screen, and ends the split. A maximized window stays maximized.
+  screen, and takes it out of the split. A minimized window keeps its cell, and a
+  maximized window stays maximized.
 - **Minimize all windows** sends every window to the dock. A tiled window keeps its cell.
 - **Restore all windows** brings every minimized window back, into its cell if it had one.
   A tab minimized on its own stays on the dock.

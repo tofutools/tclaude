@@ -288,6 +288,13 @@ test('a window torn out of the split floats where it is let go, even over the ce
   assert.ok(frame('b').classList.contains('snapped'), 'b keeps its cell');
 });
 
+test('a tear-off let go at the room\'s edge, still over the cell it left, floats rather than snapping alone', async (t) => {
+  const { harness, overlay, prefs, mounted } = await setup(t, PAIR);
+  await dragBar(harness, mounted, 'a', { x: 100, y: 10 }, { x: 10, y: 400 });
+  assert.equal(mounted.container.querySelector('.w-a').classList.contains('snapped'), false);
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), { ...PAIR, a: { gap: true } });
+});
+
 test('a floating window dropped into an empty cell later still takes it', async (t) => {
   const { harness, overlay, prefs, mounted } = await setup(t, PAIR);
   await dragBar(harness, mounted, 'a', { x: 100, y: 10 }, { x: 300, y: 400 });
@@ -315,6 +322,12 @@ test('untile all floats every tiled window where it shows and ends the split', a
   }
   assert.equal(prefs.getItem(overlay.OVERLAY_SPLIT_PREF), '', 'the split is gone');
   assert.equal(overlay.tiledOverlayWindowCount.value, 0);
+});
+
+test('untile all leaves the cell of a window that is away, for when it comes back', async (t) => {
+  const { harness, overlay, prefs } = await setup(t, { axis: 'x', at: 0.5, a: PAIR, b: { id: 'd' } });
+  await harness.act(() => overlay.untileOverlayWindows());
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), { axis: 'x', at: 0.5, a: { gap: true }, b: { id: 'd' } });
 });
 
 test('minimize all sends every window to the dock, and restore all brings them back', async (t) => {

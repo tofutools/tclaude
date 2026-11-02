@@ -95,13 +95,16 @@ function levelOf(unit) {
 // How many windows are tiled now: in the split or snapped to an edge alone.
 export const tiledOverlayWindowCount = computed(() => snappedWindows.value.size);
 
-// untileOverlayWindows floats every tiled window where it shows and ends the
-// split. A maximized window is not tiled and stays as it is.
+// untileOverlayWindows floats every tiled window where it shows and takes it out
+// of the split. A minimized window keeps its cell, and a maximized window is not
+// tiled and stays as it is.
 export function untileOverlayWindows() {
-  const tiled = [...snappedWindows.peek().values()];
-  if (!tiled.length && !splitTree.peek()) return false;
-  for (const entry of tiled) entry.unsnap();
-  if (splitTree.peek()) saveSplit(splitLoadedFrom, null);
+  const tiled = [...snappedWindows.peek()];
+  if (!tiled.length) return false;
+  for (const [, entry] of tiled) entry.unsnap();
+  const tree = splitTree.peek();
+  const next = tiled.reduce((rest, [id]) => withoutWindow(rest, id), tree);
+  if (next !== tree) saveSplit(splitLoadedFrom, next);
   return true;
 }
 
@@ -322,6 +325,8 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     const inside = ({ rect }) => pointer.x >= rect.x && pointer.x < rect.x + rect.w && pointer.y >= rect.y && pointer.y < rect.y + rect.h;
     const gap = layoutOf(live)?.gaps.find((cell) => inside(cell) && !sameRect(cell.rect, vacated) && !(cell.held && cell.held !== id && aliveWindows.has(cell.held)));
     if (gap) return planned(withinGap(savedTree, gap, pointer, id, room)) || plain;
+    // Still over the cell it left, even at the room's edge, the window floats.
+    if (vacated && inside({ rect: vacated })) return null;
     const inTree = (other) => leavesOf(savedTree).includes(other);
     // A window outside the split cannot start a tree of its own: there is one.
     const targets = others.filter(([other]) => !live || inTree(other));
@@ -406,11 +411,13 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     track(event, (m) => {
       if (start.snap) {
         // A click leaves a snapped window alone. Tearing it off takes a real
-        // move, and restores a floating size under the pointer.
+        // move, and restores a floating size under the pointer, held at the same
+        // share of its width, so a tab near an edge doesn't put half of it off screen.
         if (Math.hypot(m.clientX - sx, m.clientY - sy) < TEAR_OFF_PX) return;
         const viewport = viewportOf(win);
         const floating = clampPlacement({ ...defaultPlacement(viewport), ...(saved() || {}), snap: '' }, viewport);
-        start = { ...floating, x: sx - floating.w / 2, y: sy - 14, snap: '' };
+        const share = start.w > 0 ? Math.max(0, Math.min(1, (sx - start.x) / start.w)) : 0.5;
+        start = { ...floating, x: sx - floating.w * share, y: sy - 14, snap: '' };
         vacated = cell || null;
         if (splitTree.peek() && leavesOf(splitTree.peek()).includes(id)) saveSplit(prefs, withoutWindow(splitTree.peek(), id));
       }

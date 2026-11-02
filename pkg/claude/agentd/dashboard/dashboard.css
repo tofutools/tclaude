@@ -2055,7 +2055,8 @@ body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) 
 .overlay-dock-remove { padding: 2px 8px 2px 4px; border: 0; background: none; color: var(--cmp-muted); font-size: 13px; cursor: pointer; }
 .overlay-dock-remove:hover { color: var(--cmp-text); }
 /* The dock's menu of actions on every window. It opens upwards from its button,
-   fixed rather than inside the dock, whose scrolling would clip it. */
+   fixed and beside the dock: inside, the dock's transform and scrolling would
+   misplace and clip it. */
 .overlay-dock-menu { display: inline-flex; flex: none; border: 1px solid var(--cmp-line); border-radius: 16px; background: var(--cmp-bar); }
 .overlay-dock-menu:hover { border-color: #58a6ff; }
 .overlay-dock-menu-button { padding: 5px 10px; border: 0; background: none; color: var(--cmp-text); font: inherit; font-size: 12px; cursor: pointer; }
