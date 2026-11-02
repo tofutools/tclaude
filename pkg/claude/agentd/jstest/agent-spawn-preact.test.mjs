@@ -2279,3 +2279,95 @@ test('Preact agent-spawn offers a usage profile before any exists', async (t) =>
     await mounted.cleanup();
   }
 });
+
+test('undoing an agent\'s fill gives the fields back to the group: cwd follows a group switch again (tcl-klehjn)', async (t) => {
+  const mounted = await mountSpawn(t);
+  const { harness, host, state } = mounted;
+  const fills = await harness.importDashboardModule('js/form-fill.js');
+  // linkedom lays nothing out: show every field, as an open dialog does.
+  const proto = harness.window.Element.prototype;
+  const rects = Object.getOwnPropertyDescriptor(proto, 'getClientRects');
+  proto.getClientRects = () => [{}];
+  t.after(() => { if (rects) Object.defineProperty(proto, 'getClientRects', rects); else delete proto.getClientRects; });
+  try {
+    state.open({ defaultGroup: 'alpha' });
+    await flush(harness);
+    const cwd = () => host.querySelector('#agent-spawn-cwd').value;
+    assert.equal(cwd(), '/repo', 'the group fills the directory');
+    const tick = () => flush(harness);
+    const result = await fills.applyFill({ win: harness.window, tick, request: { form: 'spawn', agent: 'Stewie', fields: [{ field: 'agent-spawn-cwd', value: '/elsewhere' }] } });
+    assert.equal(result.fields[0].status, 'filled');
+    assert.equal(cwd(), '/elsewhere');
+    await fills.undoFill('spawn', { win: harness.window, tick });
+    await flush(harness);
+    assert.equal(cwd(), '/repo', 'undo puts the value back');
+    const group = host.querySelector('#agent-spawn-group');
+    setValue(group, 'beta');
+    await harness.act(() => harness.fireEvent(group, 'change'));
+    await flush(harness);
+    assert.equal(cwd(), '/beta', 'and the directory follows the group again, as before the fill');
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+test('spawn provenance restores the record, but not for a field the operator holds', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const sets = { touched: new Set(['cwd', 'harness', 'fetchLatestWorktree']), operatorSet: new Set(['cwd']), profileOverrides: new Set(['harness']) };
+  const before = model.spawnProvenance({ touched: new Set(), operatorSet: new Set(), profileOverrides: new Set() }, { cwdOrigin: 'group', wtRepoEdited: false });
+  const after = model.spawnProvenance(sets, { cwdOrigin: 'user', wtRepoEdited: true });
+  const entries = Object.fromEntries(Object.keys(after).filter((key) => after[key] !== before[key]).map((key) => [key, before[key]]));
+  const patch = model.restoreSpawnProvenance(sets, entries, new Set(['agent-spawn-wt-repo', 'agent-spawn-wt-fetch']));
+  assert.deepEqual([...sets.touched], ['fetchLatestWorktree'], 'a field named by an alias stays the operator\'s');
+  assert.deepEqual([...sets.operatorSet], []);
+  assert.deepEqual([...sets.profileOverrides], []);
+  assert.deepEqual(patch, { cwdOrigin: 'group' }, 'the directory follows its group again; the repo the operator holds stays edited');
+});
+
+test('after an agent\'s harness fill is undone, a profile picked later applies its harness again (tcl-klehjn)', async (t) => {
+  const mounted = await mountSpawn(t);
+  const { harness, host, state } = mounted;
+  const fills = await harness.importDashboardModule('js/form-fill.js');
+  const proto = harness.window.Element.prototype;
+  const rects = Object.getOwnPropertyDescriptor(proto, 'getClientRects');
+  proto.getClientRects = () => [{}];
+  t.after(() => { if (rects) Object.defineProperty(proto, 'getClientRects', rects); else delete proto.getClientRects; });
+  try {
+    state.open({ defaultGroup: 'beta' });
+    await flush(harness);
+    // linkedom's select value can't be set; the form renders it back each time.
+    setValue(host.querySelector('#agent-spawn-harness'), selectedValue(host.querySelector('#agent-spawn-harness')));
+    const harnessOf = () => host.querySelector('#agent-spawn-harness').value;
+    assert.equal(harnessOf(), 'claude');
+    const tick = () => flush(harness);
+    const result = await fills.applyFill({ win: harness.window, tick, request: { form: 'spawn', agent: 'Stewie', fields: [{ field: 'agent-spawn-harness', value: 'codex' }] } });
+    assert.equal(result.fields[0].status, 'filled');
+    await fills.undoFill('spawn', { win: harness.window, tick });
+    await flush(harness);
+    assert.equal(harnessOf(), 'claude');
+    const profile = host.querySelector('#agent-spawn-load-profile');
+    setValue(profile, 'codex-profile');
+    await harness.act(() => harness.fireEvent(profile, 'change'));
+    await flush(harness);
+    assert.equal(harnessOf(), 'codex', 'the profile\'s harness applies, as it would have before the fill');
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+test('a field the operator holds keeps every key its handler marks', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const kept = (id, keys) => {
+    const sets = { touched: new Set(keys), operatorSet: new Set(), profileOverrides: new Set(keys) };
+    const entries = Object.fromEntries(keys.flatMap((key) => [[`touched:${key}`, undefined], [`profileOverrides:${key}`, undefined]]));
+    model.restoreSpawnProvenance(sets, entries, new Set([`agent-spawn-${id}`]));
+    return [...sets.profileOverrides].sort();
+  };
+  assert.deepEqual(kept('trust-dir', ['trustDir', 'trustDirSpecified']), ['trustDir', 'trustDirSpecified']);
+  assert.deepEqual(kept('model', ['model', 'customModel', 'effort']), ['customModel', 'effort', 'model']);
+  assert.deepEqual(kept('wt-branch', ['worktreeBranch', 'syncWorktree']), ['syncWorktree', 'worktreeBranch']);
+  assert.deepEqual(kept('harness', ['sandbox', 'approval']), ['approval', 'sandbox']);
+  assert.deepEqual(kept('name', ['sandbox']), [], 'a field holds only its own');
+});

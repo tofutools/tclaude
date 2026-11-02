@@ -64,6 +64,9 @@ import {
   sandboxImplClearedNoticeFor,
   sandboxImplResolvedLabel,
   setSpawnSandboxImpl,
+  spawnProvenance,
+  restoreSpawnProvenance,
+  SPAWN_HARNESS_FIELDS,
 } from './agent-spawn-model.js';
 import { registerAgentSpawnController } from './agent-spawn-controller.js';
 import {
@@ -399,6 +402,20 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   // group change merely pre-fills, which must leave the peer's policy in
   // charge.
   const operatorSet = useRef(new Set());
+  // An agent's fill writes through these handlers, so it moves all of the above
+  // and the draft's own record of where cwd and the worktree repo came from. A
+  // full undo puts that back (form-fill.js), except for what the operator has
+  // touched since, so the fields follow a group or profile again (tcl-klehjn).
+  const latestDraft = useRef(draft);
+  latestDraft.current = draft;
+  const provenance = useRef(null);
+  provenance.current ||= {
+    snapshot: () => spawnProvenance({ touched: touched.current, operatorSet: operatorSet.current, profileOverrides: profileOverrides.current }, latestDraft.current),
+    restore: (entries, ownedIds) => {
+      const draftPatch = restoreSpawnProvenance({ touched: touched.current, operatorSet: operatorSet.current, profileOverrides: profileOverrides.current }, entries, ownedIds);
+      if (Object.keys(draftPatch).length) setDraft((before) => ({ ...before, ...draftPatch }));
+    },
+  };
   // Remote spawn: the saved prompts the peer applies itself (its profile and
   // group defaults, pre-filled and locked), the pre-fill's set to return to
   // on Clear, and which libraries the profile and prompt pickers list.
@@ -711,13 +728,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     operatorSet.current.add('harness');
     operatorSet.current.delete('model');
     operatorSet.current.delete('effort');
-    const harnessFields = [
-      'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer',
-      'tools', 'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl',
-      'autoMemory', 'peerMessaging', 'sshWorkaround', 'autoCompactWindow', 'contextWindowMax',
-      'copilotAPI', 'codexAppServer', 'fastMode', 'sandboxImpl', 'sandboxImplCleared', 'contextFeatures',
-    ];
-    for (const key of harnessFields) {
+    for (const key of SPAWN_HARNESS_FIELDS) {
       touched.current.add(key);
       profileOverrides.current.add(key);
     }
@@ -1931,7 +1942,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       Use SSH compatibility workaround
     </label>
     <${ErrorBanner} error=${error} onDismiss=${() => setError('')} />
-    <${FormFillBar} form="spawn" keepValues=${!!queued} fillable=${!current.options.autoSpawn}
+    <${FormFillBar} form="spawn" keepValues=${!!queued} fillable=${!current.options.autoSpawn} provenance=${provenance.current}
       claims=${Object.keys(draft.contextFeatures || {}).length ? SPAWN_CONTEXT_CLAIM : NO_CLAIMS} />
     <div class="modal-buttons">
       ${queued && html`<button id="agent-spawn-queued-discard" class="confirm-danger" type="button" disabled=${busy}

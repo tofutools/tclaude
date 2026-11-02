@@ -797,9 +797,12 @@ names that agent. The spawn form and Config take fills. Field ids come from
 - Filled fields stay highlighted, and a bar next to submit lists them. **Undo all**
   puts back what was there. Config also flags the changed sections on its rail,
   because a fill can reach a section that isn't open.
-- Undo puts values back, but the form still treats those fields as set by hand. A
-  group or profile picked afterwards won't replace them, so check them first. Config
-  also keeps showing unsaved changes, though saving then finds nothing to save.
+- In the spawn form, an **Undo all** that undoes the whole fill also puts back where
+  each value came from. The directory follows the group again, and a profile picked
+  afterwards sets the harness and its sandbox and approval again. Undo leaves alone a
+  field you have edited since the fill. If the undo can't restore every field, those
+  fields keep counting as set by hand. Config keeps showing unsaved changes after an
+  undo, though saving then finds nothing to save.
 - A field you edited stays yours: a fill won't touch it, before or after, and
   **Undo all** keeps your edit. That includes anything your own change moved, such
   as the fields a profile pick set, and a directory you browsed to. A queued spawn's

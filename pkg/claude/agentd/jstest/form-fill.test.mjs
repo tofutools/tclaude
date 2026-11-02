@@ -29,7 +29,7 @@ const ROW = `
 
 // page builds an open spawn form. stateful mimics a controlled field: its handler
 // keeps what the form accepts, so a value only stays if the handler took it.
-function page() {
+function page({ provenance = null } = {}) {
   const { window } = parseHTML(`<!doctype html><html><body><div id="agent-spawn-modal">${ROW}</div></body></html>`);
   window.Event = window.Event || globalThis.Event;
   const root = window.document.getElementById('agent-spawn-modal');
@@ -56,7 +56,7 @@ function page() {
   }
   // A timer runs after the event's handlers, as in a browser.
   const later = [];
-  const stop = watchForm('spawn', root, { win: window, setTimeoutImpl: (fn) => later.push(fn) });
+  const stop = watchForm('spawn', root, { win: window, setTimeoutImpl: (fn) => later.push(fn), provenance });
   return { window, document: window.document, root, stop, tick: async () => {}, settle: () => { while (later.length) later.shift()(); } };
 }
 
@@ -435,4 +435,74 @@ test('a form reopened with stored values keeps them', async () => {
   const result = await applyFill({ win: window, tick: async () => {}, request: { form: 'spawn', agent: 'a', fields: [{ field: 'agent-spawn-name', value: 'x' }, { field: 'agent-spawn-descr', value: 'y' }] } });
   assert.deepEqual(statuses(result), { 'agent-spawn-name': 'operator_edited', 'agent-spawn-descr': 'filled' });
   stop();
+});
+
+// tracked is a form's record of where values came from, as the spawn form keeps
+// one: a handler marks the field it ran for as chosen by hand.
+function tracked() {
+  const marks = new Set();
+  const restored = [];
+  const provenance = {
+    snapshot: () => Object.fromEntries([...marks].map((key) => [key, true])),
+    restore: (entries, owned) => {
+      restored.push({ entries, owned: [...owned] });
+      // A field the operator now holds keeps its mark, as the spawn form does.
+      for (const [key, value] of Object.entries(entries)) {
+        if (owned.has(key)) continue;
+        if (value) marks.add(key);
+        else marks.delete(key);
+      }
+    },
+  };
+  const p = page({ provenance });
+  for (const el of p.root.querySelectorAll('input, select, textarea')) {
+    el.addEventListener('input', () => marks.add(el.id));
+    el.addEventListener('change', () => marks.add(el.id));
+  }
+  return { p, marks, restored };
+}
+
+test('a full undo puts back where values came from, but not what the operator did since (tcl-klehjn)', async () => {
+  const { p, marks, restored } = tracked();
+  marks.add('earlier');
+  await fill(p, { 'agent-spawn-name': 'a', 'agent-spawn-init-msg': 'b' });
+  assert.ok(marks.has('agent-spawn-name') && marks.has('agent-spawn-init-msg'), 'the fill went through the handlers');
+  typed(p, 'agent-spawn-wt-branch', 'mine');
+  await undoFill('spawn', { win: p.window, tick: p.tick });
+  assert.deepEqual([...marks].sort(), ['agent-spawn-wt-branch', 'earlier'], 'the fill\'s marks go, the operator\'s stay');
+  assert.deepEqual(restored[0].owned, ['agent-spawn-wt-branch'], 'and the form hears which fields are the operator\'s');
+  p.stop();
+});
+
+test('a field the operator took over after the fill stays theirs through the undo', async () => {
+  const { p, marks, restored } = tracked();
+  await fill(p, { 'agent-spawn-name': 'a', 'agent-spawn-init-msg': 'b' });
+  typed(p, 'agent-spawn-name', 'mine');
+  await undoFill('spawn', { win: p.window, tick: p.tick });
+  assert.equal(restored.length, 1);
+  assert.ok(restored[0].owned.includes('agent-spawn-name'), 'the typed field is named as the operator\'s');
+  assert.ok(marks.has('agent-spawn-name'), 'so it keeps its mark');
+  assert.ok(!marks.has('agent-spawn-init-msg'), 'while the field undo gave back loses the fill\'s');
+  p.stop();
+  // With every filled field taken over, there is nothing left to undo or restore.
+  const second = tracked();
+  await fill(second.p, { 'agent-spawn-name': 'a' });
+  typed(second.p, 'agent-spawn-name', 'mine');
+  await undoFill('spawn', { win: second.p.window, tick: second.p.tick });
+  assert.deepEqual(second.restored, []);
+  assert.ok(second.marks.has('agent-spawn-name'));
+  second.p.stop();
+});
+
+test('what the operator does while a write settles is theirs, not the fill\'s', async () => {
+  const { p, marks } = tracked();
+  // As a real handler does, the operator's edit marks more than its own field.
+  p.document.getElementById('agent-spawn-wt-branch').addEventListener('input', () => marks.add('extra'));
+  let once = true;
+  const tick = async () => { if (once) { once = false; typed(p, 'agent-spawn-wt-branch', 'mine'); } };
+  await applyFill({ win: p.window, tick, request: { form: 'spawn', agent: 'Stewie', fields: [{ field: 'agent-spawn-name', value: 'a' }, { field: 'agent-spawn-init-msg', value: 'b' }] } });
+  await undoFill('spawn', { win: p.window, tick: p.tick });
+  assert.ok(marks.has('agent-spawn-wt-branch') && marks.has('extra'), 'the edit in the wait keeps its marks');
+  assert.ok(!marks.has('agent-spawn-init-msg'), 'a write after it is still the fill\'s');
+  p.stop();
 });
