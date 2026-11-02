@@ -5043,7 +5043,7 @@ body.wizard .subgroup-btn .subgroup-ico { display: none; }
    it escapes the table cell cleanly — no ancestor sets overflow.
    The cog is sized up and tinted amber so it reads as a distinct
    "more actions" affordance, not just another grey row button. */
-.row-actions .cog-btn, .group-actions .cog-btn { font-size: 16px; line-height: 1; color: #e3a008; }
+.row-actions .ui-btn.cog-btn, .group-actions .ui-btn.cog-btn { font-size: 16px; line-height: 1; color: #e3a008; }
 .row-actions .cog-btn:hover:not(:disabled), .group-actions .cog-btn:hover:not(:disabled) { color: #ffb52e; }
 /* The .filter-bar-cog wrapper holds the trailing "more group
    actions" cog + its menu. Mirror the +new-group .primary
