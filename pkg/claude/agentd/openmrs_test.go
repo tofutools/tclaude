@@ -166,7 +166,7 @@ func openMRsWorld(t *testing.T, hosts map[string]string, answer func(base string
 func graphQLAnswer(t *testing.T, username string, count int, nodes ...glOpenMRNode) glAPIResult {
 	t.Helper()
 	doc := map[string]any{"data": map[string]any{"currentUser": map[string]any{
-		"username": username,
+		"username":              username,
 		"authoredMergeRequests": map[string]any{"count": count, "nodes": nodes},
 	}}}
 	body, err := json.Marshal(doc)
