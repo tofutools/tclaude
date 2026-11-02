@@ -14,7 +14,7 @@ import {
   activateOverlayTab, changeOverlayGroup, groupOverlayTab, minimizeOverlayTab, minimizeOverlayTabs, moveOverlayGroup, moveOverlayTab,
   overlayWindows, startOverlayGroup, tearOverlayGroupOut, tearOverlayTabOut, ungroupOverlayTabs,
 } from './overlay-instances.js';
-import { holdForMenu, startTabDrag, tabDropTarget, tabGhost } from './overlay-tab-drag.js';
+import { aimFromCollab, collabDrag, holdForMenu, startTabDrag, stripTargetAt, tabDropTarget, tabGhost } from './overlay-tab-drag.js';
 import { groupsOf, windowHolding } from './overlay-tab-model.js';
 import { TO_COLLAB_LABEL, TO_WINDOW_LABEL, tabMoves } from './overlay-tab-moves.js';
 
@@ -202,6 +202,41 @@ export function OverlayTabStrip({ window, overlay, win, viewOf }) {
   };
   // The tabs in flight may be this strip's, and target.index counts without them.
   const landsBefore = target && window.tabs.filter((tab) => !target.ids.includes(tab.id))[target.index]?.id;
+  // A Collab tab dragged over the title bar shows where it would land; its own
+  // strip's dragend takes it there, as that knows the pane. One that cannot float
+  // is not taken. A browser names no element a drag left for, so leaving is by
+  // where the pointer went.
+  useEffect(() => {
+    const bar = stripRef.current?.closest?.('header');
+    if (!bar) return undefined;
+    const over = (event) => {
+      if (!collabDrag.peek()?.floats) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      aimFromCollab(stripTargetAt(win?.document, { x: event.clientX, y: event.clientY }));
+    };
+    const leave = (event) => {
+      const box = bar.getBoundingClientRect();
+      const inside = event.clientX > box.left && event.clientX < box.right && event.clientY > box.top && event.clientY < box.bottom;
+      if (!inside && tabDropTarget.peek()?.windowId === window.id) aimFromCollab(null);
+    };
+    const drop = (event) => {
+      if (!collabDrag.peek()?.floats) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    bar.addEventListener('dragenter', over);
+    bar.addEventListener('dragover', over);
+    bar.addEventListener('dragleave', leave);
+    bar.addEventListener('drop', drop);
+    return () => {
+      bar.removeEventListener('dragenter', over);
+      bar.removeEventListener('dragover', over);
+      bar.removeEventListener('dragleave', leave);
+      bar.removeEventListener('drop', drop);
+    };
+  }, [window.id]);
   // Ctrl+wheel over the title bar zooms a board.
   const onWheel = (event) => { if (!event.ctrlKey) event.currentTarget.scrollLeft += event.deltaY; };
   const renderTab = (tab) => {

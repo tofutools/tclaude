@@ -58,7 +58,7 @@ export function boardStartPlacement(prefs, index) {
 // A board goes back to its tab of the Collab view, or out to a window of its own;
 // a blocked pop-up leaves it where it is.
 registerTabMoves(BOARD_WINDOW_KIND, (tab) => ({
-  toCollab: () => void returnBoardToTab(tab.board),
+  toCollab: () => returnBoardToTab(tab.board),
   toWindow: ({ rect, win, notify }) => {
     if (detachSeedWindow({ ...boardPaneSeed(tab.board, tab.label), floats: true }, { size: rect, at: elementScreenPoint(win, rect) })) closeOverlayTab(tab.id);
     else notify?.(POPUP_BLOCKED, true);

@@ -138,6 +138,10 @@ another tab shows, and a minimized chat keeps its terminal for a few minutes.
 - **Reorder:** drag a tab along its strip.
 - **Join:** drag a tab onto another window's title bar. A marker shows where it lands.
 - **Drag out:** pull a tab well off its strip, and it opens in a new window at the drop point.
+- **Drag to the Collab tab:** drop a tab on the Collab tab's strip, and it lands there beside
+  the tab under the pointer, where a marker shows. Drop it on **Collab** in the main nav to
+  put it at the end; resting it there a moment switches to that view, so you can carry on
+  to a spot on the strip. A tab that can't be a Collab tab stays where it was.
 - **Move a whole window:** drag the bar around its tabs. A window with one tab also drags by
   that tab, and dropping it on another window's title bar joins that window.
 - **See every tab:** when a window can't show all its tabs, scroll over them with the wheel,

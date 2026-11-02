@@ -3,8 +3,9 @@ import { encodeTerminalOpenHash } from './terminal-handoff.js';
 import { shellToast } from './shell-state.js';
 import { detachWindowFeatures, elementScreenPoint } from './terminal-drag-out.js';
 import { terminalAttachConfig } from './terminal-attach-config.js';
-import { openBoardOverlay } from './board-overlay-state.js';
-import { openOverlayWindow } from './overlay-instances.js';
+import { boardWindowId, openBoardOverlay } from './board-overlay-state.js';
+import { chatWindowId } from './chat-window-model.js';
+import { moveOverlayTab, openOverlayWindow, overlayTabs } from './overlay-instances.js';
 import { agentSessionSeed, overlayablePane, terminalWindowOf } from './terminal-window-model.js';
 import { companionAvailable, floatInCompanion } from './companion-facade.js';
 
@@ -251,32 +252,37 @@ export function createTerminalShellActions({
   // floating window. A board's editor saves what it holds as it goes, and a
   // shell's tmux session outlives the tab's view of it. An agent goes to its chat
   // window, which attaches only after this tab let go: the tab's own detach
-  // would drop a chat that got there first. at places a window dragged out.
-  async function openPaneInOverlay(key, { at = null } = {}) {
+  // would drop a chat that got there first. at places a window dragged out, and
+  // into ({ windowId, index, groupId }) is a window's strip it was dropped on.
+  async function openPaneInOverlay(key, { at = null, into = null } = {}) {
     const pane = state.panes.value.find((candidate) => candidate.key === key);
     if (disposed || !pane) return false;
-    return floatPane(pane, at);
+    const floated = await floatPane(pane, at);
+    if (into && floated && overlayTabs.peek().some((tab) => tab.id === floated)) moveOverlayTab(floated, into.windowId, into.index, into.groupId);
+    return !!floated;
   }
 
+  // floatPane answers the id of the overlay tab that now holds the pane, or ''.
   async function floatPane(pane, at = null) {
     const { key } = pane;
     if (pane.seed.board) {
       await closePane(key);
       openBoardOverlay(pane.seed.board, pane.label, at);
-      return true;
+      return boardWindowId(pane.seed.board);
     }
     if (overlayablePane(pane)) {
       await closePane(key, { skipDetach: true });
-      openOverlayWindow({ ...terminalWindowOf(pane), at });
-      return true;
+      const tab = terminalWindowOf(pane);
+      openOverlayWindow({ ...tab, at });
+      return tab.id;
     }
-    if (!pane.seed.agent || !companionAvailable()) return false;
+    if (!pane.seed.agent || !companionAvailable()) return '';
     floatingAgents += 1;
     try {
       await closePane(key);
-      if (floatInCompanion(pane.seed.agent, at)) return true;
+      if (floatInCompanion(pane.seed.agent, at)) return chatWindowId(pane.seed.agent);
       openPane(pane.seed);
-      return false;
+      return '';
     } finally {
       floatingAgents -= 1;
     }

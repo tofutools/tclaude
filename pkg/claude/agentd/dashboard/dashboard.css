@@ -415,6 +415,8 @@ nav [data-tab] {
 }
 nav [data-tab].active { color: #d4d4d4; border-bottom-color: #58a6ff; }
 nav [data-tab]:hover { color: #d4d4d4; }
+/* An overlay tab resting on the Collab entry: it lands there, and the view switches. */
+nav [data-tab].overlay-drop { color: #d4d4d4; background: #1f6feb2e; box-shadow: inset 0 0 0 1px #58a6ff; border-radius: 4px 4px 0 0; }
 /* Messages tab — unread badge on the nav button + message cards. */
 .tab-badge {
   display: inline-block; margin-left: 6px; min-width: 16px; padding: 0 5px;

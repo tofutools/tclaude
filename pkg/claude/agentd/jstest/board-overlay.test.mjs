@@ -1018,3 +1018,93 @@ test('a fallback that fails too goes up, rather than round for ever', async (t) 
   assert.match(view.container.textContent, /outer/);
 });
 
+
+// The Collab strip under the pointer below the windows: its tabs side by side,
+// 100 wide from 0, at y 100 to 130. The nav's Collab entry sits at y 200.
+function layOutCollab(harness, host, overlayHost) {
+  layOut(harness, overlayHost);
+  const overlays = harness.document.elementsFromPoint;
+  const tabs = () => [...host.querySelectorAll('.mux-tab[data-pane-key]')];
+  harness.document.elementsFromPoint = (x, y) => {
+    if (y >= 200 && y < 230) return [harness.document.querySelector('nav [data-tab="terminals"]'), harness.document.body];
+    if (y < 100 || y >= 130) return overlays(x, y);
+    const tab = tabs()[Math.floor(x / 100)];
+    return [tab, host.querySelector('[data-collab-strip]'), harness.document.body].filter(Boolean);
+  };
+  for (const [index, tab] of tabs().entries()) tab.getBoundingClientRect = () => ({ left: index * 100, right: index * 100 + 100, width: 100, top: 100, bottom: 130, height: 30, x: index * 100, y: 100 });
+}
+
+scenario('an overlay tab dropped on the Collab strip lands beside the tab under the pointer', async ({ harness, host, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  await harness.act(async () => { await overlayState.openBoardPane('third', 'Third'); await wait(); await wait(); });
+  await harness.act(async () => { await overlayState.openBoardPane('fourth', 'Fourth'); await wait(); await wait(); });
+  assert.deepEqual(tabLabels(host), ['Third', 'Fourth']);
+  layOutCollab(harness, host, overlayHost);
+  const drag = pointer(harness, tabButton(overlayHost, 'Team map'));
+  await drag.down(150, 15);
+  await drag.move(120, 115);
+  assert.ok(host.querySelector('[data-collab-strip]').classList.contains('overlay-landing'), 'the strip lights');
+  assert.ok(host.querySelector('.mux-tab[data-pane-key="board:fourth"]').classList.contains('drop-before'), 'a marker shows where it lands');
+  await drag.up(120, 115);
+  await harness.act(async () => { await wait(5); await wait(5); });
+  assert.deepEqual(tabsByWindow(overlayHost), [['Release plan']]);
+  assert.deepEqual(tabLabels(host), ['Third', 'Team map', 'Fourth']);
+  assert.ok(!host.querySelector('.overlay-landing'), 'the marker goes');
+});
+
+scenario('resting an overlay tab on the nav\'s Collab entry switches there, and a drop lands it at the end', async ({ harness, host, overlayHost, overlayState, windows, island }) => {
+  await twoInOne(harness, overlayState, windows);
+  await harness.act(async () => { await overlayState.openBoardPane('third', 'Third'); await wait(); await wait(); });
+  await harness.act(async () => { harness.fireEvent(harness.document.querySelector('nav [data-tab="groups"]'), 'click'); await wait(); });
+  layOutCollab(harness, host, overlayHost);
+  const nav = harness.document.querySelector('nav [data-tab="terminals"]');
+  const drag = pointer(harness, tabButton(overlayHost, 'Release plan'));
+  await drag.down(50, 15);
+  await drag.move(40, 210);
+  assert.ok(nav.classList.contains('overlay-drop'), 'the entry lights');
+  const { NAV_SWITCH_MS } = await harness.importDashboardModule('js/overlay-tab-drag.js');
+  await harness.act(() => wait(NAV_SWITCH_MS + 50));
+  assert.ok(harness.document.getElementById('tab-terminals').classList.contains('active'), 'the view switched under the drag');
+  await drag.up(40, 210);
+  await harness.act(async () => { await wait(5); await wait(5); });
+  assert.ok(!nav.classList.contains('overlay-drop'));
+  assert.deepEqual(tabLabels(host), ['Third', 'Release plan']);
+  assert.deepEqual(tabsByWindow(overlayHost), [['Team map']]);
+});
+
+scenario('a Collab tab dragged onto a window\'s strip joins that window at the marker', async ({ harness, host, overlayHost, overlayState }) => {
+  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); await wait(); });
+  await harness.act(async () => { await overlayState.openBoardPane('map', 'Team map'); await wait(); await wait(); });
+  layOut(harness, overlayHost);
+  const tab = host.querySelector('.mux-tab[data-pane-key="board:map"]');
+  const strip = overlayHost.querySelector('[data-tab-strip]');
+  await harness.act(async () => {
+    harness.fireEvent(tab, 'dragstart', { dataTransfer: { setData() {} } });
+    harness.fireEvent(strip, 'dragover', { clientX: 10, clientY: 15, dataTransfer: { dropEffect: '' } });
+    await wait();
+  });
+  assert.ok(strip.classList.contains('joining'), 'the strip lights');
+  assert.ok(!host.querySelector('.mux-drag-out-hint'), 'it says nothing about a window of its own');
+  await harness.act(async () => {
+    harness.fireEvent(strip, 'drop', { clientX: 10, clientY: 15 });
+    harness.fireEvent(tab, 'dragend', { clientX: 10, clientY: 15, screenX: 10, screenY: 15 });
+    await wait(5);
+    await wait(5);
+  });
+  assert.deepEqual(tabsByWindow(overlayHost), [['Team map', 'Release plan']]);
+  assert.deepEqual(tabLabels(host), []);
+});
+
+scenario('a tab that cannot be a Collab tab finds no place to drop on the Collab view', async ({ harness, host, overlayHost, overlayState, windows }) => {
+  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
+  await harness.act(async () => { windows.openTabInWindow('board:plan', '', { id: 'odd', kind: 'odd', label: 'Odd' }, { activate: false }); await wait(); await wait(); });
+  layOutCollab(harness, host, overlayHost);
+  const nav = harness.document.querySelector('nav [data-tab="terminals"]');
+  const drag = pointer(harness, tabButton(overlayHost, 'Odd'));
+  await drag.down(150, 15);
+  await drag.move(40, 210);
+  assert.ok(!nav.classList.contains('overlay-drop'), 'the entry stays plain');
+  await drag.up(40, 210);
+  assert.ok(windows.overlayTabs.value.some((tab) => tab.id === 'odd' && tab.windowId), 'it is still an overlay tab');
+  assert.deepEqual(tabLabels(host), [], 'and not a Collab tab');
+});

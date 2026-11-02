@@ -45,7 +45,9 @@ pending permission request, a **🔑** opens the
   opened it is there to take it, and a terminal that can't float any more lands in a tab.
 - **Drag a tab off the strip** to float it where you drop it. What can't float opens in
   a separate window instead: a peer's terminal, an offline agent, and anything with
-  Collab off.
+  Collab off. Drop it on an overlay window's title bar instead to join that window,
+  where a marker shows. Overlay tabs drag back the same way, onto this strip or onto
+  **Collab** in the main nav.
 - **Float** a directory or group shell with **Open in overlay** (needs Collab). It
   moves, snaps and splits like a board's window, on the same tmux session, and
   **Open in the Collab tab** returns it. Closing the window leaves the shell running. A peer's
