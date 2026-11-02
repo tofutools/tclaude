@@ -609,7 +609,7 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
               ${modes.map((value) => html`<option key=${value} value=${value}>${value}</option>`)}
             </select>
           </label>
-          <p class="sandbox-impl-hint ui-hint" id="sandbox-impl-hint ui-hint"><${Words}
+          <p class="sandbox-impl-hint ui-hint" id="sandbox-impl-hint"><${Words}
             plain="Leave this alone unless you mean to pin it. Left alone, the server carries the agent's recorded mode forward, or uses the harness default when the implementation being replaced had forced one."
             wizard="Leave this be unless you mean to bind it. Left alone, the recorded mode carries forward."
           /></p>

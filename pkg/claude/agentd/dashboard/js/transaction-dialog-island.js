@@ -557,7 +557,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
       onSubmit=${close}
       confirmDiscard=${confirmDiscard}
     >
-      <p class="cleanup-hint ui-hint" id="cleanup-hint ui-hint">Cleanup complete — ${resultBits.join(' · ') || 'nothing to do'}.</p>
+      <p class="cleanup-hint ui-hint" id="cleanup-hint">Cleanup complete — ${resultBits.join(' · ') || 'nothing to do'}.</p>
       <${CleanupResult} response=${result} />
       ${(result.warnings || []).length ? html`<div class="cleanup-warn" id="cleanup-warn">
         ⚠ ${(result.warnings || []).join('\n⚠ ')}
@@ -591,7 +591,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
     onSubmit=${submit}
     confirmDiscard=${confirmDiscard}
   >
-    <p class=${`cleanup-hint ui-hint${effectiveTier === 'delete' ? ' danger' : ''}`} id="cleanup-hint ui-hint">${hint}</p>
+    <p class=${`cleanup-hint ui-hint${effectiveTier === 'delete' ? ' danger' : ''}`} id="cleanup-hint">${hint}</p>
     <div class="cleanup-toolbar" id="cleanup-toolbar">
       <button type="button" id="cleanup-select-all" disabled=${controlsDisabled} onClick=${selectAll}>select all</button>
       <button type="button" id="cleanup-select-none" disabled=${controlsDisabled} onClick=${selectNone}>select none</button>

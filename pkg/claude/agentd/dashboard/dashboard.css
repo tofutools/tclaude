@@ -1992,7 +1992,8 @@ body.companion-annotating :is(.overlay-split-line, .overlay-split-cross, .overla
   width: min(360px, 60vw); padding: 7px 12px; border: 1px solid var(--cmp-line, #30363d); border-radius: 8px;
   background: var(--cmp-bar, #161b22); color: var(--cmp-text, #e6edf3); font: inherit; font-size: 13px;
 }
-.overlay-expose-filter:focus { outline: none; border-color: #58a6ff; }.overlay-expose-grid {
+.overlay-expose-filter:focus { outline: none; border-color: #58a6ff; }
+.overlay-expose-grid {
   flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 300px)); justify-content: center;
   grid-auto-rows: max-content; align-content: center; gap: 18px; padding: 4px;
 }
@@ -5901,7 +5902,10 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   box-shadow: 0 8px 24px rgba(0,0,0,0.5);
 }
 .modal h3 { margin: 0 0 8px; font-size: 16px; color: #d4d4d4; }
-.modal p { margin: 8px 0; color: #c9d1d9; }
+/* Body text in a dialog; the standard hint and error text (ui.css) keep their
+   own colour. */
+.modal p:where(:not(.ui-hint, .ui-error, .ui-error-box)) { margin: 8px 0; color: #c9d1d9; }
+.modal p:is(.ui-hint, .ui-error, .ui-error-box) { margin: 8px 0; }
 /* Preformatted confirm bodies carry daemon-supplied dumps — bulk power-on
    failure lists, recorded sandbox details — whose length and token widths are
    not ours to predict. .modal has no height bound and .modal-overlay centres
@@ -5969,7 +5973,7 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 }
 .sandbox-impl-tag.warn { color: #e3a008; border-color: #6b4f1d; }
 .sandbox-impl-hint { margin: 8px 0 0; }
-.sandbox-impl-warn { color: #e3a008; }
+.sandbox-impl-hint.sandbox-impl-warn { color: #e3a008; }
 /* .primary is styled per modal family (.cron-create-modal, .perm-edit-modal,
    …) rather than globally, and this dialog renders the plain .modal skin — so
    it carries its own rule instead of inheriting a call-to-action treatment that
@@ -7869,7 +7873,8 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 }
 .sbx-prelaunch-actions button:where(:not(.ui-btn)):hover { background: #2d333b; }
 .sbx-prelaunch-actions button:where(:not(.ui-btn)):disabled { cursor: default; opacity: .35; }
-.sbx-prelaunch-actions .sbx-prelaunch-remove { color: #f0b0b0; }.sbx-prelaunch-add:disabled { cursor: default; opacity: .45; }
+.sbx-prelaunch-actions .sbx-prelaunch-remove { color: #f0b0b0; }
+.sbx-prelaunch-add:disabled { cursor: default; opacity: .45; }
 
 /* Temporary filesystems (TCL-1218). A tmpfs row is a path plus an optional
    ceiling, so it reuses the flat .sbx-row shape the filesystem table uses
@@ -7897,7 +7902,8 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   flex: 0 1 13rem;
   min-width: 7rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}.sbx-tmpfs-add:disabled { cursor: default; opacity: .45; }
+}
+.sbx-tmpfs-add:disabled { cursor: default; opacity: .45; }
 @media (max-width: 700px) {
   .sbx-tmpfs-row { flex-wrap: wrap; }
   .sbx-tmpfs-size { flex-basis: 100%; }
@@ -8391,7 +8397,8 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
   color: #c9d1d9; padding: 5px 10px; font-size: 12px; cursor: pointer;
 }
-.spawn-attachments-controls button:where(:not(.ui-btn)):hover { background: var(--ui-bg-hover); }.spawn-attachments-list {
+.spawn-attachments-controls button:where(:not(.ui-btn)):hover { background: var(--ui-bg-hover); }
+.spawn-attachments-list {
   list-style: none; margin: 0; padding: 0; display: flex;
   flex-direction: column; gap: 4px;
 }
@@ -8787,7 +8794,8 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
   display: flex; flex-direction: column; gap: 2px; margin-top: 4px;
 }
 .cron-explain:empty { display: none; }
-.cron-explain .cron-explain-desc { color: #c9d1d9; }.cron-create-enabled {
+.cron-explain .cron-explain-desc { color: #c9d1d9; }
+.cron-create-enabled {
   display: flex; align-items: center; gap: 6px; font-size: 12px;
   color: #c9d1d9;
 }
@@ -8900,7 +8908,8 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
 }
 .directory-picker-modal button:where(:not(.ui-btn)):disabled { cursor: default; opacity: .45; }
 .directory-picker-nav { display: flex; gap: 8px; align-items: center; }
-.directory-picker-count { color: #7d8590; font-size: 11px; margin-left: auto; }.directory-picker-list {
+.directory-picker-count { color: #7d8590; font-size: 11px; margin-left: auto; }
+.directory-picker-list {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
   display: flex; flex-direction: column; gap: 3px; min-height: 190px;
   overflow-y: auto; padding: 6px;
@@ -9057,7 +9066,8 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 /* PAF export / redact / agent import (tcl-jkmitn). */
 .paf-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin: 6px 0; cursor: pointer; }
 .paf-check input { margin-top: 3px; }
-.paf-check > span { display: flex; flex-direction: column; }.paf-sub { margin-left: 22px; }
+.paf-check > span { display: flex; flex-direction: column; }
+.paf-sub { margin-left: 22px; }
 .paf-sec { color: #7d8590; text-transform: uppercase; letter-spacing: 0.04em; font-size: 10px; margin: 8px 0 2px; }
 .paf-findings { border: 1px solid #9e6a03; background: #2a210b; border-radius: 5px; padding: 7px 10px; margin: 8px 0; font-size: 12.5px; }
 .paf-findings-head { color: #e3b341; font-weight: 600; }
@@ -9797,7 +9807,8 @@ label.cfg-label { cursor: pointer; }
 .shortcut-recording-row td { background: rgba(88, 166, 255, 0.06); }
 .shortcut-recorder { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .shortcut-recorder-keys { min-width: 180px; justify-content: center; }
-.shortcut-recorder-keys:focus-visible, .shortcut-recorder-keys:focus { outline: 2px solid #58a6ff; outline-offset: 1px; }.shortcut-problems { flex-basis: 100%; margin: 4px 0 0; padding: 0; list-style: none; font-size: 12px; }
+.shortcut-recorder-keys:focus-visible, .shortcut-recorder-keys:focus { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.shortcut-problems { flex-basis: 100%; margin: 4px 0 0; padding: 0; list-style: none; font-size: 12px; }
 .shortcut-problems li { margin: 2px 0; }
 .shortcut-problems .is-blocking { color: #ff7b72; }
 .shortcut-problems .is-warning { color: #d29922; }
@@ -9809,7 +9820,8 @@ label.cfg-label { cursor: pointer; }
 .cfg-steward-add { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .cfg-steward-pin { display: grid; gap: 6px; margin-top: 6px; }
 .cfg-steward-pin label { display: grid; gap: 2px; }
-.cfg-steward-add input[type="number"] { width: 72px; }.status-dot-external { cursor: default; }
+.cfg-steward-add input[type="number"] { width: 72px; }
+.status-dot-external { cursor: default; }
 .cfg-row-ctl .cfg-list { padding-left: 0; }
 .cfg-row-ctl .cfg-notif-types, .cfg-row-ctl .cfg-hint { padding-left: 0; }
 .cfg-row-ctl #ask-profile-state { flex-basis: 100%; text-align: right; }
@@ -12136,8 +12148,7 @@ body.wizard #agent-spawn-modal .modal-meta {
 body.wizard #agent-spawn-modal .cron-create-label,
 body.wizard #agent-spawn-modal .spawn-owner-toggle,
 body.wizard #agent-spawn-modal .spawn-perms-indicator { color: #b39ddb; }
-/* The wizard hint colour above outranks .spawn-field-hint.warn on specificity,
-   which would repaint a ⚠ caveat as ordinary help. Warnings keep warning. */
+/* Warnings and notes keep their own tone over the skin's muted hint colour. */
 body.wizard #agent-spawn-modal .spawn-field-hint.warn { color: #f0883e; }
 body.wizard #agent-spawn-modal .spawn-field-hint.info { color: #58a6ff; }
 body.wizard #agent-spawn-modal .cron-create-row input[type=text],
@@ -13440,7 +13451,8 @@ body.wizard #cleanup-modal .cleanup-modal h3 {
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}/* The delete-tier hint keeps a caution tone — a warm ember rather than the
+}
+/* The delete-tier hint keeps a caution tone — a warm ember rather than the
    base orange — so its "cannot be undone" warning still reads as danger on
    the violet surface. The .cleanup-warn / .cleanup-error status lines below
    are likewise left their honest warning hues (a signal, not chrome). */
@@ -13616,7 +13628,8 @@ body.wizard #delete-retired-modal .cleanup-modal h3 {
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}body.wizard #delete-retired-modal .cleanup-hint.danger { color: #f0a868; }
+}
+body.wizard #delete-retired-modal .cleanup-hint.danger { color: #f0a868; }
 body.wizard #delete-retired-modal .cleanup-toolbar { color: #b39ddb; }
 body.wizard #delete-retired-modal .cleanup-count { color: #e7d9f5; }
 body.wizard #delete-retired-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
@@ -13767,7 +13780,8 @@ body.wizard #delete-group-modal .cleanup-modal h3 {
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}body.wizard #delete-group-modal .cleanup-hint.danger { color: #f0a868; }
+}
+body.wizard #delete-group-modal .cleanup-hint.danger { color: #f0a868; }
 body.wizard #delete-group-modal .cleanup-toolbar { color: #b39ddb; }
 body.wizard #delete-group-modal .cleanup-count { color: #e7d9f5; }
 body.wizard #delete-group-modal .cleanup-list {
@@ -14123,7 +14137,8 @@ body.wizard #export-agent-modal .cron-create-row select:where(:not(.ui-select)) 
   color: #1a1330; background: #e7d9f5;
 }
 /* "Clone into the same group" toggle + its hint. */
-body.wizard #export-agent-modal .export-same-group { color: #e7d9f5; }/* The working phase: spinner caption + note go parchment/violet, and the
+body.wizard #export-agent-modal .export-same-group { color: #e7d9f5; }
+/* The working phase: spinner caption + note go parchment/violet, and the
    spinner itself spins tarnished-gold on a violet track (from arcane blue). */
 body.wizard #export-agent-modal .export-status-note { color: #b39ddb; }
 body.wizard #export-agent-modal .export-spinner {
@@ -16547,7 +16562,8 @@ body.wizard .mailbox-section-toggle {
   letter-spacing: 0.6px;
   text-shadow: 0 0 6px rgba(217, 180, 90, 0.25);
 }
-body.wizard .mailbox-section-toggle:hover { color: #f3e6c0; }body.wizard .mailbox { border: 1px solid #33284d; color: #d8cef0; }
+body.wizard .mailbox-section-toggle:hover { color: #f3e6c0; }
+body.wizard .mailbox { border: 1px solid #33284d; color: #d8cef0; }
 body.wizard .mailbox:hover { background: #241b3d; border-color: #7a5db0; }
 body.wizard .mailbox.active {
   background: linear-gradient(180deg, #2c2150 0%, #1c1436 100%);
@@ -19337,7 +19353,8 @@ body.wizard .usage-card-footer.usage-forecast.danger strong { color: #f0a3bf; }
 /* The footnote → a scrap of parchment pinned below the pools. */
 body.wizard .usage-history-note {
   background: #1c1436; border-color: rgba(122, 93, 176, 0.4); color: #b39ddb;
-}/* Groups route map (TCL-956): a read-only authority surface. The graph uses
+}
+/* Groups route map (TCL-956): a read-only authority surface. The graph uses
    the process editor's restrained node/edge vocabulary without exposing
    endpoint, target, credential, or payload data. */
 .groups-route-map-surface { margin: 0 0 14px; }

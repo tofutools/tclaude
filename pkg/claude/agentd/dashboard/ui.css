@@ -331,7 +331,7 @@ label:has(> input:disabled) { cursor: not-allowed !important; }
      .ui-error-box  an error banner: red edge, faint red wash
    Text style only (the box adds its edge and wash); an area class keeps
    placement and spacing, and a stronger state (a .warn variant) may still
-   recolour. Skins recolour --ui-muted and --ui-danger-text. */
+   recolour. Skins recolour --ui-muted; --ui-danger-text is shared. */
 .ui-hint { color: var(--ui-muted); font-size: 11px; line-height: 1.4; }
 .ui-error { color: var(--ui-danger-text); font-size: 12px; line-height: 1.4; }
 .ui-error-box {

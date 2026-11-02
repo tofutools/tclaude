@@ -68,7 +68,7 @@ export function RemoteFilesPanel({ terminal, viewer, peer = 'the peer', fetchImp
           : preview.tooLarge ? html`<div class="term-files-muted">Too large to preview here; download it instead.</div>`
           : html`<pre class="term-files-text">${preview.text}</pre>`}
       </div>`
-    : listing?.error ? html`<div class="term-files-error ui-error" role="alert" id="term-files-error ui-error">${listing.error}</div>`
+    : listing?.error ? html`<div class="term-files-error ui-error" role="alert" id="term-files-error">${listing.error}</div>`
     : !listing ? html`<div class="term-files-muted">Loading…</div>`
     : !entries.length ? html`<div class="term-files-muted" id="term-files-empty">Nothing to show in this directory.</div>`
     : html`<table class="term-files-table" id="term-files-list"><tbody>
