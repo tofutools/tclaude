@@ -18,7 +18,7 @@
 // Terminals" closes this tab instead of fighting over the session.
 
 import { h, render } from 'preact';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
   COMPANION_ACTIVE_PREF, COMPANION_CHIP_ROOM_SPOT_PREF, COMPANION_CHIP_SPOT_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF, COMPANION_WINDOW_SPOT_PREF, DEFAULT_CHIP_SPOT,
@@ -32,8 +32,9 @@ import { compactWidth, measureFooterRoom, useFooterRest } from './companion-chip
 import { registerCompanionController } from './companion-facade.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { OverlayWindow, raiseOverlayWindow, readPref, reducedMotion, useOverlayWindow, writePref } from './overlay-window.js';
-import { closeOverlayWindow, focusOverlayWindow, openOverlayWindow, overlayTabs, overlayWindows } from './overlay-instances.js';
+import { closeOverlayTab, focusOverlayWindow, openOverlayWindow, overlayHostUp, overlayTabs, overlayWindows, raiseOverlayTab } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND, chatWindowId } from './chat-window-model.js';
+import { OverlayTabGhost } from './overlay-tab-strip.js';
 import { OverlayTabWindow } from './overlay-tab-window.js';
 import { BOARD_WINDOW_KIND } from './board-overlay-state.js';
 import { TERMINAL_WINDOW_KIND } from './terminal-window-model.js';
@@ -378,6 +379,10 @@ export function CompanionApp({
   // Agents just resumed: the snapshot still shows them offline, so they read as
   // starting until it says online or PENDING_MS passes.
   const [resuming, setResuming] = useState(() => new Set());
+  useLayoutEffect(() => {
+    overlayHostUp.value = true;
+    return () => { overlayHostUp.value = false; };
+  }, []);
   // A tab whose agent has a window of its own is not here: the session has one view.
   const hasWindow = (agentId) => overlayTabs.value.some((tab) => tab.id === chatWindowId(agentId));
   const docked = tabs.filter((id) => !hasWindow(id));
@@ -417,7 +422,7 @@ export function CompanionApp({
         return `${name} is in its own window. Dictate there, or bring it back here.`;
       }
       if (hasWindow(steward.agentId)) {
-        raiseOverlayWindow(chatWindowId(steward.agentId));
+        raiseOverlayTab(chatWindowId(steward.agentId));
         return `${name} is in its own window. Dictate there.`;
       }
       return '';
@@ -691,7 +696,7 @@ export function CompanionApp({
   }
 
   function chatBackToTab(instance) {
-    closeOverlayWindow(instance.id);
+    closeOverlayTab(instance.id);
     showAgent(instance.agent, { reclaim: true });
   }
 
@@ -1037,7 +1042,7 @@ export function CompanionApp({
   function chatToWindow(instance, rect) {
     const agent = agents.get(instance.agent);
     if (!agent || !detachToWindow(agent, rect)) return;
-    closeOverlayWindow(instance.id);
+    closeOverlayTab(instance.id);
     setTabs((current) => withTab(current, agent.agentId));
   }
 
@@ -1483,14 +1488,21 @@ export function CompanionApp({
   <//>`;
 
   const shownTerminal = { snapshot, prefs, win, widgetFactory, loadRuntime, Terminal: CompanionTerminal };
+  const chatView = ({ agent: agentId, label }) => {
+    const agent = agents.get(agentId);
+    const name = agent?.name || label;
+    const tabStatus = agent ? statusOf(agent) : 'offline';
+    return { label: name, lead: html`<${StatusDot} status=${tabStatus} />`, title: `${name}: ${agent ? companionStatusLabel(tabStatus) : 'not on this node any more'}` };
+  };
   const tabKinds = {
-    [CHAT_WINDOW_KIND]: { ...shownTerminal, fetchImpl, notify, closeTerminalPanes, onBackToTab: chatBackToTab, onSeparateWindow: detachWindow ? chatToWindow : null, onStewardDown: stewardShutDown, stewardRoster, openPermissions, openSudo, openStewardHandover, showAgent, DecisionCard, StatusDot },
+    [CHAT_WINDOW_KIND]: { view: chatView, asksToClose: ({ agent }) => !!(agents.get(agent)?.steward && agents.get(agent).online), ...shownTerminal, fetchImpl, notify, closeTerminalPanes, onBackToTab: chatBackToTab, onSeparateWindow: detachWindow ? chatToWindow : null, onStewardDown: stewardShutDown, stewardRoster, openPermissions, openSudo, openStewardHandover, showAgent, DecisionCard, StatusDot },
     [TERMINAL_WINDOW_KIND]: { ...shownTerminal, notify },
     [BOARD_WINDOW_KIND]: { snapshot, fetchImpl, notify, win },
   };
 
   return html`
-    ${overlayWindows.value.map((window) => html`<${OverlayTabWindow} key=${window.id} window=${window} prefs=${prefs} win=${win} kinds=${tabKinds} />`)}
+    ${overlayWindows.value.map((window) => html`<${OverlayTabWindow} key=${window.id} window=${window} snapshot=${snapshot} prefs=${prefs} win=${win} kinds=${tabKinds} />`)}
+    <${OverlayTabGhost} />
     ${windowView}
     ${chipSlots}
     ${chips}

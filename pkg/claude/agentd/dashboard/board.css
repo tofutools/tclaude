@@ -281,7 +281,6 @@ body.slop, body.vegas {
 }
 /* Windows' buttons fill the bar. */
 .board-overlay-titlebar.overlay-look-windows { min-height: 34px; padding-block: 0; }
-.board-overlay-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
 .board-overlay-action {
   flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   padding: 3px 8px; border-radius: 5px; border: 1px solid var(--board-line);

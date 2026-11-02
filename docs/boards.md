@@ -46,8 +46,9 @@ corner. A resized panel keeps its size, and the window keeps its place. Ctrl+whe
 over the title bar zooms the board. It has the companion's
 [window controls](companion.md), and minimizing puts it in the dock of pills at
 the bottom of the page; with the Classic look it has a plain × instead. Several
-boards can float at once, each in its own window, and the open windows come back
-after a reload. Clicking the overlay
+boards can float at once, and a window can hold several as
+[tabs](companion.md#overlay-tabs), mixed with chats and shells. The open windows
+come back after a reload. Clicking the overlay
 or the companion brings that one forward. **Back to a tab** returns the board to the strip, and **Open in separate window** moves it to a browser window.
 
 ### Drawing

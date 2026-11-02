@@ -122,6 +122,31 @@ its access, roster and **Shut down…**, and the window's close button asks in t
 
 Dragging a maximized window by its title bar also restores it.
 
+### Overlay tabs
+
+Every overlay window except the companion is a row of tabs, and a window can hold
+any mix of chats, shells and boards. The title bar tools belong to the tab showing.
+
+- **Reorder:** drag a tab along its strip.
+- **Join:** drag a tab onto another window's title bar. A marker shows where it lands.
+- **Drag out:** pull a tab well off its strip, and it opens in a new window at the drop point.
+- **Move a whole window:** drag the bar around its tabs. A window with one tab also drags by
+  that tab, and dropping it on another window's title bar joins that window.
+- **See every tab:** when a window can't show all its tabs, scroll over them with the wheel,
+  or swipe along them on a touch screen. The other drags work with a finger too.
+
+A window is what tiles, minimizes and takes focus. A tiled window keeps its cell as tabs
+come and go, until the last tab leaves.
+
+A tab's × minimizes that tab to the dock and stops nothing. Its pill brings it back to the
+window it left, or to a new window where that one stood. The window's close button does the
+same for each of its tabs, except that a running Steward asks first and shuts down.
+The window's – keeps its tabs together on one pill, showing the active tab and a count.
+
+To take something off for good, use the × on its pill: it unpins an agent, which keeps
+running, and closes a shell's or board's window. A pill for several tabs has no ×, so bring
+the window back first. A Steward's pill has none either: shut one down from its ⚙.
+
 ### Talking to an agent
 
 Type in its terminal, just like the Collab tab. You get the harness's own

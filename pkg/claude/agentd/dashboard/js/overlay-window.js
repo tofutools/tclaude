@@ -153,7 +153,8 @@ export function writePref(prefs, key, value) {
 // placed the window themselves, and onRefocus is asked to take the keyboard
 // back after a click on the window's chrome. open is false while the window is
 // minimized. id names it in a split, which only a window that snaps can join.
-export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacement, snaps = false, open = true, spotted = null, onPlaced = null, onRefocus = null }) {
+// join, from tabJoin, lets a drag of the window end by joining another's tabs.
+export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacement, snaps = false, open = true, spotted = null, onPlaced = null, onRefocus = null, join = null }) {
   const windowRef = useRef(null);
   // The rectangle the window grows out of when it next opens.
   const openFrom = useRef(null);
@@ -340,8 +341,12 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   }
 
   function onTitlePointerDown(event) {
-    if (event.button !== 0 || event.target.closest?.('button, input, [role="tab"]')) return;
-    if (!windowRef.current) return;
+    if (event.target.closest?.('button, input, [role="tab"]')) return;
+    dragWindow(event);
+  }
+
+  function dragWindow(event) {
+    if (event.button !== 0 || !windowRef.current) return;
     event.preventDefault();
     let start = placement;
     const sx = event.clientX;
@@ -349,6 +354,23 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     let plan = null;
     let last = start;
     let moved = false;
+    const release = () => {
+      setGuide(null);
+      if (join?.drop()) return;
+      if (plan) {
+        setPlacement(snappedPlacement(plan.zone));
+        saveMovedWindow({ ...withSavedSize(last), snap: plan.zone });
+        if (plan.tree) saveSplit(prefs, plan.tree);
+      } else if (moved) {
+        // A click shows the fitted placement, which is not the operator's to keep.
+        saveMovedWindow(withSavedSize(last));
+      }
+    };
+    // A cancelled join stays a move: the window stops where it was let go.
+    const cancelJoin = join && (() => {
+      join.cancel();
+      release();
+    });
     track(event, (m) => {
       if (start.snap) {
         // A click leaves a snapped window alone. Tearing it off takes a real
@@ -362,20 +384,15 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
       moved = true;
       last = clampPlacement({ ...start, x: start.x + m.clientX - sx, y: start.y + m.clientY - sy, snap: '' }, viewportOf(win));
       setPlacement(last);
+      if (join?.over({ x: m.clientX, y: m.clientY })) {
+        plan = null;
+        setGuide(null);
+        return;
+      }
       if (!snaps) return;
       plan = dropPlan({ x: m.clientX, y: m.clientY });
       setGuide(plan?.guide || null);
-    }, () => {
-      setGuide(null);
-      if (plan) {
-        setPlacement(snappedPlacement(plan.zone));
-        saveMovedWindow({ ...withSavedSize(last), snap: plan.zone });
-        if (plan.tree) saveSplit(prefs, plan.tree);
-      } else if (moved) {
-        // A click shows the fitted placement, which is not the operator's to keep.
-        saveMovedWindow(withSavedSize(last));
-      }
-    });
+    }, release, cancelJoin);
   }
 
   function onResizePointerDown(event, zone = '') {
@@ -511,7 +528,7 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   const edges = cell ? splitEdges(layout.edges[id]) : freeEdges(placement.snap);
   const unitLevel = levelOf(cell ? SPLIT_UNIT : id);
   const splitFront = cell && overlayStack.value.findLast((other) => layout.rects[other]) === id;
-  return { placement: shown, edges, level: unitLevel + (splitFront ? 1 : 0), linesLevel: unitLevel + 2, splitLines, onLinePointerDown, detachLine, win, guide, windowRef, openFrom, onTitlePointerDown, onResizePointerDown, onWindowClick, releaseFocus, toggleMaximize, shrinkTo };
+  return { placement: shown, edges, level: unitLevel + (splitFront ? 1 : 0), linesLevel: unitLevel + 2, splitLines, onLinePointerDown, detachLine, win, guide, windowRef, openFrom, onTitlePointerDown, onResizePointerDown, onWindowClick, releaseFocus, toggleMaximize, shrinkTo, dragWindow };
 }
 
 export function ResizeFrame({ placement, level, className, onResizeStart, onPointerDownCapture }) {

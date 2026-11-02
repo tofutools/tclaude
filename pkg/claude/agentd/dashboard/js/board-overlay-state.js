@@ -6,7 +6,7 @@
 
 import { computed } from '@preact/signals';
 import { boardPaneSeed } from './board-model.js';
-import { closeOverlayWindow, labelOverlayWindow, openOverlayWindow, overlayTabs } from './overlay-instances.js';
+import { closeOverlayTab, labelOverlayWindow, openOverlayWindow, overlayTabs } from './overlay-instances.js';
 import { openTerminalPane } from './terminals-tab.js';
 
 export const BOARD_WINDOW_KIND = 'board';
@@ -53,7 +53,7 @@ export function openBoardOverlay(id, label, at = null) {
 export function returnBoardToTab(id) {
   const floating = windowOf(id);
   if (!floating) return Promise.resolve(null);
-  closeOverlayWindow(floating.id);
+  closeOverlayTab(floating.id);
   return openBoardPane(id, floating.label);
 }
 

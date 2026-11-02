@@ -178,7 +178,7 @@ async function settleInitialLayout() {
     () => mountVoiceWakeFeature(),
     () => mountAccessPanelFeature({ notify: toast }),
     () => mountKnowledgeSourceFeature({ notify: toast }),
-    () => mountBoardOverlayFeature({ notify: toast }),
+    () => mountBoardOverlayFeature(),
     () => mountPluginsFeature({
       requestMutation: dashboardActions.requestMutation,
       refresh: dashboardActions.refresh,

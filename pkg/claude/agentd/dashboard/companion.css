@@ -424,7 +424,6 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 .companion-floating .companion-annotate { color: var(--cmp-amber-text); font-size: 14px; }
 .companion-floating .companion-shell { color: #e6edf3; }
 /* A chat's own window (js/chat-window.js), and a tab about to become one. */
-.chat-window-title { flex: 1 1 auto; min-width: 0; overflow: hidden; display: flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
 .companion-tab button.tearing { opacity: .55; cursor: grabbing; }
 
 /* One-click starters for the Steward (guided setup, tcl-bifqbb). */
@@ -576,3 +575,18 @@ body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.s
 .companion-controls .steward-shutdown-actions button { width: auto; height: auto; min-width: 0; padding: 3px 10px; font-size: 12px; white-space: nowrap; }
 .companion-controls .steward-shutdown-actions button.danger { background: #8e1f1f; border: 1px solid #da3633; color: #fff; }
 .companion-controls .steward-shutdown-actions button:not(.danger) { background: #21262d; border: 1px solid #2a3340; color: #c9d1d9; }
+
+/* A window's tabs. The marker shows where the tab in flight lands. */
+.overlay-tab-strip { flex: 1 1 auto; border-radius: 6px; }
+/* In a narrow window the active tab's tools give way, so every tab stays reachable. */
+.overlay-tab-strip ~ .board-overlay-action { flex-shrink: 1000; }
+/* The drag owns a touch on a tab: left to the browser it would be cancelled as a pan. */
+.overlay-tab-strip .companion-tab > button[role="tab"] { touch-action: none; }
+.overlay-tab-strip.joining { background: #1f6feb2e; box-shadow: inset 0 0 0 1px var(--cmp-blue); }
+.companion-tab.dragging { opacity: .35; }
+.companion-tab.drop-before { box-shadow: -2px 0 0 var(--cmp-blue); }
+.overlay-tab-drop-end { flex: none; width: 2px; height: 22px; background: var(--cmp-blue); border-radius: 1px; }
+.overlay-tab-ghost {
+  position: fixed; z-index: 1000; pointer-events: none; padding: 4px 8px; border-radius: 6px; font-size: 12px; white-space: nowrap;
+  background: var(--cmp-bg); color: var(--cmp-text); border: 1px solid var(--cmp-blue); box-shadow: 0 8px 20px rgba(0, 0, 0, .6);
+}
