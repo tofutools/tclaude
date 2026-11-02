@@ -13,7 +13,7 @@
   "js/board-context-menu.js": 2,
   "js/board-island.js": 28,
   "js/board-minimap.js": 5,
-  "js/board-overlay.js": 7,
+  "js/board-overlay.js": 3,
   "js/board-quick-menu.js": 1,
   "js/chat-window.js": 9,
   "js/companion-annotate.js": 4,

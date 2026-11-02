@@ -21,14 +21,14 @@ import { h, render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  COMPANION_ACTIVE_PREF, COMPANION_CHIP_ROOM_SPOT_PREF, COMPANION_CHIP_SPOT_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_PLACEMENT_PREF, COMPANION_SEEDED_PREF, COMPANION_TABS_PREF, COMPANION_WINDOW_SPOT_PREF, DEFAULT_CHIP_SPOT,
+  COMPANION_ACTIVE_PREF, COMPANION_CHIP_ROOM_SPOT_PREF, COMPANION_CHIP_SPOT_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_PLACEMENT_PREF, COMPANION_SEEDED_PREF, COMPANION_TABS_PREF, COMPANION_WINDOW_SPOT_PREF, DEFAULT_CHIP_SPOT, DEFAULT_ROOM_CHIP_SPOT,
   companionAgents, elevatedAccess, companionStatus, companionStatusLabel,
   FOOTER_CHIP_SPOTS, defaultPlacement, footerSpotFits, footerSpotLeft, isAgentId, isFooterSpot, lastRoomSpot, parseChipSpot, parseTabs, peekAnchor, spotPlacement, stewardAgent, stewardToResume,
   parseClosedHelpers, syncHelperTabs, viewContext, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
   companionAgentOf,
 } from './companion-model.js';
 import { useChipDrag } from './companion-chip-drag.js';
-import { compactWidth, measureFooterRoom, useFooterRest } from './companion-chip-footer.js';
+import { chipReserve, compactWidth, footerChipReserve, measureFooterRoom, useFooterRest } from './companion-chip-footer.js';
 import { registerCompanionController } from './companion-facade.js';
 import { DecideTab, StartTab, stewardFreshNote, stewardReturnNote } from './companion-home.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
@@ -556,7 +556,8 @@ export function CompanionApp({
     peek: (agentId, element) => peekRef.current?.(agentId, element),
     endPeek: () => stopPeek(),
   }), [showAgent]);
-  peekRef.current = (agentId, element) => { if (agents.has(agentId)) startPeek(agentId, element, DEFAULT_CHIP_SPOT); };
+  // A pill peeks upwards from its right edge, in the footer as over the room.
+  peekRef.current = (agentId, element) => { if (agents.has(agentId)) startPeek(agentId, element, element?.closest?.('footer') ? 'footer-right' : DEFAULT_ROOM_CHIP_SPOT); };
 
   // A shut-down Steward can come back without this window: from the Agents tab,
   // the CLI, or by the seat going to another agent. Then there is nothing left
@@ -731,14 +732,21 @@ export function CompanionApp({
 
   // A row saved in the footer rests at its last spot in the room when it doesn't fit.
   const chipRow = useRef(null);
-  const footerRest = useFooterRest({ win, watching: isFooterSpot(chipSpot) && !stewardShown, row: chipRow });
-  const restSpot = () => { const spot = parseChipSpot(readPref(prefs, COMPANION_CHIP_ROOM_SPOT_PREF)); return isFooterSpot(spot) ? DEFAULT_CHIP_SPOT : spot; };
+  const footerRest = useFooterRest({ win, watching: isFooterSpot(chipSpot) && !stewardShown, row: chipRow, spot: chipSpot });
+  const restSpot = () => { const spot = parseChipSpot(readPref(prefs, COMPANION_CHIP_ROOM_SPOT_PREF)); return isFooterSpot(spot) ? DEFAULT_ROOM_CHIP_SPOT : spot; };
   const shownSpot = isFooterSpot(chipSpot) && !footerRest.fits ? restSpot() : chipSpot;
   const inFooter = isFooterSpot(shownSpot);
+  // The row saved in the footer keeps its room there, whether it fits now or not:
+  // the overlay dock gives way first.
+  const reserve = isFooterSpot(chipSpot) && !stewardShown ? chipReserve(footerRest.width) : 0;
+  useEffect(() => {
+    footerChipReserve.value = { width: reserve, spot: reserve ? chipSpot : '' };
+  }, [reserve, chipSpot]);
+  useEffect(() => () => { footerChipReserve.value = { width: 0, spot: '' }; }, []);
   const footerSlots = (node) => {
-    const room = measureFooterRoom(win);
     const width = compactWidth(node);
-    return footerSpotFits(room, width) ? FOOTER_CHIP_SPOTS.map((spot) => ({ spot, left: footerSpotLeft(spot, room, width), width })) : [];
+    return FOOTER_CHIP_SPOTS.map((spot) => ({ spot, room: measureFooterRoom(win, spot, width) }))
+      .filter(({ room }) => footerSpotFits(room, width)).map(({ spot, room }) => ({ spot, left: footerSpotLeft(spot, room, width), width }));
   };
   const chipDrag = useChipDrag({ win, spot: shownSpot, row: chipRow, extraSlots: footerSlots, onDrop: moveChips, onStart: stopPeek, reducedMotion: () => reducedMotion(win) });
 

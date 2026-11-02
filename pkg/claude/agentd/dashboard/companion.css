@@ -65,6 +65,8 @@ body.dock-open { --chip-right: calc(var(--dock-w) + 16px); }
 [class*="companion-spot-footer-"] { bottom: calc((var(--footer-h, 29px) - 23px) / 2); }
 .companion-chip-slot[class*="companion-spot-footer-"] { height: 23px; }
 .companion-chips.compact { z-index: 41; flex-wrap: nowrap; width: max-content; max-width: none; align-items: center; }
+/* Over overlay windows with the bar they rest on (dashboard.css). */
+body:has([data-overlay-window]):not(:has(.modal-overlay.show, .manage-overlay.show)) .companion-chips.compact:not(.dragging) { z-index: 951; }
 body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: 47; }
 body:has(.open-prs.is-open):not(:has(.modal-overlay.show, .manage-overlay.show)) .companion-chips.compact:not(.dragging) { z-index: 953; }
 .companion-chips.compact .companion-chip { height: 23px; box-sizing: border-box; padding: 0 9px 0 3px; gap: 5px; font-size: 11px; box-shadow: none; }
