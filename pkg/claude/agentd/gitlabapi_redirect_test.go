@@ -148,3 +148,50 @@ func TestGLCheckRedirect_BoundsTheChain(t *testing.T) {
 	require.NoError(t, glCheckRedirect(https443, via[:1]))
 	assert.Equal(t, "Bearer t", https443.Header.Get("Authorization"), ":443 is the same origin as a portless base")
 }
+
+// TestGLRestPaginated_RefusesALinkOffTheInstance follows pagination at the
+// production path (real HTTP, no stubbed transport): a Link header naming
+// another port or host is refused, and nothing is requested there.
+func TestGLRestPaginated_RefusesALinkOffTheInstance(t *testing.T) {
+	var mu sync.Mutex
+	var hits []string
+	var srv *httptest.Server
+	srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits = append(hits, r.Host+r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("Link", `<`+r.URL.Query().Get("next")+`>; rel="next"`)
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(srv.Close)
+	_, port, err := net.SplitHostPort(srv.Listener.Addr().String())
+	require.NoError(t, err)
+	prev := glHTTPClient.Transport
+	glHTTPClient.Transport = &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // test-only
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
+		},
+	}
+	t.Cleanup(func() { glHTTPClient.Transport = prev })
+
+	base := "https://gitlab.test:" + port
+	for _, next := range []string{
+		"https://gitlab.test:9999/api/v4/projects/1/notes?page=2",
+		"https://elsewhere.test:" + port + "/api/v4/projects/1/notes?page=2",
+		"http://gitlab.test:" + port + "/api/v4/projects/1/notes?page=2",
+	} {
+		mu.Lock()
+		hits = nil
+		mu.Unlock()
+		session := &glProxySession{base: base, token: "glpat", projectID: "1"}
+		_, _, err := session.restPaginated(context.Background(), authoredOpenMRTimeout, glAPIRequest{
+			Path: "projects/1/notes", Query: url.Values{"next": {next}},
+		}, func([]byte) error { return nil })
+		require.Error(t, err, next)
+		assert.Contains(t, err.Error(), "outside", next)
+		mu.Lock()
+		assert.Equal(t, []string{"gitlab.test:" + port + "/api/v4/projects/1/notes"}, hits, "only the first page was requested: %s", next)
+		mu.Unlock()
+	}
+}
