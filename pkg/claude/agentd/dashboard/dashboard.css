@@ -2063,6 +2063,49 @@ body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) 
 .overlay-dock-actions { position: fixed; z-index: 951; display: flex; flex-direction: column; min-width: 190px; padding: 4px; border: 1px solid var(--cmp-line); border-radius: 8px; background: var(--cmp-bar); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
 .overlay-dock-action { padding: 6px 10px; border: 0; border-radius: 6px; background: none; color: var(--cmp-text); font: inherit; font-size: 12px; text-align: left; white-space: nowrap; cursor: pointer; }
 .overlay-dock-action:hover, .overlay-dock-action:focus-visible { background: rgba(88, 166, 255, .14); }
+/* Show all windows (overlay-expose.js): a dimmed view over everything, the
+   companion's chips included, with a card per window laid out without overlap.
+   Under toasts and tooltips (1000). */
+.overlay-expose {
+  position: fixed; inset: 0; z-index: 970; display: flex; flex-direction: column; gap: 16px; box-sizing: border-box;
+  padding: 24px 32px calc(var(--footer-h, 29px) + 24px); background: rgba(1, 4, 9, .72); backdrop-filter: blur(3px);
+  animation: overlay-expose-in .14s ease-out;
+}
+@keyframes overlay-expose-in { from { opacity: 0; } to { opacity: 1; } }
+.overlay-expose-bar { display: flex; align-items: center; justify-content: center; gap: 14px; flex: none; }
+.overlay-expose-filter {
+  width: min(360px, 60vw); padding: 7px 12px; border: 1px solid var(--cmp-line, #30363d); border-radius: 8px;
+  background: var(--cmp-bar, #161b22); color: var(--cmp-text, #e6edf3); font: inherit; font-size: 13px;
+}
+.overlay-expose-filter:focus { outline: none; border-color: #58a6ff; }
+.overlay-expose-hint { color: var(--cmp-muted, #8b949e); font-size: 12px; }
+.overlay-expose-grid {
+  flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 300px)); justify-content: center;
+  grid-auto-rows: max-content; align-content: center; gap: 18px; padding: 4px;
+}
+.overlay-expose-card {
+  display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 12px; border: 1px solid var(--cmp-line, #30363d);
+  border-radius: 10px; background: var(--cmp-bar, #161b22); color: var(--cmp-text, #e6edf3); font: inherit; text-align: left;
+  cursor: pointer; box-shadow: 0 10px 28px rgba(0, 0, 0, .45); transition: transform .1s ease-out, border-color .1s;
+}
+.overlay-expose-card.minimized { opacity: .78; border-style: dashed; }
+.overlay-expose-card.chosen, .overlay-expose-card:focus-visible { border-color: #58a6ff; transform: translateY(-2px); outline: none; opacity: 1; }
+.overlay-expose-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.overlay-expose-glyph { flex: none; font-size: 15px; }
+.overlay-expose-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
+.overlay-expose-count { flex: none; padding: 0 7px; border-radius: 8px; background: #30363d; font-size: 11px; }
+.overlay-expose-kind { color: var(--cmp-muted, #8b949e); font-size: 12px; }
+.overlay-expose-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.overlay-expose-tab { max-width: 100%; padding: 1px 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--cmp-line, #30363d); border-radius: 6px; color: var(--cmp-muted, #8b949e); font-size: 11px; }
+/* Where the window sits on the page, as a small map of it. */
+.overlay-expose-map { position: relative; display: block; aspect-ratio: 16 / 9; margin-top: 2px; border: 1px solid var(--cmp-line, #30363d); border-radius: 4px; background: rgba(110, 118, 129, .08); }
+.overlay-expose-map-window { position: absolute; box-sizing: border-box; border: 1px solid #58a6ff; border-radius: 2px; background: rgba(88, 166, 255, .22); }
+.overlay-expose-empty { grid-column: 1 / -1; margin: 0; color: var(--cmp-muted, #8b949e); text-align: center; }
+@media (prefers-reduced-motion: reduce) {
+  .overlay-expose { animation: none; }
+  .overlay-expose-card { transition: none; }
+  .overlay-expose-card.chosen, .overlay-expose-card:focus-visible { transform: none; }
+}
 /* Above the windows: a drop that splits a window lands on top of it. */
 .overlay-snap-guide {
   position: fixed; z-index: 952; pointer-events: none; border-radius: 8px;

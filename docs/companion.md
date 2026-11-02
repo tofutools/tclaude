@@ -162,6 +162,13 @@ come and go, until the last tab leaves.
 The dock's ☰ menu and the command palette offer the same actions on every window at
 once, each only when there is something for it to do:
 
+- **Show all windows** (**Ctrl+,** from anywhere, a terminal included) spreads every
+  window out side by side over a dimmed page, minimized ones and tabs waiting on the dock
+  too. Each card shows the window's kind, its active tab, how many tabs it holds, the
+  others by name, and a small map of where it sits. Type to filter by any tab's title,
+  move with the arrow keys, and press Enter or click a card to raise that window. Escape,
+  Ctrl+, again or a click outside leaves with nothing changed. Entering and leaving
+  never moves, retiles or restores a window. It is offered only with two or more windows.
 - **Untile all windows** floats every tiled window where it is, so nothing moves on
   screen, and takes it out of the split. A minimized window keeps its cell, and a
   maximized window stays maximized.
