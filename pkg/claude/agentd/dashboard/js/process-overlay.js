@@ -13,22 +13,33 @@ import { OVERLAY_FOOTER_ROOM, clampPlacement } from './overlay-window-model.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { minimizeOverlayWindow } from './overlay-instances.js';
 import { OverlayWindow } from './overlay-window.js';
-import { registerTabMoves } from './overlay-tab-moves.js';
+import { TO_WINDOW_LABEL, registerTabMoves } from './overlay-tab-moves.js';
+import { editorToWindow } from './process-editor-window.js';
 import {
   PROCESS_WINDOW_KIND, closeFloatingEditor, dockProcessEditor, floatingProcessEditor, observeFloatingHeads,
-  openFloatingEditor, processEditorHost,
+  openFloatingEditor, processEditorHost, returnLiveEditor, takeFloatingEditor,
 } from './process-editor-place.js';
 
 const html = htm.bind(h);
 
 export const TO_PROCESSES_LABEL = 'Open in the Processes tab';
 
-// A process editor goes back to the Processes tab, not the Collab one, and asks
-// before a close drops unsaved edits.
+// A process editor goes back to the Processes tab, not the Collab one, or out to
+// a browser window of its own, and asks before a close drops unsaved edits. One
+// still opening has nothing to move yet.
 registerTabMoves(PROCESS_WINDOW_KIND, (tab) => ({
   toDock: { label: TO_PROCESSES_LABEL, run: () => dockProcessEditor(tab.template) },
+  toWindow: floatingProcessEditor(tab.template) ? ({ rect, win, notify }) => moveToWindow(tab, { rect, win, notify }) : null,
   close: () => closeFloatingEditor(tab.template),
 }));
+
+// A window that never takes the draft up gives the editor back.
+function moveToWindow(tab, { rect, win, notify }) {
+  const live = takeFloatingEditor(tab.template);
+  if (!live) return;
+  const restore = (back) => void returnLiveEditor(tab.template, tab.label, back);
+  if (!editorToWindow({ id: tab.template, label: tab.label, live, rect, win, notify, restore })) restore(live);
+}
 
 // An editor wants room: most of the screen, short of the footer.
 export function processStartPlacement(viewport) {
@@ -61,7 +72,7 @@ function useFloatingEditor(slot, id, label) {
   return error;
 }
 
-export function ProcessOverlayWindow({ instance, overlay, strip, close, snapshot, fetchImpl, win }) {
+export function ProcessOverlayWindow({ instance, overlay, strip, close, snapshot, fetchImpl, notify, win }) {
   const slot = useRef(null);
   const open = !instance.minimized;
   const look = windowControlsLook(snapshot.value?.window_controls);
@@ -76,6 +87,8 @@ export function ProcessOverlayWindow({ instance, overlay, strip, close, snapshot
   const title = html`${strip}
     <button type="button" class="board-overlay-action" title="Move this editor back to the Processes tab, unsaved edits and all"
       onClick=${() => void dockProcessEditor(instance.template)}>${TO_PROCESSES_LABEL}</button>
+    <button type="button" class="board-overlay-action" title="Move this editor to a browser window of its own, unsaved edits and all"
+      onClick=${() => floatingProcessEditor(instance.template) && moveToWindow(instance, { rect: overlay.windowRef.current?.getBoundingClientRect?.(), win, notify })}>${TO_WINDOW_LABEL}</button>
     ${look === 'classic' && html`<button type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${label}`}
       onClick=${close.onClose}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="board-overlay process-overlay" frameClass="board-overlay-resize-frame"

@@ -5,13 +5,18 @@
 // the selection, the scribe dock and the version a save is checked against, so
 // nothing is saved or lost on the way.
 //
+// The mount is page-owned and re-homed between those places, as the dock's
+// stable hosts are: Preact renders each place's empty slot and the editor's own
+// tree inside the mount, and this file only creates and moves the mount.
+// dashboard-imperative-boundary: platform-layout
+//
 // The Processes tab registers itself as the host: how an editor opens there, and
 // with which options, so an overlay tab that comes back after a reload opens one
 // as the tab would. This file stays free of the editor itself, which loads only
 // when one opens.
 
 import { effect, signal } from '@preact/signals';
-import { closeOverlayTab, openOverlayWindow, overlayTabs } from './overlay-instances.js';
+import { closeOverlayTab, openOverlayWindow, overlayHostUp, overlayTabs } from './overlay-instances.js';
 
 export const PROCESS_WINDOW_KIND = 'process';
 export const processWindowId = (id) => `process:${id}`;
@@ -20,8 +25,8 @@ export const processWindowId = (id) => `process:${id}`;
 // overlay tab showing one borrows its mount, and gives it back when it hides.
 const floating = new Map();
 
-// The Processes tab: { open(mount, id, name), dock(id, live, name), canLeave(),
-// confirmDiscard() }.
+// The Processes tab: { open(mount, id, name, handoff), dock(id, live, name),
+// canLeave(), confirmDiscard() }.
 export const processEditorHost = signal(null);
 
 // registerProcessEditorHost installs the Processes tab, and returns the way to
@@ -43,6 +48,15 @@ export function processEditorMount(doc) {
   return mount;
 }
 
+// showProcessEditorError puts why an editor could not open in its mount.
+export function showProcessEditorError(mount, message) {
+  const alert = mount.ownerDocument.createElement('div');
+  alert.className = 'process-placeholder';
+  alert.setAttribute('role', 'alert');
+  alert.textContent = `Could not open editor: ${message}`;
+  mount.replaceChildren(alert);
+}
+
 export const floatingProcessTab = (id) => overlayTabs.peek().find((tab) => tab.kind === PROCESS_WINDOW_KIND && tab.template === id) || null;
 
 export function floatingProcessEditor(id) {
@@ -59,6 +73,15 @@ export function floatProcessEditor({ id, label, editor, at = null }) {
 }
 
 const opening = new Map();
+// Drafts back from a browser window of their own, by id, for the overlay tab
+// opening to take up (process-editor-window.js).
+const handoffs = new Map();
+
+// floatHandoff opens an overlay tab on a draft handed back from a window.
+export function floatHandoff(id, label, handoff) {
+  handoffs.set(id, handoff);
+  openOverlayWindow({ id: processWindowId(id), kind: PROCESS_WINDOW_KIND, template: id, label: label || id });
+}
 
 // openFloatingEditor opens an editor for an overlay tab that has none, as after a
 // reload, in a mount it puts in slot first. A tab shown twice while that loads
@@ -70,7 +93,9 @@ export function openFloatingEditor(id, label, slot) {
   if (!host) return Promise.resolve(null);
   const mount = processEditorMount(slot.ownerDocument);
   slot.appendChild(mount);
-  const pending = Promise.resolve(host.open(mount, id, label)).then((editor) => {
+  const handoff = handoffs.get(id) || null;
+  handoffs.delete(id);
+  const pending = Promise.resolve(host.open(mount, id, label, handoff)).then((editor) => {
     opening.delete(id);
     if (!editor) return null;
     floating.set(id, { mount, editor });
@@ -108,6 +133,23 @@ export async function dockProcessEditor(id) {
   return true;
 }
 
+// returnLiveEditor gives back an editor a browser window never took: to an
+// overlay window, which takes it without a question, or else to the Processes
+// tab, if the editor open there may go.
+export async function returnLiveEditor(id, label, live) {
+  if (overlayHostUp.peek()) {
+    floatProcessEditor({ id, label, editor: live.editor });
+    return;
+  }
+  const host = processEditorHost.peek();
+  if (host && (await host.canLeave())) {
+    host.dock(id, live, label);
+    return;
+  }
+  live.mount.remove();
+  live.editor?.destroy?.();
+}
+
 // closeFloatingEditor takes a floating editor off for good, asking first when it
 // holds unsaved edits.
 export async function closeFloatingEditor(id) {
@@ -140,6 +182,33 @@ export function settleFloatingEditors(tabs = overlayTabs.peek()) {
 }
 
 effect(() => settleFloatingEditors(overlayTabs.value));
+
+// The mount of the editor last clicked or focused, so the command palette
+// serves the editor the operator is at, docked or floating.
+let touched = null;
+
+// trackTouchedEditor follows that, and returns the way to stop.
+export function trackTouchedEditor(doc) {
+  const touch = (event) => {
+    const mount = event.target?.closest?.('#process-editor-canvas');
+    if (mount) touched = mount;
+  };
+  doc.addEventListener('pointerdown', touch, true);
+  doc.addEventListener('focusin', touch, true);
+  return () => {
+    doc.removeEventListener('pointerdown', touch, true);
+    doc.removeEventListener('focusin', touch, true);
+  };
+}
+
+// paletteEditor is the editor the command palette serves: a floating one the
+// operator was last at, while it shows, or else the docked one.
+export function paletteEditor(docked) {
+  if (touched?.isConnected && touched !== docked?.mount) {
+    for (const live of floating.values()) if (live.mount === touched) return live.editor;
+  }
+  return docked;
+}
 
 let headsPending = false;
 

@@ -1237,7 +1237,7 @@ export function CompanionApp({
     [CHAT_WINDOW_KIND]: { view: chatView, asksToClose: ({ agent }) => !!(agents.get(agent)?.steward && agents.get(agent).online), ...shownTerminal, fetchImpl, notify, closeTerminalPanes, onSeparateWindow: detachWindow ? detachToWindow : null, onFloat: floatTab, onStewardDown: stewardShutDown, stewardRoster, openPermissions, openSudo, openStewardHandover, showAgent, DecisionCard, StatusDot, ...chatTabTools },
     [TERMINAL_WINDOW_KIND]: { ...shownTerminal, notify },
     [BOARD_WINDOW_KIND]: { snapshot, fetchImpl, notify, win },
-    [PROCESS_WINDOW_KIND]: { snapshot, fetchImpl, win },
+    [PROCESS_WINDOW_KIND]: { snapshot, fetchImpl, notify, win },
     [START_WINDOW_KIND]: { Body: StartTab, view: () => ({ label: customName || 'Steward', lead: html`<span class="companion-avatar steward" aria-hidden="true">✦</span>`, title: customName || 'Steward' }), ...stewardHome, onResume: resumeSteward, onSummon: summonSteward },
     [DECIDE_WINDOW_KIND]: { Body: DecideTab, view: () => ({ label: `${queue.length} to decide`, lead: html`<span class="companion-decide-mark" aria-hidden="true">◆</span>`, title: 'Decisions agents are waiting on' }), snapshot, queue, askerName, fetchImpl, notify, DecisionCard },
   };

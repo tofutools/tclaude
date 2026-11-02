@@ -492,6 +492,29 @@ export class ProcessTemplateEditor {
     return true;
   }
 
+  // handoff is the draft as another page can take it up (tcl-kjl2fr): the
+  // version it was loaded at, the edits since and their history, as plain data.
+  handoff() {
+    const model = this.model;
+    return structuredClone({
+      base: this.loadedView, root: model.rootState(), rev: model.rev, serial: model.serial, savedRev: model.savedRev,
+      undo: model.undoStack, redo: model.redoStack,
+    });
+  }
+
+  // adoptHandoff takes up a draft handed off by another page's editor, which
+  // opened this one at the handoff's base version. It opens at the root graph.
+  adoptHandoff({ root, rev, serial, savedRev, undo, redo }) {
+    if (this.destroyed) return;
+    const model = this.model;
+    model.restoreState({ ...structuredClone(root), rev });
+    model.serial = Math.max(serial, rev);
+    model.savedRev = savedRev;
+    model.undoStack = structuredClone(undo);
+    model.redoStack = structuredClone(redo);
+    this.refresh({ fit: true });
+  }
+
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
@@ -2852,15 +2875,17 @@ export class ProcessTemplateEditor {
 // openTemplateEditor mounts the editor into `mount` for a template id (or a
 // blank scaffold). Returns the editor instance; throws on fetch errors so the
 // caller can render its own error state.
-export async function openTemplateEditor(mount, { id, name = '', blank = false, version, view = null, config = {} } = {}) {
+export async function openTemplateEditor(mount, { id, name = '', blank = false, version, view = null, handoff = null, config = {} } = {}) {
   // Destroy the previous instance BEFORE fetching: on a fetch failure the
   // caller renders an error into the mount, and a live ghost editor handle
   // must not keep gating navigation with its stale dirty state.
   mount.__processEditor?.destroy?.();
-  const editView = view || (blank ? blankEditView(name || id) : await fetchEditView(id, version));
+  const editView = handoff?.base || view || (blank ? blankEditView(name || id) : await fetchEditView(id, version));
   const ui = await import('./process-editor-island.js');
-  return new ProcessTemplateEditor(mount, editView, {
+  const editor = new ProcessTemplateEditor(mount, editView, {
     ...config, blank,
     ui: { createPublisher: ui.createProcessEditorPublisher, mount: ui.mountProcessEditorIsland },
   });
+  if (handoff) editor.adoptHandoff(handoff);
+  return editor;
 }

@@ -8,7 +8,8 @@ import {
 } from './process-scribe.js';
 import { randomUUID } from './insecure-origin.js';
 import { focusOverlayWindow, openOverlayWindow } from './overlay-instances.js';
-import { floatProcessEditor, floatingProcessTab } from './process-editor-place.js';
+import { floatProcessEditor, floatingProcessTab, returnLiveEditor } from './process-editor-place.js';
+import { editorToWindow, processEditorAway } from './process-editor-window.js';
 
 export function processActorPresentation(snapshot, actor) {
   const ref = String(actor || '');
@@ -155,18 +156,25 @@ export function createProcessesActions({
     if (navigate) announceLocation();
     return true;
   }
-  async function openEditor(id, blank = false, name = '', { navigate = true, view = null, readable = false, live = null } = {}) {
-    // A template is edited in one place: one floating in an overlay window comes
-    // forward there instead.
-    const floating = !blank && !live ? floatingProcessTab(id) : null;
+  async function openEditor(id, blank = false, name = '', { navigate = true, view = null, readable = false, live = null, handoff = null } = {}) {
+    // A template is edited in one place: one floating in an overlay window, or in
+    // a browser window of its own, comes forward there instead.
+    const called = name || state.view.value.templates.find((template) => template.id === id)?.name || id;
+    const elsewhere = !blank && !live && !handoff ? processEditorAway(id) : null;
+    if (elsewhere) {
+      elsewhere.focus?.();
+      state.setNotice(`${called} is open in a separate window.`);
+      return false;
+    }
+    const floating = !blank && !live && !handoff ? floatingProcessTab(id) : null;
     if (floating) {
       openOverlayWindow(floating);
       focusOverlayWindow(floating.id);
-      state.setNotice(`${floating.label || id} is open in an overlay window.`);
+      state.setNotice(`${floating.label || called} is open in an overlay window.`);
       return false;
     }
-    state.setCanvas({ kind: 'editor', id, blank, name, view, readable, live, key: `${id}:${blank}:${Date.now()}` });
-    state.setNotice(blank ? `Blank template “${name}” ready.` : live ? `${name || id} is back from its overlay window.` : `Opening ${name || id}.`);
+    state.setCanvas({ kind: 'editor', id, blank, name, view, readable, live, handoff, key: `${id}:${blank}:${Date.now()}` });
+    state.setNotice(blank ? `Blank template “${name}” ready.` : live || handoff ? `${name || id} is back, unsaved edits and all.` : `Opening ${name || id}.`);
     // `navigate: false` is the router restoring this location FROM the URL —
     // pushing it back would forge a duplicate history entry.
     if (navigate) announceLocation();
@@ -638,6 +646,24 @@ export function createProcessesActions({
     void load('templates', { quiet: true });
     return true;
   }
+  // editorToSeparateWindow moves the open editor's draft to a browser window of
+  // its own. Should that window close before it takes the draft up, the editor
+  // comes back here as it was.
+  function editorToSeparateWindow({ rect = null, win = globalThis.window } = {}) {
+    const editor = state.currentEditor();
+    const spec = state.canvas.value;
+    if (!editor || !spec?.id || spec.blank) return false;
+    const label = editor.model?.template?.name || spec.name || spec.id;
+    const live = { mount: editor.mount, editor };
+    const restore = (back) => void returnLiveEditor(spec.id, label, back);
+    if (!editorToWindow({ id: spec.id, label, live, rect, win, notify, restore })) return false;
+    live.mount.remove();
+    state.setEditor(null); state.setCanvas(null);
+    state.setNotice(`${label} is open in a separate window.`);
+    announceLocation();
+    void load('templates', { quiet: true });
+    return true;
+  }
   async function closeCanvas() {
     if (!(await canLeaveEditor())) return false;
     state.setEditor(null); state.setCanvas(null); await load(state.subtab.value);
@@ -653,6 +679,6 @@ export function createProcessesActions({
     openScribe, stopScribe, retireScribe,
     openRename, closeRename, submitRename, renameTemplate, describeTemplate, deleteTemplate,
     openCreate, closeCreate, submitCreate,
-    closeCanvas, floatEditor, refreshActive,
+    closeCanvas, floatEditor, editorToSeparateWindow, refreshActive,
   });
 }

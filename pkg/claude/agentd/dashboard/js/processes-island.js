@@ -12,7 +12,12 @@ import { fleetState } from './fleet-state.js';
 import { NodeSection, fusedPeers, openOnNode, peerRequestMutation, usePeerSections } from './fused-sections.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { overlayHostUp } from './overlay-instances.js';
-import { floatingProcessEditor, processEditorMount, processShortcutLive, registerProcessEditorHost } from './process-editor-place.js';
+import {
+  floatHandoff, floatingProcessEditor, paletteEditor, processEditorMount, processShortcutLive, registerProcessEditorHost,
+  showProcessEditorError, trackTouchedEditor,
+} from './process-editor-place.js';
+import { TO_DASHBOARD_LABEL, editorBack, heldForWindow, installProcessWindows, isProcessSolo, openerFloats, openerTakesBack, soloHandoff } from './process-editor-window.js';
+import { TO_WINDOW_LABEL } from './overlay-tab-moves.js';
 
 const html = htm.bind(h);
 
@@ -97,14 +102,6 @@ export function processEditorConfig({ mount, readable = false, state, actions, c
 
 const loadTemplateEditor = async (mount, value) => (await import('./process-editor.js')).openTemplateEditor(mount, value);
 
-function showOpenError(mount, message) {
-  const alert = mount.ownerDocument.createElement('div');
-  alert.className = 'process-placeholder';
-  alert.setAttribute('role', 'alert');
-  alert.textContent = `Could not open editor: ${message}`;
-  mount.replaceChildren(alert);
-}
-
 export function ProcessEditorBoundary({ spec, state, actions, confirmDiscard, openEditor = null }) {
   const slotRef = useRef(null);
   useEffect(() => {
@@ -116,19 +113,22 @@ export function ProcessEditorBoundary({ spec, state, actions, confirmDiscard, op
     slotRef.current.appendChild(mount);
     if (editor) state.setEditor(editor);
     else {
-      (openEditor || loadTemplateEditor)(mount, { id: spec.id, blank: spec.blank, name: spec.name, view: spec.view, config: processEditorConfig({ mount, readable: !!spec.readable, state, actions, confirmDiscard }) })
+      (openEditor || loadTemplateEditor)(mount, { id: spec.id, blank: spec.blank, name: spec.name, view: spec.view, handoff: spec.handoff?.draft || null, config: processEditorConfig({ mount, readable: !!spec.readable, state, actions, confirmDiscard }) })
         .then((value) => {
           editor = value;
           if (disposed) { editor?.destroy?.(); return; }
           state.setEditor(editor);
+          // A draft from another window is here now, and that window lets it go.
+          spec.handoff?.taken?.();
         })
-        .catch((cause) => { if (!disposed) { showOpenError(mount, cause.message); state.setNotice(`Could not open editor: ${cause.message}`); } });
+        .catch((cause) => { if (!disposed) { showProcessEditorError(mount, cause.message); state.setNotice(`Could not open editor: ${cause.message}`); } });
     }
     return () => {
       disposed = true;
       state.setEditor(null);
-      // One that went to an overlay window lives on there.
-      if (editor && floatingProcessEditor(spec.id)?.editor === editor) return;
+      // One that went to an overlay window lives on there, and one on its way to
+      // a browser window waits for it.
+      if (editor && (floatingProcessEditor(spec.id)?.editor === editor || heldForWindow(editor))) return;
       editor?.destroy?.();
       mount.remove();
     };
@@ -194,6 +194,28 @@ function FusedPeerProcesses({ peers, active, describeActor, confirm, notify, fet
   });
 }
 
+// EditorMoves are where the editor can go from here: an overlay window or a
+// browser window of its own, or, in such a window, back to the dashboard.
+function EditorMoves({ actions, state, spec }) {
+  if (isProcessSolo()) {
+    if (!openerTakesBack()) return null;
+    const back = async (overlay) => {
+      const editor = state.currentEditor();
+      if (!editor) return;
+      const label = editor.model?.template?.name || spec.name || spec.id;
+      if (!(await editorBack({ id: spec.id, label, editor, overlay }))) {
+        state.setNotice('The dashboard did not take the editor back; it stays here.');
+        return;
+      }
+      state.setEditor(null);
+      editor.destroy?.();
+      globalThis.window?.close?.();
+    };
+    return html`<button class="process-action" data-process-back type="button" title="Move this editor back to the dashboard's Processes tab, unsaved edits and all" onClick=${() => void back(false)}>${TO_DASHBOARD_LABEL}</button>${openerFloats() && html`<button class="process-action" data-process-back-overlay type="button" title="Float this editor in a window over the dashboard, unsaved edits and all" onClick=${() => void back(true)}>Open in overlay</button>`}`;
+  }
+  return html`${overlayHostUp.value && html`<button class="process-action" data-process-float type="button" title="Float this editor in a window over the dashboard, unsaved edits and all" onClick=${() => void actions.floatEditor?.()}>Open in overlay</button>`}<button class="process-action" data-process-window type="button" title="Move this editor to a browser window of its own, unsaved edits and all" onClick=${(event) => void actions.editorToSeparateWindow?.({ rect: event.currentTarget.closest('#process-editor-view')?.getBoundingClientRect?.() })}>${TO_WINDOW_LABEL}</button>`;
+}
+
 export function ProcessesApp({ state, actions, confirmDiscard, fleet = fleetState, confirm = shellConfirm, notify = shellToast, fetchFor = undefined }) {
   const current = { ...state.view.value, state };
   // A fused view adds a section per ticked peer (fused-sections.js).
@@ -207,15 +229,17 @@ export function ProcessesApp({ state, actions, confirmDiscard, fleet = fleetStat
   // Processes is an Automations subtab: render the shared Automations row with
   // Processes active. Re-picking Processes returns to the template list.
   const selectEntry = (key) => { if (key === PROCESSES_SUBTAB) void actions.activateSubtab('templates'); else openAutomationsEntry(key); };
-  return html`<div class="processes-island"><div class="process-subnav"><${AutomationsSubnav} entries=${automationsSubnavEntries(current.snapshot)} active=${PROCESSES_SUBTAB} onSelect=${selectEntry} /><span class="spacer"></span><span id="process-notice" class="process-notice" role="status">${current.notice}</span></div><${ScribeStatus} scribes=${current.scribes || []} actions=${actions} />${spec ? html`<div id="process-editor-view" class="process-canvas-view process-scroll-surface"><div class="process-canvas-tools"><button class="process-action" data-process-close-view type="button" title="Return to templates (Ctrl/Cmd+O)" onClick=${actions.closeCanvas}>← templates</button>${overlayHostUp.value && spec.id && !spec.blank && html`<button class="process-action" data-process-float type="button" title="Float this editor in a window over the dashboard, unsaved edits and all" onClick=${() => void actions.floatEditor?.()}>Open in overlay</button>`}</div><${ProcessEditorBoundary} spec=${spec} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} /></div>` : html`<${Templates} current=${current} actions=${actions} />${peers.length ? html`<${FusedPeerProcesses} peers=${peers} active=${current.active} describeActor=${actions.describeActor} confirm=${confirm} notify=${notify} fetchFor=${fetchFor} />` : null}`}${current.create && html`<${CreateDialog} key=${current.create.key} spec=${current.create} busy=${current.mutation.busy} actions=${actions} />`}${current.rename && html`<${RenameDialog} key=${current.rename.key} spec=${current.rename} busy=${current.mutation.busy} actions=${actions} />`}</div>`;
+  return html`<div class="processes-island"><div class="process-subnav"><${AutomationsSubnav} entries=${automationsSubnavEntries(current.snapshot)} active=${PROCESSES_SUBTAB} onSelect=${selectEntry} /><span class="spacer"></span><span id="process-notice" class="process-notice" role="status">${current.notice}</span></div><${ScribeStatus} scribes=${current.scribes || []} actions=${actions} />${spec ? html`<div id="process-editor-view" class="process-canvas-view process-scroll-surface"><div class="process-canvas-tools"><button class="process-action" data-process-close-view type="button" title="Return to templates (Ctrl/Cmd+O)" onClick=${actions.closeCanvas}>← templates</button>${spec.id && !spec.blank && html`<${EditorMoves} actions=${actions} state=${state} spec=${spec} />`}</div><${ProcessEditorBoundary} spec=${spec} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} /></div>` : html`<${Templates} current=${current} actions=${actions} />${peers.length ? html`<${FusedPeerProcesses} peers=${peers} active=${current.active} describeActor=${actions.describeActor} confirm=${confirm} notify=${notify} fetchFor=${fetchFor} />` : null}`}${current.create && html`<${CreateDialog} key=${current.create.key} spec=${current.create} busy=${current.mutation.busy} actions=${actions} />`}${current.rename && html`<${RenameDialog} key=${current.rename.key} spec=${current.rename} busy=${current.mutation.busy} actions=${actions} />`}</div>`;
 }
 
 export function mountProcessesIsland({ host, state, actions, confirmDiscard, registerCleanup }) {
   const unregisterCommands = registerCommandProvider('process-editor', () => {
     const view = state.view.value;
-    return !view.active || view.canvas?.kind !== 'editor' ? [] : buildProcessEditorCommands({ editor: state.currentEditor(), actions });
+    const docked = view.active && view.canvas?.kind === 'editor' ? state.currentEditor() : null;
+    return buildProcessEditorCommands({ editor: paletteEditor(docked), actions });
   });
   registerCleanup(unregisterCommands);
+  registerCleanup(trackTouchedEditor(document));
   const restore = (event) => {
     const loc = event.detail?.location;
     if (loc?.tab === 'processes') void Promise.resolve(actions.applyLocation(loc)).catch(() => false).then((ok) => { if (!ok) actions.correctLocation(); });
@@ -244,15 +268,48 @@ export function mountProcessesIsland({ host, state, actions, confirmDiscard, reg
   const unbindTemplateDnd = bindProcessTemplateDnd();
   registerCleanup(() => { unbindTemplateDnd(); setProcessTemplateDeleteHandler(null); });
   // An overlay window's process tab opens and docks its editor through here.
+  const canLeave = () => (actions.canLeaveEditor ? actions.canLeaveEditor() : true);
   registerCleanup(registerProcessEditorHost({
-    open: (mount, id, name) => loadTemplateEditor(mount, { id, name, config: processEditorConfig({ mount, state, actions, confirmDiscard }) }),
+    open: (mount, id, name, handoff = null) => loadTemplateEditor(mount, { id, name, handoff, config: processEditorConfig({ mount, state, actions, confirmDiscard }) }),
     dock: (id, live, name) => {
       void actions.openEditor(id, false, name, { live });
       document.querySelector('nav [data-tab="processes"]')?.click();
     },
-    canLeave: () => (actions.canLeaveEditor ? actions.canLeaveEditor() : true),
+    canLeave,
     confirmDiscard,
   }));
+  // A browser window of the editor's own hands its draft back here, and this
+  // page, when it is such a window, takes up the draft it opened for.
+  if (isProcessSolo()) {
+    document.body.classList.add('process-solo');
+    const solo = soloHandoff();
+    // Closing the window drops what it has not saved, so it asks first.
+    const leaving = (event) => {
+      if (!state.currentEditor()?.model?.dirty) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', leaving);
+    registerCleanup(() => window.removeEventListener('beforeunload', leaving));
+    if (solo) {
+      document.title = `${solo.label} — tclaude process`;
+      void actions.openEditor(solo.id, false, solo.label, { handoff: { draft: solo.handoff, taken: solo.taken } });
+    }
+  } else {
+    registerCleanup(installProcessWindows(window, {
+      open: async (id, name, handoff, { overlay }) => {
+        if (overlay && overlayHostUp.peek()) {
+          floatHandoff(id, name, handoff);
+          return true;
+        }
+        if (!(await canLeave())) return false;
+        await actions.openEditor(id, false, name, { handoff: { draft: handoff } });
+        document.querySelector('nav [data-tab="processes"]')?.click();
+        return true;
+      },
+      floats: () => overlayHostUp.peek(),
+    }));
+  }
   render(html`<${ProcessesApp} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} />`, host);
   registerCleanup(() => render(null, host));
 }
