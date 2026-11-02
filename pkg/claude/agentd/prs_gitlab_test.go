@@ -118,8 +118,8 @@ func TestGitLabJobCheckRun(t *testing.T) {
 		{glJob{Name: "test", Status: "failed"}, "fail", "failed"},
 		{glJob{Name: "lint", Status: "failed", AllowFailure: true}, "skipped", "failed (allowed)"},
 		{glJob{Name: "deploy", Status: "manual"}, "pending", "manual"},
-		{glJob{Name: "old", Status: "canceled"}, "skipped", "cancelled"},  // one spelling for the summary
-		{glJob{Name: "run", Status: "running"}, "pending", "in progress"}, // the dashboard's running clock
+		{glJob{Name: "old", Status: "canceled"}, "skipped", "cancelled"}, // one spelling for the summary
+		{glJob{Name: "run", Status: "running"}, "pending", "in progress"},
 		{glJob{Name: "wait", Status: "waiting_for_resource"}, "pending", "waiting for resource"},
 	}
 	for _, tc := range cases {

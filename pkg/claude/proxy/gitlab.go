@@ -531,8 +531,8 @@ func gitlabJobArtifactsCmd() *cobra.Command {
 		Use:     "artifacts",
 		Aliases: []string{"artifact-ls"},
 		Short:   "List what a job uploaded",
-		Long: "Lists what a job uploaded: GitLab's artifact entries for it (the archive, its metadata, the " +
-			"trace, a junit report…) with each one's size, and when they expire, without " +
+		Long: "Lists a job's artifact archive — its size, when it expires, and the artifact entries the job " +
+			"uploaded (the archive, its metadata, reports), not the files inside the archive — without " +
 			"downloading anything. Run it BEFORE `job download`: the proxy refuses archives over 512 MiB, " +
 			"and this is how you find out.",
 		ParamEnrich: common.DefaultParamEnricher(),

@@ -492,12 +492,16 @@ func derivePRNumber(raw string) int {
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	// GitHub: owner/repo/pull/<n>. GitLab: group/…/project/-/merge_requests/<n>.
-	if len(parts) < 4 || (parts[len(parts)-2] != "pull" && parts[len(parts)-2] != "merge_requests") {
+	if len(parts) < 4 {
 		return 0
 	}
-	// A GitLab merge request lives under the "/-/" route marker, as every
-	// other GitLab URL parser here requires; without it the path is not one.
-	if parts[len(parts)-2] == "merge_requests" && (len(parts) < 5 || parts[len(parts)-3] != "-") {
+	switch parts[len(parts)-2] {
+	case "pull":
+	case "merge_requests":
+		if parts[len(parts)-3] != "-" {
+			return 0
+		}
+	default:
 		return 0
 	}
 	// The whole segment must be the number: Sscanf would read "7suffix" as 7.

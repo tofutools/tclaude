@@ -465,10 +465,9 @@ func handleGLProxyMRList(w http.ResponseWriter, r *http.Request) {
 	head := strings.TrimSpace(body.Head)
 	out := make([]glMRListEntry, 0, len(mrs))
 	for _, mr := range mrs {
-		// --head asks for THIS project's branch. A fork's merge request into
-		// the project can carry the same branch name; with both project ids
-		// known and different, it is not the caller's branch.
-		if head != "" && mr.SourceProjectID != 0 && mr.TargetProjectID != 0 && mr.SourceProjectID != mr.TargetProjectID {
+		// --head means THIS project's branch: a fork's merge request into
+		// the project can carry the same branch name.
+		if head != "" && !glMRFromOwnProject(mr) {
 			continue
 		}
 		out = append(out, projectGLMRListEntry(mr))
@@ -1001,8 +1000,8 @@ func handleGLProxyMRComments(w http.ResponseWriter, r *http.Request) {
 		Query: url.Values{
 			"per_page": []string{"100"},
 			"order_by": []string{"created_at"},
-			// Newest first, so the page cap drops the OLDEST notes on a busy
-			// merge request, not the latest feedback; reversed below.
+			// Newest first, so a read stopped by the page cap keeps the
+			// newest notes; reversed below into reading order.
 			"sort": []string{"desc"},
 		},
 	}, func(page []byte) error {
@@ -1017,7 +1016,7 @@ func handleGLProxyMRComments(w http.ResponseWriter, r *http.Request) {
 		g.respondOrFail(w, r, "mr.comments", failure, err)
 		return
 	}
-	slices.Reverse(notes) // read newest first, printed oldest first
+	slices.Reverse(notes)
 
 	var conversation, inline strings.Builder
 	for _, n := range notes {
