@@ -64,3 +64,15 @@ test('a row\'s action dialogs step a window aside; an editor stays beneath it', 
   }
   assert.ok(!selectors.includes('#profile-editor-modal.show'), 'an agent can still be used beside an editor');
 });
+
+test('the footer\'s PR popover opens above overlay windows, and the footer chips stay on the bar (tcl-rsr7pi)', async () => {
+  const rules = await zRules();
+  const zOf = (selector) => rules.find((r) => r.selector === selector)?.z;
+  const windows = await readFile(new URL('../dashboard/js/overlay-window.js', import.meta.url), 'utf8');
+  // A window's level tops out at OVERLAY_TOP_LEVEL, and its split lines sit two above it.
+  const top = Number(windows.match(/const OVERLAY_TOP_LEVEL = (\d+);/)[1]) + 2;
+  const footer = zOf('footer:has(.open-prs.is-open)');
+  assert.ok(footer > top, `the footer carries the popover over the windows (${footer} > ${top})`);
+  assert.ok(footer > zOf('.overlay-dock-actions'), 'and over the overlay dock and its menu');
+  assert.ok(zOf('body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging)') > footer, 'chips in the footer stay above the lifted bar');
+});
