@@ -137,3 +137,28 @@ func TestExternalStewardDashboard_OnTheRoster(t *testing.T) {
 	}
 	t.Fatalf("not on the roster: %s", rec.Body.String())
 }
+
+// Bulk resume would otherwise count it as an offline agent and fail on it, every
+// time, for as long as it exists.
+func TestExternalStewardDashboard_BulkResumeLeavesItOut(t *testing.T) {
+	s := newExternalStewardFlow(t, true)
+	s.create("assistant")
+	stewards, err := db.ListExternalStewards()
+	require.NoError(t, err)
+	conv := stewards[0].ConvID
+	group := s.f.HaveGroup("crew")
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: group.ID, ConvID: conv}))
+	dashboard := agentd.BuildDashboardHandlerForTest()
+
+	for _, body := range []map[string]any{{"scope": "all"}, {"scope": "group", "group": "crew"}} {
+		code, resp := postPowerOn(t, dashboard, body)
+		require.Equal(t, http.StatusOK, code)
+		assert.Zero(t, resp.Targeted, body)
+		assert.Zero(t, resp.Failed, body)
+		assert.Empty(t, outcomeFor(resp.Agents, conv), body)
+	}
+
+	rec := testharness.Serve(s.f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/groups/crew/resume", map[string]any{})))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "skipped:external_steward")
+}

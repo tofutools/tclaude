@@ -1348,7 +1348,7 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 	for _, member := range members {
 		online, _ := convLiveStatus(member.ConvID, alive)
-		if member.ConvID != "" && !online {
+		if member.ConvID != "" && !online && !db.IsExternalStewardConv(member.ConvID) {
 			affected = append(affected, member.ConvID)
 			selected[member.ConvID] = true
 		}
@@ -1368,8 +1368,12 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	out.Members = mapAgentsConcurrently(members, powerOnConcurrency,
 		func(_ int, m *db.AgentGroupMember) (memberOpResult, bool) {
 			if m.ConvID != "" && !selected[m.ConvID] {
+				action := "skipped:already_online"
+				if db.IsExternalStewardConv(m.ConvID) {
+					action = "skipped:external_steward"
+				}
 				return memberOpResult{ConvID: m.ConvID, AgentID: peerAgentID(m.ConvID),
-					Title: agent.FreshTitle(m.ConvID), Action: "skipped:already_online"}, true
+					Title: agent.FreshTitle(m.ConvID), Action: action}, true
 			}
 			res := resumeOneConvLocked(m.ConvID, false)
 			confirmResumedConvOnline(m.ConvID, &res)

@@ -83,6 +83,30 @@ test('renew shows the new credential once', async (t) => {
   await mounted.unmount();
 });
 
+test('a credential on screen cannot be replaced by another', async (t) => {
+  const { calls, mounted, add, button, settle } = await setup(t, { stewards: [row] });
+  await settle(() => button('Renew').click());
+  assert.equal(button('Renew').disabled, true);
+  assert.equal(button('Add').disabled, true);
+  await add('second');
+  assert.equal(calls.filter(call => call.path === '/api/external-stewards' && call.body).length, 0, 'Enter in the form sends nothing');
+  assert.equal(mounted.container.querySelector('[data-capture-mask]')?.textContent, `${CREDENTIAL}2`);
+  await settle(() => button('Done').click());
+  assert.equal(button('Renew').disabled, false);
+  await mounted.unmount();
+});
+
+test('Copied does not carry over to the next credential', async (t) => {
+  const { mounted, button, settle } = await setup(t, { stewards: [row] });
+  await settle(() => button('Renew').click());
+  await settle(() => button('Copy').click());
+  assert.ok(button('Copied'));
+  await settle(() => button('Done').click());
+  await settle(() => button('Renew').click());
+  assert.ok(button('Copy'));
+  await mounted.unmount();
+});
+
 test('a refusal shows, and the name stays to fix', async (t) => {
   const { mounted, add } = await setup(t);
   await add('taken');
@@ -96,6 +120,7 @@ test('while off, nothing can be added and revoke still works', async (t) => {
   assert.equal(mounted.container.querySelector('form'), null);
   assert.equal(button('Revoke').disabled, false);
   assert.match(mounted.container.textContent, /still revoke/);
+  assert.equal(button('Renew').disabled, true, 'the daemon refuses a renewal while off');
   await mounted.unmount();
 });
 

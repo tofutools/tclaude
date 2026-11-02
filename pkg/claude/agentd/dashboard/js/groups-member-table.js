@@ -953,9 +953,11 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
   const label = member.title || member.conv_id;
   const canRemote = harnessCanRemoteControl(snapshot, member.state?.harness);
   const prefill = JSON.stringify({ targetMode: 'solo', target: member.agent_id || member.conv_id, owner: member.agent_id || member.conv_id });
+  // No pane, no launch and no sudo: these could only fail for an external steward.
+  const runsHere = !member.external_steward;
   return html`
     <${MenuButton} member=${member} act="view-agent-messages" regular="view messages" wizard="view missives" title=${wizardCopy("Open this agent's messages in the Messages tab", "Open this hero's missives in the Messages tab")} />
-    <${MenuButton} member=${member} act="terminal-chooser" attrs=${{ 'data-cwd': member.state?.cwd || member.cwd || '' }} regular="terminals & windows…" wizard="🔮 scrying portals…" title=${wizardCopy("Open a terminal: attach to this agent's live session, or a separate shell in its working directory — as a native window or in the browser (term / web term / open window / web window)", "Open a scrying portal: gaze into this hero's live session, or open a shell of your own in its lair — as a mortal window or a browser crystal (term / web term / open window / web window)")} />
+    ${runsHere && html`<${MenuButton} member=${member} act="terminal-chooser" attrs=${{ 'data-cwd': member.state?.cwd || member.cwd || '' }} regular="terminals & windows…" wizard="🔮 scrying portals…" title=${wizardCopy("Open a terminal: attach to this agent's live session, or a separate shell in its working directory — as a native window or in the browser (term / web term / open window / web window)", "Open a scrying portal: gaze into this hero's live session, or open a shell of your own in its lair — as a mortal window or a browser crystal (term / web term / open window / web window)")} />`}
     <${MenuButton} member=${member} act="export-summary" regular="summary…" wizard="inscribe scroll…" disabled=${!member.online} title=${member.online ? wizardCopy('Ask this agent to produce a shareable export of the conversation (a summary / report) and download it here. Multiple files are zipped automatically.', 'Ask this hero to inscribe a shareable account of its conversation and bring it here. Multiple scrolls are bundled automatically.') : wizardCopy('Export needs a running agent — it produces the file in its own session. Unavailable while the agent is offline.', 'The hero must be channeling to inscribe an export. Unavailable while it slumbers.')} />
     <${MenuButton} member=${member} act="debug-export" regular="export debug info" wizard="inscribe ward diagnostics" title=${wizardCopy('Download the requested, resolved, and running launch configurations, including exact sandbox implementation and composed profiles. Task text and authorization tokens are redacted.', 'Download this hero\'s requested, resolved, and running summoning configurations, including exact ward implementation and composed profiles. Quest text and authorization runes are redacted.')} />
     <${MenuSeparator} />
@@ -967,8 +969,8 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
     } }} regular="edit" wizard="enchant" title=${wizardCopy('Edit this agent — title, role, description, ownership, permissions', 'Enchant this hero — title, class, description, party ownership, and grimoire')} />
       <${MenuButton} member=${member} group=${group} act=${member.owner ? 'revoke-owner' : 'grant-owner'} className=${member.owner ? 'warn' : undefined} regular=${member.owner ? 'revoke owner' : 'make owner'} wizard=${member.owner ? 'revoke party owner' : 'make party owner'} title=${wizardCopy(member.owner ? 'Revoke group owner status' : 'Make this agent an owner of the group', member.owner ? 'Revoke party owner status' : 'Make this hero an owner of the party')} />` : null}
     <${MenuButton} member=${member} selector="conv" act="perm-edit" regular="permissions" wizard="grimoire" title=${wizardCopy("Edit this agent's permanent permissions (grant / deny / inherit-default)", "Open this hero's grimoire of permanent boons and bindings")} />
-    <${MenuButton} member=${member} act="sudo-grant" regular="+ sudo" wizard="+ sudo" title=${wizardCopy('Grant a time-bounded sudo elevation to this agent', 'Grant this hero a time-bounded sudo boon')} />
-    <${MakeStewardMenuItem} member=${member} group=${group} snapshot=${snapshot} />
+    ${runsHere && html`<${MenuButton} member=${member} act="sudo-grant" regular="+ sudo" wizard="+ sudo" title=${wizardCopy('Grant a time-bounded sudo elevation to this agent', 'Grant this hero a time-bounded sudo boon')} />`}
+    ${runsHere && html`<${MakeStewardMenuItem} member=${member} group=${group} snapshot=${snapshot} />`}
     <${NotifyMenuItem} member=${member} />
     <${RemoteMenuItem} member=${member} canRemote=${canRemote} />
     <${FastModeMenuItem} member=${member} />
@@ -982,11 +984,11 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
     <${MenuSeparator} />
     ${snapshot?.peer_view || (group?.fleet_node && !group.fleet_node.local) ? html`<${MenuButton} member=${member} act="clone" regular="clone" wizard="mirror hero" title=${wizardCopy("Ask the peer to fork a sibling of this agent that inherits its groups and permissions. The original keeps running.", "Ask the peer to mirror this hero into a sibling that inherits its parties and boons. The original keeps channeling.")} />` : null}
     <${CompactMenuItem} member=${member} snapshot=${snapshot} />
-    <${MenuButton} member=${member} act="reincarnate" regular="reincarnate" wizard="reincarnate hero" title=${wizardCopy('Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.', 'Reincarnate this hero — by default ask it to write its own handoff; or force its immediate return in a fresh vessel.')} />
-    <${RestartMenuItem} member=${member} />
-    <${SubscriptionMenuItems} member=${member} />
-    <${SandboxRestartMenuItem} member=${member} />
-    <${SandboxImplMenuItem} member=${member} />
+    ${runsHere && html`<${MenuButton} member=${member} act="reincarnate" regular="reincarnate" wizard="reincarnate hero" title=${wizardCopy('Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.', 'Reincarnate this hero — by default ask it to write its own handoff; or force its immediate return in a fresh vessel.')} />`}
+    ${runsHere && html`<${RestartMenuItem} member=${member} />`}
+    ${runsHere && html`<${SubscriptionMenuItems} member=${member} />`}
+    ${runsHere && html`<${SandboxRestartMenuItem} member=${member} />`}
+    ${runsHere && html`<${SandboxImplMenuItem} member=${member} />`}
     <${MenuSeparator} />
     <${SendElsewhereItems} member=${member} group=${ungrouped ? null : group} snapshot=${snapshot} />
     <${MenuSeparator} />

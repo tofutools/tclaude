@@ -934,7 +934,7 @@ export function buildCommands(snapshot) {
           + ' slumber sleep rest lull dormant hero',
         run: () => openShutdownAgentDialog(sel, label),
       });
-    } else {
+    } else if (!a.external_steward) {
       cmds.push({
         id: `agent-resume:${sel}`,
         grant: { act: 'dot-toggle', agent: a.agent_id || '', dataset: { online: '0' } },

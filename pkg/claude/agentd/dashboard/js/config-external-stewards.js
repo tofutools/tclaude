@@ -44,7 +44,7 @@ function IssuedCredential({ issued, onDone, copy }) {
   </div>`;
 }
 
-function StewardRow({ steward, act, busy }) {
+function StewardRow({ steward, act, busy, renewable }) {
   const live = steward.credentials.some(credential => credential.live);
   return html`<tr>
     <td>${steward.name}${steward.retired ? ' (retired)' : ''}</td>
@@ -52,7 +52,7 @@ function StewardRow({ steward, act, busy }) {
       ? steward.credentials.map(credential => html`<div key=${credential.token_id}>${expiryLabel(credential)}</div>`)
       : 'None'}</td>
     <td class="cfg-steward-row-actions">${!steward.retired && html`
-      <button type="button" class="cfg-list-add" disabled=${busy} title="Make a new credential. The old ones keep working until they expire."
+      <button type="button" class="cfg-list-add" disabled=${busy || !renewable} title="Make a new credential. The old ones keep working until they expire."
         onClick=${() => act(steward.name, 'renew')}>Renew</button>
       <button type="button" class="cfg-list-add" disabled=${busy || !live} title="End all of its credentials on the next request"
         onClick=${() => act(steward.name, 'revoke')}>Revoke</button>`}
@@ -101,6 +101,8 @@ export function ExternalStewardManager({ enabled, fetchImpl = globalThis.fetch, 
   };
   const add = async (event) => {
     event.preventDefault();
+    // A second credential would replace the one on screen, which can't be shown again.
+    if (issued) return;
     const label = name.trim();
     const body = { name: label };
     if (days) body.expires_days = Number(days);
@@ -108,11 +110,11 @@ export function ExternalStewardManager({ enabled, fetchImpl = globalThis.fetch, 
   };
 
   return html`<div class="cfg-steward-manager">
-    ${issued && html`<${IssuedCredential} issued=${issued} copy=${copy} onDone=${() => setIssued(null)} />`}
+    ${issued && html`<${IssuedCredential} key=${issued.credential} issued=${issued} copy=${copy} onDone=${() => setIssued(null)} />`}
     ${error && html`<div class="cfg-steward-error" role="alert">${error}</div>`}
     ${stewards.length > 0 && html`<table class="cfg-tool-list">
       <thead><tr><th scope="col">Name</th><th scope="col">Credentials</th><th scope="col">Actions</th></tr></thead>
-      <tbody>${stewards.map(steward => html`<${StewardRow} key=${steward.agent_id} steward=${steward} act=${act} busy=${busy} />`)}</tbody>
+      <tbody>${stewards.map(steward => html`<${StewardRow} key=${steward.agent_id} steward=${steward} act=${act} busy=${busy} renewable=${enabled && !issued} />`)}</tbody>
     </table>`}
     ${enabled
       ? html`<form class="cfg-steward-add" onSubmit=${add}>
@@ -121,7 +123,7 @@ export function ExternalStewardManager({ enabled, fetchImpl = globalThis.fetch, 
           <input type="number" aria-label="Days until the credential expires" placeholder="30" min="1" max="365"
             value=${days} onInput=${event => setDays(event.currentTarget.value)} />
           <span>days</span>
-          <button type="submit" class="cfg-list-add" disabled=${busy}>Add</button>
+          <button type="submit" class="cfg-list-add" disabled=${busy || !!issued}>Add</button>
         </form>`
       : html`<div class="cfg-row-summary">Turn this on and save to add one. You can still revoke credentials while it's off.</div>`}
   </div>`;

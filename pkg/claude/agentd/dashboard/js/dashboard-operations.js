@@ -123,11 +123,11 @@ export async function powerOnScope(scope, groupName, node = '') {
   let metaLine = '';
   if (scope === 'group') {
     const g = (snap.groups || []).find(x => x.name === groupName);
-    offline = g ? (g.members || []).filter(m => !m.online).length : 0;
+    offline = g ? (g.members || []).filter(m => !m.online && !m.external_steward).length : 0;
     where = `group "${groupName}"`;
     metaLine = groupName;
   } else {
-    offline = (snap.agents || []).filter(a => !a.online).length;
+    offline = (snap.agents || []).filter(a => !a.online && !a.external_steward).length;
     where = 'the whole dashboard';
     metaLine = 'every group + ungrouped agents';
   }
