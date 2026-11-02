@@ -2,6 +2,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { accessHint } from './fleet-harness-model.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -53,8 +54,8 @@ function ScriptRow({ head, node, script, job, onCheck, onUpdate }) {
       </details>`}
     </td>
     <td class="fa-acts">
-      ${script.has_status && html`<button type="button" data-fa="script-check" disabled=${script.state === 'checking'} onClick=${() => onCheck(node, script)}>Check</button>`}
-      ${script.has_update && html`<button type="button" data-fa="script-update" class=${v.pending ? 'primary' : ''} disabled=${running} onClick=${() => onUpdate(node, script)}>${running ? 'Updating…' : 'Update…'}</button>`}
+      ${script.has_status && html`<${Button} size="sm" data-fa="script-check" disabled=${script.state === 'checking'} onClick=${() => onCheck(node, script)}>Check<//>`}
+      ${script.has_update && html`<${Button} size="sm" data-fa="script-update" variant=${v.pending ? 'primary' : ''} disabled=${running} onClick=${() => onUpdate(node, script)}>${running ? 'Updating…' : 'Update…'}<//>`}
     </td>
   </tr>`;
 }
@@ -103,7 +104,7 @@ export function UpdateScriptsSection({ nodes, actions, confirm, toast, timers = 
         const latest = new Map();
         for (const j of d.data?.jobs || []) if (!latest.has(j.script)) latest.set(j.script, j);
         const head = html`<td rowspan=${Math.max(scripts.length, 1)}>${node.local ? '⌂ ' : ''}<b>${node.label}</b>
-          ${scripts.some((s) => s.has_status) && html` <button type="button" class="fa-link" data-fa="script-check-all" onClick=${() => onCheck(node, null)}>check all</button>`}</td>`;
+          ${scripts.some((s) => s.has_status) && html` <${Button} size="sm" variant="link" class="fa-link" data-fa="script-check-all" onClick=${() => onCheck(node, null)}>check all<//>`}</td>`;
         if (d.error) return html`<tr key=${node.id} data-node=${node.id}>${head}<td colspan="3" class="muted">${accessHint(d.error, 'node.update')}${d.error?.status === 404 ? ' (no update scripts on this version)' : ''}</td></tr>`;
         if (!d.data) return html`<tr key=${node.id} data-node=${node.id}>${head}<td colspan="3" class="muted">loading…</td></tr>`;
         if (d.data.error) return html`<tr key=${node.id} data-node=${node.id}>${head}<td colspan="3" class="fa-danger">${d.data.error}</td></tr>`;

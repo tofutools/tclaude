@@ -1,6 +1,7 @@
 import { Fragment, h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { useDialogFocus } from './dialog-focus.js';
 import { relTime } from './helpers.js';
 
@@ -91,11 +92,11 @@ function CaptureRow({ capture, actions, deleting, now }) {
         title="Every file of this capture as one zip — to keep or hand to someone">zip ⤓</a>`}
     </div></td>
     <td class="profile-actions">
-      ${shareable && html`<button type="button" class="tool" title="Send this capture's files to an agent as message attachments"
-        aria-label=${`Share capture ${capture.id} with an agent`} onClick=${() => actions.share(capture)}>share…</button>`}
-      <button type="button" class="tool" disabled=${!done && capture.status === 'running' || deleting === capture.id}
+      ${shareable && html`<${Button} size="sm" title="Send this capture's files to an agent as message attachments"
+        aria-label=${`Share capture ${capture.id} with an agent`} onClick=${() => actions.share(capture)}>share…<//>`}
+      <${Button} size="sm" disabled=${!done && capture.status === 'running' || deleting === capture.id}
         title="Delete this capture's files" aria-label=${`Delete capture ${capture.id}`}
-        onClick=${() => actions.remove(capture)}>${deleting === capture.id ? '…' : '✕'}</button>
+        onClick=${() => actions.remove(capture)}>${deleting === capture.id ? '…' : '✕'}<//>
     </td>
   </tr>`;
 }
@@ -127,9 +128,9 @@ function ProfileModal({ state, actions }) {
           value=${draft.label} onInput=${field('label')} /></label>
       <div class="cron-create-error" id="profile-modal-error" role=${draft.error ? 'alert' : undefined}>${draft.error}</div>
       <div class="modal-buttons">
-        <button id="profile-modal-cancel" type="button" onClick=${close}>Cancel</button><span class="spacer"></span>
-        <button id="profile-modal-submit" class="primary" type="submit" disabled=${draft.submitting}>
-          ${draft.submitting ? 'Starting…' : 'Start profiling'}</button>
+        <${Button} id="profile-modal-cancel" onClick=${close}>Cancel</${Button}><span class="spacer"></span>
+        <${Button} variant="primary" id="profile-modal-submit" type="submit" disabled=${draft.submitting}>
+          ${draft.submitting ? 'Starting…' : 'Start profiling'}</${Button}>
       </div>
     </form>
   </div>`;
@@ -196,9 +197,9 @@ export function ProfilesApp({
         <strong>Daemon profiling</strong>
         <span class="muted">CPU/heap/goroutine profiles of this agentd process, viewable in pprof's web UI.</span>
         <span class="spacer"></span>
-        <button class="tool" id="profile-start" type="button" disabled=${running}
+        <${Button} id="profile-start" disabled=${running}
           title=${running ? 'A capture is already running' : 'Capture a CPU profile and friends of this daemon'}
-          onClick=${() => state.openModal()}>${running ? '⏱ profiling…' : '⏱ Profile daemon…'}</button>
+          onClick=${() => state.openModal()}>${running ? '⏱ profiling…' : '⏱ Profile daemon…'}<//>
       </div>
       ${current.notice && html`<div class="muted profile-notice" aria-live="polite">${current.notice}</div>`}
       ${current.loaded && current.request.phase === 'error' && html`<div class="island-error" role="alert">Refresh failed: ${current.request.error}</div>`}

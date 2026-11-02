@@ -62,7 +62,7 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	present(`id="profile-export-list"`, "the profile export checklist")
 	present(`id="profile-import-modal"`, "the profile import modal")
 	present(`id="profile-import-preview"`, "the profile import preview")
-	if count := strings.Count(dashboardAssets, `class="tool profile-transfer-preview-button"`); count != 2 {
+	if count := strings.Count(dashboardAssets, `class="profile-transfer-preview-button"`); count != 2 {
 		t.Errorf("dashboard has %d styled import Preview actions, want 2 (spawn and sandbox profiles)", count)
 	}
 	present(".profile-transfer-preview-button {\n  align-self: flex-start;", "the import Preview action stays compact instead of stretching across the modal")
@@ -81,7 +81,7 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	// Duplicating a profile is a first-class listing action, and it routes
 	// through the ordinary editor so the copy is reviewed and validated like any
 	// hand-written profile rather than POSTed straight from the card.
-	present(`class="tool profile-clone"`, "clone action in each spawn-profile card")
+	present(`class="profile-clone"`, "clone action in each spawn-profile card")
 	present(`actions.openProfileClone(item)`, "clone action opens the profile editor")
 	present(`function openProfileClone(`, "clone action is owned by the management actions")
 	present(`{ editExisting: false, cloneSourceName: source.name }`, "clone editor keeps create semantics and remembers its source")

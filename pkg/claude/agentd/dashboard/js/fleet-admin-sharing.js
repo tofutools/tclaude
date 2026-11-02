@@ -9,6 +9,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { RequestAccessDialog, USAGE_PERM, createPeerAccessActions, parseUSD } from './peer-access.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 const DAY_MS = 86400000;
@@ -105,14 +106,14 @@ export function SharingPage({ actions, confirm, toast, now = Date.now(), peerAcc
   const receivedErrors = Object.entries(received?.errors || {});
   const givenRows = given?.shares || [];
   return html`<div class="fa-sharing">
-    ${globalThis.__tclaudeRemoteNode?.id ? '' : html`<p class="fa-sharing-fleet modal-hint">Budgets across nodes — fleet and node-pool spend caps, and what each node shares with you — live in <button type="button" class="fa-link" id="fa-open-fleet-usage" onClick=${() => openUsageRulesManager({ tab: 'fleet' })}>Fleet usage limits…</button></p>`}
-    <h4 class="fa-h">Shared with you <span class="muted">— peers paying for your agents' model calls</span> <button type="button" class="fa-link" onClick=${reload}>refresh</button></h4>
+    ${globalThis.__tclaudeRemoteNode?.id ? '' : html`<p class="fa-sharing-fleet modal-hint">Budgets across nodes — fleet and node-pool spend caps, and what each node shares with you — live in <${Button} size="sm" variant="link" class="fa-link" id="fa-open-fleet-usage" onClick=${() => openUsageRulesManager({ tab: 'fleet' })}>Fleet usage limits…<//></p>`}
+    <h4 class="fa-h">Shared with you <span class="muted">— peers paying for your agents' model calls</span> <${Button} size="sm" variant="link" class="fa-link" onClick=${reload}>refresh<//></h4>
     ${received?.error ? html`<div class="fa-danger">${received.error}</div>` : !received ? html`<div class="empty">Asking peers…</div>`
       : receivedRows.length === 0 ? html`<div class="empty">${received.offline ? 'Federation is off.' : 'No peer shares usage with you. Ask one from its peer view (ask for usage…).'}</div>` : html`
     <table class="fa-table" id="fleet-shares-received">
       <thead><tr><th>Peer</th><th>Gateway</th><th>Spent</th><th>Ends</th><th></th></tr></thead>
       <tbody>${receivedRows.map((s) => html`<${ShareRow} key=${`${s.peer}/${s.gateway}`} share=${s} now=${now}>
-        <button type="button" data-fa="ask-more" onClick=${() => setAsking(s)}>Ask for more…</button></${ShareRow}>`)}</tbody>
+        <${Button} size="sm" data-fa="ask-more" onClick=${() => setAsking(s)}>Ask for more…<//></${ShareRow}>`)}</tbody>
     </table>`}
     ${receivedErrors.length > 0 && html`<div class="muted">Could not ask: ${receivedErrors.map(([p, e]) => `${p} (${e})`).join(', ')}</div>`}
     <h4 class="fa-h">You share <span class="muted">— peers whose agents bill your model gateways</span></h4>
@@ -122,11 +123,11 @@ export function SharingPage({ actions, confirm, toast, now = Date.now(), peerAcc
       <thead><tr><th>Peer</th><th>Gateway</th><th>Spent</th><th>Ends</th><th></th></tr></thead>
       <tbody>${givenRows.map((s) => html`<${ShareRow} key=${`${s.peer}/${s.gateway}`} share=${s} now=${now}>
         ${s.since && s.pool && html`<span class="muted" title="Change it on Peer grants, as that node group's grant">from node group ${s.pool}</span>`}
-        ${s.since && !s.pool && html`${s.grant_expires_at && html`<button type="button" data-fa="extend-share" onClick=${() => extend(s)}>+7 days…</button>`}
+        ${s.since && !s.pool && html`${s.grant_expires_at && html`<${Button} size="sm" data-fa="extend-share" onClick=${() => extend(s)}>+7 days…<//>`}
         ${s.max_usd > 0 && html`<input class="fa-share-add" aria-label=${`Dollars to add for ${s.peer_name || s.peer}`} placeholder="+$" size="5" inputmode="decimal"
           value=${raise[s.peer + s.gateway] || ''} onInput=${(e) => setRaise({ ...raise, [s.peer + s.gateway]: e.currentTarget.value })} />
-          <button type="button" data-fa="raise-share" onClick=${() => raiseBy(s)}>Raise…</button>`}
-        <button type="button" class="fa-danger" data-fa="revoke-share" onClick=${() => revoke(s)}>Revoke…</button>`}</${ShareRow}>`)}</tbody>
+          <${Button} size="sm" data-fa="raise-share" onClick=${() => raiseBy(s)}>Raise…<//>`}
+        <${Button} size="sm" variant="ghost danger" data-fa="revoke-share" onClick=${() => revoke(s)}>Revoke…<//>`}</${ShareRow}>`)}</tbody>
     </table>`}
     <div class="muted fa-cli-note">You are notified when a share reaches 80% and 100% of its cap and when it ends, on both sides. Dollars are what the gateway charges from the provider's token counts; use an API key for a shared gateway, not a subscription login. CLI: <code>tclaude federation shares [--given]</code>.</div>
     ${asking && html`<${RequestAccessDialog} node=${asking.peer_name || asking.peer} perm=${USAGE_PERM} gateway=${String(asking.scope || '').startsWith('http_proxy=') ? asking.gateway : ''} onClose=${() => setAsking(null)} actions=${peerAccess(asking.peer)} />`}

@@ -107,19 +107,19 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	// wearing the app-default grey. Pin the field + a couple of the satellite
 	// controls; the general rules are the fallback beneath the id-scoped Config
 	// and profile-modal bars, so a dropped line silently un-themes ~6 tabs.
-	must("body.wizard .filter-bar input {", "the general filter-bar field is themed in wizard mode")
-	must("body.wizard .filter-bar label.filter-toggle select {", "filter-bar dropdowns (audit/logs) are themed")
-	must("body.wizard .filter-bar button.primary {", "unscoped filter-bar primary levers are gilded")
+	must("body.wizard .filter-bar input:where(:not(.ui-input)) {", "the general filter-bar field is themed in wizard mode")
+	must("body.wizard .filter-bar label.filter-toggle select:where(:not(.ui-select)) {", "filter-bar dropdowns (audit/logs) are themed")
+	must("body.wizard .filter-bar button.primary:where(:not(.ui-btn)) {", "unscoped filter-bar primary levers are gilded")
 	// The Treasury's bespoke span selector opts out of the generic tool re-skin
 	// so the Costs re-skin can gild it itself — pin the exclusion.
-	must("body.wizard .filter-bar:not(#costs-spans) button.tool {", "the costs span control opts out of the generic tool re-skin")
+	must("body.wizard .filter-bar:not(#costs-spans) button.tool:where(:not(.ui-btn)) {", "the costs span control opts out of the generic tool re-skin")
 
 	// The Wards (Access) tab's inset sub-nav (Permissions / Slug registry /
 	// Sudo) is themed too — frame + active chamber.
 	must("body.wizard .access-subnav {", "the access sub-nav frame is themed in wizard mode")
 	must("body.wizard .access-subtab.active {", "the active access sub-tab is gilt-lit in wizard mode")
 	must("body.wizard #access-slugs .filter-bar {", "the slug-registry filter gets a scoped wizard treatment")
-	must("body.wizard #access-slugs .filter-bar input:focus {", "the slug-registry scrying field has an arcane focus state")
+	must("body.wizard #access-slugs .filter-bar input:where(:not(.ui-input)):focus {", "the slug-registry scrying field has an arcane focus state")
 }
 
 // TestDashboardHTML_WizardTabNames pins the arcane nav-tab names — every tab
@@ -523,7 +523,7 @@ func TestDashboardHTML_WizardEnvironmentEditors(t *testing.T) {
 		"the consolidated party editor carries a wizard title")
 	must(`id="group-settings-submit"`, "the party editor submit lever has a stable styling hook")
 	must(`id="group-settings-default-cwd-browse"`, "the party sanctum has a directory-picker affordance")
-	must("button:not(#group-settings-submit):not(.cron-create-error-x)",
+	must("button:where(:not(.ui-btn)):not(#group-settings-submit):not(.cron-create-error-x)",
 		"the party button skin preserves the error banner's ghost dismiss control")
 }
 
@@ -621,7 +621,7 @@ func TestDashboardHTML_WizardProfilesManage(t *testing.T) {
 
 	// The overlay surface + the gilded "+ new profile" action, both scoped.
 	must("body.wizard #profiles-manage-modal .manage-modal", "the profiles overlay surface is re-skinned")
-	must("body.wizard #profiles-manage-modal #profile-create-open.primary", "the + new profile button gets the gilded-arcane treatment")
+	must("body.wizard #profiles-manage-modal #profile-create-open.ui-btn-primary", "the + new profile button gets the gilded-arcane treatment")
 	must("body.wizard #profiles-manage-modal .template-card", "the profile cards are re-skinned")
 	must("body.wizard :is(#profile-import-modal, #sandbox-profile-import-modal) .profile-transfer-preview-button", "the profile import Preview action has a scoped wizard skin")
 }
@@ -714,7 +714,7 @@ func TestDashboardHTML_WizardSandboxProfiles(t *testing.T) {
 
 	// The dialog surfaces are re-skinned arcane, each scoped to its own id.
 	must("body.wizard #sandbox-profiles-manage-modal .manage-modal", "the ward overlay surface is re-skinned")
-	must("body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.primary", "the + new ward button gets the gilded-arcane treatment")
+	must("body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.ui-btn-primary", "the + new ward button gets the gilded-arcane treatment")
 	must("body.wizard #sandbox-profile-editor-modal .cron-create-modal", "the ward editor surface is re-skinned")
 	must(`content: "🛡 Inscribe ward!"`, "the ward editor submit reads 'Inscribe ward!' in wizard mode")
 	must("body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal", "the ward export/import surfaces are re-skinned")
@@ -750,11 +750,17 @@ func TestDashboardHTML_WizardPermEditor(t *testing.T) {
 	must("body.wizard #perm-edit-modal .perm-edit-modal", "the permissions editor surface is re-skinned")
 
 	// The active Grant/Deny tri-state fills are the safety signal and must stay
-	// their base green/red. The re-skin protects them by repainting only the
-	// INACTIVE cells (:not(.active)) — pin that mechanism so a refactor to a
-	// blanket `.perm-tristate button` rule (which would swallow the green/red via
-	// the id's specificity) trips here.
-	must("body.wizard #perm-edit-modal .perm-tristate button:not(.active)", "only inactive tri-state cells are repainted (Grant/Deny keep their green/red)")
+	// their base green/red. The tri-state is a standard .ui-seg, themed through
+	// the wizard tokens, so the re-skin repaints only the frame and the neutral
+	// Default; a blanket `.perm-tristate button` rule would swallow the green/red
+	// via the id's specificity.
+	must(".perm-tristate .ui-btn.active[data-effect=grant] {", "Grant keeps its green")
+	must(".perm-tristate .ui-btn.active[data-effect=deny] {", "Deny keeps its red")
+	must(".perm-tristate .ui-btn.active[data-effect=grant] { --ui-pressed-bg: #238636;", "Grant stays green while hovered (the pressed hover paints --ui-pressed-bg)")
+	must(".perm-tristate .ui-btn.active[data-effect=deny] { --ui-pressed-bg: #da3633;", "Deny stays red while hovered")
+	if dashboardSourceContains(dashboardAssets, "body.wizard #perm-edit-modal .perm-tristate button") || dashboardSourceContains(dashboardAssets, "body.wizard #context-features-modal .perm-tristate button") {
+		t.Errorf("a wizard rule repaints the tri-state buttons; the standard segment styles them")
+	}
 }
 
 // TestDashboardCSS_WizardPermEditorScoped guards that the wizard perm-editor
@@ -857,7 +863,6 @@ func TestDashboardHTML_WizardConfirmModal(t *testing.T) {
 	// unscoped-needle guards above.
 	must("body.wizard #confirm-modal .modal {", "the confirm dialog surface is re-skinned")
 	must("body.wizard #confirm-modal #confirm-ok {", "the OK button gets the gilded lever, scoped to the confirm modal")
-	must("body.wizard #confirm-modal .modal-buttons button:not(#confirm-ok) {", "Cancel gets the tarnished-gold secondary treatment")
 }
 
 // TestDashboardHTML_WizardEditMemberModal pins the wizard re-skin of the
@@ -936,7 +941,6 @@ func TestDashboardHTML_WizardTermPickerModal(t *testing.T) {
 	// #term-modal.
 	must("body.wizard #term-modal .modal {", "the terminal-picker dialog surface is re-skinned")
 	must("body.wizard #term-modal #term-current {", "Current dir becomes the gilded primary lever, scoped to the term modal")
-	must("body.wizard #term-modal .modal-buttons button:not(#term-current) {", "Cancel / Launch / Worktree get the tarnished-gold secondary treatment")
 }
 
 // TestDashboardHTML_TerminalChooserModal pins the ⚙ "terminals & windows…"
@@ -1047,8 +1051,8 @@ func TestDashboardHTML_WizardPartyButton(t *testing.T) {
 	must("body.wizard .group-create-label-wizard", "wizard shows the party label")
 
 	// The button itself is re-skinned arcane, scoped to its id so the base
-	// .filter-bar button.primary rule still styles it in the default theme.
-	must("body.wizard #group-create-open.primary", "the party button is re-skinned in wizard mode")
+	// standard .ui-btn-primary still styles it in the default theme.
+	must("body.wizard #group-create-open.ui-btn-primary", "the party button is re-skinned in wizard mode")
 
 	// The same span pair swaps the empty-state hint that names the button, so
 	// "No groups yet…" reads "⚔ Form a party" in wizard mode too. groups-list.js
@@ -1098,7 +1102,7 @@ func TestDashboardHTML_WizardGroupCreateDialog(t *testing.T) {
 	must("body.wizard #group-create-modal .cron-create-row input[type=number]", "the number field is re-skinned")
 	must("body.wizard #group-create-modal .cron-create-row input[type=url]", "the attachment URL field is re-skinned")
 	// Non-primary buttons (Cancel / Browse…) get the secondary arcane skin.
-	must("body.wizard #group-create-modal button:not(.primary)", "non-primary buttons get the secondary arcane skin")
+	must("body.wizard #group-create-modal button:where(:not(.ui-btn)):not(.primary)", "non-primary buttons get the secondary arcane skin")
 }
 
 // TestDashboardCSS_WizardGroupCreateModalScoped guards that the wizard
@@ -1137,8 +1141,8 @@ func TestDashboardHTML_WizardCronDialog(t *testing.T) {
 	must(".cron-open-label-wizard { display: none; }", "the default theme hides the wizard label")
 	must("body.wizard .cron-open-label-regular", "wizard hides the default label")
 	must("body.wizard .cron-open-label-wizard", "wizard shows the ritual label")
-	must("body.wizard #cron-create-open.primary", "the open button is re-skinned in wizard mode")
-	must("body.wizard #cron-create-open.primary:hover", "the open button has a wizard hover re-skin")
+	must("body.wizard #cron-create-open.ui-btn-primary", "the open button is re-skinned in wizard mode")
+	must("body.wizard #cron-create-open.ui-btn-primary:hover", "the open button has a wizard hover re-skin")
 
 	// The same span pair swaps the Jobs island's "No jobs yet…" hint. The label
 	// spans above already pin both variants; this pins their empty-state context.
@@ -1171,7 +1175,7 @@ func TestDashboardHTML_WizardCronDialog(t *testing.T) {
 	// tarnished-gold chips. Excluding the submit via :not(.primary) (not
 	// :not(#id)) is what lets this .selected rule out-specify the chip skin.
 	must("body.wizard #cron-create-modal .cron-schedule-chips button.selected", "the picked schedule chip gets a gilded highlight")
-	must("body.wizard #cron-create-modal button:not(.primary)", "non-primary buttons get the secondary arcane skin")
+	must("body.wizard #cron-create-modal button:where(:not(.ui-btn)):not(.primary)", "non-primary buttons get the secondary arcane skin")
 }
 
 // TestDashboardCSS_WizardCronDialogScoped guards that the wizard cron-dialog
@@ -1390,14 +1394,10 @@ func TestDashboardHTML_WizardCogs(t *testing.T) {
 	must("body.wizard .row-actions .cog-btn", "the per-row cog is re-skinned in wizard mode")
 	must("body.wizard .group-actions .cog-btn", "the per-group cog is re-skinned in wizard mode")
 
-	// …and so do the DROPDOWN menus each cog opens — the arcane panel plus a
-	// violet-void base skin on every menu item, so the per-group and per-agent
-	// "spell lists" match the global filter-bar one instead of staying an
-	// unthemed default-dark island inside the arcane panel.
-	must("body.wizard .action-menu {", "the cog dropdown panels get the arcane skin")
-	must("body.wizard .filter-bar-cog .action-menu button", "the filter-bar menu items get the arcane base skin at rest")
-	must("body.wizard .row-actions .action-menu button:not(:disabled)", "the per-agent menu items get the arcane base skin at rest")
-	must("body.wizard .group-actions .action-menu button:not(:disabled)", "the per-group menu items get the arcane base skin at rest")
+	// The DROPDOWN menus each cog opens are standard .ui-menu panels, whose
+	// wizard skin comes from the --ui-* variables in ui.css, so all three
+	// "spell lists" match without per-cog rules.
+	must(`class="ui-menu ui-sm action-menu"`, "the cog menus are standard .ui-menu panels")
 
 	// The enchanted rotation + its keyframes — the "self-turning clockwork" gag.
 	must("animation: wizard-cog-turn", "the wizard cog glyph spins under its own enchantment")
@@ -1409,19 +1409,9 @@ func TestDashboardHTML_WizardCogs(t *testing.T) {
 		t.Error("wizard cog rotation is not disabled under prefers-reduced-motion")
 	}
 
-	// The type-to-filter box each cog opens with (menu-filter.js) is chrome, so
-	// it takes the arcane skin along with the panel it sits in — otherwise it
-	// would sit as an unthemed default-dark input inside the violet-void
-	// dropdown. Its keyboard cursor gilds like a hovered spell, and the
-	// no-matches note re-letters to match the Spellbook's own empty state.
-	must("body.wizard .action-menu-filter {", "the cog filter box gets the arcane skin")
-	must("body.wizard .action-menu-filter::placeholder", "the filter box's prompt is re-lettered arcane")
-	// These are deliberately scoped per cog. The per-agent/per-group resting
-	// rules above carry an extra :not(:disabled); a generic active selector is
-	// less specific and leaves keyboard movement working but invisible.
-	must("body.wizard .filter-bar-cog .action-menu button[data-menu-active]", "the global keyboard cursor takes the mystic-purple glow")
-	must("body.wizard .row-actions .action-menu button[data-menu-active]", "the per-agent keyboard cursor overrides the resting item background")
-	must("body.wizard .group-actions .action-menu button[data-menu-active]", "the per-group keyboard cursor overrides the resting item background")
+	// The type-to-filter box each cog opens with (menu-filter.js) is a standard
+	// .ui-input, skinned with the panel by the same variables. The no-matches
+	// note re-letters to match the Spellbook's own empty state.
 	must("body.wizard .action-menu[data-menu-empty]::after", "the empty-result note is re-lettered arcane")
 }
 
@@ -1443,7 +1433,7 @@ func TestDashboardHTML_CogMenuFilter(t *testing.T) {
 	// The toolbar cog's items are static markup, so unlike the two Preact cogs
 	// its filter box is authored in the shell. toolbar-actions-menu.js binds by
 	// this class and degrades to the old click-only menu without it.
-	must(`<input class="action-menu-filter"`, "the static toolbar cog ships a filter box")
+	must(`<input class="ui-input ui-sm action-menu-filter"`, "the static toolbar cog ships a filter box")
 	must(`aria-label="Filter actions"`, "the filter box is named for screen readers")
 	// aria-activedescendant only resolves against a descendant or an
 	// aria-controls / aria-owns target, and the cursor's item is a SIBLING of the
@@ -1456,10 +1446,8 @@ func TestDashboardHTML_CogMenuFilter(t *testing.T) {
 	// silently do nothing.
 	must(".action-menu [data-menu-filtered-out] { display: none; }", "non-matching items are hidden")
 	must(".action-menu[data-menu-empty]::after", "a query matching nothing says so")
-	// Background only: a border here would tie with the existing per-cog :hover
-	// rules on specificity and win on source order, turning a .danger row's red
-	// edge blue on plain hover.
-	must(".action-menu button[data-menu-active] { background: #1f6feb33; }", "the keyboard cursor marks its row with a background alone")
+	// The keyboard cursor is painted by the standard menu row in ui.css, the
+	// same as its hover; jstest/ui-components.test.mjs covers the classes.
 }
 
 // TestDashboardHTML_WizardConfigTab pins the wizard re-skin of the Config tab
@@ -1494,7 +1482,7 @@ func TestDashboardHTML_WizardConfigTab(t *testing.T) {
 
 	// The diff-confirm dialog is re-skinned too, scoped to #config-diff-modal.
 	must("body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .config-diff-modal", "the config and sandbox-profile diff-confirm surfaces are re-skinned")
-	must("body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .modal-buttons button.primary", "the diff-confirm Save levers are re-skinned")
+	must("body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .modal-buttons button:is(.primary, .ui-btn-primary)", "the diff-confirm Save levers are re-skinned")
 }
 
 // TestDashboardCSS_WizardConfigTabScoped guards that the config-tab re-skin's
@@ -1599,8 +1587,6 @@ func TestDashboardHTML_WizardWindowModal(t *testing.T) {
 	must("const plainVerb = direction === 'focus' ? 'Focus' : 'Unfocus';", "the plain submit verb tracks direction")
 	must("const wizardVerb = direction === 'focus' ? 'Reveal' : 'Veil';", "the wizard submit verb swaps to Reveal/Veil")
 	must("wizard=${`${retrying ? 'Retry ' : ''}${wizardVerb} ${count} hero", "the submit count noun swaps to hero in wizard mode")
-	// Cancel gets the tarnished-gold secondary treatment (scoped away from the submit).
-	must("body.wizard #window-modal .modal-buttons button:not(#window-submit)", "Cancel gets the secondary arcane skin")
 }
 
 // TestDashboardCSS_WizardWindowModalScoped guards that the wizard window-dialog
@@ -1644,9 +1630,7 @@ func TestDashboardHTML_WizardCleanupModal(t *testing.T) {
 	// The submit becomes a gilded lever; the delete tier keeps a danger-ember
 	// variant so the irreversible action still signals danger.
 	must("body.wizard #cleanup-modal #cleanup-submit {", "the submit button gets the gilded lever chrome")
-	must("body.wizard #cleanup-modal #cleanup-submit.danger {", "the delete-tier submit keeps a danger-ember lever")
-	// Cancel gets the tarnished-gold secondary treatment (scoped off the submit).
-	must("body.wizard #cleanup-modal .modal-buttons button:not(#cleanup-submit)", "Cancel gets the secondary arcane skin")
+	must("body.wizard #cleanup-modal #cleanup-submit:is(.danger, .ui-btn-danger) {", "the delete-tier submit keeps a danger-ember lever")
 }
 
 // TestDashboardCSS_WizardCleanupModalScoped guards that the wizard bulk-cleanup
@@ -1687,8 +1671,7 @@ func TestDashboardHTML_WizardDeleteRetiredModal(t *testing.T) {
 	must("body.wizard #delete-retired-modal .cleanup-row label .cleanup-badge:not(.online)", "wizard badge chrome leaves online and result status colors semantic")
 	must("body.wizard #delete-retired-modal .delete-agent-wt", "the worktree option is re-skinned")
 	must("body.wizard #delete-retired-modal #delete-retired-submit {", "the result-phase Done button gets gilded chrome")
-	must("body.wizard #delete-retired-modal #delete-retired-submit.danger {", "the selection-phase delete action stays destructive")
-	must("body.wizard #delete-retired-modal .modal-buttons button:not(#delete-retired-submit)", "Cancel gets the secondary arcane skin")
+	must("body.wizard #delete-retired-modal #delete-retired-submit:is(.danger, .ui-btn-danger) {", "the selection-phase delete action stays destructive")
 }
 
 // TestDashboardHTML_WizardDeleteGroupModal pins the wizard re-skin of the
@@ -1718,7 +1701,6 @@ func TestDashboardHTML_WizardDeleteGroupModal(t *testing.T) {
 	must("body.wizard #delete-group-modal #delete-group-submit {", "the submit gets the retire-modal-style gilded lever")
 	must("body.wizard #delete-group-modal #delete-group-submit:active", "the submit uses the retire-modal pressed lever state")
 	must("body.wizard #delete-group-modal .cleanup-row input[type=checkbox]", "member checkboxes use the wizard accent")
-	must("body.wizard #delete-group-modal .modal-buttons button:not(#delete-group-submit)", "Cancel gets the secondary arcane skin")
 }
 
 // TestDashboardHTML_WizardTemplatesManage pins the wizard re-skin of the
@@ -1742,7 +1724,7 @@ func TestDashboardHTML_WizardTemplatesManage(t *testing.T) {
 	// The overlay surface + the gilded "+ chalk a new circle" primary +
 	// the circle cards, all scoped to the overlay.
 	must("body.wizard #templates-manage-modal .manage-modal", "the templates overlay surface is re-skinned")
-	must("body.wizard #templates-manage-modal #template-create-open.primary", "the + new template button gets the gilded-arcane treatment")
+	must("body.wizard #templates-manage-modal #template-create-open.ui-btn-primary", "the + new template button gets the gilded-arcane treatment")
 	must("body.wizard #templates-manage-modal .template-card", "the template cards are re-skinned")
 	must(`<${Words} plain="+ new template" wizard="+ chalk a new circle"/>`, "the create button ships both voices")
 	must(`<${Words} plain="⤓ from a group" wizard="⤓ trace a party"/>`, "the from-a-group button ships both voices")
@@ -1885,7 +1867,7 @@ func TestDashboardHTML_WizardActionDialogs(t *testing.T) {
 	must(actionDialogs+" .cron-create-modal", "all three action-dialog surfaces get scoped wizard chrome")
 	must(actionDialogs+" .cron-create-modal h3", "all three action-dialog titles get the fantasy type treatment")
 	must(actionDialogs+" :is(.cron-create-row, .lt-row) :is(input[type=text], input:not([type]), select, textarea)", "the action-dialog fields and dropdowns get the violet-void skin")
-	must(actionDialogs+" .modal-buttons button.primary", "the primary action buttons get the gilded lever treatment")
+	must(actionDialogs+" .modal-buttons button:is(.primary, .ui-btn-primary)", "the primary action buttons get the gilded lever treatment")
 	must("body.wizard #reincarnate-agent-modal .reincarnate-mode", "the reincarnate mode selector gets wizard panel chrome")
 	must("body.wizard #reincarnate-agent-modal .reincarnate-mode label", "the reincarnate mode labels override their explicit plain-mode color")
 
@@ -1980,7 +1962,7 @@ func TestDashboardHTML_WizardCogDialogThemes(t *testing.T) {
 
 	// Party worktree cleanup dialog, including dynamic category/submit copy.
 	must("body.wizard #worktree-cleanup-modal .cleanup-modal {", "worktree cleanup surface is re-skinned")
-	must("body.wizard #worktree-cleanup-modal .cleanup-toolbar button.active", "worktree category chips are re-skinned")
+	must("body.wizard #worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)).active", "worktree category chips are re-skinned")
 	must("body.wizard #worktree-cleanup-modal .cleanup-list", "worktree candidate list is re-skinned")
 	must("body.wizard #worktree-cleanup-modal #worktree-cleanup-submit {", "prune lever is re-skinned")
 	must("Remove ${removeCopy} + prune ${pruneCopy}", "worktree submit names both selected cleanup actions")
@@ -2036,9 +2018,9 @@ func TestDashboardHTML_WizardTemplateNativeControlSweep(t *testing.T) {
 
 	// Roles library overlay + role editor (two whole modals, never themed).
 	must("body.wizard #roles-manage-modal .manage-modal", "the roles-library overlay surface is re-skinned")
-	must("body.wizard #roles-manage-modal #role-create-open.primary", "the + new class primary gets the gilded-arcane chrome")
+	must("body.wizard #roles-manage-modal #role-create-open.ui-btn-primary", "the + new class primary gets the gilded-arcane chrome")
 	must("body.wizard #role-editor-modal .cron-create-modal", "the role-editor surface is re-skinned")
-	must("body.wizard #role-editor-modal button:not(#role-editor-submit)", "the shared permission editor entry gets the secondary wizard chrome")
+	must("body.wizard #role-editor-modal button:where(:not(.ui-btn)):not(#role-editor-submit)", "the shared permission editor entry gets the secondary wizard chrome")
 	must("body.wizard #role-editor-modal #role-editor-submit", "the Save-role button gets the gilded lever chrome")
 }
 
@@ -2303,4 +2285,23 @@ func wizardUsageSelectorLists(css string) []string {
 		lists = append(lists, selector)
 	}
 	return lists
+}
+
+// TestDashboardHTML_WizardStandardButtons pins the wizard skin of the standard
+// ui-* buttons, which dialogs use for their footers: the tarnished-gold
+// secondary and the gilded gradient primary the per-dialog rules used to repeat.
+func TestDashboardHTML_WizardStandardButtons(t *testing.T) {
+	css := dashboardAssetFile(t, "ui.css")
+	for _, want := range []string{
+		"--ui-bg: #241b3d;",
+		"--ui-bg-hover: #3a2a63;",
+		"--ui-btn-line: #d9b45a;",
+		"--ui-text: #e7d9f5;",
+		"--ui-primary: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);",
+		"body.wizard .ui-btn-primary {",
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("ui.css wizard skin missing %q", want)
+		}
+	}
 }

@@ -1,6 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button, Input } from './ui-components.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -49,7 +50,7 @@ export function LinksControls({ state, actions }) {
     ? `${current.filtered} / ${current.total}`
     : `${current.total} channel${current.total === 1 ? '' : 's'}`;
   return html`
-    <input ref=${inputRef} id="filter-links" type="text"
+    <${Input} domRef=${inputRef} id="filter-links"
       aria-label="Filter inter-group links" placeholder="Filter (from / to / mode)"
       autocomplete="off" spellcheck=${false} value=${current.query}
       onInput=${(event) => state.setQuery(event.currentTarget.value)} />
@@ -63,11 +64,11 @@ export function LinksControls({ state, actions }) {
         inputRef.current?.focus();
       }}>×</button>
     <span class="spacer"></span>
-    <button id="link-new-open" class="primary"
+    <${Button} id="link-new-open" variant="primary"
       onClick=${() => actions.openCreate()}
       title="Add a new inter-group communication link">
       <${Words} plain="+ new link" wizard="+ weave channel" />
-    </button>
+    <//>
   `;
 }
 
@@ -157,14 +158,14 @@ export function LinksList({ state, actions }) {
             ${cross && html`<td>${remote ? peerState(link) : null}</td>`}
             <td><span class="muted">${relTime(link.created_at) || ''}</span></td>
             <td><div class="row-actions">
-              ${!remote && html`<button type="button" disabled=${!!deleting}
+              ${!remote && html`<${Button} size="sm" type="button" disabled=${!!deleting}
                 onClick=${() => actions.openEdit({ id: link.id, from: link.from || '', to: link.to || '', mode: link.mode || '' })}
-                title="Change this link's mode"><${Words} plain="edit" wizard="rebind" /></button>`}
-              <button type="button" class="danger" disabled=${!!deleting}
+                title="Change this link's mode"><${Words} plain="edit" wizard="rebind" /><//>`}
+              <${Button} size="sm" type="button" variant="ghost danger" disabled=${!!deleting}
                 onClick=${() => remove(link)}
                 title=${pendingOut ? 'Withdraw this link request' : 'Remove this link'}>${pendingOut
     ? (rowBusy ? 'cancelling…' : 'cancel request')
-    : html`<${Words} plain=${rowBusy ? 'deleting…' : 'delete'} wizard=${rowBusy ? 'severing…' : 'sever'} />`}</button>
+    : html`<${Words} plain=${rowBusy ? 'deleting…' : 'delete'} wizard=${rowBusy ? 'severing…' : 'sever'} />`}<//>
             </div></td>
           </tr>
         `;
@@ -191,7 +192,7 @@ function LinksManager({ state, actions, confirmDiscard }) {
       <div id="links-list"><${LinksList} state=${state} actions=${actions} /></div>
       <div class="modal-buttons">
         <span class="spacer"></span>
-        <button id="links-manage-close" type="button" onClick=${actions.closeManager}><${Words} plain="Close" wizard="Dispel" /></button>
+        <${Button} id="links-manage-close" onClick=${actions.closeManager}><${Words} plain="Close" wizard="Dispel" /></${Button}>
       </div>
     </${Overlay}>
   `;
@@ -393,14 +394,14 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
       `}
       <${ErrorBanner} error=${error} />
       <div class="modal-buttons">
-        <button id="link-modal-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel" /></button>
+        <${Button} id="link-modal-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel" /></${Button}>
         <span class="spacer"></span>
-        <button id="link-modal-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>
+        <${Button} variant="primary" id="link-modal-submit" disabled=${busy} onClick=${submit}>
           <${Words}
             plain=${busy ? (edit ? 'Saving…' : 'Creating…') : (edit ? 'Save changes' : remote && peerGroup && !peerGroup.auto ? 'Send link request' : 'Create link')}
             wizard=${busy ? (edit ? 'Rebinding…' : 'Weaving…') : (edit ? 'Rebind channel' : remote && peerGroup && !peerGroup.auto ? 'Send link petition' : 'Weave channel')}
           />
-        </button>
+        </${Button}>
       </div>
     </${Overlay}>
   `;
@@ -504,10 +505,10 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
         </div>`}`}
       <${ErrorBanner} error=${error} />
       <div class="modal-buttons">
-        <button id="proposal-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+        <${Button} id="proposal-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
         <span class="spacer"></span>
-        <button id="proposal-submit" class="primary" type="button" disabled=${busy || !peer || !connected || !items.length} onClick=${submit}>
-          ${busy ? 'Sending…' : 'Send proposal'}</button>
+        <${Button} variant="primary" id="proposal-submit" disabled=${busy || !peer || !connected || !items.length} onClick=${submit}>
+          ${busy ? 'Sending…' : 'Send proposal'}</${Button}>
       </div>
     </${Overlay}>
   `;

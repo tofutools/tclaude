@@ -231,7 +231,7 @@ test('params dialog edits identifiers, typed defaults, descriptions, and require
   const retries = overlay.querySelector('[data-process-param="retries"]');
   const defaultValue = retries.querySelector('.process-param-default');
   defaultValue.value = '3'; harness.fireEvent(defaultValue, 'input');
-  harness.fireEvent(overlay.querySelector('.modal-buttons .primary'), 'click');
+  harness.fireEvent(overlay.querySelector('.modal-buttons .ui-btn-primary'), 'click');
 
   assert.equal(mutations, 1);
   assertAbsent(harness.document.querySelector('.process-param-modal'));
@@ -272,7 +272,7 @@ test('params dialog rejects invalid edited number and boolean defaults without a
     const input = overlay.querySelector(`[data-process-param="${paramName}"] .process-param-default`);
     input.value = value;
     harness.fireEvent(input, 'input');
-    harness.fireEvent(overlay.querySelector('.modal-buttons .primary'), 'click');
+    harness.fireEvent(overlay.querySelector('.modal-buttons .ui-btn-primary'), 'click');
     await settle();
 
     assertSameNode(harness.document.querySelector('.process-param-modal'), overlay, `${label}: dialog remains open`);
@@ -307,7 +307,7 @@ test('params dialog default presence round-trip preserves an untouched custom ob
   harness.fireEvent(enabled, 'change');
 
   assert.equal(dispose.isDirty(), false, 'presence off then on restores the original draft state');
-  harness.fireEvent(overlay.querySelector('.modal-buttons .primary'), 'click');
+  harness.fireEvent(overlay.querySelector('.modal-buttons .ui-btn-primary'), 'click');
   assert.deepEqual(model.template.params.config.default, original);
   assert.equal(model.undoStack.length, 0, 'lossless presence round-trip creates no model edit');
   assert.equal(model.dirty, false);
@@ -460,7 +460,7 @@ test('params dialog traps Tab and restores focus on every close path without pro
     harness.fireEvent(add, 'click');
     await settle();
     const first = overlay.querySelector('.process-param-name');
-    const apply = overlay.querySelector('.modal-buttons .primary');
+    const apply = overlay.querySelector('.modal-buttons .ui-btn-primary');
     apply.focus();
     const tab = harness.fireEvent(apply, 'keydown', { key: 'Tab' });
     assert.equal(tab.defaultPrevented, true, `${gesture}: Tab is contained`);

@@ -2,6 +2,7 @@ import { h, render } from 'preact';
 import { SpendLimitBanner } from './spend-limits.js';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { syncBotAnimations } from './helpers.js';
 import { ActivityModes } from './activity-bots.js';
 import { ActivityHover } from './activity-hover.js';
@@ -879,14 +880,14 @@ function Confirm({ feedback }) {
           </label>`)}
         </div>` : null}
         <div class="modal-buttons">
-          ${model?.informational ? null : html`<button id="confirm-cancel" disabled=${busy} onClick=${() => feedback.resolveConfirmation(false)}>${model?.cancelLabel || 'Cancel'}</button>`}
-          <button ref=${okRef} id="confirm-ok" class=${model?.informational ? '' : 'confirm-danger'}
-            disabled=${busy} aria-busy=${busy ? 'true' : undefined}
+          ${model?.informational ? null : html`<${Button} id="confirm-cancel" disabled=${busy} onClick=${() => feedback.resolveConfirmation(false)}>${model?.cancelLabel || 'Cancel'}</${Button}>`}
+          <${Button} domRef=${okRef} id="confirm-ok" variant=${model?.informational ? '' : 'danger'}
+            disabled=${busy} busy=${busy}
             onClick=${() => feedback.resolveConfirmation(true)}>
             ${busy
               ? html`<span class="btn-spinner" aria-hidden="true"></span>${model?.busyLabel || 'Working…'}`
               : (model?.okLabel || 'Confirm')}
-          </button>
+          </${Button}>
         </div>
       </div>
     </div>

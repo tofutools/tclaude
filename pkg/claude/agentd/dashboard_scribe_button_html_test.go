@@ -27,11 +27,12 @@ func TestDashboardHTML_ScribeButtons(t *testing.T) {
 	must(`<${Words} plain="🤖 Edit with agent" wizard="📜 Dictate to a scribe"/>`,
 		"the wizard-mode label swap for the Edit-with-agent buttons")
 
-	// The editor button must NOT be #template-editor-submit, so the wizard
-	// blanket `body.wizard #template-editor-modal button:not(#template-editor-submit)`
-	// re-skins it for free — guard that it sits in the editor's modal-buttons row
-	// as a plain (non-submit) button.
-	must(`<button id="scribe-editor-open" type="button"`, "editor scribe button is a plain (non-submit) button")
+	// The editor button sits in the editor's modal-buttons row as a standard
+	// secondary (non-submit) button, so both skins style it with the rest of
+	// the footer.
+	must(`<${Button}
+          id="scribe-editor-open"
+          hidden=`, "editor scribe button is a plain (non-submit) standard Button")
 
 	// JS wiring: the summon POSTs to the generic daemon endpoint with the base
 	// name (the daemon adds a unique suffix) and the minimal grant bundle.

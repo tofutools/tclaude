@@ -1,6 +1,7 @@
 import { Fragment, h } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button, Input } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { relTime, shortAgentId } from './helpers.js';
 import { SpawnActionFields, TemplatePlaceholderChips } from './spawn-action-fields.js';
@@ -241,8 +242,8 @@ function TriggerRow({ rule, selected, actions, onSelect, onEdit, onChanged }) {
             else input.checked = !!rule.enabled;
           }} /><span></span></label></td>
       <td><div class="row-actions" onClick=${(event) => event.stopPropagation()}>
-        <button type="button" onClick=${onEdit}>edit</button>
-        <button type="button" class="danger" onClick=${async () => { if (await actions.deleteTrigger(rule)) onChanged(); }}>delete</button>
+        <${Button} size="sm" type="button" onClick=${onEdit}>edit<//>
+        <${Button} size="sm" type="button" variant="ghost danger" onClick=${async () => { if (await actions.deleteTrigger(rule)) onChanged(); }}>delete<//>
       </div></td>
     </tr>
     ${selected && html`<tr class="trigger-inspector-row"><td colspan="9">
@@ -276,12 +277,12 @@ export function TriggerWorkspace({ state, actions }) {
   }, [rules, query]);
   return html`<div class="triggers-workspace">
     <div class="filter-bar trigger-filter-bar">
-      <input type="search" aria-label="Filter triggers" placeholder="Filter triggers (name + source + scope + action)"
+      <${Input} type="search" aria-label="Filter triggers" placeholder="Filter triggers (name + source + scope + action)"
         value=${query} onInput=${(event) => setQuery(event.currentTarget.value)} />
       <span class="filter-count">${shown.length}${query ? ` / ${rules.length}` : ` trigger${rules.length === 1 ? '' : 's'}`}</span>
       <button class="clear-filter" title="Clear trigger filter" onClick=${() => setQuery('')}>×</button>
       <span class="spacer"></span>
-      <button id="trigger-create-open" class="primary" onClick=${() => state.openTriggerCreate()}>+ new trigger</button>
+      <${Button} id="trigger-create-open" variant="primary" onClick=${() => state.openTriggerCreate()}>+ new trigger<//>
     </div>
     ${error && html`<div class="jobs-error" role="alert">${error}<button onClick=${() => void load()}>retry</button></div>`}
     ${loading ? html`<div class="empty">Loading triggers…</div>` : shown.length === 0
@@ -500,8 +501,8 @@ function TriggerDialog({ descriptor, state, actions }) {
         </div>
       </${Step}>
       ${error && html`<div class="jobs-error" role="alert">${error}</div>`}
-      <div class="modal-buttons"><button type="button" onClick=${state.closeTriggerDialog} disabled=${busy}>Cancel</button>
-        <button type="submit" class="primary" disabled=${busy || !draftValid(draft)}>${busy ? 'Saving…' : editing ? 'Save trigger' : 'Create trigger'}</button></div>
+      <div class="modal-buttons"><${Button} onClick=${state.closeTriggerDialog} disabled=${busy}>Cancel</${Button}>
+        <${Button} variant="primary" type="submit" disabled=${busy || !draftValid(draft)}>${busy ? 'Saving…' : editing ? 'Save trigger' : 'Create trigger'}</${Button}></div>
     </form>
   </${Overlay}>`;
 }

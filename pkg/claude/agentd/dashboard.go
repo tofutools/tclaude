@@ -1043,6 +1043,10 @@ type snapshotPayload struct {
 	// the Groups toolbar's queue chip and the per-group queued rows. Same wire
 	// shape as /api/queued-spawns. Empty slice (not nil) so JS .map() is safe.
 	QueuedSpawns []queuedSpawnJSON `json:"queued_spawns"`
+	// CapacityQueue is the capacity line and the spawns waiting for capacity
+	// (the Spawn queue block); nil, and omitted, when capacity limits are off
+	// and nothing waits. Same shape as GET /v1/spawn-queue.
+	CapacityQueue *spawnQueueListJSON `json:"capacity_queue,omitempty"`
 	// Messages are the human-facing notifications agents have sent via
 	// `tclaude agent notify-human`, newest first — the Messages tab.
 	// MessagesUnread is the count of unread ones, driving the tab badge.
@@ -3960,6 +3964,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		roles            []roleJSON
 		savedPrompts     []db.SavedPrompt
 		queuedSpawns     []queuedSpawnJSON
+		capacityQueue    *spawnQueueListJSON
 		messages         []dashboardHumanMessage
 		messagesUnread   int
 		plugins          []dashboardPlugin
@@ -3993,6 +3998,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 		}},
 		snapshotNamedLoad{"queued_spawns", func() { queuedSpawns = collectQueuedSpawnsSnapshot() }},
+		snapshotNamedLoad{"capacity_queue", func() { capacityQueue = collectCapacityQueueSnapshot() }},
 		snapshotNamedLoad{"messages", func() { messages, messagesUnread = buildHumanMessagesSnapshot() }},
 		snapshotNamedLoad{"plugins", func() { plugins, pluginsWarn, pluginsErr = collectPluginsSnapshot() }},
 	)
@@ -4082,6 +4088,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Roles = roles
 	out.SavedPrompts = savedPrompts
 	out.QueuedSpawns = queuedSpawns
+	out.CapacityQueue = capacityQueue
 	out.Messages, out.MessagesUnread = messages, messagesUnread
 	out.AccessRequests = approvals.dashboardSnapshot()
 	// Only the actionable (pending) ones drive the blink/banner/badge — the

@@ -2504,7 +2504,7 @@ test('a pasted join code previews what the daemon would apply and joins in one c
   const card = s.q('#fleet-setup-code-preview').textContent;
   assert.match(card, /wss:\/\/hub\.home:8470.*home.*single-use.*self-signed hub\.home.*AB:CD:EF/);
   assert.doesNotMatch(card, /Replaces/, 'a node with no hub replaces nothing');
-  assert.equal(s.q('#fleet-setup-join').className, '', 'the code, not the manual form, is the primary action');
+  assert.ok(!s.q('#fleet-setup-join').classList.contains('ui-btn-primary'), 'the code, not the manual form, is the primary action');
   await s.click(s.q('#fleet-setup-code-join'));
   assert.equal(s.confirms.at(-1).title, 'Join the hub at wss://hub.home:8470?');
   assert.match(s.confirms.at(-1).body, /as laptop, in space home.*single-use.*SHA-256 AB:CD:EF/);

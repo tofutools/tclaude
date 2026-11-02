@@ -383,6 +383,22 @@ and press **Spawn** (Ctrl Enter, or ⌘ Enter on a Mac). The rest of the form ov
 Queued agents show as rows with **▶** to start them, and a **⏸ queued** chip in
 the toolbar lists them. Drag a queued row to the **Retire** bin to discard it.
 
+### The Spawn queue
+
+With [capacity limits](spawning-and-lifecycle.md#capacity-limits-and-the-spawn-queue)
+set, a **Spawn queue** block sits above the groups. Its first line shows how
+many agents count toward `max_live_agents`, whether there is room, how many
+spawns wait, and the configured thresholds. Below it, the spawns waiting for
+capacity are listed in queue order, local and from peers (tagged **remote**),
+with who asked and how long each has waited. **✕ cancel** takes one out of the
+queue; for a peer's request, cancelling denies it. A group with waiting spawns
+shows a **⌛ N queued** chip. When nothing waits the block is a single capacity
+line, and with no limits set it is not shown.
+
+These are different from **⏸ Add to queue** above. That saves a draft until
+you start it; the Spawn queue holds spawns that were asked for and wait for
+capacity.
+
 Saved prompts are covered in the [library](dashboard-library.md#saved-prompts).
 
 ### Task forces

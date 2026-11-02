@@ -55,7 +55,7 @@ func TestDashboardHTML_TemplateDuplicate(t *testing.T) {
 	// rule) rather than pinning a now-removed scoped block. The dialog's wizard
 	// skin block is still bespoke (a white-button regression can't be caught by
 	// strings, but the block's ABSENCE can).
-	must(`class="tool" data-tact="duplicate"`, "the duplicate card button is a .tool button, so it rides the shared base button.tool skin")
+	must(`<${Button} size="sm" data-tact="duplicate"`, "the duplicate card button is a standard small button")
 	must("body.wizard #template-duplicate-modal .cron-create-modal {", "the duplicate dialog has a wizard skin block")
 	must(`content: "🪞 Mirror it!";`, "the wizard submit lever reads 🪞 Mirror it!")
 }

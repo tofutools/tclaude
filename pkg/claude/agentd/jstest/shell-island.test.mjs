@@ -369,7 +369,7 @@ test('shell confirmation keeps capture-Escape semantics and feedback cleanup', a
   assert.equal(body.classList.contains('confirm-body-preformatted'), true);
   assertAbsent(mounted.container.querySelector('#confirm-cancel'));
   const close = getByRole(mounted.container, 'button', { name: 'Close' });
-  assert.equal(close.classList.contains('confirm-danger'), false);
+  assert.equal(close.classList.contains('ui-btn-danger'), false);
   await harness.act(() => close.click());
   assert.equal(await closed, true);
   await mounted.unmount();

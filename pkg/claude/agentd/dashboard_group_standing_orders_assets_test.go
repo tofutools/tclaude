@@ -51,7 +51,7 @@ func TestDashboardGroupStandingOrdersRulebookAssets(t *testing.T) {
 		".group-standing-orders-library-callout {",
 		"body.wizard .group-standing-orders-live",
 		"body.wizard #group-standing-orders-modal .cron-create-modal",
-		"#group-standing-orders-modal .cron-create-modal button.primary",
+		"#group-standing-orders-modal .cron-create-modal button:where(:not(.ui-btn)).primary",
 		"body.wizard #standing-order-modal .cron-create-modal",
 		"body.wizard #standing-order-modal #standing-order-title::before",
 		"body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:disabled::before",

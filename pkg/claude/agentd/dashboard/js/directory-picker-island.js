@@ -1,6 +1,7 @@
 import { Fragment, h, render } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { configureDirectoryPickerBridge } from './helpers.js';
 import { visiblePageSize } from './list-viewport.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
@@ -105,11 +106,11 @@ function DirectoryOperationDialog({ operation, currentPath, actions, browse, onC
     <div class="directory-picker-action-path">${destination}</div>
     <div role="alert" class="directory-picker-error">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
+      <${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button type="button" class=${deleting ? 'danger' : 'primary'} disabled=${busy || !valid}
+      <${Button} variant=${deleting ? 'danger' : 'primary'} disabled=${busy || !valid}
         onClick=${submit}>${busy ? (deleting ? 'Deleting…' : renaming ? 'Renaming…' : 'Creating…')
-          : deleting ? 'Delete folder' : renaming ? 'Rename' : 'Create'}</button>
+          : deleting ? 'Delete folder' : renaming ? 'Rename' : 'Create'}</${Button}>
     </div>
   </${Overlay}>`;
 }
@@ -284,10 +285,10 @@ export function DirectoryPickerApp({ state, actions }) {
     </div>
     <div role="alert" class="directory-picker-error">${error}</div>
     <div class="modal-buttons">
-      <button type="button" onClick=${close}>Cancel</button>
+      <${Button} onClick=${close}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button type="button" class="primary" disabled=${busy || !validated}
-        onClick=${choose}>Use this folder</button>
+      <${Button} variant="primary" disabled=${busy || !validated}
+        onClick=${choose}>Use this folder</${Button}>
     </div>
   </${Overlay}>
   ${operation && html`<${DirectoryOperationDialog}

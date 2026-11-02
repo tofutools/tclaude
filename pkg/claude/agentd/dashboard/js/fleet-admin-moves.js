@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button, Select } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { sentLanding } from './fleet-admin-landing.js';
 
@@ -73,15 +74,15 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
   return html`<${Overlay} id="fleet-move-agent" labelledby="fleet-move-agent-title" onClose=${onClose}>
     <h3 id="fleet-move-agent-title">Move an agent to a peer</h3>
     ${!agents.length || !peers.length ? html`<div class="muted">${!agents.length ? 'This node has no agent to move.' : 'Trust a peer first.'}</div>` : html`
-    <label class="fa-of-row"><span class="fa-k">agent</span><select id="fleet-move-agent-agent" value=${form.agent} onChange=${set('agent')}>
-      ${agents.map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}</select></label>
-    <label class="fa-of-row"><span class="fa-k">peer</span><select id="fleet-move-agent-peer" value=${form.peer} onChange=${pickPeer}>
-      ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}</select></label>
+    <label class="fa-of-row"><span class="fa-k">agent</span><${Select} size="sm" id="fleet-move-agent-agent" value=${form.agent} onChange=${set('agent')}>
+      ${agents.map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}<//></label>
+    <label class="fa-of-row"><span class="fa-k">peer</span><${Select} size="sm" id="fleet-move-agent-peer" value=${form.peer} onChange=${pickPeer}>
+      ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//></label>
     <label class="fa-of-row"><span class="fa-k">group</span>${picking
-      ? html`<select id="fleet-move-agent-group-pick" value=${form.group} onChange=${pickGroup}>
+      ? html`<${Select} size="sm" id="fleet-move-agent-group-pick" value=${form.group} onChange=${pickGroup}>
           <option value="">pick a group that receives agents…</option>
           ${receiving.map((g) => html`<option key=${g} value=${g} selected=${form.group === g}>${g}</option>`)}
-          <option value=${'\u0000other'}>another group (type its name)…</option></select>`
+          <option value=${'\u0000other'}>another group (type its name)…</option><//>`
       : html`<input id="fleet-move-agent-group" value=${form.group} placeholder="receiving group on the peer (it must grant agents.receive)" autocomplete="off" onInput=${set('group')} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!(findings && !allow)) send(); } }} />`}</label>
     <div class="muted">The agent retires here once the peer runs its copy. To keep it running here, offer a copy from Offers instead. Starting directory: the receiver chooses on accept.</div>`}
     ${findings && html`<div class="fa-plan"><ul>${findings.map((f) => html`<li class="fa-warn">${f.kind} ×${f.count}${f.locations?.length ? ` (${f.locations.slice(0, 3).join(', ')})` : ''}</li>`)}</ul></div>
@@ -89,8 +90,8 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation move-agent AGENT PEER --group … [--allow-flagged]</code></div>
     <div class="modal-buttons"><span class="spacer"></span>
-      ${agents.length && peers.length ? html`<button id="fleet-move-agent-send" type="button" class="primary" disabled=${!!findings && !allow} onClick=${send}>Move…</button>` : ''}
-      <button type="button" onClick=${onClose}>Close</button></div>
+      ${agents.length && peers.length ? html`<${Button} variant="primary" id="fleet-move-agent-send" disabled=${!!findings && !allow} onClick=${send}>Move…</${Button}>` : ''}
+      <${Button} onClick=${onClose}>Close</${Button}></div>
   </${Overlay}>`;
 }
 
@@ -140,9 +141,9 @@ export function MovesPage({ view, agents = [], actions, confirm, toast, now = Da
       ${teleport?.error ? html`<span class="fa-danger">${teleport.error}</span>`
         : frozen == null ? html`<span class="muted">loading…</span>`
         : html`<span class=${frozen ? 'fa-warn' : 'muted'}>${frozen ? 'frozen: none leave or land here' : 'allowed (each still needs its grants)'}</span>
-          <button id="fleet-teleport-toggle" type="button" class=${frozen ? '' : 'fa-danger'} onClick=${toggleTeleport}>${frozen ? 'Allow teleports…' : 'Freeze teleports…'}</button>`}
-      <button type="button" class="fa-link" onClick=${() => setTick((n) => n + 1)}>refresh</button>
-      <button id="fleet-move-open" type="button" onClick=${() => setMoving(true)}>Move an agent to a peer…</button>
+          <${Button} size="sm" id="fleet-teleport-toggle" variant=${frozen ? '' : 'danger'} onClick=${toggleTeleport}>${frozen ? 'Allow teleports…' : 'Freeze teleports…'}<//>`}
+      <${Button} size="sm" variant="link" class="fa-link" onClick=${() => setTick((n) => n + 1)}>refresh<//>
+      <${Button} size="sm" id="fleet-move-open" onClick=${() => setMoving(true)}>Move an agent to a peer…<//>
     </div>
     ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
     ${!moves && !error ? html`<div class="empty">Loading…</div>` : list.length === 0 && !error ? html`<div class="empty">No agent moves or teleports.</div>` : html`
@@ -156,7 +157,7 @@ export function MovesPage({ view, agents = [], actions, confirm, toast, now = Da
         <td>${m.group || ''}</td>
         <td class=${FAILED.has(m.state) ? 'fa-danger' : ''} title=${m.last_error || ''}>${m.state}${m.last_error ? html` <span class="muted">— ${m.last_error}</span>` : ''}</td>
         <td class="muted">${m.expires_at && !String(m.expires_at).startsWith('0001-') ? (Date.parse(m.expires_at) < now ? 'expired' : new Date(m.expires_at).toLocaleString()) : ''}</td>
-        <td class="fa-acts">${canAbandon(m) ? html`<button type="button" class="fa-danger" data-fa="abandon" onClick=${() => abandon(m)}>Abandon…</button>` : ''}</td>
+        <td class="fa-acts">${canAbandon(m) ? html`<${Button} size="sm" variant="ghost danger" data-fa="abandon" onClick=${() => abandon(m)}>Abandon…<//>` : ''}</td>
       </tr>`)}</tbody>
     </table>`}
     <div class="muted fa-cli-note">Moves also start from a peer's view (Move here / Teleport here). CLI: <code>tclaude federation move-agent</code>, <code>tclaude federation moves</code>, <code>tclaude federation teleport</code>.</div>

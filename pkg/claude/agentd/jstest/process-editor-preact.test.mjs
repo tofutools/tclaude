@@ -388,13 +388,13 @@ test('custom snippets create, keyboard-insert, rename, and delete through the Pr
   assert.equal(nameInput.getAttribute('placeholder'), 'e.g. Release review');
   assert.equal(nameInput.getAttribute('autocomplete'), 'off');
   assertSameNode(harness.document.activeElement, nameInput, 'snippet name remains the dialog initial focus');
-  assert.equal(host.querySelector('#process-snippet-name-modal .primary').disabled, true,
+  assert.equal(host.querySelector('#process-snippet-name-modal .ui-btn-primary').disabled, true,
     'blank name keeps submission disabled without disabling or skipping the input');
   await harness.act(() => {
     nameInput.value = '🚀'.repeat(41);
     harness.fireEvent(nameInput, 'input');
   });
-  await harness.act(() => host.querySelector('#process-snippet-name-modal .primary').click());
+  await harness.act(() => host.querySelector('#process-snippet-name-modal .ui-btn-primary').click());
   assert.ok(host.querySelector('#process-snippet-name-modal'), 'invalid UTF-8 byte length keeps the dialog open');
   assert.match(host.querySelector('#process-snippet-name-error').textContent, /160 UTF-8 bytes/);
   assert.equal(nameInput.getAttribute('aria-invalid'), 'true');
@@ -403,7 +403,7 @@ test('custom snippets create, keyboard-insert, rename, and delete through the Pr
     harness.fireEvent(nameInput, 'input');
   });
   assert.equal(host.querySelector('#process-snippet-name-error').textContent, '', 'editing clears the inline error');
-  await harness.act(() => host.querySelector('#process-snippet-name-modal .primary').click());
+  await harness.act(() => host.querySelector('#process-snippet-name-modal .ui-btn-primary').click());
   await savePromise;
   await harness.act(async () => { await Promise.resolve(); });
   assert.equal(savedEnvelope.nodes[0].id, 'start');
@@ -424,14 +424,14 @@ test('custom snippets create, keyboard-insert, rename, and delete through the Pr
     renameInput.value = 'Approval gate';
     harness.fireEvent(renameInput, 'input');
   });
-  await harness.act(() => host.querySelector('#process-snippet-name-modal .primary').click());
+  await harness.act(() => host.querySelector('#process-snippet-name-modal .ui-btn-primary').click());
   await renamePromise;
   await harness.act(async () => { await Promise.resolve(); });
   assert.match(host.querySelector(`.process-palette-card[data-palette-item*="${id}"]`).textContent, /Approval gate/);
 
   const deletePromise = editor.deleteCustomSnippet(id);
   await harness.act(async () => { await Promise.resolve(); });
-  await harness.act(() => host.querySelector('#process-editor-choice-modal .confirm-danger').click());
+  await harness.act(() => host.querySelector('#process-editor-choice-modal .ui-btn-danger').click());
   await deletePromise;
   await harness.act(async () => { await Promise.resolve(); });
   assert.equal(deleted, true);
@@ -516,7 +516,7 @@ test('custom-snippet mutation generation gaps reload the authoritative collectio
   await harness.act(async () => { await Promise.resolve(); });
   const input = host.querySelector('#process-snippet-name-input');
   await harness.act(() => { input.value = 'New local'; harness.fireEvent(input, 'input'); });
-  await harness.act(() => host.querySelector('#process-snippet-name-modal .primary').click());
+  await harness.act(() => host.querySelector('#process-snippet-name-modal .ui-btn-primary').click());
   await save;
   await harness.act(async () => { await Promise.resolve(); });
 
@@ -1093,7 +1093,7 @@ test('production scribe modal owns focus, inertness, and every close path inside
 
   let opened = await open();
   let textarea = opened.overlay.querySelector('textarea');
-  const send = opened.overlay.querySelector('button.primary');
+  const send = opened.overlay.querySelector('button.ui-btn-primary');
   assertSameNode(harness.document.activeElement, textarea);
   assert.match(opened.overlay.querySelector('pre').textContent, /"start"/);
   assert.match(opened.overlay.querySelector('.process-scribe-context-end').textContent, /visibly truncated/);
@@ -1127,7 +1127,7 @@ test('production scribe modal owns focus, inertness, and every close path inside
   textarea = opened.overlay.querySelector('textarea');
   textarea.value = 'Preserve unrelated stages.';
   await harness.act(() => harness.fireEvent(textarea, 'input'));
-  await harness.act(() => harness.fireEvent(opened.overlay.querySelector('button.primary'), 'click'));
+  await harness.act(() => harness.fireEvent(opened.overlay.querySelector('button.ui-btn-primary'), 'click'));
   assert.equal(await opened.pending, 'Preserve unrelated stages.');
   assert.equal(editorRoot.hasAttribute('inert'), false);
   assertSameNode(harness.document.activeElement, invoker, 'Send restores the production invoker');

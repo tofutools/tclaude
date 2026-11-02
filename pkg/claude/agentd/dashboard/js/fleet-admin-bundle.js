@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 
 const html = htm.bind(h);
@@ -89,23 +90,23 @@ export function BundleInspectDialog({ offer, label, actions, toast, onImport, on
       : !list.length ? html`<div class="muted">The bundle lists no entries.</div>`
       : html`<div class="fa-bi">
         <ul class="fa-bi-list" id="fleet-bundle-entries">${list.map((e) => html`<li key=${e.path}>
-          <button type="button" class=${`fa-link${open?.path === e.path ? ' active' : ''}`} data-path=${e.path} onClick=${() => read(e)}>${e.path}</button>
+          <${Button} size="sm" variant="link" class=${`fa-link${open?.path === e.path ? ' active' : ''}`} data-path=${e.path} onClick=${() => read(e)}>${e.path}<//>
           <span class="muted">${e.kind || ''} · ${size(e.size)}</span></li>`)}</ul>
         <div class="fa-bi-view">
           ${!open ? html`<div class="muted">Pick an entry to read it here.</div>`
             : open.kind === 'binary' ? html`<div class="muted" id="fleet-bundle-binary">${open.path} is binary (${size(open.size)}); it is not shown. Download the bundle to inspect it.</div>`
             : html`<pre data-capture-mask class="fa-bi-text" id="fleet-bundle-text">${shown}</pre>
               ${open.truncated && html`<div class="fa-bi-more muted">Showing the first ${size(open.next ?? 0)} of ${size(open.size)}.
-                ${open.next != null && html` <button type="button" class="fa-link" id="fleet-bundle-more" disabled=${busy} onClick=${() => read({ path: open.path, kind: open.kind, size: open.size }, open.next)}>Load more</button>`}</div>`}`}
+                ${open.next != null && html` <${Button} size="sm" variant="link" class="fa-link" id="fleet-bundle-more" disabled=${busy} onClick=${() => read({ path: open.path, kind: open.kind, size: open.size }, open.next)}>Load more<//>`}</div>`}`}
         </div>
       </div>`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons">
-      <button type="button" id="fleet-bundle-download" disabled=${!Array.isArray(entries)} onClick=${download}>Download</button>
+      <${Button} id="fleet-bundle-download" disabled=${!Array.isArray(entries)} onClick=${download}>Download</${Button}>
       <span class="spacer"></span>
-      ${onDecline && html`<button type="button" onClick=${onDecline}>Decline…</button>`}
-      <button type="button" class="primary" id="fleet-bundle-import" onClick=${onImport}>Import…</button>
-      <button type="button" onClick=${onClose}>Close</button>
+      ${onDecline && html`<${Button} onClick=${onDecline}>Decline…</${Button}>`}
+      <${Button} variant="primary" id="fleet-bundle-import" onClick=${onImport}>Import…</${Button}>
+      <${Button} onClick=${onClose}>Close</${Button}>
     </div>
   </${Overlay}>`;
 }

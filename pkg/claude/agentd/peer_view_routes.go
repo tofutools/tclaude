@@ -366,6 +366,9 @@ var peerViewLocalRoutes = []string{
 // notifications, which has none, is reached as local above). Every federation
 // administration route is also kept here (peerViewOwnNodeRoute).
 var peerViewOwnNodeRoutes = []string{
+	// Cancelling a spawn waiting for this node's capacity (it can deny a
+	// peer's request); peers never see the queue (CapacityQueue is denied).
+	"DELETE /api/spawn-queue/{id}",
 	"GET /api/external-stewards",
 	"POST /api/external-stewards",
 	"POST /api/external-stewards/{name}/renew",

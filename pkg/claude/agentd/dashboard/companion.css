@@ -162,12 +162,16 @@ body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: c
 .companion-cog { position: relative; display: inline-flex; }
 .companion-controls .companion-state-sudo, .companion-controls .companion-state-roster { width: auto; padding: 0 5px; font-size: 11px; white-space: nowrap; color: #e3b341; }
 .companion-controls .companion-state-sudo:disabled { opacity: 1; cursor: default; color: #e3b341; }
-.companion-cog-menu { right: 0; width: 280px; overflow-y: auto; gap: 1px; z-index: var(--z-popover); }
+.companion-cog-menu { right: 0; width: 280px; overflow-y: auto; z-index: var(--z-popover); }
 .companion-cog-menu { cursor: default; }
 .companion-cog-head { padding: 6px 8px 2px; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--cmp-muted); }
-.companion-controls .companion-cog-menu button.companion-cog-item { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; width: 100%; height: auto; min-width: 0; padding: 5px 8px; border: 0; border-radius: 4px; background: none; color: var(--cmp-text); font-size: 12px; text-align: left; white-space: nowrap; }
-.companion-controls .companion-cog-menu button.companion-cog-item:hover:not(:disabled), .companion-controls .companion-cog-menu button.companion-cog-item[data-menu-active] { background: #1f6feb33; }
-.companion-controls .companion-cog-menu button.companion-cog-item.danger { color: #f85149; }
+/* The items are standard .ui-menu-item rows; these undo the window's toolbar
+   button skin (.companion-controls button), which outranks them, and lay out
+   the glyph, label and hint. */
+.companion-controls .companion-cog-menu button.companion-cog-item { display: flex; align-items: center; justify-content: flex-start; gap: 10px; text-align: left; flex: 0 0 auto; width: 100%; height: auto; min-width: 0; padding: 3px 8px; border: 0; border-radius: 4px; background: none; color: var(--ui-text); font-size: 12px; white-space: nowrap; }
+.companion-controls .companion-cog-menu button.companion-cog-item:hover:not(:disabled), .companion-controls .companion-cog-menu button.companion-cog-item[data-menu-active] { background: var(--ui-menu-hover); color: var(--ui-text-strong); }
+.companion-controls .companion-cog-menu button.companion-cog-item.ui-btn-danger { color: var(--ui-danger-text); }
+.companion-controls .companion-cog-menu button.companion-cog-item.ui-btn-danger:is(:hover, [data-menu-active]):not(:disabled) { color: var(--ui-danger); }
 .companion-controls .companion-cog-menu button.companion-cog-item[data-menu-filtered-out] { display: none; }
 .companion-cog-glyph { width: 16px; text-align: center; flex: 0 0 auto; }
 .companion-cog-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }

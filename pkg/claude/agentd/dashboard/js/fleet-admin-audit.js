@@ -2,6 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { AUDIT_WINDOWS, auditSince, shortID } from './fleet-admin-model.js';
+import { Button, Select } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -54,14 +55,14 @@ export function AuditPage({ view, actions, now }) {
   const list = rows || [];
   return html`<div class="fa-audit">
     <div class="fa-grant-form">
-      <label><span class="fa-k">Peer</span><select id="fleet-audit-peer" value=${peer} onChange=${(e) => { setPeer(e.currentTarget.value); setLimit(PAGE); }}>
+      <label><span class="fa-k">Peer</span><${Select} size="sm" id="fleet-audit-peer" value=${peer} onChange=${(e) => { setPeer(e.currentTarget.value); setLimit(PAGE); }}>
         <option value="">all peers</option>
         ${options.map((r) => html`<option key=${r.id} value=${r.id}>${r.label}</option>`)}
-      </select></label>
-      <label><span class="fa-k">When</span><select id="fleet-audit-window" value=${String(windowMs)} onChange=${(e) => { setWindowMs(Number(e.currentTarget.value)); setLimit(PAGE); }}>
+      <//></label>
+      <label><span class="fa-k">When</span><${Select} size="sm" id="fleet-audit-window" value=${String(windowMs)} onChange=${(e) => { setWindowMs(Number(e.currentTarget.value)); setLimit(PAGE); }}>
         ${AUDIT_WINDOWS.map((w) => html`<option key=${w.ms} value=${String(w.ms)}>${w.label}</option>`)}
-      </select></label>
-      <button id="fleet-audit-refresh" type="button" onClick=${() => setTick((n) => n + 1)}>Refresh</button>
+      <//></label>
+      <${Button} size="sm" id="fleet-audit-refresh" onClick=${() => setTick((n) => n + 1)}>Refresh<//>
       <span class="muted">Metadata of remote activity only. ${peer ? 'Operator audit rows that cannot be tied to one peer show only under all peers. ' : ''}CLI: <code>tclaude federation audit</code></span>
     </div>
     ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
@@ -79,7 +80,7 @@ export function AuditPage({ view, actions, now }) {
         <td class=${failed(r) ? 'fa-danger' : ''}>${[r.state, r.status || ''].filter(Boolean).join(' ') || '—'}</td>
       </tr>`)}</tbody>
     </table>
-    ${list.length >= limit && limit < MAX && html`<div class="fa-grant-form"><button id="fleet-audit-more" type="button" onClick=${() => setLimit(Math.min(MAX, limit + PAGE))}>Show more</button></div>`}
+    ${list.length >= limit && limit < MAX && html`<div class="fa-grant-form"><${Button} size="sm" id="fleet-audit-more" onClick=${() => setLimit(Math.min(MAX, limit + PAGE))}>Show more<//></div>`}
     ${list.length >= MAX && html`<div class="muted">Showing the newest ${MAX}; narrow by peer or time for older rows.</div>`}`}
   </div>`;
 }

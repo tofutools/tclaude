@@ -9,6 +9,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime } from './helpers.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -44,13 +45,13 @@ function outcomeText({ results = [], scanned = 0, total = 0, truncated = false }
 function ResultAction({ row, wizard }) {
   const label = row.title || row.conv_id;
   if (!row.agent_id || row.retired) {
-    return html`<button class="primary" data-act="promote-agent" data-conv=${row.conv_id} data-label=${label}
+    return html`<${Button} size="sm" data-act="promote-agent" data-conv=${row.conv_id} data-label=${label}
       title=${row.retired ? 'Bring this retired agent back' : 'Promote this conversation into an agent'}
-    >${wizard ? 'awaken' : (row.retired ? 'reinstate' : 'promote')}</button>`;
+    >${wizard ? 'awaken' : (row.retired ? 'reinstate' : 'promote')}<//>`;
   }
-  return html`<button data-act="copy-generation-id" data-conv=${row.conv_id} data-label=${label}
+  return html`<${Button} size="sm" data-act="copy-generation-id" data-conv=${row.conv_id} data-label=${label}
     title="Already an agent. Copy its conv-id to find it, or to inspect an older generation."
-  >copy id</button>`;
+  >copy id<//>`;
 }
 
 function ResultRow({ row, wizard }) {

@@ -341,32 +341,33 @@
       <!-- Preact owns the Groups query, visibility menu and column controls.
            display:contents keeps their existing filter-bar flex geometry. -->
       <div id="groups-filter-root"></div>
-      <button id="groups-cost-toggle" aria-label="Show agent costs" class="cost-toggle" type="button" aria-pressed="true" title="Show or hide the per-agent cost badge on each row. On a subscription this shows the hypothetical pay-per-token-equivalent cost (WHAT-IF); on pay-per-token it shows the real spend.">$</button>
+      <!-- Ghost by operator exception: the $ toggle stays a quiet glyph. -->
+      <button id="groups-cost-toggle" aria-label="Show agent costs" class="ui-btn ui-btn-ghost ui-sm ui-btn-icon cost-toggle" type="button" aria-pressed="true" title="Show or hide the per-agent cost badge on each row. On a subscription this shows the hypothetical pay-per-token-equivalent cost (WHAT-IF); on pay-per-token it shows the real spend.">$</button>
       <span class="spacer"></span>
       <span id="dashboard-default-profile-control" class="toolbar-profile-control"></span>
       <span id="dashboard-default-sandbox-profile-control" class="toolbar-profile-control"></span>
       <!-- Label copy swaps per theme (pure-CSS span swap, like the spawn
            dialog's .spawn-title-* pair): a plain "+ new group" normally, an
            arcane "⚔ Form a party" in 🧙 wizard mode. -->
-      <button id="group-create-open" class="primary" title="Create a new agent group"><span class="group-create-label-regular">+ new group</span><span class="group-create-label-wizard">⚔ Form a party</span></button>
+      <button id="group-create-open" class="ui-btn ui-btn-primary" type="button" title="Create a new agent group"><span class="group-create-label-regular">+ new group</span><span class="group-create-label-wizard">⚔ Form a party</span></button>
       <div class="filter-bar-cog">
-        <button class="cog-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="More group actions — import, clean up, and manage group resources" aria-label="More group actions"><span class="cog-glyph">⚙︎</span></button>
-        <div class="action-menu" role="menu">
+        <button class="ui-btn ui-btn-icon cog-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="More group actions — import, clean up, and manage group resources" aria-label="More group actions"><span class="cog-glyph">⚙︎</span></button>
+        <div class="ui-menu ui-sm action-menu" role="menu">
           <!-- Type-to-filter over the items below. toolbar-actions-menu.js wires
                it through the shared menu-filter core (the same one the Preact
                per-group / per-agent cogs use) and sets the themed placeholder on
                open; the items themselves stay plain click targets. -->
-          <input class="action-menu-filter" type="text" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-label="Filter actions" placeholder="filter actions…">
-          <button role="menuitem" id="group-import-open" title="Import an agent .paf, or a group .zip / .paf produced by ⤓ export. The file decides which preview opens; nothing is written before you confirm. You can also drop a .paf onto the page."><span class="tpl-word-regular">⤒ import…</span><span class="tpl-word-wizard">⤒ unseal an archive</span></button>
-          <button role="menuitem" id="snapshots-open" title="This node's snapshot library: take, spawn from, export, share on a Board or publish agent snapshots, and see resilience policy status."><span class="tpl-word-regular">📸 snapshots…</span><span class="tpl-word-wizard">📸 captured heroes…</span></button>
-          <button role="menuitem" id="cleanup-all-open" title="Bulk cleanup across agents, retired agents and plain conversations — unjoin, retire, delete or reinstate">🧹 clean up</button>
-          <button role="menuitem" id="delete-retired-open" title="Permanently delete retired agents — a filterable preview of every retired agent, all ticked, with per-row opt-out before the purge">🗑 delete retired…</button>
-          <button role="menuitem" id="profiles-manage-open" title="Manage spawn profiles — reusable bundles of the spawn dialog's fields (harness, model, effort, name, role, …) that pre-fill the spawn dialog and can be a group or dashboard default"><span class="profiles-word-regular">⧉ profiles…</span><span class="profiles-word-wizard">⧉ loadouts…</span></button>
-          <button role="menuitem" id="templates-manage-open" title="Manage group templates — reusable team blueprints (create, edit, delete, snapshot from a group, instantiate)"><span class="tpl-word-regular">⧉ templates…</span><span class="tpl-word-wizard">⧉ circles…</span></button>
-          <button role="menuitem" id="roles-manage-open" title="Manage the role library — named, reusable agent-role defaults (a canonical brief, a default launch shape and a default permission set) that a template roster agent references and inherits from"><span class="roles-word-regular">⧉ roles…</span><span class="roles-word-wizard">⧉ classes…</span></button>
-          <button role="menuitem" id="sandbox-profiles-manage-open" title="Manage sandbox profiles — filesystem and environment policy applied at agent launch"><span class="sandbox-word-regular">🛡 sandbox profiles…</span><span class="sandbox-word-wizard">🛡 wards…</span></button>
-          <button role="menuitem" id="spawn-harness-policy-open" title="Control which agent harnesses may spawn agents on other harnesses, with denial reasons returned to the spawning agent"><span class="theme-copy-regular">⇄ cross-harness spawns…</span><span class="theme-copy-wizard">⇄ cross-realm summons…</span></button>
-          <button role="menuitem" id="links-manage-open" data-act="links-manage" title="Manage inter-group communication links — the full cross-group listing (add, edit, delete)">🔗 links…</button>
+          <input class="ui-input ui-sm action-menu-filter" type="text" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-label="Filter actions" placeholder="filter actions…">
+          <button class="ui-menu-item" type="button" role="menuitem" id="group-import-open" title="Import an agent .paf, or a group .zip / .paf produced by ⤓ export. The file decides which preview opens; nothing is written before you confirm. You can also drop a .paf onto the page."><span class="tpl-word-regular">⤒ import…</span><span class="tpl-word-wizard">⤒ unseal an archive</span></button>
+          <button class="ui-menu-item" type="button" role="menuitem" id="snapshots-open" title="This node's snapshot library: take, spawn from, export, share on a Board or publish agent snapshots, and see resilience policy status."><span class="tpl-word-regular">📸 snapshots…</span><span class="tpl-word-wizard">📸 captured heroes…</span></button>
+          <button class="ui-menu-item" type="button" role="menuitem" id="cleanup-all-open" title="Bulk cleanup across agents, retired agents and plain conversations — unjoin, retire, delete or reinstate">🧹 clean up</button>
+          <button class="ui-menu-item" type="button" role="menuitem" id="delete-retired-open" title="Permanently delete retired agents — a filterable preview of every retired agent, all ticked, with per-row opt-out before the purge">🗑 delete retired…</button>
+          <button class="ui-menu-item" type="button" role="menuitem" id="profiles-manage-open" title="Manage spawn profiles — reusable bundles of the spawn dialog's fields (harness, model, effort, name, role, …) that pre-fill the spawn dialog and can be a group or dashboard default"><span class="profiles-word-regular">⧉ profiles…</span><span class="profiles-word-wizard">⧉ loadouts…</span></button>
+          <button class="ui-menu-item" type="button" role="menuitem" id="templates-manage-open" title="Manage group templates — reusable team blueprints (create, edit, delete, snapshot from a group, instantiate)"><span class="tpl-word-regular">⧉ templates…</span><span class="tpl-word-wizard">⧉ circles…</span></button>
+          <button class="ui-menu-item" type="button" role="menuitem" id="roles-manage-open" title="Manage the role library — named, reusable agent-role defaults (a canonical brief, a default launch shape and a default permission set) that a template roster agent references and inherits from"><span class="roles-word-regular">⧉ roles…</span><span class="roles-word-wizard">⧉ classes…</span></button>
+          <button class="ui-menu-item" type="button" role="menuitem" id="sandbox-profiles-manage-open" title="Manage sandbox profiles — filesystem and environment policy applied at agent launch"><span class="sandbox-word-regular">🛡 sandbox profiles…</span><span class="sandbox-word-wizard">🛡 wards…</span></button>
+          <button class="ui-menu-item" type="button" role="menuitem" id="spawn-harness-policy-open" title="Control which agent harnesses may spawn agents on other harnesses, with denial reasons returned to the spawning agent"><span class="theme-copy-regular">⇄ cross-harness spawns…</span><span class="theme-copy-wizard">⇄ cross-realm summons…</span></button>
+          <button class="ui-menu-item" type="button" role="menuitem" id="links-manage-open" data-act="links-manage" title="Manage inter-group communication links — the full cross-group listing (add, edit, delete)">🔗 links…</button>
         </div>
       </div>
       <!-- ⏸ queued chip (queued-spawns-island.js): empty until a spawn is

@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button, Select } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { fmtAge } from './fleet-model.js';
 import { TOKEN_TTLS, UNRESTRICTED_CONSEQUENCE, joinCommand, shortID, tokenState } from './fleet-admin-model.js';
@@ -31,10 +32,10 @@ function TokenDialog({ created, self, copy, toast, onClose }) {
       <span class="fa-k">On the node</span><code class="fa-wrap">${joinCommand(self.id)}</code>
     </div>
     <div class="modal-buttons">
-      <button type="button" onClick=${() => onCopy(created.token, 'Token')}>Copy token</button>
-      <button type="button" onClick=${() => onCopy(joinCommand(self.id), 'Command')}>Copy command</button>
+      <${Button} onClick=${() => onCopy(created.token, 'Token')}>Copy token</${Button}>
+      <${Button} onClick=${() => onCopy(joinCommand(self.id), 'Command')}>Copy command</${Button}>
       <span class="spacer"></span>
-      <button id="fleet-token-close" type="button" class="primary" onClick=${onClose}>Done</button>
+      <${Button} variant="primary" id="fleet-token-close" onClick=${onClose}>Done</${Button}>
     </div>
   </${Overlay}>`;
 }
@@ -70,9 +71,9 @@ export function JoinDialog({ masters, actions, onClose, onDone }) {
   return html`<${Overlay} id="fleet-join-modal" labelledby="fleet-join-title" onClose=${onClose} blocked=${busy} dirty=${!!token}>
     <h3 id="fleet-join-title">Join a master with an invite token</h3>
     <label class="cron-create-row"><span class="cron-create-label">Master</span>
-      <select id="fleet-join-master" value=${master} onChange=${(e) => { setMaster(e.currentTarget.value); reset(); }}>
+      <${Select} size="sm" id="fleet-join-master" value=${master} onChange=${(e) => { setMaster(e.currentTarget.value); reset(); }}>
         ${masters.map((m) => html`<option key=${m.id} value=${m.id}>${m.label} · ${shortID(m.id)}</option>`)}
-      </select></label>
+      <//></label>
     <label class="cron-create-row"><span class="cron-create-label">Token</span>
       <input id="fleet-join-token" class="fa-token-input" type="password" autocomplete="off" spellcheck="false" placeholder="tcle1…" value=${token}
         onInput=${(e) => { setToken(e.currentTarget.value); reset(); }}
@@ -91,11 +92,11 @@ export function JoinDialog({ masters, actions, onClose, onDone }) {
       <span>I compared the master fingerprint with its operator over another channel</span></label>`}
     <div class="cron-create-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
+      <${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <span class="spacer"></span>
       ${preview
-        ? html`<button id="fleet-join-submit" type="button" class=${c.trust_level === 'unrestricted' ? 'danger' : 'primary'} disabled=${busy || !checked} onClick=${enroll}>${busy ? 'Enrolling…' : 'Enroll'}</button>`
-        : html`<button id="fleet-join-preview" type="button" class="primary" disabled=${busy || !master || !token.trim()} onClick=${doPreview}>${busy ? 'Checking…' : 'Preview'}</button>`}
+        ? html`<${Button} id="fleet-join-submit" variant=${c.trust_level === 'unrestricted' ? 'danger' : 'primary'} disabled=${busy || !checked} onClick=${enroll}>${busy ? 'Enrolling…' : 'Enroll'}</${Button}>`
+        : html`<${Button} variant="primary" id="fleet-join-preview" disabled=${busy || !master || !token.trim()} onClick=${doPreview}>${busy ? 'Checking…' : 'Preview'}</${Button}>`}
     </div>
   </${Overlay}>`;
 }
@@ -169,29 +170,29 @@ export function InvitesPage({ view, actions, confirm, toast, copy, now }) {
     ${profiles && !list.length
       ? html`<div class="empty">Invites need a node profile: create one with <code>tclaude federation profile</code>.</div>`
       : html`<div class="fa-grant-form">
-        <label><span class="fa-k">Profile</span><select id="fleet-invite-profile" value=${chosen?.name || ''} onChange=${(e) => setProfile(e.currentTarget.value)}>
+        <label><span class="fa-k">Profile</span><${Select} size="sm" id="fleet-invite-profile" value=${chosen?.name || ''} onChange=${(e) => setProfile(e.currentTarget.value)}>
           ${list.map((p) => html`<option key=${p.id} value=${p.name}>${p.name}${p.definition?.trust_level === 'unrestricted' ? ' (unrestricted)' : ''}</option>`)}
-        </select></label>
+        <//></label>
         <label><span class="fa-k">Uses</span><input id="fleet-invite-uses" type="number" min="1" max="10000" value=${uses} style="width:5em" onInput=${(e) => setUses(e.currentTarget.value)} /></label>
-        <label><span class="fa-k">Valid</span><select id="fleet-invite-ttl" value=${String(ttl)} onChange=${(e) => setTTL(Number(e.currentTarget.value))}>
+        <label><span class="fa-k">Valid</span><${Select} size="sm" id="fleet-invite-ttl" value=${String(ttl)} onChange=${(e) => setTTL(Number(e.currentTarget.value))}>
           ${TOKEN_TTLS.map((x) => html`<option key=${x.seconds} value=${String(x.seconds)}>${x.label}</option>`)}
-        </select></label>
-        <label title="The trust the joining node grants this node"><span class="fa-k">Node trusts us</span><select id="fleet-invite-level" value=${trustLevel} onChange=${(e) => setTrustLevel(e.currentTarget.value)}>
+        <//></label>
+        <label title="The trust the joining node grants this node"><span class="fa-k">Node trusts us</span><${Select} size="sm" id="fleet-invite-level" value=${trustLevel} onChange=${(e) => setTrustLevel(e.currentTarget.value)}>
           <option value="restricted">restricted</option><option value="unrestricted">unrestricted</option>
-        </select></label>
-        <button id="fleet-invite-create" type="button" class="primary" disabled=${!chosen} onClick=${create}>Create invite…</button>
+        <//></label>
+        <${Button} size="sm" variant="primary" id="fleet-invite-create" disabled=${!chosen} onClick=${create}>Create invite…<//>
       </div>`}
     ${tokens.length > 0 && html`<table class="fa-table" id="fleet-tokens">
       <thead><tr><th>Token</th><th>Uses</th><th>Expires</th><th>State</th><th></th></tr></thead>
       <tbody>${tokens.map((t) => { const st = tokenState(t, now); return html`<tr key=${t.id} data-token=${t.id}>
         <td><code>${t.id}</code></td><td>${t.used} / ${t.max_uses}</td><td>${until(t.expires_at, now)}</td>
         <td class=${st === 'active' ? '' : 'muted'}>${st}</td>
-        <td class="fa-acts">${st === 'active' ? html`<button type="button" class="fa-danger" data-fa="revoke-token" onClick=${() => revoke(t)}>Revoke…</button>` : ''}</td>
+        <td class="fa-acts">${st === 'active' ? html`<${Button} size="sm" variant="ghost danger" data-fa="revoke-token" onClick=${() => revoke(t)}>Revoke…<//>` : ''}</td>
       </tr>`; })}</tbody>
     </table>`}
     <h4>Join a master</h4>
     <div class="fa-grant-form">
-      <button id="fleet-join-open" type="button" disabled=${!masters.length} onClick=${() => setJoining(true)}>Join with a token…</button>
+      <${Button} size="sm" id="fleet-join-open" disabled=${!masters.length} onClick=${() => setJoining(true)}>Join with a token…<//>
       <span class="muted">${masters.length ? 'Enroll this node with an invite token another node issued.' : 'The issuing node must be online on the hub.'}</span>
     </div>
     ${enrollments.length > 0 && html`<h4>Enrollments</h4><table class="fa-table" id="fleet-enrollments">

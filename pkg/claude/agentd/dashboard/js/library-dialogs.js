@@ -12,6 +12,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { previewBundleImport } from './dock-library.js';
 
@@ -59,9 +60,9 @@ export function LibraryNameDialog({ descriptor, onClose, confirmDiscard }) {
     </label>
     <div class="cron-create-error" id="library-name-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+      <${Button} disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button id="library-name-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>${busy ? 'Saving…' : descriptor.okLabel || 'Save'}</button>
+      <${Button} variant="primary" id="library-name-submit" disabled=${busy} onClick=${submit}>${busy ? 'Saving…' : descriptor.okLabel || 'Save'}</${Button}>
     </div>
   </${Overlay}>`;
 }
@@ -156,11 +157,11 @@ export function LibraryBundleImportDialog({ descriptor, onClose, confirmDiscard,
     ${preview?.security_changes > 0 && html`<div class="modal-meta library-import-security">${preview.security_changes} item${preview.security_changes === 1 ? '' : 's'} can change what agents may do. Check them before importing.</div>`}
     <div class="cron-create-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy === 'apply'} onClick=${() => { void requestClose(); }}>Cancel</button>
+      <${Button} disabled=${busy === 'apply'} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button id="library-bundle-import-submit" class="primary" type="button" disabled=${blocked} onClick=${apply}>
+      <${Button} variant="primary" id="library-bundle-import-submit" disabled=${blocked} onClick=${apply}>
         ${busy === 'apply' ? 'Importing…' : `Import ${pending.length} item${pending.length === 1 ? '' : 's'}`}
-      </button>
+      </${Button}>
     </div>
   </${Overlay}>`;
 }

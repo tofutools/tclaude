@@ -8,6 +8,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { MovePanel, dropPlan, moveProgress, MOVE_POLL_MS, openFleetPage } from './fleet-move-drop.js';
 import { shellToast } from './shell-state.js';
@@ -338,8 +339,8 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
     <label class="lt-check"><input id="lt-morph-now" type="checkbox" checked=${now} disabled=${!!waiting || preview?.history?.needs_summary || preview?.history?.needs_handoff} onChange=${(e) => setNow(e.currentTarget.checked)} /> now: stop it even if it is busy, and resume it from its last saved history</label>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons"><span class="spacer"></span>
-      <button type="button" id="lt-cancel" onClick=${onClose}>Cancel</button>
-      <button type="button" ref=${okRef} class="primary" id="lt-ok" disabled=${!preview || busy || !!waiting || (preview?.history?.needs_summary && !confirmCut && !proceedWithoutSummary)} onClick=${apply}>${busy ? 'Morphing…' : preview?.history?.needs_handoff ? 'Request handoff and morph' : preview?.history?.needs_summary ? 'Request summary and morph' : now ? 'Morph now' : 'Morph at next idle turn'}</button></div>`;
+      <${Button} id="lt-cancel" onClick=${onClose}>Cancel</${Button}>
+      <${Button} variant="primary" domRef=${okRef} id="lt-ok" disabled=${!preview || busy || !!waiting || (preview?.history?.needs_summary && !confirmCut && !proceedWithoutSummary)} onClick=${apply}>${busy ? 'Morphing…' : preview?.history?.needs_handoff ? 'Request handoff and morph' : preview?.history?.needs_summary ? 'Request summary and morph' : now ? 'Morph now' : 'Morph at next idle turn'}</${Button}></div>`;
 }
 
 export function formLine(v) {
@@ -482,8 +483,8 @@ function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, o
       ${viaPeer ? '' : html`<label class="lt-row"><span class="lt-k">Note</span><textarea id="lt-note" rows="2" placeholder="Optional: told to the agent on arrival" value=${note} onInput=${(e) => setNote(e.currentTarget.value)}></textarea></label>`}`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons"><span class="spacer"></span>
-      <button type="button" id="lt-cancel" onClick=${onClose}>Cancel</button>
-      <button type="button" ref=${okRef} class="primary" id="lt-ok" disabled=${phase === 'sending' || (mode !== 'home' && (!target?.node || !target?.group))} onClick=${send}>${phase === 'sending' ? 'Sending…' : verb}</button>
+      <${Button} id="lt-cancel" onClick=${onClose}>Cancel</${Button}>
+      <${Button} variant="primary" domRef=${okRef} id="lt-ok" disabled=${phase === 'sending' || (mode !== 'home' && (!target?.node || !target?.group))} onClick=${send}>${phase === 'sending' ? 'Sending…' : verb}</${Button}>
     </div>`;
 }
 
@@ -542,13 +543,13 @@ export function LaunchTargetDialog({
   if (mode === 'morph') body = html`<${MorphPanel} key="morph" agent=${agent} api=${acting ? morphApi.current : api} toast=${toast} onClose=${onClose} setCarry=${setCarry} okRef=${okRef} onPhase=${onPhase} />`;
   else if (mode === 'home') body = html`<${TeleportPanel} key="home" mode="home" agent=${agent} home=${agent.homeName || 'its home'} viaPeer=${!local || agent.presence === 'away'} api=${api} actions=${actions} timers=${timers} now=${now} toast=${toast} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
   else if (cloneHere) body = html`<p class="lt-consequence">A sibling of ${agent.name} starts on this node. The next step picks its working directory or worktree, its first message, and whether it copies the conversation.</p>
-    <div class="modal-buttons"><span class="spacer"></span><button type="button" id="lt-cancel" onClick=${onClose}>Cancel</button>
-      <button type="button" ref=${okRef} class="primary" id="lt-ok" onClick=${() => onLocalClone?.()}>Clone here…</button></div>`;
+    <div class="modal-buttons"><span class="spacer"></span><${Button} id="lt-cancel" onClick=${onClose}>Cancel</${Button}>
+      <${Button} variant="primary" domRef=${okRef} id="lt-ok" onClick=${() => onLocalClone?.()}>Clone here…</${Button}></div>`;
   else if (mode === 'move' && plan && (plan.kind === 'push' || plan.kind === 'pull' || (plan.kind === 'third' && relay))) body = html`<${MovePanel} key=${`${targetRef.node}/${targetRef.group}`} drop=${{ agent: { id: agent.id, name: agent.name }, source, target: targetRef }} plan=${plan} actions=${actions} peerActions=${peerActions} timers=${timers} now=${now} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
   else if ((mode === 'teleport' || mode === 'clone') && targetRef?.group) body = html`<${TeleportPanel} key=${`${mode}/${targetRef.node}/${targetRef.group}`} mode=${mode} agent=${agent} target=${targetRef} api=${api} actions=${actions} timers=${timers} now=${now} toast=${toast} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase}
     pullActions=${local ? null : peerActions(source.node)} acting=${acting} />`;
   else body = html`<div class="muted lt-hint">${picked ? 'Pick the receiving group there.' : 'Pick the node to send it to.'}</div>
-    <div class="modal-buttons"><span class="spacer"></span><button type="button" ref=${okRef} id="lt-cancel" onClick=${onClose}>Cancel</button></div>`;
+    <div class="modal-buttons"><span class="spacer"></span><${Button} domRef=${okRef} id="lt-cancel" onClick=${onClose}>Cancel</${Button}></div>`;
 
   const enter = () => { const b = okRef.current; if (b && !b.disabled) b.click(); };
   return html`<${Overlay} id="launch-target" labelledby="launch-target-title" onClose=${onClose} initialFocusRef=${okRef} onSubmitEnter=${enter}>

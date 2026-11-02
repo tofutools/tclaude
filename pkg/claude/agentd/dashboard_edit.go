@@ -151,6 +151,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/config-bundle/import", dashboardRolesRoute(handleConfigBundleImport))
 	registerDashboardSpawnAttachmentRoutes(mux)
 	registerDashboardQueuedSpawnRoutes(mux)
+	registerDashboardSpawnQueueRoutes(mux)
 	registerDashboardPluginRoutes(mux)
 	registerRemoteAccessAdminRoutes(mux)
 }

@@ -122,6 +122,6 @@ test('status lights and the tab ⚙ are drawn, and sit on the title\'s x-height 
   // Both are 15px boxes placed by vertical-align: middle in the tab's own font,
   // i.e. on the title's x-height centre, not by flex box centring.
   assert.match(css, /\.mux-tab-status::before \{\s*content: ""; display: inline-block; vertical-align: middle;\s*width: 15px; height: 15px; margin: -4px 0;/);
-  assert.match(css, /\.mux-tab-gear \.cog-btn \{[^}]*vertical-align: middle;[^}]*width: 15px; height: 15px; margin: -4px 0;/);
+  assert.match(css, /\.mux-tab-gear \.ui-btn\.ui-btn-icon\.cog-btn \{[^}]*vertical-align: middle;[^}]*width: 15px; height: 15px; margin: -4px 0;/);
   assert.doesNotMatch(css, /\.mux-tab-status \{[^}]*font-size/, 'the light keeps the tab font, whose x-height places it');
 });

@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import {
   loadSavedPrompts, saveSavedPrompt, deleteSavedPrompt,
@@ -40,11 +41,11 @@ function SavedPromptImport({ incoming, prompts, busy, onImport, onCancel }) {
     ${changed.length ? html`<label class="saved-prompts-import-overwrite"><input type="checkbox" checked=${overwrite} disabled=${busy}
       onChange=${(event) => setOverwrite(event.currentTarget.checked)}/> Overwrite the ${changed.length} existing prompt${changed.length === 1 ? '' : 's'} that differ</label>` : null}
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${onCancel}>Cancel import</button>
+      <${Button} disabled=${busy} onClick=${onCancel}>Cancel import</${Button}>
       <span class="spacer"></span>
-      <button type="button" class="primary" id="saved-prompts-import-submit" disabled=${busy || !writes}
+      <${Button} variant="primary" id="saved-prompts-import-submit" disabled=${busy || !writes}
         onClick=${() => onImport([...fresh.map((prompt) => ['', prompt]), ...(overwrite ? changed.map((prompt) => [prompt.name, prompt]) : [])])}>
-        ${busy ? 'Importing…' : `Import ${writes}`}</button>
+        ${busy ? 'Importing…' : `Import ${writes}`}</${Button}>
     </div>
   </div>`;
 }
@@ -121,10 +122,10 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
       <p class="modal-hint">Reusable text shared across all groups. Add prompts to a spawn, profile or group so their text opens the agent's task brief, or insert one into a message and edit before sending.</p>
       <div class="filter-bar saved-prompts-transfer">
         <span class="spacer"></span>
-        <button type="button" class="tool" id="saved-prompts-export" disabled=${busy || !prompts.length}
-          title="Download every saved prompt as a JSON file" onClick=${() => downloadBlob(savedPromptsExportBlob(prompts), 'tclaude-saved-prompts.json')}>⇪ export</button>
-        <button type="button" class="tool" id="saved-prompts-import-open" disabled=${busy}
-          title="Load saved prompts from an exported JSON file; you confirm before anything is written" onClick=${() => fileRef.current?.click()}>⤒ import</button>
+        <${Button} id="saved-prompts-export" disabled=${busy || !prompts.length}
+          title="Download every saved prompt as a JSON file" onClick=${() => downloadBlob(savedPromptsExportBlob(prompts), 'tclaude-saved-prompts.json')}>⇪ export<//>
+        <${Button} id="saved-prompts-import-open" disabled=${busy}
+          title="Load saved prompts from an exported JSON file; you confirm before anything is written" onClick=${() => fileRef.current?.click()}>⤒ import<//>
         <input ref=${fileRef} type="file" accept="application/json,.json" hidden
           onChange=${(event) => { void readImport(event.currentTarget.files?.[0]); event.currentTarget.value = ''; }}/>
       </div>
@@ -149,14 +150,14 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
           onInput=${(event) => setDraft({ ...draft, body: event.currentTarget.value })}/></label>
       <div role="alert" class="cron-create-error">${error}</div>
       <div class="modal-buttons">
-        <button type="button" disabled=${busy} onClick=${() => void requestClose()}>Close</button>
-        ${original ? html`<button type="button" disabled=${busy} onClick=${() => {
+        <${Button} disabled=${busy} onClick=${() => void requestClose()}>Close</${Button}>
+        ${original ? html`<${Button} disabled=${busy} onClick=${() => {
           if (deleting) void mutate(true); else setDeleting(true);
-        }}>${deleting ? 'Confirm delete' : 'Delete prompt'}</button>
-        <button type="button" id="saved-prompts-clone" disabled=${busy} onClick=${() => void startClone()}>Clone</button>` : null}
+        }}>${deleting ? 'Confirm delete' : 'Delete prompt'}</${Button}>
+        <${Button} id="saved-prompts-clone" disabled=${busy} onClick=${() => void startClone()}>Clone</${Button}>` : null}
         <span class="spacer"></span>
-        <button type="button" class="primary" disabled=${busy || !draft.name.trim() || !draft.body.trim()}
-          onClick=${() => void mutate()}>${busy ? 'Saving…' : 'Save prompt'}</button>
+        <${Button} variant="primary" disabled=${busy || !draft.name.trim() || !draft.body.trim()}
+          onClick=${() => void mutate()}>${busy ? 'Saving…' : 'Save prompt'}</${Button}>
       </div>
     </${Overlay}>
   </div>`;

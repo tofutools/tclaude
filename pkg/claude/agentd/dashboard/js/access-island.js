@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { ACCESS_SUBTABS, SUDO_COLUMNS, fmtRemaining } from './access-model.js';
 import { idTooltip, relTime, shortAgentId } from './helpers.js';
+import { Button, Input } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -49,7 +50,7 @@ function SlugsView({ state, current }) {
   }
   return html`<${Fragment}>
     <div class="filter-bar">
-      <input ref=${filterRef} id="filter-slugs" type="text" aria-label="Filter permission slugs by name"
+      <${Input} domRef=${filterRef} id="filter-slugs" aria-label="Filter permission slugs by name"
         placeholder="Filter by slug name" autocomplete="off" spellcheck=${false}
         value=${current.slugQuery} onInput=${(event) => {
           const normalized = state.setSlugQuery(event.currentTarget.value);
@@ -62,7 +63,7 @@ function SlugsView({ state, current }) {
       <span class="filter-count" id="filter-slugs-count" aria-live="polite">${current.slugQuery
         ? `${current.slugs.length} / ${current.slugTotal}`
         : `${current.slugTotal} slug${current.slugTotal === 1 ? '' : 's'}`}</span>
-      <button class="clear-filter" id="filter-slugs-clear" title="Clear filter" aria-label="Clear slug filter"
+      <button data-ui-exempt class="clear-filter" id="filter-slugs-clear" title="Clear filter" aria-label="Clear slug filter"
         onClick=${() => { state.setSlugQuery(''); filterRef.current?.focus(); }}>×</button>
     </div>
     <div class="muted" style="font-size:11px;margin-bottom:6px">👑 = group ownership automatically contributes this permission. <b>owned groups</b> means one ordinary grant scoped to each group you own; <b>global</b> is unscoped when you own any active group. 👥 = group membership contributes the permission for that group. A same-slug per-agent deny suppresses the contributed grant.</div>
@@ -105,18 +106,18 @@ function SudoView({ state, actions, current }) {
   const filterRef = useRef(null);
   return html`<${Fragment}>
     <div class="filter-bar">
-      <input ref=${filterRef} id="filter-sudo" type="text" aria-label="Filter active sudo grants"
+      <${Input} domRef=${filterRef} id="filter-sudo" aria-label="Filter active sudo grants"
         placeholder="Filter active sudo grants (matches conv title / id / slug / reason)" autocomplete="off" spellcheck=${false}
         value=${current.sudoQuery} onInput=${(event) => state.setSudoQuery(event.currentTarget.value)}
         onKeyDown=${(event) => { if (event.key === 'Escape') state.setSudoQuery(''); }} />
       <span class="filter-count" id="filter-sudo-count" aria-live="polite">${current.sudoQuery
         ? `${current.sudo.length} / ${current.sudoTotal}`
         : `${current.sudoTotal} active grant${current.sudoTotal === 1 ? '' : 's'}`}</span>
-      <button class="clear-filter" id="filter-sudo-clear" title="Clear filter" aria-label="Clear sudo filter"
+      <button data-ui-exempt class="clear-filter" id="filter-sudo-clear" title="Clear filter" aria-label="Clear sudo filter"
         onClick=${() => { state.setSudoQuery(''); filterRef.current?.focus(); }}>×</button>
       <span class="spacer"></span>
-      <button id="sudo-grant-open" class="primary" title="Proactively grant a time-bounded sudo elevation to an agent"
-        onClick=${actions.openGrant}>+ Grant sudo</button>
+      <${Button} id="sudo-grant-open" variant="primary" title="Proactively grant a time-bounded sudo elevation to an agent"
+        onClick=${actions.openGrant}>+ Grant sudo<//>
     </div>
     ${current.mutation.error && html`<div role="alert" class="island-error access-mutation-error">${current.mutation.error}</div>`}
     <div id="sudo-list">
@@ -136,8 +137,8 @@ function SudoView({ state, actions, current }) {
               <td><span class="last-hook" data-sudo-countdown=${grant.id}>${fmtRemaining(grant.remaining_seconds)}</span></td>
               <td>${grant.reason || ''}</td>
               <td><span class="muted" title=${grant.granted_by || ''}>${grant.granted_by || ''}</span></td>
-              <td><button class="danger" disabled=${current.mutation.busy.has(key)} onClick=${() => actions.revoke(grant)}
-                title="Revoke this grant">${current.mutation.busy.has(key) ? 'revoking…' : 'revoke'}</button></td>
+              <td><${Button} size="sm" variant="ghost danger" disabled=${current.mutation.busy.has(key)} onClick=${() => actions.revoke(grant)}
+                title="Revoke this grant">${current.mutation.busy.has(key) ? 'revoking…' : 'revoke'}<//></td>
             </tr>`;
           })}
         </tbody></table>`}
