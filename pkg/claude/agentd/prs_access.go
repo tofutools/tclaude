@@ -45,7 +45,13 @@ func livePresentedPRAccessValidator(ctx context.Context, caller, requestedDir, r
 		return "", fmt.Errorf("could not validate the calling agent's repository: %s", fault.Msg)
 	}
 	remote := strings.TrimSpace(runInDir(repoRoot, "git", "remote", "get-url", "origin"))
-	remoteParsed, err := parseRemoteURL(remote)
+	// Under the operator's policy, so an https origin on a configured GitLab
+	// instance's own port is read the way the proxy reads it.
+	var policy config.GitProxyConfig
+	if cfg, err := config.Load(); err == nil {
+		policy = cfg.ResolvedGitProxy()
+	}
+	remoteParsed, err := parseRemoteURLFor(remote, policy)
 	if err != nil {
 		return "", fmt.Errorf("could not validate repository origin: %w", err)
 	}

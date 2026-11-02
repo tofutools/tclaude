@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -3231,6 +3232,30 @@ func (p GitProxyConfig) GitLabBase(host string) string {
 		return base
 	}
 	return defaultGitLabHosts[host]
+}
+
+// GitLabBases lists the base URL of every GitLab instance the policy
+// recognises — the configured gitlab_hosts plus the defaults they do not
+// override — sorted, so a caller that derives configuration from it is
+// deterministic. These are exactly the bases GitLabBase can answer with, and
+// so the only places the GitLab token is ever sent.
+func (p GitProxyConfig) GitLabBases() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(base string) {
+		if base != "" && !seen[base] {
+			seen[base] = true
+			out = append(out, base)
+		}
+	}
+	for host := range p.GitLabHosts {
+		add(p.GitLabBase(host))
+	}
+	for host := range defaultGitLabHosts {
+		add(p.GitLabBase(host))
+	}
+	sort.Strings(out)
+	return out
 }
 
 // DefaultGitProxyProtectedRefs are the branches the Git proxy refuses to push

@@ -117,10 +117,14 @@ daemon state; migrated automatically from the legacy `~/.tclaude/config.json`):
   project at all (a self-hosted instance cannot be told apart from any other
   git server by its name), and it is where the web/API root lives, which may
   differ from the SSH host in scheme and port. `gitlab.com` needs no entry.
-  The base must be `https`; the GitLab token is only ever sent to it.
-- `gitlab_token_file` — the GitLab token source (GitLab proxy only): a
-  personal or project access token with the `api` scope. There is no CLI
-  fallback; with no file configured every GitLab verb refuses and says so.
+  The base must be `https`; the GitLab token is only ever sent to it. It is
+  also the one way a remote URL may name a port: an `https` remote whose
+  scheme, host and port are exactly a base here is accepted (see
+  [GitLab proxy](#gitlab-proxy)).
+- `gitlab_token_file` — the GitLab token source: a personal or project access
+  token with the `api` scope. The GitLab verbs send it to the API, and git
+  uses it for `https` pushes and fetches to a configured instance. There is no
+  CLI fallback; with no file configured every GitLab verb refuses and says so.
 
 `~/` expands in these values; shell variables do not.
 
@@ -220,9 +224,26 @@ Permissions, all scopable to a `remote` dimension:
 - `proxy.gitlab.merge` — `mr merge` only. GitLab's own protected-branch rules
   and approval requirements still apply; `protected_refs` does not.
 
-Agents' remotes should be the SSH form (`git@gitlab.example.com:acme/app.git`):
-the git proxy refuses a remote URL with an explicit port, and the instance's
-web port belongs in `gitlab_hosts` instead.
+An agent's remote can take either form GitLab's clone button offers:
+
+- SSH, `git@gitlab.example.com:acme/app.git`. Pushes and fetches use the
+  daemon's SSH key (`ssh_key`, or its ssh-agent).
+- `https`, with the instance's port when it has one:
+  `https://gitlab.example.com:6080/acme/app.git`. The git proxy otherwise
+  refuses a remote URL that names a port, because the allow-list cannot
+  express one. It accepts this one because the scheme, host and port are
+  exactly the `gitlab_hosts` base, a destination the operator has already
+  written down. Another port on the same host, or a port on an `ssh://` URL,
+  is still refused.
+
+Over `https`, git asks a credential helper for a password. For each
+configured instance the daemon answers with `gitlab_token_file`. The
+answer is scoped to the instance's exact origin (scheme, host and port), so
+no other host or port ever sees the token. Those requests get the operator's
+own global credential helper as before. The token stays off the command line
+and out of git's environment: the helper reads the file when git asks.
+With no token file, or an unreadable one, the operator's helper answers for
+the instance too.
 
 A merge request opened through the proxy, or presented with
 `tclaude agent present-pr <merge-request URL>`, shows on the dashboard like a

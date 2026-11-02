@@ -309,6 +309,87 @@ func TestGLProxy_HostMustBeAConfiguredInstance(t *testing.T) {
 	})
 }
 
+// TestGLProxy_HTTPSRemoteOnTheInstancesPort — an https origin that names the
+// configured instance's own port (the form GitLab's clone button offers for a
+// self-hosted instance on a non-default port) is the same project as its SSH
+// form. Any other port is still refused before a credential is spent.
+func TestGLProxy_HTTPSRemoteOnTheInstancesPort(t *testing.T) {
+	const httpsRemote = "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback.git"
+
+	t.Run("the instance's own port is admitted and resolves the project", func(t *testing.T) {
+		f, git, gl := glWorld(t, []string{"gitlab.yamzz.test/yamzz"})
+		git.remotes["origin"] = httpsRemote
+		gl.def = glCanned{Status: 200, Body: "[]"}
+		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
+
+		res := gitProxyPost(t, f, "/v1/gitlab/mr/list", map[string]any{})
+		require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+		call := gl.only(t)
+		assert.Equal(t, glTestBase, call.Base)
+		assert.True(t, strings.HasPrefix(call.Path, "projects/"+glTestProjectID+"/"), "path=%s", call.Path)
+	})
+
+	t.Run("another port on the same host is refused before the credential", func(t *testing.T) {
+		f, git, gl := glWorld(t, []string{"gitlab.yamzz.test/yamzz"})
+		git.remotes["origin"] = "https://gitlab.yamzz.test:9999/yamzz/sub/previewplayback.git"
+		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
+
+		res := gitProxyPost(t, f, "/v1/gitlab/mr/list", map[string]any{})
+		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+		assert.Contains(t, res.Body.String(), "explicit port")
+		assert.Equal(t, 0, gl.count())
+	})
+
+	t.Run("the instance's port over ssh is refused", func(t *testing.T) {
+		f, git, gl := glWorld(t, []string{"gitlab.yamzz.test/yamzz"})
+		git.remotes["origin"] = "ssh://git@gitlab.yamzz.test:6080/yamzz/sub/previewplayback.git"
+		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
+
+		res := gitProxyPost(t, f, "/v1/gitlab/mr/list", map[string]any{})
+		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+		assert.Equal(t, 0, gl.count())
+	})
+
+	t.Run("the remotes view admits it", func(t *testing.T) {
+		f, git, _ := glWorld(t, []string{"gitlab.yamzz.test/yamzz"})
+		git.remotes["origin"] = httpsRemote
+		git.remotes["mirror"] = "https://gitlab.yamzz.test:9999/yamzz/sub/previewplayback.git"
+		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitRead, "test"))
+
+		res := serveAsProxyAgent(t, f, http.MethodGet, "/v1/git/remotes", nil)
+		require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+		var body gitProxyRemotesResponseForTest
+		require.NoError(t, json.Unmarshal(res.Body.Bytes(), &body))
+		byName := map[string]bool{}
+		refused := map[string]string{}
+		for _, remote := range body.Remotes {
+			byName[remote.Name] = remote.Allowed
+			refused[remote.Name] = remote.RefusedFor
+		}
+		assert.True(t, byName["origin"], "origin: %s", refused["origin"])
+		assert.False(t, byName["mirror"])
+		assert.Contains(t, refused["mirror"], "explicit port")
+	})
+
+	t.Run("a push goes to the validated https URL with the token helper scoped to the instance", func(t *testing.T) {
+		f, git, _ := glWorld(t, []string{"gitlab.yamzz.test/yamzz"})
+		git.remotes["origin"] = httpsRemote
+		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitPush, "test"))
+
+		res := gitProxyPost(t, f, "/v1/git/push", map[string]any{"branch": "feat/thing"})
+		require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+		calls := git.networkCalls()
+		require.Len(t, calls, 1)
+		push := calls[0]
+		assert.Contains(t, push.Args, httpsRemote, "the destination is the validated URL, port included")
+		joined := strings.Join(push.Args, " ")
+		assert.Contains(t, joined, "-c credential.https://gitlab.yamzz.test:6080.helper=!",
+			"the GitLab token answers for the instance's exact origin")
+		assert.NotContains(t, joined+strings.Join(push.Env, " "), glTestToken,
+			"the helper reads the token file; the token is never in argv or the environment")
+	})
+}
+
 // TestGLProxy_TokenTravelsInAHeaderAndNowhereElse — the token reaches the
 // transport as a value and never a path, query or body.
 func TestGLProxy_TokenTravelsInAHeaderAndNowhereElse(t *testing.T) {

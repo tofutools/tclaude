@@ -142,7 +142,7 @@ func resolveBranchLinkRepo(ctx context.Context, policy config.GitProxyConfig, di
 	// caller named — a subdirectory carries no config of its own, but a
 	// redirected one would have.
 	remote := probe(root, "remote", "get-url", "origin")
-	ref, err := parseRemoteURL(remote)
+	ref, err := parseRemoteURLFor(remote, policy)
 	if err != nil {
 		return branchLinkRepo{}, false
 	}

@@ -60,6 +60,29 @@ func TestBranchLinkRepoResolvesAConfiguredGitLabInstance(t *testing.T) {
 	})
 }
 
+// TestBranchLinkRepoReadsAnHTTPSRemoteOnTheInstancesPort — the https form of
+// the same project, on the configured instance's own port, gives the same
+// Branch-column repository as the SSH form. Another port gives none.
+func TestBranchLinkRepoReadsAnHTTPSRemoteOnTheInstancesPort(t *testing.T) {
+	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.yamzz.test/yamzz")
+	repoDir := branchLinkGitRepo(t, gitPath, filepath.Join(root, "work"),
+		"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback.git")
+
+	repo, ok := resolveBranchLinkRepo(context.Background(), branchLinkPolicy(t), repoDir)
+	require.True(t, ok)
+	assert.Equal(t, "gitlab", repo.Forge)
+	assert.Equal(t, "https://gitlab.yamzz.test:6080", repo.Base)
+	assert.Equal(t, "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback", repo.RepoURL)
+	assert.Equal(t, "yamzz/sub/previewplayback", repo.OwnerRepo)
+
+	t.Run("another port on the same host", func(t *testing.T) {
+		otherDir := branchLinkGitRepo(t, gitPath, filepath.Join(root, "other"),
+			"https://gitlab.yamzz.test:9999/yamzz/sub/previewplayback.git")
+		_, ok := resolveBranchLinkRepo(context.Background(), branchLinkPolicy(t), otherDir)
+		assert.False(t, ok, "a port the operator never configured links nothing")
+	})
+}
+
 func TestBranchLinkRepoRefusesAGitLabHostThatIsNotConfigured(t *testing.T) {
 	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.other.test")
 	repoDir := branchLinkGitRepo(t, gitPath, filepath.Join(root, "work"),

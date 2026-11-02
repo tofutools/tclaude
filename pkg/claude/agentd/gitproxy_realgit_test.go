@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 // gitproxy_realgit_test.go runs REAL git against a throwaway repository.
@@ -231,6 +232,58 @@ func TestRealGit_CredentialHelperResetDropsRepoLocalHelper(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "the repo-local helper must be dropped")
 	_, err = os.Stat(operatorEvidence)
 	assert.NoError(t, err, "the operator's own helper must still run")
+}
+
+// TestRealGit_GitLabTokenHelperAnswersOnlyItsInstance runs real `git credential
+// fill` with the daemon's pins. The GitLab token must answer for the configured
+// instance's exact origin and nowhere else (not the same host on another port,
+// not another host on the same port), every other request must still reach the
+// operator's own helper, and an unreadable token file must fall through
+// silently rather than echo the helper's source.
+func TestRealGit_GitLabTokenHelperAnswersOnlyItsInstance(t *testing.T) {
+	gitPath := gitAvailable(t)
+	work, _ := realGitRepo(t, gitPath)
+	home := filepath.Dir(work)
+
+	// A path with a space and a quote, to prove the shell quoting.
+	tokenPath := filepath.Join(home, "gitlab tok'en")
+	require.NoError(t, os.WriteFile(tokenPath, []byte("glpat-real-git-test\n"), 0o600))
+	policy := config.GitProxyConfig{
+		GitLabHosts:     map[string]string{"gitlab.example.test": "https://gitlab.example.test:6080"},
+		GitLabTokenFile: tokenPath,
+	}
+	hooksDir := filepath.Join(home, "no-hooks")
+	require.NoError(t, os.MkdirAll(hooksDir, 0o700))
+	operatorHelper := `!f() { test "$1" = get || exit 0; echo username=op; echo password=op-secret; }; f`
+	pins := gitProxyConfigPinsScoped(hooksDir, "ssh -o BatchMode=yes",
+		gitLabCredentialHelpers(policy), []string{operatorHelper})
+
+	fill := func(host string) (string, string) {
+		args := append(append([]string{}, pins...), "credential", "fill")
+		c := exec.Command(gitPath, args...)
+		c.Dir = work
+		c.Env = realGitEnv(home)
+		c.Stdin = strings.NewReader("protocol=https\nhost=" + host + "\n\n")
+		var stdout, stderr strings.Builder
+		c.Stdout, c.Stderr = &stdout, &stderr
+		require.NoError(t, c.Run(), "stderr=%s", stderr.String())
+		return stdout.String(), stderr.String()
+	}
+
+	out, _ := fill("gitlab.example.test:6080")
+	assert.Contains(t, out, "password=glpat-real-git-test\n", "the instance's origin gets the token")
+	assert.Contains(t, out, "username=oauth2\n")
+
+	for _, host := range []string{"gitlab.example.test", "gitlab.example.test:9999", "evil.example.test:6080"} {
+		out, _ := fill(host)
+		assert.Contains(t, out, "password=op-secret\n", "%s falls through to the operator's helper", host)
+		assert.NotContains(t, out, "glpat-real-git-test", "%s must never see the token", host)
+	}
+
+	require.NoError(t, os.Remove(tokenPath))
+	out, errOut := fill("gitlab.example.test:6080")
+	assert.Contains(t, out, "password=op-secret\n", "no token file falls through")
+	assert.NotContains(t, errOut, "tok'en", "a missing file is silent, not the helper's source")
 }
 
 // TestRealGit_UploadPackPinIsIneffectiveButTheFlagWorks is a REGRESSION LOCK on
