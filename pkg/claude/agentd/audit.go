@@ -223,6 +223,7 @@ var auditRoutes = []auditRoute{
 
 	// Spawn.
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "spawn"}, verb: "spawn", describe: describeSpawn},
+	{method: http.MethodDelete, segs: []string{"spawn-queue", "{id}"}, verb: "spawn.queue.cancel"},
 
 	// Group lifecycle.
 	{method: http.MethodPost, segs: []string{"groups"}, verb: "group.create", describe: describeGroupCreate},

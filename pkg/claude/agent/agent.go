@@ -54,6 +54,7 @@ func Cmd() *cobra.Command {
 			groupsCmd(),
 			aliasCmd(),
 			spawnCmd(),
+			queueCmd(),
 			inboxCmd(),
 			permissionsCmd(),
 			sudoCmd(),

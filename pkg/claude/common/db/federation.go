@@ -599,6 +599,9 @@ const (
 	FedSpawnLaunching = "launching"
 	FedSpawnApproved  = "approved"
 	FedSpawnDenied    = "denied"
+	// FedSpawnQueued waits in the capacity spawn queue. It holds no capacity
+	// reservation and needs no decision until the queue promotes it to pending.
+	FedSpawnQueued = "queued"
 )
 
 // FederationSpawnRequest is a spawn request a peer sent into an exported
@@ -664,9 +667,9 @@ func (o FederationSpawnOverrides) dbValue() string {
 	return string(raw)
 }
 
-// Expired reports whether a pending request has passed its expiry.
+// Expired reports whether a pending or queued request has passed its expiry.
 func (r *FederationSpawnRequest) Expired(now time.Time) bool {
-	return r.Status == FedSpawnPending && now.After(r.ExpiresAt)
+	return (r.Status == FedSpawnPending || r.Status == FedSpawnQueued) && now.After(r.ExpiresAt)
 }
 
 // InsertFederationSpawnRequest records a pending request. A repeated
@@ -683,6 +686,16 @@ func InsertFederationSpawnRequest(r *FederationSpawnRequest, pendingLimit int) (
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	id, err := insertFederationSpawnRequestTx(tx, r, FedSpawnPending, pendingLimit)
+	if err != nil {
+		return 0, err
+	}
+	return id, tx.Commit()
+}
+
+// insertFederationSpawnRequestTx is InsertFederationSpawnRequest's body,
+// inserting with status. Queued requests count toward the sender's limit.
+func insertFederationSpawnRequestTx(tx *sql.Tx, r *FederationSpawnRequest, status string, pendingLimit int) (int64, error) {
 	var n int
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM federation_spawn_requests WHERE from_instance=? AND envelope_id=?`,
 		r.FromInstance, r.EnvelopeID).Scan(&n); err != nil {
@@ -692,8 +705,8 @@ func InsertFederationSpawnRequest(r *FederationSpawnRequest, pendingLimit int) (
 		return 0, ErrFederationDuplicate
 	}
 	if pendingLimit > 0 {
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM federation_spawn_requests WHERE from_instance=? AND status=? AND expires_at>=?`,
-			r.FromInstance, FedSpawnPending, dbTime(time.Now())).Scan(&n); err != nil {
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM federation_spawn_requests WHERE from_instance=? AND status IN (?,?) AND expires_at>=?`,
+			r.FromInstance, FedSpawnPending, FedSpawnQueued, dbTime(time.Now())).Scan(&n); err != nil {
 			return 0, err
 		}
 		if n >= pendingLimit {
@@ -705,15 +718,27 @@ func InsertFederationSpawnRequest(r *FederationSpawnRequest, pendingLimit int) (
 		(from_instance, envelope_id, from_agent, from_name, group_id, group_name, name, role, brief, status, created_at, expires_at, placement_version, requirements, credentials, model_lease, requested_profile, launch_overrides)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		r.FromInstance, r.EnvelopeID, r.FromAgent, r.FromName, r.GroupID, r.GroupName, r.Name, r.Role, r.Brief,
-		FedSpawnPending, dbTime(now), dbTime(r.ExpiresAt), r.PlacementVersion, r.Requirements, r.Credentials, r.ModelLease, r.Profile, r.Overrides.dbValue())
+		status, dbTime(now), dbTime(r.ExpiresAt), r.PlacementVersion, r.Requirements, r.Credentials, r.ModelLease, r.Profile, r.Overrides.dbValue())
 	if err != nil {
 		return 0, err
 	}
-	id, err := res.LastInsertId()
+	return res.LastInsertId()
+}
+
+// PromoteQueuedFederationSpawnRequest moves a queued request to pending, where
+// it reserves capacity and waits for its (automatic or human) decision.
+// False when it no longer waits in the queue.
+func PromoteQueuedFederationSpawnRequest(id int64) (bool, error) {
+	d, err := Open()
 	if err != nil {
-		return 0, err
+		return false, err
 	}
-	return id, tx.Commit()
+	res, err := d.Exec(`UPDATE federation_spawn_requests SET status=? WHERE id=? AND status=?`, FedSpawnPending, id, FedSpawnQueued)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
 }
 
 const fedSpawnColumns = `id, from_instance, envelope_id, from_agent, from_name, group_id, group_name, name, role, brief,

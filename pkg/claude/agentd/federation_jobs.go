@@ -310,16 +310,12 @@ func (rt *fedRuntime) acceptJobRequest(peer *db.FederationPeer, env *proto.Envel
 		state, code = "refused", "not_exported"
 	}
 	if state == "pending" {
-		limit, e := nodeCapacityLimit()
-		if e != nil {
+		// Jobs are not queued: a full node, or one whose capacity queue holds
+		// waiting spawns, refuses them so the requester can go elsewhere.
+		if reason, e := remoteJobCapacityFullLocked(g); e != nil {
 			state, code = "refused", "node_capacity_unknown"
-		} else if limit > 0 {
-			used, e := nodeCapacityUsed("")
-			if e != nil {
-				state, code = "refused", "node_capacity_unknown"
-			} else if used >= limit {
-				state, code = "refused", fedCodeNodeBusy
-			}
+		} else if reason != "" {
+			state, code = "refused", fedCodeNodeBusy
 		}
 	}
 	if state == "pending" {

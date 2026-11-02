@@ -1081,7 +1081,7 @@ type snapshotPayload struct {
 	// surface. It is re-read on every snapshot so changing config takes effect
 	// without restarting agentd, matching processRoute.
 	ProcessesEnabled bool `json:"processes_enabled"`
-	// CollabEnabled gates the experimental companion window, boards and the
+	// CollabEnabled gates the companion window, boards and the
 	// Collab switch. Re-read on every snapshot so a Config-tab change takes
 	// effect without restarting agentd, matching collabRoute.
 	CollabEnabled bool `json:"collab_enabled"`

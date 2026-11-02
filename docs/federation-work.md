@@ -625,7 +625,9 @@ actual launch harness and node settings. They never override its profile,
 harness, directory or model. An incompatible automatic policy refuses the
 request; a human approval must choose a compatible harness.
 
-The receiver authoritatively enforces `federation.max_live_agents` across live
+The receiver authoritatively enforces `federation.max_live_agents` (or
+`capacity.max_live_agents`, see
+[Capacity limits](spawning-and-lifecycle.md#capacity-limits-and-the-spawn-queue)) across live
 agents and reserved launches, including pending remote requests, all peers and
 both manual and automatic approvals. Local managed launches use the same gate.
 Zero means unlimited. Pending requests hold capacity until decided or expired;
@@ -634,7 +636,25 @@ in the Pending list until their pane is ready or the launch wrapper reports fail
 Deleting one whose pane is unconfirmed requires inspecting the launch and
 explicitly acknowledging a possible late worker through the dashboard API
 (`POST /api/pending/delete/<label>?acknowledge_late_worker=1`). Direct peer requests also obey this
-node cap.
+node cap, and the free-RAM and free-disk thresholds.
+
+With `capacity.when_full` set to `queue`, a direct request that does not fit,
+or that arrives while spawns already wait, joins the receiver's one spawn queue
+behind local spawns instead of being refused. It holds no capacity while it
+waits. The receiver acknowledges it as accepted with the code `queued`, so an
+older requester just sees an accepted request; a current requester shows
+`queued at peer (#N)` in `tclaude federation outbox`. The receiver lists it as
+`queued (#N)` in `tclaude federation requests` and in `tclaude agent queue ls`.
+It cannot be approved while it waits: when it reaches the head and capacity
+frees, it becomes an ordinary pending request, which automatic policy launches
+or the operator decides. Denying it in `federation requests deny`, or
+cancelling it with `agent queue rm`, ends both and tells the requester. A
+queued request still expires with its envelope. Peer-view spawns and
+automatically placed requests are never queued: they are refused with
+`node_busy`, the latter so placement can try the next candidate.
+
+Nodes advertise `spawn_when_full` and their queued spawn count. Placement
+skips a node with queued spawns, since a new request would wait behind them.
 
 Only a definitive `node_busy` refusal, before the receiver creates a request or
 launch, permits trying the next candidate. Other refusals stop selection. A

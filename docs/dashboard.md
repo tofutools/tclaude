@@ -36,8 +36,8 @@ or a phone, see [Operating remotely](remote.md).
 
 A new install usually needs a few things. The **Diagnostics** tab shows a blue or red
 badge when [Doctor](dashboard-diagnostics.md#doctor) has a question or a blocking
-problem, so look there first. To turn on the Steward helper, use **Collab** under
-[Config › Experimental](dashboard-config.md#experimental).
+problem, so look there first. To make a Steward helper, click **✦ Steward** at the
+bottom right; see [Ask the Steward](learn/steward.md).
 
 ## The header
 
@@ -105,7 +105,7 @@ terminal ones. The table below shows the defaults. Keys are written one name at 
 key, not a plus. Shortcuts follow the key's position, so they sit on the same
 keys on any keyboard layout, and the list labels them with what those keys type
 on yours. Shortcuts marked (Collab) belong to features that need
-[Collab](dashboard-config.md#experimental) on.
+[Collab](companion.md#turning-collab-off) on.
 
 <!-- shortcuts:begin -->
 | Action | Windows & Linux | macOS | In a terminal |

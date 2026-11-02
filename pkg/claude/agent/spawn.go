@@ -53,6 +53,13 @@ type SpawnResponse struct {
 	// spawn carried no task link, or on a response from an older daemon.
 	TaskRefURL   string `json:"task_ref_url,omitempty"`
 	TaskRefState string `json:"task_ref_state,omitempty"`
+
+	// Queued is set when the instance was at capacity and the spawn now waits
+	// in the capacity queue (HTTP 202): no agent exists yet, and there is no ETA.
+	Queued      bool   `json:"queued,omitempty"`
+	QueueID     int64  `json:"queue_id,omitempty"`
+	Position    int    `json:"position,omitempty"`
+	QueueReason string `json:"queue_reason,omitempty"`
 }
 
 type nonInteractiveSpawnResponse struct {
@@ -316,6 +323,9 @@ type SpawnRequest struct {
 	// output. No group member or conversation is enrolled by tclaude.
 	NonInteractive    bool  `json:"non_interactive,omitempty"`
 	RunTimeoutSeconds int64 `json:"run_timeout_seconds,omitempty"`
+	// NoQueue refuses the spawn when capacity is full even where
+	// capacity.when_full is "queue".
+	NoQueue bool `json:"no_queue,omitempty"`
 	// Cwd is the working directory for the new CC session. Empty falls
 	// back to the group's default_cwd, then CallerCwd, then the daemon's
 	// own cwd.
@@ -839,6 +849,7 @@ type SpawnParams struct {
 	ReplyTo        string   `long:"reply-to" optional:"true" help:"Whom the new agent's reply to its startup brief should reach (conv-id / prefix / title). Defaults to you when you are an agent; empty for a human-initiated spawn"`
 	Cwd            string   `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the group's default directory, then the caller's cwd)"`
 	Timeout        string   `long:"timeout" short:"t" optional:"true" help:"Interactive: conv-id wait (default 30s); non-interactive: entire run (default 1h)"`
+	NoQueue        bool     `long:"no-queue" help:"Refuse instead of queueing when this instance is at capacity (capacity.when_full = queue)"`
 	NonInteractive bool     `long:"non-interactive" help:"Run one prompt to completion using the resolved launch policy (including private per-run directories and pre-launch scripts); model gateways and managed instructions require an interactive worker"`
 	GroupContext   bool     `long:"group-context" help:"Include the group's startup context in a non-interactive prompt (off by default)"`
 	Environment    []string `long:"env" optional:"true" help:"Process environment NAME=value. Repeatable; later sources override group/profile values. Values may contain '='."`
@@ -1731,6 +1742,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	}
 
 	req := SpawnRequest{
+		NoQueue:                p.NoQueue,
 		NonInteractive:         p.NonInteractive,
 		RunTimeoutSeconds:      runTimeoutSeconds,
 		Environment:            environment,
@@ -1965,6 +1977,14 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			}
 		}
 		return nil, MapDaemonErrorToRC(err)
+	}
+	if resp.Queued {
+		// The agent launches later from the queue, in the worktree made above.
+		fmt.Fprintf(stdout, "Queued spawn #%d in group %q at position %d (no ETA): %s\n",
+			resp.QueueID, resp.Group, resp.Position, resp.QueueReason)
+		fmt.Fprintf(stdout, "  It starts when capacity frees; you are told when it launches or fails.\n")
+		fmt.Fprintf(stdout, "  Inspect: tclaude agent queue ls   Cancel: tclaude agent queue rm %d\n", resp.QueueID)
+		return &resp, rcOK
 	}
 	fmt.Fprintf(stdout, "Spawned %s in group %q\n", shortAgentID(resp.AgentID, resp.ConvID), resp.Group)
 	if resp.Label != "" {

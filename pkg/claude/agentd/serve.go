@@ -473,6 +473,7 @@ func runServe(p *serveParams) error {
 	// decision, the clone cooldown, and the spawn guardrails. Load it once
 	// up front so every startup knob reads the same snapshot.
 	cfg, _ := config.Load()
+	resolveCollabDefault(cfg)
 	resourceDelegationDir, resourceDelegationSource := resolveResourceDelegationDir(
 		p.ResourceDelegationDir, cfg)
 	if resourceDelegationDir != "" {
@@ -794,6 +795,8 @@ func runServe(p *serveParams) error {
 	startCostOpeningRefresher(cronStop)
 	startUsageFleetPoller(cronStop)
 	startHostMetricsPoller(cronStop)
+	// Launches capacity-queued spawns, in order, as capacity frees.
+	startSpawnQueue(cronStop)
 
 	// Codex subscription-usage poller. Codex has no usage API wired into
 	// tclaude, so this lifts the 5h/weekly rate limits off Codex's local

@@ -183,8 +183,9 @@ func New(t *testing.T) *World {
 	db.ResetForTest()
 	// The owning flow fixture drains daemon work before this cleanup runs.
 	// Close SQLite connections before HOME restoration and TempDir removal,
-	// including the WAL sidecars held by idle pooled connections.
-	t.Cleanup(db.ResetForTest)
+	// including the WAL sidecars held by idle pooled connections, and refuse
+	// any later Open into this HOME from work the drain does not track.
+	t.Cleanup(func() { db.CloseForTestTeardown(home) })
 	return &World{
 		HomeDir:             home,
 		Tmux:                newTmuxSim(),

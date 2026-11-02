@@ -949,6 +949,7 @@ type spawnRequestRow struct {
 	Require          string                       `json:"require,omitempty"`
 	PlacementVersion int                          `json:"placement_version,omitempty"`
 	ID               int64                        `json:"id"`
+	Position         int                          `json:"position,omitempty"`
 	From             string                       `json:"from"`
 	Group            string                       `json:"group"`
 	Name             string                       `json:"name"`
@@ -970,7 +971,7 @@ type requestsParams struct {
 func requestsCmd() *cobra.Command {
 	cmd := boa.CmdT[requestsParams]{
 		Use:         "requests",
-		Short:       "List spawn requests remote peers sent to your visible groups",
+		Short:       "List spawn requests remote peers sent to your visible groups (pending and capacity-queued)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *requestsParams, _ *cobra.Command, _ []string) {
 			if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
@@ -982,7 +983,7 @@ func requestsCmd() *cobra.Command {
 			}
 			kept := rows[:0]
 			for _, r := range rows {
-				if p.All || r.Status == "pending" {
+				if p.All || r.Status == "pending" || r.Status == "queued" {
 					kept = append(kept, r)
 				}
 			}
@@ -990,11 +991,16 @@ func requestsCmd() *cobra.Command {
 				os.Exit(printJSON(os.Stdout, kept))
 			}
 			if len(kept) == 0 {
-				fmt.Println("no pending spawn requests (--all shows decided ones)")
+				fmt.Println("no pending or queued spawn requests (--all shows decided ones)")
 				return
 			}
 			for _, r := range kept {
-				fmt.Printf("#%d  %s  from %s  into %s  %s\n", r.ID, r.Status, r.From, r.Group, ago(r.CreatedAt))
+				status := r.Status
+				if r.Status == "queued" && r.Position > 0 {
+					// Waits in this node's capacity queue; approve opens once it is handed on.
+					status = fmt.Sprintf("queued (#%d)", r.Position)
+				}
+				fmt.Printf("#%d  %s  from %s  into %s  %s\n", r.ID, status, r.From, r.Group, ago(r.CreatedAt))
 				if r.Name != "" || r.Role != "" {
 					fmt.Printf("    name %q  role %q\n", r.Name, r.Role)
 				}

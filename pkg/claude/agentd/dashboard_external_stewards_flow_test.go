@@ -77,7 +77,7 @@ func TestExternalStewardDashboard_OffAndCollabOff(t *testing.T) {
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	cfg.Features.Collab = false
+	cfg.Features.Collab = new(false)
 	require.NoError(t, config.Save(cfg))
 	assert.Equal(t, http.StatusNotFound, s.dashboard(http.MethodGet, "/api/external-stewards", nil).Code)
 }

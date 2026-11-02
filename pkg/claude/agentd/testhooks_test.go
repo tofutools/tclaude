@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"github.com/tofutools/tclaude/pkg/hostmetrics"
 	"context"
 	"encoding/json"
 	"errors"
@@ -2613,6 +2614,31 @@ func PlacementSpawnAllowedForTest(r *http.Request, conv, peer, group string) boo
 // NotifyExternalStewardExpiriesForTest runs one pass of the expiry watch.
 func NotifyExternalStewardExpiriesForTest(now time.Time) {
 	notifyExternalStewardExpiries(now)
+}
+
+// RunSpawnQueueForTest runs one capacity-queue pass, as the daemon's ticker would.
+func RunSpawnQueueForTest() { runSpawnQueue() }
+
+// ReconcileSpawnQueueForTest settles launching entries, as daemon start does.
+func ReconcileSpawnQueueForTest() { reconcileSpawnQueue() }
+
+// SetCapacityResourcesForTest replaces the free RAM/disk probe: ramMB of free
+// RAM (negative: reading unavailable) and diskMB free on every directory.
+func SetCapacityResourcesForTest(ramMB, diskMB int64) func() {
+	prev := capacityProbe
+	capacityProbe = func(dirs []string) capacityResources {
+		out := capacityResources{RAMError: "RAM: unavailable in test"}
+		if ramMB >= 0 {
+			v := uint64(ramMB) << 20
+			out.RAMAvailable = &v
+		}
+		for _, d := range dirs {
+			out.Disks = append(out.Disks, hostmetrics.Disk{Path: hostmetrics.Path{Kind: "capacity", Path: d},
+				TotalBytes: 1 << 40, AvailableBytes: uint64(diskMB) << 20})
+		}
+		return out
+	}
+	return func() { capacityProbe = prev }
 }
 
 // PollAuthoredOpenMRsForTest runs one Open MRs poll synchronously, against
