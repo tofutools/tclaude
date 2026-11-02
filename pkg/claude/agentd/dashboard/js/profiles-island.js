@@ -92,11 +92,11 @@ function CaptureRow({ capture, actions, deleting, now }) {
         title="Every file of this capture as one zip — to keep or hand to someone">zip ⤓</a>`}
     </div></td>
     <td class="profile-actions">
-      ${shareable && html`<button type="button" class="tool" title="Send this capture's files to an agent as message attachments"
-        aria-label=${`Share capture ${capture.id} with an agent`} onClick=${() => actions.share(capture)}>share…</button>`}
-      <button type="button" class="tool" disabled=${!done && capture.status === 'running' || deleting === capture.id}
+      ${shareable && html`<${Button} size="sm" title="Send this capture's files to an agent as message attachments"
+        aria-label=${`Share capture ${capture.id} with an agent`} onClick=${() => actions.share(capture)}>share…<//>`}
+      <${Button} size="sm" disabled=${!done && capture.status === 'running' || deleting === capture.id}
         title="Delete this capture's files" aria-label=${`Delete capture ${capture.id}`}
-        onClick=${() => actions.remove(capture)}>${deleting === capture.id ? '…' : '✕'}</button>
+        onClick=${() => actions.remove(capture)}>${deleting === capture.id ? '…' : '✕'}<//>
     </td>
   </tr>`;
 }

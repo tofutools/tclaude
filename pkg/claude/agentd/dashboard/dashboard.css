@@ -5092,11 +5092,11 @@ body.show-group-description .group-descr { display: inline; }
   display: grid; grid-template-columns: repeat(3, 1fr); flex: 1;
   padding: 2px; border: 1px solid #2a3340; border-radius: 5px; background: #0d1117;
 }
-.group-create-origin-options button {
+.group-create-origin-options button:where(:not(.ui-btn)) {
   height: 29px; border: 0; border-radius: 3px; background: transparent;
   color: #7d8590; font: inherit; font-size: 11px; cursor: pointer;
 }
-.group-create-origin-options button.selected {
+.group-create-origin-options button:where(:not(.ui-btn)).selected {
   background: #1f3f67; color: #79c0ff; box-shadow: inset 0 0 0 1px #1f6feb;
 }
 .group-create-source-summary { margin: 0; }
@@ -5118,12 +5118,12 @@ body.show-group-description .group-descr { display: inline; }
 .group-create-clone-transport { flex: 1; }
 .group-create-workspace-modes { margin-bottom: 10px; }
 .group-create-workspace-modes button,
-.group-create-clone-transport button {
+.group-create-clone-transport button:where(:not(.ui-btn)) {
   height: 27px; border: 0; border-radius: 3px; background: transparent;
   color: #7d8590; font: inherit; font-size: 11px; cursor: pointer;
 }
 .group-create-workspace-modes button.selected,
-.group-create-clone-transport button.selected {
+.group-create-clone-transport button:where(:not(.ui-btn)).selected {
   background: #1f3f67; color: #79c0ff; box-shadow: inset 0 0 0 1px #1f6feb;
 }
 .group-create-workspace-row { margin-top: 8px; }
@@ -8088,7 +8088,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   width: 100%;
 }
 .sbx-prelaunch-actions { display: flex; gap: .3rem; }
-.sbx-prelaunch-actions button {
+.sbx-prelaunch-actions button:where(:not(.ui-btn)) {
   background: #21262d;
   border: 1px solid #2a3340;
   border-radius: 4px;
@@ -8099,8 +8099,8 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   min-height: 29px;
   padding: 0 .55rem;
 }
-.sbx-prelaunch-actions button:hover { background: #2d333b; }
-.sbx-prelaunch-actions button:disabled { cursor: default; opacity: .35; }
+.sbx-prelaunch-actions button:where(:not(.ui-btn)):hover { background: #2d333b; }
+.sbx-prelaunch-actions button:where(:not(.ui-btn)):disabled { cursor: default; opacity: .35; }
 .sbx-prelaunch-actions .sbx-prelaunch-remove { color: #f0b0b0; }
 .sbx-prelaunch-actions .sbx-prelaunch-remove:hover { border-color: #6e3a3a; }
 .sbx-prelaunch-error { color: #ff7b72; font-size: .76rem; line-height: 1.35; }
@@ -8222,7 +8222,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   display: inline-flex; align-items: center; gap: 6px;
   color: #8b949e; font-size: 11px; white-space: nowrap;
 }
-.sbx-global-filter select {
+.sbx-global-filter select:where(:not(.ui-select)) {
   background: #161b22; border: 1px solid #303b49; border-radius: 4px;
   color: #c9d1d9; font: inherit; padding: 2px 22px 2px 6px;
 }
@@ -8249,15 +8249,15 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 }
 .sbx-global-warning { color: #f0883e; font-size: 11px; line-height: 1.4; padding: 2px 1px; }
 /* Browse… and the ✕ delete button share the dark inline-button skin. */
-.sbx-row button {
+.sbx-row button:where(:not(.ui-btn)) {
   flex: 0 0 auto; align-self: stretch;
   background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
   color: #c9d1d9; font-family: inherit; font-size: 12px;
   padding: 0 10px; cursor: pointer; white-space: nowrap;
 }
-.sbx-row button:last-child:not(.sbx-segmented-option) { padding: 0 9px; color: #8b949e; }
-.sbx-row button:hover { background: #2d333b; }
-.sbx-row button:last-child:hover:not(.sbx-segmented-option) { color: #f0b0b0; border-color: #6e3a3a; }
+.sbx-row button:where(:not(.ui-btn)):last-child:not(.sbx-segmented-option) { padding: 0 9px; color: #8b949e; }
+.sbx-row button:where(:not(.ui-btn)):hover { background: #2d333b; }
+.sbx-row button:where(:not(.ui-btn)):last-child:hover:not(.sbx-segmented-option) { color: #f0b0b0; border-color: #6e3a3a; }
 /* Sandbox-profile card body: one compact line per grant / env binding, replacing
    the old ` · `-joined .modal-meta paragraph. Each line is a small tag plus a
    monospace value that ellipsis-truncates rather than wrapping. */
@@ -8335,13 +8335,13 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   background: rgba(210, 153, 34, 0.08); color: #d2a84b; font-size: 12px;
 }
 .sbx-missing[hidden] { display: none; }
-.sbx-missing button {
+.sbx-missing button:where(:not(.ui-btn)) {
   flex: 0 0 auto; background: #21262d; border: 1px solid #6e5a2d; border-radius: 4px;
   color: #e3b341; font-family: inherit; font-size: 12px; padding: 4px 9px;
   cursor: pointer; white-space: nowrap;
 }
-.sbx-missing button:hover { background: #2d2a20; border-color: #9e7c32; }
-.sbx-missing button:disabled { opacity: 0.55; cursor: default; }
+.sbx-missing button:where(:not(.ui-btn)):hover { background: #2d2a20; border-color: #9e7c32; }
+.sbx-missing button:where(:not(.ui-btn)):disabled { opacity: 0.55; cursor: default; }
 /* The common-rule preset menu sits under the filesystem table and ships
    folded: it is a long audited catalog most profiles never open, and every
    entry is only a row inserter — after the click there is nothing left of it
@@ -8544,7 +8544,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
    making the later role-editor twin visibly thinner. Top-align all three and
    restore button.tool's own vertical padding so they match the spawn dialog's
    Role-row buttons. */
-.cron-create-row > button.tool:is(#profile-editor-perms, #profile-editor-context-features, #role-editor-perms) {
+.cron-create-row > .ui-btn:is(#profile-editor-perms, #profile-editor-context-features, #role-editor-perms) {
   align-self: flex-start; padding: 5px 12px;
 }
 /* Live inline help under the one spawn-dialog control that still needs it: the
@@ -9607,12 +9607,12 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
    button.tool rule). Without this it rendered white UA chrome in plain mode;
    the wizard .tc-actions button.primary rule recolors it per skin. Mirrors
    .filter-bar button.primary. */
-.template-card .tc-actions button.primary {
+.template-card .tc-actions button:where(:not(.ui-btn)).primary {
   background: #1f6feb; border: 1px solid #1f6feb; color: white;
   border-radius: 4px; padding: 5px 12px; font-size: 12px;
   cursor: pointer; font-family: inherit;
 }
-.template-card .tc-actions button.primary:hover { background: #388bfd; border-color: #388bfd; }
+.template-card .tc-actions button:where(:not(.ui-btn)).primary:hover { background: #388bfd; border-color: #388bfd; }
 .template-card .tc-agents { display: flex; flex-wrap: wrap; gap: 6px; }
 .template-card .tc-agent {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
@@ -13359,7 +13359,7 @@ body.wizard #group-create-modal .group-create-workspace {
   border-color: rgba(122, 93, 176, 0.45); background: #171126;
 }
 body.wizard #group-create-modal .group-create-workspace-modes button.selected,
-body.wizard #group-create-modal .group-create-clone-transport button.selected {
+body.wizard #group-create-modal .group-create-clone-transport button:where(:not(.ui-btn)).selected {
   background: #3a2a63; color: #e5d3ff; box-shadow: inset 0 0 0 1px #a97bd6;
 }
 body.wizard #group-create-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
@@ -13436,7 +13436,7 @@ body.wizard #group-create-modal .group-create-origin-options,
 body.wizard #group-create-modal .group-clone-preview {
   background: #140f28; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5;
 }
-body.wizard #group-create-modal .group-create-origin-options button.selected {
+body.wizard #group-create-modal .group-create-origin-options button:where(:not(.ui-btn)).selected {
   background: #3a2a63; color: #e5d3ff; box-shadow: inset 0 0 0 1px #a97bd6;
 }
 body.wizard #group-create-modal .group-clone-preview .gcp-title { color: #f3e6c0; }
@@ -14876,10 +14876,10 @@ body.wizard #profiles-manage-modal .template-card {
 }
 body.wizard #profiles-manage-modal .template-card .tc-name { color: #f3e6c0; }
 body.wizard #profiles-manage-modal .template-card .tc-descr { color: #b39ddb; }
-body.wizard #profiles-manage-modal .template-card .tc-actions button {
+body.wizard #profiles-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #profiles-manage-modal .template-card .tc-actions button:hover { background: #3a2a63; }
+body.wizard #profiles-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 body.wizard #profiles-manage-modal .template-empty { color: #b39ddb; }
 
 /* Close (and any other non-primary footer button): tarnished-gold secondary. */
@@ -15072,15 +15072,15 @@ body.wizard #templates-manage-modal .template-card .tc-force {
   background: #1b1338; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5;
 }
 body.wizard #templates-manage-modal .template-card .tc-force .tc-force-mission { color: #b39ddb; }
-body.wizard #templates-manage-modal .template-card .tc-actions button {
+body.wizard #templates-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #templates-manage-modal .template-card .tc-actions button:hover { background: #3a2a63; }
-body.wizard #templates-manage-modal .template-card .tc-actions button:is(.primary, .ui-btn-primary) {
+body.wizard #templates-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)):hover { background: #3a2a63; }
+body.wizard #templates-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)):is(.primary, .ui-btn-primary) {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   box-shadow: 0 0 8px rgba(169, 123, 214, 0.45);
 }
-body.wizard #templates-manage-modal .template-card .tc-actions button:is(.primary, .ui-btn-primary):hover {
+body.wizard #templates-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)):is(.primary, .ui-btn-primary):hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
 }
 body.wizard #templates-manage-modal .template-empty { color: #b39ddb; }
@@ -15138,11 +15138,11 @@ body.wizard #template-editor-modal .template-agent-owner { color: #e7d9f5; }
 /* Work-pattern rows ride the .template-agent-row re-skin above; only
    their send-to select needs its own arcane coat. */
 body.wizard #template-editor-modal .template-pattern-sendto { color: #b39ddb; }
-body.wizard #template-editor-modal select.tw-sendto {
+body.wizard #template-editor-modal select.tw-sendto:where(:not(.ui-select)) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
-body.wizard #template-editor-modal select.tw-sendto:focus { border-color: #a97bd6; }
-body.wizard #template-editor-modal select.tw-sendto option { color: #1a1330; background: #e7d9f5; }
+body.wizard #template-editor-modal select.tw-sendto:where(:not(.ui-select)):focus { border-color: #a97bd6; }
+body.wizard #template-editor-modal select.tw-sendto:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
 /* The per-hero library-reference selects — the role-library dropdown
    (JOH-351) and the launch-profile picker (JOH-350) — share the send-to
    select's arcane coat. Their labelled row wrappers (.template-agent-roleref)
@@ -15150,13 +15150,13 @@ body.wizard #template-editor-modal select.tw-sendto option { color: #1a1330; bac
    Options render on the OS layer: dark ink on parchment for legibility, same
    as tw-sendto. */
 body.wizard #template-editor-modal select.ta-role-ref,
-body.wizard #template-editor-modal select.ta-profile-select {
+body.wizard #template-editor-modal select.ta-profile-select:where(:not(.ui-select)) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
 body.wizard #template-editor-modal select.ta-role-ref:focus,
-body.wizard #template-editor-modal select.ta-profile-select:focus { border-color: #a97bd6; }
+body.wizard #template-editor-modal select.ta-profile-select:where(:not(.ui-select)):focus { border-color: #a97bd6; }
 body.wizard #template-editor-modal select.ta-role-ref option,
-body.wizard #template-editor-modal select.ta-profile-select option { color: #1a1330; background: #e7d9f5; }
+body.wizard #template-editor-modal select.ta-profile-select:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
 body.wizard #template-editor-modal .template-agent-roleref,
 body.wizard #template-editor-modal .template-agent-roleref span { color: #b39ddb; }
 /* Launch-profile summary + the pre-cutover legacy-inline notice. The summary
@@ -15752,12 +15752,12 @@ body.wizard :is(#profile-export-modal, #profile-import-modal) select:focus { bor
 body.wizard :is(#profile-export-modal, #profile-import-modal) input[type=checkbox] { accent-color: #a97bd6; }
 /* Preview sits outside .modal-buttons, so it needs its own scoped wizard skin.
    The same shared control appears in the sandbox-profile import sibling. */
-body.wizard :is(#profile-import-modal, #sandbox-profile-import-modal) .profile-transfer-preview-button {
+body.wizard :is(#profile-import-modal, #sandbox-profile-import-modal) .profile-transfer-preview-button:where(:not(.ui-btn)) {
   background: #241b3d;
   border-color: #d9b45a;
   color: #f3e6c0;
 }
-body.wizard :is(#profile-import-modal, #sandbox-profile-import-modal) .profile-transfer-preview-button:hover:not(:disabled) {
+body.wizard :is(#profile-import-modal, #sandbox-profile-import-modal) .profile-transfer-preview-button:where(:not(.ui-btn)):hover:not(:disabled) {
   background: #3a2a63;
 }
 
@@ -15824,10 +15824,10 @@ body.wizard #sandbox-profiles-manage-modal .template-card .tc-name { color: #f3e
 body.wizard #sandbox-profiles-manage-modal .template-card .tc-descr { color: #b39ddb; }
 body.wizard #sandbox-profiles-manage-modal .template-card .sbx-cap-val { color: #d8c9f0; }
 body.wizard #sandbox-profiles-manage-modal .template-card .sbx-caps-empty { color: #b39ddb; }
-body.wizard #sandbox-profiles-manage-modal .template-card .tc-actions button {
+body.wizard #sandbox-profiles-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #sandbox-profiles-manage-modal .template-card .tc-actions button:hover { background: #3a2a63; }
+body.wizard #sandbox-profiles-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 body.wizard #sandbox-profiles-manage-modal .template-empty { color: #b39ddb; }
 
 /* Editor (inscribe a ward), mirror of #profile-editor-modal. */
@@ -16059,10 +16059,10 @@ body.wizard #roles-manage-modal .template-card {
 body.wizard #roles-manage-modal .template-card .tc-name { color: #f3e6c0; }
 body.wizard #roles-manage-modal .template-card .tc-descr,
 body.wizard #roles-manage-modal .template-card .tc-sub { color: #b39ddb; }
-body.wizard #roles-manage-modal .template-card .tc-actions button {
+body.wizard #roles-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #roles-manage-modal .template-card .tc-actions button:hover { background: #3a2a63; }
+body.wizard #roles-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 body.wizard #roles-manage-modal .template-empty { color: #b39ddb; }
 /* Close (and any other non-primary footer button): tarnished-gold secondary. */
 
