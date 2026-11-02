@@ -90,6 +90,9 @@ test('a raised window stays in the window layer, under the snap guide and the ch
   const band = (name) => Number(css.match(new RegExp(`--z-${name}: (\\d+);`))[1]);
   assert.ok(bottom >= band('window'), `windows start in the window layer (${bottom})`);
   const guide = valueOf('.overlay-snap-guide').match(/calc\(var\(--z-window\) \+ (\d+)\)/);
+  const assist = valueOf('.snap-assist').match(/calc\(var\(--z-window\) \+ (\d+)\)/);
+  assert.ok(assist && Number(assist[1]) < Number(guide[1]), 'Snap Assist sits under the snap guide, not tied with it');
+  assert.ok(top < band('window') + Number(assist[1]), `and over the front split's lines (${top})`);
   assert.ok(guide, 'the snap guide is a step in the window layer');
   assert.ok(top < band('window') + Number(guide[1]), `the front split's lines (${top}) stay under the snap guide`);
   assert.ok(band('window') + Number(guide[1]) < band('chrome'), 'and the guide under the chrome');
@@ -115,10 +118,12 @@ test('opening a panel, dialog, popover or confirmation never moves a window', ()
 
 test('each kind of surface sits on its layer', () => {
   const expect = {
-    chrome: ['footer', '.overlay-dock.floating', '.knowledge-source-card', '.companion-marks', '.companion-guide-ring'],
+    chrome: ['footer', '.overlay-dock.floating', '.knowledge-source-card', '.companion-peek'],
     panel: ['#agent-dock', '.human-notification-drawer'],
     dialog: ['.modal-overlay', '.manage-overlay', '#profile-editor-modal', '#perm-edit-modal', '#directory-picker-modal', '.overlay-expose'],
-    popover: ['.action-menu', '.view-menu', '.open-prs-popover', '.modal-overlay.palette-overlay', '.board-context', '.mux-tab-menu', '.ui-menu.overlay-dock-actions', 'footer:has(.open-prs.is-open)'],
+    popover: ['.action-menu', '.view-menu', '.open-prs-popover', '.modal-overlay.palette-overlay', '.board-context', '.mux-tab-menu', '.ui-menu.overlay-dock-actions', 'footer:has(.open-prs.is-open)',
+      // An agent's marks and guide cues paint over whatever they point into.
+      '.companion-marks', '.companion-guide-ring', '.companion-guide-marks', '.companion-guide-float'],
     confirm: ['#confirm-modal', '.access-banner', '#sandbox-profile-diff-modal'],
     toast: ['.toast', '.transfer-tray'],
     system: ['.disconnect-overlay', 'body.dashboard-booting > #boot-progress'],

@@ -44,7 +44,8 @@ test('everything the operator opens paints above the resting chips', async () =>
   const zOf = (selector) => rules.find((r) => r.selector === selector)?.z;
   const chips = zOf('.companion-chips');
   assert.ok(chips > 9 && chips < LAYERS.indexOf('window') * 1000, 'over in-component stacking, under the windows');
-  assert.ok(zOf('.fleet-map:has(.fleet-edge-link.open)') > chips, 'the map carries its link popover over the chips');
+  const map = zOf('.fleet-map:has(.fleet-edge-link.open)');
+  assert.ok(map > chips && map < LAYERS.indexOf('window') * 1000, 'the map carries its link popover over the chips, and stays page content under the windows');
   const under = rules.filter((r) => opened.test(r.selector) && !nested.test(r.selector) && r.z <= chips);
   assert.deepEqual(under.map((r) => `${r.selector} (${r.z})`), []);
 });

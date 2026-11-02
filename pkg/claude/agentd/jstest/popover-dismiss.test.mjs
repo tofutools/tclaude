@@ -169,7 +169,7 @@ test('a modal shown later closes it, as the thing opened last wins; its own dial
   assert.deepEqual(closed, [], 'a hidden one is not shown yet');
   later.classList.add('show');
   await flush();
-  assert.deepEqual(closed, ['dialog']);
+  assert.deepEqual(closed, ['outside'], 'as a press outside, so focus stays with the dialog');
 });
 
 test('stopping cancels a pending close', async (t) => {
