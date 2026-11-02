@@ -23,12 +23,17 @@ const html = htm.bind(h);
 // Minimizing hides a chat and only releases its terminal later.
 const WARM_MS = 5 * 60 * 1000;
 
+const RECONNECTS = ['disconnected', 'error', 'authentication required'];
+
 // Unsent text by tab: a tab's body goes when its window shows another tab.
 const drafts = new Map();
 
+// chatHasDraft says whether a tab holds unsent text.
+export const chatHasDraft = (tabId) => !!drafts.get(tabId)?.trim();
+
 export function ChatWindow({
   instance, overlay, focusRef, strip, close, snapshot, prefs, win, fetchImpl, notify, widgetFactory, loadRuntime, closeTerminalPanes, onBackToTab, onSeparateWindow = null, onStewardDown, stewardRoster = [], openPermissions = null, openSudo = null, openStewardHandover = null, openMorph = null, showAgent = null, Terminal, DecisionCard,
-  statusOf = companionStatus, starting = () => false, offlineActions = () => null, voice = null, onCompose = null, onTerminals = null, dictationImpl = null,
+  statusOf = companionStatus, starting = () => false, offlineActions = () => null, voice = null, onCompose = null, onTerminals = null, dictationImpl = null, viewTab,
 }) {
   const agentId = instance.agent;
   const agents = companionAgents(snapshot.value);
@@ -38,7 +43,8 @@ export function ChatWindow({
   const [focusToken, setFocusToken] = useState(1);
   focusRef.current = () => setFocusToken((n) => n + 1);
   const [status, setStatus] = useState('');
-  const [canReconnect, setCanReconnect] = useState(false);
+  const [reconnectable, setCanReconnect] = useState(false);
+  const canReconnect = reconnectable || RECONNECTS.includes(status);
   const [generation, setGeneration] = useState(0);
   const widgetRef = useRef(null);
   const [font, onFontChange] = useTerminalFont('companion', agentId, prefs);
@@ -50,11 +56,11 @@ export function ChatWindow({
   // nobody can see would take the attach from whatever view holds it.
   const [warm, setWarm] = useState(false);
   useEffect(() => {
-    if (open) setWarm(true);
+    if (open || !agent?.online) setWarm(open && !!agent?.online);
     if (open || !warm) return undefined;
     const timer = setTimeout(() => setWarm(false), WARM_MS);
     return () => clearTimeout(timer);
-  }, [open, warm]);
+  }, [open, warm, agent?.online]);
   // Keys must not reach a terminal nobody can see, and one that lost its attach
   // while hidden has nothing to show.
   useEffect(() => {
@@ -121,7 +127,7 @@ export function ChatWindow({
     className=${`companion-window chat-window${open ? '' : ' companion-window-warm'}`} frameClass="companion-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Chat with ${name}`} title=${title}
     controls=${{ look, closeLabel: `Close ${name}`, closeTitle: close.title, onClose: close.onClose, onMinimize: () => minimizeOverlayWindow(instance.id) }}>
-    <div class="companion-body" id=${instance.id}>
+    <div class=${`companion-body${approvals.length + decisions.length + actionMessages.length ? ' has-cards' : ''}`} id=${instance.id}>
       ${approvals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${decisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}
       <${ActionCards} messages=${actionMessages} fetchImpl=${fetchImpl} notify=${notify} />
@@ -131,7 +137,7 @@ export function ChatWindow({
         : html`<div class="companion-empty"><p><b>${name}</b> is ${agent ? 'offline' : 'gone'}.</p>${agent && offlineActions(agent)}</div>`)}
       ${shown && html`
         ${needsYou && html`<div class="companion-needs-bar" role="status">${name} is waiting for you${agent.detail ? `: ${agent.detail}` : ''}</div>`}
-        <${PaneDictation} pane=${pane} active=${open} solo=${true} status=${status} canType=${true} target=${{ agent: agentId }} snapshot=${snapshot} actions=${actions} win=${win} notify=${notify} drafts=${drafts} dictationImpl=${dictationImpl}>
+        <${PaneDictation} pane=${pane} active=${open} solo=${true} status=${status} canType=${true} target=${{ agent: agentId }} snapshot=${snapshot} actions=${actions} win=${win} notify=${notify} drafts=${drafts} dictationImpl=${dictationImpl} viewTab=${viewTab} mailsAnyway=${true} quietSpeech=${voice?.quiet} fetchImpl=${fetchImpl}>
           <${ShellHere} agent=${agentId} name=${name} snapshot=${snapshot.value} notify=${notify} />
           <${TerminalZoom} font=${font} widget=${() => widgetRef.current} />
         <//>

@@ -18,6 +18,11 @@ import { harnessTakesMailMidTurn, voiceContinuous, voiceMarksDictated, voicePaus
 
 const html = htm.bind(h);
 
+// PaneDictation's last few options suit a chat tab, which floats over any view:
+// viewTab names the view it is over, mailsAnyway keeps the draft field through a
+// lost terminal, since mail doesn't need one, and quietSpeech stops any reply being
+// read out when the operator starts to say something.
+
 // paneTalksToAgent reports whether a draft from this pane goes to an agent as
 // mail. A shell session has an agent id too, but nobody to read mail. A local
 // pane whose harness is unknown stays a terminal, which never submits by
@@ -53,7 +58,7 @@ export function terminalDraftText(text) {
 }
 
 export function PaneDictation({
-  pane, active, solo, status, canType, target, snapshot, actions, win = globalThis.window, notify = shellToast, children = null, drafts = null, dictationImpl = null,
+  pane, active, solo, status, canType, target, snapshot, actions, win = globalThis.window, notify = shellToast, children = null, drafts = null, dictationImpl = null, viewTab = () => 'terminals', mailsAnyway = false, quietSpeech = () => {}, fetchImpl = null,
 }) {
   // drafts keeps an unsent draft for a pane that comes and goes, as a tab does
   // when its window shows another.
@@ -71,11 +76,11 @@ export function PaneDictation({
   const report = solo ? setNotice : notify;
   const talks = paneTalksToAgent(pane, target, snapshot?.value);
   const connected = String(status || '').startsWith('connected');
-  const usable = connected && (talks || canType);
+  const usable = (connected || (mailsAnyway && talks)) && (talks || canType);
   const shown = usable && active && (solo || dashboardState.activeTab.value === 'terminals');
   const name = pane.label || 'this agent';
-  const viewNow = () => viewContext({ activeTab: 'terminals', pathname: win?.location?.pathname, search: win?.location?.search });
-  const agentFetch = () => nodeFetch(target.node || '');
+  const viewNow = () => viewContext({ activeTab: viewTab(), pathname: win?.location?.pathname, search: win?.location?.search });
+  const agentFetch = () => fetchImpl || nodeFetch(target.node || '');
   const shownRef = useRef(false);
   shownRef.current = shown;
   const toTerminal = () => {
@@ -95,6 +100,7 @@ export function PaneDictation({
     onStart: () => {
       setNotice('');
       win?.speechSynthesis?.cancel?.();
+      quietSpeech();
     },
     onRelease: toTerminal,
   });
@@ -158,6 +164,8 @@ export function PaneDictation({
         micTitle=${talks ? micTitle(dictation.sendPhrase)
           : 'Dictate a draft. Nothing reaches the terminal until you press Enter here or Paste, and it lands at the prompt unrun. Uses the browser\'s speech recognition; in Chrome the audio is recognised by Google.'}
         withContext=${talks ? withContext : null} onContext=${setWithContext}
+        contextNote=${talks && (snapshot?.value?.steward_access?.capture_off || []).includes(target.agent)
+          ? `${name} can't capture your screen: that permission is off for it. The attached view says where you are, not what is on screen.` : ''}
         annotateLabel=${`Mark up this page for ${name}`}
         onAnnotate=${talks ? () => annotation.start({ agentId: target.agent, name, fetchImpl: agentFetch(), remote: !!target.node }) : null}>${children}<//>
       ${notice && html`<button type="button" class="companion-pane-notice" role="alert" title="Dismiss" onClick=${() => setNotice('')}>${notice}</button>`}
@@ -166,7 +174,7 @@ export function PaneDictation({
       label=${talks ? `Message ${name}` : 'Draft for this terminal'}
       submitLabel=${talks ? 'Send' : 'Paste'}
       submitTitle=${talks ? null : 'Paste at the prompt, without a newline: press Enter in the terminal to run it'}
-      onSubmit=${send} onEdit=${setDraftText}
+      onSubmit=${send} onEdit=${(text) => { quietSpeech(); setDraftText(text); }}
       onFocus=${() => setFieldFocused(true)} onBlur=${() => setFieldFocused(false)} />`}
     ${annotation.overlay}`;
 }

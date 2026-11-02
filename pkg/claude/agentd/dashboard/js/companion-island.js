@@ -35,6 +35,7 @@ import { OverlayWindow, raiseOverlayWindow, readPref, reducedMotion, useOverlayW
 import { closeOverlayTab, focusOverlayWindow, openOverlayWindow, overlayHostUp, overlayTabs, overlayWindows, raiseOverlayTab } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND, chatWindowId } from './chat-window-model.js';
 import { OverlayTabGhost, OverlayTabMenu } from './overlay-tab-strip.js';
+import { chatHasDraft } from './chat-window.js';
 import { OverlayTabWindow } from './overlay-tab-window.js';
 import { BOARD_WINDOW_KIND } from './board-overlay-state.js';
 import { TERMINAL_WINDOW_KIND } from './terminal-window-model.js';
@@ -638,14 +639,11 @@ export function CompanionApp({
 
   const chatOf = (target) => chatAgentOf(target, snapshot.peek());
 
-  const closeTab = useCallback((agentId, { keepOpen = false } = {}) => {
+  const silence = (agentId) => setVoiceAgents((current) => without(current, agentId));
+
+  const closeTab = useCallback((agentId, { keepOpen = false, keepVoice = false } = {}) => {
     if (agents.get(agentId)?.scribe) setHelperClosed(agentId, true);
-    setVoiceAgents((current) => {
-      if (!current.has(agentId)) return current;
-      const next = new Set(current);
-      next.delete(agentId);
-      return next;
-    });
+    if (!keepVoice) silence(agentId);
     const next = withoutTab(tabs, agentId);
     if (agentId === activeId) setActive(nextActive(tabs, agentId));
     if (!next.length && !keepOpen) setOpen(false);
@@ -662,7 +660,7 @@ export function CompanionApp({
     setParked((current) => without(current, agent.agentId));
     setDetached((current) => without(current, agent.agentId));
     // An agent that never had a tab leaves the companion as it was.
-    closeTab(agent.agentId, { keepOpen: !tabs.includes(agent.agentId) });
+    closeTab(agent.agentId, { keepOpen: !tabs.includes(agent.agentId), keepVoice: true });
     openOverlayWindow({ id: chatWindowId(agent.agentId), kind: CHAT_WINDOW_KIND, agent: agent.agentId, label: agent.name, at });
   }
 
@@ -1052,6 +1050,7 @@ export function CompanionApp({
   }
 
   function chatToTerminals(instance, agent) {
+    silence(agent.agentId);
     closeOverlayTab(instance.id);
     // Let the window's widget detach before the Terminals pane attaches.
     setTimeout(() => openTerminalsPane(agent.agentId, agent.name, agent.harness), 60);
@@ -1175,7 +1174,8 @@ export function CompanionApp({
     // Focus alone is no signal: it stays in the terminal long after the last key.
     const typing = Date.now() - lastTerminalKey.current < CUE_TYPING_WINDOW_MS;
     const drafting = !showQueue && activeAgent?.online && draftRef.current.trim();
-    if (drafting || listeningRef.current || typing) {
+    const chatting = overlayWindows.peek().some((window) => !window.minimized && chatHasDraft(window.active));
+    if (drafting || chatting || dictationOpen() || listeningRef.current || typing) {
       if (!hasWindow(agent.agentId)) setTabs((current) => withTab(current, agent.agentId));
       notify(`${by} pinned ${agent.name} in the companion window for you.`, false);
       return;
@@ -1502,7 +1502,8 @@ export function CompanionApp({
 
   const chatTabTools = {
     statusOf, offlineActions, openMorph, dictationImpl, starting: (agentId) => resuming.has(agentId),
-    voice: speaker.supported ? { supported: true, on: (agentId) => voiceAgents.has(agentId), toggle: toggleVoice } : null,
+    voice: speaker.supported ? { supported: true, on: (agentId) => voiceAgents.has(agentId), toggle: toggleVoice, quiet: () => speaker.cancel() } : null,
+    viewTab: () => activeTab.value,
     onCompose: onComposeMessage ? (agent, restoreFocus) => composeRef.current(agent, restoreFocus) : null,
     onTerminals: openTerminalsPane ? chatToTerminals : null,
   };

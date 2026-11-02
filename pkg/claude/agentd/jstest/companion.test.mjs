@@ -2466,3 +2466,97 @@ test('voice turns on and off for an agent in a chat tab, and is saved', async (t
   await harness.act(() => button().click());
   assert.equal(button().getAttribute('aria-pressed'), 'false');
 });
+
+const flushed = (harness) => harness.act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+const bringOnline = (snapshot, online) => {
+  const next = structuredClone(snapshot);
+  next.groups[0].members[0].online = online;
+  return next;
+};
+
+test('a hidden chat attaches nothing: not for an agent that came up, nor one that came back', async (t) => {
+  const windows = (h) => h.importDashboardModule('js/overlay-instances.js');
+  const live = snapshotWith();
+  const { view, harness, snap, mounted } = await floated(t, { snapshot: bringOnline(live, false) });
+  const w = await windows(harness);
+  t.after(() => { w.overlayWindows.value = []; });
+  await harness.act(async () => { w.minimizeOverlayWindow(w.overlayWindows.value[0].tabs[0].id); });
+  const attached = mounted.length;
+  await harness.act(() => { snap.value = live; });
+  await flushed(harness);
+  assert.equal(mounted.length, attached, 'minimized while starting: no terminal for a window nobody can see');
+  await harness.act(async () => { w.openOverlayWindow(w.overlayWindows.value[0].tabs[0]); });
+  await flushed(harness);
+  assert.ok(view.container.querySelector('.chat-window .companion-term-host'));
+  await harness.act(async () => { w.minimizeOverlayWindow(w.overlayWindows.value[0].tabs[0].id); });
+  await harness.act(() => { snap.value = bringOnline(live, false); });
+  await flushed(harness);
+  await harness.act(() => { snap.value = live; });
+  await flushed(harness);
+  assert.equal(view.container.querySelector('.chat-window.companion-window-warm'), null, 'a restart while hidden lets go of it');
+});
+
+const mailable = (extra = {}) => {
+  const snapshot = { ...structuredClone(snapshotWith()), collab_enabled: true, ...extra };
+  snapshot.groups[0].members[0].state.harness = 'claude';
+  snapshot.agents = [{ agent_id: A, conv_id: 'conv-a', state: { harness: 'claude' } }];
+  return snapshot;
+};
+
+test('a chat tab says the view it floats over, and keeps its draft and mail without a terminal', async (t) => {
+  const fake = fakeDictation();
+  const requests = [];
+  const fetchImpl = async (url, init = {}) => { requests.push([String(url), init.body ? JSON.parse(init.body) : null]); return { ok: true, status: 202, json: async () => ({ id: 1 }) }; };
+  const { view, harness, mounted } = await floated(t, { fetchImpl, dictationImpl: fake.impl, snapshot: mailable() });
+  await flushed(harness);
+  await fake.say(harness, view, 'what is here');
+  const chat = () => view.container.querySelector('.chat-window');
+  await harness.act(() => mounted.at(-1).options.onStatus('disconnected'));
+  assert.equal(chat().querySelector('.companion-draft').value, 'what is here', 'a lost terminal takes no draft away');
+  assert.ok(chat().querySelector('.companion-mic'));
+  await harness.act(async () => { chat().querySelector('.companion-input').dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true })); await new Promise((r) => setTimeout(r, 0)); });
+  const sent = JSON.stringify(requests.find(([, body]) => body?.to === A));
+  assert.match(sent, /what is here/);
+  assert.match(sent, /Processes/i, 'the view is the one it floats over');
+  assert.doesNotMatch(sent, /Terminals|Collab \(/);
+});
+
+test('voice stays on when a tab floats, and typing in a chat draft stops speech', async (t) => {
+  let cancelled = 0;
+  const fake = fakeDictation();
+  const prefs = memoryPrefs();
+  const speakerImpl = { supported: true, speak() {}, cancel() { cancelled += 1; } };
+  const { view, harness, controller } = await setup(t, { prefs, speakerImpl, dictationImpl: fake.impl, snapshot: { ...snapshotWith(), collab_enabled: true } });
+  await harness.act(() => controller().open(A));
+  await harness.act(() => view.container.querySelector('.companion-voice').click());
+  await harness.act(() => controller().float(A));
+  await flushed(harness);
+  assert.equal(view.container.querySelector('.chat-window .companion-voice').getAttribute('aria-pressed'), 'true');
+  await fake.say(harness, view, 'x');
+  const before = cancelled;
+  await harness.input(view.container.querySelector('.chat-window .companion-draft'), 'typed');
+  assert.ok(cancelled > before);
+});
+
+test('a chat tab notes capture off, and offers Reconnect after an error', async (t) => {
+  const { view, harness, mounted } = await floated(t, { dictationImpl: fakeDictation().impl, snapshot: mailable({ steward_access: { capture_off: [A] } }) });
+  await flushed(harness);
+  assert.ok(view.container.querySelector('.chat-window .companion-context-off'));
+  await harness.act(() => mounted.at(-1).options.onStatus('error'));
+  const button = [...view.container.querySelectorAll('.chat-window .companion-term-status button')].find((node) => node.textContent === 'Reconnect');
+  assert.ok(button);
+});
+
+test('a hand-over waits while the operator has a draft in a chat tab', async (t) => {
+  const fake = fakeDictation();
+  const notes = [];
+  const snapshot = { ...snapshotWith(), collab_enabled: true };
+  const { view, harness, snap } = await floated(t, { dictationImpl: fake.impl, snapshot, notify: (text) => notes.push(text) });
+  await flushed(harness);
+  await fake.say(harness, view, 'still writing');
+  assert.equal(view.container.querySelector('.chat-window .companion-draft').value, 'still writing');
+  await harness.act(() => { snap.value = { ...snapshot, companion_cues: [{ id: 1, open: B, agent_name: 'Steward', at: Date.now() }] }; });
+  await harness.act(() => { snap.value = { ...snapshot, companion_cues: [{ id: 2, open: B, agent_name: 'Steward', at: Date.now() }] }; });
+  await flushed(harness);
+  assert.ok(notes.some((text) => /pinned bravo/.test(text)), notes.join('|'));
+});
