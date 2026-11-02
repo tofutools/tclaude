@@ -9,6 +9,11 @@ import {
 	visibleLocalFileLinks,
 } from '../dashboard/js/terminal-interactions.js';
 import { REMOTE_FILE_ERRORS } from '../dashboard/js/remote-files.js';
+import { setShortcutPlatform } from '../dashboard/js/keybindings.js';
+
+// Shortcut text follows the host's platform; pin it so a macOS dev machine
+// expects the same "Ctrl-click" text as CI.
+setShortcutPlatform('linux');
 
 function key(overrides = {}) {
   return {

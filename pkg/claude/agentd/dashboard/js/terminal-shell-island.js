@@ -58,7 +58,8 @@ import { ShellHere, paneShellAgent } from './terminal-here.js';
 import { matchesShortcut, shortcutText, withShortcut } from './keybindings.js';
 
 const html = htm.bind(h);
-const INTERACTION_HINT = `Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: ${shortcutText('terminal-copy')}`;
+// Read at render time, so the label follows the keyboard layout once it loads.
+const interactionHint = () => `Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: ${shortcutText('terminal-copy')}`;
 const TERMINAL_TAB_DRAG_MIME = 'application/x-tclaude-terminal-tab';
 const TERMINAL_GROUP_DRAG_MIME = 'application/x-tclaude-terminal-group';
 // A pointer click on a group pill waits this long before collapsing so a
@@ -244,7 +245,7 @@ function OpaqueTerminalHost({
 function CopyButton({ className, id, hasSelection, actions, runtimeID }) {
   const label = hasSelection
     ? withShortcut('Copy selected terminal text', 'terminal-copy')
-    : `Copy terminal text. ${INTERACTION_HINT}`;
+    : `Copy terminal text. ${interactionHint()}`;
   return html`
     <button
       type="button"
@@ -388,7 +389,7 @@ function TerminalPane({
         <${RemoteBadge} seed=${pane.seed} remote=${remote} node=${scope?.node} />
         ${!pane.seed.remote && pane.seed.agent ? html`<${ViewersBadge} agentId=${pane.seed.agent} className="term-viewers-badge" />` : null}
         <span class="mux-pane-status" role="status" aria-live="polite" aria-atomic="true">${status}</span>
-        <span class="terminal-interaction-hint">${INTERACTION_HINT}</span>
+        <span class="terminal-interaction-hint">${interactionHint()}</span>
         ${reconnect ? html`<button type="button" class="mux-btn" onClick=${reconnectPane}>Reconnect</button>` : null}
         ${filesOK ? html`<button type="button" class="mux-btn" data-term-files aria-pressed=${files ? 'true' : 'false'} title="Browse the agent's project files on the peer: preview or download" onClick=${() => setFiles(!files)}>Files</button>` : null}
         <${CopyButton} className="mux-btn" hasSelection=${hasSelection} actions=${actions} runtimeID=${pane.id} />

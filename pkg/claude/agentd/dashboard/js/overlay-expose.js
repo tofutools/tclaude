@@ -15,12 +15,11 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { focusOverlayWindow, minimizedOverlayTabs, openOverlayWindow, overlayHostUp, overlayWindows } from './overlay-instances.js';
 import { overlayWindowsByStack, reducedMotion } from './overlay-window.js';
 import { hasShownOverlay } from './overlay-stack.js';
-import { matchesShortcut, shortcutText } from './keybindings.js';
+import { matchesShortcut } from './keybindings.js';
 
 const html = htm.bind(h);
 
 export const OVERLAY_EXPOSE_LABEL = 'Show all windows';
-export const OVERLAY_EXPOSE_SHORTCUT = shortcutText('expose');
 
 const KIND_NAMES = { chat: 'Chat', board: 'Board', terminal: 'Terminal', start: 'Steward', decide: 'Decision' };
 const KIND_GLYPHS = { chat: '💬', board: '✎', terminal: '⌨', start: '✦', decide: '⚖' };
