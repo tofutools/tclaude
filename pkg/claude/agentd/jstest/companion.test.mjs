@@ -2560,3 +2560,94 @@ test('a hand-over waits while the operator has a draft in a chat tab', async (t)
   await flushed(harness);
   assert.ok(notes.some((text) => /pinned bravo/.test(text)), notes.join('|'));
 });
+
+test('a draft delivered after its tab left stays delivered, and a failure still says so', async (t) => {
+  const fake = fakeDictation();
+  const notes = [];
+  let answer = null;
+  const fetchImpl = async (url) => {
+    if (String(url) !== '/api/operator-message') return { ok: true, status: 202, json: async () => ({}) };
+    return new Promise((resolve) => { answer = resolve; });
+  };
+  const { view, harness, controller } = await floated(t, { fetchImpl, dictationImpl: fake.impl, notify: (text) => notes.push(text), snapshot: mailable() });
+  await harness.act(() => controller().open(B));
+  await harness.act(() => controller().float(B));
+  const windows = await harness.importDashboardModule('js/overlay-instances.js');
+  t.after(() => { windows.overlayWindows.value = []; });
+  const [first, second] = windows.overlayWindows.value;
+  const [a, b] = [first.tabs[0].id, second.tabs[0].id];
+  const show = async (id) => { await harness.act(async () => { windows.activateOverlayTab(id); }); await flushed(harness); };
+  await harness.act(async () => { windows.moveOverlayTab(b, first.id, 1); });
+  await show(a);
+  const send = async (text) => {
+    await fake.say(harness, view, text);
+    await harness.act(async () => { view.container.querySelector('.chat-window .companion-input').dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true })); await new Promise((r) => setTimeout(r, 0)); });
+    await show(b);
+  };
+  await send('once only');
+  await harness.act(async () => { answer({ ok: true, status: 202, json: async () => ({ id: 1 }) }); await new Promise((r) => setTimeout(r, 0)); });
+  await show(a);
+  assert.equal(view.container.querySelector('.chat-window .companion-draft'), null, 'it does not come back to be sent twice');
+  await send('this one fails');
+  await harness.act(async () => { answer({ ok: false, status: 500, statusText: 'nope', json: async () => ({}) }); await new Promise((r) => setTimeout(r, 0)); });
+  assert.ok(notes.some((text) => /Message to alpha failed/.test(text)), notes.join('|'));
+  await show(a);
+  assert.equal(view.container.querySelector('.chat-window .companion-draft').value, 'this one fails');
+});
+
+test('Unpin on the dock stops voice, as it does on a tab', async (t) => {
+  const { view, harness } = await floated(t, { speakerImpl: { supported: true, speak() {}, cancel() {} } });
+  const windows = await harness.importDashboardModule('js/overlay-instances.js');
+  t.after(() => { windows.overlayWindows.value = []; windows.minimizedOverlayTabs.value = []; });
+  await harness.act(() => view.container.querySelector('.chat-window .companion-voice').click());
+  const tab = windows.overlayWindows.value[0].tabs[0];
+  await harness.act(async () => { windows.minimizeOverlayTab(tab.id); });
+  await flushed(harness);
+  await harness.act(async () => { windows.closeOverlayTab(tab.id); });
+  await flushed(harness);
+  await harness.act(async () => { windows.openOverlayWindow(tab); });
+  await flushed(harness);
+  assert.equal(view.container.querySelector('.chat-window .companion-voice').getAttribute('aria-pressed'), 'false');
+});
+
+test('a chat tab keeps the dictated mark and the view choice across a tab switch', async (t) => {
+  const fake = fakeDictation();
+  const requests = [];
+  const fetchImpl = async (url, init = {}) => { requests.push([String(url), init.body ? JSON.parse(init.body) : null]); return { ok: true, status: 202, json: async () => ({ id: 1 }) }; };
+  const snapshot = mailable({ voice: { mark_dictated: true } });
+  const { view, harness, controller } = await floated(t, { fetchImpl, dictationImpl: fake.impl, snapshot });
+  await harness.act(() => controller().open(B));
+  await harness.act(() => controller().float(B));
+  const windows = await harness.importDashboardModule('js/overlay-instances.js');
+  t.after(() => { windows.overlayWindows.value = []; });
+  const [first, second] = windows.overlayWindows.value;
+  const [a, b] = [first.tabs[0].id, second.tabs[0].id];
+  const show = async (id) => { await harness.act(async () => { windows.activateOverlayTab(id); }); await flushed(harness); };
+  await harness.act(async () => { windows.moveOverlayTab(b, first.id, 1); });
+  await show(a);
+  const context = () => view.container.querySelector('.chat-window .companion-context input');
+  assert.equal(context().hasAttribute('checked'), true, 'view starts on');
+  await harness.act(() => { context().checked = false; context().dispatchEvent(new harness.window.Event('change', { bubbles: true })); });
+  await fake.say(harness, view, 'spoken words');
+  await show(b);
+  await show(a);
+  assert.equal(context().hasAttribute('checked'), false, 'view stays off');
+  await harness.act(async () => { view.container.querySelector('.chat-window .companion-input').dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true })); await new Promise((r) => setTimeout(r, 0)); });
+  const sent = requests.find(([url]) => url === '/api/operator-message')[1].body;
+  const { markDictated } = await harness.importDashboardModule('js/companion-model.js');
+  assert.equal(sent, markDictated('spoken words'), 'marked as dictated, with no view attached');
+});
+
+test('a Classic chat can be minimized, and a pill brings it back with the keyboard', async (t) => {
+  const snapshot = { ...snapshotWith(), window_controls: 'classic' };
+  const { view, harness, mounted } = await floated(t, { snapshot });
+  const windows = await harness.importDashboardModule('js/overlay-instances.js');
+  t.after(() => { windows.overlayWindows.value = []; });
+  await harness.act(() => view.container.querySelector('.chat-window [aria-label="Minimize alpha"].board-overlay-close').click());
+  assert.ok(view.container.querySelector('.chat-window.companion-window-warm'));
+  const focused = mounted.at(-1).focused;
+  const tab = windows.overlayTabs.value[0];
+  await harness.act(async () => { windows.openOverlayWindow(tab); windows.focusOverlayWindow(tab.id); });
+  await flushed(harness);
+  assert.ok(mounted.at(-1).focused > focused);
+});

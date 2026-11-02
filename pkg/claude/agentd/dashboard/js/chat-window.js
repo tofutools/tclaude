@@ -25,11 +25,12 @@ const WARM_MS = 5 * 60 * 1000;
 
 const RECONNECTS = ['disconnected', 'error', 'authentication required'];
 
-// Unsent text by tab: a tab's body goes when its window shows another tab.
-const drafts = new Map();
+// What outlives a tab's body, which goes when its window shows another tab: unsent
+// text, which of it was dictated, and whether the view goes with a message.
+const kept = { drafts: new Map(), dictated: new Set(), viewOff: new Set() };
 
 // chatHasDraft says whether a tab holds unsent text.
-export const chatHasDraft = (tabId) => !!drafts.get(tabId)?.trim();
+export const chatHasDraft = (tabId) => !!kept.drafts.get(tabId)?.trim();
 
 export function ChatWindow({
   instance, overlay, focusRef, strip, close, snapshot, prefs, win, fetchImpl, notify, widgetFactory, loadRuntime, closeTerminalPanes, onBackToTab, onSeparateWindow = null, onStewardDown, stewardRoster = [], openPermissions = null, openSudo = null, openStewardHandover = null, openMorph = null, showAgent = null, Terminal, DecisionCard,
@@ -121,6 +122,7 @@ export function ChatWindow({
         openPermissions=${openPermissions} openSudo=${openSudo} openHandover=${openStewardHandover} agents=${agents} showAgent=${showAgent}
         fetchImpl=${fetchImpl} notify=${notify} onDown=${stewardDown} askShutDownRef=${askShutDown} rosterRef=${rosterRef} />
     </div>
+    ${look === 'classic' && html`<button type="button" class="board-overlay-close" title="Minimize" aria-label=${`Minimize ${name}`} onClick=${() => minimizeOverlayWindow(instance.id)}>–</button>`}
     ${look === 'classic' && html`<button type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${name}`} onClick=${close.onClose}>×</button>`}`;
   const shown = agent?.online && (open || warm);
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} mounted=${open || (warm && !!agent?.online)}
@@ -137,7 +139,7 @@ export function ChatWindow({
         : html`<div class="companion-empty"><p><b>${name}</b> is ${agent ? 'offline' : 'gone'}.</p>${agent && offlineActions(agent)}</div>`)}
       ${shown && html`
         ${needsYou && html`<div class="companion-needs-bar" role="status">${name} is waiting for you${agent.detail ? `: ${agent.detail}` : ''}</div>`}
-        <${PaneDictation} pane=${pane} active=${open} solo=${true} status=${status} canType=${true} target=${{ agent: agentId }} snapshot=${snapshot} actions=${actions} win=${win} notify=${notify} drafts=${drafts} dictationImpl=${dictationImpl} viewTab=${viewTab} mailsAnyway=${true} quietSpeech=${voice?.quiet} fetchImpl=${fetchImpl}>
+        <${PaneDictation} pane=${pane} active=${open} solo=${true} status=${status} canType=${true} target=${{ agent: agentId }} snapshot=${snapshot} actions=${actions} win=${win} notify=${notify} keep=${kept} dictationImpl=${dictationImpl} viewTab=${viewTab} quietSpeech=${voice?.quiet} fetchImpl=${fetchImpl}>
           <${ShellHere} agent=${agentId} name=${name} snapshot=${snapshot.value} notify=${notify} />
           <${TerminalZoom} font=${font} widget=${() => widgetRef.current} />
         <//>

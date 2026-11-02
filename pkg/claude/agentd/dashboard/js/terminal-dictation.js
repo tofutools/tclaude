@@ -18,10 +18,12 @@ import { harnessTakesMailMidTurn, voiceContinuous, voiceMarksDictated, voicePaus
 
 const html = htm.bind(h);
 
-// PaneDictation's last few options suit a chat tab, which floats over any view:
-// viewTab names the view it is over, mailsAnyway keeps the draft field through a
-// lost terminal, since mail doesn't need one, and quietSpeech stops any reply being
-// read out when the operator starts to say something.
+// PaneDictation's last few options are for a chat tab, which floats over any view
+// and whose body goes when its window shows another tab. viewTab names the view it
+// is over, and quietSpeech stops any reply being read out when the operator starts
+// to say something. keep holds what must outlive the body: { drafts, dictated,
+// viewOff }. With keep the draft field also lasts through a lost terminal, since
+// mail doesn't need one, and failures go to the page, which outlives the pane.
 
 // paneTalksToAgent reports whether a draft from this pane goes to an agent as
 // mail. A shell session has an agent id too, but nobody to read mail. A local
@@ -58,25 +60,28 @@ export function terminalDraftText(text) {
 }
 
 export function PaneDictation({
-  pane, active, solo, status, canType, target, snapshot, actions, win = globalThis.window, notify = shellToast, children = null, drafts = null, dictationImpl = null, viewTab = () => 'terminals', mailsAnyway = false, quietSpeech = () => {}, fetchImpl = null,
+  pane, active, solo, status, canType, target, snapshot, actions, win = globalThis.window, notify = shellToast, children = null, keep = null, dictationImpl = null, viewTab = () => 'terminals', quietSpeech = () => {}, fetchImpl = null,
 }) {
-  // drafts keeps an unsent draft for a pane that comes and goes, as a tab does
-  // when its window shows another.
-  const [draft, setDraftText] = useState(() => drafts?.get(pane.key) || '');
+  const [draft, setDraftText] = useState(() => keep?.drafts.get(pane.key) || '');
   useEffect(() => {
-    if (draft) drafts?.set(pane.key, draft);
-    else drafts?.delete(pane.key);
+    if (draft) keep?.drafts.set(pane.key, draft);
+    else keep?.drafts.delete(pane.key);
   }, [draft]);
   const [sending, setSending] = useState(false);
   const [fieldFocused, setFieldFocused] = useState(false);
   const fieldRef = useCallback((element) => { if (!element) setFieldFocused(false); }, []);
-  const [withContext, setWithContext] = useState(true);
+  const [withContext, setContext] = useState(() => !keep?.viewOff.has(pane.key));
+  const setWithContext = (on) => {
+    setContext(on);
+    if (on) keep?.viewOff.delete(pane.key);
+    else keep?.viewOff.add(pane.key);
+  };
   // A detached window has no toast host, so it says it on the terminal.
   const [notice, setNotice] = useState('');
-  const report = solo ? setNotice : notify;
+  const report = solo && !keep ? setNotice : notify;
   const talks = paneTalksToAgent(pane, target, snapshot?.value);
   const connected = String(status || '').startsWith('connected');
-  const usable = (connected || (mailsAnyway && talks)) && (talks || canType);
+  const usable = (connected || (keep && talks)) && (talks || canType);
   const shown = usable && active && (solo || dashboardState.activeTab.value === 'terminals');
   const name = pane.label || 'this agent';
   const viewNow = () => viewContext({ activeTab: viewTab(), pathname: win?.location?.pathname, search: win?.location?.search });
@@ -88,7 +93,7 @@ export function PaneDictation({
     if (shownRef.current) actions.activatePane(pane.key);
   };
   const dictation = useDictation({
-    win, targetId: shown ? pane.key : '', draft, notify: report, dictationImpl,
+    win, targetId: shown ? pane.key : '', draft, notify: report, dictationImpl, dictated: keep?.dictated,
     sendPhrase: talks ? dictationSendPhrase(snapshot?.value) : '',
     silenceSend: talks ? voiceSilenceSeconds(snapshot?.value) : 0,
     pauses: talks ? voicePauses(snapshot?.value) : null,
@@ -108,6 +113,9 @@ export function PaneDictation({
 
   // Whatever was typed while this went out stays.
   function settle(text) {
+    // The body may have gone while this was on its way, and a kept draft that was
+    // delivered must not come back with it.
+    if (keep?.drafts.get(pane.key) === text) keep.drafts.delete(pane.key);
     setDraftText((current) => (current === text ? '' : current));
     const focused = win?.document?.activeElement;
     if (!focused || focused === win.document.body || focused.matches?.('.companion-draft, .companion-input button[type="submit"]')) toTerminal();

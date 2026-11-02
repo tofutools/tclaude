@@ -895,6 +895,13 @@ export function CompanionApp({
   const chatTabs = overlayTabs.value.filter((tab) => tab.kind === CHAT_WINDOW_KIND).map((tab) => tab.agent);
   const heldHere = (id) => tabs.includes(id) || chatTabs.includes(id);
   const heldKey = chatTabs.join();
+  // However an agent stops being held here, voice stops with it, as Unpin says.
+  const heldBefore = useRef(new Set());
+  useEffect(() => {
+    const now = new Set([...tabs, ...chatTabs]);
+    for (const id of heldBefore.current) if (!now.has(id)) silence(id);
+    heldBefore.current = now;
+  }, [tabs, heldKey]);
 
   useEffect(() => {
     const pinned = [...voiceAgents].filter(heldHere);
