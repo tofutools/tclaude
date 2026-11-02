@@ -441,6 +441,7 @@ export function authoredOpenMRsView(snapshot, filter = 'all', includeDraftsInAtt
       host: String(entry?.host || '').slice(0, 255),
       url: MR_LIST_URL_RE.test(entry?.url || '') ? entry.url : '',
       error: entry?.error ? String(entry.error).slice(0, 300) : '',
+      everyoneError: entry?.everyone_error ? String(entry.everyone_error).slice(0, 300) : '',
     }))
     .filter((entry) => entry.host);
   const projects = (Array.isArray(source?.projects) ? source.projects : [])

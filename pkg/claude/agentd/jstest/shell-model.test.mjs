@@ -601,9 +601,9 @@ test('the Open MRs model filters merge requests like PRs and keeps only safe ins
   assert.deepEqual(authoredOpenMRsView(snapshot, 'ready').items.map((mr) => mr.number), [1]);
   assert.equal(authoredOpenMRsView(snapshot, 'recent').filter, 'all', 'filters it does not offer fall back to Open');
   assert.deepEqual(all.instances, [
-    { host: 'gitlab.example.test:6080', url: 'https://gitlab.example.test:6080/dashboard/merge_requests?state=opened&author_username=yorick', error: '' },
-    { host: 'evil.example.test', url: '', error: '' },
-    { host: 'down.example.test', url: '', error: 'GitLab returned HTTP 502' },
+    { host: 'gitlab.example.test:6080', url: 'https://gitlab.example.test:6080/dashboard/merge_requests?state=opened&author_username=yorick', error: '', everyoneError: '' },
+    { host: 'evil.example.test', url: '', error: '', everyoneError: '' },
+    { host: 'down.example.test', url: '', error: 'GitLab returned HTTP 502', everyoneError: '' },
   ]);
   assert.equal(authoredOpenMRsView({}).available, false, 'no list, no indicator');
 });

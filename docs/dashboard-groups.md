@@ -314,10 +314,11 @@ then the busiest. A project tab's rows also say who wrote each merge request,
 and **Open in GitLab** opens the project's own list.
 
 - **Filters:** **Open**, **Needs attention**, **Ready to merge** and
-  **Unattached**, with counts. **Ready to merge** is at least one approval and
-  a passing head pipeline. **Needs attention** is a failed, finished or missing
-  pipeline, a merge conflict, or requested changes; a pipeline still running
-  is not. Drafts are grey and stay out of **Needs attention** unless you tick
+  **Unattached**, with counts. **Ready to merge** is at least one approval, a
+  passing head pipeline, and no merge conflict. **Needs attention** means
+  ready for a decision: the pipeline has finished, red or green, or there is
+  none; or the merge request conflicts with its target; or changes were
+  requested. A pipeline still running with nothing failed does not count. Drafts are grey and stay out of **Needs attention** unless you tick
   **Include drafts**, which is the same setting as in Open PRs.
 - **Rows** read `!7` for merge request 7, and note approvals, requested changes
   and conflicts. The CI pill shows the head pipeline's state. Hover it for the
@@ -328,9 +329,12 @@ and **Open in GitLab** opens the project's own list.
 agentd asks each instance once every 30 seconds. Your own list is a single
 GraphQL query. Everyone's list starts with GitLab's REST merge request list,
 which names the projects and covers the 500 most recently updated open merge
-requests. With more than that, a project with only older merge requests can be
-missing, and the **all** count ends in `+`. Each project is then read through
-GraphQL, five projects per query. That needs a GitLab recent enough to have
+requests. Up to 20 projects per instance are then read through GraphQL, five
+per query: those your agents work in first, then the ones with the most open
+merge requests. Past either cap, the remaining projects are left out and the
+**all** count ends in `+`. If the project-wide read fails while your own list
+answers, the project tabs keep their last lists and say so. The instance is
+not marked as failed. That needs a GitLab recent enough to have
 `detailedMergeStatus` (16.x is safe); an older one reports the missing field
 instead of a list. A rate-limited instance is retried after the wait GitLab
 names, up to 5 minutes, and keeps showing its last list meanwhile. Ignoring,

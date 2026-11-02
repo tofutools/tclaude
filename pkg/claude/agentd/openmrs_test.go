@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"os"
@@ -403,8 +404,111 @@ func TestFetchEveryoneOpenMRs_StopsDiscoveryAtItsCap(t *testing.T) {
 		body, _ := json.Marshal(list)
 		return glAPIResult{Status: http.StatusOK, Body: body}, nil
 	}))
-	got, _, err := fetchEveryoneOpenMRs(context.Background(), testMRBase, "glpat")
+	got, _, err := fetchEveryoneOpenMRs(context.Background(), testMRBase, "glpat", nil)
 	require.NoError(t, err)
 	assert.Equal(t, everyoneOpenMRPages, pages)
 	assert.True(t, got.truncated, "full pages up to the cap mean there may be more")
+}
+
+func TestFetchEveryoneOpenMRs_CapsTheProjectsReadAgentsFirst(t *testing.T) {
+	// 30 projects with open merge requests; p29 has one, but an agent works
+	// in it.
+	var graphQL []map[string]any
+	t.Cleanup(SetGitLabTransportForTest(func(_ context.Context, _, _ string, req glAPIRequest) (glAPIResult, error) {
+		if req.GraphQL {
+			body, _ := json.Marshal(req.Body)
+			var payload struct {
+				Variables map[string]any `json:"variables"`
+			}
+			require.NoError(t, json.Unmarshal(body, &payload))
+			graphQL = append(graphQL, payload.Variables)
+			return glAPIResult{Status: http.StatusOK, Body: []byte(`{"data":{}}`)}, nil
+		}
+		// One short page: every project once, then p0 nine more times and
+		// p1 four more, so p0 is the busiest and p1 the next.
+		var page []map[string]any
+		add := func(p, n int) {
+			page = append(page, map[string]any{"web_url": testMRBase + "/acme/p" + strconv.Itoa(p) +
+				"/-/merge_requests/" + strconv.Itoa(n)})
+		}
+		for p := range 30 {
+			add(p, 1)
+		}
+		for n := 2; n <= 10; n++ {
+			add(0, n)
+		}
+		for n := 2; n <= 5; n++ {
+			add(1, n)
+		}
+		body, _ := json.Marshal(page)
+		return glAPIResult{Status: http.StatusOK, Body: body}, nil
+	}))
+	agents := map[string]bool{strings.ToLower(testMRBase + "/acme/p29"): true}
+	got, _, err := fetchEveryoneOpenMRs(context.Background(), testMRBase, "glpat", agents)
+	require.NoError(t, err)
+	assert.True(t, got.truncated, "projects beyond the cap make the count a floor")
+	require.Len(t, graphQL, everyoneOpenMRMaxProjects/everyoneOpenMRChunk)
+	var read []string
+	for _, vars := range graphQL {
+		for i := range len(vars) {
+			read = append(read, vars["p"+strconv.Itoa(i)].(string))
+		}
+	}
+	require.Len(t, read, everyoneOpenMRMaxProjects)
+	assert.Equal(t, "acme/p29", read[0], "the project an agent works in is read first, however quiet")
+	assert.Equal(t, []string{"acme/p0", "acme/p1", "acme/p2"}, read[1:4], "then the busiest, then newest first")
+}
+
+func TestPollAuthoredOpenMRs_AFailedEveryoneStepKeepsTheTabsAndTheInstance(t *testing.T) {
+	limited := false
+	openMRsWorld(t, map[string]string{"gitlab.example.test": testMRBase}, func(string) glAPIResult {
+		return graphQLAnswer(t, "yorick", 0)
+	})
+	// Replace the world's default everyone answers: one project, then a 429.
+	t.Cleanup(SetGitLabTransportForTest(func(_ context.Context, _, _ string, req glAPIRequest) (glAPIResult, error) {
+		body, _ := json.Marshal(req.Body)
+		switch {
+		case req.GraphQL && strings.Contains(string(body), "authoredMergeRequests"):
+			return graphQLAnswer(t, "yorick", 0), nil
+		case limited:
+			return glAPIResult{Status: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"90"}}}, nil
+		case !req.GraphQL:
+			return glAPIResult{Status: http.StatusOK,
+				Body: []byte(`[{"web_url":"` + testMRBase + `/acme/app/-/merge_requests/1"}]`)}, nil
+		}
+		return glAPIResult{Status: http.StatusOK, Body: []byte(`{"data":{"p0":{"mergeRequests":{"count":1,"nodes":[` +
+			`{"iid":"1","title":"One","webUrl":"` + testMRBase + `/acme/app/-/merge_requests/1","author":{"username":"ann"}}]}}}}`)}, nil
+	}))
+	_, err := pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err)
+	view := authoredOpenMRsSnapshot(loadCfg(t), nil)
+	require.NotNil(t, view)
+	require.Len(t, view.Projects, 1)
+
+	limited = true
+	wait, err := pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err, "your own list answered, so the poll is good")
+	assert.Equal(t, 90*time.Second, wait, "the everyone step's rate limit is honoured")
+	view = authoredOpenMRsSnapshot(loadCfg(t), nil)
+	require.NotNil(t, view)
+	assert.Len(t, view.Projects, 1, "the last good project tabs stay")
+	require.Len(t, view.Instances, 1)
+	assert.Empty(t, view.Instances[0].Error, "the instance itself is fine")
+	assert.Contains(t, view.Instances[0].EveryoneError, "rate limit")
+}
+
+func TestAuthoredOpenMRNextDelay(t *testing.T) {
+	delay, failures := authoredOpenMRNextDelay(90*time.Second, errors.New("limited"), 2)
+	assert.Equal(t, 90*time.Second, delay, "a rate limit waits what GitLab asked")
+	assert.Equal(t, 2, failures, "and is not a failure")
+	delay, _ = authoredOpenMRNextDelay(time.Second, nil, 0)
+	assert.Equal(t, authoredOpenMRPollInterval, delay, "never sooner than the poll interval")
+	delay, _ = authoredOpenMRNextDelay(time.Hour, nil, 0)
+	assert.Equal(t, authoredOpenMRMaxBackoff, delay, "never longer than the backoff cap")
+	delay, failures = authoredOpenMRNextDelay(0, errors.New("down"), 0)
+	assert.Equal(t, 1, failures)
+	assert.Equal(t, 2*authoredOpenMRPollInterval, delay, "errors back off")
+	delay, failures = authoredOpenMRNextDelay(0, nil, 3)
+	assert.Equal(t, authoredOpenMRPollInterval, delay)
+	assert.Equal(t, 0, failures, "success resets")
 }

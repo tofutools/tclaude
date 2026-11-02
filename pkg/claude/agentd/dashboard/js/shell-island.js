@@ -720,6 +720,9 @@ function OpenMRs({ state }) {
   if (!visible) return null;
   const age = view.updatedAt ? new Date(view.updatedAt).toLocaleTimeString() : '';
   const failed = view.instances.filter((entry) => entry.error);
+  // A failed project-wide read is not a failed instance: the project tabs
+  // keep its last good lists, and say so there.
+  const staleEveryone = view.instances.filter((entry) => entry.everyoneError);
   const everyone = `${view.everyoneTotal}${view.everyoneTruncated ? '+' : ''}`;
   const where = view.projectEntry;
   const heading = where ? `Open merge requests in ${where.project}` : 'Your merge requests';
@@ -745,6 +748,8 @@ function OpenMRs({ state }) {
             </div>
           ` : null}
           ${failed.map((entry) => html`<p key=${entry.host} class="open-prs-stale" role="status">${entry.host}: ${entry.error}</p>`)}
+          ${where ? staleEveryone.filter((entry) => entry.host === where.host).map((entry) => html`<p key=${`${entry.host}-everyone`}
+            class="open-prs-stale" role="status">Everyone's merge requests on ${entry.host} are from an earlier read: ${entry.everyoneError}</p>`) : null}
           ${panel.items.length
             ? html`<ul class="open-pr-list">${panel.items.map((mr) => html`<${OpenPRRow} key=${mr.url} pr=${mr} kind="mr" titleDetails=${false} />`)}</ul>`
             : html`<p class="open-prs-empty">${view.filter === 'all' ? 'No open merge requests.' : 'No merge requests match this filter.'}</p>`}

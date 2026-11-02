@@ -832,7 +832,8 @@ test('footer open MRs shows mine and all, and a tab per project for everyone\'s'
   state.beginRequest();
   await harness.act(() => state.commitRequest(1, { authored_open_mrs: {
     available: true, total: 0, items: [], everyone_total: 2,
-    instances: [{ host: 'gitlab.example.test:6080', url: `${base}/dashboard/merge_requests?state=opened&author_username=yorick` }],
+    instances: [{ host: 'gitlab.example.test:6080', url: `${base}/dashboard/merge_requests?state=opened&author_username=yorick`,
+      everyone_error: 'GitLab applied a rate limit; retry in 1m30s' }],
     projects: [{ host: 'gitlab.example.test:6080', project: 'yamzz/previewplayback', url: `${base}/yamzz/previewplayback/-/merge_requests`,
       total: 2, agents: true, items: [
         { number: 249, url: `${base}/yamzz/previewplayback/-/merge_requests/249`, title: 'Merge 1st', repository: 'yamzz/previewplayback',
@@ -848,11 +849,15 @@ test('footer open MRs shows mine and all, and a tab per project for everyone\'s'
 
   await harness.act(() => trigger.click());
   assert.match(mounted.container.querySelector('.open-prs-empty').textContent, /No open merge requests/);
+  assert.equal(mounted.container.querySelector('.open-prs-stale'), null,
+    'a failed project-wide read is not an instance failure on Mine');
   const tab = getByRole(mounted.container, 'tab', { name: /previewplayback 2/ });
   assert.equal(getByRole(mounted.container, 'tab', { name: /Mine 0/ }).getAttribute('aria-selected'), 'true');
   await harness.act(() => tab.click());
   assert.equal(tab.getAttribute('aria-selected'), 'true');
   assert.match(mounted.container.querySelector('.open-prs-head').textContent, /Open merge requests in yamzz\/previewplayback/);
+  assert.match(mounted.container.querySelector('.open-prs-stale').textContent,
+    /Everyone's merge requests on gitlab\.example\.test:6080 are from an earlier read: GitLab applied a rate limit/);
   const rows = [...mounted.container.querySelectorAll('.open-pr-row')];
   assert.equal(rows.length, 2);
   assert.match(rows[0].textContent, /!249 · by martin · 1 approval · builder/);

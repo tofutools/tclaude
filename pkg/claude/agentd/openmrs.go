@@ -87,6 +87,9 @@ type dashboardAuthoredOpenMRInstance struct {
 	// URL is the instance's own list of the user's open merge requests.
 	URL   string `json:"url,omitempty"`
 	Error string `json:"error,omitempty"`
+	// EveryoneError says why the last project-wide read failed. The
+	// instance itself is fine, and its last good project tabs stay.
+	EveryoneError string `json:"everyone_error,omitempty"`
 }
 
 // dashboardAuthoredOpenMRs is the snapshot's authored_open_mrs: the Open PRs
@@ -190,27 +193,40 @@ func startAuthoredOpenMRPoller(stop <-chan struct{}) {
 				return
 			case <-timer.C:
 				retry, err := pollAuthoredOpenMRs(ctx)
-				delay := authoredOpenMRPollInterval
+				var delay time.Duration
+				previous := failures
+				delay, failures = authoredOpenMRNextDelay(retry, err, failures)
 				switch {
 				case retry > 0:
-					delay = min(max(delay, retry), authoredOpenMRMaxBackoff)
 					slog.Info("open-mrs: GitLab rate limit; waiting", "retry_in", delay, "module", "agentd")
 				case err != nil:
-					failures++
-					delay = authoredOpenMRRetryDelay(failures)
 					if failures == 1 || delay > authoredOpenMRRetryDelay(failures-1) {
 						slog.Warn("open-mrs: GitLab merge request poll failed; keeping last good list",
 							"error", err, "consecutive_failures", failures, "retry_in", delay, "module", "agentd")
 					}
-				case failures > 0:
+				case previous > 0:
 					slog.Info("open-mrs: GitLab merge request poll recovered",
-						"previous_failures", failures, "module", "agentd")
-					failures = 0
+						"previous_failures", previous, "module", "agentd")
 				}
 				timer.Reset(delay)
 			}
 		}
 	}()
+}
+
+// authoredOpenMRNextDelay is the wait before the next poll, and the new
+// failure count: a rate limit waits out what GitLab asked for (at least the
+// poll interval, at most the backoff cap) without counting as a failure, an
+// error backs off exponentially, and success resets.
+func authoredOpenMRNextDelay(retry time.Duration, err error, failures int) (time.Duration, int) {
+	switch {
+	case retry > 0:
+		return min(max(authoredOpenMRPollInterval, retry), authoredOpenMRMaxBackoff), failures
+	case err != nil:
+		failures++
+		return authoredOpenMRRetryDelay(failures), failures
+	}
+	return authoredOpenMRPollInterval, 0
 }
 
 func authoredOpenMRRetryDelay(failures int) time.Duration {
@@ -256,6 +272,10 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 	}
 	authoredOpenMRState.RUnlock()
 
+	authoredOpenMRAgentProjects.Lock()
+	agentProjects := authoredOpenMRAgentProjects.set
+	authoredOpenMRAgentProjects.Unlock()
+
 	var wait time.Duration
 	var lastErr error
 	answered := 0
@@ -274,9 +294,9 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 			inst.URL = base + "/dashboard/merge_requests?state=opened&author_username=" + url.QueryEscape(username)
 			// Everyone's merge requests only once the token has resolved a
 			// user here; a failure keeps the last good project lists.
-			all, retry, err := fetchEveryoneOpenMRs(ctx, base, token)
+			all, retry, err := fetchEveryoneOpenMRs(ctx, base, token, agentProjects)
 			if err != nil {
-				inst.Error = "could not list everyone's merge requests: " + err.Error()
+				inst.EveryoneError = err.Error()
 				wait = max(wait, retry)
 			} else {
 				everyone[base] = all
@@ -448,21 +468,39 @@ const (
 	everyoneOpenMRPerProject = 100
 	// everyoneOpenMRChunk is how many projects one GraphQL query reads.
 	everyoneOpenMRChunk = 5
+	// everyoneOpenMRMaxProjects caps the projects read per instance and
+	// poll: the ones agents work in first, then the busiest. With discovery,
+	// that bounds a poll at 9 requests per instance whatever the instance
+	// holds, each under its own authoredOpenMRTimeout.
+	everyoneOpenMRMaxProjects = 20
 )
+
+// authoredOpenMRAgentProjects is the set of "<base>/<project>" roots agents
+// work in, as the last snapshot saw them. The poller reads it to put those
+// projects first when it has to cap.
+var authoredOpenMRAgentProjects struct {
+	sync.Mutex
+	set map[string]bool
+}
 
 // fetchEveryoneOpenMRs reads every open merge request the token can see on
 // one instance, grouped by project. GitLab's GraphQL has no instance-wide
 // merge request list, so discovery is the REST list (scope=all), which names
 // the projects. Each project is then read through GraphQL with the same fields
 // as the Mine list, so pipelines and approvals mean the same thing in both.
-func fetchEveryoneOpenMRs(ctx context.Context, base, token string) (authoredOpenMREveryone, time.Duration, error) {
-	ctx, cancel := context.WithTimeout(ctx, 2*authoredOpenMRTimeout)
-	defer cancel()
-	var projects []string
-	seen := map[string]bool{}
+//
+// The work is bounded whatever the instance holds: discovery stops at
+// everyoneOpenMRPages, and at most everyoneOpenMRMaxProjects projects are read
+// (agents' projects first, then the ones with the most open merge requests).
+// Every request runs under its own timeout, so a slow instance fails one step
+// rather than starving the rest. Anything cut is reported as truncated.
+func fetchEveryoneOpenMRs(ctx context.Context, base, token string, agentProjects map[string]bool) (authoredOpenMREveryone, time.Duration, error) {
+	var order []string
+	counts := map[string]int{}
 	truncated := false
 	for page := 1; page <= everyoneOpenMRPages; page++ {
-		res, err := glDo(ctx, base, token, glAPIRequest{
+		pageCtx, cancel := context.WithTimeout(ctx, authoredOpenMRTimeout)
+		res, err := glDo(pageCtx, base, token, glAPIRequest{
 			Method: http.MethodGet,
 			Path:   "merge_requests",
 			Query: url.Values{
@@ -470,6 +508,7 @@ func fetchEveryoneOpenMRs(ctx context.Context, base, token string) (authoredOpen
 				"per_page": {"100"}, "page": {strconv.Itoa(page)},
 			},
 		})
+		cancel()
 		if err != nil {
 			return authoredOpenMREveryone{}, 0, err
 		}
@@ -487,11 +526,13 @@ func fetchEveryoneOpenMRs(ctx context.Context, base, token string) (authoredOpen
 		}
 		for _, mr := range list {
 			ref, ok := gitlabMRRefFromURL(mr.WebURL)
-			if !ok || !strings.EqualFold(ref.base, base) || seen[ref.project] {
+			if !ok || !strings.EqualFold(ref.base, base) {
 				continue
 			}
-			seen[ref.project] = true
-			projects = append(projects, ref.project)
+			if counts[ref.project] == 0 {
+				order = append(order, ref.project)
+			}
+			counts[ref.project]++
 		}
 		if len(list) < 100 {
 			break
@@ -499,11 +540,35 @@ func fetchEveryoneOpenMRs(ctx context.Context, base, token string) (authoredOpen
 		truncated = page == everyoneOpenMRPages
 	}
 
+	// Agents' projects first, then the busiest; discovery order (most
+	// recently updated first) breaks ties.
+	rank := map[string]int{}
+	for i, project := range order {
+		rank[project] = i
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		a, b := order[i], order[j]
+		agentA, agentB := agentProjects[strings.ToLower(base+"/"+a)], agentProjects[strings.ToLower(base+"/"+b)]
+		if agentA != agentB {
+			return agentA
+		}
+		if counts[a] != counts[b] {
+			return counts[a] > counts[b]
+		}
+		return rank[a] < rank[b]
+	})
+	if len(order) > everyoneOpenMRMaxProjects {
+		order = order[:everyoneOpenMRMaxProjects]
+		truncated = true
+	}
+
 	out := authoredOpenMREveryone{truncated: truncated}
 	fetchedAt := time.Now().UTC().Format(time.RFC3339)
-	for start := 0; start < len(projects); start += everyoneOpenMRChunk {
-		chunk := projects[start:min(start+everyoneOpenMRChunk, len(projects))]
-		got, retry, err := fetchOpenMRProjects(ctx, base, token, chunk, fetchedAt)
+	for start := 0; start < len(order); start += everyoneOpenMRChunk {
+		chunk := order[start:min(start+everyoneOpenMRChunk, len(order))]
+		chunkCtx, cancel := context.WithTimeout(ctx, authoredOpenMRTimeout)
+		got, retry, err := fetchOpenMRProjects(chunkCtx, base, token, chunk, fetchedAt)
+		cancel()
 		if err != nil {
 			return authoredOpenMREveryone{}, retry, err
 		}
@@ -687,6 +752,9 @@ func openMRProjectsSnapshot(everyone map[string]authoredOpenMREveryone, agents [
 			}
 		}
 	}
+	authoredOpenMRAgentProjects.Lock()
+	authoredOpenMRAgentProjects.set = agentRepos
+	authoredOpenMRAgentProjects.Unlock()
 	projects := []dashboardOpenMRProject{}
 	total := 0
 	truncated := false
