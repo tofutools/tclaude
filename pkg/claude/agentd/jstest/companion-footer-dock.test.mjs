@@ -82,7 +82,9 @@ async function setup(t) {
   const { window } = harness;
   const { document } = window;
   t.after(strictMutationObserver(window.MutationObserver));
-  window.HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() { return layOut(this); };
+  const { getBoundingClientRect } = window.HTMLElement.prototype;
+  window.HTMLElement.prototype.getBoundingClientRect = function laidOut() { return layOut(this); };
+  t.after(() => { window.HTMLElement.prototype.getBoundingClientRect = getBoundingClientRect; });
   document.createRange = () => ({ selectNodeContents() {}, getClientRects: () => [] });
   const footer = document.body.appendChild(document.createElement('footer'));
   footer.innerHTML = '<div class="footer-inner"><div class="dock-host"></div><button type="button" class="open-prs-button" data-ui-exempt>Open PRs</button></div>';
