@@ -767,3 +767,55 @@ test('the header\'s global notification hint opens the quick reader on the first
   assert.equal(opened[0].sender.agent, 'agt_x');
   await mounted.unmount();
 });
+
+test('footer open MRs lists GitLab merge requests next to open PRs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenMRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenMRs} state=${state} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_prs: { available: true, total: 0, items: [] } }));
+  assert.equal(mounted.container.querySelector('.open-mrs'), null, 'absent until the daemon has a GitLab list');
+
+  const base = 'https://gitlab.example.test:6080/acme/app/-/merge_requests/';
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(2, { authored_open_mrs: {
+    available: true, total: 2, updated_at: '2026-11-02T10:00:00Z',
+    items: [
+      { number: 7, url: `${base}7`, title: 'Ready one', repository: 'acme/app', agent_title: 'builder', agent_id: 'agt_1',
+        checks: { total: 1, passed: 1, state: 'passing' }, reviews: { approved: 2 } },
+      { number: 8, url: `${base}8`, title: 'Stuck one', repository: 'acme/app', conflicts: true,
+        checks: { total: 1, pending: 1, state: 'pending' }, reviews: { approved: 0 } },
+    ],
+    instances: [
+      { host: 'gitlab.example.test:6080', url: 'https://gitlab.example.test:6080/dashboard/merge_requests?state=opened&author_username=yorick' },
+      { host: 'other.example.test', error: 'GitLab applied a rate limit; retry in 2m0s' },
+    ],
+  } }));
+  const trigger = getByRole(mounted.container, 'button', { name: /Open MRs/ });
+  assert.ok(mounted.container.querySelector('.open-mrs.has-attention'));
+  await harness.act(() => trigger.click());
+  assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+  const rows = [...mounted.container.querySelectorAll('.open-pr-row')];
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].textContent, /acme\/app · !7 · 2 approvals · builder/);
+  assert.match(rows[1].textContent, /!8 · conflict · no active agent/);
+  assert.equal(rows[0].querySelector('.ci-count').textContent, 'pipeline', 'one head pipeline, not a check count');
+  assert.equal(mounted.container.querySelector('.rv-hover, .pr-review-badge'), null, 'the GitHub review pill is not shown');
+  const link = getByRole(mounted.container, 'link', { name: /Open all on gitlab\.example\.test:6080/ });
+  assert.equal(link.getAttribute('href'), 'https://gitlab.example.test:6080/dashboard/merge_requests?state=opened&author_username=yorick');
+  assert.match(mounted.container.querySelector('.open-prs-stale').textContent, /other\.example\.test: GitLab applied a rate limit/);
+
+  await harness.act(() => getByRole(mounted.container, 'button', { name: /Ready to merge 1/ }).click());
+  assert.deepEqual([...mounted.container.querySelectorAll('.open-pr-title')].map((node) => node.textContent), ['Ready one']);
+  await harness.act(() => getByRole(mounted.container, 'button', { name: /Unattached 1/ }).click());
+  assert.deepEqual([...mounted.container.querySelectorAll('.open-pr-title')].map((node) => node.textContent), ['Stuck one']);
+
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
+  assertAbsent(mounted.container.querySelector('#open-mrs-popover'));
+  assertSameNode(harness.document.activeElement, trigger);
+  await mounted.unmount();
+});

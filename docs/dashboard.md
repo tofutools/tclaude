@@ -73,8 +73,9 @@ with a **set up** pill until you've looked at it. See
 [Fleet UI](fleet-ui.md) to link machines.
 
 On every tab, the [companion](companion.md) sits at the bottom right with Collab on.
-The footer shows the tclaude version, the last refresh and
-[Open PRs](dashboard-groups.md#open-prs).
+The footer shows the tclaude version, the last refresh,
+[Open PRs](dashboard-groups.md#open-prs) and, with a GitLab instance
+configured, [Open MRs](dashboard-groups.md#open-mrs).
 
 ### Banners
 

@@ -149,6 +149,10 @@ footer {
   gap: 16px;
 }
 .open-prs { display: inline-flex; height: calc(var(--footer-h) - 1px); align-items: stretch; margin-left: auto; }
+/* Open MRs sits just left of Open PRs. Whichever comes first takes the auto
+   margin that pushes the pair right; two auto margins would split the space
+   between them and strand Open MRs mid-footer. */
+#shell-open-mrs-root:has(.open-mrs) + #shell-open-prs-root .open-prs { margin-left: 0; }
 .open-prs-trigger {
   display: inline-flex; align-items: center; gap: 7px; height: 100%; padding: 0 12px;
   border: 0; border-left: 1px solid #2a3340; border-right: 1px solid #2a3340;

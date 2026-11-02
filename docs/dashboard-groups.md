@@ -294,6 +294,35 @@ Rows stay ordered by repository and PR number, so updates don't move them.
 Archived repositories are never listed. If GitHub rate-limits you, agentd pauses
 its background GitHub calls for 5 minutes, up to 30 while the limit holds.
 
+### Open MRs
+
+**Open MRs** sits next to **Open PRs** and lists your open GitLab merge requests
+on every instance in `agent.git_proxy.gitlab_hosts` (see
+[GitLab proxy](proxies.md#gitlab-proxy)). "Your" means the user that
+`gitlab_token_file` belongs to. It shows once a configured instance has
+answered, whether or not `gh` is installed. Without a `gitlab_hosts` entry or
+a token it does not show at all; a gitlab.com project needs a
+`"gitlab.com": "https://gitlab.com"` entry to be listed.
+
+- **Filters:** **Open**, **Needs attention**, **Ready to merge** and
+  **Unattached**, with counts. **Ready to merge** is at least one approval and
+  a passing head pipeline. **Needs attention** is a failed, finished or missing
+  pipeline, a merge conflict, or requested changes; a pipeline still running
+  is not. Drafts are grey and stay out of **Needs attention** unless you tick
+  **Include drafts**, which is the same setting as in Open PRs.
+- **Rows** read `!7` for merge request 7, and note approvals, requested changes
+  and conflicts. The CI pill shows the head pipeline's state. Hover it for the
+  pipeline's jobs.
+- **Open all on _host_** opens that instance's list of your merge requests.
+  An instance that could not be read says why, above the list.
+
+agentd asks each instance once every 30 seconds, in a single GraphQL query.
+That needs a GitLab recent enough to have `detailedMergeStatus` (16.x is
+safe); an older one reports the missing field instead of a list. A
+rate-limited instance is retried after the wait GitLab names, up to 5 minutes,
+and keeps showing its last list meanwhile. Ignoring, colleagues' tabs, the
+recently closed list and the details card are Open PRs only.
+
 ## Starting agents
 
 ### Creating a group workspace

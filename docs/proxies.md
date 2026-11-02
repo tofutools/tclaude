@@ -248,7 +248,9 @@ the instance too.
 A merge request opened through the proxy, or presented with
 `tclaude agent present-pr <merge-request URL>`, shows on the dashboard like a
 pull request: its state and head-pipeline jobs are read through the same
-token, under the same allow-list.
+token, under the same allow-list. With `gitlab_hosts` and a token configured,
+the dashboard footer also lists the token user's open merge requests on every
+configured instance; see [Open MRs](dashboard-groups.md#open-mrs).
 
 ## Linear proxy
 

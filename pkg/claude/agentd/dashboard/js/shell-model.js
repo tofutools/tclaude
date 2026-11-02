@@ -382,6 +382,8 @@ export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAtt
     if (pr?.draft && !includeDraftsInAttention) return false;
     // A reviewer asking for changes is waiting on the author whatever CI says.
     if (prReviewState(pr?.reviews) === 'changes') return true;
+    // So is a merge conflict (GitLab merge requests carry the flag).
+    if (pr?.conflicts) return true;
     const checks = pr?.checks;
     if (!checks || Number(checks.total || 0) === 0) return true;
     return checks.state === 'failing' || checks.state === 'passing';
@@ -415,6 +417,26 @@ export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAtt
     ignoredCount: ignoredItems.length,
     items: filtered,
   };
+}
+
+// authoredOpenMRsView is the footer's Open MRs model: the Open PRs model over
+// the daemon's GitLab list (authored_open_mrs), which has no peers, ignores or
+// recently closed list, plus each instance's "Open all" link. A link is kept
+// only when it is an https merge request list; an instance that failed
+// carries its error instead.
+const MR_LIST_URL_RE = /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?\/dashboard\/merge_requests\?[A-Za-z0-9_.=&%-]*$/;
+export function authoredOpenMRsView(snapshot, filter = 'all', includeDraftsInAttention = false) {
+  const source = snapshot?.authored_open_mrs;
+  const known = filter === 'attention' || filter === 'ready' || filter === 'unattached' ? filter : 'all';
+  const view = authoredOpenPRsView({ authored_open_prs: source }, known, includeDraftsInAttention);
+  const instances = (Array.isArray(source?.instances) ? source.instances : [])
+    .map((entry) => ({
+      host: String(entry?.host || '').slice(0, 255),
+      url: MR_LIST_URL_RE.test(entry?.url || '') ? entry.url : '',
+      error: entry?.error ? String(entry.error).slice(0, 300) : '',
+    }))
+    .filter((entry) => entry.host);
+  return { ...view, filter: known, instances };
 }
 
 // activityMembersForVisibility preserves the top bar's status overview while

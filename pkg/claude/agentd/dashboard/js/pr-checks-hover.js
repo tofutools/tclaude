@@ -575,7 +575,10 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
 // had rather than growing an empty indicator. A merged/closed PR (prState)
 // whose checks are not failing is tagged .ci-final, which CSS hides unless
 // config dashboard.show_final_pr_checks opts back in.
-export function PRChecksBadge({ url, prNumber, summary, prState = '' }) {
+// countText replaces the passed/total count, for a summary that is not a
+// count of checks: a GitLab merge request in the footer's Open MRs list carries
+// its head pipeline as one pipeline-level entry and reads "pipeline".
+export function PRChecksBadge({ url, prNumber, summary, prState = '', countText = '' }) {
   const rootRef = useRef(null);
   const instanceID = useId();
   const { open, close, rootProps, onTriggerClick } = useHoverPopover(rootRef);
@@ -614,7 +617,7 @@ export function PRChecksBadge({ url, prNumber, summary, prState = '' }) {
         }}
       >
         <span class="ci-glyph" aria-hidden="true">${checkStateGlyph(stateName)}</span>
-        <span class="ci-count">${summary.passed}/${denominator}</span>
+        <span class="ci-count">${countText || `${summary.passed}/${denominator}`}</span>
       </a>
       ${open ? html`
         <${PRChecksPanel} url=${url} prNumber=${prNumber} summary=${summary}

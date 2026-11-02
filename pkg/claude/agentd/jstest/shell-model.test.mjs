@@ -570,3 +570,40 @@ test('ignored PRs leave every open list and count until they expire or come back
   assert.ok(kept['acme/app#200'] && !kept['acme/app#1'], 'the oldest ignores are evicted first');
   assert.deepEqual(Object.keys(parseIgnoredPRs(JSON.stringify({ x: { url: 'javascript:alert(1)', until: 0, at: 1 } }))), []);
 });
+
+test('the Open MRs model filters merge requests like PRs and keeps only safe instance links', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { authoredOpenMRsView } = await harness.importDashboardModule('js/shell-model.js');
+  const base = 'https://gitlab.example.test:6080/acme/app/-/merge_requests/';
+  const snapshot = { authored_open_mrs: {
+    available: true, total: 5,
+    items: [
+      { number: 1, url: `${base}1`, checks: { total: 1, passed: 1, state: 'passing' }, reviews: { approved: 1 }, agent_id: 'agt_1' },
+      { number: 2, url: `${base}2`, checks: { total: 1, passed: 1, state: 'passing' }, reviews: { approved: 0 } },
+      { number: 3, url: `${base}3`, checks: { total: 1, pending: 1, state: 'pending' }, conflicts: true },
+      { number: 4, url: `${base}4`, checks: { total: 1, pending: 1, state: 'pending' }, reviews: { changes_requested: 1 } },
+      { number: 5, url: `${base}5`, draft: true, checks: { total: 1, failed: 1, state: 'failing' } },
+      { number: 6, url: 'https://example.com/not-a-merge-request/6' },
+    ],
+    instances: [
+      { host: 'gitlab.example.test:6080', url: 'https://gitlab.example.test:6080/dashboard/merge_requests?state=opened&author_username=yorick' },
+      { host: 'evil.example.test', url: 'javascript:alert(1)' },
+      { host: 'down.example.test', error: 'GitLab returned HTTP 502' },
+    ],
+  } };
+  const all = authoredOpenMRsView(snapshot);
+  assert.deepEqual(all.items.map((mr) => mr.number), [1, 2, 3, 4, 5], 'a URL that is not a merge request is dropped');
+  assert.equal(all.ready, 1, 'ready needs an approval as well as a passing pipeline');
+  assert.equal(all.attention, 4, 'green, conflicting and changes-requested need attention; a draft does not');
+  assert.equal(all.unattached, 4);
+  assert.deepEqual(authoredOpenMRsView(snapshot, 'attention').items.map((mr) => mr.number), [1, 2, 3, 4]);
+  assert.deepEqual(authoredOpenMRsView(snapshot, 'attention', true).items.map((mr) => mr.number), [1, 2, 3, 4, 5]);
+  assert.deepEqual(authoredOpenMRsView(snapshot, 'ready').items.map((mr) => mr.number), [1]);
+  assert.equal(authoredOpenMRsView(snapshot, 'recent').filter, 'all', 'filters it does not offer fall back to Open');
+  assert.deepEqual(all.instances, [
+    { host: 'gitlab.example.test:6080', url: 'https://gitlab.example.test:6080/dashboard/merge_requests?state=opened&author_username=yorick', error: '' },
+    { host: 'evil.example.test', url: '', error: '' },
+    { host: 'down.example.test', url: '', error: 'GitLab returned HTTP 502' },
+  ]);
+  assert.equal(authoredOpenMRsView({}).available, false, 'no list, no indicator');
+});

@@ -144,7 +144,7 @@
   "js/remote-terminal.js": 3,
   "js/remote-viewers.js": 1,
   "js/saved-prompts.js": 17,
-  "js/shell-island.js": 20,
+  "js/shell-island.js": 15,
   "js/small-dialog-components.js": 19,
   "js/snapshots-dialog.js": 21,
   "js/spawn-action-fields.js": 1,
