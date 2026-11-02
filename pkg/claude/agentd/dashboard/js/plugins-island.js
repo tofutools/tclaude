@@ -84,11 +84,11 @@ function PluginCard({ plugin, state, actions, busy }) {
       ${plugin.descr && html`<span class="muted">${plugin.descr}</span>`}
       <span class="spacer"></span>
       <div class="row-actions">
-        <button disabled=${busy.has(checkKey)} onClick=${() => actions.checkPlugin(plugin, checkKey)}
-          title="Re-run this plugin's check commands now">${busy.has(checkKey) ? 'checking…' : 'check'}</button>
-        <button onClick=${() => state.openModal(plugin)} title="Edit this plugin's definition">edit</button>
-        <button class="danger" onClick=${() => actions.deletePlugin(plugin, pluginBusyKey('plugin-delete', plugin.name))}
-          title="Remove this plugin definition (does not undo anything its steps did)">delete</button>
+        <${Button} size="sm" disabled=${busy.has(checkKey)} onClick=${() => actions.checkPlugin(plugin, checkKey)}
+          title="Re-run this plugin's check commands now">${busy.has(checkKey) ? 'checking…' : 'check'}<//>
+        <${Button} size="sm" onClick=${() => state.openModal(plugin)} title="Edit this plugin's definition">edit<//>
+        <${Button} size="sm" variant="ghost danger" onClick=${() => actions.deletePlugin(plugin, pluginBusyKey('plugin-delete', plugin.name))}
+          title="Remove this plugin definition (does not undo anything its steps did)">delete<//>
       </div>
     </div>
     <table class="plugin-steps">

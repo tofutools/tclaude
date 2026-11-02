@@ -160,7 +160,7 @@ test('Links manager owns keyed rows, filter/sort controls and direct actions', a
   await harness.act(() => harness.fireEvent(edit, 'click'));
   assert.equal(host.querySelector('#link-modal-meta').textContent, '#1 · alpha → beta');
   await harness.act(() => harness.fireEvent(host.querySelector('#link-modal-cancel'), 'click'));
-  const remove = first.querySelector('button.danger');
+  const remove = first.querySelector('button.ui-btn-danger');
   await harness.act(() => harness.fireEvent(remove, 'click'));
   assert.deepEqual(calls[0], ['delete', { ...sample.links[0], mode: 'owners->members', scope: 'alpha' }]);
   await mounted.cleanup();
@@ -500,7 +500,7 @@ test('cross-node rows show each side, never call an offline peer revoked, and ca
   assert.match(row('xlink_3').textContent, /unknown · offline · last: active/);
   assert.doesNotMatch(row('xlink_3').textContent, /revoked/);
   assert.equal(row('xlink_1').querySelectorAll('button').length, 1, 'no mode edit for a cross-node edge');
-  const cancel = row('xlink_2').querySelector('button.danger');
+  const cancel = row('xlink_2').querySelector('button.ui-btn-danger');
   assert.equal(cancel.textContent.trim(), 'cancel request');
   await harness.act(() => cancel.click());
   assert.deepEqual(calls.at(-1)[1].peerLabel, 'bob');

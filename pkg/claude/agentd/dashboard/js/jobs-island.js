@@ -19,6 +19,7 @@ import { dashboardState } from './snapshot-store.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { LockReason } from './lock-reason.js';
 import { Pager } from './pager.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -151,18 +152,18 @@ function CronRow({ job, actions, triggersEnabled }) {
     <td><span class="last-hook">${relTime(job.last_run_at) || '—'}</span></td>
     <td><${CronSchedule} job=${job} /></td>
     <td><div class="row-actions">
-      <button onClick=${() => actions.runCron(job)} title="Fire this job immediately (also stamps last_run_at)">run now</button>
-      <button onClick=${toggleRuns} aria-expanded=${expanded ? 'true' : 'false'} aria-controls=${`cron-run-inspector-${job.id}`}
-        title="Show recorded run outcomes">${expanded ? 'hide logs' : 'logs'}</button>
-      <button disabled=${editBlocked} onClick=${() => actions.openCronEdit(job)}
-        title=${editBlocked ? 'Enable features.triggers to edit this spawn job' : 'Edit this cron job'}>edit</button>
-      <button disabled=${editBlocked} onClick=${() => actions.openCronDuplicate(job)}
-        title=${editBlocked ? 'Enable features.triggers to duplicate this spawn job' : 'Duplicate this cron job'}>duplicate</button>
-      <button class=${job.enabled ? 'warn' : ''} onClick=${() => actions.toggleCron(job)}
+      <${Button} size="sm" onClick=${() => actions.runCron(job)} title="Fire this job immediately (also stamps last_run_at)">run now<//>
+      <${Button} size="sm" onClick=${toggleRuns} aria-expanded=${expanded ? 'true' : 'false'} aria-controls=${`cron-run-inspector-${job.id}`}
+        title="Show recorded run outcomes">${expanded ? 'hide logs' : 'logs'}<//>
+      <${Button} size="sm" disabled=${editBlocked} onClick=${() => actions.openCronEdit(job)}
+        title=${editBlocked ? 'Enable features.triggers to edit this spawn job' : 'Edit this cron job'}>edit<//>
+      <${Button} size="sm" disabled=${editBlocked} onClick=${() => actions.openCronDuplicate(job)}
+        title=${editBlocked ? 'Enable features.triggers to duplicate this spawn job' : 'Duplicate this cron job'}>duplicate<//>
+      <${Button} size="sm" class=${job.enabled ? 'warn' : ''} onClick=${() => actions.toggleCron(job)}
         title=${job.enabled ? 'Pause this cron job' : 'Re-enable this cron job'}>
         ${job.enabled ? 'disable' : 'enable'}
-      </button>
-      <button class="danger" onClick=${() => actions.deleteCron(job)} title="Delete this cron job">delete</button>
+      <//>
+      <${Button} size="sm" variant="ghost danger" onClick=${() => actions.deleteCron(job)} title="Delete this cron job">delete<//>
     </div></td>
   </tr>
   ${expanded && html`<tr class="cron-run-inspector-row"><td colspan="9">
@@ -264,18 +265,18 @@ function StandingOrderRow({ order, actions }) {
       <${StandingOrderCapability} capability=${order.capability} />
     </td>
     <td><div class="row-actions">
-      <button onClick=${() => actions.openStandingOrderEdit(order)}
-        title="Edit this standing order">edit</button>
-      <button class=${order.enabled ? 'warn' : ''} onClick=${() => actions.toggleStandingOrder(order)}
+      <${Button} size="sm" onClick=${() => actions.openStandingOrderEdit(order)}
+        title="Edit this standing order">edit<//>
+      <${Button} size="sm" class=${order.enabled ? 'warn' : ''} onClick=${() => actions.toggleStandingOrder(order)}
         title=${order.enabled
           ? 'Disable this standing order'
           : order.disabled_reason
             ? `Re-enable and clear automatic marker: ${order.disabled_reason}`
             : 'Re-enable this standing order'}>
         ${order.enabled ? 'disable' : 'enable'}
-      </button>
-      <button class="danger" onClick=${() => actions.deleteStandingOrder(order)}
-        title="Delete this standing order and its evaluation history">delete</button>
+      <//>
+      <${Button} size="sm" variant="ghost danger" onClick=${() => actions.deleteStandingOrder(order)}
+        title="Delete this standing order and its evaluation history">delete<//>
     </div></td>
   </tr>`;
 }
@@ -316,9 +317,9 @@ function ExportRow({ job, actions }) {
     <td><span class="last-hook">${relTime(job.created_at) || '—'}</span></td>
     <td>${job.artifact_size ? fmtBytes(job.artifact_size) : html`<span class="muted">—</span>`}</td>
     <td><div class="row-actions">
-      ${job.ready && html`<button onClick=${() => actions.downloadExport(job)} title="Download this export">⤓ download</button>`}
-      <button class="danger" onClick=${() => actions.dismissExport(job)}
-        title="Dismiss — removes this export job from the list and deletes its file (if one was delivered)">dismiss</button>
+      ${job.ready && html`<${Button} size="sm" onClick=${() => actions.downloadExport(job)} title="Download this export">⤓ download<//>`}
+      <${Button} size="sm" variant="ghost danger" onClick=${() => actions.dismissExport(job)}
+        title="Dismiss — removes this export job from the list and deletes its file (if one was delivered)">dismiss<//>
     </div></td>
   </tr>`;
 }

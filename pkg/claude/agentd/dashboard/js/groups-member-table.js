@@ -1,7 +1,7 @@
 import { Fragment, h, render } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
-import { MenuHeading, MenuItem, MenuSep } from './ui-components.js';
+import { Button, MenuHeading, MenuItem, MenuSep } from './ui-components.js';
 import { AgentBudgetBadge } from './usage-profile-chip.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { applySortState, tableSortState, MEMBER_ACCESSORS } from './sort.js';
@@ -1010,9 +1010,9 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
 function MemberActions({ member, group, snapshot, actions, ungrouped, menuKey }) {
   const offlineWhy = member.online ? '' : ' — unavailable while the agent is offline';
   return html`<div class="row-actions">
-    <button class="icon-btn" data-act="jump" ...${memberAttrs(member)} disabled=${!member.online} title=${`Focus this agent's terminal window; when using web terminals, Ctrl/Cmd-click keeps this tab open${offlineWhy}`} aria-label="Focus window"><${EyeIcon} /></button>
-    <button class="icon-btn" data-act="hide" ...${memberAttrs(member)} disabled=${!member.online} title=${`Hide this agent's terminal window — detaches its tmux client. The agent keeps running.${offlineWhy}`} aria-label="Hide window"><${EyeIcon} hidden=${true} /></button>
-    <button class="icon-btn warn" data-act="retire-agent" data-conv=${member.conv_id} data-stable-agent=${member.agent_id || ''} data-label=${member.title || member.conv_id} title="Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored)." aria-label="Retire agent"><${TrashIcon} /></button>
+    <${Button} size="sm" icon=${true} class="icon-btn" data-act="jump" ...${memberAttrs(member)} disabled=${!member.online} title=${`Focus this agent's terminal window; when using web terminals, Ctrl/Cmd-click keeps this tab open${offlineWhy}`} aria-label="Focus window"><${EyeIcon} /><//>
+    <${Button} size="sm" icon=${true} class="icon-btn" data-act="hide" ...${memberAttrs(member)} disabled=${!member.online} title=${`Hide this agent's terminal window — detaches its tmux client. The agent keeps running.${offlineWhy}`} aria-label="Hide window"><${EyeIcon} hidden=${true} /><//>
+    <${Button} size="sm" icon=${true} class="icon-btn warn" data-act="retire-agent" data-conv=${member.conv_id} data-stable-agent=${member.agent_id || ''} data-label=${member.title || member.conv_id} title="Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored)." aria-label="Retire agent"><${TrashIcon} /><//>
     <${ActionMenu} menuKey=${menuKey} kind="row-menu"><${MemberMenu} member=${member} group=${group} snapshot=${snapshot} actions=${actions} ungrouped=${ungrouped} /><//>
   </div>`;
 }
@@ -1348,9 +1348,9 @@ function QueuedMemberRow({ entry, columns }) {
           title=${`queued — click to spawn ${label} now (opens the dialog and launches it; worktree, fetch and spawn checks run now)`}
           aria-label=${`Spawn ${label} now`} onClick=${act(launchQueuedSpawn)}>▶</button>
         <div class="row-actions">
-          <button class="icon-btn" disabled title="Focus this agent's terminal window — unavailable until the queued agent is spawned" aria-label="Focus window"><${EyeIcon} /></button>
-          <button class="icon-btn warn" data-act="queued-spawn-discard" data-group=${entry.group} title="Discard this queued agent — remove it from the queue without launching" aria-label=${`Discard queued ${label}`} onClick=${act(discardQueuedSpawn)}><${TrashIcon} /></button>
-          <button type="button" class="cog-btn" data-act="queued-spawn-edit" data-group=${entry.group} title="Review or edit the queued spawn in the spawn dialog" aria-label=${`Edit queued ${label}`} onClick=${edit}><span class="cog-glyph">⚙︎</span></button>
+          <${Button} size="sm" icon=${true} class="icon-btn" disabled title="Focus this agent's terminal window — unavailable until the queued agent is spawned" aria-label="Focus window"><${EyeIcon} /><//>
+          <${Button} size="sm" icon=${true} class="icon-btn warn" data-act="queued-spawn-discard" data-group=${entry.group} title="Discard this queued agent — remove it from the queue without launching" aria-label=${`Discard queued ${label}`} onClick=${act(discardQueuedSpawn)}><${TrashIcon} /><//>
+          <${Button} size="sm" icon=${true} class="cog-btn" data-act="queued-spawn-edit" data-group=${entry.group} title="Review or edit the queued spawn in the spawn dialog" aria-label=${`Edit queued ${label}`} onClick=${edit}><span class="cog-glyph">⚙︎</span><//>
         </div></div>
         ${draft.profile || harness ? html`<div class="agent-harness" title=${draft.profile ? `Queued with profile ${draft.profile}` : `Queued for ${labels.long}${draft.model ? ` · ${draft.model}` : ''}`}><span class="runtime-meta runtime-meta-offline">${draft.profile
           ? String(draft.profile)

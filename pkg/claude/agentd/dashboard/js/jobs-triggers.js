@@ -242,8 +242,8 @@ function TriggerRow({ rule, selected, actions, onSelect, onEdit, onChanged }) {
             else input.checked = !!rule.enabled;
           }} /><span></span></label></td>
       <td><div class="row-actions" onClick=${(event) => event.stopPropagation()}>
-        <button type="button" onClick=${onEdit}>edit</button>
-        <button type="button" class="danger" onClick=${async () => { if (await actions.deleteTrigger(rule)) onChanged(); }}>delete</button>
+        <${Button} size="sm" type="button" onClick=${onEdit}>edit<//>
+        <${Button} size="sm" type="button" variant="ghost danger" onClick=${async () => { if (await actions.deleteTrigger(rule)) onChanged(); }}>delete<//>
       </div></td>
     </tr>
     ${selected && html`<tr class="trigger-inspector-row"><td colspan="9">
