@@ -121,7 +121,7 @@ jobs:
       - name: Set up Node for the Copilot CLI
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
 
       # The version is pinned in pkg/claude/harness/copilotfixture/version.go
       # and re-asserted by the suite itself in lab mode, so an install drift
