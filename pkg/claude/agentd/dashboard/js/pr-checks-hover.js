@@ -549,13 +549,13 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
           `)}
         </ul>
       ` : html`
-        <p class="ci-panel-empty">
+        <p class="ci-panel-empty ui-empty">
           ${error ? `Could not load checks — ${error}`
             : loading || data?.refreshing ? 'Fetching checks…'
             : 'No checks reported for this pull request.'}
         </p>
       `}
-      ${checks.length && error ? html`<p class="ci-panel-empty">Refresh failed — ${error}</p>` : null}
+      ${checks.length && error ? html`<p class="ci-panel-empty ui-empty">Refresh failed — ${error}</p>` : null}
       <p class="ci-panel-note">
         <a href=${prChecksPageURL(url)} target="_blank" rel="noopener noreferrer">
           <span class="theme-copy-regular">Open checks on GitHub ↗</span>

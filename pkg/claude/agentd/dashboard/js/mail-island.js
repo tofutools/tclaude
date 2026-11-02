@@ -138,7 +138,7 @@ function MailSidebar({ current, controller }) {
       ${group.expanded && (group.members.length > 0
         ? group.members.map(mailbox => html`<${MailboxRow} key=${mailbox.id} mailbox=${mailbox} nested=${true}
             prevGen=${model.prevGens.has(mailbox.id)} current=${current} controller=${controller} />`)
-        : html`<div class="mailbox-row nested"><span class="mail-box-check-spacer"></span><div class="mailbox-nested-empty">no member folders shown</div></div>`)}
+        : html`<div class="mailbox-row nested"><span class="mail-box-check-spacer"></span><div class="mailbox-nested-empty ui-empty">no member folders shown</div></div>`)}
       ${group.expanded && group.membersTotal > group.members.length && html`<${LoadMore} nested=${true} shown=${group.members.length}
         total=${group.membersTotal} busy=${current.busy} what=${`${group.mailbox.title}'s member mailboxes`}
         onMore=${() => controller.loadMoreMembers(group.mailbox.title)} />`}

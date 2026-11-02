@@ -107,7 +107,7 @@ export function GitRepositoriesDialog({ current, state, actions }) {
           ${repo.error || outcome?.detail ? html`<div class="git-repo-detail" role=${outcome?.status === 'failed' ? 'alert' : undefined}>${outcome?.detail || repo.error}</div>` : null}
         </div>`;
       })}
-      ${!loading && !visible.length ? html`<p class="git-repos-empty">${repos.length ? 'No matching repositories.' : 'No repositories found in this scope.'}</p>` : null}
+      ${!loading && !visible.length ? html`<p class="ui-empty-block">${repos.length ? 'No matching repositories.' : 'No repositories found in this scope.'}</p>` : null}
     </div>
     ${issues.length ? html`<details class="git-repos-issues"><summary><${Words} plain=${`${issues.length} group discovery notes`} wizard=${`${issues.length} party discovery notes`} /></summary>
       <ul>${issues.map((issue) => html`<li key=${issue.group}>${issue.group}: ${issue.detail}</li>`)}</ul></details>` : null}

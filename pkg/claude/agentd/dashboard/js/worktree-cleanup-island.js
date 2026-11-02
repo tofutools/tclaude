@@ -133,7 +133,7 @@ function CleanupOutcomeList({ response }) {
         <span class="path" title=${outcome.path}>${outcome.path}</span>
         <span class="meta">${outcome.detail || ''}</span>
       </div>
-    `) : (pruneOutcomes.length ? null : html`<div class="cleanup-empty">no cleanup outcomes returned</div>`)}
+    `) : (pruneOutcomes.length ? null : html`<div class="ui-empty-block">no cleanup outcomes returned</div>`)}
   </div>`;
 }
 
@@ -398,7 +398,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
       </div>
       <div class="cleanup-list" id="worktree-cleanup-list">
         ${busyAction === 'scan' && candidates.length === 0 && prunableRepos.length === 0
-          ? html`<div class="cleanup-empty">scanning…</div>`
+          ? html`<div class="ui-empty-block">scanning…</div>`
           : visible.length || visiblePruneRepos.length
             ? html`${visiblePruneRepos.map((repo) => html`<${PrunableRepoRow}
               key=${repo.repo_root} repo=${repo} locked=${busy || locked}
@@ -407,7 +407,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
               key=${candidate.path} candidate=${candidate} locked=${busy || locked}
               wizard=${wizard} onToggle=${toggleCandidate}
             />`)}`
-            : html`<div class="cleanup-empty">
+            : html`<div class="ui-empty-block">
               ${error && candidates.length === 0 ? 'scan failed' : 'no cleanup rows match the filter'}
             </div>`}
       </div>

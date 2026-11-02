@@ -276,7 +276,7 @@ function AgentPicker({ descriptor, state, snapshot, confirmDiscard }) {
       aria-autocomplete="list" aria-activedescendant=${activeID}
       onInput=${(event) => { setQuery(event.currentTarget.value); setHighlight(0); }} onKeyDown=${onKeyDown} />
     <div class="add-member-list" id="cron-pick-target-list" role="listbox">
-      ${candidates.length === 0 ? html`<div class="add-member-empty">No matching conversations. ${includeOffline ? '(Try a different filter.)' : '(Try ticking “Include offline / archived” for a wider pool.)'}</div>`
+      ${candidates.length === 0 ? html`<div class="ui-empty-block">No matching conversations. ${includeOffline ? '(Try a different filter.)' : '(Try ticking “Include offline / archived” for a wider pool.)'}</div>`
         : candidates.map((agent, index) => html`<div key=${agent.agent_id || agent.conv_id}
           ref=${index === bounded ? highlightedRef : null} id=${`cron-pick-target-option-${index}`}
           role="option" aria-selected=${index === bounded ? 'true' : 'false'}
@@ -461,7 +461,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
         <span class="title">${member.title || '(untitled)'}</span><span class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</span>
       </label>${openMemberPRs(member).length
         // Outside the <label>: a click inside a PR hover panel must not toggle the recipient.
-        ? html`<span class="recipient-prs">${openMemberPRs(member).map((pr) => html`<${PRChain} key=${pr.url} pr=${pr} />`)}</span>` : null}</div>`) : html`<div class="cleanup-empty">no members in this group</div>`}</div>
+        ? html`<span class="recipient-prs">${openMemberPRs(member).map((pr) => html`<${PRChain} key=${pr.url} pr=${pr} />`)}</span>` : null}</div>`) : html`<div class="ui-empty-block">no members in this group</div>`}</div>
       <p class="cleanup-hint recipient-picks-hint">Quick select: click = only these · Shift-click = add · ${modClickText()} = narrow</p>
     </div></div>`}
     ${(scopedGroup || target.mode === 'group') && html`<label class="cron-create-row" id="message-create-role-row"><span class="cron-create-label"

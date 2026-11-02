@@ -226,14 +226,14 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
         class="add-member-list" id="add-member-list" ref=${listRef}
         role="listbox" aria-busy=${busy || poolLoading ? 'true' : 'false'}
       >
-        ${poolError ? html`<div class="add-member-empty" role="alert">${poolError} <button id="add-member-pool-retry" type="button" disabled=${poolLoading || busy} onClick=${retryPool}>Retry</button></div>` : null}
+        ${poolError ? html`<div class="ui-empty-block" role="alert">${poolError} <button id="add-member-pool-retry" type="button" disabled=${poolLoading || busy} onClick=${retryPool}>Retry</button></div>` : null}
         ${candidates.map((candidate, index) => html`<${CandidateRow}
           key=${candidate.conv_id} candidate=${candidate} index=${index}
           highlighted=${index === selectedIndex} busy=${busy}
           onHighlight=${setHighlightConv} onAdd=${addOne}
         />`)}
-        ${!candidates.length && poolLoading ? html`<div class="add-member-empty" role="status">Loading conversations…</div>` : null}
-        ${!candidates.length && !poolLoading ? html`<div class="add-member-empty"><span class="theme-copy-regular">No matching conversations. ${emptyRetry}</span><span class="theme-copy-wizard">No matching conversations. ${wizardEmptyRetry}</span></div>` : null}
+        ${!candidates.length && poolLoading ? html`<div class="ui-empty-block" role="status">Loading conversations…</div>` : null}
+        ${!candidates.length && !poolLoading ? html`<div class="ui-empty-block"><span class="theme-copy-regular">No matching conversations. ${emptyRetry}</span><span class="theme-copy-wizard">No matching conversations. ${wizardEmptyRetry}</span></div>` : null}
       </div>
       ${addError ? html`<div class="cron-create-error" id="add-member-error" role="alert">${addError}${failedCandidate ? html` <button id="add-member-retry" type="button" disabled=${busy} onClick=${() => addOne(failedCandidate)}>Retry</button>` : null}</div>` : null}
       <div class="add-member-foot">

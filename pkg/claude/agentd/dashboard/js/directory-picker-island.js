@@ -279,7 +279,7 @@ export function DirectoryPickerApp({ state, actions }) {
           onClick=${() => setOperation({ kind: 'delete', directory })}>🗑</button>
       </div>`;
       })}
-      ${view && !visibleDirectories.length && html`<p class="directory-picker-empty">
+      ${view && !visibleDirectories.length && html`<p class="directory-picker-empty ui-empty">
         ${filtering ? 'No matching folders' : 'No subdirectories'}
       </p>`}
     </div>

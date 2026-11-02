@@ -319,7 +319,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     </p>
     <div id="cfg-notice" class="cfg-notice" style="display:none"></div>
     <div id="cfg-errors" class="cfg-errors" style="display:none"></div>
-    <div class="cfg-filter-empty" id="cfg-filter-empty" hidden>No settings match “<span id="cfg-filter-empty-q"></span>”.</div>
+    <div class="cfg-filter-empty ui-empty-block" id="cfg-filter-empty" hidden>No settings match “<span id="cfg-filter-empty-q"></span>”.</div>
 
     <${Panel} id="appearance" active=${active}>
       <${Group} title="Activity bots">

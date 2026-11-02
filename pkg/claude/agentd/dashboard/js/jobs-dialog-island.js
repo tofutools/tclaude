@@ -112,7 +112,7 @@ function AgentPicker({ descriptor, snapshot, onChoose, onClose, confirmDiscard }
       onInput=${(event) => { setQuery(event.currentTarget.value); setHighlight(0); }} onKeyDown=${onKeyDown} />
     <div class="add-member-list" id="cron-pick-target-list" role="listbox">
       ${candidates.length === 0
-        ? html`<div class="add-member-empty">No matching conversations. ${includeOffline ? '(Try a different filter.)' : '(Try ticking “Include offline / archived” for a wider pool.)'}</div>`
+        ? html`<div class="ui-empty-block">No matching conversations. ${includeOffline ? '(Try a different filter.)' : '(Try ticking “Include offline / archived” for a wider pool.)'}</div>`
         : candidates.map((agent, index) => html`<div key=${agent.agent_id || agent.conv_id}
           ref=${index === bounded ? highlightedRef : null} id=${`cron-pick-target-option-${index}`}
           role="option" aria-selected=${index === bounded ? 'true' : 'false'}

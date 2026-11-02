@@ -132,7 +132,7 @@ export function LibraryBundleImportDialog({ descriptor, onClose, confirmDiscard,
     <h3 id="library-bundle-import-title">Import ${descriptor.fileName || 'config bundle'}</h3>
     <div class="modal-meta">Nothing is written until you import. Untick an item to leave it out.</div>
     <div class="library-import-list" id="library-bundle-import-list">
-      ${!preview && !error && html`<div class="dock-empty">Reading the bundle…</div>`}
+      ${!preview && !error && html`<div class="dock-empty ui-empty">Reading the bundle…</div>`}
       ${rows.map((row) => {
         const label = bundleItemLabel(row.item);
         return html`<label key=${row.item} class=${`library-import-row${row.skipped ? ' is-skipped' : ''}`} data-library-import-item=${row.item}>

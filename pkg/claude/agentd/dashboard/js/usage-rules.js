@@ -122,7 +122,7 @@ function LimitsTab({ overview, busy, onEdit, onToggle }) {
       </div>
       <div class="usage-rule-summary">${ruleSummary(limit.rule)}</div>
       ${limit.enabled ? html`<${Bar} status=${statusFor(limit)}/>` : null}
-    </div>`)}</div>` : html`<div class="template-empty">No limits yet. A monthly spend cap is a good start.</div>`}
+    </div>`)}</div>` : html`<div class="ui-empty-block">No limits yet. A monthly spend cap is a good start.</div>`}
   </div>`;
 }
 
@@ -145,7 +145,7 @@ function ProfilesTab({ overview, busy, onEdit }) {
         ${profile.descr ? html`<div class="usage-rule-descr">${profile.descr}</div>` : null}
         ${(profile.rules || []).map((rule) => html`<div key=${rule.name} class="usage-rule-summary"><strong>${rule.name}</strong>: ${ruleSummary(rule)}</div>`)}
       </div>`;
-    })}</div>` : html`<div class="template-empty">No usage profiles yet.</div>`}
+    })}</div>` : html`<div class="ui-empty-block">No usage profiles yet.</div>`}
   </div>`;
 }
 
@@ -278,7 +278,7 @@ function AgentsTab({ overview, busy, onAdjust, onAssign, focus = '', onClearFocu
         </div>
         <${LinkedNote} assignments=${overview.assignments} agentID=${entry.agentID}/>
       </div>`;
-    }) : html`<div class="template-empty">No agent is under a usage profile yet. Assign one on the Assignments tab.</div>`}
+    }) : html`<div class="ui-empty-block">No agent is under a usage profile yet. Assign one on the Assignments tab.</div>`}
   </div>`;
 }
 

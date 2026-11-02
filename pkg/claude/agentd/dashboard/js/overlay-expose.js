@@ -273,7 +273,7 @@ function ExposeView({ win }) {
     ${spreading && html`<div ref=${stage} class="overlay-expose-stage" onPointerDown=${away}></div>`}
     <div class=${`overlay-expose-grid${spreading ? ' row' : ''}`} id="overlay-expose-list" role="listbox" aria-label=${spreading ? 'Minimized windows' : 'Windows'}
       onPointerDown=${away}>
-      ${shown.length === 0 && html`<p class="overlay-expose-empty">No window matches “${query.trim()}”.</p>`}
+      ${shown.length === 0 && html`<p class="overlay-expose-empty ui-empty-block">No window matches “${query.trim()}”.</p>`}
       ${cardList.map((entry) => {
         const index = shown.indexOf(entry);
         const { tab, tabs } = entry;

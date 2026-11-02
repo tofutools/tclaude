@@ -236,7 +236,6 @@ body.dock-open .open-prs.is-open::before {
   border-radius: 8px; color: #8b949e; font-size: 9px; font-weight: 600; line-height: 14px;
   text-transform: uppercase;
 }
-.open-prs-empty { margin: 0; padding: 20px 14px; color: #7d8590; font-size: 11px; }
 .open-prs-foot {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   min-height: 33px; padding: 7px 13px; background: #141920;
@@ -815,10 +814,7 @@ button.tool:where(:hover) { background: var(--ui-bg-hover); }
 /* Member folders nested under an expanded group: indented so they read as
    children of the group row above them. */
 .mailbox-row.nested { margin-left: 16px; }
-.mailbox-nested-empty {
-  flex: 1 1 auto; color: #6e7681; font-size: 11px; font-style: italic;
-  padding: 4px 8px;
-}
+.mailbox-nested-empty { flex: 1 1 auto; padding: 4px 8px; }
 
 /* Sidebar section divider: separates the aggregate group folders from the
    per-agent folders below them. A small uppercase label, no own row chrome. */
@@ -1346,7 +1342,7 @@ body:not(.show-final-pr-checks) .ci-hover.ci-final { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .ci-check-running { animation: none; }
 }
-.ci-panel-empty { margin: 4px 0 0; color: #8b949e; font-size: 11px; }
+.ci-panel-empty { margin-top: 4px; }
 .ci-panel-note {
   margin: 9px 0 0; padding-top: 8px; border-top: 1px solid #30363d;
   color: #8b949e; font-size: 11px;
@@ -1371,7 +1367,6 @@ body.wizard .ci-panel-heading {
 body.wizard .ci-panel-summary,
 body.wizard .ci-check-meta,
 body.wizard .ci-check-time,
-body.wizard .ci-panel-empty,
 body.wizard .ci-panel-note { color: #9a86c4; }
 body.wizard .ci-check-name { color: #f3e6c0; }
 body.wizard .ci-checks li + li { border-top-color: rgba(122, 93, 176, 0.35); }
@@ -1395,7 +1390,6 @@ body.slop .ci-panel-heading { color: #ffe88c; }
 body.slop .ci-panel-summary,
 body.slop .ci-check-meta,
 body.slop .ci-check-time,
-body.slop .ci-panel-empty,
 body.slop .ci-panel-note { color: #d8b95e; }
 body.slop .ci-check-name { color: #fff4bd; }
 body.slop .ci-checks li + li,
@@ -1451,7 +1445,6 @@ body.slop .ci-panel-note { border-color: #684500; }
   margin: 8px 0 0; color: #adbac7; font-size: 11.5px; overflow-wrap: anywhere;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
-.prd-excerpt-empty { color: #6e7681; font-style: italic; }
 /* A warm daemon cache answers in a few ms; only a read that is actually
    taking a while earns the loading line, so a quick one never flashes it. */
 .prd-loading { animation: prd-loading-in 0s linear 300ms both; }
@@ -2047,7 +2040,7 @@ body.companion-annotating :is(.overlay-split-line, .overlay-split-cross, .overla
   background: var(--cmp-bar, #161b22); color: var(--cmp-text, #e6edf3); font-size: 12px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis;
 }
 .overlay-expose-live:is(.chosen, :hover, :focus-visible) .overlay-expose-live-label { display: inline-flex; }
-.overlay-expose-empty { grid-column: 1 / -1; margin: 0; color: var(--cmp-muted, #8b949e); text-align: center; }
+.overlay-expose-empty { grid-column: 1 / -1; }
 @media (prefers-reduced-motion: reduce) {
   .overlay-expose { animation: none; }
   .overlay-expose-card { transition: none; }
@@ -5551,7 +5544,6 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 .palette-item.disabled { cursor: not-allowed; opacity: .58; }
 .palette-item.disabled .palette-hint { color: #d29922; }
 .palette-item.disabled.selected { background: #30363d66; color: #8b949e; }
-.palette-empty { padding: 16px; text-align: center; color: #7d8590; font-size: 13px; }
 .palette-foot {
   display: flex; gap: 14px; padding: 8px 14px;
   border-top: 1px solid #2a3340; color: #6e7681; font-size: 11px;
@@ -6403,9 +6395,6 @@ body.wizard .group-pending-title-wizard { display: inline; }
 }
 .add-member-row .online { color: #3fb950; }
 .add-member-row .offline { color: #7d8590; }
-.add-member-empty {
-  padding: 14px; color: #7d8590; font-size: 12px; text-align: center;
-}
 .add-member-foot {
   display: flex; align-items: center; gap: 12px;
   padding-top: 8px; font-size: 11px; color: #7d8590;
@@ -8055,7 +8044,6 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
    the old ` · `-joined .modal-meta paragraph. Each line is a small tag plus a
    monospace value that ellipsis-truncates rather than wrapping. */
 .sbx-caps { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
-.sbx-caps-empty { color: #6e7681; font-size: 11px; font-style: italic; }
 .sbx-cap { display: flex; align-items: baseline; gap: 8px; min-width: 0; line-height: 1.5; }
 .sbx-cap-tag {
   flex: 0 0 auto; box-sizing: border-box; min-width: 3.4em; text-align: center;
@@ -8957,7 +8945,7 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
   background: rgba(248,81,73,.12); border-color: #f85149;
 }
 .directory-picker-new { color: #79c0ff !important; border-color: #388bfd !important; }
-.directory-picker-empty { color: #7d8590; margin: auto; }
+.directory-picker-empty { margin: auto; }
 .directory-picker-error { color: #ffa198; min-height: 18px; }
 .directory-picker-modal .modal-buttons { border-top: 1px solid #2a3340; padding-top: 10px; }
 body.wizard .directory-picker-modal {
@@ -9199,7 +9187,6 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .ta-profile-summary { font-size: 11px; color: #7d8590; min-height: 0; }
 .ta-profile-summary:empty { display: none; }
 .ta-profile-summary-missing { color: #d29922; }
-.ta-profile-summary-empty { color: #6e7681; font-style: italic; }
 .profile-card-disabled { border-color: rgba(248, 81, 73, .8); background: rgba(248, 81, 73, .09); box-shadow: inset 3px 0 0 #f85149; }
 /* Card-head status pills. They are LABELS, not prose: a pill that wraps mid-
    phrase ("OPERATOR" over "ONLY") doubles the head's height and knocks the
@@ -9344,7 +9331,6 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 /* "(default)" flag on a member adopting the deploy default profile — dimmer than
    the profile name it trails, so it reads as provenance not a second value. */
 .template-preview .tp-default-tag { color: #6e7681; font-style: italic; }
-.template-preview .tp-empty { color: #6e7681; }
 /* Templates tab list — one card per template. */
 .template-card {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
@@ -9433,7 +9419,6 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .starter-row .starter-meta { display: flex; flex-wrap: wrap; gap: 8px; }
 .starter-row .tc-count { color: #6e7681; font-size: 11px; }
 .starter-row .starter-actions { display: flex; gap: 6px; margin-top: 2px; }
-.template-empty { color: #6e7681; padding: 14px; font-size: 13px; }
 /* Cleanup modal — the 🧹 bulk-cleanup overlay. Reuses the
    cron-create-modal outer shape and the add-member list look for the
    editable candidate rows. */
@@ -9590,9 +9575,6 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .cleanup-row .path {
   color: #7d8590; font-size: 11px; flex: 1 1 auto; overflow: hidden;
   white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left;
-}
-.cleanup-empty {
-  padding: 16px; color: #7d8590; font-size: 12px; text-align: center;
 }
 .cleanup-options {
   display: flex; flex-direction: column; gap: 6px;
@@ -9916,11 +9898,7 @@ label.cfg-label { cursor: pointer; }
    use the [hidden] attribute — .cfg-section / details.cfg-advanced set no
    display of their own, so the browser default already hid them; the global
    `[hidden] { display: none !important }` rule at the top now backs that too. */
-.cfg-filter-empty {
-  font-size: 12px; color: #7d8590; font-style: italic;
-  border: 1px dashed #30363d; border-radius: 8px;
-  padding: 16px; margin: 0 0 14px; text-align: center;
-}
+.cfg-filter-empty { border: 1px dashed #30363d; border-radius: 8px; margin: 0 0 14px; }
 .cfg-section {
   border: 1px solid #30363d; border-radius: 8px; background: #0f141a;
   margin: 0 0 14px; padding: 2px 14px 12px;
@@ -11683,7 +11661,6 @@ body.wizard .open-prs-head strong {
 }
 body.wizard .open-prs-age,
 body.wizard .open-pr-meta,
-body.wizard .open-prs-empty { color: #9a86c4; }
 body.wizard .open-prs-filters button { border-color: #4a3d6b; color: #b39ddb; }
 body.wizard .open-prs-filters button:hover { color: #e7d9f5; background: #3a2a63; }
 body.wizard .open-prs-filters button.active {
@@ -12877,7 +12854,6 @@ body.wizard #message-create-modal .cleanup-row { border-bottom-color: #241b3d; }
 body.wizard #message-create-modal .cleanup-row .title { color: #f3e6c0; }
 body.wizard #message-create-modal .cleanup-row .id,
 body.wizard #message-create-modal .cleanup-badge,
-body.wizard #message-create-modal .cleanup-empty { color: #b39ddb; }
 body.wizard #message-create-modal .cleanup-badge { border-color: #3a2a63; }
 body.wizard #message-create-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 body.wizard #message-create-modal #message-create-submit {
@@ -12966,7 +12942,6 @@ body.wizard #add-member-modal .add-member-row .id,
 body.wizard #add-member-modal .add-member-row .descr,
 body.wizard #add-member-modal .add-member-row .groups-tag,
 body.wizard #add-member-modal .add-member-row .offline,
-body.wizard #add-member-modal .add-member-empty,
 body.wizard #add-member-modal .add-member-foot { color: #b39ddb; }
 body.wizard #add-member-modal .add-member-row .role { color: #d9b45a; }
 body.wizard #add-member-modal .add-member-foot input[type=checkbox] { accent-color: #a97bd6; }
@@ -13007,7 +12982,6 @@ body.wizard #cron-pick-target-modal .add-member-row .id,
 body.wizard #cron-pick-target-modal .add-member-row .descr,
 body.wizard #cron-pick-target-modal .add-member-row .groups-tag,
 body.wizard #cron-pick-target-modal .add-member-row .offline,
-body.wizard #cron-pick-target-modal .add-member-empty,
 body.wizard #cron-pick-target-modal .add-member-foot { color: #b39ddb; }
 body.wizard #cron-pick-target-modal .add-member-row .role { color: #d9b45a; }
 body.wizard #cron-pick-target-modal .add-member-row .online { color: #5ee58a; }
@@ -13184,7 +13158,6 @@ body.wizard #group-create-modal .template-preview {
 body.wizard #group-create-modal .template-preview .tp-name { color: #f3e6c0; }
 body.wizard #group-create-modal .template-preview .tp-meta { color: #b39ddb; }
 body.wizard #group-create-modal .template-preview .tp-owner { color: #d9b45a; }
-body.wizard #group-create-modal .template-preview .tp-empty { color: #b39ddb; }
 body.wizard #group-create-modal .template-preview .tp-badges .tc-count { color: #b39ddb; }
 body.wizard #group-create-modal .group-create-origin-options,
 body.wizard #group-create-modal .group-clone-preview {
@@ -13334,7 +13307,6 @@ body.wizard #command-palette-modal .palette-item.disabled .palette-hint { color:
 
 /* No-match line + the foot legend go violet; the kbd chips get the
    tarnished-gold-on-violet treatment the header buttons use. */
-body.wizard #command-palette-modal .palette-empty { color: #b39ddb; }
 body.wizard #command-palette-modal .palette-foot {
   border-top-color: rgba(122, 93, 176, 0.4);
   color: #b39ddb;
@@ -13456,7 +13428,6 @@ body.wizard #window-modal .cleanup-row { border-bottom-color: #241b3d; }
 body.wizard #window-modal .cleanup-row .title { color: #f3e6c0; }
 body.wizard #window-modal .cleanup-row .id { color: #b39ddb; }
 body.wizard #window-modal .cleanup-badge { border-color: #3a2a63; color: #b39ddb; }
-body.wizard #window-modal .cleanup-empty { color: #b39ddb; }
 
 /* Footer: Cancel gets the tarnished-gold secondary treatment; the
    focus/unfocus submit becomes a gilded lever. Its label is JS-set with a live
@@ -13556,7 +13527,6 @@ body.wizard #cleanup-modal .cleanup-row .title { color: #f3e6c0; }
 body.wizard #cleanup-modal .cleanup-row .id,
 body.wizard #cleanup-modal .cleanup-row .meta,
 body.wizard #cleanup-modal .cleanup-row .seen { color: #b39ddb; }
-body.wizard #cleanup-modal .cleanup-empty { color: #b39ddb; }
 
 /* The tier selector + its sub-options: an arcane inset panel, parchment
    labels, violet notes. The native radios / checkboxes stay legible. */
@@ -13641,7 +13611,6 @@ body.wizard #retire-preview-modal .delete-agent-wt input[type=checkbox] {
 body.wizard #retire-preview-modal .cleanup-row .title { color: #f3e6c0; }
 body.wizard #retire-preview-modal .cleanup-row .id,
 body.wizard #retire-preview-modal .cleanup-row .meta,
-body.wizard #retire-preview-modal .cleanup-empty { color: #b39ddb; }
 /* Candidate status/class badges get wizard chrome. Result rows have no label,
    so their semantic green/amber/red outcome palette remains authoritative. */
 body.wizard #retire-preview-modal .cleanup-row label .cleanup-badge {
@@ -13719,7 +13688,6 @@ body.wizard #delete-retired-modal .cleanup-row .title { color: #f3e6c0; }
 body.wizard #delete-retired-modal .cleanup-row .id,
 body.wizard #delete-retired-modal .cleanup-row .meta,
 body.wizard #delete-retired-modal .cleanup-row .seen,
-body.wizard #delete-retired-modal .cleanup-empty { color: #b39ddb; }
 body.wizard #delete-retired-modal .cleanup-badge {
   background: #1c1436;
 }
@@ -13793,7 +13761,6 @@ body.wizard #worktree-cleanup-modal .cleanup-list {
 body.wizard #worktree-cleanup-modal .cleanup-row { border-bottom-color: #241b3d; }
 body.wizard #worktree-cleanup-modal .cleanup-row .branch { color: #e7d9f5; }
 body.wizard #worktree-cleanup-modal .cleanup-row .path,
-body.wizard #worktree-cleanup-modal .cleanup-empty { color: #b39ddb; }
 body.wizard #worktree-cleanup-modal .cleanup-badge { border-color: #3a2a63; }
 body.wizard #worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn))[aria-pressed="true"] {
   background: #3a2a63; border-color: #f3e6c0; color: #f3e6c0;
@@ -13867,7 +13834,6 @@ body.wizard #delete-group-modal .cleanup-badge {
   border-color: #3a2a63;
   color: #b39ddb;
 }
-body.wizard #delete-group-modal .cleanup-empty { color: #b39ddb; }
 body.wizard #delete-group-modal .delete-agent-wt { color: #e7d9f5; }
 body.wizard #delete-group-modal .delete-agent-wt .wt-note { color: #b39ddb; }
 body.wizard #delete-group-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
@@ -14590,7 +14556,6 @@ body.wizard #profiles-manage-modal .template-card .tc-actions button:where(:not(
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
 body.wizard #profiles-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)):hover { background: #3a2a63; }
-body.wizard #profiles-manage-modal .template-empty { color: #b39ddb; }
 
 /* Close (and any other non-primary footer button): tarnished-gold secondary. */
 
@@ -14790,7 +14755,6 @@ body.wizard #templates-manage-modal .template-card .tc-actions button:where(:not
 body.wizard #templates-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)):is(.primary, .ui-btn-primary):hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
 }
-body.wizard #templates-manage-modal .template-empty { color: #b39ddb; }
 
 /* Close (and any other non-primary footer button): tarnished-gold secondary. */
 
@@ -14872,7 +14836,6 @@ body.wizard #template-editor-modal .template-agent-roleref span { color: #b39ddb
    inside the editor rather than on a stray slate card. */
 body.wizard #template-editor-modal .ta-profile-summary { color: #b39ddb; }
 body.wizard #template-editor-modal .ta-profile-summary-missing { color: #d9b45a; }
-body.wizard #template-editor-modal .ta-profile-summary-empty { color: #9d86c9; }
 body.wizard #template-editor-modal .ta-profile-summary-default { color: #9d86c9; }
 body.wizard #template-editor-modal .ta-legacy-note {
   background: #241b3d; border-color: #d9b45a; color: #f0d9a0;
@@ -15001,7 +14964,6 @@ body.wizard #template-deploy-modal .template-preview .tp-name { color: #f3e6c0; 
 body.wizard #template-deploy-modal .template-preview .tp-meta { color: #b39ddb; }
 body.wizard #template-deploy-modal .template-preview .tp-owner { color: #d9b45a; }
 body.wizard #template-deploy-modal .template-preview .tp-default-tag { color: #9d86c9; }
-body.wizard #template-deploy-modal .template-preview .tp-empty { color: #b39ddb; }
 body.wizard #template-deploy-modal button:where(:not(.ui-btn)):not(#template-deploy-submit) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
@@ -15286,7 +15248,6 @@ body.wizard #starters-modal .starter-actions button:where(:not(.ui-btn)) {
 }
 body.wizard #starters-modal .starter-actions button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 body.wizard #starters-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
-body.wizard #starters-modal .template-empty { color: #b39ddb; }
 
 /* ─── Wizard unseal dialog — "⤒ Unseal a party archive" ──────────────
    Group import. Scoped to #group-import-modal. Unlike the sibling levers
@@ -15511,12 +15472,10 @@ body.wizard #sandbox-profiles-manage-modal .template-card {
 body.wizard #sandbox-profiles-manage-modal .template-card .tc-name { color: #f3e6c0; }
 body.wizard #sandbox-profiles-manage-modal .template-card .tc-descr { color: #b39ddb; }
 body.wizard #sandbox-profiles-manage-modal .template-card .sbx-cap-val { color: #d8c9f0; }
-body.wizard #sandbox-profiles-manage-modal .template-card .sbx-caps-empty { color: #b39ddb; }
 body.wizard #sandbox-profiles-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
 body.wizard #sandbox-profiles-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)):hover { background: #3a2a63; }
-body.wizard #sandbox-profiles-manage-modal .template-empty { color: #b39ddb; }
 
 /* Editor (inscribe a ward), mirror of #profile-editor-modal. */
 body.wizard #sandbox-profile-editor-modal .cron-create-modal {
@@ -15750,7 +15709,6 @@ body.wizard #roles-manage-modal .template-card .tc-actions button:where(:not(.ui
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
 body.wizard #roles-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)):hover { background: #3a2a63; }
-body.wizard #roles-manage-modal .template-empty { color: #b39ddb; }
 /* Close (and any other non-primary footer button): tarnished-gold secondary. */
 
 /* ─── Wizard role editor — "Chalk a new class" ─────────────────────────
@@ -16675,7 +16633,6 @@ body.wizard .mail-dot.offline { color: #5a5470; }
 body.wizard .mailbox-tag { border-color: #7a5db0; color: #b39ddb; }
 body.wizard .mail-group-caret { color: #9a86c4; }
 body.wizard .mail-group-caret:hover { color: #f3e6c0; }
-body.wizard .mailbox-nested-empty { color: #7d719c; }
 body.wizard .mail-sidebar-foot { color: #9a86c4; }
 
 /* ─── The Scrolls (message list) ────────────────────────────────────
@@ -16974,9 +16931,7 @@ body.wizard #tab-config .filter-bar input:where(:not(.ui-input)):focus { border-
 body.wizard #tab-config .filter-bar .filter-count { color: #b39ddb; }
 body.wizard #tab-config .filter-bar button.clear-filter { color: #b39ddb; }
 body.wizard #tab-config .filter-bar button.clear-filter:hover { color: #f3e6c0; }
-body.wizard #tab-config .cfg-filter-empty {
-  border-color: rgba(122, 93, 176, 0.5); color: #b39ddb;
-}
+body.wizard #tab-config .cfg-filter-empty { border-color: rgba(122, 93, 176, 0.5); }
 
 /* Section panels: violet-void surface, mystic-purple frame; the small
    uppercase h3 head goes tarnished-gold with an arcane glow (kept uppercase —
@@ -17559,7 +17514,7 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
 }
 .dock-section-manage:hover { color: #58a6ff; border-color: #2a3340; background: #21262d; }
 
-.dock-empty { color: #6e7681; font-size: 11px; font-style: italic; padding: 2px 6px 4px; }
+.dock-empty { padding: 2px 6px 4px; }
 
 /* The library search sits above every section and stays put while they
    scroll; the sticky section headings dock just below it. */
@@ -17752,7 +17707,6 @@ body.wizard #agent-dock .dock-section-head:hover .dock-section-title { color: #e
 body.wizard #agent-dock .dock-section-title { color: #c9b8f0; text-shadow: 0 0 6px rgba(139, 109, 214, 0.4); }
 body.wizard #agent-dock .dock-section-chevron { color: #8b6dd6; }
 body.wizard #agent-dock .dock-section-count { color: #9a86c9; }
-body.wizard #agent-dock .dock-empty { color: #7a6ba0; }
 body.wizard #agent-dock .dock-card { background: #1d1730; border-color: #3a2f57; }
 body.wizard #agent-dock .dock-card:hover { border-color: #7c5cc4; background: #241a3a; }
 body.wizard #agent-dock .dock-card-name { color: #e6dcff; }
@@ -19558,7 +19512,6 @@ body.wizard .usage-history-error { color: #f0a3bf; }
 .git-repo-badge.dirty, .git-repo-badge.skipped { color: #e0b785; background: #3b3023; }
 .git-repo-badge.failed, .git-repos-error { color: #f1a2a2; }
 .git-repo-detail { padding: 0 10px 8px 34px; font-size: 11px; color: #aebccc; overflow-wrap: anywhere; white-space: pre-wrap; }
-.git-repos-empty { padding: 15px; color: #91a0b3; }
 .git-repos-issues { font-size: 12px; color: #91a0b3; }
 .git-repos-issues ul { max-height: 80px; overflow: auto; }
 .git-repos-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid #2d3947; padding-top: 12px; }
@@ -19891,7 +19844,6 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
 .fleet-card-trust { padding-top: 0; }
 .fleet-trust.unrestricted { color: #e3b341; }
 .fleet-trust.unknown { color: #7d8590; }
-.fleet-card-empty { padding: 10px 12px; color: #8b949e; font-style: italic; }
 .fleet-attn { color: #d29922; }
 .fleet-card-health.stale, .fleet-card-health.warming { color: #d29922; }
 .fleet-card-health.current { color: #3fb950; }

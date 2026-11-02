@@ -147,7 +147,7 @@ test('group menu launches a polling-stable dirty picker and restores its cog foc
     'snapshot polling cannot remount the live search transaction');
   assert.equal(search.value, 'work', 'snapshot polling cannot overwrite the query');
   await harness.input(search, 'missing candidate');
-  assert.match(dialogHost.querySelector('.add-member-empty').textContent,
+  assert.match(dialogHost.querySelector('.ui-empty-block').textContent,
     /No matching conversations.*Include offline/,
     'an exhausted online-filtered query explains how to widen the pool');
 
