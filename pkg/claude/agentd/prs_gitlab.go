@@ -241,29 +241,39 @@ func gitlabReadMR(ctx context.Context, base, token string, ref gitlabMRRef) (*gl
 // gitlabPipelineChecks turns a head pipeline's jobs into the check list the
 // dashboard renders. No pipeline parses to "resolved, zero checks", the same
 // answer a GitHub PR with no rollup gives.
+//
+// Every page of jobs is read (through the proxy's own pipelineJobs, which
+// follows GitLab's pagination up to its cap), and the summary counts all of
+// them. Only the displayed list stops at prChecksMaxRuns. When the read is
+// incomplete, because the page cap was reached or a page failed, the jobs in
+// hand are a subset, and a subset of green jobs must not read as a green
+// pipeline: GitLab's own verdict for the pipeline sets the state instead.
 func gitlabPipelineChecks(ctx context.Context, base, token string, ref gitlabMRRef, pipeline *glPipeline, now time.Time) prChecksInfo {
 	checks := []prCheckRun{}
+	complete := true
 	if pipeline != nil && pipeline.ID > 0 {
-		res, err := glDo(ctx, base, token, glAPIRequest{
-			Path:  "projects/" + url.PathEscape(ref.project) + "/pipelines/" + strconv.FormatInt(pipeline.ID, 10) + "/jobs",
-			Query: url.Values{"per_page": []string{strconv.Itoa(glJobsPerPage)}},
-		})
-		if err == nil && res.Status >= 200 && res.Status <= 299 {
-			var jobs []glJob
-			_ = json.Unmarshal(res.Body, &jobs)
-			for _, job := range jobs {
-				run, ok := gitlabJobCheckRun(job, pipeline.WebURL)
-				if !ok {
-					continue
-				}
+		session := &glProxySession{base: base, token: token, project: ref.project, projectID: url.PathEscape(ref.project)}
+		jobs, truncated, failure, err := session.pipelineJobs(ctx, pipeline.ID)
+		complete = !truncated && failure == nil && err == nil
+		for _, job := range jobs {
+			if run, ok := gitlabJobCheckRun(job, pipeline.WebURL); ok {
 				checks = append(checks, run)
-				if len(checks) >= prChecksMaxRuns {
-					break
-				}
 			}
 		}
 	}
-	return prChecksInfo{Summary: summarizePRChecks(checks, now), Checks: checks, FetchedAt: now}
+	summary := summarizePRChecks(checks, now)
+	if !complete {
+		summary.State = "pending"
+		if verdict := glPipelineChecks(&struct {
+			Status string `json:"status"`
+		}{Status: pipeline.Status}, ""); verdict != nil {
+			summary.State = verdict.State
+		}
+	}
+	if len(checks) > prChecksMaxRuns {
+		checks = checks[:prChecksMaxRuns]
+	}
+	return prChecksInfo{Summary: summary, Checks: checks, FetchedAt: now}
 }
 
 // gitlabJobCheckRun maps one CI job onto a check row. Buckets follow the
