@@ -347,10 +347,10 @@ export function CompanionApp({
   const heldKey = held.join();
   const heldHere = (id) => held.includes(id);
   const holder = windowHolding(overlayWindows.value, steward ? chatWindowId(steward.agentId) : '');
-  // With no Steward its chip opens the start tab, which is shown just the same.
+  // With no Steward's chat here the chip opens the start tab, shown just the same.
   const startHolder = windowHolding(overlayWindows.value, startTab().id);
-  const stewardShown = steward
-    ? !!holder && !holder.minimized && activeTabOf(holder)?.agent === steward.agentId
+  const stewardShown = holder
+    ? !holder.minimized && activeTabOf(holder)?.agent === steward.agentId
     : !!startHolder && !startHolder.minimized && activeTabOf(startHolder)?.kind === START_WINDOW_KIND;
   const homeWindow = overlayWindows.value.find((window) => window.id === HOME_WINDOW);
   // The chat showing at the front, for what acts on whichever agent is in view.
