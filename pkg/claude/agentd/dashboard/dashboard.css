@@ -3847,7 +3847,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .profile-links a.muted { color: #8b949e; }
 .profile-links a:hover { text-decoration: underline; }
 .profile-actions { white-space: nowrap; }
-.profile-actions .tool + .tool { margin-left: 4px; }
+.profile-actions .ui-btn + .ui-btn { margin-left: 4px; }
 .profile-done { background: #161b22; color: #9da7b3; border-color: #2a3340; }
 #profile-modal .cron-create-row input[type=number] { flex: 0 0 7em; }
 #profile-modal p.muted { font-size: 12px; margin: 0 0 10px; max-width: 520px; }
@@ -5116,13 +5116,18 @@ body.show-group-description .group-descr { display: inline; }
   padding: 2px; border: 1px solid #2a3340; border-radius: 5px; background: #0d1117;
 }
 .group-create-clone-transport { flex: 1; }
+/* As standard .ui-seg groups the choices keep their equal-width grid; the
+   segment buttons carry the frame. */
+.ui-seg:is(.group-create-origin-options, .group-create-workspace-modes, .group-create-clone-transport) {
+  display: grid; padding: 0; border: 0; background: none;
+}
 .group-create-workspace-modes { margin-bottom: 10px; }
-.group-create-workspace-modes button,
+.group-create-workspace-modes button:where(:not(.ui-btn)),
 .group-create-clone-transport button:where(:not(.ui-btn)) {
   height: 27px; border: 0; border-radius: 3px; background: transparent;
   color: #7d8590; font: inherit; font-size: 11px; cursor: pointer;
 }
-.group-create-workspace-modes button.selected,
+.group-create-workspace-modes button:where(:not(.ui-btn)).selected,
 .group-create-clone-transport button:where(:not(.ui-btn)).selected {
   background: #1f3f67; color: #79c0ff; box-shadow: inset 0 0 0 1px #1f6feb;
 }
@@ -7234,7 +7239,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .cron-create-row input:not([type]),
 .sbx-section input:not([type]),
 .sbx-section textarea,
-.sbx-section select,
+.sbx-section select:where(:not(.ui-select)),
 .cron-create-row input[type=number],
 .cron-create-row input[type=url],
 .cron-create-row select:where(:not(.ui-select)),
@@ -7253,6 +7258,9 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   padding: 6px 10px; font-size: 13px; color: #c9d1d9; font-family: inherit;
 }
 .cron-create-row select { text-overflow: ellipsis; }
+/* A standard select in a form row takes the row's flex sizing; its skin is
+   ui.css's. */
+:is(.cron-create-row, .sbx-section) select.ui-select { flex: 1; min-width: 0; }
 .sbx-section select { text-overflow: ellipsis; }
 
 /* ---- Sandbox-profile structured editors (filesystem / environment tables) --
@@ -8505,7 +8513,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .cron-create-row input:not([type]):focus,
 .sbx-section input:not([type]):focus,
 .sbx-section textarea:focus,
-.sbx-section select:focus,
+.sbx-section select:where(:not(.ui-select)):focus,
 .cron-create-row input[type=number]:focus,
 .cron-create-row input[type=url]:focus,
 .cron-create-row select:where(:not(.ui-select)):focus,
@@ -8517,14 +8525,14 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 /* "Browse…" button that sits beside a path input and asks the daemon to
    open a native directory picker. align-self:stretch makes it match the
    adjacent input's height in the flex row. */
-.cron-create-row .dir-browse-btn {
-  flex: 0 0 auto; align-self: stretch;
+.cron-create-row .dir-browse-btn { flex: 0 0 auto; align-self: stretch; }
+.cron-create-row .dir-browse-btn:where(:not(.ui-btn)) {
   background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
   color: #c9d1d9; font-family: inherit; font-size: 12px;
   padding: 0 12px; cursor: pointer; white-space: nowrap;
 }
-.cron-create-row .dir-browse-btn:hover { background: #2d333b; }
-.cron-create-row .dir-browse-btn:disabled { opacity: 0.5; cursor: default; }
+.cron-create-row .dir-browse-btn:where(:not(.ui-btn)):hover { background: #2d333b; }
+.cron-create-row .dir-browse-btn:where(:not(.ui-btn)):disabled { opacity: 0.5; cursor: default; }
 /* JOH-364: the "⧉ manage templates…" tool button sits beside the template
    <select> in a cron-create-row — exactly like a Browse… button beside a path
    input — so it needs the same flex sizing to match the select's height instead
@@ -9371,7 +9379,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   color: #7d8590; text-transform: uppercase; letter-spacing: 0.04em;
   font-size: 10px; margin-top: 4px;
 }
-.template-agents-head .tool { margin-left: auto; }
+.template-agents-head > .ui-btn { margin-left: auto; }
 #template-editor-agents { display: flex; flex-direction: column; gap: 10px; }
 .template-agent-row {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 5px;
@@ -9391,12 +9399,12 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .template-agent-roleref {
   display: flex; align-items: center; gap: 8px; font-size: 11px; color: #7d8590;
 }
-.template-agent-roleref select {
+.template-agent-roleref select:where(:not(.ui-select)) {
   flex: 1; background: #161b22; color: #c9d1d9; font-family: inherit;
   font-size: 12px; border: 1px solid #2a3340; border-radius: 4px;
   padding: 5px 8px; box-sizing: border-box; min-width: 0;
 }
-.template-agent-roleref select:focus { outline: none; border-color: #58a6ff; }
+.template-agent-roleref select:where(:not(.ui-select)):focus { outline: none; border-color: #58a6ff; }
 /* Launch-profile picker (JOH-350): the agent's launch config + birth-time
    permissions are a single stored-profile pick — the .ta-launch-pick dropdown
    reuses the role-library row chrome, with new/manage affordances beside it, a
@@ -9540,11 +9548,11 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   display: flex; align-items: center; gap: 6px;
   font-size: 11px; color: #7d8590;
 }
-.template-pattern-row select.tw-sendto {
+.template-pattern-row select.tw-sendto:where(:not(.ui-select)) {
   background: #161b22; color: #c9d1d9; font-family: inherit; font-size: 12px;
   border: 1px solid #2a3340; border-radius: 4px; padding: 3px 6px;
 }
-.template-pattern-row select.tw-sendto:focus { outline: none; border-color: #58a6ff; }
+.template-pattern-row select.tw-sendto:where(:not(.ui-select)):focus { outline: none; border-color: #58a6ff; }
 .template-preview {
   flex: 1; font-size: 12px; background: #0d1117; border: 1px solid #2a3340;
   border-radius: 4px; padding: 7px 10px; display: flex;
@@ -13358,7 +13366,7 @@ body.wizard #group-create-modal button:where(:not(.ui-btn)):not(.primary):hover 
 body.wizard #group-create-modal .group-create-workspace {
   border-color: rgba(122, 93, 176, 0.45); background: #171126;
 }
-body.wizard #group-create-modal .group-create-workspace-modes button.selected,
+body.wizard #group-create-modal .group-create-workspace-modes button:where(:not(.ui-btn)).selected,
 body.wizard #group-create-modal .group-create-clone-transport button:where(:not(.ui-btn)).selected {
   background: #3a2a63; color: #e5d3ff; box-shadow: inset 0 0 0 1px #a97bd6;
 }
@@ -15149,13 +15157,13 @@ body.wizard #template-editor-modal select.tw-sendto:where(:not(.ui-select)) opti
    already read parchment-muted, so only the control itself needs skinning.
    Options render on the OS layer: dark ink on parchment for legibility, same
    as tw-sendto. */
-body.wizard #template-editor-modal select.ta-role-ref,
+body.wizard #template-editor-modal select.ta-role-ref:where(:not(.ui-select)),
 body.wizard #template-editor-modal select.ta-profile-select:where(:not(.ui-select)) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
-body.wizard #template-editor-modal select.ta-role-ref:focus,
+body.wizard #template-editor-modal select.ta-role-ref:where(:not(.ui-select)):focus,
 body.wizard #template-editor-modal select.ta-profile-select:where(:not(.ui-select)):focus { border-color: #a97bd6; }
-body.wizard #template-editor-modal select.ta-role-ref option,
+body.wizard #template-editor-modal select.ta-role-ref:where(:not(.ui-select)) option,
 body.wizard #template-editor-modal select.ta-profile-select:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
 body.wizard #template-editor-modal .template-agent-roleref,
 body.wizard #template-editor-modal .template-agent-roleref span { color: #b39ddb; }
@@ -15579,10 +15587,10 @@ body.wizard #starters-modal .starter-row .tc-name { color: #f3e6c0; }
 body.wizard #starters-modal .starter-row .tc-descr,
 body.wizard #starters-modal .starter-row .tc-count { color: #b39ddb; }
 /* The "⭐ copy into my circles" button + Close: tarnished-gold secondary. */
-body.wizard #starters-modal .starter-actions button {
+body.wizard #starters-modal .starter-actions button:where(:not(.ui-btn)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #starters-modal .starter-actions button:hover { background: #3a2a63; }
+body.wizard #starters-modal .starter-actions button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 body.wizard #starters-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 body.wizard #starters-modal .template-empty { color: #b39ddb; }
 
@@ -15849,7 +15857,7 @@ body.wizard #sandbox-profile-editor-modal .cron-create-row input[type=text],
 body.wizard #sandbox-profile-editor-modal .cron-create-row input:not([type]),
 body.wizard #sandbox-profile-editor-modal .sbx-section input:not([type]),
 body.wizard #sandbox-profile-editor-modal .sbx-section textarea,
-body.wizard #sandbox-profile-editor-modal .sbx-section select,
+body.wizard #sandbox-profile-editor-modal .sbx-section select:where(:not(.ui-select)),
 body.wizard #sandbox-profile-editor-modal .cron-create-row textarea {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
@@ -15860,7 +15868,7 @@ body.wizard #sandbox-profile-editor-modal .cron-create-row input[type=text]:focu
 body.wizard #sandbox-profile-editor-modal .cron-create-row input:not([type]):focus,
 body.wizard #sandbox-profile-editor-modal .sbx-section input:not([type]):focus,
 body.wizard #sandbox-profile-editor-modal .sbx-section textarea:focus,
-body.wizard #sandbox-profile-editor-modal .sbx-section select:focus,
+body.wizard #sandbox-profile-editor-modal .sbx-section select:where(:not(.ui-select)):focus,
 body.wizard #sandbox-profile-editor-modal .cron-create-row textarea:focus { border-color: #a97bd6; }
 /* Secondary + inline buttons (Cancel / 🤖 configure). :not(#…-submit) excludes
    the Inscribe lever below so the two rules match disjoint elements. */
@@ -22003,3 +22011,6 @@ body.wizard .dock-process-toggle button.on { background: #2d2145; }
 .content-search-head .rowname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .content-search-head .row-actions { margin-left: auto; flex: none; }
 .content-search-match { margin: 2px 0 0 18px; font-size: 12px; color: #7d8590; overflow-wrap: anywhere; }
+
+/* Small icon buttons (row remove ×) sit centred beside taller fields. */
+.sbx-row > .ui-btn-icon, .sbx-environment-row > .ui-btn-icon { align-self: center; }
