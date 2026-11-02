@@ -24,7 +24,7 @@ export function snapAssistChoices(windows, tiled) {
 // such as a terminal.
 function focusSnapped(doc, windowId) {
   const window = overlayWindows.peek().find((candidate) => candidate.id === windowId);
-  if (!window) return;
+  if (!window || window.minimized) return;
   [...(doc?.querySelectorAll?.('[data-overlay-window]') || [])].find((node) => node.dataset.overlayWindow === windowId)?.focus?.();
   focusOverlayWindow(window.active);
 }
