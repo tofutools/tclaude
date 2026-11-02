@@ -323,7 +323,7 @@ body.hide-costs .mux-cost-toggle { display: none; }
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
   border-radius: 5px; padding: 3px 8px; font-size: 12px; cursor: pointer;
 }
-.mux-btn:hover { background: #2d333b; border-color: #3d4451; }
+.mux-btn:hover { background: #2d333b; }
 /* A terminal's zoom, in its floating tools. */
 .term-zoom { display: inline-flex; align-items: center; gap: 2px; flex: none; }
 .term-zoom .companion-tool { color: #e6edf3; }
@@ -548,7 +548,7 @@ body.wizard .mux-btn {
   background: #2a1c43; border-color: #7a5db0; color: #e7d9f5;
 }
 body.wizard .mux-btn:hover {
-  background: #3a2a63; border-color: #d9b45a; color: #f3e6c0;
+  background: #3a2a63; color: #f3e6c0;
 }
 body.wizard .mux-palette-toggle { color: #d8ccea; }
 body.wizard .mux-palette-toggle:hover { color: #f3e6c0; }
@@ -591,7 +591,8 @@ body.wizard .mux-pane-xterm {
   mask: var(--mux-gear-icon) center / 100% 100% no-repeat;
   --mux-gear-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><path fill-rule='evenodd' transform='translate(7.5 7.5) scale(0.87) translate(-7.5 -7.5)' d='M12.18 6.05L14 6.38V8.62L12.18 8.95L11.83 9.79L12.89 11.31L11.31 12.89L9.79 11.83L8.95 12.18L8.62 14H6.38L6.05 12.18L5.21 11.83L3.69 12.89L2.11 11.31L3.17 9.79L2.82 8.95L1 8.62V6.38L2.82 6.05L3.17 5.21L2.11 3.69L3.69 2.11L5.21 3.17L6.05 2.82L6.38 1H8.62L8.95 2.82L9.79 3.17L11.31 2.11L12.89 3.69L11.83 5.21ZM9.7 7.5A2.2 2.2 0 1 0 5.3 7.5A2.2 2.2 0 1 0 9.7 7.5Z'/></svg>");
 }
-.mux-tab-gear .ui-btn.cog-btn:hover:not(:disabled), .mux-tab-gear .ui-btn.cog-btn[aria-expanded="true"] { background: none; color: #ffb52e; border-color: #6b4f1d; }
+.mux-tab-gear .ui-btn.cog-btn[aria-expanded="true"] { background: none; color: #ffb52e; border-color: #6b4f1d; }
+.mux-tab-gear .ui-btn.cog-btn:hover:not(:disabled) { background: none; color: #ffb52e; }
 .mux-tab-gear .action-menu { position: fixed; margin-top: 0; z-index: var(--z-popover); overflow-y: auto; }
 .mux-tab-gear .action-menu.opens-up { top: auto; bottom: auto; }
 

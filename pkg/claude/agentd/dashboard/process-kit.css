@@ -122,7 +122,7 @@ body.wizard {
   border-radius: 6px; padding: 2px 7px; font: inherit; font-size: 11px; color: var(--pk-running-text);
 }
 button.pk-run-badge { cursor: pointer; }
-button.pk-run-badge:hover { border-color: var(--pk-running); }
+button.pk-run-badge:hover { background: var(--ui-bg-hover); }
 button.pk-run-badge:focus-visible, button.pk-run-icon:focus-visible, button.pk-gnode:focus-visible { outline: 2px solid var(--pk-running); outline-offset: 2px; }
 .pk-run-badge .pk-run-name { overflow: hidden; text-overflow: ellipsis; }
 .pk-run-badge .pk-sep { opacity: .7; }
