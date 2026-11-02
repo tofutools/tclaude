@@ -137,7 +137,7 @@ body.slop {
 }
 .ui-btn:hover:not(:disabled) { background: var(--ui-bg-hover); border-color: var(--ui-btn-hover-line); color: var(--ui-text-strong); }
 .ui-btn:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 1px; }
-.ui-btn:disabled { opacity: .45; cursor: default; }
+.ui-btn:disabled { opacity: .45; cursor: not-allowed; }
 .ui-btn[aria-pressed="true"] { background: var(--ui-pressed-bg); border-color: var(--ui-focus); color: var(--ui-text-strong); }
 .ui-btn[aria-busy="true"] { opacity: .7; cursor: progress; }
 
@@ -182,7 +182,7 @@ body.slop {
 .ui-input:focus, .ui-select:focus, .ui-textarea:focus {
   outline: none; border-color: var(--ui-focus); box-shadow: 0 0 0 1px var(--ui-focus);
 }
-.ui-input:disabled, .ui-select:disabled, .ui-textarea:disabled { opacity: .45; cursor: default; }
+.ui-input:disabled, .ui-select:disabled, .ui-textarea:disabled { opacity: .45; cursor: not-allowed; }
 .ui-input[aria-invalid="true"], .ui-select[aria-invalid="true"], .ui-textarea[aria-invalid="true"] { border-color: var(--ui-danger); }
 .ui-select { text-overflow: ellipsis; cursor: pointer; }
 .ui-select option { background: var(--ui-field-bg); color: var(--ui-text); }
@@ -192,7 +192,7 @@ body.slop {
 /* Checkbox / radio with its label, and the on/off switch. */
 .ui-check { display: inline-flex; align-items: center; gap: 6px; color: var(--ui-text); font-size: 13px; cursor: pointer; }
 .ui-check > input { margin: 0; accent-color: var(--ui-focus); cursor: inherit; }
-.ui-check:has(> input:disabled) { opacity: .45; cursor: default; }
+.ui-check:has(> input:disabled) { opacity: .45; cursor: not-allowed; }
 .ui-switch {
   appearance: none; position: relative; flex: none;
   width: 32px; height: 18px; margin: 0;
@@ -206,7 +206,7 @@ body.slop {
 .ui-switch:checked { background: var(--ui-success); }
 .ui-switch:checked::after { left: 16px; background: #fff; }
 .ui-switch:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
-.ui-switch:disabled { opacity: .45; cursor: default; }
+.ui-switch:disabled { opacity: .45; cursor: not-allowed; }
 
 /* Menus: the panel only. Positioning and open/close stay with the owner. */
 .ui-menu {
@@ -221,7 +221,7 @@ body.slop {
 }
 .ui-menu-item:is(:hover, [data-menu-active]):not(:disabled) { background: var(--ui-menu-hover); color: var(--ui-text-strong); }
 .ui-menu-item:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: -2px; }
-.ui-menu-item:disabled { opacity: .45; cursor: default; }
+.ui-menu-item:disabled { opacity: .45; cursor: not-allowed; }
 .ui-menu-item.ui-btn-danger { color: var(--ui-danger-text); }
 /* Warn: reversible but disruptive (retire, revoke owner, restart without the
    sandbox). Danger stays for what cannot be undone. */
@@ -239,3 +239,12 @@ body.slop {
 .ui-menu.ui-sm { gap: 0; }
 .ui-menu.ui-sm .ui-menu-item { padding: 3px 8px; font-size: 12px; line-height: 17px; }
 .ui-menu.ui-sm .ui-menu-sep { margin: 2px; }
+
+/* Disabled controls say so on hover, everywhere: the operator's rule. Old
+   per-surface skins set cursor: default on :disabled at every specificity,
+   so this is the one place !important earns its keep. A control that is
+   busy (aria-busy) shows progress instead; it is disabled only while its
+   request runs. Guarded by jstest/ui-disabled-cursor.test.mjs. */
+:is(button, select, input, textarea, [role="button"], [role="menuitem"], [role="tab"], [role="option"]):is(:disabled, [aria-disabled="true"]),
+label:has(> input:disabled) { cursor: not-allowed !important; }
+:is(button, [role="button"])[aria-busy="true"]:disabled { cursor: progress !important; }

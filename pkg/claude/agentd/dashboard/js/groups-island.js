@@ -144,7 +144,8 @@ export function GroupsControls({ state, actions }) {
       `}
     </span>
     ${conversationSearchAvailable() && html`
-      <${Button} size="sm" id="conversation-search-toggle" class="view-btn"
+      ${/* Ghost by operator exception: this toolbar toggle stays quiet. */ ''}
+      <${Button} size="sm" variant="ghost" id="conversation-search-toggle" class="view-btn"
         aria-expanded=${state.contentSearchOpen.value ? 'true' : 'false'}
         title=${wizard ? 'Search the words inside past scrolls' : 'Search the text of past conversations'}
         onClick=${() => { state.contentSearchOpen.value = !state.contentSearchOpen.value; }}
@@ -152,8 +153,10 @@ export function GroupsControls({ state, actions }) {
     `}
     <${GroupsFocusSwitch} state=${state} groups=${current.groups} wizard=${wizard} />
     <div class="view-popover-wrap">
+      ${/* Ghost by operator exception: the view trigger stays quiet. */ ''}
       <${Button}
         size="sm"
+        variant="ghost"
         domRef=${buttonRef}
         id="filter-groups-view-btn"
         class="view-btn"
