@@ -4,13 +4,17 @@ The **companion** is a floating window that keeps agents' terminals with you on
 every dashboard tab. The **Steward** is a helper agent that lives there: ask it
 what you can do, how things are set up, or to get work started.
 
-## Turning Collab on
+## Turning Collab off
 
 The companion, the Steward, [boards](boards.md), the fleet brief and decisions
-are experimental and off by default. Turn them on with **Collab** under
-[Config › Experimental](dashboard-config.md#experimental), or `features.collab` in
-`config.json`. You don't need to restart anything; the next dashboard refresh picks
-it up.
+make up Collab, which is on by default. Turning it on spawns no agent and grants
+no permission: a Steward exists only once you make one. On the first daemon start
+after an upgrade, tclaude stores the setting once: if you had Collab on, it stays
+on; if you had turned it off again (it left Steward settings, a Steward or boards
+behind), it stays off; anyone else gets it on. To turn Collab off,
+uncheck **Collab** under [Config › Appearance](dashboard-config.md#appearance), or
+set `features.collab` to `false` in `config.json`. You don't need to restart
+anything; the next dashboard refresh picks it up.
 
 | With Collab | Off | On |
 |---|---|---|
@@ -293,7 +297,7 @@ for that agent is reused, wherever it is now. The agent never gets the shell's
 input or output. If the agent has retired, the board was deleted or the PR is no
 longer presented, the button is off and says why.
 
-Action links need [Collab](#turning-collab-on) and only work on the node that holds
+Action links need [Collab](#turning-collab-off) and only work on the node that holds
 the message: a peer looking at this node's messages sees no button.
 
 ## Voice and dictation
