@@ -271,20 +271,6 @@ func gitlabPipelineChecks(ctx context.Context, base, token string, ref gitlabMRR
 			Status string `json:"status"`
 		}{Status: pipeline.Status}, "")
 	}
-	if complete && verdict != nil && verdict.State == "passing" && summary.State == "pending" && onlyManualJobsPending(checks) {
-		// A manual job nobody has played waits on a human, not on CI, and
-		// GitLab decides what it means for the pipeline: optional ones leave
-		// it "success", a blocking one leaves it "manual" (pending here).
-		// When manual jobs are all that hold the read at pending and the
-		// pipeline itself succeeded, they count as skipped, as GitLab shows
-		// them, instead of pinning the pill at pending forever.
-		for i := range checks {
-			if isUnplayedManualJob(checks[i]) {
-				checks[i].Bucket = "skipped"
-			}
-		}
-		summary = summarizePRChecks(checks, now)
-	}
 	switch {
 	case !complete:
 		summary.State = "pending"
@@ -302,31 +288,10 @@ func gitlabPipelineChecks(ctx context.Context, base, token string, ref gitlabMRR
 	return prChecksInfo{Summary: summary, Checks: checks, FetchedAt: now}
 }
 
-// isUnplayedManualJob reports a job gitlabJobCheckRun mapped from GitLab's
-// "manual" status: it waits for someone to play it.
-func isUnplayedManualJob(run prCheckRun) bool {
-	return run.Bucket == "pending" && run.Conclusion == "manual"
-}
-
-// onlyManualJobsPending reports that every still-pending job is an unplayed
-// manual one, and that there is at least one.
-func onlyManualJobsPending(checks []prCheckRun) bool {
-	manual := 0
-	for _, run := range checks {
-		switch {
-		case isUnplayedManualJob(run):
-			manual++
-		case run.Bucket != "pass" && run.Bucket != "fail" && run.Bucket != "skipped":
-			return false
-		}
-	}
-	return manual > 0
-}
-
 // gitlabJobCheckRun maps one CI job onto a check row. Buckets follow the
 // GitHub mapping's judgement: a canceled or skipped job is noise rather than
-// a failure, a manual job is waiting on a human and so pending, and a job
-// that is allowed to fail does not paint the badge red.
+// a failure, a job that is allowed to fail does not paint the badge red, and
+// a manual job nobody has played is pending only when the pipeline needs it.
 func gitlabJobCheckRun(job glJob, pipelineURL string) (prCheckRun, bool) {
 	run := prCheckRun{
 		Name:        clipPRCheckText(job.Name),
@@ -359,9 +324,18 @@ func gitlabJobCheckRun(job glJob, pipelineURL string) (prCheckRun, bool) {
 		// The dashboard's own word for a running check, which is what
 		// starts its live elapsed-time display.
 		run.Bucket, run.Conclusion = "pending", "in progress"
+	case "manual":
+		// An optional manual job (allow_failure, the default for `when:
+		// manual`) leaves its pipeline passed, as a deploy waiting to be
+		// played does; a required one blocks it and is still to come.
+		if job.AllowFailure {
+			run.Bucket, run.Conclusion = "skipped", "manual"
+		} else {
+			run.Bucket, run.Conclusion = "pending", "manual"
+		}
 	default:
-		// created, pending, running, manual, scheduled, waiting_for_resource,
-		// preparing: all still to come.
+		// created, pending, scheduled, waiting_for_resource, preparing: all
+		// still to come.
 		run.Bucket, run.Conclusion = "pending", strings.ReplaceAll(status, "_", " ")
 	}
 	return run, run.Name != ""

@@ -126,16 +126,20 @@ func TestGitLabPipelineChecks_AFailedPipelineWithNoFailingJobIsFailing(t *testin
 	assert.Equal(t, "failing", info.Summary.State)
 }
 
-// A manual job nobody has played does not hold the pill at pending once the
-// pipeline itself succeeded: GitLab shows such a pipeline as passed. Any other
-// pipeline status keeps its say, so a blocking manual job ("manual") or a
-// failure elsewhere still shows.
-func TestGitLabPipelineChecks_AnUnplayedManualJobFollowsThePipelinesStatus(t *testing.T) {
-	run := func(t *testing.T, pipelineStatus string, statuses ...string) prChecksInfo {
+// An optional manual job nobody has played (allow_failure, the default for
+// `when: manual`) does not hold the pill at pending: GitLab shows its pipeline
+// as passed. A required one blocks the pipeline, and the pill says so.
+func TestGitLabPipelineChecks_AnOptionalManualJobDoesNotHoldThePillAtPending(t *testing.T) {
+	type job struct {
+		status       string
+		allowFailure bool
+	}
+	run := func(t *testing.T, pipelineStatus string, list ...job) prChecksInfo {
 		t.Helper()
-		jobs := make([]map[string]any, len(statuses))
-		for i, status := range statuses {
-			jobs[i] = map[string]any{"id": i + 1, "name": "job-" + strconv.Itoa(i+1), "stage": "test", "status": status}
+		jobs := make([]map[string]any, len(list))
+		for i, j := range list {
+			jobs[i] = map[string]any{"id": i + 1, "name": "job-" + strconv.Itoa(i+1), "stage": "test",
+				"status": j.status, "allow_failure": j.allowFailure}
 		}
 		body, err := json.Marshal(jobs)
 		require.NoError(t, err)
@@ -146,23 +150,17 @@ func TestGitLabPipelineChecks_AnUnplayedManualJobFollowsThePipelinesStatus(t *te
 			&glPipeline{ID: 99, Status: pipelineStatus}, time.Now())
 	}
 
-	passed := run(t, "success", "success", "success", "manual")
+	passed := run(t, "success", job{"success", false}, job{"success", false}, job{"manual", true})
 	assert.Equal(t, "passing", passed.Summary.State, "GitLab says passed; an optional deploy waiting to be played is not CI")
 	assert.Equal(t, 2, passed.Summary.Passed)
-	assert.Equal(t, 1, passed.Summary.Skipped, "the manual job counts as skipped, so the panel's counts agree with the pill")
+	assert.Equal(t, 1, passed.Summary.Skipped)
 	assert.Zero(t, passed.Summary.Pending)
 	require.Len(t, passed.Checks, 3)
-	assert.Equal(t, "skipped", passed.Checks[2].Bucket)
 	assert.Equal(t, "manual", passed.Checks[2].Conclusion, "the row still says what it is waiting for")
 
-	assert.Equal(t, "pending", run(t, "manual", "success", "manual").Summary.State,
-		"a blocking manual job leaves the pipeline itself waiting")
-	assert.Equal(t, "failing", run(t, "failed", "success", "manual").Summary.State,
-		"a failed bridge job still shows")
-	assert.Equal(t, "pending", run(t, "running", "success", "manual").Summary.State,
-		"a downstream pipeline still running")
-	assert.Equal(t, "pending", run(t, "success", "success", "running", "manual").Summary.State,
-		"only a manual-only remainder follows the pipeline; a running job is still pending")
-	assert.Equal(t, "failing", run(t, "success", "failed", "manual").Summary.State,
-		"a failed job is never hidden by the pipeline's verdict")
+	blocked := run(t, "manual", job{"success", false}, job{"manual", false})
+	assert.Equal(t, "pending", blocked.Summary.State, "a required manual job blocks the pipeline")
+	assert.Equal(t, 1, blocked.Summary.Pending)
+	assert.Equal(t, "failing", run(t, "failed", job{"success", false}, job{"manual", true}).Summary.State,
+		"a failed pipeline still shows")
 }
