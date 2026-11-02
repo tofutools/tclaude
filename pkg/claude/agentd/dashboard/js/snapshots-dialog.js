@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { dashboardState } from './snapshot-store.js';
 import { createFleetAdminActions } from './fleet-admin-actions.js';
@@ -340,6 +341,6 @@ export function SnapshotsDialog({ descriptor, state, actions, confirm, confirmDi
     ${notice && html`<div class="paf-ok" id="snapshots-notice">✓ ${notice}</div>`}
     <div class="cron-create-error" role="alert" id="snapshots-error">${error}</div>
     <${PolicyStatus} policies=${policies} />
-    <div class="modal-buttons"><span class="spacer"></span><button class="ui-btn" type="button" id="snapshots-close" onClick=${() => { void requestClose(); }}>Close</button></div>
+    <div class="modal-buttons"><span class="spacer"></span><${Button} id="snapshots-close" onClick=${() => { void requestClose(); }}>Close</${Button}></div>
   </${Overlay}>`;
 }

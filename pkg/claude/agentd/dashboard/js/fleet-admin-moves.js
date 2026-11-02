@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { sentLanding } from './fleet-admin-landing.js';
 
@@ -89,8 +90,8 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation move-agent AGENT PEER --group … [--allow-flagged]</code></div>
     <div class="modal-buttons"><span class="spacer"></span>
-      ${agents.length && peers.length ? html`<button id="fleet-move-agent-send" type="button" class="ui-btn ui-btn-primary" disabled=${!!findings && !allow} onClick=${send}>Move…</button>` : ''}
-      <button class="ui-btn" type="button" onClick=${onClose}>Close</button></div>
+      ${agents.length && peers.length ? html`<${Button} variant="primary" id="fleet-move-agent-send" disabled=${!!findings && !allow} onClick=${send}>Move…</${Button}>` : ''}
+      <${Button} onClick=${onClose}>Close</${Button}></div>
   </${Overlay}>`;
 }
 

@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { profileSummary, getDashDefaultProfile, findProfileByHandle, profileChoices } from './profiles.js';
 import { pickDirectory } from './helpers.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
@@ -319,13 +320,13 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
       </div>
       <div class="modal-buttons">
         <span class="spacer"></span
-        ><button class="ui-btn"
+        ><${Button}
           id="templates-manage-close"
-          type="button"
+         
           onClick=${state.closeTemplateManager}
         >
           Close
-        </button>
+        </${Button}>
       </div>
     `,
   );
@@ -405,21 +406,20 @@ export function TemplateDuplicateDialog({
         ${error}
       </div>
       <div class="modal-buttons">
-        <button class="ui-btn"
+        <${Button}
           id="template-duplicate-cancel"
           disabled=${busy}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><span class="spacer"></span
-        ><button
+          Cancel</${Button}><span class="spacer"></span
+        ><${Button} variant="primary"
           id="template-duplicate-submit"
-          class="ui-btn ui-btn-primary"
+         
           disabled=${busy}
           onClick=${submit}
         >
           ${busy ? 'Duplicating…' : 'Duplicate template'}
-        </button>
+        </${Button}>
       </div> `,
   );
 }
@@ -519,21 +519,20 @@ export function TemplateImportDialog({ initialRaw = '', state, actions, confirmD
         ${error}
       </div>
       <div class="modal-buttons">
-        <button class="ui-btn"
+        <${Button}
           id="template-import-cancel"
           disabled=${busy}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><span class="spacer"></span
-        ><button
+          Cancel</${Button}><span class="spacer"></span
+        ><${Button} variant="primary"
           id="template-import-submit"
-          class="ui-btn ui-btn-primary"
+         
           disabled=${busy}
           onClick=${submit}
         >
           ${busy ? 'Importing…' : 'Import'}
-        </button>
+        </${Button}>
       </div> `,
   );
 }
@@ -641,16 +640,15 @@ export function TemplateFromGroupDialog({
         ${error}
       </div>
       <div class="modal-buttons">
-        <button class="ui-btn"
+        <${Button}
           id="template-from-group-cancel"
           disabled=${busy}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><span class="spacer"></span
-        ><button
+          Cancel</${Button}><span class="spacer"></span
+        ><${Button} variant="primary"
           id="template-from-group-submit"
-          class="ui-btn ui-btn-primary"
+         
           disabled=${busy}
           onClick=${submit}
         >
@@ -659,7 +657,7 @@ export function TemplateFromGroupDialog({
             : updating
               ? 'Update template'
               : 'Save as template'}
-        </button>
+        </${Button}>
       </div> `,
   );
 }
@@ -770,13 +768,13 @@ export function TemplateStartersDialog({
       </div>
       <div class="modal-buttons">
         <span class="spacer"></span
-        ><button class="ui-btn"
+        ><${Button}
           id="starters-close"
           disabled=${!!busy}
           onClick=${state.closeDialog}
         >
           Close
-        </button>
+        </${Button}>
       </div>`,
   );
 }
@@ -1019,7 +1017,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
         <${ImportWarnings} id="group-import-result" title="Check these" warnings=${landed.warnings} />
         <div class="modal-buttons">
           <span class="spacer"></span>
-          <button id="group-import-done" class="ui-btn ui-btn-primary" onClick=${state.closeDialog}>Done</button>
+          <${Button} variant="primary" id="group-import-done" onClick=${state.closeDialog}>Done</${Button}>
         </div>`,
     );
   }
@@ -1099,30 +1097,29 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
         ${phase === 'error' ? '' : error}
       </div>
       <div class="modal-buttons">
-        <button class="ui-btn"
+        <${Button}
           id="group-import-cancel"
           disabled=${phase === 'importing'}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><span class="spacer"></span
+          Cancel</${Button}><span class="spacer"></span
         >${kind === 'agent' &&
-        html`<button class="ui-btn"
+        html`<${Button}
           id="agent-import-start"
           disabled=${!ready || busy}
           title="Import the agent and start it now"
           onClick=${() => submit(true)}
         >
           Import & start
-        </button>`}<button
+        </${Button}>`}<${Button} variant="primary"
           id="group-import-submit"
-          class="ui-btn ui-btn-primary"
+         
           disabled=${!ready || busy || !!offlineBlocker}
           title=${kind === 'agent' && !choices.group ? 'Pick the group the agent joins' : offlineBlocker || (kind === 'agent' ? 'Import the agent offline with its conversation; wake it to start' : '')}
           onClick=${() => submit(false)}
         >
           ${phase === 'importing' ? 'Importing…' : kind === 'agent' ? 'Import (offline)' : 'Import'}
-        </button>
+        </${Button}>
       </div>`,
   );
 }
@@ -1191,21 +1188,20 @@ export function GroupContextDialog({
         ${error}
       </div>
       <div class="modal-buttons">
-        <button class="ui-btn"
+        <${Button}
           id="group-context-cancel"
           disabled=${busy}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><span class="spacer"></span
-        ><button
+          Cancel</${Button}><span class="spacer"></span
+        ><${Button} variant="primary"
           id="group-context-submit"
-          class="ui-btn ui-btn-primary"
+         
           disabled=${busy}
           onClick=${submit}
         >
           ${busy ? 'Saving…' : 'Save'}
-        </button>
+        </${Button}>
       </div> `,
   );
 }
@@ -1954,16 +1950,15 @@ export function TemplateDeployDialog({
         ${error}
       </div>
       <div class="modal-buttons">
-        <button class="ui-btn"
+        <${Button}
           id="template-deploy-cancel"
           disabled=${busy || worktreeLoading}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><span class="spacer"></span
-        ><button
+          Cancel</${Button}><span class="spacer"></span
+        ><${Button} variant="primary"
           id="template-deploy-submit"
-          class="ui-btn ui-btn-primary"
+         
           disabled=${busy || worktreeLoading}
           onClick=${submit}
         >
@@ -1980,7 +1975,7 @@ export function TemplateDeployDialog({
                 : copying
                   ? 'Create group'
                   : 'Deploy task force'}
-        </button>
+        </${Button}>
       </div>`,
   );
 }
@@ -3021,16 +3016,15 @@ export function TemplateEditor({
         ${current.error}
       </div>
       <div class="modal-buttons">
-        <button class="ui-btn"
+        <${Button}
           id="template-editor-cancel"
-          type="button"
+         
           disabled=${saving}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><button class="ui-btn"
+          Cancel</${Button}><${Button}
           id="scribe-editor-open"
-          type="button"
+         
           hidden=${!!actions.catalogNode}
           disabled=${saving}
           onClick=${handoff}
@@ -3038,17 +3032,16 @@ export function TemplateEditor({
           <${Words}
             plain="🤖 Edit with agent"
             wizard="📜 Dictate to a scribe"
-          /></button
-        ><span class="spacer"></span
-        ><button
+          /></${Button}><span class="spacer"></span
+        ><${Button} variant="primary"
           id="template-editor-submit"
-          class="ui-btn ui-btn-primary"
-          type="button"
+         
+         
           disabled=${saving}
           onClick=${submit}
         >
           ${saving ? 'Saving…' : 'Save template'}
-        </button>
+        </${Button}>
       </div> `,
   );
 }

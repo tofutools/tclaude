@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { UpdateScriptsSection } from './fleet-admin-update-scripts.js';
 import { CREDENTIAL_FILE_HARNESSES, SHARE_WARNING, accessHint, cellView, harnessColumns, jobActive } from './fleet-harness-model.js';
@@ -115,8 +116,8 @@ export function HarnessDialog({ node, row, actions, confirm, toast, onJob, onClo
               <span>Replace an existing login there (it is backed up first)</span></label>`}`}
         ${busyChoice
           ? html`<div class="fa-consequence" role="alert">Agents using ${label} on ${node.label} are busy.
-              <div class="modal-buttons"><button id="fleet-harness-now" type="button" class="ui-btn ui-btn-danger" disabled=${busy} onClick=${() => start('now')}>Run now (may interrupt them)</button>
-              <button class="ui-btn" id="fleet-harness-idle" type="button" disabled=${busy} onClick=${() => start('when_idle')}>When they are idle</button></div></div>`
+              <div class="modal-buttons"><${Button} variant="danger" id="fleet-harness-now" disabled=${busy} onClick=${() => start('now')}>Run now (may interrupt them)</${Button}>
+              <${Button} id="fleet-harness-idle" disabled=${busy} onClick=${() => start('when_idle')}>When they are idle</${Button}></div></div>`
           : html`<button id="fleet-harness-run" type="button" class="primary" disabled=${busy || !ops} onClick=${run}>${action === 'install' ? 'Install…' : 'Update…'}</button>`}`}
     ${fileLogin
       ? html`<h4>Login files</h4>
@@ -133,7 +134,7 @@ export function HarnessDialog({ node, row, actions, confirm, toast, onJob, onClo
               : html`<div class="muted">No backups yet.</div>`)}`}`
       : html`<div class="muted">${label} keeps its login outside copyable files (keychain or environment): log in on ${node.label} itself.</div>`}
     <div class="cron-create-error" role="alert">${error}</div>
-    <div class="modal-buttons"><span class="spacer"></span><button class="ui-btn" type="button" disabled=${busy} onClick=${onClose}>Close</button></div>
+    <div class="modal-buttons"><span class="spacer"></span><${Button} disabled=${busy} onClick=${onClose}>Close</${Button}></div>
   </${Overlay}>`;
 }
 

@@ -1,6 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -191,7 +192,7 @@ function LinksManager({ state, actions, confirmDiscard }) {
       <div id="links-list"><${LinksList} state=${state} actions=${actions} /></div>
       <div class="modal-buttons">
         <span class="spacer"></span>
-        <button class="ui-btn" id="links-manage-close" type="button" onClick=${actions.closeManager}><${Words} plain="Close" wizard="Dispel" /></button>
+        <${Button} id="links-manage-close" onClick=${actions.closeManager}><${Words} plain="Close" wizard="Dispel" /></${Button}>
       </div>
     </${Overlay}>
   `;
@@ -393,14 +394,14 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
       `}
       <${ErrorBanner} error=${error} />
       <div class="modal-buttons">
-        <button class="ui-btn" id="link-modal-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel" /></button>
+        <${Button} id="link-modal-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel" /></${Button}>
         <span class="spacer"></span>
-        <button id="link-modal-submit" class="ui-btn ui-btn-primary" type="button" disabled=${busy} onClick=${submit}>
+        <${Button} variant="primary" id="link-modal-submit" disabled=${busy} onClick=${submit}>
           <${Words}
             plain=${busy ? (edit ? 'Saving…' : 'Creating…') : (edit ? 'Save changes' : remote && peerGroup && !peerGroup.auto ? 'Send link request' : 'Create link')}
             wizard=${busy ? (edit ? 'Rebinding…' : 'Weaving…') : (edit ? 'Rebind channel' : remote && peerGroup && !peerGroup.auto ? 'Send link petition' : 'Weave channel')}
           />
-        </button>
+        </${Button}>
       </div>
     </${Overlay}>
   `;
@@ -504,10 +505,10 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
         </div>`}`}
       <${ErrorBanner} error=${error} />
       <div class="modal-buttons">
-        <button class="ui-btn" id="proposal-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+        <${Button} id="proposal-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
         <span class="spacer"></span>
-        <button id="proposal-submit" class="ui-btn ui-btn-primary" type="button" disabled=${busy || !peer || !connected || !items.length} onClick=${submit}>
-          ${busy ? 'Sending…' : 'Send proposal'}</button>
+        <${Button} variant="primary" id="proposal-submit" disabled=${busy || !peer || !connected || !items.length} onClick=${submit}>
+          ${busy ? 'Sending…' : 'Send proposal'}</${Button}>
       </div>
     </${Overlay}>
   `;

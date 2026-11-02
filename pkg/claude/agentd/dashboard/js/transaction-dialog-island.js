@@ -1,6 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -27,11 +28,11 @@ export function TransactionDialogFrame({
   error = '',
   primaryLabel,
   busyLabel = primaryLabel,
-  primaryClass = 'ui-btn-danger',
+  primaryVariant = 'danger',
   submitDisabled = false,
   alternateLabel = '',
   alternateBusyLabel = alternateLabel,
-  alternateClass = 'ui-btn-danger',
+  alternateVariant = 'danger',
   alternateDisabled = false,
   alternateID = '',
   alternateTitle = '',
@@ -90,26 +91,24 @@ export function TransactionDialogFrame({
       ${children}
       <div class="cleanup-error" id=${errorID || undefined} role=${error ? 'alert' : undefined}>${error}</div>
       <div class="modal-buttons">
-        ${hideCancel ? null : html`<button class="ui-btn" id=${cancelID || `${baseID}-cancel`} type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>`}
+        ${hideCancel ? null : html`<${Button} id=${cancelID || `${baseID}-cancel`} disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>`}
         <span class="spacer"></span>
-        ${alternateLabel ? html`<button
+        ${alternateLabel ? html`<${Button}
           id=${alternateID || `${baseID}-alternate`}
-          class=${`ui-btn ${alternateClass}`}
-          type="button"
+          variant=${alternateVariant}
           title=${alternateTitle || undefined}
           disabled=${busy || alternateDisabled}
-          aria-busy=${busy && busyAction === 'alternate' ? 'true' : undefined}
+          busy=${busy && busyAction === 'alternate'}
           onClick=${() => submit('alternate')}
-        >${busy && busyAction === 'alternate' ? alternateBusyLabel : alternateLabel}</button>` : null}
-        <button
-          ref=${submitRef}
+        >${busy && busyAction === 'alternate' ? alternateBusyLabel : alternateLabel}</${Button}>` : null}
+        <${Button}
+          domRef=${submitRef}
           id=${submitID || `${baseID}-submit`}
-          class=${`ui-btn ${primaryClass}`}
-          type="button"
+          variant=${primaryVariant}
           disabled=${busy || submitDisabled}
-          aria-busy=${busy && busyAction === 'primary' ? 'true' : undefined}
+          busy=${busy && busyAction === 'primary'}
           onClick=${() => submit('primary')}
-        >${busy && busyAction === 'primary' ? busyLabel : primaryLabel}</button>
+        >${busy && busyAction === 'primary' ? busyLabel : primaryLabel}</${Button}>
       </div>
     </${Overlay}>
   `;
@@ -247,7 +246,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
       plain=${`${plainVerb}ing…`}
       wizard=${`${wizardVerb}ing…`}
     />`}
-    primaryClass="ui-btn-primary"
+    primaryVariant="primary"
     submitDisabled=${count === 0}
     cancelID="window-cancel"
     submitID="window-submit"
@@ -551,7 +550,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
       title=${title}
       dialogClass="cleanup-modal"
       primaryLabel="Done"
-      primaryClass="ui-btn-primary"
+      primaryVariant="primary"
       hideCancel=${true}
       submitID="cleanup-submit"
       onClose=${close}
@@ -584,7 +583,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
     primaryLabel=${primaryLabel}
     busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
       plain="Cleaning up…" wizard="Tidying…" />`}
-    primaryClass=${effectiveTier === 'delete' ? 'ui-btn-danger' : 'ui-btn-primary'}
+    primaryVariant=${effectiveTier === 'delete' ? 'danger' : 'primary'}
     submitDisabled=${count === 0}
     cancelID="cleanup-cancel"
     submitID="cleanup-submit"
@@ -809,7 +808,7 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
     busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
       plain="Deleting…" wizard="Disbanding…"
     />`}
-    primaryClass="ui-btn-danger"
+    primaryVariant="danger"
     cancelID="delete-group-cancel"
     submitID="delete-group-submit"
     onClose=${actions.close}
@@ -1092,7 +1091,7 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
       plain=${result ? 'Refreshing…' : 'Retiring…'}
       wizard=${result ? 'Refreshing…' : 'Banishing…'}
     />`}
-    primaryClass=${result ? 'ui-btn-primary' : 'ui-btn-danger'}
+    primaryVariant=${result ? 'primary' : 'danger'}
     submitDisabled=${!result && selectedCandidates.length === 0}
     hideCancel=${!!result}
     cancelID="retire-preview-cancel"
@@ -1320,7 +1319,7 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
       plain=${result ? 'Refreshing…' : 'Deleting…'}
       wizard=${result ? 'Refreshing…' : 'Dispelling…'}
     />`}
-    primaryClass=${result ? 'ui-btn-primary' : 'ui-btn-danger'}
+    primaryVariant=${result ? 'primary' : 'danger'}
     submitDisabled=${!result && visibleSelected.length === 0}
     hideCancel=${!!result}
     cancelID="delete-retired-cancel"
@@ -1676,7 +1675,7 @@ function ShutdownAgentDialog({ descriptor, actions, confirmDiscard }) {
       primaryLabel=${softLabel}
       busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
         plain="Soft exiting…" wizard="Slumbering…" />`}
-      primaryClass=""
+      primaryVariant=""
       submitDisabled=${retrying && forceChoice}
       submitID="shutdown-soft"
       alternateLabel=${forceLabel}

@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { HealthPolicySection } from './fleet-admin-health.js';
 import { IdentityRotationSection } from './fleet-admin-identity.js';
@@ -135,6 +136,6 @@ export function NodeSettingsDialog({ self, peers = [], actions, confirm, toast, 
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <${HealthPolicySection} peers=${peers} actions=${actions} confirm=${confirm} toast=${toast} />
     <${IdentityRotationSection} actions=${actions} confirm=${confirm} toast=${toast} />
-    <div class="modal-buttons"><span class="spacer"></span><button class="ui-btn" type="button" onClick=${onClose}>Close</button></div>
+    <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${onClose}>Close</${Button}></div>
   </${Overlay}>`;
 }

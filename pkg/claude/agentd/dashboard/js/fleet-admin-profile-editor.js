@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { PEER_SLUGS, REQUESTER_PAYS, UNRESTRICTED_CONSEQUENCE, slugInfo } from './fleet-admin-model.js';
 
@@ -125,8 +126,8 @@ export function ProfileEditor({ profile = null, pools = [], groups = [], actions
     </details>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons"><span class="spacer"></span>
-      <button class="ui-btn" type="button" onClick=${onClose}>Cancel</button>
-      <button id="fleet-profile-save" type="button" class="ui-btn ui-btn-primary" onClick=${save}>${profile ? 'Save…' : 'Create…'}</button>
+      <${Button} onClick=${onClose}>Cancel</${Button}>
+      <${Button} variant="primary" id="fleet-profile-save" onClick=${save}>${profile ? 'Save…' : 'Create…'}</${Button}>
     </div>
   </${Overlay}>`;
 }

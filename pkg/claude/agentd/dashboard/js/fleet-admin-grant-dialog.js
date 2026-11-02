@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { GRANT_CATEGORIES, GRANT_LIFETIMES, LAUNCH_FIELDS, PEER_SLUGS, REQUESTER_PAYS, extraPolicy, grantConsequence, grantExpiryText, grantRows, planGrants, slugCategory, slugInfo } from './fleet-admin-model.js';
 
@@ -177,8 +178,8 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
             ${plan.missing.length > 0 && html`<div class="fa-warn">Pick a group for ${plan.missing.join(', ')}.</div>`}`}
         </div>
         <div class="modal-buttons"><span class="spacer"></span>
-          <button class="ui-btn" type="button" onClick=${onClose}>Cancel</button>
-          <button id="fleet-grant-submit" type="button" class="ui-btn ui-btn-primary" disabled=${!canGrant} onClick=${grant}>${todo.length > 1 ? `Grant ${todo.length}…` : 'Grant…'}</button>
+          <${Button} onClick=${onClose}>Cancel</${Button}>
+          <${Button} variant="primary" id="fleet-grant-submit" disabled=${!canGrant} onClick=${grant}>${todo.length > 1 ? `Grant ${todo.length}…` : 'Grant…'}</${Button}>
         </div>
       </div>
     </div>

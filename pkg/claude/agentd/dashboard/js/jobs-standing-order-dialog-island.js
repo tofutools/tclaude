@@ -1,6 +1,7 @@
 import { Fragment, h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -342,11 +343,11 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
       Enabled</label>
     <div class="cron-create-error" id="standing-order-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button class="ui-btn" id="standing-order-cancel" type="button" disabled=${busy}
-        onClick=${() => { void requestClose(); }}>Cancel</button>
+      <${Button} id="standing-order-cancel" disabled=${busy}
+        onClick=${() => { void requestClose(); }}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button id="standing-order-submit" class="ui-btn ui-btn-primary" type="button" disabled=${busy}
-        onClick=${submit}>${busy ? 'Saving…' : editing ? 'Save' : 'Create'}</button>
+      <${Button} variant="primary" id="standing-order-submit" disabled=${busy}
+        onClick=${submit}>${busy ? 'Saving…' : editing ? 'Save' : 'Create'}</${Button}>
     </div>
   </${Overlay}>`;
 }

@@ -1,6 +1,7 @@
 import { Fragment, h } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { relTime, shortAgentId } from './helpers.js';
 import { SpawnActionFields, TemplatePlaceholderChips } from './spawn-action-fields.js';
@@ -500,8 +501,8 @@ function TriggerDialog({ descriptor, state, actions }) {
         </div>
       </${Step}>
       ${error && html`<div class="jobs-error" role="alert">${error}</div>`}
-      <div class="modal-buttons"><button class="ui-btn" type="button" onClick=${state.closeTriggerDialog} disabled=${busy}>Cancel</button>
-        <button type="submit" class="ui-btn ui-btn-primary" disabled=${busy || !draftValid(draft)}>${busy ? 'Saving…' : editing ? 'Save trigger' : 'Create trigger'}</button></div>
+      <div class="modal-buttons"><${Button} onClick=${state.closeTriggerDialog} disabled=${busy}>Cancel</${Button}>
+        <${Button} variant="primary" type="submit" disabled=${busy || !draftValid(draft)}>${busy ? 'Saving…' : editing ? 'Save trigger' : 'Create trigger'}</${Button}></div>
     </form>
   </${Overlay}>`;
 }

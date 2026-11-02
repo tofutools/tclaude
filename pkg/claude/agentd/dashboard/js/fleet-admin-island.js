@@ -1,6 +1,7 @@
 import { h, render } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { GrantsPage } from './fleet-admin-grants.js';
 import { InvitesPage } from './fleet-admin-invites.js';
@@ -247,11 +248,11 @@ export function TrustDialog({ row, actions, onClose, onDone }) {
       <span>I compared this fingerprint with ${row.label}'s operator over another channel (e.g. <code>tclaude federation identity</code> on their node)</span></label>
     <div class="cron-create-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button class="ui-btn" type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
+      <${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button id="fleet-trust-submit" type="button" class=${effective === 'unrestricted' ? 'ui-btn ui-btn-danger' : 'ui-btn ui-btn-primary'} disabled=${busy || !preview || !checked || !labelOK} onClick=${submit}>
+      <${Button} id="fleet-trust-submit" variant=${effective === 'unrestricted' ? 'danger' : 'primary'} disabled=${busy || !preview || !checked || !labelOK} onClick=${submit}>
         ${busy ? 'Trusting…' : effective === 'unrestricted' ? 'Trust unrestricted' : 'Trust'}
-      </button>
+      </${Button}>
     </div>
   </${Overlay}>`;
 }
@@ -281,9 +282,9 @@ export function UnrestrictDialog({ row, actions, onClose, onDone }) {
       <span>I understand, and this is ${row.label}'s fingerprint</span></label>
     <div class="cron-create-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button class="ui-btn" type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
+      <${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button id="fleet-level-submit" type="button" class="ui-btn ui-btn-danger" disabled=${busy || !checked || !row.fingerprint} onClick=${submit}>${busy ? 'Saving…' : 'Make unrestricted'}</button>
+      <${Button} variant="danger" id="fleet-level-submit" disabled=${busy || !checked || !row.fingerprint} onClick=${submit}>${busy ? 'Saving…' : 'Make unrestricted'}</${Button}>
     </div>
   </${Overlay}>`;
 }
