@@ -413,6 +413,7 @@ func TestExternalStewardSpawn_RevokeListsWorkersAndLeavesThemRunning(t *testing.
 	code, body := s.humanPost("/v1/external-stewards/assistant/revoke", map[string]any{})
 	require.Equal(t, http.StatusOK, code, body)
 	assert.Contains(t, body, mustAgentID(t, conv))
+	assert.Contains(t, body, `"title":"w1"`, "the operator reads names, not ids")
 	assert.True(t, s.f.World.Tmux.IsAlive(mustSession(t, conv)), "workers keep running")
 
 	code, body = s.humanPost("/v1/external-stewards/assistant/revoke", map[string]any{"stop_children": true})
@@ -437,4 +438,19 @@ func TestExternalStewardSpawn_ExpiryTellsTheOperatorOnce(t *testing.T) {
 	assert.Equal(t, before+1, notices())
 	agentd.NotifyExternalStewardExpiriesForTest(later)
 	assert.Equal(t, before+1, notices(), "once")
+}
+
+// Revoking is the operator's own act, and it already listed the workers.
+func TestExternalStewardSpawn_RevokedStewardNeedsNoExpiryNotice(t *testing.T) {
+	s := newSpawnSetup(t)
+	s.pinned()
+	s.worker("w1")
+	code, body := s.humanPost("/v1/external-stewards/assistant/revoke", map[string]any{})
+	require.Equal(t, http.StatusOK, code, body)
+	before, err := db.CountHumanMessages(db.HumanMessageFilter{})
+	require.NoError(t, err)
+	agentd.NotifyExternalStewardExpiriesForTest(time.Now().Add(365 * 24 * time.Hour))
+	after, err := db.CountHumanMessages(db.HumanMessageFilter{})
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
 }

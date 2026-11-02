@@ -225,7 +225,7 @@ function ExternalStewardGroup({ loads }) {
       <${ExternalStewardManager} enabled=${!!info.enabled} />
     </${Setting}>`}
     <${Setting} title="Workers per external steward" forId="cfg-steward-external-max-children" k="steward.external_max_children"
-      summary="An external steward can start workers only where you choose below it. Its workers stop at the first action that isn't read-only until you answer, and it can't answer for you."
+      summary="An external steward can start workers only where you choose above. Its workers stop at the first action that isn't read-only until you answer, and it can't answer for you."
       more="Past this many running at once, it's refused. Workers keep running if its credential ends: revoking lists them with an option to stop them, and you're notified when a credential expires.">
       <${ConfigInput} type="number" id="cfg-steward-external-max-children" min="1" placeholder="3" />
     </${Setting}>

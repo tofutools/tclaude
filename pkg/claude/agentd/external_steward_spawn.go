@@ -234,11 +234,9 @@ func externalStewardChildren(agentID string) ([]externalStewardSpawnChild, error
 		if state, err := db.AgentState(conv); err != nil || state != db.AgentStateActive {
 			continue
 		}
-		child := externalStewardSpawnChild{AgentID: id, ConvID: conv, Online: pickAliveSession(conv) != nil}
-		if res, _, err := agent.ResolveSelector(id); err == nil && res.Row != nil {
-			child.Title = guideText(res.Row.CustomTitle, 80)
-		}
-		children = append(children, child)
+		children = append(children, externalStewardSpawnChild{
+			AgentID: id, ConvID: conv, Title: guideText(agent.CachedTitle(conv), 80), Online: pickAliveSession(conv) != nil,
+		})
 	}
 	return children, nil
 }
