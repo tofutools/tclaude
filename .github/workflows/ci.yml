@@ -10,7 +10,7 @@ on:
     # (JOH-374..377) — same deal; drop it once dnd-palette→main lands.
     # integration/ui-components is the long-lived standard-UI-components
     # integration branch (tcl-32qwip) — same deal; drop it once it→main lands.
-    branches: [main, main-codex, implement-stable-agent-identity, dnd-palette, integration/ui-components]
+    branches: [main, main-codex, implement-stable-agent-identity, dnd-palette, integration/ui-components, ci/slim-demo-base]
 
 permissions:
   contents: read
