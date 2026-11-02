@@ -28,6 +28,7 @@ import { PROCESS_SCRIBE_PROMPT_MAX, processScribeChatLive, processScribeChatTran
 import { dashPrefs } from './prefs.js';
 import { dashboardState } from './snapshot-store.js';
 import { shortcutText } from './keybindings.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -276,11 +277,11 @@ export function ScribeDock({ controller, view }) {
         <strong class="psd-title">${scribe ? scribe.name : 'Process scribe'}</strong>
         ${scribe && html`<span class=${`psd-state ${live ? 'is-live' : 'is-stopped'}`}>${live ? 'live' : 'stopped'}</span>`}
         <span class="spacer"></span>
-        <button type="button" class="psd-close" aria-label="Close scribe panel" title="Close the scribe panel"
+        <button data-ui-exempt type="button" class="psd-close" aria-label="Close scribe panel" title="Close the scribe panel"
           onClick=${() => controller.toggleScribeDock(false)}>✕</button>
       </div>
       <div class="psd-modes" role="tablist" aria-label="Scribe mode">
-        ${[['chat', '💬 Chat'], ['terminal', '⌨ Terminal']].map(([mode, label]) => html`<button key=${mode} type="button" role="tab"
+        ${[['chat', '💬 Chat'], ['terminal', '⌨ Terminal']].map(([mode, label]) => html`<button key=${mode} type="button" data-ui-exempt role="tab"
           class=${`psd-mode${dock.mode === mode ? ' is-active' : ''}`} aria-selected=${dock.mode === mode ? 'true' : 'false'}
           data-scribe-mode=${mode} onClick=${() => controller.setScribeDockMode(mode)}>${label}</button>`)}
       </div>
@@ -292,19 +293,19 @@ export function ScribeDock({ controller, view }) {
     </div>`}
     ${!scribe && !dock.starting && html`<div class="psd-summon">
       <p>No scribe is scoped to this template yet.</p>
-      <button type="button" class="process-action primary" disabled=${!context.saved}
+      <${Button} size="sm" variant="primary" class="process-action" disabled=${!context.saved}
         title=${context.saved ? 'Summon a scribe scoped to this template' : 'Save the template once first'}
-        onClick=${() => controller.requestScribe('template')}>Summon scribe</button>
+        onClick=${() => controller.requestScribe('template')}>Summon scribe<//>
     </div>`}
     ${scribe && !live && html`<div class="psd-summon">
       <p>${scribe.name} is stopped. Summon a fresh scribe to continue.</p>
-      <button type="button" class="process-action" onClick=${() => controller.requestScribe('template')}>Summon scribe</button>
+      <${Button} size="sm" class="process-action" onClick=${() => controller.requestScribe('template')}>Summon scribe<//>
     </div>`}
 
     ${proposal && html`<div class="psd-proposal" role="status">
       <span>A new version is waiting.</span>
-      <button type="button" class="process-action primary" data-review-on-canvas
-        onClick=${() => controller.openDiffReview()}>Review on canvas</button>
+      <${Button} size="sm" variant="primary" class="process-action" data-review-on-canvas
+        onClick=${() => controller.openDiffReview()}>Review on canvas<//>
     </div>`}
 
     ${live && html`<div class="psd-context" aria-label="Editor context">
@@ -313,21 +314,21 @@ export function ScribeDock({ controller, view }) {
         <span class=${`psd-chip${context.errors ? ' is-error' : ' is-empty'}`}>validation errors (${context.errors})</span>
       </div>
       <div class="psd-actions">
-        <button type="button" class="process-action" disabled=${sending || !context.selection || !context.saved} data-scribe-action="selection"
-          onClick=${() => send('selection')}>send selection</button>
-        <button type="button" class="process-action" disabled=${sending || !context.singleNode || !context.saved} data-scribe-action="explain"
-          onClick=${() => send('explain')}>explain this node</button>
-        <button type="button" class="process-action" disabled=${sending || !context.hasIssue || !context.saved} data-scribe-action="diagnostic"
-          onClick=${() => send('diagnostic')}>fix this issue</button>
-        <button type="button" class="process-action" data-scribe-action="draft"
-          onClick=${() => { controller.setScribeDockMode('chat'); setDraft(DRAFT_PREFIX); queueMicrotask(() => input.current?.focus?.()); }}>draft from description</button>
+        <${Button} size="sm" class="process-action" disabled=${sending || !context.selection || !context.saved} data-scribe-action="selection"
+          onClick=${() => send('selection')}>send selection<//>
+        <${Button} size="sm" class="process-action" disabled=${sending || !context.singleNode || !context.saved} data-scribe-action="explain"
+          onClick=${() => send('explain')}>explain this node<//>
+        <${Button} size="sm" class="process-action" disabled=${sending || !context.hasIssue || !context.saved} data-scribe-action="diagnostic"
+          onClick=${() => send('diagnostic')}>fix this issue<//>
+        <${Button} size="sm" class="process-action" data-scribe-action="draft"
+          onClick=${() => { controller.setScribeDockMode('chat'); setDraft(DRAFT_PREFIX); queueMicrotask(() => input.current?.focus?.()); }}>draft from description<//>
       </div>
     </div>`}
 
     ${live && dock.mode === 'chat' && html`<${ChatLog} messages=${chat.messages} live=${chat.live} loaded=${chat.loaded} error=${chat.error} pendingSend=${sending} />`}
     ${live && dock.mode === 'terminal' && html`<div class="psd-terminal">
       <p>${companionAvailable() ? 'The scribe\'s terminal opens in the floating companion window over the editor (' + shortcutText('steward') + ' toggles it).' : dashboardState.snapshot.value?.default_terminal === 'web' ? 'The scribe\'s terminal opens in the Terminals tab.' : 'The scribe\'s terminal opens in its own window, or in the Terminals tab if no window can be opened.'} Messages and context actions sent from here arrive there too.</p>
-      <button type="button" class="process-action" data-scribe-open-terminal onClick=${() => api.openTerminal?.(scribe)}>Open terminal</button>
+      <${Button} size="sm" class="process-action" data-scribe-open-terminal onClick=${() => api.openTerminal?.(scribe)}>Open terminal<//>
     </div>`}
 
     ${live && html`<form class="psd-compose" onSubmit=${submit}>
@@ -341,7 +342,7 @@ export function ScribeDock({ controller, view }) {
       <div class="psd-compose-row">
         ${notice.text && html`<span class=${`psd-notice${notice.error ? ' is-error' : ''}`} role=${notice.error ? 'alert' : 'status'}>${notice.text}</span>`}
         <span class="spacer"></span>
-        <button type="submit" class="process-action primary" disabled=${sending || !draft.trim()}>${sending ? 'Sending…' : 'Send'}</button>
+        <${Button} size="sm" variant="primary" type="submit" class="process-action" disabled=${sending || !draft.trim()}>${sending ? 'Sending…' : 'Send'}<//>
       </div>
     </form>`}
   </aside>`;

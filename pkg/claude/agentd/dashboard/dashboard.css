@@ -10624,15 +10624,15 @@ body.wizard nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #f
   display: flex; align-items: center; gap: 6px; margin-bottom: 12px;
 }
 .process-subnav .jobs-subnav { margin: 0; }
-.process-subtab, .process-action {
+.process-subtab, .process-action:where(:not(.ui-btn)) {
   border: 1px solid #30363d; border-radius: 6px; background: #161b22;
   color: #c9d1d9; padding: 6px 12px; cursor: pointer; font: inherit;
   text-decoration: none;
 }
-.process-subtab:hover, .process-action:hover { background: #21262d; border-color: #484f58; }
+.process-subtab:hover, .process-action:where(:not(.ui-btn)):hover { background: #21262d; border-color: #484f58; }
 .process-subtab.active { color: #fff; background: #1f6feb; border-color: #388bfd; }
-.process-action.primary { color: #fff; background: #238636; border-color: #2ea043; }
-.process-action.primary:hover { background: #2ea043; }
+.process-action:where(:not(.ui-btn)).primary { color: #fff; background: #238636; border-color: #2ea043; }
+.process-action:where(:not(.ui-btn)).primary:hover { background: #2ea043; }
 /* Auto layout + its flow-direction picker read as one segmented control. */
 .process-auto-layout-group { display: inline-flex; align-items: stretch; }
 .process-auto-layout-group > .process-action { border-radius: 0; margin-left: -1px; }
@@ -10658,7 +10658,7 @@ body.wizard #tab-processes .process-scribe-wizard { display: inline; }
 .process-scribe-state.stopped { color: #d29922; }
 .process-scribe-open { border: 0; padding: 0; color: #58a6ff; background: none; font: inherit; cursor: pointer; text-decoration: underline dotted; }
 .process-scribe-open:disabled { color: #8b949e; cursor: default; }
-.process-scribe-session .process-action { padding: 3px 7px; font-size: 12px; }
+.process-scribe-session .process-action:where(:not(.ui-btn)) { padding: 3px 7px; font-size: 12px; }
 .process-scribe-task { color: #79c0ff; font-size: 12px; }
 .process-notice { color: #8b949e; font-size: 12px; }
 .process-list table { width: 100%; border-collapse: collapse; }
@@ -10673,7 +10673,8 @@ body.wizard #tab-processes .process-scribe-wizard { display: inline; }
    (16 + 4px padding x2 + 1px border x2). The icon-only delete button matches
    it with `min-height` rather than inheriting a stretched flex height — keep
    the two numbers in sync. */
-.process-list .process-actions .process-action { padding: 4px 8px; font-size: 12px; line-height: 16px; white-space: nowrap; vertical-align: middle; }
+.process-list .process-actions .process-action { white-space: nowrap; vertical-align: middle; }
+.process-list .process-actions .process-action:where(:not(.ui-btn)) { padding: 4px 8px; font-size: 12px; line-height: 16px; }
 .process-list .process-actions .process-action + .process-action { margin-left: 6px; }
 .process-hash { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #79c0ff; }
 .process-description, .process-secondary { color: #8b949e; font-size: 12px; }
@@ -18171,7 +18172,7 @@ body.process-solo #companion-root, body.process-solo #board-overlay-root { displ
 .process-editor-title-input:focus,
 .process-name-input:focus { outline: none; }
 .process-editor-identity { display: inline-flex; align-items: center; min-width: 0; }
-.process-editor .process-action:disabled { opacity: .45; cursor: default; }
+.process-editor .process-action:where(:not(.ui-btn)):disabled { opacity: .45; cursor: default; }
 .process-editor-version { font-size: 12px; }
 .process-editor-dirty { color: #e3a341; font-size: 12px; white-space: nowrap; }
 .process-editor-status { color: #8b949e; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
@@ -18241,7 +18242,7 @@ body.process-solo #companion-root, body.process-solo #board-overlay-root { displ
 }
 .process-editor-id-input:focus,
 .process-inspector-input:focus,
-.process-inspector-select:focus { border-color: #58a6ff; outline: none; }
+.process-inspector-select:where(:not(.ui-select)):focus { border-color: #58a6ff; outline: none; }
 .process-editor-id-input:disabled { color: #8b949e; }
 /* The id is orientation only, not an editable field. Specificity keeps it muted
    over the later generic .process-inspector-id colour. */
@@ -18344,13 +18345,13 @@ body.process-solo #companion-root, body.process-solo #board-overlay-root { displ
 .process-palette-card-actions { display: inline-flex; align-items: center; gap: 4px; }
 .process-palette-card-actions button,
 .process-palette-save,
-.process-palette-state button {
+.process-palette-state button:where(:not(.ui-btn)) {
   border: 1px solid #30363d; border-radius: 5px; background: #21262d; color: #c9d1d9;
   font: inherit; font-size: 11px; padding: 3px 6px; cursor: pointer;
 }
 .process-palette-card-actions button:hover:not(:disabled),
 .process-palette-save:hover:not(:disabled),
-.process-palette-state button:hover:not(:disabled) { color: #f0f6fc; background: var(--ui-bg-hover); }
+.process-palette-state button:where(:not(.ui-btn)):hover:not(:disabled) { color: #f0f6fc; background: var(--ui-bg-hover); }
 .process-palette-card-actions button:disabled,
 .process-palette-save:disabled { opacity: .45; cursor: default; }
 .process-palette-manage { width: 24px; padding-inline: 0 !important; }
@@ -18562,7 +18563,7 @@ body.wizard .process-scope-ports { background: #140f28; border-left-color: #4a3d
    padding .process-actions .process-action sets. It sits last in the action
    row behind a small gap so a mis-aimed click lands on "instantiate" rather
    than on an irreversible delete. */
-.process-list .process-actions .process-delete-btn {
+.process-list .process-actions .process-delete-btn:where(:not(.ui-btn)) {
   display: inline-flex; align-items: center; justify-content: center;
   padding: 4px 7px;
   /* Matches the text buttons' 26px border box: the 13px icon alone would
@@ -18573,8 +18574,8 @@ body.wizard .process-scope-ports { background: #140f28; border-left-color: #4a3d
 /* Same (0,4,0) specificity as the generic 6px gap rule up at .process-actions,
    so this wins on source order alone — it must stay below that rule. */
 .process-list .process-actions .process-action + .process-delete-btn { margin-left: 8px; }
-.process-list .process-actions .process-delete-btn:disabled { opacity: .5; cursor: default; }
-.process-list .process-actions .process-delete-btn:hover:not(:disabled) {
+.process-list .process-actions .process-delete-btn:where(:not(.ui-btn)):disabled { opacity: .5; cursor: default; }
+.process-list .process-actions .process-delete-btn:where(:not(.ui-btn)):hover:not(:disabled) {
   background: #2d1618;
 }
 /* Rows are draggable onto the shared bin; dim the source for the gesture the
@@ -18605,14 +18606,14 @@ body.wizard #dnd-trash.dnd-trash-unpin-mode .dnd-trash-label-unpin-wizard { disp
    sigil the group member rows' retire icon wears — tarnished gold at rest,
    flaring to a crimson-gold halo on reach. Deleting a template is destructive
    AND irreversible, so it flares crimson rather than the retire icon's gold. */
-body.wizard .process-list .process-actions .process-delete-btn {
+body.wizard .process-list .process-actions .process-delete-btn:where(:not(.ui-btn)) {
   color: #d9b45a; border-color: #7a5db0;
 }
-body.wizard .process-list .process-actions .process-delete-btn:focus-visible {
+body.wizard .process-list .process-actions .process-delete-btn:where(:not(.ui-btn)):focus-visible {
   color: #f3d98a; border-color: #d9b45a;
   background: linear-gradient(180deg, #3a1826 0%, #241b3d 100%);
 }
-body.wizard .process-list .process-actions .process-delete-btn:hover:not(:disabled) {
+body.wizard .process-list .process-actions .process-delete-btn:where(:not(.ui-btn)):hover:not(:disabled) {
   color: #f3d98a;
   background: linear-gradient(180deg, #3a1826 0%, #241b3d 100%);
 }
@@ -18814,15 +18815,15 @@ body.wizard .process-external-review { color: #e3cf9c; }
 body.wizard .process-external-graph-summary,
 body.wizard .process-external-source-summary { background: rgba(24, 18, 38, .7); border-color: #8b6b38; }
 body.wizard .process-editor-palette { background: #181226; border-color: #4a3d6b; }
-body.wizard .process-editor .process-action,
+body.wizard .process-editor .process-action:where(:not(.ui-btn)),
 body.wizard .process-editor .process-inspector-input {
   background: #2c2042;
   color: #f1e8ff;
   border-color: #4a3d6b;
 }
-body.wizard .process-editor .process-action:hover,
+body.wizard .process-editor .process-action:where(:not(.ui-btn)):hover,
 body.wizard .process-editor .process-inspector-input:focus { border-color: #d4af37; }
-body.wizard .process-editor .process-action.primary { background: #6d4aa2; border-color: #d4af37; }
+body.wizard .process-editor .process-action:where(:not(.ui-btn)).primary { background: #6d4aa2; border-color: #d4af37; }
 body.wizard .process-editor .process-layout-direction.is-active { background: #4a3270; border-color: #d4af37; color: #ffe9a8; }
 body.wizard .process-palette-card { background: #2c2042; border-color: #4a3d6b; }
 body.wizard .process-palette-card:hover { border-color: #d4af37; }
@@ -18830,10 +18831,10 @@ body.wizard .process-palette-card.is-built-in { border-left-color: #8b6fb3; }
 body.wizard .process-palette-card.is-custom { border-left-color: #d4af37; }
 body.wizard .process-palette-card-actions button,
 body.wizard .process-palette-save,
-body.wizard .process-palette-state button { background: #211832; border-color: #6d568f; color: #f3e6c0; }
+body.wizard .process-palette-state button:where(:not(.ui-btn)) { background: #211832; border-color: #6d568f; color: #f3e6c0; }
 body.wizard .process-palette-card-actions button:hover:not(:disabled),
 body.wizard .process-palette-save:hover:not(:disabled),
-body.wizard .process-palette-state button:hover:not(:disabled) { background: #3a2a63; }
+body.wizard .process-palette-state button:where(:not(.ui-btn)):hover:not(:disabled) { background: #3a2a63; }
 body.wizard .process-editor-band { stroke: #d4af37; }
 body.wizard .process-node-chooser {
   color: #e7d9f5; background: #211832; border-color: #d4af37;
@@ -19035,7 +19036,7 @@ body.wizard .pdr-current { background: #181226; border-color: #4a3d6b; }
 .psd-chip { border: 1px solid #30363d; border-radius: 999px; padding: 1px 8px; font-size: 11.5px; color: #c9d1d9; }
 .psd-chip.is-empty { color: #6e7681; }
 .psd-chip.is-error { color: #ff7b72; border-color: #da3633; }
-.psd-actions .process-action { font-size: 11.5px; }
+.psd-actions .process-action:where(:not(.ui-btn)) { font-size: 11.5px; }
 .psd-log {
   flex: 1; min-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
   border: 1px solid #21262d; border-radius: 8px; padding: 8px; background: #0b0f14;

@@ -25,6 +25,7 @@ import {
   setSubprocessPort, setSubprocessRef,
 } from './process-node-blocks.js';
 import { NodeField, NodeSelect, PerformerEditor } from './process-node-fields.js';
+import { Button, Select } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -69,8 +70,8 @@ function locateMain(type) {
 function PerformerBlock({ node, commit, readOnly }) {
   const type = node.type || 'task';
   if (type === 'task' && !node.performer && !readOnly) {
-    return html`<button class="process-action process-node-add" type="button"
-      onClick=${() => commit('work.add', (draft) => { draft.performer = defaultPerformer('agent'); })}>add work performer</button>`;
+    return html`<${Button} size="sm" class="process-action process-node-add"
+      onClick=${() => commit('work.add', (draft) => { draft.performer = defaultPerformer('agent'); })}>add work performer<//>`;
   }
   return html`<${PerformerEditor} path="performer" locate=${locateMain(type)} performer=${mainPerformer(node)}
     commit=${commit} readOnly=${readOnly} choiceRouting=${type !== 'decision'} omit=${[...PROMPT_FIELDS, ...BOUNDS_FIELDS]} />`;
@@ -107,12 +108,12 @@ function StagesBlock({ node, commit, readOnly }) {
       ${(node.checks || []).map((check, index) => html`<div key=${index} class="process-node-check">
         <div class="process-node-check-head">
           ${field(`checks.${index}.id`, 'check id', check.id, (draft, value) => setCheckID(draft, index, value))}<span class="spacer"></span>
-          ${!readOnly && html`<button class="process-action" type="button" aria-label=${`Move check ${check.id} up`} onClick=${() => commit(`checks.${index}.up`, (draft) => moveCheck(draft, index, -1))}>↑</button><button class="process-action" type="button" aria-label=${`Move check ${check.id} down`} onClick=${() => commit(`checks.${index}.down`, (draft) => moveCheck(draft, index, 1))}>↓</button><button class="process-action process-action-danger" type="button" aria-label=${`Remove check ${check.id}`} onClick=${() => commit(`checks.${index}.remove`, (draft) => removeCheck(draft, index))}>remove</button>`}
+          ${!readOnly && html`<${Button} size="sm" icon=${true} class="process-action" aria-label=${`Move check ${check.id} up`} onClick=${() => commit(`checks.${index}.up`, (draft) => moveCheck(draft, index, -1))}>↑<//><${Button} size="sm" icon=${true} class="process-action" aria-label=${`Move check ${check.id} down`} onClick=${() => commit(`checks.${index}.down`, (draft) => moveCheck(draft, index, 1))}>↓<//><${Button} size="sm" icon=${true} variant="ghost danger" class="process-action" aria-label=${`Remove check ${check.id}`} onClick=${() => commit(`checks.${index}.remove`, (draft) => removeCheck(draft, index))}>remove<//>`}
         </div>
         <${PerformerEditor} path=${`checks.${index}.performer`} locate=${(draft) => draft.checks[index].performer} performer=${check.performer}
           commit=${commit} readOnly=${readOnly} contact=${true} />
       </div>`)}
-      ${!readOnly && html`<button class="process-action process-node-add" type="button" onClick=${() => commit('checks.add', (draft) => addCheck(draft))}>+ add check</button>`}
+      ${!readOnly && html`<${Button} size="sm" class="process-action process-node-add" onClick=${() => commit('checks.add', (draft) => addCheck(draft))}>+ add check<//>`}
     </div>
     ${toggle('review.enabled', 'review gate after checks', 'review')}
     ${node.review && html`<${PerformerEditor} path="review.performer" locate=${(draft) => draft.review.performer} performer=${node.review.performer}
@@ -174,15 +175,15 @@ function SubprocessBlock({ node, nodeId, controller, commit, readOnly, edges }) 
         <${NodeField} fieldKey="subprocess.version" label="version" placeholder="head at run start" value=${sub.version || ''} readOnly=${readOnly}
           apply=${(key, raw) => commit(key, (draft) => setSubprocessRef(draft, 'version', raw))} />
       </div>
-      ${controller.options?.onOpenTemplate && html`<button type="button" class="process-action" data-subprocess-open-template
-        onClick=${() => controller.options.onOpenTemplate(sub.templateRef)}>open template ↗</button>`}`
+      ${controller.options?.onOpenTemplate && html`<${Button} size="sm" class="process-action" data-subprocess-open-template
+        onClick=${() => controller.options.onOpenTemplate(sub.templateRef)}>open template ↗<//>`}`
     : html`<div class="pni-subprocess-inline"><span>Inline body · ${inlineNodes.length} node${inlineNodes.length === 1 ? '' : 's'}</span>
-        <button type="button" class="process-action primary" data-subprocess-enter disabled=${!controller.model.canEnterScope(nodeId)}
-          title="Open the nested graph (double-click the node does the same)" onClick=${() => controller.enterSubprocess(nodeId)}>enter ▸</button>
-        <button type="button" class="process-action" data-subprocess-expand disabled=${!controller.model.canExpand?.(nodeId)}
-          title="Draw the body on this canvas as a framed group and edit it in context" onClick=${() => controller.expandSubprocess(nodeId)}>⊞ expand</button>
-        <button type="button" class="process-action" data-subprocess-unwrap disabled=${readOnly || !controller.model.canExpand?.(nodeId)}
-          title="Inline the body into this graph; the ▣ node's connectors attach to its start and ends" onClick=${() => controller.unwrapSubprocess(nodeId)}>⇲ unwrap</button></div>`}
+        <${Button} size="sm" variant="primary" class="process-action" data-subprocess-enter disabled=${!controller.model.canEnterScope(nodeId)}
+          title="Open the nested graph (double-click the node does the same)" onClick=${() => controller.enterSubprocess(nodeId)}>enter ▸<//>
+        <${Button} size="sm" class="process-action" data-subprocess-expand disabled=${!controller.model.canExpand?.(nodeId)}
+          title="Draw the body on this canvas as a framed group and edit it in context" onClick=${() => controller.expandSubprocess(nodeId)}>⊞ expand<//>
+        <${Button} size="sm" class="process-action" data-subprocess-unwrap disabled=${readOnly || !controller.model.canExpand?.(nodeId)}
+          title="Inline the body into this graph; the ▣ node's connectors attach to its start and ends" onClick=${() => controller.unwrapSubprocess(nodeId)}>⇲ unwrap<//></div>`}
     <div class="pni-ports">
       <span class="process-node-field-label">in-ports · bind body params</span>
       ${params.length ? params.map((param) => html`<${NodeField} key=${param} fieldKey=${`subprocess.inputs.${param}`} label=${`${param} ←`}
@@ -237,10 +238,10 @@ function Block({ blockKey, index, count, readOnly, removable = true, onMove, onR
       <span class="pni-block-icon" aria-hidden="true">${block.icon}</span>
       <span class="pni-block-title">${block.label}</span>
       <span class="spacer"></span>
-      <button type="button" class="pni-block-move" aria-label=${`Move ${block.label} up`} disabled=${index === 0} onClick=${() => onMove(blockKey, -1)}>↑</button>
-      <button type="button" class="pni-block-move" aria-label=${`Move ${block.label} down`} disabled=${index === count - 1} onClick=${() => onMove(blockKey, 1)}>↓</button>
-      ${!block.required && !readOnly && removable && html`<button type="button" class="pni-block-remove" aria-label=${`Remove ${block.label}`}
-        title=${block.clear ? `Remove ${block.label} and clear its settings` : `Hide ${block.label}`} onClick=${() => onRemove(blockKey)}>✕</button>`}
+      <${Button} size="sm" icon=${true} class="pni-block-move" aria-label=${`Move ${block.label} up`} disabled=${index === 0} onClick=${() => onMove(blockKey, -1)}>↑<//>
+      <${Button} size="sm" icon=${true} class="pni-block-move" aria-label=${`Move ${block.label} down`} disabled=${index === count - 1} onClick=${() => onMove(blockKey, 1)}>↓<//>
+      ${!block.required && !readOnly && removable && html`<${Button} size="sm" icon=${true} variant="ghost danger" class="pni-block-remove" aria-label=${`Remove ${block.label}`}
+        title=${block.clear ? `Remove ${block.label} and clear its settings` : `Hide ${block.label}`} onClick=${() => onRemove(blockKey)}>✕<//>`}
     </div>
     <div class="pni-block-body">${children}</div>
   </div>`;
@@ -294,24 +295,24 @@ export function NodeInspector({ controller, view }) {
       <div class="pni-head-row">
         <${NodeField} fieldKey="meta.name" label="label" value=${node.name || ''} readOnly=${readOnly}
           apply=${(key, raw) => (controller.renameNode(nodeId, raw) === undefined ? { blocked: true } : { accepted: true })} />
-        <button type="button" class="pni-close process-node-close" title="Close the inspector" aria-label="Close node inspector"
+        <button data-ui-exempt type="button" class="pni-close process-node-close" title="Close the inspector" aria-label="Close node inspector"
           onClick=${() => { controller.setSelection(null); refocusCanvas(controller); }}>✕</button>
       </div>
       <div class="pni-meta"><span class="process-inspector-kind">${type} node</span> · <span class="process-inspector-id">${nodeId}</span>
         ${readOnly && html` <span class="process-node-readonly-badge">read-only</span>`}</div>
       <div class="pni-actions">
-        ${view.selectedNodeIncoming > 1 && html`<select class="process-inspector-select" aria-label="Join semantics" disabled=${readOnly}
+        ${view.selectedNodeIncoming > 1 && html`<${Select} size="sm" class="process-inspector-select" aria-label="Join semantics" disabled=${readOnly}
           value=${node.join || ''} onChange=${(event) => controller.setJoin(nodeId, event.currentTarget.value || null)}>
-          <option value="">join: unset</option><option value="all">join: all</option><option value="any">join: any</option></select>`}
-        ${view.model.start !== nodeId && type !== 'end' && !readOnly && html`<button class="process-action" type="button" title="Make this node the process entry point" onClick=${() => controller.setStart(nodeId)}>set as start</button>`}
-        <button class="process-action" type="button" disabled=${!view.snippets.canSaveSelection} title="Save this node as a reusable custom snippet" onClick=${() => controller.saveSelectionAsSnippet()}>save as snippet…</button>
-        ${extraActions.map((action) => html`<button key=${action.key || action.label} class="process-action" type="button" disabled=${!!action.disabled} title=${action.title || ''} onClick=${action.run}>${action.label}</button>`)}
-        ${!readOnly && html`<button class="process-action process-action-danger" type="button" onClick=${() => { controller.deleteSelection(); refocusCanvas(controller); }}>delete node</button>`}
+          <option value="">join: unset</option><option value="all">join: all</option><option value="any">join: any</option><//>`}
+        ${view.model.start !== nodeId && type !== 'end' && !readOnly && html`<${Button} size="sm" class="process-action" title="Make this node the process entry point" onClick=${() => controller.setStart(nodeId)}>set as start<//>`}
+        <${Button} size="sm" class="process-action" disabled=${!view.snippets.canSaveSelection} title="Save this node as a reusable custom snippet" onClick=${() => controller.saveSelectionAsSnippet()}>save as snippet…<//>
+        ${extraActions.map((action) => html`<${Button} size="sm" key=${action.key || action.label} class="process-action" disabled=${!!action.disabled} title=${action.title || ''} onClick=${action.run}>${action.label}<//>`)}
+        ${!readOnly && html`<${Button} size="sm" variant="danger" class="process-action" onClick=${() => { controller.deleteSelection(); refocusCanvas(controller); }}>delete node<//>`}
       </div>
       ${diagnostics.length > 0 && html`<ul class="pni-diagnostics" aria-label="Issues on this node">${diagnostics.map((entry, i) => html`<li key=${i} class=${`pni-diag is-${entry.severity}`}>${entry.severity === 'error' ? '✕' : '⚠'} ${entry.message}</li>`)}</ul>`}
-      ${referencedTemplates(diagnostics).map((ref) => controller.options?.onOpenTemplate && html`<button key=${`open:${ref}`} type="button"
+      ${referencedTemplates(diagnostics).map((ref) => controller.options?.onOpenTemplate && html`<${Button} size="sm" key=${`open:${ref}`}
         class="process-action pni-diag-open" data-diag-open-template=${ref} title="Problems in a stored template are fixed there, not in place"
-        onClick=${() => controller.options.onOpenTemplate(ref)}>open ${ref} to fix ↗</button>`)}
+        onClick=${() => controller.options.onOpenTemplate(ref)}>open ${ref} to fix ↗<//>`)}
     </div>
     ${visible.map((key, index) => {
       const Body = BLOCK_BODIES[key];
@@ -325,8 +326,8 @@ export function NodeInspector({ controller, view }) {
     })}
     ${addable.length > 0 && html`<div class="pni-add" role="group" aria-label="Add block">
       <span class="pni-add-label">+ add block:</span>
-      ${addable.map((block) => html`<button key=${block.key} type="button" class="pni-add-block" data-add-block=${block.key}
-        title=${block.hint} onClick=${() => open(block.key)}>${block.icon} ${block.label}</button>`)}
+      ${addable.map((block) => html`<${Button} size="sm" key=${block.key} class="pni-add-block" data-add-block=${block.key}
+        title=${block.hint} onClick=${() => open(block.key)}>${block.icon} ${block.label}<//>`)}
     </div>`}
   </aside>`;
 }

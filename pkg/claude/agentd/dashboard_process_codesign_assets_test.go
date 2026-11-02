@@ -46,7 +46,7 @@ func TestDashboardProcessCodesignAssets(t *testing.T) {
 		"<${ScribeDock} controller=${controller} view=${view} />",
 		"import { DiffReviewBar } from './process-diff-review.js';",
 		"<${DiffReviewBar} controller=${controller} view=${view} />",
-		"onClick=${() => controller.openDiffReview()}>Review on canvas</button>",
+		"onClick=${() => controller.openDiffReview()}>Review on canvas<//>",
 	)
 
 	dock := read("js/process-scribe-dock.js")
