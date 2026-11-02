@@ -7,6 +7,9 @@ import {
   processScribeScopeLabel, processScribeSessions, processScribeTaskRef,
 } from './process-scribe.js';
 import { randomUUID } from './insecure-origin.js';
+import { focusOverlayWindow, openOverlayWindow, overlayHostUp } from './overlay-instances.js';
+import { floatProcessEditor, floatingProcessTab, returnLiveEditor, takeFloatingEditor } from './process-editor-place.js';
+import { editorToWindow, processEditorAway } from './process-editor-window.js';
 
 export function processActorPresentation(snapshot, actor) {
   const ref = String(actor || '');
@@ -153,9 +156,32 @@ export function createProcessesActions({
     if (navigate) announceLocation();
     return true;
   }
-  async function openEditor(id, blank = false, name = '', { navigate = true, view = null, readable = false } = {}) {
-    state.setCanvas({ kind: 'editor', id, blank, name, view, readable, key: `${id}:${blank}:${Date.now()}` });
-    state.setNotice(blank ? `Blank template “${name}” ready.` : `Opening ${name || id}.`);
+  async function openEditor(id, blank = false, name = '', { navigate = true, view = null, readable = false, live = null, handoff = null } = {}) {
+    // A template is edited in one place: one floating in an overlay window, or in
+    // a browser window of its own, comes forward there instead.
+    const called = name || state.view.value.templates.find((template) => template.id === id)?.name || id;
+    const elsewhere = !blank && !live && !handoff ? processEditorAway(id) : null;
+    if (elsewhere) {
+      elsewhere.focus?.();
+      state.setNotice(`${called} is open in a separate window.`);
+      return false;
+    }
+    let floating = !blank && !live && !handoff ? floatingProcessTab(id) : null;
+    // With no overlay to show it (Collab off), a floating editor docks here
+    // instead, edits and all, and a tab with no editor yet just goes.
+    if (floating && !overlayHostUp.peek()) {
+      const held = takeFloatingEditor(id);
+      if (held) return openEditor(id, false, floating.label || called, { navigate, live: held });
+      floating = null;
+    }
+    if (floating) {
+      openOverlayWindow(floating);
+      focusOverlayWindow(floating.id);
+      state.setNotice(`${floating.label || called} is open in an overlay window.`);
+      return false;
+    }
+    state.setCanvas({ kind: 'editor', id, blank, name, view, readable, live, handoff, key: `${id}:${blank}:${Date.now()}` });
+    state.setNotice(blank ? `Blank template “${name}” ready.` : live || handoff ? `${name || id} is back, unsaved edits and all.` : `Opening ${name || id}.`);
     // `navigate: false` is the router restoring this location FROM the URL —
     // pushing it back would forge a duplicate history entry.
     if (navigate) announceLocation();
@@ -264,7 +290,7 @@ export function createProcessesActions({
     const showing = state.location.value;
     if (showing.subtab === name && (showing.selection || '') === target) return target === requested;
     if (!(await activateSubtab(name, { navigate: false }))) return false;
-    if (target) await openEditor(target, false, '', { navigate: false });
+    if (target && (await openEditor(target, false, '', { navigate: false })) === false) return false;
     return target === requested;
   }
   async function summonScribe(anchor = { kind: 'library' }, handoffOptions = {}) {
@@ -613,6 +639,38 @@ export function createProcessesActions({
       state.endMutation();
     }
   }
+  // floatEditor moves the open editor to an overlay window, as it is: nothing is
+  // saved or dropped, and this tab goes back to the templates.
+  function floatEditor() {
+    const editor = state.currentEditor();
+    const spec = state.canvas.value;
+    if (!editor || !spec?.id || spec.blank) return false;
+    const label = editor.model?.template?.name || spec.name || spec.id;
+    floatProcessEditor({ id: spec.id, label, editor });
+    state.setEditor(null); state.setCanvas(null);
+    state.setNotice(`${label} is open in an overlay window.`);
+    announceLocation();
+    void load('templates', { quiet: true });
+    return true;
+  }
+  // editorToSeparateWindow moves the open editor's draft to a browser window of
+  // its own. Should that window close before it takes the draft up, the editor
+  // comes back here as it was.
+  function editorToSeparateWindow({ rect = null, win = globalThis.window } = {}) {
+    const editor = state.currentEditor();
+    const spec = state.canvas.value;
+    if (!editor || !spec?.id || spec.blank) return false;
+    const label = editor.model?.template?.name || spec.name || spec.id;
+    const live = { mount: editor.mount, editor };
+    const restore = (back) => void returnLiveEditor(spec.id, label, back);
+    if (!editorToWindow({ id: spec.id, label, live, rect, win, notify, restore })) return false;
+    live.mount.remove();
+    state.setEditor(null); state.setCanvas(null);
+    state.setNotice(`${label} is open in a separate window.`);
+    announceLocation();
+    void load('templates', { quiet: true });
+    return true;
+  }
   async function closeCanvas() {
     if (!(await canLeaveEditor())) return false;
     state.setEditor(null); state.setCanvas(null); await load(state.subtab.value);
@@ -628,6 +686,6 @@ export function createProcessesActions({
     openScribe, stopScribe, retireScribe,
     openRename, closeRename, submitRename, renameTemplate, describeTemplate, deleteTemplate,
     openCreate, closeCreate, submitCreate,
-    closeCanvas, refreshActive,
+    closeCanvas, floatEditor, editorToSeparateWindow, refreshActive,
   });
 }

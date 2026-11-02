@@ -383,7 +383,14 @@ export function mountAccessPanelFeature(dependencies = {}) {
   return mountIslandDescriptor(accessPanelDescriptor, dependencies);
 }
 
+// A process editor's browser window of its own (process-editor-window.js, named
+// tclaude-process:<token>) shows the editor alone. It gets a copy of this tab's
+// session storage, so the companion and the overlay windows would come back in
+// it, hidden, with their terminals. They stay out of it.
+const processSoloWindow = () => String(globalThis.window?.name || '').startsWith('tclaude-process:');
+
 export function mountCompanionFeature(dependencies = {}) {
+  if (processSoloWindow()) return Promise.resolve(null);
   return mountIslandDescriptor(companionDescriptor, dependencies);
 }
 
@@ -405,6 +412,7 @@ const boardOverlayDescriptor = createIslandDescriptor({
 });
 
 export function mountBoardOverlayFeature(dependencies = {}) {
+  if (processSoloWindow()) return Promise.resolve(null);
   return mountIslandDescriptor(boardOverlayDescriptor, dependencies);
 }
 

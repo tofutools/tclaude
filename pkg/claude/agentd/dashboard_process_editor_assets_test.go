@@ -447,7 +447,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"void actions.observeTemplateHeads()",
 		"useDialogFocus({",
 		"registerCommandProvider('process-editor'",
-		"buildProcessEditorCommands({ editor: state.currentEditor(), actions })",
+		"buildProcessEditorCommands({ editor: paletteEditor(docked), actions })",
 	)
 	if strings.Contains(processes, "String(Number(value))") {
 		t.Error("processes-island.js must preserve number-param strings without JS precision round-tripping")

@@ -8,6 +8,8 @@ import { useRef } from 'preact/hooks';
 import htm from 'htm';
 import { BoardOverlayWindow, WINDOW_GLYPHS, boardStartPlacement } from './board-overlay.js';
 import { BOARD_WINDOW_KIND, boardOverlays } from './board-overlay-state.js';
+import { PROCESS_WINDOW_KIND } from './process-editor-place.js';
+import { ProcessOverlayWindow, processStartPlacement } from './process-overlay.js';
 import { ChatWindow } from './chat-window.js';
 import { CHAT_WINDOW_KIND } from './chat-window-model.js';
 import { defaultPlacement } from './companion-model.js';
@@ -26,6 +28,7 @@ const TAB_BODIES = Object.freeze({
   [CHAT_WINDOW_KIND]: ChatWindow,
   [TERMINAL_WINDOW_KIND]: TerminalWindow,
   [BOARD_WINDOW_KIND]: BoardOverlayWindow,
+  [PROCESS_WINDOW_KIND]: ProcessOverlayWindow,
 });
 
 // TabBoundary holds what a tab's kind threw, so the dashboard around it lives on.
@@ -60,7 +63,7 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = n
   const tab = activeTabOf(window);
   const start = tab.kind === BOARD_WINDOW_KIND
     ? boardStartPlacement(prefs, boardOverlays.value.findIndex((board) => board.id === tab.id))
-    : defaultPlacement;
+    : tab.kind === PROCESS_WINDOW_KIND ? processStartPlacement : defaultPlacement;
   useDropPoint(tab, { win, prefs, prefKey: window.place, start });
   const focusRef = useRef(null);
   const overlay = useOverlayWindow({

@@ -136,8 +136,8 @@ Dragging a maximized window by its title bar also restores it.
 
 ### Overlay tabs
 
-Every overlay window is a row of tabs, and a window can hold any mix of chats, shells
-and boards. The title bar tools belong to the tab showing. A chat's draft stays while
+Every overlay window is a row of tabs, and a window can hold any mix of chats, shells,
+boards and process editors ([Processes](processes.md#in-the-dashboard)). The title bar tools belong to the tab showing. A chat's draft stays while
 another tab shows, and a minimized chat keeps its terminal for a few minutes.
 
 - **Reorder:** drag a tab along its strip.

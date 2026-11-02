@@ -18831,6 +18831,19 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
   overflow: hidden;
 }
 .process-editor { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+/* The editor's mount moves between the Processes tab and an overlay window
+   (process-editor-place.js), so each place gives it a slot to fill. */
+.process-canvas-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.process-editor-slot { display: grid; min-height: 0; }
+.process-overlay-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.process-overlay-body > .process-placeholder { margin: 12px; }
+.process-overlay-slot { flex: 1 1 auto; min-height: 0; display: grid; }
+.process-overlay #process-editor-canvas.process-editor-mount { min-height: 0; margin: 0; border: 0; border-radius: 0; }
+/* A browser window of the editor's own (process-editor-window.js) is the
+   dashboard showing the editor alone. */
+body.process-solo > header, body.process-solo > #slop-marquee, body.process-solo > nav, body.process-solo > footer,
+body.process-solo .process-subnav, body.process-solo .process-scribe-status, body.process-solo [data-process-close-view],
+body.process-solo #companion-root, body.process-solo #board-overlay-root { display: none !important; }
 /* Actual editor-owned overflow containers carry this marker. */
 .process-scroll-surface {
   --process-scrollbar-track: #0d1117;

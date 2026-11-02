@@ -16,7 +16,9 @@ export const POPUP_BLOCKED = 'Could not open a separate window: allow pop-ups fo
 const byKind = new Map();
 
 // registerTabMoves says how a kind's tabs move. moves(tab) answers
-// { toCollab, toWindow }, either null where that tab cannot go now. toCollab may
+// { toCollab, toWindow }, either null where that tab cannot go now, and a kind
+// docked somewhere other than Collab names that place as toDock, { label, run },
+// and may say how it closes for good as close(). toCollab may
 // answer, or promise, the pane it opened, so a drop can place it. toWindow
 // takes { rect, win, notify }: the rect of the window it leaves, to open as large
 // where it was, and where to say a blocked pop-up kept it here. It returns the
@@ -28,10 +30,11 @@ export function registerTabMoves(kind, moves) {
   };
 }
 
-// tabMoves is what a tab offers now: { toCollab, toWindow }, each null if not.
+// tabMoves is what a tab offers now: { toCollab, toWindow, toDock, close }, each
+// null if not.
 export function tabMoves(tab) {
   const moves = tab && byKind.get(tab.kind)?.(tab);
-  return { toCollab: moves?.toCollab || null, toWindow: moves?.toWindow || null };
+  return { toCollab: moves?.toCollab || null, toWindow: moves?.toWindow || null, toDock: moves?.toDock || null, close: moves?.close || null };
 }
 
 // moveTabsToCollab moves overlay tabs to the Collab tab, in order, beside the pane
