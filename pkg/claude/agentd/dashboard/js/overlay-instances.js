@@ -157,10 +157,14 @@ export function minimizeOverlayTab(id) {
 // closeEveryTab is the window's close. It stops nothing: each tab leaves for good,
 // with nothing left on the dock, the way the × on its pill takes it (closeOf(tab),
 // or else straight off), and it opens again from wherever it opened first. The
-// tab that asks (a running Steward) stays to ask.
-export function closeEveryTab(windowId, { asking = '', closeOf = () => null } = {}) {
+// tab that asks (a running Steward) stays to ask. A kind's own close may ask a
+// question first, so each waits its turn: the shell asks one at a time.
+export async function closeEveryTab(windowId, { asking = '', closeOf = () => null } = {}) {
   const window = overlayWindows.peek().find((candidate) => candidate.id === windowId);
-  for (const tab of (window?.tabs || []).filter((candidate) => candidate.id !== asking)) (closeOf(tab) || (() => closeOverlayTab(tab.id)))();
+  const leaving = (window?.tabs || []).filter((candidate) => candidate.id !== asking);
+  const plain = leaving.filter((tab) => !closeOf(tab));
+  for (const tab of plain) closeOverlayTab(tab.id);
+  for (const tab of leaving.filter((candidate) => !plain.includes(candidate))) await closeOf(tab)();
 }
 
 // minimizeOverlayTabs sends the tabs of a window that leaves picks to the dock.
