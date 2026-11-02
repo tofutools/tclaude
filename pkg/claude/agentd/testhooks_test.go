@@ -2614,3 +2614,12 @@ func PlacementSpawnAllowedForTest(r *http.Request, conv, peer, group string) boo
 func NotifyExternalStewardExpiriesForTest(now time.Time) {
 	notifyExternalStewardExpiries(now)
 }
+
+// PollAuthoredOpenMRsForTest runs one Open MRs poll synchronously, against
+// whatever GitLab transport the test installed.
+func PollAuthoredOpenMRsForTest() (time.Duration, error) {
+	return pollAuthoredOpenMRs(context.Background())
+}
+
+// ResetAuthoredOpenMRsForTest forgets the Open MRs poller's last result.
+func ResetAuthoredOpenMRsForTest() { resetAuthoredOpenMRs("") }

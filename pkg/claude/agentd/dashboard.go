@@ -1016,6 +1016,10 @@ type snapshotPayload struct {
 	// TrackedPRAuthors are the colleague tabs of the same popover: one list
 	// per tracked GitHub user, in the order they were added (trackedprs.go).
 	TrackedPRAuthors []dashboardAuthoredOpenPRs `json:"tracked_pr_authors,omitempty"`
+	// AuthoredOpenMRs is the footer's Open MRs list: the token user's open
+	// GitLab merge requests on every configured instance (openmrs.go). Absent
+	// unless gitlab_hosts names an instance and the token resolved a user.
+	AuthoredOpenMRs *dashboardAuthoredOpenMRs `json:"authored_open_mrs,omitempty"`
 	// Templates are the group-template blueprints rendered in the
 	// Templates tab. Empty slice (not nil) so JS .map() is safe.
 	Templates []templateJSON `json:"templates"`
@@ -4020,6 +4024,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		)), prReviews),
 		out.Agents,
 	)
+	out.AuthoredOpenMRs = authoredOpenMRsSnapshot(cfg, out.Agents)
 	for _, view := range trackedPRAuthors {
 		out.TrackedPRAuthors = append(out.TrackedPRAuthors, associateAuthoredOpenPRs(
 			withAuthoredPRReviews(withoutArchivedPRs(

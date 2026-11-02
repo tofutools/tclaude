@@ -781,6 +781,9 @@ func runServe(p *serveParams) error {
 	// canonical per-PR caches; the 2s snapshot only reads those shared caches.
 	startAuthoredOpenPRPoller(cronStop)
 	startTrackedPRAuthorsPoller(cronStop)
+	// The GitLab counterpart for the footer's Open MRs indicator: one GraphQL
+	// query per configured instance, every 30 seconds (openmrs.go).
+	startAuthoredOpenMRPoller(cronStop)
 
 	// Subscription-usage poller. Disabled by default; when
 	// usage.poll_anthropic_api is enabled it keeps the SQLite usage_cache

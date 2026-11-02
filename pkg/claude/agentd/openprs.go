@@ -116,6 +116,9 @@ type dashboardAuthoredOpenPR struct {
 	// badges) sees them as before; only the footer popover's lists drop them,
 	// at snapshot time (withoutArchivedPRs).
 	Archived bool `json:"archived,omitempty"`
+	// Conflicts marks a merge request GitLab reports as conflicting with its
+	// target (openmrs.go); it always needs attention. GitHub rows never set it.
+	Conflicts bool `json:"conflicts,omitempty"`
 	// Reviews is stamped from the per-PR review cache at snapshot time, open
 	// items only (prreviews.go).
 	Reviews *prReviewSummary `json:"reviews,omitempty"`

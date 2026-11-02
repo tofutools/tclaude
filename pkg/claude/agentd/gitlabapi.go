@@ -115,7 +115,15 @@ type glAPIRequest struct {
 	Body   any
 	// Accept overrides the default JSON media type. A job trace is plain text.
 	Accept string
+	// GraphQL sends the request to the instance's GraphQL endpoint,
+	// <base>/api/graphql, instead of a REST path; Path and Query must then be
+	// empty and Body carries {query, variables}. The query text is always a
+	// daemon constant, with any value passed as a variable.
+	GraphQL bool
 }
+
+// gitlabGraphQLPath is the instance-relative GraphQL endpoint.
+const gitlabGraphQLPath = "api/graphql"
 
 // glAPIResult is a bounded response.
 type glAPIResult struct {
@@ -154,12 +162,13 @@ func SetGitLabTransportForTest(fn func(ctx context.Context, base, token string, 
 // GitHub test cannot: that a self-hosted remote reached its configured base and
 // not gitlab.com.
 type GitLabRequestForTest struct {
-	Base   string
-	Method string
-	Path   string
-	Query  url.Values
-	Body   []byte
-	Accept string
+	Base    string
+	Method  string
+	Path    string
+	Query   url.Values
+	Body    []byte
+	Accept  string
+	GraphQL bool
 }
 
 // SetGitLabTransportForTestJSON is SetGitLabTransportForTest in exported types.
@@ -177,6 +186,7 @@ func SetGitLabTransportForTestJSON(
 			}
 			status, out, header, err := fn(ctx, token, GitLabRequestForTest{
 				Base: base, Method: req.Method, Path: req.Path, Query: req.Query, Body: body, Accept: req.Accept,
+				GraphQL: req.GraphQL,
 			})
 			if err != nil {
 				return glAPIResult{}, err
@@ -236,6 +246,12 @@ func glRequestURL(base string, req glAPIRequest) (string, error) {
 	baseURL, err := url.Parse(base)
 	if err != nil || baseURL.Scheme != "https" || baseURL.Host == "" {
 		return "", fmt.Errorf("the GitLab base URL %q is not an https URL", base)
+	}
+	if req.GraphQL {
+		if req.Path != "" || len(req.Query) > 0 {
+			return "", fmt.Errorf("a GitLab GraphQL request carries its query in the body, not a path or query string")
+		}
+		return strings.TrimRight(base, "/") + "/" + gitlabGraphQLPath, nil
 	}
 	raw := req.Path
 	if !strings.Contains(raw, "://") {
