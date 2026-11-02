@@ -113,10 +113,9 @@ jobs:
           npm install --global @github/copilot@1.0.77
           copilot --version
 
+      # scripts/ci/pi pins pi and its whole dependency tree.
       - name: Install pinned pi smoke binary
-        run: |
-          npm install --global @earendil-works/pi-coding-agent@1.1.0
-          pi --version
+        run: scripts/ci/install-pi.sh
 
       # The pinned evidence tests below (filtered model endpoint, Codex
       # effective-config seam, Codex system-config layer) require exactly
