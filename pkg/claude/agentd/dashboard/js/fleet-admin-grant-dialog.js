@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { GRANT_CATEGORIES, GRANT_LIFETIMES, LAUNCH_FIELDS, PEER_SLUGS, REQUESTER_PAYS, extraPolicy, grantConsequence, grantExpiryText, grantRows, planGrants, slugCategory, slugInfo } from './fleet-admin-model.js';
 
@@ -121,8 +121,8 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
       <div class="fa-gd-pick">
         <input id="fleet-grant-search" type="text" placeholder="Search permissions: name or what it allows…" value=${q} autocomplete="off" spellcheck="false" onInput=${(e) => setQ(e.currentTarget.value)} />
         <div class="fa-gd-chips">
-          <button type="button" class=${`fa-gd-chip${cat ? '' : ' on'}`} data-cat="" onClick=${() => setCat('')}>All <span class="muted">${PEER_SLUGS.length}</span></button>
-          ${GRANT_CATEGORIES.map((c) => html`<button key=${c} type="button" class=${`fa-gd-chip${cat === c ? ' on' : ''}`} data-cat=${c} onClick=${() => setCat(cat === c ? '' : c)}>${c} <span class="muted">${counts[c]}</span></button>`)}
+          <button type="button" data-ui-exempt class=${`fa-gd-chip${cat ? '' : ' on'}`} data-cat="" onClick=${() => setCat('')}>All <span class="muted">${PEER_SLUGS.length}</span></button>
+          ${GRANT_CATEGORIES.map((c) => html`<button key=${c} type="button" data-ui-exempt class=${`fa-gd-chip${cat === c ? ' on' : ''}`} data-cat=${c} onClick=${() => setCat(cat === c ? '' : c)}>${c} <span class="muted">${counts[c]}</span></button>`)}
           <label class="muted fa-gd-hide"><input id="fleet-grant-hide-sensitive" type="checkbox" checked=${hideSensitive} onChange=${(e) => setHideSensitive(e.currentTarget.checked)} /> hide sensitive</label>
         </div>
         <div class="fa-gd-list" id="fleet-grant-list">
@@ -145,10 +145,10 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
       </div>
       <div class="fa-gd-side">
         <label class="fa-gd-row"><span class="fa-k">To</span>
-          <select id="fleet-grant-to" value=${to} onChange=${(e) => setTo(e.currentTarget.value)}>
+          <${Select} size="sm" id="fleet-grant-to" value=${to} onChange=${(e) => setTo(e.currentTarget.value)}>
             <option value="">pick a peer or pool…</option>
             ${targets.map((t) => html`<option key=${t.id} value=${t.id}>${t.label}${t.level === 'unrestricted' ? ' (unrestricted)' : ''}</option>`)}
-          </select></label>
+          <//></label>
         ${target?.level === 'unrestricted' && html`<div class="fa-warn fa-gd-note">Unrestricted: ${target.label} already holds every group permission on all groups; these matter once it is restricted.</div>`}
         ${groupKinds && html`<div class="fa-gd-row fa-gd-top"><span class="fa-k">Where</span><div>
           ${!scopedOnly || infos.some((i) => i.kind === 'group') ? html`<label class="fa-gd-radio"><input type="radio" name="fleet-grant-where" id="fleet-grant-all-groups" checked=${allGroups} onChange=${() => setAllGroups(true)} /> <span class="fa-warn">all groups, incl. future</span></label>` : ''}
@@ -159,17 +159,17 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
         ${gatewayKinds && html`<label class="fa-gd-row"><span class="fa-k">Gateway</span><input id="fleet-grant-gateway" type="text" placeholder="all gateways (or a name)" value=${gateway} autocomplete="off" spellcheck="false" onInput=${(e) => setGateway(e.currentTarget.value)} /></label>`}
         ${gwBad && html`<div class="fa-danger fa-gd-note">A gateway name is letters, digits, . _ - (max 64).</div>`}
         ${policySlugs.length > 0 && html`<div class="fa-gd-row"><span class="fa-k">Cap</span><span><input id="fleet-grant-cap" type="number" min="1" value=${maxLive} style="width:4em" onInput=${(e) => setMaxLive(e.currentTarget.value)} />
-          <span class="muted"> live workers</span> <button id="fleet-grant-launch-toggle" type="button" class="fa-link" aria-expanded=${showLaunch ? 'true' : 'false'} onClick=${() => setShowLaunch(!showLaunch)}>launch settings${Object.keys(launch).length ? ' •' : ''}</button></span></div>`}
+          <span class="muted"> live workers</span> <${Button} size="sm" variant="link" id="fleet-grant-launch-toggle" class="fa-link" aria-expanded=${showLaunch ? 'true' : 'false'} onClick=${() => setShowLaunch(!showLaunch)}>launch settings${Object.keys(launch).length ? ' •' : ''}<//></span></div>`}
         ${policySlugs.length > 0 && showLaunch && html`<div class="fa-grant-launch" id="fleet-grant-launch">
           <span class="muted">How this node starts workers for the peer. Empty uses the group's or profile's default; on an existing grant, untouched settings are kept.</span>
           ${fields.map((f) => html`<label key=${f.key}><span class="fa-k">${f.label}</span><input data-launch=${f.key} type="text" placeholder=${f.hint} value=${launch[f.key] ?? ''} autocomplete="off" spellcheck="false" onInput=${(e) => setLaunch({ ...launch, [f.key]: e.currentTarget.value })} /></label>`)}
-          ${policySlugs.includes('groups.members.spawn') && html`<label><span class="fa-k">requester pays</span><select data-launch="requester_pays" value=${launch.requester_pays ?? ''} onChange=${(e) => setLaunch({ ...launch, requester_pays: e.currentTarget.value })}>
-            ${REQUESTER_PAYS.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}</select></label>`}
-          ${policySlugs.includes('jobs.run') && html`<label><span class="fa-k">job approval</span><select data-launch="job_approval" value=${launch.job_approval ?? ''} onChange=${(e) => setLaunch({ ...launch, job_approval: e.currentTarget.value })}>
-            <option value="">auto (default)</option><option value="manual">manual: each job waits for you</option></select></label>`}
+          ${policySlugs.includes('groups.members.spawn') && html`<label><span class="fa-k">requester pays</span><${Select} size="sm" data-launch="requester_pays" value=${launch.requester_pays ?? ''} onChange=${(e) => setLaunch({ ...launch, requester_pays: e.currentTarget.value })}>
+            ${REQUESTER_PAYS.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}<//></label>`}
+          ${policySlugs.includes('jobs.run') && html`<label><span class="fa-k">job approval</span><${Select} size="sm" data-launch="job_approval" value=${launch.job_approval ?? ''} onChange=${(e) => setLaunch({ ...launch, job_approval: e.currentTarget.value })}>
+            <option value="">auto (default)</option><option value="manual">manual: each job waits for you</option><//></label>`}
         </div>`}
-        ${!target?.pool && html`<label class="fa-gd-row"><span class="fa-k">For</span><select id="fleet-grant-lifetime" value=${lifetime} onChange=${(e) => setLifetime(e.currentTarget.value)}>
-          ${GRANT_LIFETIMES.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}</select></label>`}
+        ${!target?.pool && html`<label class="fa-gd-row"><span class="fa-k">For</span><${Select} size="sm" id="fleet-grant-lifetime" value=${lifetime} onChange=${(e) => setLifetime(e.currentTarget.value)}>
+          ${GRANT_LIFETIMES.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}<//></label>`}
         ${!target?.pool && !lifetime && rows?.some((r) => !r.pool && r.expiresAt && picked.includes(r.slug)) && html`<div class="muted fa-gd-note">A timed grant you update keeps its time limit.</div>`}
         <div class="fa-gd-plan" id="fleet-grant-plan">
           ${rowsError ? html`<span class="fa-danger" role="alert">Could not read ${target?.label}'s grants: ${rowsError}</span>` : !picked.length ? html`<span class="muted">Tick permissions on the left.</span>` : !target ? html`<span class="muted">Pick who gets them.</span>` : !rows ? html`<span class="muted">Loading ${target.label}'s grants…</span>` : html`

@@ -47,9 +47,9 @@ export function KeyTransitionDialog({ row, resolved = false, copy, toast, onClos
       ? html`<p>This node is waiting out its detection window before it accepts the successor key; nothing needs doing now. Acceptance is not guaranteed: if a competing successor key appears, the transition stops and needs your explicit recovery. To be sure the new key is legitimate, compare its fingerprint with ${row.label}'s operator.</p>`
       : html`<p class="fa-danger">More than one signed successor key was announced, so this node accepts none of them on its own. Ask ${row.label}'s operator, out of band, which instance and fingerprint are theirs. Then, in a terminal on this node:</p>
         ${cmds ? html`<div class="fa-kt-cmd"><span class="muted">Preview (changes nothing):</span> <code id="fleet-key-preview">${cmds.preview}</code>
-            <button type="button" class="fa-link" data-fa="copy-preview" onClick=${() => onCopy(cmds.preview)}>copy</button></div>
+            <${Button} size="sm" variant="link" class="fa-link" data-fa="copy-preview" onClick=${() => onCopy(cmds.preview)}>copy<//></div>
           ${cmds.apply && html`<div class="fa-kt-cmd"><span class="muted">Only if the operator confirmed this exact candidate's fingerprint:</span> <code id="fleet-key-apply">${cmds.apply}</code>
-            <button type="button" class="fa-link" data-fa="copy-apply" onClick=${() => onCopy(cmds.apply)}>copy</button></div>`}
+            <${Button} size="sm" variant="link" class="fa-link" data-fa="copy-apply" onClick=${() => onCopy(cmds.apply)}>copy<//></div>`}
           <div class="muted">If the operator names a different instance or fingerprint, do not apply this one: list the candidates with <code>tclaude federation identity rotations</code>.</div>`
         : html`<div class="muted">List the candidates with <code>tclaude federation identity rotations</code>.</div>`}`}
     <div class="muted fa-cli-note">Key rotation and recovery are CLI-only: <code>tclaude federation identity …</code></div>
@@ -159,7 +159,7 @@ export function IdentityRotationSection({ actions, confirm, toast, timers = glob
           ${left == null ? '' : left > 0 ? ` Peers accept it no earlier than ${pending.activateAt.toLocaleString()} (in ${fmtSpan(left)}).` : ' The detection window has passed.'}</div>`
       : html`<div class="muted">No rotation pending.</div>`}
     ${block && html`<div id="fleet-rotation-blocked" class="fa-warn">${block}</div>`}
-    <div class="fa-ns-actions"><button id="fleet-rotate-open" type="button" disabled=${busy || !!pending || !!block} onClick=${rotate}>Rotate identity…</button>
+    <div class="fa-ns-actions"><${Button} size="sm" id="fleet-rotate-open" disabled=${busy || !!pending || !!block} onClick=${rotate}>Rotate identity…<//>
       <span class="muted">CLI: <code>tclaude federation identity rotate [--apply]</code>; recover-local, recover-peer and revoke-old stay CLI-only</span></div>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
   </div>`;
