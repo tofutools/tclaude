@@ -31,6 +31,15 @@ func StatusSnapshotGeneration() uint64 {
 	stateMu.Unlock()
 	statusVersionReader.Lock()
 	defer statusVersionReader.Unlock()
+	// Re-read under the reader lock: a reset that ran since the read above
+	// already closed the reader, and reopening it on the old path would leave
+	// a connection behind in a database that is being torn down.
+	stateMu.Lock()
+	current := globalDBPath
+	stateMu.Unlock()
+	if current == "" || current != path {
+		return statusGeneration.Add(1)
+	}
 	if statusVersionReader.db == nil || statusVersionReader.path != path {
 		closeStatusVersionReaderLocked()
 		dsn := (&url.URL{Scheme: "file", Path: path}).String() + "?mode=ro&_pragma=busy_timeout(100)"
