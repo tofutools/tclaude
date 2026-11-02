@@ -67,6 +67,9 @@ export function PaneDictation({
     if (draft) keep?.drafts.set(pane.key, draft);
     else keep?.drafts.delete(pane.key);
   }, [draft]);
+  const draftNow = useRef(draft);
+  draftNow.current = draft;
+  const draftSent = useRef('');
   const [sending, setSending] = useState(false);
   const [fieldFocused, setFieldFocused] = useState(false);
   const field = useRef(null);
@@ -118,9 +121,10 @@ export function PaneDictation({
     // delivered must not come back with it.
     if (keep?.drafts.get(pane.key) === text) keep.drafts.delete(pane.key);
     setDraftText((current) => (current === text ? '' : current));
-    // A field in another window is the operator typing there.
+    // Anyone still typing, here or in another window, keeps the keyboard.
+    const typedOn = draftNow.current !== draftSent.current;
     const focused = win?.document?.activeElement;
-    if (!focused || focused === win.document.body || field.current?.closest('.companion-input')?.contains(focused)) toTerminal();
+    if (!focused || focused === win.document.body || (!typedOn && field.current?.closest('.companion-input')?.contains(focused))) toTerminal();
   }
 
   async function mailAgent(text) {
@@ -151,6 +155,7 @@ export function PaneDictation({
   async function send(event, text = draft) {
     event?.preventDefault?.();
     if (sending || !text.trim()) return false;
+    draftSent.current = draft;
     // An open mic would bring the sent text back. Enter or the button sends
     // what the draft holds; a failed send leaves it there.
     if (event) dictation.abort();

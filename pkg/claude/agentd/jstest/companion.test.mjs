@@ -2683,3 +2683,23 @@ test('a reply landing leaves the operator typing in another window', async (t) =
   assert.equal(mounted.at(-1).focused, focused);
   assert.equal(view.container.querySelector('.chat-window .companion-draft'), null, 'and the message did go');
 });
+
+test('a reply landing leaves the operator typing on in the same field', async (t) => {
+  const fake = fakeDictation();
+  let answer = null;
+  const fetchImpl = async (url) => {
+    if (String(url) !== '/api/operator-message') return { ok: true, status: 202, json: async () => ({}) };
+    return new Promise((resolve) => { answer = resolve; });
+  };
+  const { view, harness, mounted } = await floated(t, { fetchImpl, dictationImpl: fake.impl, snapshot: mailable() });
+  await fake.say(harness, view, 'first');
+  const field = () => view.container.querySelector('.chat-window .companion-draft');
+  await harness.act(async () => { view.container.querySelector('.chat-window .companion-input').dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true })); await new Promise((r) => setTimeout(r, 0)); });
+  await harness.act(() => { field().focus(); field().value = 'first and more'; field().dispatchEvent(new harness.window.Event('input', { bubbles: true })); });
+  const focused = mounted.at(-1).focused;
+  await harness.act(async () => { answer({ ok: true, status: 202, json: async () => ({ id: 1 }) }); await new Promise((r) => setTimeout(r, 0)); });
+  await flushed(harness);
+  assert.equal(field().value, 'first and more');
+  assert.equal(harness.document.activeElement, field());
+  assert.equal(mounted.at(-1).focused, focused);
+});

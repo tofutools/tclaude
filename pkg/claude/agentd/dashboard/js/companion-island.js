@@ -1512,7 +1512,7 @@ export function CompanionApp({
     voice: speaker.supported ? { supported: true, on: (agentId) => voiceAgents.has(agentId), toggle: toggleVoice, quiet: () => speaker.cancel() } : null,
     viewTab: () => activeTab.value,
     // Drawing happens above the windows, which step aside, so it cannot live in one.
-    annotate: (agentId) => startAnnotating(agents.get(agentId)),
+    annotate: (agentId) => startAnnotating(agents.get(agentId) || null),
     onCompose: onComposeMessage ? (agent, restoreFocus) => composeRef.current(agent, restoreFocus) : null,
     onTerminals: openTerminalsPane ? chatToTerminals : null,
   };
