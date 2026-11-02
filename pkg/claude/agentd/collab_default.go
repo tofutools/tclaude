@@ -8,6 +8,11 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
+// collabDefaultDecideHookForTest runs inside the Collab default store, after
+// it has read config.json and before it writes it back. Tests use it to hold
+// that window open.
+var collabDefaultDecideHookForTest func()
+
 // resolveCollabDefault stores features.collab once, the first time a daemon
 // starts after Collab became on by default. Builds before that never stored
 // false: turning Collab off deleted the key. So an absent key with Collab
@@ -17,12 +22,16 @@ import (
 // Either way the value is stored, so this decides only once; only that key is
 // written. A failed read stores nothing and leaves the key for the next start;
 // until then this daemon reads the unset key as off.
-// It runs before the daemon serves anything, and cfg is updated to match.
+// It runs before the daemon binds its socket, so no client can write
+// config.json while the store is in flight, and cfg is updated to match.
 func resolveCollabDefault(cfg *config.Config) {
 	if cfg == nil || (cfg.Features != nil && cfg.Features.Collab != nil) {
 		return
 	}
 	on, err := config.StoreCollabDefault(func() (bool, error) {
+		if collabDefaultDecideHookForTest != nil {
+			collabDefaultDecideHookForTest()
+		}
 		traces, err := collabTraces(cfg)
 		return !traces, err
 	})
