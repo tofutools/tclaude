@@ -46,12 +46,12 @@ func TestDashboardProcessCodesignAssets(t *testing.T) {
 		"<${ScribeDock} controller=${controller} view=${view} />",
 		"import { DiffReviewBar } from './process-diff-review.js';",
 		"<${DiffReviewBar} controller=${controller} view=${view} />",
-		"onClick=${() => controller.openDiffReview()}>Review on canvas</button>",
+		"onClick=${() => controller.openDiffReview()}>Review on canvas<//>",
 	)
 
 	dock := read("js/process-scribe-dock.js")
 	mustContain("process-scribe-dock.js", dock,
-		"process-scribe-dock process-scroll-surface",
+		`class="process-scribe-dock"`,
 		"`/api/scribe/${encodeURIComponent(agentId)}/chat`",
 	)
 	if strings.Contains(dock, "innerHTML") || strings.Contains(dock, "dangerouslySetInnerHTML") {

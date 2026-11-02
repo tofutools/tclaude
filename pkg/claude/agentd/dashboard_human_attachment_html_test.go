@@ -60,10 +60,6 @@ func TestDashboardHTML_HumanAttachmentWired(t *testing.T) {
 			t.Errorf("dashboard CSS is missing the %s skin", rule)
 		}
 	}
-	// A scrolling surface in this dashboard gets the house scrollbar, per theme.
-	if !strings.Contains(css, ":is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar {") {
-		t.Error("the attachment viewers' scrolling stages have no styled scrollbar")
-	}
 	for _, name := range []string{"js/image-preview-overlay.js", "js/markdown-attachment.js"} {
 		if !strings.Contains(dashboardAssetFile(t, name), "DialogResizer") {
 			t.Errorf("%s does not offer the resize grip", name)

@@ -250,7 +250,7 @@ func TestDashboardHTML_WizardLinksDialogs(t *testing.T) {
 	must(`regular="+ link" wizard="+ weave channel"`, "the native per-party add-link action carries both voices")
 	must("body.wizard .group-links-section > button", "the per-party add-link action keeps wizard styling")
 	must("body.wizard .group-links-section > button {\n  background: #241b3d;\n  border-color: #7a5db0;\n  color: #e7d9f5;", "the compact wizard action uses contrast-safe secondary chrome")
-	must("body.wizard .group-links-section > button:hover {\n  background: #3a2a63;\n  border-color: #d9b45a;\n  color: #f3e6c0;", "the compact wizard action keeps contrast-safe hover chrome")
+	must("body.wizard .group-links-section > button:hover {\n  background: #3a2a63;\n  color: #f3e6c0;", "the compact wizard action keeps contrast-safe hover chrome")
 }
 
 // TestDashboardHTML_WizardGroupsTabCopy pins the Parties tab's wizard voice.

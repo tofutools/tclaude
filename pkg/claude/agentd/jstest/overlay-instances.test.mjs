@@ -343,15 +343,113 @@ test('a tear-off let go at the room\'s edge, still over the cell it left, floats
   assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), { ...PAIR, a: { gap: true } });
 });
 
-test('a floating window dropped into an empty cell later still takes it', async (t) => {
+test('a floating window dropped on an empty cell\'s box later takes the cell', async (t) => {
   const { harness, overlay, prefs, mounted } = await setup(t, PAIR);
   await dragBar(harness, mounted, 'a', { x: 100, y: 10 }, { x: 300, y: 400 });
   assert.equal(mounted.container.querySelector('.w-a').classList.contains('snapped'), false);
-  const bar = mounted.container.querySelector('.w-a .t').getBoundingClientRect?.() || { left: 0, top: 0 };
-  const grab = { x: Math.round(bar.left) + 20, y: Math.round(bar.top) + 5 };
-  await dragBar(harness, mounted, 'a', grab, { x: 320, y: 420 });
+  const held = await hold(harness, mounted, 'a', { x: 20, y: 5 });
+  await held.move({ x: 600, y: 300 });
+  const box = held.centre('.overlay-snap-target.gap');
+  await held.move(box);
+  await held.up(box);
   assert.ok(mounted.container.querySelector('.w-a').classList.contains('snapped'), 'a new drag goes back into the cell');
   assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), PAIR);
+});
+
+// A drag held by the title bar, step by step, to look at the targets it shows.
+async function hold(harness, mounted, id, from) {
+  const bar = mounted.container.querySelector(`.w-${id} .t`);
+  const event = (type, { x, y }) => Object.assign(new harness.window.Event(type, { bubbles: true, cancelable: true }), { button: 0, pointerId: 1, clientX: x, clientY: y });
+  await harness.act(() => bar.dispatchEvent(event('pointerdown', from)));
+  const all = (selector) => [...mounted.container.querySelectorAll(selector)];
+  const px = (node, side) => Number.parseFloat(node.style[side]);
+  return {
+    move: (to) => harness.act(() => bar.dispatchEvent(event('pointermove', to))),
+    up: (to) => harness.act(() => bar.dispatchEvent(event('pointerup', to))),
+    all,
+    hot: () => all('.overlay-snap-targets .hot').map((node) => node.className),
+    guide: () => mounted.container.querySelector('.overlay-snap-guide'),
+    centre: (selector) => {
+      const node = mounted.container.querySelector(selector);
+      return { x: px(node, 'left') + px(node, 'width') / 2, y: px(node, 'top') + px(node, 'height') / 2 };
+    },
+  };
+}
+
+const LEFT_AND_GAP = { axis: 'x', at: 0.5, a: { id: 'a' }, b: { gap: true } };
+const snappedIn = (mounted, id) => mounted.container.querySelector(`.w-${id}`).classList.contains('snapped');
+
+test('a drag shows every target for the whole drag, and over an empty cell away from its box nothing fills (tcl-7uk9l6)', async (t) => {
+  const { harness, overlay, prefs, mounted } = await setup(t, LEFT_AND_GAP);
+  const held = await hold(harness, mounted, 'c', { x: 20, y: 5 });
+  await held.move({ x: 700, y: 120 });
+  assert.equal(held.all('.overlay-snap-edge').length > 0, true, 'the room\'s edge strips show');
+  assert.deepEqual(held.all('.overlay-snap-edge').map((node) => node.dataset.snapZone).filter((zone, i, all) => all.indexOf(zone) === i).sort(),
+    ['bottom', 'bottom-left', 'bottom-right', 'left', 'right', 'top-left', 'top-right']);
+  assert.equal(held.all('.overlay-snap-target.gap').length, 1, 'the empty cell has its box');
+  assert.equal(held.guide(), null, 'over the empty cell, but not its box: no fill preview');
+  assert.deepEqual(held.hot(), []);
+  await held.move({ x: 900, y: 600 });
+  assert.equal(held.guide(), null, 'anywhere in it');
+  await held.up({ x: 900, y: 600 });
+  assert.equal(snappedIn(mounted, 'c'), false, 'let go there, it floats');
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), LEFT_AND_GAP, 'and the split is as it was');
+  assert.equal(mounted.container.querySelector('.overlay-snap-targets'), null, 'the targets go with the drag');
+});
+
+test('over an empty cell\'s box the box lights, the fill shows, and the drop fills the cell', async (t) => {
+  const { harness, overlay, prefs, mounted } = await setup(t, LEFT_AND_GAP);
+  const held = await hold(harness, mounted, 'c', { x: 20, y: 5 });
+  await held.move({ x: 700, y: 120 });
+  const box = held.centre('.overlay-snap-target.gap');
+  await held.move(box);
+  assert.deepEqual(held.hot(), ['overlay-snap-target gap hot']);
+  const cell = held.all('.overlay-snap-target.gap')[0];
+  assert.ok(held.guide(), 'the fill preview shows');
+  assert.equal(held.guide().style.left, `${Number.parseFloat(cell.style.left) + Number.parseFloat(cell.style.width) / 2 - Number.parseFloat(held.guide().style.width) / 2}px`, 'over the cell the box is centred in');
+  await held.up(box);
+  assert.ok(snappedIn(mounted, 'c'));
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), { ...LEFT_AND_GAP, b: { id: 'c' } }, 'the whole cell');
+});
+
+test('a tiled window splits only over its marker, and floats a drop anywhere else on it', async (t) => {
+  const { harness, overlay, prefs, mounted } = await setup(t, PAIR);
+  const held = await hold(harness, mounted, 'c', { x: 20, y: 5 });
+  await held.move({ x: 320, y: 300 });
+  const sides = (id) => held.all(`.overlay-snap-target.split[data-snap-window="${id}"]`).map((node) => node.dataset.snapSide).sort();
+  assert.deepEqual(sides('a'), ['right', 'top'], 'a\'s free edges have markers; its left and bottom are the room\'s edge strips');
+  assert.deepEqual(sides('b'), ['left', 'top']);
+  assert.equal(sides('c').length, 0, 'the window dragged has none');
+  assert.equal(held.guide(), null, 'over a window, off its markers: no split');
+  const marker = held.centre('.overlay-snap-target.split[data-snap-window="a"][data-snap-side="top"]');
+  await held.move(marker);
+  assert.deepEqual(held.hot(), ['overlay-snap-target split top hot']);
+  assert.ok(held.guide(), 'the split shows');
+  await held.move({ x: 320, y: 300 });
+  assert.equal(held.guide(), null, 'leaving the marker takes it away');
+  await held.up({ x: 320, y: 300 });
+  assert.equal(snappedIn(mounted, 'c'), false, 'let go off a marker, it floats');
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), PAIR);
+  const again = await hold(harness, mounted, 'c', { x: 20, y: 5 });
+  await again.move({ x: 320, y: 300 });
+  const top = again.centre('.overlay-snap-target.split[data-snap-window="a"][data-snap-side="top"]');
+  await again.move(top);
+  await again.up(top);
+  assert.ok(snappedIn(mounted, 'c'));
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), { ...PAIR, a: { axis: 'y', at: 0.5, a: { id: 'c' }, b: { id: 'a' } } }, 'over a, in a\'s cell');
+});
+
+test('an edge strip lights under the pointer and snaps there as before', async (t) => {
+  const { harness, prefs, mounted } = await setup(t, LEFT_AND_GAP);
+  const held = await hold(harness, mounted, 'c', { x: 20, y: 5 });
+  await held.move({ x: 700, y: 120 });
+  const strip = held.centre('.overlay-snap-edge[data-snap-zone="right"]');
+  await held.move(strip);
+  assert.deepEqual(held.hot(), ['overlay-snap-edge hot']);
+  assert.ok(held.guide(), 'the snap shows');
+  await held.up(strip);
+  assert.ok(snappedIn(mounted, 'c'));
+  assert.equal(JSON.parse(prefs.getItem('p.c')).snap, 'right');
 });
 
 test('untile all floats every tiled window where it shows and ends the split', async (t) => {
@@ -426,6 +524,32 @@ async function floating(t) {
   const cards = () => [...mounted.container.querySelectorAll('.snap-assist-card')].map((card) => card.querySelector('.snap-assist-title').textContent);
   return { harness, overlay, instances, prefs, mounted, snapped, cards };
 }
+
+test('with nothing tiled, a drag shows only the room\'s edge strips, and a drop off them floats', async (t) => {
+  const s = await floating(t);
+  const held = await hold(s.harness, s.mounted, 'a', { x: 400, y: 210 });
+  await held.move({ x: 600, y: 400 });
+  assert.ok(held.all('.overlay-snap-edge').length > 0);
+  assert.equal(held.all('.overlay-snap-target').length, 0, 'no boxes and no markers');
+  await held.up({ x: 600, y: 400 });
+  assert.equal(s.snapped('a'), false);
+});
+
+test('beside a window snapped alone, the space it leaves has a box, and only the box fills it', async (t) => {
+  const s = await floating(t);
+  await dragBar(s.harness, s.mounted, 'a', { x: 400, y: 210 }, { x: 1, y: 400 });
+  await s.harness.act(() => s.harness.document.dispatchEvent(Object.assign(new s.harness.window.Event('keydown', { cancelable: true }), { key: 'Escape' })));
+  const held = await hold(s.harness, s.mounted, 'b', { x: 400, y: 210 });
+  await held.move({ x: 1000, y: 200 });
+  assert.equal(held.all('.overlay-snap-target.gap').length, 1);
+  assert.equal(held.guide(), null, 'near the space is not on its box');
+  const box = held.centre('.overlay-snap-target.gap');
+  await held.move(box);
+  assert.ok(held.guide());
+  await held.up(box);
+  assert.ok(s.snapped('b'), 'b fills the space');
+  assert.deepEqual(JSON.parse(s.prefs.getItem(s.overlay.OVERLAY_SPLIT_PREF)), { axis: 'x', at: 0.5, a: { id: 'a' }, b: { id: 'b' } });
+});
 
 test('snapping a window offers the others for the space it left, and a pick fills it', async (t) => {
   const s = await floating(t);

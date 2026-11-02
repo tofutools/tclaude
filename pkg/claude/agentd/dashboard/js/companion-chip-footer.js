@@ -77,7 +77,10 @@ export function useFooterRest({ win, watching, row, spot }) {
     const bar = win?.document?.querySelector?.('footer');
     const again = () => measure.current();
     const observer = bar && typeof win.MutationObserver === 'function' ? new win.MutationObserver(again) : null;
-    observer?.observe(bar, { childList: true, subtree: true, characterData: true });
+    // Attributes too: the overlay dock moves its pills by restyling itself, as
+    // when it makes room for this very row (footerChipReserve), and a pill moved
+    // so is a pill measured where it was, under the row.
+    observer?.observe(bar, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['style', 'class', 'hidden'] });
     win?.addEventListener?.('resize', again);
     return () => {
       observer?.disconnect();

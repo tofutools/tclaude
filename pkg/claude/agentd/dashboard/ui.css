@@ -56,10 +56,10 @@
 
 :root {
   --ui-bg: #21262d;
-  --ui-bg-hover: #21262d;
+  --ui-bg-hover: #2d333b;
+  --ui-danger-hover: #6b2424;
   --ui-line: #2a3340;
   --ui-btn-line: #2a3340;
-  --ui-btn-hover-line: #58a6ff;
   --ui-text: #c9d1d9;
   --ui-text-strong: #e6edf3;
   --ui-muted: #7d8590;
@@ -87,7 +87,6 @@ body.wizard {
   --ui-bg-hover: #3a2a63;
   --ui-line: rgba(122, 93, 176, 0.58);
   --ui-btn-line: #d9b45a;
-  --ui-btn-hover-line: #d9b45a;
   --ui-text: #e7d9f5;
   --ui-text-strong: #f3e6c0;
   --ui-muted: #ad9abb;
@@ -104,13 +103,12 @@ body.wizard {
 }
 /* The wizard dialogs' house primary: a gilded, glowing gradient. */
 body.wizard .ui-btn-primary { text-shadow: 0 0 6px rgba(169, 123, 214, 0.6); box-shadow: 0 0 10px rgba(122, 93, 176, 0.4); }
-body.wizard .ui-btn-primary:hover:not(:disabled) { border-color: #f3e6c0; box-shadow: 0 0 16px rgba(169, 123, 214, 0.7); }
+body.wizard .ui-btn-primary:hover:not(:disabled) { box-shadow: 0 0 16px rgba(169, 123, 214, 0.7); }
 body.slop {
   --ui-bg: #2a0a0a;
-  --ui-bg-hover: #2a0a0a;
+  --ui-bg-hover: #4a1414;
   --ui-line: #8b0000;
   --ui-btn-line: #8b0000;
-  --ui-btn-hover-line: #ffd700;
   --ui-text: #f0dcc0;
   --ui-text-strong: #ffe88c;
   --ui-muted: #c0a080;
@@ -126,7 +124,9 @@ body.slop {
   --ui-switch-off: #4a1a1a;
 }
 
-/* Buttons */
+/* Buttons. One hover for every variant: the background brightens a step and
+   the border stays as it is; danger and warn brighten within their own
+   colour. Keyboard focus is the outline ring, not a hover look. */
 .ui-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   margin: 0; padding: 5px 12px;
@@ -135,7 +135,7 @@ body.slop {
   font: inherit; font-size: 13px; line-height: 18px; white-space: nowrap;
   text-decoration: none; cursor: pointer;
 }
-.ui-btn:hover:not(:disabled) { background: var(--ui-bg-hover); border-color: var(--ui-btn-hover-line); color: var(--ui-text-strong); }
+.ui-btn:hover:not(:disabled) { background: var(--ui-bg-hover); color: var(--ui-text-strong); }
 .ui-btn:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 1px; }
 .ui-btn:disabled { opacity: .45; cursor: not-allowed; }
 .ui-btn[aria-pressed="true"],
@@ -143,17 +143,17 @@ body.slop {
 .ui-btn[aria-busy="true"] { opacity: .7; cursor: progress; }
 
 .ui-btn-primary { background: var(--ui-primary); border-color: var(--ui-primary-line); color: var(--ui-primary-text); }
-.ui-btn-primary:hover:not(:disabled) { background: var(--ui-primary-hover); border-color: var(--ui-primary-line); color: var(--ui-primary-text); }
+.ui-btn-primary:hover:not(:disabled) { background: var(--ui-primary-hover); color: var(--ui-primary-text); }
 .ui-btn-success { background: var(--ui-success); border-color: var(--ui-success-line); color: #fff; }
-.ui-btn-success:hover:not(:disabled) { background: var(--ui-success-line); border-color: var(--ui-success-line); color: #fff; }
+.ui-btn-success:hover:not(:disabled) { background: var(--ui-success-line); color: #fff; }
 /* Danger is the confirm-a-destructive-action button; with -ghost it is the
    quiet form for row and toolbar actions, red only in its text. */
 .ui-btn-danger { background: var(--ui-danger-bg); border-color: var(--ui-danger); color: var(--ui-danger); }
-.ui-btn-danger:hover:not(:disabled) { background: var(--ui-danger); border-color: var(--ui-danger); color: #fff; }
+.ui-btn-danger:hover:not(:disabled) { background: var(--ui-danger-hover); color: var(--ui-danger-text); }
 .ui-btn-ghost { background: transparent; border-color: transparent; color: var(--ui-muted); }
-.ui-btn-ghost:hover:not(:disabled) { background: var(--ui-bg); border-color: var(--ui-btn-line); }
+.ui-btn-ghost:hover:not(:disabled) { background: var(--ui-bg-hover); }
 .ui-btn-ghost.ui-btn-danger { background: transparent; border-color: transparent; color: var(--ui-danger-text); }
-.ui-btn-ghost.ui-btn-danger:hover:not(:disabled) { background: var(--ui-danger-bg); border-color: var(--ui-danger); color: var(--ui-danger); }
+.ui-btn-ghost.ui-btn-danger:hover:not(:disabled) { background: var(--ui-danger-bg); color: var(--ui-danger-text); }
 .ui-btn-link { padding: 0; border: 0; background: none; color: var(--ui-focus); }
 .ui-btn-link:hover:not(:disabled) { background: none; color: var(--ui-focus); text-decoration: underline; }
 .ui-btn-link.ui-btn-danger,
@@ -176,7 +176,7 @@ body.slop {
   margin: 0; border-color: transparent; border-radius: calc(var(--ui-radius) - 1px);
   background: transparent; color: var(--ui-muted); font-weight: normal;
 }
-.ui-seg > .ui-btn:hover:not(:disabled) { background: var(--ui-bg); border-color: transparent; color: var(--ui-text); }
+.ui-seg > .ui-btn:hover:not(:disabled) { background: var(--ui-bg); color: var(--ui-text); }
 .ui-seg > .ui-btn[aria-pressed="true"],
 .ui-seg > .ui-btn[aria-pressed="true"]:hover:not(:disabled) { background: var(--ui-pressed-bg); border-color: transparent; color: var(--ui-text-strong); }
 .ui-seg > .ui-btn:focus-visible { position: relative; }
@@ -258,3 +258,56 @@ body.slop {
 :is(button, select, input, textarea, [role="button"], [role="menuitem"], [role="tab"], [role="option"]):is(:disabled, [aria-disabled="true"]),
 label:has(> input:disabled) { cursor: not-allowed !important; }
 :is(button, [role="button"])[aria-busy="true"]:disabled { cursor: progress !important; }
+
+/* Scrollbars. One house scrollbar for every scroller on the page, the page
+   itself included: thin, a quiet thumb on a transparent track (so it sits on
+   whatever pane it scrolls), brightening on hover and while dragged (in
+   Chromium; Firefox cannot target the thumb). Each state keeps 3:1 contrast
+   on the skin's lighter scrolling panes (WCAG non-text). Skins
+   set the --ui-scroll-* tokens on the root, so the page scrollbar follows the
+   skin too. Firefox reads the standardized properties; Chromium reads the
+   ::-webkit-scrollbar rules, kept apart because a non-auto scrollbar-color
+   switches Chromium to the standardized path and loses the hover state.
+   A surface that must hide its bar (an xterm viewport whose scrolling tmux
+   owns) sets scrollbar-width: none and ::-webkit-scrollbar { display: none }.
+   No other sheet styles scrollbars; jstest/ui-scrollbars.test.mjs holds that. */
+:root {
+  --ui-scroll-thumb: #6e7681;
+  --ui-scroll-thumb-hover: #8b949e;
+  --ui-scroll-thumb-active: #b1bac4;
+}
+:root:has(> body.wizard) {
+  --ui-scroll-thumb: #7a5db0;
+  --ui-scroll-thumb-hover: #a97bd6;
+  --ui-scroll-thumb-active: #d9b45a;
+}
+:root:has(> body.slop) {
+  --ui-scroll-thumb: #9e7a00;
+  --ui-scroll-thumb-hover: #d4a017;
+  --ui-scroll-thumb-active: #ffd700;
+}
+/* Firefox has no *:hover variant: :hover matches every ancestor of the
+   pointer, so it would light every enclosing scroller at once. */
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: var(--ui-scroll-thumb) transparent; }
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  min-height: 24px; min-width: 24px;
+  border: 2px solid transparent; border-radius: 6px;
+  background: var(--ui-scroll-thumb) padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background-color: var(--ui-scroll-thumb-hover); }
+::-webkit-scrollbar-thumb:active { background-color: var(--ui-scroll-thumb-active); }
+/* High contrast returns to the native bar in system colours. */
+@media (forced-colors: active) {
+  * { scrollbar-width: auto; scrollbar-color: auto; }
+  ::-webkit-scrollbar { width: auto; height: auto; }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner { background: Canvas; }
+  ::-webkit-scrollbar-thumb { background: ButtonText; border: 1px solid Canvas; }
+  ::-webkit-scrollbar-thumb:hover,
+  ::-webkit-scrollbar-thumb:active { background: Highlight; }
+}

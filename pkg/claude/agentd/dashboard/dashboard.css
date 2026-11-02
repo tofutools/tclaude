@@ -19,20 +19,19 @@
 [hidden] { display: none !important; }
 /* Always reserve the document scrollbar gutter so switching tabs never
    reflows the page sideways. Every tab except Messages scrolls the page,
-   so a tall tab shows the ~15px vertical scrollbar; the Messages tab pins
+   so a tall tab shows the vertical scrollbar; the Messages tab pins
    body to 100vh (see the app-shell height lock below) and scrolls its three
    panes internally, so it has no page scrollbar at all. Without this, opening
-   Messages reclaims that ~15px and the whole chrome (header + nav/tabs bar)
+   Messages reclaims that gutter and the whole chrome (header + nav/tabs bar)
    jumps over — the "the UI shifts when I view Messages" bug. overflow-y:scroll
-   keeps the gutter present on every tab, so the switch is a no-op. It only
-   reserves space where the scrollbar is classic (Windows/Linux); overlay
-   scrollbars (macOS) float and never caused the reflow, so this is harmless
-   there. */
+   keeps the gutter present on every tab, so the switch is a no-op. The house
+   scrollbar (ui.css) is a classic one in every engine that reads
+   ::-webkit-scrollbar, macOS included, so the gutter is its 10px. */
 html { overflow-y: scroll; }
 /* The Terminals app shell needs a percentage containing block so it can inherit
    the document's scrollbar-adjusted height. Keep the document scrollbar itself
-   native and visible, just like every other dashboard tab; only xterm's nested,
-   redundant scrollbars are suppressed below. */
+   visible, the house scrollbar (ui.css) like every other dashboard tab; only
+   xterm's nested, redundant scrollbars are suppressed below. */
 html:has(#tab-terminals.active) {
   height: 100%;
 }
@@ -226,21 +225,6 @@ body.dock-open .open-prs.is-open::before {
 }
 .open-prs-filters button.active { color: #c9d1d9; border-color: #385b81; background: #172a40; }
 .open-pr-list { min-height: 0; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
-/* The list is the popover's only scrolling surface. Match the dashboard's
-   other dark panes in both Firefox and Chromium/WebKit instead of exposing
-   the browser's light native scrollbar inside the dark footer disclosure. */
-@supports not selector(::-webkit-scrollbar) {
-  .open-pr-list { scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117; }
-  body.wizard .open-pr-list { scrollbar-color: #7a5db0 #140f28; }
-}
-.open-pr-list::-webkit-scrollbar { width: 10px; height: 10px; }
-.open-pr-list::-webkit-scrollbar-track,
-.open-pr-list::-webkit-scrollbar-corner { background: #0d1117; }
-.open-pr-list::-webkit-scrollbar-thumb {
-  background: #6e7681; border: 2px solid #0d1117; border-radius: 6px;
-}
-.open-pr-list::-webkit-scrollbar-thumb:hover { background: #8b949e; }
-.open-pr-list::-webkit-scrollbar-thumb:active { background: #b1bac4; }
 .open-pr-row { display: grid; grid-template-columns: 9px minmax(0,1fr) auto; gap: 9px; align-items: center; padding: 10px 13px; border-bottom: 1px solid #222b35; }
 .open-pr-state { width: 7px; height: 7px; border-radius: 50%; background: #6e7681; }
 .open-pr-state-passing { background: #3fb950; }
@@ -518,9 +502,9 @@ nav [data-tab].overlay-drop { color: #d4d4d4; background: #1f6feb2e; box-shadow:
    over every context), and its scoped twin a cooler blue: the narrower,
    safer of the two must not read as the same click. */
 .ui-btn.access-btn.always { background: #3a2f16; border-color: #d29922; color: #e6c07b; }
-.ui-btn.access-btn.always:hover:not(:disabled) { background: #4a3c1c; border-color: #d29922; color: #e6c07b; }
+.ui-btn.access-btn.always:hover:not(:disabled) { background: #4a3c1c; color: #e6c07b; }
 .ui-btn.access-btn.always.scoped { background: #12233a; border-color: #1f4b7a; color: #79c0ff; }
-.ui-btn.access-btn.always.scoped:hover:not(:disabled) { background: #17304f; border-color: #1f4b7a; color: #79c0ff; }
+.ui-btn.access-btn.always.scoped:hover:not(:disabled) { background: #17304f; color: #79c0ff; }
 
 /* Recently-handled history: decided requests stay in the folder (dimmed) so the
    operator can see what they chose, under a small divider below the pending ones. */
@@ -668,38 +652,6 @@ body.mail-col-resizing, body.mail-col-resizing * { user-select: none; }
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   overflow-y: auto;
 }
-/* Firefox has no ::-webkit-scrollbar surface. Keep its standardized fallback
-   out of WebKit/Blink, where a non-auto scrollbar-color would suppress the
-   richer pseudo-element hover and wizard treatments below. */
-@supports not selector(::-webkit-scrollbar) {
-  .mail-sidebar, .mail-list, .mail-reader {
-    scrollbar-width: thin;
-    scrollbar-color: #6e7681 #0d1117;
-  }
-  body.wizard .mail-sidebar,
-  body.wizard .mail-list,
-  body.wizard .mail-reader { scrollbar-color: #7a5db0 #140f28; }
-}
-.mail-sidebar::-webkit-scrollbar,
-.mail-list::-webkit-scrollbar,
-.mail-reader::-webkit-scrollbar { width: 10px; height: 10px; }
-.mail-sidebar::-webkit-scrollbar-track,
-.mail-list::-webkit-scrollbar-track,
-.mail-reader::-webkit-scrollbar-track { background: #0d1117; }
-.mail-sidebar::-webkit-scrollbar-corner,
-.mail-list::-webkit-scrollbar-corner,
-.mail-reader::-webkit-scrollbar-corner { background: #161b22; }
-.mail-sidebar::-webkit-scrollbar-thumb,
-.mail-list::-webkit-scrollbar-thumb,
-.mail-reader::-webkit-scrollbar-thumb {
-  background: #6e7681; border-radius: 6px;
-}
-.mail-sidebar::-webkit-scrollbar-thumb:hover,
-.mail-list::-webkit-scrollbar-thumb:hover,
-.mail-reader::-webkit-scrollbar-thumb:hover { background: #8b949e; }
-.mail-sidebar::-webkit-scrollbar-thumb:active,
-.mail-list::-webkit-scrollbar-thumb:active,
-.mail-reader::-webkit-scrollbar-thumb:active { background: #b1bac4; }
 .mail-sidebar, .mail-list { flex: 1 1 auto; min-height: 0; }
 .mail-sidebar { padding: 6px; }
 .mail-list { padding: 6px; }
@@ -749,10 +701,10 @@ button.tool {
   border-radius: 4px; padding: 5px 12px; font-size: 12px;
   cursor: pointer; font-family: inherit;
 }
-/* Hover sets ONLY border-color: every scoped `.tool` hover (filter-bar) and the tied .modal-buttons button:hover already set
-   border-color to this same value, so this fallback introduces no property they
-   don't — it can't leak a background/text change onto a do-not-touch button. */
-button.tool:hover { border-color: #58a6ff; }
+/* Hover brightens the background (the one hover style). :where() keeps it at
+   the base rule's own rank, so any scoped `.tool` skin out-ranks it and it
+   can't leak onto a do-not-touch button. */
+button.tool:where(:hover) { background: var(--ui-bg-hover); }
 
 /* Bulk-action bars above each column's scrolling pane: a count/label on
    the left, action buttons on the right. */
@@ -785,10 +737,10 @@ button.tool:hover { border-color: #58a6ff; }
   color: #7d8590; cursor: pointer; font-family: inherit;
   font-size: 12px; padding: 3px 8px;
 }
-.mail-bulk-bar button:where(:not(.ui-btn)):hover:not(:disabled) { color: #d4d4d4; border-color: #58a6ff; }
+.mail-bulk-bar button:where(:not(.ui-btn)):hover:not(:disabled) { color: #d4d4d4; background: var(--ui-bg-hover); }
 .mail-bulk-bar button:where(:not(.ui-btn)):disabled { opacity: .45; cursor: default; }
 .mail-bulk-bar button:where(:not(.ui-btn)).danger { color: #d4d4d4; }
-.mail-bulk-bar button:where(:not(.ui-btn)).danger:hover:not(:disabled) { color: #f85149; border-color: #f85149; }
+.mail-bulk-bar button:where(:not(.ui-btn)).danger:hover:not(:disabled) { color: #f85149; background: rgba(248, 81, 73, 0.15); }
 
 /* Pager footer under the message list: prev/next navigation on the left,
    a page-size selector pushed to the right. Same chrome as the bulk bar
@@ -829,7 +781,7 @@ button.tool:hover { border-color: #58a6ff; }
   border-radius: 5px; color: #7d8590; cursor: pointer;
   padding: 4px 6px; font-size: 13px; line-height: 1;
 }
-.mail-row-del:hover { color: #f85149; border-color: #f85149; }
+.mail-row-del:hover { color: #f85149; }
 /* The "all messages" firehose row renders sender → recipient rather
    than a single counterparty. */
 .mail-row-arrow { color: #7d8590; flex: 0 0 auto; }
@@ -1035,7 +987,7 @@ button.tool:hover { border-color: #58a6ff; }
   cursor: pointer; font-family: inherit; font-size: 13px; padding: 4px 10px;
 }
 .mail-decision button:where(:not(.ui-btn)).primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-.mail-decision button:where(:not(.ui-btn)):hover:not(:disabled) { border-color: #58a6ff; }
+.mail-decision button:where(:not(.ui-btn)):not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
 .mail-decision button:where(:not(.ui-btn)):disabled { opacity: .5; cursor: default; }
 /* The button an agent put on a message (notify-human --action). */
 .message-action { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
@@ -1044,7 +996,7 @@ button.tool:hover { border-color: #58a6ff; }
   cursor: pointer; font-family: inherit; font-size: 13px; padding: 4px 10px;
 }
 .message-action button:where(:not(.ui-btn)).primary, .message-action button:where(:not(.ui-btn)).companion-primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-.message-action button:where(:not(.ui-btn)):hover:not(:disabled) { border-color: #58a6ff; }
+.message-action button:where(:not(.ui-btn)):not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
 .message-action button:where(:not(.ui-btn)):disabled { opacity: .5; cursor: default; }
 .message-action-detail { color: #d4d4d4; font-size: 12px; overflow-wrap: anywhere; }
 .message-action-note { flex-basis: 100%; color: #8b949e; font-size: 12px; }
@@ -1058,9 +1010,9 @@ button.tool:hover { border-color: #58a6ff; }
   color: #7d8590; cursor: pointer; font-family: inherit;
   font-size: 12px; padding: 3px 8px;
 }
-.mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):hover:not(:disabled) { color: #d4d4d4; border-color: #58a6ff; }
+.mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):hover:not(:disabled) { color: #d4d4d4; background: var(--ui-bg-hover); }
 .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):disabled { opacity: .45; cursor: default; }
-.mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover { color: #f85149; border-color: #f85149; }
+.mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover { color: #f85149; background: rgba(248, 81, 73, 0.15); }
 /* "⤓ download ▾" split button (message-download-menu.js). It sits at the far
    end of the action bar, just before delete, and its menu opens DOWNWARD: the
    reader scrolls, so a menu below the bar only lengthens the scroll area,
@@ -1420,22 +1372,6 @@ body:not(.show-final-pr-checks) .ci-hover.ci-final { display: none; }
 }
 .ci-panel-note a { color: #58a6ff; text-decoration: none; }
 .ci-panel-note a:hover { text-decoration: underline; }
-/* Panel scrollbar — dashboard furniture like the mail panes, so it gets the
-   same treatment: the richer ::-webkit- surface everywhere it exists, and
-   Firefox's standardized fallback kept OUT of WebKit/Blink (a non-auto
-   scrollbar-color there suppresses the ::-webkit- rules). */
-@supports not selector(::-webkit-scrollbar) {
-  .ci-panel { scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117; }
-  body.wizard .ci-panel { scrollbar-color: #7a5db0 #140f28; }
-  body.slop .ci-panel { scrollbar-color: #9e7a00 #210808; }
-}
-.ci-panel::-webkit-scrollbar { width: 10px; height: 10px; }
-.ci-panel::-webkit-scrollbar-track { background: #0d1117; }
-.ci-panel::-webkit-scrollbar-thumb {
-  background: #6e7681; border-radius: 6px; border: 2px solid #161b22;
-}
-.ci-panel::-webkit-scrollbar-thumb:hover { background: #8b949e; }
-.ci-panel::-webkit-scrollbar-thumb:active { background: #b1bac4; }
 body.wizard .ci-badge { background: #241b3d; border-color: #3a2a63; color: #9a86c4; }
 body.wizard .ci-badge.ci-passing { color: #7ee08a; border-color: rgba(126, 224, 138, 0.35); }
 body.wizard .ci-badge.ci-failing { color: #ff8a8a; border-color: rgba(255, 138, 138, 0.4); }
@@ -1463,11 +1399,6 @@ body.wizard .ci-icon-pass { color: #7ee08a; }
 body.wizard .ci-icon-fail { color: #ff8a8a; }
 body.wizard .ci-icon-pending { color: #e8c15a; }
 body.wizard .ci-icon-skipped { color: #6f5f96; }
-body.wizard .ci-panel::-webkit-scrollbar-track { background: #140f28; }
-body.wizard .ci-panel::-webkit-scrollbar-thumb {
-  background: #7a5db0; border-color: #241b3d;
-}
-body.wizard .ci-panel::-webkit-scrollbar-thumb:hover { background: #9a7fd0; }
 body.slop .ci-badge { background: #210808; border-color: #684500; color: #d8b95e; }
 /* The skin's gold .ci-badge colour outranks the plain .rv-* state colours,
    and the review pill's state is colour alone, so restate them here. */
@@ -1488,11 +1419,6 @@ body.slop .ci-panel-note { color: #d8b95e; }
 body.slop .ci-check-name { color: #fff4bd; }
 body.slop .ci-checks li + li,
 body.slop .ci-panel-note { border-color: #684500; }
-body.slop .ci-panel::-webkit-scrollbar-track { background: #210808; }
-body.slop .ci-panel::-webkit-scrollbar-thumb {
-  background: #9e7a00; border-color: #351010;
-}
-body.slop .ci-panel::-webkit-scrollbar-thumb:hover { background: #d8b95e; }
 /* Narrow viewport: a smaller panel. Horizontal placement is clamped into the
    viewport by the component, so no right-edge flip is needed here. */
 @media (max-width: 640px) {
@@ -1830,7 +1756,7 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
   width: 28px; height: 26px; padding: 0; border: 1px solid #30363d;
   border-radius: 4px; background: #161b22; color: #8b949e; cursor: pointer;
 }
-.human-notification-drawer-nav button:where(:not(.ui-btn)):hover:not(:disabled) { color: #f0f6fc; border-color: #58a6ff; }
+.human-notification-drawer-nav button:where(:not(.ui-btn)):hover:not(:disabled) { color: #f0f6fc; background: var(--ui-bg-hover); }
 .human-notification-drawer-nav button:where(:not(.ui-btn)):disabled { opacity: .35; cursor: default; }
 .human-notification-drawer-order { margin-left: auto; }
 .human-notification-drawer-announcement {
@@ -1933,7 +1859,7 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
 .human-notification-drawer-actions .mail-download-menu button[role="menuitem"][type]:where(:not(.ui-menu-item)):focus-visible {
   background: #263445; color: #f0f6fc; outline: none;
 }
-.human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):hover:not(:disabled) { border-color: #58a6ff; color: #f0f6fc; }
+.human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):not(.primary, .companion-primary):hover:not(:disabled) { color: #f0f6fc; background: var(--ui-bg-hover); }
 .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)).primary {
   border-color: #1f6feb; background: #0d3a66; color: #dbeafe;
 }
@@ -2152,6 +2078,22 @@ body.companion-annotating :is(.overlay-split-line, .overlay-split-cross, .overla
   position: fixed; z-index: calc(var(--z-window) + 90); pointer-events: none; border-radius: 8px;
   background: rgba(88, 166, 255, .10); border: 1px dashed #58a6ff;
 }
+/* The drop targets a drag shows (overlay-window.js SnapTargets): over every
+   window, the dragged one included, and over the guide, so a hot target reads
+   on top of the preview it gives; under the chrome. Quiet until hot. */
+.overlay-snap-targets { position: fixed; inset: 0; z-index: calc(var(--z-window) + 95); pointer-events: none; }
+.overlay-snap-edge, .overlay-snap-target { position: absolute; box-sizing: border-box; border: 1.5px solid rgba(88, 166, 255, .45); background: rgba(88, 166, 255, .07); }
+.overlay-snap-edge { border-radius: 4px; }
+.overlay-snap-target { border-color: rgba(88, 166, 255, .6); background: rgba(13, 17, 23, .85); border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, .35); }
+.overlay-snap-target::after { content: ""; position: absolute; inset: 9px; border: 1.5px dashed rgba(88, 166, 255, .8); border-radius: 3px; }
+.overlay-snap-target.split::after { inset: 7px; }
+.overlay-snap-target.split.left::after { right: 50%; }
+.overlay-snap-target.split.right::after { left: 50%; }
+.overlay-snap-target.split.top::after { bottom: 50%; }
+.overlay-snap-target.split.bottom::after { top: 50%; }
+.overlay-snap-edge.hot, .overlay-snap-target.hot { border-color: #58a6ff; background: rgba(88, 166, 255, .3); }
+.overlay-snap-target.hot { box-shadow: 0 0 0 3px rgba(88, 166, 255, .25); }
+.overlay-snap-target.hot::after { border-style: solid; border-color: #cfe5ff; background: rgba(88, 166, 255, .35); }
 /* A dragged window that would float where it is let go, as a tear-off out of a
    split does: the guide's dashed line on the window itself, where it will stay. */
 .overlay-window.overlay-window-floating { outline: 1px dashed #58a6ff; outline-offset: 2px; }
@@ -2249,10 +2191,11 @@ body.slop .attachment-preview-position { color: #c9a86b; }
      page-level `body.wizard header button` rule adds here. */
   display: grid; place-items: center; line-height: 1;
 }
-.image-preview-close:hover, .image-preview-close:focus-visible,
-.image-preview-footer button:hover:not(:disabled), .image-preview-footer button:focus-visible {
+.image-preview-close:focus-visible, .image-preview-footer button:focus-visible {
   border-color: #58a6ff; color: #f0f6fc;
 }
+.image-preview-close:hover,
+.image-preview-footer button:hover:not(:disabled) { color: #f0f6fc; background: var(--ui-bg-hover); }
 .image-preview-stage {
   position: relative; min-height: 0; flex: 1; display: flex;
   overflow: auto; padding: 24px; overscroll-behavior: contain;
@@ -2327,10 +2270,11 @@ body.slop .attachment-preview-position { color: #c9a86b; }
 }
 .viewer-display-button { width: 30px; }
 .markdown-preview-zoom-reset { min-width: 48px; font-variant-numeric: tabular-nums; }
-.viewer-display-button:hover, .viewer-display-button:focus-visible,
-.markdown-preview-zoom-reset:hover, .markdown-preview-zoom-reset:focus-visible {
+.viewer-display-button:focus-visible, .markdown-preview-zoom-reset:focus-visible {
   border-color: #58a6ff; color: #f0f6fc;
 }
+.viewer-display-button:hover,
+.markdown-preview-zoom-reset:hover { color: #f0f6fc; background: var(--ui-bg-hover); }
 /* Maximized fills the window up to the same margin the resize ceiling keeps;
    fullscreen is the whole screen. Both outrank the remembered drag size, and
    neither has a corner to drag. */
@@ -2610,28 +2554,6 @@ body.slop .attachment-preview-position { color: #c9a86b; }
   .markdown-attachment-document { margin-top: 8px; padding-top: 10px; }
 }
 
-/* ─── Attachment-viewer scrollbars ────────────────────────────────────
-   The viewers scroll, so their scrollbars are dashboard furniture like the
-   mail panes' — the same 10px track and rounded thumb, per theme. Firefox has
-   no ::-webkit-scrollbar surface; its standardized fallback is kept OUT of
-   WebKit/Blink, where a non-auto scrollbar-color suppresses the richer
-   pseudo-element treatment. (Same split as the .mail-* panes above.) */
-@supports not selector(::-webkit-scrollbar) {
-  .markdown-preview-stage, .image-preview-stage {
-    scrollbar-width: thin; scrollbar-color: #6e7681 #0b1016;
-  }
-  body.wizard :is(.markdown-preview-stage, .image-preview-stage) { scrollbar-color: #7a5db0 #140f28; }
-  body.slop :is(.markdown-preview-stage, .image-preview-stage) { scrollbar-color: #c11a1a #1a0505; }
-}
-:is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar { width: 10px; height: 10px; }
-:is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-track,
-:is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-corner { background: #0b1016; }
-:is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb {
-  background: #6e7681; border-radius: 6px; border: 2px solid #0b1016;
-}
-:is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb:hover { background: #8b949e; }
-:is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb:active { background: #b1bac4; }
-
 /* ─── Attachment viewers under the cosmetic themes ────────────────────
    Both viewers are chrome opened FROM the notification surfaces, so they
    re-skin with the shell the way the reader below does. The dialog CHROME
@@ -2673,10 +2595,12 @@ body.wizard :is(.markdown-preview-close, .image-preview-close, .viewer-display-b
   border-color: #3a2f57; background: #1d1730; color: #b39ddb;
 }
 body.wizard :is(.markdown-preview-overlay, .image-preview-overlay)
-  header :is(.markdown-preview-close, .image-preview-close, .viewer-display-button, .markdown-preview-zoom-reset):hover,
-body.wizard :is(.markdown-preview-overlay, .image-preview-overlay)
   header :is(.markdown-preview-close, .image-preview-close, .viewer-display-button, .markdown-preview-zoom-reset):focus-visible {
   background: #2a2140; border-color: #7c5cc4; color: #e6dcff;
+}
+body.wizard :is(.markdown-preview-overlay, .image-preview-overlay)
+  header :is(.markdown-preview-close, .image-preview-close, .viewer-display-button, .markdown-preview-zoom-reset):hover {
+  background: #2a2140; color: #e6dcff;
 }
 body.wizard .markdown-preview-modes { border-color: #3a2f57; }
 body.wizard .markdown-preview-mode {
@@ -2692,8 +2616,8 @@ body.wizard .image-preview-footer { border-top-color: #3a2f57; }
 body.wizard .image-preview-footer button {
   background: #1d1730; border-color: #3a2f57; color: #d8cff0;
 }
-body.wizard .image-preview-footer button:hover:not(:disabled),
 body.wizard .image-preview-footer button:focus-visible { border-color: #7c5cc4; color: #e6dcff; }
+body.wizard .image-preview-footer button:hover:not(:disabled) { color: #e6dcff; background: #3a2a63; }
 body.wizard .markdown-preview-source { color: #d8cff0; }
 body.wizard :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer { color: #6b5b8f; }
 body.wizard :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer:hover,
@@ -2726,10 +2650,12 @@ body.slop :is(.markdown-preview-close, .image-preview-close, .viewer-display-but
   border-color: #8b0000; background: #2a0a0a; color: #c9a86b;
 }
 body.slop :is(.markdown-preview-overlay, .image-preview-overlay)
-  header :is(.markdown-preview-close, .image-preview-close, .viewer-display-button, .markdown-preview-zoom-reset):hover,
-body.slop :is(.markdown-preview-overlay, .image-preview-overlay)
   header :is(.markdown-preview-close, .image-preview-close, .viewer-display-button, .markdown-preview-zoom-reset):focus-visible {
   background: #3d0d0d; border-color: #ffd700; color: #ffe88c;
+}
+body.slop :is(.markdown-preview-overlay, .image-preview-overlay)
+  header :is(.markdown-preview-close, .image-preview-close, .viewer-display-button, .markdown-preview-zoom-reset):hover {
+  background: #3d0d0d; color: #ffe88c;
 }
 body.slop .markdown-preview-modes { border-color: #8b0000; }
 body.slop .markdown-preview-mode {
@@ -2745,27 +2671,13 @@ body.slop .image-preview-footer { border-top-color: #8b0000; }
 body.slop .image-preview-footer button {
   background: #2a0a0a; border-color: #8b0000; color: #f0dcc0;
 }
-body.slop .image-preview-footer button:hover:not(:disabled),
 body.slop .image-preview-footer button:focus-visible { border-color: #ffd700; color: #ffe88c; }
+body.slop .image-preview-footer button:hover:not(:disabled) { color: #ffe88c; background: #4a1414; }
 body.slop .markdown-preview-source { color: #f0dcc0; }
 body.slop :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer { color: #7a3b3b; }
 body.slop :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer:hover,
 body.slop :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer:focus-visible { color: #ffd700; }
 
-body.wizard :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-track,
-body.wizard :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb {
-  background: #7a5db0; border-color: #140f28;
-}
-body.wizard :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
-body.wizard :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
-body.slop :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-track,
-body.slop :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-corner { background: #1a0505; }
-body.slop :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb {
-  background: #c11a1a; border-color: #1a0505;
-}
-body.slop :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb:hover { background: #e02b2b; }
-body.slop :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb:active { background: #ffd700; }
 
 /* The rendered document itself, on BOTH surfaces that show one: the card in
    the message and the viewer. Default-theme colours are in the .markdown-document
@@ -2905,9 +2817,7 @@ body.wizard .human-notification-drawer-nav { border-bottom-color: #2a2140; color
 body.wizard .human-notification-drawer-nav button:where(:not(.ui-btn)) {
   background: #1d1730; border-color: #3a2f57; color: #b39ddb;
 }
-body.wizard .human-notification-drawer-nav button:where(:not(.ui-btn)):hover:not(:disabled) {
-  color: #e6dcff; border-color: #7c5cc4;
-}
+body.wizard .human-notification-drawer-nav button:where(:not(.ui-btn)):hover:not(:disabled) { color: #e6dcff; background: #3a2a63; }
 body.wizard .human-notification-drawer-date { border-bottom-color: #2a2140; }
 body.wizard .human-notification-drawer-body { color: #d8cff0; }
 body.wizard .human-notification-drawer-body a { color: #b39ddb; }
@@ -2920,7 +2830,7 @@ body.wizard .human-notification-drawer-download:hover { background: rgba(124, 92
 body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)) {
   background: #1d1730; border-color: #3a2f57; color: #d8cff0;
 }
-body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):hover:not(:disabled) { border-color: #7c5cc4; color: #e6dcff; }
+body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):not(.primary, .companion-primary):hover:not(:disabled) { color: #e6dcff; background: #3a2a63; }
 body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)).primary {
   background: #3b2a63; border-color: #7c5cc4; color: #f0e9ff;
 }
@@ -2949,9 +2859,7 @@ body.slop .human-notification-drawer-nav { border-bottom-color: #5c0d0d; color: 
 body.slop .human-notification-drawer-nav button:where(:not(.ui-btn)) {
   background: #2a0a0a; border-color: #8b0000; color: #c9a86b;
 }
-body.slop .human-notification-drawer-nav button:where(:not(.ui-btn)):hover:not(:disabled) {
-  color: #ffe88c; border-color: #ffd700;
-}
+body.slop .human-notification-drawer-nav button:where(:not(.ui-btn)):hover:not(:disabled) { color: #ffe88c; background: #4a1414; }
 body.slop .human-notification-drawer-date { border-bottom-color: #5c0d0d; }
 body.slop .human-notification-drawer-body { color: #f0dcc0; }
 body.slop .human-notification-drawer-body a { color: #ffd700; }
@@ -2964,7 +2872,7 @@ body.slop .human-notification-drawer-download:hover { background: rgba(255, 215,
 body.slop .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)) {
   background: #2a0a0a; border-color: #8b0000; color: #f0dcc0;
 }
-body.slop .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):hover:not(:disabled) { border-color: #ffd700; color: #ffe88c; }
+body.slop .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):not(.primary, .companion-primary):hover:not(:disabled) { color: #ffe88c; background: #4a1414; }
 body.slop .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)).primary {
   background: #4a0a0a; border-color: #ffd700; color: #ffe88c;
 }
@@ -3291,23 +3199,6 @@ body.wizard header .activity-hover-trigger:hover { background: transparent; }
   content: ""; position: absolute; z-index: calc(var(--z-popover) - 1);
   top: 100%; left: 0; width: min(420px, calc(100vw - 32px)); height: 9px;
 }
-/* Match the dashboard's standard dark scroll surfaces, including Firefox's
-   standardized fallback and the richer Chromium/WebKit hover states. */
-@supports not selector(::-webkit-scrollbar) {
-  .activity-hover-panel {
-    scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117;
-  }
-  body.wizard .activity-hover-panel { scrollbar-color: #7a5db0 #140f28; }
-  body.slop .activity-hover-panel { scrollbar-color: #c11a1a #1a0505; }
-}
-.activity-hover-panel::-webkit-scrollbar { width: 10px; height: 10px; }
-.activity-hover-panel::-webkit-scrollbar-track,
-.activity-hover-panel::-webkit-scrollbar-corner { background: #0d1117; }
-.activity-hover-panel::-webkit-scrollbar-thumb {
-  background: #6e7681; border: 2px solid #0d1117; border-radius: 6px;
-}
-.activity-hover-panel::-webkit-scrollbar-thumb:hover { background: #8b949e; }
-.activity-hover-panel::-webkit-scrollbar-thumb:active { background: #b1bac4; }
 .activity-hover-panel-heading {
   color: #f0f6fc; font-size: 13px; font-weight: 700; letter-spacing: 0.2px;
 }
@@ -3352,13 +3243,6 @@ body.slop .activity-hover-panel {
   border-color: #9e7a00; background: linear-gradient(180deg, #351010 0%, #210808 100%);
   color: #ffe88c; box-shadow: 0 0 18px rgba(255, 215, 0, 0.25);
 }
-body.slop .activity-hover-panel::-webkit-scrollbar-track,
-body.slop .activity-hover-panel::-webkit-scrollbar-corner { background: #1a0505; }
-body.slop .activity-hover-panel::-webkit-scrollbar-thumb {
-  background: #c11a1a; border-color: #1a0505;
-}
-body.slop .activity-hover-panel::-webkit-scrollbar-thumb:hover { background: #e02b2b; }
-body.slop .activity-hover-panel::-webkit-scrollbar-thumb:active { background: #ffd700; }
 body.slop .activity-hover-panel-heading { color: #ffe88c; }
 body.slop .activity-hover-panel-summary,
 body.slop .activity-hover-worker-detail,
@@ -3372,13 +3256,6 @@ body.wizard .activity-hover-panel {
   border-color: #7a5db0; background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);
   color: #e7d9f5; box-shadow: 0 0 24px rgba(122, 93, 176, 0.35);
 }
-body.wizard .activity-hover-panel::-webkit-scrollbar-track,
-body.wizard .activity-hover-panel::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard .activity-hover-panel::-webkit-scrollbar-thumb {
-  background: #7a5db0; border-color: #140f28;
-}
-body.wizard .activity-hover-panel::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
-body.wizard .activity-hover-panel::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
 body.wizard .activity-hover-panel-heading {
   color: #f3e6c0; font-family: Papyrus, Luminari, 'Palatino Linotype', Palatino, serif;
   letter-spacing: 0.5px;
@@ -3587,7 +3464,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
   font-family: inherit;
 }
-.group-links-section > button:hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-links-section > button:hover { color: #d4d4d4; background: var(--ui-bg-hover); }
 /* Per-group link chips in the <summary> header — an at-a-glance, always-
    visible (even when the group is collapsed) view of who this group can
    message (→) and who can message it (←). Clicking any chip opens the
@@ -3753,31 +3630,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   color: #d4d4d4; font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
-/* Keep both scroll surfaces in the disclosure on the same dark skin as the
-   dashboard panes. Firefox has no ::-webkit-scrollbar surface, so its
-   standardized fallback stays behind the feature query used by the rest of
-   the dashboard. */
-@supports not selector(::-webkit-scrollbar) {
-  .audit-spawn-popover,
-  .audit-spawn-popover pre {
-    scrollbar-width: thin;
-    scrollbar-color: #6e7681 #0d1117;
-  }
-}
-.audit-spawn-popover::-webkit-scrollbar,
-.audit-spawn-popover pre::-webkit-scrollbar { width: 10px; height: 10px; }
-.audit-spawn-popover::-webkit-scrollbar-track,
-.audit-spawn-popover pre::-webkit-scrollbar-track { background: #0d1117; }
-.audit-spawn-popover::-webkit-scrollbar-corner,
-.audit-spawn-popover pre::-webkit-scrollbar-corner { background: #161b22; }
-.audit-spawn-popover::-webkit-scrollbar-thumb,
-.audit-spawn-popover pre::-webkit-scrollbar-thumb {
-  background: #6e7681; border-radius: 6px;
-}
-.audit-spawn-popover::-webkit-scrollbar-thumb:hover,
-.audit-spawn-popover pre::-webkit-scrollbar-thumb:hover { background: #8b949e; }
-.audit-spawn-popover::-webkit-scrollbar-thumb:active,
-.audit-spawn-popover pre::-webkit-scrollbar-thumb:active { background: #b1bac4; }
 .filter-bar label.filter-toggle select:where(:not(.ui-select)) {
   background: #161b22; color: #d4d4d4; border: 1px solid #2a3340;
   border-radius: 4px; padding: 1px 4px; font-size: 12px; cursor: pointer;
@@ -4701,7 +4553,7 @@ tr:hover .row-actions { opacity: 1; }
    a delete is the quiet .ui-btn-ghost.ui-btn-danger, so a red frame doesn't
    repeat down every row. A reversible demotion (retire, disable, pause) is a
    plain button that warms amber only under the cursor. */
-.row-actions .ui-btn.warn:hover:not(:disabled) { color: var(--ui-warn-text); border-color: var(--ui-warn-text); }
+.row-actions .ui-btn.warn:hover:not(:disabled) { color: var(--ui-warn-text); background: rgba(210, 153, 34, 0.15); }
 /* The status dot + the focus/hide/⚙ cluster share the row's first
    cell (.agent-ctl) so the controls sit together — no empty gap from
    the dot living in its own column. */
@@ -4992,9 +4844,9 @@ details[open] > summary .group-actions { opacity: 1; }
     opacity: 0;
   }
 }
-.group-actions button:where(:not(.ui-menu-item, .ui-btn)):hover { color: #d4d4d4; border-color: #58a6ff; }
-.group-actions button:where(:not(.ui-menu-item, .ui-btn)).danger:hover { color: #f85149; border-color: #f85149; }
-.group-actions button:where(:not(.ui-menu-item, .ui-btn)).warn:hover { color: #d29922; border-color: #d29922; }
+.group-actions button:where(:not(.ui-menu-item, .ui-btn)):hover:not(:disabled) { color: #d4d4d4; background: var(--ui-bg-hover); }
+.group-actions button:where(:not(.ui-menu-item, .ui-btn)).danger:hover:not(:disabled) { color: #f85149; background: rgba(248, 81, 73, 0.15); }
+.group-actions button:where(:not(.ui-menu-item, .ui-btn)).warn:hover:not(:disabled) { color: #d29922; background: rgba(210, 153, 34, 0.15); }
 /* The spawn button — the primary "add an agent to this group" CTA.
    Sits as a SIBLING of .group-actions (not inside it) so its style
    stays distinct: blue-accent skin matching filter-bar .primary so it
@@ -5014,7 +4866,7 @@ details[open] > summary .group-actions { opacity: 1; }
   cursor: pointer; font-family: inherit;
   opacity: 0.4; transition: opacity 0.15s ease;
 }
-.spawn-btn:hover { background: #388bfd; border-color: #388bfd; }
+.spawn-btn:hover { background: #388bfd; }
 .spawn-btn .spawn-ico, .subgroup-btn .subgroup-ico { display: block; }
 details > summary:hover .spawn-btn,
 details[open] > summary .spawn-btn { opacity: 1; }
@@ -5271,10 +5123,10 @@ body.show-group-description .group-descr { display: inline; }
   font-size: 11px; padding: 2px 10px; border-radius: 4px;
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9; cursor: pointer;
 }
-.force-rebrief-btn:hover { background: #2d333b; border-color: #58a6ff; }
+.force-rebrief-btn:hover { background: #2d333b; }
 /* Stand-down is the destructive wind-down control, so its hover warms to a
    caution border rather than the re-brief blue. */
-.force-standdown-btn:hover { background: #2d333b; border-color: #f0883e; }
+.force-standdown-btn:hover { background: #2d333b; }
 /* The mission label span-swaps regular → wizard, the same "always emit, CSS
    picks" trick the spawn button + activity bots use. */
 .force-mission-label-wizard { display: none; }
@@ -5506,7 +5358,7 @@ details[data-group-key][open] > summary .group-usage-profile {
   color: #c9d1d9; cursor: pointer; padding: 5px 8px; font: inherit; font-size: 12px;
   text-align: center;
 }
-.notify-pop-config:hover { color: #d4d4d4; border-color: #58a6ff; }
+.notify-pop-config:hover { color: #d4d4d4; }
 /* The delivery selector is a row with a label on the left and the <select>
    pushed to the right, unlike the checkbox rows whose control leads. */
 .notify-pop-delivery { justify-content: space-between; gap: 10px; }
@@ -5688,41 +5540,6 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 }
 #palette-input::placeholder { color: #6e7681; }
 .palette-list { max-height: 50vh; overflow-y: auto; padding: 6px; }
-/* Keep the results scrollbar in the same dark dashboard chrome as the other
-   scrolling panes. Firefox needs the standardized properties; keeping them
-   behind this feature query preserves the richer Blink/WebKit hover states. */
-@supports not selector(::-webkit-scrollbar) {
-  #command-palette-modal .palette-list {
-    scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117;
-  }
-  body.wizard #command-palette-modal .palette-list {
-    scrollbar-color: #7a5db0 #140f28;
-  }
-}
-#command-palette-modal .palette-list::-webkit-scrollbar { width: 10px; height: 10px; }
-#command-palette-modal .palette-list::-webkit-scrollbar-track,
-#command-palette-modal .palette-list::-webkit-scrollbar-corner { background: #0d1117; }
-#command-palette-modal .palette-list::-webkit-scrollbar-thumb {
-  min-height: 24px;
-  background: #6e7681; border: 2px solid #0d1117; border-radius: 6px;
-}
-#command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover { background: #8b949e; }
-#command-palette-modal .palette-list::-webkit-scrollbar-thumb:active { background: #b1bac4; }
-@media (forced-colors: active) {
-  #command-palette-modal .palette-list {
-    scrollbar-width: auto;
-    scrollbar-color: auto;
-    forced-color-adjust: auto;
-  }
-  #command-palette-modal .palette-list::-webkit-scrollbar { width: auto; height: auto; }
-  #command-palette-modal .palette-list::-webkit-scrollbar-track,
-  #command-palette-modal .palette-list::-webkit-scrollbar-corner { background: Canvas; }
-  #command-palette-modal .palette-list::-webkit-scrollbar-thumb {
-    background: ButtonText; border: 1px solid Canvas;
-  }
-  #command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover,
-  #command-palette-modal .palette-list::-webkit-scrollbar-thumb:active { background: Highlight; }
-}
 .palette-item {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 10px; border-radius: 6px; cursor: pointer;
@@ -5815,23 +5632,6 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   max-width: min(1100px, calc(100vw - 32px));
   min-height: 260px;
 }
-/* Sandbox profiles can make this resizable surface itself scroll. Theme that
-   scrollbar (including its resize-corner) instead of exposing the browser's
-   light native chrome. Keep this id-scoped: other manage panels can choose
-   their own treatment without inheriting sandbox-profile styling. */
-@supports not selector(::-webkit-scrollbar) {
-  #sandbox-profiles-manage-modal .manage-modal {
-    scrollbar-width: thin; scrollbar-color: #3a4553 #161b22;
-  }
-}
-#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar { width: 10px; height: 10px; }
-#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-track,
-#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-corner { background: #161b22; }
-#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb {
-  background: #3a4553; border-radius: 6px; border: 2px solid #161b22;
-}
-#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb:hover { background: #4d5866; }
-#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb:active { background: #6e7681; }
 /* Let the listing absorb extra vertical space when the panel is enlarged,
    keeping the footer Close button at the bottom; the panel still scrolls as one
    unit (as it already does at the 86vh cap) when the list outgrows a shortened
@@ -6565,7 +6365,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
 /* Spawn dialog: the queue action sits beside Spawn; a reopened queued spawn
    gets a banner and a green launch button instead of the blue primary. */
 #agent-spawn-modal .modal-buttons button.agent-spawn-queue-btn { background: #2b2111; border-color: #9e6a03; color: #e3b341; font-weight: 600; }
-#agent-spawn-modal .modal-buttons button.agent-spawn-queue-btn:hover:not(:disabled) { border-color: #e3b341; color: #f2cc60; }
+#agent-spawn-modal .modal-buttons button.agent-spawn-queue-btn:hover:not(:disabled) { color: #f2cc60; background: #3d2f12; }
 #agent-spawn-modal .modal-buttons button.agent-spawn-launch-btn { background: #238636; border-color: #2ea043; color: #fff; }
 #agent-spawn-modal .modal-buttons button.agent-spawn-launch-btn:hover:not(:disabled) { background: #2ea043; }
 .agent-spawn-queued-banner {
@@ -6685,7 +6485,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
   border-radius: 4px; padding: 5px 12px; font-size: 12px;
   cursor: pointer; font-family: inherit;
 }
-.filter-bar button.primary:where(:not(.ui-btn)):hover { background: #388bfd; border-color: #388bfd; }
+.filter-bar button.primary:where(:not(.ui-btn)):hover { background: #388bfd; }
 .filter-bar button.tool:where(:not(.ui-btn)), .filter-bar a.tool {
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
   border-radius: 4px; padding: 5px 12px; font-size: 12px;
@@ -6693,7 +6493,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
 }
 /* A download link styled as a toolbar button (Logs tab "export"). */
 .filter-bar a.tool { display: inline-block; text-decoration: none; line-height: normal; }
-.filter-bar button.tool:where(:not(.ui-btn)):hover, .filter-bar a.tool:hover { border-color: #58a6ff; color: #d4d4d4; }
+.filter-bar button.tool:where(:not(.ui-btn)):hover, .filter-bar a.tool:hover { color: #d4d4d4; background: var(--ui-bg-hover); }
 .filter-bar label.filter-toggle {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 11px; color: #7d8590; cursor: pointer; user-select: none;
@@ -6715,12 +6515,14 @@ body.wizard .group-pending-title-wizard { display: inline; }
    default so a user can tell at a glance whether anything is hidden. */
 .filter-bar .view-popover-wrap { position: relative; display: inline-flex; align-items: center; }
 /* "search conversations" and "▾ view" are ghost buttons by operator exception
-   (buttons are bordered by default): quiet grey text, no fill, a blue frame
-   only on hover or while open. */
+   (buttons are bordered by default): quiet grey text, no fill; hover lifts
+   the background like every button, and a blue frame marks it open. */
 .filter-bar .view-btn.ui-btn { color: #7d8590; font-size: 11px; background: transparent; border-color: transparent; }
-.filter-bar .view-btn.ui-btn:is(:hover:not(:disabled), [aria-expanded="true"]) { color: #d4d4d4; background: transparent; border-color: #58a6ff; }
+.filter-bar .view-btn.ui-btn:hover:not(:disabled) { color: #d4d4d4; background: var(--ui-bg-hover); }
+.filter-bar .view-btn.ui-btn[aria-expanded="true"] { color: #d4d4d4; border-color: #58a6ff; }
 body.wizard .filter-bar .view-btn.ui-btn { color: #b39ddb; }
-body.wizard .filter-bar .view-btn.ui-btn:is(:hover:not(:disabled), [aria-expanded="true"]) { color: #f3e6c0; border-color: #a97bd6; }
+body.wizard .filter-bar .view-btn.ui-btn:hover:not(:disabled) { color: #f3e6c0; background: #3a2a63; }
+body.wizard .filter-bar .view-btn.ui-btn[aria-expanded="true"] { color: #f3e6c0; background: #3a2a63; border-color: #a97bd6; }
 /* Subtle grey count — matches the Terminals tab's .tab-badge.count so a
    deviation-from-default reads as a quiet informational number, not an alert. */
 .filter-bar .view-badge {
@@ -6818,24 +6620,6 @@ body.wizard .filter-bar .view-btn.ui-btn:is(:hover:not(:disabled), [aria-expande
   border: 1px solid #2a3340; border-radius: 4px;
   overflow-y: auto; max-height: 52vh;
 }
-/* The slug list is the permission editor's scroll container. Keep its native
-   scrollbar in the same dark chrome as the dialog instead of letting a light
-   browser-default track cut through it. Firefox has no ::-webkit-scrollbar
-   surface; keep its standardized fallback out of Blink, where scrollbar-color
-   would suppress the richer thumb states below. */
-@supports not selector(::-webkit-scrollbar) {
-  #perm-edit-modal .perm-edit-list {
-    scrollbar-width: thin; scrollbar-color: #3a4553 #0d1117;
-  }
-}
-#perm-edit-modal .perm-edit-list::-webkit-scrollbar { width: 10px; height: 10px; }
-#perm-edit-modal .perm-edit-list::-webkit-scrollbar-track,
-#perm-edit-modal .perm-edit-list::-webkit-scrollbar-corner { background: #0d1117; }
-#perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb {
-  background: #3a4553; border-radius: 6px; border: 2px solid #0d1117;
-}
-#perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb:hover { background: #4d5866; }
-#perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb:active { background: #6e7681; }
 .perm-row {
   display: flex; align-items: center; gap: 10px;
   padding: 6px 10px; border-bottom: 1px solid #21262d;
@@ -7018,7 +6802,7 @@ button.perm-scope-twisty {
   background: #21262d; border: 1px solid #3d4451; border-radius: 5px;
   color: #c9d1d9; cursor: pointer;
 }
-button.perm-scope-twisty:hover { background: #2d333b; border-color: #58a6ff; color: #e6edf3; }
+button.perm-scope-twisty:hover { background: #2d333b; color: #e6edf3; }
 button.perm-scope-twisty:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 button.perm-scope-twisty[aria-expanded="true"] { border-color: #58a6ff; color: #58a6ff; }
 .perm-scope-chevron {
@@ -7057,9 +6841,9 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   background: #0d1117; border: 1px solid #2a3340; border-radius: 3px; color: #c9d1d9;
   font-size: 10px; font-family: inherit; line-height: 1; padding: 3px 6px; cursor: pointer;
 }
-.perm-scope-free-add:hover { border-color: #58a6ff; color: #f0f6fc; }
+.perm-scope-free-add:hover { color: #f0f6fc; }
 .perm-scope-free-add[aria-disabled="true"] { opacity: 0.4; cursor: default; }
-.perm-scope-free-add[aria-disabled="true"]:hover { border-color: #2a3340; color: #c9d1d9; }
+.perm-scope-free-add[aria-disabled="true"]:hover { color: #c9d1d9; }
 .perm-row-eff { flex: 0 0 78px; font-size: 10px; text-align: right; }
 .perm-row-eff.granted { color: #3fb950; }
 .perm-row-eff.denied { color: #f85149; }
@@ -7185,27 +6969,6 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   align-self: stretch; min-height: 0; max-height: none; resize: none;
 }
 .operator-message-modal .modal-buttons { flex: 0 0 auto; }
-/* Theme the scroll container's scrollbar to the dark dialog chrome. Without
-   this the tall spawn/clone dialogs (and the Initial-msg textarea) fall back
-   to the browser's default light, classic scrollbar — the same white-default
-   trap that bites unstyled buttons, and especially loud against the near-black
-   wizard re-skin (overridden arcane below). Chromium reads ::-webkit-scrollbar-*;
-   Firefox reads scrollbar-width/-color. scrollbar-corner keeps the resize-grip
-   corner (both bars present) from flashing white. The 10px width matches the
-   Messages tab's themed bars. */
-.cron-create-modal { scrollbar-width: thin; scrollbar-color: #3a4553 #161b22; }
-.cron-create-modal::-webkit-scrollbar { width: 10px; height: 10px; }
-.cron-create-modal::-webkit-scrollbar-track { background: #161b22; }
-.cron-create-modal::-webkit-scrollbar-thumb { background: #3a4553; border-radius: 6px; }
-.cron-create-modal::-webkit-scrollbar-thumb:hover { background: #4d5866; }
-.cron-create-modal::-webkit-scrollbar-corner { background: #161b22; }
-/* The multiline fields (Initial msg / Follow-up) scroll on their own darker
-   #0d1117 surface, so their track matches that rather than the dialog body. */
-.cron-create-row textarea { scrollbar-width: thin; scrollbar-color: #3a4553 #0d1117; }
-.cron-create-row textarea::-webkit-scrollbar { width: 10px; height: 10px; }
-.cron-create-row textarea::-webkit-scrollbar-track { background: #0d1117; }
-.cron-create-row textarea::-webkit-scrollbar-thumb { background: #3a4553; border-radius: 6px; }
-.cron-create-row textarea::-webkit-scrollbar-thumb:hover { background: #4d5866; }
 .cron-create-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
 .cron-create-modal .modal-meta {
   font-size: 11px; color: #7d8590;
@@ -8162,7 +7925,6 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .sbx-prelaunch-actions button:where(:not(.ui-btn)):hover { background: #2d333b; }
 .sbx-prelaunch-actions button:where(:not(.ui-btn)):disabled { cursor: default; opacity: .35; }
 .sbx-prelaunch-actions .sbx-prelaunch-remove { color: #f0b0b0; }
-.sbx-prelaunch-actions .sbx-prelaunch-remove:hover { border-color: #6e3a3a; }
 .sbx-prelaunch-error { color: #ff7b72; font-size: .76rem; line-height: 1.35; }
 .sbx-prelaunch-add:disabled { cursor: default; opacity: .45; }
 
@@ -8317,7 +8079,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 }
 .sbx-row button:where(:not(.ui-btn)):last-child:not(.sbx-segmented-option) { padding: 0 9px; color: #8b949e; }
 .sbx-row button:where(:not(.ui-btn)):hover { background: #2d333b; }
-.sbx-row button:where(:not(.ui-btn)):last-child:hover:not(.sbx-segmented-option) { color: #f0b0b0; border-color: #6e3a3a; }
+.sbx-row button:where(:not(.ui-btn)):last-child:hover:not(.sbx-segmented-option) { color: #f0b0b0; background: var(--ui-bg-hover); }
 /* Sandbox-profile card body: one compact line per grant / env binding, replacing
    the old ` · `-joined .modal-meta paragraph. Each line is a small tag plus a
    monospace value that ellipsis-truncates rather than wrapping. */
@@ -8353,7 +8115,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   color: #7d8590; font-family: inherit; font-size: 12px;
   padding: 4px 10px; cursor: pointer;
 }
-.sbx-add-row:hover { background: #1c2330; border-color: #3a4553; color: #c9d1d9; }
+.sbx-add-row:hover { background: #1c2330; color: #c9d1d9; }
 .sbx-effective-environment-toggle {
   background: transparent; border: 1px solid #30363d; border-radius: 4px;
   color: #8b949e; font-family: inherit; font-size: 12px; padding: 4px 9px;
@@ -8400,7 +8162,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   color: #e3b341; font-family: inherit; font-size: 12px; padding: 4px 9px;
   cursor: pointer; white-space: nowrap;
 }
-.sbx-missing button:where(:not(.ui-btn)):hover { background: #2d2a20; border-color: #9e7c32; }
+.sbx-missing button:where(:not(.ui-btn)):hover { background: #2d2a20; }
 .sbx-missing button:where(:not(.ui-btn)):disabled { opacity: 0.55; cursor: default; }
 /* The common-rule preset menu sits under the filesystem table and ships
    folded: it is a long audited catalog most profiles never open, and every
@@ -8663,7 +8425,8 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .spawn-field-help-trigger.warn {
   color: #d29922; border-color: #9e6a03; background: #1c1710;
 }
-.spawn-field-help-trigger.warn:hover, .spawn-field-help-trigger.warn:focus {
+.spawn-field-help-trigger.warn:hover { color: #f0b72f; background: rgba(210, 153, 34, 0.15); }
+.spawn-field-help-trigger.warn:focus {
   color: #f0b72f; border-color: #d29922;
 }
 .spawn-field-description {
@@ -8690,7 +8453,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
   color: #c9d1d9; padding: 5px 10px; font-size: 12px; cursor: pointer;
 }
-.spawn-attachments-controls button:where(:not(.ui-btn)):hover { border-color: #58a6ff; }
+.spawn-attachments-controls button:where(:not(.ui-btn)):hover { background: var(--ui-bg-hover); }
 .spawn-attachments-hint { font-size: 11px; color: #7d8590; }
 .spawn-attachments-list {
   list-style: none; margin: 0; padding: 0; display: flex;
@@ -8821,13 +8584,13 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
 }
 #group-standing-orders-modal .cron-create-modal button:where(:not(.ui-btn)):not(.group-standing-orders-close):hover:not(:disabled) {
-  background: #2d333b; border-color: #58a6ff;
+  background: #2d333b;
 }
 #group-standing-orders-modal .cron-create-modal button:where(:not(.ui-btn)).primary {
   background: #1f6feb; border-color: #388bfd; color: #fff;
 }
 #group-standing-orders-modal .cron-create-modal button:where(:not(.ui-btn)).primary:hover:not(:disabled) {
-  background: #388bfd; border-color: #58a6ff;
+  background: #388bfd;
 }
 #group-standing-orders-modal .cron-create-modal button:where(:not(.ui-btn)):disabled { opacity: 0.65; cursor: not-allowed; }
 .group-standing-orders-summary {
@@ -8930,15 +8693,14 @@ body.wizard #group-standing-orders-modal .cron-create-modal button:where(:not(.u
   background: #2a2034; border-color: #59466b; color: #e7d9f5;
 }
 body.wizard #group-standing-orders-modal .cron-create-modal button:where(:not(.ui-btn)):not(.group-standing-orders-close):hover:not(:disabled) {
-  background: #39294a; border-color: #d9b45a;
+  background: #39294a;
 }
 body.wizard #group-standing-orders-modal .cron-create-modal button:is(.primary, .ui-btn-primary) {
   background: linear-gradient(180deg, #7650a5, #563477);
   border-color: #b184d1; color: #fff7dc; box-shadow: 0 0 12px #b26de840;
 }
 body.wizard #group-standing-orders-modal .cron-create-modal button:is(.primary, .ui-btn-primary):hover:not(:disabled) {
-  background: linear-gradient(180deg, #8d65ba, #654087);
-  border-color: #f3e6c0; box-shadow: 0 0 17px #b26de866;
+  background: linear-gradient(180deg, #8d65ba, #654087); box-shadow: 0 0 17px #b26de866;
 }
 body.wizard #group-standing-orders-modal .group-standing-orders-first-run {
   border-color: #694f7e; background: linear-gradient(145deg, #17101f, #120e19);
@@ -9199,7 +8961,7 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
 .directory-picker-path button, .directory-picker-nav button { padding: 6px 11px; }
 .directory-picker-path button:hover:not(:disabled),
 .directory-picker-nav button:hover:not(:disabled),
-.directory-picker-list button:hover:not(:disabled) { border-color: #58a6ff; background: #292f37; }
+.directory-picker-list button:hover:not(:disabled) { background: #292f37; }
 .directory-picker-list button.active:not(:disabled) {
   background: #1f2937; border-color: #58a6ff; box-shadow: inset 3px 0 #58a6ff;
 }
@@ -9383,7 +9145,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
   padding: 5px 14px; color: #c9d1d9; font-family: inherit; font-size: 13px; cursor: pointer;
 }
-:is(.paf-flagged-actions, .paf-row-buttons) button:hover:not(:disabled) { border-color: #58a6ff; }
+:is(.paf-flagged-actions, .paf-row-buttons) button:not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
 :is(.paf-flagged-actions, .paf-row-buttons) button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
 :is(.paf-flagged-actions, .paf-row-buttons) button:disabled { opacity: 0.6; cursor: default; }
 :is(.paf-flagged-actions, .paf-row-buttons) button.primary:disabled { background: #6e7681; border-color: #6e7681; opacity: 1; }
@@ -9672,7 +9434,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   border-radius: 4px; padding: 5px 12px; font-size: 12px;
   cursor: pointer; font-family: inherit;
 }
-.template-card .tc-actions button:where(:not(.ui-btn)).primary:hover { background: #388bfd; border-color: #388bfd; }
+.template-card .tc-actions button:where(:not(.ui-btn)).primary:hover { background: #388bfd; }
 .template-card .tc-agents { display: flex; flex-wrap: wrap; gap: 6px; }
 .template-card .tc-agent {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
@@ -9885,7 +9647,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   border-radius: 4px; padding: 4px 8px; color: #c9d1d9;
   font: inherit; cursor: pointer;
 }
-.cleanup-related button:hover { border-color: #58a6ff; color: #58a6ff; }
+.cleanup-related button:hover { color: #58a6ff; background: var(--ui-bg-hover); }
 .cleanup-tier {
   display: flex; flex-direction: column; gap: 4px;
   padding: 6px 8px; margin-bottom: 2px;
@@ -9994,7 +9756,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   font-family: inherit; white-space: nowrap;
 }
 #command-palette-btn:hover,
-#window-all-btn:hover { border-color: #58a6ff; color: #d4d4d4; }
+#window-all-btn:hover { color: #d4d4d4; background: var(--ui-bg-hover); }
 /* (The top-bar #dock-toggle-top and its aria-expanded "on" accent were removed
    in JOH-390 item 7 — see the dashboard.html note. The dock's own edge tab +
    in-dock collapse are the remaining show/hide controls.) */
@@ -10083,7 +9845,7 @@ label.cfg-label { cursor: pointer; }
   border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px;
   padding: 4px 10px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9;
 }
-.cfg-row-ctl button.cfg-inline:not(:disabled):hover { border-color: #58a6ff; }
+.cfg-row-ctl button.cfg-inline:not(:disabled):hover { background: var(--ui-bg-hover); }
 .cfg-row-ctl button.cfg-inline:disabled { opacity: 0.5; cursor: default; }
 .cfg-row-wide > .cfg-row-ctl { justify-content: flex-start; }
 .cfg-tool-list { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -10328,8 +10090,8 @@ label.cfg-label { cursor: pointer; }
 }
 .cfg-footer button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
 .cfg-footer button:disabled { opacity: 0.5; cursor: default; }
-.cfg-footer button:not(:disabled):hover { border-color: #58a6ff; }
-.cfg-footer button.primary:not(:disabled):hover { border-color: #58a6ff; }
+.cfg-footer button:not(:disabled):hover { background: var(--ui-bg-hover); }
+.cfg-footer button.primary:not(:disabled):hover { background: #388bfd; }
 .cfg-status { font-size: 11px; color: #7d8590; }
 /* Remote-access live status line (Config tab) — colour tracks the state:
    info (neutral), ok (listener live), warn (setup missing / restart pending). */
@@ -10364,9 +10126,9 @@ label.cfg-label { cursor: pointer; }
   border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px;
   padding: 6px 16px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9;
 }
-.ra-inline-form button:not(:disabled):hover { border-color: #58a6ff; }
+.ra-inline-form button:not(:disabled):hover { background: var(--ui-bg-hover); }
 .ra-inline-form button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-.ra-inline-form button.primary:not(:disabled):hover { border-color: #58a6ff; }
+.ra-inline-form button.primary:not(:disabled):hover { background: #388bfd; }
 .ra-form-grid { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 10px; }
 .ra-form-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #9aa3b2; }
 .ra-link {
@@ -10897,23 +10659,24 @@ body.wizard nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #f
   display: flex; align-items: center; gap: 6px; margin-bottom: 12px;
 }
 .process-subnav .jobs-subnav { margin: 0; }
-.process-subtab, .process-action {
+.process-subtab, .process-action:where(:not(.ui-btn)) {
   border: 1px solid #30363d; border-radius: 6px; background: #161b22;
   color: #c9d1d9; padding: 6px 12px; cursor: pointer; font: inherit;
   text-decoration: none;
 }
-.process-subtab:hover, .process-action:hover { background: #21262d; border-color: #484f58; }
+.process-subtab:hover, .process-action:where(:not(.ui-btn)):hover { background: var(--ui-bg-hover); }
 .process-subtab.active { color: #fff; background: #1f6feb; border-color: #388bfd; }
-.process-action.primary { color: #fff; background: #238636; border-color: #2ea043; }
-.process-action.primary:hover { background: #2ea043; }
+.process-action:where(:not(.ui-btn)).primary { color: #fff; background: #238636; border-color: #2ea043; }
+.process-action:where(:not(.ui-btn)).primary:hover { background: #2ea043; }
 /* Auto layout + its flow-direction picker read as one segmented control. */
 .process-auto-layout-group { display: inline-flex; align-items: stretch; }
 .process-auto-layout-group > .process-action { border-radius: 0; margin-left: -1px; }
 .process-auto-layout-group > .process-action:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
 .process-auto-layout-group > .process-action:last-child { border-radius: 0 6px 6px 0; }
 .process-auto-layout-group > .process-layout-direction { padding: 6px 7px; min-width: 26px; }
-.process-auto-layout-group > .process-layout-direction.is-active {
-  position: relative; color: #fff; background: #1f6feb33; border-color: #388bfd;
+.process-auto-layout-group > .process-layout-direction:is(.is-active, [aria-pressed="true"]) { position: relative; }
+.process-auto-layout-group > .process-layout-direction:where(:not(.ui-btn)).is-active {
+  color: #fff; background: #1f6feb33; border-color: #388bfd;
 }
 .process-panel { display: none; }
 .process-panel.active { display: block; }
@@ -10931,7 +10694,7 @@ body.wizard #tab-processes .process-scribe-wizard { display: inline; }
 .process-scribe-state.stopped { color: #d29922; }
 .process-scribe-open { border: 0; padding: 0; color: #58a6ff; background: none; font: inherit; cursor: pointer; text-decoration: underline dotted; }
 .process-scribe-open:disabled { color: #8b949e; cursor: default; }
-.process-scribe-session .process-action { padding: 3px 7px; font-size: 12px; }
+.process-scribe-session .process-action:where(:not(.ui-btn)) { padding: 3px 7px; font-size: 12px; }
 .process-scribe-task { color: #79c0ff; font-size: 12px; }
 .process-notice { color: #8b949e; font-size: 12px; }
 .process-list table { width: 100%; border-collapse: collapse; }
@@ -10946,7 +10709,8 @@ body.wizard #tab-processes .process-scribe-wizard { display: inline; }
    (16 + 4px padding x2 + 1px border x2). The icon-only delete button matches
    it with `min-height` rather than inheriting a stretched flex height — keep
    the two numbers in sync. */
-.process-list .process-actions .process-action { padding: 4px 8px; font-size: 12px; line-height: 16px; white-space: nowrap; vertical-align: middle; }
+.process-list .process-actions .process-action { white-space: nowrap; vertical-align: middle; }
+.process-list .process-actions .process-action:where(:not(.ui-btn)) { padding: 4px 8px; font-size: 12px; line-height: 16px; }
 .process-list .process-actions .process-action + .process-action { margin-left: 6px; }
 .process-hash { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #79c0ff; }
 .process-description, .process-secondary { color: #8b949e; font-size: 12px; }
@@ -11762,9 +11526,9 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 }
 .plugin-step-edit-head button:hover,
 .plugin-head > button.primary:hover,
-#sudo-list td > button:where(:not(.ui-btn)):hover { color: #d4d4d4; border-color: #58a6ff; }
+#sudo-list td > button:where(:not(.ui-btn)):hover { color: #d4d4d4; background: var(--ui-bg-hover); }
 .plugin-step-edit-head button.danger:hover,
-#sudo-list td > button.danger:where(:not(.ui-btn)):hover { color: #f85149; border-color: #f85149; }
+#sudo-list td > button.danger:where(:not(.ui-btn)):hover { color: #f85149; background: rgba(248, 81, 73, 0.15); }
 #plugin-modal .cron-create-modal { max-width: 720px; }
 #plugin-modal-steps { max-height: 50vh; overflow-y: auto; }
 
@@ -11883,8 +11647,8 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
   flex: 0 0 auto; font-size: 12px; padding: 2px 7px;
   background: transparent; border: 1px solid #30363d; color: #c9d1d9; border-radius: 5px; cursor: pointer;
 }
-.export-history-item button:hover { border-color: #58a6ff; }
-.export-history-item button.ehi-del:hover { border-color: #f85149; color: #f85149; }
+.export-history-item button:hover { background: var(--ui-bg-hover); }
+.export-history-item button.ehi-del:hover { color: #f85149; background: rgba(248, 81, 73, 0.15); }
 
 /* ═══ Wizard theme (body.wizard) ═════════════════════════════════════
    The 🧙 "it's wizard time" re-skin — activated by ?wizard=1 on the URL
@@ -11964,7 +11728,7 @@ body.wizard .open-prs-age,
 body.wizard .open-pr-meta,
 body.wizard .open-prs-empty { color: #9a86c4; }
 body.wizard .open-prs-filters button { border-color: #4a3d6b; color: #b39ddb; }
-body.wizard .open-prs-filters button:hover { border-color: #7a5db0; color: #e7d9f5; }
+body.wizard .open-prs-filters button:hover { color: #e7d9f5; background: #3a2a63; }
 body.wizard .open-prs-filters button.active {
   border-color: #d9b45a; background: #3a2a63; color: #f3e6c0;
 }
@@ -12007,13 +11771,6 @@ body.wizard .open-prs-confirm-durations legend { color: #9a86c4; }
 body.wizard .open-prs-confirm-pr,
 body.wizard .open-prs-confirm-durations label { color: #e7d9f5; }
 body.wizard .open-prs-confirm-durations input { accent-color: #7a5db0; }
-body.wizard .open-pr-list::-webkit-scrollbar-track,
-body.wizard .open-pr-list::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard .open-pr-list::-webkit-scrollbar-thumb {
-  background: #7a5db0; border-color: #140f28;
-}
-body.wizard .open-pr-list::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
-body.wizard .open-pr-list::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
 /* State pills keep their default fill; a purple/gold/emerald edge makes them
    pop on the violet background (mirrors slop's gold-edge tweak). */
 body.wizard .state-working   { border-color: #a97bd6; }
@@ -12118,7 +11875,6 @@ body.wizard .group-actions button[data-act="power-on-group"] {
 body.wizard #power-on-all-btn:hover,
 body.wizard .group-actions button[data-act="power-on-group"]:hover {
   background: linear-gradient(180deg, #37a374 0%, #1d5540 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 14px rgba(110, 231, 183, 0.85);
 }
 
@@ -12131,7 +11887,6 @@ body.wizard .group-actions button[data-act="shutdown-group"] {
 body.wizard #shutdown-all-btn:hover,
 body.wizard .group-actions button[data-act="shutdown-group"]:hover {
   background: linear-gradient(180deg, #bb5567 0%, #4d2131 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 14px rgba(242, 119, 122, 0.8);
 }
 
@@ -12433,7 +12188,6 @@ body.wizard .spawn-btn {
 }
 body.wizard .spawn-btn:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 14px rgba(169, 123, 214, 0.85);
 }
 
@@ -12527,10 +12281,6 @@ body.wizard #agent-spawn-modal button:where(:not(.ui-btn)):not(#agent-spawn-subm
 }
 body.wizard #agent-spawn-modal button:where(:not(.ui-btn)):not(#agent-spawn-submit):not(.att-remove):hover { background: #3a2a63; }
 body.wizard #agent-spawn-modal .cron-create-sep { border-top-color: rgba(122, 93, 176, 0.4); }
-/* The Summon dialog's own scrollbar goes arcane too — see the shared wizard
-   scrollbar block after the export-agent re-skin, which themes every
-   wizard-reskinned .cron-create-modal dialog (Summon included) in one place. */
-
 /* Spawn = 🔮 Summon! — the submit button re-skinned into a gilded conjuring
    button, the wizard twin of slop's 🎰 PULL! lever. Same mechanism: the
    button's own "Spawn" text is hidden (font-size: 0) and replaced by a
@@ -12659,7 +12409,6 @@ body.wizard #group-settings-modal .cron-create-modal {
   border: 1px solid #7a5db0;
   box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
   color: #e7d9f5;
-  scrollbar-color: #7a5db0 #140f28;
 }
 body.wizard #group-settings-modal .cron-create-modal h3 {
   color: #f3e6c0;
@@ -12951,7 +12700,6 @@ body.wizard #cron-create-open.ui-btn-primary {
 }
 body.wizard #cron-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 
@@ -13195,7 +12943,6 @@ body.wizard .operator-message-overlay .operator-message-modal {
   border: 1px solid #7a5db0;
   box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
   color: #e7d9f5;
-  scrollbar-color: #7a5db0 #140f28;
 }
 body.wizard .operator-message-overlay .operator-message-modal h3 {
   color: #f3e6c0;
@@ -13231,13 +12978,6 @@ body.wizard .operator-message-overlay .operator-message-submit:hover {
   box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
 }
 body.wizard .operator-message-overlay .operator-message-submit:disabled { opacity: 0.6; }
-body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar { width: 10px; height: 10px; }
-body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar-track,
-body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar-thumb {
-  background: #7a5db0; border-radius: 6px; border: 2px solid #140f28;
-}
-body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
 
 /* ─── Wizard invite-hero picker ──────────────────────────────────
    #add-member-modal shares .add-member-modal with the sudo/cron target
@@ -13344,7 +13084,6 @@ body.wizard #group-create-open.ui-btn-primary {
 }
 body.wizard #group-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 
@@ -13621,15 +13360,6 @@ body.wizard #command-palette-modal #palette-input {
 }
 body.wizard #command-palette-modal #palette-input::placeholder { color: #b39ddb; }
 
-/* The results scrollbar follows the spellbook's midnight-violet chrome. */
-body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-track,
-body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-thumb {
-  background: #7a5db0; border-color: #140f28;
-}
-body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
-body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
-
 /* Command rows — parchment label, violet icon + hint. */
 body.wizard #command-palette-modal .palette-item { color: #e7d9f5; }
 body.wizard #command-palette-modal .palette-item .palette-ico,
@@ -13667,7 +13397,7 @@ body.wizard #command-palette-btn {
 body.wizard #command-palette-btn::before {
   content: "📖"; font-size: 11px;
 }
-body.wizard #command-palette-btn:hover { background: #3a2a63; border-color: #d9b45a; }
+body.wizard #command-palette-btn:hover { background: #3a2a63; }
 
 /* ─── Wizard windows button + modal — "Reveal / veil heroes" ─────
    The top-bar 🪟 windows… launcher and the bulk focus/unfocus dialog it
@@ -13688,7 +13418,7 @@ body.wizard .win-label-wizard { display: inline; }
 body.wizard #window-all-btn {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #window-all-btn:hover { background: #3a2a63; border-color: #d9b45a; }
+body.wizard #window-all-btn:hover { background: #3a2a63; }
 
 /* Dialog title copy — a pure-CSS span swap, "Agent windows" → "Heroes'
    windows". The h3 is the dialog's aria-labelledby, and display:none drops the
@@ -14643,40 +14373,6 @@ body.wizard :is(#paf-export-modal, #group-export-modal) button:where(:not(.ui-bt
   opacity: 0.5; cursor: default; box-shadow: none;
 }
 
-/* ─── Wizard dialog scrollbars — the "scroll"-bars go arcane ─────────
-   Every wizard-reskinned .cron-create-modal dialog (Summon a hero /
-   Bind a cron / Form a party / edit a loadout / Scribe a chronicle) scrolls
-   on a violet-void surface, so its scrollbar goes arcane too — a violet thumb
-   with a gilded edge on a #140f28 track, the same "scroll"-bar pun the Messages
-   tab uses. This OVERRIDES the base dark .cron-create-modal scrollbar (defined
-   near the modal's base rule) and covers both the whole-dialog scroll and the
-   dialogs' multiline textareas.
-
-   The :is() list names the re-skinned dialogs by #id — NOT an unscoped
-   `.cron-create-modal`. This is the same positive-per-#id scoping the surface
-   re-skins above follow, collapsed with :is() so the ids don't have to be
-   spelled out as separate rules. All share the #140f28 arcane field palette.
-   Treatment mirrors the mail panes. */
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-modal,
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-row textarea {
-  scrollbar-color: #7a5db0 #140f28;
-}
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-modal::-webkit-scrollbar,
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-row textarea::-webkit-scrollbar { width: 10px; height: 10px; }
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-modal::-webkit-scrollbar-track,
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-row textarea::-webkit-scrollbar-track,
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-modal::-webkit-scrollbar-corner,
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-row textarea::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-modal::-webkit-scrollbar-thumb,
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-row textarea::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #7a5db0, #3a2a63);
-  border: 1px solid #d9b45a; border-radius: 6px;
-}
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-modal::-webkit-scrollbar-thumb:hover,
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-row textarea::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #8f6fca, #4a367d);
-}
-
 /* ─── Wizard edit-agent modal — "Enchant this hero" ─────────────
    The third of the arcane dialog re-skins (Summon a hero / Banish a
    hero / Enchant a hero): the per-agent "+ role" cell and the ⚙
@@ -14923,7 +14619,6 @@ body.wizard #profiles-manage-modal #profile-create-open.ui-btn-primary {
 }
 body.wizard #profiles-manage-modal #profile-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 
@@ -14979,7 +14674,6 @@ body.wizard #links-manage-modal #link-new-open.ui-btn-primary {
 }
 body.wizard #links-manage-modal #link-new-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 body.wizard #links-manage-modal #links-list th,
@@ -15006,7 +14700,6 @@ body.wizard .group-links-section > button {
 }
 body.wizard .group-links-section > button:hover {
   background: #3a2a63;
-  border-color: #d9b45a;
   color: #f3e6c0;
 }
 
@@ -15104,7 +14797,6 @@ body.wizard #templates-manage-modal #template-create-open.ui-btn-primary {
 }
 body.wizard #templates-manage-modal #template-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 
@@ -15824,8 +15516,7 @@ body.wizard :is(#profile-import-modal, #sandbox-profile-import-modal) .profile-t
    the same arcane chrome as the spawn-profile ("loadout") dialogs —
    the sandbox dialog is now their sibling (wizard vocabulary, export/import).
    Each block is scoped to its own id so the shared .manage-modal / .cron-create-
-   modal surfaces on sibling dialogs keep the default chrome; the scrollbar theme
-   is folded into the shared :is() list above. */
+   modal surfaces on sibling dialogs keep the default chrome. */
 
 /* Manage overlay (the ward picker), mirror of #profiles-manage-modal. */
 body.wizard #sandbox-profiles-manage-modal .manage-modal {
@@ -15834,18 +15525,6 @@ body.wizard #sandbox-profiles-manage-modal .manage-modal {
   box-shadow: 0 0 32px rgba(122, 93, 176, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
   color: #e7d9f5;
 }
-@supports not selector(::-webkit-scrollbar) {
-  body.wizard #sandbox-profiles-manage-modal .manage-modal {
-    scrollbar-color: #7a5db0 #140f28;
-  }
-}
-body.wizard #sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-track,
-body.wizard #sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard #sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb {
-  background: #7a5db0; border-color: #140f28;
-}
-body.wizard #sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
-body.wizard #sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
 body.wizard #sandbox-profiles-manage-modal .manage-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -15872,7 +15551,6 @@ body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.ui-btn-p
 }
 body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 body.wizard #sandbox-profiles-manage-modal .template-card {
@@ -16107,7 +15785,6 @@ body.wizard #roles-manage-modal #role-create-open.ui-btn-primary {
 }
 body.wizard #roles-manage-modal #role-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 /* Class cards: violet-framed void, gilt name, violet meta + descr. */
@@ -16309,16 +15986,6 @@ body.wizard #perm-edit-modal .perm-edit-toolbar .perm-edit-filter button:hover {
 /* Slug list: violet frame + dividers, gilt slug label, violet description. */
 body.wizard #perm-edit-modal .perm-edit-list,
 body.wizard #context-features-modal .perm-edit-list { border-color: rgba(122, 93, 176, 0.4); }
-@supports not selector(::-webkit-scrollbar) {
-  body.wizard #perm-edit-modal .perm-edit-list { scrollbar-color: #7a5db0 #140f28; }
-}
-body.wizard #perm-edit-modal .perm-edit-list::-webkit-scrollbar-track,
-body.wizard #perm-edit-modal .perm-edit-list::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard #perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb {
-  background: #7a5db0; border-color: #140f28;
-}
-body.wizard #perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
-body.wizard #perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
 body.wizard #perm-edit-modal .perm-row,
 body.wizard #context-features-modal .perm-row { border-bottom-color: rgba(122, 93, 176, 0.2); }
 body.wizard #perm-edit-modal .perm-row-slug,
@@ -16351,7 +16018,6 @@ body.wizard #context-features-modal .modal-buttons button:is(.primary, .ui-btn-p
 body.wizard #perm-edit-modal .modal-buttons button:is(.primary, .ui-btn-primary):hover,
 body.wizard #context-features-modal .modal-buttons button:is(.primary, .ui-btn-primary):hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 body.wizard #perm-edit-modal .modal-buttons button:is(.primary, .ui-btn-primary):disabled,
@@ -16526,7 +16192,7 @@ body.wizard .filter-bar:not(#costs-spans) button.tool:where(:not(.ui-btn)) {
   background: #241b3d; border-color: #d9b45a; color: #f3e6c0;
 }
 body.wizard .filter-bar:not(#costs-spans) button.tool:where(:not(.ui-btn)):hover {
-  background: #3a2a63; border-color: #f3e6c0; color: #f3e6c0;
+  background: #3a2a63; color: #f3e6c0;
 }
 /* Primary "+ new …" / "+ Grant sudo" levers that lack their own id-scoped
    wizard rule (Parties + Labours already carry gilded overrides above). */
@@ -16538,7 +16204,6 @@ body.wizard .filter-bar button.primary:where(:not(.ui-btn)) {
 }
 body.wizard .filter-bar button.primary:where(:not(.ui-btn)):hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 
@@ -16734,7 +16399,7 @@ body.wizard .jobs-subnav {
   background: #161b22; border: 1px solid #30363d; color: #c9d1d9;
 }
 .trigger-inspector-head button:hover, .trigger-action-editor-head button:hover, .trigger-placeholder-chips button:hover, .trigger-add-actions button:hover {
-  background: #21262d; border-color: #58a6ff;
+  background: #21262d;
 }
 .trigger-action-editor-head button.danger { color: #ff7b72; }
 .trigger-placeholder-chips button { color: #e3a54b; }
@@ -16811,7 +16476,7 @@ body.wizard :is(.trigger-inspector-head button, #trigger-modal .trigger-action-e
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
 body.wizard :is(.trigger-inspector-head button, #trigger-modal .trigger-action-editor-head button, #trigger-modal .trigger-placeholder-chips button, #trigger-modal .trigger-add-actions button, #trigger-modal .modal-buttons button:where(:not(.ui-btn)):not(.primary)):hover {
-  background: #3a2a63; border-color: #f3e6c0;
+  background: #3a2a63;
 }
 body.wizard #trigger-modal .trigger-placeholder-chips button { color: #f0d066; }
 body.wizard #trigger-modal .modal-buttons button:is(.primary, .ui-btn-primary) {
@@ -16885,16 +16550,15 @@ body.wizard .filter-bar-cog .cog-btn {
 }
 /* Reach for the cog — the mechanism winds up: brighter parchment-gold, a
    gold edge, a flare of candle-glow, and the gear whirls fast. */
-body.wizard .filter-bar-cog .cog-btn:hover,
-body.wizard .filter-bar-cog .cog-btn:focus-visible,
-body.wizard .row-actions .cog-btn:hover,
-body.wizard .row-actions .cog-btn:focus-visible,
-body.wizard .group-actions .cog-btn:hover,
-body.wizard .group-actions .cog-btn:focus-visible {
+body.wizard .filter-bar-cog .cog-btn:focus-visible, body.wizard .row-actions .cog-btn:focus-visible, body.wizard .group-actions .cog-btn:focus-visible {
   color: #f3e6c0;
   border-color: #d9b45a;
   text-shadow: 0 0 10px rgba(217, 180, 90, 0.9);
 }
+body.wizard .filter-bar-cog .cog-btn:hover,
+body.wizard .row-actions .cog-btn:hover,
+body.wizard .group-actions .cog-btn:hover { color: #f3e6c0;
+  text-shadow: 0 0 10px rgba(217, 180, 90, 0.9); background: #3a2a63; }
 body.wizard .filter-bar-cog .cog-btn:hover .cog-glyph,
 body.wizard .filter-bar-cog .cog-btn:focus-visible .cog-glyph,
 body.wizard .row-actions .cog-btn:hover .cog-glyph,
@@ -16923,11 +16587,11 @@ body.wizard .row-actions .icon-btn.warn {
   color: #d9b45a;
   border-color: #7a5db0;
 }
-body.wizard .row-actions .icon-btn.warn:hover,
 body.wizard .row-actions .icon-btn.warn:focus-visible {
   color: #f3d98a;
   border-color: #d9b45a;
 }
+body.wizard .row-actions .icon-btn.warn:hover { color: #f3d98a; background: rgba(210, 153, 34, 0.15); }
 body.wizard .row-actions .icon-btn.warn:hover .trash-ico,
 body.wizard .row-actions .icon-btn.warn:focus-visible .trash-ico {
   filter: drop-shadow(0 0 4px rgba(217, 180, 90, 0.9));
@@ -16944,7 +16608,7 @@ body.wizard .action-menu[data-menu-empty]::after {
    The audit table itself keeps its readable dark default, but the [?]
    disclosure is a dialog surface, so it takes the same midnight-violet void +
    mystic-purple frame as the Summon / Bind dialogs rather than staying on the
-   #0d1117 chrome its scrollbars had already left behind. The <pre> bodies stay
+   #0d1117 default chrome. The <pre> bodies stay
    a legible violet-tinted dark so the JSON is still readable. */
 body.wizard .audit-spawn-popover {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
@@ -16969,31 +16633,8 @@ body.wizard .audit-spawn-popover pre {
   border-color: rgba(122, 93, 176, 0.5);
   color: #e7d9f5;
 }
-@supports not selector(::-webkit-scrollbar) {
-  body.wizard .audit-spawn-popover,
-  body.wizard .audit-spawn-popover pre { scrollbar-color: #7a5db0 #140f28; }
-}
-body.wizard .audit-spawn-popover::-webkit-scrollbar,
-body.wizard .audit-spawn-popover pre::-webkit-scrollbar { width: 10px; height: 10px; }
-body.wizard .audit-spawn-popover::-webkit-scrollbar-track,
-body.wizard .audit-spawn-popover pre::-webkit-scrollbar-track,
-body.wizard .audit-spawn-popover::-webkit-scrollbar-corner,
-body.wizard .audit-spawn-popover pre::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard .audit-spawn-popover::-webkit-scrollbar-thumb,
-body.wizard .audit-spawn-popover pre::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #7a5db0, #3a2a63);
-  border: 1px solid #d9b45a; border-radius: 6px;
-}
-body.wizard .audit-spawn-popover::-webkit-scrollbar-thumb:hover,
-body.wizard .audit-spawn-popover pre::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #8f6fca, #4a367d);
-}
 /* The default skin brightens the thumb again while it is dragged; without an
    arcane twin that drag flashes light grey through the violet frame. */
-body.wizard .audit-spawn-popover::-webkit-scrollbar-thumb:active,
-body.wizard .audit-spawn-popover pre::-webkit-scrollbar-thumb:active {
-  background: linear-gradient(180deg, #a98fdc, #5c458f);
-}
 
 /* ═══ Wizard Messages tab — "The Rookery & the Unfurled Scroll" ═══════
    Unlike the rest of the wizard re-skin (which only re-paints chrome and
@@ -17013,31 +16654,12 @@ body.wizard .audit-spawn-popover pre::-webkit-scrollbar-thumb:active {
    purple / gold palette as the rest of the wizard chrome, plus a warm
    parchment + ink palette that only the scroll/broadsheet surfaces use. */
 
-/* ─── The panes: arcane void bodies + "scroll"-bar thumbs ────────────
-   The literal scrollbars go arcane too — a small pun on the theme. */
+/* ─── The panes: arcane void bodies ──────────────────────────────── */
 body.wizard .mail-sidebar,
 body.wizard .mail-list {
   background: linear-gradient(180deg, #1a1233 0%, #140f28 100%);
   border-color: #4a3a6b;
 }
-body.wizard .mail-sidebar::-webkit-scrollbar,
-body.wizard .mail-list::-webkit-scrollbar,
-body.wizard .mail-reader::-webkit-scrollbar { width: 10px; height: 10px; }
-body.wizard .mail-sidebar::-webkit-scrollbar-track,
-body.wizard .mail-list::-webkit-scrollbar-track,
-body.wizard .mail-reader::-webkit-scrollbar-track,
-body.wizard .mail-sidebar::-webkit-scrollbar-corner,
-body.wizard .mail-list::-webkit-scrollbar-corner,
-body.wizard .mail-reader::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard .mail-sidebar::-webkit-scrollbar-thumb,
-body.wizard .mail-list::-webkit-scrollbar-thumb,
-body.wizard .mail-reader::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #7a5db0, #3a2a63);
-  border: 1px solid #d9b45a; border-radius: 6px;
-}
-body.wizard .mail-sidebar::-webkit-scrollbar-thumb:hover,
-body.wizard .mail-list::-webkit-scrollbar-thumb:hover,
-body.wizard .mail-reader::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #8f6fca, #4a367d); }
 /* Empty-state prompts across the three panes read as muted arcane. */
 body.wizard .mail-sidebar .empty,
 body.wizard .mail-list .empty,
@@ -17133,7 +16755,7 @@ body.wizard .mail-row-arrow { color: #9a86c4; }
 body.wizard .mail-dir.in { color: #6ee7b7; }
 body.wizard .mail-dir.out { color: #d9b45a; }
 body.wizard .mail-row-del { color: #9a86c4; }
-body.wizard .mail-row-del:hover { color: #f2777a; border-color: #f2777a; }
+body.wizard .mail-row-del:hover { color: #f2777a; }
 
 /* Per-kind wax seal — the unread dot recoloured + haloed, and the row's
    left edge tinted to match. Read rows keep the default (no seal). Base =
@@ -17162,9 +16784,9 @@ body.wizard .mail-pager {
 body.wizard .mail-bulk-bar button:where(:not(.ui-btn)) {
   background: #241b3d; border-color: #d9b45a; color: #b39ddb;
 }
-body.wizard .mail-bulk-bar button:where(:not(.ui-btn)):hover:not(:disabled) { color: #f3e6c0; border-color: #a97bd6; }
+body.wizard .mail-bulk-bar button:where(:not(.ui-btn)):hover:not(:disabled) { color: #f3e6c0; background: #3a2a63; }
 body.wizard .mail-bulk-bar button:where(:not(.ui-btn)).danger { color: #d8cef0; }
-body.wizard .mail-bulk-bar button:where(:not(.ui-btn)).danger:hover:not(:disabled) { color: #f2777a; border-color: #f2777a; }
+body.wizard .mail-bulk-bar button:where(:not(.ui-btn)).danger:hover:not(:disabled) { color: #f2777a; background: rgba(248, 81, 73, 0.15); }
 body.wizard .mail-folder-actions { border-left-color: #4a3a6b; }
 body.wizard .mail-pager-pos,
 body.wizard .mail-pager-size { color: #b39ddb; }
@@ -17339,18 +16961,16 @@ body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-actions button:w
 body.wizard .mail-reader[data-kind="raven"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):hover,
 body.wizard .mail-reader[data-kind="reply"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):hover,
 body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):hover {
-  background: linear-gradient(180deg, #ecdcae, #d4bd82); border-color: #5f4519;
+  background: linear-gradient(180deg, #ecdcae, #d4bd82);
 }
 body.wizard .mail-reader[data-kind="raven"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover,
 body.wizard .mail-reader[data-kind="reply"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover,
-body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover {
-  color: #a5342e; border-color: #a5342e;
-}
+body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover { color: #a5342e; background: rgba(248, 81, 73, 0.15); }
 body.wizard .mail-reader[data-kind="decree"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
 body.wizard .mail-reader[data-kind="decree"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):hover { background: #3a2a63; }
-body.wizard .mail-reader[data-kind="decree"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover { color: #f2777a; border-color: #f2777a; }
+body.wizard .mail-reader[data-kind="decree"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover { color: #f2777a; background: rgba(248, 81, 73, 0.15); }
 
 /* ─── Wizard config tab — "📜 The Wizard's Almanac" ─────────────────
    The 🧙 re-skin of the Config tab (#tab-config) — the settings-book twin of
@@ -17520,9 +17140,7 @@ body.wizard #tab-config .cfg-status { color: #b39ddb; }
 body.wizard #tab-config .cfg-footer button:not(.primary) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #tab-config .cfg-footer button:not(.primary):not(:disabled):hover {
-  border-color: #f3e6c0;
-}
+body.wizard #tab-config .cfg-footer button:not(.primary):not(:disabled):hover { background: #3a2a63; }
 body.wizard #tab-config .cfg-footer button.primary {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   border: 1px solid #d9b45a; color: #f3e6c0;
@@ -17531,7 +17149,6 @@ body.wizard #tab-config .cfg-footer button.primary {
 }
 body.wizard #tab-config .cfg-footer button.primary:not(:disabled):hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 
@@ -17566,7 +17183,6 @@ body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .modal-buttons 
 }
 body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .modal-buttons button:is(.primary, .ui-btn-primary):hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 
@@ -17960,74 +17576,6 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
 .dock-collapse:hover { color: #58a6ff; border-color: #2a3340; background: #21262d; }
 .dock-body { flex: 1 1 auto; overflow-y: auto; padding: 8px; }
 
-/* The dock body is an independent scroll surface, so it needs the same
-   dashboard scrollbar treatment as the Messages panes. Keep the card-details
-   popover on the same skin when a long profile or role needs to scroll there.
-   Firefox has no ::-webkit-scrollbar surface; the standardized fallback stays
-   behind the feature query so Chromium can use the richer hover treatments. */
-#agent-dock .dock-body,
-#agent-dock .dock-card-details {
-  --dock-scrollbar-track: #0d1117;
-  --dock-scrollbar-corner: #161b22;
-  --dock-scrollbar-thumb-color: #6e7681;
-  --dock-scrollbar-thumb: #6e7681;
-  --dock-scrollbar-thumb-hover: #8b949e;
-  --dock-scrollbar-thumb-active: #b1bac4;
-}
-@supports not selector(::-webkit-scrollbar) {
-  #agent-dock .dock-body,
-  #agent-dock .dock-card-details {
-    scrollbar-width: thin;
-    scrollbar-color: var(--dock-scrollbar-thumb-color) var(--dock-scrollbar-track);
-  }
-}
-#agent-dock .dock-body::-webkit-scrollbar,
-#agent-dock .dock-card-details::-webkit-scrollbar { width: 10px; height: 10px; }
-#agent-dock .dock-body::-webkit-scrollbar-track,
-#agent-dock .dock-card-details::-webkit-scrollbar-track { background: var(--dock-scrollbar-track); }
-#agent-dock .dock-body::-webkit-scrollbar-corner,
-#agent-dock .dock-card-details::-webkit-scrollbar-corner { background: var(--dock-scrollbar-corner); }
-#agent-dock .dock-body::-webkit-scrollbar-thumb,
-#agent-dock .dock-card-details::-webkit-scrollbar-thumb {
-  background: var(--dock-scrollbar-thumb); border-radius: 6px;
-}
-#agent-dock .dock-body::-webkit-scrollbar-thumb:hover,
-#agent-dock .dock-card-details::-webkit-scrollbar-thumb:hover { background: var(--dock-scrollbar-thumb-hover); }
-#agent-dock .dock-body::-webkit-scrollbar-thumb:active,
-#agent-dock .dock-card-details::-webkit-scrollbar-thumb:active { background: var(--dock-scrollbar-thumb-active); }
-
-/* Vegas/slop mode uses the casino's oxblood track and gilded thumb. Cover both
-   the full casino re-skin and the regular-mode Vegas opt-in; the latter still
-   only changes this scrollbar surface, leaving the rest of the dashboard's
-   regular chrome untouched. */
-body.slop #agent-dock .dock-body,
-body.slop #agent-dock .dock-card-details,
-body.vegas #agent-dock .dock-body,
-body.vegas #agent-dock .dock-card-details {
-  --dock-scrollbar-track: #2a0808;
-  --dock-scrollbar-corner: #4a0a0a;
-  --dock-scrollbar-thumb-color: #d4a017;
-  --dock-scrollbar-thumb: linear-gradient(180deg, #d4a017, #8b0000);
-  --dock-scrollbar-thumb-hover: linear-gradient(180deg, #ffe88c, #a31515);
-  --dock-scrollbar-thumb-active: linear-gradient(180deg, #fff0ad, #d4a017);
-}
-
-/* Wizard mode turns the same scroll surfaces into violet "scroll" bars with
-   a gilded edge, matching the wizard Messages and dialog scrollbars. */
-body.wizard #agent-dock .dock-body,
-body.wizard #agent-dock .dock-card-details {
-  --dock-scrollbar-track: #140f28;
-  --dock-scrollbar-corner: #211832;
-  --dock-scrollbar-thumb-color: #7a5db0;
-  --dock-scrollbar-thumb: linear-gradient(180deg, #7a5db0, #3a2a63);
-  --dock-scrollbar-thumb-hover: linear-gradient(180deg, #8f6fca, #4a367d);
-  --dock-scrollbar-thumb-active: linear-gradient(180deg, #a98fdc, #5c458f);
-}
-body.wizard #agent-dock .dock-body::-webkit-scrollbar-thumb,
-body.wizard #agent-dock .dock-card-details::-webkit-scrollbar-thumb {
-  border: 1px solid #d9b45a;
-}
-
 .dock-section { margin-bottom: 12px; }
 .dock-section:last-child { margin-bottom: 0; }
 /* Each section is a <details> now (JOH-388 req 5) — collapsible on its own.
@@ -18086,7 +17634,8 @@ body.wizard #agent-dock .dock-card-details::-webkit-scrollbar-thumb {
 .dock-section-head:has(.dock-card-menu.open) { z-index: 3; }
 /* Processes keeps the .pwf importer mounted for its review dialog; the ⋯
    menu's Import… drives it, so its own button stays hidden. */
-.dock-process-import-hidden { display: none; }
+/* Hidden programmatic trigger; outranks .ui-btn's display. */
+.pwf-import-entry .dock-process-import-hidden { display: none; }
 .dock-section.is-drop-over { outline: 1.5px dashed #58a6ff; outline-offset: 2px; border-radius: 6px; }
 .dock-chip.dock-chip-default { color: #56d364; border-color: #2ea04366; }
 .dock-card-pin { font-size: 10px; margin-right: 3px; }
@@ -18108,7 +17657,8 @@ button.dock-where-pill { cursor: pointer; }
 .dock-where-pill.is-differs { color: #f2cc60; border-color: #f2cc6088; background: #2a2208; }
 .dock-where-pill.is-differs.is-picked { border-color: #f2cc60; box-shadow: 0 0 0 1px #f2cc6066; }
 .dock-where-pill.is-missing { color: #6e7681; border-style: dashed; border-color: #484f58; background: none; }
-button.dock-where-pill.is-missing:hover, button.dock-where-pill.is-missing:focus-visible { color: #79c0ff; border-color: #58a6ff; }
+button.dock-where-pill.is-missing:focus-visible { color: #79c0ff; border-color: #58a6ff; }
+button.dock-where-pill.is-missing:hover { color: #79c0ff; background: var(--ui-bg-hover); }
 .dock-where-pill.is-missing.is-locked { opacity: .7; }
 .dock-card-menu-item.is-locked { opacity: .55; cursor: not-allowed; }
 
@@ -18513,7 +18063,7 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
 }
-.process-fit-button:hover { border-color: var(--pg-accent); background: var(--pg-node-strong); }
+.process-fit-button:hover { background: var(--pg-node-strong); }
 .process-fit-button:focus-visible { outline: 2px solid var(--pg-focus); outline-offset: 2px; }
 
 /* Wizard keeps the same semantic shapes and non-colour state anchors, with a
@@ -18574,69 +18124,6 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
 body.process-solo > header, body.process-solo > #slop-marquee, body.process-solo > nav, body.process-solo > footer,
 body.process-solo .process-subnav, body.process-solo .process-scribe-status, body.process-solo [data-process-close-view],
 body.process-solo #companion-root, body.process-solo #board-overlay-root { display: none !important; }
-/* Actual editor-owned overflow containers carry this marker. */
-.process-scroll-surface {
-  --process-scrollbar-track: #0d1117;
-  --process-scrollbar-thumb: #6e7681;
-  --process-scrollbar-thumb-hover: #8b949e;
-  --process-scrollbar-thumb-active: #b1bac4;
-  --process-scrollbar-corner: #161b22;
-  scrollbar-width: thin;
-  scrollbar-color: var(--process-scrollbar-thumb) var(--process-scrollbar-track);
-}
-body.wizard .process-scroll-surface {
-  --process-scrollbar-track: #181226;
-  --process-scrollbar-thumb: #755da0;
-  --process-scrollbar-thumb-hover: #957ac0;
-  --process-scrollbar-thumb-active: #d4af37;
-  --process-scrollbar-corner: #211832;
-}
-.process-scroll-surface::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-.process-scroll-surface::-webkit-scrollbar-track {
-  background: var(--process-scrollbar-track);
-}
-.process-scroll-surface::-webkit-scrollbar-thumb {
-  min-height: 24px;
-  background: var(--process-scrollbar-thumb);
-  border-radius: 6px;
-}
-.process-scroll-surface::-webkit-scrollbar-thumb:hover {
-  background: var(--process-scrollbar-thumb-hover);
-}
-.process-scroll-surface::-webkit-scrollbar-thumb:active {
-  background: var(--process-scrollbar-thumb-active);
-}
-.process-scroll-surface::-webkit-scrollbar-corner {
-  background: var(--process-scrollbar-corner);
-}
-/* High contrast returns to native geometry/Firefox colors. System keywords
-   provide a safe fallback where Chromium still exposes the pseudo-elements. */
-@media (forced-colors: active) {
-  .process-scroll-surface {
-    scrollbar-width: auto;
-    scrollbar-color: auto;
-    forced-color-adjust: auto;
-  }
-  .process-scroll-surface::-webkit-scrollbar {
-    width: auto;
-    height: auto;
-  }
-  .process-scroll-surface::-webkit-scrollbar-track,
-  .process-scroll-surface::-webkit-scrollbar-corner {
-    background: Canvas;
-  }
-  .process-scroll-surface::-webkit-scrollbar-thumb {
-    background: ButtonText;
-    border: 1px solid Canvas;
-  }
-  .process-scroll-surface::-webkit-scrollbar-thumb:hover,
-  .process-scroll-surface::-webkit-scrollbar-thumb:active {
-    background: Highlight;
-  }
-}
 .process-editor-header {
   display: flex;
   align-items: center;
@@ -18722,7 +18209,7 @@ body.wizard .process-scroll-surface {
 .process-editor-title-input:focus,
 .process-name-input:focus { outline: none; }
 .process-editor-identity { display: inline-flex; align-items: center; min-width: 0; }
-.process-editor .process-action:disabled { opacity: .45; cursor: default; }
+.process-editor .process-action:where(:not(.ui-btn)):disabled { opacity: .45; cursor: default; }
 .process-editor-version { font-size: 12px; }
 .process-editor-dirty { color: #e3a341; font-size: 12px; white-space: nowrap; }
 .process-editor-status { color: #8b949e; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
@@ -18792,7 +18279,7 @@ body.wizard .process-scroll-surface {
 }
 .process-editor-id-input:focus,
 .process-inspector-input:focus,
-.process-inspector-select:focus { border-color: #58a6ff; outline: none; }
+.process-inspector-select:where(:not(.ui-select)):focus { border-color: #58a6ff; outline: none; }
 .process-editor-id-input:disabled { color: #8b949e; }
 /* The id is orientation only, not an editable field. Specificity keeps it muted
    over the later generic .process-inspector-id colour. */
@@ -18893,19 +18380,18 @@ body.wizard .process-scroll-surface {
 .process-palette-card[draggable="false"] { cursor: default; }
 .process-palette-card-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
 .process-palette-card-actions { display: inline-flex; align-items: center; gap: 4px; }
-.process-palette-card-actions button,
-.process-palette-save,
-.process-palette-state button {
+.process-palette-card-actions button:where(:not(.ui-btn)),
+.process-palette-save:where(:not(.ui-btn)),
+.process-palette-state button:where(:not(.ui-btn)) {
   border: 1px solid #30363d; border-radius: 5px; background: #21262d; color: #c9d1d9;
   font: inherit; font-size: 11px; padding: 3px 6px; cursor: pointer;
 }
-.process-palette-card-actions button:hover:not(:disabled),
-.process-palette-save:hover:not(:disabled),
-.process-palette-state button:hover:not(:disabled) { border-color: #58a6ff; color: #f0f6fc; }
-.process-palette-card-actions button:disabled,
-.process-palette-save:disabled { opacity: .45; cursor: default; }
+.process-palette-card-actions button:where(:not(.ui-btn)):hover:not(:disabled),
+.process-palette-save:where(:not(.ui-btn)):hover:not(:disabled),
+.process-palette-state button:where(:not(.ui-btn)):hover:not(:disabled) { color: #f0f6fc; background: var(--ui-bg-hover); }
+.process-palette-card-actions button:where(:not(.ui-btn)):disabled,
+.process-palette-save:where(:not(.ui-btn)):disabled { opacity: .45; cursor: default; }
 .process-palette-manage { width: 24px; padding-inline: 0 !important; }
-.process-palette-delete:hover:not(:disabled) { border-color: #f85149 !important; color: #ff7b72 !important; }
 .process-palette-custom-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .process-palette-state { display: flex; align-items: center; gap: 6px; color: #8b949e; font-size: 11px; line-height: 1.35; margin: 6px 0; }
 .process-palette-state.is-error { color: #ff7b72; }
@@ -19113,7 +18599,7 @@ body.wizard .process-scope-ports { background: #140f28; border-left-color: #4a3d
    padding .process-actions .process-action sets. It sits last in the action
    row behind a small gap so a mis-aimed click lands on "instantiate" rather
    than on an irreversible delete. */
-.process-list .process-actions .process-delete-btn {
+.process-list .process-actions .process-delete-btn:where(:not(.ui-btn)) {
   display: inline-flex; align-items: center; justify-content: center;
   padding: 4px 7px;
   /* Matches the text buttons' 26px border box: the 13px icon alone would
@@ -19124,9 +18610,9 @@ body.wizard .process-scope-ports { background: #140f28; border-left-color: #4a3d
 /* Same (0,4,0) specificity as the generic 6px gap rule up at .process-actions,
    so this wins on source order alone — it must stay below that rule. */
 .process-list .process-actions .process-action + .process-delete-btn { margin-left: 8px; }
-.process-list .process-actions .process-delete-btn:disabled { opacity: .5; cursor: default; }
-.process-list .process-actions .process-delete-btn:hover:not(:disabled) {
-  background: #2d1618; border-color: #f85149;
+.process-list .process-actions .process-delete-btn:where(:not(.ui-btn)):disabled { opacity: .5; cursor: default; }
+.process-list .process-actions .process-delete-btn:where(:not(.ui-btn)):hover:not(:disabled) {
+  background: #2d1618;
 }
 /* Rows are draggable onto the shared bin; dim the source for the gesture the
    same way group-reorder.js dims a dragged group header. */
@@ -19156,12 +18642,15 @@ body.wizard #dnd-trash.dnd-trash-unpin-mode .dnd-trash-label-unpin-wizard { disp
    sigil the group member rows' retire icon wears — tarnished gold at rest,
    flaring to a crimson-gold halo on reach. Deleting a template is destructive
    AND irreversible, so it flares crimson rather than the retire icon's gold. */
-body.wizard .process-list .process-actions .process-delete-btn {
+body.wizard .process-list .process-actions .process-delete-btn:where(:not(.ui-btn)) {
   color: #d9b45a; border-color: #7a5db0;
 }
-body.wizard .process-list .process-actions .process-delete-btn:hover:not(:disabled),
-body.wizard .process-list .process-actions .process-delete-btn:focus-visible {
+body.wizard .process-list .process-actions .process-delete-btn:where(:not(.ui-btn)):focus-visible {
   color: #f3d98a; border-color: #d9b45a;
+  background: linear-gradient(180deg, #3a1826 0%, #241b3d 100%);
+}
+body.wizard .process-list .process-actions .process-delete-btn:where(:not(.ui-btn)):hover:not(:disabled) {
+  color: #f3d98a;
   background: linear-gradient(180deg, #3a1826 0%, #241b3d 100%);
 }
 body.wizard .process-list .process-actions .process-delete-btn:hover:not(:disabled) .trash-ico,
@@ -19331,7 +18820,8 @@ body.wizard .process-list .process-actions .process-delete-btn:focus-visible .tr
 .process-loop-exhausted {
   background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; padding: 3px 6px; font-size: 13px;
 }
-.process-loop-make { color: #e3a341; border-color: #6b5a1e; }
+/* The loop fix keeps its amber warning look on the standard button. */
+.process-loop-make, .ui-btn.process-loop-make { color: #e3a341; border-color: #6b5a1e; }
 .process-issues-list li:has(> .process-loop-make) { display: flex; align-items: center; gap: 6px; }
 .process-issues-list li:has(> .process-loop-make) > .process-issue { width: auto; flex: 1; min-width: 0; }
 .process-issues-list li > .process-loop-make { flex: none; font-size: 12px; padding: 2px 8px; }
@@ -19362,26 +18852,26 @@ body.wizard .process-external-review { color: #e3cf9c; }
 body.wizard .process-external-graph-summary,
 body.wizard .process-external-source-summary { background: rgba(24, 18, 38, .7); border-color: #8b6b38; }
 body.wizard .process-editor-palette { background: #181226; border-color: #4a3d6b; }
-body.wizard .process-editor .process-action,
+body.wizard .process-editor .process-action:where(:not(.ui-btn)),
 body.wizard .process-editor .process-inspector-input {
   background: #2c2042;
   color: #f1e8ff;
   border-color: #4a3d6b;
 }
-body.wizard .process-editor .process-action:hover,
+body.wizard .process-editor .process-action:where(:not(.ui-btn)):hover { background: #3a2a63; }
 body.wizard .process-editor .process-inspector-input:focus { border-color: #d4af37; }
-body.wizard .process-editor .process-action.primary { background: #6d4aa2; border-color: #d4af37; }
-body.wizard .process-editor .process-layout-direction.is-active { background: #4a3270; border-color: #d4af37; color: #ffe9a8; }
+body.wizard .process-editor .process-action:where(:not(.ui-btn)).primary { background: #6d4aa2; border-color: #d4af37; }
+body.wizard .process-editor .process-layout-direction:where(:not(.ui-btn)).is-active { background: #4a3270; border-color: #d4af37; color: #ffe9a8; }
 body.wizard .process-palette-card { background: #2c2042; border-color: #4a3d6b; }
 body.wizard .process-palette-card:hover { border-color: #d4af37; }
 body.wizard .process-palette-card.is-built-in { border-left-color: #8b6fb3; }
 body.wizard .process-palette-card.is-custom { border-left-color: #d4af37; }
-body.wizard .process-palette-card-actions button,
-body.wizard .process-palette-save,
-body.wizard .process-palette-state button { background: #211832; border-color: #6d568f; color: #f3e6c0; }
-body.wizard .process-palette-card-actions button:hover:not(:disabled),
-body.wizard .process-palette-save:hover:not(:disabled),
-body.wizard .process-palette-state button:hover:not(:disabled) { border-color: #d4af37; }
+body.wizard .process-palette-card-actions button:where(:not(.ui-btn)),
+body.wizard .process-palette-save:where(:not(.ui-btn)),
+body.wizard .process-palette-state button:where(:not(.ui-btn)) { background: #211832; border-color: #6d568f; color: #f3e6c0; }
+body.wizard .process-palette-card-actions button:where(:not(.ui-btn)):hover:not(:disabled),
+body.wizard .process-palette-save:where(:not(.ui-btn)):hover:not(:disabled),
+body.wizard .process-palette-state button:where(:not(.ui-btn)):hover:not(:disabled) { background: #3a2a63; }
 body.wizard .process-editor-band { stroke: #d4af37; }
 body.wizard .process-node-chooser {
   color: #e7d9f5; background: #211832; border-color: #d4af37;
@@ -19474,12 +18964,13 @@ body.wizard .process-param-check { color: #f3e6c0; }
 .pni-block-head .spacer { flex: 1; }
 .pni-grip { color: #6e7681; cursor: grab; user-select: none; }
 .pni-block-title { font-weight: 600; font-size: 12.5px; color: #e6edf3; }
-.pni-block-move, .pni-block-remove {
+.pni-block-move:where(:not(.ui-btn)), .pni-block-remove:where(:not(.ui-btn)) {
   background: transparent; border: 1px solid transparent; border-radius: 4px; color: #8b949e;
   font: inherit; font-size: 11px; padding: 0 5px; cursor: pointer;
 }
-.pni-block-move:hover:not(:disabled), .pni-block-remove:hover, .pni-block-move:focus-visible, .pni-block-remove:focus-visible { border-color: #30363d; color: #e6edf3; }
-.pni-block-move:disabled { opacity: .35; cursor: default; }
+.pni-block-move:where(:not(.ui-btn)):hover:not(:disabled), .pni-block-remove:where(:not(.ui-btn)):hover { background: var(--ui-bg-hover); color: #e6edf3; }
+.pni-block-move:where(:not(.ui-btn)):focus-visible, .pni-block-remove:where(:not(.ui-btn)):focus-visible { border-color: #30363d; color: #e6edf3; }
+.pni-block-move:where(:not(.ui-btn)):disabled { opacity: .35; cursor: default; }
 .pni-block-body { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 10px; }
 .pni-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
 .pni-stage-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
@@ -19489,12 +18980,13 @@ body.wizard .process-param-check { color: #f3e6c0; }
 .pni-input-list { margin: 0; padding-left: 16px; font-size: 12px; color: #c9d1d9; }
 .pni-params { margin: 0; font-size: 12px; color: #8b949e; }
 .pni-add { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; border: 1px dashed #30363d; border-radius: 8px; font-size: 12px; color: #8b949e; }
-.pni-add-block { background: transparent; border: 1px solid #30363d; border-radius: 999px; color: #c9d1d9; font: inherit; font-size: 11.5px; padding: 1px 9px; cursor: pointer; }
-.pni-add-block:hover, .pni-add-block:focus-visible { border-color: #58a6ff; }
+.pni-add-block:where(:not(.ui-btn)) { background: transparent; border: 1px solid #30363d; border-radius: 999px; color: #c9d1d9; font: inherit; font-size: 11.5px; padding: 1px 9px; cursor: pointer; }
+.pni-add-block:where(:not(.ui-btn)):hover { background: var(--ui-bg-hover); }
+.pni-add-block:where(:not(.ui-btn)):focus-visible { border-color: #58a6ff; }
 body.wizard .process-node-inspector { background: #140f28; border-left-color: #4a3d6b; }
 body.wizard .pni-block { background: #181226; border-color: #4a3d6b; }
 body.wizard .pni-block-head { border-bottom-color: #4a3d6b; }
-body.wizard .pni-add, body.wizard .pni-add-block { border-color: #4a3d6b; }
+body.wizard .pni-add, body.wizard .pni-add-block:where(:not(.ui-btn)) { border-color: #4a3d6b; }
 @media (max-width: 900px) { .process-node-inspector { width: 280px; } }
 /* Proposal review overlay (E4): another author's saved version painted over
    the live draft. Added = green, changed = amber, removed = red dashed; the
@@ -19545,11 +19037,12 @@ body.wizard .pni-add, body.wizard .pni-add-block { border-color: #4a3d6b; }
 .pdr-verdict { font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; }
 .pdr-verdict.is-accepted { color: #56d364; }
 .pdr-verdict.is-rejected { color: #ff7b72; }
-.pdr-step, .pdr-close {
+.pdr-step:where(:not(.ui-btn)), .pdr-close {
   background: transparent; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9;
   font: inherit; padding: 0 8px; cursor: pointer; line-height: 22px;
 }
-.pdr-step:hover, .pdr-close:hover, .pdr-step:focus-visible, .pdr-close:focus-visible { border-color: #58a6ff; }
+.pdr-step:where(:not(.ui-btn)):hover, .pdr-close:hover { background: var(--ui-bg-hover); }
+.pdr-step:where(:not(.ui-btn)):focus-visible, .pdr-close:focus-visible { border-color: #58a6ff; }
 body.wizard .process-diff-review { background: #160f2c; border-top-color: #7c5cff; }
 body.wizard .pdr-current { background: #181226; border-color: #4a3d6b; }
 
@@ -19583,7 +19076,7 @@ body.wizard .pdr-current { background: #181226; border-color: #4a3d6b; }
 .psd-chip { border: 1px solid #30363d; border-radius: 999px; padding: 1px 8px; font-size: 11.5px; color: #c9d1d9; }
 .psd-chip.is-empty { color: #6e7681; }
 .psd-chip.is-error { color: #ff7b72; border-color: #da3633; }
-.psd-actions .process-action { font-size: 11.5px; }
+.psd-actions .process-action:where(:not(.ui-btn)) { font-size: 11.5px; }
 .psd-log {
   flex: 1; min-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
   border: 1px solid #21262d; border-radius: 8px; padding: 8px; background: #0b0f14;
@@ -19621,7 +19114,7 @@ body.wizard .psd-log { border-color: #4a3d6b; background: #120d1f; }
 .psd-input:focus-visible { outline: 2px solid #58a6ff; outline-offset: -1px; }
 .psd-compose-row { display: flex; align-items: center; gap: 6px; }
 .psd-compose-row .spacer { flex: 1; }
-.process-scribe-action.is-active { border-color: #58a6ff; color: #a5d6ff; }
+.process-scribe-action:where(:not(.ui-btn)).is-active { border-color: #58a6ff; color: #a5d6ff; }
 body.wizard .process-scribe-dock { background: #140f28; border-left-color: #4a3d6b; }
 body.wizard .psd-msg-body { background: #181226; border-color: #4a3d6b; }
 body.wizard .psd-msg.is-human .psd-msg-body { background: #2a1f4f; border-color: #7c5cff; }
@@ -19785,7 +19278,6 @@ body.wizard .process-node-readonly-badge { color: #d4af37; border-color: #d4af37
   flex: 1 1 auto; min-height: 0; overflow: auto;
   contain: layout paint; will-change: scroll-position;
   border: 1px solid #2a3340; border-radius: 5px;
-  scrollbar-width: thin; scrollbar-color: #3a4553 #0d1117;
 }
 .spawn-harness-matrix { width: max-content; min-width: 100%; table-layout: fixed; }
 .spawn-harness-matrix col.spawn-harness-axis { width: 180px; }
@@ -19831,7 +19323,6 @@ body.wizard #spawn-harness-policy-modal .manage-intro,
 body.wizard #spawn-harness-policy-modal .empty { color: #b39ddb; }
 body.wizard #spawn-harness-policy-modal .spawn-harness-matrix-wrap {
   border-color: rgba(122, 93, 176, 0.55);
-  scrollbar-color: #5a4385 #140f28;
 }
 body.wizard #spawn-harness-policy-modal .spawn-harness-matrix th {
   background: #1c1436; color: #d9b45a;
@@ -20104,13 +19595,9 @@ body.wizard .usage-history-error { color: #f0a3bf; }
 .git-repos-toolbar input { flex: 1; min-width: 0; background: #101720; color: #d4d4d4; border: 1px solid #354356; border-radius: 5px; padding: 8px 10px; }
 .git-repos-list {
   min-height: 44px; max-height: 352px; overflow: auto; flex: 0 1 auto;
-  scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117;
+  scrollbar-gutter: stable;
   border: 1px solid #2d3947; border-radius: 6px;
 }
-.git-repos-list::-webkit-scrollbar { width: 8px; height: 8px; }
-.git-repos-list::-webkit-scrollbar-track { background: #0d1117; }
-.git-repos-list::-webkit-scrollbar-thumb { background: #6e7681; border-radius: 5px; }
-.git-repos-list::-webkit-scrollbar-thumb:hover { background: #8b949e; }
 .git-repo-entry + .git-repo-entry { border-top: 1px solid #2d3947; }
 .git-repo-row { display: flex; align-items: center; height: 44px; gap: 10px; padding: 5px 10px; cursor: pointer; }
 .git-repo-name { flex: 1; min-width: 0; }
@@ -20134,10 +19621,7 @@ body.wizard .usage-history-error { color: #f0a3bf; }
 body.wizard .git-repositories-modal { background: #1c162c; border-color: #51406b; color: #e7d9f5; }
 body.wizard .git-repos-heading h3 { color: #f0e3c9; font-family: Georgia, serif; }
 body.wizard .git-repos-options, body.wizard .git-repos-toolbar input { background: #140f28; border-color: #51406b; color: #e7d9f5; }
-body.wizard .git-repos-list { scrollbar-color: #7a5db0 #140f28; border-color: #483758; }
-body.wizard .git-repos-list::-webkit-scrollbar-track { background: #140f28; }
-body.wizard .git-repos-list::-webkit-scrollbar-thumb { background: #7a5db0; }
-body.wizard .git-repos-list::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
+body.wizard .git-repos-list { border-color: #483758; }
 body.wizard .git-repo-entry + .git-repo-entry, body.wizard .git-repos-footer { border-color: #443353; }
 body.wizard .git-repositories-modal input[type=checkbox] { accent-color: #a97bd6; }
 body.wizard .git-repositories-modal button:where(:not(.ui-btn)) { background: #30253f; border-color: #655080; color: #e7d9f5; }
@@ -20304,7 +19788,7 @@ html.scope-fused #messages-root { display: none !important; }
 /* node-select.js: the one node selector (tcl-vwuc0b), rows styled like the top bar's node popover. */
 .node-select { position: relative; display: inline-block; max-width: 100%; }
 .node-select-button { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; box-sizing: border-box; padding: 3px 8px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #c9d1d9; font-size: 11.5px; cursor: pointer; }
-.node-select-button:hover { border-color: #8b949e; }
+.node-select-button:hover { background: var(--ui-bg-hover); }
 .node-select-button.narrowed { border-color: #1f6feb; background: #1f6feb22; }
 .node-select-button:disabled { opacity: .6; cursor: not-allowed; }
 .node-select-label { color: #7d8590; }
@@ -20547,7 +20031,7 @@ html.remote-node body::before {
 .rnp-foot button {
   font: inherit; font-size: 11px; color: #58a6ff; background: transparent; border: 1px solid #30363d; border-radius: 4px; padding: 1px 8px; cursor: pointer;
 }
-.rnp-foot button:hover { border-color: #58a6ff; }
+.rnp-foot button:hover { background: var(--ui-bg-hover); }
 .rnp-ask {
   background: none; border: 0; padding: 0 2px; color: #58a6ff; font: inherit; font-size: 11px; cursor: pointer;
 }
@@ -20681,7 +20165,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 /* Themed base for plain buttons on the Fleet pages and their dialogs; :where
    keeps it below every class rule (subtabs, cells, links, modal buttons). */
 :where(.fleet-admin, [id^="fleet-"]) button:where(:not(.ui-btn)) { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 5px; padding: 3px 10px; font: 12px system-ui, sans-serif; cursor: pointer; }
-:where(.fleet-admin, [id^="fleet-"]) button:where(:not(.ui-btn)):where(:hover:not(:disabled)) { border-color: #58a6ff; }
+:where(.fleet-admin, [id^="fleet-"]) button:where(:not(.ui-btn)):where(:hover:not(:disabled)) { background: var(--ui-bg-hover); }
 :where(.fleet-admin, [id^="fleet-"], #launch-target) :where(select, textarea, input:not([type="checkbox"]):not([type="radio"])) { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 2px 6px; font: inherit; color-scheme: dark; }
 :where(.fleet-admin, [id^="fleet-"], #launch-target) :where(select, textarea, input):where(:disabled) { opacity: 0.6; }
 :where(.fleet-admin, [id^="fleet-"], #launch-target) :where(button, select, textarea, input, a):where(:focus-visible) { outline: 2px solid #58a6ff; outline-offset: 1px; }
@@ -21095,7 +20579,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .remote-viewers-badge.term-viewers-badge { flex: none; margin-left: 0; font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid #30363d; }
 .remote-viewers-badge.term-viewers-badge.typing { border-color: #9e6a03; }
 #remote-sessions button[data-open] { background: #21262d; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; cursor: pointer; padding: 2px 10px; font: inherit; font-size: 12px; }
-#remote-sessions button[data-open]:hover { border-color: #58a6ff; }
+#remote-sessions button[data-open]:hover { background: var(--ui-bg-hover); }
 #remote-sessions button[data-open="interactive"] { border-color: #9e6a03; color: #d29922; }
 
 /* Other own nodes' human inbox (tcl-99b5ir): unread notifications and pending
@@ -21223,7 +20707,6 @@ body.wizard .groups-processes-placeholder-glyph { color: #d4af37; }
 .gp-member.is-waiting { box-shadow: 0 0 0 2px #ff7b72; }
 .gp-member.is-offline .gp-member-glyph { opacity: .35; }
 .gp-run-controls .group-actions button:disabled { opacity: .4; cursor: default; }
-.gp-run-controls .group-actions button:disabled:hover { border-color: #2a3340; }
 .gp-strip-text { color: #8b949e; font-size: 11px; }
 .gp-card { background: #161b22; border: 1px solid #2a3340; border-radius: 10px; margin: 0 0 10px 18px; }
 .gp-card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-bottom: 1px solid #2a3340; }
@@ -21337,7 +20820,7 @@ body.wizard .gp-group-name, body.wizard .gp-card-name { color: #f3e6c0; }
 body.wizard .gp-member.busy { box-shadow: 0 0 0 2px #a97bd6; }
 body.wizard .gp-member-count { background: #2c2248; color: #e7d9f5; box-shadow: 0 0 0 1.5px #0f0a1f; }
 .gp-start, .gp-start-form button, .gp-start-form select { font: inherit; font-size: 12px; border: 1px solid #30363d; border-radius: 6px; padding: 3px 10px; background: #21262d; color: #e6edf3; cursor: pointer; }
-.gp-start:hover, .gp-start-form button:hover:not(:disabled) { border-color: #58a6ff; }
+.gp-start:hover, .gp-start-form button:not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
 .gp-start-form button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
 .gp-start-form button:disabled { opacity: .55; cursor: default; }
 .gp-start-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px 18px; padding: 8px 12px; border: 1px solid #2a3340; border-radius: 8px; background: #11161d; }
@@ -21380,8 +20863,12 @@ body.wizard .gp-start-form button.primary { background: #3a2f16; border-color: #
 .gq-spacer { flex: 1; }
 .gq-chip, .gq-btn, .gq-link { font: inherit; font-size: 12px; cursor: pointer; }
 .gq-chip, .gq-btn { border: 1px solid #30363d; border-radius: 6px; padding: 3px 10px; background: #21262d; color: #e6edf3; }
-.gq-chip:hover, .gq-btn:hover:not(:disabled) { border-color: #58a6ff; }
+.gq-chip:hover, .gq-btn:not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
 .gq-btn.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+/* Area primaries keep their own colour on hover and brighten it a step (the
+   one hover style); the neutral area hovers above skip them. */
+:is(.mail-decision, .message-action, .human-notification-drawer-actions, .paf-flagged-actions, .paf-row-buttons, .gp-start-form) button:is(.primary, .companion-primary):hover:not(:disabled),
+.gq-btn.primary:hover:not(:disabled) { filter: brightness(1.2); }
 .gq-btn:disabled { opacity: .55; cursor: default; }
 .gq-btn.primary:disabled { opacity: 1; background: #21262d; border-color: #30363d; color: #8b949e; }
 .gq-link { background: transparent; border: 0; padding: 0; color: #58a6ff; }
@@ -21420,7 +20907,8 @@ body.wizard .gq-step:hover .gq-decides { color: #d4af37; }
 .gq-res.waits, .gq-whonow li.waits span { color: #e3b341; }
 .gq-row-act { display: flex; flex-direction: column; gap: 2px; }
 .gq-row-act button { font: inherit; font-size: 11px; line-height: 1; padding: 2px 5px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #8b949e; cursor: pointer; }
-.gq-row-act button:hover:not(:disabled), .gq-row-act button:focus-visible { border-color: #30363d; color: #e6edf3; }
+.gq-row-act button:focus-visible { border-color: #30363d; color: #e6edf3; }
+.gq-row-act button:hover:not(:disabled) { color: #e6edf3; background: var(--ui-bg-hover); }
 .gq-row-act button:disabled { opacity: .35; cursor: default; }
 .gq-problem, .gq-problems, .gq-error { font-size: 11.5px; color: #ff7b72; }
 .gq-problems, .gq-error { margin-top: 8px; }
@@ -21900,7 +21388,8 @@ body.wizard #saved-prompts-manage-modal .modal-buttons { border-top-color: rgba(
 .pwf-replace input { flex: none; width: auto; margin: 0; }
 .pwf-roles li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .pwf-role-map, .pwf-group { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
-.pwf-role-map select, .pwf-group select { width: auto; max-width: 260px; padding: 2px 6px; font-size: 12.5px; }
+.pwf-role-map select, .pwf-group select { width: auto; max-width: 260px; }
+.pwf-role-map select:where(:not(.ui-select)), .pwf-group select:where(:not(.ui-select)) { padding: 2px 6px; font-size: 12.5px; }
 .pwf-role-unknown { font-size: 11.5px; color: #f2cc60; }
 body.wizard .pwf-import-dialog { background: #211832; border-color: #6d5695; color: #f3e6c0; }
 

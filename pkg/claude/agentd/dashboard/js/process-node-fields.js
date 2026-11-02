@@ -44,7 +44,7 @@ export function NodeField({
   const Tag = multiline ? 'textarea' : 'input';
   return html`<label class="field process-node-field" title=${hint || undefined}>
     <span class="process-node-field-label">${label}</span>
-    <${Tag} ref=${input} class=${multiline ? 'process-node-textarea process-scroll-surface' : 'process-node-input'}
+    <${Tag} ref=${input} class=${multiline ? 'process-node-textarea' : 'process-node-input'}
       type=${multiline ? undefined : 'text'} rows=${multiline ? 3 : undefined}
       spellcheck="false" placeholder=${placeholder} disabled=${readOnly} autofocus=${autofocus}
       value=${raw} aria-invalid=${invalid ? 'true' : undefined} data-node-field=${fieldKey}
