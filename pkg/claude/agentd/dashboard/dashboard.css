@@ -4706,18 +4706,18 @@ details.cost-filter-menu[open] > summary::before { content: none; }
   display: inline-flex; gap: 4px; opacity: 0.4; position: relative;
 }
 tr:hover .row-actions { opacity: 1; }
-.row-actions button {
+.row-actions button:where(:not(.ui-menu-item)) {
   background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
   color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
   font-family: inherit;
 }
-.row-actions button:hover { color: #d4d4d4; border-color: #58a6ff; }
-.row-actions button.danger:hover { color: #f85149; border-color: #f85149; }
-.row-actions button.warn:hover { color: #d29922; border-color: #d29922; }
+.row-actions button:where(:not(.ui-menu-item)):hover { color: #d4d4d4; border-color: #58a6ff; }
+.row-actions button:where(:not(.ui-menu-item)).danger:hover { color: #f85149; border-color: #f85149; }
+.row-actions button:where(:not(.ui-menu-item)).warn:hover { color: #d29922; border-color: #d29922; }
 /* A disabled row button (focus/hide on an offline agent) stays
    visible but dim and non-interactive — no hover highlight. */
-.row-actions button:disabled { color: #484f58; cursor: not-allowed; }
-.row-actions button:disabled:hover { color: #484f58; border-color: #2a3340; }
+.row-actions button:where(:not(.ui-menu-item)):disabled { color: #484f58; cursor: not-allowed; }
+.row-actions button:where(:not(.ui-menu-item)):disabled:hover { color: #484f58; border-color: #2a3340; }
 /* The status dot + the focus/hide/⚙ cluster share the row's first
    cell (.agent-ctl) so the controls sit together — no empty gap from
    the dot living in its own column. */
@@ -4920,7 +4920,7 @@ details[open] > summary .group-actions { opacity: 1; }
 .group-header-actions .group-actions,
 .group-header-actions .spawn-btn { opacity: 1; margin-left: 0; }
 .group-header-actions .group-actions { margin-left: 4px; }
-.group-actions button {
+.group-actions button:where(:not(.ui-menu-item)) {
   background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
   color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
   font-family: inherit;
@@ -5012,9 +5012,9 @@ details[open] > summary .group-actions { opacity: 1; }
     opacity: 0;
   }
 }
-.group-actions button:hover { color: #d4d4d4; border-color: #58a6ff; }
-.group-actions button.danger:hover { color: #f85149; border-color: #f85149; }
-.group-actions button.warn:hover { color: #d29922; border-color: #d29922; }
+.group-actions button:where(:not(.ui-menu-item)):hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-actions button:where(:not(.ui-menu-item)).danger:hover { color: #f85149; border-color: #f85149; }
+.group-actions button:where(:not(.ui-menu-item)).warn:hover { color: #d29922; border-color: #d29922; }
 /* The spawn button — the primary "add an agent to this group" CTA.
    Sits as a SIBLING of .group-actions (not inside it) so its style
    stays distinct: blue-accent skin matching filter-bar .primary so it
@@ -5080,42 +5080,18 @@ body.wizard .subgroup-btn .subgroup-ico { display: none; }
 }
 .filter-bar-cog .cog-btn:hover { color: #ffb52e; border-color: #e3a008; }
 .action-menu {
-  display: none; position: absolute; top: 100%; z-index: var(--z-popover);
-  margin-top: 4px; min-width: 150px; flex-direction: column; gap: 4px;
-  padding: 6px; background: #0d1117; border: 1px solid #2a3340;
-  border-radius: 6px; box-shadow: 0 8px 24px rgba(1, 4, 9, 0.85);
+  position: absolute; top: 100%; z-index: var(--z-popover);
+  margin-top: 4px; min-width: 150px;
 }
-/* Row actions sit in the row's first cell, near the table's left
-   edge, so the menu opens rightward; the group cog sits at the right
-   end of the summary, so its menu opens leftward — each stays
-   on-screen. */
+/* The panel and its rows are the standard .ui-menu.ui-sm (ui.css); this places
+   it and opens it. */
+.action-menu:not(.open) { display: none; }
 .row-actions .action-menu { left: 0; }
 .group-actions .action-menu { right: 0; }
 /* The filter-bar cog sits at the far right end of the filter bar
    — right-align so the menu drops back to the LEFT instead of
    overflowing past the page edge. */
 .filter-bar-cog .action-menu { right: 0; }
-.action-menu.open { display: flex; }
-.action-menu button { width: 100%; text-align: left; }
-/* Hairline divider between the cog menu's semantic groups
-   (inspect & reach / configure / lifecycle / remove-destroy). Inert
-   full-width flex row — emitted by joinMenuGroups (helpers.js); the
-   parent's 4px gap gives it breathing room either side. */
-.action-menu .menu-sep {
-  height: 1px; margin: 0; padding: 0; border: 0;
-  background: #2a3340; flex: 0 0 auto;
-}
-/* The filter-bar cog's menu items dispatch via id-bound listeners
-   (modal-templates.js, modal-message.js) rather than the data-act
-   handler, so they don't inherit the .row-actions / .group-actions
-   button skin. Stamp the same chrome here so the items read as
-   menu rows, not raw <button>s. */
-.filter-bar-cog .action-menu button {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
-  color: #c9d1d9; cursor: pointer; padding: 5px 10px; font-size: 12px;
-  font-family: inherit;
-}
-.filter-bar-cog .action-menu button:hover { color: #d4d4d4; border-color: #58a6ff; }
 /* Flip above the cog when opening downward would run off the viewport
    bottom — the toggle handler measures the menu and sets this. */
 .action-menu.opens-up { top: auto; bottom: 100%; margin: 0 0 4px; }
@@ -5128,14 +5104,7 @@ body.wizard .subgroup-btn .subgroup-ico { display: none; }
    The four data-menu-* attributes below are written ONLY by menu-filter.js and
    are declared by no vnode, so applying a filter to a Preact-rendered menu
    cannot collide with a snapshot re-render. */
-.action-menu-filter {
-  flex: 0 0 auto; box-sizing: border-box; width: 100%; min-width: 0;
-  margin: 0 0 2px; padding: 4px 8px;
-  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
-  color: #c9d1d9; font-family: inherit; font-size: 12px;
-}
-.action-menu-filter::placeholder { color: #6e7681; }
-.action-menu-filter:focus { outline: none; border-color: #58a6ff; }
+.action-menu-filter { flex: 0 0 auto; width: 100%; }
 /* Items the live query excludes, plus — while any query is live — the
    separators, because with an arbitrary subset showing, the semantic grouping
    they divide no longer describes what is on screen. */
@@ -5146,15 +5115,9 @@ body.wizard .subgroup-btn .subgroup-ico { display: none; }
 .action-menu [data-menu-match-priority="1"] { order: 1; }
 .action-menu [data-menu-match-priority="2"] { order: 2; }
 /* One cursor shared by mouse and keyboard: menu-filter.js moves this marker on
-   hover as well, so a pointer and an ↑/↓ cursor can never light two rows at
-   once. It marks the row with a BACKGROUND only — same as .palette-item.selected
-   — and deliberately sets neither `color` nor `border-color`, so a .danger /
-   .warn item keeps the red or amber text AND edge that mark it destructive.
-   (Setting the border here would tie with the existing :hover rules on
-   specificity and win on source order, quietly turning the "delete" row's red
-   edge blue on plain hover.) Nothing else paints this background, so no
-   per-cog specificity dance is needed. */
-.action-menu button[data-menu-active] { background: #1f6feb33; }
+   hover as well, so a pointer and an ↑/↓ cursor never light two rows at once.
+   .ui-menu-item paints it as its hover (ui.css), and a danger or warn row keeps
+   its colour under it. */
 /* A query that matches nothing still has to say so — the menu would otherwise
    collapse to an empty box. Generated content keeps this out of both owners'
    markup (the static toolbar cog has no renderer to add an empty row). */
@@ -16968,52 +16931,9 @@ body.wizard .row-actions .icon-btn.warn:focus-visible .trash-ico {
   filter: drop-shadow(0 0 4px rgba(217, 180, 90, 0.9));
 }
 
-/* The cog's dropdown — the little "spell list" of collected actions —
-   gets the arcane-panel treatment: a violet-void fill, a tarnished-gold
-   edge and a mystic-purple halo. Covers all three cogs' menus. */
-body.wizard .action-menu {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border-color: #7a5db0;
-  box-shadow: 0 8px 24px rgba(10, 6, 24, 0.9), 0 0 12px rgba(169, 123, 214, 0.3);
-}
-body.wizard .action-menu .menu-sep { background: #3a2a63; }
-/* Every spell in the list wears the same violet-void skin at rest so all
-   three cog menus read as one arcane grimoire. The filter-bar items carry
-   their own chrome (they dispatch via id-bound listeners, not the shared
-   button skin); the row/group items reuse the .row-actions / .group-actions
-   dark button skin — without this they'd sit as an unthemed default-dark
-   island inside the arcane panel. A :not(:disabled) guard leaves a disabled
-   item (e.g. the offline agent's "summary…" export) its dimmed default so it
-   still reads as an unavailable spell. */
-body.wizard .filter-bar-cog .action-menu button,
-body.wizard .row-actions .action-menu button:not(:disabled),
-body.wizard .group-actions .action-menu button:not(:disabled) {
-  background: #241b3d; border-color: #3a2a63; color: #e7d9f5;
-}
-/* Reach for a spell (hover) and its edge lights gold instead of the base
-   blue — the shared gild for all three menus. */
-body.wizard .filter-bar-cog .action-menu button:hover,
-body.wizard .row-actions .action-menu button:hover,
-body.wizard .group-actions .action-menu button:hover {
-  color: #f3e6c0; border-color: #d9b45a;
-}
-/* Naming an intent in the grimoire — the filter box and its cursor take the
-   same violet-void fill and gold gild as the spells they sift, and the
-   empty-result note re-letters to match the Spellbook's "No such incantation". */
-body.wizard .action-menu-filter {
-  background: #140f28; border-color: #3a2a63; color: #e7d9f5;
-}
-body.wizard .action-menu-filter::placeholder { color: #9a86c4; }
-body.wizard .action-menu-filter:focus { border-color: #d9b45a; }
-/* Keep each selector at least as specific as its resting-item rule above.
-   The row/group rules include :not(:disabled), so the generic active selector
-   lost the cascade there: keyboard navigation moved the cursor, but its
-   highlight stayed hidden under the resting violet background. */
-body.wizard .filter-bar-cog .action-menu button[data-menu-active],
-body.wizard .row-actions .action-menu button[data-menu-active],
-body.wizard .group-actions .action-menu button[data-menu-active] {
-  background: rgba(122, 93, 176, 0.3);
-}
+/* The cog menus take the wizard skin from the standard .ui-menu variables
+   (ui.css); only the empty-result note re-letters to match the Spellbook's
+   "No such incantation". */
 body.wizard .action-menu[data-menu-empty]::after {
   content: 'no such deed in this tome'; color: #b39ddb;
 }
@@ -20735,7 +20655,6 @@ body.wizard .drop-landing { --dl: 188, 140, 255; }
 @keyframes drop-landed-fade { 0% { opacity: 1; } 100% { opacity: 0; } }
 tr.away-placeholder .away-recall { font-style: normal; margin-left: 8px; font-size: 11px; padding: 0 6px; border: 1px solid #3fb950; border-radius: 4px; background: transparent; color: #3fb950; cursor: pointer; }
 /* ⚙ menu section label ("send elsewhere", tcl-o9d5d9). */
-.action-menu .menu-section-label { padding: 4px 10px 2px; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: #6e7681; }
 /* Launch-target dialog (launch-target-dialog.js): a mode segment, the fields
    on the left and what carries over on the right. */
 #launch-target { min-width: min(760px, 94vw); }

@@ -119,15 +119,15 @@ export function CompanionCog({ sections, children = null }) {
   return html`<span ref=${rootRef} class="companion-cog">
     <button ref=${buttonRef} type="button" class="companion-cog-button" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
       aria-label="More actions" title="More actions" onClick=${() => setOpen((value) => !value)}>⚙</button>
-    <div ref=${menuRef} class=${`action-menu companion-cog-menu${open ? ' open' : ''}`} role="menu"
+    <div ref=${menuRef} class=${`ui-menu ui-sm action-menu companion-cog-menu${open ? ' open' : ''}`} role="menu"
       onPointerDown=${(event) => event.stopPropagation()}>
-      <input ref=${filterRef} class="action-menu-filter" type="text" autocomplete="off" spellcheck=${false} role="combobox"
+      <input ref=${filterRef} class="ui-input ui-sm action-menu-filter" type="text" autocomplete="off" spellcheck=${false} role="combobox"
         aria-expanded="true" aria-autocomplete="list" aria-label="Filter actions"
         placeholder=${isWizardActive() ? MENU_FILTER_WIZARD_PLACEHOLDER : MENU_FILTER_PLACEHOLDER} value=${query}
         onInput=${(event) => setQuery(event.currentTarget.value)}
         onKeyDown=${(event) => handleMenuFilterKeyDown(menuRef.current, event, { hasQuery: !!query, clearQuery: () => setQuery('') })} />
       ${sections.map((section) => html`<div key=${section.title} class="companion-cog-head" role="separator">${section.title}</div>
-        ${section.items.map((item) => html`<button key=${item.key} type="button" role="menuitem" class=${`companion-cog-item ${item.className || ''}${item.danger ? ' danger' : ''}`}
+        ${section.items.map((item) => html`<button key=${item.key} type="button" role="menuitem" class=${`ui-menu-item companion-cog-item ${item.className || ''}${item.danger ? ' ui-btn-danger' : ''}`}
           disabled=${!!item.disabled} aria-label=${item.ariaLabel} title=${item.title || null} onClick=${() => choose(item)}>
           <span class="companion-cog-glyph" aria-hidden="true">${item.glyph}</span><span class="companion-cog-label">${item.label}</span>${item.hint && html`<span class="companion-cog-hint">${item.hint}</span>`}
         </button>`)}`)}

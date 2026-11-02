@@ -93,17 +93,20 @@ export function Seg({ class: extra, className, domRef, children, ...rest }) {
 }
 
 // Menu: the panel only; its owner positions it and opens and closes it.
-export function Menu({ class: extra, className, domRef, children, ...rest }) {
-  return html`<div role="menu" ...${rest} ref=${domRef} class=${join('ui-menu', extra, className)}>${children}</div>`;
+// size="sm" packs the rows of a long action menu.
+export function Menu({ size, class: extra, className, domRef, children, ...rest }) {
+  return html`<div role="menu" ...${rest} ref=${domRef} class=${join('ui-menu', size === 'sm' && 'ui-sm', extra, className)}>${children}</div>`;
 }
 
-export function MenuItem({ danger, type = 'button', class: extra, className, domRef, children, ...rest }) {
+// MenuItem: danger for what cannot be undone, warn for what is reversible but
+// disruptive.
+export function MenuItem({ danger, warn, type = 'button', class: extra, className, domRef, children, ...rest }) {
   return html`<button
     role="menuitem"
     ...${rest}
     ref=${domRef}
     type=${type}
-    class=${join('ui-menu-item', danger && 'ui-btn-danger', extra, className)}
+    class=${join('ui-menu-item', danger && 'ui-btn-danger', warn && !danger && 'ui-menu-warn', extra, className)}
   >${children}</button>`;
 }
 

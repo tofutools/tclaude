@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { MenuItem } from './ui-components.js';
 import { UsageProfileChip } from './usage-profile-chip.js';
 import {
   applySort, tableSortState, RETIRED_COLS, RETIRED_ACCESSORS,
@@ -140,7 +141,7 @@ function GroupAttachment({ group, actions, placement }) {
 }
 
 function MenuButton({ regular, wizard = regular, className, ...props }) {
-  return h('button', { role: 'menuitem', class: className || undefined, ...props },
+  return h(MenuItem, { danger: className === 'danger', warn: className === 'warn', ...props },
     h(ThemeText, { regular, wizard }));
 }
 
@@ -201,7 +202,7 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
       regular=${contextLength ? `📋 startup context (${contextLength} chars)…` : '📋 set startup context…'}
       wizard=${contextLength ? `📜 party lore (${contextLength} chars)…` : '📜 inscribe party lore…'}
     />
-    <button role="menuitem" ...${shared} data-act="set-default-spawn-group"
+    <${MenuItem} ...${shared} data-act="set-default-spawn-group"
       data-enabled=${defaultSpawnGroup ? '1' : '0'}
       disabled=${!group.default_cwd && !defaultSpawnGroup}
       title=${defaultSpawnGroup
@@ -209,13 +210,13 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
         : group.default_cwd
           ? 'Use this group when bare tclaude finds multiple groups for the same directory. Selecting it clears the previous default.'
           : 'Set a default spawn directory before making this the directory auto-join default.'}
-    >${defaultSpawnGroup ? '★ directory auto-join default' : '☆ make directory auto-join default'}</button>
-    <button role="menuitem" ...${shared} data-act="set-group-permissions" title=${wizardMode ? 'Bestow party boons on every hero in this party. Membership changes take effect immediately; a personal binding against one still wins.' : 'Grant permissions to every current member of this group. Membership changes take effect immediately; an agent-level Deny still wins.'}>🔑 <span class="group-perms-word-regular">group permissions</span><span class="group-perms-word-wizard">party boons</span>${group.permissions?.length ? ` (${group.permissions.length})` : ''}…</button>
+    >${defaultSpawnGroup ? '★ directory auto-join default' : '☆ make directory auto-join default'}<//>
+    <${MenuItem} ...${shared} data-act="set-group-permissions" title=${wizardMode ? 'Bestow party boons on every hero in this party. Membership changes take effect immediately; a personal binding against one still wins.' : 'Grant permissions to every current member of this group. Membership changes take effect immediately; an agent-level Deny still wins.'}>🔑 <span class="group-perms-word-regular">group permissions</span><span class="group-perms-word-wizard">party boons</span>${group.permissions?.length ? ` (${group.permissions.length})` : ''}…<//>
     <${MenuButton} ...${shared} data-act="spawn-harness-policy" title=${wizardMode ? 'Set party wards for which realms may summon heroes into other realms' : 'Set group overrides for which harnesses may spawn agents on other harnesses'} regular="⇄ cross-harness spawns…" wizard="⇄ cross-realm summons…" onClick=${() => actions.openSpawnHarnessPolicy(group)} />
     <${MenuButton} ...${shared} data-act="toggle-group-notify" data-enabled=${notify ? '1' : '0'} title=${notifyTitle} regular=${notify ? '🔔 notifications: on' : '🔕 notifications: muted'} wizard=${notify ? '🔔 omens: on' : '🔕 omens: silent'} />
-    <button role="menuitem" ...${shared} data-act="set-group-remote-control" data-policy=${policy} data-next=${nextPolicy} title=${remoteTitle}>${policy === 'deny' ? '🚫' : '📱'} remote policy: ${policy === 'optin' ? 'opt-in' : policy}</button>
-    <button role="menuitem" ...${shared} data-offline-override=${offlineOverride} title=${offlineTitle} onClick=${() => actions.cycleGroupOffline(group)}>${offlineLabel}</button>
-    ${quickFold ? html`<button role="menuitem" ...${shared} data-pinned=${pinned ? '1' : '0'} title=${quickPinTitle} onClick=${() => actions.toggleQuickPin(group)}>${pinned ? '📌 unpin quick options' : '📌 pin quick options open'}</button>` : null}
+    <${MenuItem} ...${shared} data-act="set-group-remote-control" data-policy=${policy} data-next=${nextPolicy} title=${remoteTitle}>${policy === 'deny' ? '🚫' : '📱'} remote policy: ${policy === 'optin' ? 'opt-in' : policy}<//>
+    <${MenuItem} ...${shared} data-offline-override=${offlineOverride} title=${offlineTitle} onClick=${() => actions.cycleGroupOffline(group)}>${offlineLabel}<//>
+    ${quickFold ? html`<${MenuItem} ...${shared} data-pinned=${pinned ? '1' : '0'} title=${quickPinTitle} onClick=${() => actions.toggleQuickPin(group)}>${pinned ? '📌 unpin quick options' : '📌 pin quick options open'}<//>` : null}
     <${MenuButton} ...${shared} data-act="rename-group" title=${wizardMode ? 'Rename this party' : 'Rename this group'} regular="rename" wizard="rename party" onClick=${(event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -231,7 +232,7 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
     <${MenuButton} ...${shared} data-act="cleanup-group" title=${wizardMode ? 'Remove confirmed-slumbering heroes from this party' : 'Remove confirmed-offline members from this group'} regular="🧹 cleanup" wizard="🧹 tidy party" />
     <${MenuButton} ...${shared} data-act="pull-repositories-group" title="Git pull — update repositories in this home directory and two levels below" regular="↓ pull repositories…" wizard="↓ summon latest code…" />
     <${MenuButton} ...${shared} data-act="sync-repositories-group" title="Git sync — fetch, prune stale remote references, then fast-forward pull" regular="↻ sync repositories…" wizard="✧ harmonize repositories…" />
-    <button role="menuitem" ...${shared} data-act="cleanup-worktrees-group" title=${wizardMode ? "Clean up git worktrees in this party's repos. Main repo and live-hero worktrees are protected." : "Clean up git worktrees — scan this group's repo(s) for stale worktrees (leftovers from retired/deleted agents and hand-made branches) and remove the ones you pick. Main repo and live-agent worktrees are protected."}>🧹 cleanup worktrees…</button>
+    <${MenuItem} ...${shared} data-act="cleanup-worktrees-group" title=${wizardMode ? "Clean up git worktrees in this party's repos. Main repo and live-hero worktrees are protected." : "Clean up git worktrees — scan this group's repo(s) for stale worktrees (leftovers from retired/deleted agents and hand-made branches) and remove the ones you pick. Main repo and live-agent worktrees are protected."}>🧹 cleanup worktrees…<//>
     <${MenuButton} ...${shared} data-act="window-modal-group" title=${wizardMode ? 'Reveal or veil the scrying portals of heroes in this party. The heroes keep channeling either way.' : 'Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of agents in this group. Window-only: the agents keep running either way.'} regular="🪟 windows…" wizard="👁 heroes…" />
     ${group.default_cwd ? html`<${MenuButton} ...${shared} data-act="group-web-term" title=${wizardMode ? `Open a browser scrying portal in this party's default directory (${group.default_cwd.trim()})` : `Open a terminal in this group's default directory (${group.default_cwd.trim()}), in the browser (always a web terminal — never a native window)`} regular="🖥 open web terminal" wizard="🔮 open party portal" />` : null}
     <${MenuButton} ...${shared} className="danger" data-act="delete-group" data-members=${members.length} title=${wizardMode ? 'Disband this party' : 'Delete this group'} regular="delete group" wizard="disband party" />
