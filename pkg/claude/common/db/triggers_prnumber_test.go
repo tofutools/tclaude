@@ -15,6 +15,7 @@ func TestDerivePRNumber(t *testing.T) {
 		"https://github.com/tofutools/tclaude/pull/42abc":                               0,
 		"https://github.com/tofutools/tclaude/pull/0":                                   0,
 		"https://gitlab.com/acme/app/merge_requests/7":                                  0,
+		"https://gitlab.com/acme/-/merge_requests/7":                                    0, // no project segment
 		"": 0,
 	}
 	for raw, want := range cases {

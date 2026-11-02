@@ -498,7 +498,9 @@ func derivePRNumber(raw string) int {
 	switch parts[len(parts)-2] {
 	case "pull":
 	case "merge_requests":
-		if parts[len(parts)-3] != "-" {
+		// group/…/project/-/merge_requests/<n>: the route marker, and a
+		// project path in front of it (a namespace and the project).
+		if len(parts) < 5 || parts[len(parts)-3] != "-" {
 			return 0
 		}
 	default:
