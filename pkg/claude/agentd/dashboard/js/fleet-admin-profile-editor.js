@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { PEER_SLUGS, REQUESTER_PAYS, UNRESTRICTED_CONSEQUENCE, slugInfo } from './fleet-admin-model.js';
 
@@ -92,31 +92,31 @@ export function ProfileEditor({ profile = null, pools = [], groups = [], actions
   return html`<${Overlay} id="fleet-profile-editor" labelledby="fleet-profile-editor-title" onClose=${onClose}>
     <h3 id="fleet-profile-editor-title">${profile ? `Edit profile ${profile.name}` : 'New node profile'}${profile ? html` <span class="muted">rev ${profile.revision}</span>` : ''}</h3>
     ${!profile && html`<label class="fa-pe-row"><span class="fa-k">name</span><input id="fleet-profile-name" value=${name} autocomplete="off" spellcheck="false" onInput=${(e) => setName(e.currentTarget.value)} /></label>`}
-    <label class="fa-pe-row"><span class="fa-k">trust</span><select id="fleet-profile-level" value=${level} onChange=${(e) => setLevel(e.currentTarget.value)}>
-      <option value="restricted">restricted: only its grants</option><option value="unrestricted">unrestricted</option></select></label>
+    <label class="fa-pe-row"><span class="fa-k">trust</span><${Select} size="sm" id="fleet-profile-level" value=${level} onChange=${(e) => setLevel(e.currentTarget.value)}>
+      <option value="restricted">restricted: only its grants</option><option value="unrestricted">unrestricted</option><//></label>
     ${level === 'unrestricted' && html`<div class="fa-consequence" role="note"><b>Unrestricted.</b> ${UNRESTRICTED_CONSEQUENCE}</div>`}
     <div class="fa-pe-row"><span class="fa-k">pools</span><span>${pools.length ? pools.map((p) => html`<label key=${p.id} class="fa-pe-check"><input type="checkbox" data-pool=${p.id} checked=${poolIDs.has(p.id)}
       onChange=${(e) => { const s = new Set(poolIDs); if (e.currentTarget.checked) s.add(p.id); else s.delete(p.id); setPoolIDs(s); }} /> ${p.name}</label>`) : html`<span class="muted">no pools</span>`}
-      ${[...poolIDs].filter((id) => !pools.some((p) => p.id === id)).map((id) => html`<span key=${id} class="fa-danger" title="This pool no longer exists; saving fails until it is unticked">missing pool ${id} <button type="button" class="fa-link" onClick=${() => { const s = new Set(poolIDs); s.delete(id); setPoolIDs(s); }}>drop</button></span>`)}</span></div>
+      ${[...poolIDs].filter((id) => !pools.some((p) => p.id === id)).map((id) => html`<span key=${id} class="fa-danger" title="This pool no longer exists; saving fails until it is unticked">missing pool ${id} <${Button} size="sm" variant="link" class="fa-link" onClick=${() => { const s = new Set(poolIDs); s.delete(id); setPoolIDs(s); }}>drop<//></span>`)}</span></div>
     <label class="fa-pe-row"><span class="fa-k">labels</span><input id="fleet-profile-labels" value=${labels} placeholder="gpu, ci" onInput=${(e) => setLabels(e.currentTarget.value)} /></label>
-    <label class="fa-pe-row"><span class="fa-k">requester pays</span><select id="fleet-profile-pays" value=${requesterPays} onChange=${(e) => setRequesterPays(e.currentTarget.value)}>
-      ${REQUESTER_PAYS.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}</select></label>
+    <label class="fa-pe-row"><span class="fa-k">requester pays</span><${Select} size="sm" id="fleet-profile-pays" value=${requesterPays} onChange=${(e) => setRequesterPays(e.currentTarget.value)}>
+      ${REQUESTER_PAYS.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}<//></label>
     <div class="fa-pe-row fa-pe-top"><span class="fa-k">peer grants</span><div>
       ${grants.length === 0 ? html`<div class="muted">none</div>` : html`<table class="fa-table" id="fleet-profile-grants"><tbody>${grants.map((g) => html`<tr key=${g.key} data-slug=${g.slug}>
         <td><code class=${slugInfo(g.slug).sensitive ? 'fa-sensitive' : ''}>${g.slug}</code></td>
         <td>${scopeText(g.scope, groupNames) || (slugInfo(g.slug).kind === 'group' ? html`<span class="fa-warn">all groups, incl. future</span>` : slugInfo(g.slug).gateway ? 'all gateways' : html`<span class="muted">node-wide</span>`)}</td>
         <td>${slugInfo(g.slug).policy ? html`cap <input type="number" min="1" style="width:4em" value=${g.spawn_policy?.max_live || 2}
           onInput=${(e) => setGrants(grants.map((x) => (x.key === g.key ? { ...x, spawn_policy: { ...(x.spawn_policy || {}), max_live: Math.max(1, Number(e.currentTarget.value) || 2) } } : x)))} />` : ''}</td>
-        <td class="fa-acts"><button type="button" class="fa-link" data-fa="drop-grant" onClick=${() => setGrants(grants.filter((x) => x.key !== g.key))}>remove</button></td>
+        <td class="fa-acts"><${Button} size="sm" variant="link" class="fa-link" data-fa="drop-grant" onClick=${() => setGrants(grants.filter((x) => x.key !== g.key))}>remove<//></td>
       </tr>`)}</tbody></table>`}
       <div class="fa-grant-form">
-        <select id="fleet-profile-slug" value=${slug} onChange=${(e) => { setSlug(e.currentTarget.value); setScope(''); }}>
-          ${PEER_SLUGS.map((s) => html`<option key=${s.slug} value=${s.slug}>${s.slug}</option>`)}</select>
+        <${Select} size="sm" id="fleet-profile-slug" value=${slug} onChange=${(e) => { setSlug(e.currentTarget.value); setScope(''); }}>
+          ${PEER_SLUGS.map((s) => html`<option key=${s.slug} value=${s.slug}>${s.slug}</option>`)}<//>
         ${info.gateway ? html`<input id="fleet-profile-scope" value=${scope} placeholder="all gateways (or a name)" onInput=${(e) => setScope(e.currentTarget.value)} />`
-          : info.kind !== 'node' && html`<select id="fleet-profile-scope" value=${scope} onChange=${(e) => setScope(e.currentTarget.value)}>
+          : info.kind !== 'node' && html`<${Select} size="sm" id="fleet-profile-scope" value=${scope} onChange=${(e) => setScope(e.currentTarget.value)}>
             ${info.kind === 'group' ? html`<option value="">all groups (incl. future)</option>` : html`<option value="">pick a group…</option>`}
-            ${groups.map((g) => html`<option key=${g} value=${g}>${g}</option>`)}</select>`}
-        <button id="fleet-profile-add-grant" type="button" onClick=${addGrant}>add</button>
+            ${groups.map((g) => html`<option key=${g} value=${g}>${g}</option>`)}<//>`}
+        <${Button} size="sm" id="fleet-profile-add-grant" onClick=${addGrant}>add<//>
         <span class="muted">${info.what}</span>
       </div>
     </div></div>

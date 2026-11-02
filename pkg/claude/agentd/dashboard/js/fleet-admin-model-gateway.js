@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 
 const html = htm.bind(h);
@@ -151,14 +151,14 @@ export function GatewayDialog({ setup, actions, confirm, onClose, onDone }) {
     <h3 id="fleet-model-gateway-title">${create ? 'Add a model gateway' : `Edit model gateway ${setup.name}`}</h3>
     <div class="muted">Lets workers on your other nodes use this node's provider API key without the key leaving this node. It needs an API key from the provider console; a Claude or ChatGPT subscription login cannot be shared.</div>
     <label class="fa-jb-row"><span class="fa-k">name</span><input id="fleet-mg-name" value=${form.name} disabled=${!create} placeholder="e.g. anthropic" autocomplete="off" spellcheck="false" onInput=${set('name')} /></label>
-    <label class="fa-jb-row"><span class="fa-k">provider</span><select id="fleet-mg-provider" value=${form.provider} onChange=${setProvider}>
+    <label class="fa-jb-row"><span class="fa-k">provider</span><${Select} size="sm" id="fleet-mg-provider" value=${form.provider} onChange=${setProvider}>
       ${Object.entries(PROVIDERS).map(([k, p]) => html`<option key=${k} value=${k}>${p.label}</option>`)}
-    </select></label>
+    <//></label>
     ${custom && html`<div class="muted">Any endpoint serving the Anthropic Messages or OpenAI Responses API with a key in one header, such as a LiteLLM proxy or a company gateway. Chat Completions-only APIs and signed credentials (Bedrock, Vertex) need a translating proxy in front.</div>`}
-    ${custom && html`<label class="fa-jb-row"><span class="fa-k">API</span><select id="fleet-mg-dialect" value=${form.dialect} onChange=${set('dialect')}>
+    ${custom && html`<label class="fa-jb-row"><span class="fa-k">API</span><${Select} size="sm" id="fleet-mg-dialect" value=${form.dialect} onChange=${set('dialect')}>
       <option value="anthropic">Anthropic Messages (Claude Code)</option>
       <option value="openai">OpenAI Responses (Codex, Copilot)</option>
-    </select></label>`}
+    <//></label>`}
     <label class="fa-jb-row"><span class="fa-k">URL</span><input id="fleet-mg-url" value=${form.url} disabled=${!custom} autocomplete="off" spellcheck="false" onInput=${set('url')} /></label>
     ${custom && html`<label class="fa-jb-row"><span class="fa-k">header</span><input id="fleet-mg-header" value=${form.header} placeholder="x-api-key or Authorization" autocomplete="off" spellcheck="false" onInput=${set('header')} /></label>
     <label class="fa-jb-row"><span class="fa-k">prefix</span><input id="fleet-mg-prefix" value=${form.prefix} placeholder='before the key, e.g. "Bearer "' autocomplete="off" spellcheck="false" onInput=${set('prefix')} /></label>`}
@@ -171,18 +171,18 @@ export function GatewayDialog({ setup, actions, confirm, onClose, onDone }) {
       ${!create && CREDENTIAL_TEXT[form.credential] && html`<div class="muted">${CREDENTIAL_TEXT[form.credential]}</div>`}
     </div></div>
     <div class="fa-jb-row"><span></span><div>
-      <button id="fleet-mg-test" type="button" disabled=${test?.busy} onClick=${runTest}>${test?.busy ? 'Testing…' : 'Test the key'}</button>
+      <${Button} size="sm" id="fleet-mg-test" disabled=${test?.busy} onClick=${runTest}>${test?.busy ? 'Testing…' : 'Test the key'}<//>
       ${test && !test.busy && html` <span id="fleet-mg-test-result" class=${test.ok ? '' : 'fa-danger'}>${test.message}</span>`}
     </div></div>
     <label class="fa-jb-row"><span class="fa-k">models</span><input id="fleet-mg-models" value=${form.models} placeholder="exact IDs or prefixes ending in *, e.g. claude-sonnet-*" autocomplete="off" spellcheck="false" onInput=${set('models')} /></label>
     ${test?.ok && (test.models || []).length > 0 && html`<div class="fa-jb-row"><span></span><div id="fleet-mg-offered">
       <span class="muted">The provider offers (click to allow or drop): </span>
-      ${test.models.map((m) => html`<button key=${m} type="button" class=${`fa-chip${allowed.includes(m) ? ' on' : ''}`} data-model=${m} aria-pressed=${allowed.includes(m)} onClick=${() => toggleModel(m)}>${m}</button> `)}
+      ${test.models.map((m) => html`<button key=${m} type="button" data-ui-exempt class=${`fa-chip${allowed.includes(m) ? ' on' : ''}`} data-model=${m} aria-pressed=${allowed.includes(m)} onClick=${() => toggleModel(m)}>${m}</button> `)}
     </div></div>`}
-    <label class="fa-jb-row"><span class="fa-k">limits</span><select id="fleet-mg-preset" value=${form.preset} onChange=${setPreset}>
+    <label class="fa-jb-row"><span class="fa-k">limits</span><${Select} size="sm" id="fleet-mg-preset" value=${form.preset} onChange=${setPreset}>
       ${Object.entries(LIMIT_PRESETS).map(([k, p]) => html`<option key=${k} value=${k}>${p.label}</option>`)}
       <option value="custom">Custom</option>
-    </select></label>
+    <//></label>
     <div class="fa-jb-row"><span></span><div class="fa-mg-limits">
       ${LIMIT_FIELDS.map(([f, what]) => html`<label key=${f}><span class="muted">${what}</span><input type="number" min="1" step="1" data-limit=${f} value=${form.limits[f]} onInput=${setLimit(f)} /></label>`)}
     </div></div>

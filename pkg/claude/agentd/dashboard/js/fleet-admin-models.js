@@ -2,6 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { GatewayDialog } from './fleet-admin-model-gateway.js';
+import { Button, Select } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -115,8 +116,8 @@ export function SubscriptionCard({ actions, confirm, toast }) {
     ${!state ? html`<div class="empty">Loading…</div>` : html`<div class="fa-run-settings">
       <span class="fa-k">Token</span>
       <span class=${set ? '' : 'muted'} id="fleet-claude-subscription-state">${set ? `stored${state.set_at ? ` ${new Date(state.set_at).toLocaleDateString()}` : ''}` : 'not set up'}</span>
-      ${!editing && html`<button type="button" id="fleet-claude-subscription-edit" onClick=${() => { setEditing(true); setError(''); }}>${set ? 'Replace…' : 'Set up…'}</button>`}
-      ${set && !editing && html`<button type="button" class="fa-danger" id="fleet-claude-subscription-forget" onClick=${forget}>Forget…</button>`}
+      ${!editing && html`<${Button} size="sm" id="fleet-claude-subscription-edit" onClick=${() => { setEditing(true); setError(''); }}>${set ? 'Replace…' : 'Set up…'}<//>`}
+      ${set && !editing && html`<${Button} size="sm" variant="danger" id="fleet-claude-subscription-forget" onClick=${forget}>Forget…<//>`}
     </div>`}
     ${state?.error && html`<div class="fa-warn">${state.error}</div>`}
     ${editing && html`<div class="fa-subscription-form">
@@ -124,8 +125,8 @@ export function SubscriptionCard({ actions, confirm, toast }) {
       <input id="fleet-claude-subscription-token" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-oat…" aria-label="Claude subscription token"
         value=${token} disabled=${busy} onInput=${(e) => setToken(e.currentTarget.value)}
         onKeyDown=${(e) => { if (e.key === 'Enter') save(); }} />
-      <button type="button" id="fleet-claude-subscription-save" onClick=${save} disabled=${busy || !token.trim()}>${busy ? 'Saving…' : 'Save'}</button>
-      <button type="button" class="fa-link" disabled=${busy} onClick=${() => { setEditing(false); setToken(''); setError(''); }}>cancel</button>
+      <${Button} size="sm" id="fleet-claude-subscription-save" onClick=${save} disabled=${busy || !token.trim()}>${busy ? 'Saving…' : 'Save'}<//>
+      <${Button} size="sm" variant="link" class="fa-link" disabled=${busy} onClick=${() => { setEditing(false); setToken(''); setError(''); }}>cancel<//>
       ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
     </div>`}
   </div>`;
@@ -223,9 +224,9 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
     ${control && html`<div class="fa-run-settings" id="fleet-models-master">
       <span class="fa-k">Model gateways</span>
       <span class=${control.disabled ? 'fa-warn' : 'muted'}>${control.disabled ? 'all off: no peer model requests are served' : `on (${gws.filter(([, p]) => p.enabled).length} of ${gws.length} enabled)`}</span>
-      <button id="fleet-models-master-toggle" type="button" class=${control.disabled ? '' : 'fa-danger'} onClick=${master}>${control.disabled ? 'Turn on…' : 'Turn off all…'}</button>
-      <button id="fleet-models-add" type="button" onClick=${() => setDialog({ setup: null })}>Add gateway…</button>
-      <button type="button" class="fa-link" onClick=${reload}>refresh</button>
+      <${Button} size="sm" id="fleet-models-master-toggle" variant=${control.disabled ? '' : 'danger'} onClick=${master}>${control.disabled ? 'Turn on…' : 'Turn off all…'}<//>
+      <${Button} size="sm" id="fleet-models-add" onClick=${() => setDialog({ setup: null })}>Add gateway…<//>
+      <${Button} size="sm" variant="link" class="fa-link" onClick=${reload}>refresh<//>
     </div>
     ${gws.length === 0 ? html`<div class="empty">No model gateways yet. Add one to let workers on your other nodes use this node's provider API key.</div>` : html`
     <table class="fa-table" id="fleet-model-gateways">
@@ -236,15 +237,15 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
         <td>${(p.models || []).length ? p.models.join(', ') : html`<span class="fa-warn">none</span>`}</td>
         <td>${limitText(p.daily_requests, p.daily_tokens)} · ${limitText(p.peer_daily_requests, p.peer_daily_tokens)} · ${limitText(p.session_daily_requests, p.session_daily_tokens)}</td>
         <td class="muted">${[p.max_input_tokens ? `≤${num(p.max_input_tokens)} in` : '', p.max_output_tokens ? `≤${num(p.max_output_tokens)} out` : '', p.max_concurrent ? `${p.max_concurrent} at once` : '', p.requests_per_minute ? `${p.requests_per_minute}/min` : '', `leases idle out after ${p.lease_idle_hours || 24}h`].filter(Boolean).join(' · ')}</td>
-        <td>${(p.blocked_peers || []).map((b) => html`<span class="fa-chip" key=${b}>${label(b)} <button type="button" class="fa-link" title=${`Unblock ${label(b)}`} data-fa="unblock" onClick=${() => unblock(name, b)}>×</button></span> `)}
-          ${peers.filter((r) => !(p.blocked_peers || []).includes(r.id)).length > 0 && html`<select class="fa-model-block" aria-label=${`Block a peer on ${name}`} value=${blocking[name] || ''} onChange=${(e) => setBlocking({ ...blocking, [name]: e.currentTarget.value })}>
+        <td>${(p.blocked_peers || []).map((b) => html`<span class="fa-chip" key=${b}>${label(b)} <${Button} size="sm" variant="link" class="fa-link" title=${`Unblock ${label(b)}`} data-fa="unblock" onClick=${() => unblock(name, b)}>×<//></span> `)}
+          ${peers.filter((r) => !(p.blocked_peers || []).includes(r.id)).length > 0 && html`<${Select} size="sm" class="fa-model-block" aria-label=${`Block a peer on ${name}`} value=${blocking[name] || ''} onChange=${(e) => setBlocking({ ...blocking, [name]: e.currentTarget.value })}>
             <option value="">block a peer…</option>
             ${peers.filter((r) => !(p.blocked_peers || []).includes(r.id)).map((r) => html`<option key=${r.id} value=${r.id}>${r.label}</option>`)}
-          </select>
-          ${blocking[name] && html`<button type="button" class="fa-danger" data-fa="block" onClick=${() => { const b = blocking[name]; setBlocking({ ...blocking, [name]: '' }); block(name, b); }}>Block…</button>`}`}</td>
-        <td class="fa-acts"><button type="button" data-fa="edit-gateway" onClick=${() => edit(name)}>Edit…</button>
-          <button type="button" class=${p.enabled ? 'fa-danger' : ''} data-fa="gateway" onClick=${() => gateway(name, p)}>${p.enabled ? 'Disable…' : 'Enable…'}</button>
-          <button type="button" class="fa-danger" data-fa="remove-gateway" onClick=${() => remove(name)}>Remove…</button></td>
+          <//>
+          ${blocking[name] && html`<${Button} size="sm" variant="ghost danger" data-fa="block" onClick=${() => { const b = blocking[name]; setBlocking({ ...blocking, [name]: '' }); block(name, b); }}>Block…<//>`}`}</td>
+        <td class="fa-acts"><${Button} size="sm" data-fa="edit-gateway" onClick=${() => edit(name)}>Edit…<//>
+          <${Button} size="sm" variant=${p.enabled ? 'ghost danger' : ''} data-fa="gateway" onClick=${() => gateway(name, p)}>${p.enabled ? 'Disable…' : 'Enable…'}<//>
+          <${Button} size="sm" variant="ghost danger" data-fa="remove-gateway" onClick=${() => remove(name)}>Remove…<//></td>
       </tr>`)}</tbody>
     </table>`}`}
     <${SubscriptionCard} actions=${actions} confirm=${confirm} toast=${toast} />
@@ -258,7 +259,7 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
         <td><code>${l.proxy}</code></td>
         <td>${l.worker ? html`<code title=${l.worker}>${l.worker.slice(0, 14)}</code>` : '—'}</td>
         <td class="muted">${l.touched_at && !String(l.touched_at).startsWith('0001-') ? new Date(l.touched_at).toLocaleString() : ''}${l.idle_seconds ? ` · idles out after ${Math.round(l.idle_seconds / 3600)}h` : ''}</td>
-        <td class="fa-acts">${l.revoked ? 'revoked' : html`<button type="button" class="fa-danger" data-fa="revoke-lease" onClick=${() => revoke(l)}>Revoke…</button>`}</td>
+        <td class="fa-acts">${l.revoked ? 'revoked' : html`<${Button} size="sm" variant="ghost danger" data-fa="revoke-lease" onClick=${() => revoke(l)}>Revoke…<//>`}</td>
       </tr>`)}</tbody>
     </table>`}
     <h4 class="fa-h">Usage <input type="date" id="fleet-model-day" value=${day} max=${utcToday(now)} onChange=${(e) => e.currentTarget.value && setDay(e.currentTarget.value)} /> <span class="muted">UTC day</span></h4>
