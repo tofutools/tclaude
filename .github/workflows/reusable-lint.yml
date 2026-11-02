@@ -25,7 +25,7 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.14.0
+          version: v2.15.0
 
       # scripts/e2e/drive is its own module (keeps go-rod out of go.mod), so
       # the root ./... build, lint and test above never compile it.

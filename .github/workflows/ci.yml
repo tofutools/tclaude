@@ -209,7 +209,7 @@ jobs:
       - name: Set up Node for the Copilot CLI
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
 
       # Pinned HERE and nowhere else, the same way opencode-ai, @openai/codex
       # and @anthropic-ai/claude-code are pinned in the sandbox jobs above: a
@@ -312,7 +312,7 @@ jobs:
       - name: Set up Node for the Gemini CLI
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
 
       # Keep in step with harness.GeminiPinnedVersion and the filtered proxy
       # smoke's HARNESS_GEMINI_VERSION.
@@ -375,7 +375,7 @@ jobs:
       - name: Set up Node for pi
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
 
       # Keep in step with harness.PiMinimumVersion.
       - name: Install pi

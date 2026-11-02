@@ -31,7 +31,7 @@ jobs:
       - name: Set up Node for OpenCode smoke
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
 
       # The passt source archive is fetched from passt.top, which intermittently
       # answers 502/504. Restoring it from the Actions cache means only a cache

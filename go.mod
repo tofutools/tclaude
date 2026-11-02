@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	charm.land/bubbles/v2 v2.2.1
-	charm.land/bubbletea/v2 v2.1.0
+	charm.land/bubbletea/v2 v2.1.1
 	charm.land/lipgloss/v2 v2.0.6
 	filippo.io/age v1.3.2
 	fyne.io/systray v1.12.2
@@ -16,7 +16,7 @@ require (
 	github.com/gofrs/flock v0.13.1
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/nftables v0.3.0
-	github.com/google/pprof v0.0.0-20261016150608-1facf8f91b50
+	github.com/google/pprof v0.0.0-20261026192309-dbd0ed30aa88
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/jedib0t/go-pretty/v6 v6.8.3
@@ -35,13 +35,13 @@ require (
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.58.0
 	golang.org/x/mod v0.42.0
-	golang.org/x/net v0.61.0
+	golang.org/x/net v0.62.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
 	golang.org/x/text v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.61.0
+	modernc.org/sqlite v1.61.1
 	software.sslmate.com/src/go-pkcs12 v0.7.4
 )
 

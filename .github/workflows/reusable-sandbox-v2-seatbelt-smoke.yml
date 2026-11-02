@@ -25,7 +25,7 @@ jobs:
       - name: Set up Node for OpenCode smoke
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
 
       # Keep this deliberately aligned with the Linux executor smoke. A pin
       # bump changes the exercised upstream tool/server contract and must be a
