@@ -259,7 +259,13 @@ function CopyButton({ className, id, hasSelection, actions, runtimeID }) {
   `;
 }
 
-function TerminalDisconnectNotice({ onReconnect }) {
+// TerminalDisconnectNotice covers every settled loss that offers Reconnect,
+// not only a plain 'disconnected': attaching to a just-spawned agent before its
+// tmux session is up exhausts the initial retries and settles on 'session
+// ended', and a remote close settles on 'closed: …'. Each of those leaves the
+// same dead screen, so each gets the same big Reconnect; the reason, when it
+// says more than "disconnected", is shown on the card.
+function TerminalDisconnectNotice({ status, onReconnect }) {
   // While the dashboard-wide "Disconnected from agentd" curtain is up, this
   // terminal dropped for the same reason (the daemon is gone) and its restart
   // watch reconnects once agentd answers again; a second card on top of the
@@ -271,7 +277,7 @@ function TerminalDisconnectNotice({ onReconnect }) {
       <div class="mux-terminal-disconnect-card">
         <div class="mux-terminal-disconnect-icon" aria-hidden="true">⚠️</div>
         <h2 class="mux-terminal-disconnect-title">Terminal disconnected</h2>
-        <p class="mux-terminal-disconnect-body">This terminal is no longer connected.</p>
+        <p class="mux-terminal-disconnect-body">This terminal is no longer connected${status && status !== 'disconnected' ? html` (${status})` : null}.</p>
         <${Button} variant="success" class="mux-terminal-disconnect-reconnect" aria-label="Reconnect terminal" onClick=${onReconnect}>
           <span aria-hidden="true">⟳</span> Reconnect
         <//>
@@ -453,7 +459,7 @@ function TerminalPane({
         onFontChange=${onFontChange}
         onDisconnect=${(info) => { actions.paneDisconnected?.(pane.key); if (info?.closeTab) void actions.closePane(pane.key, { skipDetach: true }); }}
         onComposeMessage=${composeMessage}
-        disconnectNotice=${status === 'disconnected' && reconnect ? html`<${TerminalDisconnectNotice} onReconnect=${reconnectPane} />` : null}
+        disconnectNotice=${reconnect ? html`<${TerminalDisconnectNotice} status=${status} onReconnect=${reconnectPane} />` : null}
       />
     </div>
   `;
