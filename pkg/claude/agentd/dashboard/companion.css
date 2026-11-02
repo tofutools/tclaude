@@ -253,7 +253,7 @@ body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: 4
 }
 .companion-input.listening { border-color: var(--cmp-red); }
 /* Approvals and decisions stack down the body: the strip must not cover their buttons. */
-.companion-body.clear-strip { padding-bottom: 52px; }
+.companion-body.clear-strip, .companion-body.has-cards:has(> .companion-input) { padding-bottom: 52px; }
 .companion-context { display: inline-flex; align-items: center; gap: 4px; color: var(--cmp-muted); font-size: 11px; cursor: pointer; white-space: nowrap; }
 .companion-context input { margin: 0; accent-color: var(--cmp-blue); }
 .companion-context-off { font-style: italic; cursor: help; }

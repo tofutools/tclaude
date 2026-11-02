@@ -64,7 +64,7 @@ export function micTitle(sendPhrase) {
 // callbacks read the latest props through a ref.
 export function useDictation({
   win, targetId, draft, setDraft, send, notify, sendPhrase = '', silenceSend = 0, pauses = null, mark = false, continuous = null, wakeHost = () => null,
-  onStart = () => {}, onRelease = () => {}, dictationImpl = null,
+  onStart = () => {}, onRelease = () => {}, dictationImpl = null, dictated = null,
 }) {
   const [listening, setListening] = useState(false);
   const listeningRef = useRef(false);
@@ -248,7 +248,7 @@ export function useDictation({
   }
   const dictationRef = useRef(null);
   target.current = targetId || '';
-  const dictatedDrafts = useRef(new Set());
+  const dictatedDrafts = useRef(dictated || new Set());
   if (!draft.trim()) dictatedDrafts.current.delete(target.current);
   const own = () => owner.current && owner.current === target.current;
   const dictation = useMemo(() => (dictationImpl || ((callbacks) => createDictation(win, callbacks)))({

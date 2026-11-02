@@ -18,7 +18,7 @@ import { OVERLAY_FOOTER_ROOM, clampPlacement, parsePlacement } from './overlay-w
 import { companionAgents, companionStatus, decisionsFor, approvalsFor, isAgentId } from './companion-model.js';
 import { openInCompanion } from './companion-facade.js';
 import { windowControlsLook } from './overlay-window-controls.js';
-import { closeOverlayTab, keepOverlayWindows, minimizeOverlayWindow, minimizedOverlayTabs, openOverlayWindow, overlayWindows } from './overlay-instances.js';
+import { closeOverlayTab, focusOverlayWindow, keepOverlayWindows, minimizeOverlayWindow, minimizedOverlayTabs, openOverlayWindow, overlayWindows } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND } from './chat-window-model.js';
 import { TERMINAL_WINDOW_KIND, validTerminalWindow } from './terminal-window-model.js';
 import { OverlayWindow, overlayStackReset, readPref } from './overlay-window.js';
@@ -113,7 +113,7 @@ function OverlayDock({ snapshot }) {
       const removes = tabs.length === 1 && !(tab.kind === CHAT_WINDOW_KIND && agents.get(tab.agent)?.steward) && REMOVE_TITLES[tab.kind];
       return html`<span key=${key} class=${`overlay-dock-pill${tabs.some(needs) ? ' needs' : ''}`}>
         <button type="button" class="overlay-dock-item" title=${`Bring back ${tab.label}`}
-          onClick=${() => openOverlayWindow(tab)}>${WINDOW_GLYPHS[tab.kind] || '▣'} ${tab.label}${tabs.length > 1 && html` <span class="overlay-dock-count" aria-label=${`${tabs.length} tabs`}>${tabs.length}</span>`}</button>
+          onClick=${() => { openOverlayWindow(tab); focusOverlayWindow(tab.id); }}>${WINDOW_GLYPHS[tab.kind] || '▣'} ${tab.label}${tabs.length > 1 && html` <span class="overlay-dock-count" aria-label=${`${tabs.length} tabs`}>${tabs.length}</span>`}</button>
         ${removes && html`<button type="button" class="overlay-dock-remove" aria-label=${`${removes[0]} ${tab.label}`} title=${removes[1]} onClick=${() => closeOverlayTab(tab.id)}>×</button>`}
       </span>`;
     })}
