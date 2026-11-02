@@ -1116,3 +1116,29 @@ test('picking a Config section is a navigation; a history location shows it', as
   assert.equal(navigated.length, 1);
   await mounted.unmount();
 });
+
+test('Config lists an external steward\'s tools from the daemon, and nothing without them', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'), harness.importDashboardModule('js/config-island.js'),
+  ]);
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`);
+  await harness.act(() => state.lifecycle.loaded({ raw: '{}' }));
+  assert.equal(mounted.container.querySelector('.cfg-tool-list'), null);
+
+  await harness.act(() => state.lifecycle.loaded({
+    raw: '{}',
+    external_steward: { enabled: false, tools: [
+      { name: 'whoami', description: 'Show its name.', access: 'Always available' },
+      { name: 'notify_human', description: '<b>Tell</b> the human.', access: 'Needs human.notify' },
+    ] },
+  }));
+  const rows = mounted.container.querySelectorAll('.cfg-tool-list tbody tr');
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].textContent, /whoami.*Always available/s);
+  assert.match(rows[1].textContent, /human\.notify/);
+  assert.equal(rows[1].querySelector('b'), null, 'descriptions are text');
+  assert.match(mounted.container.textContent, /Off\. No credential can be made or used\./);
+  await mounted.unmount();
+});

@@ -4050,14 +4050,20 @@ func ListAgentMessagesFromConv(fromConv string, limit int) ([]*AgentMessage, err
 // full fix would OR in every one of the actor's conv generations. All four
 // read/delete/prune paths agree on missing it, so there is no asymmetry.
 func ListInboxForActor(toConv, toAgent string, limit int) ([]*AgentMessage, error) {
-	return listAgentMessagesForActor("to_conv", "to_agent", toConv, toAgent, limit)
+	return listAgentMessagesForActor("to_conv", "to_agent", toConv, toAgent, "", limit)
+}
+
+// ListUnreadInboxForActor is ListInboxForActor narrowed to unread mail before the
+// limit applies, so old unread mail isn't pushed out of view by newer read mail.
+func ListUnreadInboxForActor(toConv, toAgent string, limit int) ([]*AgentMessage, error) {
+	return listAgentMessagesForActor("to_conv", "to_agent", toConv, toAgent, " AND read_at IS NULL", limit)
 }
 
 // ListOutboxForActor is the actor-keyed outbox twin of ListInboxForActor:
 // every message the caller sent by current conv (from_conv) OR stable actor
 // (from_agent), most recent first.
 func ListOutboxForActor(fromConv, fromAgent string, limit int) ([]*AgentMessage, error) {
-	return listAgentMessagesForActor("from_conv", "from_agent", fromConv, fromAgent, limit)
+	return listAgentMessagesForActor("from_conv", "from_agent", fromConv, fromAgent, "", limit)
 }
 
 // actorMatchClause builds the "(col = ? OR …)" predicate that matches a
@@ -4090,7 +4096,7 @@ func actorMatchClause(pairs ...[2]string) (string, []any) {
 // actorMatchClause). convCol/agentCol must be literal column names, never user
 // input — they are interpolated into SQL. Ordering by id DESC gives the actor
 // mailbox a stable newest-insertion-first total order.
-func listAgentMessagesForActor(convCol, agentCol, conv, agent string, limit int) ([]*AgentMessage, error) {
+func listAgentMessagesForActor(convCol, agentCol, conv, agent, filter string, limit int) ([]*AgentMessage, error) {
 	where, args := actorMatchClause([2]string{convCol, conv}, [2]string{agentCol, agent})
 	if where == "" {
 		return nil, nil
@@ -4100,7 +4106,7 @@ func listAgentMessagesForActor(convCol, agentCol, conv, agent string, limit int)
 		return nil, err
 	}
 	q := `SELECT ` + agentMessageColumns + `
-		FROM agent_messages WHERE ` + where + ` ORDER BY id DESC`
+		FROM agent_messages WHERE ` + where + filter + ` ORDER BY id DESC`
 	if limit > 0 {
 		q += ` LIMIT ?`
 		args = append(args, limit)

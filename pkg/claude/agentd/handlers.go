@@ -3279,9 +3279,12 @@ func handleInbox(w http.ResponseWriter, r *http.Request) {
 
 	var msgs []*db.AgentMessage
 	var err error
-	if outbox {
+	switch {
+	case outbox:
 		msgs, err = outboxForCaller(myID, limit)
-	} else {
+	case unreadOnly:
+		msgs, err = db.ListUnreadInboxForActor(myID, peerAgentID(myID), limit)
+	default:
 		msgs, err = inboxForCaller(myID, limit)
 	}
 	if err != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/stewardtools"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -502,4 +503,43 @@ func TestDashboardConfigAskSandboxValidatesLibrarySelection(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, w.Code, resp)
 		require.Contains(t, strings.Join(resp.Errors, " "), "ask.sandbox")
 	}
+}
+
+// Config shows the tool list before the feature is on, and only with Collab on.
+func TestDashboardConfig_ExternalStewardToolList(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	load := func() map[string]any {
+		w := httptest.NewRecorder()
+		serveDashboardConfig(w, dashboardRequest(http.MethodGet, "/api/config", ""))
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		return body
+	}
+	setCollab := func(on bool) {
+		cfg, err := config.Load()
+		require.NoError(t, err)
+		if cfg.Features == nil {
+			cfg.Features = &config.FeaturesConfig{}
+		}
+		cfg.Features.Collab = on
+		require.NoError(t, config.Save(cfg))
+	}
+	setCollab(true)
+	shown, ok := load()["external_steward"].(map[string]any)
+	require.True(t, ok, "shown before it is enabled")
+	assert.Equal(t, false, shown["enabled"])
+	var names []string
+	for _, tool := range shown["tools"].([]any) {
+		names = append(names, tool.(map[string]any)["name"].(string))
+	}
+	var want []string
+	for _, tool := range stewardtools.List() {
+		want = append(want, tool.Name)
+	}
+	assert.Equal(t, want, names)
+
+	setCollab(false)
+	assert.NotContains(t, load(), "external_steward")
 }

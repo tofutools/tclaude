@@ -197,6 +197,31 @@ function Toggle({ id, label, onChange }) {
   return html`<${ConfigInput} type="checkbox" class="cfg-switch" role="switch" id=${id} aria-label=${label || undefined} onChange=${onChange} />`;
 }
 
+// What an assistant outside tclaude can do, shown before it is turned on. The
+// list comes from the daemon, so it is the list the MCP server offers.
+// Reading the signal here keeps a load from re-rendering the uncontrolled form.
+function ExternalStewardGroup({ loads }) {
+  const info = loads?.value?.external_steward;
+  if (!info?.tools?.length) return null;
+  return html`<${Group} title="External stewards" lede=${html`An assistant you run yourself can act as a steward through
+    <code>tclaude mcp serve</code>, using a credential only you can make. It can't answer permission questions, and it
+    can never hold sudo.`}>
+    <${Setting} title="Status" k="steward.external_enabled"
+      summary=${info.enabled ? 'On. Credentials you made work.' : 'Off. No credential can be made or used.'}
+      more="Set steward.external_enabled in the config file to change this. Permissions decide each tool, and you can change them in the usual editor." />
+    <${Setting} title="What it can do" wide summary="These are all the tools it gets.">
+      <table class="cfg-tool-list">
+        <thead><tr><th scope="col">Tool</th><th scope="col">What it does</th><th scope="col">Who decides</th></tr></thead>
+        <tbody>${info.tools.map(tool => html`<tr key=${tool.name}>
+          <td><code>${tool.name}</code></td>
+          <td>${tool.description}</td>
+          <td>${tool.access}</td>
+        </tr>`)}</tbody>
+      </table>
+    </${Setting}>
+  </${Group}>`;
+}
+
 function Group({ title, lede, children }) {
   return html`<div class="cfg-section">
     <h3>${title}</h3>
@@ -1025,6 +1050,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
             placeholder="Optional. For example: Reply in Swedish. Start every brief with open pull requests."></${ConfigTextarea}>
         </${Setting}>
       </${Group}>
+      <${ExternalStewardGroup} loads=${loads} />
     </${Panel}>
 
     <${Panel} id="experimental" active=${active}>

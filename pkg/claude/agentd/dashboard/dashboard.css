@@ -10121,6 +10121,10 @@ label.cfg-label { cursor: pointer; }
 .cfg-row-ctl button.cfg-inline:not(:disabled):hover { border-color: #58a6ff; }
 .cfg-row-ctl button.cfg-inline:disabled { opacity: 0.5; cursor: default; }
 .cfg-row-wide > .cfg-row-ctl { justify-content: flex-start; }
+.cfg-tool-list { width: 100%; border-collapse: collapse; font-size: 13px; }
+.cfg-tool-list th { text-align: left; font-weight: 600; color: #8b949e; }
+.cfg-tool-list th, .cfg-tool-list td { padding: 6px 12px 6px 0; vertical-align: top; border-bottom: 1px solid var(--border); }
+.cfg-tool-list td code { overflow-wrap: anywhere; }
 .cfg-row-ctl .cfg-list { padding-left: 0; }
 .cfg-row-ctl .cfg-notif-types, .cfg-row-ctl .cfg-hint { padding-left: 0; }
 .cfg-row-ctl #ask-profile-state { flex-basis: 100%; text-align: right; }

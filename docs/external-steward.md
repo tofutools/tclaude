@@ -46,6 +46,55 @@ Give it to the assistant through the environment or a file only you can read
 Retiring the agent also ends its credentials, and reinstating it doesn't bring them
 back.
 
+## Connecting your assistant
+
+Add `tclaude mcp serve` to your assistant's MCP settings. It talks to your assistant over
+standard input and output, so the assistant starts it. The tclaude daemon has to be running
+on the same machine, and the assistant has to run outside tclaude's terminals.
+
+For example, in a Claude Code `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "tclaude": {
+      "command": "tclaude",
+      "args": ["mcp", "serve", "--credential-file", "/home/you/.config/tclaude-steward"]
+    }
+  }
+}
+```
+
+Create that file with `chmod 600`. `tclaude mcp serve` refuses a credential file anyone else
+can read, and it has no option that takes the credential itself. You can set
+`TCLAUDE_EXTERNAL_STEWARD_CREDENTIAL` in its environment instead, but not both.
+
+It reads the credential once when it starts, so restart it after a renewal.
+
+| Tool | What it does | What decides it |
+|---|---|---|
+| `whoami` | Shows its name and identity | Always available |
+| `fleet_brief` | Reads the fleet: who is working, idle, offline or needs you | Needs `fleet.read` |
+| `list_agents` | Lists the agents and groups it can reach | Always shows its own groups and agents in no group; `fleet.read` adds every group |
+| `inbox` | Lists its messages, with previews | Always available |
+| `read_message` | Reads one message and marks it read | Always available |
+| `send_message` | Sends a message to an agent or group, including `member@peer` on a linked instance | An agent needs `message.direct`, a shared or owned group, or a group link. A group needs it to be a member or owner. Another instance needs a group link or `message.direct` |
+| `reply` | Replies to a message it received | Always available: having received a message is enough |
+| `notify_human` | Sends you a message in the dashboard | Needs `human.notify`, or owning a group |
+| `wait_for_activity` | Waits up to 50 seconds for new mail or a change in what needs attention | Always watches mail; `fleet.read` adds what needs attention |
+
+So taking `message.direct` away doesn't stop it messaging agents it can reach through a group.
+
+**Config** › **Steward** shows this list with Collab on, whether or not the feature is on.
+
+Nothing wakes an idle assistant: it only sees new mail when it asks. Call `wait_for_activity`
+in a loop to stay current, passing back the `cursor` from the last call. Past 10 unread
+messages, senders are told to retry until it reads some, so it has to keep up.
+
+Each tool calls the ordinary daemon routes with the credential, so the same permissions and
+audit log apply. `tclaude mcp serve` makes no decisions of its own, and it never sends your
+operator token, even if the token is in its environment.
+
 ## What it can do
 
 It starts with the Steward's [**Reads** and **Writes** levels](companion.md#what-the-steward-may-do)
