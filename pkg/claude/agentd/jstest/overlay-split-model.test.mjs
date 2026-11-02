@@ -203,29 +203,29 @@ test('windows snapped alone keep their kind of snap, and what nobody took stays 
   const corner = roomTree([['a', 'top-left'], ['b', 'right']]);
   assert.deepEqual(corner, { axis: 'x', at: 0.5, a: { axis: 'y', at: 0.5, a: { id: 'a' }, b: gap }, b: { id: 'b' } });
   assert.deepEqual(splitLayout(corner, room).rects.a, { x: 0, y: 100, w: 500, h: 400 }, 'the corner stays a corner');
-  assert.deepEqual(roomTree([['a', 'top-left'], ['b', 'top-right']]), { x: 0.5, y: 0.5, cells: [{ id: 'a' }, { id: 'b' }, gap, gap] });
+  assert.deepEqual(roomTree([['a', 'top-left'], ['b', 'top-right']]), { axis: 'y', at: 0.5, a: pair('x', 'a', 'b'), b: gap }, 'an empty half is a gap beside a line');
   assert.deepEqual(roomTree([['a', 'top-left'], ['b', 'bottom-right']]), { x: 0.5, y: 0.5, cells: [{ id: 'a' }, gap, gap, { id: 'b' }] });
   assert.deepEqual(roomTree([['a', 'bottom'], ['b', 'top-right']]), { axis: 'y', at: 0.5, a: { axis: 'x', at: 0.5, a: gap, b: { id: 'b' } }, b: { id: 'a' } });
   assert.equal(roomTree([['a', 'left'], ['b', 'bottom']]), null, 'two want one cell');
   assert.equal(roomTree([['a', 'left'], ['b', 'top-left']]), null);
 });
 
-test('a window fills a gap, both gaps of a side, or a corner of an empty half', async (t) => {
+test('at the room\u2019s edge, a window takes what the room\u2019s zone covers of a gap', async (t) => {
   const { roomTree, splitLayout, withinGap, leavesOf, rectZone } = await model(t);
   const half = roomTree([['a', 'left'], ['b', 'top-right']]);
   const [hole] = splitLayout(half, room).gaps;
-  const filled = withinGap(half, hole, { x: 900, y: 850 }, 'c', 'bottom-right');
+  const filled = withinGap(half, hole, { x: 900, y: 850 }, 'c', 'bottom-right', room);
   assert.deepEqual(filled.b.b, { id: 'c' });
   assert.deepEqual(leavesOf(filled), ['a', 'b', 'c']);
 
   const row = roomTree([['a', 'top-left'], ['b', 'top-right']]);
   const [low] = splitLayout(row, room).gaps;
-  assert.deepEqual(withinGap(row, low, { x: 400, y: 880 }, 'c', 'bottom'), { axis: 'y', at: 0.5, a: pair('x', 'a', 'b'), b: { id: 'c' } });
-  assert.deepEqual(withinGap(row, low, { x: 100, y: 880 }, 'c', 'bottom-left').cells, [{ id: 'a' }, { id: 'b' }, { id: 'c' }, gap]);
+  assert.deepEqual(withinGap(row, low, { x: 400, y: 880 }, 'c', 'bottom', room), { axis: 'y', at: 0.5, a: pair('x', 'a', 'b'), b: { id: 'c' } });
+  assert.deepEqual(withinGap(row, low, { x: 100, y: 880 }, 'c', 'bottom-left', room).cells, [{ id: 'a' }, { id: 'b' }, { id: 'c' }, gap]);
 
   const emptyHalf = { axis: 'y', at: 0.5, a: pair('x', 'a', 'b'), b: gap };
   const [wide] = splitLayout(emptyHalf, room).gaps;
-  assert.deepEqual(withinGap(emptyHalf, wide, { x: 950, y: 880 }, 'c', 'bottom-right'), { x: 0.5, y: 0.5, cells: [{ id: 'a' }, { id: 'b' }, gap, { id: 'c' }] });
+  assert.deepEqual(withinGap(emptyHalf, wide, { x: 950, y: 880 }, 'c', 'bottom-right', room), { x: 0.5, y: 0.5, cells: [{ id: 'a' }, { id: 'b' }, gap, { id: 'c' }] });
   assert.deepEqual(withinGap(emptyHalf, wide, { x: 500, y: 700 }, 'c').b, { id: 'c' });
 
   assert.equal(rectZone({ x: 500, y: 500, w: 500, h: 400 }, room), 'bottom-right');
@@ -324,4 +324,117 @@ test('detach unlocks one line: the windows stay put, and each side has its own e
   assert.deepEqual(splitEdges(both.edges.a), ['s', 'e', 'se']);
   const after = withoutWindow(unlockedLine(quad, [], 'x', room), 'd');
   assert.equal(after.freeX, 0.5, 'a cell left empty keeps a line unlocked');
+});
+
+test('an empty cell offers itself whole, its halves and its quarters, as a blank screen does', async (t) => {
+  const { dropTree, normalized, splitLayout } = await model(t);
+  const oneAndGap = { axis: 'x', at: 0.5, a: { id: 'a' }, b: gap };
+  const here = new Set(['a']);
+  const rectsOf = (pointer, roomZone = '', area = AREA) => {
+    const { tree } = dropTree(oneAndGap, area, pointer, 'c', { here, alive: here, room: roomZone });
+    return splitLayout(normalized(tree), area).rects;
+  };
+  const rectOf = (...args) => rectsOf(...args).c;
+  assert.deepEqual(rectOf({ x: 1200, y: 440 }), { x: 800, y: 40, w: 800, h: 800 }, 'the middle takes the cell');
+  assert.deepEqual(rectOf({ x: 1200, y: 60 }), { x: 800, y: 40, w: 800, h: 400 }, 'its top edge, the top half');
+  assert.deepEqual(rectOf({ x: 1200, y: 820 }), { x: 800, y: 440, w: 800, h: 400 }, 'its bottom edge, the bottom half');
+  assert.deepEqual(rectOf({ x: 820, y: 440 }), { x: 800, y: 40, w: 400, h: 800 }, 'its left edge, the left half');
+  assert.deepEqual(rectOf({ x: 1580, y: 60 }), { x: 1200, y: 40, w: 400, h: 400 }, 'its corner, that quarter');
+  assert.deepEqual(rectOf({ x: 1599, y: 440 }, 'right'), { x: 800, y: 40, w: 800, h: 800 }, 'the screen edge, the half it is');
+  assert.deepEqual(rectOf({ x: 1599, y: 41 }, 'top-right'), { x: 800, y: 40, w: 800, h: 400 }, 'the screen corner, the room\u2019s quarter');
+  assert.deepEqual(rectsOf({ x: 1580, y: 60 }).a, { x: 0, y: 40, w: 800, h: 800 }, 'nothing else moves');
+  assert.deepEqual(rectOf({ x: 520, y: 500 }, '', room), { x: 500, y: 100, w: 500, h: 800 }, 'a cell too narrow for two side by side is not split so');
+  assert.deepEqual(rectOf({ x: 980, y: 120 }, '', room), { x: 500, y: 100, w: 500, h: 400 }, 'and its corner takes the top half');
+});
+
+test('a cell held for a window that is away is kept, and one that no longer exists is not', async (t) => {
+  const { dropTree, normalized } = await model(t);
+  const saved = pair('x', 'a', 'b');
+  const into = (alive) => dropTree(saved, room, { x: 750, y: 500 }, 'c', { here: new Set(['a']), alive: new Set(alive) });
+  assert.deepEqual(into(['a', 'c']).tree, pair('x', 'a', 'c'), 'b is gone: its cell takes c');
+  assert.equal(into(['a', 'b', 'c'])?.tree, undefined, 'b is minimized: the cell waits for it');
+  assert.deepEqual(normalized(saved, new Set(['a'])), { ...saved, b: gap }, 'an operation drops a window that is gone');
+  assert.equal(normalized(saved, new Set()), null);
+});
+
+test('a quad with an empty half is the other half beside a gap, on load too', async (t) => {
+  const { normalized, parseSplit, withoutWindow } = await model(t);
+  const column = { axis: 'x', at: 0.5, a: pair('y', 'a', 'c'), b: gap };
+  assert.deepEqual(withoutWindow(withoutWindow(quad(), 'b'), 'd'), column);
+  assert.deepEqual(withoutWindow({ axis: 'x', at: 0.5, a: pair('y', 'a', 'c'), b: { id: 'b' } }, 'b'), column, 'however it came to be');
+  assert.deepEqual(parseSplit(JSON.stringify({ x: 0.5, y: 0.5, cells: [{ id: 'a' }, gap, { id: 'c' }, gap] })), column, 'a tree saved before normalizes as it loads');
+  const unlocked = normalized({ x: 0.4, y: 0.6, freeX: 0.5, cells: [{ id: 'a' }, { id: 'b' }, gap, gap] });
+  assert.deepEqual(unlocked, { axis: 'y', at: 0.6, a: { axis: 'x', at: 0.4, free: 0.5, a: { id: 'a' }, b: { id: 'b' } }, b: gap }, 'an unlocked line stays unlocked');
+  assert.deepEqual(normalized({ x: 0.5, y: 0.5, cells: [gap, gap, { id: 'c' }, gap] }), { axis: 'x', at: 0.5, a: { axis: 'y', at: 0.5, a: gap, b: { id: 'c' } }, b: gap }, 'three empty: one window in its quarter');
+});
+
+// What every drop over a split would do, sampled across the room, at its edges
+// and inside it, for windows that are and are not there.
+function dropsOver({ dropTree, normalized, leavesOf }, tree) {
+  const ids = new Set(leavesOf(tree));
+  const zones = ['', 'left', 'right', 'bottom', 'top-left', 'top-right', 'bottom-left', 'bottom-right'];
+  const out = [];
+  for (let x = room.x + 5; x < room.x + room.w; x += room.w / 20) {
+    for (let y = room.y + 5; y < room.y + room.h; y += room.h / 16) {
+      for (const zone of zones) {
+        const drop = dropTree(tree, room, { x, y }, 'z', { here: ids, alive: ids, room: zone });
+        out.push(drop?.tree ? JSON.stringify(normalized(drop.tree)) : String(drop?.float || null));
+      }
+    }
+  }
+  return out;
+}
+
+test('the same split, however it was reached, offers the same drops', async (t) => {
+  const m = await model(t);
+  const { dropTree, leavesOf, normalized, parseSplit, roomTree, splitLayout, withoutWindow } = m;
+  const here = (tree) => new Set(leavesOf(tree));
+  const drop = (tree, id, pointer, zone = '') => normalized(dropTree(tree, room, pointer, id, { here: here(tree), alive: new Set([...here(tree), id]), room: zone }).tree);
+  const centreOf = (tree) => {
+    const [{ rect }] = splitLayout(tree, room).gaps;
+    return { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
+  };
+  // 1+2: a on the left, b above c on the right.
+  const want = { axis: 'x', at: 0.5, a: { id: 'a' }, b: pair('y', 'b', 'c') };
+  const blank = roomTree([['a', 'left'], ['b', 'top-right']]);
+  const histories = {
+    'a blank screen': drop(blank, 'c', { x: 999, y: 899 }, 'bottom-right'),
+    'two, b torn off, back at the screen corner': (() => {
+      const torn = withoutWindow(pair('x', 'a', 'b'), 'b');
+      const back = drop(torn, 'b', { x: 999, y: 101 }, 'top-right');
+      return drop(back, 'c', centreOf(back));
+    })(),
+    'two, b torn off, back at the top of its cell': (() => {
+      const torn = withoutWindow(pair('x', 'a', 'b'), 'b');
+      const back = drop(torn, 'b', { x: 750, y: 120 });
+      return drop(back, 'c', centreOf(back));
+    })(),
+    'four, two closed, one back': (() => {
+      const two = withoutWindow(withoutWindow({ x: 0.5, y: 0.5, cells: [{ id: 'x' }, { id: 'b' }, { id: 'y' }, { id: 'c' }] }, 'x'), 'y');
+      return drop(two, 'a', centreOf(two));
+    })(),
+    'b split off a, then c': (() => {
+      const two = drop(roomTree([['a', 'left']]), 'b', { x: 999, y: 101 }, 'top-right');
+      return drop(two, 'c', { x: 999, y: 899 }, 'bottom-right');
+    })(),
+  };
+  for (const [name, tree] of Object.entries(histories)) {
+    assert.deepEqual(tree, want, name);
+    assert.deepEqual(parseSplit(JSON.stringify(tree)), want, `${name}, reloaded`);
+  }
+  const drops = dropsOver(m, want);
+  for (const [name, tree] of Object.entries(histories)) assert.deepEqual(dropsOver(m, tree), drops, name);
+
+  // One window and an empty half, from a split a window left and from corner
+  // snaps on a blank screen: the same drops either way.
+  const left = { axis: 'x', at: 0.5, a: { id: 'a' }, b: gap };
+  const halves = [
+    withoutWindow(pair('x', 'a', 'b'), 'b'),
+    withoutWindow(withoutWindow(roomTree([['a', 'left'], ['b', 'top-right']]), 'b'), 'nobody'),
+  ];
+  assert.deepEqual(halves[0], left);
+  assert.deepEqual(halves[1], left);
+  const leftDrops = dropsOver(m, left);
+  assert.deepEqual(dropsOver(m, halves[0]), leftDrops);
+  assert.deepEqual(dropsOver(m, halves[1]), leftDrops);
 });
