@@ -614,7 +614,7 @@ func TestSteward_ListsEveryAgentAndGroup(t *testing.T) {
 	cfg, err := config.Load()
 	require.NoError(t, err)
 	require.NotNil(t, cfg.Features)
-	cfg.Features.Collab = false
+	cfg.Features.Collab = new(false)
 	require.NoError(t, config.Save(cfg))
 	_, convs = peers(steward, "")
 	assert.NotContains(t, convs, worker)

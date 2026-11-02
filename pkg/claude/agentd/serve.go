@@ -473,6 +473,7 @@ func runServe(p *serveParams) error {
 	// decision, the clone cooldown, and the spawn guardrails. Load it once
 	// up front so every startup knob reads the same snapshot.
 	cfg, _ := config.Load()
+	resolveCollabDefault(cfg)
 	resourceDelegationDir, resourceDelegationSource := resolveResourceDelegationDir(
 		p.ResourceDelegationDir, cfg)
 	if resourceDelegationDir != "" {

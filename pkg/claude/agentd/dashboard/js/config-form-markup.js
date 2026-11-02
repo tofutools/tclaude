@@ -150,7 +150,7 @@ export const CONFIG_PANELS = Object.freeze([
   { id: 'context', icon: '🧠', title: 'Context & sessions', lede: 'Compaction, context nudges, resume prompts and how long Claude Code keeps transcripts.' },
   { id: 'costs', icon: '💲', title: 'Usage & costs', lede: 'Cost display, WHAT-IF estimates, subscription usage bars and rate-limit gating.' },
   { id: 'assistants', icon: '💬', title: 'Ask & scribe', lede: 'Defaults for tclaude ask and for the scribe agents behind the 🤖 Edit with agent buttons.' },
-  { id: 'steward', icon: '✦', title: 'Steward', lede: 'What a Steward, your helper in the companion window, may do without asking. Part of the Collab experimental feature.' },
+  { id: 'steward', icon: '✦', title: 'Steward', lede: 'What a Steward, your helper in the companion window, may do without asking. Part of Collab.' },
   { id: 'daemon', icon: '🌐', title: 'Daemon & network', lede: 'How agentd starts, where the dashboard listens, operator tokens and remote access.' },
   { id: 'logs', icon: '🧾', title: 'Logs & housekeeping', lede: 'Log verbosity and rotation, and long-horizon cleanup of retired agents.' },
   { id: 'experimental', icon: '🧪', title: 'Experimental', lede: 'Opt-in flags for features under active development.' },
@@ -391,6 +391,14 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           summary="show the Vegas tab, volume controls & play music outside slop mode"
           more=${html`The dashboard's casino "slop" mode (the 🎰 in the header) bundles a <strong>Vegas</strong> tab with a lounge-radio player and a header volume mixer. Enable this to surface those — the tab, the 🔊 sound switch and 🎚️ volume sliders, and the music — on the <em>plain</em> dashboard too, without the slot machines, coins and sound FX. Music starts muted and plays on your first click (browsers block autoplay); the 🔊 button mutes it (remembered per browser). Off by default. Stored in the <code>slop</code> block of config.json alongside the volume/channel settings.`}>
           <${Toggle} id="cfg-slop-vegas-regular" />
+        </${Setting}>
+      </${Group}>
+
+      <${Group} title="Collab">
+        <${Setting} title="Collab" forId="cfg-feature-collab" k="features.collab" badges=${['refresh']}
+          summary=${html`show the <strong>Collab</strong> surfaces: the companion window, the Steward and shared boards`}
+          more="The floating companion window for talking to agents from any view, with the Steward as your helper for all of tclaude; shared boards you draw on with agents; the fleet brief and map; decisions agents put to you with options; and agents pointing at the dashboard for you. On by default. Turning it on spawns nothing and grants nothing: a Steward exists only once you make one. Uncheck to hide these views; their API and CLI commands then answer that Collab is turned off.">
+          <${Toggle} id="cfg-feature-collab" />
         </${Setting}>
       </${Group}>
 
@@ -1081,11 +1089,6 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           summary=${html`enable the in-development <strong>Processes</strong> feature`}
           more="Repeatable process graphs run by agents, programs and you: a template editor with an AI scribe, runs scoped to a group or an agent, and run views in Groups and Terminals. Off by default while it is tested and iterated on; the tab, the Groups and Terminals process views, the process API and the run engine all stay absent until enabled.">
           <${Toggle} id="cfg-feature-processes" />
-        </${Setting}>
-        <${Setting} title="Collab" forId="cfg-feature-collab" k="features.collab" badges=${['refresh']}
-          summary=${html`enable the in-development <strong>Collab</strong> surfaces: the companion window, the Steward and shared boards`}
-          more="The floating companion window for talking to agents from any view, with the Steward as your helper for all of tclaude; shared boards you draw on with agents; the fleet brief and map; decisions agents put to you with options; and agents pointing at the dashboard for you. Off by default while it is tested and iterated on; these views stay hidden and their API and CLI commands answer with a disabled message until enabled.">
-          <${Toggle} id="cfg-feature-collab" />
         </${Setting}>
         <${Setting} title="Triggers" forId="cfg-feature-triggers" k="features.triggers" badges=${['refresh']}
           summary=${html`enable the in-development <strong>Triggers</strong> automation feature`}

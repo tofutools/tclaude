@@ -126,7 +126,7 @@ func TestExternalSteward_NeedsCollab(t *testing.T) {
 	issued := s.create("assistant")
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	cfg.Features.Collab = false
+	cfg.Features.Collab = new(false)
 	require.NoError(t, config.Save(cfg))
 	code, _ := s.humanPost("/v1/external-stewards", map[string]any{"name": "other"})
 	assert.Equal(t, http.StatusNotFound, code)

@@ -2,19 +2,18 @@
 
 In this tutorial you turn on the Steward, a helper agent that knows tclaude and
 can see your fleet. You ask it what needs you, and let it help with setup. It is
-optional, and the feature is experimental.
+optional.
 
 **You need:** [Your first agent](first-agent.md) completed.
 
-## 1. Turn on Collab
+## 1. Check that Collab is on
 
-The Steward is part of **Collab**, which is off by default.
+The Steward is part of **Collab**, which is on by default: the dashboard has a
+**Collab** tab, and a **✦ Steward** pill sits at the bottom right of every tab.
 
-1. Open **Config**, then **🧪 Experimental**.
-2. Turn on **Collab**, and click **Save changes…**.
-
-You don't need to restart. On the next refresh, the **Terminals** tab becomes
-**Collab**, and a **✦ Steward** pill appears at the bottom right of every tab.
+If the tab is called **Terminals** instead, Collab was turned off. Open **Config**,
+then **🎨 Appearance**, turn on **Collab**, and click **Save changes…**. You don't
+need to restart; the next refresh picks it up.
 
 ## 2. Summon it
 
@@ -78,7 +77,7 @@ it needs your taste, it sends a **decision**: a question with one button per opt
 
 ## What you learned
 
-- **Collab** under **Config › Experimental** turns on the Steward and the companion.
+- **Collab**, on by default under **Config › Appearance**, gives you the Steward and the companion.
 - **✦ Steward** summons it; **Ctrl .** opens and hides the window.
 - "Brief me" tells you what needs you.
 - The Steward asks before it acts, and you approve in the dashboard.

@@ -1,8 +1,8 @@
 # Collab boards
 
-Boards are experimental and opt-in: turn on **Collab** under
-[Config › Experimental](dashboard-config.md#experimental). Until then boards do not show in the
-dashboard, and their API and the `tclaude agent board` commands answer with a disabled message.
+Boards are part of [Collab](companion.md#turning-collab-off), which is on by default. With
+Collab turned off, boards do not show in the dashboard, and their API and the
+`tclaude agent board` commands answer with a disabled message.
 
 A collab board is a shared drawing board for the operator and agents. The
 operator draws in the dashboard, where a board opens as a tab of the Collab
