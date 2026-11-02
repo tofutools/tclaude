@@ -7,7 +7,7 @@
 import { h } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
-import { minimizeOverlayWindow, overlayWindows } from './overlay-instances.js';
+import { focusOverlayWindow, minimizeOverlayWindow, overlayWindows } from './overlay-instances.js';
 import { activeTabOf } from './overlay-tab-model.js';
 import { endSnapAssist, placeSnapAssisted, snapAssist, tiledOverlayIds } from './overlay-window.js';
 
@@ -17,6 +17,16 @@ const html = htm.bind(h);
 // and in no tiling.
 export function snapAssistChoices(windows, tiled) {
   return windows.filter((window) => !tiled.has(window.id) && window.tabs.length);
+}
+
+// focusSnapped gives the keyboard back to the window the operator snapped, as
+// Escape leaves the question: the window itself, then whatever its tab holds,
+// such as a terminal.
+function focusSnapped(doc, windowId) {
+  const window = overlayWindows.peek().find((candidate) => candidate.id === windowId);
+  if (!window) return;
+  [...(doc?.querySelectorAll?.('[data-overlay-window]') || [])].find((node) => node.dataset.overlayWindow === windowId)?.focus?.();
+  focusOverlayWindow(window.active);
 }
 
 export function SnapAssist({ win, viewOf }) {
@@ -39,7 +49,9 @@ export function SnapAssist({ win, viewOf }) {
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
+        const from = snapAssist.peek()?.from;
         endSnapAssist();
+        focusSnapped(doc, from);
         return;
       }
       if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter'].includes(event.key) || panel.current?.contains(doc.activeElement)) return;
