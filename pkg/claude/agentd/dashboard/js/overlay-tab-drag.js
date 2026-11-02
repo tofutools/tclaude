@@ -3,15 +3,24 @@
 // the strip for a window of its own. A group's pill drags the whole group the same
 // way. It runs on pointer events, unlike the Terminals strip's HTML5 drag, which
 // touch screens do not reliably start.
+//
+// The Collab strip is one more place to drop on (tcl-0mqn7r): a tab lands there
+// beside the tab under the pointer, and the main nav's Collab entry takes it at
+// the end, switching to that view when the pointer rests on it. A tab of that
+// strip, dragged the other way, shows where it would land on a window's strip.
 
 import { signal } from '@preact/signals';
 import { dropIndex, pulledOff } from './overlay-tab-model.js';
 import { moveOverlayTab, overlayWindows, tearOverlayTabOut } from './overlay-instances.js';
 import { droppedAt } from './overlay-window-model.js';
+import { moveTabsToCollab } from './overlay-tab-moves.js';
 
 const DRAG_START_PX = 5;
 const TEAR_OFF_PX = 40;
 const HOLD_MS = 500;
+// How long the pointer rests on the nav's Collab entry before the view switches.
+export const NAV_SWITCH_MS = 600;
+const COLLAB_NAV = 'nav [data-tab="terminals"]';
 
 // Where the tabs in flight would land: { ids, windowId, index, groupId }, index
 // counting the tabs there without them, and groupId the group they were dropped
@@ -20,6 +29,15 @@ export const tabDropTarget = signal(null);
 
 // The tab following the pointer: { label, x, y }. Otherwise null.
 export const tabGhost = signal(null);
+
+// Where overlay tabs in flight would land in the Collab view: { beside, after }
+// on its strip, beside the pane keyed beside or at the end with none, or { nav }
+// on the main nav's entry. Otherwise null.
+export const collabDropTarget = signal(null);
+
+// The Collab tab in flight toward the windows: { key, floats }, floats saying
+// whether it can be in one. Otherwise null.
+export const collabDrag = signal(null);
 
 const windowOf = (element) => element.closest?.('section')?.querySelector?.('[data-tab-strip]')?.dataset?.tabStrip || '';
 
@@ -44,28 +62,77 @@ function targetAt(doc, point, ids, through = '') {
   return { ids, windowId, index: beside ? tabs.findIndex((tab) => tab.id === beside.dataset.tabId) : tabs.length, groupId };
 }
 
-const sameTarget = (a, b) => a?.windowId === b?.windowId && a?.index === b?.index && a?.groupId === b?.groupId;
+// Where on the Collab view a point is: its strip, beside the nearest tab, or the
+// nav's entry for it. The strip only counts while its view shows.
+function collabAt(doc, { x, y }, through) {
+  const top = [...(doc?.elementsFromPoint?.(x, y) || [])].find((element) => !element.closest?.('.window-resize-frame') && (!through || windowOf(element) !== through));
+  if (top?.closest?.(COLLAB_NAV)) return { nav: true };
+  const strip = top?.closest?.('[data-collab-strip]');
+  if (!strip) return null;
+  const nodes = [...strip.querySelectorAll('.mux-tab[data-pane-key]')];
+  if (!nodes.length) return { beside: '', after: false };
+  const at = dropIndex(nodes.map((node) => node.getBoundingClientRect()), x);
+  return at < nodes.length
+    ? { beside: nodes[at].dataset.paneKey, after: false }
+    : { beside: nodes[nodes.length - 1].dataset.paneKey, after: true };
+}
 
-function aim(next) {
+const sameTarget = (a, b) => a?.windowId === b?.windowId && a?.index === b?.index && a?.groupId === b?.groupId;
+const sameCollab = (a, b) => a?.nav === b?.nav && a?.beside === b?.beside && a?.after === b?.after;
+
+// Resting on the nav's entry switches to the Collab view, as a browser's tab bar
+// does under a dragged link.
+let navTimer = null;
+function restOnNav(doc, on) {
+  const nav = doc?.querySelector?.(COLLAB_NAV);
+  nav?.classList?.toggle?.('overlay-drop', on);
+  if (!on) {
+    clearTimeout(navTimer);
+    navTimer = null;
+  } else if (!navTimer) navTimer = setTimeout(() => { navTimer = null; nav?.click?.(); }, NAV_SWITCH_MS);
+}
+
+function aimCollab(next, doc) {
+  if (!sameCollab(collabDropTarget.peek(), next)) collabDropTarget.value = next;
+  restOnNav(doc, !!next?.nav);
+}
+
+function aim(next, doc = null, collab = null) {
   if (!sameTarget(tabDropTarget.peek(), next)) tabDropTarget.value = next;
+  aimCollab(next ? null : collab, doc);
+}
+
+// stripTargetAt is where tabs land on an overlay strip, given an HTML5 drag from
+// the Collab strip: ids is empty, as none of them are there yet.
+export function stripTargetAt(doc, point) {
+  return targetAt(doc, point, []);
+}
+
+// aimFromCollab shows where a Collab tab would land, or nothing.
+export function aimFromCollab(target) {
+  if (!sameTarget(tabDropTarget.peek(), target)) tabDropTarget.value = target;
 }
 
 // tabJoin lets a window of one tab, dragged by its title bar or tab, drop into
 // another window's strip. over and drop take the pointer, and say whether it is
 // over a strip.
 export function tabJoin(win, tabId, windowId) {
+  const doc = win?.document;
   const over = (point) => {
-    const target = targetAt(win?.document, point, [tabId], windowId);
-    aim(target);
-    return !!target;
+    const target = targetAt(doc, point, [tabId], windowId);
+    const collab = target ? null : collabAt(doc, point, windowId);
+    aim(target, doc, collab);
+    return !!(target || collab);
   };
   const drop = () => {
     const target = tabDropTarget.peek();
-    aim(null);
+    const collab = collabDropTarget.peek();
+    aim(null, doc);
     if (target) moveOverlayTab(tabId, target.windowId, target.index, target.groupId);
-    return !!target;
+    else if (collab) void moveTabsToCollab([tabId], collab);
+    return !!(target || collab);
   };
-  return { over, drop, cancel: () => aim(null) };
+  return { over, drop, cancel: () => aim(null, doc) };
 }
 
 // A release back on what was pressed clicks it, which would act on it again.
@@ -116,7 +183,8 @@ export function holdForMenu(event, win, onHold, cancel) {
 }
 
 // startTabDrag follows a press on a tab or a group's pill: item is { ids, label,
-// land, tear }, the tabs that go and what to do with them. Anything shorter than a drag
+// land, tear }, the tabs that go and what to do with them. Dropped on the Collab
+// view, they go there. Anything shorter than a drag
 // stays a click, and Escape, a cancelled pointer or what it returns leaves
 // everything where it was. A finger swiping along a strip too full to show every
 // tab scrolls it instead, since a tab keeps the browser from doing that.
@@ -136,7 +204,7 @@ export function startTabDrag(event, { ids, label, land, tear }, win) {
     win?.removeEventListener?.('pointercancel', cancel);
     win?.removeEventListener?.('keydown', onKey, true);
     tabGhost.value = null;
-    aim(null);
+    aim(null, doc);
   };
   const move = (m) => {
     if (m.pointerId !== pointerId) return;
@@ -155,18 +223,21 @@ export function startTabDrag(event, { ids, label, land, tear }, win) {
       held?.classList?.add?.('dragging');
     }
     tabGhost.value = { label, x: m.clientX + 8, y: m.clientY + 8 };
-    aim(targetAt(doc, point(m), ids));
+    const target = targetAt(doc, point(m), ids);
+    aim(target, doc, target ? null : collabAt(doc, point(m)));
   };
   const up = (u) => {
     if (u.pointerId !== pointerId) return;
     const dragged = dragging;
     const target = dragged ? targetAt(doc, point(u), ids) : null;
+    const collab = dragged && !target ? collabAt(doc, point(u)) : null;
     const pressHeld = !dragged && !swiping;
     const rect = strip?.getBoundingClientRect?.();
     end();
     if (pressHeld) return;
     swallowClick(node);
     if (target) land(target);
+    else if (collab) void moveTabsToCollab(ids, collab);
     else if (dragged && rect && pulledOff(rect, point(u), TEAR_OFF_PX)) tear(droppedAt(u));
   };
   const end = () => {

@@ -897,7 +897,9 @@ export function CompanionApp({
     silence(agent.agentId);
     closeOverlayTab(instance.id);
     // Let the window's widget detach before the Terminals pane attaches.
-    setTimeout(() => openTerminalsPane(agent.agentId, agent.name, agent.harness), 60);
+    return new Promise((resolve) => {
+      setTimeout(() => resolve(openTerminalsPane(agent.agentId, agent.name, agent.harness)), 60);
+    });
   }
 
   // Attach first: the window sees it lost the terminal, so closing it cannot

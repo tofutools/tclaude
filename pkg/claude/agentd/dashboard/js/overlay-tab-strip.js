@@ -14,7 +14,7 @@ import {
   activateOverlayTab, changeOverlayGroup, groupOverlayTab, minimizeOverlayTab, minimizeOverlayTabs, moveOverlayGroup, moveOverlayTab,
   overlayWindows, startOverlayGroup, tearOverlayGroupOut, tearOverlayTabOut, ungroupOverlayTabs,
 } from './overlay-instances.js';
-import { holdForMenu, startTabDrag, tabDropTarget, tabGhost } from './overlay-tab-drag.js';
+import { aimFromCollab, collabDrag, holdForMenu, startTabDrag, stripTargetAt, tabDropTarget, tabGhost } from './overlay-tab-drag.js';
 import { groupsOf, windowHolding } from './overlay-tab-model.js';
 import { TO_COLLAB_LABEL, TO_WINDOW_LABEL, tabMoves } from './overlay-tab-moves.js';
 
@@ -202,6 +202,23 @@ export function OverlayTabStrip({ window, overlay, win, viewOf }) {
   };
   // The tabs in flight may be this strip's, and target.index counts without them.
   const landsBefore = target && window.tabs.filter((tab) => !target.ids.includes(tab.id))[target.index]?.id;
+  // A Collab tab dragged here shows where it would land; its own strip's dragend
+  // takes it there, as it knows the pane. One that cannot float is not taken.
+  const collabOver = (event) => {
+    if (!collabDrag.peek()?.floats) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    aimFromCollab(stripTargetAt(win?.document, { x: event.clientX, y: event.clientY }));
+  };
+  const collabLeave = (event) => {
+    if (!event.currentTarget.contains(event.relatedTarget) && tabDropTarget.peek()?.windowId === window.id) aimFromCollab(null);
+  };
+  const collabDrop = (event) => {
+    if (!collabDrag.peek()?.floats) return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
   // Ctrl+wheel over the title bar zooms a board.
   const onWheel = (event) => { if (!event.ctrlKey) event.currentTarget.scrollLeft += event.deltaY; };
   const renderTab = (tab) => {
@@ -219,7 +236,8 @@ export function OverlayTabStrip({ window, overlay, win, viewOf }) {
   const groups = new Map((window.groups || []).map((group) => [group.id, group]));
   const groupOf = new Map(window.tabs.map((tab) => [tab.id, tab.groupId]));
   const segments = segmentsFor(window.tabs.map((tab) => ({ ...tab, key: tab.id })), (key) => groupOf.get(key), groups);
-  return html`<div ref=${stripRef} class=${`companion-tabs overlay-tab-strip${target ? ' joining' : ''}`} role="tablist" aria-label="Tabs" data-tab-strip=${window.id} onWheel=${onWheel}>
+  return html`<div ref=${stripRef} class=${`companion-tabs overlay-tab-strip${target ? ' joining' : ''}`} role="tablist" aria-label="Tabs" data-tab-strip=${window.id} onWheel=${onWheel}
+    onDragOver=${collabOver} onDragLeave=${collabLeave} onDrop=${collabDrop}>
     ${segments.map((segment) => (segment.type === 'group'
     ? html`<${GroupStack} key=${segment.key} window=${window} group=${segment.group} overlay=${overlay} win=${win} renderTab=${renderTab} />`
     : renderTab(segment.pane)))}

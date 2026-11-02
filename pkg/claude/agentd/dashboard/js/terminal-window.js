@@ -42,7 +42,7 @@ setFloatingTerminals((key) => {
 registerTabMoves(TERMINAL_WINDOW_KIND, (tab) => ({
   toCollab: () => {
     closeOverlayTab(tab.id);
-    void openTerminalPane(paneSeedOf(tab));
+    return openTerminalPane(paneSeedOf(tab));
   },
   toWindow: ({ rect, win, notify }) => {
     if (detachSeedWindow({ ...paneSeedOf(tab), floats: true }, { size: rect, at: elementScreenPoint(win, rect) })) closeOverlayTab(tab.id);

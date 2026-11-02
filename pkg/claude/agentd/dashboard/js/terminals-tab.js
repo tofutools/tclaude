@@ -70,6 +70,11 @@ export function openTerminalPane(seedOrPromise, { reveal = true, activate = true
   });
 }
 
+// placeTerminalPane moves an open pane beside another, taking that one's group.
+export function placeTerminalPane(key, beside, options) {
+  return controller?.reorderPane?.(key, beside, options) || null;
+}
+
 // Returns openTerminalPane's promise (the opened pane, or null). Every existing
 // caller is fire-and-forget; the deep-link restore in terminal-nav-route.js
 // needs to know whether the agent's terminal actually came up.

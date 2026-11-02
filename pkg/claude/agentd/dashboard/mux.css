@@ -114,6 +114,8 @@ body.hide-costs .mux-cost-toggle { display: none; }
 }
 .mux-tab.drop-before::before { left: -3px; }
 .mux-tab.drop-after::after { right: -3px; }
+/* Overlay tabs about to land on this strip. */
+.mux-tabs.overlay-landing { background: #1f6feb1f; box-shadow: inset 0 0 0 1px #58a6ff; }
 /* Centre-drop: releasing here combines the two tabs into a group, so the whole
    target tab lights up rather than showing an insertion line — a different
    outcome deserves a different signal. */

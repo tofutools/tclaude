@@ -4,7 +4,7 @@ import { shellToast } from './shell-state.js';
 import { detachWindowFeatures, elementScreenPoint } from './terminal-drag-out.js';
 import { terminalAttachConfig } from './terminal-attach-config.js';
 import { openBoardOverlay } from './board-overlay-state.js';
-import { openOverlayWindow } from './overlay-instances.js';
+import { moveOverlayTab, openOverlayWindow, overlayTabs } from './overlay-instances.js';
 import { agentSessionSeed, overlayablePane, terminalWindowOf } from './terminal-window-model.js';
 import { companionAvailable, floatInCompanion } from './companion-facade.js';
 
@@ -251,11 +251,16 @@ export function createTerminalShellActions({
   // floating window. A board's editor saves what it holds as it goes, and a
   // shell's tmux session outlives the tab's view of it. An agent goes to its chat
   // window, which attaches only after this tab let go: the tab's own detach
-  // would drop a chat that got there first. at places a window dragged out.
-  async function openPaneInOverlay(key, { at = null } = {}) {
+  // would drop a chat that got there first. at places a window dragged out, and
+  // into ({ windowId, index, groupId }) is a window's strip it was dropped on.
+  async function openPaneInOverlay(key, { at = null, into = null } = {}) {
     const pane = state.panes.value.find((candidate) => candidate.key === key);
     if (disposed || !pane) return false;
-    return floatPane(pane, at);
+    const before = new Set(overlayTabs.peek().map((tab) => tab.id));
+    const floated = await floatPane(pane, at);
+    const arrived = into && floated && overlayTabs.peek().find((tab) => !before.has(tab.id));
+    if (arrived) moveOverlayTab(arrived.id, into.windowId, into.index, into.groupId);
+    return floated;
   }
 
   async function floatPane(pane, at = null) {

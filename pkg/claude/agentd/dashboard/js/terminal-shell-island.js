@@ -12,6 +12,7 @@ import { loadXtermRuntime } from './xterm-loader.js';
 import { bindTerminalHandoffReceiver } from './terminal-handoff.js';
 import { dragLeftRegion, dragScreenPoint } from './terminal-drag-out.js';
 import { toTabsLabel } from './overlay-tab-moves.js';
+import { aimFromCollab, collabDrag, collabDropTarget, tabDropTarget } from './overlay-tab-drag.js';
 import { TabContextMenu, TabGroupRename, useArmedCollapse } from './tab-controls.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
@@ -1182,7 +1183,12 @@ function TerminalTabs({
   const [stripGap, setStripGap] = useState(null);
 
   const detachArmed = useDragOutArmed(Boolean(dragKey), tabsRef);
+  // A window's strip about to take the tab in flight, and overlay tabs about to
+  // land on this strip.
+  const joining = !!dragKey && !!tabDropTarget.value;
+  const landing = collabDropTarget.value;
   const clearDrag = () => {
+    collabDrag.value = null;
     dragKeyRef.current = null;
     dragGroupIdRef.current = null;
     droppedRef.current = false;
@@ -1241,6 +1247,8 @@ function TerminalTabs({
     droppedRef.current = false;
     setDragKey(key);
     setDropTarget(null);
+    // An overlay window's strip may take it, if it can float.
+    collabDrag.value = { key, floats: paneFloats(state.panes.value.find((pane) => pane.key === key), snapshot?.value) };
   };
   // A stack moves as one block. Dragging its pill is a distinct gesture from
   // dragging a member tab (which reorders that one tab), so it carries its own
@@ -1285,8 +1293,15 @@ function TerminalTabs({
   // the pane it is leaving and placed where the drag was released.
   const endTabDrag = (event) => {
     const key = dragKeyRef.current;
-    const detach = !droppedRef.current && key && dragLeftRegion(event, tabsRef.current);
+    // Dropped on a window's strip, it joins that window there.
+    const into = !droppedRef.current && collabDrag.peek()?.floats ? tabDropTarget.peek() : null;
+    aimFromCollab(null);
+    const detach = !into && !droppedRef.current && key && dragLeftRegion(event, tabsRef.current);
     clearDrag();
+    if (into && key) {
+      void actions.openPaneInOverlay(key, { into });
+      return;
+    }
     if (!detach) return;
     if (paneFloats(state.panes.value.find((pane) => pane.key === key), snapshot?.value)) {
       void actions.openPaneInOverlay(key, { at: droppedAt(event) });
@@ -1706,7 +1721,7 @@ function TerminalTabs({
           Drag this pill, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow, to move the whole group among the other tabs.
         </span>
         <span class="mux-tab-a11y" role="status" aria-live="polite" aria-atomic="true">${reorderAnnouncement}</span>
-        <div class="mux-tabbar"><${GroupsInteractionProvider}><div ref=${tabsRef} class=${`mux-tabs${detachArmed ? ' drag-out-armed' : ''}`} role="tablist" aria-label="Open terminals">
+        <div class="mux-tabbar"><${GroupsInteractionProvider}><div ref=${tabsRef} class=${`mux-tabs${detachArmed && !joining ? ' drag-out-armed' : ''}${collabDropTarget.value && !collabDropTarget.value.nav ? ' overlay-landing' : ''}`} role="tablist" aria-label="Open terminals" data-collab-strip="">
           ${current.segments.map((segment) => {
             const renderTab = (pane) => html`
               <${PaneTab}
@@ -1719,7 +1734,7 @@ function TerminalTabs({
                 actions=${scopedActions}
                 openMenu=${setTabMenu}
                 dragging=${dragKey === pane.key}
-                dropSide=${dropTarget?.key === pane.key ? dropTarget.side : ''}
+                dropSide=${dropTarget?.key === pane.key ? dropTarget.side : landing?.beside === pane.key ? (landing.after ? 'after' : 'before') : ''}
                 onDragStart=${startTabDrag}
                 onDragEnd=${endTabDrag}
                 onDragOver=${tabDragOver}
@@ -1794,7 +1809,7 @@ function TerminalTabs({
         <${BoardMenu} state=${state} snapshot=${snapshot} />
         ${hasBackground ? html`<div class="mux-bg-slot"><${BackgroundTerminalsChip} rows=${backgroundRows} snapshot=${snapshot} /></div>` : null}
         </div>
-        ${detachArmed ? html`<div class="mux-drag-out-hint">Release anywhere — even outside the browser — to detach this terminal into its own window</div>` : null}
+        ${detachArmed && !joining ? html`<div class="mux-drag-out-hint">Release anywhere — even outside the browser — to detach this terminal into its own window</div>` : null}
       ` : null}
       ${snapshot ? html`<${BoardDeleteHost} snapshot=${snapshot} fetchImpl=${fetchFromPage} notify=${shellToast} />` : null}
       ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} groups=${current.groups}
