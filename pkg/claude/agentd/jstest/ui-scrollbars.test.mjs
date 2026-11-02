@@ -60,7 +60,7 @@ test('only ui.css styles scrollbars', () => {
   assert.deepEqual(over, [], 'style scrollbars only through the --ui-scroll-* tokens in ui.css');
 
   const modules = ['dashboard.html', 'terminals.html', ...readdirSync(new URL('js/', DASHBOARD)).filter((name) => name.endsWith('.js')).map((name) => `js/${name}`)];
-  const inline = modules.filter((file) => /scrollbar-color|scrollbarColor|::-webkit-scrollbar-thumb/.test(read(file)));
+  const inline = modules.filter((file) => /scrollbar-color|scrollbarColor|scrollbarWidth|scrollbar-width:\s*(?!none)|::-webkit-scrollbar(?![\w-]*\s*\{\s*display:\s*none)/.test(read(file)));
   assert.deepEqual(inline, [], 'no page or module carries its own scrollbar styling');
 });
 

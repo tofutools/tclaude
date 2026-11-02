@@ -10,14 +10,15 @@ import (
 
 // TestDashboardScrollbarTokenContrast holds the house scrollbar (ui.css, see
 // jstest/ui-scrollbars.test.mjs) to WCAG non-text contrast: in every skin the
-// thumb keeps 3:1 against that skin's darkest pane in each state, and
-// brightens from rest to hover to drag.
+// thumb keeps 3:1 in each state against the lightest pane that commonly
+// scrolls there (the thumb is the lighter colour, so that is the hard case),
+// and brightens from rest to hover to drag.
 func TestDashboardScrollbarTokenContrast(t *testing.T) {
 	css := dashboardAssetFile(t, "ui.css")
 	for _, skin := range []struct{ name, selector, pane string }{
-		{name: "default", selector: ":root", pane: "#0d1117"},
-		{name: "wizard", selector: ":root:has(> body.wizard)", pane: "#140f28"},
-		{name: "slop", selector: ":root:has(> body.slop)", pane: "#1a0505"},
+		{name: "default", selector: ":root", pane: "#21262d"},
+		{name: "wizard", selector: ":root:has(> body.wizard)", pane: "#241b3d"},
+		{name: "slop", selector: ":root:has(> body.slop)", pane: "#2a0a0a"},
 	} {
 		rule := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(skin.selector) + ` \{([^}]*--ui-scroll-thumb:[^}]*)\}`).FindStringSubmatch(css)
 		if rule == nil {

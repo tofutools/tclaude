@@ -261,8 +261,9 @@ label:has(> input:disabled) { cursor: not-allowed !important; }
 
 /* Scrollbars. One house scrollbar for every scroller on the page, the page
    itself included: thin, a quiet thumb on a transparent track (so it sits on
-   whatever pane it scrolls), brightening on hover and while dragged. Each
-   state keeps 3:1 contrast on the skin's darkest pane (WCAG non-text). Skins
+   whatever pane it scrolls), brightening on hover and while dragged (in
+   Chromium; Firefox cannot target the thumb). Each state keeps 3:1 contrast
+   on the skin's lighter scrolling panes (WCAG non-text). Skins
    set the --ui-scroll-* tokens on the root, so the page scrollbar follows the
    skin too. Firefox reads the standardized properties; Chromium reads the
    ::-webkit-scrollbar rules, kept apart because a non-auto scrollbar-color
@@ -285,9 +286,10 @@ label:has(> input:disabled) { cursor: not-allowed !important; }
   --ui-scroll-thumb-hover: #d4a017;
   --ui-scroll-thumb-active: #ffd700;
 }
+/* Firefox has no *:hover variant: :hover matches every ancestor of the
+   pointer, so it would light every enclosing scroller at once. */
 @supports not selector(::-webkit-scrollbar) {
   * { scrollbar-width: thin; scrollbar-color: var(--ui-scroll-thumb) transparent; }
-  *:hover { scrollbar-color: var(--ui-scroll-thumb-hover) transparent; }
 }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track,

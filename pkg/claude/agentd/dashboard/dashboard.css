@@ -24,10 +24,9 @@
    panes internally, so it has no page scrollbar at all. Without this, opening
    Messages reclaims that gutter and the whole chrome (header + nav/tabs bar)
    jumps over — the "the UI shifts when I view Messages" bug. overflow-y:scroll
-   keeps the gutter present on every tab, so the switch is a no-op. It only
-   reserves space where the scrollbar is classic (Windows/Linux); overlay
-   scrollbars (macOS) float and never caused the reflow, so this is harmless
-   there. */
+   keeps the gutter present on every tab, so the switch is a no-op. The house
+   scrollbar (ui.css) is a classic one in every engine that reads
+   ::-webkit-scrollbar, macOS included, so the gutter is its 10px. */
 html { overflow-y: scroll; }
 /* The Terminals app shell needs a percentage containing block so it can inherit
    the document's scrollbar-adjusted height. Keep the document scrollbar itself
