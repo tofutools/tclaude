@@ -216,7 +216,9 @@ func handleGLProxyJobLogFailed(w http.ResponseWriter, r *http.Request) {
 			maxGLPaginatedPages*glJobsPerPage)
 	}
 	tail, truncated := ghTailText(b.String(), maxGHProxyTextBytes)
-	out := ProxyResult{Stdout: tail, Truncated: truncated || anyTraceTruncated}
+	// A walk stopped at the page cap is a partial answer too: its note is in
+	// the text, and the flag says so for a caller that reads only the flag.
+	out := ProxyResult{Stdout: tail, Truncated: truncated || anyTraceTruncated || partial}
 	if unreadable > 0 {
 		out.ExitCode = ghExitFailure
 		out.Stderr = firstUnreadable

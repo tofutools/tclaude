@@ -809,6 +809,29 @@ func TestGLProxy_JobLogFailedKeepsTheEndOfManyTraces(t *testing.T) {
 	assert.True(t, out.Truncated)
 }
 
+// TestGLProxy_JobLogFailedFlagsAPartialJobWalk: a pipeline with more jobs than
+// the proxy reads answers with its note, exit 0, and the truncated flag.
+func TestGLProxy_JobLogFailedFlagsAPartialJobWalk(t *testing.T) {
+	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
+	gl.route = func(req agentd.GitLabRequestForTest) (glCanned, bool) {
+		// Always another page: the proxy reads up to its cap and stops.
+		return glCanned{Status: http.StatusOK, Body: `[{"id":1,"name":"build","stage":"build","status":"success"}]`,
+			Header: http.Header{"Link": {`<` + glTestBase + `/api/v4/projects/` + glTestProjectID + `/pipelines/99/jobs?page=2>; rel="next"`}}}, true
+	}
+	res := gitProxyPost(t, f, "/v1/gitlab/job/log-failed", map[string]any{"pipeline_id": 99})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	var out struct {
+		ExitCode  int    `json:"exit_code"`
+		Stdout    string `json:"stdout"`
+		Truncated bool   `json:"truncated"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+	assert.Contains(t, out.Stdout, "the rest were not inspected")
+	assert.Zero(t, out.ExitCode, "what was read is a real answer")
+	assert.True(t, out.Truncated, "a partial walk is a partial answer")
+}
+
 // TestGLProxy_IssueViewTellsAnUnreadableAnswerFromAMissingIssue.
 func TestGLProxy_IssueViewTellsAnUnreadableAnswerFromAMissingIssue(t *testing.T) {
 	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
