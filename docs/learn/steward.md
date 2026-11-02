@@ -29,7 +29,7 @@ says what changes.
 
 The window has a real terminal, so you type to the Steward as you would to any
 agent. Move the window by its title bar, drag it to a screen edge to snap it, and
-press **Ctrl+.** to minimize it or bring it back.
+press **Ctrl .** to minimize it or bring it back.
 
 ## 3. Ask what needs you
 
@@ -79,7 +79,7 @@ it needs your taste, it sends a **decision**: a question with one button per opt
 ## What you learned
 
 - **Collab** under **Config › Experimental** turns on the Steward and the companion.
-- **✦ Steward** summons it; **Ctrl+.** opens and hides the window.
+- **✦ Steward** summons it; **Ctrl .** opens and hides the window.
 - "Brief me" tells you what needs you.
 - The Steward asks before it acts, and you approve in the dashboard.
 

@@ -4,6 +4,7 @@
 import { h } from 'preact';
 import htm from 'htm';
 import { browserOS } from './helpers.js';
+import { withShortcut } from './keybindings.js';
 
 const html = htm.bind(h);
 
@@ -31,7 +32,7 @@ function Glyph({ path }) {
 export function WindowControls({ look, maximized, closeLabel, closeTitle, onMinimize, onMaximize, onClose }) {
   const glyphs = GLYPHS[look];
   const sizeLabel = maximized ? 'Restore' : 'Maximize';
-  const minimize = onMinimize && html`<button type="button" class="overlay-wc-minimize" aria-label="Minimize (Ctrl+.)" title="Minimize (Ctrl+.)"
+  const minimize = onMinimize && html`<button type="button" class="overlay-wc-minimize" aria-label=${withShortcut('Minimize', 'steward')} title=${withShortcut('Minimize', 'steward')}
     onClick=${onMinimize}><${Glyph} path=${glyphs.minimize} /></button>`;
   const size = html`<button type="button" class="overlay-wc-maximize" aria-label=${sizeLabel} title=${sizeLabel}
     onClick=${onMaximize}><${Glyph} path=${maximized ? glyphs.restore : glyphs.maximize} /></button>`;

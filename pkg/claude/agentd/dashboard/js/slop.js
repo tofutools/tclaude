@@ -10,6 +10,8 @@
 // a refresh preserves the chosen state without leaving an extra history
 // entry.
 
+import { matchesShortcut } from './keybindings.js';
+
 const SLOP_REST = 'The slop machine';
 const SLOP_TITLE = 'The slop machine';
 
@@ -253,7 +255,7 @@ export function setVegasRegularMode(on) {
 // the Windows snip tool, Alt+Shift switches the keyboard layout. Nothing
 // owns Ctrl/⌘+Alt+Shift+S, so we claim it.
 //
-// We match on e.code === 'KeyS' rather than e.key because e.key is
+// The registry ('slop', 'wizard') matches on e.code === 'KeyS' rather than e.key because e.key is
 // keyboard-layout *and* modifier dependent: on macOS Option+S emits 'ß',
 // and Ctrl+Alt (AltGr on Windows/EU layouts) can remap the produced
 // character too. e.code is the physical key, so the shortcut behaves the
@@ -261,10 +263,7 @@ export function setVegasRegularMode(on) {
 // doesn't strobe the toggle.
 export function bindSlopHotkey() {
   document.addEventListener('keydown', (e) => {
-    if (e.repeat) return;
-    if (e.code !== 'KeyS') return;
-    if (!e.shiftKey || !e.altKey) return;
-    if (!e.ctrlKey && !e.metaKey) return;
+    if (e.repeat || !matchesShortcut(e, 'slop')) return;
     e.preventDefault();
     toggleSlop();
   });
@@ -283,10 +282,7 @@ export function bindSlopHotkey() {
 // free), so we take it for wizard mode.
 export function bindWizardHotkey() {
   document.addEventListener('keydown', (e) => {
-    if (e.repeat) return;
-    if (e.code !== 'KeyW') return;
-    if (!e.shiftKey || !e.altKey) return;
-    if (!e.ctrlKey && !e.metaKey) return;
+    if (e.repeat || !matchesShortcut(e, 'wizard')) return;
     e.preventDefault();
     toggleWizard();
   });

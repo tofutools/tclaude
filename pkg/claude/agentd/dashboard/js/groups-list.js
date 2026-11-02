@@ -31,6 +31,7 @@ import { subgroupsSectionAuto, subgroupsSectionOpen } from './groups-fused-secti
 import { featureState } from './feature-state-registry.js';
 import { firstUnreadHumanNotification } from './human-notification-attention.js';
 import { groupQueuedSpawns } from './queued-spawns.js';
+import { modClickText, modifierText } from './keybindings.js';
 
 const html = htm.bind(h);
 
@@ -476,7 +477,7 @@ function RealGroupSummary({ node, group, activity, membersView, snapshot, action
   const groupEditing = interactions.editorKey.startsWith(`group:${group.name}:`);
   const renameKey = `group:${group.name}:name`;
   const maxValue = group.max_members || 0;
-  return html`<summary draggable=${!groupEditing} data-group-reorder=${group.name} title="Drag this header to reorder or nest the group · Ctrl/Cmd-drag to clone">
+  return html`<summary draggable=${!groupEditing} data-group-reorder=${group.name} title=${`Drag this header to reorder or nest the group · ${modifierText('Mod')}-drag to clone`}>
     ${interactions.editorKey === renameKey ? html`<${InlineEditor}
       editorKey=${renameKey} value=${fleetOwnName(group)} className="group-rename-input"
       onCommit=${(value) => actions.renameGroup(group, value)}
@@ -502,7 +503,7 @@ function RealGroupSummary({ node, group, activity, membersView, snapshot, action
       className=${`group-default-cwd${group.default_cwd ? '' : ' unset'}`} action="set-group-dir" group=${group} actions=${actions}
       field="default_cwd" value=${group.default_cwd || ''} inputClass="group-default-cwd-input" placeholder="absolute path (~ OK) — empty clears the default"
       passModifiedClick=${!!group.default_cwd}
-      title=${group.default_cwd ? `Default spawn directory: ${group.default_cwd} — click the text to edit, Ctrl/Cmd-click it to open a terminal, or click the 📁 to browse` : 'No default spawn directory — click the text to type one, the 📁 to browse'}
+      title=${group.default_cwd ? `Default spawn directory: ${group.default_cwd} — click the text to edit, ${modClickText()} it to open a terminal, or click the 📁 to browse` : 'No default spawn directory — click the text to type one, the 📁 to browse'}
       message=${(value) => value ? `${group.name}: default dir → ${value}` : `${group.name}: default dir cleared`}
     ><span class="gdc-pick" tabindex="0" role="button" data-act="pick-group-dir" data-group=${group.name} data-label=${group.name} data-cwd=${group.default_cwd || ''} title="Browse for a directory" onClick=${(event) => {
       event.preventDefault();

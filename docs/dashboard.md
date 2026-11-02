@@ -83,7 +83,7 @@ is waiting on you. Spending limits raise their own banner.
 
 ## Command palette
 
-Press Ctrl/Cmd-K or click 🔍, then type. It covers tabs, windows, spawning, retiring,
+Press **Ctrl K** (**⌘ K** on a Mac) or click 🔍, then type. It covers tabs, windows, spawning, retiring,
 power, repository updates and every manager dialog.
 
 - `spawn luna` finds saved profiles by name or alias. Add `fast` for fast mode on
@@ -97,17 +97,43 @@ On a peer's page, it runs on that peer, limited to what the peer allows.
 
 ## Keyboard shortcuts
 
-| Keys | Action |
-|---|---|
-| Ctrl/Cmd-K | Command palette (inside a terminal, it needs **Command palette in terminals** under [Config › Experimental](dashboard-config.md#experimental)) |
-| `[` and `]` | Previous and next tab |
-| ← and → | Move along the focused tab bar |
-| Alt+1, Alt+2…9 | This node, then peers in order |
-| Ctrl/Cmd+M | Message the agent in the current terminal |
-| Ctrl+. | Open or minimize the window holding the Steward |
-| Ctrl+Shift+. | Mark up the page |
-| Ctrl+, | Show all overlay windows side by side, to pick one |
-| Ctrl/Cmd+Enter | Submit the spawn dialog |
+**Config › Keyboard** lists every shortcut, including those of the process
+editor, boards and the image viewer, with its keys on Windows and Linux and on
+macOS. Keys are written one name at a time: **Ctrl ,** is Ctrl and the comma
+key, not a plus. Shortcuts follow the key's position, so they sit on the same
+keys on any keyboard layout, and the list labels them with what those keys type
+on yours. Shortcuts marked (Collab) belong to features that need
+[Collab](dashboard-config.md#experimental) on.
+
+<!-- shortcuts:begin -->
+| Action | Windows & Linux | macOS | In a terminal |
+|---|---|---|---|
+| **Anywhere** | | | |
+| Open the command palette | <kbd>Ctrl</kbd> <kbd>K</kbd> | <kbd>⌘</kbd> <kbd>K</kbd> | with **Command palette in terminals** |
+| Open or minimize the Steward window (Collab) | <kbd>Ctrl</kbd> <kbd>.</kbd> | <kbd>Ctrl</kbd> <kbd>.</kbd> | yes |
+| Mark up the page for the agent in the window (Collab) | <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>.</kbd> | <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>.</kbd> | yes |
+| Show all windows side by side, to pick one (Collab) | <kbd>Ctrl</kbd> <kbd>,</kbd> | <kbd>Ctrl</kbd> <kbd>,</kbd> | yes |
+| Message the agent in the current terminal or window | <kbd>Ctrl</kbd> <kbd>M</kbd> | <kbd>Ctrl</kbd> <kbd>M</kbd> | yes |
+| Next dashboard tab | <kbd>]</kbd> | <kbd>]</kbd> | no |
+| Previous dashboard tab | <kbd>[</kbd> | <kbd>[</kbd> | no |
+| Switch node: this node, then peers in order | <kbd>Alt</kbd> <kbd>1…9</kbd> | <kbd>Option</kbd> <kbd>1…9</kbd> | no |
+| Toggle wizard mode | <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>W</kbd> | <kbd>Option</kbd> <kbd>Shift</kbd> <kbd>⌘</kbd> <kbd>W</kbd> | no |
+| Toggle slop mode | <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>S</kbd> | <kbd>Option</kbd> <kbd>Shift</kbd> <kbd>⌘</kbd> <kbd>S</kbd> | no |
+| **Web terminals** | | | |
+| Copy the selected terminal text | <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>C</kbd> | <kbd>Shift</kbd> <kbd>⌘</kbd> <kbd>C</kbd> | yes |
+| Paste text or files | <kbd>Ctrl</kbd> <kbd>V</kbd> | <kbd>⌘</kbd> <kbd>V</kbd> | yes |
+| New line in the prompt | <kbd>Shift</kbd> <kbd>Enter</kbd> | <kbd>Shift</kbd> <kbd>Enter</kbd> | yes |
+| Move the focused terminal tab or tab group left | <kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>←</kbd> | <kbd>Option</kbd> <kbd>Shift</kbd> <kbd>←</kbd> | no |
+| Move the focused terminal tab or tab group right | <kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>→</kbd> | <kbd>Option</kbd> <kbd>Shift</kbd> <kbd>→</kbd> | no |
+| **Dialogs** | | | |
+| Submit the dialog or send the message | <kbd>Ctrl</kbd> <kbd>Enter</kbd> | <kbd>⌘</kbd> <kbd>Enter</kbd> | no |
+| Spawn dialog: add to the queue | <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Enter</kbd> | <kbd>Shift</kbd> <kbd>⌘</kbd> <kbd>Enter</kbd> | no |
+| Undo in the group and markup editors | <kbd>Ctrl</kbd> <kbd>Z</kbd> | <kbd>⌘</kbd> <kbd>Z</kbd> | no |
+<!-- shortcuts:end -->
+
+The command palette inside a terminal needs **Command palette in terminals**
+under [Config › Experimental](dashboard-config.md#experimental), because
+Ctrl K clears the input line there. ← and → move along a focused tab bar.
 
 In any ⚙ menu, start typing to filter, then use ↑, ↓ and Enter.
 
@@ -142,8 +168,8 @@ your session. If you cancel, the dashboard waits for the next change.
 The **wizard** and **slop** themes re-skin the same dashboard. They're not different
 feature sets. Wizard renames things (Parties, Scrying, Labours and so on), and slop goes
 full casino. Click the header icon to switch between regular and wizard, or use
-Ctrl/⌘+Alt+Shift+W. Slop is unfinished, so it's left out of that cycle:
-Ctrl/⌘+Alt+Shift+S toggles it. `?wizard=1` and `?slop=1` force one. A **Vegas** tab
+Ctrl Alt Shift W (Option Shift ⌘ W on a Mac). Slop is unfinished, so it's left out of that cycle:
+Ctrl Alt Shift S (Option Shift ⌘ S on a Mac) toggles it. `?wizard=1` and `?slop=1` force one. A **Vegas** tab
 appears in these themes.
 
 ## The TUI dashboard

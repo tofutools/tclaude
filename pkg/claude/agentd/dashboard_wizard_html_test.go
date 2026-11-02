@@ -69,7 +69,8 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	// The +W hotkey identity: physical W key (layout-independent), Shift+Alt,
 	// and either Ctrl or Cmd — the wizard twin of the +S slop hotkey. Pin each
 	// clause so a refactor can't quietly widen the accident surface.
-	must("e.code !== 'KeyW'", "matches the physical W key, not layout-dependent e.key")
+	must("S('wizard', 'global', 'Mod+Alt+Shift+KeyW'", "the registry pins the physical W key with Shift, Alt and Ctrl/Cmd")
+	must("matchesShortcut(e, 'wizard')", "the +W hotkey matches through the shortcut registry")
 	must("toggleWizard();", "the +W hotkey flips wizard mode")
 
 	// The native wizard state pill replaces the plain pill in wizard mode and

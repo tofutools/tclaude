@@ -10240,6 +10240,16 @@ label.cfg-label { cursor: pointer; }
 .cfg-tool-list th, .cfg-tool-list td { padding: 6px 12px 6px 0; vertical-align: top; border-bottom: 1px solid var(--border); }
 .cfg-tool-list td:first-child code { white-space: nowrap; }
 @media (max-width: 640px) { .cfg-tool-list td:first-child code { white-space: normal; overflow-wrap: anywhere; } }
+/* A shortcut written as key chips (shortcut-keys.js): Ctrl , → [Ctrl] [,]. */
+.shortcut-keys { display: inline-flex; gap: 3px; white-space: nowrap; }
+.shortcut-keys kbd {
+  min-width: 1.4em; text-align: center; background: #21262d; border: 1px solid #2a3340;
+  border-bottom-width: 2px; border-radius: 4px; padding: 0 5px;
+  font-family: ui-monospace, monospace; font-size: 11px; line-height: 18px; color: #c9d1d9;
+}
+.shortcut-or { color: #8b949e; font-size: 12px; }
+.cfg-shortcut-list th.is-here, .cfg-shortcut-list td.is-here { background: rgba(88, 166, 255, 0.06); }
+.cfg-shortcut-list td:first-child { width: 40%; }
 .cfg-steward-manager { display: flex; flex-direction: column; gap: 10px; width: 100%; min-width: 0; }
 .cfg-steward-issued { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
 .cfg-steward-secret { display: block; padding: 6px 8px; font-size: 12px; overflow-wrap: anywhere; user-select: all; }

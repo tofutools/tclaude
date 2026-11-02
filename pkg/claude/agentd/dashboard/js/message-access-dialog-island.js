@@ -20,6 +20,7 @@ import { openMemberPRs } from './pr-review-model.js';
 import { PRChain } from './pr-chain.js';
 import { idTooltip, shortAgentId } from './helpers.js';
 import { wizWord } from './slop.js';
+import { modClickText, shortcutText } from './keybindings.js';
 
 const html = htm.bind(h);
 
@@ -168,7 +169,7 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
         value=${subject} readOnly=${busy} onInput=${(event) => setSubject(event.currentTarget.value)}/></label>
     <label class="cron-create-row operator-message-body-row"><span class="cron-create-label"><${Words} plain="Message" wizard="Missive"/></span>
       <textarea ref=${bodyRef} id="operator-message-body" rows="6" maxlength="16384"
-        placeholder="Message text — Ctrl/Cmd+Enter to send" spellcheck=${true} value=${body} readOnly=${busy}
+        placeholder=${`Message text — ${shortcutText('dialog-submit')} to send`} spellcheck=${true} value=${body} readOnly=${busy}
         onInput=${(event) => setBody(event.currentTarget.value)}></textarea></label>
     <${SavedPromptPicker} value=${body} onChange=${setBody} textareaRef=${bodyRef}
       disabled=${busy} confirmDiscard=${confirmDiscard}/>
@@ -449,7 +450,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
         <button type="button" id="message-create-members-none" onClick=${() => choose([])}>none</button>
         ${RECIPIENT_PICKS.map((pick) => html`<button type="button" key=${pick.key} id=${`message-create-pick-${pick.key}`}
           class=${`recipient-pick${preset === pick.key ? ' active' : ''}`} disabled=${!pickCounts.get(pick.key)}
-          title=${`${pick.title}. Click: only these · Shift-click: add · Ctrl/⌘-click: narrow`}
+          title=${`${pick.title}. Click: only these · Shift-click: add · ${modClickText()}: narrow`}
           onClick=${(event) => applyPick(pick, event)}>${pick.label} <span class="recipient-pick-count">${pickCounts.get(pick.key)}</span></button>`)}
         <span class="spacer"></span><span class="cleanup-count" id="message-create-members-count">${selectedMembers.length} of ${members.length} selected</span></div>
       <div class="cleanup-list" id="message-create-members">${members.length ? members.map((member) => html`<div class=${`cleanup-row${member.online ? '' : ' recipient-offline'}`} key=${member.key}><label>
@@ -460,7 +461,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
       </label>${openMemberPRs(member).length
         // Outside the <label>: a click inside a PR hover panel must not toggle the recipient.
         ? html`<span class="recipient-prs">${openMemberPRs(member).map((pr) => html`<${PRChain} key=${pr.url} pr=${pr} />`)}</span>` : null}</div>`) : html`<div class="cleanup-empty">no members in this group</div>`}</div>
-      <p class="cleanup-hint recipient-picks-hint">Quick select: click = only these · Shift-click = add · Ctrl/⌘-click = narrow</p>
+      <p class="cleanup-hint recipient-picks-hint">Quick select: click = only these · Shift-click = add · ${modClickText()} = narrow</p>
     </div></div>`}
     ${(scopedGroup || target.mode === 'group') && html`<label class="cron-create-row" id="message-create-role-row"><span class="cron-create-label"
       title="Optional group role filter; blank or all reaches every selected member"><${Words} plain="Role filter" wizard="Class filter"/></span>
@@ -546,7 +547,7 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
       ? '🟢 Online — your reply will be queued and delivered when its pane is ready.'
       : '⚫ Offline — this agent has no live session, so it can’t receive a reply. Replying is disabled until it’s back online.'}</div></div></label>
     <label class="cron-create-row"><span class="cron-create-label">Reply</span><textarea ref=${bodyRef} id="human-reply-body" rows="4" value=${body}
-      placeholder="your reply — ⌘/Ctrl+Enter to send" spellcheck="false" onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)}></textarea></label>
+      placeholder=${`your reply — ${shortcutText('dialog-submit')} to send`} spellcheck="false" onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)}></textarea></label>
     ${!remote && html`<div class="cron-create-row"><span class="cron-create-label">Attachments</span>
       <div class="cron-create-target spawn-attachments"><div class="spawn-attachments-controls">
         <button type="button" id="human-reply-attach-btn" disabled=${busy}

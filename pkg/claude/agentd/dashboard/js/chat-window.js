@@ -15,6 +15,7 @@ import { PaneDictation } from './terminal-dictation.js';
 import { ActionCards } from './message-action.js';
 import { ShellHere } from './terminal-here.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
+import { withShortcut } from './keybindings.js';
 
 const html = htm.bind(h);
 
@@ -111,7 +112,7 @@ export function ChatWindow({
         aria-pressed=${voiceOn ? 'true' : 'false'} aria-label=${`Speak ${name}'s replies aloud`}
         title=${voiceOn ? 'Voice on: replies are spoken when a turn ends. Typing stops speech.' : 'Speak replies aloud'}
         onClick=${() => voice.toggle(agent)}>${voiceOn ? '🔊' : '🔈'}</button>`}
-      ${agent?.online && onCompose && html`<button type="button" class="companion-compose" aria-label=${`Message ${name}`} title="Send a queued message (Ctrl/Cmd+M)" onClick=${() => onCompose(agent, refocus)}>✉</button>`}
+      ${agent?.online && onCompose && html`<button type="button" class="companion-compose" aria-label=${`Message ${name}`} title=${withShortcut('Send a queued message', 'compose')} onClick=${() => onCompose(agent, refocus)}>✉</button>`}
       <${AgentCog} agent=${agent} parked=${away} roster=${stewardRoster} canShutDown=${closeShutsDown} showRoster=${showRoster}
         onCollab=${agent && onTerminals && !away ? () => onTerminals(instance, agent) : null}
         onFloat=${onFloat && (tabCount > 1 || away) ? () => onFloat(agent) : null} onDetach=${onSeparateWindow ? () => onSeparateWindow(agent, overlay.windowRef.current?.getBoundingClientRect?.()) : null} onMorph=${agent && openMorph ? () => openMorph(agent) : null}

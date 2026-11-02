@@ -5,6 +5,8 @@
 // is rebuilt for a theme change), so contextual commands can inspect live
 // feature state without coupling the shell island to that state.
 
+import { matchesShortcut } from './keybindings.js';
+
 export const COMMAND_PALETTE_OPEN_EVENT = 'tclaude:command-palette-open';
 
 const providers = new Map();
@@ -27,10 +29,11 @@ export function buildRegisteredCommands(context = {}) {
   return commands;
 }
 
+// The chord is the registry's 'palette' entry, matched by key position
+// (event.code) so it sits on the same key on every layout.
 export function isCommandPaletteShortcut(event) {
-  if (!event || event.type !== 'keydown' || event.repeat ||
-      !(event.ctrlKey || event.metaKey)) return false;
-  return (event.key || '').toLowerCase() === 'k';
+  if (!event || event.type !== 'keydown' || event.repeat) return false;
+  return matchesShortcut(event, 'palette');
 }
 
 export function requestCommandPalette(documentRef = document, detail = {}) {

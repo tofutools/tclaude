@@ -57,6 +57,14 @@ lives. Each section has its own address, such as `/config/notifications`. Bare
 | Web terminal attachment | Wait times | `dashboard.terminal_attach.*_ms` | 0; 250; 250 |
 | Web terminal tabs | Auto-close tabs | `dashboard.close_terminal_tabs` | Shell tabs close when their session ends |
 
+## Keyboard
+
+Lists every dashboard shortcut by where it works, with its keys on Windows and
+Linux and on macOS (this browser's column is marked), and whether it still works
+while a web terminal has focus. Shortcuts of Collab-only features show only with
+Collab on. The list is read-only for now. See
+[Keyboard shortcuts](dashboard.md#keyboard-shortcuts) for the table.
+
 ## Voice
 
 Spoken phrases and the opt-in hands-free settings. See
@@ -214,7 +222,7 @@ policy, under **Processes**.
 | Triggers | `features.triggers` | off | [Triggers](dashboard-automations.md#triggers), and spawn cron jobs |
 | Groups Route map | `features.groups_route_map` | off | [Group routes](group-routes.md) map view |
 | Group attachments | `features.group_attachments` | off | A group's link or attachment panel |
-| Command palette in terminals | `features.terminal_command_palette_shortcut` | off | Ctrl/Cmd-K inside a terminal |
+| Command palette in terminals | `features.terminal_command_palette_shortcut` | off | Ctrl K (⌘ K on a Mac) inside a terminal |
 | Recorded sandbox details | `features.recorded_sandbox_details` | off | A `›` details link on the sandbox badge |
 | Agent dirs: mount parent | `features.agent_dirs_mount_parent` | **on** | See [Sandboxing](sandboxing.md) |
 

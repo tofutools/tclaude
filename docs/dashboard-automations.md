@@ -59,7 +59,7 @@ Decision, Parallel, Wait, Subprocess, Start and End. Other highlights:
 - **Edit with agent** docks the scribe beside the canvas, as 💬 chat or ⌨ terminal.
   A version the scribe saves is reviewed on the canvas, change by change: A accept,
   R reject, J and K to walk.
-- **Subprocess nodes (▣):** double-click to drill in, and Esc or Alt+↑ to leave. ⇪
+- **Subprocess nodes (▣):** double-click to drill in, and Esc or Alt ↑ to leave. ⇪
   extracts a body as its own template, ⊞ expands it in place, ▣ wraps a selection,
   ⇲ unwraps one.
 - Drop a palette item onto a connector to splice it in.

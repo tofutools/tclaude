@@ -93,7 +93,7 @@ The tabs you will use first:
 | **Config** | Your settings. |
 
 **Usage** and **Plugins** stay hidden until they have something to show.
-**Ctrl/Cmd+K** opens a command palette that reaches everything else.
+**Ctrl K (⌘ K on a Mac)** opens a command palette that reaches everything else.
 
 ## 6. Check Doctor
 

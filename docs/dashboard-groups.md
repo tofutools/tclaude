@@ -98,7 +98,7 @@ options open** in the group's ⚙ menu.
 | Icon | What it is | Click to |
 |---|---|---|
 | 📝 | Description (when shown) | Edit it |
-| 📁 | Default directory | Edit it; 📁 browses; Ctrl/Cmd-click opens a terminal there |
+| 📁 | Default directory | Edit it; 📁 browses; Ctrl-click (⌘-click on a Mac) opens a terminal there |
 | 👥 | Members and cap, such as `2/∞` | Change the cap (0 means none) |
 | 🧠 | Default spawn profile | Pick one |
 | 🛡 | Default sandbox profile | Pick one |
@@ -143,7 +143,7 @@ Below the sections is the group's list of links, with **+ link**.
 ### Drag and drop
 
 Drag a group header onto another group to nest it, or to its top or bottom edge
-to reorder. Ctrl/Cmd-drag a header to clone the group. Drag an agent's row to
+to reorder. Ctrl-drag (⌘-drag on a Mac) a header to clone the group. Drag an agent's row to
 another group to move it. A **Retire** bin appears while you drag: drop a row there
 to retire it, or a queued spawn to discard it. Drag from **Retired** to a group to
 reinstate an agent. Dragging a **Conversations** row to a group promotes it
@@ -312,12 +312,12 @@ The rest is optional: startup context, environment, max members, link.
 ### The spawn dialog
 
 To start an agent, use the spawn button inside a group, drag a
-profile, role or template onto the group, or press Ctrl/Cmd-K and type
+profile, role or template onto the group, or press Ctrl K (⌘ K on a Mac) and type
 `spawn`. It runs the same path as `tclaude agent spawn`; see
 [Spawning and lifecycle](spawning-and-lifecycle.md).
 
 For most spawns, pick a **Profile**, give it a **Name** and an **Initial msg**,
-and press **Spawn** (Ctrl/Cmd+Enter). The rest of the form overrides the profile:
+and press **Spawn** (Ctrl Enter, or ⌘ Enter on a Mac). The rest of the form overrides the profile:
 
 | Fields | Use them for |
 |---|---|
@@ -331,7 +331,7 @@ and press **Spawn** (Ctrl/Cmd+Enter). The rest of the form overrides the profile
 | **CWD**, **Worktree repo**, **Worktree**, **New branch**, **Base branch** | Where it works. See [Git worktrees](worktrees.md). |
 | Checkboxes | Auto focus a terminal, include the group's context, start with remote control, and harness-specific options |
 
-**⏸ Add to queue** (Ctrl/Cmd+Shift+Enter) saves the spawn without starting it.
+**⏸ Add to queue** (Ctrl Shift Enter, or Shift ⌘ Enter on a Mac) saves the spawn without starting it.
 Queued agents show as rows with **▶** to start them, and a **⏸ queued** chip in
 the toolbar lists them. Drag a queued row to the **Retire** bin to discard it.
 
@@ -428,7 +428,7 @@ The dialog finds repositories in each group's directory and two levels below it,
 following symlinks, and lists each once. It only shows checkouts on the default
 branch, so feature-branch and detached worktrees are left out, and it does not
 scan every agent worktree. Pick repositories, filtering if you like, then press
-Ctrl/Cmd+Enter.
+Ctrl Enter (⌘ Enter on a Mac).
 
 - **Switch to default branch first** starts on. Untick it to pull each current
   branch's upstream.

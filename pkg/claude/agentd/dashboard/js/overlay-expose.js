@@ -15,11 +15,12 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { focusOverlayWindow, minimizedOverlayTabs, openOverlayWindow, overlayHostUp, overlayWindows } from './overlay-instances.js';
 import { overlayWindowsByStack, reducedMotion } from './overlay-window.js';
 import { hasShownOverlay } from './overlay-stack.js';
+import { matchesShortcut, shortcutText } from './keybindings.js';
 
 const html = htm.bind(h);
 
 export const OVERLAY_EXPOSE_LABEL = 'Show all windows';
-export const OVERLAY_EXPOSE_SHORTCUT = 'Ctrl+,';
+export const OVERLAY_EXPOSE_SHORTCUT = shortcutText('expose');
 
 const KIND_NAMES = { chat: 'Chat', board: 'Board', terminal: 'Terminal', start: 'Steward', decide: 'Decision' };
 const KIND_GLYPHS = { chat: '💬', board: '✎', terminal: '⌨', start: '✦', decide: '⚖' };
@@ -293,11 +294,11 @@ function ExposeView({ win }) {
   ${targets}`;
 }
 
-// installOverlayExposeKey lets Ctrl+, open and close the view from anywhere,
+// installOverlayExposeKey lets its shortcut (Ctrl ,) open and close the view from anywhere,
 // a focused terminal included: capture phase, before xterm sees the key.
 export function installOverlayExposeKey(win) {
   const onKey = (event) => {
-    if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key !== ',') return;
+    if (!matchesShortcut(event, 'expose')) return;
     // Not over a dialog: its focus trap would pull typing into the form beneath.
     if (!overlayExposeOpen.peek() && (!overlayExposeAvailable.peek() || hasShownOverlay())) return;
     event.preventDefault();

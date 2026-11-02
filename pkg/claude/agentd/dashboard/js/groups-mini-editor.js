@@ -25,6 +25,7 @@ import { collapseParamShorthand, setStepName, setStepText, setStepWho, stepText,
 import { handOffProcessDraft } from './process-draft-handoff.js';
 import { FallbackPicker, WhoPicker, defaultNotify, inheritLabel, markQuickStart, useSpawnProfiles } from './groups-quickstart.js';
 import { fallbackNote, setStepFallback, stepFallbackValue } from './process-quickstart.js';
+import { withShortcut } from './keybindings.js';
 
 const html = htm.bind(h);
 
@@ -318,7 +319,7 @@ export function MiniGraphEditor({
       </span>
       ${dirty && html`<span class="gm-changes" data-mini-changes=${summary.length}>● ${summary.length || 1} unsaved change${summary.length === 1 ? '' : 's'}${summary.length ? `: ${summary.slice(0, 3).join(', ')}${summary.length > 3 ? '…' : ''}` : ''}</span>`}
       <span class="gq-spacer"></span>
-      <button type="button" class="gq-btn" data-mini-undo disabled=${!model.current.canUndo} title="Undo (Ctrl+Z)" onClick=${undo}>↶ undo</button>
+      <button type="button" class="gq-btn" data-mini-undo disabled=${!model.current.canUndo} title=${withShortcut('Undo', 'mini-undo')} onClick=${undo}>↶ undo</button>
       <button type="button" class="gq-btn" data-mini-full disabled=${!!busy} title=${dirty ? 'Save, then open it in the full editor' : 'Open it in the full editor'} onClick=${fullEditor}>⤢ full editor</button>
       ${discarding
     ? html`<span class="gq-confirm">Discard ${summary.length || 'the'} change${summary.length === 1 ? '' : 's'}?
