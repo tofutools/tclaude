@@ -6543,14 +6543,6 @@ body.wizard .filter-bar .view-btn.ui-btn[aria-expanded="true"] { color: #f3e6c0;
 /* The generated column checkboxes reuse .filter-toggle (same grid
    alignment); this just stacks them like the toggles above. */
 .view-menu .view-cols { display: flex; flex-direction: column; gap: 2px; }
-.group-offline-toggle {
-  font-size: 11px; color: #7d8590; margin-left: 8px;
-  border: 1px solid #2a3340; border-radius: 4px;
-  padding: 1px 7px; cursor: pointer; background: #161b22;
-  white-space: nowrap;
-}
-.group-offline-toggle:hover { color: #d4d4d4; border-color: #58a6ff; }
-.group-offline-toggle.inherit { color: #484f58; font-style: italic; }
 .sudo-badge {
   display: inline-block; margin-left: 4px; font-size: 11px; cursor: help;
   color: #ffa657;
