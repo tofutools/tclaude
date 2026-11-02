@@ -158,8 +158,7 @@ func TestGLCheckRedirect_BoundsTheChain(t *testing.T) {
 func TestGLRestPaginated_RefusesALinkOffTheInstance(t *testing.T) {
 	var mu sync.Mutex
 	var hits []string
-	var srv *httptest.Server
-	srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		hits = append(hits, r.Host+r.URL.Path)
 		mu.Unlock()
