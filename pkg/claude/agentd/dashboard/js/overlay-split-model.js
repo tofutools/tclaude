@@ -242,12 +242,35 @@ function lineOf(axis, at, free, a, b) {
   return { axis, at, ...(free !== undefined && { free }), a, b };
 }
 
-// tidied folds whatever only holds empty cells into one.
+// A quad's halves, as the cells each holds, and the line that is left when one
+// is empty: the other half beside a gap.
+const QUAD_HALVES = [
+  { cells: [1, 3], half: (q, [tl, , bl]) => lineOf('x', q.x, q.freeX, lineOf('y', q.y, q.freeY, tl, bl), GAP) },
+  { cells: [0, 2], half: (q, [, tr, , br]) => lineOf('x', q.x, q.freeX, GAP, lineOf('y', q.y, q.freeY, tr, br)) },
+  { cells: [2, 3], half: (q, [tl, tr]) => lineOf('y', q.y, q.freeY, lineOf('x', q.x, q.freeX, tl, tr), GAP) },
+  { cells: [0, 1], half: (q, [, , bl, br]) => lineOf('y', q.y, q.freeY, GAP, lineOf('x', q.x, q.freeX, bl, br)) },
+];
+
+// tidied is the one tree for what a tree shows, so that how it was reached makes
+// no difference to what can be done with it. A part that holds only empty cells
+// is one, and a quad with an empty half is the other half beside a gap: a
+// shared crossing means nothing with no window across it.
 function tidied(node) {
   if (isLeaf(node) || isGap(node)) return node;
   const kept = childrenOf(node).map(tidied);
   if (kept.every(isGap)) return GAP;
-  return isQuad(node) ? { ...node, cells: kept } : { ...node, a: kept[0], b: kept[1] };
+  if (!isQuad(node)) return { ...node, a: kept[0], b: kept[1] };
+  const empty = QUAD_HALVES.find(({ cells }) => cells.every((cell) => isGap(kept[cell])));
+  return empty ? tidied(empty.half(node, kept)) : { ...node, cells: kept };
+}
+
+// normalized is the tree as every operation keeps it, tidied. A window that no
+// longer exists keeps its leaf, so it finds its cell if it comes back late, but
+// every operation treats that cell as empty. Null with no window left.
+export function normalized(tree) {
+  if (!tree) return null;
+  const next = tidied(tree);
+  return leavesOf(next).length ? next : null;
 }
 
 // withoutWindow takes a window out and leaves its cell empty, so nothing else
@@ -256,8 +279,7 @@ export function withoutWindow(tree, id) {
   const path = tree && pathTo(tree, id);
   if (!path) return tree;
   if (!path.length) return null;
-  const next = tidied(atPath(tree, path, () => GAP));
-  return leavesOf(next).length ? next : null;
+  return normalized(atPath(tree, path, () => GAP));
 }
 
 // keepingWindows is what is showing now: the tree with the same shape, and an
@@ -301,9 +323,9 @@ export function roomTree(placed) {
   const [tl, tr, bl, br] = cells;
   const whole = (first, second) => !isGap(first) && first === second;
   const column = (top, low) => (top === low ? top : pairOf('y', top, low));
-  if (whole(tl, bl) || whole(tr, br)) return pairOf('x', column(tl, bl), column(tr, br));
-  if (whole(bl, br)) return pairOf('y', pairOf('x', tl, tr), bl);
-  return { x: 0.5, y: 0.5, cells: [tl, tr, bl, br] };
+  if (whole(tl, bl) || whole(tr, br)) return normalized(pairOf('x', column(tl, bl), column(tr, br)));
+  if (whole(bl, br)) return normalized(pairOf('y', pairOf('x', tl, tr), bl));
+  return normalized({ x: 0.5, y: 0.5, cells: [tl, tr, bl, br] });
 }
 
 // rectZone names the snap of a rectangle in area, for a window that fills a gap.
@@ -314,36 +336,49 @@ export function rectZone(rect, area) {
   return rect.w >= area.w && end === 'bottom' ? 'bottom' : `${end}-${side}`;
 }
 
-// withinGap brings id into an empty cell. A room zone that takes two empty cells
-// of a quad takes both, and a corner of an empty half splits it against the line
-// beside it, so it completes a quad. Otherwise the window fills the cell.
-export function withinGap(tree, gap, pointer, id, room = '') {
-  const parentPath = gap.path.slice(0, -1);
-  const index = gap.path[gap.path.length - 1];
-  const parent = nodeAt(tree, parentPath);
-  const window = { id };
-  const taken = ZONE_CELLS[room] || [];
-  if (isQuad(parent) && taken.length === 2 && taken.includes(index) && taken.every((cell) => isGap(parent.cells[cell]))) {
-    return atPath(tree, parentPath, (quad) => wholeSide(quad, room, window));
-  }
-  if (!isQuad(parent)) {
-    const axis = parent.axis === 'y' ? 'x' : 'y';
-    const zone = dropZone(pointer, gap.rect);
-    const toward = axis === 'x' ? sideOf(zone) : endOf(zone);
-    const beside = childrenOf(parent)[1 - index];
-    if (toward && !isLeaf(beside) && !isGap(beside) && beside.axis === axis) {
-      const part = toward === 'left' || toward === 'top' ? pairOf(axis, window, GAP) : pairOf(axis, GAP, window);
-      return atPath(atPath(tree, gap.path, () => part), parentPath, (node) => promoted(node, index));
-    }
-  }
-  return atPath(tree, gap.path, () => window);
+// gapZone is the part of an empty cell a drop takes: '' for all of it, an edge
+// for that half and a corner for that quarter, as a blank screen offers them. At
+// the room's edge it is what the room's zone covers of the cell, so a screen
+// edge or corner takes there what it would on a blank screen; inside the room
+// it is where the pointer is in the cell. A cell too small for two windows
+// side by side, or one above the other, is not split that way.
+function gapZone(rect, pointer, room, area) {
+  const roomy = !!room && !!area;
+  const zone = roomy ? room : dropZone(pointer, rect);
+  // At the room's edge, only a cell wider or taller than the room's half has a
+  // half of its own there.
+  const across = rect.w >= 2 * OVERLAY_MIN_W && (!roomy || rect.w > area.w * 0.75) ? sideOf(zone) : '';
+  const along = rect.h >= 2 * OVERLAY_MIN_H && (!roomy || rect.h > area.h * 0.75) ? endOf(zone) : '';
+  return along && across ? `${along}-${across}` : along || across;
 }
 
-function wholeSide(quad, room, window) {
-  const [tl, tr, bl, br] = quad.cells;
-  if (room === 'bottom') return lineOf('y', quad.y, quad.freeY, lineOf('x', quad.x, quad.freeX, tl, tr), window);
-  if (room === 'left') return lineOf('x', quad.x, quad.freeX, window, lineOf('y', quad.y, quad.freeY, tr, br));
-  return lineOf('x', quad.x, quad.freeX, lineOf('y', quad.y, quad.freeY, tl, bl), window);
+// A cell's quarter by its corner, the drop in it and the rest still empty.
+function quarterOf(zone, window) {
+  const corner = ['top-left', 'top-right', 'bottom-left', 'bottom-right'].indexOf(zone);
+  return { x: 0.5, y: 0.5, cells: [GAP, GAP, GAP, GAP].map((cell, index) => (index === corner ? window : cell)) };
+}
+
+// withinGap brings id into an empty cell, in the part of it gapZone names, in
+// area. A half that splits the cell across its parent's line, beside a part
+// already split that way, shares that line and completes a quad.
+export function withinGap(tree, gap, pointer, id, room = '', area = null) {
+  const parentPath = gap.path.slice(0, -1);
+  const index = gap.path[gap.path.length - 1];
+  const parent = gap.path.length ? nodeAt(tree, parentPath) : null;
+  const window = { id };
+  const zone = gapZone(gap.rect, pointer, room, area);
+  const side = sideOf(zone);
+  const end = endOf(zone);
+  if (!zone) return atPath(tree, gap.path, () => window);
+  if (side && end) return atPath(tree, gap.path, () => quarterOf(zone, window));
+  const axis = side ? 'x' : 'y';
+  const part = side === 'left' || end === 'top' ? pairOf(axis, window, GAP) : pairOf(axis, GAP, window);
+  const next = atPath(tree, gap.path, () => part);
+  const beside = parent && !isQuad(parent) ? childrenOf(parent)[1 - index] : null;
+  if (parent?.axis !== axis && beside && !isLeaf(beside) && !isGap(beside) && beside.axis === axis) {
+    return atPath(next, parentPath, (node) => promoted(node, index));
+  }
+  return next;
 }
 
 // promoted makes a quad of a binary whose two children split across it: a corner
@@ -375,6 +410,31 @@ export function withWindow(tree, target, zone, id) {
   const split = (leaf) => (first ? pairOf(axis, { id }, leaf) : pairOf(axis, leaf, { id }));
   const next = atPath(tree, path, split);
   return corner && path.length ? atPath(next, parentPath, (node) => promoted(node, path[path.length - 1])) : next;
+}
+
+const inside = (pointer, rect) => !!rect && pointer.x >= rect.x && pointer.x < rect.x + rect.w && pointer.y >= rect.y && pointer.y < rect.y + rect.h;
+
+// dropTree is what a drop of id at pointer does to the saved split, laid out in
+// area with the windows in here showing: { tree, zone } for the split it makes,
+// { float: true } back over vacated, the cell this drag tore the window out of,
+// or null where the drop is on nothing of the split. An empty cell takes the
+// window (withinGap), unless it is held for a window in alive that is away; on
+// a window, an edge or corner splits that window (withWindow). It reads nothing
+// but its arguments, so a split behaves the same however it was reached.
+export function dropTree(saved, area, pointer, id, { here, alive, room = '', vacated = null }) {
+  const live = keepingWindows(saved, here);
+  if (!live || !fits(live, area)) return null;
+  // The cell just left is empty space now, even where it joined an empty
+  // neighbour into one larger cell.
+  if (inside(pointer, vacated)) return { float: true };
+  const { rects, gaps } = splitLayout(live, area);
+  const gap = gaps.find((cell) => inside(pointer, cell.rect) && !(cell.held && cell.held !== id && alive.has(cell.held)));
+  if (gap) return { tree: withinGap(saved, gap, pointer, id, room, area), zone: '' };
+  for (const other of leavesOf(live)) {
+    const zone = other === id ? '' : dropZone(pointer, rects[other]);
+    if (zone) return { tree: withWindow(saved, other, zone, id), zone };
+  }
+  return null;
 }
 
 // dropZone is the edge or corner of rect a pointer is on, or '' in the middle of it.
@@ -415,13 +475,14 @@ function validNode(raw, depth = 0) {
   return { axis: raw.axis, at: clampShare(raw.at), ...open('free'), a, b };
 }
 
-// parseSplit reads a saved tree, or null. A window named twice cannot be laid out.
+// parseSplit reads a saved tree, normalized, or null. A window named twice
+// cannot be laid out.
 export function parseSplit(raw) {
   try {
     const tree = validNode(JSON.parse(raw || 'null'));
     if (!tree) return null;
     const ids = leavesOf(tree);
-    return !isLeaf(tree) && ids.length >= 1 && new Set(ids).size === ids.length ? tree : null;
+    return !isLeaf(tree) && ids.length >= 1 && new Set(ids).size === ids.length ? normalized(tree) : null;
   } catch {
     return null;
   }

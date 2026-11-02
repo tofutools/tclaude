@@ -25,7 +25,7 @@ import {
   clampPlacement, fitPlacement, freeEdges, parsePlacement, resizedPlacement, savedAfterResize, snappedResize, snapReach, snapZone, viewportOf, zoneRect,
 } from './overlay-window-model.js';
 import {
-  detachSpot, dropZone, edgeMeets, fits, keepingWindows, leavesOf, lockedEdge, movedEdge, movedLine, nodeAt, parseSplit, rectZone, roomTree, splitEdges, splitLayout, unlockedLine, withWindow, withinGap, withoutWindow,
+  detachSpot, dropTree, dropZone, edgeMeets, fits, keepingWindows, leavesOf, lockedEdge, movedEdge, movedLine, nodeAt, normalized, parseSplit, rectZone, roomTree, splitEdges, splitLayout, unlockedLine, withWindow, withinGap, withoutWindow,
 } from './overlay-split-model.js';
 import { WindowControls } from './overlay-window-controls.js';
 
@@ -80,7 +80,6 @@ let splitLoadedFrom = null;
 
 const SPLIT_UNIT = '\0split';
 
-const sameRect = (a, b) => !!a && !!b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
 // The stack as levels, front first, with a split as one entry.
 const stackUnits = computed(() => {
   const split = new Set(leavesOf(liveSplit.value));
@@ -120,7 +119,10 @@ function loadSplit(prefs) {
   splitTree.value = parseSplit(readPref(prefs, OVERLAY_SPLIT_PREF));
 }
 
-function saveSplit(prefs, tree) {
+// Every operation saves the tree normalized, so what it shows is all that
+// decides what can be done with it next.
+function saveSplit(prefs, made) {
+  const tree = normalized(made);
   splitTree.value = tree;
   writePref(prefs, OVERLAY_SPLIT_PREF, tree ? JSON.stringify(tree) : '');
 }
@@ -150,9 +152,11 @@ export function tiledOverlayIds() {
   return new Set([...leavesOf(splitTree.value), ...snappedWindows.value.keys()]);
 }
 
-// offerSnapAssist asks for the largest empty cell of tree, if there is one.
+// offerSnapAssist asks for the largest empty cell of tree, if there is one. A
+// cell kept for a window that no longer exists is empty to it too.
 function offerSnapAssist(tree, area, from) {
-  const cells = snapAssistOn && tree && fits(tree, area) ? splitLayout(tree, area).gaps.filter((gap) => !gap.held) : [];
+  const shown = tree && keepingWindows(tree, aliveWindows);
+  const cells = snapAssistOn && shown && fits(shown, area) ? splitLayout(shown, area).gaps : [];
   const size = ({ rect }) => rect.w * rect.h;
   const gap = cells.sort((a, b) => size(b) - size(a))[0];
   snapAssist.value = gap ? { tree, gap, area, from, base: splitTree.peek() } : null;
@@ -169,7 +173,7 @@ export function placeSnapAssisted(windowId) {
   }
   const { tree, gap, area, from } = assist;
   const centre = { x: gap.rect.x + gap.rect.w / 2, y: gap.rect.y + gap.rect.h / 2 };
-  const next = withinGap(tree, gap, centre, windowId);
+  const next = withinGap(tree, gap, centre, windowId, '', area);
   saveSplit(splitLoadedFrom, next);
   place(rectZone(gap.rect, area));
   offerSnapAssist(next, area, from);
@@ -382,28 +386,32 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     const savedTree = splitTree.peek();
     const others = [...snappedWindows.peek()].filter(([other]) => other !== id);
     const here = new Set([...others.map(([other]) => other), id]);
-    const planned = (tree, zone = '') => {
+    const planned = (made, zone = '') => {
+      const tree = normalized(made);
       const next = tree && layoutOf(keepingWindows(tree, here));
       const rect = next?.rects[id];
       return rect ? { zone: zone === 'top' ? 'top-left' : zone || rectZone(rect, bounds), tree, guide: rect } : null;
     };
-    const live = liveSplit.peek();
-    const inside = ({ rect }) => pointer.x >= rect.x && pointer.x < rect.x + rect.w && pointer.y >= rect.y && pointer.y < rect.y + rect.h;
-    const gap = layoutOf(live)?.gaps.find((cell) => inside(cell) && !sameRect(cell.rect, vacated) && !(cell.held && cell.held !== id && aliveWindows.has(cell.held)));
-    if (gap) return planned(withinGap(savedTree, gap, pointer, id, room)) || plain;
-    // Still over the cell it left, even at the room's edge, the window floats.
-    if (vacated && inside({ rect: vacated })) return null;
-    const inTree = (other) => leavesOf(savedTree).includes(other);
     // A window outside the split cannot start a tree of its own: there is one.
-    const targets = others.filter(([other]) => !live || inTree(other));
-    if (!room || live) {
-      for (const [other, { rect }] of targets) {
+    if (liveSplit.peek()) {
+      const drop = dropTree(savedTree, bounds, pointer, id, { here: new Set(snappedWindows.peek().keys()), alive: aliveWindows, room, vacated });
+      if (drop?.float) return null;
+      return (drop && planned(drop.tree, drop.zone)) || plain;
+    }
+    // Still over the cell it left, even at the room's edge, the window floats.
+    const inVacated = vacated && pointer.x >= vacated.x && pointer.x < vacated.x + vacated.w && pointer.y >= vacated.y && pointer.y < vacated.y + vacated.h;
+    if (inVacated) return null;
+    // Windows snapped alone are side panels, not a tiling: the space beside them
+    // stays free, and only their edges and the room's make one.
+    const inTree = (other) => leavesOf(savedTree).includes(other);
+    if (!room) {
+      for (const [other, { rect }] of others) {
         const zone = dropZone(pointer, rect());
         if (zone) return planned(withWindow(inTree(other) ? savedTree : { id: other }, other, zone, id), zone) || plain;
       }
+      return plain;
     }
-    if (live || !room) return plain;
-    const alone = targets.filter(([other]) => !inTree(other)).map(([other, { zone }]) => [other, zone]);
+    const alone = others.filter(([other]) => !inTree(other)).map(([other, { zone }]) => [other, zone]);
     return (alone.length && planned(roomTree([...alone, [id, room]]), room)) || plain;
   }
 
@@ -675,7 +683,10 @@ function SplitLines({ overlay }) {
     overlay.win?.addEventListener?.('pointermove', onMove, true);
     return () => overlay.win?.removeEventListener?.('pointermove', onMove, true);
   }, [overlay.win]);
-  return html`${spots.map(({ line, spot }, index) => html`<div key=${`${line.path.join()}:${line.axis}`} class=${`overlay-split-line ${line.axis}`} role="separator"
+  const { gaps } = overlay.splitLines;
+  return html`${gaps.map(({ path, rect }) => html`<div key=${`gap:${path.join()}`} class="overlay-split-gap" aria-hidden="true"
+      style=${`left:${rect.x + 4}px;top:${rect.y + 4}px;width:${Math.max(0, rect.w - 8)}px;height:${Math.max(0, rect.h - 8)}px;z-index:${above}`}></div>`)}
+    ${spots.map(({ line, spot }, index) => html`<div key=${`${line.path.join()}:${line.axis}`} class=${`overlay-split-line ${line.axis}`} role="separator"
       aria-orientation=${line.axis === 'x' ? 'vertical' : 'horizontal'} style=${`left:${line.x}px;top:${line.y}px;width:${line.w}px;height:${line.h}px;z-index:${above}`}
       onPointerDown=${(event) => overlay.onLinePointerDown(event, [line.axis], line.path, line.area)}></div>`)}
     ${crossings.map((crossing) => html`<div key=${crossing.path.join()} class="overlay-split-cross" aria-hidden="true" style=${`left:${crossing.x}px;top:${crossing.y}px;z-index:${above}`}

@@ -2048,9 +2048,12 @@ header.overlay-look-windows { padding-right: 0; }
   background: var(--cmp-bar); color: #58a6ff; line-height: 1; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .12s;
 }
 .overlay-split-detach:is(.near, :focus-visible) { opacity: 1; pointer-events: auto; }
+/* An empty cell of a split, outlined so a tiling reads as one: a window snapped
+   alone is a side panel and has none. It takes no clicks: the page shows through. */
+.overlay-split-gap { position: fixed; pointer-events: none; border: 1px dashed var(--cmp-line); border-radius: 8px; box-sizing: border-box; }
 /* The windows step down for a dialog and aside for annotation. The lines between
    them go, as they would cut across either and take its clicks. */
-body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) :is(.overlay-split-line, .overlay-split-cross, .overlay-split-detach) { display: none; }
+body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) :is(.overlay-split-line, .overlay-split-cross, .overlay-split-detach, .overlay-split-gap) { display: none; }
 /* The minimized windows (board-overlay.js), clear of the chips in a corner. */
 .overlay-dock { position: fixed; z-index: 950; left: 50%; bottom: calc(var(--footer-h, 29px) + 8px); transform: translateX(-50%); display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; max-width: 70vw; max-height: 40vh; overflow: auto; }
 .overlay-dock-pill { display: inline-flex; align-items: center; flex: none; border: 1px solid var(--cmp-line); border-radius: 16px; background: var(--cmp-bar); }
