@@ -183,6 +183,13 @@ runs:
           exit 0
         fi
 
+        # tcl-ha2ux1: stays until the jstest runner shutdowns are explained.
+        if [ "${{ inputs.shard }}" = jstest ] && [ "$RUNNER_OS" = Linux ]; then
+          scripts/ci/jstest-watch.sh &
+          watch_pid=$!
+          trap 'kill "$watch_pid" 2>/dev/null || true' EXIT
+        fi
+
         # Exercise macOS-style temp path aliases on Linux as well. Keep the
         # native macOS temp layout so both sources of aliases remain covered.
         if [ "$RUNNER_OS" = Linux ]; then
