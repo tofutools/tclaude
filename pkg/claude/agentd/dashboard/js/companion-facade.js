@@ -45,3 +45,12 @@ export function floatInCompanion(agentId, at = null) {
 export function reclaimInCompanion(selector) {
   return controller ? controller.reclaim(selector) === true : false;
 }
+
+// peekInCompanion previews an agent's pane by element, read-only.
+export function peekInCompanion(agentId, element) {
+  controller?.peek?.(agentId, element);
+}
+
+export function endCompanionPeek() {
+  controller?.endPeek?.();
+}

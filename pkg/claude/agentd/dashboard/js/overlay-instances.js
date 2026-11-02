@@ -1,15 +1,14 @@
 // overlay-instances.js -- which overlay windows are open (tcl-ppvf8g). A window
 // holds tabs (overlay-tab-model.js), and has its own saved placement, place in
 // the stack and place in a split, so a chat or a board is just one kind of tab,
-// and there can be any number of either. The companion is the one window that
-// is not here: it is always the same one. Everything that opens or finds a window
+// and there can be any number of either. Everything that opens or finds a window
 // names it by its tab, because a tab can move between windows.
 
 import { batch, computed, effect, signal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
 import { parsePlacement, viewportOf } from './overlay-window-model.js';
 import { forgetOverlayWindow, raiseOverlayWindow, readPref, writePref } from './overlay-window.js';
-import { changedGroup, dissolvedGroup, groupedTab, minimizedTab, movedGroup, movedTab, newTabGroup, parseSavedOverlays, removedTab, restoredTab, savedOverlays, tabsOfWindows, tornOutGroup, tornOutTab, windowAround, windowHolding } from './overlay-tab-model.js';
+import { addedTab, changedGroup, dissolvedGroup, groupedTab, minimizedTab, movedGroup, movedTab, newTabGroup, parseSavedOverlays, removedTab, restoredTab, savedOverlays, swappedTab, tabsOfWindows, tornOutGroup, tornOutTab, windowAround, windowHolding } from './overlay-tab-model.js';
 
 // In session storage, as the companion's open state is: a reload brings the
 // windows back, another browser tab does not get a second set.
@@ -58,6 +57,26 @@ export function openOverlayWindow(instance) {
   else if (minimizedOverlayTabs.peek().some(({ tab }) => tab.id === instance.id)) commit(restoredTab(dockState(), instance.id));
   else overlayWindows.value = [...overlayWindows.peek(), windowAround(overlayWindows.peek(), instance, { at: instance.at })];
   raiseOverlayTab(instance.id);
+}
+
+// openTabInWindow shows a tab that has a place already, or else adds it to the
+// window called windowId, which starts with it if there is none yet, at place.
+// With activate false it arrives without taking the window over.
+export function openTabInWindow(windowId, place, tab, { activate = true } = {}) {
+  const held = overlayTabs.peek().some((other) => other.id === tab.id);
+  const home = overlayWindows.peek().find((window) => window.id === windowId);
+  if (held) {
+    if (activate) openOverlayWindow(tab);
+    return;
+  }
+  if (home) commit({ windows: addedTab(overlayWindows.peek(), windowId, tab, activate) });
+  else overlayWindows.value = [...overlayWindows.peek(), { ...windowAround(overlayWindows.peek(), tab, { id: windowId, place }), minimized: !activate }];
+  if (activate) raiseOverlayTab(tab.id);
+}
+
+// swapOverlayTab puts tab in another's place, which leaves the window as it was.
+export function swapOverlayTab(id, tab) {
+  if (holding(id)) commit({ windows: swappedTab(overlayWindows.peek(), id, tab) });
 }
 
 // raiseOverlayTab brings the window holding a tab to the front.
@@ -197,13 +216,17 @@ export function useDropPoint(instance, { win, prefs, prefKey, start }) {
 // keepOverlayWindows reads the saved set, keeping only tabs valid(tab) accepts,
 // and saves it from then on. It returns the way to stop saving.
 export function keepOverlayWindows(win, valid) {
-  if (!overlayWindows.peek().length) {
-    try {
-      const { windows, minimizedTabs } = parseSavedOverlays(sessionStore(win)?.getItem?.(OVERLAY_WINDOWS_KEY), valid);
-      overlayWindows.value = windows;
-      minimizedOverlayTabs.value = minimizedTabs;
-    } catch { /* they just do not come back after a reload */ }
-  }
+  try {
+    const { windows, minimizedTabs } = parseSavedOverlays(sessionStore(win)?.getItem?.(OVERLAY_WINDOWS_KEY), valid);
+    // Islands mount in no set order, so a window may have opened already. A tab
+    // the saved set knows comes back as saved.
+    const saved = new Set([...tabsOfWindows(windows), ...minimizedTabs.map(({ tab }) => tab)].map((tab) => tab.id));
+    let current = overlayWindows.peek();
+    for (const id of saved) if (windowHolding(current, id)) current = removedTab({ windows: current, minimizedTabs: [] }, id).windows;
+    current = current.filter((window) => !windows.some((other) => other.id === window.id));
+    overlayWindows.value = [...windows, ...current];
+    minimizedOverlayTabs.value = [...minimizedTabs, ...minimizedOverlayTabs.peek().filter(({ tab }) => !saved.has(tab.id))];
+  } catch { /* they just do not come back after a reload */ }
   return effect(() => {
     const saved = savedOverlays(overlayWindows.value, minimizedOverlayTabs.value);
     try {

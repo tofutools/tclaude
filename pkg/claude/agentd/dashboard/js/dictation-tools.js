@@ -63,7 +63,7 @@ export function micTitle(sendPhrase) {
 // it returns the target's element while it can dictate, else null. The
 // callbacks read the latest props through a ref.
 export function useDictation({
-  win, targetId, draft, setDraft, send, notify, sendPhrase = '', silenceSend = 0, pauses = null, mark = false, continuous = null, wakeHost = () => null,
+  win, targetId, draft, setDraft, send, notify, sendPhrase = '', silenceSend = 0, pauses = null, mark = false, continuous = null, wakeHost = () => null, onFailed = () => {},
   onStart = () => {}, onRelease = () => {}, dictationImpl = null, dictated = null,
 }) {
   const [listening, setListening] = useState(false);
@@ -72,7 +72,7 @@ export function useDictation({
   const owner = useRef('');
   const target = useRef('');
   const latest = useRef(null);
-  latest.current = { draft, setDraft, send, notify, sendPhrase, silenceSend, pauses, continuous, wakeHost, onStart, onRelease };
+  latest.current = { draft, setDraft, send, notify, sendPhrase, silenceSend, pauses, continuous, wakeHost, onFailed, onStart, onRelease };
   const [local, setLocal] = useState(false);
   const [silenceLeft, setSilenceLeft] = useState(0);
   const silence = useRef(null);
@@ -241,6 +241,7 @@ export function useDictation({
     live.sending = false;
     if (sent === false) {
       endLoop();
+      latest.current.onFailed();
       return;
     }
     live.sent = true;

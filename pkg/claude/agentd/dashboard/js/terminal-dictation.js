@@ -60,7 +60,7 @@ export function terminalDraftText(text) {
 }
 
 export function PaneDictation({
-  pane, active, solo, status, canType, target, snapshot, actions, win = globalThis.window, notify = shellToast, children = null, keep = null, onAnnotate = null, dictationImpl = null, viewTab = () => 'terminals', quietSpeech = () => {}, fetchImpl = null,
+  pane, active, solo, status, canType, target, snapshot, actions, win = globalThis.window, notify = shellToast, children = null, keep = null, onAnnotate = null, onMic = null, dictationImpl = null, viewTab = () => 'terminals', quietSpeech = () => {}, fetchImpl = null,
 }) {
   const [draft, setDraftText] = useState(() => keep?.drafts.get(pane.key) || '');
   useEffect(() => {
@@ -110,7 +110,16 @@ export function PaneDictation({
       quietSpeech();
     },
     onRelease: toTerminal,
+    // A failed send ends continuous mode with the words in the draft, to send again.
+    onFailed: () => field.current?.focus?.(),
   });
+  const mic = useRef(dictation);
+  mic.current = dictation;
+  // Who hands dictation over needs this body while it is showing.
+  useEffect(() => {
+    if (!shown || !talks || !onMic) return undefined;
+    return onMic({ handover: (words, carry) => mic.current.handover(words, carry) });
+  }, [shown, talks]);
   const annotation = useAnnotation({ win, notify: report, viewNow });
 
   // Whatever was typed while this went out stays.
@@ -121,6 +130,8 @@ export function PaneDictation({
     setDraftText((current) => (current === text ? '' : current));
     // Anyone still typing, here or in another window, keeps the keyboard.
     const focused = win?.document?.activeElement;
+    // With no terminal to go to, the field stays for the next message.
+    if (!connected) return;
     if (!focused || focused === win.document.body || (!typedOn.current && field.current?.closest('.companion-input')?.contains(focused))) toTerminal();
   }
 

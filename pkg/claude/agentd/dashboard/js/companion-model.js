@@ -19,6 +19,8 @@ export const COMPANION_TABS_PREF = 'tclaude.dash.companion.tabs';
 // What this window is showing is per browser tab (sessionStorage): an open
 // window attaches its terminal, and that takes over from other views.
 export const COMPANION_OPEN_PREF = 'tclaude.dash.companion.open';
+// Set once a dashboard tab has brought back what the operator keeps at hand.
+export const COMPANION_SEEDED_PREF = 'tclaude.dash.companion.seeded';
 export const COMPANION_PARKED_PREF = 'tclaude.dash.companion.parked';
 export const COMPANION_DETACHED_PREF = 'tclaude.dash.companion.detached';
 // The scribes and Stewards the operator closed, which stay closed.

@@ -1,5 +1,4 @@
-// overlay-tab-window.js -- the one place every overlay window but the companion
-// is shown from (tcl-e4i44z). This runs the window and its tab strip; the active
+// overlay-tab-window.js -- the one place every overlay window is shown from (tcl-e4i44z). This runs the window and its tab strip; the active
 // tab's kind brings what is in it, title bar tools included, so the tools always
 // belong to the tab showing. kinds holds what each kind is shown with. A kind that
 // fails to draw takes down its own tab, not the window beside it.
@@ -54,7 +53,7 @@ const closeTitle = (window, stewardInside) => {
   return window.tabs.length > 1 ? 'Close: every tab goes to the dock, and keeps running' : 'Close: it goes to the dock, and keeps running';
 };
 
-export function OverlayTabWindow({ window, snapshot, prefs, win, kinds }) {
+export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = null, add = null }) {
   const tab = activeTabOf(window);
   const start = tab.kind === BOARD_WINDOW_KIND
     ? boardStartPlacement(prefs, boardOverlays.value.findIndex((board) => board.id === tab.id))
@@ -64,6 +63,7 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds }) {
   const overlay = useOverlayWindow({
     id: window.id, win, prefs, prefKey: window.place, defaultPlacement: start, snaps: true, open: !window.minimized,
     onRefocus: () => focusRef.current?.(),
+    ...(window.id === home?.id && { spotted: home.spotted, onPlaced: home.onPlaced }),
     join: window.tabs.length === 1 ? tabJoin(win, tab.id, window.id) : null,
   });
   const asking = window.tabs.find((candidate) => kinds[candidate.kind]?.asksToClose?.(candidate));
@@ -75,8 +75,9 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds }) {
     },
   };
   const viewOf = (candidate) => (kinds[candidate.kind]?.view || plainView)(candidate);
-  const strip = html`<${OverlayTabStrip} window=${window} overlay=${overlay} win=${win} viewOf=${viewOf} />`;
-  const Body = TAB_BODIES[tab.kind];
+  const strip = html`<${OverlayTabStrip} window=${window} overlay=${overlay} win=${win} viewOf=${viewOf} />${add?.(window)}`;
+  const Body = kinds[tab.kind]?.Body || TAB_BODIES[tab.kind];
+  const minimize = home?.shrinks?.(window, overlay);
   const fallback = (retry) => {
     const look = windowControlsLook(snapshot.value?.window_controls);
     return html`<${OverlayWindow} id=${window.id} window=${overlay} open=${!window.minimized} className="companion-window chat-window" frameClass="companion-resize-frame"
@@ -87,6 +88,6 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds }) {
     <//>`;
   };
   return html`<${TabBoundary} key=${tab.id} fallback=${fallback}>
-    <${Body} instance=${tab} overlay=${overlay} focusRef=${focusRef} strip=${strip} close=${close} ...${kinds[tab.kind]} />
+    <${Body} instance=${tab} overlay=${overlay} focusRef=${focusRef} strip=${strip} close=${close} minimize=${minimize} ...${kinds[tab.kind]} />
   <//>`;
 }

@@ -208,6 +208,18 @@ export function tornOutTab(windows, tabId, at) {
 }
 
 // minimizedTab sends a window's tab to the dock on its own.
+// addedTab puts a tab in a window, showing it there unless activate is false.
+export function addedTab(windows, windowId, tab, activate = true) {
+  const window = windows.find((candidate) => candidate.id === windowId);
+  return replaced(windows, windowId, { ...window, tabs: [...window.tabs, tab], ...(activate && { active: tab.id, minimized: false }) });
+}
+
+// swappedTab puts tab where another one is, with that tab's place in the strip.
+export function swappedTab(windows, id, tab) {
+  const window = windowHolding(windows, id);
+  return replaced(windows, window.id, { ...window, tabs: window.tabs.map((other) => (other.id === id ? tab : other)), active: window.active === id ? tab.id : window.active });
+}
+
 export function minimizedTab({ windows, minimizedTabs }, tabId) {
   const source = windowHolding(windows, tabId);
   if (!source) return { windows, minimizedTabs };
