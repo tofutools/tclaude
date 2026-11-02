@@ -177,7 +177,10 @@ admitted it; a nested path is ordinary on GitLab and is never re-derived
 from its first and last segments. The token travels as an
 `Authorization: Bearer` header, never through argv or a child's environment.
 That is the standard header, so a reverse proxy in front of the instance
-passes it through, and Go drops it if a redirect leaves the instance's host.
+passes it through. The token is sent only to the instance's exact origin
+(scheme, host and port): a redirect elsewhere, such as an artifact download
+handed to object storage, is followed without it, and a redirect to plain
+`http` is refused.
 
 To authorise some projects and not others, write them out:
 

@@ -142,7 +142,42 @@ type glStreamResult struct {
 // glHTTPClient is the daemon's client for GitLab instances. No client-level
 // timeout, for the reason ghHTTPClient has none: every call runs under a
 // per-verb context deadline.
-var glHTTPClient = &http.Client{}
+var glHTTPClient = &http.Client{CheckRedirect: glCheckRedirect}
+
+// glMaxRedirects bounds a redirect chain, as Go's default policy does.
+const glMaxRedirects = 10
+
+// glCheckRedirect keeps the token on its instance across redirects. Go's own
+// rule (net/http shouldCopyHeaderOnRedirect) keeps Authorization on any
+// redirect to the same HOSTNAME, whatever its scheme or port, and on its
+// subdomains. That is not the instance: object storage on another port of the
+// same box, a plain-http endpoint, or a storage subdomain would all receive the
+// token. So the token rides only while a hop stays on the original request's
+// exact origin (scheme, host and port, with :443 folded). A redirect elsewhere,
+// such as an artifact download handed to object storage, is followed without
+// it. A redirect to anything but https is refused outright, so neither the
+// token nor the response travels in clear text. Go copies the headers onto req
+// before calling this, so deleting the header here takes effect.
+func glCheckRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= glMaxRedirects {
+		return fmt.Errorf("stopped after %d redirects", glMaxRedirects)
+	}
+	if !strings.EqualFold(req.URL.Scheme, "https") {
+		return fmt.Errorf("refusing a redirect to a non-https URL (%s)", req.URL.Redacted())
+	}
+	if len(via) > 0 && !sameHTTPSOrigin(req.URL, via[0].URL) {
+		req.Header.Del("Authorization")
+	}
+	return nil
+}
+
+// sameHTTPSOrigin compares scheme, hostname and port, folding https's
+// implicit 443.
+func sameHTTPSOrigin(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) &&
+		strings.EqualFold(a.Hostname(), b.Hostname()) &&
+		httpsPortKey(a.Port()) == httpsPortKey(b.Port())
+}
 
 // glDo is the bounded-response boundary. base is the instance the session
 // pinned; production performs the real request, flow tests swap in a recorder.
@@ -305,10 +340,10 @@ func newGitLabHTTPRequest(ctx context.Context, base, token string, req glAPIRequ
 	//   - a reverse proxy in front of the instance may drop a non-standard
 	//     header (one in the field forwarded Authorization and silently lost
 	//     PRIVATE-TOKEN, so every call read as anonymous and came back 401);
-	//   - Go's client drops Authorization when a redirect leaves the host, but
-	//     forwards a custom header to wherever the redirect points, so an
-	//     artifact download redirected to object storage would have carried
-	//     PRIVATE-TOKEN along with it.
+	//   - a custom header follows a redirect wherever it points, while
+	//     glCheckRedirect can hold Authorization to the instance's exact
+	//     origin (Go's own rule alone keeps it for any port, scheme or
+	//     subdomain of the same host; see glCheckRedirect).
 	httpReq.Header.Set("Authorization", "Bearer "+token)
 	accept := req.Accept
 	if accept == "" {
