@@ -26,6 +26,7 @@ import {
 import { handOffProcessDraft } from './process-draft-handoff.js';
 import { PROCESS_SCRIBE_PROMPT_MAX } from './process-scribe.js';
 import { dashPrefs } from './prefs.js';
+import { Button, Select } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -149,26 +150,26 @@ export function GetStarted({ group, roster, wizard = false, api, onEditList, onO
   return html`<section class="gq-start" aria-label=${wizard ? 'Begin a first rite' : 'Get started with processes'} data-quickstart=${group.name}>
     <div class="gq-start-head">
       <h3>${wizard ? `Set ${group.name}'s heroes walking a rite` : `Get ${group.name}'s agents working through a process`}</h3>
-      ${onDismiss && html`<button type="button" class="gq-link" data-quickstart-dismiss title="Fold this panel to one line in every empty group" onClick=${onDismiss}>✕ not now</button>`}
+      ${onDismiss && html`<${Button} size="sm" variant="link" class="gq-link" data-quickstart-dismiss title="Fold this panel to one line in every empty group" onClick=${onDismiss}>✕ not now<//>`}
     </div>
     <p class="gq-sub">A process is a set of steps. Each step is done by an agent of this group, by you, or by a command. Steps run in order, and your answers can branch them.</p>
     <form class="gq-ask" data-quickstart-draft onSubmit=${draft}>
       <input type="text" class="gq-ask-in" aria-label="Describe the process in plain words" maxlength=${DRAFT_DESCRIPTION_MAX}
         disabled=${!onDraft || pending} value=${description} onInput=${(event) => setDescription(event.currentTarget.value)}
         placeholder="Describe the flow in plain words, e.g. implement the issue, have the reviewer check it, I approve, then merge" />
-      <button type="submit" class="gq-btn primary" disabled=${!onDraft || pending || !description.trim()}
+      <${Button} size="sm" variant="primary" type="submit" disabled=${!onDraft || pending || !description.trim()}
         title=${wizard
           ? 'Ask a process scribe, working in the background, to set down the rite\'s steps from your words. It uses a model run. You grant its access first, and you review the steps before anything is performed.'
           : 'Asks a process scribe, in the background, to draft the steps from your words. It uses a model run. You approve its access first and review the steps here; nothing runs until you press Start.'}
-      >✨ Draft steps</button>
+      >✨ Draft steps<//>
     </form>
-    ${onImport && html`<p class="gq-import"><button type="button" class="gq-link" data-quickstart-import disabled=${pending} onClick=${onImport}
-      title="Import a shared .pwf workflow file: you review what it runs before anything is stored, and it never starts a run">⤒ Import a .pwf</button> or drop one on this group</p>`}
+    ${onImport && html`<p class="gq-import"><${Button} size="sm" variant="link" class="gq-link" data-quickstart-import disabled=${pending} onClick=${onImport}
+      title="Import a shared .pwf workflow file: you review what it runs before anything is stored, and it never starts a run">⤒ Import a .pwf<//> or drop one on this group</p>`}
     <div class="gq-sec">Or start from</div>
     <div class="gq-starters">
       ${STARTERS.map((starter) => {
         const uses = starter.build(roster).uses;
-        return html`<button key=${starter.key} type="button" class="gq-starter" data-starter=${starter.key} disabled=${pending} onClick=${() => pick(starter)}>
+        return html`<button data-ui-exempt key=${starter.key} type="button" class="gq-starter" data-starter=${starter.key} disabled=${pending} onClick=${() => pick(starter)}>
           <span class="gq-starter-title">${starter.title}</span>
           <span class="gq-flow">${starter.chain.map(([kind, label], i) => html`${i > 0 && html`<i aria-hidden="true">→</i>`}<span>${GLYPHS[kind] || ''} ${label}</span>`)}</span>
           <span class="gq-note">${starter.note}</span>
@@ -180,13 +181,13 @@ export function GetStarted({ group, roster, wizard = false, api, onEditList, onO
     <div class="gq-reuse">
       ${templates === null && html`<span class="gq-note">Loading the template library…</span>`}
       ${templates !== null && !shown.length && html`<span class="gq-note">The template library is empty.</span>`}
-      ${shown.map((template) => html`<button key=${template.id} type="button" class="gq-chip" data-reuse-template=${template.id}
+      ${shown.map((template) => html`<button data-ui-exempt key=${template.id} type="button" class="gq-chip" data-reuse-template=${template.id}
         title=${`Start ${template.name} in ${group.name}`} onClick=${() => onReuse(template.id)}>▣ ${template.name}</button>`)}
       ${shown.length > 0 && html`<span class="gq-note">from the template library ·</span>
-        <button type="button" class="gq-link" onClick=${() => onReuse('')}>browse all ›</button>`}
+        <${Button} size="sm" variant="link" class="gq-link" onClick=${() => onReuse('')}>browse all ›<//>`}
       <span class="gq-spacer"></span>
-      <button type="button" class="gq-btn" data-quickstart-blank onClick=${() => onEditList(blankStepList(''), '')}>blank step list</button>
-      <button type="button" class="gq-btn" data-quickstart-graph disabled=${pending} onClick=${() => onOpenGraph(null, '')}>⤢ full graph editor</button>
+      <${Button} size="sm" data-quickstart-blank onClick=${() => onEditList(blankStepList(''), '')}>blank step list<//>
+      <${Button} size="sm" data-quickstart-graph disabled=${pending} onClick=${() => onOpenGraph(null, '')}>⤢ full graph editor<//>
     </div>
   </section>`;
 }
@@ -197,7 +198,7 @@ export function WhoPicker({ step, roster, roles, onChange }) {
   const options = whoOptions(roster, { roles });
   const known = options.some((option) => option.value === value);
   const groups = [['agent', 'Specific agent'], ['role', 'By role'], ['other', 'Not an agent']];
-  return html`<select class="gq-who-select" aria-label="Who does this step" data-who=${value} value=${value}
+  return html`<${Select} size="sm" class="gq-who-select" aria-label="Who does this step" data-who=${value} value=${value}
     onChange=${(event) => onChange(whoFromValue(event.currentTarget.value))}>
     ${!known && html`<option value=${value}>${who.mode === 'agent' ? `${who.agent} (not in this group)` : who.mode === 'role' ? `any ${who.role}` : 'nobody yet'}</option>`}
     ${groups.map(([key, label]) => {
@@ -206,7 +207,7 @@ export function WhoPicker({ step, roster, roles, onChange }) {
         ${inGroup.map((option) => html`<option key=${option.value} value=${option.value} disabled=${option.disabled}>${option.label}${option.detail ? ` — ${option.detail}` : ''}</option>`)}
       </optgroup>`;
     })}
-  </select>`;
+  <//>`;
 }
 
 // useSpawnProfiles reads the node's spawn profile names for the fallback
@@ -226,10 +227,10 @@ export function useSpawnProfiles(api) {
 // the process's own.
 export function FallbackPicker({ value, inherit = '', defaultSpawnProfile = '', profiles = [], label, onChange }) {
   const options = fallbackChoices({ current: value, inherit, defaultSpawnProfile, profiles });
-  return html`<select class="gq-fallback-select" aria-label=${label} data-fallback-value=${value} value=${value}
+  return html`<${Select} size="sm" class="gq-fallback-select" aria-label=${label} data-fallback-value=${value} value=${value}
     onChange=${(event) => onChange(fallbackFromValue(event.currentTarget.value))}>
     ${options.map((option) => html`<option key=${option.value} value=${option.value} disabled=${option.disabled}>${option.label}</option>`)}
-  </select>`;
+  <//>`;
 }
 
 // inheritLabel names what a step gets by following the process's fallback.
@@ -295,18 +296,18 @@ function Answers({ list, step, onChange }) {
       const bound = back.includes(to) ? stepLoop(step, answer) : null;
       const others = answers.filter((a) => a !== answer && !back.includes(linkFor(a)));
       return html`<div key=${answer} class="gq-then-row"><label class="gq-then-link"><span class="gq-answer">${answer}</span> →
-        <select aria-label=${`After ${answer}`} value=${to} onChange=${(event) => retarget(answer, event.currentTarget.value)}>
+        <${Select} size="sm" aria-label=${`After ${answer}`} value=${to} onChange=${(event) => retarget(answer, event.currentTarget.value)}>
           ${options.map((id) => html`<option key=${id} value=${id}>${back.includes(id) ? backTargetLabel(list, id) : stepTargetLabel(list, id)}</option>`)}
-        </select></label>
+        <//></label>
         ${bound && html`<span class="gq-loop" data-loop=${answer}>at most
           <input type="number" class="gq-loop-rounds" min=${LOOP_MIN_ROUNDS} max=${LOOP_MAX_ROUNDS} value=${bound.maxIterations}
             aria-label=${`Most rounds ${answer} goes back for`} onChange=${(event) => setRounds(answer, event.currentTarget)} />
           rounds, then
-          <select aria-label=${`When ${answer} has used its rounds`} value=${bound.onExhausted}
+          <${Select} size="sm" aria-label=${`When ${answer} has used its rounds`} value=${bound.onExhausted}
             onChange=${(event) => setExhausted(answer, event.currentTarget.value)}>
             ${others.map((a) => html`<option key=${a} value=${a}>${a}</option>`)}
             <option value="">ask again</option>
-          </select></span>`}</div>`;
+          <//></span>`}</div>`;
     })}</div>
   </div>`;
 }
@@ -340,9 +341,9 @@ function StepRow({ list, step, index, roster, roles, now, problems, fallbackInfo
       <textarea class="gq-step-text" rows="2" aria-label=${`Step ${index + 1} ${kind === 'command' ? 'command' : 'instruction'}`} placeholder=${placeholder}
         value=${text} onChange=${(event) => onChange(setStepText(step, event.currentTarget.value))}></textarea>
       ${decision && kind !== 'command' && html`<${Answers} list=${list} step=${step} onChange=${onChange} />`}
-      ${!decision && kind === 'agent' && html`<button type="button" class="gq-link gq-decides" data-step-decides=${step.id}
+      ${!decision && kind === 'agent' && html`<${Button} size="sm" variant="link" class="gq-link gq-decides" data-step-decides=${step.id}
         title="The agent reports a verdict (approve or changes) instead of just finishing; send changes back to an earlier step for a review loop"
-        onClick=${() => onChange(setStepChoices({ ...step, cont: AGENT_VERDICTS[0] }, [...AGENT_VERDICTS], following))}>◇ agent decides</button>`}
+        onClick=${() => onChange(setStepChoices({ ...step, cont: AGENT_VERDICTS[0] }, [...AGENT_VERDICTS], following))}>◇ agent decides<//>`}
       ${taskLinks && html`<div class="gq-then gq-then-ro">then: ${step.links.map((link) => `${link.outcome} → ${stepTargetLabel(list, link.to)}`).join(' · ')}</div>`}
       ${problems.map((problem) => html`<div key=${problem} class="gq-problem" role="note">${problem}</div>`)}
     </div>
@@ -358,9 +359,9 @@ function StepRow({ list, step, index, roster, roles, now, problems, fallbackInfo
       </label>`}
     </div>
     <div class="gq-row-act">
-      <button type="button" aria-label=${`Move step ${index + 1} up`} disabled=${index === 0} onClick=${() => onMove(-1)}>↑</button>
-      <button type="button" aria-label=${`Move step ${index + 1} down`} disabled=${index === list.steps.length - 1} onClick=${() => onMove(1)}>↓</button>
-      <button type="button" aria-label=${`Remove step ${index + 1}`} onClick=${onRemove}>✕</button>
+      <${Button} size="sm" icon=${true} aria-label=${`Move step ${index + 1} up`} disabled=${index === 0} onClick=${() => onMove(-1)}>↑<//>
+      <${Button} size="sm" icon=${true} aria-label=${`Move step ${index + 1} down`} disabled=${index === list.steps.length - 1} onClick=${() => onMove(1)}>↓<//>
+      <${Button} size="sm" icon=${true} variant="ghost danger" aria-label=${`Remove step ${index + 1}`} onClick=${onRemove}>✕<//>
     </div>
   </div>`;
 }
@@ -698,8 +699,8 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
           onInput=${(event) => setName(event.currentTarget.value)} />
         <span class="gq-tag">${saved ? `saved in ${group.name} · editing` : 'draft · not saved'}</span>
         ${onGraph && html`<span class="gm-toggle" role="group" aria-label="View">
-          <button type="button" aria-pressed="true" class="on">☰ Steps</button>
-          <button type="button" data-mini-graph title="Show the same draft as a graph"
+          <button data-ui-exempt type="button" aria-pressed="true" class="on">☰ Steps</button>
+          <button type="button" data-ui-exempt data-mini-graph title="Show the same draft as a graph"
             onClick=${() => onGraph({ view, changed: created.current.key !== viewKey, sourceHash: created.current.sourceHash, ref: created.current.ref })}>◈ Graph</button>
         </span>`}
         <span class="gq-spacer"></span>
@@ -711,8 +712,8 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
       ${!list.steps.length && html`<div class="gq-empty">No steps yet. Add the first one.</div>`}
       <div class="gq-add">
         <span>+ add step:</span>
-        ${[['agent', '🤖 agent'], ['you', '👤 you'], ['command', '⌘ command']].map(([kind, text]) => html`<button key=${kind} type="button" class="gq-btn" data-add-step=${kind}
-          onClick=${() => update(insertStep(list, newStep(list, { kind })))}>${text}</button>`)}
+        ${[['agent', '🤖 agent'], ['you', '👤 you'], ['command', '⌘ command']].map(([kind, text]) => html`<${Button} size="sm" key=${kind} data-add-step=${kind}
+          onClick=${() => update(insertStep(list, newStep(list, { kind })))}>${text}<//>`)}
       </div>
       ${agentSteps.length > 0 && html`<div class="gq-fallback" data-process-fallback=${fallbackAction}>
         <span aria-hidden="true">↯</span>
@@ -747,23 +748,23 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
       ${newer && html`<div class="gq-newer" role="alert" data-step-newer>
         <p>A newer version of ${label} was saved after you opened it, so nothing started. The steps here are the older version.</p>
         <div class="gq-newer-acts">
-          ${onNewer && html`<button type="button" class="gq-btn primary" data-step-newer-review disabled=${!!busy} onClick=${reviewNewer}>${busy === 'newer' ? 'opening…' : 'Review the newer version'}</button>`}
-          <button type="button" class="gq-btn" data-step-newer-start disabled=${!!busy || !!blockedWhy} title=${blockedWhy || 'Run the steps shown here. The newer version stays the current one.'}
-            onClick=${() => start({ reviewed: true })}>${busy === 'start' ? 'starting…' : '▶ Start this older version'}</button>
+          ${onNewer && html`<${Button} size="sm" variant="primary" data-step-newer-review disabled=${!!busy} onClick=${reviewNewer}>${busy === 'newer' ? 'opening…' : 'Review the newer version'}<//>`}
+          <${Button} size="sm" data-step-newer-start disabled=${!!busy || !!blockedWhy} title=${blockedWhy || 'Run the steps shown here. The newer version stays the current one.'}
+            onClick=${() => start({ reviewed: true })}>${busy === 'start' ? 'starting…' : '▶ Start this older version'}<//>
         </div>
       </div>`}
       <div class="gq-foot">
-        <button type="button" class="gq-btn primary" data-step-start disabled=${!!busy || !!blockedWhy || newer} title=${newer ? 'Choose a version above' : blockedWhy}
-          onClick=${() => start()}>${busy === 'start' ? 'starting…' : '▶ Start now'}</button>
-        <button type="button" class="gq-btn" data-step-save-group disabled=${!!busy || !name.trim() || hasErrors}
+        <${Button} size="sm" variant="primary" data-step-start disabled=${!!busy || !!blockedWhy || newer} title=${newer ? 'Choose a version above' : blockedWhy}
+          onClick=${() => start()}>${busy === 'start' ? 'starting…' : '▶ Start now'}<//>
+        <${Button} size="sm" data-step-save-group disabled=${!!busy || !name.trim() || hasErrors}
           title=${saved ? `Save a new version of ${label}` : `Save to ${group.name}'s processes, for one-click reruns; the template library lists it only once you publish it`}
-          onClick=${saveToGroup}>${busy === 'group' ? 'saving…' : saved ? 'Save' : `Save to ${group.name}`}</button>
-        ${!saved?.listed && html`<button type="button" class="gq-btn" data-step-save-library disabled=${!!busy || !name.trim() || hasErrors}
+          onClick=${saveToGroup}>${busy === 'group' ? 'saving…' : saved ? 'Save' : `Save to ${group.name}`}<//>
+        ${!saved?.listed && html`<${Button} size="sm" data-step-save-library disabled=${!!busy || !name.trim() || hasErrors}
           title=${saved ? 'Save and list it in the template library, for every group to reuse' : 'Save it to the template library, for every group to reuse'}
-          onClick=${saveToLibrary}>${busy === 'save' ? 'saving…' : saved ? 'Save and publish' : 'Save to library'}</button>`}
-        <button type="button" class="gq-btn" data-step-open-graph disabled=${!!busy || !name.trim()} title=${name.trim() ? 'Save the steps as a template and open it in the full graph editor' : 'Name the process first'}
-          onClick=${openGraph}>${busy === 'graph' ? 'opening…' : '⤢ open in graph editor'}</button>
-        <button type="button" class="gq-link" onClick=${onClose}>cancel</button>
+          onClick=${saveToLibrary}>${busy === 'save' ? 'saving…' : saved ? 'Save and publish' : 'Save to library'}<//>`}
+        <${Button} size="sm" data-step-open-graph disabled=${!!busy || !name.trim()} title=${name.trim() ? 'Save the steps as a template and open it in the full graph editor' : 'Name the process first'}
+          onClick=${openGraph}>${busy === 'graph' ? 'opening…' : '⤢ open in graph editor'}<//>
+        <${Button} size="sm" variant="link" class="gq-link" onClick=${onClose}>cancel<//>
       </div>
       ${blockedWhy && html`<div class="gq-why" data-start-blocked>▶ ${blockedWhy}</div>`}
       <p class="gq-hint">${saved
