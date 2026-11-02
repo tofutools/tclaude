@@ -146,6 +146,32 @@ func TestOpenAndMigrate(t *testing.T) {
 	require.Equal(t, currentVersion, ver, "expected version %d, got %d", currentVersion, ver)
 }
 
+// TestCloseForTestTeardownRefusesLateOpen — a goroutine that reaches Open
+// after a test world's teardown must not recreate the database inside the
+// HOME the testing package is about to remove, while the next test's HOME
+// still opens normally.
+func TestCloseForTestTeardownRefusesLateOpen(t *testing.T) {
+	setupTestDB(t)
+	home := os.Getenv("HOME")
+	_, err := Open()
+	require.NoError(t, err)
+	_ = StatusSnapshotGeneration()
+
+	CloseForTestTeardown(home)
+	_, err = Open()
+	require.Error(t, err, "a late Open into a torn-down HOME")
+	_ = StatusSnapshotGeneration()
+	require.NoError(t, os.RemoveAll(filepath.Join(home, ".tclaude")))
+	_, err = Open()
+	require.Error(t, err, "the refusal is not memoized away")
+	_, statErr := os.Stat(filepath.Join(home, ".tclaude"))
+	require.True(t, os.IsNotExist(statErr), "nothing was recreated under the torn-down HOME: %v", statErr)
+
+	setupTestDB(t)
+	_, err = Open()
+	require.NoError(t, err, "the next test's HOME opens normally")
+}
+
 func TestOpenUsesNormalSynchronousInProductionMode(t *testing.T) {
 	t.Setenv("TCLAUDE_TEST_KEEP_FSYNC", "1")
 	setupTestDB(t)
