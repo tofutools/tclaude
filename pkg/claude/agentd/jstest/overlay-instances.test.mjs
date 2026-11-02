@@ -193,6 +193,9 @@ test('closing a window sends each tab to the dock, and a question goes to the ta
   assert.equal(instances.overlayWindows.value[0].active, 'q', 'it asks where it can be seen');
   instances.overlayCloseHeard('q');
   assert.equal(instances.overlayTabs.value[0].closeAsked, undefined, 'and only once');
+  instances.minimizeEveryTab('w', 'q');
+  assert.deepEqual(instances.overlayWindows.value[0].tabs.map((tab) => tab.id), ['q'], 'the tab that asks stays to ask');
+  assert.deepEqual(instances.minimizedOverlayTabs.value.map(({ tab }) => tab.id), ['p']);
   instances.minimizeEveryTab('w');
   assert.deepEqual(instances.overlayWindows.value, []);
   assert.deepEqual(instances.minimizedOverlayTabs.value.map(({ tab, home }) => [tab.id, home]), [['p', 'w'], ['q', 'w']]);

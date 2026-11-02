@@ -734,6 +734,20 @@ scenario('a window of one tab joins the window under it, looking through itself 
   assert.equal(overlayHost.querySelector('.joining'), null);
 });
 
+scenario('a cancelled drag of a window of one tab joins nothing', async ({ harness, overlayHost, overlayState }) => {
+  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
+  await harness.act(async () => { overlayState.openBoardOverlay('map', 'Team map'); await wait(); await wait(); });
+  const dragged = overlayHost.querySelectorAll('.board-overlay')[1].querySelector('header');
+  layOut(harness, overlayHost, dragged);
+  const drag = pointer(harness, tabButton(overlayHost, 'Team map'), tabButton(overlayHost, 'Team map'));
+  await drag.down(520, 15);
+  await drag.move(50, 15);
+  assert.ok(overlayHost.querySelector('.joining'), 'the strip lights');
+  await drag.cancel(50, 15);
+  assert.equal(overlayHost.querySelector('.joining'), null);
+  assert.deepEqual(tabsByWindow(overlayHost), [['Release plan'], ['Team map']]);
+});
+
 scenario('a window of one tab that stays clear of the others just moves', async ({ harness, overlayHost, overlayState, windows }) => {
   await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
   await harness.act(async () => { overlayState.openBoardOverlay('map', 'Team map'); await wait(); await wait(); });

@@ -354,6 +354,23 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     let plan = null;
     let last = start;
     let moved = false;
+    const release = () => {
+      setGuide(null);
+      if (join?.drop()) return;
+      if (plan) {
+        setPlacement(snappedPlacement(plan.zone));
+        saveMovedWindow({ ...withSavedSize(last), snap: plan.zone });
+        if (plan.tree) saveSplit(prefs, plan.tree);
+      } else if (moved) {
+        // A click shows the fitted placement, which is not the operator's to keep.
+        saveMovedWindow(withSavedSize(last));
+      }
+    };
+    // A cancelled join stays a move: the window stops where it was let go.
+    const cancelJoin = join && (() => {
+      join.cancel();
+      release();
+    });
     track(event, (m) => {
       if (start.snap) {
         // A click leaves a snapped window alone. Tearing it off takes a real
@@ -375,18 +392,7 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
       if (!snaps) return;
       plan = dropPlan({ x: m.clientX, y: m.clientY });
       setGuide(plan?.guide || null);
-    }, () => {
-      setGuide(null);
-      if (join?.drop()) return;
-      if (plan) {
-        setPlacement(snappedPlacement(plan.zone));
-        saveMovedWindow({ ...withSavedSize(last), snap: plan.zone });
-        if (plan.tree) saveSplit(prefs, plan.tree);
-      } else if (moved) {
-        // A click shows the fitted placement, which is not the operator's to keep.
-        saveMovedWindow(withSavedSize(last));
-      }
-    });
+    }, release, cancelJoin);
   }
 
   function onResizePointerDown(event, zone = '') {

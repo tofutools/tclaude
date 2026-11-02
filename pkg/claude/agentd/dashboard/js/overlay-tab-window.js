@@ -50,7 +50,7 @@ export class TabBoundary extends Component {
 const plainView = ({ kind, label }) => ({ label: label || 'Terminal', lead: html`<span aria-hidden="true">${WINDOW_GLYPHS[kind] || '▣'}</span>`, title: label });
 
 const closeTitle = (window, stewardInside) => {
-  if (stewardInside) return 'Close: shut it down, after asking';
+  if (stewardInside) return window.tabs.length > 1 ? 'Close: other tabs go to the dock, and the Steward shuts down, after asking' : 'Close: shut it down, after asking';
   return window.tabs.length > 1 ? 'Close: every tab goes to the dock, and keeps running' : 'Close: it goes to the dock, and keeps running';
 };
 
@@ -69,7 +69,10 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds }) {
   const asking = window.tabs.find((candidate) => kinds[candidate.kind]?.asksToClose?.(candidate));
   const close = {
     title: closeTitle(window, !!asking),
-    onClose: () => (asking ? askOverlayClose(asking.id) : minimizeEveryTab(window.id)),
+    onClose: () => {
+      minimizeEveryTab(window.id, asking?.id);
+      if (asking) askOverlayClose(asking.id);
+    },
   };
   const viewOf = (candidate) => (kinds[candidate.kind]?.view || plainView)(candidate);
   const strip = html`<${OverlayTabStrip} window=${window} overlay=${overlay} win=${win} viewOf=${viewOf} />`;

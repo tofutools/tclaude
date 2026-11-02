@@ -2045,7 +2045,7 @@ header.overlay-look-windows { padding-right: 0; }
    them go, as they would cut across either and take its clicks. */
 body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) :is(.overlay-split-line, .overlay-split-cross, .overlay-split-detach) { display: none; }
 /* The minimized windows (board-overlay.js), clear of the chips in a corner. */
-.overlay-dock { position: fixed; z-index: 950; left: 50%; bottom: calc(var(--footer-h, 29px) + 8px); transform: translateX(-50%); display: flex; gap: 6px; max-width: 70vw; overflow: hidden; }
+.overlay-dock { position: fixed; z-index: 950; left: 50%; bottom: calc(var(--footer-h, 29px) + 8px); transform: translateX(-50%); display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; max-width: 70vw; max-height: 40vh; overflow: auto; }
 .overlay-dock-pill { display: inline-flex; align-items: center; flex: none; border: 1px solid var(--cmp-line); border-radius: 16px; background: var(--cmp-bar); }
 .overlay-dock-pill:hover { border-color: #58a6ff; }
 .overlay-dock-pill.needs { border-color: var(--cmp-amber); }

@@ -89,10 +89,11 @@ export function minimizeOverlayTab(id) {
   commit(minimizedTab(dockState(), id));
 }
 
-// minimizeEveryTab is the window's close: each tab goes to the dock.
-export function minimizeEveryTab(windowId) {
+// minimizeEveryTab is the window's close: each tab goes to the dock, apart from
+// one that asks first.
+export function minimizeEveryTab(windowId, asking = '') {
   const window = overlayWindows.peek().find((candidate) => candidate.id === windowId);
-  for (const tab of window?.tabs || []) minimizeOverlayTab(tab.id);
+  for (const tab of window?.tabs || []) if (tab.id !== asking) minimizeOverlayTab(tab.id);
 }
 
 // askOverlayClose shows a tab and asks it to put its own question about closing.

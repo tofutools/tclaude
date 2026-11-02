@@ -132,8 +132,8 @@ any mix of chats, shells and boards. The title bar tools belong to the tab showi
 - **Drag out:** pull a tab well off its strip, and it opens in a new window at the drop point.
 - **Move a whole window:** drag the bar around its tabs. A window with one tab also drags by
   that tab, and dropping it on another window's title bar joins that window.
-- **On a touch screen:** the same drags work with a finger. When a window can't show all its
-  tabs, swipe along them to scroll.
+- **See every tab:** when a window can't show all its tabs, scroll over them with the wheel,
+  or swipe along them on a touch screen. The other drags work with a finger too.
 
 A window is what tiles, minimizes and takes focus. A tiled window keeps its cell as tabs
 come and go, until the last tab leaves.
