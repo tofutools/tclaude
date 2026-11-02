@@ -72,6 +72,11 @@ blocking it, and comes back when you reload the tab.
 - **Snap it** by dragging against the left, right or bottom edge to make a side
   panel or drawer, or into a corner to fill a quarter. Pull a snapped window's free
   edges to resize it; each spot keeps the size you gave it, across reloads too.
+- **Snap Assist** follows your snap: the largest space it left empty shows a card for
+  each overlay window outside the tiling, minimized ones too. Click one, or move with
+  the arrow keys and press Enter, to put it there, and the next empty space asks until
+  none is left. A click anywhere else, Escape, or any drag stops it. It never shows
+  after a reload. **Config > Overlays > Snap Assist** turns it off.
 - **Give a chat its own window** by dragging its tab off the title bar, or with **⚙ > Open in overlay**.
   It is the same terminal, and it moves, snaps, splits, minimizes and closes on its
   own. Drag its tab onto another window to join them again. Open windows come back

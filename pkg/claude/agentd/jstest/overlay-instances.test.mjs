@@ -352,3 +352,74 @@ test('minimize all sends every window to the dock, and restore all brings them b
   assert.deepEqual(commands.map(({ label }) => label), bulk.overlayBulkActions.value.map(({ label }) => label), 'the palette says what the dock says');
   assert.ok(commands.every(({ label }) => Object.values(bulk.OVERLAY_BULK_ACTIONS).some((action) => action.label === label)));
 });
+
+// Three floating windows, for Snap Assist: none tiled yet.
+async function floating(t) {
+  const harness = await createPreactHarness(t);
+  const [overlay, instances, assist] = await Promise.all([
+    harness.importDashboardModule('js/overlay-window.js'),
+    harness.importDashboardModule('js/overlay-instances.js'),
+    harness.importDashboardModule('js/overlay-snap-assist.js'),
+  ]);
+  const prefs = memoryPrefs();
+  for (const id of ['a', 'b', 'c']) prefs.setItem(`p.${id}`, JSON.stringify({ x: 300, y: 200, w: 400, h: 300, snap: '' }));
+  instances.overlayWindows.value = ['a', 'b', 'c'].map((id) => ({ id, place: `p.${id}`, active: id, tabs: [{ id, kind: 'board', label: `Board ${id}` }] }));
+  overlay.setSnapAssistEnabled(true);
+  overlay.endSnapAssist();
+  function Win({ id }) {
+    const window = overlay.useOverlayWindow({ id, win: harness.window, prefs, prefKey: `p.${id}`, defaultPlacement: () => ({ x: 300, y: 200, w: 400, h: 300, snap: '' }), snaps: true });
+    return harness.html`<${overlay.OverlayWindow} id=${id} window=${window} className=${`w-${id}`} frameClass="f" titlebarClass="t" label=${id} title="x">body<//>`;
+  }
+  const viewOf = (tab) => ({ label: tab.label, lead: '▣', title: tab.label });
+  const { h } = harness.preact;
+  const mounted = await harness.mount(h('div', null, ...['a', 'b', 'c'].map((id) => h(Win, { key: id, id })), h(assist.SnapAssist, { win: harness.window, viewOf })));
+  t.after(() => { instances.overlayWindows.value = []; overlay.endSnapAssist(); });
+  const snapped = (id) => mounted.container.querySelector(`.w-${id}`).classList.contains('snapped');
+  const cards = () => [...mounted.container.querySelectorAll('.snap-assist-card')].map((card) => card.querySelector('.snap-assist-title').textContent);
+  return { harness, overlay, instances, prefs, mounted, snapped, cards };
+}
+
+test('snapping a window offers the others for the space it left, and a pick fills it', async (t) => {
+  const s = await floating(t);
+  await dragBar(s.harness, s.mounted, 'a', { x: 400, y: 210 }, { x: 1, y: 400 });
+  assert.ok(s.snapped('a'), 'a snapped to the left');
+  assert.deepEqual(s.cards(), ['Board b', 'Board c'], 'the right half offers the rest');
+  assert.ok(!s.prefs.getItem(s.overlay.OVERLAY_SPLIT_PREF), 'nothing is saved before a pick');
+  await s.harness.act(() => s.mounted.container.querySelector('.snap-assist-card').click());
+  assert.ok(s.snapped('b'), 'b took the space');
+  assert.deepEqual(JSON.parse(s.prefs.getItem(s.overlay.OVERLAY_SPLIT_PREF)), { axis: 'x', at: 0.5, a: { id: 'a' }, b: { id: 'b' } });
+  assert.deepEqual(s.cards(), [], 'with no space left it is done');
+});
+
+test('a corner snap asks for each space left, the largest first, until a press elsewhere ends it', async (t) => {
+  const s = await floating(t);
+  await dragBar(s.harness, s.mounted, 'a', { x: 400, y: 210 }, { x: 1, y: 60 });
+  assert.ok(s.snapped('a'));
+  assert.equal(s.cards().length, 2);
+  await s.harness.act(() => s.mounted.container.querySelector('.snap-assist-card').click());
+  assert.deepEqual(s.cards(), ['Board c'], 'the next space asks');
+  await s.harness.act(() => s.harness.document.body.dispatchEvent(new s.harness.window.Event('pointerdown', { bubbles: true })));
+  assert.deepEqual(s.cards(), [], 'a press elsewhere ends it');
+  assert.ok(!s.snapped('c'));
+});
+
+test('Escape ends Snap Assist, and with it off nothing asks', async (t) => {
+  const s = await floating(t);
+  await dragBar(s.harness, s.mounted, 'a', { x: 400, y: 210 }, { x: 1, y: 400 });
+  assert.equal(s.cards().length, 2);
+  await s.harness.act(() => s.harness.document.dispatchEvent(Object.assign(new s.harness.window.Event('keydown', { cancelable: true }), { key: 'Escape' })));
+  assert.deepEqual(s.cards(), []);
+  s.overlay.setSnapAssistEnabled(false);
+  await dragBar(s.harness, s.mounted, 'b', { x: 400, y: 210 }, { x: s.harness.window.innerWidth - 1, y: 400 });
+  assert.ok(s.snapped('b'));
+  assert.deepEqual(s.cards(), [], 'Config turned it off');
+});
+
+test('a lone snap beside another window snapped alone asks nothing, rather than offer its space', async (t) => {
+  const s = await floating(t);
+  await dragBar(s.harness, s.mounted, 'a', { x: 400, y: 210 }, { x: 1, y: 400 });
+  await s.harness.act(() => s.harness.document.dispatchEvent(Object.assign(new s.harness.window.Event('keydown', { cancelable: true }), { key: 'Escape' })));
+  await dragBar(s.harness, s.mounted, 'b', { x: 400, y: 210 }, { x: 1, y: 60 });
+  assert.ok(s.snapped('b'), 'b snapped to the corner');
+  assert.deepEqual(s.cards(), [], 'a has the left half');
+});

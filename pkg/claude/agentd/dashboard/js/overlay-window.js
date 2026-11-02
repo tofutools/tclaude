@@ -125,6 +125,57 @@ function saveSplit(prefs, tree) {
   writePref(prefs, OVERLAY_SPLIT_PREF, tree ? JSON.stringify(tree) : '');
 }
 
+// Snap Assist (tcl-aahter): after the operator snaps a window, the largest cell
+// left empty offers the windows outside the tiling, one cell at a time.
+// { tree, gap: { path, rect }, from, base } while it asks, or null. tree is the
+// split the cell is in, which only becomes the saved one when a window is placed,
+// and base the saved split it was built on: if that changed meanwhile, the
+// question is stale.
+export const snapAssist = signal(null);
+let snapAssistOn = true;
+// Each window that snaps, by id: how to snap it to a zone of the room.
+const assistPlacers = new Map();
+
+export function setSnapAssistEnabled(on) {
+  snapAssistOn = !!on;
+  if (!snapAssistOn) snapAssist.value = null;
+}
+
+export function endSnapAssist() {
+  if (snapAssist.peek()) snapAssist.value = null;
+}
+
+// tiledOverlayIds is every window in the split or snapped alone.
+export function tiledOverlayIds() {
+  return new Set([...leavesOf(splitTree.value), ...snappedWindows.value.keys()]);
+}
+
+// offerSnapAssist asks for the largest empty cell of tree, if there is one.
+function offerSnapAssist(tree, area, from) {
+  const cells = snapAssistOn && tree && fits(tree, area) ? splitLayout(tree, area).gaps.filter((gap) => !gap.held) : [];
+  const size = ({ rect }) => rect.w * rect.h;
+  const gap = cells.sort((a, b) => size(b) - size(a))[0];
+  snapAssist.value = gap ? { tree, gap, area, from, base: splitTree.peek() } : null;
+}
+
+// placeSnapAssisted puts a window in the cell asking, and asks for the next.
+export function placeSnapAssisted(windowId) {
+  const assist = snapAssist.peek();
+  const place = assistPlacers.get(windowId);
+  if (!assist || !place) return false;
+  if (splitTree.peek() !== assist.base) {
+    endSnapAssist();
+    return false;
+  }
+  const { tree, gap, area, from } = assist;
+  const centre = { x: gap.rect.x + gap.rect.w / 2, y: gap.rect.y + gap.rect.h / 2 };
+  const next = withinGap(tree, gap, centre, windowId);
+  saveSplit(splitLoadedFrom, next);
+  place(rectZone(gap.rect, area));
+  offerSnapAssist(next, area, from);
+  return true;
+}
+
 function showWindow(id, entry) {
   snappedWindows.value = new Map(snappedWindows.peek()).set(id, entry);
 }
@@ -233,6 +284,21 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     showWindow(id, { zone: joins, rect: () => shownRef.current, pin: () => pinPanelSize(), unsnap: () => unsnapInPlace() });
     return () => hideWindow(id);
   }, [joins]);
+
+  // Snap Assist snaps this window into the cell it was picked for.
+  const placeIn = useRef(null);
+  placeIn.current = (zone) => {
+    setPlacement(snappedPlacement(zone));
+    saveMovedWindow({ ...withSavedSize(shownRef.current), snap: zone });
+  };
+  useLayoutEffect(() => {
+    if (!id || !snaps) return undefined;
+    const place = (zone) => placeIn.current(zone);
+    assistPlacers.set(id, place);
+    return () => {
+      if (assistPlacers.get(id) === place) assistPlacers.delete(id);
+    };
+  }, [id, snaps]);
 
   // Reopen where the operator left it, if that still fits.
   useLayoutEffect(() => {
@@ -383,6 +449,7 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   function dragWindow(event) {
     if (event.button !== 0 || !windowRef.current) return;
     event.preventDefault();
+    endSnapAssist();
     let start = placement;
     const sx = event.clientX;
     const sy = event.clientY;
@@ -398,6 +465,11 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
         setPlacement(snappedPlacement(plan.zone));
         saveMovedWindow({ ...withSavedSize(last), snap: plan.zone });
         if (plan.tree) saveSplit(prefs, plan.tree);
+        // Snapped alone into an empty room, the room around it is the cells it
+        // left. A saved split, even one all away, or another window snapped alone
+        // has its own say over the room.
+        const alone = !splitTree.peek() && ![...snappedWindows.peek().keys()].some((other) => other !== id);
+        offerSnapAssist(plan.tree || (alone ? roomTree([[id, plan.zone]]) : null), splitArea(), id);
       } else if (moved) {
         // A click shows the fitted placement, which is not the operator's to keep.
         saveMovedWindow(withSavedSize(last));

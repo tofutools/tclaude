@@ -588,6 +588,23 @@ body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.s
 .companion-tab.dragging { opacity: .35; }
 .companion-tab.drop-before { box-shadow: -2px 0 0 var(--cmp-blue); }
 .overlay-tab-drop-end { flex: none; width: 2px; height: 22px; background: var(--cmp-blue); border-radius: 1px; }
+/* Snap Assist: the cell left empty, with a card for each window that could fill it. */
+.snap-assist {
+  position: fixed; z-index: 948; box-sizing: border-box; padding: 14px; overflow: auto;
+  display: flex; flex-wrap: wrap; align-content: flex-start; gap: 10px;
+  border: 1.5px dashed color-mix(in srgb, var(--cmp-blue) 55%, transparent); border-radius: 10px;
+  background: color-mix(in srgb, var(--cmp-bg) 82%, transparent); backdrop-filter: blur(6px);
+}
+.snap-assist-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px; width: 168px; min-height: 84px; box-sizing: border-box;
+  padding: 10px 12px; border-radius: 8px; border: 1px solid var(--cmp-line); background: var(--cmp-bar); color: var(--cmp-text);
+  font: inherit; font-size: 13px; text-align: left; cursor: pointer; box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
+}
+.snap-assist-card:hover, .snap-assist-card:focus-visible { border-color: var(--cmp-blue); outline: none; transform: translateY(-1px); }
+.snap-assist-kind { font-size: 16px; line-height: 1; }
+.snap-assist-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.snap-assist-more, .snap-assist-note { font-size: 11px; color: var(--cmp-muted); }
+@media (max-width: 640px) { .snap-assist-card { width: 100%; min-height: 0; } }
 .overlay-tab-ghost {
   position: fixed; z-index: 1000; pointer-events: none; padding: 4px 8px; border-radius: 6px; font-size: 12px; white-space: nowrap;
   background: var(--cmp-bg); color: var(--cmp-text); border: 1px solid var(--cmp-blue); box-shadow: 0 8px 20px rgba(0, 0, 0, .6);

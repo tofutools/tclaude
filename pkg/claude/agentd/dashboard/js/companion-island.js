@@ -32,13 +32,14 @@ import { compactWidth, measureFooterRoom, useFooterRest } from './companion-chip
 import { registerCompanionController } from './companion-facade.js';
 import { DecideTab, StartTab, stewardFreshNote, stewardReturnNote } from './companion-home.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
-import { overlayWindowsByStack, readPref, reducedMotion, writePref } from './overlay-window.js';
+import { overlayWindowsByStack, readPref, reducedMotion, setSnapAssistEnabled, writePref } from './overlay-window.js';
 import { registerTabMoves } from './overlay-tab-moves.js';
 import { activateOverlayTab, closeOverlayTab, focusOverlayWindow, minimizeOverlayWindow, openOverlayWindow, openTabInWindow, overlayHostUp, overlayTabs, overlayWindows, swapOverlayTab, tearOverlayTabOut } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND, DECIDE_WINDOW_KIND, START_WINDOW_KIND, chatTab, chatWindowId, decideTab, startTab } from './chat-window-model.js';
 import { OverlayTabGhost, OverlayTabMenu } from './overlay-tab-strip.js';
 import { chatHasDraft } from './chat-window.js';
-import { OverlayTabWindow } from './overlay-tab-window.js';
+import { OverlayTabWindow, tabViewOf } from './overlay-tab-window.js';
+import { SnapAssist } from './overlay-snap-assist.js';
 import { activeTabOf, windowHolding } from './overlay-tab-model.js';
 import { BOARD_WINDOW_KIND } from './board-overlay-state.js';
 import { TERMINAL_WINDOW_KIND } from './terminal-window-model.js';
@@ -1207,6 +1208,9 @@ export function CompanionApp({
     };
   };
   useEffect(() => registerTabMoves(CHAT_WINDOW_KIND, (tab) => chatMoves.current(tab)), []);
+  // Config can turn Snap Assist off; it is on unless the snapshot says so.
+  const snapAssistOn = snapshot.value?.snap_assist !== false;
+  useEffect(() => setSnapAssistEnabled(snapAssistOn), [snapAssistOn]);
 
   const chatTabTools = {
     statusOf, offlineActions, openMorph, dictationImpl, starting: (agentId) => resuming.has(agentId) || pending.current.has(agentId),
@@ -1241,6 +1245,7 @@ export function CompanionApp({
   return html`
     ${overlayWindows.value.map((window) => html`<${OverlayTabWindow} key=${window.id} window=${window} snapshot=${snapshot} prefs=${prefs} win=${win} kinds=${tabKinds} home=${home} add=${addTab} />`)}
     <${OverlayTabGhost} />
+    <${SnapAssist} win=${win} viewOf=${tabViewOf(tabKinds)} />
     <${OverlayTabMenu} notify=${notify} />
     ${chipSlots}
     ${chips}
