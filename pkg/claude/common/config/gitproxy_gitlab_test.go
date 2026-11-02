@@ -50,3 +50,29 @@ func TestResolvedGitProxyGitLabHostsAbsent(t *testing.T) {
 		"with no instance listed, the token is for gitlab.com")
 	assert.Equal(t, "", GitProxyConfig{}.GitLabBase("gitlab.example.com"))
 }
+
+func TestResolvedGitProxyGitLabHostsAllInvalidNeverFallBackToGitLabCom(t *testing.T) {
+	cfg := &Config{Agent: &AgentConfig{GitProxy: &GitProxyConfig{
+		GitLabHosts:     map[string]string{"gitlab.corp": "http://gitlab.corp", "mounted.corp": "https://mounted.corp/gitlab"},
+		GitLabTokenFile: "/token",
+	}}}
+	policy := cfg.ResolvedGitProxy()
+	assert.Empty(t, policy.GitLabHosts, "every entry was invalid and dropped")
+	assert.Equal(t, "", policy.GitLabBase("gitlab.com"),
+		"the operator listed instances, so the token is not gitlab.com's, even with none left")
+	assert.Empty(t, policy.GitLabBases())
+}
+
+func TestResolvedGitProxyGitLabHostsConflictingDuplicatesAreDropped(t *testing.T) {
+	cfg := &Config{Agent: &AgentConfig{GitProxy: &GitProxyConfig{GitLabHosts: map[string]string{
+		" GitLab.Corp ": "https://gitlab.corp:6080",
+		"gitlab.corp":   "https://gitlab.corp:7080",
+		"same.corp":     "https://same.corp",
+		"SAME.corp":     "https://same.corp/",
+		"other.corp":    "https://other.corp",
+	}}}}
+	policy := cfg.ResolvedGitProxy()
+	assert.Equal(t, "", policy.GitLabBase("gitlab.corp"), "two bases for one host: neither is trusted")
+	assert.Equal(t, "https://same.corp", policy.GitLabBase("same.corp"), "duplicates that agree are fine")
+	assert.Equal(t, "https://other.corp", policy.GitLabBase("other.corp"))
+}

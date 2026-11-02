@@ -3233,6 +3233,12 @@ type GitProxyConfig struct {
 	// header. There is no CLI fallback: with no file configured the GitLab
 	// proxy refuses every call and says so. One token for every configured host.
 	GitLabTokenFile string `json:"gitlab_token_file,omitempty"`
+
+	// gitlabHostsListed records that the operator listed instances in
+	// gitlab_hosts, even if normalisation dropped every one of them. It is
+	// what keeps the gitlab.com default off: a list whose entries were all
+	// invalid is still a statement that the token is not gitlab.com's.
+	gitlabHostsListed bool
 }
 
 // defaultGitLabHosts are the GitLab instances recognised without a
@@ -3257,7 +3263,7 @@ func (p GitProxyConfig) GitLabBase(host string) string {
 	if base, ok := p.GitLabHosts[host]; ok {
 		return base
 	}
-	if len(p.GitLabHosts) > 0 {
+	if len(p.GitLabHosts) > 0 || p.gitlabHostsListed {
 		return ""
 	}
 	return defaultGitLabHosts[host]
@@ -3306,6 +3312,7 @@ func (c *Config) ResolvedGitProxy() GitProxyConfig {
 		out.GitHubTokenFile = strings.TrimSpace(src.GitHubTokenFile)
 		out.GitLabTokenFile = strings.TrimSpace(src.GitLabTokenFile)
 		out.GitLabHosts = normalizeGitLabHosts(src.GitLabHosts)
+		out.gitlabHostsListed = len(src.GitLabHosts) > 0
 		if src.ProtectedRefs != nil {
 			// An explicit list — including an explicit empty one, which
 			// deliberately turns the protection off — wins over the default.
@@ -3517,6 +3524,10 @@ func normalizeGitLabHosts(in map[string]string) map[string]string {
 		return nil
 	}
 	out := make(map[string]string, len(in))
+	// Two entries can normalise to one host (" GitLab.x " and "gitlab.x").
+	// With different bases, map order would pick the winner, so neither is
+	// trusted: the host is dropped with a warning.
+	conflicted := map[string]bool{}
 	for rawHost, rawBase := range in {
 		host := strings.ToLower(strings.TrimSpace(rawHost))
 		base := strings.TrimRight(strings.TrimSpace(rawBase), "/")
@@ -3534,7 +3545,14 @@ func normalizeGitLabHosts(in map[string]string) map[string]string {
 				"host", host, "base", base)
 			continue
 		}
+		if prev, ok := out[host]; ok && !strings.EqualFold(prev, base) {
+			conflicted[host] = true
+		}
 		out[host] = base
+	}
+	for host := range conflicted {
+		slog.Warn("agent.git_proxy.gitlab_hosts: ignoring a host listed twice with different bases", "host", host)
+		delete(out, host)
 	}
 	if len(out) == 0 {
 		return nil
