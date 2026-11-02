@@ -1955,7 +1955,7 @@ func TestDashboardHTML_WizardCogDialogThemes(t *testing.T) {
 
 	// Party worktree cleanup dialog, including dynamic category/submit copy.
 	must("body.wizard #worktree-cleanup-modal .cleanup-modal {", "worktree cleanup surface is re-skinned")
-	must("body.wizard #worktree-cleanup-modal .cleanup-toolbar button.active", "worktree category chips are re-skinned")
+	must("body.wizard #worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)).active", "worktree category chips are re-skinned")
 	must("body.wizard #worktree-cleanup-modal .cleanup-list", "worktree candidate list is re-skinned")
 	must("body.wizard #worktree-cleanup-modal #worktree-cleanup-submit {", "prune lever is re-skinned")
 	must("Remove ${removeCopy} + prune ${pruneCopy}", "worktree submit names both selected cleanup actions")

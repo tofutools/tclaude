@@ -494,24 +494,14 @@ nav [data-tab].overlay-drop { color: #d4d4d4; background: #1f6feb2e; box-shadow:
   white-space: pre-wrap; word-break: break-word; max-height: 12em; overflow-y: auto;
 }
 .access-countdown { font-size: 11px; color: #8b949e; }
-.access-btn {
-  border: 1px solid #2a3340; border-radius: 6px; padding: 5px 12px;
-  font-size: 12px; font-weight: 600; cursor: pointer;
-  background: #21262d; color: #c9d1d9;
-}
-.access-btn:hover { background: #2d333b; }
-.access-btn.approve { background: #238636; border-color: #2ea043; color: #fff; }
-.access-btn.approve:hover { background: #2ea043; }
-.access-btn.deny { background: #3d2224; border-color: #b3423a; color: #ffb3ab; }
-.access-btn.deny:hover { background: #4d2a2c; }
-.access-btn.always { background: #3a2f16; border-color: #d29922; color: #e6c07b; }
-.access-btn.always:hover { background: #4a3c1c; }
-/* The scoped twin sits next to the blanket button and must not read as the
-   same click. Cooler and quieter: it is the narrower, safer of the two, and
-   the amber "you are handing over every context" weight belongs to the other. */
-.access-btn.always.scoped { background: #12233a; border-color: #1f4b7a; color: #79c0ff; }
-.access-btn.always.scoped:hover { background: #17304f; }
-.access-btn.extend { font-weight: 500; color: #8b949e; }
+/* Decision buttons are standard: approve is .ui-btn-success, decline
+   .ui-btn-danger, +5m plain. "Always allow" keeps its amber weight (it hands
+   over every context), and its scoped twin a cooler blue: the narrower,
+   safer of the two must not read as the same click. */
+.ui-btn.access-btn.always { background: #3a2f16; border-color: #d29922; color: #e6c07b; }
+.ui-btn.access-btn.always:hover:not(:disabled) { background: #4a3c1c; border-color: #d29922; color: #e6c07b; }
+.ui-btn.access-btn.always.scoped { background: #12233a; border-color: #1f4b7a; color: #79c0ff; }
+.ui-btn.access-btn.always.scoped:hover:not(:disabled) { background: #17304f; border-color: #1f4b7a; color: #79c0ff; }
 
 /* Recently-handled history: decided requests stay in the folder (dimmed) so the
    operator can see what they chose, under a small divider below the pending ones. */
@@ -541,12 +531,7 @@ body.wizard .access-banner-review:hover { background: #c39ee8; }
 body.wizard .access-k, body.wizard .access-countdown { color: #b39ddb; }
 body.wizard .access-v { color: #e7d9f5; }
 body.wizard .access-body { background: #14102a; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5; }
-body.wizard .access-btn { background: #241b3d; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
-body.wizard .access-btn:hover { border-color: rgba(169, 123, 214, 0.85); }
-body.wizard .access-btn.approve { background: #3a2f16; border-color: #d4af37; color: #f3e6c0; }
-body.wizard .access-btn.approve:hover { background: #4a3c1c; }
-body.wizard .access-btn.always { background: #2a2140; border-color: #a97bd6; color: #f3e6c0; }
-body.wizard .access-btn.deny { background: #3a1c2a; border-color: #b3426a; color: #f0b3cb; }
+body.wizard .ui-btn.access-btn.always:not(.scoped) { background: #2a2140; border-color: #a97bd6; color: #f3e6c0; }
 body.wizard .access-divider { color: #8f7bb5; }
 body.wizard .access-outcome.approved { color: #7bd88f; }
 body.wizard .access-outcome.always { color: #e6c07b; }
@@ -776,15 +761,15 @@ button.tool:hover { border-color: #58a6ff; }
 /* Match the dark chrome the pager / row-action buttons use. Without an
    explicit background these fell back to the native (light-grey) button,
    which made the light "delete selected" / "wipe" labels unreadable. */
-.mail-bulk-bar button {
+.mail-bulk-bar button:where(:not(.ui-btn)) {
   background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
   color: #7d8590; cursor: pointer; font-family: inherit;
   font-size: 12px; padding: 3px 8px;
 }
-.mail-bulk-bar button:hover:not(:disabled) { color: #d4d4d4; border-color: #58a6ff; }
-.mail-bulk-bar button:disabled { opacity: .45; cursor: default; }
-.mail-bulk-bar button.danger { color: #d4d4d4; }
-.mail-bulk-bar button.danger:hover:not(:disabled) { color: #f85149; border-color: #f85149; }
+.mail-bulk-bar button:where(:not(.ui-btn)):hover:not(:disabled) { color: #d4d4d4; border-color: #58a6ff; }
+.mail-bulk-bar button:where(:not(.ui-btn)):disabled { opacity: .45; cursor: default; }
+.mail-bulk-bar button:where(:not(.ui-btn)).danger { color: #d4d4d4; }
+.mail-bulk-bar button:where(:not(.ui-btn)).danger:hover:not(:disabled) { color: #f85149; border-color: #f85149; }
 
 /* Pager footer under the message list: prev/next navigation on the left,
    a page-size selector pushed to the right. Same chrome as the bulk bar
@@ -1023,13 +1008,13 @@ button.tool:hover { border-color: #58a6ff; }
 }
 .mail-decision.decided { border-color: #2a3340; background: #161b22; }
 .mail-decision-label { color: #8b949e; font-size: 12px; }
-.mail-decision button {
+.mail-decision button:where(:not(.ui-btn)) {
   background: #161b22; border: 1px solid #2a3340; border-radius: 4px; color: #d4d4d4;
   cursor: pointer; font-family: inherit; font-size: 13px; padding: 4px 10px;
 }
-.mail-decision button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-.mail-decision button:hover:not(:disabled) { border-color: #58a6ff; }
-.mail-decision button:disabled { opacity: .5; cursor: default; }
+.mail-decision button:where(:not(.ui-btn)).primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.mail-decision button:where(:not(.ui-btn)):hover:not(:disabled) { border-color: #58a6ff; }
+.mail-decision button:where(:not(.ui-btn)):disabled { opacity: .5; cursor: default; }
 /* The button an agent put on a message (notify-human --action). */
 .message-action { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .message-action button {
@@ -1069,13 +1054,13 @@ button.tool:hover { border-color: #58a6ff; }
   background: #1c2330; border: 1px solid #58a6ff; border-radius: 6px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, .5); padding: 4px;
 }
-.mail-reader .mail-reader-actions .mail-download-menu button[role="menuitem"][type] {
+.mail-reader .mail-reader-actions .mail-download-menu button[role="menuitem"][type]:where(:not(.ui-menu-item)) {
   display: flex; gap: 8px; align-items: flex-start; width: 100%; text-align: left;
   background: transparent; border: none; border-radius: 4px; padding: 6px 8px;
   color: #d4d4d4; font-size: 12px;
 }
-.mail-reader .mail-reader-actions .mail-download-menu button[role="menuitem"][type]:hover,
-.mail-reader .mail-reader-actions .mail-download-menu button[role="menuitem"][type]:focus-visible {
+.mail-reader .mail-reader-actions .mail-download-menu button[role="menuitem"][type]:where(:not(.ui-menu-item)):hover,
+.mail-reader .mail-reader-actions .mail-download-menu button[role="menuitem"][type]:where(:not(.ui-menu-item)):focus-visible {
   background: #263445; color: #f0f6fc; outline: none;
 }
 .mail-download-menu small { display: block; color: #7d8590; font-size: 11px; }
@@ -1819,12 +1804,12 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
   display: flex; align-items: center; gap: 8px; padding: 10px 18px;
   border-bottom: 1px solid #21262d; color: #8b949e; font-size: 11px;
 }
-.human-notification-drawer-nav button {
+.human-notification-drawer-nav button:where(:not(.ui-btn)) {
   width: 28px; height: 26px; padding: 0; border: 1px solid #30363d;
   border-radius: 4px; background: #161b22; color: #8b949e; cursor: pointer;
 }
-.human-notification-drawer-nav button:hover:not(:disabled) { color: #f0f6fc; border-color: #58a6ff; }
-.human-notification-drawer-nav button:disabled { opacity: .35; cursor: default; }
+.human-notification-drawer-nav button:where(:not(.ui-btn)):hover:not(:disabled) { color: #f0f6fc; border-color: #58a6ff; }
+.human-notification-drawer-nav button:where(:not(.ui-btn)):disabled { opacity: .35; cursor: default; }
 .human-notification-drawer-order { margin-left: auto; }
 .human-notification-drawer-announcement {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
@@ -1899,12 +1884,12 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
   border-top: 1px solid #30363d; background: #161b22;
 }
 .human-notification-drawer-actions-break { flex-basis: 100%; height: 0; }
-.human-notification-drawer-actions button {
+.human-notification-drawer-actions button:where(:not(.ui-btn)) {
   padding: 7px 10px; border: 1px solid #30363d; border-radius: 5px;
   background: #21262d; color: #c9d1d9; cursor: pointer; font: inherit; font-size: 12px;
   line-height: 16px; white-space: nowrap;
 }
-.human-notification-drawer-actions button:disabled { opacity: .45; cursor: default; }
+.human-notification-drawer-actions button:where(:not(.ui-btn)):disabled { opacity: .45; cursor: default; }
 .human-notification-drawer-actions .human-notification-drawer-delete { margin-left: auto; }
 /* The shared split button, joined and left-aligned on the second row. Its menu
    opens UPWARD here: the bar sits at the drawer's bottom edge. */
@@ -1917,17 +1902,17 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
   border-color: #58a6ff; border-left: none; color: #f0f6fc;
 }
 .human-notification-drawer-actions .mail-download-menu { top: auto; bottom: calc(100% + 4px); left: 0; right: auto; }
-.human-notification-drawer-actions .mail-download-menu button[role="menuitem"][type] {
+.human-notification-drawer-actions .mail-download-menu button[role="menuitem"][type]:where(:not(.ui-menu-item)) {
   display: flex; gap: 8px; align-items: flex-start; width: 100%; text-align: left;
   background: transparent; border: none; border-radius: 4px; padding: 6px 8px;
   color: #d4d4d4; font-size: 12px; white-space: normal;
 }
-.human-notification-drawer-actions .mail-download-menu button[role="menuitem"][type]:hover,
-.human-notification-drawer-actions .mail-download-menu button[role="menuitem"][type]:focus-visible {
+.human-notification-drawer-actions .mail-download-menu button[role="menuitem"][type]:where(:not(.ui-menu-item)):hover,
+.human-notification-drawer-actions .mail-download-menu button[role="menuitem"][type]:where(:not(.ui-menu-item)):focus-visible {
   background: #263445; color: #f0f6fc; outline: none;
 }
-.human-notification-drawer-actions button:hover:not(:disabled) { border-color: #58a6ff; color: #f0f6fc; }
-.human-notification-drawer-actions button.primary {
+.human-notification-drawer-actions button:where(:not(.ui-btn)):hover:not(:disabled) { border-color: #58a6ff; color: #f0f6fc; }
+.human-notification-drawer-actions button:where(:not(.ui-btn)).primary {
   border-color: #1f6feb; background: #0d3a66; color: #dbeafe;
 }
 
@@ -2875,10 +2860,10 @@ body.wizard .human-notification-drawer-sender small,
 body.wizard .human-notification-drawer-date,
 body.wizard .human-notification-drawer-file span { color: #9a86c9; }
 body.wizard .human-notification-drawer-nav { border-bottom-color: #2a2140; color: #b39ddb; }
-body.wizard .human-notification-drawer-nav button {
+body.wizard .human-notification-drawer-nav button:where(:not(.ui-btn)) {
   background: #1d1730; border-color: #3a2f57; color: #b39ddb;
 }
-body.wizard .human-notification-drawer-nav button:hover:not(:disabled) {
+body.wizard .human-notification-drawer-nav button:where(:not(.ui-btn)):hover:not(:disabled) {
   color: #e6dcff; border-color: #7c5cc4;
 }
 body.wizard .human-notification-drawer-date { border-bottom-color: #2a2140; }
@@ -2890,11 +2875,11 @@ body.wizard .human-notification-drawer-file-link:focus-visible { outline-color: 
 body.wizard .human-notification-drawer-file-icon { background: #241a3a; color: #d8cff0; }
 body.wizard .human-notification-drawer-download { border-color: #7c5cc4; color: #b39ddb; }
 body.wizard .human-notification-drawer-download:hover { background: rgba(124, 92, 196, .16); }
-body.wizard .human-notification-drawer-actions button {
+body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn)) {
   background: #1d1730; border-color: #3a2f57; color: #d8cff0;
 }
-body.wizard .human-notification-drawer-actions button:hover:not(:disabled) { border-color: #7c5cc4; color: #e6dcff; }
-body.wizard .human-notification-drawer-actions button.primary {
+body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn)):hover:not(:disabled) { border-color: #7c5cc4; color: #e6dcff; }
+body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn)).primary {
   background: #3b2a63; border-color: #7c5cc4; color: #f0e9ff;
 }
 
@@ -2919,10 +2904,10 @@ body.slop .human-notification-drawer-sender small,
 body.slop .human-notification-drawer-date,
 body.slop .human-notification-drawer-file span { color: #c9a86b; }
 body.slop .human-notification-drawer-nav { border-bottom-color: #5c0d0d; color: #c9a86b; }
-body.slop .human-notification-drawer-nav button {
+body.slop .human-notification-drawer-nav button:where(:not(.ui-btn)) {
   background: #2a0a0a; border-color: #8b0000; color: #c9a86b;
 }
-body.slop .human-notification-drawer-nav button:hover:not(:disabled) {
+body.slop .human-notification-drawer-nav button:where(:not(.ui-btn)):hover:not(:disabled) {
   color: #ffe88c; border-color: #ffd700;
 }
 body.slop .human-notification-drawer-date { border-bottom-color: #5c0d0d; }
@@ -2934,11 +2919,11 @@ body.slop .human-notification-drawer-file-link:focus-visible { outline-color: #f
 body.slop .human-notification-drawer-file-icon { background: #4a0a0a; color: #f0dcc0; }
 body.slop .human-notification-drawer-download { border-color: #ffd700; color: #ffd700; }
 body.slop .human-notification-drawer-download:hover { background: rgba(255, 215, 0, .13); }
-body.slop .human-notification-drawer-actions button {
+body.slop .human-notification-drawer-actions button:where(:not(.ui-btn)) {
   background: #2a0a0a; border-color: #8b0000; color: #f0dcc0;
 }
-body.slop .human-notification-drawer-actions button:hover:not(:disabled) { border-color: #ffd700; color: #ffe88c; }
-body.slop .human-notification-drawer-actions button.primary {
+body.slop .human-notification-drawer-actions button:where(:not(.ui-btn)):hover:not(:disabled) { border-color: #ffd700; color: #ffe88c; }
+body.slop .human-notification-drawer-actions button:where(:not(.ui-btn)).primary {
   background: #4a0a0a; border-color: #ffd700; color: #ffe88c;
 }
 
@@ -6847,11 +6832,6 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .sudo-active-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 4px 10px; font-size: 12px; border-top: 1px solid #2d2615; }
 .sudo-active-slug { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
 .sudo-active-left { color: #e3b341; font-variant-numeric: tabular-nums; }
-.sudo-active button, .sudo-presets button {
-  background: #21262d; border: 1px solid #2a3340; border-radius: 3px; padding: 2px 8px;
-  font-size: 11px; color: #c9d1d9; font-family: inherit; cursor: pointer;
-}
-.sudo-active button:disabled { opacity: .5; cursor: not-allowed; }
 .sudo-limits { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; }
 .sudo-limits-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .sudo-limits-label { flex: 0 0 56px; font-size: 11px; color: #8b949e; }
@@ -6862,7 +6842,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 #sudo-duration { width: 72px; }
 #sudo-reason { flex: 1; min-width: 160px; }
 .sudo-presets { display: flex; gap: 4px; }
-.sudo-presets button.active { background: #9e6a03; border-color: #d29922; color: #fff; }
+.sudo-presets .ui-btn.active { background: #9e6a03; border-color: #d29922; color: #fff; }
 .sudo-limits-hint { font-size: 11px; color: #7d8590; }
 .sudo-limits-hint.bad { color: #f85149; }
 .sudo-picked { margin-right: auto; align-self: center; font-size: 11px; color: #8b949e; }
@@ -7031,27 +7011,19 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   color: #c9d1d9; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px; line-height: 1.5; padding: 6px 8px;
 }
-.perm-tristate {
-  flex: 0 0 auto; display: inline-flex;
-  border: 1px solid #2a3340; border-radius: 4px; overflow: hidden;
-}
-.perm-tristate button {
-  background: #0d1117; border: none; border-right: 1px solid #2a3340;
-  padding: 3px 9px; font-size: 11px; color: #7d8590;
-  font-family: inherit; cursor: pointer;
-}
-.perm-tristate button:last-child { border-right: none; }
-.perm-tristate button:hover { background: #21262d; }
-.perm-tristate button.active[data-effect=default] { background: #30363d; color: #c9d1d9; }
-.perm-tristate button.active[data-effect=grant] { background: #238636; color: #fff; }
-.perm-tristate button.active[data-effect=deny] { background: #da3633; color: #fff; }
+/* A standard .ui-seg of small buttons; the chosen effect keeps its meaning
+   colour (grant green, deny red) over the standard pressed frame. */
+.perm-tristate { flex: 0 0 auto; }
+.perm-tristate .ui-btn.active[data-effect=default] { background: #30363d; color: #c9d1d9; }
+.perm-tristate .ui-btn.active[data-effect=grant] { background: #238636; color: #fff; }
+.perm-tristate .ui-btn.active[data-effect=deny] { background: #da3633; color: #fff; }
 /* Startup-context states. Deliberately NOT green/red: trimming a capability is a
    routine tuning choice, not a safety veto, and borrowing the permission
    editor's danger palette would overstate it. Keep = neutral-positive blue,
    Trim = amber "changed from stock". */
-.perm-tristate button.active[data-state=default] { background: #30363d; color: #c9d1d9; }
-.perm-tristate button.active[data-state=on] { background: #1f6feb; color: #fff; }
-.perm-tristate button.active[data-state=off] { background: #9e6a03; color: #fff; }
+.perm-tristate .ui-btn.active[data-state=default] { background: #30363d; color: #c9d1d9; }
+.perm-tristate .ui-btn.active[data-state=on] { background: #1f6feb; color: #fff; }
+.perm-tristate .ui-btn.active[data-state=off] { background: #9e6a03; color: #fff; }
 .perm-edit-modal .modal-buttons {
   display: flex; justify-content: flex-end; gap: 8px;
   border-top: 1px solid #2a3340; padding-top: 10px;
@@ -9672,12 +9644,12 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   display: flex; align-items: center; gap: 8px;
   font-size: 11px; color: #7d8590;
 }
-.cleanup-toolbar button {
+.cleanup-toolbar button:where(:not(.ui-btn)) {
   background: #21262d; border: 1px solid #2a3340; border-radius: 3px;
   padding: 2px 8px; font-size: 11px; color: #c9d1d9;
   font-family: inherit; cursor: pointer;
 }
-.cleanup-toolbar button:hover { background: #2d333b; }
+.cleanup-toolbar button:where(:not(.ui-btn)):hover { background: #2d333b; }
 .cleanup-toolbar .spacer { flex: 1; }
 .cleanup-toolbar input[type=number] {
   width: 3.6em; background: #0d1117; border: 1px solid #2a3340;
@@ -9787,9 +9759,9 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 #worktree-cleanup-modal .cleanup-row label { flex-wrap: wrap; row-gap: 3px; }
 #worktree-cleanup-modal .cleanup-row .path { flex: 1 1 14em; }
 #worktree-cleanup-modal .cleanup-row .cleanup-dangling-note { flex: 1 1 100%; margin: 2px 0 0 25px; color: #d29922; }
-#worktree-cleanup-modal .cleanup-toolbar button { white-space: nowrap; }
-.cleanup-toolbar button.active,
-.cleanup-toolbar button[aria-pressed="true"] { border-color: #1f6feb; color: #58a6ff; }
+#worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)) { white-space: nowrap; }
+.cleanup-toolbar button:where(:not(.ui-btn)).active,
+.cleanup-toolbar button:where(:not(.ui-btn))[aria-pressed="true"] { border-color: #1f6feb; color: #58a6ff; }
 .cleanup-prune-row { background: rgba(210, 153, 34, 0.035); }
 .cleanup-prune-note {
   margin: 5px 8px 0 25px; color: #7d8590; font-size: 11px; line-height: 1.4;
@@ -13654,10 +13626,10 @@ body.wizard #window-modal .window-dir-note-wizard { display: inline; }
 /* Toolbar: select-all / none buttons take the tarnished-gold secondary skin,
    the filter field goes dark-violet, the count line reads parchment. */
 body.wizard #window-modal .cleanup-toolbar { color: #b39ddb; }
-body.wizard #window-modal .cleanup-toolbar button {
+body.wizard #window-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #window-modal .cleanup-toolbar button:hover { background: #3a2a63; }
+body.wizard #window-modal .cleanup-toolbar button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 body.wizard #window-modal .cleanup-toolbar input[type=search] {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
@@ -13751,10 +13723,10 @@ body.wizard #cleanup-modal .cleanup-hint.danger { color: #f0a868; }
    inactivity (number) + filter (search) fields go dark-violet; the count
    reads parchment. */
 body.wizard #cleanup-modal .cleanup-toolbar { color: #b39ddb; }
-body.wizard #cleanup-modal .cleanup-toolbar button {
+body.wizard #cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #cleanup-modal .cleanup-toolbar button:hover { background: #3a2a63; }
+body.wizard #cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 body.wizard #cleanup-modal .cleanup-toolbar input[type=number],
 body.wizard #cleanup-modal .cleanup-toolbar input[type=search] {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
@@ -13850,10 +13822,10 @@ body.wizard #retire-preview-modal .cleanup-modal h3 {
 body.wizard #retire-preview-modal .cleanup-hint,
 body.wizard #retire-preview-modal .cleanup-toolbar { color: #b39ddb; }
 body.wizard #retire-preview-modal .cleanup-count { color: #e7d9f5; }
-body.wizard #retire-preview-modal .cleanup-toolbar button {
+body.wizard #retire-preview-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #retire-preview-modal .cleanup-toolbar button:hover { background: #3a2a63; }
+body.wizard #retire-preview-modal .cleanup-toolbar button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 body.wizard #retire-preview-modal .cleanup-toolbar input[type=search] {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
@@ -13925,10 +13897,10 @@ body.wizard #delete-retired-modal .cleanup-hint { color: #b39ddb; }
 body.wizard #delete-retired-modal .cleanup-hint.danger { color: #f0a868; }
 body.wizard #delete-retired-modal .cleanup-toolbar { color: #b39ddb; }
 body.wizard #delete-retired-modal .cleanup-count { color: #e7d9f5; }
-body.wizard #delete-retired-modal .cleanup-toolbar button {
+body.wizard #delete-retired-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #delete-retired-modal .cleanup-toolbar button:hover { background: #3a2a63; }
+body.wizard #delete-retired-modal .cleanup-toolbar button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 body.wizard #delete-retired-modal .cleanup-toolbar input[type=number],
 body.wizard #delete-retired-modal .cleanup-toolbar input[type=search] {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
@@ -14003,11 +13975,11 @@ body.wizard #worktree-cleanup-modal .cleanup-modal h3 {
 body.wizard #worktree-cleanup-modal .cleanup-hint,
 body.wizard #worktree-cleanup-modal .cleanup-toolbar { color: #b39ddb; }
 body.wizard #worktree-cleanup-modal .cleanup-count { color: #e7d9f5; }
-body.wizard #worktree-cleanup-modal .cleanup-toolbar button {
+body.wizard #worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #worktree-cleanup-modal .cleanup-toolbar button:hover { background: #3a2a63; }
-body.wizard #worktree-cleanup-modal .cleanup-toolbar button.active {
+body.wizard #worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)):hover { background: #3a2a63; }
+body.wizard #worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)).active {
   background: #3a2a63; border-color: #f3e6c0; color: #f3e6c0;
   box-shadow: 0 0 8px rgba(169, 123, 214, 0.45);
 }
@@ -14025,7 +13997,7 @@ body.wizard #worktree-cleanup-modal .cleanup-row .branch { color: #e7d9f5; }
 body.wizard #worktree-cleanup-modal .cleanup-row .path,
 body.wizard #worktree-cleanup-modal .cleanup-empty { color: #b39ddb; }
 body.wizard #worktree-cleanup-modal .cleanup-badge { border-color: #3a2a63; }
-body.wizard #worktree-cleanup-modal .cleanup-toolbar button[aria-pressed="true"] {
+body.wizard #worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn))[aria-pressed="true"] {
   background: #3a2a63; border-color: #f3e6c0; color: #f3e6c0;
   box-shadow: 0 0 8px rgba(169, 123, 214, 0.45);
 }
@@ -16256,9 +16228,9 @@ body.wizard #perm-edit-modal .perm-tristate button:not(.active),
 body.wizard #context-features-modal .perm-tristate button:not(.active) { background: #140f28; color: #b39ddb; }
 body.wizard #perm-edit-modal .perm-tristate button:not(.active):hover,
 body.wizard #context-features-modal .perm-tristate button:not(.active):hover { background: #241b3d; }
-body.wizard #perm-edit-modal .perm-tristate button.active[data-effect=default],
-body.wizard #context-features-modal .perm-tristate button.active[data-effect=default],
-body.wizard #context-features-modal .perm-tristate button.active[data-state=default] {
+body.wizard #perm-edit-modal .perm-tristate .ui-btn.active[data-effect=default],
+body.wizard #context-features-modal .perm-tristate .ui-btn.active[data-effect=default],
+body.wizard #context-features-modal .perm-tristate .ui-btn.active[data-state=default] {
   background: #3a2a63; color: #f3e6c0;
 }
 /* Footer: gilded Save lever + tarnished-gold Cancel, mirroring the dialogs. */
@@ -17082,12 +17054,12 @@ body.wizard .mail-bulk-bar,
 body.wizard .mail-pager {
   background: #1c1436; border-color: #4a3a6b; color: #d8cef0;
 }
-body.wizard .mail-bulk-bar button {
+body.wizard .mail-bulk-bar button:where(:not(.ui-btn)) {
   background: #241b3d; border-color: #d9b45a; color: #b39ddb;
 }
-body.wizard .mail-bulk-bar button:hover:not(:disabled) { color: #f3e6c0; border-color: #a97bd6; }
-body.wizard .mail-bulk-bar button.danger { color: #d8cef0; }
-body.wizard .mail-bulk-bar button.danger:hover:not(:disabled) { color: #f2777a; border-color: #f2777a; }
+body.wizard .mail-bulk-bar button:where(:not(.ui-btn)):hover:not(:disabled) { color: #f3e6c0; border-color: #a97bd6; }
+body.wizard .mail-bulk-bar button:where(:not(.ui-btn)).danger { color: #d8cef0; }
+body.wizard .mail-bulk-bar button:where(:not(.ui-btn)).danger:hover:not(:disabled) { color: #f2777a; border-color: #f2777a; }
 body.wizard .mail-folder-actions { border-left-color: #4a3a6b; }
 body.wizard .mail-pager-pos,
 body.wizard .mail-pager-size { color: #b39ddb; }

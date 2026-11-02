@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { slugInfo } from './fleet-admin-model.js';
 
@@ -141,14 +141,14 @@ export function RequestAccessDialog({ node, perm, groups = [], gateway = '', onC
       <label class="peer-access-opt">Gateway
         <input id="peer-access-gateway" placeholder=${`any (${node} picks)`} value=${proxy} onInput=${(e) => setProxy(e.currentTarget.value)} /></label>`}
       ${scope !== 'node' && groups.length > 0 && html`<label class="peer-access-opt">Group
-        <select id="peer-access-group" value=${groupID} onChange=${(e) => setGroupID(e.currentTarget.value)}>
+        <${Select} id="peer-access-group" value=${groupID} onChange=${(e) => setGroupID(e.currentTarget.value)}>
           ${scope === 'group' && html`<option value="">every group on ${node}, including future ones (it may narrow to one)</option>`}
           ${groups.map((g) => html`<option key=${g.id} value=${String(g.id)}>${g.name}</option>`)}
-        </select></label>`}
+        <//></label>`}
       <label class="peer-access-opt">For
-        <select id="peer-access-ttl" value=${ttl} onChange=${(e) => setTtl(e.currentTarget.value)}>
+        <${Select} id="peer-access-ttl" value=${ttl} onChange=${(e) => setTtl(e.currentTarget.value)}>
           ${TTL_CHOICES.map((c) => html`<option key=${c.s} value=${String(c.s)}>${c.label}</option>`)}
-        </select></label>
+        <//></label>
       <label class="peer-access-opt peer-access-reason">Reason <textarea id="peer-access-reason" rows="3" maxlength=${REASON_MAX} value=${reason} onInput=${(e) => setReason(e.currentTarget.value)}></textarea></label>
       ${scope === 'group' && !groupID && html`<div class="muted">Without a group this asks for <code>${perm}</code> in every group on ${node}, including ones created later; its operator may narrow it to one group.</div>`}
       ${usage && maxUSD === null && html`<div class="fa-danger" role="alert">Amount is a dollar amount, or blank for no cap.</div>`}

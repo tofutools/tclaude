@@ -13,6 +13,7 @@ import htm from 'htm';
 import { attachmentSize, messageAttachments, messageExportHref } from './human-attachments.js';
 import { useDismissablePopover } from './hover-popover.js';
 import { clipboardFailure, writeClipboard } from './insecure-origin.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -100,21 +101,21 @@ export function MessageDownloadMenu({
     if (open && next && !rootRef.current?.contains(next)) setOpen(false);
   };
   return html`<span class="mail-download" ref=${rootRef} onFocusOut=${onFocusOut}>
-    <button type="button" class="mail-download-main"
+    <${Button} size="sm" class="mail-download-main"
       title=${count ? `Download this message with its ${filesNote} as a .zip` : 'Download this message as Markdown'}
-      onClick=${() => download(messageExportHref(message.id, count > 0, node))}>⤓ download</button><button
-      type="button" class="mail-download-caret" ref=${caretRef} aria-haspopup="menu" aria-expanded=${String(open)}
+      onClick=${() => download(messageExportHref(message.id, count > 0, node))}>⤓ download<//><${Button}
+      size="sm" icon=${true} class="mail-download-caret" domRef=${caretRef} aria-haspopup="menu" aria-expanded=${String(open)}
       aria-label="More download options" title="More download options"
-      onClick=${() => setOpen(!open)}>▾</button>
-    ${open && html`<div class="mail-download-menu" role="menu" aria-label="Download message" onKeyDown=${onMenuKeyDown}>
-      ${count > 0 && html`<button type="button" role="menuitem" data-export="zip"
+      onClick=${() => setOpen(!open)}>▾<//>
+    ${open && html`<div class="ui-menu ui-sm mail-download-menu" role="menu" aria-label="Download message" onKeyDown=${onMenuKeyDown}>
+      ${count > 0 && html`<button type="button" class="ui-menu-item" role="menuitem" data-export="zip"
         onClick=${() => run(() => download(messageExportHref(message.id, true, node)))}>
         <span class="mail-download-icon" aria-hidden="true">📦</span><span>Message + attachments (.zip)<small>message.md + ${filesNote}</small></span></button>`}
-      <button type="button" role="menuitem" data-export="md"
+      <button type="button" class="ui-menu-item" role="menuitem" data-export="md"
         onClick=${() => run(() => download(messageExportHref(message.id, false, node)))}>
         <span class="mail-download-icon" aria-hidden="true">📄</span><span>Message only (.md)<small>${count ? 'headers + body, attachments listed by name' : 'headers + body'}</small></span></button>
-      <div class="mail-download-sep" role="separator"></div>
-      <button type="button" role="menuitem" data-export="copy" onClick=${() => run(copyMarkdown)}>
+      <div class="ui-menu-sep mail-download-sep" role="separator"></div>
+      <button type="button" class="ui-menu-item" role="menuitem" data-export="copy" onClick=${() => run(copyMarkdown)}>
         <span class="mail-download-icon" aria-hidden="true">📋</span><span>Copy as Markdown<small>paste straight into a chat or a PR</small></span></button>
     </div>`}
   </span>`;
