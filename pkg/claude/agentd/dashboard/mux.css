@@ -455,7 +455,7 @@ body.hide-costs .mux-cost-toggle { display: none; }
   color: #fff; background: #238636; border: 1px solid #2ea043; border-radius: 6px;
   cursor: pointer;
 }
-.mux-terminal-disconnect-reconnect:where(:not(.ui-btn)):hover { background: #2ea043; border-color: #3fb950; }
+.mux-terminal-disconnect-reconnect:where(:not(.ui-btn)):hover { background: #2ea043; }
 .mux-terminal-disconnect-reconnect:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
   .mux-terminal-disconnect-card { animation: none; }
