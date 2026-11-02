@@ -56,7 +56,7 @@ func TestDashboardCSS_StylingSweep(t *testing.T) {
 
 	// Group 4 — A8 mail-reader action bar: reply / focus / mark / delete are
 	// plain <button>s with no .tool class, so they needed a base rule.
-	must(".mail-reader-actions button {", "the mail-reader action bar has a base button skin")
+	must(".mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)) {", "the mail-reader action bar has a base button skin")
 
 	// Group 5 — B1/B2/B3 buttons that sit outside a .row-actions wrapper.
 	must(".plugin-step-edit-head button,", "the plugin step-editor remove button is themed")
