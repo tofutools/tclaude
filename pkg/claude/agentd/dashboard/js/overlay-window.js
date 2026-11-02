@@ -504,13 +504,13 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     // Escape calls the whole move off: the window goes back where it was, into
     // the cell it was torn out of, and nothing is saved.
     const original = placement;
-    const treeBefore = splitTree.peek();
+    let tornFrom = null;
     const putBack = () => {
       join?.cancel();
       setGuide(null);
       setFloating(false);
       setPlacement(original);
-      if (splitTree.peek() !== treeBefore) saveSplit(prefs, treeBefore);
+      if (tornFrom) saveSplit(prefs, tornFrom);
     };
     track(event, (m) => {
       if (start.snap) {
@@ -523,7 +523,10 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
         const share = start.w > 0 ? Math.max(0, Math.min(1, (sx - start.x) / start.w)) : 0.5;
         start = { ...floating, x: sx - floating.w * share, y: sy - 14, snap: '' };
         vacated = cell || null;
-        if (splitTree.peek() && leavesOf(splitTree.peek()).includes(id)) saveSplit(prefs, withoutWindow(splitTree.peek(), id));
+        if (splitTree.peek() && leavesOf(splitTree.peek()).includes(id)) {
+          tornFrom = splitTree.peek();
+          saveSplit(prefs, withoutWindow(tornFrom, id));
+        }
       }
       moved = true;
       last = clampPlacement({ ...start, x: start.x + m.clientX - sx, y: start.y + m.clientY - sy, snap: '' }, viewportOf(win));

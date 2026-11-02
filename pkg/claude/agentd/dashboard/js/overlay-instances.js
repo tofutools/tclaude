@@ -39,6 +39,8 @@ function patchWindow(id, patch) {
 // A window whose tabs wait on the dock comes back as itself, to its cell.
 const onDock = (id, minimizedTabs = minimizedOverlayTabs.peek()) => !!id && minimizedTabs.some(({ home }) => home === id);
 setOverlayDockCheck((id) => onDock(id));
+// The ids windows on the dock come back as, which no new window may take.
+const dockHomes = () => minimizedOverlayTabs.peek().map(({ home }) => home).filter(Boolean);
 
 // Windows and the dock change together. A window left with no tabs is gone from
 // the stack, and from any split once no tab of it waits on the dock.
@@ -62,7 +64,7 @@ export function openOverlayWindow(instance) {
   const window = holding(instance.id);
   if (window) patchWindow(window.id, { minimized: false, active: instance.id });
   else if (minimizedOverlayTabs.peek().some(({ tab }) => tab.id === instance.id)) commit(restoredTab(dockState(), instance.id));
-  else overlayWindows.value = [...overlayWindows.peek(), windowAround(overlayWindows.peek(), instance, { at: instance.at })];
+  else overlayWindows.value = [...overlayWindows.peek(), windowAround(overlayWindows.peek(), instance, { at: instance.at, reserved: dockHomes() })];
   raiseOverlayTab(instance.id);
 }
 
@@ -78,7 +80,7 @@ export function openTabInWindow(windowId, place, tab, { activate = true } = {}) 
     return;
   }
   if (into) commit({ windows: addedTab(overlayWindows.peek(), windowId, tab, activate) });
-  else overlayWindows.value = [...overlayWindows.peek(), { ...windowAround(overlayWindows.peek(), tab, { id: windowId || tab.id, place }), minimized: !activate }];
+  else overlayWindows.value = [...overlayWindows.peek(), { ...windowAround(overlayWindows.peek(), tab, { id: windowId || tab.id, place, reserved: windowId ? [] : dockHomes() }), minimized: !activate }];
   if (activate) raiseOverlayTab(tab.id);
 }
 
@@ -114,7 +116,7 @@ export function moveOverlayGroup(sourceId, groupId, windowId, index) {
 // tearOverlayGroupOut gives a group a window of its own, at the drop point.
 export function tearOverlayGroupOut(sourceId, groupId, at) {
   const before = new Set(overlayWindows.peek().map((window) => window.id));
-  commit({ windows: tornOutGroup(overlayWindows.peek(), sourceId, groupId, at) });
+  commit({ windows: tornOutGroup(overlayWindows.peek(), sourceId, groupId, at, dockHomes()) });
   const opened = overlayWindows.peek().find((window) => !before.has(window.id));
   if (opened) raiseOverlayWindow(opened.id);
 }
@@ -142,7 +144,7 @@ export function ungroupOverlayTabs(windowId, groupId) {
 
 // tearOverlayTabOut gives a tab a window of its own, at the drop point.
 export function tearOverlayTabOut(id, at) {
-  commit({ windows: tornOutTab(overlayWindows.peek(), id, at) });
+  commit({ windows: tornOutTab(overlayWindows.peek(), id, at, dockHomes()) });
   raiseOverlayTab(id);
 }
 
