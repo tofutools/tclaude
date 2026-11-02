@@ -4706,18 +4706,11 @@ details.cost-filter-menu[open] > summary::before { content: none; }
   display: inline-flex; gap: 4px; opacity: 0.4; position: relative;
 }
 tr:hover .row-actions { opacity: 1; }
-.row-actions button:where(:not(.ui-menu-item)) {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
-  color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
-  font-family: inherit;
-}
-.row-actions button:where(:not(.ui-menu-item)):hover { color: #d4d4d4; border-color: #58a6ff; }
-.row-actions button:where(:not(.ui-menu-item)).danger:hover { color: #f85149; border-color: #f85149; }
-.row-actions button:where(:not(.ui-menu-item)).warn:hover { color: #d29922; border-color: #d29922; }
-/* A disabled row button (focus/hide on an offline agent) stays
-   visible but dim and non-interactive — no hover highlight. */
-.row-actions button:where(:not(.ui-menu-item)):disabled { color: #484f58; cursor: not-allowed; }
-.row-actions button:where(:not(.ui-menu-item)):disabled:hover { color: #484f58; border-color: #2a3340; }
+/* Row buttons are the standard .ui-btn.ui-sm (ui.css), icons .ui-btn-icon;
+   a delete is the quiet .ui-btn-ghost.ui-btn-danger, so a red frame doesn't
+   repeat down every row. A reversible demotion (retire, disable, pause) is a
+   plain button that warms amber only under the cursor. */
+.row-actions .ui-btn.warn:hover:not(:disabled) { color: var(--ui-warn-text); border-color: var(--ui-warn-text); }
 /* The status dot + the focus/hide/⚙ cluster share the row's first
    cell (.agent-ctl) so the controls sit together — no empty gap from
    the dot living in its own column. */
@@ -4880,18 +4873,14 @@ tr:hover .agent-harness { color: #c9d1d9; }
    drop the pointer cursor + hover frame the editable .rowname-text carries. */
 .rowname-text.rowname-fixed { cursor: default; }
 .rowname-text.rowname-fixed:hover { border-color: transparent; }
-/* focus / hide are icon buttons (eye / slashed-eye) — same chip frame
-   as the text buttons, just a centred SVG that inherits the button's
-   dimmable text colour via stroke="currentColor". */
-.row-actions .icon-btn {
-  display: inline-flex; align-items: center; padding: 2px 6px;
-}
+/* focus / hide are icon buttons (eye / slashed-eye): a centred SVG that
+   inherits the button's text colour via stroke="currentColor". */
 .eye-ico { display: block; }
 /* The top-level 🗑 retire icon reuses the eye pair's icon-btn frame + the
    .warn hover semantics (amber, reversible-demotion — never the red
    `danger` of a permanent delete). Its glyph inherits currentColor like
    the eyes, so it dims at rest and lights amber on hover via the shared
-   `.row-actions button.warn:hover` rule above. */
+   `.row-actions .ui-btn.warn:hover` rule above. */
 .trash-ico { display: block; }
 /* The per-agent "hide window" button (the slashed-eye beside "focus")
    detaches the agent's terminal — far less used than "focus", so it's
@@ -4920,7 +4909,7 @@ details[open] > summary .group-actions { opacity: 1; }
 .group-header-actions .group-actions,
 .group-header-actions .spawn-btn { opacity: 1; margin-left: 0; }
 .group-header-actions .group-actions { margin-left: 4px; }
-.group-actions button:where(:not(.ui-menu-item)) {
+.group-actions button:where(:not(.ui-menu-item, .ui-btn)) {
   background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
   color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
   font-family: inherit;
@@ -5012,9 +5001,9 @@ details[open] > summary .group-actions { opacity: 1; }
     opacity: 0;
   }
 }
-.group-actions button:where(:not(.ui-menu-item)):hover { color: #d4d4d4; border-color: #58a6ff; }
-.group-actions button:where(:not(.ui-menu-item)).danger:hover { color: #f85149; border-color: #f85149; }
-.group-actions button:where(:not(.ui-menu-item)).warn:hover { color: #d29922; border-color: #d29922; }
+.group-actions button:where(:not(.ui-menu-item, .ui-btn)):hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-actions button:where(:not(.ui-menu-item, .ui-btn)).danger:hover { color: #f85149; border-color: #f85149; }
+.group-actions button:where(:not(.ui-menu-item, .ui-btn)).warn:hover { color: #d29922; border-color: #d29922; }
 /* The spawn button — the primary "add an agent to this group" CTA.
    Sits as a SIBLING of .group-actions (not inside it) so its style
    stays distinct: blue-accent skin matching filter-bar .primary so it
@@ -5054,13 +5043,8 @@ body.wizard .subgroup-btn .subgroup-ico { display: none; }
    it escapes the table cell cleanly — no ancestor sets overflow.
    The cog is sized up and tinted amber so it reads as a distinct
    "more actions" affordance, not just another grey row button. */
-.row-actions .cog-btn, .group-actions .cog-btn {
-  font-size: 15px; line-height: 1; padding: 0 6px;
-  color: #e3a008; border-color: #6b4f1d;
-}
-.row-actions .cog-btn:hover, .group-actions .cog-btn:hover {
-  color: #ffb52e; border-color: #e3a008;
-}
+.row-actions .cog-btn, .group-actions .cog-btn { font-size: 16px; line-height: 1; color: #e3a008; }
+.row-actions .cog-btn:hover:not(:disabled), .group-actions .cog-btn:hover:not(:disabled) { color: #ffb52e; }
 /* The .filter-bar-cog wrapper holds the trailing "more group
    actions" cog + its menu. Mirror the +new-group .primary
    button's exact size recipe (font-size 12 + padding 5×12 + the
@@ -11699,7 +11683,6 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
    without this override those buttons sat permanently dim. Keep them
    full-strength and a notch lighter — same end state as a hovered row. */
 .plugin-card .row-actions { opacity: 1; }
-.plugin-card .row-actions button { color: #adbac7; }
 /* The amber "needs attention" lamp state (enabled-but-not-active, or
    deactivated-but-still-running) — same hue as the warn badge. */
 .status-dot-warn { color: #d29922; }
@@ -11727,7 +11710,7 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 /* JOH-364: three action buttons that sit OUTSIDE a .row-actions wrapper, so no
    rule reached them — white UA chrome in BOTH skins. (#plugin-modal and the
    sudo/permissions table deliberately stay plain-dark in wizard, so no wizard
-   twin is needed.) All mirror .row-actions button:
+   twin is needed.) All keep the old row-chip look:
      • plugin step-editor "remove"   → .plugin-step-edit-head button
      • catalog "+ install"           → .plugin-head > button.primary
        (a DIRECT child; the installed-card .row-actions cluster is already fine)
@@ -14974,13 +14957,6 @@ body.wizard #links-manage-modal #links-list .rowname { color: #f3e6c0; }
 body.wizard #links-manage-modal #links-list .id,
 body.wizard #links-manage-modal #links-list .muted,
 body.wizard #links-manage-modal #links-list .empty { color: #b39ddb; }
-body.wizard #links-manage-modal #links-list .row-actions button {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #links-manage-modal #links-list .row-actions button:hover { background: #3a2a63; }
-body.wizard #links-manage-modal #links-list .row-actions button.danger:hover {
-  color: #ffb4a8; border-color: #f0883e;
-}
 
 /* The compact add-link action lives inside each expanded party card rather
    than either links modal, so it needs its own group-section hook. It keeps

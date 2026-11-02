@@ -158,14 +158,14 @@ export function LinksList({ state, actions }) {
             ${cross && html`<td>${remote ? peerState(link) : null}</td>`}
             <td><span class="muted">${relTime(link.created_at) || ''}</span></td>
             <td><div class="row-actions">
-              ${!remote && html`<button type="button" disabled=${!!deleting}
+              ${!remote && html`<${Button} size="sm" type="button" disabled=${!!deleting}
                 onClick=${() => actions.openEdit({ id: link.id, from: link.from || '', to: link.to || '', mode: link.mode || '' })}
-                title="Change this link's mode"><${Words} plain="edit" wizard="rebind" /></button>`}
-              <button type="button" class="danger" disabled=${!!deleting}
+                title="Change this link's mode"><${Words} plain="edit" wizard="rebind" /><//>`}
+              <${Button} size="sm" type="button" variant="ghost danger" disabled=${!!deleting}
                 onClick=${() => remove(link)}
                 title=${pendingOut ? 'Withdraw this link request' : 'Remove this link'}>${pendingOut
     ? (rowBusy ? 'cancelling…' : 'cancel request')
-    : html`<${Words} plain=${rowBusy ? 'deleting…' : 'delete'} wizard=${rowBusy ? 'severing…' : 'sever'} />`}</button>
+    : html`<${Words} plain=${rowBusy ? 'deleting…' : 'delete'} wizard=${rowBusy ? 'severing…' : 'sever'} />`}<//>
             </div></td>
           </tr>
         `;
