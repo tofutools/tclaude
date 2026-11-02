@@ -94,7 +94,19 @@ func TestDashboardJS(t *testing.T) {
 		args = append(args, fmt.Sprintf("--test-concurrency=%d", concurrency))
 	}
 	args = append(args, files...)
-	out, err := exec.Command(node, args...).CombinedOutput()
+	var output bytes.Buffer
+	cmd := exec.Command(node, args...)
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	err = cmd.Start()
+	if err == nil {
+		stopGuard := guardSuiteMemory(cmd.Process.Pid, suiteMemoryLimitKB(t))
+		err = cmd.Wait()
+		for _, suite := range stopGuard() {
+			t.Errorf("killed %s: it passed the per-suite memory limit (TCLAUDE_JS_TEST_SUITE_MAX_MB)", suite)
+		}
+	}
+	out := output.Bytes()
 	if err != nil {
 		// A non-zero Node exit means the suite ran and failed. Preserve its output
 		// so CI failures identify the actual assertion instead of looking like an
@@ -109,6 +121,22 @@ func TestDashboardJS(t *testing.T) {
 		t.Skip("unable to run node — skipping JS unit tests (install node to run them)", err)
 	}
 	t.Logf("node %v:\n%s", args, out)
+}
+
+// suiteMemoryLimitKB is the resident size past which a suite is killed. The
+// largest suites stay under 1 GB; one that allocates without bound would
+// otherwise take the whole machine.
+func suiteMemoryLimitKB(t *testing.T) int64 {
+	t.Helper()
+	mb := int64(3072)
+	if env := os.Getenv("TCLAUDE_JS_TEST_SUITE_MAX_MB"); env != "" {
+		parsed, err := strconv.ParseInt(env, 10, 64)
+		if err != nil || parsed < 1 {
+			t.Fatalf("invalid TCLAUDE_JS_TEST_SUITE_MAX_MB %q (want a positive integer)", env)
+		}
+		mb = parsed
+	}
+	return mb * 1024
 }
 
 // recordNodeInputs hashes the runtime input set for diagnostics. nodeTestInputs
