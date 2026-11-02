@@ -94,13 +94,16 @@ func TestDashboardJS(t *testing.T) {
 		args = append(args, fmt.Sprintf("--test-concurrency=%d", concurrency))
 	}
 	args = append(args, files...)
+	// Read before the run starts: an invalid limit fails the test here, rather
+	// than leaving node --test running behind a t.Fatalf.
+	limitKB := suiteMemoryLimitKB(t)
 	var output bytes.Buffer
 	cmd := exec.Command(node, args...)
 	cmd.Stdout = &output
 	cmd.Stderr = &output
 	err = cmd.Start()
 	if err == nil {
-		stopGuard := guardSuiteMemory(cmd.Process.Pid, suiteMemoryLimitKB(t))
+		stopGuard := guardSuiteMemory(cmd.Process.Pid, limitKB)
 		err = cmd.Wait()
 		for _, suite := range stopGuard() {
 			t.Errorf("killed %s: it passed the per-suite memory limit (TCLAUDE_JS_TEST_SUITE_MAX_MB)", suite)
