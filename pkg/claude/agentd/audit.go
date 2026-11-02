@@ -278,6 +278,11 @@ var auditRoutes = []auditRoute{
 	{method: http.MethodPost, segs: []string{"steward", "handover"}, verb: "steward.handover", describe: describeStewardHandover},
 	{method: http.MethodPost, segs: []string{"steward", "step-down"}, verb: "steward.step-down", describe: describeStewardHandover},
 	{method: http.MethodPost, segs: []string{"steward", "roster", "remove"}, verb: "steward.roster-remove", describe: describeStewardHandover},
+	// The create and renew responses hold a credential, so neither side of
+	// these is ever buffered.
+	{method: http.MethodPost, segs: []string{"external-stewards"}, verb: "external-steward.create", pathOnly: true},
+	{method: http.MethodPost, segs: []string{"external-stewards", "{name}", "renew"}, verb: "external-steward.renew", pathOnly: true},
+	{method: http.MethodPost, segs: []string{"external-stewards", "{name}", "revoke"}, verb: "external-steward.revoke", pathOnly: true},
 	{method: http.MethodPut, segs: []string{"steward", "default-permissions"}, verb: "steward.default-permissions", describe: describeStewardDefaults},
 	{method: http.MethodPost, segs: []string{"permissions", "deny"}, verb: "permissions.deny", describe: describePerm},
 	{method: http.MethodPost, segs: []string{"permissions", "revoke"}, verb: "permissions.revoke", describe: describePerm},
@@ -847,6 +852,9 @@ func auditActor(r *http.Request, source string) (kind, conv, label string) {
 	case classHuman:
 		return db.AuditActorHuman, "", "operator"
 	case classAgent:
+		if p.ExternalSteward {
+			return db.AuditActorAgent, p.ConvID, "external:" + agent.TitleFor(p.ConvID)
+		}
 		return db.AuditActorAgent, p.ConvID, auditConvLabel(p.ConvID)
 	default:
 		return db.AuditActorUnknown, p.ConvID, "(unknown)"

@@ -3020,6 +3020,9 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 // agent.resume slug OR caller is owner of a group containing
 // target. Routed via /v1/agent/{selector}/resume.
 func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string) {
+	if refuseExternalStewardLaunch(w, targetConv) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
 		return

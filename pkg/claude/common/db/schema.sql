@@ -655,6 +655,12 @@ CREATE TRIGGER collab_board_sessions_agent_retired
  DELETE FROM collab_board_sessions WHERE agent_id = NEW.agent_id;
 END;
 
+CREATE TRIGGER external_steward_retired
+		AFTER UPDATE OF retired_at ON agents WHEN NEW.retired_at IS NOT NULL BEGIN
+			UPDATE external_steward_credentials SET revoked_at = NEW.retired_at
+			WHERE agent_id = NEW.agent_id AND revoked_at IS NULL;
+		END;
+
 CREATE TABLE "agent_conversations" (
 			conv_id   TEXT PRIMARY KEY,
 			agent_id  TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
@@ -2257,3 +2263,24 @@ CREATE TABLE steward_roster (
 
 CREATE UNIQUE INDEX steward_roster_one_active
 		ON steward_roster (seat) WHERE seat = 'active';
+
+CREATE TABLE external_stewards (
+		agent_id   TEXT NOT NULL PRIMARY KEY REFERENCES agents(agent_id) ON DELETE CASCADE,
+		name       TEXT NOT NULL UNIQUE,
+		created_at INTEGER NOT NULL,
+		created_by TEXT NOT NULL
+	) STRICT;
+
+CREATE TABLE external_steward_credentials (
+		token_id     TEXT NOT NULL PRIMARY KEY,
+		agent_id     TEXT NOT NULL REFERENCES external_stewards(agent_id) ON DELETE CASCADE,
+		token_hash   BLOB NOT NULL,
+		created_at   INTEGER NOT NULL,
+		created_by   TEXT NOT NULL,
+		expires_at   INTEGER NOT NULL,
+		revoked_at   INTEGER,
+		last_used_at INTEGER
+	) STRICT;
+
+CREATE INDEX idx_external_steward_credentials_agent
+		ON external_steward_credentials (agent_id);

@@ -72,6 +72,8 @@ func TestMain(m *testing.M) {
 	agentd.InstallBrokerProcTableTestDefaults()
 	agentd.DisableBrokerPaneCacheForTest()
 	agentd.DisableFleetMetadataForTest()
+	// The test process is every socket peer here, and is not an agent the daemon runs.
+	agentd.SetExternalDaemonPIDForTest(-1)
 	agentd.SetOpenTerminalForTest(func(string) error {
 		return errors.New("agentd tests: terminal spawn suppressed by default (TCL-584); swap agentd.SetOpenTerminalForTest to observe the open path")
 	})

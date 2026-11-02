@@ -1380,6 +1380,10 @@ type StewardConfig struct {
 	// StewardSource constants. It is consent to a download, which is why it
 	// lives here, where only the operator can set it.
 	SourceDownload string `json:"source_download,omitempty"`
+	// ExternalEnabled lets an assistant outside tclaude act as a steward with
+	// a credential the operator made. Off by default: while off, none can be
+	// made and every one presented is refused.
+	ExternalEnabled bool `json:"external_enabled,omitempty"`
 }
 
 const (
@@ -1468,6 +1472,11 @@ func (c *Config) StewardWrites() string {
 		return c.Steward.Writes
 	}
 	return StewardWritesMessaging
+}
+
+// ExternalStewardsEnabled reports the external steward switch. Nil-safe.
+func (c *Config) ExternalStewardsEnabled() bool {
+	return c != nil && c.Steward != nil && c.Steward.ExternalEnabled
 }
 
 // StewardSourceDownload returns the operator's choice on downloading tclaude's

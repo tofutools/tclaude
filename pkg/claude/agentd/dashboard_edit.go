@@ -2265,6 +2265,10 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	convID := actor.CurrentConvID
+	if db.IsExternalStewardConv(convID) {
+		http.Error(w, externalStewardSudoRefusal, http.StatusConflict)
+		return
+	}
 	if len(body.Carry) > 0 && !isLiveSteward(convID) {
 		http.Error(w, "only a live Steward's grants can be kept for future Stewards", http.StatusForbidden)
 		return
@@ -2449,6 +2453,15 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "resolve conv: "+err.Error(), http.StatusNotFound)
 		return
+	}
+	for slug, effect := range body.Overrides {
+		if effect != db.PermEffectGrant {
+			continue
+		}
+		if refusal := refuseExternalStewardGrant(res.ConvID, slug); refusal != "" {
+			http.Error(w, refusal, http.StatusConflict)
+			return
+		}
 	}
 	steward := isLiveSteward(res.ConvID)
 	var overridesBefore map[string]db.PermissionOverride
