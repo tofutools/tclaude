@@ -96,6 +96,7 @@ It reads the credential once when it starts, so restart it after a renewal.
 | `dashboard_view` | Reads which view your dashboard is on | Needs `dashboard.view.read` |
 | `dashboard_cue` | Moves your dashboard to a view or highlights something there | Needs `dashboard.guide` |
 | `dashboard_capture` | Sees your dashboard as an image | Off until you grant `dashboard.capture`, because the image goes to your assistant's provider |
+| `spawn_agent` | Starts a worker in a group you chose | Off until you [set where it can start workers](#starting-workers) |
 | `set_task_link` | Sets or clears the task link beside an agent | Needs `agent.task`, which comes with the Workers level, or owning every group that agent is in |
 
 So taking `message.direct` away doesn't stop it messaging agents it can reach through a group.
@@ -181,13 +182,13 @@ and they are checked when you set them and again at every spawn.
 
 - **Its workers stop for you.** The spawn profile has to set an approval mode where you
   answer every action: `default` on Claude, `untrusted` on Codex, `default` on Gemini, `ask`
-  on OpenCode or pi. A worker stops at the first action that isn't read-only until you
-  answer, and the assistant can't answer for you. Copilot and a shell have no such mode, so
-  they can't be used.
+  on pi. A worker stops at the first action that isn't read-only until you answer, and the
+  assistant can't answer for you. Copilot and a shell have no such mode, so they can't be
+  used. Neither can OpenCode, whose `bash` follows its tools policy instead.
 - **The sandbox holds.** The spawn profile also has to enforce the sandbox profile while
-  still asking you: `sandbox_implementation` set to `tclaude-layer` for Claude, Gemini,
-  OpenCode or pi, and `sandbox` set to `read-only` or `workspace-write` for Codex. Claude's
-  own sandbox can't be used, because it runs Bash without asking. Check your own Claude
+  still asking you: `sandbox_implementation` set to `tclaude-layer` for Claude, Gemini or
+  pi, and `sandbox` set to `tclaude-agent` for Codex, or `read-only` or `workspace-write`
+  if the sandbox profile has no rules for those to miss. Claude's own sandbox can't be used, because it runs Bash without asking. Check your own Claude
   settings too: a `permissions.allow` entry there applies to a worker as well. A profile
   that gives its agents ownership, permissions or a trusted directory can't be used either.
 - **A request can't change the launch.** The assistant chooses the group, a name, the first

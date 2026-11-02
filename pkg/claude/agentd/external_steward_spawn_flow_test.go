@@ -135,6 +135,12 @@ func TestExternalStewardSpawn_PinIsCheckedWhenGranted(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "opencode", Harness: harness.OpenCodeName, Approval: "ask"})
 	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "walled-opencode", Harness: harness.OpenCodeName, Approval: "ask", SandboxImplementation: "tclaude-layer"})
+	require.NoError(t, err)
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{Name: "ruled", Filesystem: []db.SandboxFilesystemGrant{{Path: s.dir, Access: "read"}}})
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "plain-codex", Harness: harness.CodexName, Approval: "untrusted", Sandbox: harness.SandboxWorkspaceWrite})
+	require.NoError(t, err)
 	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "own-sandbox", Harness: harness.DefaultName, Approval: "default", Sandbox: harness.ClaudeSandboxOn})
 	require.NoError(t, err)
 	yes := true
@@ -165,6 +171,8 @@ func TestExternalStewardSpawn_PinIsCheckedWhenGranted(t *testing.T) {
 		"shell":         pin([]string{"crew"}, "shell", "locked"),
 		"unconfined":    pin([]string{"crew"}, "unconfined", "locked"),
 		"not enforced":  pin([]string{"crew"}, "opencode", "locked"),
+		"opencode wall": pin([]string{"crew"}, "walled-opencode", "locked"),
+		"codex rules":   pin([]string{"crew"}, "plain-codex", "ruled"),
 		"gives owner":   pin([]string{"crew"}, "owner", "locked"),
 		"own sandbox":   pin([]string{"crew"}, "own-sandbox", "locked"),
 		"auto review":   pin([]string{"crew"}, "reviewed", "locked"),
@@ -301,6 +309,20 @@ func TestExternalStewardSpawn_RequestIsOnlyTheShortForm(t *testing.T) {
 		assert.Containsf(t, body, field, "the refusal names the field")
 	}
 	s.worker("w")
+}
+
+// Leaving a field out of the tool has to leave it to the profile.
+func TestExternalStewardSpawn_ToolKeepsWhatTheProfileSays(t *testing.T) {
+	s := newSpawnSetup(t)
+	profile, err := db.GetSpawnProfile("worker")
+	require.NoError(t, err)
+	profile.AgentName = "from-profile"
+	require.NoError(t, db.UpdateSpawnProfile(profile))
+	s.pinned()
+	mcpOK(t, s.mcpSession(s.issued.Credential), stewardtools.SpawnAgent, map[string]any{"group": "crew"})
+	code, body := s.humanPost("/v1/external-stewards/assistant/revoke", map[string]any{})
+	require.Equal(t, http.StatusOK, code, body)
+	assert.Contains(t, body, `"title":"from-profile"`)
 }
 
 func TestExternalStewardSpawn_OffTakesThePinAway(t *testing.T) {

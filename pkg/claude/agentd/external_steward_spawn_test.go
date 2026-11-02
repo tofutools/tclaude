@@ -63,3 +63,12 @@ func TestExternalStewardSpawnFields_DefaultDeny(t *testing.T) {
 	}
 	assert.Equal(t, 5, allowed, "profile, name, initial message and a task link with its label; the group is in the path")
 }
+
+// The lineage guard refuses these too, for reasons of its own that could change.
+func TestExternalStewardApprovalHolds(t *testing.T) {
+	assert.True(t, externalStewardApprovalHolds(harness.DefaultName, harness.ClaudeSandboxOff), "tclaude's wall, Claude's sandbox off")
+	assert.False(t, externalStewardApprovalHolds(harness.DefaultName, harness.ClaudeSandboxOn), "Claude's sandbox runs Bash without asking")
+	assert.False(t, externalStewardApprovalHolds(harness.DefaultName, ""), "settings.json decides")
+	assert.False(t, externalStewardApprovalHolds(harness.OpenCodeName, harness.OpenCodeSandboxTclaudeLayer), "bash follows its tools policy")
+	assert.True(t, externalStewardApprovalHolds(harness.CodexName, harness.SandboxManagedProfile))
+}

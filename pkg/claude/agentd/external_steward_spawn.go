@@ -126,7 +126,34 @@ func checkExternalStewardSpawnPin(pin externalStewardSpawnPin) error {
 	if sandbox == nil {
 		return fmt.Errorf("no sandbox profile is named %q", pin.SandboxProfile)
 	}
+	// Groups layer their own rules on it, so whether the launch can enforce them
+	// depends on the group.
+	harnessName, mode, implementation := externalStewardProfileLaunch(profile)
+	for _, name := range pin.Groups {
+		g, err := db.GetAgentGroupByName(name)
+		if err != nil {
+			return err
+		}
+		snapshot, err := db.ResolveEffectiveSandboxSnapshot(g.ID, pin.SandboxProfile)
+		if err != nil {
+			return err
+		}
+		if fail := sandboxProfileCapabilityFailure(harnessName, mode, &snapshot, string(implementation)); fail != nil {
+			return fmt.Errorf("spawn profile %q can't enforce sandbox profile %q in group %q: %s", pin.SpawnProfile, pin.SandboxProfile, name, fail.Msg)
+		}
+	}
 	return nil
+}
+
+// externalStewardProfileLaunch is the sandbox posture a spawn profile launches with.
+func externalStewardProfileLaunch(profile *db.SpawnProfile) (string, string, sandboxpolicy.Implementation) {
+	harnessName := harnessOrDefault(profile.Harness)
+	implementation := normalizeLineageImplementation(profile.SandboxImplementation)
+	mode := strings.TrimSpace(profile.Sandbox)
+	if h, ok := harness.Get(harnessName); ok && mode == "" && implementation == sandboxpolicy.ImplementationTclaudeLayer {
+		mode = h.TclaudeLayerMode
+	}
+	return harnessName, mode, implementation
 }
 
 // externalStewardProfileProblem says why a spawn profile can't start a principal's
@@ -145,21 +172,13 @@ func externalStewardProfileProblem(profile *db.SpawnProfile) error {
 	if profile.TrustDir != nil && *profile.TrustDir {
 		return fmt.Errorf("spawn profile %q trusts the directory for its agents, which an external steward can't do", profile.Name)
 	}
-	implementation := normalizeLineageImplementation(profile.SandboxImplementation)
-	mode := strings.TrimSpace(profile.Sandbox)
-	h, ok := harness.Get(harnessOrDefault(profile.Harness))
-	if !ok {
-		return fmt.Errorf("spawn profile %q names an unknown harness", profile.Name)
-	}
-	if mode == "" && implementation == sandboxpolicy.ImplementationTclaudeLayer {
-		mode = h.TclaudeLayerMode
-	}
-	child := spawnLineageSandbox{Harness: h.Name, HarnessBuiltinMode: mode, Implementation: implementation}
-	if !spawnSandboxLineageAllowed(externalStewardLineage, child) || !externalStewardApprovalHolds(h.Name, mode) {
-		return fmt.Errorf("spawn profile %q has to confine its agents with a sandbox that still asks a human: tclaude's pane sandbox for Claude, Gemini, OpenCode and pi, read-only or workspace-write for Codex",
+	harnessName, mode, implementation := externalStewardProfileLaunch(profile)
+	child := spawnLineageSandbox{Harness: harnessName, HarnessBuiltinMode: mode, Implementation: implementation}
+	if !spawnSandboxLineageAllowed(externalStewardLineage, child) || !externalStewardApprovalHolds(harnessName, mode) {
+		return fmt.Errorf("spawn profile %q has to confine its agents with a sandbox that still asks a human: tclaude's pane sandbox for Claude, Gemini and pi, tclaude-agent, read-only or workspace-write for Codex; OpenCode can't be used",
 			profile.Name)
 	}
-	if fail := sandboxImplementationHostFailure(h.Name, string(implementation)); fail != nil {
+	if fail := sandboxImplementationHostFailure(harnessName, string(implementation)); fail != nil {
 		return fmt.Errorf("%s", fail.Msg)
 	}
 	return nil
@@ -169,8 +188,16 @@ func externalStewardProfileProblem(profile *db.SpawnProfile) error {
 // runs Bash without asking inside its own sandbox unless told otherwise, whatever
 // the approval mode, so a worker that has to stop for a human can't use that
 // sandbox: tclaude's wall confines it instead, with Claude's own switched off.
+// OpenCode's bash follows its tools policy rather than the approval mode, and that
+// allows it by default.
 func externalStewardApprovalHolds(harnessName, builtinMode string) bool {
-	return harnessOrDefault(harnessName) != harness.DefaultName || strings.TrimSpace(builtinMode) == harness.ClaudeSandboxOff
+	switch harnessOrDefault(harnessName) {
+	case harness.DefaultName:
+		return strings.TrimSpace(builtinMode) == harness.ClaudeSandboxOff
+	case harness.OpenCodeName:
+		return false
+	}
+	return true
 }
 
 // refuseExternalStewardSpawnGrant answers a direct grant of agent.spawn to a

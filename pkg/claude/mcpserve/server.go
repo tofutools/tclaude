@@ -155,10 +155,18 @@ func register(server *mcp.Server, c *Client, tool stewardtools.Tool) {
 		mcp.AddTool(server, def, c.dashboardCapture)
 	case stewardtools.SpawnAgent:
 		mcp.AddTool(server, def, post(c, func(in spawnAgentInput) (string, any) {
-			return "/v1/groups/" + url.PathEscape(in.Group) + "/spawn", map[string]any{
+			// A key that's present counts as chosen, even empty, and would wipe the
+			// profile's own name and first message.
+			body := map[string]any{}
+			for key, value := range map[string]string{
 				"name": in.Name, "profile": in.Profile, "initial_message": in.InitialMessage,
 				"task_ref_url": in.TaskURL, "task_ref_label": in.TaskLabel,
+			} {
+				if value != "" {
+					body[key] = value
+				}
 			}
+			return "/v1/groups/" + url.PathEscape(in.Group) + "/spawn", body
 		}))
 	case stewardtools.SetTaskLink:
 		mcp.AddTool(server, def, post(c, func(in setTaskLinkInput) (string, any) {
