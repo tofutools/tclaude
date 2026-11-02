@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -452,27 +453,66 @@ func handleGLProxyMRList(w http.ResponseWriter, r *http.Request) {
 		}
 		query.Set("source_branch", h)
 	}
-	raw, failure, err := g.rest(r.Context(), glAPIRequest{Path: g.projectPath("merge_requests"), Query: query})
+	mrs, failure, err := g.listMergeRequests(r.Context(), query, strings.TrimSpace(body.Head) != "", limit)
 	if failure != nil || err != nil {
 		g.respondOrFail(w, r, "mr.list", failure, err)
 		return
 	}
-	var mrs []glMR
-	if err := json.Unmarshal(raw, &mrs); err != nil {
-		g.respond(w, r, "mr.list", ProxyResult{}, fmt.Errorf("could not read the merge-request listing: %w", err))
-		return
-	}
-	head := strings.TrimSpace(body.Head)
 	out := make([]glMRListEntry, 0, len(mrs))
 	for _, mr := range mrs {
-		// --head means THIS project's branch: a fork's merge request into
-		// the project can carry the same branch name.
-		if head != "" && !glMRFromOwnProject(mr) {
-			continue
-		}
 		out = append(out, projectGLMRListEntry(mr))
 	}
 	g.respondJSON(w, r, "mr.list", out)
+}
+
+// errGLListFull stops a paged read once it holds enough rows.
+var errGLListFull = errors.New("enough rows")
+
+// listMergeRequests reads one page of the project's merge requests, or, for
+// --head, as many pages as it takes to find `limit` of the project's own.
+// --head means THIS project's branch, and a fork's merge request into the
+// project can carry the same branch name; dropping those from one page could
+// leave nothing although the project's own is on the next.
+func (g *glProxySession) listMergeRequests(ctx context.Context, query url.Values, ownOnly bool, limit int) ([]glMR, *ProxyResult, error) {
+	req := glAPIRequest{Path: g.projectPath("merge_requests"), Query: query}
+	if !ownOnly {
+		raw, failure, err := g.rest(ctx, req)
+		if failure != nil || err != nil {
+			return nil, failure, err
+		}
+		var mrs []glMR
+		if err := json.Unmarshal(raw, &mrs); err != nil {
+			return nil, nil, fmt.Errorf("could not read the merge-request listing: %w", err)
+		}
+		return mrs, nil, nil
+	}
+	query.Set("per_page", "100")
+	var mrs []glMR
+	_, failure, err := g.restPaginated(ctx, glProxyTimeout, req, func(page []byte) error {
+		var batch []glMR
+		if err := json.Unmarshal(page, &batch); err != nil {
+			return fmt.Errorf("could not read the merge-request listing: %w", err)
+		}
+		for _, mr := range batch {
+			if glMRFromOwnProject(mr) {
+				mrs = append(mrs, mr)
+			}
+		}
+		if len(mrs) >= limit {
+			return errGLListFull
+		}
+		return nil
+	})
+	if errors.Is(err, errGLListFull) {
+		err = nil
+	}
+	if failure != nil || err != nil {
+		return nil, failure, err
+	}
+	if len(mrs) > limit {
+		mrs = mrs[:limit]
+	}
+	return mrs, nil, nil
 }
 
 // handleGLProxyMRView serves POST /v1/gitlab/mr/view.

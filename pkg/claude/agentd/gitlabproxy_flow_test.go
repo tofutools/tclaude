@@ -447,7 +447,7 @@ func TestGLProxy_MRListTranslatesTheFilters(t *testing.T) {
 	call := gl.only(t)
 	assert.Equal(t, "opened", call.Query.Get("state"), "the CLI's 'open' is GitLab's 'opened'")
 	assert.Equal(t, "feat/thing", call.Query.Get("source_branch"))
-	assert.Equal(t, "5", call.Query.Get("per_page"))
+	assert.Equal(t, "100", call.Query.Get("per_page"), "--head reads whole pages, drops forks, then applies --limit")
 
 	_, _, _, doc := glOutcome(t, res.Body.Bytes())
 	var rows []map[string]any
@@ -456,6 +456,43 @@ func TestGLProxy_MRListTranslatesTheFilters(t *testing.T) {
 	assert.EqualValues(t, 7, rows[0]["number"], "the iid is the number")
 	assert.Equal(t, "feat/thing", rows[0]["headRefName"])
 	assert.Equal(t, "agent-bot", rows[0]["author"].(map[string]any)["login"])
+
+	res = gitProxyPost(t, f, "/v1/gitlab/mr/list", map[string]any{"state": "open", "limit": 5})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	calls := gl.requests()
+	assert.Equal(t, "5", calls[len(calls)-1].Query.Get("per_page"), "without --head, --limit is the page size")
+}
+
+// TestGLProxy_MRListHeadReadsPastAPageOfForks: forks' merge requests reusing
+// the branch name can fill a whole page; --head reads on to the project's own.
+func TestGLProxy_MRListHeadReadsPastAPageOfForks(t *testing.T) {
+	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
+	var perPage string
+	gl.route = func(req agentd.GitLabRequestForTest) (glCanned, bool) {
+		if strings.Contains(req.Path, "page=2") {
+			return glCanned{Status: http.StatusOK, Body: `[{"iid":8,"title":"Ours","state":"opened","source_branch":"feat/thing",
+				"source_project_id":1,"target_project_id":1,"web_url":"` + glTestBase + `/yamzz/sub/previewplayback/-/merge_requests/8"}]`}, true
+		}
+		perPage = req.Query.Get("per_page")
+		var forks []string
+		for i := range 3 {
+			forks = append(forks, fmt.Sprintf(`{"iid":%d,"title":"From a fork","state":"opened","source_branch":"feat/thing",
+				"source_project_id":%d,"target_project_id":1,"web_url":"%s/yamzz/sub/previewplayback/-/merge_requests/%d"}`, 20+i, 50+i, glTestBase, 20+i))
+		}
+		return glCanned{Status: http.StatusOK, Body: "[" + strings.Join(forks, ",") + "]",
+			Header: http.Header{"Link": {`<` + glTestBase + `/api/v4/projects/` + glTestProjectID + `/merge_requests?page=2>; rel="next"`}}}, true
+	}
+	res := gitProxyPost(t, f, "/v1/gitlab/mr/list", map[string]any{"head": "feat/thing", "limit": 1})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	_, _, _, doc := glOutcome(t, res.Body.Bytes())
+	var rows []struct {
+		Number int `json:"number"`
+	}
+	require.NoError(t, json.Unmarshal(doc, &rows), "doc=%s", doc)
+	require.Len(t, rows, 1, "the project's own merge request, from the second page")
+	assert.Equal(t, 8, rows[0].Number)
+	assert.Equal(t, "100", perPage, "pages are read in full, then filtered and limited")
 }
 
 // TestGLProxy_MRListHeadLeavesOutForks: --head names this project's branch,
