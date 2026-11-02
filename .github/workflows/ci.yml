@@ -20,25 +20,53 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # Decides which jobs this PR needs; see scripts/ci/classify-changes.py for
+  # the rules. Every gated job below skips only when its run_* output says so,
+  # and ci-complete checks each job against the same verdict. Every doubt
+  # (CI or go.mod touched, unknown path, empty diff, any error) runs
+  # everything, and release.yml runs everything on every merge regardless.
   changes:
     name: Changes
     runs-on: ubuntu-latest
     outputs:
-      docs_only: ${{ steps.diff.outputs.docs_only }}
+      mode: ${{ steps.diff.outputs.mode }}
+      expected: ${{ steps.diff.outputs.expected }}
+      test_matrix: ${{ steps.diff.outputs.test_matrix }}
+      run_lint: ${{ steps.diff.outputs.run_lint }}
+      run_sandbox_v2_smoke: ${{ steps.diff.outputs.run_sandbox_v2_smoke }}
+      run_sandbox_v2_seatbelt_smoke: ${{ steps.diff.outputs.run_sandbox_v2_seatbelt_smoke }}
+      run_test: ${{ steps.diff.outputs.run_test }}
+      run_copilot_smoke: ${{ steps.diff.outputs.run_copilot_smoke }}
+      run_gemini_smoke: ${{ steps.diff.outputs.run_gemini_smoke }}
+      run_pi_smoke: ${{ steps.diff.outputs.run_pi_smoke }}
+      run_filtered_proxy_smoke: ${{ steps.diff.outputs.run_filtered_proxy_smoke }}
+      run_proxy_posture_e2e: ${{ steps.diff.outputs.run_proxy_posture_e2e }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
+      # The harness-smoke verdicts come from scripts/ci/affected's import
+      # graph, which needs Go and the module cache.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
       - name: Classify the PR diff
         id: diff
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          python3 scripts/ci/test_docs_only.py
+          set -euo pipefail
+          python3 scripts/ci/test_classify_changes.py
           git fetch --no-tags --depth=1 origin "$BASE_SHA"
-          docs_only=$(python3 scripts/ci/docs-only.py "$BASE_SHA")
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          python3 scripts/ci/classify-changes.py "$BASE_SHA" HEAD > "$RUNNER_TEMP/classify.out"
+          cat "$RUNNER_TEMP/classify.out" >> "$GITHUB_OUTPUT"
+          {
+            echo '### CI change classification'
+            echo '```'
+            cat "$RUNNER_TEMP/classify.out"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   docs:
     name: mkdocs --strict
@@ -68,67 +96,44 @@ jobs:
   # rather than duplicating it across the test matrix.
   lint:
     needs: changes
-    if: needs.changes.outputs.docs_only == 'false'
+    if: needs.changes.outputs.run_lint == 'true'
     uses: ./.github/workflows/reusable-lint.yml
 
   sandbox-v2-smoke:
     needs: changes
-    if: needs.changes.outputs.docs_only == 'false'
+    if: needs.changes.outputs.run_sandbox_v2_smoke == 'true'
     uses: ./.github/workflows/reusable-sandbox-v2-smoke.yml
 
   sandbox-v2-seatbelt-smoke:
     needs: changes
-    if: needs.changes.outputs.docs_only == 'false'
+    if: needs.changes.outputs.run_sandbox_v2_seatbelt_smoke == 'true'
     uses: ./.github/workflows/reusable-sandbox-v2-seatbelt-smoke.yml
 
   test:
     needs: changes
-    if: needs.changes.outputs.docs_only == 'false'
+    if: needs.changes.outputs.run_test == 'true'
     name: Test
     runs-on: ${{ matrix.os }}
     strategy:
       # One red shard must not cancel its siblings — the point of sharding is
       # seeing exactly which slice fails.
       fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        # The suite is sharded across concurrent runners so the wall clock is
-        # bounded by the slowest single package instead of the sum. The shard
-        # partition itself (and the rationale for each slice) lives in the
-        # shared .github/actions/test-suite action, which the release
-        # workflows consume with the same split — keep the shard list here in
-        # sync with the case statement there.
-        shard: [agentd, jstest, process, sandbox, rest]
-        exclude:
-          # PR CI skips macOS jstest: the shard exercises browser-targeted
-          # dashboard JS under Node + the vendored LinkeDOM runtime, so
-          # nothing in it varies by runner OS (end-user browsers are a
-          # different axis entirely) and one Linux run is full PR coverage.
-          # macOS still covers this shard post-merge: release.yml's gating
-          # Test job runs the same shard matrix without this exclusion.
-          # Residual PR-side gap, accepted knowingly: the Go wrapper in
-          # pkg/claude/agentd/jstest itself never builds/runs on darwin
-          # before merge, so a darwin-only break there would surface in
-          # release.yml (blocking releases) rather than bouncing the
-          # offending PR. The Go shards run on both OSes — they carry
-          # _unix/_darwin build-tagged code and real fs behavior.
-          - os: macos-latest
-            shard: jstest
-          # macOS runners are concurrency-capped, so PR CI often waits longer
-          # for a free macOS slot than the jobs take to run. The small process
-          # and sandbox shards each paid ~1 min of setup for well under 2 min
-          # of tests; on macOS they run inside one rest-all job instead, the
-          # same packages with two fewer macOS slots per PR. release.yml keeps
-          # the full split.
-          - os: macos-latest
-            shard: process
-          - os: macos-latest
-            shard: sandbox
-          - os: macos-latest
-            shard: rest
-        include:
-          - os: macos-latest
-            shard: rest-all
+      # The matrix comes from the change classifier: Linux agentd + jstest +
+      # rest for a dashboard-only change, every Linux shard for any other
+      # code, and the macOS agentd + rest-all jobs only when the change is
+      # platform-specific or sandbox code (or CI itself changed). The shard
+      # partition itself (and the rationale for each slice) lives in the
+      # shared .github/actions/test-suite action, which the release workflows
+      # consume with the same split.
+      #
+      # macOS never runs jstest on PRs: the shard exercises browser-targeted
+      # dashboard JS under Node + the vendored LinkeDOM runtime, so nothing in
+      # it varies by runner OS, and one Linux run is full PR coverage. And
+      # macOS runners are concurrency-capped, so the small process and sandbox
+      # shards run inside one rest-all job there instead of three slots.
+      # release.yml keeps the full split on both OSes on every merge, which is
+      # where a darwin-only break the classifier did not foresee surfaces.
+      matrix: ${{ fromJSON(needs.changes.outputs.test_matrix) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -191,7 +196,7 @@ jobs:
   # an auth dependency fails here instead of passing on a logged-in machine.
   copilot-smoke:
     needs: changes
-    if: needs.changes.outputs.docs_only == 'false'
+    if: needs.changes.outputs.run_copilot_smoke == 'true'
     name: Copilot CLI smoke
     runs-on: ubuntu-latest
     steps:
@@ -296,7 +301,7 @@ jobs:
   # what the pinned binary actually writes and accepts. Credential-free.
   gemini-smoke:
     needs: changes
-    if: needs.changes.outputs.docs_only == 'false'
+    if: needs.changes.outputs.run_gemini_smoke == 'true'
     name: Gemini CLI smoke
     runs-on: ubuntu-latest
     steps:
@@ -359,7 +364,7 @@ jobs:
   # the spawner assumes.
   pi-smoke:
     needs: changes
-    if: needs.changes.outputs.docs_only == 'false'
+    if: needs.changes.outputs.run_pi_smoke == 'true'
     name: pi smoke
     runs-on: ubuntu-latest
     steps:
@@ -422,7 +427,7 @@ jobs:
   # ever needed to add a smoke, that belongs in the entrypoint instead.
   filtered-proxy-smoke:
     needs: changes
-    if: needs.changes.outputs.docs_only == 'false'
+    if: needs.changes.outputs.run_filtered_proxy_smoke == 'true'
     uses: ./.github/workflows/reusable-filtered-proxy-smoke.yml
 
   # The end-to-end proxy-posture smokes verify the ASSEMBLED posture: authored
@@ -435,14 +440,15 @@ jobs:
   # instead.
   proxy-posture-e2e:
     needs: changes
-    if: needs.changes.outputs.docs_only == 'false'
+    if: needs.changes.outputs.run_proxy_posture_e2e == 'true'
     uses: ./.github/workflows/reusable-proxy-posture-e2e.yml
 
-  # Require this gate in merge tooling: a skipped code job is never evidence.
+  # Require this gate in merge tooling: a skipped code job is never evidence
+  # unless the classifier said, before anything ran, that it would be skipped.
   ci-complete:
     name: CI complete
     if: always()
-    needs: [changes, docs, learn-commands, lint, sandbox-v2-smoke, sandbox-v2-seatbelt-smoke, test, copilot-smoke, gemini-smoke, filtered-proxy-smoke, proxy-posture-e2e]
+    needs: [changes, docs, learn-commands, lint, sandbox-v2-smoke, sandbox-v2-seatbelt-smoke, test, copilot-smoke, gemini-smoke, pi-smoke, filtered-proxy-smoke, proxy-posture-e2e]
     runs-on: ubuntu-latest
     steps:
       - name: Require the checks for this change
@@ -452,14 +458,38 @@ jobs:
           python3 - <<'PY'
           import json
           import os
+          import sys
           checks = json.loads(os.environ["NEEDS_JSON"])
-          for name in ("changes", "docs", "learn-commands"):
-              assert checks[name]["result"] == "success", (name, checks[name]["result"])
-          docs_only = checks["changes"]["outputs"].get("docs_only")
-          assert docs_only in ("true", "false"), docs_only
-          for name, check in checks.items():
-              if name in ("changes", "docs", "learn-commands"):
-                  continue
-              expected = "skipped" if docs_only == "true" else "success"
-              assert check["result"] == expected, (name, check["result"], expected)
+          failures = []
+          always = ("changes", "docs", "learn-commands")
+          for name in always:
+              if checks[name]["result"] != "success":
+                  failures.append(f"{name}: {checks[name]['result']}, needs success")
+          outputs = checks["changes"].get("outputs") or {}
+          mode = outputs.get("mode")
+          try:
+              expected = json.loads(outputs.get("expected") or "")
+          except ValueError:
+              expected = None
+          # Fail closed: without a well-formed verdict covering exactly the
+          # gated jobs, no skip can be justified.
+          gated = set(checks) - set(always)
+          if mode not in ("docs", "ui", "code", "full"):
+              failures.append(f"classifier mode is {mode!r}")
+          if not isinstance(expected, dict) or set(expected) != gated or not all(
+                  isinstance(v, bool) for v in expected.values()):
+              failures.append(f"classifier verdict {expected!r} does not cover {sorted(gated)}")
+              expected = {name: True for name in gated}
+          if mode == "full" and not all(expected.values()):
+              failures.append("a full run may not skip any job")
+          for name in sorted(gated):
+              want = "success" if expected[name] else "skipped"
+              got = checks[name]["result"]
+              print(f"{name}: {got} (expected {want})")
+              if got != want:
+                  failures.append(f"{name}: {got}, expected {want}")
+          print(f"mode: {mode}")
+          if failures:
+              print("::error::" + "; ".join(failures))
+              sys.exit(1)
           PY
