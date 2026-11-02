@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,7 +20,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // An external steward is an assistant the operator runs outside tclaude, acting
@@ -48,7 +48,8 @@ const (
 
 // externalStewardNever are the slugs this principal can never use, however it
 // comes to hold them: a grant, a group, ownership, a popup. Each either answers
-// the human's questions or hands out authority that would outlive the grant.
+// the human's questions, hands out authority that would outlive the grant, or
+// keeps acting after the credential ends.
 // Listed explicitly rather than derived, so that adding a slug here is a
 // decision; the flow test refuses every one.
 var externalStewardNever = []string{
@@ -61,8 +62,14 @@ var externalStewardNever = []string{
 	PermPermissionsGrant, PermPermissionsRevoke, PermConfigImport, PermRolesManage,
 	PermGroupsOwnersManage, PermGroupsSettingsMemberPermissions, PermGroupsSettingsOwnerScopes,
 	PermGroupsMembersSpawnPermissions, PermGroupsMembersSpawnOwner, PermGroupsMembersSpawnAll,
+	// Bundles that carry permissions or ownership to whoever is spawned from them.
+	PermProfilesManage, PermTemplatesManage,
 	// Receiving the operator's harness credentials.
 	PermNodeCredentialsReceive,
+	// Acting later without a credential: a job or trigger fires as the principal
+	// after its credentials are revoked.
+	PermSelfSchedule, PermAgentSchedule, PermGroupsMembersSchedule, PermGroupsMessagesSchedule,
+	PermTriggersManage, PermGroupsTriggersManage,
 }
 
 // externalStewardOptIn are level slugs a principal does not start with. A capture
@@ -163,23 +170,42 @@ func verifyExternalStewardCredential(credential string, now time.Time) (auth *db
 	return row, ""
 }
 
-// externalCallerUnderPane reports whether any ancestor is a live tclaude pane.
-// The name of the process does not matter, so this also holds for a plain shell
-// session and for a process that double-forked inside a sandbox, which stays
-// under the pane because its PID namespace does. An unsandboxed daemon that
-// reparented to init escapes it; that is a same-uid process, which the threat
-// model already leaves out.
+// externalCallerUnderPane reports whether any ancestor is the pane of a session
+// tclaude runs. It goes by tmux's own pane pids, because sessions.pid moves to the
+// harness at the first hook, and a process that double-forked in a sandbox is a
+// sibling of the harness, still under the pane through the sandbox's init. An
+// orphan with no PID namespace reparents to host init and escapes this; that is
+// outside what the credential defends, and the docs say so. Anything that cannot
+// be answered counts as under a pane: this check only ever refuses.
 func externalCallerUnderPane(pid int) bool {
-	const maxHops = 64
-	live := func(row *db.SessionRow) bool {
-		return row.TmuxSession != "" && session.IsTmuxSessionAlive(row.TmuxSession)
+	out, err := tmuxOutputWithTimeout("list-panes", "-a", "-F", brokerPaneListFormat)
+	if tmuxServerNotRunning(err) {
+		return false
 	}
+	if err != nil {
+		return true
+	}
+	sessionAt := map[int]string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		parts := strings.Split(strings.TrimSpace(line), "|")
+		if len(parts) != 5 || parts[0] == "" {
+			continue
+		}
+		if panePID, err := strconv.Atoi(parts[2]); err == nil {
+			sessionAt[panePID] = parts[0]
+		}
+	}
+	const maxHops = 256
 	for range maxHops {
 		if pid <= 1 {
 			return false
 		}
-		if row := preferLiveRowAtPID(pid, live); row != nil && live(row) {
-			return true
+		if name, ok := sessionAt[pid]; ok {
+			// The operator's own tmux panes can share this server.
+			rows, err := db.FindLatestSessionsByTmux([]string{name})
+			if err != nil || rows[name] != nil {
+				return true
+			}
 		}
 		pid = procParent(pid)
 	}
@@ -461,7 +487,10 @@ func handleExternalStewardRevoke(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"revoked": revoked})
 }
 
-// externalStewardCredentialFrom reads the presented credential.
-func externalStewardCredentialFrom(r *http.Request) string {
-	return strings.TrimSpace(r.Header.Get(agentipc.ExternalStewardCredentialHeader))
+// takeExternalStewardCredential reads the presented credential and removes it
+// from the request, so no handler below can log it or forward it upstream.
+func takeExternalStewardCredential(r *http.Request) string {
+	credential := strings.TrimSpace(r.Header.Get(agentipc.ExternalStewardCredentialHeader))
+	r.Header.Del(agentipc.ExternalStewardCredentialHeader)
+	return credential
 }

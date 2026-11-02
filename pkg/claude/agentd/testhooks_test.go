@@ -2513,6 +2513,18 @@ const RegularAgentMessageQueueLimitForTest = regularAgentMessageQueueLimit
 // never touches the operator's daemon.
 func DaemonSocketClientForTest(t *testing.T) *http.Client {
 	t.Helper()
+	return identitySocketClientForTest(t, buildMux())
+}
+
+// CapturingSocketClientForTest is DaemonSocketClientForTest with h behind the
+// identity middleware instead of the mux, to see what a handler is given.
+func CapturingSocketClientForTest(t *testing.T, h http.Handler) *http.Client {
+	t.Helper()
+	return identitySocketClientForTest(t, h)
+}
+
+func identitySocketClientForTest(t *testing.T, h http.Handler) *http.Client {
+	t.Helper()
 	// Not t.TempDir: its path holds the test name and can outgrow sun_path.
 	dir, err := os.MkdirTemp("", "es")
 	if err != nil {
@@ -2525,7 +2537,7 @@ func DaemonSocketClientForTest(t *testing.T) *http.Client {
 		t.Fatal(err)
 	}
 	server := &http.Server{
-		Handler: withIdentity(buildMux()), ReadHeaderTimeout: time.Second,
+		Handler: withIdentity(h), ReadHeaderTimeout: time.Second,
 		ConnContext: func(ctx context.Context, conn net.Conn) context.Context {
 			if unixConn, ok := conn.(*net.UnixConn); ok {
 				return context.WithValue(ctx, unixConnKey{}, unixConn)

@@ -267,11 +267,12 @@ func isDashboardSpawnPeer(r *http.Request) bool {
 func withIdentity(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := &peer{}
+		credential := takeExternalStewardCredential(r)
 		if uconn, ok := r.Context().Value(unixConnKey{}).(*net.UnixConn); ok && uconn != nil {
 			if pid, err := peerPID(uconn); err == nil {
 				p.PID = pid
 				claimedID := strings.TrimSpace(r.Header.Get(agentipc.SessionClaimHeader))
-				if credential := externalStewardCredentialFrom(r); credential != "" {
+				if credential != "" {
 					if !authenticateExternalSteward(w, r, p, claimedID, credential) {
 						return
 					}

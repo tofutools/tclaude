@@ -18,7 +18,8 @@ on, plus this setting in `~/.tclaude/config.json`:
 ```
 
 While it is off, no credential can be created and every credential presented is
-refused. You can still revoke credentials.
+refused. You can still revoke credentials. A running daemon picks up a change to this
+file within about 5 seconds.
 
 ## Creating one
 
@@ -79,7 +80,8 @@ the editor rather than saving a grant that does nothing:
 | Why | Permissions |
 |---|---|
 | Answering your questions, directly or through a prompt in a terminal | `approvals.answer`, `human.inbox.read`, `human.inbox.answer`, `sessions.attach`, `sessions.takeover`, `sessions.shell` |
-| Handing out permissions | `permissions.grant`, `permissions.revoke`, `config.import`, `roles.manage`, `groups.owners.manage`, `groups.settings.member-permissions`, `groups.settings.owner-scopes`, `groups.members.spawn.permissions`, `groups.members.spawn.owner`, `groups.members.spawn.all` |
+| Handing out permissions | `permissions.grant`, `permissions.revoke`, `config.import`, `roles.manage`, `profiles.manage`, `templates.manage`, `groups.owners.manage`, `groups.settings.member-permissions`, `groups.settings.owner-scopes`, `groups.members.spawn.permissions`, `groups.members.spawn.owner`, `groups.members.spawn.all` |
+| Acting later without a credential, because a schedule or trigger would keep firing after you revoke it | `self.schedule`, `agent.schedule`, `groups.members.schedule`, `groups.messages.schedule`, `triggers.manage`, `groups.triggers.manage` |
 | Receiving your harness credentials | `node.credentials.receive` |
 
 Password fields and fields marked secret are masked in the page before a capture
@@ -114,10 +116,15 @@ It does **not** protect against:
   That includes agents' messages and anything else you let it read.
 
 An agent running in a tclaude terminal that gets hold of a credential is still refused,
-because tclaude checks for a live tclaude terminal above the caller. This also catches a
-background process started inside a sandbox. It can't catch an unsandboxed process that
-has detached from its terminal, which is the first point above. It also means your own
-assistant has to run outside tclaude's terminals.
+because tclaude looks for one of its terminals above the caller. This holds for a
+background process inside a sandbox that has its own process namespace. It can't catch a
+process that has left its terminal with no such namespace, as an agent can under a
+sandbox that doesn't isolate processes. So keep the credential where sandboxed agents
+can't read it: the check is a second line, not the boundary. It also means your own
+assistant has to run outside tclaude's terminals, though your own tmux is fine.
+
+Revoking takes effect on the next request. A request already waiting for your approval
+isn't checked again, so if you approve it after revoking, it still runs.
 
 ### How this differs from the operator token
 

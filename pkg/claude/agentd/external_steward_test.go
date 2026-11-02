@@ -196,6 +196,21 @@ func TestExternalSteward_RefusedByEveryHumanAndApprovalRoute(t *testing.T) {
 	assert.Greater(t, answering, 3, "approval routes found")
 }
 
+// The list itself is pinned, because the tests below walk it: dropping a slug
+// has to be a change to this test too, not just a line that goes quiet.
+func TestExternalSteward_NeverListIsPinned(t *testing.T) {
+	assert.ElementsMatch(t, []string{
+		"approvals.answer", "human.inbox.read", "human.inbox.answer",
+		"sessions.attach", "sessions.takeover", "sessions.shell",
+		"permissions.grant", "permissions.revoke", "config.import", "roles.manage",
+		"groups.owners.manage", "groups.settings.member-permissions", "groups.settings.owner-scopes",
+		"groups.members.spawn.permissions", "groups.members.spawn.owner", "groups.members.spawn.all",
+		"profiles.manage", "templates.manage", "node.credentials.receive",
+		"self.schedule", "agent.schedule", "groups.members.schedule", "groups.messages.schedule",
+		"triggers.manage", "groups.triggers.manage",
+	}, externalStewardNever)
+}
+
 // Nothing makes a never-listed slug usable: not a standing grant, not a group
 // grant, and not the popup, which does not even open.
 func TestExternalSteward_NeverListRefusedAtTheGate(t *testing.T) {

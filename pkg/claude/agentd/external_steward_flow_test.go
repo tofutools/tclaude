@@ -253,26 +253,46 @@ func TestExternalSteward_ManagedAgentCannotWearIt(t *testing.T) {
 	assert.Contains(t, body, "managed agent")
 }
 
-// The real check goes by the live pane above the caller, not by process names:
-// a double-forked process in a sandbox has no harness ancestor left, but it is
-// still under its pane.
+// The real check goes by tmux's live pane pids. sessions.pid is the harness after
+// the first hook, and a double-forked process in a sandbox is the harness's
+// sibling under the sandbox init, so only the pane itself is above both.
 func TestExternalSteward_ManagedCheckFindsThePane(t *testing.T) {
 	f := newFlow(t)
 	f.HaveConvWithTitle("pane-conv-1", "worker")
 	f.HaveAliveSession("pane-conv-1", "panes", "tclaude-panes", f.TestCwd("w"))
-	const pane, sandboxInit, forked, shell, assistant = 4100, 4101, 4102, 5100, 5101
+	const pane, bwrap, sandboxInit, harness, forked, shell, assistant = 4100, 4101, 4102, 4103, 4104, 5100, 5101
+	f.World.Tmux.SetPaneIdentityForTest("tclaude-panes", "%7", pane)
 	row, err := db.FindSessionByConvID("pane-conv-1")
 	require.NoError(t, err)
-	row.PID = pane
+	row.PID = harness
 	require.NoError(t, db.SaveSession(row))
 	t.Cleanup(agentd.SetProcTreeForTest(
-		map[int]string{pane: "bash", sandboxInit: "bwrap", forked: "daemon", shell: "fish", assistant: "node"},
-		map[int]int{forked: sandboxInit, sandboxInit: pane, pane: 1, assistant: shell, shell: 1}))
+		map[int]string{pane: "sh", bwrap: "bwrap", sandboxInit: "bwrap", harness: "claude", forked: "daemon", shell: "fish", assistant: "node"},
+		map[int]int{forked: sandboxInit, harness: sandboxInit, sandboxInit: bwrap, bwrap: pane, pane: 1, assistant: shell, shell: 1}))
 	assert.True(t, agentd.ExternalCallerManagedForTest(forked, ""), "under a live pane")
 	assert.True(t, agentd.ExternalCallerManagedForTest(assistant, "claimed-session"), "a session claim is agent-shaped")
 	assert.False(t, agentd.ExternalCallerManagedForTest(assistant, ""), "the operator's own assistant")
-	f.World.Tmux.KillBySignalForTest("tclaude-panes")
-	assert.False(t, agentd.ExternalCallerManagedForTest(forked, ""), "a dead pane proves nothing")
+
+	// A pane on the same tmux server that tclaude does not run is the operator's.
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE sessions SET tmux_session = 'renamed'`)
+	require.NoError(t, err)
+	assert.False(t, agentd.ExternalCallerManagedForTest(forked, ""), "the operator's own tmux pane")
+}
+
+// No handler below the identity layer can see the credential, so none can log it
+// or send it upstream.
+func TestExternalSteward_HandlersNeverSeeTheCredential(t *testing.T) {
+	s := newExternalStewardFlow(t, true)
+	issued := s.create("assistant")
+	seen := make(chan string, 1)
+	s.client = agentd.CapturingSocketClientForTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.Header.Get(agentipc.ExternalStewardCredentialHeader) + "|" + fmt.Sprint(len(r.Header.Values(agentipc.ExternalStewardCredentialHeader)))
+	}))
+	code, body := s.call(issued.Credential, http.MethodGet, "/anything", nil)
+	require.Equal(t, http.StatusOK, code, body)
+	assert.Equal(t, "|0", <-seen)
 }
 
 // capture reports whether the principal got past the dashboard.capture gate:
