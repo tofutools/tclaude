@@ -40,6 +40,9 @@ func (s *redirectSeen) list() []string {
 // redirectWorld starts two TLS servers and points glHTTPClient at them
 // through a transport that dials by PORT, so any hostname reaches them: the
 // instance is gitlab.test on server A's port.
+//
+// It swaps the package-wide glHTTPClient.Transport, so a test using it, or
+// TestGLRestPaginated_RefusesALinkOffTheInstance, must never call t.Parallel.
 func redirectWorld(t *testing.T) (base string, portB string, seen *redirectSeen) {
 	t.Helper()
 	seen = &redirectSeen{}
