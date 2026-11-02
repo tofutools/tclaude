@@ -1,3 +1,4 @@
+//ci:reads docs/dashboard.md
 // Tests for the keyboard shortcut registry (tcl-12p3ex): matching by key
 // position, the one Cmd vs Ctrl decision, the "Ctrl ," display, and the
 // read-only Config › Keyboard list.
