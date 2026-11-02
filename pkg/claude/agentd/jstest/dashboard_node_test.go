@@ -22,10 +22,11 @@ import (
 	_ "github.com/tofutools/tclaude/pkg/claude/agentd/dashboard"
 )
 
-// nodeTestInputs makes every suite, harness module, and nested vendor runtime
-// part of the test binary's content-addressed build ID.
+// nodeTestInputs makes every suite, harness module, JSON fixture or baseline,
+// and nested vendor runtime part of the test binary's content-addressed build
+// ID, so a change to any of them alone still reruns the suites.
 //
-//go:embed *.mjs third_party
+//go:embed *.mjs *.json third_party
 var nodeTestInputs embed.FS
 
 // Dashboard pure-module and Preact component suites run with Node's

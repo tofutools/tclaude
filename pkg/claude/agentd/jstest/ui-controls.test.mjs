@@ -1,9 +1,13 @@
 // New buttons and selects use the standard ui-* controls (dashboard/ui.css,
 // tcl-32qwip), so they are styled by default instead of by whichever container
 // they land in. A source scan of the page shells and every dashboard module:
-// a <button> or <select> tag counts as standard when it carries a ui-* class
-// (static or inside a ${…} expression) or is marked data-ui-exempt, the opt-out
-// for deliberate one-offs such as window controls.
+// a <button> or <select> tag counts as standard when its class attribute names
+// a base control (ui-btn, ui-menu-item or ui-select) or it is marked
+// data-ui-exempt, the opt-out for deliberate one-offs such as window controls.
+// The class must be written at the tag, as a literal or a string inside its
+// ${…}: a class held in a variable (class=${cls}) cannot be read and counts as
+// non-standard. A createElement('button'|'select') counts the same way unless
+// a className naming a base control follows within the next few lines.
 //
 // Existing markup is a ratchet: ui-controls-baseline.json records each file's
 // count of non-standard tags. A file may not exceed it, and once an area is
@@ -42,18 +46,54 @@ function tagEnd(source, start) {
   return source.length;
 }
 
-// nonStandardTags lists the line numbers of <button>/<select> tags in source
-// that carry neither a ui-* class nor data-ui-exempt.
+// classAttr returns the value of a tag's class (or className) attribute: the
+// quoted string, the ${…} expression, or the bare token; '' when it has none.
+function classAttr(tag) {
+  const at = tag.match(/\sclass(?:Name)?=/);
+  if (!at) return '';
+  const start = at.index + at[0].length;
+  const open = tag[start];
+  if (open === '"' || open === "'") return tag.slice(start + 1, tag.indexOf(open, start + 1));
+  if (open === '$' && tag[start + 1] === '{') {
+    let depth = 0;
+    for (let i = start + 1; i < tag.length; i++) {
+      if (tag[i] === '{') depth++;
+      else if (tag[i] === '}' && --depth === 0) return tag.slice(start, i + 1);
+    }
+    return tag.slice(start);
+  }
+  return tag.slice(start).match(/^[^\s>]*/)[0];
+}
+
+const BASE_CONTROL = /(^|[\s"'`])ui-(btn|menu-item|select)(?![\w-])/;
+
+// inComment reports whether the text before a match on its line opens a comment.
+function inComment(source, index) {
+  const before = source.slice(source.lastIndexOf('\n', index) + 1, index);
+  return /^\s*(\/\/|\/\*|\*)/.test(before) || /(^|[\s;])\/\/\s/.test(before);
+}
+
+const lineOf = (source, index) => source.slice(0, index).split('\n').length;
+
+// nonStandardTags lists the line numbers of <button>/<select> tags and
+// createElement calls in source that name no base ui-* control and are not
+// marked data-ui-exempt.
 export function nonStandardTags(source) {
   const lines = [];
   for (const match of source.matchAll(/<(button|select)(?=[\s>/])/g)) {
-    const lineStart = source.lastIndexOf('\n', match.index) + 1;
-    if (/^\s*(\/\/|\/\*|\*)/.test(source.slice(lineStart, match.index))) continue; // a comment naming the tag
+    if (inComment(source, match.index)) continue;
     const tag = source.slice(match.index, tagEnd(source, match.index) + 1);
-    if (/(^|[\s"'`])ui-[a-z]/.test(tag) || /\bdata-ui-exempt\b/.test(tag)) continue;
-    lines.push(source.slice(0, match.index).split('\n').length);
+    if (BASE_CONTROL.test(classAttr(tag)) || /\sdata-ui-exempt\b/.test(tag)) continue;
+    lines.push(lineOf(source, match.index));
   }
-  return lines;
+  for (const match of source.matchAll(/(?:(\w+)\s*=\s*)?[\w.]*createElement\(\s*['"](button|select)['"]\s*\)/g)) {
+    if (inComment(source, match.index)) continue;
+    const following = source.slice(match.index, match.index + 400).split('\n').slice(0, 4).join('\n');
+    const owner = match[1] ? `\\b${match[1]}\\.` : '';
+    const named = [...following.matchAll(new RegExp(`${owner}className\\s*=\\s*([^;\\n]*)`, 'g'))].some((m) => BASE_CONTROL.test(m[1]));
+    if (!named) lines.push(lineOf(source, match.index));
+  }
+  return lines.sort((a, b) => a - b);
 }
 
 function scan() {
@@ -78,8 +118,16 @@ test('the scanner tells standard, exempt and bare controls apart', () => {
     '<buttonish>not a tag</buttonish>',
     '// a click does not focus a <button> on every platform',
     ' * repopulates a descendant <select>, whereas',
+    'rebuild(); // the <select> is rebuilt',
+    '<button class=ui-btn>Unquoted</button>',
+    '<button style="font-family: ui-monospace">Font, not a class</button>',
+    '<button class="ui-sm tool">Size only</button>',
+    '<button class=${cls}>Class in a variable</button>',
+    "const b = document.createElement('button');",
+    "const s = document.createElement('select');",
+    "s.className = 'ui-select ui-sm';",
   ].join('\n');
-  assert.deepEqual(nonStandardTags(source), [5, 6, 7]);
+  assert.deepEqual(nonStandardTags(source), [5, 6, 7, 13, 14, 15, 16]);
 });
 
 test('no file gains a button or select without a standard ui-* class', () => {
