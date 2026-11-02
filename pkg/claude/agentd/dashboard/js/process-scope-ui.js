@@ -74,7 +74,7 @@ export function ScopePorts({ controller, view }) {
   const ports = scope?.ports;
   if (!scope?.portsOpen || !ports) return null;
   const readOnly = view.pending.save || view.diff?.open;
-  return html`<aside class="process-scope-ports process-node-detail process-scroll-surface" aria-label="Subgraph ports" data-scope-ports>
+  return html`<aside class="process-scope-ports process-node-detail" aria-label="Subgraph ports" data-scope-ports>
     <div class="pni-head-row">
       <strong class="pscope-ports-title">⇄ Ports · ${scope.trail.at(-1).label}</strong>
       <span class="spacer"></span>

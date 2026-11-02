@@ -51,7 +51,7 @@ func TestDashboardProcessCodesignAssets(t *testing.T) {
 
 	dock := read("js/process-scribe-dock.js")
 	mustContain("process-scribe-dock.js", dock,
-		"process-scribe-dock process-scroll-surface",
+		"process-scribe-dock",
 		"`/api/scribe/${encodeURIComponent(agentId)}/chat`",
 	)
 	if strings.Contains(dock, "innerHTML") || strings.Contains(dock, "dangerouslySetInnerHTML") {

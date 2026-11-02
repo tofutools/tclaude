@@ -203,7 +203,7 @@ function ChatLog({ messages, live, loaded, error, pendingSend }) {
   };
   const last = messages.at(-1);
   const working = pendingSend || last?.role === 'human' || !!live;
-  return html`<div ref=${log} onScroll=${onScroll} class="psd-log process-scroll-surface" role="log" aria-live="polite" aria-label="Scribe conversation">
+  return html`<div ref=${log} onScroll=${onScroll} class="psd-log" role="log" aria-live="polite" aria-label="Scribe conversation">
     ${!loaded && html`<p class="psd-empty">Loading the conversation…</p>`}
     ${loaded && !messages.length && !error && html`<p class="psd-empty">Ask for a change in plain words. The scribe saves a new version, and you accept or reject each change on the canvas.</p>`}
     ${messages.map((message) => html`<div key=${message.id} class=${`psd-msg is-${message.role}`} data-scribe-msg=${message.role}>
@@ -270,7 +270,7 @@ export function ScribeDock({ controller, view }) {
     aria-label="Resize scribe panel" title="Drag to resize the scribe panel; double-click to reset"
     aria-valuemin=${SCRIBE_DOCK_MIN_WIDTH} aria-valuemax=${clampDockWidth(SCRIBE_DOCK_MAX_WIDTH, bodyWidth)} aria-valuenow=${shownWidth}
     data-scribe-resize onPointerDown=${resize.onPointerDown} onKeyDown=${resize.onKeyDown} onDblClick=${resize.reset}></div>
-  <aside ref=${dockRef} class="process-scribe-dock process-scroll-surface" aria-label="Process scribe" data-scribe-dock=${dock.mode}
+  <aside ref=${dockRef} class="process-scribe-dock" aria-label="Process scribe" data-scribe-dock=${dock.mode}
     style=${resize.width ? { width: `${resize.width}px` } : undefined}>
     <div class="psd-head">
       <div class="psd-title-row">

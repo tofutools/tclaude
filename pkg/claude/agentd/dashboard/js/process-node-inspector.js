@@ -289,7 +289,7 @@ export function NodeInspector({ controller, view }) {
   const diagnostics = (view.issues?.entries || []).filter((entry) => entry.node === nodeId);
   const extraActions = controller.options?.nodeInspectorActions?.({ nodeId, node, readOnly }) || [];
   const bodyProps = { node, nodeId, controller, commit, readOnly, inputs, edges: model.outgoingEdges(nodeId), nameOf };
-  return html`<aside ref=${root} class="process-node-inspector process-node-detail process-scroll-surface${readOnly ? ' is-readonly' : ''}"
+  return html`<aside ref=${root} class="process-node-inspector process-node-detail${readOnly ? ' is-readonly' : ''}"
       aria-label=${`Node ${nodeId}`} data-node-inspector=${nodeId} inert=${pending}>
     <div class="pni-head">
       <div class="pni-head-row">
