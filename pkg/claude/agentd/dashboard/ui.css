@@ -20,7 +20,10 @@
 
 :root {
   --ui-bg: #21262d;
+  --ui-bg-hover: #21262d;
   --ui-line: #2a3340;
+  --ui-btn-line: #2a3340;
+  --ui-btn-hover-line: #58a6ff;
   --ui-text: #c9d1d9;
   --ui-text-strong: #e6edf3;
   --ui-muted: #7d8590;
@@ -43,8 +46,11 @@
   --ui-radius: 4px;
 }
 body.wizard {
-  --ui-bg: #241a3d;
+  --ui-bg: #241b3d;
+  --ui-bg-hover: #3a2a63;
   --ui-line: rgba(122, 93, 176, 0.58);
+  --ui-btn-line: #d9b45a;
+  --ui-btn-hover-line: #d9b45a;
   --ui-text: #e7d9f5;
   --ui-text-strong: #f3e6c0;
   --ui-muted: #ad9abb;
@@ -53,16 +59,21 @@ body.wizard {
   --ui-field-bg: #100c17;
   --ui-menu-bg: #100c17;
   --ui-menu-hover: rgba(169, 123, 214, 0.25);
-  --ui-primary: #3b2a63;
+  --ui-primary: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   --ui-primary-line: #d9b45a;
-  --ui-primary-hover: #4a3580;
+  --ui-primary-hover: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   --ui-primary-text: #f3e6c0;
   --ui-switch-off: #2f2350;
-  --ui-radius: 5px;
 }
+/* The wizard dialogs' house primary: a gilded, glowing gradient. */
+body.wizard .ui-btn-primary { text-shadow: 0 0 6px rgba(169, 123, 214, 0.6); box-shadow: 0 0 10px rgba(122, 93, 176, 0.4); }
+body.wizard .ui-btn-primary:hover:not(:disabled) { border-color: #f3e6c0; box-shadow: 0 0 16px rgba(169, 123, 214, 0.7); }
 body.slop {
   --ui-bg: #2a0a0a;
+  --ui-bg-hover: #2a0a0a;
   --ui-line: #8b0000;
+  --ui-btn-line: #8b0000;
+  --ui-btn-hover-line: #ffd700;
   --ui-text: #f0dcc0;
   --ui-text-strong: #ffe88c;
   --ui-muted: #c0a080;
@@ -82,12 +93,12 @@ body.slop {
 .ui-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   margin: 0; padding: 5px 12px;
-  border: 1px solid var(--ui-line); border-radius: var(--ui-radius);
+  border: 1px solid var(--ui-btn-line); border-radius: var(--ui-radius);
   background: var(--ui-bg); color: var(--ui-text);
   font: inherit; font-size: 13px; line-height: 18px; white-space: nowrap;
   text-decoration: none; cursor: pointer;
 }
-.ui-btn:hover:not(:disabled) { border-color: var(--ui-focus); color: var(--ui-text-strong); }
+.ui-btn:hover:not(:disabled) { background: var(--ui-bg-hover); border-color: var(--ui-btn-hover-line); color: var(--ui-text-strong); }
 .ui-btn:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 1px; }
 .ui-btn:disabled { opacity: .45; cursor: default; }
 .ui-btn[aria-pressed="true"] { background: var(--ui-pressed-bg); border-color: var(--ui-focus); color: var(--ui-text-strong); }
@@ -100,9 +111,9 @@ body.slop {
 .ui-btn-danger { color: var(--ui-danger-text); }
 .ui-btn-danger:hover:not(:disabled) { background: var(--ui-danger-bg); border-color: var(--ui-danger); color: var(--ui-danger); }
 .ui-btn-ghost { background: transparent; border-color: transparent; color: var(--ui-muted); }
-.ui-btn-ghost:hover:not(:disabled) { background: var(--ui-bg); border-color: var(--ui-line); }
+.ui-btn-ghost:hover:not(:disabled) { background: var(--ui-bg); border-color: var(--ui-btn-line); }
 .ui-btn-link { padding: 0; border: 0; background: none; color: var(--ui-focus); }
-.ui-btn-link:hover:not(:disabled) { color: var(--ui-focus); text-decoration: underline; }
+.ui-btn-link:hover:not(:disabled) { background: none; color: var(--ui-focus); text-decoration: underline; }
 .ui-btn-link.ui-btn-danger,
 .ui-btn-link.ui-btn-danger:hover:not(:disabled) { background: none; color: var(--ui-danger); }
 
