@@ -893,11 +893,16 @@ export function CompanionApp({
     }
   }
 
+  // An agent is here as a tab of this window or of a window of its own.
+  const chatTabs = overlayTabs.value.filter((tab) => tab.kind === CHAT_WINDOW_KIND).map((tab) => tab.agent);
+  const heldHere = (id) => tabs.includes(id) || chatTabs.includes(id);
+  const heldKey = chatTabs.join();
+
   useEffect(() => {
-    const pinned = [...voiceAgents].filter((id) => tabs.includes(id));
+    const pinned = [...voiceAgents].filter(heldHere);
     writePref(prefs, VOICE_PREF, JSON.stringify(pinned));
     for (const id of pinned) voiceReader.prime(id).catch(() => {});
-  }, [voiceAgents, voiceReader, tabs]);
+  }, [voiceAgents, voiceReader, tabs, heldKey]);
 
   // Speak when a voice agent's turn ends, or when it starts waiting on the
   // operator. Only transitions speak; the first sight of an agent is silent.
@@ -910,7 +915,7 @@ export function CompanionApp({
     const quiet = () => dictationOpen() || listeningRef.current; // never speak into an open mic
     for (const id of voiceAgents) {
       const agent = agents.get(id);
-      if (agent && tabs.includes(id)) next.set(id, statusOf(agent));
+      if (agent && heldHere(id)) next.set(id, statusOf(agent));
     }
     const said = voiceTransitions(voiceStatuses.current, next);
     voiceStatuses.current = next;
@@ -959,7 +964,7 @@ export function CompanionApp({
       if (!claim(`${VOICE_PREF}.decision.${agentId}`, String(decision.id), (prev) => decision.id > Number(prev))) continue;
       if (!quiet()) speaker.speak(speakableText(decisionSpeech(agent, decision), 400));
     }
-  }, [agents, voiceAgents, tabs, snapshot.value]);
+  }, [agents, voiceAgents, tabs, heldKey, snapshot.value]);
 
   function toggleVoice(agent) {
     setVoiceAgents((current) => {
@@ -1044,6 +1049,12 @@ export function CompanionApp({
     if (!agent || !detachToWindow(agent, rect)) return;
     closeOverlayTab(instance.id);
     setTabs((current) => withTab(current, agent.agentId));
+  }
+
+  function chatToTerminals(instance, agent) {
+    closeOverlayTab(instance.id);
+    // Let the window's widget detach before the Terminals pane attaches.
+    setTimeout(() => openTerminalsPane(agent.agentId, agent.name, agent.harness), 60);
   }
 
   // Attach first: the window sees it lost the terminal, so closing it cannot
@@ -1323,6 +1334,12 @@ export function CompanionApp({
     </button>`}
   </div>`;
 
+  const offlineActions = (agent) => (agent.agentId === returning?.agentId ? html`<button type="button" class="companion-primary companion-resume-steward" disabled=${busy} onClick=${resumeSteward}>Resume</button>
+    <p class="companion-empty-note">${stewardReturnNote(returning)}</p>
+    <button type="button" class="companion-secondary companion-fresh-steward" disabled=${busy} onClick=${summonSteward}>Start fresh</button>
+    <p class="companion-empty-note">${stewardFreshNote(returning)}</p>`
+    : html`<button type="button" class="companion-primary" onClick=${() => resume(agent)}>Resume</button>`);
+
   const status = activeAgent ? statusOf(activeAgent) : 'offline';
   const activeApprovals = activeAgent ? approvals(activeAgent) : [];
   const activeElevated = elevatedAccess(snapshot.value, activeAgent);
@@ -1458,11 +1475,7 @@ export function CompanionApp({
       ${activeAgent && parked.has(activeAgent.agentId) && showComposer && html`<div class="companion-floating-anchor">${messageTools()}</div>`}
       ${activeAgent && !activeAgent.online && !starting && html`<div class="companion-empty">
         <p><b>${activeAgent.name}</b> is offline.</p>
-        ${activeAgent.agentId === returning?.agentId ? html`<button type="button" class="companion-primary companion-resume-steward" disabled=${busy} onClick=${resumeSteward}>Resume</button>
-          <p class="companion-empty-note">${stewardReturnNote(returning)}</p>
-          <button type="button" class="companion-secondary companion-fresh-steward" disabled=${busy} onClick=${summonSteward}>Start fresh</button>
-          <p class="companion-empty-note">${stewardFreshNote(returning)}</p>`
-        : html`<button type="button" class="companion-primary" onClick=${() => resume(activeAgent)}>Resume</button>`}
+        ${offlineActions(activeAgent)}
       </div>`}
       ${activeAgent && activeAgent.online && parked.has(activeAgent.agentId) && html`<div class="companion-empty">
         <p><b>${activeAgent.name}</b> is open in its own window.</p>
@@ -1487,6 +1500,12 @@ export function CompanionApp({
       onEdit=${(text) => { speaker.cancel(); setDraft(activeAgent.agentId, text); }} />`}
   <//>`;
 
+  const chatTabTools = {
+    statusOf, offlineActions, openMorph, dictationImpl, starting: (agentId) => resuming.has(agentId),
+    voice: speaker.supported ? { supported: true, on: (agentId) => voiceAgents.has(agentId), toggle: toggleVoice } : null,
+    onCompose: onComposeMessage ? (agent, restoreFocus) => composeRef.current(agent, restoreFocus) : null,
+    onTerminals: openTerminalsPane ? chatToTerminals : null,
+  };
   const shownTerminal = { snapshot, prefs, win, widgetFactory, loadRuntime, Terminal: CompanionTerminal };
   const chatView = ({ agent: agentId, label }) => {
     const agent = agents.get(agentId);
@@ -1495,7 +1514,7 @@ export function CompanionApp({
     return { label: name, lead: html`<${StatusDot} status=${tabStatus} />`, title: `${name}: ${agent ? companionStatusLabel(tabStatus) : 'not on this node any more'}` };
   };
   const tabKinds = {
-    [CHAT_WINDOW_KIND]: { view: chatView, asksToClose: ({ agent }) => !!(agents.get(agent)?.steward && agents.get(agent).online), ...shownTerminal, fetchImpl, notify, closeTerminalPanes, onBackToTab: chatBackToTab, onSeparateWindow: detachWindow ? chatToWindow : null, onStewardDown: stewardShutDown, stewardRoster, openPermissions, openSudo, openStewardHandover, showAgent, DecisionCard, StatusDot },
+    [CHAT_WINDOW_KIND]: { view: chatView, asksToClose: ({ agent }) => !!(agents.get(agent)?.steward && agents.get(agent).online), ...shownTerminal, fetchImpl, notify, closeTerminalPanes, onBackToTab: chatBackToTab, onSeparateWindow: detachWindow ? chatToWindow : null, onStewardDown: stewardShutDown, stewardRoster, openPermissions, openSudo, openStewardHandover, showAgent, DecisionCard, StatusDot, ...chatTabTools },
     [TERMINAL_WINDOW_KIND]: { ...shownTerminal, notify },
     [BOARD_WINDOW_KIND]: { snapshot, fetchImpl, notify, win },
   };

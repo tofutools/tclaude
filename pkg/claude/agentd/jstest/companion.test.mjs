@@ -2350,3 +2350,119 @@ test('a chat moves to a separate window, and its way back is a companion tab', a
   assert.ok(view.container.querySelector('.companion-tab'));
   assert.equal(controller().reclaim(A), false, 'nothing is waiting any more');
 });
+
+// Everything a companion tab does, a chat tab in a window of its own does too
+// (tcl-e4i44z): the companion becomes a window of these.
+const chatOf = (harness, view) => view.container.querySelector('.chat-window');
+async function floated(t, options = {}) {
+  const prefs = options.prefs || memoryPrefs();
+  const opened = await setup(t, { ...options, prefs });
+  const { harness, view, controller } = opened;
+  const agent = options.agent || A;
+  await harness.act(() => controller().open(agent));
+  await harness.act(() => controller().float(agent));
+  assert.ok(chatOf(harness, view), 'it floats');
+  return opened;
+}
+
+test('a chat tab takes dictation, and keeps an unsent draft while its window shows another tab', async (t) => {
+  const fake = fakeDictation();
+  const { view, harness, controller } = await floated(t, { dictationImpl: fake.impl, snapshot: { ...snapshotWith(), collab_enabled: true } });
+  await harness.act(() => controller().open(B));
+  await harness.act(() => controller().float(B));
+  const windows = await harness.importDashboardModule('js/overlay-instances.js');
+  t.after(() => { windows.overlayWindows.value = []; });
+  const [first, second] = windows.overlayWindows.value;
+  const [a, b] = [first.tabs[0].id, second.tabs[0].id];
+  const show = async (id) => {
+    await harness.act(async () => { windows.activateOverlayTab(id); });
+    await harness.act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+  };
+  await harness.act(async () => { windows.moveOverlayTab(b, first.id, 1); });
+  await show(a);
+  await fake.say(harness, view, 'half a thought');
+  const draftField = () => view.container.querySelector('.chat-window .companion-draft');
+  assert.equal(draftField().value, 'half a thought', 'dictation reaches the draft');
+  await show(b);
+  assert.equal(draftField(), null, 'the other tab has no such draft');
+  await show(a);
+  assert.equal(draftField().value, 'half a thought');
+});
+
+test('a chat tab has the companion\'s title bar tools', async (t) => {
+  const opened = [];
+  const snapshot = snapshotWith({ steward: true });
+  const { view, harness } = await floated(t, {
+    snapshot, agent: S, onComposeMessage: (message) => opened.push(message.agent),
+    openPermissions: () => {}, openSudo: () => {},
+  });
+  const chat = chatOf(harness, view);
+  await harness.act(() => chat.querySelector('.companion-compose').click());
+  assert.deepEqual(opened, [S]);
+  assert.ok(chat.querySelector('.companion-cog-button'));
+});
+
+test('an offline agent resumes in its chat tab and shows it starting', async (t) => {
+  const offline = structuredClone(snapshotWith());
+  offline.groups[0].members[0].online = false;
+  const calls = [];
+  const fetchImpl = async (url) => { calls.push(String(url)); return { ok: true, status: 200, json: async () => ({ action: 'resumed' }), text: async () => '' }; };
+  const { view, harness, snap } = await floated(t, { fetchImpl });
+  await harness.act(() => { snap.value = offline; });
+  const chat = chatOf(harness, view);
+  assert.match(chat.textContent, /alpha is offline/);
+  await harness.act(async () => { chat.querySelector('.companion-primary').click(); await new Promise((r) => setTimeout(r, 0)); });
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  assert.ok(calls.some((url) => url.includes('resume')), calls.join());
+  assert.match(chatOf(harness, view).textContent, /Starting the agent/);
+});
+
+test('a minimized chat tab keeps its terminal warm and hidden, and shows it again', async (t) => {
+  const { view, harness, mounted } = await floated(t);
+  const windows = await harness.importDashboardModule('js/overlay-instances.js');
+  t.after(() => { windows.overlayWindows.value = []; });
+  const attached = mounted.length;
+  await harness.act(async () => { windows.minimizeOverlayWindow(windows.overlayWindows.value[0].tabs[0].id); });
+  const hidden = view.container.querySelector('.chat-window.companion-window-warm');
+  assert.ok(hidden, 'it stays in the page, out of sight');
+  assert.ok(hidden.querySelector('.companion-term-host'));
+  await harness.act(async () => { windows.openOverlayWindow(windows.overlayWindows.value[0].tabs[0]); });
+  assert.equal(view.container.querySelector('.chat-window.companion-window-warm'), null);
+  assert.equal(mounted.length, attached, 'no second attach');
+});
+
+test('a chat tab shows who needs the operator', async (t) => {
+  const { view, harness } = await floated(t, { snapshot: snapshotWith({ aStatus: 'awaiting_permission' }) });
+  assert.match(view.container.querySelector('.chat-window .companion-needs-bar').textContent, /alpha is waiting for you: Bash\(rm -rf build\)/);
+});
+
+test('a chat tab has the sudo band and state, the access count, the roster and Clear context', async (t) => {
+  const opened = [];
+  const snapshot = {
+    ...snapshotWith({ steward: true }),
+    steward_elevated: { [S]: { standing: ['host.read'], inherited: [] } },
+    access_requests: [{ id: 7, kind: 'grant', from_agent: B, slugs: ['host.read'], status: 'pending' }],
+    steward_roster: [{ agent_id: S, seat: 'primary', online: true }, { agent_id: B, seat: 'standby', online: true }],
+  };
+  const { view, harness } = await floated(t, { snapshot, agent: S, openSudo: (agent) => opened.push(agent), openPermissions: () => {}, openStewardHandover: () => {} });
+  const chat = chatOf(harness, view);
+  assert.ok(chat.querySelector('.companion-elevated'), 'the band');
+  await harness.act(() => chat.querySelector('.companion-state-sudo').click());
+  assert.deepEqual(opened, [S]);
+  assert.match(chat.querySelector('.companion-access').textContent, /1/);
+  assert.match(chat.querySelector('.companion-state-roster').textContent, /1/);
+  await harness.act(() => chat.querySelector('.companion-cog-button').click());
+  assert.ok(chat.querySelector('.companion-cog-menu .companion-clear-open, .companion-cog-menu [class*="clear"]'), 'Clear context is on its cog');
+});
+
+test('voice turns on and off for an agent in a chat tab, and is saved', async (t) => {
+  const prefs = memoryPrefs();
+  const { view, harness } = await floated(t, { prefs, speakerImpl: { supported: true, speak() {}, cancel() {} } });
+  const button = () => view.container.querySelector('.chat-window .companion-voice');
+  assert.equal(button().getAttribute('aria-pressed'), 'false');
+  await harness.act(() => button().click());
+  assert.equal(button().getAttribute('aria-pressed'), 'true');
+  assert.deepEqual(JSON.parse(prefs.getItem('tclaude.dash.companion.voice') || '[]'), [A]);
+  await harness.act(() => button().click());
+  assert.equal(button().getAttribute('aria-pressed'), 'false');
+});

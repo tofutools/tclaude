@@ -7,7 +7,7 @@
 // stays the operator's, in the terminal.
 
 import { h } from 'preact';
-import { useCallback, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { agentBlockedOnOperator, companionMessageFits, composeCompanionMessage, viewContext } from './companion-model.js';
 import { DraftField, FloatingTools, dictationSendPhrase, micTitle, postOperatorMessage, useAnnotation, useDictation } from './dictation-tools.js';
@@ -53,9 +53,15 @@ export function terminalDraftText(text) {
 }
 
 export function PaneDictation({
-  pane, active, solo, status, canType, target, snapshot, actions, win = globalThis.window, notify = shellToast, children = null,
+  pane, active, solo, status, canType, target, snapshot, actions, win = globalThis.window, notify = shellToast, children = null, drafts = null, dictationImpl = null,
 }) {
-  const [draft, setDraftText] = useState('');
+  // drafts keeps an unsent draft for a pane that comes and goes, as a tab does
+  // when its window shows another.
+  const [draft, setDraftText] = useState(() => drafts?.get(pane.key) || '');
+  useEffect(() => {
+    if (draft) drafts?.set(pane.key, draft);
+    else drafts?.delete(pane.key);
+  }, [draft]);
   const [sending, setSending] = useState(false);
   const [fieldFocused, setFieldFocused] = useState(false);
   const fieldRef = useCallback((element) => { if (!element) setFieldFocused(false); }, []);
@@ -77,7 +83,7 @@ export function PaneDictation({
     if (shownRef.current) actions.activatePane(pane.key);
   };
   const dictation = useDictation({
-    win, targetId: shown ? pane.key : '', draft, notify: report,
+    win, targetId: shown ? pane.key : '', draft, notify: report, dictationImpl,
     sendPhrase: talks ? dictationSendPhrase(snapshot?.value) : '',
     silenceSend: talks ? voiceSilenceSeconds(snapshot?.value) : 0,
     pauses: talks ? voicePauses(snapshot?.value) : null,

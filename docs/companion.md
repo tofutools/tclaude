@@ -126,6 +126,8 @@ Dragging a maximized window by its title bar also restores it.
 
 Every overlay window except the companion is a row of tabs, and a window can hold
 any mix of chats, shells and boards. The title bar tools belong to the tab showing.
+A chat tab has the same tools, cards and draft field as a companion tab. Its draft stays
+while another tab shows, and a minimized chat keeps its terminal for a few minutes.
 
 - **Reorder:** drag a tab along its strip.
 - **Join:** drag a tab onto another window's title bar. A marker shows where it lands.
