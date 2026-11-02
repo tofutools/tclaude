@@ -129,3 +129,44 @@ func TestGitLabPipelineChecks_ThePipelinesVerdictCanOnlyMakeACompleteReadWorse(t
 	assert.Equal(t, "pending", run(t, "running"), "a downstream pipeline still running")
 	assert.Equal(t, "passing", run(t, "success"))
 }
+
+// A manual job nobody has played does not hold the pill at pending once the
+// pipeline itself succeeded: GitLab shows such a pipeline as passed. Any other
+// pipeline status keeps its say, so a blocking manual job ("manual") or a
+// failure elsewhere still shows.
+func TestGitLabPipelineChecks_AnUnplayedManualJobFollowsThePipelinesStatus(t *testing.T) {
+	run := func(t *testing.T, pipelineStatus string, statuses ...string) prChecksInfo {
+		t.Helper()
+		jobs := make([]map[string]any, len(statuses))
+		for i, status := range statuses {
+			jobs[i] = map[string]any{"id": i + 1, "name": "job-" + strconv.Itoa(i+1), "stage": "test", "status": status}
+		}
+		body, err := json.Marshal(jobs)
+		require.NoError(t, err)
+		t.Cleanup(SetGitLabTransportForTest(func(_ context.Context, _, _ string, _ glAPIRequest) (glAPIResult, error) {
+			return glAPIResult{Status: http.StatusOK, Body: body, Header: http.Header{}}, nil
+		}))
+		return gitlabPipelineChecks(context.Background(), jobsTestBase, "glpat", jobsRef(t),
+			&glPipeline{ID: 99, Status: pipelineStatus}, time.Now())
+	}
+
+	passed := run(t, "success", "success", "success", "manual")
+	assert.Equal(t, "passing", passed.Summary.State, "GitLab says passed; an optional deploy waiting to be played is not CI")
+	assert.Equal(t, 2, passed.Summary.Passed)
+	assert.Equal(t, 1, passed.Summary.Skipped, "the manual job counts as skipped, so the panel's counts agree with the pill")
+	assert.Zero(t, passed.Summary.Pending)
+	require.Len(t, passed.Checks, 3)
+	assert.Equal(t, "skipped", passed.Checks[2].Bucket)
+	assert.Equal(t, "manual", passed.Checks[2].Conclusion, "the row still says what it is waiting for")
+
+	assert.Equal(t, "pending", run(t, "manual", "success", "manual").Summary.State,
+		"a blocking manual job leaves the pipeline itself waiting")
+	assert.Equal(t, "failing", run(t, "failed", "success", "manual").Summary.State,
+		"a failed bridge job still shows")
+	assert.Equal(t, "pending", run(t, "running", "success", "manual").Summary.State,
+		"a downstream pipeline still running")
+	assert.Equal(t, "pending", run(t, "success", "success", "running", "manual").Summary.State,
+		"only a manual-only remainder follows the pipeline; a running job is still pending")
+	assert.Equal(t, "failing", run(t, "success", "failed", "manual").Summary.State,
+		"a failed job is never hidden by the pipeline's verdict")
+}

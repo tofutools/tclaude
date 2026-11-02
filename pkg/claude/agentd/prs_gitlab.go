@@ -269,6 +269,21 @@ func gitlabPipelineChecks(ctx context.Context, base, token string, ref gitlabMRR
 		verdict := glPipelineChecks(&struct {
 			Status string `json:"status"`
 		}{Status: pipeline.Status}, "")
+		if complete && verdict != nil && verdict.State == "passing" && summary.State == "pending" && onlyManualJobsPending(checks) {
+			// A manual job nobody has played waits on a human, not on CI,
+			// and GitLab decides what it means for the pipeline: optional
+			// ones leave it "success", a blocking one leaves it "manual"
+			// (pending here). When manual jobs are all that hold the read at
+			// pending and the pipeline itself succeeded, they count as
+			// skipped, as GitLab shows them, instead of pinning the pill at
+			// pending forever.
+			for i := range checks {
+				if isUnplayedManualJob(checks[i]) {
+					checks[i].Bucket = "skipped"
+				}
+			}
+			summary = summarizePRChecks(checks, now)
+		}
 		switch {
 		case !complete:
 			summary.State = "pending"
@@ -295,6 +310,27 @@ const (
 	gitlabBranchMRPerPage = 20
 	gitlabBranchMRPages   = 5
 )
+
+// isUnplayedManualJob reports a job gitlabJobCheckRun mapped from GitLab's
+// "manual" status: it waits for someone to play it.
+func isUnplayedManualJob(run prCheckRun) bool {
+	return run.Bucket == "pending" && run.Conclusion == "manual"
+}
+
+// onlyManualJobsPending reports that every still-pending job is an unplayed
+// manual one, and that there is at least one.
+func onlyManualJobsPending(checks []prCheckRun) bool {
+	manual := 0
+	for _, run := range checks {
+		switch {
+		case isUnplayedManualJob(run):
+			manual++
+		case run.Bucket != "pass" && run.Bucket != "fail" && run.Bucket != "skipped":
+			return false
+		}
+	}
+	return manual > 0
+}
 
 // checkStateRank orders summary states from good to bad, for letting the
 // pipeline's own verdict override a summary only towards worse.
