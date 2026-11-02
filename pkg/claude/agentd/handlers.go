@@ -3692,6 +3692,12 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			}
 			groupCwd = repositoryPlan.Destination
 		}
+		// A rename could give a group made this way a pinned group's name.
+		if db.IsExternalStewardConv(creator) && (groupCwd != "" || body.Environment != nil) {
+			writeError(w, http.StatusForbidden, externalStewardCeilingCode,
+				"an external steward can't set a group's directory or environment; those decide how its workers start")
+			return
+		}
 		groupContext, err := normalizeGroupContext(body.DefaultContext)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())

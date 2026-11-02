@@ -159,7 +159,9 @@ the editor rather than saving a grant that does nothing:
 | Handing out permissions | `permissions.grant`, `permissions.revoke`, `config.import`, `roles.manage`, `profiles.manage`, `templates.manage`, `groups.owners.manage`, `groups.settings.member-permissions`, `groups.settings.owner-scopes`, `groups.members.spawn.permissions`, `groups.members.spawn.owner`, `groups.members.spawn.all` |
 | Acting later without a credential, because a schedule or trigger would keep firing after you revoke it | `self.schedule`, `agent.schedule`, `groups.members.schedule`, `groups.messages.schedule`, `triggers.manage`, `groups.triggers.manage` |
 | Receiving your harness credentials | `node.credentials.receive` |
-| Starting or changing a launch any other way than [below](#starting-workers) | `groups.members.spawn`, `agent.clone`, `groups.members.clone`, `agent.morph`, `groups.members.morph` |
+| Starting or changing a launch any other way than [below](#starting-workers) | `groups.members.spawn`, `agent.clone`, `groups.members.clone`, `groups.clone`, `agent.morph`, `groups.members.morph`, `agent.resume`, `groups.members.resume` |
+| Changing what a worker's launch means | `groups.settings.default-dir`, `groups.settings.environment`, `groups.settings.default-spawn-target`, `sandbox-profiles.manage`, `agent.sandbox-impl` |
+| Moving an agent to a linked instance | `agent.move`, `agent.share` |
 
 Password fields and fields marked secret are masked in the page before a capture
 leaves it, as for the [Steward](companion.md#capture).
@@ -192,7 +194,7 @@ and they are checked when you set them and again at every spawn.
   group without one can't be chosen. A directory the harness doesn't trust yet waits at its
   dialog for you.
 - **Workers can't do what it can't.** Each is denied everything in the table above, plus
-  `agent.spawn` and `self.clone`, at birth, ahead of what its group or `agent.default_permissions` would give
+  `agent.spawn`, `self.clone`, `self.teleport` and `templates.instantiate`, at birth, ahead of what its group or `agent.default_permissions` would give
   it. So they can't start workers of their own or schedule anything. You can still lift a
   deny, grant sudo or approve a one-off request for a worker yourself.
 - **There's a cap.** Each external steward can have 3 workers running, or the number you

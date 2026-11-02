@@ -321,6 +321,16 @@ func TestExternalStewardSpawn_OtherDoorsAreShut(t *testing.T) {
 	}
 	code, body = s.call(s.issued.Credential, http.MethodPatch, "/v1/groups/crew", map[string]any{"default_cwd": "/somewhere/else"})
 	assert.Equal(t, http.StatusForbidden, code, body)
+
+	// With groups.create it can make a group, but not the launch one would give.
+	code, body = s.humanPost("/v1/permissions/grant", map[string]any{"target": s.issued.AgentID, "slug": agentd.PermGroupsCreate})
+	require.Equal(t, http.StatusOK, code, body)
+	code, body = s.call(s.issued.Credential, http.MethodPost, "/v1/groups", map[string]any{"name": "made", "default_cwd": s.dir})
+	assert.Equal(t, http.StatusForbidden, code, body)
+	code, body = s.call(s.issued.Credential, http.MethodPost, "/v1/groups", map[string]any{"name": "made", "environment": []map[string]any{{"name": "A", "value": "b"}}})
+	assert.Equal(t, http.StatusForbidden, code, body)
+	code, body = s.call(s.issued.Credential, http.MethodPost, "/v1/groups", map[string]any{"name": "made"})
+	assert.Equal(t, http.StatusCreated, code, body)
 }
 
 // B's condition. The child stands where it would otherwise get these slugs from
@@ -372,6 +382,8 @@ func TestExternalStewardSpawn_ChildDeniesBeatOwnershipAndGroupsAndDefaults(t *te
 	cloned := testharness.Serve(s.f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/clone", map[string]any{}), child))
 	assert.Truef(t, refusedBySlug(cloned, agentd.PermSelfClone), "a clone would be a worker nothing counts: %s", cloned.Body.String())
 
+	assert.Subset(t, agentd.ExternalStewardChildDeniesForTest(), []string{agentd.PermSelfClone, agentd.PermSelfTeleport, agentd.PermTemplatesUse},
+		"each of these starts or moves an agent nothing else here would catch")
 	for _, slug := range agentd.ExternalStewardChildDeniesForTest() {
 		effect, ok, err := db.AgentPermissionOverride(child, slug)
 		require.NoError(t, err)

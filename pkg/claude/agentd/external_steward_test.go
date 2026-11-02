@@ -246,6 +246,7 @@ func TestExternalSteward_NeverListIsPinned(t *testing.T) {
 		"groups.members.spawn", "agent.clone", "groups.members.clone", "groups.clone",
 		"agent.morph", "groups.members.morph", "agent.resume", "groups.members.resume",
 		"groups.settings.default-dir", "groups.settings.environment", "groups.settings.default-spawn-target",
+		"sandbox-profiles.manage", "agent.sandbox-impl", "agent.move", "agent.share",
 		"approvals.answer", "human.inbox.read", "human.inbox.answer",
 		"sessions.attach", "sessions.takeover", "sessions.shell",
 		"permissions.grant", "permissions.revoke", "config.import", "roles.manage",

@@ -55,7 +55,7 @@ var externalStewardSpawnFields = map[string]bool{
 // hold what its parent never may, and go on acting after the credential ended. The
 // spawn slugs keep the tree one level deep.
 func externalStewardChildDenies() []string {
-	return append(slices.Clone(externalStewardNever), PermAgentSpawn, PermSelfClone)
+	return append(slices.Clone(externalStewardNever), PermAgentSpawn, PermSelfClone, PermSelfTeleport, PermTemplatesUse)
 }
 
 // externalStewardSpawnPin is what an agent.spawn grant to a principal has to name.
@@ -470,6 +470,9 @@ func notifyExternalStewardExpiries(now time.Time) {
 		return
 	}
 	for _, steward := range stewards {
+		if len(steward.Credentials) == 0 {
+			continue
+		}
 		live := slices.ContainsFunc(steward.Credentials, func(c db.ExternalStewardCredential) bool { return c.Live(now) })
 		// Only the newest counts: rotating ends an old credential by revoking it, and
 		// the one after it can still run out.
