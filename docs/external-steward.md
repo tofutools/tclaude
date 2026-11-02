@@ -50,7 +50,7 @@ back.
 
 It starts with the Steward's [**Reads** and **Writes** levels](companion.md#what-the-steward-may-do)
 as they are when you create it, as ordinary permissions you can change in the usual
-editor. There are three differences:
+editor. There are four differences:
 
 - **No screen capture.** `dashboard.capture` is off until you grant it, because a
   capture shows whatever you have open and would go to your assistant's own model
@@ -116,12 +116,14 @@ It does **not** protect against:
   That includes agents' messages and anything else you let it read.
 
 An agent running in a tclaude terminal that gets hold of a credential is still refused,
-because tclaude looks for one of its terminals above the caller. This holds for a
-background process inside a sandbox that has its own process namespace. It can't catch a
-process that has left its terminal with no such namespace, as an agent can under a
-sandbox that doesn't isolate processes. So keep the credential where sandboxed agents
-can't read it: the check is a second line, not the boundary. It also means your own
-assistant has to run outside tclaude's terminals, though your own tmux is fine.
+because tclaude looks for one of its terminals above the caller. This covers one-shot
+agents, and a background process inside a sandbox that has its own process namespace. It
+can't catch a process that has left its terminal with no such namespace, as an agent can
+under a sandbox that doesn't isolate processes. So keep the credential where sandboxed
+agents can't read it: the check is a second line, not the boundary.
+
+It also means your own assistant has to run outside tclaude's terminals. Your own tmux is
+fine, because tclaude keeps its terminals on a tmux server of its own.
 
 Revoking takes effect on the next request. A request already waiting for your approval
 isn't checked again, so if you approve it after revoking, it still runs.

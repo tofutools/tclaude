@@ -1368,11 +1368,7 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 	case classAgent:
 		// Confirmed agent — fall through to the per-conv evaluation below.
 	}
-	// Before any standing check or popup: not even the human can approve one
-	// of these for an external steward.
-	if p.ExternalSteward && externalStewardRefuses(perm) {
-		writeError(w, http.StatusForbidden, externalStewardCeilingCode,
-			"an external steward can never use "+perm)
+	if refuseExternalStewardCeiling(w, p, perm) {
 		return "", false
 	}
 	title := ""

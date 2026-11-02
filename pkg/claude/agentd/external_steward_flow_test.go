@@ -273,12 +273,34 @@ func TestExternalSteward_ManagedCheckFindsThePane(t *testing.T) {
 	assert.True(t, agentd.ExternalCallerManagedForTest(assistant, "claimed-session"), "a session claim is agent-shaped")
 	assert.False(t, agentd.ExternalCallerManagedForTest(assistant, ""), "the operator's own assistant")
 
-	// A pane on the same tmux server that tclaude does not run is the operator's.
+	// A one-shot's pane has no session row, and is still tclaude's.
 	d, err := db.Open()
 	require.NoError(t, err)
-	_, err = d.Exec(`UPDATE sessions SET tmux_session = 'renamed'`)
+	_, err = d.Exec(`DELETE FROM sessions WHERE tmux_session = 'tclaude-panes'`)
 	require.NoError(t, err)
-	assert.False(t, agentd.ExternalCallerManagedForTest(forked, ""), "the operator's own tmux pane")
+	assert.True(t, agentd.ExternalCallerManagedForTest(forked, ""), "a pane with no session row")
+}
+
+// A session row proves nothing: installed hooks can register the operator's own
+// claude with whichever tclaude session was current.
+func TestExternalSteward_ManagedCheckIgnoresSessionRows(t *testing.T) {
+	f := newFlow(t)
+	f.HaveConvWithTitle("plain-conv-1", "worker")
+	f.HaveAliveSession("plain-conv-1", "plain", "tclaude-plain", f.TestCwd("w"))
+	const claude, assistant = 6100, 6101
+	row, err := db.FindSessionByConvID("plain-conv-1")
+	require.NoError(t, err)
+	row.PID = claude
+	require.NoError(t, db.SaveSession(row))
+	t.Cleanup(agentd.SetProcTreeForTest(map[int]string{claude: "claude", assistant: "tclaude"}, map[int]int{assistant: claude, claude: 1}))
+	assert.False(t, agentd.ExternalCallerManagedForTest(assistant, ""))
+}
+
+// A peer can connect and exit, leaving a live socket and no ancestry to read.
+func TestExternalSteward_ManagedCheckRefusesAGonePeer(t *testing.T) {
+	newFlow(t)
+	const beyondPidMax = 1 << 23
+	assert.True(t, agentd.ExternalCallerManagedForTest(beyondPidMax, ""))
 }
 
 // No handler below the identity layer can see the credential, so none can log it

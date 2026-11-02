@@ -10,6 +10,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os/exec"
 	"regexp"
 	"slices"
 	"strconv"
@@ -81,6 +82,18 @@ var externalStewardOptIn = []string{PermDashboardCapture, PermAgentSpawn}
 
 func externalStewardRefuses(slug string) bool {
 	return slices.Contains(externalStewardNever, slug)
+}
+
+// refuseExternalStewardCeiling stops a gate before any standing check, approval
+// continuation or popup: not even the human can approve one of these for an
+// external steward. Every gate that can open a popup calls it, and a test holds
+// the list of those gates.
+func refuseExternalStewardCeiling(w http.ResponseWriter, p *peer, perm string) bool {
+	if !p.ExternalSteward || !externalStewardRefuses(perm) {
+		return false
+	}
+	writeError(w, http.StatusForbidden, externalStewardCeilingCode, "an external steward can never use "+perm)
+	return true
 }
 
 // externalStewardStartingSlugs is the Steward's Reads and Writes levels, less
@@ -170,46 +183,51 @@ func verifyExternalStewardCredential(credential string, now time.Time) (auth *db
 	return row, ""
 }
 
-// externalCallerUnderPane reports whether any ancestor is the pane of a session
-// tclaude runs. It goes by tmux's own pane pids, because sessions.pid moves to the
-// harness at the first hook, and a process that double-forked in a sandbox is a
-// sibling of the harness, still under the pane through the sandbox's init. An
-// orphan with no PID namespace reparents to host init and escapes this; that is
-// outside what the credential defends, and the docs say so. Anything that cannot
-// be answered counts as under a pane: this check only ever refuses.
+// externalCallerUnderPane reports whether any ancestor is a pane on tclaude's own
+// tmux server. That server is dedicated (-L tclaude), so any pane on it is
+// something tclaude runs, one-shots included, which have no session row. It goes
+// by tmux's pane pids because sessions.pid moves to the harness at the first
+// hook, and a process that double-forked in a sandbox is a sibling of the harness,
+// still under the pane through the sandbox's init. An orphan with no PID namespace
+// reparents to host init and escapes this; the docs say so. Anything that cannot
+// be answered counts as under a pane, including a peer that has already exited,
+// whose ancestry is gone: this check only ever refuses.
 func externalCallerUnderPane(pid int) bool {
 	out, err := tmuxOutputWithTimeout("list-panes", "-a", "-F", brokerPaneListFormat)
-	if tmuxServerNotRunning(err) {
-		return false
-	}
-	if err != nil {
+	if err != nil && !externalNoTmuxPanes(err) {
 		return true
 	}
-	sessionAt := map[int]string{}
+	panes := map[int]bool{}
 	for _, line := range strings.Split(string(out), "\n") {
 		parts := strings.Split(strings.TrimSpace(line), "|")
-		if len(parts) != 5 || parts[0] == "" {
+		if len(parts) != 5 {
 			continue
 		}
 		if panePID, err := strconv.Atoi(parts[2]); err == nil {
-			sessionAt[panePID] = parts[0]
+			panes[panePID] = true
 		}
 	}
 	const maxHops = 256
 	for range maxHops {
-		if pid <= 1 {
+		if pid == 1 {
 			return false
 		}
-		if name, ok := sessionAt[pid]; ok {
-			// The operator's own tmux panes can share this server.
-			rows, err := db.FindLatestSessionsByTmux([]string{name})
-			if err != nil || rows[name] != nil {
-				return true
-			}
+		if panes[pid] {
+			return true
 		}
-		pid = procParent(pid)
+		if pid = procParent(pid); pid == 0 {
+			return true
+		}
 	}
 	return true
+}
+
+// externalNoTmuxPanes reports a failed pane listing that still answers the
+// question: tmux missing, or exiting non-zero because no server runs, which is
+// the normal state with no agent up. A wedged tmux does not answer it.
+func externalNoTmuxPanes(err error) bool {
+	var exitErr *exec.ExitError
+	return errors.Is(err, exec.ErrNotFound) || errors.As(err, &exitErr)
 }
 
 // externalCallerManaged reports whether the socket peer is an agent tclaude
@@ -218,23 +236,14 @@ func externalCallerUnderPane(pid int) bool {
 // rule on purpose: the token never promotes a harness descendant, because it
 // would make it the human, while this credential only ever names a limited
 // agent, and the assistant the operator chose may well be their own Claude Code.
-// Swapped by tests.
+// Session rows do not decide this: installed hooks can register a plain claude
+// with some agent's tmux session. Swapped by tests.
 var externalCallerManaged = func(pid int, claimedID string) bool {
 	if claimedID != "" || externalCallerUnderPane(pid) {
 		return true
 	}
-	convID, _, selectedLayer := legacyIdentityForPID(pid)
-	if selectedLayer {
-		return true
-	}
-	if convID == "" {
-		return false
-	}
-	rows, err := db.FindSessionsByConvID(convID)
-	if err != nil {
-		return true
-	}
-	return slices.ContainsFunc(rows, func(row *db.SessionRow) bool { return row.TmuxSession != "" })
+	_, _, selectedLayer := legacyIdentityForPID(pid)
+	return selectedLayer
 }
 
 // authenticateExternalSteward turns a presented credential into the peer's

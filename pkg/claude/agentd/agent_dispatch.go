@@ -173,6 +173,9 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 	case classAgent:
 		// Confirmed agent — fall through to the per-conv evaluation below.
 	}
+	if refuseExternalStewardCeiling(w, p, perm) {
+		return "", false
+	}
 	if hasWriteProofApprovalContinuation(r, p.ConvID, perm, targetConv) ||
 		hasHumanApprovalContinuation(r, perm, targetConv) {
 		recordAuthorizedPermission(r, perm, 0)

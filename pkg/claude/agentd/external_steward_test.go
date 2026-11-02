@@ -2,12 +2,14 @@ package agentd
 
 import (
 	"context"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -196,6 +198,44 @@ func TestExternalSteward_RefusedByEveryHumanAndApprovalRoute(t *testing.T) {
 	assert.Greater(t, answering, 3, "approval routes found")
 }
 
+func TestExternalNoTmuxPanes(t *testing.T) {
+	assert.True(t, externalNoTmuxPanes(fmt.Errorf("run: %w", exec.ErrNotFound)), "tmux is not installed")
+	exitErr := exec.Command("false").Run()
+	require.Error(t, exitErr)
+	assert.True(t, externalNoTmuxPanes(fmt.Errorf("list-panes: %w", exitErr)), "no server is running")
+	assert.False(t, externalNoTmuxPanes(errTmuxCommandTimeout), "a wedged tmux proves nothing")
+}
+
+// A popup opened anywhere else would be a way past the ceiling. These gates either
+// call refuseExternalStewardCeiling or sit behind one that does; a new one has to
+// be looked at before it joins this list.
+func TestExternalSteward_EveryPopupIsAccountedFor(t *testing.T) {
+	want := map[string]bool{
+		"requirePermissionEx": true, "requireCrossAgentPermission": true, // the ceiling
+		"requestResumeDirectoryRecreationApproval": true, "requestCodexDriveRollbackApproval": true, // agent.resume, after its gate
+		"handleSudoRequest": true, // sudo, which refuses the principal
+	}
+	fset := token.NewFileSet()
+	got := map[string]bool{}
+	for _, file := range parseAgentdSources(t, fset) {
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil || fn.Name.Name == "admitApproval" {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if call, ok := n.(*ast.CallExpr); ok {
+					if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "admitApproval" {
+						got[fn.Name.Name] = true
+					}
+				}
+				return true
+			})
+		}
+	}
+	assert.Equal(t, want, got)
+}
+
 // The list itself is pinned, because the tests below walk it: dropping a slug
 // has to be a change to this test too, not just a line that goes quiet.
 func TestExternalSteward_NeverListIsPinned(t *testing.T) {
@@ -212,18 +252,30 @@ func TestExternalSteward_NeverListIsPinned(t *testing.T) {
 }
 
 // Nothing makes a never-listed slug usable: not a standing grant, not a group
-// grant, and not the popup, which does not even open.
+// grant, and not the popup, which does not even open, on either gate that has
+// one.
 func TestExternalSteward_NeverListRefusedAtTheGate(t *testing.T) {
 	require.NotEmpty(t, externalStewardNever)
-	for _, slug := range externalStewardNever {
-		require.Truef(t, IsKnownPermSlug(slug), "%s is not a registered slug", slug)
-		rec := httptest.NewRecorder()
-		r := requestWithPeer(&peer{PID: 1, HasClaudeAncestor: true, ConvID: "ext-1", ExternalSteward: true})
-		r.Header.Set("X-Tclaude-Ask-Human", "30s")
-		_, ok := requirePermission(rec, r, slug)
-		assert.Falsef(t, ok, slug)
-		assert.Equalf(t, http.StatusForbidden, rec.Code, slug)
-		assert.Containsf(t, rec.Body.String(), externalStewardCeilingCode, slug)
+	gates := map[string]func(http.ResponseWriter, *http.Request, string) bool{
+		"requirePermission": func(w http.ResponseWriter, r *http.Request, slug string) bool {
+			_, ok := requirePermission(w, r, slug)
+			return ok
+		},
+		"requireCrossAgentPermission": func(w http.ResponseWriter, r *http.Request, slug string) bool {
+			_, ok := requireCrossAgentPermission(w, r, slug, "some-other-conv")
+			return ok
+		},
+	}
+	for name, gate := range gates {
+		for _, slug := range externalStewardNever {
+			require.Truef(t, IsKnownPermSlug(slug), "%s is not a registered slug", slug)
+			rec := httptest.NewRecorder()
+			r := requestWithPeer(&peer{PID: 1, HasClaudeAncestor: true, ConvID: "ext-1", ExternalSteward: true})
+			r.Header.Set("X-Tclaude-Ask-Human", "30s")
+			assert.Falsef(t, gate(rec, r, slug), "%s %s", name, slug)
+			assert.Equalf(t, http.StatusForbidden, rec.Code, "%s %s", name, slug)
+			assert.Containsf(t, rec.Body.String(), externalStewardCeilingCode, "%s %s", name, slug)
+		}
 	}
 	src := permSources{resolvable: true, externalSteward: true,
 		override: map[string]overridePermSource{}, sudo: map[string]sudoPermSource{}, group: map[string][]string{}}
