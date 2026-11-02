@@ -341,6 +341,33 @@ type externalStewardIssued struct {
 	Grants     []string  `json:"grants,omitempty"`
 }
 
+// soleExternalSteward finds who the address "steward" falls to when no built-in
+// Steward runs. Only a principal that can authenticate counts, since mail to any
+// other would wait for nobody. able says how many are, and address is usable only
+// when that is one. It is an agent id: the conv has no conversation row for a
+// selector to find.
+func soleExternalSteward() (address string, able int) {
+	cfg, err := config.LoadShared()
+	if err != nil || !cfg.ExternalStewardsEnabled() {
+		return "", 0
+	}
+	stewards, err := db.ListExternalStewards()
+	if err != nil {
+		slog.Warn("external steward: list for the steward address failed", "error", err)
+		return "", 0
+	}
+	now := time.Now()
+	for _, steward := range stewards {
+		if !steward.Retired && slices.ContainsFunc(steward.Credentials, func(c db.ExternalStewardCredential) bool {
+			return c.Live(now)
+		}) {
+			address = steward.AgentID
+			able++
+		}
+	}
+	return address, able
+}
+
 func externalStewardExpiry(w http.ResponseWriter, days int) (time.Time, bool) {
 	if days == 0 {
 		days = externalStewardDefaultDays

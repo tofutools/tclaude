@@ -444,7 +444,8 @@ An offline agent can take the role too. Its brief waits until you resume it.
 ### One active Steward, and the roster
 
 One Steward is active. `steward`, your chosen name, the companion's **✦** and a
-changed-name message all mean that agent, even while it's offline. Until you first
+changed-name message all mean that agent, even while it's offline, apart from the
+[one fallback](#messaging-the-steward) for `steward`. Until you first
 choose, the newest running Steward is the active one. Summoning a Steward yourself
 makes the new one active. Only you can summon one: an agent's summon is refused,
 whatever it holds.
@@ -515,8 +516,9 @@ can't read or write them, and config bundles don't carry them.
 
 ### Messaging the Steward
 
-`steward` always reaches the active Steward. If it's offline, the send fails and says
-so. An agent can answer a message from the Steward with `tclaude agent reply <id>`,
+`steward` reaches the active Steward. If it's offline, the send fails and says so,
+unless an [external steward](external-steward.md#mail) can take the message. Your chosen
+name never falls back that way. An agent can answer a message from the Steward with `tclaude agent reply <id>`,
 whatever its groups and permissions. Writing to it first, with `tclaude agent message
 steward`, needs `message.direct` or a shared group, like any other agent. With Collab
 on, `steward` and your chosen name always mean the Steward, even if another agent has
