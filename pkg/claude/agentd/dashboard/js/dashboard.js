@@ -59,6 +59,7 @@ import { bindSandboxProfilesUI, loadSandboxProfiles, summonSandboxScribe } from 
 import { bindRolesUI } from './modal-roles.js';
 import { refreshAgentSpawnSandboxPolicy } from './agent-spawn-controller.js';
 import { configureQueuedSpawns } from './queued-spawns.js';
+import { configureSpawnQueue } from './spawn-queue-block.js';
 import { bindRemoteAdmin, loadRemoteAdmin } from './remote-admin.js';
 import { bindCostDisplayToggle } from './cost-display-toggle.js';
 import { focusAccessRequest } from './mail-bridge.js';
@@ -276,6 +277,7 @@ async function settleInitialLayout() {
     }),
     () => {
       configureQueuedSpawns({ confirm: confirmModal, notify: toast, refresh: dashboardActions.refresh });
+      configureSpawnQueue({ confirm: confirmModal, notify: toast, refresh: dashboardActions.refresh });
       return mountQueuedSpawnsFeature();
     },
     () => mountGitRepositoriesFeature(),

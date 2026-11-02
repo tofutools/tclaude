@@ -332,7 +332,9 @@ Spawn requests from federation peers share this queue; see
 one-shot jobs are not queued: a full node, or one with spawns waiting, refuses
 them with `node_busy`.
 
-`tclaude agent ls` lists waiting spawns under the agent table. An agent sees
+`tclaude agent ls` lists waiting spawns under the agent table, and the
+dashboard shows them in the [Spawn queue](dashboard-groups.md#the-spawn-queue)
+block above the groups. An agent sees
 its own queued spawns and those targeting a group it is in; the operator sees
 all. A waiting spawn can be cancelled by its requester, an owner of its target
 group, or the operator. Listings show only the name, group, requester,

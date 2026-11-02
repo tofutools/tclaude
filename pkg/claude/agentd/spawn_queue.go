@@ -581,6 +581,24 @@ func spawnQueueView(e *db.SpawnQueueEntry, now time.Time) spawnQueueEntryJSON {
 	}
 }
 
+// spawnQueueCapacity is the capacity line: the limits, and the agents counted
+// toward max_live_agents when there is one. Queued is left for the caller.
+func spawnQueueCapacity(limits config.CapacityLimits) spawnQueueCapacityJSON {
+	out := spawnQueueCapacityJSON{MaxLiveAgents: limits.MaxLiveAgents, MinFreeRAMMB: limits.MinFreeRAMMB,
+		MinFreeDiskMB: limits.MinFreeDiskMB, WhenFull: config.CapacityWhenFullRefuse, MaxQueued: limits.MaxQueued}
+	if limits.Queue {
+		out.WhenFull = config.CapacityWhenFullQueue
+	}
+	if limits.MaxLiveAgents > 0 {
+		nodeAdmission.Lock()
+		if used, err := nodeCapacityUsed(""); err == nil {
+			out.UsedAgents = &used
+		}
+		nodeAdmission.Unlock()
+	}
+	return out
+}
+
 // spawnQueueCaller resolves who is asking: the human ("" conv) or an agent.
 func spawnQueueCaller(w http.ResponseWriter, r *http.Request) (conv string, ok bool) {
 	p := peerFromContext(r.Context())
@@ -617,19 +635,7 @@ func handleSpawnQueueList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limits, _ := nodeCapacityLimits()
-	out := spawnQueueListJSON{Entries: []spawnQueueEntryJSON{}}
-	out.Capacity = spawnQueueCapacityJSON{MaxLiveAgents: limits.MaxLiveAgents, MinFreeRAMMB: limits.MinFreeRAMMB,
-		MinFreeDiskMB: limits.MinFreeDiskMB, WhenFull: config.CapacityWhenFullRefuse, MaxQueued: limits.MaxQueued}
-	if limits.Queue {
-		out.Capacity.WhenFull = config.CapacityWhenFullQueue
-	}
-	if limits.MaxLiveAgents > 0 {
-		nodeAdmission.Lock()
-		if used, err := nodeCapacityUsed(""); err == nil {
-			out.Capacity.UsedAgents = &used
-		}
-		nodeAdmission.Unlock()
-	}
+	out := spawnQueueListJSON{Entries: []spawnQueueEntryJSON{}, Capacity: spawnQueueCapacity(limits)}
 	callerAgent, callerGroups := "", map[int64]bool{}
 	if conv != "" {
 		callerAgent, _ = db.AgentIDForConv(conv)

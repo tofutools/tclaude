@@ -32,6 +32,7 @@ import { subgroupsSectionAuto, subgroupsSectionOpen } from './groups-fused-secti
 import { featureState } from './feature-state-registry.js';
 import { firstUnreadHumanNotification } from './human-notification-attention.js';
 import { groupQueuedSpawns } from './queued-spawns.js';
+import { SpawnQueueBlock, groupCapacityQueued } from './spawn-queue-block.js';
 import { modClickText, modifierText } from './keybindings.js';
 
 const html = htm.bind(h);
@@ -493,6 +494,7 @@ function RealGroupSummary({ node, group, activity, membersView, snapshot, action
     <${ProcessChip} group=${group} />
     ${group.waves?.pending_waves ? html`<span class="group-waves-chip" title=${`Staged spawn — ${group.waves.pending_agents} agent(s) in ${group.waves.pending_waves} more wave(s) will spawn as each wave settles${group.waves.deadline_at ? `\nnext wave by ${group.waves.deadline_at} at the latest` : ''}`}>🌊 wave ${group.waves.current_wave}/${group.waves.total_waves} pending</span>` : null}
     ${group.pending?.length ? html`<span class="group-pending-chip" title=${`${group.pending.length} pending spawn${group.pending.length === 1 ? '' : 's'} waiting for startup`}>⏳ ${group.pending.length} pending spawn${group.pending.length === 1 ? '' : 's'}</span>` : null}
+    <${CapacityQueuedChip} group=${group} snapshot=${snapshot} />
     <${ActionMenu} menuKey=${`group:${group.name}`} kind="group-menu" wrapperClass="group-actions group-header-cog"><${GroupMenuItems} group=${group} members=${members} snapshot=${snapshot} actions=${actions} /><//>
     <${EditableGroupChip}
       className=${`group-descr${group.descr ? '' : ' unset'}`} action="set-group-descr" group=${group} actions=${actions}
@@ -854,10 +856,22 @@ function GroupNode({ node, snapshot, actions, triggers, hoveredGroupKey }) {
   return html`<${VirtualUngrouped} group=${group} snapshot=${snapshot} actions=${actions} />`;
 }
 
+// CapacityQueuedChip counts this node's spawns waiting for capacity into the
+// group; the Spawn queue block above the groups lists them in order.
+function CapacityQueuedChip({ group, snapshot }) {
+  // The snapshot's queue is the page node's own; the fused view names its
+  // groups with a node suffix.
+  if (group.fleet_node && !group.fleet_node.page) return null;
+  const n = groupCapacityQueued(snapshot, group.fleet_node ? fleetOwnName(group) : group.name);
+  if (!n) return null;
+  return html`<span class="group-capacity-queued-chip" title=${`${n} spawn${n === 1 ? '' : 's'} into this group waiting for capacity — see the Spawn queue above the groups`}>⌛ ${n} queued</span>`;
+}
+
 export function GroupsNativeList({ groups, snapshot, actions, triggers = [], hoveredGroupKey = null }) {
-  if (!groups?.length) return html`<div class="empty">No groups yet. Create one with the <strong><span class="group-create-label-regular">+ new group</span><span class="group-create-label-wizard">⚔ Form a party</span></strong> button above.</div>`;
+  const queue = html`<${SpawnQueueBlock} key="spawn-queue" snapshot=${snapshot} />`;
+  if (!groups?.length) return html`${queue}<div class="empty">No groups yet. Create one with the <strong><span class="group-create-label-regular">+ new group</span><span class="group-create-label-wizard">⚔ Form a party</span></strong> button above.</div>`;
   // A group shows its subgroups' activity only while they are drawn: its
   // row and its Subgroups section both open.
   const tree = buildGroupTree(groups, (group) => realGroupOpen(group, dashPrefs) && subgroupsSectionOpen(group, dashPrefs));
-  return tree.map((node) => html`<${GroupNode} key=${node.key} node=${node} snapshot=${snapshot} actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`);
+  return [queue, ...tree.map((node) => html`<${GroupNode} key=${node.key} node=${node} snapshot=${snapshot} actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`)];
 }
