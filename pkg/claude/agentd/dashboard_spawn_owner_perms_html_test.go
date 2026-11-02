@@ -74,8 +74,9 @@ func TestDashboardSpawnOwnerPermsUI_Wired(t *testing.T) {
 func TestDashboardPermEditorStacksAboveProfileEditor(t *testing.T) {
 	zIndexOf := func(selector string) int {
 		t.Helper()
-		// Match `#selector { … z-index: N; … }` (single-line rule).
-		re := regexp.MustCompile(regexp.QuoteMeta(selector) + `\s*\{[^}]*z-index:\s*(\d+)`)
+		// Match `#selector { … z-index: calc(var(--z-dialog) + N); … }` (single-line
+		// rule): both editors are steps on the dialog layer, so N orders them.
+		re := regexp.MustCompile(regexp.QuoteMeta(selector) + `\s*\{[^}]*z-index:\s*calc\(var\(--z-dialog\) \+ (\d+)\)`)
 		m := re.FindStringSubmatch(dashboardAssets)
 		if m == nil {
 			t.Fatalf("no z-index rule found for %s", selector)

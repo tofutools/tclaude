@@ -109,7 +109,7 @@ body.slop, body.vegas {
 .board-person .board-person-x:hover { color: #f85149; }
 .board-invite-wrap { position: relative; }
 .board-invite-menu {
-  position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 220px; max-height: 320px; overflow: auto;
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: var(--z-popover); min-width: 220px; max-height: 320px; overflow: auto;
   display: flex; flex-direction: column; padding: 4px; border-radius: 8px;
   border: 1px solid var(--board-line); background: var(--board-bar); box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
 }
@@ -204,7 +204,7 @@ body.slop, body.vegas {
 }
 .board-quick-none { padding: 6px 8px; color: var(--board-muted); font-size: 12px; }
 /* The context menu (js/board-context-menu.js) wears the tab menu's rows. */
-.board-context { position: fixed; z-index: 960; max-height: calc(100vh - 16px); overflow: auto; min-width: 210px; }
+.board-context { position: fixed; z-index: var(--z-popover); max-height: calc(100vh - 16px); overflow: auto; min-width: 210px; }
 .board-context .mux-tab-menu-item { display: flex; justify-content: space-between; gap: 18px; }
 .board-context .mux-tab-menu-item:disabled { opacity: .45; cursor: default; }
 .board-context kbd { color: var(--board-muted); font: inherit; font-size: 11px; white-space: nowrap; }
@@ -270,7 +270,7 @@ body.slop, body.vegas {
 /* The overlay (js/board-overlay.js, tcl-h4y60w): a board in its own window, on
    the companion's layer. Whichever was clicked last is on top. */
 .board-overlay {
-  position: fixed; z-index: var(--overlay-level, 930); display: flex; flex-direction: column; overflow: hidden;
+  position: fixed; z-index: var(--overlay-level, var(--z-window)); display: flex; flex-direction: column; overflow: hidden;
   background: var(--board-bg); color: var(--board-text); border: 1px solid #3d4451; border-radius: 10px;
   box-shadow: 0 18px 44px rgba(0, 0, 0, .6);
 }
@@ -293,7 +293,5 @@ body.slop, body.vegas {
 .board-overlay-action:hover, .board-overlay-close:hover { background: #2d333b; color: var(--board-text); }
 .board-overlay .board-title { display: none; }
 .board-overlay .board-canvas-wrap { min-height: 80px; margin: 0 8px 8px; }
-/* As for the companion: the dialogs it opens stay above it, and it steps aside
-   while the operator annotates the page. */
-body:has(.modal-overlay.show, .manage-overlay.show) :is(.board-overlay, .board-overlay-resize-frame) { z-index: 90; }
+/* As for the companion: it steps aside while the operator annotates the page. */
 body.companion-annotating :is(.board-overlay, .board-overlay-resize-frame) { visibility: hidden; }
