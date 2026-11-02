@@ -73,7 +73,7 @@ func TestDashboardHTML_MessageFilterAboveList(t *testing.T) {
 		`'mail-folder-actions'`,
 		`id="mail-mark-all"`,
 		`id="mail-clear-read"`,
-		`>🗑 delete read</button>`,
+		`>🗑 delete read<//>`,
 	} {
 		if !strings.Contains(island, needle) {
 			t.Errorf("mail-island.js missing %q in the bulk-bar row", needle)

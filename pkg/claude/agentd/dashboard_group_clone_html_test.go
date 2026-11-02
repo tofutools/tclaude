@@ -28,7 +28,7 @@ func TestDashboardHTML_GroupCloneModal(t *testing.T) {
 	must(`id="group-create-attachment-label"`, "the shared modal has an editable attachment label")
 	must(`id="group-create-environment-row"`, "the shared modal has editable group environment variables")
 	must(`id="group-create-source-summary"`, "the shared modal has a source summary panel")
-	must(`class="group-create-origin-options"`, "the shared modal exposes the source-first selector")
+	must(`class="ui-seg group-create-origin-options"`, "the shared modal exposes the source-first selector")
 	must(`id="group-create-group-source"`, "the source group is visibly selectable")
 	must(`id="group-create-placement"`, "placement is editable in every create flow")
 	must(`id="group-create-submit"`, "clone mode uses the shared create submit button")

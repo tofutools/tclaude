@@ -14,6 +14,7 @@ import {
 import { GroupsProcessesFocus } from './groups-processes.js';
 import { processContext } from './process-context.js';
 import { useDismissablePopover } from './hover-popover.js';
+import { Button, Input } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -108,10 +109,9 @@ export function GroupsControls({ state, actions }) {
   return html`
     <span class=${`groups-search${filtering ? ' filtering' : ''}`}>
       <span class="groups-search-icon" aria-hidden="true">🔍</span>
-      <input
-        ref=${inputRef}
+      <${Input}
+        domRef=${inputRef}
         id="filter-groups"
-        type="text"
         aria-label=${wizard ? 'Filter parties' : 'Filter groups'}
         placeholder=${wizard ? 'Filter parties & heroes' : 'Filter groups & members'}
         title=${wizard
@@ -144,19 +144,22 @@ export function GroupsControls({ state, actions }) {
       `}
     </span>
     ${conversationSearchAvailable() && html`
-      <button id="conversation-search-toggle" class="view-btn" type="button"
+      ${/* Ghost by operator exception: this toolbar toggle stays quiet. */ ''}
+      <${Button} size="sm" variant="ghost" id="conversation-search-toggle" class="view-btn"
         aria-expanded=${state.contentSearchOpen.value ? 'true' : 'false'}
         title=${wizard ? 'Search the words inside past scrolls' : 'Search the text of past conversations'}
         onClick=${() => { state.contentSearchOpen.value = !state.contentSearchOpen.value; }}
-      >${wizard ? '📜 search scrolls' : '📜 search conversations'}</button>
+      >${wizard ? '📜 search scrolls' : '📜 search conversations'}<//>
     `}
     <${GroupsFocusSwitch} state=${state} groups=${current.groups} wizard=${wizard} />
     <div class="view-popover-wrap">
-      <button
-        ref=${buttonRef}
+      ${/* Ghost by operator exception: the view trigger stays quiet. */ ''}
+      <${Button}
+        size="sm"
+        variant="ghost"
+        domRef=${buttonRef}
         id="filter-groups-view-btn"
         class="view-btn"
-        type="button"
         aria-haspopup="menu"
         aria-expanded=${state.viewOpen.value ? 'true' : 'false'}
         aria-controls="filter-groups-view-menu"
@@ -167,7 +170,7 @@ export function GroupsControls({ state, actions }) {
       >
         ▾ view
         <span id="filter-groups-view-badge" class="view-badge" hidden=${badge === 0}>${badge || ''}</span>
-      </button>
+      <//>
       <div
         ref=${menuRef}
         id="filter-groups-view-menu"

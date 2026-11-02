@@ -41,7 +41,7 @@ func TestDashboardCSS_StylingSweep(t *testing.T) {
 	// distinguishes it from `.filter-bar button.tool:hover { …; color: … }`.
 	must("\nbutton.tool:hover { border-color: #58a6ff; }", "the fallback hover is border-only (leak-free)")
 	// The deploy/summon action is a `.primary`, not a `.tool`.
-	must(".template-card .tc-actions button.primary {", "the template deploy .primary button is themed")
+	must(".template-card .tc-actions button:where(:not(.ui-btn)).primary {", "the template deploy .primary button is themed")
 
 	// Group 2 — A1 sizing (both skins): the "⧉ manage templates…" tool button
 	// beside the template <select> gets the dir-browse flex idiom so it matches
@@ -56,7 +56,7 @@ func TestDashboardCSS_StylingSweep(t *testing.T) {
 
 	// Group 4 — A8 mail-reader action bar: reply / focus / mark / delete are
 	// plain <button>s with no .tool class, so they needed a base rule.
-	must(".mail-reader-actions button {", "the mail-reader action bar has a base button skin")
+	must(".mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)) {", "the mail-reader action bar has a base button skin")
 
 	// Group 5 — B1/B2/B3 buttons that sit outside a .row-actions wrapper.
 	must(".plugin-step-edit-head button,", "the plugin step-editor remove button is themed")
@@ -73,7 +73,7 @@ func TestDashboardCSS_StylingSweep(t *testing.T) {
 
 	// C1 — the spawn-dialog attachment ✕ stays a ghost button in the wizard skin:
 	// the blanket repaint now excludes .att-remove.
-	must("button:not(#agent-spawn-submit):not(.att-remove) {", "the wizard spawn blanket excludes the ghost att-remove button")
+	must("button:where(:not(.ui-btn)):not(#agent-spawn-submit):not(.att-remove) {", "the wizard spawn blanket excludes the ghost att-remove button")
 
 	// Anti-regression: the plain-mode gaps must NOT be closed by widening a
 	// body.wizard rule (the wizard selectors stay modal-id-scoped). A bare

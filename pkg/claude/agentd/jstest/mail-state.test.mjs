@@ -107,7 +107,7 @@ test('a decision notification offers its options and posts the pick through the 
   const message = { id: 4, from_agent: 'agt_x', from_title: 'designer', options: ['Tabs', 'Sidebar'], recommended: 1 };
   const view = await harness.mount(harness.html`<${DecisionChoices} message=${message} fetchImpl=${fetchImpl}
     toast=${(text, bad) => toasts.push([text, bad])} onDone=${() => { done += 1; }} />`);
-  assert.ok(harness.getByRole(view.container, 'button', { name: 'Tabs ★' }).classList.contains('primary'));
+  assert.ok(harness.getByRole(view.container, 'button', { name: 'Tabs ★' }).classList.contains('ui-btn-primary'));
   await harness.act(async () => { harness.getByRole(view.container, 'button', { name: 'Sidebar' }).click(); await new Promise((r) => setTimeout(r, 0)); });
   assert.deepEqual(requests, [{ url: '/api/human-messages/reply', body: { id: 4, choice: 2 } }]);
   assert.deepEqual(toasts, [['Sent “Sidebar” to designer', false]]);

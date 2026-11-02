@@ -6,6 +6,7 @@ import { dashboardState } from './snapshot-store.js';
 import { Fragment, h, render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { TransferTray } from './transfer-card.js';
 import { LockReason } from './lock-reason.js';
 import { isPageNode } from './node-api.js';
@@ -1946,27 +1947,27 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     <${FormFillBar} form="spawn" keepValues=${!!queued} fillable=${!current.options.autoSpawn} provenance=${provenance.current}
       claims=${Object.keys(draft.contextFeatures || {}).length ? SPAWN_CONTEXT_CLAIM : NO_CLAIMS} />
     <div class="modal-buttons">
-      ${queued && html`<button id="agent-spawn-queued-discard" class="confirm-danger" type="button" disabled=${busy}
+      ${queued && html`<${Button} variant="danger" id="agent-spawn-queued-discard" disabled=${busy}
         title="Remove this prepared spawn from the queue without launching it"
-        onClick=${() => { void discardQueued(); }}>Discard</button>`}
-      <button id="agent-spawn-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>${queued ? 'Close' : 'Cancel'}</button>
+        onClick=${() => { void discardQueued(); }}>Discard</${Button}>`}
+      <${Button} id="agent-spawn-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>${queued ? 'Close' : 'Cancel'}</${Button}>
       <span id="agent-spawn-progress" class="agent-spawn-progress" role="status" aria-live="polite">
         ${busy ? progress : ''}
       </span>
       <span class="spacer"></span>
-      <button id="agent-spawn-queue" class="agent-spawn-queue-btn" type="button" disabled=${busy}
+      <${Button} class="agent-spawn-queue-btn" id="agent-spawn-queue" disabled=${busy}
         title=${queued
           ? withShortcut('Save changes and keep it queued', 'dialog-submit')
           : 'Prepare this agent without starting it — launch it later from ⏸ queued. Worktree creation, branch fetch and the spawn itself happen at launch. (' + shortcutText('dialog-queue') + ')'}
         onClick=${() => { void saveQueued(); }}>
         ${queued ? 'Save' : '⏸ Add to queue'}
-      </button>
-      <button id="agent-spawn-submit" class=${`${queued ? 'agent-spawn-launch-btn' : 'primary'}${busy ? ' slop-pull-active' : ''}`} type="button"
-        disabled=${busy} aria-busy=${busy ? 'true' : undefined}
+      </${Button}>
+      <${Button} id="agent-spawn-submit" variant=${queued ? 'success' : 'primary'} class=${[queued && 'agent-spawn-launch-btn', busy && 'slop-pull-active'].filter(Boolean).join(' ')}
+        disabled=${busy} busy=${busy}
         title=${queued ? 'Launch it now and remove it from the queue' : requestOnly ? withShortcut(`Send the request to ${remote.node}'s operator`, 'dialog-submit') : withShortcut('Spawn the agent now', 'dialog-submit')}
         onClick=${() => { void submit(); }}>
         ${busy && !queueing ? (requestOnly ? 'Sending…' : 'Spawning…') : (queued ? '▶ Spawn now' : requestOnly ? 'Send request' : 'Spawn')}
-      </button>
+      </${Button}>
     </div>
   </${Overlay}>`;
 }

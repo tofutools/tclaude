@@ -4,6 +4,7 @@ import htm from 'htm';
 import { NOTIFY_TYPES, NOTIFY_DELIVERIES } from './notify-state.js';
 import { browserNotifyPermission, notificationsUnsupportedNote } from './browser-notify.js';
 import { useDismissablePopover } from './hover-popover.js';
+import { Button, Select } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -55,7 +56,7 @@ export function NotifyApp({ state, actions, documentRef = document }) {
   const popClass = [current.open && 'open', !settings.enabled && 'master-off'].filter(Boolean).join(' ');
 
   return html`<span class="notify-bell-wrap" ref=${rootRef}>
-    <button class=${`notify-bell${current.bellEnabled ? '' : ' muted'}`} id="notify-global"
+    <button data-ui-exempt class=${`notify-bell${current.bellEnabled ? '' : ' muted'}`} id="notify-global"
       type="button" aria-haspopup="true" aria-expanded=${current.open ? 'true' : 'false'}
       aria-controls="notify-pop" data-enabled=${current.bellEnabled ? '1' : '0'}
       hidden=${!current.bellReady} title=${bellTitle} onClick=${() => { void actions.toggle(); }}>
@@ -88,17 +89,17 @@ export function NotifyApp({ state, actions, documentRef = document }) {
       <div class="notify-pop-sep"></div>
       <label class="notify-pop-row notify-pop-delivery" title="Where a notification is raised. Desktop uses this machine's notifier; Browser raises it from any open dashboard tab (reaches you when you're remote); Both does each.">
         <span>Deliver via</span>
-        <select id="notify-pop-delivery" value=${settings.delivery}
+        <${Select} size="sm" id="notify-pop-delivery" value=${settings.delivery}
           onChange=${(event) => { void actions.setDelivery(event.currentTarget.value); }}>
           ${NOTIFY_DELIVERIES.map((value) => html`<option key=${value} value=${value}
             selected=${settings.delivery === value}>${DELIVERY_LABELS[value]}</option>`)}
-        </select>
+        <//>
       </label>
       ${deliveryNote && html`<div class="notify-pop-hint" id="notify-pop-delivery-note">${deliveryNote}</div>`}
       <div class="notify-pop-sep"></div>
-      <button class="notify-pop-config" id="notify-pop-config" type="button"
+      <${Button} size="sm" class="notify-pop-config" id="notify-pop-config"
         title="Open the Config tab for the full notifications settings (cooldown, custom command, advanced rules)."
-        onClick=${actions.openConfig}>Config tab ↗</button>
+        onClick=${actions.openConfig}>Config tab ↗<//>
     </div>
   </span>`;
 }

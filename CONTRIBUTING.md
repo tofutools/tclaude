@@ -211,6 +211,15 @@ attributes (`disabled`, `aria-pressed`, `aria-busy`, `aria-invalid`), and
 colours are `--ui-*` variables that the wizard and slop skins override, so a
 new control needs no CSS of its own.
 
+Preact code uses the components in `dashboard/js/ui-components.js` rather than
+the raw classes: `Button` (`variant`, `size="sm"`, `icon`, `busy`, `pressed`),
+`Select`, `Input`, `Textarea`, `Check`, `Switch`, `Seg`, and `Menu` with
+`MenuItem`, `MenuSep` and `MenuHeading`. They pass other props through, take
+extra classes as `class`, and hand their element to `domRef`, because a Preact 10
+function component cannot take `ref`. `Button` defaults to `type="button"`. The
+classes stay for innerHTML and `createElement` code, where `uiButtonClass()`
+builds a button's class list.
+
 `jstest/ui-controls.test.mjs` fails when a file gains a `<button>` or `<select>`
 without a `ui-*` class. Mark a deliberate one-off, such as an overlay window
 control, with `data-ui-exempt`. Older markup is held by a per-file baseline;

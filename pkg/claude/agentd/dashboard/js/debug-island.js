@@ -2,6 +2,7 @@ import { Fragment, h, render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ActivityNodeSwitch, activityTarget } from './activity-node.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 export const DEBUG_POLL_MS = 10_000;
@@ -193,12 +194,12 @@ export function DebugApp({
       <${ActivityNodeSwitch} />
       <span class="spacer"></span>
       <span id="debug-updated" class="muted" aria-live="polite">${updatedLabel(current.response)}</span>
-      <button class="tool" id="debug-reset" disabled=${current.resetting}
+      <${Button} id="debug-reset" disabled=${current.resetting}
         title="Discard every recorded sample and start a fresh distribution — useful after changing what's being measured (agent count, config)"
         onClick=${actions.reset}>
         <span class="theme-copy-regular">${current.resetting ? '… resetting' : '↺ reset stats'}</span>
         <span class="theme-copy-wizard">${current.resetting ? '… clearing' : '⚗ clear readings'}</span>
-      </button>
+      <//>
     </div>
     <div id="debug-list" aria-busy=${busy}><${DebugContents} current=${current} /></div>
   </${Fragment}>`;

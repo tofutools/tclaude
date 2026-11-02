@@ -1,6 +1,7 @@
 import { Fragment, h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -366,11 +367,11 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
           onChange=${(event) => update({ queueWhenOffline: event.currentTarget.checked })} /> Queue while offline
       </label>`}
       <div class="cron-create-error" id="cron-create-error" role="alert">${error}</div>
-      <div class="modal-buttons"><button id="cron-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
-        <span class="spacer"></span>${!editing && html`<button id="cron-create-save-another" class="secondary" type="button" disabled=${busy}
-          title="Save and reset the form so you can create another in the same sitting" onClick=${() => submit(true)}>Save & create another</button>`}
-        <button id="cron-create-submit" class="primary" type="button" disabled=${busy} onClick=${() => submit(false)}>
-          ${busy ? (editing ? 'Saving…' : 'Creating…') : (editing ? 'Save' : 'Create')}</button></div>
+      <div class="modal-buttons"><${Button} id="cron-create-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
+        <span class="spacer"></span>${!editing && html`<${Button} variant="ghost" id="cron-create-save-another" disabled=${busy}
+          title="Save and reset the form so you can create another in the same sitting" onClick=${() => submit(true)}>Save & create another</${Button}>`}
+        <${Button} variant="primary" id="cron-create-submit" disabled=${busy} onClick=${() => submit(false)}>
+          ${busy ? (editing ? 'Saving…' : 'Creating…') : (editing ? 'Save' : 'Create')}</${Button}></div>
     </${Overlay}>
     ${picker && html`<${AgentPicker} descriptor=${picker} snapshot=${snapshot} onChoose=${choose}
       onClose=${() => setPicker(null)} confirmDiscard=${confirmDiscard}/>`}

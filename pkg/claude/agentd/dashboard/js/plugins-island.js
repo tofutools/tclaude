@@ -1,6 +1,7 @@
 import { Fragment, h, render } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
+import { Button, Input } from './ui-components.js';
 import { useDialogFocus } from './dialog-focus.js';
 import { AsyncLoadState } from './async-load-state.js';
 import { relTime } from './helpers.js';
@@ -83,11 +84,11 @@ function PluginCard({ plugin, state, actions, busy }) {
       ${plugin.descr && html`<span class="muted">${plugin.descr}</span>`}
       <span class="spacer"></span>
       <div class="row-actions">
-        <button disabled=${busy.has(checkKey)} onClick=${() => actions.checkPlugin(plugin, checkKey)}
-          title="Re-run this plugin's check commands now">${busy.has(checkKey) ? 'checking…' : 'check'}</button>
-        <button onClick=${() => state.openModal(plugin)} title="Edit this plugin's definition">edit</button>
-        <button class="danger" onClick=${() => actions.deletePlugin(plugin, pluginBusyKey('plugin-delete', plugin.name))}
-          title="Remove this plugin definition (does not undo anything its steps did)">delete</button>
+        <${Button} size="sm" disabled=${busy.has(checkKey)} onClick=${() => actions.checkPlugin(plugin, checkKey)}
+          title="Re-run this plugin's check commands now">${busy.has(checkKey) ? 'checking…' : 'check'}<//>
+        <${Button} size="sm" onClick=${() => state.openModal(plugin)} title="Edit this plugin's definition">edit<//>
+        <${Button} size="sm" variant="ghost danger" onClick=${() => actions.deletePlugin(plugin, pluginBusyKey('plugin-delete', plugin.name))}
+          title="Remove this plugin definition (does not undo anything its steps did)">delete<//>
       </div>
     </div>
     <table class="plugin-steps">
@@ -187,18 +188,18 @@ export function PluginsApp({ state, actions, fleet = fleetState, confirm = shell
   const checkKey = pluginBusyKey('plugins-check-all');
   return html`<div class="plugins-island">
     <div class="filter-bar">
-      <input ref=${inputRef} id="filter-plugins" type="text" aria-label="Filter plugins"
+      <${Input} domRef=${inputRef} id="filter-plugins" aria-label="Filter plugins"
         placeholder="Filter (name / descr / step name / command)" autocomplete="off" spellcheck=${false}
         value=${current.query} onInput=${(event) => state.setQuery(event.currentTarget.value)} />
       <span class="filter-count" id="filter-plugins-count" aria-live="polite">${count}</span>
       <button class="clear-filter" id="filter-plugins-clear" title="Clear filter" aria-label="Clear plugin filter"
         onClick=${() => { state.setQuery(''); inputRef.current?.focus(); }}>×</button>
       <span class="spacer"></span>
-      <button id="plugins-check-now" class="tool" disabled=${current.busy.has(checkKey)}
+      <${Button} id="plugins-check-now" disabled=${current.busy.has(checkKey)}
         title="Re-run every plugin's check commands right now (the daemon also re-checks once a minute)"
-        onClick=${() => actions.checkAll(checkKey)}>${current.busy.has(checkKey) ? 'checking…' : '⟳ check all now'}</button>
-      <button id="plugin-create-open" class="primary" onClick=${() => state.openModal()}
-        title="Define a new plugin — a named list of check/run shell-command steps">+ new plugin</button>
+        onClick=${() => actions.checkAll(checkKey)}>${current.busy.has(checkKey) ? 'checking…' : '⟳ check all now'}<//>
+      <${Button} id="plugin-create-open" variant="primary" onClick=${() => state.openModal()}
+        title="Define a new plugin — a named list of check/run shell-command steps">+ new plugin<//>
     </div>
     ${peers.length ? html`<h3 class="fused-self-head"><span class="scope-pill" style=${`--nc:${fleet.fleet.value.self.color}`}>⌂ ${fleet.fleet.value.self.name}</span></h3>` : null}
     <${AsyncLoadState} label="Plugins" request=${current.request} retry=${actions.refresh} errorClass="plugins-error" />
@@ -261,13 +262,13 @@ export function PluginsModal({ state, actions }) {
         <textarea id="plugin-modal-descr" rows="2" placeholder="optional — what this plugin provides" spellcheck=${false}
           value=${draft.descr} onInput=${(event) => state.updateModal({ descr: event.currentTarget.value })}></textarea></label>
       <div id="plugin-modal-steps">${draft.steps.map((step, index) => html`<${StepEditor} key=${step._key} step=${step} index=${index} state=${state} />`)}</div>
-      <div class="modal-buttons"><button id="plugin-modal-add-step" type="button" class="tool" onClick=${() => state.addStep()}
-        title="Append another check/run step">+ add step</button></div>
+      <div class="modal-buttons"><${Button} id="plugin-modal-add-step" onClick=${() => state.addStep()}
+        title="Append another check/run step">+ add step</${Button}></div>
       <div class="cron-create-error" id="plugin-modal-error" role=${draft.error ? 'alert' : undefined}>${draft.error}</div>
       <div class="modal-buttons">
-        <button id="plugin-modal-cancel" type="button" onClick=${close}>Cancel</button><span class="spacer"></span>
-        <button id="plugin-modal-submit" class="primary" type="button" disabled=${draft.submitting}
-          onClick=${() => actions.save(draft)}>${draft.submitting ? 'Saving…' : draft.mode === 'edit' ? 'Save changes' : 'Create plugin'}</button>
+        <${Button} id="plugin-modal-cancel" onClick=${close}>Cancel</${Button}><span class="spacer"></span>
+        <${Button} variant="primary" id="plugin-modal-submit" disabled=${draft.submitting}
+          onClick=${() => actions.save(draft)}>${draft.submitting ? 'Saving…' : draft.mode === 'edit' ? 'Save changes' : 'Create plugin'}</${Button}>
       </div>
     </div>
   </div>`;

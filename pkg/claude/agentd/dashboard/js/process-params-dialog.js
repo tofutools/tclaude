@@ -4,6 +4,7 @@
 import { h, render } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 
 const html = htm.bind(h);
@@ -141,7 +142,7 @@ export function ParamsDialog({ model, onMutated, complete, confirmDiscard, regis
       </div>`)}
     </div>
     <div class="process-param-toolbar"><button ref=${addButton} class="process-action" type="button" onClick=${add}>+ add param</button><span class="spacer"></span><div class="process-param-error" role="alert">${error}</div></div>
-    <div class="modal-buttons"><button type="button" onClick=${requestClose}>Cancel</button><button class="primary" type="button" onClick=${apply}>Apply</button></div>
+    <div class="modal-buttons"><${Button} onClick=${requestClose}>Cancel</${Button}><${Button} variant="primary" onClick=${apply}>Apply</${Button}></div>
   </${Overlay}>`;
 }
 

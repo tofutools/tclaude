@@ -2,6 +2,7 @@ import { SavedPromptPicker } from './saved-prompts.js';
 import { Fragment, h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button, Select } from './ui-components.js';
 import { TransferTray } from './transfer-card.js';
 import {
   ManagementOverlay as Overlay,
@@ -61,7 +62,7 @@ function OperatorAttachmentList({ files, busy, remove }) {
     ${files.map((file, index) => html`<li key=${`${index}:${operatorFileName(file, index)}:${file?.size || 0}`}>
       <span class="att-name">${operatorFileName(file, index)}</span>
       <span class="att-size">${file?.size || 0} B</span>
-      <button type="button" class="att-remove" disabled=${busy}
+      <button data-ui-exempt type="button" class="att-remove" disabled=${busy}
         aria-label=${`Remove ${operatorFileName(file, index)}`} onClick=${() => remove(index)}>✕</button>
     </li>`)}
   </ul>`;
@@ -175,16 +176,16 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
       disabled=${busy} confirmDiscard=${confirmDiscard}/>
     ${!textOnly && html`<div class="cron-create-row"><span class="cron-create-label"><${Words} plain="Attachments" wizard="Enclosures"/></span>
       <div class="cron-create-target spawn-attachments"><div class="spawn-attachments-controls">
-        <button type="button" id="operator-message-attach-btn" disabled=${busy}
-          onClick=${() => fileInputRef.current?.click()}><${Words} plain="📎 Attach files…" wizard="📎 Bind relics…"/></button>
+        <${Button} id="operator-message-attach-btn" disabled=${busy}
+          onClick=${() => fileInputRef.current?.click()}><${Words} plain="📎 Attach files…" wizard="📎 Bind relics…"/><//>
         <input ref=${fileInputRef} type="file" id="operator-message-attach-input" multiple hidden disabled=${busy}
           onChange=${(event) => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
         <span class="spawn-attachments-hint"><${Words} plain="…or drag files here / paste a screenshot" wizard="…or draw relics here / paste a captured vision"/></span>
       </div><${OperatorAttachmentList} files=${files} busy=${busy} remove=${removeFile}/></div></div>`}
     <${ErrorLine} id="operator-message-error" value=${error}/>
-    <div class="modal-buttons"><button id="operator-message-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
-      <span class="spacer"></span><button id="operator-message-submit" class="primary operator-message-submit" type="button" disabled=${busy} onClick=${submit}>
-        <${Words} plain=${busy ? 'Queueing…' : allLive ? 'Announce' : 'Send'} wizard=${busy ? '✒ Sending missive…' : allLive ? '📯 Proclaim' : '✒ Send missive'}/></button></div>
+    <div class="modal-buttons"><${Button} id="operator-message-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></${Button}>
+      <span class="spacer"></span><${Button} variant="primary" class="operator-message-submit" id="operator-message-submit" disabled=${busy} onClick=${submit}>
+        <${Words} plain=${busy ? 'Queueing…' : allLive ? 'Announce' : 'Send'} wizard=${busy ? '✒ Sending missive…' : allLive ? '📯 Proclaim' : '✒ Send missive'}/></${Button}></div>
   </${Overlay}>`;
 }
 
@@ -223,23 +224,23 @@ export function TargetPicker({ prefix, value, onChange, snapshot, pickAgent, gro
       <input id=${`${prefix}-target`} type="text" value=${value.target}
         placeholder="agt_ id / title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false"
         onInput=${(event) => onChange({ ...value, target: event.currentTarget.value })} />
-      <button type="button" id=${`${prefix}-target-pick`} title="Pick from the agent / hero list" onClick=${choose}>🔍</button>
+      <${Button} id=${`${prefix}-target-pick`} title="Pick from the agent / hero list" onClick=${choose}>🔍<//>
     </div>`}
     ${value.mode === 'solo' && scope && html`<div class="cron-target-input-row" id=${`${prefix}-target-scoped`}>
-      <select id=${`${prefix}-scoped-member`} value=${value.target}
+      <${Select} id=${`${prefix}-scoped-member`} value=${value.target}
         onChange=${(event) => onChange({ ...value, target: event.currentTarget.value })}>
         ${memberOptions.length
           ? html`<${Fragment}><option value="">${wizWord('(pick a member)', '(pick a hero)')}</option>${memberOptions.map((member) => html`<option key=${member.key} value=${member.key}>${member.title || member.conv_id}${member.online ? '' : ' (offline)'}</option>`)}</${Fragment}>`
           : html`<option value="">${wizWord('(no members in this group)', '(no heroes in this party)')}</option>`}
-      </select>
+      <//>
     </div>`}
     ${value.mode === 'group' && html`<div class="cron-target-input-row" id=${`${prefix}-target-group`}>
-      <select id=${`${prefix}-group`} value=${value.groupName} disabled=${!!scope}
+      <${Select} id=${`${prefix}-group`} value=${value.groupName} disabled=${!!scope}
         onChange=${(event) => onChange({ ...value, groupName: event.currentTarget.value })}>
         ${groupOptions.length
           ? html`<${Fragment}><option value="">${wizWord('(pick a group)', '(pick a party)')}</option>${groupOptions.map((name) => html`<option key=${name} value=${name}>${name}${!groups.includes(name) ? ' (missing)' : ''}</option>`)}</${Fragment}>`
           : html`<option value="">${wizWord('(no groups — create one first)', '(no parties — form one first)')}</option>`}
-      </select>
+      <//>
     </div>`}
   </div>`;
 }
@@ -437,7 +438,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     <label class="cron-create-row"><span class="cron-create-label" title="Leave blank to multicast as the human operator; a solo message needs a sender agent">From</span><div class="cron-create-target"><div class=${`cron-target-input-row${lock.from ? ' locked-field' : ''}`}>
       <input id="message-create-from" type="text" value=${lock.from ? '' : from} placeholder=${lock.from ? 'you (the operator)' : 'blank = you (the operator) · or a sender: agt_ id / title / conv-id'}
         disabled=${!!lock.from} autocomplete="off" spellcheck="false" onInput=${(event) => setFrom(event.currentTarget.value)} />
-      <button type="button" id="message-create-from-pick" title="Pick from the agent / hero list" disabled=${!!lock.from} onClick=${chooseFrom}>🔍</button>
+      <${Button} id="message-create-from-pick" title="Pick from the agent / hero list" disabled=${!!lock.from} onClick=${chooseFrom}>🔍<//>
     </div><${LockReason} id="message-create-from-lock" why=${lock.from}/></div></label>
     ${!scopedGroup ? html`<label class="cron-create-row" id="message-create-target-row"><span class="cron-create-label"><${Words} plain="Target" wizard="Recipient"/></span>
       <${TargetPicker} prefix="message-create" value=${target} onChange=${setTarget} snapshot=${snapshot} pickAgent=${state.pickAgent} groupLocked=${lock.group || ''}/>
@@ -446,12 +447,12 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
         ? `${members.length} current member${members.length === 1 ? '' : 's'} — ${preset === 'online' ? 'online members selected, following live presence; tick an offline member to queue it in their inbox.'
           : preset === 'all' ? 'all selected follows live membership.' : 'custom selection is retained across live updates.'}`
         : `Group “${scopedGroup}” is missing; sending is blocked.`}</p>
-      <div class="cleanup-toolbar recipient-picks" id="message-create-picks"><button type="button" id="message-create-members-all" onClick=${() => setPreset('all')}>all</button>
-        <button type="button" id="message-create-members-none" onClick=${() => choose([])}>none</button>
-        ${RECIPIENT_PICKS.map((pick) => html`<button type="button" key=${pick.key} id=${`message-create-pick-${pick.key}`}
+      <div class="cleanup-toolbar recipient-picks" id="message-create-picks"><${Button} size="sm" id="message-create-members-all" onClick=${() => setPreset('all')}>all<//>
+        <${Button} size="sm" id="message-create-members-none" onClick=${() => choose([])}>none<//>
+        ${RECIPIENT_PICKS.map((pick) => html`<${Button} size="sm" key=${pick.key} pressed=${preset === pick.key} id=${`message-create-pick-${pick.key}`}
           class=${`recipient-pick${preset === pick.key ? ' active' : ''}`} disabled=${!pickCounts.get(pick.key)}
           title=${`${pick.title}. Click: only these · Shift-click: add · ${modClickText()}: narrow`}
-          onClick=${(event) => applyPick(pick, event)}>${pick.label} <span class="recipient-pick-count">${pickCounts.get(pick.key)}</span></button>`)}
+          onClick=${(event) => applyPick(pick, event)}>${pick.label} <span class="recipient-pick-count">${pickCounts.get(pick.key)}</span><//>`)}
         <span class="spacer"></span><span class="cleanup-count" id="message-create-members-count">${selectedMembers.length} of ${members.length} selected</span></div>
       <div class="cleanup-list" id="message-create-members">${members.length ? members.map((member) => html`<div class=${`cleanup-row${member.online ? '' : ' recipient-offline'}`} key=${member.key}><label>
         <input type="checkbox" data-conv=${member.conv_id} checked=${selectedKeys.has(member.key)}
@@ -472,9 +473,9 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Body" wizard="Missive"/></span><textarea ref=${bodyRef} id="message-create-body" rows="4"
       value=${body} placeholder=${wizWord('message text (required)', 'missive text (required)')} spellcheck="false" onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)}></textarea></label>
     <${ErrorLine} id="message-create-error" value=${error}/>
-    <div class="modal-buttons"><button id="message-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
-      <span class="spacer"></span><button id="message-create-submit" class="primary" type="button" disabled=${busy || (scopedGroup && (!groupExists || !selectedMembers.length))} onClick=${submit}>
-        <${Words} plain=${busy ? 'Sending…' : 'Send'} wizard=${busy ? 'Sending…' : '✒ Send missive'}/></button></div>
+    <div class="modal-buttons"><${Button} id="message-create-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></${Button}>
+      <span class="spacer"></span><${Button} variant="primary" id="message-create-submit" disabled=${busy || (scopedGroup && (!groupExists || !selectedMembers.length))} onClick=${submit}>
+        <${Words} plain=${busy ? 'Sending…' : 'Send'} wizard=${busy ? 'Sending…' : '✒ Send missive'}/></${Button}></div>
   </${Overlay}>`;
 }
 
@@ -550,15 +551,15 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
       placeholder=${`your reply — ${shortcutText('dialog-submit')} to send`} spellcheck="false" onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)}></textarea></label>
     ${!remote && html`<div class="cron-create-row"><span class="cron-create-label">Attachments</span>
       <div class="cron-create-target spawn-attachments"><div class="spawn-attachments-controls">
-        <button type="button" id="human-reply-attach-btn" disabled=${busy}
-          onClick=${() => fileInputRef.current?.click()}>📎 Attach files…</button>
+        <${Button} id="human-reply-attach-btn" disabled=${busy}
+          onClick=${() => fileInputRef.current?.click()}>📎 Attach files…<//>
         <input ref=${fileInputRef} type="file" id="human-reply-attach-input" multiple hidden disabled=${busy}
           onChange=${(event) => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
         <span class="spawn-attachments-hint">…or drag files here / paste a screenshot</span>
       </div><${OperatorAttachmentList} files=${files} busy=${busy} remove=${removeFile}/></div></div>`}
     <${ErrorLine} id="human-reply-error" value=${error}/><div class="modal-buttons">
-      <button id="human-reply-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span>
-      <button id="human-reply-submit" class="primary" type="button" disabled=${busy || !online} onClick=${submit}>${busy ? 'Sending…' : 'Send reply'}</button>
+      <${Button} id="human-reply-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}><span class="spacer"></span>
+      <${Button} variant="primary" id="human-reply-submit" disabled=${busy || !online} onClick=${submit}>${busy ? 'Sending…' : 'Send reply'}</${Button}>
     </div>
   </${Overlay}>`;
 }
@@ -592,7 +593,7 @@ function ScopeSummary({ scope }) {
 // nothing to disclose gets an inert placeholder rather than a dead control.
 function ScopeTwisty({ scopable, open, toggle, slug }) {
   if (!scopable) return html`<span class="perm-scope-twisty empty" aria-hidden="true"></span>`;
-  return html`<button type="button" class="perm-scope-twisty" aria-expanded=${open ? 'true' : 'false'}
+  return html`<button data-ui-exempt type="button" class="perm-scope-twisty" aria-expanded=${open ? 'true' : 'false'}
     aria-label=${`${open ? 'Hide' : 'Add or edit'} scopes for ${slug}`}
     title=${open ? 'Hide scopes' : 'Add or edit scopes: narrow this grant to particular targets'}
     onClick=${toggle}><svg class="perm-scope-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5"/></svg></button>`;
@@ -607,7 +608,7 @@ function PermissionFilter({ value, onChange }) {
   return html`<div class="perm-edit-filter"><input ref=${inputRef} id="perm-edit-filter" type="text" value=${value} placeholder="Filter slugs…" autocomplete="off" spellcheck="false"
     onInput=${(event) => onChange(event.currentTarget.value)}
     onKeyDown=${(event) => { if (event.key === 'Escape' && value) { event.preventDefault(); event.stopPropagation(); onChange(''); } }} />
-    ${value && html`<button type="button" id="perm-edit-filter-clear" title="Clear filter" aria-label="Clear filter"
+    ${value && html`<button type="button" data-ui-exempt id="perm-edit-filter-clear" title="Clear filter" aria-label="Clear filter"
       onClick=${() => { onChange(''); inputRef.current?.focus(); }}>×</button>`}</div>`;
 }
 
@@ -668,12 +669,12 @@ function ScopeDimEditor({ dim, values, options, onChange, declared = true, onDra
     <div class="perm-scope-dim-body">
       <span class="perm-scope-chips">
         ${values.map((value) => html`<span key=${value} class="perm-scope-chip">${value}
-          <button type="button" class="x" aria-label=${`Remove ${dim}=${value}`} onClick=${() => remove(value)}>×</button></span>`)}
-        ${unused.length ? html`<select class="perm-scope-add" aria-label=${`Add a ${dim} value`}
+          <button data-ui-exempt type="button" class="x" aria-label=${`Remove ${dim}=${value}`} onClick=${() => remove(value)}>×</button></span>`)}
+        ${unused.length ? html`<${Select} class="perm-scope-add" aria-label=${`Add a ${dim} value`}
           onChange=${(event) => add(event.currentTarget.value)}>
           <option value="" selected>+ add…</option>
           ${unused.map((value) => html`<option key=${value} value=${value}>${value}</option>`)}
-        </select>` : null}
+        <//>` : null}
         <input type="text" class="perm-scope-free" value=${draft}
           placeholder=${unused.length ? 'or type a value' : 'type a value'}
           autocomplete="off" spellcheck=${false} aria-label=${`Type a ${dim} value`}
@@ -684,9 +685,9 @@ function ScopeDimEditor({ dim, values, options, onChange, declared = true, onDra
     event.preventDefault();
     commitDraft();
   }} />
-        <button type="button" class="perm-scope-free-add" aria-disabled=${draft.trim() ? 'false' : 'true'}
+        <${Button} class="perm-scope-free-add" aria-disabled=${draft.trim() ? 'false' : 'true'}
           aria-label=${`Add the typed ${dim} value`} title="Add the typed value"
-          onMouseDown=${holdFocus} onClick=${commitDraft}>+</button>
+          onMouseDown=${holdFocus} onClick=${commitDraft}>+<//>
       </span>
       ${values.length ? null : html`<div class="perm-scope-hint">empty — unconstrained on this dimension</div>`}
     </div>
@@ -718,12 +719,12 @@ function ScopeDrawer({ row, scope, snapshot, onChange, effective, onDraft }) {
 // CarryChoice says who a Steward's grant is for. The second option stores it, so
 // it reads as what it does rather than as a scope of this one agent.
 function CarryChoice({ slug, carried, onChange }) {
-  return html`<select class="perm-carry" aria-label=${`Who ${slug} is for`}
+  return html`<${Select} class="perm-carry" aria-label=${`Who ${slug} is for`}
     title="All future Stewards stores this grant and gives it to each new Steward"
     onChange=${(event) => onChange(event.currentTarget.value === 'all')}>
     <option value="this" selected=${!carried}>This Steward only</option>
     <option value="all" selected=${carried}>All future Stewards (stored)</option>
-  </select>`;
+  <//>`;
 }
 
 // SudoActive lists what an agent holds through sudo now, with its time left
@@ -742,8 +743,8 @@ function SudoActive({ grants, duration, maxSeconds, busy, act, steward }) {
   };
   return html`<section class="sudo-active" id="sudo-active" aria-label="Active sudo grants">
     <div class="sudo-active-head"><b>Active now (${grants.length})</b><span class="spacer"></span>
-      <button type="button" id="sudo-revoke-all" disabled=${busy} title=${grants.some((grant) => grant.carried) ? 'End every sudo grant this agent holds, including what is stored for future Stewards' : 'End every sudo grant this agent holds'}
-        onClick=${() => act.revokeAll()}>Revoke all</button></div>
+      <${Button} size="sm" variant="danger" id="sudo-revoke-all" disabled=${busy} title=${grants.some((grant) => grant.carried) ? 'End every sudo grant this agent holds, including what is stored for future Stewards' : 'End every sudo grant this agent holds'}
+        onClick=${() => act.revokeAll()}>Revoke all<//></div>
     ${grants.map((grant) => {
     const blocked = refusal(grant);
     const chips = scopeChips(sudoGrantScope(grant));
@@ -753,9 +754,9 @@ function SudoActive({ grants, duration, maxSeconds, busy, act, steward }) {
       ${steward && html`<span class="perm-source">${grant.carried ? 'all future Stewards: revoking ends it for them too' : 'this Steward only'}</span>`}
       <span class="sudo-active-left">${sudoDurationText(sudoSecondsLeft(grant, now))} left</span>
       ${grant.uses_limit > 0 && html`<span class="sudo-active-left sudo-uses-left" title="Ends at whichever limit comes first">${grant.uses_left} of ${grant.uses_limit} uses left</span>`}
-      <button type="button" class="sudo-extend" disabled=${busy || !!blocked} title=${blocked || `Add ${duration} to this grant`}
-        aria-label=${`Add ${duration} to ${grant.slug}`} onClick=${() => act.extend([grant.id])}>+${adds ? duration : '…'}</button>
-      <button type="button" class="sudo-revoke" disabled=${busy} title=${grant.carried ? 'Also ends it for all future Stewards' : ''} aria-label=${`Revoke ${grant.slug}`} onClick=${() => act.revoke([grant.id])}>Revoke</button>
+      <${Button} size="sm" class="sudo-extend" disabled=${busy || !!blocked} title=${blocked || `Add ${duration} to this grant`}
+        aria-label=${`Add ${duration} to ${grant.slug}`} onClick=${() => act.extend([grant.id])}>+${adds ? duration : '…'}<//>
+      <${Button} size="sm" variant="ghost danger" class="sudo-revoke" disabled=${busy} title=${grant.carried ? 'Also ends it for all future Stewards' : ''} aria-label=${`Revoke ${grant.slug}`} onClick=${() => act.revoke([grant.id])}>Revoke<//>
     </div>`;
   })}
   </section>`;
@@ -772,8 +773,8 @@ function SudoLimits({ duration, setDuration, uses, setUses, usesBad, uncounted, 
     : seconds ? `Ends about ${new Date(Date.now() + seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · maximum ${sudoDurationText(maxSeconds)}` : '';
   return html`<div class="sudo-limits" id="sudo-limits">
     <div class="sudo-limits-row"><span class="sudo-limits-label">Duration</span>
-      <div class="sudo-presets" role="group" aria-label="Duration presets">${presets.map((preset) => html`<button type="button" key=${preset}
-        class=${preset === duration ? 'active' : ''} aria-pressed=${preset === duration ? 'true' : 'false'} onClick=${() => setDuration(preset)}>${preset}</button>`)}</div>
+      <div class="sudo-presets" role="group" aria-label="Duration presets">${presets.map((preset) => html`<${Button} size="sm" key=${preset}
+        pressed=${preset === duration} class=${preset === duration ? 'active' : ''} onClick=${() => setDuration(preset)}>${preset}<//>`)}</div>
       <input id="sudo-duration" type="text" value=${duration} aria-label="Custom duration" placeholder="custom" autocomplete="off" spellcheck="false"
         onInput=${(event) => setDuration(event.currentTarget.value)} />
       <span class=${`sudo-limits-hint${over || (duration.trim() && !seconds) ? ' bad' : ''}`} id="sudo-duration-hint">${hint}</span></div>
@@ -1129,9 +1130,9 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
         onChange=${(carried) => setCarryChoices((current) => ({ ...current, [row.slug]: carried }))} />`}
       ${refusedWhy ? html`<span class="perm-refused" title=${refusedWhy}>refused</span>`
     : sudoHeld ? html`<span class="perm-sudo-held" title="Already elevated: extend it under Active now">🔓 active</span>`
-    : html`<div class="perm-tristate"><button type="button" data-effect="default" class=${currentEffect(row.slug) === 'default' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'default')}>${sudoMode ? 'Off' : groupMode ? html`<${Words} plain="Not granted" wizard="Unbound"/>` : 'Default'}</button>
-        <button type="button" data-effect="grant" class=${currentEffect(row.slug) === 'grant' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'grant')}>${sudoMode ? 'Sudo' : groupMode ? html`<${Words} plain="Grant" wizard="Bestow"/>` : 'Grant'}</button>
-        ${!groupMode && !grantOnly && !sudoMode && html`<button type="button" data-effect="deny" class=${currentEffect(row.slug) === 'deny' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'deny')}>Deny</button>`}</div>`}
+    : html`<div class="ui-seg perm-tristate"><${Button} size="sm" data-effect="default" pressed=${currentEffect(row.slug) === 'default'} class=${currentEffect(row.slug) === 'default' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'default')}>${sudoMode ? 'Off' : groupMode ? html`<${Words} plain="Not granted" wizard="Unbound"/>` : 'Default'}<//>
+        <${Button} size="sm" data-effect="grant" pressed=${currentEffect(row.slug) === 'grant'} class=${currentEffect(row.slug) === 'grant' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'grant')}>${sudoMode ? 'Sudo' : groupMode ? html`<${Words} plain="Grant" wizard="Bestow"/>` : 'Grant'}<//>
+        ${!groupMode && !grantOnly && !sudoMode && html`<${Button} size="sm" data-effect="deny" pressed=${currentEffect(row.slug) === 'deny'} class=${currentEffect(row.slug) === 'deny' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'deny')}>Deny<//>`}</div>`}
       ${scopable
     // The column is kept but emptied rather than removed: dropping it would
     // let a scopable row's tristate buttons sit further right than its
@@ -1159,11 +1160,11 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
       maxSeconds=${policy.max_seconds} submit=${submit} />`}
     <${ErrorLine} id="perm-edit-error" className="sudo-grant-error" value=${error}/><div class="modal-buttons">
       ${sudoMode && html`<span class="sudo-picked" id="sudo-picked">${usesBad ? 'A use limit is a whole number from 1 to 1000' : sudoPicked.length ? `${sudoPicked.length} picked${sudoRisky ? ` · ${sudoRisky} risky` : ''}` : 'Pick at least one permission'}</span>`}
-      <button id="perm-edit-reset" type="button" disabled=${busy || !resettable}
+      <${Button} id="perm-edit-reset" disabled=${busy || !resettable}
         title=${`Set every slug back to Default (${sudoMode ? 'not picked' : 'inherit'}), including any the filter hides`}
-        onClick=${() => setSelection(Object.fromEntries(rows.map((row) => [row.slug, stewardAccess?.config.has(row.slug) ? currentEffect(row.slug) : 'default'])))}><span class="pe-btn-regular">${sudoMode ? 'Clear selections' : groupMode || grantOnly ? 'Clear all grants' : 'Reset all to Default'}</span><span class="pe-btn-wizard">unbind all</span></button>
-      <button id="perm-edit-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><span class="pe-btn-regular">Cancel</span><span class="pe-btn-wizard">Dispel</span></button>
-      <button id="perm-edit-submit" class="primary" type="button" disabled=${busy || (sudoMode && !sudoReady)} onClick=${submit}>${busy ? 'Saving…' : sudoMode ? sudoLabel : 'Save'}</button>
+        onClick=${() => setSelection(Object.fromEntries(rows.map((row) => [row.slug, stewardAccess?.config.has(row.slug) ? currentEffect(row.slug) : 'default'])))}><span class="pe-btn-regular">${sudoMode ? 'Clear selections' : groupMode || grantOnly ? 'Clear all grants' : 'Reset all to Default'}</span><span class="pe-btn-wizard">unbind all</span></${Button}>
+      <${Button} id="perm-edit-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><span class="pe-btn-regular">Cancel</span><span class="pe-btn-wizard">Dispel</span></${Button}>
+      <${Button} variant="primary" id="perm-edit-submit" disabled=${busy || (sudoMode && !sudoReady)} onClick=${submit}>${busy ? 'Saving…' : sudoMode ? sudoLabel : 'Save'}</${Button}>
     </div>
   </${Overlay}>`;
 }
@@ -1216,14 +1217,14 @@ function ContextFeaturesDialog({ descriptor, state, confirmDiscard }) {
     <div class="perm-edit-toolbar">
       <input id="context-features-filter" type="text" value=${filter} placeholder="Filter features…"
         autocomplete="off" spellcheck="false" onInput=${(event) => setFilter(event.currentTarget.value)} />
-      <button type="button" id="context-features-lean" title="Trim every feature flagged as a large startup-context win, and leave the rest alone"
+      <${Button} id="context-features-lean" title="Trim every feature flagged as a large startup-context win, and leave the rest alone"
         onClick=${() => setSelection((current) => {
     const draft = { ...current };
     for (const row of catalog) if (row.heavy) draft[row.slug] = 'off';
     return draft;
-  })}>lean</button>
-      <button type="button" id="context-features-reset" title="Set every feature back to Default (leave the harness alone)"
-        onClick=${() => setSelection({})}>all default</button>
+  })}>lean<//>
+      <${Button} id="context-features-reset" title="Set every feature back to Default (leave the harness alone)"
+        onClick=${() => setSelection({})}>all default<//>
     </div>
     <div id="context-features-list" class="perm-edit-list">${visible.length ? visible.map((row) => html`
       <div class="perm-row" key=${row.slug} data-slug=${row.slug}>
@@ -1233,13 +1234,13 @@ function ContextFeaturesDialog({ descriptor, state, confirmDiscard }) {
           <span class="perm-row-desc" title=${row.descr || ''}>${row.descr || ''}</span>
           ${row.caution ? html`<span class="perm-row-desc context-features-caution" title=${row.caution}>⚠ ${row.caution}</span>` : null}
         </div>
-        <div class="perm-tristate">
-          <button type="button" data-state="default" class=${currentState(row.slug) === 'default' ? 'active' : ''}
-            onClick=${() => setState(row.slug, 'default')}>Default</button>
-          <button type="button" data-state="on" class=${currentState(row.slug) === 'on' ? 'active' : ''}
-            onClick=${() => setState(row.slug, 'on')}>Keep</button>
-          <button type="button" data-state="off" class=${currentState(row.slug) === 'off' ? 'active' : ''}
-            onClick=${() => setState(row.slug, 'off')}>Trim</button>
+        <div class="ui-seg perm-tristate">
+          <${Button} size="sm" data-state="default" pressed=${currentState(row.slug) === 'default'} class=${currentState(row.slug) === 'default' ? 'active' : ''}
+            onClick=${() => setState(row.slug, 'default')}>Default<//>
+          <${Button} size="sm" data-state="on" pressed=${currentState(row.slug) === 'on'} class=${currentState(row.slug) === 'on' ? 'active' : ''}
+            onClick=${() => setState(row.slug, 'on')}>Keep<//>
+          <${Button} size="sm" data-state="off" pressed=${currentState(row.slug) === 'off'} class=${currentState(row.slug) === 'off' ? 'active' : ''}
+            onClick=${() => setState(row.slug, 'off')}>Trim<//>
         </div>
         <span class=${`perm-row-eff ${currentState(row.slug) === 'off' ? 'denied' : 'granted'}`}>${
   currentState(row.slug) === 'off' ? '✂ trimmed'
@@ -1249,9 +1250,9 @@ function ContextFeaturesDialog({ descriptor, state, confirmDiscard }) {
     ? 'No matching features.'
     : 'This harness has no steerable startup-context features.'}</div>`}</div>
     <div class="modal-buttons">
-      <button id="context-features-cancel" type="button" onClick=${() => { void requestClose(); }}>Cancel</button>
+      <${Button} id="context-features-cancel" onClick=${() => { void requestClose(); }}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button id="context-features-submit" class="primary" type="button" onClick=${submit}>Save</button>
+      <${Button} variant="primary" id="context-features-submit" onClick=${submit}>Save</${Button}>
     </div>
   </${Overlay}>`;
 }

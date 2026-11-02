@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { HealthPolicySection } from './fleet-admin-health.js';
 import { IdentityRotationSection } from './fleet-admin-identity.js';
@@ -124,17 +125,17 @@ export function NodeSettingsDialog({ self, peers = [], actions, confirm, toast, 
     <label class="fa-ns-row"><span class="fa-k">CA file</span><input id="fleet-hub-ca" value=${form.caFile} placeholder="/abs/path/hub-ca.pem on this node (optional; leave empty to keep)" autocomplete="off" spellcheck="false" onInput=${set('caFile')} disabled=${form.clearCA} /></label>
     <label class="fa-ns-check"><input id="fleet-hub-ca-clear" type="checkbox" checked=${form.clearCA} onChange=${set('clearCA')} /> clear the pinned CA file (use system roots)</label>
     <label class="fa-ns-check"><input id="fleet-hub-connect" type="checkbox" checked=${form.connect} onChange=${set('connect')} /> connected</label>
-    <div class="fa-ns-actions"><button id="fleet-hub-save" type="button" class="primary" onClick=${saveHub}>${self.enabled ? 'Save…' : 'Connect…'}</button>
+    <div class="fa-ns-actions"><${Button} size="sm" variant="primary" id="fleet-hub-save" onClick=${saveHub}>${self.enabled ? 'Save…' : 'Connect…'}<//>
       <span class="muted">CLI: <code>tclaude federation connect URL [--name …] [--invite …] [--ca-file …]</code>, <code>disconnect</code></span></div>
     <h4 class="fa-ns-h">Node labels</h4>
     <div class="muted">Used by automatic placement (<code>require label=…</code>) and shown to peers that can read this node.</div>
     ${labels?.error ? html`<div class="fa-danger">${labels.error}</div>` : !labels ? html`<div class="muted">Loading…</div>` : html`
       <label class="fa-ns-row"><span class="fa-k">labels</span><input id="fleet-node-labels" value=${labelText} placeholder="gpu, ci, linux" autocomplete="off" spellcheck="false" onInput=${(e) => setLabelText(e.currentTarget.value)} /></label>
-      <div class="fa-ns-actions"><button id="fleet-labels-save" type="button" onClick=${saveLabels}>Save labels…</button>
+      <div class="fa-ns-actions"><${Button} size="sm" id="fleet-labels-save" onClick=${saveLabels}>Save labels…<//>
         <span class="muted">CLI: <code>tclaude federation node-labels [--add …] [--remove …]</code></span></div>`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <${HealthPolicySection} peers=${peers} actions=${actions} confirm=${confirm} toast=${toast} />
     <${IdentityRotationSection} actions=${actions} confirm=${confirm} toast=${toast} />
-    <div class="modal-buttons"><span class="spacer"></span><button type="button" onClick=${onClose}>Close</button></div>
+    <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${onClose}>Close</${Button}></div>
   </${Overlay}>`;
 }

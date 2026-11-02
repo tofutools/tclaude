@@ -8,6 +8,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { boardIdFromTitle, cleanText, drawnElements, fromExcalidraw, toExcalidraw } from './board-model.js';
 import { companionAgents } from './companion-model.js';
 import { useDialogFocus } from './dialog-focus.js';
@@ -187,9 +188,9 @@ function BoardDeleteDialog({ request, snapshot, fetchImpl, notify, close }) {
       </ul>` : html`<p class="board-muted">No agents are on it.</p>`}` : !problem && html`<p class="board-muted">Loading…</p>`}
       ${problem && html`<p class="board-error" role="alert">${problem}</p>`}
       <div class="modal-buttons">
-        <button type="button" class="board-delete-export" disabled=${!board} onClick=${exportFirst}>${exported ? '✓ Exported' : '⤓ Export first'}</button>
-        <button type="button" ref=${cancelRef} onClick=${close}>Cancel</button>
-        <button type="button" class="confirm-danger board-delete-confirm" disabled=${!board || busy} onClick=${confirm}>Delete board</button>
+        <${Button} class="board-delete-export" disabled=${!board} onClick=${exportFirst}>${exported ? '✓ Exported' : '⤓ Export first'}</${Button}>
+        <${Button} domRef=${cancelRef} onClick=${close}>Cancel</${Button}>
+        <${Button} variant="danger" class="board-delete-confirm" disabled=${!board || busy} onClick=${confirm}>Delete board</${Button}>
       </div>
     </div>
   </div>`;

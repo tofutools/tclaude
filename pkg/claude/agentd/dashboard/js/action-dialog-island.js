@@ -1,6 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -282,11 +283,11 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
       </label>`}
       <${ErrorBanner} id="clone-agent-error" error=${error} onDismiss=${() => setError('')} />
       <div class="modal-buttons">
-        <button id="clone-agent-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
+        <${Button} id="clone-agent-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></${Button}>
         <span class="spacer"></span>
-        <button id="clone-agent-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>
+        <${Button} variant="primary" id="clone-agent-submit" disabled=${busy} onClick=${submit}>
           <${Words} plain=${busy ? 'Cloning…' : 'Clone'} wizard=${busy ? 'Mirroring…' : 'Mirror hero'}/>
-        </button>
+        </${Button}>
       </div>
     </${Overlay}>
   `;
@@ -383,14 +384,14 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
       `}
       <${ErrorBanner} id="reincarnate-agent-error" error=${error} onDismiss=${() => setError('')} />
       <div class="modal-buttons">
-        <button id="reincarnate-agent-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
+        <${Button} id="reincarnate-agent-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></${Button}>
         <span class="spacer"></span>
-        <button id="reincarnate-agent-submit" class="primary" type="button" disabled=${busy || (force && !normaliseFollowUp(followUp))} onClick=${submit}>
+        <${Button} variant="primary" id="reincarnate-agent-submit" disabled=${busy || (force && !normaliseFollowUp(followUp))} onClick=${submit}>
           <${Words}
             plain=${mode === 'clear' ? (busy ? 'Clearing…' : 'Clear context') : busy ? (force ? 'Reincarnating…' : 'Asking…') : (force ? 'Force reincarnate' : 'Ask agent')}
             wizard=${mode === 'clear' ? (busy ? 'Clearing…' : 'Clear context') : busy ? (force ? 'Reincarnating…' : 'Asking…') : (force ? 'Force reincarnate' : 'Ask hero')}
           />
-        </button>
+        </${Button}>
       </div>
     </${Overlay}>
   `;
@@ -427,9 +428,9 @@ function NestGroupDialog({ descriptor, actions, confirmDiscard }) {
       </label>
       <${ErrorBanner} id="group-nest-error" error=${error} onDismiss=${() => setError('')} />
       <div class="modal-buttons">
-        <button id="group-nest-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
+        <${Button} id="group-nest-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></${Button}>
         <span class="spacer"></span>
-        <button id="group-nest-submit" class="primary" type="button" disabled=${busy} onClick=${submit}><${Words} plain=${busy ? 'Saving…' : 'Save'} wizard=${busy ? 'Nesting…' : 'Nest party'}/></button>
+        <${Button} variant="primary" id="group-nest-submit" disabled=${busy} onClick=${submit}><${Words} plain=${busy ? 'Saving…' : 'Save'} wizard=${busy ? 'Nesting…' : 'Nest party'}/></${Button}>
       </div>
     </${Overlay}>
   `;
@@ -563,11 +564,11 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
       </div>
       <${ErrorBanner} id="task-link-error" error=${error} onDismiss=${() => setError('')} />
       <div class="modal-buttons">
-        <button id="task-link-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
+        <${Button} id="task-link-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></${Button}>
         <span class="spacer"></span>
-        <button id="task-link-save" class="primary" type="button" disabled=${busy} onClick=${submit}>
+        <${Button} variant="primary" id="task-link-save" disabled=${busy} onClick=${submit}>
           <${Words} plain=${busy ? 'Saving…' : 'Save'} wizard=${busy ? 'Binding…' : '✒ Bind quest!'}/>
-        </button>
+        </${Button}>
       </div>
     </${Overlay}>
   `;
@@ -656,7 +657,7 @@ function GroupSettingsDialog({ descriptor, snapshot, actions, confirmDiscard }) 
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Link / attachment" wizard="Quest portal" /></span><input type="url" ...${off('group-attachment')} placeholder="https://…" value=${values.attachmentURL} onInput=${(event) => set('attachmentURL', event.currentTarget.value)}/></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Link label" wizard="Portal name" /></span><input ...${off('group-attachment')} placeholder="optional display label" value=${values.attachmentLabel} onInput=${(event) => set('attachmentLabel', event.currentTarget.value)}/></label>
     <${ErrorBanner} id="group-settings-error" error=${error} onDismiss=${() => setError('')} />
-    <div class="modal-buttons"><button id="group-settings-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel" /></button><span class="spacer"></span><button id="group-settings-submit" class="primary" disabled=${busy || !dirty} onClick=${submit}><${Words} plain=${busy ? 'Saving…' : 'Save settings'} wizard=${busy ? 'Enchanting…' : '✦ Enchant party'} /></button></div>
+    <div class="modal-buttons"><${Button} id="group-settings-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel" /></${Button}><span class="spacer"></span><${Button} variant="primary" id="group-settings-submit" disabled=${busy || !dirty} onClick=${submit}><${Words} plain=${busy ? 'Saving…' : 'Save settings'} wizard=${busy ? 'Enchanting…' : '✦ Enchant party'} /></${Button}></div>
   </${Overlay}>`;
 }
 

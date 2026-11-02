@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 
 const html = htm.bind(h);
@@ -168,11 +169,11 @@ export function NodeUpdateDialog({ node, confirm, toast, onClose, actions = defa
         ${job.deadline && updateJobActive(job) && html`<span class="muted"> · healthy by ${new Date(job.deadline).toLocaleTimeString()} or it rolls back</span>`}
       </div>`}`}
     <div class="modal-buttons">
-      ${status && html`<button id="fleet-node-update-check" type="button" disabled=${busy || active} onClick=${() => start('check')}>Check now</button>
-        ${v.update && html`<button id="fleet-node-update-apply" type="button" class="primary" disabled=${busy || active || !!blocked} onClick=${apply}>Update to ${v.latest}…</button>`}
-        ${status.rollback_available && html`<button id="fleet-node-update-rollback" type="button" class="danger" disabled=${busy || active || !!blocked} onClick=${rollback}>Roll back…</button>`}`}
+      ${status && html`<${Button} id="fleet-node-update-check" disabled=${busy || active} onClick=${() => start('check')}>Check now</${Button}>
+        ${v.update && html`<${Button} variant="primary" id="fleet-node-update-apply" disabled=${busy || active || !!blocked} onClick=${apply}>Update to ${v.latest}…</${Button}>`}
+        ${status.rollback_available && html`<${Button} variant="danger" id="fleet-node-update-rollback" disabled=${busy || active || !!blocked} onClick=${rollback}>Roll back…</${Button}>`}`}
       <span class="spacer"></span>
-      <button type="button" disabled=${busy} onClick=${onClose}>Close</button>
+      <${Button} disabled=${busy} onClick=${onClose}>Close</${Button}>
     </div>
     <div class="muted fa-cli-note">CLI: <code>${node.hub ? 'tclaude federation hub update' : `tclaude update${node.local ? '' : ` --node ${node.id}`}`} --check|--apply|--rollback</code></div>
   </${Overlay}>`;

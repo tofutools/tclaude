@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { isWizardActive } from './slop.js';
 
@@ -264,7 +265,7 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
       <span class="group-standing-orders-managed-note">◇ ${wizard
         ? (firstRun ? 'Realm-wide decrees shall reveal themselves here' : 'Realm-wide decrees are governed in Labours')
         : (firstRun ? 'Global rules will appear here automatically' : 'Inherited rules are managed in Automations')}</span>
-      <button type="button" onClick=${actions.closeStandingOrders} disabled=${changing.size > 0}>${wizard ? 'seal' : 'done'}</button>
+      <${Button} onClick=${actions.closeStandingOrders} disabled=${changing.size > 0}>${wizard ? 'seal' : 'done'}</${Button}>
     </div>
   <//>`;
 }

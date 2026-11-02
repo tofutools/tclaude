@@ -1,6 +1,7 @@
 import { Fragment, h, render } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
+import { Button, MenuHeading, MenuItem, MenuSep } from './ui-components.js';
 import { AgentBudgetBadge } from './usage-profile-chip.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { applySortState, tableSortState, MEMBER_ACCESSORS } from './sort.js';
@@ -773,8 +774,10 @@ function menuMemberAttrs(member, selector) {
   return attrs;
 }
 
+// MenuButton is one ⚙ menu item. className 'danger' (cannot be undone) and
+// 'warn' (reversible but disruptive) pick the item's tone.
 function MenuButton({ member, selector = 'agent', group, act, regular, wizard = regular, title, className, disabled, attrs = {} }) {
-  return html`<button role="menuitem" class=${className} data-act=${act} ...${menuMemberAttrs(member, selector)} data-group=${group?.name} ...${attrs} title=${title} disabled=${disabled}><${ThemeText} regular=${regular} wizard=${wizard} /></button>`;
+  return html`<${MenuItem} danger=${className === 'danger'} warn=${className === 'warn'} data-act=${act} ...${menuMemberAttrs(member, selector)} data-group=${group?.name} ...${attrs} title=${title} disabled=${disabled}><${ThemeText} regular=${regular} wizard=${wizard} /><//>`;
 }
 
 function NotifyMenuItem({ member }) {
@@ -929,7 +932,7 @@ function SendElsewhereItems({ member, group, snapshot }) {
   // Without a fleet (no hub connection, or no linked node yet) move and
   // teleport stay in the menu, greyed out with the reason, as the node chips do.
   const off = fleet ? '' : sendElsewhereOffReason(fleetState.node.value);
-  return html`<div class="menu-section-label" role="presentation">send elsewhere</div>
+  return html`<${MenuHeading}>send elsewhere<//>
     ${item('move', peerRow ? 'move here…' : 'move to…', 'relocate hero…', off || (peerRow ? `Move ${label} to a group on this node, with its history` : `Move ${label} to a group on another node, with its history; it retires here once its copy runs there`), !!off)}
     ${TELEPORT_ROUTES && !peerRow ? item('teleport', 'teleport to…', 'teleport hero…', off || `Teleport ${label} to another node; its home keeps its place for Recall home`, !!off) : null}
     ${!peerRow ? item('clone', fleet ? 'clone to…' : 'clone…', 'mirror hero to…', `Clone ${label} here or onto another node; the original keeps running`) : null}
@@ -952,7 +955,7 @@ function MakeStewardMenuItem({ member, group, snapshot }) {
 }
 
 function MenuSeparator() {
-  return html`<div class="menu-sep" role="separator"></div>`;
+  return html`<${MenuSep} />`;
 }
 
 function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
@@ -1008,9 +1011,9 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
 function MemberActions({ member, group, snapshot, actions, ungrouped, menuKey }) {
   const offlineWhy = member.online ? '' : ' — unavailable while the agent is offline';
   return html`<div class="row-actions">
-    <button class="icon-btn" data-act="jump" ...${memberAttrs(member)} disabled=${!member.online} title=${`Focus this agent's terminal window; when using web terminals, ${modClickText()} keeps this tab open${offlineWhy}`} aria-label="Focus window"><${EyeIcon} /></button>
-    <button class="icon-btn" data-act="hide" ...${memberAttrs(member)} disabled=${!member.online} title=${`Hide this agent's terminal window — detaches its tmux client. The agent keeps running.${offlineWhy}`} aria-label="Hide window"><${EyeIcon} hidden=${true} /></button>
-    <button class="icon-btn warn" data-act="retire-agent" data-conv=${member.conv_id} data-stable-agent=${member.agent_id || ''} data-label=${member.title || member.conv_id} title="Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored)." aria-label="Retire agent"><${TrashIcon} /></button>
+    <${Button} size="sm" icon=${true} class="icon-btn" data-act="jump" ...${memberAttrs(member)} disabled=${!member.online} title=${`Focus this agent's terminal window; when using web terminals, ${modClickText()} keeps this tab open${offlineWhy}`} aria-label="Focus window"><${EyeIcon} /><//>
+    <${Button} size="sm" icon=${true} class="icon-btn" data-act="hide" ...${memberAttrs(member)} disabled=${!member.online} title=${`Hide this agent's terminal window — detaches its tmux client. The agent keeps running.${offlineWhy}`} aria-label="Hide window"><${EyeIcon} hidden=${true} /><//>
+    <${Button} size="sm" icon=${true} class="icon-btn warn" data-act="retire-agent" data-conv=${member.conv_id} data-stable-agent=${member.agent_id || ''} data-label=${member.title || member.conv_id} title="Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored)." aria-label="Retire agent"><${TrashIcon} /><//>
     <${ActionMenu} menuKey=${menuKey} kind="row-menu"><${MemberMenu} member=${member} group=${group} snapshot=${snapshot} actions=${actions} ungrouped=${ungrouped} /><//>
   </div>`;
 }
@@ -1346,9 +1349,9 @@ function QueuedMemberRow({ entry, columns }) {
           title=${`queued — click to spawn ${label} now (opens the dialog and launches it; worktree, fetch and spawn checks run now)`}
           aria-label=${`Spawn ${label} now`} onClick=${act(launchQueuedSpawn)}>▶</button>
         <div class="row-actions">
-          <button class="icon-btn" disabled title="Focus this agent's terminal window — unavailable until the queued agent is spawned" aria-label="Focus window"><${EyeIcon} /></button>
-          <button class="icon-btn warn" data-act="queued-spawn-discard" data-group=${entry.group} title="Discard this queued agent — remove it from the queue without launching" aria-label=${`Discard queued ${label}`} onClick=${act(discardQueuedSpawn)}><${TrashIcon} /></button>
-          <button type="button" class="cog-btn" data-act="queued-spawn-edit" data-group=${entry.group} title="Review or edit the queued spawn in the spawn dialog" aria-label=${`Edit queued ${label}`} onClick=${edit}><span class="cog-glyph">⚙︎</span></button>
+          <${Button} size="sm" icon=${true} class="icon-btn" disabled title="Focus this agent's terminal window — unavailable until the queued agent is spawned" aria-label="Focus window"><${EyeIcon} /><//>
+          <${Button} size="sm" icon=${true} class="icon-btn warn" data-act="queued-spawn-discard" data-group=${entry.group} title="Discard this queued agent — remove it from the queue without launching" aria-label=${`Discard queued ${label}`} onClick=${act(discardQueuedSpawn)}><${TrashIcon} /><//>
+          <${Button} size="sm" icon=${true} class="cog-btn" data-act="queued-spawn-edit" data-group=${entry.group} title="Review or edit the queued spawn in the spawn dialog" aria-label=${`Edit queued ${label}`} onClick=${edit}><span class="cog-glyph">⚙︎</span><//>
         </div></div>
         ${draft.profile || harness ? html`<div class="agent-harness" title=${draft.profile ? `Queued with profile ${draft.profile}` : `Queued for ${labels.long}${draft.model ? ` · ${draft.model}` : ''}`}><span class="runtime-meta runtime-meta-offline">${draft.profile
           ? String(draft.profile)

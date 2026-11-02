@@ -7,6 +7,7 @@ import {
 } from './menu-filter.js';
 import { isWizardActive } from './slop.js';
 import { useDismissablePopover } from './hover-popover.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 const GroupsInteractions = createContext(null);
@@ -174,9 +175,10 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
   }, [open]);
 
   const body = html`
-    <button
-      ref=${buttonRef}
-      type="button"
+    <${Button}
+      domRef=${buttonRef}
+      size="sm"
+      icon=${true}
       class="cog-btn"
       data-act=${kind}
       aria-haspopup="menu"
@@ -188,15 +190,15 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
         event.stopPropagation();
         interactions.toggleMenu(menuKey);
       }}
-    ><span class="cog-glyph">⚙︎</span></button>
+    ><span class="cog-glyph">⚙︎</span><//>
     <div
       ref=${menuRef}
-      class=${`action-menu${open ? ' open' : ''}${opensUp ? ' opens-up' : ''}`}
+      class=${`ui-menu ui-sm action-menu${open ? ' open' : ''}${opensUp ? ' opens-up' : ''}`}
       data-preact-menu="1"
       role="menu"
     ><input
         ref=${filterRef}
-        class="action-menu-filter"
+        class="ui-input ui-sm action-menu-filter"
         type="text"
         autocomplete="off"
         spellcheck=${false}

@@ -1,6 +1,7 @@
 import { h, render } from 'preact';
 import { useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { LockReason, trustLock } from './lock-reason.js';
 import { agentTitleHint, resolveAgentTitle, validAgentTitle } from './agent-title.js';
 import {
@@ -187,13 +188,13 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
     </div>
     <div class="cron-create-error" id="edit-member-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button id="edit-member-perms" type="button" disabled=${busy || !here}
+      <${Button} id="edit-member-perms" disabled=${busy || !here}
         title="Open this agent / hero's permanent permission grimoire (grant / deny / inherit per slug)"
-        onClick=${() => actions.openMemberPermissions(descriptor)}><span class="em-btn-regular">Permissions…</span><span class="em-btn-wizard">Grimoire…</span></button><${LockReason} id="edit-member-perms-lock" why=${adminLock}/>
+        onClick=${() => actions.openMemberPermissions(descriptor)}><span class="em-btn-regular">Permissions…</span><span class="em-btn-wizard">Grimoire…</span></${Button}><${LockReason} id="edit-member-perms-lock" why=${adminLock}/>
       <span class="spacer"></span>
-      <button id="edit-member-cancel" type="button" disabled=${busy}
-        onClick=${() => { void requestClose(); }}><span class="em-btn-regular">Cancel</span><span class="em-btn-wizard">Dispel</span></button>
-      <button id="edit-member-save" type="button" disabled=${busy} onClick=${submit}>${busy ? 'Saving…' : 'Save'}</button>
+      <${Button} id="edit-member-cancel" disabled=${busy}
+        onClick=${() => { void requestClose(); }}><span class="em-btn-regular">Cancel</span><span class="em-btn-wizard">Dispel</span></${Button}>
+      <${Button} id="edit-member-save" disabled=${busy} onClick=${submit}>${busy ? 'Saving…' : 'Save'}</${Button}>
     </div>
   </${Overlay}>`;
 }

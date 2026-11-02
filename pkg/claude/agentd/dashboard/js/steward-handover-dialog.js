@@ -3,6 +3,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { holdsMoreThanSteward, loadStewardHandover } from './steward-roster.js';
 
@@ -84,9 +85,9 @@ export function StewardHandoverDialog({ descriptor, actions }) {
       </fieldset>`}`}
     ${error && html`<p class="steward-handover-line warn" role="alert">${error}</p>`}
     <div class="modal-buttons">
-      <button id="steward-handover-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+      <${Button} id="steward-handover-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button id="steward-handover-submit" class="primary" type="button" disabled=${!preview || !!blocked || busy} onClick=${submit}>${busy ? 'Handing over…' : 'Make Steward'}</button>
+      <${Button} variant="primary" id="steward-handover-submit" disabled=${!preview || !!blocked || busy} onClick=${submit}>${busy ? 'Handing over…' : 'Make Steward'}</${Button}>
     </div>
   </${Overlay}>`;
 }

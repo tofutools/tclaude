@@ -1,6 +1,7 @@
 import { h, render } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { registerWorktreeCleanupController } from './worktree-cleanup-controller.js';
 import {
@@ -333,7 +334,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
       <${CleanupOutcomeList} response=${result} />
       <div class="cleanup-error" id="worktree-cleanup-error"></div>
       <div class="modal-buttons">
-        <button ref=${doneRef} id="worktree-cleanup-submit" class="primary" type="button" onClick=${close}>Done</button>
+        <${Button} variant="primary" domRef=${doneRef} id="worktree-cleanup-submit" onClick=${close}>Done</${Button}>
       </div>
     ` : html`
       <p class="cleanup-hint" id="worktree-cleanup-hint"><${Words}
@@ -431,11 +432,11 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
           ? `Stale-record scan incomplete: ${pruneScanErrors.map((entry) => `${entry.repo_root}: ${entry.detail}`).join('; ')}`
           : '')}</div>
       <div class="modal-buttons">
-        <button id="worktree-cleanup-cancel" type="button" disabled=${closeBlocked} onClick=${close}>
+        <${Button} id="worktree-cleanup-cancel" disabled=${closeBlocked} onClick=${close}>
           <${Words} plain="Cancel" wizard="Dispel" />
-        </button>
-        <button id="worktree-cleanup-submit" class="primary danger" type="button"
-          disabled=${busy || (selected.length === 0 && selectedPruneRepos.length === 0)} aria-busy=${busyAction === 'submit' ? 'true' : undefined}
+        </${Button}>
+        <${Button} variant="danger" id="worktree-cleanup-submit"
+          disabled=${busy || (selected.length === 0 && selectedPruneRepos.length === 0)} busy=${busyAction === 'submit'}
           onClick=${() => void submit()}>
           ${busyAction === 'submit'
             ? html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
@@ -444,7 +445,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
               plain=${actionCopy}
               wizard=${actionCopy}
             />`}
-        </button>
+        </${Button}>
       </div>
     `}
   </${Overlay}>`;

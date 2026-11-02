@@ -7,6 +7,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { setFleetAdminPage, setFleetGrantTarget } from './fleet-admin-page.js';
 import { markInTransit } from './drop-landing.js';
@@ -199,8 +200,8 @@ export function MovePanel({ drop, plan, actions, peerActions, timers = globalThi
     ${status}
     <div class="modal-buttons"><span class="spacer"></span>
       ${phase === 'progress'
-        ? html`<button type="button" ref=${okRef} id="fleetview-move-drop-close" onClick=${onClose}>${progress?.phase === 'checking' ? 'Close (the move continues)' : 'Close'}</button>`
-        : html`<button type="button" id="fleetview-move-drop-cancel" onClick=${onClose}>Cancel</button>
-          <button type="button" ref=${okRef} class="confirm-danger" id="fleetview-move-drop-ok" disabled=${phase === 'sending' || (!!findings && !allow)} onClick=${send}>${phase === 'sending' ? 'Sending…' : 'Move agent'}</button>`}
+        ? html`<${Button} domRef=${okRef} id="fleetview-move-drop-close" onClick=${onClose}>${progress?.phase === 'checking' ? 'Close (the move continues)' : 'Close'}</${Button}>`
+        : html`<${Button} id="fleetview-move-drop-cancel" onClick=${onClose}>Cancel</${Button}>
+          <${Button} variant="danger" domRef=${okRef} id="fleetview-move-drop-ok" disabled=${phase === 'sending' || (!!findings && !allow)} onClick=${send}>${phase === 'sending' ? 'Sending…' : 'Move agent'}</${Button}>`}
     </div>`;
 }

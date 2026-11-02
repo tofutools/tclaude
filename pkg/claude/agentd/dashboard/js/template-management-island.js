@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button, Input, Select } from './ui-components.js';
 import { profileSummary, getDashDefaultProfile, findProfileByHandle, profileChoices } from './profiles.js';
 import { pickDirectory } from './helpers.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
@@ -105,8 +106,7 @@ function TemplateCard({ template, groups, profiles, actions }) {
         >🌊 ${waves} <${Words} plain="waves" wizard="ranks"
       /></span>`}
       <span class="tc-actions"
-        ><button
-          class="primary"
+        ><${Button} size="sm" variant="primary"
           data-tact="deploy"
           data-template=${template.name}
           title=${wizWord(
@@ -115,16 +115,12 @@ function TemplateCard({ template, groups, profiles, actions }) {
           )}
           onClick=${() => actions.openTemplateDeploy(template.name)}
         >
-          <${Words} plain="🚀 deploy" wizard="🧙 summon" /></button
-        ><button
-          class="tool"
+          <${Words} plain="🚀 deploy" wizard="🧙 summon" /><//><${Button} size="sm"
           data-tact="edit"
           data-template=${template.name}
           onClick=${() => actions.openTemplateEditor(template)}
         >
-          edit</button
-        ><button
-          class="tool"
+          edit<//><${Button} size="sm"
           data-tact="duplicate"
           data-template=${template.name}
           title=${wizWord(
@@ -133,9 +129,7 @@ function TemplateCard({ template, groups, profiles, actions }) {
           )}
           onClick=${() => actions.openTemplateDuplicate(template.name)}
         >
-          <${Words} plain="⧉ duplicate" wizard="🪞 mirror" /></button
-        ><button
-          class="tool"
+          <${Words} plain="⧉ duplicate" wizard="🪞 mirror" /><//><${Button} size="sm"
           data-tact="export"
           data-template=${template.name}
           title=${wizWord(
@@ -144,15 +138,13 @@ function TemplateCard({ template, groups, profiles, actions }) {
           )}
           onClick=${() => actions.exportTemplate(template.name)}
         >
-          <${Words} plain="⇪ export" wizard="📜 inscribe" /></button
-        ><button
-          class="tool"
+          <${Words} plain="⇪ export" wizard="📜 inscribe" /><//><${Button} size="sm" variant="ghost danger"
           data-tact="delete"
           data-template=${template.name}
           onClick=${() => actions.removeTemplate(template.name)}
         >
           delete
-        </button></span
+        <//></span
       >
     </div>
     ${agents.length > 0 &&
@@ -227,9 +219,8 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
         />
       </p>
       <div class="filter-bar">
-        <input
+        <${Input}
           id="filter-templates"
-          type="text"
           value=${current.templateFilter}
           onInput=${(event) =>
             state.setTemplateFilter(event.currentTarget.value)}
@@ -241,7 +232,7 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
           >${filtered
             ? `${list.length} / ${current.templates.length}`
             : current.templates.length}</span
-        ><button
+        ><button data-ui-exempt
           class="clear-filter"
           id="filter-templates-clear"
           title="Clear filter"
@@ -249,9 +240,8 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
         >
           ×</button
         ><span class="spacer"></span>
-        <button
+        <${Button}
           id="scribe-templates-open"
-          class="tool"
           title="Summon a chat agent (a scribe) that edits your templates for you — pre-briefed and already holding the templates.manage permission. Tell it what to change in plain words; its edits appear here live."
           onClick=${actions.editTemplatesWithAgent}
         >
@@ -259,39 +249,36 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
             plain="🤖 Edit with agent"
             wizard="📜 Dictate to a scribe"
           />
-        </button>
-        <button
+        <//>
+        <${Button}
           id="template-from-group-open"
-          class="tool"
           title="Snapshot an existing group's structure — roles, owner, per-agent permissions, context — into a new reusable template"
           onClick=${actions.openTemplateFromGroup}
         >
           <${Words} plain="⤓ from a group" wizard="⤓ trace a party" />
-        </button>
-        <button
+        <//>
+        <${Button}
           id="template-import-open"
-          class="tool"
           title="Import a template from a portable .task-force.json file (from ⇪ export) — share task forces between machines or with friends"
           onClick=${actions.openTemplateImport}
         >
           <${Words} plain="⤒ import" wizard="📜 read a scroll" />
-        </button>
-        <button
+        <//>
+        <${Button}
           id="starters-open"
-          class="tool"
           title="Browse bundled starter task forces — copy a curated, ready-to-run team into your own templates list (it does not spawn a team; deploy or edit it afterwards)"
           onClick=${actions.openTemplateStarters}
         >
           <${Words} plain="⭐ starters" wizard="⭐ conjure a preset party" />
-        </button>
-        <button
+        <//>
+        <${Button}
           id="template-create-open"
-          class="primary"
+          variant="primary"
           title="Define a new group template"
           onClick=${() => actions.openTemplateEditor()}
         >
           <${Words} plain="+ new template" wizard="+ chalk a new circle" />
-        </button>
+        <//>
       </div>
       <div id="templates-list">
         ${list.length
@@ -319,13 +306,12 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
       </div>
       <div class="modal-buttons">
         <span class="spacer"></span
-        ><button
+        ><${Button}
           id="templates-manage-close"
-          type="button"
           onClick=${state.closeTemplateManager}
         >
           Close
-        </button>
+        </${Button}>
       </div>
     `,
   );
@@ -405,21 +391,19 @@ export function TemplateDuplicateDialog({
         ${error}
       </div>
       <div class="modal-buttons">
-        <button
+        <${Button}
           id="template-duplicate-cancel"
           disabled=${busy}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><span class="spacer"></span
-        ><button
+          Cancel</${Button}><span class="spacer"></span
+        ><${Button} variant="primary"
           id="template-duplicate-submit"
-          class="primary"
           disabled=${busy}
           onClick=${submit}
         >
           ${busy ? 'Duplicating…' : 'Duplicate template'}
-        </button>
+        </${Button}>
       </div> `,
   );
 }
@@ -519,21 +503,19 @@ export function TemplateImportDialog({ initialRaw = '', state, actions, confirmD
         ${error}
       </div>
       <div class="modal-buttons">
-        <button
+        <${Button}
           id="template-import-cancel"
           disabled=${busy}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><span class="spacer"></span
-        ><button
+          Cancel</${Button}><span class="spacer"></span
+        ><${Button} variant="primary"
           id="template-import-submit"
-          class="primary"
           disabled=${busy}
           onClick=${submit}
         >
           ${busy ? 'Importing…' : 'Import'}
-        </button>
+        </${Button}>
       </div> `,
   );
 }
@@ -597,7 +579,7 @@ export function TemplateFromGroupDialog({
       <label class="cron-create-row"
         ><span class="cron-create-label"
           ><${Words} plain="Group" wizard="Party" /></span
-        ><select
+        ><${Select}
           id="template-from-group-group"
           value=${group}
           onChange=${(event) => setGroup(event.currentTarget.value)}
@@ -606,7 +588,7 @@ export function TemplateFromGroupDialog({
             (value) =>
               html`<option key=${value} value=${value}>${value}</option>`,
           )}
-        </select></label
+        <//></label
       ><label class="cron-create-row"
         ><span class="cron-create-label">Template name</span
         ><input
@@ -641,16 +623,14 @@ export function TemplateFromGroupDialog({
         ${error}
       </div>
       <div class="modal-buttons">
-        <button
+        <${Button}
           id="template-from-group-cancel"
           disabled=${busy}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><span class="spacer"></span
-        ><button
+          Cancel</${Button}><span class="spacer"></span
+        ><${Button} variant="primary"
           id="template-from-group-submit"
-          class="primary"
           disabled=${busy}
           onClick=${submit}
         >
@@ -659,7 +639,7 @@ export function TemplateFromGroupDialog({
             : updating
               ? 'Update template'
               : 'Save as template'}
-        </button>
+        </${Button}>
       </div> `,
   );
 }
@@ -738,8 +718,7 @@ export function TemplateStartersDialog({
                       >`}
                     </div>
                     <div class="starter-actions">
-                      <button
-                        class="tool"
+                      <${Button} size="sm"
                         data-sact="install"
                         data-starter=${starter.name}
                         disabled=${!!busy}
@@ -753,7 +732,7 @@ export function TemplateStartersDialog({
                             ? 'Copying…'
                             : '⭐ copy into my circles'}
                         />
-                      </button>
+                      <//>
                     </div>
                   </div>`,
               )
@@ -770,13 +749,13 @@ export function TemplateStartersDialog({
       </div>
       <div class="modal-buttons">
         <span class="spacer"></span
-        ><button
+        ><${Button}
           id="starters-close"
           disabled=${!!busy}
           onClick=${state.closeDialog}
         >
           Close
-        </button>
+        </${Button}>
       </div>`,
   );
 }
@@ -1019,7 +998,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
         <${ImportWarnings} id="group-import-result" title="Check these" warnings=${landed.warnings} />
         <div class="modal-buttons">
           <span class="spacer"></span>
-          <button id="group-import-done" class="primary" onClick=${state.closeDialog}>Done</button>
+          <${Button} variant="primary" id="group-import-done" onClick=${state.closeDialog}>Done</${Button}>
         </div>`,
     );
   }
@@ -1099,30 +1078,28 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
         ${phase === 'error' ? '' : error}
       </div>
       <div class="modal-buttons">
-        <button
+        <${Button}
           id="group-import-cancel"
           disabled=${phase === 'importing'}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><span class="spacer"></span
+          Cancel</${Button}><span class="spacer"></span
         >${kind === 'agent' &&
-        html`<button
+        html`<${Button}
           id="agent-import-start"
           disabled=${!ready || busy}
           title="Import the agent and start it now"
           onClick=${() => submit(true)}
         >
           Import & start
-        </button>`}<button
+        </${Button}>`}<${Button} variant="primary"
           id="group-import-submit"
-          class="primary"
           disabled=${!ready || busy || !!offlineBlocker}
           title=${kind === 'agent' && !choices.group ? 'Pick the group the agent joins' : offlineBlocker || (kind === 'agent' ? 'Import the agent offline with its conversation; wake it to start' : '')}
           onClick=${() => submit(false)}
         >
           ${phase === 'importing' ? 'Importing…' : kind === 'agent' ? 'Import (offline)' : 'Import'}
-        </button>
+        </${Button}>
       </div>`,
   );
 }
@@ -1191,21 +1168,19 @@ export function GroupContextDialog({
         ${error}
       </div>
       <div class="modal-buttons">
-        <button
+        <${Button}
           id="group-context-cancel"
           disabled=${busy}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><span class="spacer"></span
-        ><button
+          Cancel</${Button}><span class="spacer"></span
+        ><${Button} variant="primary"
           id="group-context-submit"
-          class="primary"
           disabled=${busy}
           onClick=${submit}
         >
           ${busy ? 'Saving…' : 'Save'}
-        </button>
+        </${Button}>
       </div> `,
   );
 }
@@ -1688,7 +1663,7 @@ export function TemplateDeployDialog({
       </div>`}<label class="cron-create-row"
         ><span class="cron-create-label"
           ><${Words} plain="Template" wizard="Circle" /></span
-        ><select
+        ><${Select}
           id="template-deploy-template"
           value=${templateName}
           onChange=${(event) => chooseTemplate(event.currentTarget.value)}
@@ -1699,7 +1674,7 @@ export function TemplateDeployDialog({
                 ${item.name}
               </option>`,
           )}
-        </select></label
+        <//></label
       ><label class="cron-create-row"
         ><span class="cron-create-label"
           ><${Words} plain="Mission" wizard="Quest" /></span
@@ -1739,7 +1714,7 @@ export function TemplateDeployDialog({
         id="template-deploy-source-row"
         hidden=${!!dropGroup}
         ><span class="cron-create-label">Mirror settings</span
-        ><select
+        ><${Select}
           id="template-deploy-source"
           value=${source}
           onChange=${(event) => chooseSource(event.currentTarget.value)}
@@ -1751,7 +1726,7 @@ export function TemplateDeployDialog({
                 ${group.name}
               </option>`,
           )}
-        </select></label
+        <//></label
       ><label
         class="cron-create-enabled"
         id="template-deploy-parent-row"
@@ -1789,15 +1764,14 @@ export function TemplateDeployDialog({
           placeholder="optional — absolute path (~ OK) the force spawns in"
           autocomplete="off"
           spellcheck="false"
-        /><button
+        /><${Button}
           id="template-deploy-cwd-browse"
-          type="button"
           class="dir-browse-btn"
           title="Browse for a directory"
           onClick=${() => browse('cwd')}
         >
           Browse…
-        </button></label
+        <//></label
       ><label class="cron-create-row" hidden=${worktreesHidden}
         ><span class="cron-create-label">Worktree repo</span
         ><input
@@ -1819,18 +1793,17 @@ export function TemplateDeployDialog({
                 ${item.rel}
               </option>`,
           )}</datalist
-        ><button
+        ><${Button}
           id="template-deploy-wt-repo-browse"
-          type="button"
           class="dir-browse-btn"
           title="Browse for a directory"
           onClick=${() => browse('repo')}
         >
           Browse…
-        </button></label
+        <//></label
       ><label class="cron-create-row" hidden=${worktreesHidden}
         ><span class="cron-create-label">Worktree</span
-        ><select
+        ><${Select}
           id="template-deploy-worktree"
           value=${worktree}
           disabled=${!wtData?.is_repo}
@@ -1842,7 +1815,7 @@ export function TemplateDeployDialog({
                 ${item.label}
               </option>`,
           )}
-        </select></label
+        <//></label
       ><label
         class=${`cron-create-enabled cron-check-aligned${!wtData?.is_repo ? ' disabled' : ''}`}
         id="template-deploy-wt-sync-row"
@@ -1888,7 +1861,7 @@ export function TemplateDeployDialog({
         id="template-deploy-wt-base-row"
         hidden=${!showNew || wtData?.has_commits === false}
         ><span class="cron-create-label">Base branch</span
-        ><select
+        ><${Select}
           id="template-deploy-wt-base"
           value=${base}
           onChange=${(event) => setBase(event.currentTarget.value)}
@@ -1897,7 +1870,7 @@ export function TemplateDeployDialog({
             (value) =>
               html`<option key=${value} value=${value}>${value}</option>`,
           )}
-        </select></label
+        <//></label
       >${showNew &&
       wtData?.has_commits === false &&
       html`<p class="wt-orphan-warn" id="template-deploy-wt-orphan-hint">
@@ -1920,7 +1893,7 @@ export function TemplateDeployDialog({
         /></label
       ><label class="cron-create-row" id="template-deploy-default-profile-row"
         ><span class="cron-create-label">Default profile</span
-        ><select
+        ><${Select}
           id="template-deploy-default-profile"
           value=${findProfileByHandle(current.profiles, defaultProfile)
             ? defaultProfile
@@ -1937,7 +1910,7 @@ export function TemplateDeployDialog({
                 ${choice.label}
               </option>`,
           )}
-        </select></label
+        <//></label
       >
       <div class="cron-create-row">
         <span class="cron-create-label">Preview</span>
@@ -1954,16 +1927,14 @@ export function TemplateDeployDialog({
         ${error}
       </div>
       <div class="modal-buttons">
-        <button
+        <${Button}
           id="template-deploy-cancel"
           disabled=${busy || worktreeLoading}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><span class="spacer"></span
-        ><button
+          Cancel</${Button}><span class="spacer"></span
+        ><${Button} variant="primary"
           id="template-deploy-submit"
-          class="primary"
           disabled=${busy || worktreeLoading}
           onClick=${submit}
         >
@@ -1980,7 +1951,7 @@ export function TemplateDeployDialog({
                 : copying
                   ? 'Create group'
                   : 'Deploy task force'}
-        </button>
+        </${Button}>
       </div>`,
   );
 }
@@ -2203,9 +2174,8 @@ function AgentRow({
             update({ is_owner: event.currentTarget.checked })}
         />
         owner</label
-      ><button
-        type="button"
-        class="tool ta-remove"
+      ><${Button}
+        class="ta-remove"
         title="Remove this agent"
         onClick=${() =>
           setAgents((current) =>
@@ -2213,7 +2183,7 @@ function AgentRow({
           )}
       >
         ✕
-      </button>
+      <//>
     </div>
     <div class="template-agent-grid">
       <input
@@ -2242,7 +2212,7 @@ function AgentRow({
       class="template-agent-roleref"
       title="Reference a role from the library: the agent inherits that role's canonical brief and default permissions. Launch settings remain independent."
       ><span>Role library</span
-      ><select
+      ><${Select}
         class="ta-role-ref"
         value=${agent.role_ref}
         onChange=${(event) => update({ role_ref: event.currentTarget.value })}
@@ -2257,7 +2227,7 @@ function AgentRow({
                 : '(none)'}
             </option>`,
         )}
-      </select></label
+      <//></label
     >
     <div class="ta-role-inspect">
       <${RoleInspect} roleName=${agent.role_ref} roles=${roles} />
@@ -2281,7 +2251,7 @@ function AgentRow({
         class="template-agent-roleref ta-launch-pick"
         title="Launch profile: the agent's harness, model, effort, sandbox/approval and birth-time permissions come from the picked spawn profile."
         ><span>Launch profile</span
-        ><select
+        ><${Select}
           class="ta-profile-select"
           value=${agent.spawn_profile}
           onChange=${(event) =>
@@ -2291,25 +2261,21 @@ function AgentRow({
             ([value, label]) =>
               html`<option key=${value} value=${value}>${label}</option>`,
           )}
-        </select></label
+        <//></label
       >
       <div class="ta-launch-actions">
-        <button type="button" class="tool ta-custom-launch" onClick=${custom}>
-          ${agent.profile_inline ? '✎ edit custom…' : '✎ custom…'}</button
-        ><button
-          type="button"
-          class="tool ta-profile-new"
+        <${Button} class="ta-custom-launch" onClick=${custom}>
+          ${agent.profile_inline ? '✎ edit custom…' : '✎ custom…'}<//><${Button}
+          class="ta-profile-new"
           onClick=${newProfile}
         >
-          ＋ new</button
-        ><button
-          type="button"
-          class="tool ta-profile-manage"
+          ＋ new<//><${Button}
+          class="ta-profile-manage"
           hidden=${!!actions.catalogNode}
           onClick=${() => actions.openManager('profiles')}
         >
           ⧉ manage…
-        </button>
+        <//>
       </div>
       <div class="ta-profile-summary">
         <${ProfileReadback} agent=${agent} profiles=${profiles} />
@@ -2319,61 +2285,49 @@ function AgentRow({
         <span class="ta-legacy-text"
           >✎ <${Words} plain="custom" wizard="bespoke" />:
           ${customSummary || '(sets no launch fields)'}</span
-        ><button
-          type="button"
-          class="tool ta-custom-remove"
+        ><${Button}
+          class="ta-custom-remove"
           onClick=${removeCustom}
         >
           ✕
-        </button>
+        <//>
       </div>`}
       ${agentHasLegacyLaunch(agent) &&
       html`<div class="ta-legacy-note">
         <span class="ta-legacy-text"
           >⚠ legacy inline: ${legacy.join(' · ')}</span
-        ><button
-          type="button"
-          class="tool ta-extract-profile"
+        ><${Button}
+          class="ta-extract-profile"
           onClick=${extract}
         >
-          Extract to profile…</button
-        ><button
-          type="button"
-          class="tool ta-legacy-remove"
+          Extract to profile…<//><${Button}
+          class="ta-legacy-remove"
           onClick=${removeLegacy}
         >
           ✕
-        </button>
+        <//>
       </div>`}
     </div>
   </div>`;
 }
 
 function ReorderButtons({ prefix, label, index, count, update }) {
-  return html`<button
-      type="button"
-      class=${`tool ${prefix}-up`}
+  return html`<${Button} size="sm" icon=${true} class=${`${prefix}-up`}
       title=${`Move this ${label} up`}
       disabled=${index === 0}
       onClick=${() => update(-1)}
     >
-      ↑</button
-    ><button
-      type="button"
-      class=${`tool ${prefix}-down`}
+      ↑<//><${Button} size="sm" icon=${true} class=${`${prefix}-down`}
       title=${`Move this ${label} down`}
       disabled=${index === count - 1}
       onClick=${() => update(1)}
     >
-      ↓</button
-    ><button
-      type="button"
-      class=${`tool ${prefix}-remove`}
+      ↓<//><${Button} size="sm" icon=${true} variant="ghost danger" class=${`${prefix}-remove`}
       title=${`Remove this ${label}`}
       onClick=${() => update(0)}
     >
       ✕
-    </button>`;
+    <//>`;
 }
 
 function Concepts() {
@@ -2686,15 +2640,14 @@ export function TemplateEditor({
         : null}
       <div class="template-agents-head">
         <span><${Words} plain="Agents" wizard="Heroes" /></span
-        ><button
-          type="button"
+        ><${Button}
           id="template-editor-add-agent"
-          class="tool"
+         
           onClick=${() =>
             setAgents((agents) => [...agents, blankTemplateAgent()])}
         >
           <${Words} plain="+ add agent" wizard="+ add hero" />
-        </button>
+        <//>
       </div>
       <div id="template-editor-agents">
         ${draft.agents.map(
@@ -2718,10 +2671,9 @@ export function TemplateEditor({
         title="Ordered briefing messages delivered after the whole roster has spawned."
       >
         <span><${Words} plain="Work pattern" wizard="Rite of command" /></span
-        ><button
-          type="button"
+        ><${Button}
           id="template-editor-add-pattern"
-          class="tool"
+         
           onClick=${() =>
             setDraft((old) => ({
               ...old,
@@ -2732,7 +2684,7 @@ export function TemplateEditor({
             }))}
         >
           <${Words} plain="+ add step" wizard="+ add verse" />
-        </button>
+        <//>
       </div>
       <div id="template-editor-pattern">
         ${draft.work_pattern.map((step, index) => {
@@ -2757,7 +2709,7 @@ export function TemplateEditor({
               <span class="template-agent-num"
                 ><${Words} plain="Step" wizard="Verse" /> ${index + 1}</span
               ><label class="template-pattern-sendto"
-                ><${Words} plain="send to" wizard="whisper to" /><select
+                ><${Words} plain="send to" wizard="whisper to" /><${Select}
                   class="tw-sendto"
                   value=${step.send_to}
                   onChange=${(event) =>
@@ -2780,7 +2732,7 @@ export function TemplateEditor({
                             : name}
                       </option>`,
                   )}
-                </select></label
+                <//></label
               ><${ReorderButtons}
                 prefix="tw"
                 label="step"
@@ -2810,10 +2762,9 @@ export function TemplateEditor({
       </div>
       <div class="template-agents-head">
         <span><${Words} plain="Process" wizard="Quest plan" /></span
-        ><button
-          type="button"
+        ><${Button}
           id="template-editor-add-phase"
-          class="tool"
+         
           onClick=${() =>
             setDraft((old) => ({
               ...old,
@@ -2824,7 +2775,7 @@ export function TemplateEditor({
             }))}
         >
           <${Words} plain="+ add phase" wizard="+ add chapter" />
-        </button>
+        <//>
       </div>
       <div id="template-editor-process">
         ${draft.process.map(
@@ -2898,10 +2849,9 @@ export function TemplateEditor({
       </div>
       <div class="template-agents-head">
         <span><${Words} plain="Rhythms" wizard="Drumbeats" /></span
-        ><button
-          type="button"
+        ><${Button}
           id="template-editor-add-rhythm"
-          class="tool"
+         
           onClick=${() =>
             setDraft((old) => ({
               ...old,
@@ -2919,7 +2869,7 @@ export function TemplateEditor({
             }))}
         >
           <${Words} plain="+ add rhythm" wizard="+ add drumbeat" />
-        </button>
+        <//>
       </div>
       <div id="template-editor-rhythms">
         ${draft.rhythms.map((rhythm, index) => {
@@ -3021,16 +2971,13 @@ export function TemplateEditor({
         ${current.error}
       </div>
       <div class="modal-buttons">
-        <button
+        <${Button}
           id="template-editor-cancel"
-          type="button"
           disabled=${saving}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><button
+          Cancel</${Button}><${Button}
           id="scribe-editor-open"
-          type="button"
           hidden=${!!actions.catalogNode}
           disabled=${saving}
           onClick=${handoff}
@@ -3038,17 +2985,14 @@ export function TemplateEditor({
           <${Words}
             plain="🤖 Edit with agent"
             wizard="📜 Dictate to a scribe"
-          /></button
-        ><span class="spacer"></span
-        ><button
+          /></${Button}><span class="spacer"></span
+        ><${Button} variant="primary"
           id="template-editor-submit"
-          class="primary"
-          type="button"
           disabled=${saving}
           onClick=${submit}
         >
           ${saving ? 'Saving…' : 'Save template'}
-        </button>
+        </${Button}>
       </div> `,
   );
 }
