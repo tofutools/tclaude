@@ -25,8 +25,9 @@ The companion isn't available in a peer's per-node view or in pop-out windows.
 
 ## Using the companion
 
-Each pinned agent shows as a pill at the bottom right, with its status. With
-nothing pinned, you'll see a **✦ Steward** pill. Drag a pill to move the row to
+The **✦ Steward** pill sits at the bottom right, with its status, next to any
+decisions and permission requests waiting on you. Any other minimized window has a
+pill in the dock. Drag the Steward's pill to move the row to
 any of 16 spots around the edges: the corners and quarter points of the top and
 bottom, and the quarter points of each side. While the row fits in the footer's free
 room, three more spots there show it smaller, covering no work. A row that stops
@@ -38,11 +39,14 @@ can show:
 - **🔑 approval**: the agent asked for permission.
 - **decide**: the agent asked you to [choose](#decisions).
 
-Hover a pill to peek at the agent's last lines. It's read-only, and your keyboard
-stays with the page.
+Hover the Steward's pill, or a chat's pill in the dock, to peek at the agent's last
+lines. It's read-only, and your keyboard stays with the page.
 
-Click a pill, or press **Ctrl+.** anywhere, to open the window. It stays above the
-page without blocking it, and comes back when you reload the tab.
+The Steward lives in an ordinary overlay window, with any other agents you keep at
+hand as its [tabs](#overlay-tabs). Click its pill to open that window, or press
+**Ctrl+.** anywhere to open or minimize it. With no Steward running, the pill opens
+the page that summons or resumes one. The window stays above the page without
+blocking it, and comes back when you reload the tab.
 
 - **Move it** by its title bar. Resize it from any edge or corner.
 - **Split the room** with any windows, boards and chats alike: snap one to the left and one to the right, and they
@@ -66,20 +70,21 @@ page without blocking it, and comes back when you reload the tab.
   edges to resize it; each spot keeps the size you gave it, across reloads too.
 - **Give a chat its own window** by dragging its tab off the title bar, or with **⚙ > Open in overlay**.
   It is the same terminal, and it moves, snaps, splits, minimizes and closes on its
-  own. **Back to a tab** returns it. Open windows come back after a reload. The
-  agent keeps running when its window closes.
-- **Each agent is a tab**, up to eight. **＋** summons the Steward or pins another
-  live agent, and **×** unpins one. The agent keeps running.
-- **Scribes and Stewards** get a tab and a pill by themselves. One you close stays
-  closed until you bring it back with **＋**.
+  own. Drag its tab onto another window to join them again. Open windows come back
+  after a reload. The agent keeps running when its window closes.
+- **Each agent is a tab**. **＋** summons the Steward or adds another live agent, and
+  **×** on a tab sends it to the dock. The agent keeps running. **×** on its dock pill
+  removes it for good.
+- **Scribes and Stewards** get a tab by themselves. One you remove stays removed until
+  you bring it back with **＋**.
 
 An offline agent's tab has **Resume**. A tab detached into a browser window has
-**Bring it back here**. Moving an agent to the Collab tab closes its companion tab,
-since an agent is in one place at a time.
+**Bring it back here**. Moving an agent to the Collab tab closes its tab, since an
+agent is in one place at a time.
 
 Focusing an agent from anywhere shows it where it already is. A row's eye, its cog,
-the palette and a message's link restore its overlay window and raise it, or open
-its companion tab, and only otherwise open a terminal.
+the palette and a message's link restore its overlay window and raise it, and only
+otherwise open a terminal.
 
 ### Title bar buttons
 
@@ -93,7 +98,7 @@ its companion tab, and only otherwise open a terminal.
 | ⚙ | Everything else, listed below. Type to filter it |
 | – | Minimize (Ctrl+.) |
 | □ | Maximize, or restore the size it had |
-| × | Close the tab you're on. The agent keeps running. With no agent showing, this minimizes the window. On a running Steward it asks, then shuts the Steward down and closes its tab, like **Shut down…** |
+| × | Send every tab in the window to the dock. They keep running. On a window holding a running Steward it asks first, then shuts the Steward down, like **Shut down…** |
 
 Under **⚙**, each shown when it applies:
 
@@ -115,19 +120,16 @@ GNOME-style buttons on Linux. **Config > Appearance > Window controls** picks a
 look by hand. **Classic** keeps a plain minimize button and has no maximize or
 close.
 
-The small × on a tab, next to the name, unpins that agent and leaves it running.
-On a Steward's tab it only minimizes the window, and the tab stays.
-A chat floated into an overlay window of its own has a ⚙ too. On a Steward that holds
-its access, roster and **Shut down…**, and the window's close button asks in the same way.
+The small × on a tab, next to the name, sends that tab to the dock and leaves it
+running, on a Steward's tab too. The Steward's pill brings it back.
 
 Dragging a maximized window by its title bar also restores it.
 
 ### Overlay tabs
 
-Every overlay window except the companion is a row of tabs, and a window can hold
-any mix of chats, shells and boards. The title bar tools belong to the tab showing.
-A chat tab has the same tools, cards and draft field as a companion tab. Its draft stays
-while another tab shows, and a minimized chat keeps its terminal for a few minutes.
+Every overlay window is a row of tabs, and a window can hold any mix of chats, shells
+and boards. The title bar tools belong to the tab showing. A chat's draft stays while
+another tab shows, and a minimized chat keeps its terminal for a few minutes.
 
 - **Reorder:** drag a tab along its strip.
 - **Join:** drag a tab onto another window's title bar. A marker shows where it lands.

@@ -15,11 +15,11 @@ import { onBoardDeleted } from './board-manage.js';
 import { BOARD_WINDOW_KIND, returnBoardToTab, setBoardOverlayLabel } from './board-overlay-state.js';
 import { boardPaneSeed, isBoardId } from './board-model.js';
 import { OVERLAY_FOOTER_ROOM, clampPlacement, parsePlacement } from './overlay-window-model.js';
-import { companionAgents, companionStatus, decisionsFor, approvalsFor, isAgentId } from './companion-model.js';
-import { openInCompanion } from './companion-facade.js';
+import { companionAgents, companionStatus, decisionsFor, approvalsFor, isAgentId, stewardAgent } from './companion-model.js';
+import { endCompanionPeek, openInCompanion, peekInCompanion } from './companion-facade.js';
 import { windowControlsLook } from './overlay-window-controls.js';
-import { closeOverlayTab, focusOverlayWindow, keepOverlayWindows, minimizeOverlayWindow, minimizedOverlayTabs, openOverlayWindow, overlayWindows } from './overlay-instances.js';
-import { CHAT_WINDOW_KIND } from './chat-window-model.js';
+import { closeOverlayTab, focusOverlayWindow, keepOverlayWindows, minimizeOverlayWindow, minimizedOverlayTabs, openOverlayWindow, overlayHostUp, overlayWindows } from './overlay-instances.js';
+import { CHAT_WINDOW_KIND, DECIDE_WINDOW_KIND, START_WINDOW_KIND } from './chat-window-model.js';
 import { TERMINAL_WINDOW_KIND, validTerminalWindow } from './terminal-window-model.js';
 import { OverlayWindow, overlayStackReset, readPref } from './overlay-window.js';
 import { BOARD_OVERLAY_PLACEMENT_PREF, dockEntriesOf } from './overlay-tab-model.js';
@@ -101,19 +101,28 @@ const REMOVE_TITLES = {
 // window it left. A chat that needs the operator says so here, as a chip does, so
 // it never looks silently busy.
 function OverlayDock({ snapshot }) {
-  const entries = dockEntriesOf(overlayWindows.value, minimizedOverlayTabs.value);
-  if (!entries.length) return null;
   const agents = companionAgents(snapshot.value);
+  // The chip stands for the seated Steward's window, and for the page summoning one.
+  const seated = stewardAgent(agents)?.agentId;
+  const onChip = ({ kind, agent }) => kind === START_WINDOW_KIND || (kind === CHAT_WINDOW_KIND && agent === seated);
+  const entries = dockEntriesOf(overlayWindows.value, minimizedOverlayTabs.value).filter(({ tabs }) => !(overlayHostUp.value && (tabs.every(onChip) || tabs.some(({ kind, agent }) => kind === CHAT_WINDOW_KIND && agent === seated))));
+  if (!entries.length) return null;
   const needs = ({ kind, agent }) => {
     const row = kind === CHAT_WINDOW_KIND ? agents.get(agent) : null;
     return !!row && (companionStatus(row) === 'needs' || approvalsFor(snapshot.value, row).length + decisionsFor(snapshot.value, row).length > 0);
   };
   return html`<div class="overlay-dock" role="group" aria-label="Minimized windows">
     ${entries.map(({ key, tab, tabs }) => {
-      const removes = tabs.length === 1 && !(tab.kind === CHAT_WINDOW_KIND && agents.get(tab.agent)?.steward) && REMOVE_TITLES[tab.kind];
+      const removes = tabs.length === 1 && !onChip(tab) && tab.kind !== DECIDE_WINDOW_KIND && REMOVE_TITLES[tab.kind];
+      const peeks = tab.kind === CHAT_WINDOW_KIND ? {
+        onMouseEnter: (event) => peekInCompanion(tab.agent, event.currentTarget),
+        onMouseLeave: endCompanionPeek,
+        onFocus: (event) => peekInCompanion(tab.agent, event.currentTarget),
+        onBlur: endCompanionPeek,
+      } : null;
       return html`<span key=${key} class=${`overlay-dock-pill${tabs.some(needs) ? ' needs' : ''}`}>
-        <button type="button" class="overlay-dock-item" title=${`Bring back ${tab.label}`}
-          onClick=${() => { openOverlayWindow(tab); focusOverlayWindow(tab.id); }}>${WINDOW_GLYPHS[tab.kind] || '▣'} ${tab.label}${tabs.length > 1 && html` <span class="overlay-dock-count" aria-label=${`${tabs.length} tabs`}>${tabs.length}</span>`}</button>
+        <button type="button" class="overlay-dock-item" title=${`Bring back ${tab.label}`} ...${peeks}
+          onClick=${() => { endCompanionPeek(); openOverlayWindow(tab); focusOverlayWindow(tab.id); }}>${WINDOW_GLYPHS[tab.kind] || '▣'} ${tab.label}${tabs.length > 1 && html` <span class="overlay-dock-count" aria-label=${`${tabs.length} tabs`}>${tabs.length}</span>`}</button>
         ${removes && html`<button type="button" class="overlay-dock-remove" aria-label=${`${removes[0]} ${tab.label}`} title=${removes[1]} onClick=${() => closeOverlayTab(tab.id)}>×</button>`}
       </span>`;
     })}
@@ -128,6 +137,7 @@ export function BoardOverlay({ snapshot }) {
 function validWindow(window) {
   if (window.kind === BOARD_WINDOW_KIND) return isBoardId(window.board);
   if (window.kind === TERMINAL_WINDOW_KIND) return validTerminalWindow(window);
+  if (window.kind === START_WINDOW_KIND || window.kind === DECIDE_WINDOW_KIND) return true;
   return window.kind === CHAT_WINDOW_KIND && isAgentId(window.agent);
 }
 

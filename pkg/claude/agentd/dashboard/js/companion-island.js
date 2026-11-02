@@ -1,74 +1,64 @@
-// companion-island.js -- the dashboard companion (tcl-6i0283): a floating,
-// minimizable window over every dashboard view that hosts agents' native
-// harness terminals. See companion-model.js for the concept.
+// companion-island.js -- the dashboard companion (tcl-6i0283): the Steward's chip
+// and the agents the operator keeps at hand, over every dashboard view. See
+// companion-model.js for the concept. An agent here is a chat tab of an ordinary
+// overlay window (chat-window.js), so this holds what is shared between them.
 //
-//   chips   minimized: one pill per pinned agent, bottom-right, showing its
-//           status; "needs you" (a permission prompt or a question) turns the
-//           pill amber so a minimized agent never looks silently busy.
-//   peek    hovering a chip previews the last lines of the agent's pane,
-//           read-only (GET /api/companion/{agent}/peek): the keyboard stays
-//           with the page until the operator clicks.
-//   window  click or Ctrl+. grows the chip into a draggable, resizable window
-//           (edge drags snap it into a side panel or bottom drawer) with one
-//           tab per agent. The body is the agent's real terminal, so
-//           streaming, prompts and Esc interrupts are the harness's own.
+//   chips   the Steward's pill, with what needs the operator but belongs to no
+//           one tab: decisions, and permission requests. Bottom-right by default,
+//           and movable. It opens the window holding the Steward. Any other
+//           window minimizes to a dock pill.
+//   peek    hovering a chip or a chat's pill previews the last lines of the
+//           agent's pane, read-only (GET /api/companion/{agent}/peek): the
+//           keyboard stays with the page until the operator clicks.
+//   home    the window the Steward opens in, which keeps the placement the
+//           companion window had, and takes any agent with nowhere else to go.
 //
 // A web terminal attach displaces any other web view of the same session, so
-// opening an agent here first closes its Terminals-tab pane, and "open in
+// showing an agent here first closes its Terminals-tab pane, and "open in
 // Terminals" closes this tab instead of fighting over the session.
 
 import { h, render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  COMPANION_ACTIVE_PREF, COMPANION_CHIP_ROOM_SPOT_PREF, COMPANION_CHIP_SPOT_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_MESSAGE_MAX, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_PLACEMENT_PREF, COMPANION_TABS_PREF, COMPANION_WINDOW_SPOT_PREF, DEFAULT_CHIP_SPOT,
-  agentBlockedOnOperator, companionAgents, companionMessageFits, elevatedAccess, companionStatus, companionStatusLabel, composeCompanionMessage,
-  FOOTER_CHIP_SPOTS, defaultPlacement, footerSpotFits, footerSpotLeft, isAgentId, isFooterSpot, lastRoomSpot, nextActive, parseChipSpot, parseTabs, peekAnchor, spotPlacement, stewardAgent, stewardToResume,
-  parseClosedHelpers, syncHelperTabs, viewContext, withTab, withoutTab, actionsFor, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
+  COMPANION_ACTIVE_PREF, COMPANION_CHIP_ROOM_SPOT_PREF, COMPANION_CHIP_SPOT_PREF, COMPANION_CLOSED_PREF, COMPANION_DETACHED_PREF, COMPANION_CUE_OPEN_PREF, COMPANION_OPEN_PREF, COMPANION_PARKED_PREF, COMPANION_PLACEMENT_PREF, COMPANION_SEEDED_PREF, COMPANION_TABS_PREF, COMPANION_WINDOW_SPOT_PREF, DEFAULT_CHIP_SPOT,
+  companionAgents, elevatedAccess, companionStatus, companionStatusLabel,
+  FOOTER_CHIP_SPOTS, defaultPlacement, footerSpotFits, footerSpotLeft, isAgentId, isFooterSpot, lastRoomSpot, parseChipSpot, parseTabs, peekAnchor, spotPlacement, stewardAgent, stewardToResume,
+  parseClosedHelpers, syncHelperTabs, viewContext, approvalsFor, decisionsFor, decisionSpeech, pendingApprovals, pendingDecisions,
   companionAgentOf,
 } from './companion-model.js';
 import { useChipDrag } from './companion-chip-drag.js';
 import { compactWidth, measureFooterRoom, useFooterRest } from './companion-chip-footer.js';
 import { registerCompanionController } from './companion-facade.js';
+import { DecideTab, StartTab, stewardFreshNote, stewardReturnNote } from './companion-home.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
-import { OverlayWindow, raiseOverlayWindow, readPref, reducedMotion, useOverlayWindow, writePref } from './overlay-window.js';
-import { closeOverlayTab, focusOverlayWindow, openOverlayWindow, overlayHostUp, overlayTabs, overlayWindows, raiseOverlayTab } from './overlay-instances.js';
-import { CHAT_WINDOW_KIND, chatWindowId } from './chat-window-model.js';
+import { readPref, reducedMotion, writePref } from './overlay-window.js';
+import { activateOverlayTab, closeOverlayTab, focusOverlayWindow, minimizeOverlayWindow, openOverlayWindow, openTabInWindow, overlayHostUp, overlayTabs, overlayWindows, swapOverlayTab, tearOverlayTabOut } from './overlay-instances.js';
+import { CHAT_WINDOW_KIND, DECIDE_WINDOW_KIND, HOME_WINDOW, START_WINDOW_KIND, chatTab, chatWindowId, decideTab, startTab } from './chat-window-model.js';
 import { OverlayTabGhost, OverlayTabMenu } from './overlay-tab-strip.js';
 import { chatHasDraft } from './chat-window.js';
 import { OverlayTabWindow } from './overlay-tab-window.js';
+import { activeTabOf, windowHolding } from './overlay-tab-model.js';
 import { BOARD_WINDOW_KIND } from './board-overlay-state.js';
 import { TERMINAL_WINDOW_KIND } from './terminal-window-model.js';
 import { viewportOf } from './overlay-window-model.js';
 import { CompanionViewChannel } from './companion-view-channel.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
-import { ApprovalCard, ElevatedBand, openAccessPanel, requestStewardSummon, resumeAgent } from './companion-approval.js';
-import { relativeAge } from './pr-review-model.js';
-import { AgentCog } from './companion-cog.js';
-import { windowControlsLook } from './overlay-window-controls.js';
+import { openAccessPanel, requestStewardSummon, resumeAgent } from './companion-approval.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { isComposeMessageShortcut } from './terminal-interactions.js';
-import { DraftField, FloatingTools, dictationSendPhrase, micTitle, postOperatorMessage, useAnnotation, useDictation } from './dictation-tools.js';
+import { useAnnotation, useDictation } from './dictation-tools.js';
 import { registerStewardDoor } from './voice-wake.js';
-import { harnessTakesMailMidTurn, voiceContinuous, voiceMarksDictated, voicePauses, voiceSilenceSeconds } from './voice-config.js';
 import { VOICE_PREF, createSpeaker, dictationOpen, createVoiceReader, parseVoiceAgents, speakableText, decisionArrivals, voiceTransitions } from './companion-voice.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
-import { ActionCards } from './message-action.js';
-import { ShellHere } from './terminal-here.js';
-import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 
 const PEEK_DELAY_MS = 220;
 const PENDING_MS = 30000;
-// How long a minimized window keeps its terminal attached, so reopening it
-// shows content at once. After this it detaches and the next open reconnects.
-const WARM_MS = 5 * 60 * 1000;
 
 const PEEK_REFRESH_MS = 1500;
-// How far a tab is pulled off the strip before it comes away as a window.
-const TAB_TEAR_PX = 40;
 
 function Avatar({ agent }) {
   const steward = agent?.steward;
@@ -146,17 +136,8 @@ function without(set, value) {
 
 // The agent of the chat window target is in, null outside one.
 function chatAgentOf(target, snapshotValue) {
-  const id = target?.closest?.('.chat-window')?.querySelector?.('[data-companion-terminal]')?.dataset?.companionTerminal;
+  const id = target?.closest?.('.chat-window')?.querySelector?.('[data-chat-agent]')?.dataset?.chatAgent;
   return id ? companionAgents(snapshotValue).get(id) || null : null;
-}
-
-// companionContinuous is continuous mode's settings for an agent's tab, null
-// where it can't run: on a peer's agent, whose questions this node can't see,
-// or a harness that isn't proven to take mail mid-turn.
-function companionContinuous(snapshot, agent) {
-  const mode = voiceContinuous(snapshot);
-  if (!mode || !agent || agent.presence || !harnessTakesMailMidTurn(snapshot, agent.harness || 'claude')) return null;
-  return { ...mode, held: () => (agentBlockedOnOperator(snapshot, agent) ? `${agent.name} is waiting on you, so continuous mode stopped. Your words stay in the draft.` : '') };
 }
 
 // How long the Steward's window has to come up after its phrase.
@@ -164,19 +145,6 @@ const STEWARD_WAKE_MS = 3000;
 
 // How recently a key in the terminal counts as still typing when a cue lands.
 const CUE_TYPING_WINDOW_MS = 3000;
-
-// stewardReturnNote says how far back a Steward's conversation picks up.
-function stewardReturnNote({ lastRan }) {
-  const age = relativeAge(lastRan);
-  return age ? `Same conversation. Last ran ${age}.` : 'Same conversation.';
-}
-
-// stewardFreshNote says what Start fresh leaves behind. Going on the roster takes
-// what the role gave, not what the operator gave this agent separately.
-function stewardFreshNote({ name, keeps = [] }) {
-  const kept = keeps.length ? ` It keeps what you gave it separately: ${keeps.join(', ')}.` : '';
-  return `A new Steward. ${name} goes on the roster.${kept}`;
-}
 
 function AddMenu({ agents, tabs, steward, stewardLabel, returning, onResumeSteward, onSummonSteward, onPin, onClose, busy, trigger }) {
   const [filter, setFilter] = useState('');
@@ -259,6 +227,17 @@ function DecisionCard({ decision, fetchImpl, notify, from = '' }) {
   </div>`;
 }
 
+// AddTab is a window's ＋: what the operator can bring into it.
+function AddTab({ window, ...menu }) {
+  const [shown, setShown] = useState(false);
+  const trigger = useRef(null);
+  return html`<button ref=${trigger} type="button" class="companion-add" aria-label="Add a companion" aria-expanded=${shown ? 'true' : 'false'}
+    title=${`Summon ${menu.stewardLabel} or pin a live agent`} onClick=${() => setShown((v) => !v)}>＋</button>
+    ${shown && html`<${AddMenu} ...${menu} onPin=${(id) => { setShown(false); menu.onPin(id); }}
+      onResumeSteward=${() => { setShown(false); menu.onResumeSteward(); }} onSummonSteward=${() => { setShown(false); menu.onSummonSteward(); }}
+      onClose=${() => setShown(false)} trigger=${trigger} />`}`;
+}
+
 export function CompanionApp({
   speakerImpl = null,
   dictationImpl = null,
@@ -292,71 +271,51 @@ export function CompanionApp({
     if (sessionPrefsImpl) return sessionPrefsImpl;
     try { return win?.sessionStorage ?? null; } catch { return null; }
   }, [win, sessionPrefsImpl]);
-  // A tab an older page parked for the Terminals tab is not restored: the pane has
+  // What a page saved before the Steward moved into a window comes back as one,
+  // and so does what the operator keeps at hand, in a dashboard tab new to it. A
+  // tab an older page parked for the Terminals tab is not restored: the pane has
   // the session, and the tab would only take it back.
-  const [tabs, setTabs] = useState(() => {
+  useState(() => {
+    if (readPref(sessionPrefs, COMPANION_SEEDED_PREF) === '1') return;
+    writePref(sessionPrefs, COMPANION_SEEDED_PREF, '1');
     const inWindows = new Set(parseTabs(readPref(sessionPrefs, COMPANION_DETACHED_PREF)));
     const gone = new Set(parseTabs(readPref(sessionPrefs, COMPANION_PARKED_PREF)).filter((id) => !inWindows.has(id)));
-    return parseTabs(readPref(prefs, COMPANION_TABS_PREF)).filter((id) => !gone.has(id));
-  });
-  const [active, setActive] = useState(() => {
+    const held = parseTabs(readPref(prefs, COMPANION_TABS_PREF), Infinity).filter((id) => !gone.has(id) && agents.has(id) && !overlayTabs.peek().some((tab) => tab.id === chatWindowId(id)));
     const saved = readPref(sessionPrefs, COMPANION_ACTIVE_PREF) || readPref(prefs, COMPANION_ACTIVE_PREF);
-    return isAgentId(saved) ? saved : '';
+    const shown = held.includes(saved) ? saved : held[0];
+    for (const id of held) openTabInWindow(HOME_WINDOW, COMPANION_PLACEMENT_PREF, chatTab(id, agents.get(id).name), { activate: false });
+    if (shown && readPref(sessionPrefs, COMPANION_OPEN_PREF) === '1') openOverlayWindow(chatTab(shown));
+    else if (shown) activateOverlayTab(chatWindowId(shown));
   });
-  const [open, setOpen] = useState(() => readPref(sessionPrefs, COMPANION_OPEN_PREF) === '1');
   const [chipSpot, setChipSpot] = useState(() => parseChipSpot(readPref(prefs, COMPANION_CHIP_SPOT_PREF)));
-  const overlay = useOverlayWindow({
-    id: 'companion', win, prefs, prefKey: COMPANION_PLACEMENT_PREF, defaultPlacement, snaps: true, open,
-    // A floating window opens at the chips' spot until the operator moves it.
+  // A floating home window opens at the chips' spot until the operator moves it.
+  const homeOverlay = useRef(null);
+  const chipRects = useRef(new Map());
+  const home = {
+    id: HOME_WINDOW,
     spotted: (base, viewport, top) => {
       const spot = readPref(prefs, COMPANION_WINDOW_SPOT_PREF);
       return spot ? spotPlacement(parseChipSpot(spot), base, viewport, top) : null;
     },
     onPlaced: () => writePref(prefs, COMPANION_WINDOW_SPOT_PREF, ''),
-    onRefocus: () => setFocusToken((n) => n + 1),
-  });
-  const { windowRef, openFrom, releaseFocus } = overlay;
-  const [menu, setMenu] = useState(false);
-  const addRef = useRef(null);
+    // The window holding the Steward plays down into its chip.
+    shrinks: (window, overlay) => {
+      if (!window.tabs.some((tab) => tab.agent === steward?.agentId)) return null;
+      homeOverlay.current = overlay;
+      return () => overlay.shrinkTo(chipRects.current.get(steward.agentId), () => minimizeOverlayWindow(window.active));
+    },
+  };
   const [busy, setBusy] = useState(false);
   // The Steward just shut down, { agentId, name }. It reads as gone from here
   // on: the snapshot can still show it online for a poll.
   const [shutDown, setShutDown] = useState(null);
-  const askShutDown = useRef(null);
-  const rosterRef = useRef(null);
   const [detached, setDetached] = useState(() => new Set(parseTabs(readPref(sessionPrefs, COMPANION_DETACHED_PREF))));
   const detachedRef = useRef(detached);
   detachedRef.current = detached;
   const detachedWindows = useRef(new Map());
-  // A tab parked for a browser window of the agent, which keeps the way back.
+  // An agent parked for a browser window of it, which keeps the way back.
   const [parked, setParked] = useState(() => new Set(parseTabs(readPref(sessionPrefs, COMPANION_PARKED_PREF)).filter((id) => detached.has(id))));
-  const [statuses, setStatuses] = useState({});
-  const [reconnectable, setReconnectable] = useState({});
-  const terminalWidgetRef = useRef(null);
-  const [generation, setGeneration] = useState(0);
-  const [focusToken, setFocusToken] = useState(0);
-  const [warmId, setWarmId] = useState('');
-  const warmTimer = useRef(null);
   const [peek, setPeek] = useState(null); // {agentId, anchor, lines}
-  // Unsent text per agent id, so a draft stays with the agent it was written
-  // for however the active tab changes.
-  const [drafts, setDrafts] = useState({});
-  const setDraft = (agentId, text) => setDrafts((current) => {
-    const { [agentId]: _replaced, ...rest } = current;
-    return text ? { ...rest, [agentId]: text } : rest;
-  });
-  // deciding shows the fleet-wide "to decide" queue over the window body.
-  const [deciding, setDeciding] = useState(false);
-  // Answering the last decision ends the queue: a later decision must not
-  // cover the window again while the operator is typing in it.
-  const queueSize = pendingDecisions(snapshot.value).length;
-  useEffect(() => { if (!queueSize) setDeciding(false); }, [queueSize]);
-  const draftRef = useRef('');
-  // Emptying the field by hand must not take it away from under the caret.
-  const [fieldFocused, setFieldFocused] = useState(false);
-  const fieldRef = useCallback((element) => { if (!element) setFieldFocused(false); }, []);
-  const [withContext, setWithContext] = useState(true);
-  // The agent the operator is marking up the page for (tcl-8vjjko), or null.
   // Voice output (tcl-q3qcfw): agents whose replies are spoken aloud.
   const [voiceAgents, setVoiceAgents] = useState(() => new Set(parseVoiceAgents(readPref(prefs, VOICE_PREF))));
   const voiceAgentsRef = useRef(voiceAgents);
@@ -372,9 +331,7 @@ export function CompanionApp({
   const voiceReader = useMemo(() => createVoiceReader(fetchImpl), [fetchImpl]);
   const voiceStatuses = useRef(new Map());
   const voiceDecisions = useRef(new Map());
-  const [sending, setSending] = useState(false);
-  const chipRects = useRef(new Map());
-  // Agents just summoned or opened but not yet in a snapshot: kept pinned (and
+  // Agents just summoned or opened but not yet in a snapshot: kept here (and
   // shown as starting) until a snapshot lists them or PENDING_MS passes.
   const pending = useRef(new Map());
   // Agents just resumed: the snapshot still shows them offline, so they read as
@@ -384,33 +341,26 @@ export function CompanionApp({
     overlayHostUp.value = true;
     return () => { overlayHostUp.value = false; };
   }, []);
-  // A tab whose agent has a window of its own is not here: the session has one view.
-  const hasWindow = (agentId) => overlayTabs.value.some((tab) => tab.id === chatWindowId(agentId));
-  const docked = tabs.filter((id) => !hasWindow(id));
-  const activeId = docked.includes(active) ? active : (docked[0] || '');
-  const activeAgent = activeId ? agents.get(activeId) || null : null;
-  const [terminalFont, onTerminalFontChange] = useTerminalFont('companion', activeId, prefs);
-  const draft = drafts[activeId] || '';
-  draftRef.current = draft;
-  // Voice input (tcl-sqxkb0): dictation fills the draft; ending with "send"
-  // sends it. listeningRef keeps replies from being spoken into the open mic.
-  const sendPhrase = dictationSendPhrase(snapshot.value);
-  const composerShown = useRef(false);
-  const dictation = useDictation({
-    win, targetId: activeId, draft, setDraft, notify, dictationImpl, sendPhrase,
-    silenceSend: voiceSilenceSeconds(snapshot.value),
-    pauses: voicePauses(snapshot.value),
-    mark: voiceMarksDictated(snapshot.value),
-    continuous: companionContinuous(snapshot.value, activeAgent),
-    wakeHost: () => (composerShown.current ? windowRef.current : null),
-    send: (text) => send(null, text),
-    onStart: () => speaker.cancel(),
-    onRelease: () => { setFieldFocused(false); setFocusToken((n) => n + 1); },
-  });
-  const { listening, listeningRef } = dictation;
-  // The Steward phrase. The dictation only starts once the Steward is the
-  // target, so no word can land on the agent that had the focus, and the mic
-  // stays reserved until then so the wake listener doesn't take it back.
+  // An agent is here as a chat tab, of a window or on the dock.
+  const chats = overlayTabs.value.filter((tab) => tab.kind === CHAT_WINDOW_KIND);
+  const held = chats.map((tab) => tab.agent);
+  const heldKey = held.join();
+  const heldHere = (id) => held.includes(id);
+  const holder = windowHolding(overlayWindows.value, steward ? chatWindowId(steward.agentId) : '');
+  // With no Steward's chat here the chip opens the start tab, shown just the same.
+  const startHolder = windowHolding(overlayWindows.value, startTab().id);
+  const stewardShown = holder
+    ? !holder.minimized && activeTabOf(holder)?.agent === steward.agentId
+    : !!startHolder && !startHolder.minimized && activeTabOf(startHolder)?.kind === START_WINDOW_KIND;
+  const homeWindow = overlayWindows.value.find((window) => window.id === HOME_WINDOW);
+  // The chat showing at the front, for what acts on whichever agent is in view.
+  const shownChats = overlayWindows.value.filter((window) => !window.minimized).map((window) => activeTabOf(window)).filter((tab) => tab?.kind === CHAT_WINDOW_KIND);
+  const frontAgent = () => agents.get(shownChats.at(-1)?.agent) || null;
+  // The Steward phrase. The dictation only starts once the Steward's tab shows, so
+  // no word can land on the agent that had the focus, and the mic stays reserved
+  // until then so the wake listener doesn't take it back.
+  const doorMic = useDictation({ win, targetId: '', draft: '', setDraft: () => {}, notify, dictationImpl, send: () => {} });
+  const mics = useRef(new Map());
   const stewardWake = useRef(null);
   const wakeDoor = useRef(null);
   wakeDoor.current = {
@@ -422,51 +372,45 @@ export function CompanionApp({
         detachedWindows.current.get(steward.agentId)?.focus?.();
         return `${name} is in its own window. Dictate there, or bring it back here.`;
       }
-      if (hasWindow(steward.agentId)) {
-        raiseOverlayTab(chatWindowId(steward.agentId));
-        return `${name} is in its own window. Dictate there.`;
-      }
       return '';
     },
-    reserve: () => dictation.reserve(),
+    reserve: () => doorMic.reserve(),
     open(words, carry) {
-      dictation.reserve();
-      if (activeId === steward.agentId && composerShown.current) {
-        dictation.handover(words, carry);
-        return;
-      }
+      doorMic.reserve();
       clearTimeout(stewardWake.current?.timer);
       const timer = setTimeout(() => {
         stewardWake.current = null;
-        dictation.release();
+        doorMic.release();
         notify(`Could not open ${stewardLabel}, so nothing is listening.`, true);
       }, STEWARD_WAKE_MS);
       stewardWake.current = { agentId: steward.agentId, words, carry, timer };
       showAgent(steward.agentId);
+      wakeWhenShown();
     },
+  };
+  function wakeWhenShown() {
+    const wake = stewardWake.current;
+    const mic = wake && mics.current.get(wake.agentId);
+    if (!mic) return;
+    stewardWake.current = null;
+    clearTimeout(wake.timer);
+    mic.handover(wake.words, wake.carry);
+    doorMic.release();
+  }
+  const onMic = (agentId, mic) => {
+    mics.current.set(agentId, mic);
+    wakeWhenShown();
+    return () => { if (mics.current.get(agentId) === mic) mics.current.delete(agentId); };
   };
   useEffect(() => registerStewardDoor({
     refusal: () => wakeDoor.current.refusal(),
     reserve: () => wakeDoor.current.reserve(),
     open: (words, carry) => wakeDoor.current.open(words, carry),
   }), []);
-  useEffect(() => {
-    const pendingWake = stewardWake.current;
-    if (!pendingWake || activeId !== pendingWake.agentId || !composerShown.current) return;
-    stewardWake.current = null;
-    clearTimeout(pendingWake.timer);
-    dictation.handover(pendingWake.words, pendingWake.carry);
-  });
 
-  useEffect(() => writePref(prefs, COMPANION_TABS_PREF, JSON.stringify(tabs)), [tabs]);
-  useEffect(() => {
-    if (!activeId) return;
-    writePref(prefs, COMPANION_ACTIVE_PREF, activeId);
-    writePref(sessionPrefs, COMPANION_ACTIVE_PREF, activeId);
-  }, [activeId, sessionPrefs]);
+  useEffect(() => writePref(prefs, COMPANION_TABS_PREF, JSON.stringify(held)), [heldKey]);
   useEffect(() => writePref(sessionPrefs, COMPANION_DETACHED_PREF, JSON.stringify([...detached])), [detached, sessionPrefs]);
   useEffect(() => writePref(sessionPrefs, COMPANION_PARKED_PREF, JSON.stringify([...parked])), [parked, sessionPrefs]);
-  useEffect(() => writePref(sessionPrefs, COMPANION_OPEN_PREF, open ? '1' : '0'), [open, sessionPrefs]);
 
   // Live scribes and Stewards keep a tab without being pinned.
   const closedHelpers = useRef(null);
@@ -480,29 +424,44 @@ export function CompanionApp({
     if (closed) list.add(agentId); else list.delete(agentId);
     writePref(prefs, COMPANION_CLOSED_PREF, JSON.stringify([...list]));
   };
+  // However an agent stops being held here, voice stops with it, as Unpin says,
+  // and a helper the operator let go of stays gone.
+  const heldBefore = useRef(new Set());
+  const ended = useRef(new Set());
+  useEffect(() => {
+    const now = new Set(held);
+    for (const id of heldBefore.current) {
+      if (now.has(id)) continue;
+      silence(id);
+      if (agents.get(id)?.scribe && !ended.current.has(id)) setHelperClosed(id, true);
+      ended.current.delete(id);
+    }
+    heldBefore.current = now;
+  }, [heldKey]);
+
+  const shownKey = shownChats.map((tab) => tab.agent).join();
   useEffect(() => {
     if (!snapshot.value) return;
-    const keep = new Set([...pending.current.keys(), ...resuming, open ? activeId : ''].filter(Boolean));
-    const next = syncHelperTabs(tabs, agents, closedList(), keep);
-    if (next !== tabs) setTabs(next);
-  }, [agents, snapshot.value, open, activeId, resuming]);
+    const keep = new Set([...pending.current.keys(), ...resuming, ...shownChats.map((tab) => tab.agent)]);
+    const next = syncHelperTabs(held, agents, closedList(), keep);
+    if (next === held) return;
+    for (const id of held) {
+      if (next.includes(id)) continue;
+      ended.current.add(id);
+      closeOverlayTab(chatWindowId(id));
+    }
+    for (const id of next) if (!held.includes(id)) openTabInWindow(HOME_WINDOW, COMPANION_PLACEMENT_PREF, chatTab(id, agents.get(id).name), { activate: false });
+  }, [agents, snapshot.value, heldKey, shownKey, resuming]);
 
-  // However an agent comes to be attached here (a tab chosen, a reload, the
-  // active tab closing), this view takes over from its Terminals pane.
-  useEffect(() => {
-    if (open && activeId && !parked.has(activeId)) closeTerminalPanes([activeId, activeAgent?.convId].filter(Boolean));
-  }, [open, activeId, activeAgent?.convId, parked]);
-
-  // A pinned agent that was retired drops out of the snapshot; forget it once
-  // the snapshot is known so the chips never show a dead handle forever.
+  // An agent that was retired drops out of the snapshot; forget it once the
+  // snapshot is known so nothing shows a dead handle forever.
   useEffect(() => {
     if (!snapshot.value) return;
     const now = Date.now();
     for (const [id, until] of pending.current) {
       if (agents.has(id) || until < now) pending.current.delete(id);
     }
-    const keep = (id) => agents.has(id) || pending.current.has(id);
-    if (tabs.some((id) => !keep(id))) setTabs((current) => current.filter(keep));
+    for (const id of held) if (!agents.has(id) && !pending.current.has(id)) closeOverlayTab(chatWindowId(id));
   }, [agents]);
 
   useEffect(() => {
@@ -515,22 +474,17 @@ export function CompanionApp({
     return () => clearTimeout(timer);
   }, [resuming]);
 
-  // A detached agent stays in its own window: opening its tab only shows where
-  // it went. Attaching here would throw that window off the terminal, and the
-  // window has no idea why. Only Bring it back here reclaims it.
-  const showAgent = useCallback((agentId, { focus = true, starting = false, reclaim = false } = {}) => {
+  const putStart = () => openTabInWindow(HOME_WINDOW, COMPANION_PLACEMENT_PREF, startTab());
+  // A detached agent stays in its own window: its tab only shows where it went.
+  // Attaching here would throw that window off the terminal, and the window has
+  // no idea why. Only Bring it back here reclaims it.
+  const showAgent = useCallback((agentId, { focus = true, starting = false, reclaim = false, into = HOME_WINDOW } = {}) => {
     if (!isAgentId(agentId)) return false;
-    // A chat opens in one place: its window, when it has one.
-    const chat = overlayTabs.peek().find((tab) => tab.id === chatWindowId(agentId));
-    if (chat && !reclaim) {
-      openOverlayWindow(chat);
-      if (focus) focusOverlayWindow(chat.id);
-      return true;
-    }
     const agent = agents.get(agentId);
+    const tab = chatTab(agentId, agent?.name);
     // An id the snapshot does not know is only accepted for an agent this
     // window just started; other callers keep their own fallback.
-    if (!agent && !starting && !pending.current.has(agentId)) return false;
+    if (!agent && !starting && !pending.current.has(agentId) && !overlayTabs.peek().some((other) => other.id === tab.id)) return false;
     if (!agent && starting) pending.current.set(agentId, Date.now() + PENDING_MS);
     setHelperClosed(agentId, false);
     stopPeek();
@@ -539,13 +493,9 @@ export function CompanionApp({
       setParked((current) => without(current, agentId));
       setDetached((current) => without(current, agentId));
     }
-    setTabs((current) => withTab(current, agentId));
-    setActive(agentId);
-    setDeciding(false);
-    setMenu(false);
-    setOpen(true);
-    raiseOverlayWindow('companion');
-    if (focus) setFocusToken((n) => n + 1);
+    openTabInWindow(into, COMPANION_PLACEMENT_PREF, tab);
+    if (focus) focusOverlayWindow(tab.id);
+    if (overlayTabs.peek().some((other) => other.id === startTab().id)) closeOverlayTab(startTab().id);
     return true;
   }, [agents, closeTerminalPanes]);
 
@@ -567,26 +517,30 @@ export function CompanionApp({
   const revealAgent = useRef(null);
   revealAgent.current = (selector, { tabs: orTab }) => {
     const agentId = companionAgentOf(snapshot.peek(), selector)?.agentId || selector;
-    const chat = overlayTabs.peek().find((tab) => tab.id === chatWindowId(agentId));
-    if (chat) {
-      openOverlayWindow(chat);
-      focusOverlayWindow(chat.id);
-      return true;
-    }
     if (detachedRef.current.has(agentId)) {
       const opened = detachedWindows.current.get(agentId);
       if (!opened) return showAgent(agentId);
       opened.focus?.();
       return true;
     }
-    return orTab && tabs.includes(agentId) && !parked.has(agentId) && showAgent(agentId);
+    const chat = overlayTabs.peek().find((tab) => tab.id === chatWindowId(agentId));
+    // One not showing has let go of the session, which a Terminals pane may have.
+    const showing = overlayWindows.peek().some((window) => !window.minimized && window.active === chat?.id);
+    if (!chat || (!showing && !orTab)) return false;
+    openOverlayWindow(chat);
+    focusOverlayWindow(chat.id);
+    return true;
   };
+  const peekRef = useRef(null);
   useEffect(() => registerController({
     open: (agentId, options) => showAgent(agentId, options),
     float: (selector, at) => floatAgent.current(selector, at),
     reclaim: (selector) => reclaimAgent.current(selector),
     reveal: (selector, options) => revealAgent.current(selector, options),
+    peek: (agentId, element) => peekRef.current?.(agentId, element),
+    endPeek: () => stopPeek(),
   }), [showAgent]);
+  peekRef.current = (agentId, element) => { if (agents.has(agentId)) startPeek(agentId, element, DEFAULT_CHIP_SPOT); };
 
   // A shut-down Steward can come back without this window: from the Agents tab,
   // the CLI, or by the seat going to another agent. Then there is nothing left
@@ -641,16 +595,7 @@ export function CompanionApp({
 
   const silence = (agentId) => setVoiceAgents((current) => without(current, agentId));
 
-  const closeTab = useCallback((agentId, { keepOpen = false, keepVoice = false } = {}) => {
-    if (agents.get(agentId)?.scribe) setHelperClosed(agentId, true);
-    if (!keepVoice) silence(agentId);
-    const next = withoutTab(tabs, agentId);
-    if (agentId === activeId) setActive(nextActive(tabs, agentId));
-    if (!next.length && !keepOpen) setOpen(false);
-    setTabs(next);
-  }, [tabs, activeId, agents]);
-
-  // floatTab moves a tab into a window of its own, at at if it was dragged there.
+  // floatTab gives an agent a window of its own, at at if it was dragged there.
   function floatTab(agent, at = null) {
     // A browser window of it goes, as Bring it back here closes one: it would
     // lose the session to this window with no idea why.
@@ -659,81 +604,44 @@ export function CompanionApp({
     if (opened) setTimeout(() => opened.close?.(), RECLAIM_CLOSE_MS);
     setParked((current) => without(current, agent.agentId));
     setDetached((current) => without(current, agent.agentId));
-    // An agent that never had a tab leaves the companion as it was.
-    closeTab(agent.agentId, { keepOpen: !tabs.includes(agent.agentId), keepVoice: true });
-    openOverlayWindow({ id: chatWindowId(agent.agentId), kind: CHAT_WINDOW_KIND, agent: agent.agentId, label: agent.name, at });
+    const tab = chatTab(agent.agentId, agent.name);
+    const window = windowHolding(overlayWindows.peek(), tab.id);
+    if (window?.tabs.length > 1) tearOverlayTabOut(tab.id, at);
+    else openOverlayWindow({ ...tab, at });
   }
 
-  // A press on a tab stays a click until it is pulled well off the tab strip.
-  function onTabPointerDown(event, agent) {
-    if (event.button !== 0) return;
-    const handle = event.currentTarget;
-    const strip = handle.closest('.companion-titlebar')?.getBoundingClientRect?.();
-    if (!strip) return;
-    handle.setPointerCapture?.(event.pointerId);
-    let torn = false;
-    const off = (m) => m.clientY < strip.top - TAB_TEAR_PX || m.clientY > strip.bottom + TAB_TEAR_PX
-      || m.clientX < strip.left - TAB_TEAR_PX || m.clientX > strip.right + TAB_TEAR_PX;
-    const move = (m) => {
-      torn = off(m);
-      handle.classList.toggle('tearing', torn);
-    };
-    const up = (m) => {
-      handle.removeEventListener('pointermove', move);
-      handle.removeEventListener('pointerup', up);
-      handle.removeEventListener('pointercancel', up);
-      handle.classList.remove('tearing');
-      if (torn && m.type === 'pointerup') {
-        handle.addEventListener('click', (click) => { click.preventDefault(); click.stopPropagation(); }, { capture: true, once: true });
-        floatTab(agent, { x: m.clientX - 120, y: m.clientY - 14 });
-      }
-    };
-    handle.addEventListener('pointermove', move);
-    handle.addEventListener('pointerup', up);
-    handle.addEventListener('pointercancel', up);
-  }
-
-  function chatBackToTab(instance) {
-    closeOverlayTab(instance.id);
-    showAgent(instance.agent, { reclaim: true });
-  }
-
-  // The window stays open on the shut-down state, with the way to start again.
-  // A detached window of it goes too: it has nothing left to show.
-  // Closing is the window's ✕ asking: then the window goes as a close does, and
-  // Resume waits in ✦ Steward.
-  function stewardShutDown(agent, { closing = false } = {}) {
+  // The tab stays on the shut-down state, with the way to start again. A detached
+  // window of it goes too: it has nothing left to show.
+  // Closing is the window's ✕ asking: then the tab goes as a close does, and
+  // Resume waits behind ✦ Steward.
+  function stewardShutDown(agent, { closing = false } = {}, tabId = chatWindowId(agent.agentId)) {
     setResuming((current) => without(current, agent.agentId));
     detachedWindows.current.get(agent.agentId)?.close?.();
     detachedWindows.current.delete(agent.agentId);
     setParked((current) => without(current, agent.agentId));
     setDetached((current) => without(current, agent.agentId));
-    closeTab(agent.agentId, { keepOpen: !closing });
+    // A window already offering the way back only loses the tab.
+    if (closing || overlayTabs.peek().some((tab) => tab.id === startTab().id)) closeOverlayTab(tabId);
+    else swapOverlayTab(tabId, startTab());
     setShutDown({ agentId: agent.agentId, name: agent.name });
     notify(`${agent.name} is shut down.`);
   }
 
-  const minimize = useCallback(() => {
-    setMenu(false);
-    setDeciding(false);
-    overlay.shrinkTo(chipRects.current.get(activeId), () => setOpen(false));
-  }, [activeId, win]);
-
+  // Ctrl+. and the chip bring up the window holding the Steward, or the one that
+  // would, and Ctrl+. puts it away again.
   const toggle = useCallback(() => {
     stopPeek();
-    if (open) {
-      minimize();
+    const window = overlayWindows.peek().find((candidate) => candidate.id === (holder?.id || HOME_WINDOW));
+    const docked = !holder && !!steward && overlayTabs.peek().some((tab) => tab.id === chatWindowId(steward.agentId));
+    if (window && !window.minimized && !docked) {
+      const shrinks = home.shrinks(window, homeOverlay.current);
+      if (shrinks && homeOverlay.current) shrinks();
+      else minimizeOverlayWindow(window.active);
       return;
     }
-    raiseOverlayWindow('companion');
-    if (!docked.length) {
-      setOpen(true);
-      return;
-    }
-    openFrom.current = chipRects.current.get(activeId) || null;
-    setOpen(true);
-    setFocusToken((n) => n + 1);
-  }, [open, docked.length, activeId, minimize]);
+    if (steward && (holder || steward.online) && steward.agentId !== shutDown?.agentId) showAgent(steward.agentId);
+    else if (window) { openOverlayWindow(activeTabOf(window)); focusOverlayWindow(window.active); } else putStart();
+  }, [holder?.id, holder?.minimized, steward?.agentId, steward?.online, shutDown, showAgent]);
 
   // Ctrl+. toggles the window from anywhere, including from inside a focused
   // terminal: capture phase, before xterm sees the key.
@@ -747,27 +655,12 @@ export function CompanionApp({
         // Ctrl+Shift+. marks up the page for the agent in the window.
         event.preventDefault();
         event.stopPropagation();
-        startAnnotating(chatOf(event.target) || activeAgent);
+        startAnnotating(chatOf(event.target) || frontAgent());
       }
     };
     win?.addEventListener?.('keydown', onKey, true);
     return () => win?.removeEventListener?.('keydown', onKey, true);
-  }, [toggle, win, activeAgent?.agentId, activeAgent?.online]);
-
-  // Minimizing hides the window and only releases its terminal later.
-  useEffect(() => {
-    if (!open) return undefined;
-    setWarmId(activeId || '');
-    clearTimeout(warmTimer.current);
-    return () => { warmTimer.current = setTimeout(() => setWarmId(''), WARM_MS); };
-  }, [open, activeId]);
-  // Keys must not reach a terminal nobody can see.
-  useEffect(() => {
-    if (open) return;
-    const focused = win?.document?.activeElement;
-    if (windowRef.current?.contains(focused)) focused.blur?.();
-  }, [open]);
-  useEffect(() => () => clearTimeout(warmTimer.current), []);
+  }, [toggle, win, shownKey, agents]);
 
   function moveChips(spot) {
     setChipSpot(spot);
@@ -776,19 +669,6 @@ export function CompanionApp({
     const roomSpot = lastRoomSpot(spot, shownSpot);
     if (roomSpot) writePref(prefs, COMPANION_CHIP_ROOM_SPOT_PREF, roomSpot);
     writePref(prefs, COMPANION_WINDOW_SPOT_PREF, spot === DEFAULT_CHIP_SPOT ? '' : spot);
-  }
-
-  function closeActive(event) {
-    if (!closesTab) {
-      minimize();
-      return;
-    }
-    if (closeShutsDown) {
-      askShutDown.current?.();
-      return;
-    }
-    closeTab(activeAgent.agentId);
-    releaseFocus(event);
   }
 
   // Peek: a short hover delay, then the pane text, refreshed while hovered.
@@ -815,13 +695,13 @@ export function CompanionApp({
       if (peekAgent.current === agentId) setPeek((current) => (current ? { ...current, lines: [] } : current));
     }
   }
-  function startPeek(agentId, chip) {
+  function startPeek(agentId, chip, spot = shownSpot) {
     stopPeek();
     peekAgent.current = agentId;
     peekTimer.current = setTimeout(() => {
       const rect = chip.getBoundingClientRect();
       const vp = viewportOf(win);
-      setPeek({ agentId, lines: null, anchor: peekAnchor(shownSpot, rect, vp) });
+      setPeek({ agentId, lines: null, anchor: peekAnchor(spot, rect, vp) });
       void readPeek(agentId);
       peekRefresh.current = setInterval(() => void readPeek(agentId), PEEK_REFRESH_MS);
     }, PEEK_DELAY_MS);
@@ -829,7 +709,7 @@ export function CompanionApp({
 
   // A row saved in the footer rests at its last spot in the room when it doesn't fit.
   const chipRow = useRef(null);
-  const footerRest = useFooterRest({ win, watching: isFooterSpot(chipSpot) && !open, row: chipRow });
+  const footerRest = useFooterRest({ win, watching: isFooterSpot(chipSpot) && !stewardShown, row: chipRow });
   const restSpot = () => { const spot = parseChipSpot(readPref(prefs, COMPANION_CHIP_ROOM_SPOT_PREF)); return isFooterSpot(spot) ? DEFAULT_CHIP_SPOT : spot; };
   const shownSpot = isFooterSpot(chipSpot) && !footerRest.fits ? restSpot() : chipSpot;
   const inFooter = isFooterSpot(shownSpot);
@@ -847,67 +727,16 @@ export function CompanionApp({
       openAccessPanel({ agentId, launcher: event.currentTarget, documentRef: win?.document });
       return;
     }
-    openFrom.current = event.currentTarget.getBoundingClientRect();
+    if (homeOverlay.current) homeOverlay.current.openFrom.current = event.currentTarget.getBoundingClientRect();
     if (agentId) showAgent(agentId);
-    else toggle();
+    else putStart();
   }
-
-  async function send(event, text = draft) {
-    event?.preventDefault?.();
-    const context = withContext
-      ? viewContext({ activeTab: activeTab.value, pathname: win?.location?.pathname, search: win?.location?.search })
-      : '';
-    const message = dictation.outgoing(text);
-    if (!companionMessageFits(message, context)) {
-      notify('That message is too long to send. Shorten it and try again.', true);
-      return false;
-    }
-    const body = composeCompanionMessage(message, context);
-    if (!body || !activeAgent || sending) return false;
-    // An open mic would bring the sent text back. Enter or Send with the mic
-    // on sends what the draft holds; a failed send leaves it there.
-    if (event) dictation.abort?.();
-    setSending(true);
-    try {
-      await postOperatorMessage(fetchImpl, { to: activeAgent.agentId, body });
-      // Whatever was typed while this went out stays.
-      setDrafts((current) => {
-        if (current[activeAgent.agentId] !== text) return current;
-        const { [activeAgent.agentId]: _sent, ...rest } = current;
-        return rest;
-      });
-      // Send and the field are about to go, and focus would fall to the page.
-      const focused = win?.document?.activeElement;
-      if (draftRef.current === text && focused?.matches?.('.companion-draft, .companion-input button[type="submit"]')) {
-        setFieldFocused(false);
-        setFocusToken((n) => n + 1);
-      }
-      return true;
-    } catch (error) {
-      notify(`Message to ${activeAgent.name} failed: ${error?.message || error}`, true);
-      return false;
-    } finally {
-      setSending(false);
-    }
-  }
-
-  // An agent is here as a tab of this window or of a window of its own.
-  const chatTabs = overlayTabs.value.filter((tab) => tab.kind === CHAT_WINDOW_KIND).map((tab) => tab.agent);
-  const heldHere = (id) => tabs.includes(id) || chatTabs.includes(id);
-  const heldKey = chatTabs.join();
-  // However an agent stops being held here, voice stops with it, as Unpin says.
-  const heldBefore = useRef(new Set());
-  useEffect(() => {
-    const now = new Set([...tabs, ...chatTabs]);
-    for (const id of heldBefore.current) if (!now.has(id)) silence(id);
-    heldBefore.current = now;
-  }, [tabs, heldKey]);
 
   useEffect(() => {
     const pinned = [...voiceAgents].filter(heldHere);
     writePref(prefs, VOICE_PREF, JSON.stringify(pinned));
     for (const id of pinned) voiceReader.prime(id).catch(() => {});
-  }, [voiceAgents, voiceReader, tabs, heldKey]);
+  }, [voiceAgents, voiceReader, heldKey]);
 
   // Speak when a voice agent's turn ends, or when it starts waiting on the
   // operator. Only transitions speak; the first sight of an agent is silent.
@@ -917,7 +746,7 @@ export function CompanionApp({
   useEffect(() => {
     if (!speaker.supported) return;
     const next = new Map();
-    const quiet = () => dictationOpen() || listeningRef.current; // never speak into an open mic
+    const quiet = () => dictationOpen(); // never speak into an open mic
     for (const id of voiceAgents) {
       const agent = agents.get(id);
       if (agent && heldHere(id)) next.set(id, statusOf(agent));
@@ -969,7 +798,7 @@ export function CompanionApp({
       if (!claim(`${VOICE_PREF}.decision.${agentId}`, String(decision.id), (prev) => decision.id > Number(prev))) continue;
       if (!quiet()) speaker.speak(speakableText(decisionSpeech(agent, decision), 400));
     }
-  }, [agents, voiceAgents, tabs, heldKey, snapshot.value]);
+  }, [agents, voiceAgents, heldKey, snapshot.value]);
 
   function toggleVoice(agent) {
     setVoiceAgents((current) => {
@@ -985,14 +814,14 @@ export function CompanionApp({
     });
   }
 
-  // The window and chips stay mounted (the terminal keeps its stream) but
+  // The windows and chips stay mounted (the terminal keeps its stream) but
   // step out of the way while the operator draws.
   const annotation = useAnnotation({
     win, notify,
     viewNow: () => viewContext({ activeTab: activeTab.value, pathname: win?.location?.pathname, search: win?.location?.search }),
   });
 
-  function startAnnotating(agent = activeAgent) {
+  function startAnnotating(agent) {
     if (!agent?.online) {
       notify('Open a live agent in the companion first, then mark up the page for it.', true);
       return;
@@ -1022,7 +851,6 @@ export function CompanionApp({
   async function resumeSteward() {
     if (!returning || busy) return;
     setBusy(true);
-    setMenu(false);
     try {
       if (await resume(returning)) {
         setShutDown(null);
@@ -1033,9 +861,9 @@ export function CompanionApp({
     }
   }
 
-  // The window has one attach to the terminal, so it lets go first. A blocked
-  // pop-up leaves everything where it was.
-  function detachToWindow(agent, rect = windowRef.current?.getBoundingClientRect?.()) {
+  // The window has one attach to the terminal, so the tab lets go first, and stays
+  // as the way back. A blocked pop-up leaves everything where it was.
+  function detachToWindow(agent, rect) {
     const size = rect ? { width: rect.width, height: rect.height } : null;
     const opened = detachWindow(agent.agentId, agent.name, { harness: agent.harness, size, at: elementScreenPoint(win, rect) });
     if (!opened) {
@@ -1046,14 +874,6 @@ export function CompanionApp({
     setParked((current) => new Set(current).add(agent.agentId));
     setDetached((current) => new Set(current).add(agent.agentId));
     return true;
-  }
-
-  // Its way back is a companion tab, as Back to a tab from the chat gives it.
-  function chatToWindow(instance, rect) {
-    const agent = agents.get(instance.agent);
-    if (!agent || !detachToWindow(agent, rect)) return;
-    closeOverlayTab(instance.id);
-    setTabs((current) => withTab(current, agent.agentId));
   }
 
   function chatToTerminals(instance, agent) {
@@ -1086,17 +906,6 @@ export function CompanionApp({
     return () => clearInterval(check);
   }, [detached.size]);
 
-  function moveToTerminals(agent) {
-    if (!openTerminalsPane) return;
-    // It leaves here: a tab saying where it went would be one more thing to close.
-    closeTab(agent.agentId);
-    // Let the companion's widget detach before the Terminals pane attaches.
-    setTimeout(() => openTerminalsPane(agent.agentId, agent.name, agent.harness), 60);
-  }
-
-  const setReconnectFor = useCallback((agentId) => (available) => setReconnectable((current) => (current[agentId] === available ? current : { ...current, [agentId]: available })), []);
-  const setStatusFor = useCallback((agentId) => (status) => setStatuses((current) => (current[agentId] === status ? current : { ...current, [agentId]: status })), []);
-
   // -- dashboard guidance ---------------------------------------------------
   // Play the agents' pointing cues.
 
@@ -1120,13 +929,13 @@ export function CompanionApp({
     return () => clearTimeout(timer);
   }, [guideCue]);
 
-  function composeToActive(agent = activeAgent, restoreFocus = () => setFocusToken((n) => n + 1)) {
+  function composeTo(agent, restoreFocus) {
     if (!agent?.online) return false;
     onComposeMessage?.({ agent: agent.agentId, label: agent.name, restoreFocus });
     return true;
   }
-  const composeRef = useRef(composeToActive);
-  composeRef.current = composeToActive;
+  const composeRef = useRef(composeTo);
+  composeRef.current = composeTo;
   useEffect(() => {
     if (!onComposeMessage) return undefined;
     const doc = win?.document;
@@ -1141,12 +950,9 @@ export function CompanionApp({
         event.stopPropagation();
         return;
       }
-      if (!event.target?.closest?.('.companion-window') || hasShownOverlay()) return;
-      const chat = event.target.closest('.chat-window');
-      const sent = chat
-        ? composeRef.current(chatOf(event.target), () => chat.querySelector('.companion-term-host textarea')?.focus?.())
-        : composeRef.current();
-      if (sent) {
+      const chat = event.target?.closest?.('.chat-window');
+      if (!chat || hasShownOverlay()) return;
+      if (composeRef.current(chatOf(event.target), () => chat.querySelector('.companion-term-host textarea')?.focus?.())) {
         event.preventDefault();
         event.stopPropagation();
       }
@@ -1171,19 +977,18 @@ export function CompanionApp({
   }, [win, speaker]);
 
   // openForCue opens the agent a cue hands over. While the operator is
-  // typing or dictating to the current tab it is only pinned, never switched
-  // to: a switch would take the terminal they are typing in, or the draft they
-  // are writing, away from under them.
+  // typing or dictating to a tab it only joins the tabs, never showing: that would
+  // take the terminal they are typing in, or the draft they are writing, away from
+  // under them.
   function openForCue(cue) {
     const agent = agents.get(cue.open);
     if (!agent) return;
     const by = cue.agent_name || 'An agent';
     // Focus alone is no signal: it stays in the terminal long after the last key.
     const typing = Date.now() - lastTerminalKey.current < CUE_TYPING_WINDOW_MS;
-    const drafting = !showQueue && activeAgent?.online && draftRef.current.trim();
     const chatting = overlayWindows.peek().some((window) => !window.minimized && chatHasDraft(window.active));
-    if (drafting || chatting || dictationOpen() || listeningRef.current || typing) {
-      if (!hasWindow(agent.agentId)) setTabs((current) => withTab(current, agent.agentId));
+    if (chatting || dictationOpen() || typing) {
+      openTabInWindow(HOME_WINDOW, COMPANION_PLACEMENT_PREF, chatTab(agent.agentId, agent.name), { activate: false });
       notify(`${by} pinned ${agent.name} in the companion window for you.`, false);
       return;
     }
@@ -1288,44 +1093,65 @@ export function CompanionApp({
   const decisions = (agent) => decisionsFor(snapshot.value, agent);
   // A pending approval or decision is the clearest "needs you" there is.
   const statusOf = (agent) => (approvals(agent).length || decisions(agent).length ? 'needs' : companionStatus(agent));
-  const chipAgents = docked.map((id) => agents.get(id)).filter(Boolean);
+  const chipAgent = steward && (heldHere(steward.agentId) || (steward.online && steward.agentId !== shutDown?.agentId)) ? steward : null;
+  const heldAgents = held.map((id) => agents.get(id)).filter(Boolean);
   const queue = pendingDecisions(snapshot.value);
   const toApprove = pendingApprovals(snapshot.value);
-  const elsewhere = toApprove.filter((request) => !chipAgents.some((agent) => approvalsFor({ access_requests: [request] }, agent).length));
-  const showQueue = deciding && queue.length > 0;
-  const showField = draft || listening || fieldFocused;
+  // A tab showing answers its own agent's requests, and the Steward's chip its
+  // own, so a chip counts the rest.
+  const answered = [chipAgent, ...shownChats.map((tab) => agents.get(tab.agent))].filter(Boolean);
+  const elsewhere = toApprove.filter((request) => !answered.some((agent) => approvalsFor({ access_requests: [request] }, agent).length));
   const askerName = (d) => agents.get(d.from_agent)?.name || d.from_title || 'an agent';
-  const needsCount = chipAgents.filter((agent) => statusOf(agent) === 'needs').length;
+  const hidden = heldAgents.filter((agent) => !shownChats.some((tab) => tab.agent === agent.agentId));
+  const needsCount = hidden.filter((agent) => statusOf(agent) === 'needs').length;
   const peekTarget = peek ? agents.get(peek.agentId) : null;
 
-  const chipSlots = !open && chipDrag.slots && chipDrag.slots.map(({ spot, near, width, height, left }) => html`<div key=${spot}
+  // The queue is a tab of the Steward's window while that shows, as the chips are not.
+  const queueWindow = holder?.id || HOME_WINDOW;
+  const queueUp = holder ? !holder.minimized : !!homeWindow && !homeWindow.minimized;
+  useEffect(() => {
+    const tab = decideTab();
+    const there = overlayTabs.peek().some((other) => other.id === tab.id);
+    if (!queue.length && there) closeOverlayTab(tab.id);
+    if (queue.length && !there && queueUp) openTabInWindow(queueWindow, COMPANION_PLACEMENT_PREF, tab, { activate: false });
+  }, [queue.length, queueUp, queueWindow]);
+
+  const chipSlots = !stewardShown && chipDrag.slots && chipDrag.slots.map(({ spot, near, width, height, left }) => html`<div key=${spot}
     class=${`companion-chip-slot companion-spot-${spot}${near ? ' near' : ''}`} data-chip-spot=${spot}
     style=${`width:${width}px;${left === undefined ? `height:${height}px` : `left:${left}px`}`} aria-hidden="true"></div>`);
 
-  const chips = !open && html`<div ref=${chipRow} class=${`companion-chips companion-spot-${shownSpot}${inFooter ? ' compact' : ''}${chipDrag.slots ? ' dragging' : ''}`}
+  const chips = !stewardShown && html`<div ref=${chipRow} class=${`companion-chips companion-spot-${shownSpot}${inFooter ? ' compact' : ''}${chipDrag.slots ? ' dragging' : ''}`}
     style=${inFooter ? `left:${footerSpotLeft(shownSpot, footerRest.room, footerRest.width)}px` : null}
     role="toolbar" aria-label="Companions" onPointerDown=${chipDrag.onPointerDown} onClickCapture=${chipDrag.onClickCapture}>
-    ${chipAgents.map((agent) => {
-      const status = statusOf(agent);
-      return html`<button key=${agent.agentId} type="button"
+    ${chipAgent && (() => {
+      const own = statusOf(chipAgent);
+      // Its window has no pill, so the chip speaks for the tabs waiting out of
+      // sight. A prompt or an approval holds an agent up, and a decision need not,
+      // so one never hides behind the other.
+      const unseen = (holder?.tabs || []).filter((tab) => tab.kind === CHAT_WINDOW_KIND && (holder.minimized || tab.id !== holder.active)).map((tab) => agents.get(tab.agent)).filter((agent) => agent && agent !== chipAgent);
+      const stopped = (agent) => approvals(agent).length > 0 || companionStatus(agent) === 'needs';
+      const behind = stopped(chipAgent) ? null : unseen.find(stopped) || (own === 'needs' ? null : unseen.find((agent) => statusOf(agent) === 'needs'));
+      const status = behind ? 'needs' : own;
+      const peekAt = (behind || chipAgent).agentId;
+      return html`<button key=${chipAgent.agentId} type="button"
         class=${`companion-chip ${status}`}
-        ref=${(node) => { if (node) chipRects.current.set(agent.agentId, node.getBoundingClientRect()); }}
-        aria-label=${`${agent.name}: ${companionStatusLabel(status)}. Open companion (Ctrl+.)`}
-        onMouseEnter=${(event) => startPeek(agent.agentId, event.currentTarget)}
+        ref=${(node) => { if (node) chipRects.current.set(chipAgent.agentId, node.getBoundingClientRect()); }}
+        aria-label=${behind ? `${behind.name}: ${companionStatusLabel('needs')}, in the window of ${chipAgent.name}. Open it` : `${chipAgent.name}: ${companionStatusLabel(status)}. Open companion (Ctrl+.)`}
+        onMouseEnter=${(event) => startPeek(peekAt, event.currentTarget)}
         onMouseLeave=${stopPeek}
-        onFocus=${(event) => startPeek(agent.agentId, event.currentTarget)}
+        onFocus=${(event) => startPeek(peekAt, event.currentTarget)}
         onBlur=${stopPeek}
-        onClick=${(event) => onChipClick(agent.agentId, event)}>
-        <${Avatar} agent=${agent} />
-        <span class="companion-chip-name">${agent.name}</span>
-        ${elevatedAccess(snapshot.value, agent) && html`<span title="Elevated access">🔓</span>`}
-        ${status === 'needs' ? html`<span class="companion-chip-needs">${approvals(agent).length ? '🔑 approval' : decisions(agent).length ? 'decide' : 'needs you'}</span>` : html`<${StatusDot} status=${status} />`}
+        onClick=${(event) => onChipClick(peekAt, event)}>
+        <${Avatar} agent=${chipAgent} />
+        <span class="companion-chip-name">${behind ? behind.name : chipAgent.name}</span>
+        ${elevatedAccess(snapshot.value, chipAgent) && html`<span title="Elevated access">🔓</span>`}
+        ${status === 'needs' ? html`<span class="companion-chip-needs">${behind ? 'needs you' : approvals(chipAgent).length ? '🔑 approval' : decisions(chipAgent).length ? 'decide' : 'needs you'}</span>` : html`<${StatusDot} status=${status} />`}
       </button>`;
-    })}
+    })()}
     ${queue.length > 0 && html`<button type="button" class="companion-chip companion-chip-decide"
       aria-label=${`${queue.length} ${queue.length === 1 ? 'decision' : 'decisions'} to make. Open them`}
       title="Agents are waiting for you to choose"
-      onClick=${(event) => { stopPeek(); openFrom.current = event.currentTarget.getBoundingClientRect(); setDeciding(true); setOpen(true); }}>
+      onClick=${() => { stopPeek(); openTabInWindow(queueWindow, COMPANION_PLACEMENT_PREF, decideTab()); }}>
       <span class="companion-decide-mark" aria-hidden="true">◆</span><span class="companion-chip-name">${queue.length} to decide</span>
     </button>`}
     ${elsewhere.length > 0 && html`<button type="button" class="companion-chip companion-chip-decide"
@@ -1334,7 +1160,7 @@ export function CompanionApp({
       onClick=${(event) => { stopPeek(); openAccessPanel({ launcher: event.currentTarget, documentRef: win?.document }); }}>
       <span aria-hidden="true">🔑</span><span class="companion-chip-name">${elsewhere.length} to approve</span>
     </button>`}
-    ${!chipAgents.length && html`<button type="button" class="companion-chip companion-chip-steward"
+    ${!chipAgent && html`<button type="button" class="companion-chip companion-chip-steward"
       aria-label="Open the companion (Ctrl+.)" title=${`${customName || 'Steward'}: your helper for all of tclaude (Ctrl+.)`}
       onClick=${(event) => onChipClick('', event)}>
       <span class="companion-avatar steward" aria-hidden="true">✦</span><span class="companion-chip-name">${customName || 'Steward'}</span>
@@ -1347,174 +1173,18 @@ export function CompanionApp({
     <p class="companion-empty-note">${stewardFreshNote(returning)}</p>`
     : html`<button type="button" class="companion-primary" onClick=${() => resume(agent)}>Resume</button>`);
 
-  const status = activeAgent ? statusOf(activeAgent) : 'offline';
-  const activeApprovals = activeAgent ? approvals(activeAgent) : [];
-  const activeElevated = elevatedAccess(snapshot.value, activeAgent);
-  const activeDecisions = activeAgent ? decisions(activeAgent) : [];
-  const activeActions = activeAgent ? actionsFor(snapshot.value, activeAgent) : [];
-  const showRoster = !!(openStewardHandover && activeAgent && !showQueue && (activeAgent.steward || stewardRoster.some((entry) => entry.agent_id === activeAgent.agentId)));
-  const standby = showRoster ? stewardRoster.filter((entry) => entry.seat === 'standby').length : 0;
-  const termStatus = activeAgent ? statuses[activeAgent.agentId] || 'connecting…' : '';
-  const canReconnect = activeAgent ? reconnectable[activeAgent.agentId] === true || ['disconnected', 'error', 'authentication required'].includes(termStatus) : false;
-  const starting = activeAgent ? !activeAgent.online && resuming.has(activeId) : activeId && pending.current.has(activeId);
-
-  // A terminal that lost its attach while hidden, for example to a Terminals
-  // tab pane, has nothing to show, so reopening starts a fresh connection.
-  useEffect(() => {
-    if (open && canReconnect) setGeneration((n) => n + 1);
-  }, [open]);
-
-  // Only the terminal already attached may stay hidden. Mounting one for any
-  // other agent, or again after a restart, would take the attach from whatever
-  // view holds it, for a window nobody can see.
-  const warm = !!warmId && warmId === activeId && activeAgent?.online && !parked.has(warmId);
-  useEffect(() => {
-    if (!open && warmId && !warm) setWarmId('');
-  }, [open, warmId, warm]);
-
-  const showComposer = !showQueue && activeAgent && activeAgent.online;
-  composerShown.current = !!(open && showComposer);
-  // A mic with no window showing would have no countdown and no Cancel.
-  useEffect(() => { if (!composerShown.current) dictation.abort?.(); }, [composerShown.current]);
-  const messageTools = (children = null) => html`<${FloatingTools} dictation=${dictation}
-    micLabel=${`Dictate a message to ${activeAgent.name}`}
-    micTitle=${micTitle(sendPhrase)}
-    withContext=${withContext} onContext=${setWithContext}
-    contextNote=${(snapshot.value?.steward_access?.capture_off || []).includes(activeAgent.agentId)
-      ? `${activeAgent.name} can't capture your screen: that permission is off for it. The attached view says where you are, not what is on screen.` : ''}
-    annotateLabel=${`Mark up this page for ${activeAgent.name} (Ctrl+Shift+.)`} onAnnotate=${() => startAnnotating()}>${children}<//>`;
-  const terminalZoom = html`<${ShellHere} agent=${activeAgent?.agentId} name=${activeAgent?.name} snapshot=${snapshot.value} notify=${notify} />
-    <${TerminalZoom} font=${terminalFont} widget=${() => terminalWidgetRef.current} />`;
-
-  const look = windowControlsLook(snapshot.value?.window_controls);
-  // Close takes the tab being shown off the window, as its own × does. With
-  // no such tab there is nothing to close, so the window just goes away.
-  const closesTab = activeAgent && !showQueue;
-  // A running Steward isn't closed in passing: its ✕ asks what ⏻ asks.
-  const closeShutsDown = closesTab && activeAgent.steward && activeAgent.online;
-  const closeTitle = closeShutsDown ? 'Close: shut it down, after asking' : closesTab ? 'Close (the agent keeps running)' : 'Close';
-  const controls = {
-    look, closeLabel: closesTab ? `Close ${activeAgent.name}` : 'Close', closeTitle,
-    onMinimize: minimize, onClose: closeActive,
-  };
-
-  const titlebarContent = html`
-      <div class="companion-tabs" role="tablist" aria-label="Companion agents">
-        ${chipAgents.map((agent) => {
-          const tabStatus = statusOf(agent);
-          const selected = agent.agentId === activeId && !showQueue;
-          return html`<div key=${agent.agentId} class=${`companion-tab${selected ? ' selected' : ''}`}>
-            <button type="button" role="tab" aria-selected=${selected ? 'true' : 'false'}
-              title=${`${agent.name}: ${companionStatusLabel(tabStatus)}. Drag out for a window of its own.`}
-              onPointerDown=${(event) => onTabPointerDown(event, agent)}
-              onClick=${() => showAgent(agent.agentId)}>
-              <${Avatar} agent=${agent} /><span>${agent.name}</span>${elevatedAccess(snapshot.value, agent) && html`<span class="companion-tab-elevated" title="Elevated access">🔓</span>`}<${StatusDot} status=${tabStatus} />
-            </button>
-            ${agent.steward
-              ? html`<button type="button" class="companion-tab-close" aria-label=${`Minimize ${agent.name}`} title="Minimize"
-                onClick=${minimize}>×</button>`
-              : html`<button type="button" class="companion-tab-close" aria-label=${`Unpin ${agent.name}`} title="Unpin (the agent keeps running)"
-                onClick=${() => closeTab(agent.agentId)}>×</button>`}
-          </div>`;
-        })}
-        ${queue.length > 0 && html`<div class=${`companion-tab companion-decide-tab${showQueue ? ' selected' : ''}`}>
-          <button type="button" role="tab" aria-selected=${showQueue ? 'true' : 'false'} title="Decisions agents are waiting on"
-            onClick=${() => setDeciding((v) => !v)}><span class="companion-decide-mark" aria-hidden="true">◆</span><span>${queue.length} to decide</span></button>
-        </div>`}
-        <button ref=${addRef} type="button" class="companion-add" aria-label="Add a companion" aria-expanded=${menu ? 'true' : 'false'}
-          title=${`Summon ${stewardLabel} or pin a live agent`} onClick=${() => setMenu((v) => !v)}>＋</button>
-      </div>
-      <div class="companion-controls">
-        ${activeElevated && html`<button type="button" class="companion-state-sudo" aria-label=${`${activeAgent.name} has elevated access`}
-          title="Elevated access. The band in the window can end it." disabled=${!(activeAgent.steward && activeAgent.online && openSudo)}
-          onClick=${() => openSudo(activeAgent.agentId, activeAgent.name)}>🛡 sudo</button>`}
-        ${standby > 0 && html`<button type="button" class="companion-state-roster" aria-label=${`${standby} on the Steward roster`}
-          title="On the Steward roster" onClick=${() => rosterRef.current?.()}>✦ ${standby}</button>`}
-        ${toApprove.length > 0 && html`<button type="button" class="companion-access"
-          aria-label=${`${toApprove.length} permission ${toApprove.length === 1 ? 'request' : 'requests'} waiting. Open them`}
-          title="Agents are asking for permission"
-          onClick=${(event) => openAccessPanel({ launcher: event.currentTarget, documentRef: win?.document })}>🔑 ${toApprove.length}</button>`}
-        ${activeAgent && speaker.supported && html`<button type="button" class=${`companion-voice${voiceAgents.has(activeAgent.agentId) ? ' on' : ''}`}
-          aria-pressed=${voiceAgents.has(activeAgent.agentId) ? 'true' : 'false'} aria-label=${`Speak ${activeAgent.name}'s replies aloud`}
-          title=${voiceAgents.has(activeAgent.agentId) ? 'Voice on: replies are spoken when a turn ends. Typing stops speech.' : 'Speak replies aloud'}
-          onClick=${() => toggleVoice(activeAgent)}>${voiceAgents.has(activeAgent.agentId) ? '🔊' : '🔈'}</button>`}
-        ${activeAgent?.online && !showQueue && onComposeMessage && html`<button type="button" class="companion-compose" aria-label=${`Message ${activeAgent.name}`} title="Send a queued message (Ctrl/Cmd+M)" onClick=${() => composeToActive()}>✉</button>`}
-        <${AgentCog} agent=${activeAgent} deciding=${showQueue} parked=${activeAgent ? parked.has(activeAgent.agentId) : false} roster=${stewardRoster} showRoster=${showRoster}
-          onCollab=${openTerminalsPane && activeAgent && !parked.has(activeAgent.agentId) ? () => moveToTerminals(activeAgent) : null} onFloat=${() => floatTab(activeAgent)}
-          onDetach=${detachWindow ? () => detachToWindow(activeAgent) : null} onMorph=${openMorph ? () => openMorph(activeAgent) : null}
-          openPermissions=${openPermissions} openSudo=${openSudo} openHandover=${openStewardHandover} agents=${agents} showAgent=${showAgent}
-          fetchImpl=${fetchImpl} notify=${notify} onDown=${stewardShutDown} askShutDownRef=${askShutDown} rosterRef=${rosterRef} />
-        ${look === 'classic' && html`<button type="button" aria-label="Minimize (Ctrl+.)" title="Minimize (Ctrl+.)" onClick=${minimize}>–</button>`}
-      </div>
-`;
-
-  const windowView = html`<${OverlayWindow} id="companion" window=${overlay} open=${open} mounted=${open || warm}
-    className=${`companion-window${open ? '' : ' companion-window-warm'}`} frameClass="companion-resize-frame"
-    titlebarClass=${`companion-titlebar overlay-look-${look}`} label="Companion" controls=${controls}
-    lead=${html`<span class="companion-grip" aria-hidden="true">⋮⋮</span>`} title=${titlebarContent}>
-    ${menu && html`<${AddMenu} agents=${agents} tabs=${tabs} steward=${steward} busy=${busy}
-      stewardLabel=${stewardLabel} returning=${returning} onResumeSteward=${resumeSteward} onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id)} onClose=${() => setMenu(false)} trigger=${addRef} />`}
-    <div class=${`companion-body${showComposer && showField && activeApprovals.length + activeDecisions.length + activeActions.length ? ' clear-strip' : ''}`}>
-      ${showQueue && html`<div class="companion-decide-queue" role="region" aria-label="To decide">
-        ${activeApprovals.length > 0 && html`<p class="companion-decide-note" role="status">${activeAgent.name} also has
-          ${activeApprovals.length === 1 ? ' an approval' : ` ${activeApprovals.length} approvals`} waiting:
-          <button type="button" onClick=${() => setDeciding(false)}>show</button></p>`}
-        ${queue.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} from=${askerName(decision)} />`)}
-      </div>`}
-      ${activeApprovals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
-      ${!showQueue && activeDecisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}
-      ${!showQueue && html`<${ActionCards} messages=${activeActions} fetchImpl=${fetchImpl} notify=${notify} />`}
-      ${starting && html`<div class="companion-empty" role="status"><p>Starting the agent… its terminal opens here as soon as it is up.</p></div>`}
-      ${!activeAgent && !starting && html`<div class="companion-empty">
-        <p class="companion-empty-title"><span class="companion-avatar steward" aria-hidden="true">✦</span> ${customName || 'The Steward'}</p>
-        ${shutDown && html`<p class="companion-shutdown-note" role="status"><b>${shutDown.name}</b> is shut down. You can pick its conversation back up.</p>`}
-        <p>An always-available helper for all of tclaude. Ask what you can do on this page, how your
-          groups are set up, or to help you set up groups, profiles, processes or your sandbox.</p>
-        <p class="companion-empty-note">Config > Steward sets what it can do without asking. Once it is running, ⚙ in the title bar changes its access.</p>
-        ${returning ? html`<button type="button" class="companion-primary companion-resume-steward" disabled=${busy} onClick=${resumeSteward}>${busy ? 'Working…' : `Resume ${returning.name}`}</button>
-          <p class="companion-empty-note">${stewardReturnNote(returning)}</p>
-          <button type="button" class="companion-secondary companion-fresh-steward" disabled=${busy} onClick=${summonSteward}>Start fresh</button>
-          <p class="companion-empty-note">${stewardFreshNote(returning)}</p>`
-        : html`<button type="button" class="companion-primary" disabled=${busy} onClick=${summonSteward}>${busy ? 'Summoning…' : `${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}`}</button>`}
-        <p class="companion-empty-note">Or press ＋ to pin any live agent here.</p>
-      </div>`}
-      ${activeElevated && html`<${ElevatedBand} agent=${activeAgent} access=${activeElevated} fetchImpl=${fetchImpl} notify=${notify} />`}
-      ${activeAgent && parked.has(activeAgent.agentId) && showComposer && html`<div class="companion-floating-anchor">${messageTools()}</div>`}
-      ${activeAgent && !activeAgent.online && !starting && html`<div class="companion-empty">
-        <p><b>${activeAgent.name}</b> is offline.</p>
-        ${offlineActions(activeAgent)}
-      </div>`}
-      ${activeAgent && activeAgent.online && parked.has(activeAgent.agentId) && html`<div class="companion-empty">
-        <p><b>${activeAgent.name}</b> is open in its own window.</p>
-        <button type="button" class="companion-primary" onClick=${() => reclaim(activeAgent.agentId)}>Bring it back here</button>
-      </div>`}
-      ${activeAgent && activeAgent.online && !parked.has(activeAgent.agentId) && html`
-        ${status === 'needs' && !activeApprovals.length && !activeDecisions.length && html`<div class="companion-needs-bar" role="status">${activeAgent.name} is waiting for you${activeAgent.detail ? `: ${activeAgent.detail}` : ''}</div>`}
-        <div class="companion-floating-anchor">
-          ${showComposer ? messageTools(terminalZoom) : html`<div class="companion-floating" role="group" aria-label="Terminal tools">${terminalZoom}</div>`}
-          ${termStatus !== 'connected' && html`<div class="companion-term-status" role="status">${canReconnect
-          ? html`${termStatus || 'disconnected'}. <button type="button" onClick=${() => setGeneration((n) => n + 1)}>Reconnect</button>`
-          : termStatus}</div>`}
-        </div>
-        <${CompanionTerminal} key=${activeAgent.agentId} agent=${activeAgent} generation=${generation}
-          widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} focusToken=${focusToken} widgetRef=${terminalWidgetRef}
-          fontSize=${() => readTerminalFont('companion', activeAgent.agentId, prefs)} onFontChange=${onTerminalFontChange}
-          onStatus=${setStatusFor(activeAgent.agentId)} onReconnectChange=${setReconnectFor(activeAgent.agentId)} />`}
-    </div>
-    ${showComposer && showField && html`<${DraftField} dictation=${dictation} draft=${draft} sending=${sending}
-      label=${`Message ${activeAgent.name}`} fieldRef=${fieldRef} onSubmit=${send}
-      onFocus=${() => setFieldFocused(true)} onBlur=${() => setFieldFocused(false)}
-      onEdit=${(text) => { speaker.cancel(); setDraft(activeAgent.agentId, text); }} />`}
-  <//>`;
 
   const chatTabTools = {
-    statusOf, offlineActions, openMorph, dictationImpl, starting: (agentId) => resuming.has(agentId),
+    statusOf, offlineActions, openMorph, dictationImpl, starting: (agentId) => resuming.has(agentId) || pending.current.has(agentId),
     voice: speaker.supported ? { supported: true, on: (agentId) => voiceAgents.has(agentId), toggle: toggleVoice, quiet: () => speaker.cancel() } : null,
     viewTab: () => activeTab.value,
     // Drawing happens above the windows, which step aside, so it cannot live in one.
     annotate: (agentId) => startAnnotating(agents.get(agentId) || null),
     onCompose: onComposeMessage ? (agent, restoreFocus) => composeRef.current(agent, restoreFocus) : null,
     onTerminals: openTerminalsPane ? chatToTerminals : null,
+    parked: (agentId) => parked.has(agentId),
+    onReclaim: reclaim,
+    onMic,
   };
   const shownTerminal = { snapshot, prefs, win, widgetFactory, loadRuntime, Terminal: CompanionTerminal };
   const chatView = ({ agent: agentId, label }) => {
@@ -1523,24 +1193,28 @@ export function CompanionApp({
     const tabStatus = agent ? statusOf(agent) : 'offline';
     return { label: name, lead: html`<${StatusDot} status=${tabStatus} />`, title: `${name}: ${agent ? companionStatusLabel(tabStatus) : 'not on this node any more'}` };
   };
+  const stewardHome = { win, steward, shutDown, returning, busy, stewardLabel, customName, snapshot };
   const tabKinds = {
-    [CHAT_WINDOW_KIND]: { view: chatView, asksToClose: ({ agent }) => !!(agents.get(agent)?.steward && agents.get(agent).online), ...shownTerminal, fetchImpl, notify, closeTerminalPanes, onBackToTab: chatBackToTab, onSeparateWindow: detachWindow ? chatToWindow : null, onStewardDown: stewardShutDown, stewardRoster, openPermissions, openSudo, openStewardHandover, showAgent, DecisionCard, StatusDot, ...chatTabTools },
+    [CHAT_WINDOW_KIND]: { view: chatView, asksToClose: ({ agent }) => !!(agents.get(agent)?.steward && agents.get(agent).online), ...shownTerminal, fetchImpl, notify, closeTerminalPanes, onSeparateWindow: detachWindow ? detachToWindow : null, onFloat: floatTab, onStewardDown: stewardShutDown, stewardRoster, openPermissions, openSudo, openStewardHandover, showAgent, DecisionCard, StatusDot, ...chatTabTools },
     [TERMINAL_WINDOW_KIND]: { ...shownTerminal, notify },
     [BOARD_WINDOW_KIND]: { snapshot, fetchImpl, notify, win },
+    [START_WINDOW_KIND]: { Body: StartTab, view: () => ({ label: customName || 'Steward', lead: html`<span class="companion-avatar steward" aria-hidden="true">✦</span>`, title: customName || 'Steward' }), ...stewardHome, onResume: resumeSteward, onSummon: summonSteward },
+    [DECIDE_WINDOW_KIND]: { Body: DecideTab, view: () => ({ label: `${queue.length} to decide`, lead: html`<span class="companion-decide-mark" aria-hidden="true">◆</span>`, title: 'Decisions agents are waiting on' }), snapshot, queue, askerName, fetchImpl, notify, DecisionCard },
   };
+  const addTab = (window) => html`<${AddTab} window=${window} agents=${agents} tabs=${held} steward=${steward} busy=${busy}
+    stewardLabel=${stewardLabel} returning=${returning} onResumeSteward=${resumeSteward} onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id, { into: window.id })} />`;
 
   return html`
-    ${overlayWindows.value.map((window) => html`<${OverlayTabWindow} key=${window.id} window=${window} snapshot=${snapshot} prefs=${prefs} win=${win} kinds=${tabKinds} />`)}
+    ${overlayWindows.value.map((window) => html`<${OverlayTabWindow} key=${window.id} window=${window} snapshot=${snapshot} prefs=${prefs} win=${win} kinds=${tabKinds} home=${home} add=${addTab} />`)}
     <${OverlayTabGhost} />
     <${OverlayTabMenu} />
-    ${windowView}
     ${chipSlots}
     ${chips}
     ${annotation.overlay}
-    ${!open && needsCount > 0 && html`<span class="companion-sr" role="status">${needsCount} companion${needsCount === 1 ? '' : 's'} need you</span>`}
+    ${needsCount > 0 && html`<span class="companion-sr" role="status">${needsCount} companion${needsCount === 1 ? '' : 's'} need you</span>`}
     <${CompanionViewChannel} activeTab=${activeTab} notify=${notify} fetchImpl=${fetchImpl} win=${win} />
     ${guideCue && html`<${GuideOverlay} key=${guideCue.cue.id} cue=${guideCue.cue} element=${guideCue.element} marks=${guideCue.marks} onDismiss=${dismissGuide} win=${win} />`}
-    ${!open && html`<${Peek} agent=${peekTarget} lines=${peek?.lines ?? null} anchor=${peek?.anchor} />`}`;
+    <${Peek} agent=${peekTarget} lines=${peek?.lines ?? null} anchor=${peek?.anchor} />`;
 }
 
 // CompanionGate keeps the whole companion out of the page while

@@ -41,11 +41,11 @@ function rosterHint(roster) {
 // agentCogSections lists what the cog offers for an agent. A handler left out
 // leaves its item out: a floated chat has no Float, for one.
 export function agentCogSections({
-  agent, deciding = false, parked = false, roster = [], canShutDown = !!agent?.steward,
+  agent, parked = false, roster = [], canShutDown = !!agent?.steward,
   onCollab = null, onFloat = null, onDetach = null, onMorph = null,
   onClearContext, openPermissions = null, openSudo = null, openRoster = null, onShutDown,
 }) {
-  if (!agent || deciding) return agent && onCollab ? [{ title: 'This agent', items: [collabItem(onCollab)] }] : [];
+  if (!agent) return [];
   const offline = `${agent.name} is not running. Resume it to change its access.`;
   const running = agent.online;
   const thisAgent = [
@@ -138,7 +138,7 @@ export function CompanionCog({ sections, children = null }) {
 // AgentCog is the cog with what its items open: the questions that ask before
 // acting and the roster, which keep their own popovers and have no button here.
 export function AgentCog({
-  agent, deciding, parked, roster, showRoster = false, canShutDown, onCollab, onFloat, onDetach, onMorph, openPermissions, openSudo,
+  agent, parked, roster, showRoster = false, canShutDown, onCollab, onFloat, onDetach, onMorph, openPermissions, openSudo,
   openHandover, agents, showAgent, fetchImpl, notify, onDown, askShutDownRef = null, rosterRef = null,
 }) {
   const ownShutDown = useRef(null);
@@ -148,15 +148,15 @@ export function AgentCog({
   const openRoster = rosterRef || ownRoster;
   if (!agent) return null;
   const sections = agentCogSections({
-    agent, deciding, parked, roster, canShutDown, onCollab, onFloat, onDetach, onMorph, openPermissions, openSudo,
+    agent, parked, roster, canShutDown, onCollab, onFloat, onDetach, onMorph, openPermissions, openSudo,
     openRoster: showRoster ? () => openRoster.current?.() : null,
     onClearContext: () => askClear.current?.('here'), onShutDown: () => askShutDown.current?.('here'),
   });
   if (!sections.length) return null;
-  const asksShutDown = !deciding && (canShutDown ?? agent.steward);
+  const asksShutDown = canShutDown ?? agent.steward;
   return html`<${CompanionCog} sections=${sections}>
-    ${!deciding && agent.online && agent.harness !== 'shell' && html`<${ClearContext} agent=${agent} fetchImpl=${fetchImpl} notify=${notify} askRef=${askClear} trigger=${false} />`}
+    ${agent.online && agent.harness !== 'shell' && html`<${ClearContext} agent=${agent} fetchImpl=${fetchImpl} notify=${notify} askRef=${askClear} trigger=${false} />`}
     ${asksShutDown && html`<${StewardShutdown} agent=${agent} fetchImpl=${fetchImpl} onDown=${onDown} askRef=${askShutDown} trigger=${false} />`}
-    ${showRoster && !deciding && html`<${StewardRoster} roster=${roster} agents=${agents} fetchImpl=${fetchImpl} notify=${notify} openHandover=${openHandover} showAgent=${showAgent} openRef=${openRoster} trigger=${false} />`}
+    ${showRoster && html`<${StewardRoster} roster=${roster} agents=${agents} fetchImpl=${fetchImpl} notify=${notify} openHandover=${openHandover} showAgent=${showAgent} openRef=${openRoster} trigger=${false} />`}
   <//>`;
 }

@@ -1,8 +1,6 @@
-// chat-window.js -- one agent's terminal in an overlay window of its own, a tab
-// dragged out of the companion (tcl-ppvf8g). It is the same terminal as a tab:
-// the agent's real session, with the same floating tools and title bar tools. A
-// session has one web view, so the agent leaves the tab strip while its window is
-// open.
+// chat-window.js -- one agent in an overlay tab (tcl-ppvf8g): its real terminal,
+// floating tools, composer, and everything waiting on the operator from it. The
+// Steward is one of these. A session has one web view, so an agent has one tab.
 
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
@@ -10,7 +8,7 @@ import htm from 'htm';
 import { actionsFor, approvalsFor, companionAgents, companionStatus, decisionsFor, elevatedAccess, pendingApprovals } from './companion-model.js';
 import { ApprovalCard, ElevatedBand, openAccessPanel } from './companion-approval.js';
 import { AgentCog } from './companion-cog.js';
-import { closeOverlayTab, minimizeOverlayWindow, overlayCloseHeard } from './overlay-instances.js';
+import { minimizeOverlayWindow, overlayCloseHeard } from './overlay-instances.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { OverlayWindow } from './overlay-window.js';
 import { PaneDictation } from './terminal-dictation.js';
@@ -33,7 +31,7 @@ const kept = { drafts: new Map(), dictated: new Set(), viewOff: new Set() };
 export const chatHasDraft = (tabId) => !!kept.drafts.get(tabId)?.trim();
 
 export function ChatWindow({
-  instance, overlay, focusRef, strip, close, snapshot, prefs, win, fetchImpl, notify, widgetFactory, loadRuntime, closeTerminalPanes, onBackToTab, onSeparateWindow = null, onStewardDown, stewardRoster = [], openPermissions = null, openSudo = null, openStewardHandover = null, openMorph = null, showAgent = null, Terminal, DecisionCard,
+  instance, overlay, focusRef, strip, close, snapshot, prefs, win, fetchImpl, notify, widgetFactory, loadRuntime, closeTerminalPanes, onSeparateWindow = null, onFloat = null, parked = () => false, onReclaim = null, onMic = null, minimize = null, tabCount = 1, onStewardDown, stewardRoster = [], openPermissions = null, openSudo = null, openStewardHandover = null, openMorph = null, showAgent = null, Terminal, DecisionCard,
   statusOf = companionStatus, starting = () => false, offlineActions = () => null, voice = null, onCompose = null, onTerminals = null, dictationImpl = null, annotate, viewTab,
 }) {
   const agentId = instance.agent;
@@ -50,9 +48,10 @@ export function ChatWindow({
   const widgetRef = useRef(null);
   const [font, onFontChange] = useTerminalFont('companion', agentId, prefs);
   useEffect(() => { if (instance.focusAsked) setFocusToken((n) => n + 1); }, [instance.focusAsked]);
+  const away = parked(agentId);
   useEffect(() => {
-    if (open) closeTerminalPanes([agentId, agent?.convId].filter(Boolean));
-  }, [open, agentId]);
+    if (open && !away) closeTerminalPanes([agentId, agent?.convId].filter(Boolean));
+  }, [open, agentId, away]);
   // Only the terminal already attached stays hidden: one mounted for a window
   // nobody can see would take the attach from whatever view holds it.
   const [warm, setWarm] = useState(false);
@@ -85,10 +84,8 @@ export function ChatWindow({
     overlayCloseHeard(instance.id);
     askShutDown.current?.();
   }, [instance.closeAsked]);
-  const stewardDown = (down) => {
-    closeOverlayTab(instance.id);
-    onStewardDown?.(down);
-  };
+  const stewardDown = (down, how) => onStewardDown(down, how, instance.id);
+  const onMinimize = minimize || (() => minimizeOverlayWindow(instance.id));
   const approvals = approvalsFor(snapshot.value, agent);
   const decisions = decisionsFor(snapshot.value, agent);
   const actionMessages = actionsFor(snapshot.value, agent);
@@ -100,8 +97,6 @@ export function ChatWindow({
   const actions = { widgetFor: () => widgetRef.current, activatePane: () => setFocusToken((n) => n + 1) };
   const refocus = () => setFocusToken((n) => n + 1);
   const title = html`${strip}
-    <button type="button" class="board-overlay-action" title="Move this agent back to a tab of the companion" onClick=${() => onBackToTab(instance)}>Back to a tab</button>
-    ${agent?.online && onSeparateWindow && html`<button type="button" class="board-overlay-action" title="Move this agent to a browser window of its own" onClick=${() => onSeparateWindow(instance, overlay.windowRef.current?.getBoundingClientRect?.())}>Open in separate window</button>`}
     <div class="companion-controls">
       ${elevated && html`<button type="button" class="companion-state-sudo" aria-label=${`${name} has elevated access`}
         title="Elevated access. The band in the window can end it." disabled=${!(agent.steward && agent.online && openSudo)}
@@ -117,38 +112,43 @@ export function ChatWindow({
         title=${voiceOn ? 'Voice on: replies are spoken when a turn ends. Typing stops speech.' : 'Speak replies aloud'}
         onClick=${() => voice.toggle(agent)}>${voiceOn ? '🔊' : '🔈'}</button>`}
       ${agent?.online && onCompose && html`<button type="button" class="companion-compose" aria-label=${`Message ${name}`} title="Send a queued message (Ctrl/Cmd+M)" onClick=${() => onCompose(agent, refocus)}>✉</button>`}
-      <${AgentCog} agent=${agent} roster=${stewardRoster} canShutDown=${closeShutsDown} showRoster=${showRoster}
-        onCollab=${agent && onTerminals ? () => onTerminals(instance, agent) : null} onMorph=${agent && openMorph ? () => openMorph(agent) : null}
+      <${AgentCog} agent=${agent} parked=${away} roster=${stewardRoster} canShutDown=${closeShutsDown} showRoster=${showRoster}
+        onCollab=${agent && onTerminals && !away ? () => onTerminals(instance, agent) : null}
+        onFloat=${onFloat && (tabCount > 1 || away) ? () => onFloat(agent) : null} onDetach=${onSeparateWindow ? () => onSeparateWindow(agent, overlay.windowRef.current?.getBoundingClientRect?.()) : null} onMorph=${agent && openMorph ? () => openMorph(agent) : null}
         openPermissions=${openPermissions} openSudo=${openSudo} openHandover=${openStewardHandover} agents=${agents} showAgent=${showAgent}
         fetchImpl=${fetchImpl} notify=${notify} onDown=${stewardDown} askShutDownRef=${askShutDown} rosterRef=${rosterRef} />
     </div>
-    ${look === 'classic' && html`<button type="button" class="board-overlay-close" title="Minimize" aria-label=${`Minimize ${name}`} onClick=${() => minimizeOverlayWindow(instance.id)}>–</button>`}
+    ${look === 'classic' && html`<button type="button" class="board-overlay-close" title="Minimize" aria-label=${`Minimize ${name}`} onClick=${onMinimize}>–</button>`}
     ${look === 'classic' && html`<button type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${name}`} onClick=${close.onClose}>×</button>`}`;
   const shown = agent?.online && (open || warm);
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} mounted=${open || (warm && !!agent?.online)}
     className=${`companion-window chat-window${open ? '' : ' companion-window-warm'}`} frameClass="companion-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Chat with ${name}`} title=${title}
-    controls=${{ look, closeLabel: `Close ${name}`, closeTitle: close.title, onClose: close.onClose, onMinimize: () => minimizeOverlayWindow(instance.id) }}>
-    <div class=${`companion-body${approvals.length + decisions.length + actionMessages.length ? ' has-cards' : ''}`} id=${instance.id}>
+    controls=${{ look, closeLabel: `Close ${name}`, closeTitle: close.title, onClose: close.onClose, onMinimize }}>
+    <div class=${`companion-body${approvals.length + decisions.length + actionMessages.length ? ' has-cards' : ''}`} id=${instance.id} data-chat-agent=${agentId}>
       ${approvals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${decisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}
       <${ActionCards} messages=${actionMessages} fetchImpl=${fetchImpl} notify=${notify} />
       ${elevated && html`<${ElevatedBand} agent=${agent} access=${elevated} fetchImpl=${fetchImpl} notify=${notify} />`}
-      ${!agent?.online && (agent && starting(agentId)
+      ${!agent?.online && (starting(agentId)
         ? html`<div class="companion-empty" role="status"><p>Starting the agent… its terminal opens here as soon as it is up.</p></div>`
         : html`<div class="companion-empty"><p><b>${name}</b> is ${agent ? 'offline' : 'gone'}.</p>${agent && offlineActions(agent)}</div>`)}
       ${shown && html`
         ${needsYou && html`<div class="companion-needs-bar" role="status">${name} is waiting for you${agent.detail ? `: ${agent.detail}` : ''}</div>`}
-        <${PaneDictation} pane=${pane} active=${open} solo=${true} status=${status} canType=${true} target=${{ agent: agentId }} snapshot=${snapshot} actions=${actions} win=${win} notify=${notify} keep=${kept} onAnnotate=${annotate ? () => annotate(agentId) : null} dictationImpl=${dictationImpl} viewTab=${viewTab} quietSpeech=${voice?.quiet} fetchImpl=${fetchImpl}>
+        <${PaneDictation} pane=${pane} active=${open} solo=${true} status=${status} canType=${true} target=${{ agent: agentId }} snapshot=${snapshot} actions=${actions} win=${win} notify=${notify} keep=${kept} onAnnotate=${annotate ? () => annotate(agentId) : null} onMic=${onMic ? (mic) => onMic(agentId, mic) : null} dictationImpl=${dictationImpl} viewTab=${viewTab} quietSpeech=${voice?.quiet} fetchImpl=${fetchImpl}>
           <${ShellHere} agent=${agentId} name=${name} snapshot=${snapshot.value} notify=${notify} />
           <${TerminalZoom} font=${font} widget=${() => widgetRef.current} />
         <//>
-        ${status !== 'connected' && html`<div class="companion-floating-anchor"><div class="companion-term-status" role="status">${canReconnect
+        ${away && html`<div class="companion-empty">
+          <p><b>${name}</b> is open in its own window.</p>
+          <button type="button" class="companion-primary" onClick=${() => onReclaim(agentId)}>Bring it back here</button>
+        </div>`}
+        ${!away && status !== 'connected' && html`<div class="companion-floating-anchor"><div class="companion-term-status" role="status">${canReconnect
           ? html`${status || 'disconnected'}. <button type="button" onClick=${() => setGeneration((n) => n + 1)}>Reconnect</button>`
           : status}</div></div>`}
-        <${Terminal} key=${agentId} agent=${agent} generation=${generation} widgetFactory=${widgetFactory} loadRuntime=${loadRuntime}
+        ${!away && html`<${Terminal} key=${agentId} agent=${agent} generation=${generation} widgetFactory=${widgetFactory} loadRuntime=${loadRuntime}
           focusToken=${focusToken} widgetRef=${widgetRef} fontSize=${() => readTerminalFont('companion', agentId, prefs)} onFontChange=${onFontChange}
-          onStatus=${setStatus} onReconnectChange=${setCanReconnect} />`}
+          onStatus=${setStatus} onReconnectChange=${setCanReconnect} />`}`}
     </div>
   <//>`;
 }

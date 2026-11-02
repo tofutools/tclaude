@@ -653,6 +653,7 @@ test('a failed send ends it and keeps the words', async (t) => {
   assert.ok(!s.$('.companion-continuous'));
   await reopened(s);
   assert.equal(s.speech.made.length, 1);
+  assert.equal(s.harness.document.activeElement === s.$('.companion-draft'), true, 'and the keyboard is on them, to send again');
 });
 
 test('without a harness that takes mail mid-turn, a voice send ends the mic as before', async (t) => {

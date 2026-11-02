@@ -104,7 +104,7 @@ On a peer's page, it runs on that peer, limited to what the peer allows.
 | ← and → | Move along the focused tab bar |
 | Alt+1, Alt+2…9 | This node, then peers in order |
 | Ctrl/Cmd+M | Message the agent in the current terminal |
-| Ctrl+. | Open or minimize the companion |
+| Ctrl+. | Open or minimize the window holding the Steward |
 | Ctrl+Shift+. | Mark up the page |
 | Ctrl/Cmd+Enter | Submit the spawn dialog |
 
