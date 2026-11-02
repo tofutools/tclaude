@@ -756,7 +756,9 @@ func TestDashboardHTML_WizardPermEditor(t *testing.T) {
 	// via the id's specificity.
 	must(".perm-tristate .ui-btn.active[data-effect=grant] {", "Grant keeps its green")
 	must(".perm-tristate .ui-btn.active[data-effect=deny] {", "Deny keeps its red")
-	if dashboardSourceContains(dashboardAssets, "body.wizard #perm-edit-modal .perm-tristate button") {
+	must(".perm-tristate .ui-btn.active[data-effect=grant] { --ui-pressed-bg: #238636;", "Grant stays green while hovered (the pressed hover paints --ui-pressed-bg)")
+	must(".perm-tristate .ui-btn.active[data-effect=deny] { --ui-pressed-bg: #da3633;", "Deny stays red while hovered")
+	if dashboardSourceContains(dashboardAssets, "body.wizard #perm-edit-modal .perm-tristate button") || dashboardSourceContains(dashboardAssets, "body.wizard #context-features-modal .perm-tristate button") {
 		t.Errorf("a wizard rule repaints the tri-state buttons; the standard segment styles them")
 	}
 }

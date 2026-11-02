@@ -6872,7 +6872,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 #sudo-duration { width: 72px; }
 #sudo-reason { flex: 1; min-width: 160px; }
 /* A standard .ui-seg; the chosen duration keeps the sudo amber. */
-.sudo-presets.ui-seg .ui-btn.active { background: #9e6a03; border-color: #d29922; color: #fff; }
+.sudo-presets.ui-seg .ui-btn.active { --ui-pressed-bg: #9e6a03; --ui-text-strong: #fff; background: #9e6a03; border-color: #d29922; color: #fff; }
 .sudo-limits-hint { font-size: 11px; color: #7d8590; }
 .sudo-limits-hint.bad { color: #f85149; }
 .sudo-picked { margin-right: auto; align-self: center; font-size: 11px; color: #8b949e; }
@@ -7042,18 +7042,20 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   font-size: 11px; line-height: 1.5; padding: 6px 8px;
 }
 /* A standard .ui-seg of small buttons; the chosen effect keeps its meaning
-   colour (grant green, deny red) in place of the neutral pressed fill. */
+   colour (grant green, deny red) in place of the neutral pressed fill. The
+   colour goes through the pressed tokens too, so the higher-ranked pressed
+   hover rule in ui.css paints the same colour. */
 .perm-tristate { flex: 0 0 auto; }
-.perm-tristate .ui-btn.active[data-effect=default] { background: #30363d; color: #c9d1d9; }
-.perm-tristate .ui-btn.active[data-effect=grant] { background: #238636; color: #fff; }
-.perm-tristate .ui-btn.active[data-effect=deny] { background: #da3633; color: #fff; }
+.perm-tristate .ui-btn.active[data-effect=default] { --ui-pressed-bg: #30363d; --ui-text-strong: #c9d1d9; background: #30363d; color: #c9d1d9; }
+.perm-tristate .ui-btn.active[data-effect=grant] { --ui-pressed-bg: #238636; --ui-text-strong: #fff; background: #238636; color: #fff; }
+.perm-tristate .ui-btn.active[data-effect=deny] { --ui-pressed-bg: #da3633; --ui-text-strong: #fff; background: #da3633; color: #fff; }
 /* Startup-context states. Deliberately NOT green/red: trimming a capability is a
    routine tuning choice, not a safety veto, and borrowing the permission
    editor's danger palette would overstate it. Keep = neutral-positive blue,
    Trim = amber "changed from stock". */
-.perm-tristate .ui-btn.active[data-state=default] { background: #30363d; color: #c9d1d9; }
-.perm-tristate .ui-btn.active[data-state=on] { background: #1f6feb; color: #fff; }
-.perm-tristate .ui-btn.active[data-state=off] { background: #9e6a03; color: #fff; }
+.perm-tristate .ui-btn.active[data-state=default] { --ui-pressed-bg: #30363d; --ui-text-strong: #c9d1d9; background: #30363d; color: #c9d1d9; }
+.perm-tristate .ui-btn.active[data-state=on] { --ui-pressed-bg: #1f6feb; --ui-text-strong: #fff; background: #1f6feb; color: #fff; }
+.perm-tristate .ui-btn.active[data-state=off] { --ui-pressed-bg: #9e6a03; --ui-text-strong: #fff; background: #9e6a03; color: #fff; }
 .perm-edit-modal .modal-buttons {
   display: flex; justify-content: flex-end; gap: 8px;
   border-top: 1px solid #2a3340; padding-top: 10px;
