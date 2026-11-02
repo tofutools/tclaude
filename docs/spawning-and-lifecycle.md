@@ -327,6 +327,11 @@ tclaude agent queue ls --all    # also ended entries kept for a week
 tclaude agent queue rm 12       # cancel a waiting spawn
 ```
 
+Spawn requests from federation peers share this queue; see
+[Automatic worker placement](federation-work.md#automatic-worker-placement) for how they wait and are handed on. Remote
+one-shot jobs are not queued: a full node, or one with spawns waiting, refuses
+them with `node_busy`.
+
 `tclaude agent ls` lists waiting spawns under the agent table. An agent sees
 its own queued spawns and those targeting a group it is in; the operator sees
 all. A waiting spawn can be cancelled by its requester, an owner of its target

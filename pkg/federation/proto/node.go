@@ -21,7 +21,10 @@ type NodeMetadata struct {
 	Harnesses             []NodeHarness `json:"harnesses"`
 	Labels                []string      `json:"labels"`
 	MaxLiveAgents         int           `json:"max_live_agents"` // zero is unlimited
-	Resources             NodeResources `json:"resources"`
+	// SpawnWhenFull is what the node does with a spawn request past its
+	// capacity: "refuse" or "queue". Empty from nodes that predate queueing.
+	SpawnWhenFull string        `json:"spawn_when_full,omitempty"`
+	Resources     NodeResources `json:"resources"`
 }
 type NodeHarness struct {
 	Name    string `json:"name"`
@@ -43,6 +46,9 @@ type NodeDisk struct {
 type NodeAgents struct {
 	LiveAgents   int `json:"live_agents"`
 	LiveSessions int `json:"live_sessions"`
+	// QueuedSpawns counts spawns waiting in the node's capacity queue; a new
+	// request goes behind them.
+	QueuedSpawns int `json:"queued_spawns,omitempty"`
 }
 type NodeResources struct {
 	ObservedAt                  *time.Time  `json:"observed_at"`
@@ -155,8 +161,11 @@ func SanitizeNode(n *NodeMetadata) *NodeMetadata {
 	if p := r.WorkDiskMinAvailablePercent; p != nil && (*p < 0 || *p > 100 || math.IsNaN(*p) || math.IsInf(*p, 0)) {
 		r.WorkDiskMinAvailablePercent = nil
 	}
-	if r.Agents != nil && (r.Agents.LiveAgents < 0 || r.Agents.LiveSessions < 0) {
+	if r.Agents != nil && (r.Agents.LiveAgents < 0 || r.Agents.LiveSessions < 0 || r.Agents.QueuedSpawns < 0) {
 		r.Agents = nil
+	}
+	if n.SpawnWhenFull != "refuse" && n.SpawnWhenFull != "queue" {
+		n.SpawnWhenFull = ""
 	}
 	return n
 }

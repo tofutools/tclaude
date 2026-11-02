@@ -35,6 +35,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1124,6 +1125,14 @@ func (rt *fedRuntime) handleAck(env *proto.Envelope) {
 		note := ""
 		if row.Kind == proto.KindGroupMail && ack.Delivered > 0 {
 			note = fmt.Sprintf("delivered to %d members", ack.Delivered)
+		}
+		if row.Kind == proto.KindSpawnReq && ack.Code == fedAckCodeQueued {
+			note = "queued at peer"
+			if pos, ok := strings.CutPrefix(ack.Reason, "position "); ok {
+				if n, err := strconv.Atoi(pos); err == nil && n > 0 {
+					note = fmt.Sprintf("queued at peer (#%d)", n)
+				}
+			}
 		}
 		_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxAccepted, note)
 	case fedRetryableCode(ack.Code):

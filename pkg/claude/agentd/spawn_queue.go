@@ -22,6 +22,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // The capacity spawn queue (tcl-ao1yz5). With capacity.when_full "queue", a
@@ -351,6 +352,9 @@ func runSpawnQueue() {
 			slog.Warn("spawn queue: list failed", "error", err)
 			return
 		}
+		if settleFederationQueueEntries(entries) {
+			continue
+		}
 		if len(entries) == 0 {
 			return
 		}
@@ -372,6 +376,9 @@ func runSpawnQueue() {
 // launchSpawnQueueHead tries the head entry once. It returns true when the
 // entry ended (launched or failed) and the next one may be tried.
 func launchSpawnQueueHead(e *db.SpawnQueueEntry) bool {
+	if e.FedRequestID != 0 {
+		return promoteFederationQueueHead(e)
+	}
 	limits, err := nodeCapacityLimits()
 	if err != nil {
 		return false
@@ -495,7 +502,9 @@ func finishSpawnQueueEntry(e *db.SpawnQueueEntry, state, reason, agentID string)
 		return
 	}
 	slog.Info("spawn queue entry ended", "queue_id", e.ID, "group", e.GroupName, "name", e.Name, "state", state, "reason", reason)
-	if state == db.SpawnQueueCancelled {
+	// A remote requester hears the outcome of its request as a spawn result,
+	// and the request has its own federation audit trail.
+	if state == db.SpawnQueueCancelled || e.RequesterKind == db.SpawnRequesterFederation {
 		return
 	}
 	auditSpawnQueueOutcome(e, state, reason, agentID)
@@ -694,6 +703,9 @@ func handleSpawnQueueCancel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "not_queued", "queued spawn #"+strconv.FormatInt(id, 10)+" already ended: "+e.State)
 		return
 	}
+	if e.FedRequestID != 0 {
+		endQueuedFederationRequest(e.FedRequestID, "cancelled while queued for capacity")
+	}
 	slog.Info("spawn queue entry cancelled", "queue_id", id, "by", cmp.Or(short8(conv), "operator"))
 	kickSpawnQueue()
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "state": db.SpawnQueueCancelled})
@@ -734,4 +746,111 @@ func auditSpawnQueueOutcome(e *db.SpawnQueueEntry, state, reason, agentID string
 	if _, err := db.InsertAuditLog(entry); err != nil {
 		slog.Warn("spawn queue: audit failed", "queue_id", e.ID, "error", err)
 	}
+}
+
+// settleFederationQueueEntries ends remote entries whose request no longer
+// waits: expired, decided elsewhere, or from a peer no longer trusted. Any
+// entry, not only the head, so an expired request does not hold a place.
+// True when an entry ended and the queue should be listed again.
+func settleFederationQueueEntries(entries []*db.SpawnQueueEntry) bool {
+	changed := false
+	now := time.Now()
+	for _, e := range entries {
+		if e.FedRequestID == 0 || e.State != db.SpawnQueueQueued {
+			continue
+		}
+		req, err := db.GetFederationSpawnRequest(e.FedRequestID)
+		if err != nil {
+			slog.Warn("spawn queue: read remote request failed", "queue_id", e.ID, "request", e.FedRequestID, "error", err)
+			continue
+		}
+		reason := ""
+		switch {
+		case req == nil:
+			reason = "the remote spawn request is gone"
+		case req.Status == db.FedSpawnPending || req.Status == db.FedSpawnLaunching || req.Status == db.FedSpawnApproved:
+			// A promotion whose entry update was lost (a daemon crash between the two).
+			finishSpawnQueueEntry(e, db.SpawnQueueLaunched, fmt.Sprintf("handed on as remote spawn request #%d", req.ID), "")
+			changed = true
+			continue
+		case req.Status != db.FedSpawnQueued:
+			reason = "the remote spawn request was " + req.Status
+		case req.Expired(now):
+			reason = "the remote spawn request expired while queued for capacity"
+			endQueuedFederationRequest(req.ID, reason)
+		default:
+			if p, err := db.GetFederationPeer(req.FromInstance); err == nil && p == nil {
+				reason = "the requesting instance is no longer trusted"
+				endQueuedFederationRequest(req.ID, reason)
+			}
+		}
+		if reason != "" {
+			finishSpawnQueueEntry(e, db.SpawnQueueFailed, reason, "")
+			changed = true
+		}
+	}
+	return changed
+}
+
+// promoteFederationQueueHead hands a remote request at the head of the queue
+// to its decision once capacity allows: it becomes pending (reserving its
+// slot, under the same gate every launch takes) and then goes to automatic
+// approval or the operator, exactly as a request that found room on arrival.
+// True when the entry ended.
+func promoteFederationQueueHead(e *db.SpawnQueueEntry) bool {
+	limits, err := nodeCapacityLimits()
+	if err != nil {
+		return false
+	}
+	req, err := db.GetFederationSpawnRequest(e.FedRequestID)
+	if err != nil || req == nil || req.Status != db.FedSpawnQueued {
+		// settleFederationQueueEntries ends it on the next pass.
+		return false
+	}
+	nodeAdmission.Lock()
+	reason := ""
+	if limits.Limited() {
+		reason, err = nodeCapacityFullLocked(limits, "", []string{fedSpawnRequestDir(req)})
+	}
+	promoted := false
+	if err == nil && reason == "" {
+		promoted, err = db.PromoteQueuedFederationSpawnRequest(req.ID)
+	}
+	nodeAdmission.Unlock()
+	if err != nil || !promoted {
+		return false
+	}
+	finishSpawnQueueEntry(e, db.SpawnQueueLaunched, fmt.Sprintf("handed on as remote spawn request #%d", req.ID), "")
+	req.Status = db.FedSpawnPending
+	peer, _ := db.GetFederationPeer(req.FromInstance)
+	if peer == nil {
+		// Trust went in between; the pending request now waits for the
+		// operator's deny like any request from a peer that was removed.
+		return true
+	}
+	if fedPeerAllows(peer.InstanceID, req.GroupID, PermGroupsMembersSpawn) {
+		goBackground(func() { autoApproveFederationSpawn(req, peer) })
+	} else {
+		notifyFederationSpawnRequest(peer, req, req.FromName)
+	}
+	return true
+}
+
+// endQueuedFederationRequest denies a remote request that waited in the
+// queue and tells its requester why.
+func endQueuedFederationRequest(reqID int64, reason string) {
+	req, err := db.GetFederationSpawnRequest(reqID)
+	if err != nil || req == nil {
+		return
+	}
+	won, err := db.DecideFederationSpawnRequest(req.ID, db.FedSpawnQueued, db.FedSpawnDenied, "", reason)
+	if err != nil || !won {
+		return
+	}
+	takeRequestClaudeSubscription(req.ID)
+	if peer, _ := db.GetFederationPeer(req.FromInstance); peer != nil {
+		_ = queueSpawnResult(req, peer, proto.SpawnResultPayload{Status: proto.SpawnDenied, Reason: reason})
+	}
+	recordFederationAudit("federation.spawn.in", fedSpawnRequesterLabel(req), "", req.GroupName,
+		fmt.Sprintf("#%d denied: %s", req.ID, reason), 409)
 }

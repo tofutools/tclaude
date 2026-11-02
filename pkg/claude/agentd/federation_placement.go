@@ -24,6 +24,8 @@ type fedPlacementCandidate struct {
 	LoadPerCore  *float64 `json:"load_per_core,omitempty"`
 	RAMAvailable *uint64  `json:"ram_available_bytes,omitempty"`
 	Attempt      string   `json:"attempt,omitempty"`
+	// Note is the receiver's word on an accepted attempt, e.g. "queued at peer (#2)".
+	Note string `json:"note,omitempty"`
 }
 type fedPlacementExplanation struct {
 	Selector   string                  `json:"selector"`
@@ -132,6 +134,11 @@ func placementCandidateWithAuthority(r *http.Request, p db.FederationPeer, req f
 		if n.Resources.Agents.LiveAgents >= n.MaxLiveAgents {
 			return reject("advertised capacity busy")
 		}
+	}
+	// A request to a node whose capacity queue is not empty would wait behind
+	// it (or be refused); a node with free capacity is always the better pick.
+	if a := n.Resources.Agents; a != nil && a.QueuedSpawns > 0 {
+		return reject(fmt.Sprintf("advertised capacity busy: %d spawn(s) queued", a.QueuedSpawns))
 	}
 	switch req.Prefer {
 	case "least-loaded":
@@ -249,6 +256,9 @@ func handleFederationPlacement(w http.ResponseWriter, r *http.Request, req fedSp
 			row.Eligible = false
 			row.Reason = "receiver terminally refused: busy"
 			continue
+		}
+		if settled.State == db.FedOutboxAccepted && strings.HasPrefix(settled.LastError, "queued at peer") {
+			row.Note = settled.LastError
 		}
 		explanation.Selected = p.InstanceID
 		via := ""

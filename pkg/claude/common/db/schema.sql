@@ -2300,6 +2300,6 @@ CREATE TABLE spawn_queue (
 		reserved_agent   TEXT NOT NULL DEFAULT '',
 		created_at       INTEGER NOT NULL,
 		updated_at       INTEGER NOT NULL
-	) STRICT;
+	, fed_request_id INTEGER NOT NULL DEFAULT 0) STRICT;
 
 CREATE INDEX idx_spawn_queue_state ON spawn_queue (state, id);
