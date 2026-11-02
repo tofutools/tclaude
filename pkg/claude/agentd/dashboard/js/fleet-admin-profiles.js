@@ -2,6 +2,7 @@ import { h } from 'preact';
 import { ProfileEditor } from './fleet-admin-profile-editor.js';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { POOL_NAME_RE, UNRESTRICTED_CONSEQUENCE, changeText, grantText, profileSummary } from './fleet-admin-model.js';
 
@@ -59,9 +60,9 @@ export function ApplyDialog({ profile, peers, actions, poolNames = new Map(), on
         <span>I understand, and this is ${row.label}'s fingerprint</span></label>`}
     <div class="cron-create-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button class="ui-btn" type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
+      <${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button id="fleet-apply-submit" type="button" class=${widens ? 'ui-btn ui-btn-danger' : 'ui-btn ui-btn-primary'} disabled=${busy || !ready || !changes.length} onClick=${apply}>${busy ? 'Applying…' : 'Apply'}</button>
+      <${Button} id="fleet-apply-submit" variant=${widens ? 'danger' : 'primary'} disabled=${busy || !ready || !changes.length} onClick=${apply}>${busy ? 'Applying…' : 'Apply'}</${Button}>
     </div>
   </${Overlay}>`;
 }

@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { shortID } from './fleet-admin-model.js';
 import { BundleInspectDialog } from './fleet-admin-bundle.js';
@@ -220,9 +221,9 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
     <div class="muted fa-cli-note">CLI: <code>tclaude federation offers import ${offer.offer?.id} --peer ${shortID(offer.peer)}${agent ? ' [--cwd … | --landing ID] [--group …]' : ' [--skip …] [--replace]'} [--apply]</code></div>
     <div class="modal-buttons">
       <span class="spacer"></span>
-      <button class="ui-btn" id="fleet-offer-preview" type="button" disabled=${busy} onClick=${() => run()}>${busy ? 'Previewing…' : stale && preview ? 'Preview again' : 'Preview'}</button>
-      <button id="fleet-offer-apply" type="button" class="ui-btn ui-btn-primary" disabled=${blocked} title=${stale && preview ? 'Preview again after changing options' : ''} onClick=${apply}>${agent ? 'Start agent…' : 'Apply…'}</button>
-      <button class="ui-btn" type="button" onClick=${onClose}>Close</button>
+      <${Button} id="fleet-offer-preview" disabled=${busy} onClick=${() => run()}>${busy ? 'Previewing…' : stale && preview ? 'Preview again' : 'Preview'}</${Button}>
+      <${Button} variant="primary" id="fleet-offer-apply" disabled=${blocked} title=${stale && preview ? 'Preview again after changing options' : ''} onClick=${apply}>${agent ? 'Start agent…' : 'Apply…'}</${Button}>
+      <${Button} onClick=${onClose}>Close</${Button}>
     </div>
   </${Overlay}>`;
 }
@@ -258,8 +259,8 @@ function SendConfigDialog({ peers, actions, confirm, onClose, onDone }) {
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation offer-config PEER [--only …] [--allow-flagged]</code></div>
     <div class="modal-buttons"><span class="spacer"></span>
-      <button id="fleet-offer-config-send" type="button" class="ui-btn ui-btn-primary" disabled=${!!flags && !allow} onClick=${send}>Send…</button>
-      <button class="ui-btn" type="button" onClick=${onClose}>Close</button></div>
+      <${Button} variant="primary" id="fleet-offer-config-send" disabled=${!!flags && !allow} onClick=${send}>Send…</${Button}>
+      <${Button} onClick=${onClose}>Close</${Button}></div>
   </${Overlay}>`;
 }
 
@@ -299,8 +300,8 @@ function ShareAgentDialog({ peers, agents, actions, confirm, onClose, onDone }) 
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation share-agent AGENT PEER --group … [--history]</code></div>
     <div class="modal-buttons"><span class="spacer"></span>
-      <button id="fleet-share-agent-send" type="button" class="ui-btn ui-btn-primary" disabled=${!!findings && !allow} onClick=${send}>Send…</button>
-      <button class="ui-btn" type="button" onClick=${onClose}>Close</button></div>
+      <${Button} variant="primary" id="fleet-share-agent-send" disabled=${!!findings && !allow} onClick=${send}>Send…</${Button}>
+      <${Button} onClick=${onClose}>Close</${Button}></div>
   </${Overlay}>`;
 }
 
@@ -334,8 +335,8 @@ function OfferProfileDialog({ peers, profiles, actions, confirm, onClose, onDone
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation profile offer NAME PEER</code></div>
     <div class="modal-buttons"><span class="spacer"></span>
-      <button id="fleet-offer-profile-send" type="button" class="ui-btn ui-btn-primary" onClick=${send}>Send…</button>
-      <button class="ui-btn" type="button" onClick=${onClose}>Close</button></div>
+      <${Button} variant="primary" id="fleet-offer-profile-send" onClick=${send}>Send…</${Button}>
+      <${Button} onClick=${onClose}>Close</${Button}></div>
   </${Overlay}>`;
 }
 

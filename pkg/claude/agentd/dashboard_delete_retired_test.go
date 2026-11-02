@@ -37,7 +37,7 @@ func TestDashboardTransactionDeleteRetiredExclusiveOwnership(t *testing.T) {
 		`id="delete-retired-select-all"`, `id="delete-retired-select-none"`,
 		`id="delete-retired-wt"`, `id="delete-retired-list"`,
 		`submitID="delete-retired-submit"`,
-		`primaryClass=${result ? 'ui-btn-primary' : 'ui-btn-danger'}`,
+		`primaryVariant=${result ? 'primary' : 'danger'}`,
 		"visibleCandidates.filter(",
 		"selected.has(candidate.conv_id)",
 		"candidate.agent_id || candidate.conv_id",

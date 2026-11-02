@@ -1,6 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -264,9 +265,9 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
       ` : null}
       <div class="cron-create-error" role="alert">${error}</div>
       <div class="modal-buttons">
-        <button class="ui-btn" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>${copy.cancel}</button>
+        <${Button} disabled=${busy} onClick=${() => { void requestClose(); }}>${copy.cancel}</${Button}>
         <span class="spacer"></span>
-        <button type="button" class="ui-btn ui-btn-primary" disabled=${busy || !view} onClick=${submit}>${copy.save}</button>
+        <${Button} variant="primary" disabled=${busy || !view} onClick=${submit}>${copy.save}</${Button}>
       </div>
     </${Overlay}>
   `;

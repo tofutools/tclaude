@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { HUB_CONSEQUENCE } from './fleet-admin-run.js';
 import { HubBoards } from './fleet-admin-boards.js';
@@ -171,7 +172,7 @@ export function ClaimDialog({ self, actions, confirm, onClose, onDone }) {
     <label class="fa-pe-row"><span class="fa-k">claim token</span><input id="fleet-hub-claim-token" type="password" value=${token} autocomplete="off" spellcheck="false" onInput=${(e) => setToken(e.currentTarget.value)} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); claim(); } }} /></label>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation hub claim TOKEN</code>. Lost every admin key? Only <code>tclaude-hub admin reset</code> on the hub host recovers it.</div>
-    <div class="modal-buttons"><span class="spacer"></span><button class="ui-btn" type="button" onClick=${onClose}>Cancel</button><button type="button" class="ui-btn ui-btn-primary" id="fleet-hub-claim-send" onClick=${claim}>Claim…</button></div>
+    <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${onClose}>Cancel</${Button}><${Button} variant="primary" id="fleet-hub-claim-send" onClick=${claim}>Claim…</${Button}></div>
   </${Overlay}>`;
 }
 
@@ -248,7 +249,7 @@ function IdentityDialog({ actions, confirm, onClose, onDone }) {
     <label class="fa-pe-row"><span class="fa-k">${recover ? 'new fingerprint' : 'old fingerprint'}</span><input id="fleet-hub-identity-fp" value=${form.fingerprint} placeholder="full fingerprint" autocomplete="off" spellcheck="false" onInput=${set('fingerprint')} /></label>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation hub identity recover OLD NEW</code> · <code>tclaude federation hub identity revoke-old INSTANCE</code></div>
-    <div class="modal-buttons"><span class="spacer"></span><button class="ui-btn" type="button" onClick=${onClose}>Cancel</button><button type="button" class="ui-btn ui-btn-primary" id="fleet-hub-identity-send" disabled=${busy} onClick=${run}>${recover ? 'Recover…' : 'Revoke…'}</button></div>
+    <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${onClose}>Cancel</${Button}><${Button} variant="primary" id="fleet-hub-identity-send" disabled=${busy} onClick=${run}>${recover ? 'Recover…' : 'Revoke…'}</${Button}></div>
   </${Overlay}>`;
 }
 
@@ -283,7 +284,7 @@ function AdmitDialog({ peers, actions, confirm, onClose, onDone }) {
     <label class="fa-pe-row"><span class="fa-k">fingerprint</span><input id="fleet-hub-admit-fp" value=${form.fingerprint} placeholder="full fingerprint" autocomplete="off" spellcheck="false" onInput=${set('fingerprint')} /></label>
     <label class="fa-pe-row"><span class="fa-k">spaces</span><input id="fleet-hub-admit-spaces" value=${form.spaces} placeholder="space, …" autocomplete="off" spellcheck="false" onInput=${set('spaces')} /></label>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
-    <div class="modal-buttons"><span class="spacer"></span><button class="ui-btn" type="button" onClick=${onClose}>Cancel</button><button type="button" class="ui-btn ui-btn-primary" id="fleet-hub-admit-send" onClick=${admit}>Admit…</button></div>
+    <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${onClose}>Cancel</${Button}><${Button} variant="primary" id="fleet-hub-admit-send" onClick=${admit}>Admit…</${Button}></div>
   </${Overlay}>`;
 }
 

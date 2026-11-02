@@ -1,6 +1,7 @@
 import { h, render } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { DiffLines } from './diff-lines.js';
 import { useDialogFocus } from './dialog-focus.js';
 import { ConfigFormMarkup } from './config-form-markup.js';
@@ -28,10 +29,10 @@ function ConfigDiffModal({ model, close }) {
       <p id="config-diff-sub" class="cfg-diff-sub">${adds} line(s) added, ${dels} removed — writing to ${model.path}</p>
       <div id="config-diff-body" class="config-diff"><${DiffLines} diff=${diff} sign=${sign} unreadable=${!!model.malformed} /></div>
       <div class="modal-buttons">
-        <button class="ui-btn" id="config-diff-cancel" type="button" onClick=${() => close(false)}>Cancel</button>
+        <${Button} id="config-diff-cancel" onClick=${() => close(false)}>Cancel</${Button}>
         <span class="spacer"></span>
-        <button ref=${confirmRef} id="config-diff-confirm" class="ui-btn ui-btn-primary" type="button"
-          onClick=${() => close(true)}>${model.malformed ? 'Replace corrupt config.json' : 'Save to config.json'}</button>
+        <${Button} variant="primary" domRef=${confirmRef} id="config-diff-confirm"
+          onClick=${() => close(true)}>${model.malformed ? 'Replace corrupt config.json' : 'Save to config.json'}</${Button}>
       </div>
     </div>
   </div>`;

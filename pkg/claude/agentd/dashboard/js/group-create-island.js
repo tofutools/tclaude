@@ -1,6 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -499,13 +500,13 @@ function GroupCreateDialog({
     </label>` : null}
     <div class="cron-create-error" id="group-create-error" role=${error ? 'alert' : undefined}>${error}</div>
     <div class="modal-buttons">
-      <button class="ui-btn" id="group-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+      <${Button} id="group-create-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button id="group-create-submit" class="ui-btn ui-btn-primary" type="button" disabled=${busy}
-        aria-busy=${busy ? 'true' : undefined}
+      <${Button} variant="primary" id="group-create-submit" disabled=${busy}
+        busy=${busy}
         onClick=${() => { void submit(); }}>${busy
           ? (draft.workspaceMode === 'clone' && !cloneMode ? 'Cloning & creating…' : 'Creating…')
-          : 'Create group'}</button>
+          : 'Create group'}</${Button}>
     </div>
   </${Overlay}>`;
 }

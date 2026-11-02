@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 
 const html = htm.bind(h);
@@ -101,11 +102,11 @@ export function BundleInspectDialog({ offer, label, actions, toast, onImport, on
       </div>`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons">
-      <button class="ui-btn" type="button" id="fleet-bundle-download" disabled=${!Array.isArray(entries)} onClick=${download}>Download</button>
+      <${Button} id="fleet-bundle-download" disabled=${!Array.isArray(entries)} onClick=${download}>Download</${Button}>
       <span class="spacer"></span>
-      ${onDecline && html`<button class="ui-btn" type="button" onClick=${onDecline}>Decline…</button>`}
-      <button type="button" class="ui-btn ui-btn-primary" id="fleet-bundle-import" onClick=${onImport}>Import…</button>
-      <button class="ui-btn" type="button" onClick=${onClose}>Close</button>
+      ${onDecline && html`<${Button} onClick=${onDecline}>Decline…</${Button}>`}
+      <${Button} variant="primary" id="fleet-bundle-import" onClick=${onImport}>Import…</${Button}>
+      <${Button} onClick=${onClose}>Close</${Button}>
     </div>
   </${Overlay}>`;
 }

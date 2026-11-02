@@ -1,6 +1,7 @@
 import { Fragment, h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { useDialogFocus } from './dialog-focus.js';
 import { relTime } from './helpers.js';
 
@@ -127,9 +128,9 @@ function ProfileModal({ state, actions }) {
           value=${draft.label} onInput=${field('label')} /></label>
       <div class="cron-create-error" id="profile-modal-error" role=${draft.error ? 'alert' : undefined}>${draft.error}</div>
       <div class="modal-buttons">
-        <button class="ui-btn" id="profile-modal-cancel" type="button" onClick=${close}>Cancel</button><span class="spacer"></span>
-        <button id="profile-modal-submit" class="ui-btn ui-btn-primary" type="submit" disabled=${draft.submitting}>
-          ${draft.submitting ? 'Starting…' : 'Start profiling'}</button>
+        <${Button} id="profile-modal-cancel" onClick=${close}>Cancel</${Button}><span class="spacer"></span>
+        <${Button} variant="primary" id="profile-modal-submit" type="submit" disabled=${draft.submitting}>
+          ${draft.submitting ? 'Starting…' : 'Start profiling'}</${Button}>
       </div>
     </form>
   </div>`;

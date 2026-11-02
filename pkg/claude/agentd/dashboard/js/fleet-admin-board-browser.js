@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { ImportDialog, PublishDialog, canPost, postedBy } from './fleet-admin-board-items.js';
 import { dashPrefs } from './prefs.js';
@@ -327,11 +328,11 @@ export function SkillInstallDialog({ row, actions, confirm, onClose, onDone }) {
       ${(preview.warnings || []).map((w) => html`<div class="fa-warn">${w}</div>`)}`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons"><span class="spacer"></span>
-      <button class="ui-btn" type="button" onClick=${onClose}>Cancel</button>
+      <${Button} onClick=${onClose}>Cancel</${Button}>
       ${opts.target === 'download'
-        ? html`<button type="button" class="ui-btn ui-btn-primary" id="fleet-cb-download" disabled=${busy} onClick=${download}>Download</button>`
-        : html`<button class="ui-btn" type="button" id="fleet-cb-preview-btn" disabled=${busy || !targetReady} onClick=${() => run(opts)}>${busy ? 'Previewing…' : preview && !stale ? 'Preview again' : 'Preview'}</button>
-          <button type="button" class="ui-btn ui-btn-primary" id="fleet-cb-install-btn" disabled=${blocked} title=${stale ? 'Preview first' : ''} onClick=${install}>Install…</button>`}
+        ? html`<${Button} variant="primary" id="fleet-cb-download" disabled=${busy} onClick=${download}>Download</${Button}>`
+        : html`<${Button} id="fleet-cb-preview-btn" disabled=${busy || !targetReady} onClick=${() => run(opts)}>${busy ? 'Previewing…' : preview && !stale ? 'Preview again' : 'Preview'}</${Button}>
+          <${Button} variant="primary" id="fleet-cb-install-btn" disabled=${blocked} title=${stale ? 'Preview first' : ''} onClick=${install}>Install…</${Button}>`}
     </div>
   </${Overlay}>`;
 }
@@ -343,7 +344,7 @@ function UploadPicker({ boards, onPick, onClose }) {
     <h3 id="fleet-cb-upload-title">Upload to which board?</h3>
     <div class="muted">Skills and config you post are signed by this node and readable by every member of the board.</div>
     <div class="fa-cb-pick">${boards.map((b) => html`<button type="button" key=${b.id} data-upload-board=${b.id} onClick=${() => onPick(b)}>${b.name}</button>`)}</div>
-    <div class="modal-buttons"><span class="spacer"></span><button class="ui-btn" type="button" onClick=${onClose}>Cancel</button></div>
+    <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${onClose}>Cancel</${Button}></div>
   </${Overlay}>`;
 }
 
@@ -445,7 +446,7 @@ export function ContentBrowser({ boards, view, actions, confirm, toast, onOpenBo
           <div class="fa-cb-pane">${detail(sel)}</div>
         </div>`}
     ${d?.kind === 'detail' && html`<${Overlay} id="fleet-cb-detail" ariaLabel=${d.row.name} onClose=${() => setDialog(null)}>${detail(d.row)}
-      <div class="modal-buttons"><span class="spacer"></span><button class="ui-btn" type="button" onClick=${() => setDialog(null)}>Close</button></div></${Overlay}>`}
+      <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${() => setDialog(null)}>Close</${Button}></div></${Overlay}>`}
     ${d?.kind === 'skill' && html`<${SkillInstallDialog} row=${d.row} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${d?.kind === 'config' && html`<${ImportDialog} board=${d.row.board} item=${d.row} version=${d.row.version} by=${d.row.by} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${d?.kind === 'pick' && html`<${UploadPicker} boards=${posters} onPick=${(b) => setDialog({ kind: 'publish', board: b })} onClose=${() => setDialog(null)} />`}

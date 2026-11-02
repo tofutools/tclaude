@@ -11,6 +11,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { openTerminalPane } from './terminals-tab.js';
 import { remoteShellPath, remoteTerminalPath } from './terminals-core.js';
@@ -161,6 +162,6 @@ export function RemoteSessionsDialog({ node, onClose, fetchImpl, toast = shellTo
         </tr>`;
       })}</tbody></table>`}
     <div class="muted fa-cli-note">Opening never stops the agent. Viewers share the size: the smallest attached terminal sets it. With the take-over grant you can disconnect the others. ${node.name} shows REMOTE WATCH or REMOTE INPUT on its pane and can disconnect you.</div>
-    <div class="modal-buttons"><span class="spacer"></span><button class="ui-btn" type="button" onClick=${onClose}>Close</button></div>
+    <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${onClose}>Close</${Button}></div>
   </${Overlay}>`;
 }

@@ -30,9 +30,9 @@ func TestDashboardHTML_ScribeButtons(t *testing.T) {
 	// The editor button sits in the editor's modal-buttons row as a standard
 	// secondary (non-submit) button, so both skins style it with the rest of
 	// the footer.
-	must(`<button class="ui-btn"
+	must(`<${Button}
           id="scribe-editor-open"
-          type="button"`, "editor scribe button is a plain (non-submit) standard button")
+          hidden=`, "editor scribe button is a plain (non-submit) standard Button")
 
 	// JS wiring: the summon POSTs to the generic daemon endpoint with the base
 	// name (the daemon adds a unique suffix) and the minimal grant bundle.

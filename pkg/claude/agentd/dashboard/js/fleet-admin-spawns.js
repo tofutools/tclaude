@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { remoteLaunchFields } from './agent-spawn-remote.js';
 
@@ -144,8 +145,8 @@ function ApproveDialog({ req, actions, confirm, toast, onClose, onDone }) {
     ${['name', 'profile', 'cwd', 'harness', 'model', 'effort'].map((k) => html`<label class="fa-spawn-opt" key=${k}>${k}
       <input id=${`fleet-spawn-${k}`} value=${o[k]} onInput=${set(k)} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } }} placeholder=${placeholder(k)} /></label>`)}
     <div class="modal-buttons"><span class="spacer"></span>
-      <button class="ui-btn" type="button" onClick=${onClose}>Cancel</button>
-      <button id="fleet-spawn-approve-go" type="button" class="ui-btn ui-btn-primary" onClick=${go}>Approve…</button>
+      <${Button} onClick=${onClose}>Cancel</${Button}>
+      <${Button} variant="primary" id="fleet-spawn-approve-go" onClick=${go}>Approve…</${Button}>
     </div>
     <div class="muted fa-cli-note">CLI: <code>tclaude federation requests approve ${req.id} [--name …] [--profile …] [--cwd …] [--harness …] [--model …] [--effort …]</code></div>
   </${Overlay}>`;
@@ -165,8 +166,8 @@ function DenyDialog({ req, actions, confirm, toast, onClose, onDone }) {
     <div class="fa-spawn-brief">${req.brief}</div>
     <label class="fa-spawn-opt fa-spawn-top">Reason <textarea id="fleet-spawn-deny-reason" rows="2" maxlength="300" value=${reason} onInput=${(e) => setReason(e.currentTarget.value)} placeholder="optional, sent to the requester"></textarea></label>
     <div class="modal-buttons"><span class="spacer"></span>
-      <button class="ui-btn" type="button" onClick=${onClose}>Cancel</button>
-      <button id="fleet-spawn-deny-go" type="button" class="ui-btn fa-danger" onClick=${go}>Deny…</button>
+      <${Button} onClick=${onClose}>Cancel</${Button}>
+      <${Button} class="fa-danger" id="fleet-spawn-deny-go" onClick=${go}>Deny…</${Button}>
     </div>
     <div class="muted fa-cli-note">CLI: <code>tclaude federation requests deny ${req.id} [--reason …]</code></div>
   </${Overlay}>`;
@@ -221,8 +222,8 @@ function SendDialog({ view, pools, actions, confirm, toast, onClose, onDone }) {
         : html`<div class=${result.state === 'refused' ? 'fa-danger' : ''}>Sent to ${result.to}: <b>${result.state}</b>${result.state === 'refused' ? ' — placement never retries elsewhere after a refusal' : result.state === 'sent' ? ' — not yet acknowledged; check the outbox' : ''}</div>`}
       <${PlacementList} placement=${result.placement} /></div>`}
     <div class="modal-buttons"><span class="spacer"></span>
-      <button class="ui-btn" type="button" onClick=${result && !result.error ? onDone : onClose}>${result ? 'Close' : 'Cancel'}</button>
-      <button id="fleet-spawn-send-go" type="button" class="ui-btn ui-btn-primary" disabled=${!f.brief.trim() || (!auto && !f.group.trim())} onClick=${go}>Send…</button>
+      <${Button} onClick=${result && !result.error ? onDone : onClose}>${result ? 'Close' : 'Cancel'}</${Button}>
+      <${Button} variant="primary" id="fleet-spawn-send-go" disabled=${!f.brief.trim() || (!auto && !f.group.trim())} onClick=${go}>Send…</${Button}>
     </div>
     <div class="muted fa-cli-note">CLI: <code>tclaude federation spawn-request ${'<group>@<peer>'} --brief …</code> or <code>--node ${'auto|group:<pool>'}</code></div>
   </${Overlay}>`;

@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { dashboardState } from './snapshot-store.js';
 import { WorkflowImportButton } from './process-workflow-share.js';
@@ -135,11 +136,11 @@ export function AgentExportDialog({ descriptor, state, actions, confirmDiscard }
       ${redacting && html`<${RedactPanel} actions=${actions} source=${unredacted} filename=${safeFilename(label, '.redacted.paf')} onDone=${state.closeDialog} />`}`}
     <div class="cron-create-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button class="ui-btn" type="button" id="paf-export-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+      <${Button} id="paf-export-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button type="button" id="paf-export-download" class="ui-btn ui-btn-primary"
+      <${Button} variant="primary" id="paf-export-download"
         disabled=${busy || (history && !native && !neutral) || (!!findings && !ack)} onClick=${download}>
-        ${busy ? 'Exporting…' : '⤓ Download .paf'}</button>
+        ${busy ? 'Exporting…' : '⤓ Download .paf'}</${Button}>
     </div>
   </${Overlay}>`;
 }
@@ -182,10 +183,10 @@ export function GroupExportDialog({ descriptor, state, actions, confirmDiscard }
       <${Check} id="group-export-ack" checked=${ack} onChange=${setAck}>Export anyway; I have checked the findings</${Check}>`}
     <div class="cron-create-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button class="ui-btn" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+      <${Button} disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button type="button" id="group-export-download" class="ui-btn ui-btn-primary" disabled=${busy || (!!findings && !ack)} onClick=${download}>
-        ${busy ? 'Exporting…' : `⤓ Download .${format}`}</button>
+      <${Button} variant="primary" id="group-export-download" disabled=${busy || (!!findings && !ack)} onClick=${download}>
+        ${busy ? 'Exporting…' : `⤓ Download .${format}`}</${Button}>
     </div>
   </${Overlay}>`;
 }

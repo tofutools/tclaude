@@ -1,6 +1,7 @@
 import { Fragment, h, render } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { useDialogFocus } from './dialog-focus.js';
 import { AsyncLoadState } from './async-load-state.js';
 import { relTime } from './helpers.js';
@@ -261,13 +262,13 @@ export function PluginsModal({ state, actions }) {
         <textarea id="plugin-modal-descr" rows="2" placeholder="optional — what this plugin provides" spellcheck=${false}
           value=${draft.descr} onInput=${(event) => state.updateModal({ descr: event.currentTarget.value })}></textarea></label>
       <div id="plugin-modal-steps">${draft.steps.map((step, index) => html`<${StepEditor} key=${step._key} step=${step} index=${index} state=${state} />`)}</div>
-      <div class="modal-buttons"><button id="plugin-modal-add-step" type="button" class="ui-btn" onClick=${() => state.addStep()}
-        title="Append another check/run step">+ add step</button></div>
+      <div class="modal-buttons"><${Button} id="plugin-modal-add-step" onClick=${() => state.addStep()}
+        title="Append another check/run step">+ add step</${Button}></div>
       <div class="cron-create-error" id="plugin-modal-error" role=${draft.error ? 'alert' : undefined}>${draft.error}</div>
       <div class="modal-buttons">
-        <button class="ui-btn" id="plugin-modal-cancel" type="button" onClick=${close}>Cancel</button><span class="spacer"></span>
-        <button id="plugin-modal-submit" class="ui-btn ui-btn-primary" type="button" disabled=${draft.submitting}
-          onClick=${() => actions.save(draft)}>${draft.submitting ? 'Saving…' : draft.mode === 'edit' ? 'Save changes' : 'Create plugin'}</button>
+        <${Button} id="plugin-modal-cancel" onClick=${close}>Cancel</${Button}><span class="spacer"></span>
+        <${Button} variant="primary" id="plugin-modal-submit" disabled=${draft.submitting}
+          onClick=${() => actions.save(draft)}>${draft.submitting ? 'Saving…' : draft.mode === 'edit' ? 'Save changes' : 'Create plugin'}</${Button}>
       </div>
     </div>
   </div>`;
