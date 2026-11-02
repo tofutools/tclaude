@@ -128,7 +128,7 @@ scenario('with Collab off an agent\'s tab offers no overlay', { ...AGENT_ON, col
   } finally { stop(); }
 });
 
-scenario('with no companion to float it, an agent\'s tab offers no overlay', AGENT_ON, async ({ harness, host, button }) => {
+scenario('with no companion to float it, an agent\'s tab offers no overlay', AGENT_ON, { companion: false }, async ({ harness, host, button }) => {
   await agentPane(harness);
   assert.equal(button(host, 'Open in overlay'), undefined);
 });
