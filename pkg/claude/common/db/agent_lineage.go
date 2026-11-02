@@ -55,6 +55,31 @@ func RecordAgentLineage(childAgentID, parentAgentID string, spawnedAt time.Time)
 // enrollment is being rolled back before the harness ever starts. Ordinary
 // retirement and conversation rotation must not call this: ancestry belongs
 // to the stable actor for its full lifetime.
+func ListAgentChildren(parentAgentID string) ([]string, error) {
+	parentAgentID = strings.TrimSpace(parentAgentID)
+	if parentAgentID == "" {
+		return nil, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT child_agent_id FROM agent_lineage WHERE parent_agent_id = ? ORDER BY spawned_at, child_agent_id`, parentAgentID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var children []string
+	for rows.Next() {
+		var child string
+		if err := rows.Scan(&child); err != nil {
+			return nil, err
+		}
+		children = append(children, child)
+	}
+	return children, rows.Err()
+}
+
 func DeleteAgentLineageForChild(childAgentID string) (int64, error) {
 	childAgentID = strings.TrimSpace(childAgentID)
 	if childAgentID == "" {

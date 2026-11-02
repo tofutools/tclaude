@@ -370,6 +370,7 @@ var peerViewOwnNodeRoutes = []string{
 	"POST /api/external-stewards",
 	"POST /api/external-stewards/{name}/renew",
 	"POST /api/external-stewards/{name}/revoke",
+	"POST /api/external-stewards/{name}/spawn",
 	// Conversation search returns raw transcript excerpts, a thing no peer
 	// grant covers, and reads files for seconds on this node's disk.
 	"GET /api/conversations/search",

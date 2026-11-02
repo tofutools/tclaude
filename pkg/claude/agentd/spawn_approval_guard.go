@@ -75,6 +75,15 @@ func spawnApprovalLineageFailure(parentConvID, childHarness, childPolicy string,
 	if parentConvID == "" {
 		return nil
 	}
+	if db.IsExternalStewardConv(parentConvID) {
+		// No launch to bound the child by, so it gets the least any posture gives.
+		if !harness.ApprovalIsBaseline(childHarness, childPolicy, childAutoReview) {
+			return &spawnFailure{http.StatusForbidden, "approval_restricted", fmt.Sprintf(
+				"an external steward's worker needs an approval mode where a human answers every action, and %s approval %q isn't one; the operator sets it on the spawn profile",
+				harnessOrDefault(childHarness), strings.TrimSpace(childPolicy))}
+		}
+		return nil
+	}
 	parent, err := db.FindSessionByConvID(parentConvID)
 	if err != nil {
 		return &spawnFailure{http.StatusInternalServerError, "io", "spawn approval guard: " + err.Error()}

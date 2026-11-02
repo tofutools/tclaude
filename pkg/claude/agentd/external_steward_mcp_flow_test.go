@@ -171,6 +171,7 @@ func TestExternalStewardMCP_RevokedCredentialFailsEveryTool(t *testing.T) {
 		stewardtools.CreateBoard: {"title": "plan"},
 		stewardtools.UpdateBoard: {"id": "plan", "elements": []map[string]any{}},
 		stewardtools.SetTaskLink: {"agent": "worker"},
+		stewardtools.SpawnAgent:  {"group": "crew"},
 	}
 	for _, tool := range stewardtools.List() {
 		text, isError := mcpCall(t, session, tool.Name, args[tool.Name])
@@ -199,7 +200,7 @@ func TestExternalStewardMCP_ListedPermissionsCanBeHeld(t *testing.T) {
 		for _, slug := range tool.Permissions {
 			assert.Truef(t, agentd.IsKnownPermSlug(slug), "%s lists unknown %s", tool.Name, slug)
 			assert.Falsef(t, agentd.ExternalStewardRefusesForTest(slug), "%s lists never-listed %s", tool.Name, slug)
-			if slug != agentd.PermDashboardCapture {
+			if slug != agentd.PermDashboardCapture && slug != agentd.PermAgentSpawn {
 				assert.Containsf(t, issued.Grants, slug, "%s needs %s, which a new steward lacks", tool.Name, slug)
 			}
 			assert.Containsf(t, tool.Access, slug, "%s does not tell the operator about %s", tool.Name, slug)

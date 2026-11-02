@@ -49,6 +49,14 @@ func ApprovalLineageAllowed(parentHarness, parentPolicy string, parentAutoReview
 	return child.capability&^parent.capability == 0
 }
 
+// ApprovalIsBaseline reports whether a posture, launched as a child, has no
+// automatic capability at all: a human answers everything that acts. Copilot and a
+// shell have no such posture.
+func ApprovalIsBaseline(harnessName, policy string, autoReview bool) bool {
+	child := classifyChildApprovalLineage(harnessName, policy, autoReview)
+	return child.valid && child.capability == approvalAutoBaseline
+}
+
 // claudeAutoMayDelegateCopilotYolo bridges the one approval-mode mismatch that
 // the shared capability lattice cannot express. Claude's `auto` supervisor may
 // approve the same actions Copilot `yolo` must accept without a corresponding

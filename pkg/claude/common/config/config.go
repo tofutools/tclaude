@@ -1384,7 +1384,13 @@ type StewardConfig struct {
 	// a credential the operator made. Off by default: while off, none can be
 	// made and every one presented is refused.
 	ExternalEnabled bool `json:"external_enabled,omitempty"`
+	// ExternalMaxChildren caps the workers one external steward can have running.
+	// Zero means DefaultExternalStewardMaxChildren.
+	ExternalMaxChildren int `json:"external_max_children,omitempty"`
 }
+
+// DefaultExternalStewardMaxChildren is the cap when the operator hasn't set one.
+const DefaultExternalStewardMaxChildren = 3
 
 const (
 	// StewardReadsOperator reads what the operator reads across tclaude.
@@ -1477,6 +1483,15 @@ func (c *Config) StewardWrites() string {
 // ExternalStewardsEnabled reports the external steward switch. Nil-safe.
 func (c *Config) ExternalStewardsEnabled() bool {
 	return c != nil && c.Steward != nil && c.Steward.ExternalEnabled
+}
+
+// ExternalStewardMaxChildren returns the cap on one external steward's running
+// workers. Nil-safe.
+func (c *Config) ExternalStewardMaxChildren() int {
+	if c == nil || c.Steward == nil || c.Steward.ExternalMaxChildren <= 0 {
+		return DefaultExternalStewardMaxChildren
+	}
+	return c.Steward.ExternalMaxChildren
 }
 
 // StewardSourceDownload returns the operator's choice on downloading tclaude's
