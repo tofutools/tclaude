@@ -130,8 +130,9 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   const fused = authoredOpenPRsView({ authored_open_prs: prs }, 'all', false, peers);
   assert.deepEqual(fused.items.map((pr) => [pr.number, pr.agent_id || '', pr.agent_title || '']), [
     [1, 'agt_1', ''], [2, 'agt_p', 'paste-files@brain'], [3, 'agt_q', 'other@brain'], [4, '', ''], [5, '', ''],
+    [6, '', ''],
   ], 'a peer agent fills in only PRs the page daemon left unattached');
-  assert.equal(fused.unattached, 2);
+  assert.equal(fused.unattached, 3);
   assert.equal(prs.items[1].agent_id, undefined, 'the snapshot rows are not mutated');
 
   // Recently closed PRs live in their own filter: they must not reach the open
