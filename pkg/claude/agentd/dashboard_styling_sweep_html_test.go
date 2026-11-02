@@ -41,7 +41,7 @@ func TestDashboardCSS_StylingSweep(t *testing.T) {
 	// distinguishes it from `.filter-bar button.tool:hover { …; color: … }`.
 	must("\nbutton.tool:hover { border-color: #58a6ff; }", "the fallback hover is border-only (leak-free)")
 	// The deploy/summon action is a `.primary`, not a `.tool`.
-	must(".template-card .tc-actions button.primary {", "the template deploy .primary button is themed")
+	must(".template-card .tc-actions button:where(:not(.ui-btn)).primary {", "the template deploy .primary button is themed")
 
 	// Group 2 — A1 sizing (both skins): the "⧉ manage templates…" tool button
 	// beside the template <select> gets the dir-browse flex idiom so it matches
