@@ -105,7 +105,7 @@ function OverlayDock({ snapshot }) {
   // The chip stands for the seated Steward's window, and for the page summoning one.
   const seated = stewardAgent(agents)?.agentId;
   const onChip = ({ kind, agent }) => kind === START_WINDOW_KIND || (kind === CHAT_WINDOW_KIND && agent === seated);
-  const entries = dockEntriesOf(overlayWindows.value, minimizedOverlayTabs.value).filter(({ tabs }) => !(overlayHostUp.value && (tabs.every(onChip) || tabs.some(({ agent }) => agent && agent === seated))));
+  const entries = dockEntriesOf(overlayWindows.value, minimizedOverlayTabs.value).filter(({ tabs }) => !(overlayHostUp.value && (tabs.every(onChip) || tabs.some(({ kind, agent }) => kind === CHAT_WINDOW_KIND && agent === seated))));
   if (!entries.length) return null;
   const needs = ({ kind, agent }) => {
     const row = kind === CHAT_WINDOW_KIND ? agents.get(agent) : null;

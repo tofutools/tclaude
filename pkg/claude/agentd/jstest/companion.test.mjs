@@ -2839,3 +2839,26 @@ test('a Steward out of the seat keeps its pill', async (t) => {
   const seated = (await harness.importDashboardModule('js/companion-model.js')).stewardAgent((await harness.importDashboardModule('js/companion-model.js')).companionAgents(snapshot)).agentId;
   assert.equal(dock.container.querySelectorAll('.overlay-dock-pill').length, seated === S2 ? 0 : 1);
 });
+
+test('a prompt behind the chip shows past a decision, and a shown tab stays out of it', async (t) => {
+  const snapshot = snapshotWith({ steward: true, aStatus: 'awaiting_permission' });
+  snapshot.messages = [{ id: 7, from_agent: S, subject: 'Later', options: ['x', 'y'] }];
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([S, A]) });
+  const { view, harness, controller } = await setup(t, { prefs, snapshot });
+  assert.ok(harness.getByRole(view.container, 'button', { name: /alpha: .*in the window of steward-k3x/ }), 'the Steward only asked');
+  await harness.act(() => controller().open(A));
+  assert.ok(harness.getByRole(view.container, 'button', { name: /^steward-k3x: / }), 'alpha is on screen, and the chip is the Steward again');
+});
+
+test('a minimized shell of the Steward keeps its pill', async (t) => {
+  const prefs = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([S]) });
+  const { harness, snap } = await setup(t, { prefs, snapshot: snapshotWith({ steward: true }) });
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  const { BoardOverlay } = await harness.importDashboardModule('js/board-overlay.js');
+  const dock = await harness.mount(harness.html`<${BoardOverlay} snapshot=${snap} />`);
+  await harness.act(async () => {
+    overlays.openOverlayWindow({ id: 'term:s', kind: 'terminal', agent: S, paneKey: 'p', ws: '/x', label: 'shell' });
+    overlays.minimizeOverlayWindow('term:s');
+  });
+  assert.match(dock.container.querySelector('.overlay-dock-pill').textContent, /shell/);
+});

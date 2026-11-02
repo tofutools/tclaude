@@ -1121,14 +1121,18 @@ export function CompanionApp({
     role="toolbar" aria-label="Companions" onPointerDown=${chipDrag.onPointerDown} onClickCapture=${chipDrag.onClickCapture}>
     ${chipAgent && (() => {
       const own = statusOf(chipAgent);
-      // Its window has no pill, so the chip speaks for the tabs waiting behind it.
-      const behind = own === 'needs' ? null : (holder?.tabs || []).map((tab) => agents.get(tab.agent)).find((agent) => agent && agent !== chipAgent && statusOf(agent) === 'needs');
+      // Its window has no pill, so the chip speaks for the tabs waiting out of
+      // sight. A prompt or an approval holds an agent up, and a decision need not,
+      // so one never hides behind the other.
+      const unseen = (holder?.tabs || []).filter((tab) => holder.minimized || tab.id !== holder.active).map((tab) => agents.get(tab.agent)).filter((agent) => agent && agent !== chipAgent);
+      const stopped = (agent) => approvals(agent).length > 0 || companionStatus(agent) === 'needs';
+      const behind = stopped(chipAgent) ? null : unseen.find(stopped) || (own === 'needs' ? null : unseen.find((agent) => statusOf(agent) === 'needs'));
       const status = behind ? 'needs' : own;
       const peekAt = (behind || chipAgent).agentId;
       return html`<button key=${chipAgent.agentId} type="button"
         class=${`companion-chip ${status}`}
         ref=${(node) => { if (node) chipRects.current.set(chipAgent.agentId, node.getBoundingClientRect()); }}
-        aria-label=${behind ? `${behind.name}: ${companionStatusLabel('needs')}, in the window of ${chipAgent.name}. Open it (Ctrl+.)` : `${chipAgent.name}: ${companionStatusLabel(status)}. Open companion (Ctrl+.)`}
+        aria-label=${behind ? `${behind.name}: ${companionStatusLabel('needs')}, in the window of ${chipAgent.name}. Open it` : `${chipAgent.name}: ${companionStatusLabel(status)}. Open companion (Ctrl+.)`}
         onMouseEnter=${(event) => startPeek(peekAt, event.currentTarget)}
         onMouseLeave=${stopPeek}
         onFocus=${(event) => startPeek(peekAt, event.currentTarget)}
