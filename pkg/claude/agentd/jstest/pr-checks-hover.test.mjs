@@ -514,3 +514,40 @@ test('a merge request CI badge names GitLab and links its pipelines from any sub
   assert.equal(prChecksPageURL(`${MR}/diffs`), `${MR}/pipelines`, 'a sub-page still leads to the pipelines tab');
   assert.equal(prChecksPageURL('https://github.com/acme/app/pull/2'), 'https://github.com/acme/app/pull/2/checks');
 });
+
+test('a merge request URL with a query or fragment is still GitLab', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { prChecksPageURL } = await harness.importDashboardModule('js/pr-checks-hover.js');
+  const MR = 'https://gitlab.example.test:6080/acme/app/-/merge_requests/7';
+  assert.equal(prChecksPageURL(`${MR}?view=parallel`), `${MR}/pipelines`);
+  assert.equal(prChecksPageURL(`${MR}#note_3`), `${MR}/pipelines`);
+});
+
+test('a merge request checks panel names it !N, links its pipelines, and says GitLab', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { PRChecksBadge } = await harness.importDashboardModule('js/pr-checks-hover.js');
+  const MR = 'https://gitlab.example.test:6080/acme/app/-/merge_requests/7';
+  stubFetch(t, () => ({
+    url: MR,
+    summary: { total: 1, passed: 0, failed: 1, pending: 0, skipped: 0, state: 'failing' },
+    checks: [{ name: 'test', bucket: 'fail', conclusion: 'failed', source: 'test' }],
+    resolved: true,
+  }));
+  const mounted = await harness.mount(harness.html`
+    <${PRChecksBadge} url=${MR} prNumber=${7} countText="pipeline"
+      summary=${{ total: 1, passed: 0, failed: 1, pending: 0, skipped: 0, state: 'failing' }} />
+  `);
+  try {
+    await harness.act(() => { harness.fireEvent(mounted.container.querySelector('.ci-hover'), 'mouseenter'); });
+    await flush();
+    await harness.act(async () => {});
+    const panel = mounted.container.querySelector('.ci-panel');
+    assert.ok(panel);
+    assert.match(panel.querySelector('.ci-panel-heading').textContent, /!7 · checks/);
+    assert.doesNotMatch(panel.querySelector('.ci-panel-heading').textContent, /#7/);
+    assert.equal(panel.querySelector('.ci-panel-note a').getAttribute('href'), `${MR}/pipelines`);
+    assert.match(panel.querySelector('.ci-panel-note').textContent, /Open the pipeline on GitLab/);
+  } finally {
+    await mounted.unmount();
+  }
+});

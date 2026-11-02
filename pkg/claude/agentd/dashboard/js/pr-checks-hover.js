@@ -327,7 +327,7 @@ export function summaryLine(summary) {
 // lie to anyone who presses Enter and lands on GitHub instead.
 // GITLAB_MR_RE recognises a GitLab merge request URL, sub-page and all, so
 // the badge can name the right forge and link its pipelines tab.
-const GITLAB_MR_RE = /^(https:\/\/[^/]+\/(?:[^/]+\/)+-\/merge_requests\/[0-9]+)(?:\/.*)?$/;
+const GITLAB_MR_RE = /^(https:\/\/[^/]+\/(?:[^/]+\/)+-\/merge_requests\/[0-9]+)(?:[/?#].*)?$/;
 
 function badgeTitle(summary, prNumber, url = '') {
   if (GITLAB_MR_RE.test(url || '')) {
@@ -525,6 +525,10 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
   const live = data?.summary && (data.summary.total || 0) > 0 ? data.summary : summary;
   const checks = data?.checks || [];
   const orderedChecks = orderChecks(checks);
+  // A GitLab merge request is !N and runs a pipeline; a GitHub pull request
+  // is #N and runs checks.
+  const isMR = GITLAB_MR_RE.test(url || '');
+  const ref = prNumber ? `${isMR ? '!' : '#'}${prNumber}` : '';
   const [now, setNow] = useState(() => Date.now());
   const hasRunningClock = checks.some(isRunningCheck);
 
@@ -550,8 +554,8 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
       id=${panelID} role="dialog" aria-labelledby=${headingID}>
       <div class="ci-panel-heading" id=${headingID}>
         <a href=${badgeHref(summary, url)} target="_blank" rel="noopener noreferrer">
-          <span class="theme-copy-regular">${prNumber ? `#${prNumber} · checks` : 'Pull request checks'}</span>
-          <span class="theme-copy-wizard">${prNumber ? `#${prNumber} · omens of the rite` : 'Omens of the rite'}</span>
+          <span class="theme-copy-regular">${ref ? `${ref} · checks` : (isMR ? 'Merge request pipeline' : 'Pull request checks')}</span>
+          <span class="theme-copy-wizard">${ref ? `${ref} · omens of the rite` : 'Omens of the rite'}</span>
         </a>
       </div>
       <div class="ci-panel-summary">${summaryLine(live)}</div>
