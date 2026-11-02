@@ -2054,11 +2054,22 @@ body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) 
 .overlay-dock-count { padding: 0 6px; border-radius: 8px; background: #30363d; font-size: 10px; }
 .overlay-dock-remove { padding: 2px 8px 2px 4px; border: 0; background: none; color: var(--cmp-muted); font-size: 13px; cursor: pointer; }
 .overlay-dock-remove:hover { color: var(--cmp-text); }
+/* The dock's menu of actions on every window. It opens upwards from its button,
+   fixed rather than inside the dock, whose scrolling would clip it. */
+.overlay-dock-menu { display: inline-flex; flex: none; border: 1px solid var(--cmp-line); border-radius: 16px; background: var(--cmp-bar); }
+.overlay-dock-menu:hover { border-color: #58a6ff; }
+.overlay-dock-menu-button { padding: 5px 10px; border: 0; background: none; color: var(--cmp-text); font: inherit; font-size: 12px; cursor: pointer; }
+.overlay-dock-actions { position: fixed; z-index: 951; display: flex; flex-direction: column; min-width: 190px; padding: 4px; border: 1px solid var(--cmp-line); border-radius: 8px; background: var(--cmp-bar); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
+.overlay-dock-action { padding: 6px 10px; border: 0; border-radius: 6px; background: none; color: var(--cmp-text); font: inherit; font-size: 12px; text-align: left; white-space: nowrap; cursor: pointer; }
+.overlay-dock-action:hover, .overlay-dock-action:focus-visible { background: rgba(88, 166, 255, .14); }
 /* Above the windows: a drop that splits a window lands on top of it. */
 .overlay-snap-guide {
   position: fixed; z-index: 952; pointer-events: none; border-radius: 8px;
   background: rgba(88, 166, 255, .10); border: 1px dashed #58a6ff;
 }
+/* A dragged window that would float where it is let go, as a tear-off out of a
+   split does: the guide's dashed line on the window itself, where it will stay. */
+.overlay-window.overlay-window-floating { outline: 1px dashed #58a6ff; outline-offset: 2px; }
 
 /* Edges and corners of a floating window (overlay-window.js): 6px strips that
    straddle the edge, with the corners on top. The frame matches the window's

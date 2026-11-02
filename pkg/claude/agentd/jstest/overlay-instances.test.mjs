@@ -260,3 +260,82 @@ for (const [name, end] of [['Escape', (s) => s.harness.act(() => s.harness.windo
     assert.equal(s.prefs.getItem(s.overlay.OVERLAY_SPLIT_PREF), before);
   });
 }
+
+// A drag by the title bar, as a hand does it: down, a few moves, up.
+async function dragBar(harness, mounted, id, from, to, during = () => {}) {
+  const bar = mounted.container.querySelector(`.w-${id} .t`);
+  const event = (type, { x, y }) => Object.assign(new harness.window.Event(type, { bubbles: true, cancelable: true }), { button: 0, pointerId: 1, clientX: x, clientY: y });
+  await harness.act(() => bar.dispatchEvent(event('pointerdown', from)));
+  for (let i = 1; i <= 4; i++) {
+    await harness.act(() => bar.dispatchEvent(event('pointermove', { x: from.x + (to.x - from.x) * i / 4, y: from.y + (to.y - from.y) * i / 4 })));
+  }
+  during();
+  await harness.act(() => bar.dispatchEvent(event('pointerup', to)));
+}
+
+test('a window torn out of the split floats where it is let go, even over the cell it left', async (t) => {
+  const { harness, overlay, prefs, mounted } = await setup(t, PAIR);
+  const frame = (id) => mounted.container.querySelector(`.w-${id}`);
+  assert.ok(frame('a').classList.contains('snapped'), 'a starts in the left cell');
+  let previewed = false;
+  await dragBar(harness, mounted, 'a', { x: 100, y: 10 }, { x: 300, y: 400 }, () => {
+    previewed = frame('a').classList.contains('overlay-window-floating');
+  });
+  assert.ok(previewed, 'while held, it shows that it will float');
+  assert.equal(frame('a').classList.contains('snapped'), false, 'let go inside its old cell, it floats');
+  assert.equal(frame('a').classList.contains('overlay-window-floating'), false, 'and the preview ends with the drag');
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), { ...PAIR, a: { gap: true } }, 'its cell stays empty');
+  assert.ok(frame('b').classList.contains('snapped'), 'b keeps its cell');
+});
+
+test('a floating window dropped into an empty cell later still takes it', async (t) => {
+  const { harness, overlay, prefs, mounted } = await setup(t, PAIR);
+  await dragBar(harness, mounted, 'a', { x: 100, y: 10 }, { x: 300, y: 400 });
+  assert.equal(mounted.container.querySelector('.w-a').classList.contains('snapped'), false);
+  const bar = mounted.container.querySelector('.w-a .t').getBoundingClientRect?.() || { left: 0, top: 0 };
+  const grab = { x: Math.round(bar.left) + 20, y: Math.round(bar.top) + 5 };
+  await dragBar(harness, mounted, 'a', grab, { x: 320, y: 420 });
+  assert.ok(mounted.container.querySelector('.w-a').classList.contains('snapped'), 'a new drag goes back into the cell');
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), PAIR);
+});
+
+test('untile all floats every tiled window where it shows and ends the split', async (t) => {
+  const { harness, overlay, prefs, mounted } = await setup(t, PAIR);
+  const rect = (id) => {
+    const style = mounted.container.querySelector(`.w-${id}`).getAttribute('style');
+    return ['left', 'top', 'width', 'height'].map((side) => style.match(new RegExp(`${side}:([-\\d.]+)px`))[1]);
+  };
+  const before = { a: rect('a'), b: rect('b') };
+  assert.equal(overlay.tiledOverlayWindowCount.value, 2);
+  await harness.act(() => overlay.untileOverlayWindows());
+  for (const id of ['a', 'b']) {
+    assert.equal(mounted.container.querySelector(`.w-${id}`).classList.contains('snapped'), false, `${id} floats`);
+    assert.deepEqual(rect(id), before[id], `${id} does not move on screen`);
+    assert.equal(JSON.parse(prefs.getItem(`p.${id}`)).snap, '', `${id} stays floating after a reload`);
+  }
+  assert.equal(prefs.getItem(overlay.OVERLAY_SPLIT_PREF), '', 'the split is gone');
+  assert.equal(overlay.tiledOverlayWindowCount.value, 0);
+});
+
+test('minimize all sends every window to the dock, and restore all brings them back', async (t) => {
+  const { harness, instances } = await setup(t);
+  const bulk = await harness.importDashboardModule('js/overlay-window-bulk.js');
+  const keys = () => bulk.overlayBulkActions.value.map(({ key }) => key);
+  // The fixture's a and b are snapped to an edge, so untiling is offered; no
+  // window is open yet, so there is nothing to minimize or restore.
+  assert.deepEqual(keys(), ['untile']);
+  await harness.act(() => {
+    instances.openOverlayWindow({ id: 'x', kind: 'k', label: 'X' });
+    instances.openOverlayWindow({ id: 'y', kind: 'k', label: 'Y' });
+  });
+  assert.ok(keys().includes('minimize'));
+  assert.ok(!keys().includes('restore'));
+  await harness.act(() => bulk.minimizeAllOverlayWindows());
+  assert.deepEqual(instances.overlayWindows.value.map((window) => !!window.minimized), [true, true]);
+  assert.deepEqual(keys().filter((key) => key !== 'untile'), ['restore']);
+  await harness.act(() => bulk.restoreAllOverlayWindows());
+  assert.deepEqual(instances.overlayWindows.value.map((window) => !!window.minimized), [false, false]);
+  const commands = bulk.buildOverlayBulkCommands();
+  assert.deepEqual(commands.map(({ label }) => label), bulk.overlayBulkActions.value.map(({ label }) => label), 'the palette says what the dock says');
+  assert.ok(commands.every(({ label }) => Object.values(bulk.OVERLAY_BULK_ACTIONS).some((action) => action.label === label)));
+});

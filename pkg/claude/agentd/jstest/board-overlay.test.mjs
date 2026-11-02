@@ -347,7 +347,7 @@ scenario('a board minimizes to the dock and comes back', async ({ harness, overl
   assert.match(item.textContent, /Release plan/);
   await harness.act(async () => { item.click(); await wait(); });
   assert.ok(overlayHost.querySelector('.board-overlay'));
-  assertAbsent(overlayHost.querySelector('.overlay-dock'));
+  assertAbsent(overlayHost.querySelector('.overlay-dock-item'));
 });
 
 scenario('opening the board the overlay shows brings the window forward, not a second editor', async ({ harness, host, overlayHost, overlayState }) => {
@@ -928,7 +928,7 @@ scenario('a tab × minimizes only that tab, and it comes back to its window', as
   assert.equal(overlayState.boardOverlays.value.length, 2, 'it keeps its one place');
   await harness.act(async () => { overlayHost.querySelector('.overlay-dock-item').click(); await wait(); await wait(); });
   assert.deepEqual(tabsByWindow(overlayHost), [['Team map', 'Release plan']]);
-  assert.equal(overlayHost.querySelector('.overlay-dock'), null);
+  assert.equal(overlayHost.querySelector('.overlay-dock-item'), null);
 });
 
 scenario('a minimized window of several tabs is one pill, with a count and no way to lose them all', async ({ harness, overlayHost, overlayState, windows }) => {
