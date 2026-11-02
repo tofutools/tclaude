@@ -196,8 +196,13 @@ footer {
 }
 /* The dock normally paints above the footer. Lift the footer only while this
    disclosure is open so the bridge can receive hover across the dock's bottom
-   edge; its visible popover is already shifted clear of the dock. */
+   edge; its visible popover is already shifted clear of the dock. The footer is
+   the popover's stacking context, so the lift also has to clear the overlay
+   windows (930-949, overlay-window.js): a popover the operator opened belongs
+   above them, and above the overlay dock and its menu (950-951) too. A dialog
+   opened over a pinned popover still covers it. */
 footer:has(.open-prs.is-open) { z-index: 46; }
+body:not(:has(.modal-overlay.show, .manage-overlay.show)) footer:has(.open-prs.is-open) { z-index: 952; }
 body.dock-open .open-prs-popover { right: calc(var(--dock-w) + 12px); }
 body.dock-open .open-prs.is-open::before {
   right: 12px; width: calc(var(--dock-w) + min(470px, calc(100vw - 24px)));
