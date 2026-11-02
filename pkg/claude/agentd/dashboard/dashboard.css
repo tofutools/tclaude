@@ -276,7 +276,7 @@ body.dock-open .open-prs.is-open::before {
 .open-pr-ignore { width: 20px; height: 20px; padding: 0; opacity: 0.45; }
 .open-pr-restore { padding: 4px 9px; color: #8b949e; }
 .open-pr-row:hover .open-pr-ignore, .open-pr-ignore:focus-visible { opacity: 1; }
-.open-pr-ignore:hover, .open-pr-restore:hover { color: #c9d1d9; border-color: #385b81; background: #172a40; }
+.open-pr-ignore:hover, .open-pr-restore:hover { color: #c9d1d9; background: #172a40; }
 .open-pr-ignore:focus-visible, .open-pr-restore:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .open-pr-row.is-ignored .open-pr-title { color: #8b949e; }
 /* Whose pull requests: the operator's own tab plus one per tracked colleague,
@@ -313,7 +313,7 @@ body.dock-open .open-prs.is-open::before {
   margin: 0 0 5px auto; padding: 3px 8px; border: 1px dashed #303946; border-radius: 10px;
   background: transparent; color: #7d8590; cursor: pointer; font-size: 10px;
 }
-.open-prs-add-person:hover { color: #c9d1d9; border-color: #385b81; }
+.open-prs-add-person:hover { color: #c9d1d9; background: var(--ui-bg-hover); }
 .open-prs-add-person:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .open-prs-add-form { display: flex; gap: 4px; margin: 0 0 5px auto; }
 .open-prs-add-form input {
