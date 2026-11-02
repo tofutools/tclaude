@@ -10,6 +10,7 @@ import { computed, signal } from '@preact/signals';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { focusOverlayWindow, minimizedOverlayTabs, openOverlayWindow, overlayHostUp, overlayWindows } from './overlay-instances.js';
 import { overlayWindowsByStack } from './overlay-window.js';
+import { hasShownOverlay } from './overlay-stack.js';
 
 const html = htm.bind(h);
 
@@ -46,7 +47,12 @@ export function showAllOverlayWindows(open = true) {
 
 const matches = (entry, query) => !query || entry.tabs.some(({ label }) => String(label || '').toLowerCase().includes(query));
 
+// Whether the view closed on a window chosen, which takes focus itself. Any
+// other way out puts focus back where it was.
+let picked = false;
+
 function pick(entry) {
+  picked = true;
   overlayExposeOpen.value = false;
   openOverlayWindow(entry.tab);
   focusOverlayWindow(entry.tab.id);
@@ -64,9 +70,11 @@ function shareOf(win, windowId) {
 }
 
 export function OverlayExpose({ win = globalThis.window }) {
-  if (!overlayExposeOpen.value) return null;
+  if (!overlayExposeOpen.value || !overlayExposeAvailable.value) return null;
   return html`<${ExposeView} win=${win} />`;
 }
+
+const optionId = (index) => `overlay-expose-option-${index}`;
 
 function ExposeView({ win }) {
   const [query, setQuery] = useState('');
@@ -81,48 +89,48 @@ function ExposeView({ win }) {
   const at = Math.min(chosen, Math.max(0, shown.length - 1));
   // Read once on entry: the view changes nothing, so nothing moves under it.
   const [maps] = useState(() => Object.fromEntries(entries.filter((entry) => entry.windowId && !entry.minimized).map((entry) => [entry.key, shareOf(win, entry.windowId)])));
-  // Leaving with nothing chosen puts focus back, as into a terminal it came from.
-  const leave = () => {
-    overlayExposeOpen.value = false;
-    returnTo?.focus?.();
-  };
+  const leave = () => { overlayExposeOpen.value = false; };
 
-  useEffect(() => { input.current?.focus?.(); }, []);
-  // A window closing to fewer than two leaves nothing to choose between.
-  useEffect(() => { if (entries.length < 2) leave(); }, [entries.length]);
+  // However the view goes, the flag goes with it, so it never comes back unasked.
+  // Leaving with nothing chosen puts focus back, as into a terminal it came from:
+  // after the pointer's own default, which would blur to the page.
+  useEffect(() => {
+    picked = false;
+    input.current?.focus?.();
+    return () => {
+      overlayExposeOpen.value = false;
+      if (!picked && returnTo?.isConnected !== false) win?.setTimeout?.(() => returnTo?.focus?.(), 0);
+    };
+  }, []);
 
   function onKey(event) {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      event.stopPropagation();
-      leave();
-    } else if (event.key === 'Enter') {
-      event.preventDefault();
-      if (shown[at]) pick(shown[at]);
-    } else if (event.key === 'ArrowRight' || event.key === 'ArrowDown' || (event.key === 'Tab' && !event.shiftKey)) {
-      event.preventDefault();
-      setChosen((at + 1) % Math.max(1, shown.length));
-    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey)) {
-      event.preventDefault();
-      setChosen((at - 1 + shown.length) % Math.max(1, shown.length));
-    }
+    const forward = event.key === 'ArrowRight' || event.key === 'ArrowDown' || (event.key === 'Tab' && !event.shiftKey);
+    const back = event.key === 'ArrowLeft' || event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey);
+    if (event.key !== 'Escape' && event.key !== 'Enter' && !forward && !back) return;
+    // The view keeps its keys: no focus trap or shortcut beneath it sees them.
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === 'Escape') leave();
+    else if (event.key === 'Enter') { if (shown[at]) pick(shown[at]); } else if (forward) setChosen((at + 1) % Math.max(1, shown.length));
+    else setChosen((at - 1 + shown.length) % Math.max(1, shown.length));
   }
 
   return html`<div class="overlay-expose" role="dialog" aria-modal="true" aria-label="All windows" onKeyDown=${onKey}
     onPointerDown=${(event) => { if (event.target === event.currentTarget) leave(); }}>
     <div class="overlay-expose-bar">
       <input ref=${input} class="overlay-expose-filter" type="text" placeholder="Type to filter windows" aria-label="Filter windows by title"
+        role="combobox" aria-expanded="true" aria-controls="overlay-expose-list" aria-activedescendant=${shown[at] ? optionId(at) : undefined}
         value=${query} onInput=${(event) => { setQuery(event.currentTarget.value); setChosen(0); }} />
       <span class="overlay-expose-hint">Enter or a click raises · Esc leaves</span>
     </div>
-    <div class="overlay-expose-grid" role="listbox" aria-label="Windows"
+    <div class="overlay-expose-grid" id="overlay-expose-list" role="listbox" aria-label="Windows"
       onPointerDown=${(event) => { if (event.target === event.currentTarget) leave(); }}>
       ${shown.length === 0 && html`<p class="overlay-expose-empty">No window matches “${query.trim()}”.</p>`}
       ${shown.map((entry, index) => {
         const { tab, tabs } = entry;
         const map = maps[entry.key];
         const others = tabs.filter((other) => other.id !== tab.id);
-        return html`<button key=${entry.key} type="button" role="option" aria-selected=${index === at ? 'true' : 'false'}
+        return html`<button key=${entry.key} id=${optionId(index)} type="button" role="option" aria-selected=${index === at ? 'true' : 'false'}
           class=${`overlay-expose-card${index === at ? ' chosen' : ''}${entry.minimized ? ' minimized' : ''}`}
           title=${`Raise ${tab.label || KIND_NAMES[tab.kind] || 'window'}`}
           onMouseEnter=${() => setChosen(index)} onClick=${() => pick(entry)}>
@@ -147,7 +155,8 @@ function ExposeView({ win }) {
 export function installOverlayExposeKey(win) {
   const onKey = (event) => {
     if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key !== ',') return;
-    if (!overlayExposeOpen.peek() && !overlayExposeAvailable.peek()) return;
+    // Not over a dialog: its focus trap would pull typing into the form beneath.
+    if (!overlayExposeOpen.peek() && (!overlayExposeAvailable.peek() || hasShownOverlay())) return;
     event.preventDefault();
     event.stopPropagation();
     showAllOverlayWindows(!overlayExposeOpen.peek());

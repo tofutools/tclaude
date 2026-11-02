@@ -113,3 +113,47 @@ test('the palette and the dock menu offer it as "Show all windows"', async (t) =
   await s.harness.act(() => command.run());
   assert.ok(s.view());
 });
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+test('leaving by Ctrl+, puts focus back where it was, and picking leaves it with the window', async (t) => {
+  const s = await setup(t);
+  await threeWindows(s);
+  const terminal = s.harness.window.document.body.appendChild(s.harness.window.document.createElement('textarea'));
+  t.after(() => terminal.remove());
+  terminal.focus();
+  await s.key({ key: ',', ctrlKey: true }, terminal);
+  assert.notEqual(s.harness.window.document.activeElement, terminal, 'the filter takes focus');
+  const filter = s.mounted.container.querySelector('.overlay-expose-filter');
+  assert.equal(filter.getAttribute('aria-activedescendant'), s.mounted.container.querySelector('.overlay-expose-card.chosen').id, 'the chosen card is announced');
+  await s.key({ key: ',', ctrlKey: true }, filter);
+  await tick();
+  assert.equal(s.harness.window.document.activeElement, terminal, 'back to the terminal');
+  await s.key({ key: ',', ctrlKey: true }, terminal);
+  await s.key({ key: 'Enter' }, s.mounted.container.querySelector('.overlay-expose-filter'));
+  await tick();
+  assert.notEqual(s.harness.window.document.activeElement, terminal, 'a picked window keeps the focus it was given');
+});
+
+test('Ctrl+, does not open over a dialog', async (t) => {
+  const s = await setup(t);
+  await threeWindows(s);
+  const dialog = s.harness.window.document.body.appendChild(s.harness.window.document.createElement('div'));
+  dialog.className = 'modal-overlay show';
+  t.after(() => dialog.remove());
+  await s.key({ key: ',', ctrlKey: true });
+  assert.equal(s.view(), null);
+});
+
+test('the view going away with its host does not leave it open to come back unasked', async (t) => {
+  const s = await setup(t);
+  await threeWindows(s);
+  await s.harness.act(() => s.expose.showAllOverlayWindows());
+  await s.mounted.unmount();
+  assert.equal(s.expose.overlayExposeOpen.value, false);
+  await s.harness.act(() => s.expose.showAllOverlayWindows());
+  await s.harness.act(() => { s.instances.overlayHostUp.value = false; });
+  assert.equal(s.expose.overlayExposeOpen.value, true, 'not mounted here, so the flag alone');
+  const again = await s.harness.mount(s.harness.html`<${s.expose.OverlayExpose} win=${s.harness.window} />`);
+  assert.equal(again.container.querySelector('.overlay-expose'), null, 'with Collab off it does not show');
+});
