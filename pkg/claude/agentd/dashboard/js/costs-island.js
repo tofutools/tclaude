@@ -118,16 +118,16 @@ function Controls({ state, actions, current }) {
   // past the window edge, so it gets a row of its own regardless of length.
   return html`<div class="costs-header">
     <div class="filter-bar" id="costs-spans">
-      ${COST_SPANS.map((span) => html`<${Button} class=${`tool${current.span === span.key ? ' active' : ''}`}
+      ${COST_SPANS.map((span) => html`<${Button} pressed=${current.span === span.key}
         data-span=${span.key} title=${span.key === 'month' ? 'Calendar month to date — the only span with a projection' : `Trailing ${span.days} days`}
         onClick=${() => loadAfter(() => state.setSpan(span.key))}>${span.label}<//>`)}
       <span id="costs-month-nav" title="Browse a month — click the month, then ‹ / › to step">
-        <${Button} class="tool costs-month-step" id="costs-month-prev" title="Older month" aria-label="Older month"
+        <${Button} class="costs-month-step" id="costs-month-prev" title="Older month" aria-label="Older month"
           disabled=${current.monthOffset >= current.oldestMonthOffset}
           onClick=${() => loadAfter(() => state.activateMonth(monthView ? current.monthOffset + 1 : current.monthOffset))}>‹<//>
-        <${Button} class=${`tool${monthView ? ' active' : ''}`} id="costs-month-cur" data-span="calmonth" title="View this month"
+        <${Button} pressed=${monthView} id="costs-month-cur" data-span="calmonth" title="View this month"
           onClick=${() => loadAfter(() => state.activateMonth(current.monthOffset))}>${current.monthLabel}<//>
-        <${Button} class="tool costs-month-step" id="costs-month-next" title="Newer month" aria-label="Newer month"
+        <${Button} class="costs-month-step" id="costs-month-next" title="Newer month" aria-label="Newer month"
           disabled=${current.monthOffset <= 0}
           onClick=${() => loadAfter(() => state.activateMonth(monthView ? current.monthOffset - 1 : current.monthOffset))}>›<//>
       </span>

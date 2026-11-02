@@ -107,7 +107,7 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	// controls; the general rules are the fallback beneath the id-scoped Config
 	// and profile-modal bars, so a dropped line silently un-themes ~6 tabs.
 	must("body.wizard .filter-bar input:where(:not(.ui-input)) {", "the general filter-bar field is themed in wizard mode")
-	must("body.wizard .filter-bar label.filter-toggle select {", "filter-bar dropdowns (audit/logs) are themed")
+	must("body.wizard .filter-bar label.filter-toggle select:where(:not(.ui-select)) {", "filter-bar dropdowns (audit/logs) are themed")
 	must("body.wizard .filter-bar button.primary:where(:not(.ui-btn)) {", "unscoped filter-bar primary levers are gilded")
 	// The Treasury's bespoke span selector opts out of the generic tool re-skin
 	// so the Costs re-skin can gild it itself — pin the exclusion.

@@ -3751,7 +3751,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .audit-spawn-popover pre::-webkit-scrollbar-thumb:hover { background: #8b949e; }
 .audit-spawn-popover::-webkit-scrollbar-thumb:active,
 .audit-spawn-popover pre::-webkit-scrollbar-thumb:active { background: #b1bac4; }
-.filter-bar label.filter-toggle select {
+.filter-bar label.filter-toggle select:where(:not(.ui-select)) {
   background: #161b22; color: #d4d4d4; border: 1px solid #2a3340;
   border-radius: 4px; padding: 1px 4px; font-size: 12px; cursor: pointer;
 }
@@ -3884,7 +3884,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   margin-top: 6px; padding: 4px 2px; font-size: 12px; color: #7d8590;
 }
 .list-pager-count { white-space: nowrap; padding: 0 4px; }
-.list-pager-size { margin-left: auto; }
+.list-pager .list-pager-size { margin-left: auto; }
 .owner-badge {
   display: inline-block; padding: 1px 6px; margin-left: 4px;
   background: #1d2a3a; color: #d29922; border: 1px solid #4d3a1d;
@@ -4257,7 +4257,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    never reads as recorded spend. Recorded spend keeps the same full-strength
    palette on weekdays and weekends: its calendar position does not make the
    measurement less certain. */
-#costs-spans button.tool.active { border-color: #58a6ff; color: #d4d4d4; background: #2a3340; }
+/* The span buttons are standard toggles: aria-pressed marks the chosen span. */
 /* Completed-month stepper: the ‹ label › group sits just after the fixed
    span buttons, set off by a thin left divider. The arrows are tight,
    fixed-width squares; the month label between them carries the span. */
@@ -4268,10 +4268,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 #costs-month-nav button.costs-month-step {
   padding: 5px 8px; min-width: 26px; line-height: 1; text-align: center;
 }
-#costs-month-nav button.tool:disabled {
-  opacity: 0.35; cursor: default; border-color: #2a3340; color: #7d8590;
-}
-#costs-month-nav button.tool:disabled:hover { border-color: #2a3340; color: #7d8590; }
 /* The Costs header is two stacked rows: controls, then the totals line.
    The summary (total, real/WHAT-IF split, date range, month projection) is
    too long to share a line with the span buttons, so it always sits below
@@ -16430,7 +16426,7 @@ body.wizard .filter-bar .muted { color: #9a86c4; }
    view-menu items) + their little dropdowns. */
 body.wizard .filter-bar label.filter-toggle { color: #b39ddb; }
 body.wizard .filter-bar label.filter-toggle:hover { color: #f3e6c0; }
-body.wizard .filter-bar label.filter-toggle select {
+body.wizard .filter-bar label.filter-toggle select:where(:not(.ui-select)) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
 /* View popover — the "▾ view" trigger, its badge and drop panel. */
@@ -17619,17 +17615,8 @@ body.wizard #costs-summary .cost-proj strong {
 body.wizard #costs-summary .muted { color: #8f7bbf; }
 body.wizard #costs-summary .cost-sep { color: #4a3a6b; }
 
-/* ─── Span buttons + month stepper: gild the active/blue states ────────
-   The generic filter-bar chrome is themed by the shared `body.wizard
-   .filter-bar …` block, but that block deliberately excludes #costs-spans'
-   `.tool` buttons (`:not(#costs-spans)`) so this bespoke segmented control
-   keeps its own treatment: the costs-specific BLUE active-span border would
-   clash with the violet/gold palette, so it gilds; the stepper divider
-   warms to match. */
-body.wizard #costs-spans button.tool.active {
-  border-color: #d9b45a; color: #f3e6c0; background: #2c2150;
-  box-shadow: inset 0 0 8px rgba(169, 123, 214, 0.3);
-}
+/* ─── Month stepper: the divider warms to the wizard palette. The span
+   buttons are standard toggles and take the wizard skin from ui.css. */
 body.wizard #costs-month-nav { border-left-color: #4a3a6b; }
 
 /* ─── Breakdown table: money-green accents gild to match the chart ─────
