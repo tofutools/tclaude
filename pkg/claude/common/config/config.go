@@ -204,11 +204,13 @@ type FeaturesConfig struct {
 	// are landing in bounded slices.
 	Triggers bool `json:"triggers,omitempty"`
 
-	// Collab enables the in-development collaboration surfaces: the floating
-	// companion window with the Steward, shared boards, the fleet brief,
-	// operator decisions and dashboard guidance. It defaults off; the flag
-	// gates their dashboard chrome, daemon routes and CLI commands.
-	Collab bool `json:"collab,omitempty"`
+	// Collab enables the collaboration surfaces: the floating companion
+	// window with the Steward, shared boards, the fleet brief, operator
+	// decisions and dashboard guidance. It defaults on; an explicit false
+	// turns them off and gates their dashboard chrome, daemon routes and CLI
+	// commands. A *bool so absent (on) is distinguishable from an explicit
+	// false that an upgrade must keep.
+	Collab *bool `json:"collab,omitempty"`
 
 	// GroupAttachments selects how the in-development persistent http(s)
 	// attachment control appears on group titles. It defaults off while the
@@ -263,12 +265,16 @@ const TriggersDisabledMessage = "trigger commands are disabled; set features.tri
 
 // CollabDisabledMessage is the stable response returned by daemon collab
 // routes (boards, fleet brief, dashboard guidance, the companion) while the
-// experimental feature is disabled.
-const CollabDisabledMessage = "this collab command is disabled; set features.collab=true in tclaude config to use this experimental surface"
+// operator has turned Collab off.
+const CollabDisabledMessage = "Collab is turned off; set features.collab=true in tclaude config to use this command"
 
-// CollabEnabled reports whether the opt-in Collab feature flag is set.
+// CollabEnabled reports whether Collab is on: it is unless features.collab is
+// explicitly false. Nil-safe.
 func (c *Config) CollabEnabled() bool {
-	return c != nil && c.Features != nil && c.Features.Collab
+	if c == nil || c.Features == nil || c.Features.Collab == nil {
+		return true
+	}
+	return *c.Features.Collab
 }
 
 // ProcessesConfig is operator policy for processes.

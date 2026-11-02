@@ -141,7 +141,7 @@ question it answers and any note they added — even if you are offline by
 then. Only the first answer counts. Keep working on what does not depend on
 the answer instead of waiting idle; one decision per message.
 
-Decisions are part of the experimental Collab feature. If `--option` is refused
+Decisions are part of Collab, which the operator can turn off. If `--option` is refused
 with `collab_disabled`, send the same message without it and list the choices in
 the body; the human answers with a reply.
 

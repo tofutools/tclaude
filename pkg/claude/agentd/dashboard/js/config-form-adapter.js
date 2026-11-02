@@ -523,7 +523,7 @@ function populateConfigForm(cfg) {
   $('#cfg-processes-refuse-unsigned').checked = !!(cfg.processes && cfg.processes.refuse_unsigned_imports);
   $('#cfg-feature-triggers').checked = !!(cfg.features && cfg.features.triggers);
   $('#cfg-feature-groups-route-map').checked = !!(cfg.features && cfg.features.groups_route_map);
-  $('#cfg-feature-collab').checked = !!(cfg.features && cfg.features.collab);
+  $('#cfg-feature-collab').checked = cfg.features?.collab !== false;
   setSelectValue(
     $('#cfg-feature-group-attachments'),
     (cfg.features && cfg.features.group_attachments) || 'off',
@@ -877,14 +877,14 @@ function assembleConfig() {
   // the existing one so a future flag with no widget round-trips. Groups Route
   // map, Processes, Triggers, terminal_command_palette_shortcut, and
   // recorded_sandbox_details default off; group_attachments omits its "off"
-  // default; agent_dirs_mount_parent defaults on. Drop the block when it is
+  // default; collab and agent_dirs_mount_parent default on. Drop the block when it is
   // empty so an all-default config does not marshal a spurious "features": {}
   // diff.
   const feats = (cfg.features && typeof cfg.features === 'object') ? cfg.features : {};
   if ($('#cfg-feature-processes').checked) feats.processes = true; else delete feats.processes;
   if ($('#cfg-feature-triggers').checked) feats.triggers = true; else delete feats.triggers;
   if ($('#cfg-feature-groups-route-map').checked) feats.groups_route_map = true; else delete feats.groups_route_map;
-  if ($('#cfg-feature-collab').checked) feats.collab = true; else delete feats.collab;
+  if ($('#cfg-feature-collab').checked) delete feats.collab; else feats.collab = false;
   const groupAttachments = controlValue($('#cfg-feature-group-attachments'));
   if (groupAttachments === 'float' || groupAttachments === 'fixed') {
     feats.group_attachments = groupAttachments;

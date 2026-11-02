@@ -523,7 +523,7 @@ func TestDashboardConfig_ExternalStewardToolList(t *testing.T) {
 		if cfg.Features == nil {
 			cfg.Features = &config.FeaturesConfig{}
 		}
-		cfg.Features.Collab = on
+		cfg.Features.Collab = new(on)
 		require.NoError(t, config.Save(cfg))
 	}
 	setCollab(true)

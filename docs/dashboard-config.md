@@ -25,6 +25,7 @@ lives. Each section has its own address, such as `/config/notifications`. Bare
 | Activity bots | Regular mode, Wizard mode 🧙, Slop mode 🎰 | `dashboard.activity_bots.*` | emoji; emoji; sprites |
 | Tabs | Plugins tab | `dashboard.always_show_plugins_tab` | off |
 | Tabs | Vegas music in regular mode | `slop.vegas_in_regular_mode` | off |
+| Collab | Collab: the [companion, Steward](companion.md) and [boards](boards.md) | `features.collab` | **on** |
 | Header & rows | Horizontal scroll | `dashboard.hscroll_follow` | on |
 | Header & rows | Group quick options | `dashboard.group_quick_options` | `hover` |
 | Overlays | Preview background | `dashboard.overlay_backdrop` | `dim`; also `blur`, `both`, `none` |
@@ -237,7 +238,6 @@ policy, under **Processes**.
 | Label | Key | Default | What it adds |
 |---|---|---|---|
 | Processes | `features.processes` | off | [Processes](processes.md) |
-| Collab | `features.collab` | off | [Companion, Steward](companion.md) and [boards](boards.md) |
 | Triggers | `features.triggers` | off | [Triggers](dashboard-automations.md#triggers), and spawn cron jobs |
 | Groups Route map | `features.groups_route_map` | off | [Group routes](group-routes.md) map view |
 | Group attachments | `features.group_attachments` | off | A group's link or attachment panel |

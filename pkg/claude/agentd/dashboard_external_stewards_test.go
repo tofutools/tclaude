@@ -18,7 +18,7 @@ func TestDashboardExternalStewardRoute_RefusesPeerAuthority(t *testing.T) {
 	withDashboardAuth(t)
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	cfg.Features = &config.FeaturesConfig{Collab: true}
+	cfg.Features = &config.FeaturesConfig{Collab: new(true)}
 	require.NoError(t, config.Save(cfg))
 
 	reached := false

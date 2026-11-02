@@ -1394,6 +1394,36 @@ func TestAgentDirsMountParentEnabled(t *testing.T) {
 	assert.False(t, out.AgentDirsMountParentEnabled(), "explicit false survives round-trip")
 }
 
+// TestCollabEnabled: Collab is on by default, so an unset features.collab
+// (nil config, no features block, absent key) is on; an explicit false stays
+// off through Save/Load, and a default config writes no collab key.
+func TestCollabEnabled(t *testing.T) {
+	assert.True(t, (*Config)(nil).CollabEnabled(), "nil config → on")
+	assert.True(t, (&Config{}).CollabEnabled(), "no features block → on")
+	assert.True(t, (&Config{Features: &FeaturesConfig{}}).CollabEnabled(), "features block, flag unset → on")
+	assert.True(t, (&Config{Features: &FeaturesConfig{Collab: new(true)}}).CollabEnabled(), "explicit true → on")
+	assert.False(t, (&Config{Features: &FeaturesConfig{Collab: new(false)}}).CollabEnabled(), "explicit false → off")
+
+	clean, err := json.Marshal(&Config{Features: &FeaturesConfig{}})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "collab", "the default writes no key")
+
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, os.MkdirAll(filepath.Dir(ConfigPath()), 0o700))
+	require.NoError(t, os.WriteFile(ConfigPath(), []byte(`{"features":{"processes":true}}`), 0o600))
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.True(t, loaded.CollabEnabled(), "a config written before Collab was default-on, without the key → on")
+
+	require.NoError(t, Save(&Config{Features: &FeaturesConfig{Collab: new(false)}}))
+	data, err := os.ReadFile(ConfigPath())
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"collab": false`)
+	loaded, err = Load()
+	require.NoError(t, err)
+	assert.False(t, loaded.CollabEnabled(), "explicit false survives Save/Load")
+}
+
 // TestAlwaysShowOpenPRs covers the dashboard.always_show_open_prs resolver:
 // nil config / absent block / nil pointer all default to a permanent footer
 // indicator (true); only an explicit false hides it at zero. A default config
