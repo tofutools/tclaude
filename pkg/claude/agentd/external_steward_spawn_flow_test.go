@@ -337,7 +337,7 @@ func TestExternalStewardSpawn_ChildDeniesBeatOwnershipAndGroupsAndDefaults(t *te
 	if cfg.Agent == nil {
 		cfg.Agent = &config.AgentConfig{}
 	}
-	cfg.Agent.DefaultPermissions = []string{agentd.PermSelfSchedule, agentd.PermGroupsAdmin}
+	cfg.Agent.DefaultPermissions = []string{agentd.PermSelfSchedule, agentd.PermSelfClone, agentd.PermGroupsAdmin}
 	require.NoError(t, config.Save(cfg))
 
 	g := s.f.HaveGroup("theirs")
