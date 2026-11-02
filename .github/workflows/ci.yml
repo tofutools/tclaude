@@ -377,12 +377,11 @@ jobs:
         with:
           node-version: 24
 
-      # Keep in step with harness.PiMinimumVersion.
+      # scripts/ci/pi pins pi and its whole dependency tree; keep it in step
+      # with harness.PiMinimumVersion.
       - name: Install pi
         shell: bash
-        run: |
-          npm install --global @earendil-works/pi-coding-agent@1.1.0
-          pi --version </dev/null
+        run: scripts/ci/install-pi.sh
 
       - name: pi smoke
         shell: bash

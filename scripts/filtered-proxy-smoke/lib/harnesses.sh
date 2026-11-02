@@ -208,7 +208,8 @@ harnesses::install_gemini() {
 
 harnesses::install_pi() {
   smoke::log "Installing pinned pi ${HARNESS_PI_VERSION}"
-  npm install --global "@earendil-works/pi-coding-agent@${HARNESS_PI_VERSION}"
+  # scripts/ci/pi pins pi and its whole dependency tree, at this version.
+  "$repo_root/scripts/ci/install-pi.sh"
   # Must resolve under the read-only OS surface the constructed root binds,
   # for the same reason as every harness above.
   local resolved

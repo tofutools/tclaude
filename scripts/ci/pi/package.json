@@ -1,0 +1,8 @@
+{
+  "name": "tclaude-ci-pi",
+  "private": true,
+  "description": "The pi harness CI installs, pinned with its whole dependency tree by package-lock.json. Keep in step with harness.PiMinimumVersion; scripts/ci/install-pi.sh installs it.",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.1.0"
+  }
+}
