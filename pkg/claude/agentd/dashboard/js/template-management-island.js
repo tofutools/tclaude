@@ -560,6 +560,8 @@ export function TemplateFromGroupDialog({
     Overlay,
     {
       id: 'template-from-group-modal',
+      // Update mode re-labels the wizard lever (dashboard.css .tfg-updating).
+      overlayClass: updating ? 'tfg-updating' : '',
       labelledby: 'template-from-group-title',
       onClose: state.closeDialog,
       onSubmitHotkey: busy ? null : submit,
