@@ -20877,6 +20877,8 @@ body.wizard .gp-start-form button:where(:not(.ui-btn)).primary { background: #3a
 .gq-then-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .gq-loop { display: inline-flex; align-items: center; gap: 5px; color: #e3a341; }
 .gq-loop select:where(:not(.ui-select)), .gq-loop-rounds { font: inherit; font-size: 12px; border: 1px solid #6b5a1e; border-radius: 6px; padding: 2px 6px; background: #161b22; color: #e6edf3; }
+/* The loop's target select keeps its amber loop cue as a standard Select. */
+.gq-loop .ui-select { border-color: #6b5a1e; }
 .gq-loop-rounds { width: 3.6em; }
 .gq-who-select { width: 100%; }
 .gq-answer { color: #e3b341; }
