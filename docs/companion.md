@@ -184,6 +184,8 @@ once, each only when there is something for it to do:
   the windows glide back. Entering and leaving never moves, retiles or restores a window:
   the spread is only how they are drawn. With reduced motion they move without gliding.
   It is offered only with two or more windows.
+
+  ![Show all windows: three chat windows spread side by side over the dimmed page, live, and a minimized one as a card along the bottom](assets/companion-show-all-windows.png)
 - **Untile all windows** floats every tiled window where it is, so nothing moves on
   screen, and takes it out of the split. A minimized window keeps its cell, and a
   maximized window stays maximized.
