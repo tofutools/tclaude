@@ -234,7 +234,11 @@ const CHIP_SPOT_SHARES = Object.freeze({
 // The spots in the room. The footer's are offered only while the row fits there.
 export const FOOTER_CHIP_SPOTS = Object.freeze(['footer-left', 'footer-center', 'footer-right']);
 export const CHIP_SPOTS = Object.freeze(Object.keys(CHIP_SPOT_SHARES).filter((spot) => !FOOTER_CHIP_SPOTS.includes(spot)));
-export const DEFAULT_CHIP_SPOT = 'bottom-right';
+// The chips rest in the footer, next to Open PRs, unless the operator moved
+// them (tcl-9qsgqs). Where the footer has no room, they rest at the room's
+// bottom right instead.
+export const DEFAULT_CHIP_SPOT = 'footer-right';
+export const DEFAULT_ROOM_CHIP_SPOT = 'bottom-right';
 // The chips' own distance from the viewport edges; companion.css has the same.
 const CHIP_INSET_X = 16;
 const CHIP_INSET_Y = 12;
@@ -249,19 +253,40 @@ export const isFooterSpot = (spot) => FOOTER_CHIP_SPOTS.includes(spot);
 export const lastRoomSpot = (next, shown) => [next, shown].find((spot) => !isFooterSpot(spot));
 
 // The space a row keeps from what else is in the footer.
-const FOOTER_CHIP_MARGIN = 12;
+export const FOOTER_CHIP_MARGIN = 12;
 
-// freeStretch is the widest stretch between left and right that no rect covers.
-export function freeStretch(rects, left, right) {
-  let best = null;
+// freeStretches is every stretch between left and right that no rect covers,
+// from the left.
+export function freeStretches(rects, left, right) {
+  const out = [];
   let from = left;
-  const keep = (to) => { if (to > from && (!best || to - from > best.right - best.left)) best = { left: from, right: to }; };
+  const keep = (to) => { if (to > from) out.push({ left: from, right: to }); };
   for (const rect of [...rects].sort((a, b) => a.left - b.left)) {
     keep(Math.min(rect.left, right));
     from = Math.max(from, rect.right);
   }
   keep(right);
-  return best;
+  return out;
+}
+
+const widest = (stretches) => stretches.reduce((best, stretch) => (!best || stretch.right - stretch.left > best.right - best.left ? stretch : best), null);
+
+// freeStretch is the widest stretch between left and right that no rect covers.
+export function freeStretch(rects, left, right) {
+  return widest(freeStretches(rects, left, right));
+}
+
+// footerRoom is the stretch a row width wide rests in at a footer spot: of the
+// stretches it fits, the one furthest right for footer-right, so it sits right
+// beside Open PRs whatever is left of it, the one furthest left for footer-left,
+// and the widest otherwise. With none it fits, the widest, which it doesn't.
+export function footerRoom(rects, left, right, spot, width) {
+  const all = freeStretches(rects, left, right);
+  const fitting = all.filter((stretch) => footerSpotFits(stretch, width));
+  if (!fitting.length) return widest(all);
+  if (spot === 'footer-right') return fitting[fitting.length - 1];
+  if (spot === 'footer-left') return fitting[0];
+  return widest(fitting);
 }
 
 export function footerSpotFits(room, width) {
