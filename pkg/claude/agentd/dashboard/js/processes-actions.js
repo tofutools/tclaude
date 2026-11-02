@@ -7,8 +7,8 @@ import {
   processScribeScopeLabel, processScribeSessions, processScribeTaskRef,
 } from './process-scribe.js';
 import { randomUUID } from './insecure-origin.js';
-import { focusOverlayWindow, openOverlayWindow } from './overlay-instances.js';
-import { floatProcessEditor, floatingProcessTab, returnLiveEditor } from './process-editor-place.js';
+import { focusOverlayWindow, openOverlayWindow, overlayHostUp } from './overlay-instances.js';
+import { floatProcessEditor, floatingProcessTab, returnLiveEditor, takeFloatingEditor } from './process-editor-place.js';
 import { editorToWindow, processEditorAway } from './process-editor-window.js';
 
 export function processActorPresentation(snapshot, actor) {
@@ -166,7 +166,14 @@ export function createProcessesActions({
       state.setNotice(`${called} is open in a separate window.`);
       return false;
     }
-    const floating = !blank && !live && !handoff ? floatingProcessTab(id) : null;
+    let floating = !blank && !live && !handoff ? floatingProcessTab(id) : null;
+    // With no overlay to show it (Collab off), a floating editor docks here
+    // instead, edits and all, and a tab with no editor yet just goes.
+    if (floating && !overlayHostUp.peek()) {
+      const held = takeFloatingEditor(id);
+      if (held) return openEditor(id, false, floating.label || called, { navigate, live: held });
+      floating = null;
+    }
     if (floating) {
       openOverlayWindow(floating);
       focusOverlayWindow(floating.id);

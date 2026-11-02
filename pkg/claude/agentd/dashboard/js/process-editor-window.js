@@ -41,6 +41,11 @@ export const heldForWindow = (editor) => [...leaving.values()].some((entry) => e
 // large as rect where it was. restore(live) takes the editor back if the window
 // never takes the draft up. It answers whether the window opened.
 export function editorToWindow({ id, label, live, rect = null, win = globalThis.window, notify = null, restore }) {
+  // A save on its way would land after the draft left, against its old base.
+  if (live.editor?.savePending) {
+    notify?.('Saving: move the editor once the save is done.', true);
+    return false;
+  }
   const key = token();
   const features = rect ? detachWindowFeatures({ size: rect, at: elementScreenPoint(win, rect), screen: win.screen }) : '';
   let popup = null;
@@ -87,6 +92,10 @@ export function installProcessWindows(win, { open, floats = () => false }) {
       entry.live.mount.remove();
       entry.live.editor?.destroy?.();
     },
+    // A window holding a template says so, so a reload here still knows.
+    here(id, popup) {
+      if (typeof id === 'string' && popup) away.set(id, popup);
+    },
     async back(id, label, draft, overlay = false) {
       win.focus?.();
       if (!(await open(id, label, JSON.parse(draft), { overlay }))) return false;
@@ -114,6 +123,15 @@ export function soloHandoff(win = globalThis.window) {
     id: claimed.id, label: claimed.label, handoff: JSON.parse(claimed.draft),
     taken: () => { try { api.taken(key); } catch { /* the dashboard closed meanwhile */ } },
   };
+}
+
+// announceSolo keeps telling the dashboard that opened this window that it holds
+// template id, through that dashboard's reloads. It returns the way to stop.
+export function announceSolo(id, win = globalThis.window, everyMs = 2000) {
+  const tell = () => { try { win.opener?.[API]?.here(id, win); } catch { /* not there now */ } };
+  tell();
+  const timer = win.setInterval(tell, everyMs);
+  return () => win.clearInterval(timer);
 }
 
 // isProcessSolo is whether this page is such a window.

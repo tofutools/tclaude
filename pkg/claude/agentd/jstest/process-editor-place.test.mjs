@@ -135,3 +135,23 @@ test('a floating editor takes Ctrl/Cmd+S only while its window has the keyboard'
   dockedMount.remove();
   assert.equal(place.processShortcutLive(dockedMount, docked), false, 'a mount out of the page takes nothing');
 });
+
+test('an editor coming back while the Processes tab keeps its own waits, rather than going', async (t) => {
+  const { harness, place, instances, editor } = await setup(t);
+  instances.overlayHostUp.value = false;
+  t.after(() => { instances.overlayHostUp.value = false; place.takeReturningEditor(); });
+  place.registerProcessEditorHost({ canLeave: async () => false, dock: () => assert.fail('the tab kept its editor') });
+  const shown = editor(true);
+  const live = { mount: shown.mount, editor: shown };
+  await harness.act(() => place.returnLiveEditor('release-train', 'Release train', live));
+  assert.equal(shown.destroyed, 0, 'its edits are not dropped');
+  assert.equal(place.returningEditor.peek().live, live);
+  assert.equal(place.takeReturningEditor().id, 'release-train');
+  assert.equal(place.returningEditor.peek(), null);
+});
+
+test('a draft handed back for a template already floating here is refused', async (t) => {
+  const { harness, place, editor } = await setup(t);
+  await harness.act(() => place.floatProcessEditor({ id: 'release-train', label: 'Release train', editor: editor() }));
+  assert.equal(await place.floatHandoff('release-train', 'Release train', { rev: 1 }), false);
+});

@@ -1,4 +1,5 @@
 import { h, render } from 'preact';
+import { effect } from '@preact/signals';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { useDialogFocus } from './dialog-focus.js';
@@ -13,10 +14,13 @@ import { NodeSection, fusedPeers, openOnNode, peerRequestMutation, usePeerSectio
 import { shellConfirm, shellToast } from './shell-state.js';
 import { overlayHostUp } from './overlay-instances.js';
 import {
-  floatHandoff, floatingProcessEditor, paletteEditor, processEditorMount, processShortcutLive, registerProcessEditorHost,
-  showProcessEditorError, trackTouchedEditor,
+  editorDirty, floatHandoff, floatingProcessEditor, floatingProcessTab, paletteEditor, processEditorMount, processShortcutLive,
+  registerProcessEditorHost, returningEditor, showProcessEditorError, takeReturningEditor, trackTouchedEditor,
 } from './process-editor-place.js';
-import { TO_DASHBOARD_LABEL, editorBack, heldForWindow, installProcessWindows, isProcessSolo, openerFloats, openerTakesBack, soloHandoff } from './process-editor-window.js';
+import {
+  TO_DASHBOARD_LABEL, announceSolo, editorBack, heldForWindow, installProcessWindows, isProcessSolo, openerFloats, openerTakesBack,
+  soloHandoff,
+} from './process-editor-window.js';
 import { TO_WINDOW_LABEL } from './overlay-tab-moves.js';
 
 const html = htm.bind(h);
@@ -93,7 +97,9 @@ export function processEditorConfig({ mount, readable = false, state, actions, c
   return {
     readableOpen: readable, confirmDiscard,
     isShortcutActive: () => processShortcutLive(mount, () => state.view.value.active),
-    onOpenTemplates: () => actions?.activateSubtab?.('templates'), onOpenTemplate: actions?.openReferencedTemplate,
+    // Ctrl/Cmd+O leaves for the template list, which only the docked editor has.
+    onOpenTemplates: () => (isProcessSolo() || mount.closest?.('.process-overlay') ? false : actions?.activateSubtab?.('templates')),
+    onOpenTemplate: actions?.openReferencedTemplate,
     templateRefs: () => state.view.value.templates, onScribe: actions?.summonScribe,
     scribeDock: actions?.openScribe ? { scribes: () => state.view.value.scribes, openTerminal: actions.openScribe } : null,
     describeActor: actions?.describeActor, onOpenActor: actions?.openActor,
@@ -121,7 +127,10 @@ export function ProcessEditorBoundary({ spec, state, actions, confirmDiscard, op
           // A draft from another window is here now, and that window lets it go.
           spec.handoff?.taken?.();
         })
-        .catch((cause) => { if (!disposed) { showProcessEditorError(mount, cause.message); state.setNotice(`Could not open editor: ${cause.message}`); } });
+        .catch((cause) => {
+          spec.handoff?.failed?.();
+          if (!disposed) { showProcessEditorError(mount, cause.message); state.setNotice(`Could not open editor: ${cause.message}`); }
+        });
     }
     return () => {
       disposed = true;
@@ -267,6 +276,18 @@ export function mountProcessesIsland({ host, state, actions, confirmDiscard, reg
   setProcessTemplateDeleteHandler((spec) => actions.deleteTemplate(spec));
   const unbindTemplateDnd = bindProcessTemplateDnd();
   registerCleanup(() => { unbindTemplateDnd(); setProcessTemplateDeleteHandler(null); });
+  // An editor a separate window never took waits for this tab's own editor to
+  // close, and then comes back here.
+  registerCleanup(effect(() => {
+    const waiting = returningEditor.value;
+    if (!waiting) return;
+    if (state.canvas.value) {
+      state.setNotice(`${waiting.label}'s unsaved edits are waiting: close this editor to get them back.`);
+      return;
+    }
+    const back = takeReturningEditor();
+    void actions.openEditor(back.id, false, back.label, { live: back.live });
+  }));
   // An overlay window's process tab opens and docks its editor through here.
   const canLeave = () => (actions.canLeaveEditor ? actions.canLeaveEditor() : true);
   registerCleanup(registerProcessEditorHost({
@@ -285,7 +306,7 @@ export function mountProcessesIsland({ host, state, actions, confirmDiscard, reg
     const solo = soloHandoff();
     // Closing the window drops what it has not saved, so it asks first.
     const leaving = (event) => {
-      if (!state.currentEditor()?.model?.dirty) return;
+      if (!editorDirty(state.currentEditor())) return;
       event.preventDefault();
       event.returnValue = '';
     };
@@ -293,19 +314,25 @@ export function mountProcessesIsland({ host, state, actions, confirmDiscard, reg
     registerCleanup(() => window.removeEventListener('beforeunload', leaving));
     if (solo) {
       document.title = `${solo.label} — tclaude process`;
+      registerCleanup(announceSolo(solo.id));
       void actions.openEditor(solo.id, false, solo.label, { handoff: { draft: solo.handoff, taken: solo.taken } });
+    } else {
+      // Too late: the dashboard took its editor back, so this window has nothing
+      // of its own to show.
+      window.close();
     }
   } else {
     registerCleanup(installProcessWindows(window, {
+      // It answers once an editor here has taken the draft up, so the window
+      // keeps it until then, and takes none for a template already open here.
       open: async (id, name, handoff, { overlay }) => {
-        if (overlay && overlayHostUp.peek()) {
-          floatHandoff(id, name, handoff);
-          return true;
-        }
+        if (floatingProcessTab(id) || state.canvas.value?.id === id) return false;
+        if (overlay && overlayHostUp.peek()) return floatHandoff(id, name, handoff);
         if (!(await canLeave())) return false;
-        await actions.openEditor(id, false, name, { handoff: { draft: handoff } });
-        document.querySelector('nav [data-tab="processes"]')?.click();
-        return true;
+        return new Promise((resolve) => {
+          void actions.openEditor(id, false, name, { handoff: { draft: handoff, taken: () => resolve(true), failed: () => resolve(false) } });
+          document.querySelector('nav [data-tab="processes"]')?.click();
+        });
       },
       floats: () => overlayHostUp.peek(),
     }));

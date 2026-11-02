@@ -72,15 +72,24 @@ export function floatProcessEditor({ id, label, editor, at = null }) {
   openOverlayWindow({ id: processWindowId(id), kind: PROCESS_WINDOW_KIND, template: id, label: label || id, at });
 }
 
+// editorDirty is whether an editor holds anything unsaved, an open dialog's
+// draft included.
+export const editorDirty = (editor) => !!(editor?.dirty ?? editor?.model?.dirty);
+
 const opening = new Map();
 // Drafts back from a browser window of their own, by id, for the overlay tab
-// opening to take up (process-editor-window.js).
+// opening to take up (process-editor-window.js): { handoff, settle }.
 const handoffs = new Map();
 
-// floatHandoff opens an overlay tab on a draft handed back from a window.
+// floatHandoff opens an overlay tab on a draft handed back from a window. It
+// answers, in time, whether an editor there took the draft up; a template
+// already open here takes none.
 export function floatHandoff(id, label, handoff) {
-  handoffs.set(id, handoff);
-  openOverlayWindow({ id: processWindowId(id), kind: PROCESS_WINDOW_KIND, template: id, label: label || id });
+  if (floating.has(id) || opening.has(id) || handoffs.has(id) || floatingProcessTab(id)) return Promise.resolve(false);
+  return new Promise((settle) => {
+    handoffs.set(id, { handoff, settle });
+    openOverlayWindow({ id: processWindowId(id), kind: PROCESS_WINDOW_KIND, template: id, label: label || id });
+  });
 }
 
 // openFloatingEditor opens an editor for an overlay tab that has none, as after a
@@ -93,10 +102,11 @@ export function openFloatingEditor(id, label, slot) {
   if (!host) return Promise.resolve(null);
   const mount = processEditorMount(slot.ownerDocument);
   slot.appendChild(mount);
-  const handoff = handoffs.get(id) || null;
+  const back = handoffs.get(id) || null;
   handoffs.delete(id);
-  const pending = Promise.resolve(host.open(mount, id, label, handoff)).then((editor) => {
+  const pending = Promise.resolve(host.open(mount, id, label, back?.handoff || null)).then((editor) => {
     opening.delete(id);
+    back?.settle(!!editor);
     if (!editor) return null;
     floating.set(id, { mount, editor });
     // A tab closed while it loaded lets it go.
@@ -104,6 +114,7 @@ export function openFloatingEditor(id, label, slot) {
     return floating.get(id) || null;
   }, (cause) => {
     opening.delete(id);
+    back?.settle(false);
     mount.remove();
     throw cause;
   });
@@ -133,9 +144,14 @@ export async function dockProcessEditor(id) {
   return true;
 }
 
+// An editor a browser window never took, waiting for the Processes tab to be
+// free: { id, label, live }. Nothing destroys it while it waits.
+export const returningEditor = signal(null);
+
 // returnLiveEditor gives back an editor a browser window never took: to an
 // overlay window, which takes it without a question, or else to the Processes
-// tab, if the editor open there may go.
+// tab, if the editor open there may go. If that one stays, this one waits until
+// it closes (processes-island.js), so neither loses its edits.
 export async function returnLiveEditor(id, label, live) {
   if (overlayHostUp.peek()) {
     floatProcessEditor({ id, label, editor: live.editor });
@@ -147,7 +163,14 @@ export async function returnLiveEditor(id, label, live) {
     return;
   }
   live.mount.remove();
-  live.editor?.destroy?.();
+  returningEditor.value = { id, label, live };
+}
+
+// takeReturningEditor hands the waiting editor over, once.
+export function takeReturningEditor() {
+  const waiting = returningEditor.peek();
+  returningEditor.value = null;
+  return waiting;
 }
 
 // closeFloatingEditor takes a floating editor off for good, asking first when it
@@ -155,7 +178,7 @@ export async function returnLiveEditor(id, label, live) {
 export async function closeFloatingEditor(id) {
   const live = floating.get(id);
   const confirmDiscard = processEditorHost.peek()?.confirmDiscard;
-  if (live?.editor?.model?.dirty && !(await (confirmDiscard ? confirmDiscard() : false))) return false;
+  if (editorDirty(live?.editor) && !(await (confirmDiscard ? confirmDiscard() : false))) return false;
   const tab = floatingProcessTab(id);
   if (tab) closeOverlayTab(tab.id);
   return true;
