@@ -10250,11 +10250,29 @@ label.cfg-label { cursor: pointer; }
 .shortcut-or { color: #8b949e; font-size: 12px; }
 .cfg-shortcut-list th.is-here, .cfg-shortcut-list td.is-here { background: rgba(88, 166, 255, 0.06); }
 .cfg-shortcut-list { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
-.cfg-shortcut-list th { text-align: left; font-weight: 600; color: #8b949e; }
+.cfg-shortcut-list th { text-align: left; font-weight: 600; color: #8b949e; white-space: normal; overflow-wrap: anywhere; }
 .cfg-shortcut-list th, .cfg-shortcut-list td { padding: 6px 12px 6px 0; vertical-align: top; border-bottom: 1px solid var(--border); }
 .cfg-shortcut-list th:first-child { width: 38%; }
 .cfg-shortcut-list th:nth-child(2), .cfg-shortcut-list th:nth-child(3) { width: 24%; }
 @media (max-width: 640px) { .cfg-shortcut-list { table-layout: auto; } .cfg-shortcut-list th { width: auto; } }
+.cfg-shortcut-list.is-editable th:first-child { width: 32%; }
+.cfg-shortcut-list.is-editable th:nth-child(2), .cfg-shortcut-list.is-editable th:nth-child(3) { width: 20%; }
+.cfg-shortcut-list th:last-child[aria-label="Change"] { width: 140px; }
+.cfg-shortcut-list .shortcut-actions { white-space: nowrap; text-align: right; }
+.cfg-shortcut-list .shortcut-actions .ui-btn { padding: 2px 8px; font-size: 12px; }
+.cfg-shortcut-list tr.is-changed td:first-child { color: #e6edf3; }
+.shortcut-changed, .shortcut-fixed { font-size: 11px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); color: #8b949e; }
+.shortcut-changed { border-color: rgba(88, 166, 255, 0.5); color: #79c0ff; }
+.shortcut-recording-row td { background: rgba(88, 166, 255, 0.06); }
+.shortcut-recorder { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.shortcut-recorder-keys { min-width: 180px; justify-content: center; }
+.shortcut-recorder-keys:focus-visible, .shortcut-recorder-keys:focus { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.shortcut-recorder-hint { color: #8b949e; font-size: 12px; }
+.shortcut-problems { flex-basis: 100%; margin: 4px 0 0; padding: 0; list-style: none; font-size: 12px; }
+.shortcut-problems li { margin: 2px 0; }
+.shortcut-problems .is-blocking { color: #ff7b72; }
+.shortcut-problems .is-warning { color: #d29922; }
+.shortcut-reset-all { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; padding: 8px 12px; border: 1px solid rgba(88, 166, 255, 0.4); border-radius: 6px; }
 .cfg-steward-manager { display: flex; flex-direction: column; gap: 10px; width: 100%; min-width: 0; }
 .cfg-steward-issued { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
 .cfg-steward-secret { display: block; padding: 6px 8px; font-size: 12px; overflow-wrap: anywhere; user-select: all; }

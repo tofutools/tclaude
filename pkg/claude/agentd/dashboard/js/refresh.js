@@ -548,12 +548,11 @@ let tabHotkeysCleanup = null;
 function bindTabHotkeys() {
   if (tabHotkeysCleanup) return tabHotkeysCleanup;
   const onKeyDown = e => {
-    // Leave every modifier chord to the browser / app — plain keys only.
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
-
-    // ←/→ while focus is on the tab bar (ARIA tablist idiom). preventDefault
-    // so the arrow doesn't also scroll, and move focus onto the new tab.
-    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
+    // ←/→ while focus is on the tab bar (ARIA tablist idiom), plain keys
+    // only. preventDefault so the arrow doesn't also scroll, and move focus
+    // onto the new tab.
+    const plain = !e.metaKey && !e.ctrlKey && !e.altKey;
+    if (plain && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
         document.activeElement && document.activeElement.closest('nav')) {
       e.preventDefault();
       const moved = cycleTab(e.key === 'ArrowRight' ? 1 : -1);

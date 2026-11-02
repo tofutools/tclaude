@@ -1116,6 +1116,10 @@ type snapshotPayload struct {
 	// elsewhere remains the normal dashboard shortcut. Re-read on every
 	// snapshot so a Config-tab change takes effect without restarting agentd.
 	TerminalPaletteShortcut bool `json:"terminal_command_palette_shortcut_enabled"`
+	// Keybindings carries dashboard.keybindings, the operator's shortcut
+	// overrides by registry id. Re-read on every snapshot so a Config-tab
+	// change takes effect without restarting agentd.
+	Keybindings map[string]string `json:"keybindings,omitempty"`
 	// RecordedSandboxDetails gates the optional details chevron beside each
 	// sandbox badge. The compact badge and tooltip remain visible either way.
 	// Re-read on every snapshot so a Config-tab change takes effect without
@@ -3530,6 +3534,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		GroupsRouteMapEnabled:         groupsRouteMapEnabled,
 		GroupAttachmentsMode:          cfg.GroupAttachmentsMode(),
 		TerminalPaletteShortcut:       cfg.TerminalCommandPaletteShortcutEnabled(),
+		Keybindings:                   cfg.DashboardKeybindings(),
 		RecordedSandboxDetails:        cfg.RecordedSandboxDetailsEnabled(),
 		AgentRosterAuthoritative:      agentRosterErr == nil,
 		Permissions: snapshotPermissionsView{
