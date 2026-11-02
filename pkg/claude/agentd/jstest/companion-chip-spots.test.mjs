@@ -108,7 +108,9 @@ test('every spot saved before there were sixteen still means the same place', as
   const m = await harness.importDashboardModule('js/companion-model.js');
   assert.equal(m.CHIP_SPOTS.length, 16);
   for (const spot of ['top-left', 'top-right', 'bottom-left', 'bottom-center', 'bottom-right']) assert.equal(m.parseChipSpot(spot), spot);
-  assert.equal(m.DEFAULT_CHIP_SPOT, 'bottom-right');
+  assert.equal(m.DEFAULT_CHIP_SPOT, 'footer-right', 'the chips rest in the footer, next to Open PRs');
+  assert.equal(m.parseChipSpot(''), 'footer-right', 'unless the operator moved them');
+  assert.equal(m.DEFAULT_ROOM_CHIP_SPOT, 'bottom-right');
 });
 
 test('model: a footer spot needs the row to fit in the widest free stretch', async (t) => {

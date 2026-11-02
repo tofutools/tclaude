@@ -3,7 +3,8 @@
 // width, so it is measured, and a row that doesn't fit is not put there: it
 // covers nothing and pushes nothing.
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { footerSpotFits, freeStretch } from './companion-model.js';
+import { signal } from '@preact/signals';
+import { FOOTER_CHIP_MARGIN, footerSpotFits, freeStretch } from './companion-model.js';
 
 const COMPACT = 'compact';
 
@@ -11,7 +12,15 @@ const COMPACT = 'compact';
 // span the bar stretches for layout says nothing about where its text ends, and
 // the popover opening above the bar lives in it without taking room on it: its
 // list reports rows scrolled out of sight wherever they would be, the bar included.
-const POPOVER = '.open-prs-popover';
+// The overlay dock's measuring row (overlay-dock.js) is off screen and takes none either.
+const POPOVER = '.open-prs-popover, .overlay-dock-measure';
+
+// footerChipReserve is the room the chips take in the footer while they rest
+// there, margins included. The overlay dock beside them in the bar keeps it free,
+// so its pills give way before the chips have to float.
+export const footerChipReserve = signal(0);
+
+export const chipReserve = (width) => (width > 0 ? width + 2 * FOOTER_CHIP_MARGIN : 0);
 
 function occupied(bar, doc) {
   const rects = [...bar.querySelectorAll('button, a, img, svg')].filter((node) => !node.closest(POPOVER)).map((node) => node.getBoundingClientRect());

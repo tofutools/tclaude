@@ -25,15 +25,16 @@ The companion isn't available in a peer's per-node view or in pop-out windows.
 
 ## Using the companion
 
-The **✦ Steward** pill sits at the bottom right, with its status, next to any
-decisions and permission requests waiting on you. Any other minimized window has a
-pill in the dock. Drag the Steward's pill to move the row to
-any of 16 spots around the edges: the corners and quarter points of the top and
-bottom, and the quarter points of each side. While the row fits in the footer's free
-room, three more spots there show it smaller, covering no work. A row that stops
-fitting rests at its last spot on the page until it fits again. Outlines show the spots, Esc
-cancels, and the window then opens from there until you move it yourself. A pill
-can show:
+The **✦ Steward** pill sits in the footer, next to **Open PRs**, with its status and
+any decisions and permission requests waiting on you. Any other minimized window has a
+pill in the [dock](#the-dock). Drag the Steward's pill to move the row to one of three
+spots in the footer, or to any of 16 spots around the edges: the corners and quarter
+points of the top and bottom, and the quarter points of each side. The footer's spots
+are offered while the row fits in its free room, where it covers no work. A row that
+doesn't fit there rests on the page at the last spot it had there, or at the bottom
+right, until it fits again. Outlines show the spots, Esc cancels, and the window then
+opens from there until you move it yourself. A spot you chose before the footer became
+the default is kept. A pill can show:
 
 - **needs you**: a permission prompt or question is waiting.
 - **🔑 approval**: the agent asked for permission.
@@ -186,6 +187,18 @@ once, each only when there is something for it to do:
   A tab minimized on its own stays on the dock.
 
 While any window is open, the dock shows its ☰ menu even with nothing minimized.
+
+### The dock
+
+The dock rests in the footer, after the version text: ☰ first, then a pill for each
+minimized window or tab. It takes only the room the footer has left beside the
+Steward's pill and **Open PRs**, and never covers or pushes them. When the pills don't
+all fit, the ones that don't fold into a **+N** button, which lists them; it takes an
+amber edge when one of them needs you. With no room even for one pill beside **+N**,
+they fold into ☰ itself, which then shows how many and lists them under its actions.
+Only after that, with no room left at all, does the Steward's pill leave the footer.
+On a phone the footer drops the version text and keeps the refresh time, ☰ and the
+Steward's pill. The dock's menus open upwards, above any overlay window.
 
 A tab's × minimizes that tab to the dock and stops nothing, and so does `Minimize tab` on its
 menu, beside `Minimize other tabs` and `Minimize all tabs`. These never ask, even for a Steward,

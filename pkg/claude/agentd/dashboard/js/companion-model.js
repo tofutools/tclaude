@@ -234,7 +234,11 @@ const CHIP_SPOT_SHARES = Object.freeze({
 // The spots in the room. The footer's are offered only while the row fits there.
 export const FOOTER_CHIP_SPOTS = Object.freeze(['footer-left', 'footer-center', 'footer-right']);
 export const CHIP_SPOTS = Object.freeze(Object.keys(CHIP_SPOT_SHARES).filter((spot) => !FOOTER_CHIP_SPOTS.includes(spot)));
-export const DEFAULT_CHIP_SPOT = 'bottom-right';
+// The chips rest in the footer, next to Open PRs, unless the operator moved
+// them (tcl-9qsgqs). Where the footer has no room, they rest at the room's
+// bottom right instead.
+export const DEFAULT_CHIP_SPOT = 'footer-right';
+export const DEFAULT_ROOM_CHIP_SPOT = 'bottom-right';
 // The chips' own distance from the viewport edges; companion.css has the same.
 const CHIP_INSET_X = 16;
 const CHIP_INSET_Y = 12;
@@ -249,7 +253,7 @@ export const isFooterSpot = (spot) => FOOTER_CHIP_SPOTS.includes(spot);
 export const lastRoomSpot = (next, shown) => [next, shown].find((spot) => !isFooterSpot(spot));
 
 // The space a row keeps from what else is in the footer.
-const FOOTER_CHIP_MARGIN = 12;
+export const FOOTER_CHIP_MARGIN = 12;
 
 // freeStretch is the widest stretch between left and right that no rect covers.
 export function freeStretch(rects, left, right) {
