@@ -590,6 +590,21 @@ func TestExternalSteward_StewardAddress(t *testing.T) {
 	require.Equal(t, http.StatusAccepted, operator.Code, operator.Body.String())
 	assert.Contains(t, inbox(first.Credential), "from the operator")
 
+	const peer = "stwd-aaaa-bbbb-cccc-000000000003"
+	s.f.HaveConvWithTitle(peer, "peer")
+	s.f.HaveAliveSession(peer, "peers", "tclaude-peers", s.f.TestCwd("p"))
+	rec = send(map[string]any{"to": peer, "cc": []string{"steward"}, "body": "copied in"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, inbox(first.Credential), "copied in")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	cfg.Steward.Name = "jarvis"
+	require.NoError(t, config.Save(cfg))
+	named := send(map[string]any{"to": "jarvis", "body": "for the built-in only"})
+	require.Equal(t, http.StatusNotFound, named.Code, "the operator's name for the Steward stays the Steward's: %s", named.Body.String())
+	assert.NotContains(t, inbox(first.Credential), "for the built-in only")
+
 	code, body := s.humanPost("/v1/external-stewards/assistant/revoke", map[string]any{})
 	require.Equal(t, http.StatusOK, code, body)
 	require.Equal(t, http.StatusNotFound, send(map[string]any{"to": "steward", "body": "revoked"}).Code,

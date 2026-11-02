@@ -152,7 +152,8 @@ The address `steward` stays with the built-in Steward while one is running, so t
 can work side by side. With none online, `steward` goes to your external steward, if
 exactly one can answer: the switch is on and it holds a credential that hasn't expired
 or been revoked. With several able to answer, the sender is told to address one by name.
-Addressing an external steward by name works either way.
+Addressing an external steward by name works either way. A name you gave the built-in
+Steward still means only that Steward.
 
 It holds 10 unprocessed messages at most, like any agent that is offline. After that a
 sender gets a `queue_full` error it can retry, and reading a message makes room.

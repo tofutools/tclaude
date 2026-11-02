@@ -761,8 +761,10 @@ func isStewardAddress(to string) bool {
 
 // resolveStewardAddresses turns the address "steward" into the active Steward,
 // in To and Cc alike, before any routing looks at them. A built-in Steward keeps
-// the address while it runs. With none online it goes to the one external steward
-// able to answer. It answers the request and returns false when nobody can take it.
+// the address while it runs. With none online the fixed address goes to the one
+// external steward able to answer, but a name the operator gave the Steward still
+// means that Steward. It answers the request and returns false when nobody can
+// take it.
 func resolveStewardAddresses(w http.ResponseWriter, req *sendReq) bool {
 	var steward string
 	resolve := func(address *string) bool {
@@ -770,22 +772,27 @@ func resolveStewardAddresses(w http.ResponseWriter, req *sendReq) bool {
 			return true
 		}
 		if steward == "" {
-			steward = activeStewardConv()
-			if steward == "" || pickAliveSession(steward) == nil {
-				var able int
-				steward, able = soleExternalSteward()
-				if able > 1 {
-					writeError(w, http.StatusNotFound, "not_found", "no Steward is online and several external stewards could take this; address one by name")
-					return false
-				}
+			if steward = activeStewardConv(); steward != "" && pickAliveSession(steward) == nil {
+				steward = ""
 			}
-			if steward == "" {
-				writeError(w, http.StatusNotFound, "not_found", "no Steward is online; the operator can summon one from the companion window")
+		}
+		if steward != "" {
+			*address = steward
+			return true
+		}
+		if strings.EqualFold(strings.TrimSpace(*address), stewardAddress) {
+			external, able := soleExternalSteward()
+			if able == 1 {
+				*address = external
+				return true
+			}
+			if able > 1 {
+				writeError(w, http.StatusNotFound, "not_found", "no Steward is online and several external stewards could take this; address one by name")
 				return false
 			}
 		}
-		*address = steward
-		return true
+		writeError(w, http.StatusNotFound, "not_found", "no Steward is online; the operator can summon one from the companion window")
+		return false
 	}
 	if !resolve(&req.To) {
 		return false
