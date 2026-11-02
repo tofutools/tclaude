@@ -322,7 +322,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
           <span class="id">${candidate.conv_id.slice(0, 8)}</span>
           ${candidate.roles.map((role) => html`<span class="cleanup-badge" key=${role}>${role}</span>`)}
         </label></div>
-      `) : html`<div class="cleanup-empty"><${Words} plain="no agents match the filter" wizard="no heroes match the filter" /></div>`}
+      `) : html`<div class="ui-empty-block"><${Words} plain="no agents match the filter" wizard="no heroes match the filter" /></div>`}
     </div>
   </${TransactionDialogFrame}>`;
 }
@@ -368,7 +368,7 @@ function CleanupResult({ response }) {
         <span class="id">${String(outcome.conv_id || '').slice(0, 8)}</span>
         <span class="meta">${outcome.detail || ''}</span>
       </div>
-    `) : html`<div class="cleanup-empty">Nothing to do.</div>`}
+    `) : html`<div class="ui-empty-block">Nothing to do.</div>`}
   </div>`;
 }
 
@@ -653,7 +653,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
             </div>`;
           })}
         </div>`;
-      }) : html`<div class="cleanup-empty">${candidates.length
+      }) : html`<div class="ui-empty-block">${candidates.length
         ? 'No conversations match the current filters.' : 'Nothing to clean up.'}</div>`}
     </div>
     <div class="cleanup-options" id="cleanup-options">
@@ -854,7 +854,7 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
           /></span>
           <span class="muted"> <${Words} plain=${plainWhy} wizard=${wizardWhy} /></span>
         </label></div>`;
-      }) : html`<div class="cleanup-empty"><${Words}
+      }) : html`<div class="ui-empty-block"><${Words}
         plain="no agents in this group" wizard="no heroes in this party"
       /></div>`}
     </div>
@@ -891,7 +891,7 @@ function BulkRetireResult({ descriptor, response }) {
           worktree ${worktree.action || 'unknown'}
         </span><span class="meta">${worktree.detail || ''}</span>` : null}
       </div>`;
-    }) : html`<div class="cleanup-empty">Nothing to do.</div>`}
+    }) : html`<div class="ui-empty-block">Nothing to do.</div>`}
   </div>`;
 }
 
@@ -1135,7 +1135,7 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
               wizard=${candidate.groups?.length ? `parties: ${candidate.groups.join(', ')}` : 'in: Unbound'}
             /></span>` : null}
           </label></div>
-        `) : html`<div class="cleanup-empty">no agents match the filter</div>`}
+        `) : html`<div class="ui-empty-block">no agents match the filter</div>`}
       </div>
       <label class="delete-agent-wt" id="retire-preview-shutdown-row">
         <input
@@ -1184,7 +1184,7 @@ function DeleteRetiredResult({ response }) {
         <span class="id">${String(outcome.conv_id || '').slice(0, 8)}</span>
         <span class="meta">${outcome.detail || ''}</span>
       </div>
-    `) : html`<div class="cleanup-empty">Nothing to do.</div>`}
+    `) : html`<div class="ui-empty-block">Nothing to do.</div>`}
   </div>`;
 }
 
@@ -1374,7 +1374,7 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
             ${candidate.online ? html`<span class="cleanup-badge online">online — will skip</span>` : null}
             ${candidate.retired_by ? html`<span class="cleanup-badge">by ${candidate.retired_by}</span>` : null}
           </label></div>`;
-        }) : html`<div class="cleanup-empty">no retired agents match the filter</div>`}
+        }) : html`<div class="ui-empty-block">no retired agents match the filter</div>`}
       </div>
       <label class="delete-agent-wt" id="delete-retired-wt-row">
         <input

@@ -292,7 +292,7 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
                   actions=${actions}
                 />`,
             )
-          : html`<div class="template-empty">
+          : html`<div class="ui-empty-block">
               ${current.templates.length
                 ? html`<${Words}
                     plain="No templates match the filter."
@@ -687,7 +687,7 @@ export function TemplateStartersDialog({
       </div>
       <div id="starters-list" class="starters-list">
         ${descriptor.request.phase === 'loading'
-          ? html`<div class="template-empty">
+          ? html`<div class="ui-empty-block">
               <${Words} plain="Loading starters…" wizard="Conjuring presets…" />
             </div>`
           : rows.length
@@ -739,7 +739,7 @@ export function TemplateStartersDialog({
                   </div>`,
               )
             : descriptor.request.phase === 'ready' &&
-              html`<div class="template-empty">
+              html`<div class="ui-empty-block">
                 <${Words}
                   plain="No starters bundled."
                   wizard="No presets bound."
@@ -1224,7 +1224,7 @@ function suggestedGroup(name, groups) {
 
 function DeployRosterPreview({ template, prefix, profiles, defaultProfile }) {
   if (!template?.agents?.length)
-    return html`<span class="tp-empty"
+    return html`<span class="ui-empty"
       ><${Words}
         plain="this template has no agents"
         wizard="this circle names no heroes"
@@ -2032,7 +2032,7 @@ function ProfileReadback({ agent, profiles }) {
       >`;
     return (
       profileSummary(profile) ||
-      html`<span class="ta-profile-summary-empty"
+      html`<span class="ui-empty"
         >(profile sets no launch fields)</span
       >`
     );

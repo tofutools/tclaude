@@ -577,8 +577,8 @@ function DockSection({
         </span>
       </summary>
       <div class="dock-section-items">
-        ${error ? html`<div class="dock-empty island-error" role="alert">${error}</div>` : null}
-        ${all === null && !error ? html`<div class="dock-empty">Loading…</div>` : null}
+        ${error ? html`<div class="dock-empty ui-empty island-error" role="alert">${error}</div>` : null}
+        ${all === null && !error ? html`<div class="dock-empty ui-empty">Loading…</div>` : null}
         ${all !== null && (items.length ? items.map((value) => html`
           <${DockCard}
             key=${nameOf(value)}
@@ -596,7 +596,7 @@ function DockSection({
             onTogglePin=${(name) => { togglePin(prefs, section.key, name); setPinsVersion(pinsVersion + 1); }}
             notify=${notify}
           />
-        `) : html`<div class="dock-empty">(${section.empty()})</div>`)}
+        `) : html`<div class="dock-empty ui-empty">(${section.empty()})</div>`)}
       </div>
     </details>
   `;
@@ -688,7 +688,7 @@ export function Dock({
     </div>`,
     fusedValue ? html`<${DockNodeFilter} key="nodes" nodes=${fusedValue.nodes} hidden=${hidden}
       onHide=${(ids) => { hiddenState.value = ids; }} />` : null,
-    nothing ? html`<div key="no-match" class="dock-empty dock-search-empty">No matches for “${query.trim()}”.</div>` : null,
+    nothing ? html`<div key="no-match" class="dock-empty ui-empty dock-search-empty">No matches for “${query.trim()}”.</div>` : null,
     ...sections.filter((section) => !section.afterProcesses).map(renderSection),
     processes ? html`<${DockProcesses} key="processes" groups=${groups}
       isSectionOpen=${isSectionOpen} setSectionOpen=${setSectionOpen} openMenu=${openMenu} setOpenMenu=${setOpenMenu} clipHost=${host}

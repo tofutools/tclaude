@@ -405,8 +405,8 @@ export function DockProcesses({
         </span>
         <${WorkflowImportButton} id="" className="dock-process-import-hidden" label="⤒ import" dropped=${dropped} onImported=${load} />
       </div>
-      ${error && html`<div class="dock-empty island-error" role="alert">${error}</div>`}
-      ${rows && !rows.length && !error && html`<div class="dock-empty">(${wizWord('no processes in the library yet', 'no rites in the grimoire yet')})</div>`}
+      ${error && html`<div class="dock-empty ui-empty island-error" role="alert">${error}</div>`}
+      ${rows && !rows.length && !error && html`<div class="dock-empty ui-empty">(${wizWord('no processes in the library yet', 'no rites in the grimoire yet')})</div>`}
       ${shown.map((row) => html`<${ProcessCard} key=${row.id} row=${row} open=${preview?.row.id === row.id} onOpen=${setPreview}
         openMenu=${openMenu} setOpenMenu=${setOpenMenu} onDelete=${remove} clipHost=${clipHost}
         pinned=${pins.includes(row.id)} onMenu=${menu} />`)}

@@ -183,7 +183,7 @@ export function PaletteOverlay({
               ${command.shortcut ? html`<${Keys} id=${command.shortcut} />` : null}
               ${command.enabled === false || command.hint ? html`<span class="palette-hint">${command.enabled === false ? command.disabledReason || 'Unavailable' : command.hint}</span>` : null}
             </div>
-          `) : html`<div class="palette-empty">${wizard ? WIZARD_EMPTY : 'No matching commands'}</div>`}
+          `) : html`<div class="ui-empty-block">${wizard ? WIZARD_EMPTY : 'No matching commands'}</div>`}
         </div>
         <div class="palette-foot">
           <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>

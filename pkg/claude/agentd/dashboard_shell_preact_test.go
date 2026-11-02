@@ -146,7 +146,7 @@ func TestDashboardOpenPRsThemed(t *testing.T) {
 	}
 
 	list := strings.Index(island, "? html`<ul class=\"open-pr-list\">")
-	empty := strings.Index(island, ": html`<p class=\"open-prs-empty\">")
+	empty := strings.Index(island, ": html`<p class=\"ui-empty-block\">")
 	filters := strings.Index(island, `<div class="open-prs-filters"`)
 	footer := strings.Index(island, `<div class="open-prs-foot">`)
 	if list < 0 || empty < 0 || filters < 0 || footer < 0 || list >= filters || empty >= filters || filters >= footer {

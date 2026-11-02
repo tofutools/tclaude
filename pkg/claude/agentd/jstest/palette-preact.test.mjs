@@ -235,7 +235,7 @@ test('palette island preserves markup, keyboard/mouse behavior, theme copy, focu
   assert.equal(overlay.querySelectorAll('[role="option"]').length, 1);
   assert.equal(input.getAttribute('aria-activedescendant'), 'palette-opt-0');
   await harness.input(input, 'nothing matches');
-  assert.equal(overlay.querySelector('.palette-empty').textContent, 'No matching commands');
+  assert.equal(overlay.querySelector('.ui-empty-block').textContent, 'No matching commands');
   assert.equal(input.hasAttribute('aria-activedescendant'), false);
 
   await harness.input(input, 'Command 3');

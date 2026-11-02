@@ -657,7 +657,7 @@ export function FusedMail({
             })}
             ${isOpen && (members.length > 0
               ? members.map((m) => html`<${Fragment} key=${m.id}>${agentRow(n, m, true)}</${Fragment}>`)
-              : html`<div class="mailbox-row nested"><span class="mail-box-check-spacer"></span><div class="mailbox-nested-empty">${e?.rosterURL?.includes('expand=') ? 'no member folders shown' : 'loading…'}</div></div>`)}
+              : html`<div class="mailbox-row nested"><span class="mail-box-check-spacer"></span><div class="mailbox-nested-empty ui-empty">${e?.rosterURL?.includes('expand=') ? 'no member folders shown' : 'loading…'}</div></div>`)}
             ${isOpen && (g.members_total || 0) > members.length && html`<${LoadMore} nested=${true} shown=${members.length} total=${g.members_total}
               busy=${busy} what=${`${g.title}'s member mailboxes`}
               onMore=${() => setMemberLimits((cur) => ({ ...cur, [gk]: (cur[gk] || ROSTER_PAGE) + ROSTER_PAGE }))} />`}

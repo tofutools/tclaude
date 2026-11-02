@@ -93,7 +93,7 @@ export function FleetTab({ api, busy, reloadKey = 0, onEdit, onToggle, onManageN
         <div class="usage-rule-summary">${ruleSummary(limit.rule)}</div>
         ${limit.enabled ? html`<${FleetBar} status=${status}/>${status ? html`<${MemberRows} status=${status}/>` : null}` : null}
       </div>`;
-    })}</div>` : html`<div class="template-empty">No fleet limits yet.</div>`}
+    })}</div>` : html`<div class="ui-empty-block">No fleet limits yet.</div>`}
 
     <h4 class="usage-fleet-h">Nodes</h4>
     <div class="usage-fleet-nodes-wrap"><table class="usage-fleet-nodes">
@@ -116,7 +116,7 @@ export function FleetTab({ api, busy, reloadKey = 0, onEdit, onToggle, onManageN
       </tbody>
     </table></div>
     ${(fleet.nodes || []).length ? html`<p class="modal-hint">A node shares with you what its operator grants you: <code>usage.read</code> (its totals), <code>usage-rules.manage</code> (its rules, from here), <code>usage-rules.enforce</code> (your fleet limits act on its agents). Ask from its peer view (the <b>peer view</b> pill → request…), or its operator runs <code>${'tclaude federation grant <this node> usage.read'}</code>.</p>`
-      : html`<div class="template-empty">No trusted peers. Link nodes under Fleet to build a fleet.</div>`}
+      : html`<div class="ui-empty-block">No trusted peers. Link nodes under Fleet to build a fleet.</div>`}
 
     ${(fleet.controls || []).length ? html`<h4 class="usage-fleet-h">Peers' fleet limits in force here</h4>
       <ul class="usage-fleet-controls">${fleet.controls.map((c) => html`<li key=${c.peer + c.rule_key}>

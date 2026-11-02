@@ -564,14 +564,14 @@ function OpenPRs({ state }) {
           <${PeopleTabs} active=${personEntry ? personEntry.login : ''} mine=${view.total} people=${people}
             onSelect=${setPerson} onAdd=${addPerson} onRemove=${removePerson} />
           ${panelWarning ? html`<p class="open-prs-stale" role="status">${panelWarning}</p>` : null}
-          ${panelNotice ? html`<p class="open-prs-empty">${panelNotice}</p>` : panel.items.length
+          ${panelNotice ? html`<p class="ui-empty-block">${panelNotice}</p>` : panel.items.length
             ? html`<ul class="open-pr-list">${panel.items.map((pr) => html`<${OpenPRRow} key=${pr.url} pr=${pr}
                 showFinalCI=${panel.showingRecent && showFinalCI} titleDetails=${titleDetails}
                 onIgnore=${askIgnore} onRestore=${(target) => {
                   saveIgnored(unignorePR(ignored, target.url));
                   setFocusBack((n) => n + 1);
                 }} />`)}</ul>`
-            : html`<p class="open-prs-empty">${panel.showingIgnored
+            : html`<p class="ui-empty-block">${panel.showingIgnored
               ? 'No ignored pull requests.'
               : panel.showingRecent
               ? `Nothing merged or closed in the last ${panel.recentWindowDays} day(s).`

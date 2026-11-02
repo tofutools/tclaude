@@ -438,7 +438,7 @@ function CardRows({ card, node, onUpdate }) {
     else if (f?.kind === 'not_trusted') text = 'Not trusted any more.';
     else if (f?.kind === 'offline' || f?.kind === 'timeout' || card.presence === 'offline') text = card.lastSeen ? `Unreachable. Last seen ${new Date(card.lastSeen).toLocaleString()}.` : 'Unreachable.';
     else if (f) text = `Summary failed: ${f.message || f.kind}`;
-    return html`<div class="fleet-card-empty">${text}</div>`;
+    return html`<div class="ui-empty-block">${text}</div>`;
   }
   const r = card.resources;
   return html`<dl class="fleet-card-body">
