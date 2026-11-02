@@ -2,6 +2,7 @@
    styled by default instead of needing a per-container style pass:
 
      buttons  .ui-btn [+ .ui-btn-primary | -success | -danger | -ghost | -link]
+              (-ghost or -link with -danger: the quiet red-text form)
               [+ .ui-sm] [+ .ui-btn-icon]; group with .ui-seg
      fields   .ui-input  .ui-select  .ui-textarea  [+ .ui-sm]
      checks   label.ui-check > input[type=checkbox|radio];  input.ui-switch
@@ -108,10 +109,14 @@ body.slop {
 .ui-btn-primary:hover:not(:disabled) { background: var(--ui-primary-hover); border-color: var(--ui-primary-line); color: var(--ui-primary-text); }
 .ui-btn-success { background: var(--ui-success); border-color: var(--ui-success-line); color: #fff; }
 .ui-btn-success:hover:not(:disabled) { background: var(--ui-success-line); border-color: var(--ui-success-line); color: #fff; }
-.ui-btn-danger { color: var(--ui-danger-text); }
-.ui-btn-danger:hover:not(:disabled) { background: var(--ui-danger-bg); border-color: var(--ui-danger); color: var(--ui-danger); }
+/* Danger is the confirm-a-destructive-action button; with -ghost it is the
+   quiet form for row and toolbar actions, red only in its text. */
+.ui-btn-danger { background: var(--ui-danger-bg); border-color: var(--ui-danger); color: var(--ui-danger); }
+.ui-btn-danger:hover:not(:disabled) { background: var(--ui-danger); border-color: var(--ui-danger); color: #fff; }
 .ui-btn-ghost { background: transparent; border-color: transparent; color: var(--ui-muted); }
 .ui-btn-ghost:hover:not(:disabled) { background: var(--ui-bg); border-color: var(--ui-btn-line); }
+.ui-btn-ghost.ui-btn-danger { background: transparent; border-color: transparent; color: var(--ui-danger-text); }
+.ui-btn-ghost.ui-btn-danger:hover:not(:disabled) { background: var(--ui-danger-bg); border-color: var(--ui-danger); color: var(--ui-danger); }
 .ui-btn-link { padding: 0; border: 0; background: none; color: var(--ui-focus); }
 .ui-btn-link:hover:not(:disabled) { background: none; color: var(--ui-focus); text-decoration: underline; }
 .ui-btn-link.ui-btn-danger,
