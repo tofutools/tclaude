@@ -19,7 +19,7 @@ import { dashboardState } from './snapshot-store.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { LockReason } from './lock-reason.js';
 import { Pager } from './pager.js';
-import { Button } from './ui-components.js';
+import { Button, Input } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -457,7 +457,7 @@ export function JobsApp({ state, actions, fleet = fleetState, activeTab = dashbo
   return html`<div class="jobs-island">
     <${AutomationsSubnav} entries=${subnavEntries} active=${displayKind} onSelect=${selectEntry} />
     ${displayKind !== 'trigger' && html`<div class="filter-bar">
-      <input ref=${inputRef} id="filter-jobs" type="text" aria-label="Filter automations"
+      <${Input} domRef=${inputRef} id="filter-jobs" aria-label="Filter automations"
         placeholder="Filter this view (name + agent/owner/target + subject + body + status)"
         autocomplete="off" spellcheck=${false} value=${current.query}
         onInput=${(event) => onQuery(event.currentTarget.value)} />
@@ -466,15 +466,15 @@ export function JobsApp({ state, actions, fleet = fleetState, activeTab = dashbo
         onClick=${() => { onQuery(''); inputRef.current?.focus(); }}>×</button>
       <span class="spacer"></span>
       ${(displayKind === 'all' || displayKind === 'cron') && html`
-        <button id="cron-create-open" class="primary" title="Schedule a new recurring cron job"
+        <${Button} id="cron-create-open" variant="primary" title="Schedule a new recurring cron job"
           onClick=${() => actions.openCronCreate({})}>
           <span class="cron-open-label-regular">+ new cron job</span>
           <span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span>
-        </button>`}
+        <//>`}
       ${(displayKind === 'all' || displayKind === 'standing-order') && html`
-        <button id="standing-order-create-open" class="primary"
+        <${Button} id="standing-order-create-open" variant="primary"
           title="Create a standing instruction triggered at session boundaries"
-          onClick=${() => actions.openStandingOrderCreate({})}>+ new standing order</button>`}
+          onClick=${() => actions.openStandingOrderCreate({})}>+ new standing order<//>`}
     </div>`}
     ${displayKind === 'trigger' ? html`<${TriggerWorkspace} state=${state} actions=${actions} />` : html`<${Fragment}>
     <${AsyncLoadState} label="Automations" request=${current.request}

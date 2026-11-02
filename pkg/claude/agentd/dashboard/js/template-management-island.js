@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Input } from './ui-components.js';
 import { profileSummary, getDashDefaultProfile, findProfileByHandle, profileChoices } from './profiles.js';
 import { pickDirectory } from './helpers.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
@@ -228,9 +228,8 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
         />
       </p>
       <div class="filter-bar">
-        <input
+        <${Input}
           id="filter-templates"
-          type="text"
           value=${current.templateFilter}
           onInput=${(event) =>
             state.setTemplateFilter(event.currentTarget.value)}
@@ -250,9 +249,8 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
         >
           ×</button
         ><span class="spacer"></span>
-        <button
+        <${Button}
           id="scribe-templates-open"
-          class="tool"
           title="Summon a chat agent (a scribe) that edits your templates for you — pre-briefed and already holding the templates.manage permission. Tell it what to change in plain words; its edits appear here live."
           onClick=${actions.editTemplatesWithAgent}
         >
@@ -260,39 +258,36 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
             plain="🤖 Edit with agent"
             wizard="📜 Dictate to a scribe"
           />
-        </button>
-        <button
+        <//>
+        <${Button}
           id="template-from-group-open"
-          class="tool"
           title="Snapshot an existing group's structure — roles, owner, per-agent permissions, context — into a new reusable template"
           onClick=${actions.openTemplateFromGroup}
         >
           <${Words} plain="⤓ from a group" wizard="⤓ trace a party" />
-        </button>
-        <button
+        <//>
+        <${Button}
           id="template-import-open"
-          class="tool"
           title="Import a template from a portable .task-force.json file (from ⇪ export) — share task forces between machines or with friends"
           onClick=${actions.openTemplateImport}
         >
           <${Words} plain="⤒ import" wizard="📜 read a scroll" />
-        </button>
-        <button
+        <//>
+        <${Button}
           id="starters-open"
-          class="tool"
           title="Browse bundled starter task forces — copy a curated, ready-to-run team into your own templates list (it does not spawn a team; deploy or edit it afterwards)"
           onClick=${actions.openTemplateStarters}
         >
           <${Words} plain="⭐ starters" wizard="⭐ conjure a preset party" />
-        </button>
-        <button
+        <//>
+        <${Button}
           id="template-create-open"
-          class="primary"
+          variant="primary"
           title="Define a new group template"
           onClick=${() => actions.openTemplateEditor()}
         >
           <${Words} plain="+ new template" wizard="+ chalk a new circle" />
-        </button>
+        <//>
       </div>
       <div id="templates-list">
         ${list.length

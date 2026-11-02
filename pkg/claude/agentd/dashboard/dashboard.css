@@ -797,18 +797,6 @@ button.tool:hover { border-color: #58a6ff; }
 .mail-pager .grow { flex: 1 1 auto; }
 .mail-pager-pos { white-space: nowrap; padding: 0 4px; }
 .mail-pager-size { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
-.mail-pager button {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
-  color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 12px;
-  min-width: 26px; font-family: inherit;
-}
-.mail-pager button:hover:not(:disabled) { color: #d4d4d4; border-color: #58a6ff; }
-.mail-pager button:disabled { opacity: .4; cursor: default; }
-.mail-pager-size select {
-  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
-  color: #c9d1d9; font-size: 12px; padding: 2px 4px; font-family: inherit;
-}
-.mail-pager-size select:focus { outline: none; border-color: #58a6ff; }
 
 /* Progress bar shown inside a bulk bar while a batched delete / wipe runs
    ("Deleting 150 / 300…" + a filling track). */
@@ -3763,7 +3751,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .audit-spawn-popover pre::-webkit-scrollbar-thumb:hover { background: #8b949e; }
 .audit-spawn-popover::-webkit-scrollbar-thumb:active,
 .audit-spawn-popover pre::-webkit-scrollbar-thumb:active { background: #b1bac4; }
-.filter-bar label.filter-toggle select {
+.filter-bar label.filter-toggle select:where(:not(.ui-select)) {
   background: #161b22; color: #d4d4d4; border: 1px solid #2a3340;
   border-radius: 4px; padding: 1px 4px; font-size: 12px; cursor: pointer;
 }
@@ -3780,16 +3768,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .audit-pager .grow { flex: 1 1 auto; }
 .audit-pager-pos { white-space: nowrap; padding: 0 4px; }
 .audit-pager-size { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
-.audit-pager button {
-  background: #161b22; color: #7d8590; border: 1px solid #2a3340;
-  border-radius: 4px; padding: 2px 8px; cursor: pointer;
-}
-.audit-pager button:hover:not(:disabled) { color: #d4d4d4; border-color: #58a6ff; }
-.audit-pager button:disabled { opacity: 0.4; cursor: default; }
-.audit-pager-size select {
-  background: #161b22; color: #d4d4d4; border: 1px solid #2a3340;
-  border-radius: 4px; padding: 1px 4px; cursor: pointer;
-}
 /* Debug tab — Preact-owned poll-timing cards (debug-island.js / TCL-376). One card per
    polled endpoint: header stat chips, the latency sparkline, and (for
    /api/snapshot) the median phase-composition bar + aggregate table.
@@ -3906,17 +3884,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   margin-top: 6px; padding: 4px 2px; font-size: 12px; color: #7d8590;
 }
 .list-pager-count { white-space: nowrap; padding: 0 4px; }
-.list-pager-btn {
-  background: #161b22; color: #7d8590; border: 1px solid #2a3340;
-  border-radius: 4px; padding: 2px 8px; cursor: pointer; line-height: 1;
-}
-.list-pager-btn:hover:not(:disabled) { color: #d4d4d4; border-color: #58a6ff; }
-.list-pager-btn:disabled { opacity: 0.4; cursor: default; }
-.list-pager-size {
-  margin-left: auto;
-  background: #161b22; color: #d4d4d4; border: 1px solid #2a3340;
-  border-radius: 4px; padding: 1px 4px; cursor: pointer;
-}
+.list-pager .list-pager-size { margin-left: auto; }
 .owner-badge {
   display: inline-block; padding: 1px 6px; margin-left: 4px;
   background: #1d2a3a; color: #d29922; border: 1px solid #4d3a1d;
@@ -4289,7 +4257,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    never reads as recorded spend. Recorded spend keeps the same full-strength
    palette on weekdays and weekends: its calendar position does not make the
    measurement less certain. */
-#costs-spans button.tool.active { border-color: #58a6ff; color: #d4d4d4; background: #2a3340; }
+/* The span buttons are standard toggles: aria-pressed marks the chosen span. */
 /* Completed-month stepper: the ‹ label › group sits just after the fixed
    span buttons, set off by a thin left divider. The arrows are tight,
    fixed-width squares; the month label between them carries the span. */
@@ -4300,10 +4268,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 #costs-month-nav button.costs-month-step {
   padding: 5px 8px; min-width: 26px; line-height: 1; text-align: center;
 }
-#costs-month-nav button.tool:disabled {
-  opacity: 0.35; cursor: default; border-color: #2a3340; color: #7d8590;
-}
-#costs-month-nav button.tool:disabled:hover { border-color: #2a3340; color: #7d8590; }
 /* The Costs header is two stacked rows: controls, then the totals line.
    The summary (total, real/WHAT-IF split, date range, month projection) is
    too long to share a line with the span buttons, so it always sits below
@@ -5053,16 +5017,8 @@ body.wizard .subgroup-btn .subgroup-ico { display: none; }
    row/group cogs the cluster reuses elsewhere keep their own
    tighter sizing. */
 .filter-bar-cog { position: relative; display: inline-flex; align-items: center; }
-.filter-bar-cog .cog-btn {
-  background: #21262d; border: 1px solid #6b4f1d; border-radius: 4px;
-  color: #e3a008; cursor: pointer; font-family: inherit;
-  /* Larger gear glyph (16px vs the +new-group label's 12px),
-     compensated by tighter vertical padding so the box height
-     still matches .primary: ~18px line-height at 16px + 6px
-     padding ≈ ~14-15px + 10px padding at 12px. */
-  font-size: 16px; padding: 3px 12px;
-}
-.filter-bar-cog .cog-btn:hover { color: #ffb52e; border-color: #e3a008; }
+.filter-bar-cog .ui-btn.cog-btn { font-size: 16px; line-height: 1; color: #e3a008; }
+.filter-bar-cog .ui-btn.cog-btn:hover:not(:disabled) { color: #ffb52e; }
 .action-menu {
   position: absolute; top: 100%; z-index: var(--z-popover);
   margin-top: 4px; min-width: 150px;
@@ -6643,13 +6599,15 @@ body.wizard .group-pending-title-wizard { display: inline; }
    flex layout so the owned input/count/view children retain the exact toolbar
    geometry and descendant selectors used by the default and wizard themes. */
 #groups-filter-root { display: contents; }
-.filter-bar input {
+.filter-bar input:where(:not(.ui-input)) {
   flex: 1; max-width: 360px;
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
   padding: 6px 10px; font-size: 13px; color: #c9d1d9;
   font-family: inherit;
 }
-.filter-bar input:focus { outline: none; border-color: #58a6ff; }
+.filter-bar input:where(:not(.ui-input)):focus { outline: none; border-color: #58a6ff; }
+/* A standard field in a toolbar keeps the toolbar's filter geometry. */
+.filter-bar .ui-input { flex: 1; max-width: 360px; }
 .filter-bar .filter-count { font-size: 11px; color: #7d8590; }
 .jobs-error {
   margin: 8px 0;
@@ -6666,20 +6624,20 @@ body.wizard .group-pending-title-wizard { display: inline; }
 }
 :is(.filter-bar, .content-search-bar) button.clear-filter:hover { color: #d4d4d4; }
 .filter-bar .spacer { flex: 1; }
-.filter-bar button.primary {
+.filter-bar button.primary:where(:not(.ui-btn)) {
   background: #1f6feb; border: 1px solid #1f6feb; color: white;
   border-radius: 4px; padding: 5px 12px; font-size: 12px;
   cursor: pointer; font-family: inherit;
 }
-.filter-bar button.primary:hover { background: #388bfd; border-color: #388bfd; }
-.filter-bar button.tool, .filter-bar a.tool {
+.filter-bar button.primary:where(:not(.ui-btn)):hover { background: #388bfd; border-color: #388bfd; }
+.filter-bar button.tool:where(:not(.ui-btn)), .filter-bar a.tool {
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
   border-radius: 4px; padding: 5px 12px; font-size: 12px;
   cursor: pointer; font-family: inherit;
 }
 /* A download link styled as a toolbar button (Logs tab "export"). */
 .filter-bar a.tool { display: inline-block; text-decoration: none; line-height: normal; }
-.filter-bar button.tool:hover, .filter-bar a.tool:hover { border-color: #58a6ff; color: #d4d4d4; }
+.filter-bar button.tool:where(:not(.ui-btn)):hover, .filter-bar a.tool:hover { border-color: #58a6ff; color: #d4d4d4; }
 .filter-bar label.filter-toggle {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 11px; color: #7d8590; cursor: pointer; user-select: none;
@@ -6700,21 +6658,9 @@ body.wizard .group-pending-title-wizard { display: inline; }
    trigger; an "N" badge surfaces when any toggle deviates from
    default so a user can tell at a glance whether anything is hidden. */
 .filter-bar .view-popover-wrap { position: relative; display: inline-flex; align-items: center; }
-/* Trigger styled like the per-group chips (.group-descr et al.) —
-   no background fill at rest, transparent border that lights up on
-   hover, dim text. Aria-expanded="true" gets the same lit border
-   so the open state is still legible. Deliberately discreet:
-   the four toggles inside are an occasional knob, not a primary
-   action, so the trigger should fade into the bar until the user
-   reaches for it. The badge keeps its blue so an active filter
-   still pulls the eye. */
-.filter-bar .view-btn {
-  background: transparent; border: 1px solid transparent;
-  color: #7d8590; cursor: pointer; font-family: inherit;
-  font-size: 11px; padding: 2px 8px; border-radius: 4px;
-}
-.filter-bar .view-btn:hover { color: #d4d4d4; border-color: #58a6ff; }
-.filter-bar .view-btn[aria-expanded="true"] { color: #d4d4d4; border-color: #58a6ff; }
+/* The trigger is a standard small button; while its popover is open it keeps
+   the hover frame so the open state stays legible. */
+.filter-bar .view-btn.ui-btn[aria-expanded="true"] { border-color: var(--ui-btn-hover-line); color: var(--ui-text-strong); }
 /* Subtle grey count — matches the Terminals tab's .tab-badge.count so a
    deviation-from-default reads as a quiet informational number, not an alert. */
 .filter-bar .view-badge {
@@ -11018,6 +10964,12 @@ body:has(#tab-terminals.active) > nav {
 .cost-toggle:hover { color: #56d364; }
 .cost-toggle.off { color: #737c86; }
 .cost-toggle.off:hover { color: #c9d1d9; }
+/* The Groups toolbar's $ is a standard small icon button; the id outranks
+   .ui-btn.ui-sm so the glyph keeps its size and state colours. */
+#groups-cost-toggle.ui-btn { font-size: 16px; color: #3fb950; }
+#groups-cost-toggle.ui-btn:hover:not(:disabled) { color: #56d364; }
+#groups-cost-toggle.ui-btn.off { color: #737c86; }
+#groups-cost-toggle.ui-btn.off:hover:not(:disabled) { color: #c9d1d9; }
 
 /* WHAT-IF banner at the top of the Costs tab — shown by the costs island only
    in WHAT-IF mode (a subscription account that opted in). Amber so it reads as
@@ -12905,7 +12857,7 @@ body.wizard #confirm-modal #confirm-ok:active {
 .cron-open-label-wizard { display: none; }
 body.wizard .cron-open-label-regular { display: none; }
 body.wizard .cron-open-label-wizard { display: inline; }
-body.wizard #cron-create-open.primary {
+body.wizard #cron-create-open.ui-btn-primary {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   border: 1px solid #d9b45a;
   color: #f3e6c0;
@@ -12914,7 +12866,7 @@ body.wizard #cron-create-open.primary {
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
   box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
 }
-body.wizard #cron-create-open.primary:hover {
+body.wizard #cron-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
@@ -13298,7 +13250,7 @@ body.wizard #cron-pick-target-modal .add-member-foot kbd {
 .group-create-label-wizard { display: none; }
 body.wizard .group-create-label-regular { display: none; }
 body.wizard .group-create-label-wizard { display: inline; }
-body.wizard #group-create-open.primary {
+body.wizard #group-create-open.ui-btn-primary {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   border: 1px solid #d9b45a;
   color: #f3e6c0;
@@ -13307,7 +13259,7 @@ body.wizard #group-create-open.primary {
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
   box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
 }
-body.wizard #group-create-open.primary:hover {
+body.wizard #group-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
@@ -14865,10 +14817,10 @@ body.wizard #profiles-manage-modal .manage-modal h3 {
 body.wizard #profiles-manage-modal .manage-intro { color: #b39ddb; }
 
 /* Filter bar: violet-tinted field, violet count, gold clear-×. */
-body.wizard #profiles-manage-modal .filter-bar input {
+body.wizard #profiles-manage-modal .filter-bar input:where(:not(.ui-input)) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
-body.wizard #profiles-manage-modal .filter-bar input:focus { border-color: #a97bd6; }
+body.wizard #profiles-manage-modal .filter-bar input:where(:not(.ui-input)):focus { border-color: #a97bd6; }
 body.wizard #profiles-manage-modal .filter-bar .filter-count { color: #b39ddb; }
 body.wizard #profiles-manage-modal .filter-bar button.clear-filter { color: #b39ddb; }
 body.wizard #profiles-manage-modal .filter-bar button.clear-filter:hover { color: #f3e6c0; }
@@ -14877,7 +14829,7 @@ body.wizard #profiles-manage-modal .filter-bar button.clear-filter:hover { color
    filter bar's "⚔ Form a party" primary gets. #profile-create-open out-
    specifies the base .filter-bar button.primary rule, so it wins without
    !important. */
-body.wizard #profiles-manage-modal #profile-create-open.primary {
+body.wizard #profiles-manage-modal #profile-create-open.ui-btn-primary {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   border: 1px solid #d9b45a;
   color: #f3e6c0;
@@ -14886,7 +14838,7 @@ body.wizard #profiles-manage-modal #profile-create-open.primary {
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
   box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
 }
-body.wizard #profiles-manage-modal #profile-create-open.primary:hover {
+body.wizard #profiles-manage-modal #profile-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
@@ -14926,14 +14878,14 @@ body.wizard #link-modal .cron-create-modal h3 {
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
 body.wizard #links-manage-modal .manage-intro { color: #b39ddb; }
-body.wizard #links-manage-modal .filter-bar input {
+body.wizard #links-manage-modal .filter-bar input:where(:not(.ui-input)) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
-body.wizard #links-manage-modal .filter-bar input:focus { border-color: #a97bd6; }
+body.wizard #links-manage-modal .filter-bar input:where(:not(.ui-input)):focus { border-color: #a97bd6; }
 body.wizard #links-manage-modal .filter-bar .filter-count,
 body.wizard #links-manage-modal .filter-bar button.clear-filter { color: #b39ddb; }
 body.wizard #links-manage-modal .filter-bar button.clear-filter:hover { color: #f3e6c0; }
-body.wizard #links-manage-modal #link-new-open.primary {
+body.wizard #links-manage-modal #link-new-open.ui-btn-primary {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   border: 1px solid #d9b45a;
   color: #f3e6c0;
@@ -14942,7 +14894,7 @@ body.wizard #links-manage-modal #link-new-open.primary {
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
   box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
 }
-body.wizard #links-manage-modal #link-new-open.primary:hover {
+body.wizard #links-manage-modal #link-new-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
@@ -15044,10 +14996,10 @@ body.wizard #templates-manage-modal .manage-modal h3 {
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
 body.wizard #templates-manage-modal .manage-intro { color: #b39ddb; }
-body.wizard #templates-manage-modal .filter-bar input {
+body.wizard #templates-manage-modal .filter-bar input:where(:not(.ui-input)) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
-body.wizard #templates-manage-modal .filter-bar input:focus { border-color: #a97bd6; }
+body.wizard #templates-manage-modal .filter-bar input:where(:not(.ui-input)):focus { border-color: #a97bd6; }
 body.wizard #templates-manage-modal .filter-bar .filter-count { color: #b39ddb; }
 body.wizard #templates-manage-modal .filter-bar button.clear-filter { color: #b39ddb; }
 body.wizard #templates-manage-modal .filter-bar button.clear-filter:hover { color: #f3e6c0; }
@@ -15058,7 +15010,7 @@ body.wizard #templates-manage-modal #template-from-group-open {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
 body.wizard #templates-manage-modal #template-from-group-open:hover { background: #3a2a63; }
-body.wizard #templates-manage-modal #template-create-open.primary {
+body.wizard #templates-manage-modal #template-create-open.ui-btn-primary {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   border: 1px solid #d9b45a;
   color: #f3e6c0;
@@ -15067,7 +15019,7 @@ body.wizard #templates-manage-modal #template-create-open.primary {
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
   box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
 }
-body.wizard #templates-manage-modal #template-create-open.primary:hover {
+body.wizard #templates-manage-modal #template-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
@@ -15818,15 +15770,15 @@ body.wizard #sandbox-profiles-manage-modal .manage-modal h3 {
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
 body.wizard #sandbox-profiles-manage-modal .manage-intro { color: #b39ddb; }
-body.wizard #sandbox-profiles-manage-modal .filter-bar input {
+body.wizard #sandbox-profiles-manage-modal .filter-bar input:where(:not(.ui-input)) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
-body.wizard #sandbox-profiles-manage-modal .filter-bar input:focus { border-color: #a97bd6; }
+body.wizard #sandbox-profiles-manage-modal .filter-bar input:where(:not(.ui-input)):focus { border-color: #a97bd6; }
 body.wizard #sandbox-profiles-manage-modal .filter-bar .filter-count { color: #b39ddb; }
 /* "+ new ward" — the gilded-arcane primary action. The .tool buttons
    (export / import / 🤖 configure) keep their base skin, matching the
    spawn-profile manage overlay. */
-body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.primary {
+body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.ui-btn-primary {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   border: 1px solid #d9b45a;
   color: #f3e6c0;
@@ -15835,7 +15787,7 @@ body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.primary 
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
   box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
 }
-body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.primary:hover {
+body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
@@ -16052,16 +16004,16 @@ body.wizard #roles-manage-modal .manage-modal h3 {
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
 body.wizard #roles-manage-modal .manage-intro { color: #b39ddb; }
-body.wizard #roles-manage-modal .filter-bar input {
+body.wizard #roles-manage-modal .filter-bar input:where(:not(.ui-input)) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
-body.wizard #roles-manage-modal .filter-bar input:focus { border-color: #a97bd6; }
+body.wizard #roles-manage-modal .filter-bar input:where(:not(.ui-input)):focus { border-color: #a97bd6; }
 body.wizard #roles-manage-modal .filter-bar .filter-count { color: #b39ddb; }
 body.wizard #roles-manage-modal .filter-bar button.clear-filter { color: #b39ddb; }
 body.wizard #roles-manage-modal .filter-bar button.clear-filter:hover { color: #f3e6c0; }
 /* "+ new class": the gilded-arcane primary — the profiles/templates overlay's
    "+ new" twin. */
-body.wizard #roles-manage-modal #role-create-open.primary {
+body.wizard #roles-manage-modal #role-create-open.ui-btn-primary {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   border: 1px solid #d9b45a;
   color: #f3e6c0;
@@ -16070,7 +16022,7 @@ body.wizard #roles-manage-modal #role-create-open.primary {
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
   box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
 }
-body.wizard #roles-manage-modal #role-create-open.primary:hover {
+body.wizard #roles-manage-modal #role-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
@@ -16460,11 +16412,11 @@ body.wizard-shake { animation: wizard-shake 0.6s ease-in-out; }
    control the Costs re-skin gilds itself, so its `.tool` buttons opt out
    below. Palette matches the rest of the wizard chrome: void #140f28,
    violet frame rgba(122,93,176,.5), gilt text #f3e6c0, arcane focus. */
-body.wizard .filter-bar input {
+body.wizard .filter-bar input:where(:not(.ui-input)) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
-body.wizard .filter-bar input::placeholder { color: #8f7bbf; font-style: italic; }
-body.wizard .filter-bar input:focus { border-color: #a97bd6; }
+body.wizard .filter-bar input:where(:not(.ui-input))::placeholder { color: #8f7bbf; font-style: italic; }
+body.wizard .filter-bar input:where(:not(.ui-input)):focus { border-color: #a97bd6; }
 body.wizard .filter-bar .filter-count { color: #b39ddb; }
 body.wizard .filter-bar button.clear-filter { color: #b39ddb; }
 body.wizard .filter-bar button.clear-filter:hover { color: #f3e6c0; }
@@ -16474,13 +16426,10 @@ body.wizard .filter-bar .muted { color: #9a86c4; }
    view-menu items) + their little dropdowns. */
 body.wizard .filter-bar label.filter-toggle { color: #b39ddb; }
 body.wizard .filter-bar label.filter-toggle:hover { color: #f3e6c0; }
-body.wizard .filter-bar label.filter-toggle select {
+body.wizard .filter-bar label.filter-toggle select:where(:not(.ui-select)) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
 /* View popover — the "▾ view" trigger, its badge and drop panel. */
-body.wizard .filter-bar .view-btn { color: #b39ddb; }
-body.wizard .filter-bar .view-btn:hover,
-body.wizard .filter-bar .view-btn[aria-expanded="true"] { color: #f3e6c0; border-color: #a97bd6; }
 /* Muted amethyst-grey rather than bright gold — the wizard echo of the quiet
    grey terminals count, so the deviation number stays subtle in this skin too. */
 body.wizard .filter-bar .view-badge { background: #2a2140; color: #9a86c4; }
@@ -16496,21 +16445,21 @@ body.wizard .view-menu .view-menu-sep { background: rgba(122, 93, 176, 0.5); }
 body.wizard .view-menu .view-menu-heading { color: #9a86c4; }
 /* Secondary "⟳" tool levers (Plugins' check-all, the Runes refresh).
    #costs-spans opts out — the Treasury gilds its own span control. */
-body.wizard .filter-bar:not(#costs-spans) button.tool {
+body.wizard .filter-bar:not(#costs-spans) button.tool:where(:not(.ui-btn)) {
   background: #241b3d; border-color: #d9b45a; color: #f3e6c0;
 }
-body.wizard .filter-bar:not(#costs-spans) button.tool:hover {
+body.wizard .filter-bar:not(#costs-spans) button.tool:where(:not(.ui-btn)):hover {
   background: #3a2a63; border-color: #f3e6c0; color: #f3e6c0;
 }
 /* Primary "+ new …" / "+ Grant sudo" levers that lack their own id-scoped
    wizard rule (Parties + Labours already carry gilded overrides above). */
-body.wizard .filter-bar button.primary {
+body.wizard .filter-bar button.primary:where(:not(.ui-btn)) {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   border: 1px solid #d9b45a; color: #f3e6c0;
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
   box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
 }
-body.wizard .filter-bar button.primary:hover {
+body.wizard .filter-bar button.primary:where(:not(.ui-btn)):hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
@@ -16814,10 +16763,10 @@ body.wizard #access-slugs .filter-bar {
   padding-bottom: 12px;
   border-bottom: 1px solid rgba(122, 93, 176, 0.32);
 }
-body.wizard #access-slugs .filter-bar input {
+body.wizard #access-slugs .filter-bar input:where(:not(.ui-input)) {
   box-shadow: inset 0 0 10px rgba(169, 123, 214, 0.08);
 }
-body.wizard #access-slugs .filter-bar input:focus {
+body.wizard #access-slugs .filter-bar input:where(:not(.ui-input)):focus {
   box-shadow: inset 0 0 12px rgba(169, 123, 214, 0.14), 0 0 8px rgba(169, 123, 214, 0.28);
 }
 body.wizard #access-slugs .filter-bar button.clear-filter {
@@ -17133,21 +17082,15 @@ body.wizard .mail-bulk-bar,
 body.wizard .mail-pager {
   background: #1c1436; border-color: #4a3a6b; color: #d8cef0;
 }
-body.wizard .mail-bulk-bar button,
-body.wizard .mail-pager button {
+body.wizard .mail-bulk-bar button {
   background: #241b3d; border-color: #d9b45a; color: #b39ddb;
 }
-body.wizard .mail-bulk-bar button:hover:not(:disabled),
-body.wizard .mail-pager button:hover:not(:disabled) { color: #f3e6c0; border-color: #a97bd6; }
+body.wizard .mail-bulk-bar button:hover:not(:disabled) { color: #f3e6c0; border-color: #a97bd6; }
 body.wizard .mail-bulk-bar button.danger { color: #d8cef0; }
 body.wizard .mail-bulk-bar button.danger:hover:not(:disabled) { color: #f2777a; border-color: #f2777a; }
 body.wizard .mail-folder-actions { border-left-color: #4a3a6b; }
 body.wizard .mail-pager-pos,
 body.wizard .mail-pager-size { color: #b39ddb; }
-body.wizard .mail-pager-size select {
-  background: #140f28; border-color: #4a3a6b; color: #f3e6c0;
-}
-body.wizard .mail-pager-size select option { color: #1a1330; background: #e7d9f5; }
 body.wizard .mail-progress-label { color: #d8cef0; }
 body.wizard .mail-progress { background: #241b3d; }
 body.wizard .mail-progress-fill { background: linear-gradient(90deg, #7a5db0, #d9b45a); }
@@ -17375,10 +17318,10 @@ body.wizard #tab-config .cfg-inline code {
 /* Live section filter: void-tinted field, gold focus, violet count + note,
    gold clear-×. Scoped to #tab-config so the Groups / Costs filter bars are
    untouched. */
-body.wizard #tab-config .filter-bar input {
+body.wizard #tab-config .filter-bar input:where(:not(.ui-input)) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
-body.wizard #tab-config .filter-bar input:focus { border-color: #a97bd6; }
+body.wizard #tab-config .filter-bar input:where(:not(.ui-input)):focus { border-color: #a97bd6; }
 body.wizard #tab-config .filter-bar .filter-count,
 body.wizard #tab-config .cfg-filter-note { color: #b39ddb; }
 body.wizard #tab-config .filter-bar button.clear-filter { color: #b39ddb; }
@@ -17672,17 +17615,8 @@ body.wizard #costs-summary .cost-proj strong {
 body.wizard #costs-summary .muted { color: #8f7bbf; }
 body.wizard #costs-summary .cost-sep { color: #4a3a6b; }
 
-/* ─── Span buttons + month stepper: gild the active/blue states ────────
-   The generic filter-bar chrome is themed by the shared `body.wizard
-   .filter-bar …` block, but that block deliberately excludes #costs-spans'
-   `.tool` buttons (`:not(#costs-spans)`) so this bespoke segmented control
-   keeps its own treatment: the costs-specific BLUE active-span border would
-   clash with the violet/gold palette, so it gilds; the stepper divider
-   warms to match. */
-body.wizard #costs-spans button.tool.active {
-  border-color: #d9b45a; color: #f3e6c0; background: #2c2150;
-  box-shadow: inset 0 0 8px rgba(169, 123, 214, 0.3);
-}
+/* ─── Month stepper: the divider warms to the wizard palette. The span
+   buttons are standard toggles and take the wizard skin from ui.css. */
 body.wizard #costs-month-nav { border-left-color: #4a3a6b; }
 
 /* ─── Breakdown table: money-green accents gild to match the chart ─────
@@ -17933,18 +17867,6 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
    dock body without clipping past either dock edge. Overrides the leftward
    .filter-bar-cog right:0 anchor for the in-dock cog only. */
 .dock-actions .filter-bar-cog .action-menu { left: 50%; right: auto; transform: translateX(-50%); }
-/* The "+ new group" blue skin lives on `.filter-bar button.primary` (scoped to
-   the toolbar it normally sits in), so once re-homed into the dock the button
-   would fall back to the bare browser-white default. Mirror the toolbar recipe
-   here for the dock context. (Wizard mode is already covered: its skin is on the
-   id-scoped `body.wizard #group-create-open.primary`, which rides along wherever
-   the button lives.) */
-.dock-actions button.primary {
-  background: #1f6feb; border: 1px solid #1f6feb; color: white;
-  border-radius: 4px; padding: 5px 12px; font-size: 12px;
-  cursor: pointer; font-family: inherit;
-}
-.dock-actions button.primary:hover { background: #388bfd; border-color: #388bfd; }
 /* Row 2: the 🧠 default-profile chip on its own line. :empty (dock collapsed →
    chip is back in the toolbar) removes the row so the header doesn't keep a bare
    gap. */

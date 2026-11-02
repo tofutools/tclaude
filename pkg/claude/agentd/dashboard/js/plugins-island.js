@@ -1,7 +1,7 @@
 import { Fragment, h, render } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Input } from './ui-components.js';
 import { useDialogFocus } from './dialog-focus.js';
 import { AsyncLoadState } from './async-load-state.js';
 import { relTime } from './helpers.js';
@@ -188,18 +188,18 @@ export function PluginsApp({ state, actions, fleet = fleetState, confirm = shell
   const checkKey = pluginBusyKey('plugins-check-all');
   return html`<div class="plugins-island">
     <div class="filter-bar">
-      <input ref=${inputRef} id="filter-plugins" type="text" aria-label="Filter plugins"
+      <${Input} domRef=${inputRef} id="filter-plugins" aria-label="Filter plugins"
         placeholder="Filter (name / descr / step name / command)" autocomplete="off" spellcheck=${false}
         value=${current.query} onInput=${(event) => state.setQuery(event.currentTarget.value)} />
       <span class="filter-count" id="filter-plugins-count" aria-live="polite">${count}</span>
       <button class="clear-filter" id="filter-plugins-clear" title="Clear filter" aria-label="Clear plugin filter"
         onClick=${() => { state.setQuery(''); inputRef.current?.focus(); }}>×</button>
       <span class="spacer"></span>
-      <button id="plugins-check-now" class="tool" disabled=${current.busy.has(checkKey)}
+      <${Button} id="plugins-check-now" disabled=${current.busy.has(checkKey)}
         title="Re-run every plugin's check commands right now (the daemon also re-checks once a minute)"
-        onClick=${() => actions.checkAll(checkKey)}>${current.busy.has(checkKey) ? 'checking…' : '⟳ check all now'}</button>
-      <button id="plugin-create-open" class="primary" onClick=${() => state.openModal()}
-        title="Define a new plugin — a named list of check/run shell-command steps">+ new plugin</button>
+        onClick=${() => actions.checkAll(checkKey)}>${current.busy.has(checkKey) ? 'checking…' : '⟳ check all now'}<//>
+      <${Button} id="plugin-create-open" variant="primary" onClick=${() => state.openModal()}
+        title="Define a new plugin — a named list of check/run shell-command steps">+ new plugin<//>
     </div>
     ${peers.length ? html`<h3 class="fused-self-head"><span class="scope-pill" style=${`--nc:${fleet.fleet.value.self.color}`}>⌂ ${fleet.fleet.value.self.name}</span></h3>` : null}
     <${AsyncLoadState} label="Plugins" request=${current.request} retry=${actions.refresh} errorClass="plugins-error" />

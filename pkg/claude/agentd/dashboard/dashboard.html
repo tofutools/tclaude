@@ -341,16 +341,16 @@
       <!-- Preact owns the Groups query, visibility menu and column controls.
            display:contents keeps their existing filter-bar flex geometry. -->
       <div id="groups-filter-root"></div>
-      <button id="groups-cost-toggle" aria-label="Show agent costs" class="cost-toggle" type="button" aria-pressed="true" title="Show or hide the per-agent cost badge on each row. On a subscription this shows the hypothetical pay-per-token-equivalent cost (WHAT-IF); on pay-per-token it shows the real spend.">$</button>
+      <button id="groups-cost-toggle" aria-label="Show agent costs" class="ui-btn ui-sm ui-btn-icon cost-toggle" type="button" aria-pressed="true" title="Show or hide the per-agent cost badge on each row. On a subscription this shows the hypothetical pay-per-token-equivalent cost (WHAT-IF); on pay-per-token it shows the real spend.">$</button>
       <span class="spacer"></span>
       <span id="dashboard-default-profile-control" class="toolbar-profile-control"></span>
       <span id="dashboard-default-sandbox-profile-control" class="toolbar-profile-control"></span>
       <!-- Label copy swaps per theme (pure-CSS span swap, like the spawn
            dialog's .spawn-title-* pair): a plain "+ new group" normally, an
            arcane "⚔ Form a party" in 🧙 wizard mode. -->
-      <button id="group-create-open" class="primary" title="Create a new agent group"><span class="group-create-label-regular">+ new group</span><span class="group-create-label-wizard">⚔ Form a party</span></button>
+      <button id="group-create-open" class="ui-btn ui-btn-primary" type="button" title="Create a new agent group"><span class="group-create-label-regular">+ new group</span><span class="group-create-label-wizard">⚔ Form a party</span></button>
       <div class="filter-bar-cog">
-        <button class="cog-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="More group actions — import, clean up, and manage group resources" aria-label="More group actions"><span class="cog-glyph">⚙︎</span></button>
+        <button class="ui-btn ui-btn-icon cog-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="More group actions — import, clean up, and manage group resources" aria-label="More group actions"><span class="cog-glyph">⚙︎</span></button>
         <div class="ui-menu ui-sm action-menu" role="menu">
           <!-- Type-to-filter over the items below. toolbar-actions-menu.js wires
                it through the shared menu-filter core (the same one the Preact

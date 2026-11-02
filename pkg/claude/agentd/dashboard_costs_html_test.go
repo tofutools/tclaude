@@ -380,7 +380,7 @@ func TestDashboardHTML_CostsMonthStepperWired(t *testing.T) {
 	// "This month" routes through activateMonth(0), the span folds back into
 	// 'month' there, and syncSpanHighlight lights the "This month" button
 	// alongside the stepper so the two stay in sync and both read as active.
-	must("monthView ? ' active'", "dual span highlight implemented")
+	must("pressed=${monthView}", "dual span highlight implemented")
 	must("monthOffset.value = 0", "This month is the stepper's offset-0 head")
 
 	// dashboard.css: the stepper group is styled (divider + tight arrows).
