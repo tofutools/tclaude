@@ -167,6 +167,13 @@ test('rebinding checks other shortcuts, browser and OS chords, and terminal keys
     'a shortcut that works in terminals needs a real modifier');
   assert.deepEqual(kb.rebindProblems('tab-next', 'KeyN', {}, 'linux'), [], 'tab cycling can stay a bare key');
   assert.ok(kb.rebindProblems('tab-next', 'Escape', {}, 'linux').some((p) => p.blocking));
+  for (const [id, chord] of [['slop', 'KeyS'], ['wizard', 'Shift+KeyW'], ['tab-next', 'Shift+Tab'], ['tab-next', 'Enter'], ['tab-prev', 'Space']]) {
+    assert.ok(kb.rebindProblems(id, chord, {}, 'linux').some((p) => p.kind === 'invalid' && p.blocking), `${id} can't be ${chord}`);
+  }
+  assert.deepEqual(kb.rebindProblems('slop', 'F8', {}, 'linux').filter((p) => p.blocking), [], 'an F-key needs no modifier');
+  assert.ok(kb.validOverride('expose', 'Ctrl+Alt+KeyE'));
+  assert.ok(!kb.validOverride('expose', 'Ctrl+Ctrl'), 'a chord that does not parse');
+  assert.ok(!kb.validOverride('no-such-shortcut', 'Ctrl+KeyE'));
   assert.deepEqual(kinds(kb.rebindProblems('board-duplicate', 'Mod+KeyD', {}, 'linux').filter((p) => p.kind === 'shortcut')), [],
     'scopes that are never live together do not collide');
 });

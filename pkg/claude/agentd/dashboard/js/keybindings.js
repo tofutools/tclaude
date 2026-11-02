@@ -114,6 +114,17 @@ export function shortcut(id) {
 
 export const isRebindable = (id) => !shortcutDefault(id).fixed;
 
+// validOverride reports whether a stored rebinding can be used: a known,
+// rebindable shortcut and a chord that parses to modifiers and one key.
+export function validOverride(id, chord) {
+  if (!BY_ID.has(id) || shortcutDefault(id).fixed || typeof chord !== 'string') return false;
+  try {
+    // One real key: not a modifier, and not a range like Digit1-9.
+    const { code } = parseChord(chord);
+    return /^[A-Za-z0-9]+$/.test(code) && !MODIFIERS.includes(code);
+  } catch { return false; }
+}
+
 // setShortcutOverrides applies a rebinding map ({ id: chord }). Entries for
 // unknown or fixed shortcuts, or with a chord that does not parse, are
 // ignored, so a stale config never breaks a handler. Returns whether anything
@@ -121,8 +132,7 @@ export const isRebindable = (id) => !shortcutDefault(id).fixed;
 export function setShortcutOverrides(map) {
   const next = new Map();
   for (const [id, chord] of Object.entries(map || {})) {
-    if (!BY_ID.has(id) || !isRebindable(id) || typeof chord !== 'string') continue;
-    try { parseChord(chord); } catch { continue; }
+    if (!validOverride(id, chord)) continue;
     if (chord !== shortcutDefault(id).chord) next.set(id, chord);
   }
   const same = next.size === overrides.size && [...next].every(([id, chord]) => overrides.get(id) === chord);
@@ -420,6 +430,11 @@ const TERMINAL_CHORDS = [
 
 const browserChordApplies = (os, platform) => !platform || (platform === 'macos' ? os === 'macos' : os !== 'macos');
 
+// Shortcuts whose handler ignores keys typed into fields, so they may be a
+// single printable key.
+const BARE_OK = new Set(['tab-next', 'tab-prev']);
+const PRINTABLE_CODE = /^(Key[A-Z]|Digit\d|Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Backquote|Comma|Period|Slash)$/;
+
 // rebindProblems checks a proposed chord for shortcut id against the other
 // shortcuts (with the draft rebindings in drafts), known browser and OS
 // chords, and terminal keys. Each problem: { kind: 'invalid' | 'shortcut' |
@@ -431,12 +446,21 @@ export function rebindProblems(id, chord, drafts = shortcutOverrides(), os = sho
   let parsed;
   try { parsed = parseChord(chord); } catch { return [{ kind: 'invalid', text: 'Not a key combination.', blocking: true }]; }
   const { mods, code } = parsed;
-  if (code === 'Escape' || code === 'Tab' && !mods.size) {
-    problems.push({ kind: 'invalid', text: `${keyLabel(code)} can't be a shortcut on its own: it closes and moves focus everywhere.`, blocking: true });
-  }
   const strong = mods.has('Ctrl') || mods.has('Meta') || mods.has('Mod') || mods.has('Alt');
-  if (entry.terminal && !strong && !/^F\d+$/.test(code)) {
-    problems.push({ kind: 'invalid', text: 'This one also works inside terminals, so it needs Ctrl, Alt or ⌘; otherwise it would take keys you type.', blocking: true });
+  const fKey = /^F\d+$/.test(code);
+  if (code === 'Escape' || (code === 'Tab' && !strong)) {
+    problems.push({ kind: 'invalid', text: `${keyLabel(code)} closes and moves focus everywhere, so it needs Ctrl, Alt or ⌘.`, blocking: true });
+  } else if (!strong && !fKey) {
+    // Only tab cycling skips text fields; every other shortcut would take
+    // the key wherever it is typed. Tab cycling still leaves Enter, Space
+    // and the arrows to buttons, lists and scrolling.
+    if (!BARE_OK.has(id)) {
+      problems.push({ kind: 'invalid', text: entry.terminal
+        ? 'This one also works inside terminals, so it needs Ctrl, Alt or ⌘; otherwise it would take keys you type.'
+        : 'This one works while you type, so it needs Ctrl, Alt or ⌘; otherwise it would take keys you type.', blocking: true });
+    } else if (!PRINTABLE_CODE.test(code)) {
+      problems.push({ kind: 'invalid', text: `${keyLabel(code)} on its own works buttons, lists and scrolling, so it needs Ctrl, Alt or ⌘ here.`, blocking: true });
+    }
   }
   for (const other of SHORTCUTS) {
     if (other.id === id || !scopesMeet(entry.scope, other.scope)) continue;

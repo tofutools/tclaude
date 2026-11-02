@@ -5,7 +5,7 @@ import { $, $$ } from './helpers.js';
 import { lineDiff as configLineDiff } from './line-diff.js';
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS, closeTabsChecked, closeTabsStored } from './terminal-close-tabs.js';
 import { dashboardState } from './snapshot-store.js';
-import { KEYBINDINGS_LIST } from './keybindings.js';
+import { KEYBINDINGS_LIST, validOverride } from './keybindings.js';
 import { loadProfiles, findProfileByHandle, profileChoices } from './profiles.js';
 import { loadSandboxProfiles } from './sandbox-profiles-data.js';
 
@@ -593,8 +593,10 @@ function populateConfigForm(cfg) {
     ? terminalAttach.pre_attach_delay_ms : '';
 
   // Keyboard shortcut rebindings, drafted in Config › Keyboard.
+  // An entry this dashboard can't use (an unknown or fixed id, a chord that
+  // doesn't parse) is left out, and so dropped on the next save.
   configDependencies.lists.set(KEYBINDINGS_LIST, Object.entries((cfg.dashboard && cfg.dashboard.keybindings) || {})
-    .map(([id, chord]) => ({ id, chord })));
+    .filter(([id, chord]) => validOverride(id, chord)).map(([id, chord]) => ({ id, chord })));
 
   // Auto-close terminal tabs matrix; absent cells show their default.
   const closeTabs = closeTabsChecked(cfg.dashboard && cfg.dashboard.close_terminal_tabs);

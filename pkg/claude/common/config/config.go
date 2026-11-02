@@ -2021,7 +2021,7 @@ func (c *Config) ShowFinalPRChecks() bool {
 // to the registry's id shape and to modifier+KeyboardEvent.code chords.
 var (
 	keybindingIDPattern    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
-	keybindingChordPattern = regexp.MustCompile(`^[A-Za-z0-9+-]{1,64}$`)
+	keybindingChordPattern = regexp.MustCompile(`^((Ctrl|Meta|Alt|Shift|Mod)\+){0,5}[A-Za-z0-9-]{1,32}$`)
 )
 
 // maxKeybindings caps dashboard.keybindings well above the registry's size.

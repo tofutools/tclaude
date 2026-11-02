@@ -37,8 +37,9 @@ const draftMap = (drafts) => Object.fromEntries((drafts || []).map(({ id, chord 
 function Recorder({ entry, drafts, onUse, onCancel }) {
   const [chord, setChord] = useState(null);
   const ref = useRef(null);
+  // Shortcuts are held off only while the recorder has focus: clicking away,
+  // to another section or tab, gives them back even with the recorder open.
   useEffect(() => {
-    setShortcutRecording(true);
     ref.current?.focus();
     return () => setShortcutRecording(false);
   }, []);
@@ -54,6 +55,7 @@ function Recorder({ entry, drafts, onUse, onCancel }) {
   const blocked = problems.some(problem => problem.blocking);
   return html`<div class="shortcut-recorder" data-shortcut-recorder=${entry.id}>
     <button type="button" ref=${ref} class="ui-btn shortcut-recorder-keys" onKeyDown=${onKeyDown}
+      onFocus=${() => setShortcutRecording(true)} onBlur=${() => setShortcutRecording(false)}
       aria-label=${`New keys for ${entry.label}. Press them now; Escape cancels.`}>
       ${chord ? html`<${Keys} chord=${chord} />` : 'Press the new keys…'}
     </button>

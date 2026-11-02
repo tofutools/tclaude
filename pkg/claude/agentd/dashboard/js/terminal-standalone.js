@@ -16,6 +16,7 @@ import {
 import { normalizeSeed } from './terminals-core.js';
 import { settleBoardEdits } from './board-island.js';
 import { SNAPSHOT_HIDDEN_POLL_MS, SNAPSHOT_POLL_MS } from './snapshot-poll.js';
+import { bindShortcutOverrides } from './snapshot-store.js';
 
 export { decodeTerminalOpenHash };
 
@@ -35,7 +36,7 @@ export function startStandaloneStatusPoll({
   snapshot,
   path = `/api/agents/${encodeURIComponent(selector)}/status`,
   adopt = (value) => ({
-    agents: [value], collab_enabled: value.collab_enabled, voice: value.voice,
+    agents: [value], collab_enabled: value.collab_enabled, voice: value.voice, keybindings: value.keybindings,
   }),
   pollMs = null,
   fetchImpl = globalThis.fetch,
@@ -151,6 +152,7 @@ export function createStandaloneTerminalsPage({
   let disposed = false;
   let authExpired = false;
   const snapshot = signal(null);
+  const stopShortcutOverrides = bindShortcutOverrides({ snapshot });
   let stopStatusPoll = null;
   let statusPollSelector = null;
 
@@ -258,6 +260,7 @@ export function createStandaloneTerminalsPage({
     windowRef.removeEventListener('pagehide', onPageHide);
     windowRef.removeEventListener('unload', dispose);
     stopStatusPolling();
+    stopShortcutOverrides();
     if (mountCleanup) mountCleanup();
     else actions.dispose();
     if (messageDialogsCleanup) messageDialogsCleanup();
