@@ -540,6 +540,15 @@ func TestDashboardConfig_ExternalStewardToolList(t *testing.T) {
 	}
 	assert.Equal(t, want, names)
 
+	// Saving replaces what the page loaded, so the save has to carry it as well.
+	w, _ := postConfig(t, "/api/config", wrapBody(`{"features":{"collab":true},"steward":{"external_enabled":true}}`, ""))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var saved map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &saved))
+	shown, ok = saved["external_steward"].(map[string]any)
+	require.True(t, ok, w.Body.String())
+	assert.Equal(t, true, shown["enabled"])
+
 	setCollab(false)
 	assert.NotContains(t, load(), "external_steward")
 }

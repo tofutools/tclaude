@@ -268,7 +268,7 @@ export function buildCommands(snapshot) {
     });
   }
   const onlineAll = (snap.agents || []).filter(a => a.online).length;
-  const offlineAll = (snap.agents || []).filter(a => !a.online).length;
+  const offlineAll = (snap.agents || []).filter(a => !a.online && !a.external_steward).length;
   if (onlineAll) {
     const plural = onlineAll === 1 ? '' : 's';
     cmds.push({
@@ -855,7 +855,7 @@ export function buildCommands(snapshot) {
         run: () => { recordGroupInteraction(g.name); shutdownScope('group', g.name); },
       });
     }
-    const offlineG = (g.members || []).filter(m => !m.online).length;
+    const offlineG = (g.members || []).filter(m => !m.online && !m.external_steward).length;
     if (offlineG) {
       const plural = offlineG === 1 ? '' : 's';
       cmds.push({
@@ -934,7 +934,7 @@ export function buildCommands(snapshot) {
           + ' slumber sleep rest lull dormant hero',
         run: () => openShutdownAgentDialog(sel, label),
       });
-    } else {
+    } else if (!a.external_steward) {
       cmds.push({
         id: `agent-resume:${sel}`,
         grant: { act: 'dot-toggle', agent: a.agent_id || '', dataset: { online: '0' } },
@@ -956,7 +956,7 @@ export function buildCommands(snapshot) {
   for (const status of ['idle', 'offline']) {
     const allCount = new Set((snap.agents || [])
       .filter(agent => status === 'offline'
-        ? !agent.online
+        ? !agent.online && !agent.external_steward
         : agent.online && agent.state?.status === status)
       .map(agent => agent.conv_id)
       .filter(Boolean)).size;
@@ -976,7 +976,7 @@ export function buildCommands(snapshot) {
 
     const ungroupedN = new Set((snap.ungrouped || [])
       .filter(agent => status === 'offline'
-        ? !agent.online
+        ? !agent.online && !agent.external_steward
         : agent.online && agent.state?.status === status)
       .map(agent => agent.conv_id)
       .filter(Boolean)).size;
@@ -998,7 +998,7 @@ export function buildCommands(snapshot) {
       const group = (snap.groups || []).find(candidate => candidate.name === g.name);
       const n = new Set((group?.members || [])
         .filter(member => status === 'offline'
-          ? !member.online
+          ? !member.online && !member.external_steward
           : member.online && member.state?.status === status)
         .map(member => member.conv_id)
         .filter(Boolean)).size;

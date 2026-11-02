@@ -366,6 +366,10 @@ var peerViewLocalRoutes = []string{
 // notifications, which has none, is reached as local above). Every federation
 // administration route is also kept here (peerViewOwnNodeRoute).
 var peerViewOwnNodeRoutes = []string{
+	"GET /api/external-stewards",
+	"POST /api/external-stewards",
+	"POST /api/external-stewards/{name}/renew",
+	"POST /api/external-stewards/{name}/revoke",
 	// Conversation search returns raw transcript excerpts, a thing no peer
 	// grant covers, and reads files for seconds on this node's disk.
 	"GET /api/conversations/search",

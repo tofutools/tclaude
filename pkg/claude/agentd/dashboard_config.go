@@ -98,13 +98,7 @@ func handleDashboardConfigGet(w http.ResponseWriter, _ *http.Request) {
 	if unknown := unknownConfigKeys(); len(unknown) > 0 {
 		resp["unknown_keys"] = unknown
 	}
-	// The Config page shows this before the feature can be turned on.
-	if cfg.CollabEnabled() {
-		resp["external_steward"] = map[string]any{
-			"enabled": cfg.ExternalStewardsEnabled(),
-			"tools":   stewardtools.List(),
-		}
-	}
+	addExternalStewardInfo(resp, cfg)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -207,10 +201,25 @@ func handleDashboardConfigPost(w http.ResponseWriter, r *http.Request) {
 		autoFetchKnowledgeSource(cfg)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"raw":  string(raw),
 		"path": config.ConfigPath(),
-	})
+	}
+	addExternalStewardInfo(resp, cfg)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// addExternalStewardInfo is what the Config page shows of external stewards, in
+// the load and in the save, which replaces it: the tool list has to be there
+// before the feature can be turned on.
+func addExternalStewardInfo(resp map[string]any, cfg *config.Config) {
+	if !cfg.CollabEnabled() {
+		return
+	}
+	resp["external_steward"] = map[string]any{
+		"enabled": cfg.ExternalStewardsEnabled(),
+		"tools":   stewardtools.List(),
+	}
 }
 
 // unknownConfigKeys returns the dotted paths of the on-disk config's keys

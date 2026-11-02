@@ -123,11 +123,11 @@ export async function powerOnScope(scope, groupName, node = '') {
   let metaLine = '';
   if (scope === 'group') {
     const g = (snap.groups || []).find(x => x.name === groupName);
-    offline = g ? (g.members || []).filter(m => !m.online).length : 0;
+    offline = g ? (g.members || []).filter(m => !m.online && !m.external_steward).length : 0;
     where = `group "${groupName}"`;
     metaLine = groupName;
   } else {
-    offline = (snap.agents || []).filter(a => !a.online).length;
+    offline = (snap.agents || []).filter(a => !a.online && !a.external_steward).length;
     where = 'the whole dashboard';
     metaLine = 'every group + ungrouped agents';
   }
@@ -207,7 +207,7 @@ function groupMembersByStatus(group, status) {
     if (!m.conv_id || seen.has(m.conv_id)) continue; // dedupe owner + member rows
     seen.add(m.conv_id);
     const matches = status === 'offline'
-      ? !m.online
+      ? !m.online && !m.external_steward
       : (m.online && m.state && m.state.status === status);
     if (matches) {
       out.push({
@@ -271,7 +271,7 @@ function retireCandidatesByStatus(rows, status = '') {
     if (!a.conv_id || seen.has(a.conv_id)) continue;
     seen.add(a.conv_id);
     const matches = !status || (status === 'offline'
-      ? !a.online
+      ? !a.online && !a.external_steward
       : (a.online && a.state && a.state.status === status));
     if (!matches) continue;
     out.push({

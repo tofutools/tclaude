@@ -11,7 +11,8 @@ remote access is not supported.
 ## Turning it on
 
 External stewards are off by default. They need [Collab](companion.md#turning-collab-on)
-on, plus this setting in `~/.tclaude/config.json`:
+on, plus **Allow external stewards** under **Config** › **Steward**. That page lists what
+an assistant can do, so you can read it first. In `~/.tclaude/config.json` the setting is:
 
 ```json
 { "steward": { "external_enabled": true } }
@@ -23,14 +24,17 @@ file within about 5 seconds.
 
 ## Creating one
 
-Only you can do this. Agents are refused, with no permission or sudo path.
+Only you can do this. Agents are refused, with no permission or sudo path, and so is
+another instance viewing your dashboard. Use **Your external stewards** under **Config** ›
+**Steward**, or the command line:
 
 ```bash
 tclaude agent steward external add my-assistant --days 30
 ```
 
 The credential is printed once and is stored only as a hash, so it can't be shown
-again. It lasts 30 days by default and at most 365.
+again. It lasts 30 days by default and at most 365. On the Config page it stays on screen
+until you press **Done**, and it's left out of anything a Steward captures from the page.
 
 Give it to the assistant through the environment or a file only you can read
 (`chmod 600`). Don't put it on a command line, where other processes can read it.
@@ -42,6 +46,9 @@ Give it to the assistant through the environment or a file only you can read
 | `tclaude agent steward external renew <name> --revoke-old` | Makes a new credential and ends the old ones at once |
 | `tclaude agent steward external revoke <name>` | Ends all its credentials on the next request |
 | `tclaude agent steward external revoke <name> --token <id>` | Ends one credential |
+
+The Config page can list, add, renew and revoke too. Its **Revoke** ends all of a
+steward's credentials, and to end old ones while keeping a new one, use the command line.
 
 Retiring the agent also ends its credentials, and reinstating it doesn't bring them
 back.
@@ -145,7 +152,8 @@ It holds 10 unprocessed messages at most, like any agent that is offline. After 
 sender gets a `queue_full` error it can retry, and reading a message makes room.
 
 tclaude can't start or resume an external steward. It runs where you put it, and shows
-as offline on the roster.
+on the roster as an offline agent labelled **External steward**, with no resume.
+Bulk "offline" actions pass over it, so a routine tidy-up doesn't end its credential.
 
 ## What the credential protects against
 

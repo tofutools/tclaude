@@ -127,6 +127,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/pr-details", handleDashboardPRDetails)
 	mux.HandleFunc("/api/open-prs/tracked-authors", handleDashboardTrackedPRAuthors)
 	registerDashboardCronRoutes(mux)
+	registerDashboardExternalStewardRoutes(mux)
 	registerDashboardStandingOrderRoutes(mux)
 	registerDashboardTriggerRoutes(mux)
 	registerDashboardMessageRoutes(mux)

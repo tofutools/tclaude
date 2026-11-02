@@ -104,6 +104,19 @@ test('cleanup descriptor freezes the complete sorted roster and group owner boun
   assert.equal(group.candidates[0].owner, true);
 });
 
+test('cleanup candidates leave out an external steward, which only looks offline', async (t) => {
+  const harness = await createPreactHarness(t);
+  const controller = await harness.importDashboardModule('js/transaction-dialog-controller.js');
+  const steward = { agent_id: 'agt_steward', conv_id: 'steward-conv', title: 'Steward',
+    online: false, external_steward: true };
+  const worker = { agent_id: 'agt_worker', conv_id: 'worker-conv', title: 'Worker', online: false };
+  const snapshot = { agents: [steward, worker], groups: [{ name: 'alpha', members: [steward, worker] }] };
+  for (const options of [{ mode: 'agents' }, { mode: 'group', group: 'alpha' }]) {
+    const { candidates } = controller.buildCleanupDescriptor(snapshot, options);
+    assert.deepEqual(candidates.map((candidate) => candidate.conv_id), ['worker-conv'], options.mode);
+  }
+});
+
 test('group cleanup preserves owner opt-in and submits only checked enabled rows', async (t) => {
   const requests = [];
   const opened = await openCleanup(t, {

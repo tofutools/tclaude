@@ -30,13 +30,13 @@ var peerSnapshotFields = map[reflect.Type]map[string]string{
 		"presence": "Online FederationPresence",
 		"status":   "State taskRefView ClaudeSubscription",
 		"settings": "Descr tagsView Notify NotifyEffective",
-		"denied":   "CreatedAt agentLocationView repoLinksView Waking RouteHealth Owner",
+		"denied":   "CreatedAt agentLocationView repoLinksView Waking ExternalSteward RouteHealth Owner",
 	}),
 	reflect.TypeFor[dashboardAgent](): classifyPeerFields(map[string]string{
 		"identity": "AgentID ConvID Title Groups",
 		"presence": "Online",
 		"status":   "State taskRefView",
-		"denied":   "agentLocationView repoLinksView tagsView Waking OwnedGroups Effective ActiveSudo Notify NotifyEffective",
+		"denied":   "agentLocationView repoLinksView tagsView Waking ExternalSteward OwnedGroups Effective ActiveSudo Notify NotifyEffective",
 	}),
 	reflect.TypeFor[taskRefView](): classifyPeerFields(map[string]string{"status": "TaskURL TaskLabel", "denied": "TaskLabelOverride"}),
 	reflect.TypeFor[agentState](): classifyPeerFields(map[string]string{
