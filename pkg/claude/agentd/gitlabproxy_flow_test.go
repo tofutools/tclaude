@@ -457,6 +457,33 @@ func TestGLProxy_MRListTranslatesTheFilters(t *testing.T) {
 	assert.Equal(t, "agent-bot", rows[0]["author"].(map[string]any)["login"])
 }
 
+// TestGLProxy_MRListHeadLeavesOutForks: --head names this project's branch,
+// so a fork's merge request with the same branch name is not returned.
+func TestGLProxy_MRListHeadLeavesOutForks(t *testing.T) {
+	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
+	gl.def = glCanned{Status: 200, Body: `[
+		{"iid":9,"title":"From a fork","state":"opened","source_branch":"feat/thing","source_project_id":5,"target_project_id":1,
+		 "web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/9"},
+		{"iid":8,"title":"Ours","state":"opened","source_branch":"feat/thing","source_project_id":1,"target_project_id":1,
+		 "web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/8"}]`}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
+	res := gitProxyPost(t, f, "/v1/gitlab/mr/list", map[string]any{"head": "feat/thing"})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	_, _, _, doc := glOutcome(t, res.Body.Bytes())
+	var rows []struct {
+		Number int `json:"number"`
+	}
+	require.NoError(t, json.Unmarshal(doc, &rows), "doc=%s", doc)
+	require.Len(t, rows, 1)
+	assert.Equal(t, 8, rows[0].Number)
+
+	res = gitProxyPost(t, f, "/v1/gitlab/mr/list", map[string]any{})
+	require.Equal(t, http.StatusOK, res.Code)
+	_, _, _, doc = glOutcome(t, res.Body.Bytes())
+	require.NoError(t, json.Unmarshal(doc, &rows))
+	assert.Len(t, rows, 2, "without --head, merge requests from forks into the project are listed")
+}
+
 func TestGLProxy_MRListRefusesAnUnknownState(t *testing.T) {
 	f, _, gl := glWorld(t, []string{"gitlab.yamzz.test"})
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))

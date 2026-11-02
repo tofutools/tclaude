@@ -289,6 +289,13 @@ func gitlabPipelineChecks(ctx context.Context, base, token string, ref gitlabMRR
 	return prChecksInfo{Summary: summary, Checks: checks, FetchedAt: now}
 }
 
+const (
+	// gitlabBranchMRPerPage and gitlabBranchMRPages bound the search for a
+	// branch's merge request: at most 100 per state.
+	gitlabBranchMRPerPage = 20
+	gitlabBranchMRPages   = 5
+)
+
 // checkStateRank orders summary states from good to bad, for letting the
 // pipeline's own verdict override a summary only towards worse.
 func checkStateRank(state string) int {
@@ -384,13 +391,14 @@ func gitlabMRForBranch(policy config.GitProxyConfig, repo branchLinkRepo, branch
 	defer cancel()
 
 	projectID := url.PathEscape(repo.OwnerRepo)
-	list := func(state string) []glMR {
+	list := func(state string, page int) []glMR {
 		res, err := glDo(ctx, repo.Base, token, glAPIRequest{
 			Path: "projects/" + projectID + "/merge_requests",
 			Query: url.Values{
 				"source_branch": []string{branch},
 				"state":         []string{state},
-				"per_page":      []string{"10"},
+				"per_page":      []string{strconv.Itoa(gitlabBranchMRPerPage)},
+				"page":          []string{strconv.Itoa(page)},
 				"order_by":      []string{"created_at"},
 				"sort":          []string{"desc"},
 			},
@@ -410,29 +418,31 @@ func gitlabMRForBranch(policy config.GitProxyConfig, repo branchLinkRepo, branch
 	ownBranch := func(mr glMR) bool {
 		return mr.SourceProjectID == 0 || mr.TargetProjectID == 0 || mr.SourceProjectID == mr.TargetProjectID
 	}
-	// Open first, so an open merge request is never hidden behind newer
-	// merged or closed ones; otherwise the newest in any state.
-	pick := -1
-	mrs := list("opened")
-	for i := range mrs {
-		if mrs[i].State == "opened" && ownBranch(mrs[i]) {
-			pick = i
-			break
-		}
-	}
-	if pick < 0 {
-		mrs = list("all")
-		for i := range mrs {
-			if ownBranch(mrs[i]) {
-				pick = i
+	// Pages, boundedly: forks' merge requests on the same branch name can
+	// fill a page and push the project's own past it.
+	find := func(state string, accept func(glMR) bool) (glMR, bool) {
+		for page := 1; page <= gitlabBranchMRPages; page++ {
+			mrs := list(state, page)
+			for _, mr := range mrs {
+				if accept(mr) {
+					return mr, true
+				}
+			}
+			if len(mrs) < gitlabBranchMRPerPage {
 				break
 			}
 		}
+		return glMR{}, false
 	}
-	if pick < 0 {
+	// Open first, so an open merge request is never hidden behind newer
+	// merged or closed ones; otherwise the newest in any state.
+	mr, found := find("opened", func(mr glMR) bool { return mr.State == "opened" && ownBranch(mr) })
+	if !found {
+		mr, found = find("all", ownBranch)
+	}
+	if !found {
 		return 0, "", "", "", nil
 	}
-	mr := mrs[pick]
 	// The listing carries no head pipeline; one more read fetches it, and the
 	// jobs follow. A merge request with no pipeline parses to zero checks.
 	ref := gitlabMRRef{base: repo.Base, host: strings.ToLower(strings.TrimSpace(hostOf(repo.Base))), project: repo.OwnerRepo, number: mr.IID}

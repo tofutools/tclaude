@@ -2,9 +2,11 @@ package agentd
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -226,4 +228,37 @@ func TestHardenedGitInfoKeepsTheCachedChecksWhenTheDetailReadFails(t *testing.T)
 	require.True(t, ok)
 	assert.Equal(t, 8, info.PRNumber)
 	assert.Nil(t, info.Checks, "no checks, not zero checks, so the cached summary is kept")
+}
+
+func TestHardenedGitInfoPagesPastForksForTheProjectsOwnMergeRequest(t *testing.T) {
+	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.yamzz.test/yamzz")
+	repoDir := branchLinkGitRepo(t, gitPath, filepath.Join(root, "work"),
+		"git@gitlab.yamzz.test:yamzz/sub/previewplayback.git")
+	const list = "projects/yamzz%2Fsub%2Fpreviewplayback/merge_requests"
+	mrURL := func(n int) string {
+		return "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/" + strconv.Itoa(n)
+	}
+	t.Cleanup(SetGitLabTransportForTest(func(_ context.Context, _, _ string, req glAPIRequest) (glAPIResult, error) {
+		if req.Path == list && req.Query.Get("state") == "opened" {
+			var page []map[string]any
+			if req.Query.Get("page") == "1" {
+				for i := range gitlabBranchMRPerPage { // a full page of forks
+					page = append(page, map[string]any{"iid": 100 + i, "state": "opened", "source_project_id": 50 + i,
+						"target_project_id": 1, "web_url": mrURL(100 + i)})
+				}
+			} else {
+				page = append(page, map[string]any{"iid": 8, "state": "opened", "title": "Ours",
+					"source_project_id": 1, "target_project_id": 1, "web_url": mrURL(8)})
+			}
+			body, _ := json.Marshal(page)
+			return glAPIResult{Status: http.StatusOK, Header: http.Header{}, Body: body}, nil
+		}
+		if strings.HasPrefix(req.Path, list+"/") {
+			return glAPIResult{Status: http.StatusOK, Header: http.Header{}, Body: []byte(`{"iid":8,"state":"opened"}`)}, nil
+		}
+		return glAPIResult{Status: http.StatusOK, Header: http.Header{}, Body: []byte(`[]`)}, nil
+	}))
+	info, ok := hardenedGitInfo(branchLinkPolicy(t), repoDir, "feat")
+	require.True(t, ok)
+	assert.Equal(t, 8, info.PRNumber, "found on page two, past a page of forks")
 }

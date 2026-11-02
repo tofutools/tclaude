@@ -461,8 +461,15 @@ func handleGLProxyMRList(w http.ResponseWriter, r *http.Request) {
 		g.respond(w, r, "mr.list", ProxyResult{}, fmt.Errorf("could not read the merge-request listing: %w", err))
 		return
 	}
+	head := strings.TrimSpace(body.Head)
 	out := make([]glMRListEntry, 0, len(mrs))
 	for _, mr := range mrs {
+		// --head asks for THIS project's branch. A fork's merge request into
+		// the project can carry the same branch name; with both project ids
+		// known and different, it is not the caller's branch.
+		if head != "" && mr.SourceProjectID != 0 && mr.TargetProjectID != 0 && mr.SourceProjectID != mr.TargetProjectID {
+			continue
+		}
 		out = append(out, projectGLMRListEntry(mr))
 	}
 	g.respondJSON(w, r, "mr.list", out)

@@ -133,7 +133,7 @@ type gitlabListParams struct {
 
 type gitlabMRListParams struct {
 	State    string `long:"state" optional:"true" help:"Filter by state: open, closed, merged or all."`
-	Head     string `long:"head" short:"H" optional:"true" help:"Only merge requests opened FROM this source branch. This is how you find the MR for a branch when you know its name and not its number."`
+	Head     string `long:"head" short:"H" optional:"true" help:"Only merge requests opened FROM this project's own branch of that name; a fork's merge request with the same branch name is left out, so fewer than --limit may come back. This is how you find the MR for a branch when you know its name and not its number."`
 	Limit    int    `long:"limit" optional:"true" help:"Maximum rows (1-100, default 20)."`
 	Remote   string `long:"remote" optional:"true" help:"Remote naming the project to act on (default: origin)."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
