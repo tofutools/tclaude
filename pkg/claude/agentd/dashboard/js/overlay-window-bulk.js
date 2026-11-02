@@ -1,13 +1,16 @@
 // overlay-window-bulk.js -- actions on every overlay window at once (tcl-87awjd):
-// untile them all, send them all to the dock, and bring them all back. The
+// show them all side by side (overlay-expose.js), untile them all, send them all
+// to the dock, and bring them all back. The
 // palette and the dock's menu offer the same actions in the same words, and each
 // shows only when there is something for it to do.
 
 import { batch, computed } from '@preact/signals';
 import { minimizeOverlayWindow, overlayWindows } from './overlay-instances.js';
+import { OVERLAY_EXPOSE_LABEL, OVERLAY_EXPOSE_SHORTCUT, overlayExposeAvailable, showAllOverlayWindows } from './overlay-expose.js';
 import { tiledOverlayWindowCount, untileOverlayWindows } from './overlay-window.js';
 
 export const OVERLAY_BULK_ACTIONS = {
+  expose: { icon: '⧉', label: OVERLAY_EXPOSE_LABEL, hint: `Spread out every overlay window, minimized ones too, to pick one (${OVERLAY_EXPOSE_SHORTCUT})` },
   untile: { icon: '⊟', label: 'Untile all windows', hint: 'Float every tiled window where it is, and end the split' },
   minimize: { icon: '▁', label: 'Minimize all windows', hint: 'Send every overlay window to the dock; tiled ones keep their cells' },
   restore: { icon: '▣', label: 'Restore all windows', hint: 'Bring every minimized overlay window back' },
@@ -35,6 +38,7 @@ export function restoreAllOverlayWindows() {
 export const overlayBulkActions = computed(() => {
   const windows = overlayWindows.value;
   const actions = [];
+  if (overlayExposeAvailable.value) actions.push({ key: 'expose', run: () => showAllOverlayWindows() });
   if (tiledOverlayWindowCount.value > 0) actions.push({ key: 'untile', run: untileOverlayWindows });
   if (windows.some((window) => !window.minimized)) actions.push({ key: 'minimize', run: minimizeAllOverlayWindows });
   if (windows.some((window) => window.minimized)) actions.push({ key: 'restore', run: restoreAllOverlayWindows });
@@ -49,7 +53,7 @@ export function buildOverlayBulkCommands() {
     icon,
     label,
     hint,
-    keywords: `overlay windows window ${key} all tile tiling split dock`,
+    keywords: `overlay windows window ${key} all tile tiling split dock${key === 'expose' ? ' expose exposé overview spread switch' : ''}`,
     run,
   }));
 }

@@ -106,6 +106,7 @@ On a peer's page, it runs on that peer, limited to what the peer allows.
 | Ctrl/Cmd+M | Message the agent in the current terminal |
 | Ctrl+. | Open or minimize the window holding the Steward |
 | Ctrl+Shift+. | Mark up the page |
+| Ctrl+, | Show all overlay windows side by side, to pick one |
 | Ctrl/Cmd+Enter | Submit the spawn dialog |
 
 In any ⚙ menu, start typing to filter, then use ↑, ↓ and Enter.

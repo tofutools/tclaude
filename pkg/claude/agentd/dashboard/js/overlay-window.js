@@ -629,7 +629,7 @@ export function OverlayWindow({ id, window: overlay, open = true, mounted = open
     ...${buttons} onMaximize=${overlay.toggleMaximize} />`;
   return html`
     ${guide && html`<div class="overlay-snap-guide" aria-hidden="true" style=${`left:${guide.x}px;top:${guide.y}px;width:${guide.w}px;height:${guide.h}px`}></div>`}
-    ${mounted && html`<section ref=${overlay.windowRef}
+    ${mounted && html`<section ref=${overlay.windowRef} data-overlay-window=${id}
       class=${`overlay-window ${className}${placement.snap ? ` snapped snapped-${placement.snap}` : ''}${overlay.floating ? ' overlay-window-floating' : ''}${front}`}
       style=${`left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px;${level}`}
       role="dialog" tabindex="-1" aria-label=${label} aria-modal="false" aria-hidden=${open ? undefined : 'true'}

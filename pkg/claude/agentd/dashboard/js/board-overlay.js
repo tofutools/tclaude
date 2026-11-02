@@ -27,6 +27,7 @@ import { elementScreenPoint } from './terminal-drag-out.js';
 import { detachSeedWindow } from './terminals-tab.js';
 import { POPUP_BLOCKED, TO_COLLAB_LABEL, TO_WINDOW_LABEL, registerTabMoves, tabMoves } from './overlay-tab-moves.js';
 import { buildOverlayBulkCommands, overlayBulkActions } from './overlay-window-bulk.js';
+import { OverlayExpose, installOverlayExposeKey } from './overlay-expose.js';
 import { registerCommandProvider } from './command-registry.js';
 
 const html = htm.bind(h);
@@ -177,9 +178,9 @@ function OverlayDockActions({ at, actions, onClose }) {
   </div>`;
 }
 
-export function BoardOverlay({ snapshot }) {
+export function BoardOverlay({ snapshot, win = globalThis.window }) {
   if (!overlayWindows.value.length && !minimizedOverlayTabs.value.length) return null;
-  return html`<${BoardsGate} snapshot=${snapshot}><${OverlayDock} snapshot=${snapshot} /><//>`;
+  return html`<${BoardsGate} snapshot=${snapshot}><${OverlayDock} snapshot=${snapshot} /><${OverlayExpose} win=${win} /><//>`;
 }
 
 function validWindow(window) {
@@ -192,10 +193,12 @@ function validWindow(window) {
 export function mountBoardOverlayIsland({ host, registerCleanup, snapshot, win = globalThis.window }) {
   const stopKeeping = keepOverlayWindows(win, validWindow);
   const stopCommands = registerCommandProvider('overlay-windows', buildOverlayBulkCommands);
-  render(html`<${BoardOverlay} snapshot=${snapshot} />`, host);
+  const stopExposeKey = installOverlayExposeKey(win);
+  render(html`<${BoardOverlay} snapshot=${snapshot} win=${win} />`, host);
   registerCleanup(() => {
     render(null, host);
     stopCommands();
+    stopExposeKey();
     stopKeeping();
     overlayStackReset();
   });

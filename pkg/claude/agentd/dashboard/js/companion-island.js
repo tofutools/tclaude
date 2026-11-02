@@ -47,6 +47,7 @@ import { CompanionViewChannel } from './companion-view-channel.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
 import { openAccessPanel, requestStewardSummon, resumeAgent } from './companion-approval.js';
 import { hasShownOverlay } from './overlay-stack.js';
+import { overlayExposeOpen } from './overlay-expose.js';
 import { isComposeMessageShortcut } from './terminal-interactions.js';
 import { useAnnotation, useDictation } from './dictation-tools.js';
 import { registerStewardDoor } from './voice-wake.js';
@@ -664,6 +665,8 @@ export function CompanionApp({
   // terminal: capture phase, before xterm sees the key.
   useEffect(() => {
     const onKey = (event) => {
+      // Show all windows covers the companion's window and marks: Escape first.
+      if (overlayExposeOpen.peek()) return;
       if (event.ctrlKey && !event.altKey && !event.metaKey && event.key === '.') {
         event.preventDefault();
         event.stopPropagation();
