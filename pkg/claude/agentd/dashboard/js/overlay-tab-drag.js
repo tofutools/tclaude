@@ -15,6 +15,9 @@ const TEAR_OFF_PX = 40;
 // the tabs there without it. Otherwise null.
 export const tabDropTarget = signal(null);
 
+// The tab following the pointer: { label, x, y }. Otherwise null.
+export const tabGhost = signal(null);
+
 const windowOf = (element) => element.closest?.('section')?.querySelector?.('[data-tab-strip]')?.dataset?.tabStrip || '';
 
 // The strip of the title bar under a point, if the window on top there has one.
@@ -57,14 +60,6 @@ export function tabJoin(win, tabId, windowId) {
   return { over, drop, cancel: () => aim(null) };
 }
 
-function ghostOf(doc, node) {
-  const ghost = doc.createElement('div');
-  ghost.className = 'overlay-tab-ghost';
-  ghost.textContent = node.textContent.replace(/×\s*$/, '').trim();
-  doc.body.appendChild(ghost);
-  return ghost;
-}
-
 // startTabDrag follows a press on a tab. Anything shorter than a drag stays a
 // click, and Escape or a cancelled pointer leaves everything where it was. A
 // finger swiping along a strip too full to show every tab scrolls it instead,
@@ -75,7 +70,7 @@ export function startTabDrag(event, tabId, win) {
   const strip = node.closest?.('[data-tab-strip]');
   const { pointerId, clientX: sx, clientY: sy } = event;
   const scrolledFrom = strip?.scrollLeft;
-  let ghost = null;
+  let dragging = false;
   let swiping = false;
   const point = (m) => ({ x: m.clientX, y: m.clientY });
   const stop = () => {
@@ -83,14 +78,14 @@ export function startTabDrag(event, tabId, win) {
     win?.removeEventListener?.('pointerup', up);
     win?.removeEventListener?.('pointercancel', cancel);
     win?.removeEventListener?.('keydown', onKey, true);
-    ghost?.remove?.();
+    tabGhost.value = null;
     aim(null);
   };
   const move = (m) => {
     if (m.pointerId !== pointerId) return;
     const dx = m.clientX - sx;
     const dy = m.clientY - sy;
-    if (!ghost && !swiping) {
+    if (!dragging && !swiping) {
       if (Math.hypot(dx, dy) < DRAG_START_PX) return;
       swiping = m.pointerType === 'touch' && Math.abs(dx) > Math.abs(dy) && strip?.scrollWidth > strip?.clientWidth;
     }
@@ -98,17 +93,16 @@ export function startTabDrag(event, tabId, win) {
       strip.scrollLeft = scrolledFrom - dx;
       return;
     }
-    if (!ghost) {
-      ghost = ghostOf(doc, node);
+    if (!dragging) {
+      dragging = true;
       node.closest?.('[data-tab-id]')?.classList?.add?.('dragging');
     }
-    ghost.style.left = `${m.clientX + 8}px`;
-    ghost.style.top = `${m.clientY + 8}px`;
+    tabGhost.value = { label: node.textContent.trim(), x: m.clientX + 8, y: m.clientY + 8 };
     aim(targetAt(doc, point(m), tabId));
   };
   const up = (u) => {
     if (u.pointerId !== pointerId) return;
-    const dragged = !!ghost;
+    const dragged = dragging;
     const target = dragged ? targetAt(doc, point(u), tabId) : null;
     const pressHeld = !dragged && !swiping;
     const rect = strip?.getBoundingClientRect?.();
@@ -128,7 +122,7 @@ export function startTabDrag(event, tabId, win) {
     stop();
   };
   const onKey = (key) => {
-    if (key.key !== 'Escape' || !ghost) return;
+    if (key.key !== 'Escape' || !dragging) return;
     key.preventDefault();
     key.stopImmediatePropagation();
     node.closest?.('[data-tab-id]')?.classList?.remove?.('dragging');

@@ -34,6 +34,7 @@ import { elementScreenPoint } from './terminal-drag-out.js';
 import { OverlayWindow, raiseOverlayWindow, readPref, reducedMotion, useOverlayWindow, writePref } from './overlay-window.js';
 import { closeOverlayTab, focusOverlayWindow, openOverlayWindow, overlayHostUp, overlayTabs, overlayWindows, raiseOverlayTab } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND, chatWindowId } from './chat-window-model.js';
+import { OverlayTabGhost } from './overlay-tab-strip.js';
 import { OverlayTabWindow } from './overlay-tab-window.js';
 import { BOARD_WINDOW_KIND } from './board-overlay-state.js';
 import { TERMINAL_WINDOW_KIND } from './terminal-window-model.js';
@@ -1501,6 +1502,7 @@ export function CompanionApp({
 
   return html`
     ${overlayWindows.value.map((window) => html`<${OverlayTabWindow} key=${window.id} window=${window} snapshot=${snapshot} prefs=${prefs} win=${win} kinds=${tabKinds} />`)}
+    <${OverlayTabGhost} />
     ${windowView}
     ${chipSlots}
     ${chips}

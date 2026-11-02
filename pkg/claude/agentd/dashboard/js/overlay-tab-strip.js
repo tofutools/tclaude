@@ -7,9 +7,15 @@ import { h } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { activateOverlayTab, minimizeOverlayTab } from './overlay-instances.js';
-import { startTabDrag, tabDropTarget } from './overlay-tab-drag.js';
+import { startTabDrag, tabDropTarget, tabGhost } from './overlay-tab-drag.js';
 
 const html = htm.bind(h);
+
+// The tab in flight. It stands apart from the strips, as it outlives leaving one.
+export function OverlayTabGhost() {
+  const ghost = tabGhost.value;
+  return ghost && html`<div class="overlay-tab-ghost" style=${{ left: `${ghost.x}px`, top: `${ghost.y}px` }}>${ghost.label}</div>`;
+}
 
 export function OverlayTabStrip({ window, overlay, win, viewOf }) {
   const target = tabDropTarget.value?.windowId === window.id ? tabDropTarget.value : null;
