@@ -448,10 +448,12 @@ body.hide-costs .mux-cost-toggle { display: none; }
 .mux-terminal-disconnect-status { margin: 0; font-size: 13px; color: #7d8590; }
 /* The header Reconnect is small and far from the curtain's focal point; this
    is the same action placed where the eye already is. */
-.mux-terminal-disconnect-reconnect:where(:not(.ui-btn)) {
+.mux-terminal-disconnect-reconnect, .ui-btn.mux-terminal-disconnect-reconnect {
   display: inline-flex; align-items: center; gap: 8px;
   margin: 4px 0 14px; padding: 9px 22px;
   font: inherit; font-size: 15px; font-weight: 600;
+}
+.mux-terminal-disconnect-reconnect:where(:not(.ui-btn)) {
   color: #fff; background: #238636; border: 1px solid #2ea043; border-radius: 6px;
   cursor: pointer;
 }

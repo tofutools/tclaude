@@ -108,11 +108,12 @@ body.slop, body.vegas {
   display: flex; flex-direction: column; padding: 4px; border-radius: 8px;
   border: 1px solid var(--board-line); background: var(--board-bar); box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
 }
-.board-invite-menu button {
-  text-align: left; border: 0; border-radius: 5px; padding: 6px 10px; background: transparent;
+.board-invite-menu button { text-align: left; }
+.board-invite-menu button:where(:not(.ui-menu-item)) {
+  border: 0; border-radius: 5px; padding: 6px 10px; background: transparent;
   color: var(--board-text); font: inherit; font-size: 12px; cursor: pointer;
 }
-.board-invite-menu button:hover, .board-invite-menu button:focus-visible { background: #1f6feb33; outline: none; }
+.board-invite-menu button:where(:not(.ui-menu-item)):hover, .board-invite-menu button:where(:not(.ui-menu-item)):focus-visible { background: #1f6feb33; outline: none; }
 .board-invite-empty { padding: 8px 10px; color: var(--board-muted); font-size: 12px; max-width: 260px; }
 
 .board-toolbar {

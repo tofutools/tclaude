@@ -321,13 +321,13 @@ body.dock-open .open-prs.is-open::before {
   background: #0d1117; color: #c9d1d9; font: inherit; font-size: 11px;
 }
 .open-prs-add-form input:focus-visible { outline: 2px solid #58a6ff; outline-offset: 0; }
-.open-prs-add-form button {
+.open-prs-add-form button:where(:not(.ui-btn)) {
   padding: 2px 8px; border: 1px solid #303946; border-radius: 6px; background: transparent;
   color: #8b949e; cursor: pointer; font-size: 10.5px;
 }
 .open-prs-add-form .open-prs-add-ok:where(:not(.ui-btn)) { border-color: #385b81; background: #172a40; color: #c9d1d9; }
-.open-prs-add-form button:disabled { opacity: 0.5; cursor: default; }
-.open-prs-add-form button:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.open-prs-add-form button:where(:not(.ui-btn)):disabled { opacity: 0.5; cursor: default; }
+.open-prs-add-form button:where(:not(.ui-btn)):focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .open-prs-stale { margin: 0; padding: 6px 13px; border-bottom: 1px solid #222b35; color: #d29922; font-size: 10.5px; }
 .open-prs-people-error { flex-basis: 100%; margin: 0 0 6px; color: #f85149; font-size: 10.5px; text-align: right; }
 /* The ignore confirmation covers the popover (its positioned ancestor). */
@@ -347,13 +347,11 @@ body.dock-open .open-prs.is-open::before {
 .open-prs-confirm-durations label { display: inline-flex; align-items: center; gap: 4px; color: #c9d1d9; cursor: pointer; }
 .open-prs-confirm-durations input { margin: 0; accent-color: #1f6feb; }
 .open-prs-confirm-buttons { display: flex; justify-content: flex-end; gap: 8px; }
-.open-prs-confirm-button:where(:not(.ui-btn))s button {
+.open-prs-confirm-buttons button:where(:not(.ui-btn)) {
   padding: 4px 12px; border: 1px solid #3a4654; border-radius: 6px; background: #21262d;
   color: #c9d1d9; cursor: pointer; font-size: 11.5px;
 }
-.open-prs-confirm-button:where(:not(.ui-btn))s button:hover { background: #30363d; }
-.open-prs-confirm-button:where(:not(.ui-btn))s button.confirm-danger { border-color: #f85149; background: #4d1d1d; color: #f85149; }
-.open-prs-confirm-button:where(:not(.ui-btn))s button.confirm-danger:hover { background: #f85149; color: #fff; }
+.open-prs-confirm-buttons button:where(:not(.ui-btn)):hover { background: #30363d; }
 .open-prs-confirm-buttons button:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 @media (max-width: 620px) {
   .open-prs-popover, .open-prs.is-open::before { right: 8px; width: calc(100vw - 16px); }

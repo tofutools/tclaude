@@ -146,11 +146,11 @@ body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: c
 .companion-tab .companion-avatar { width: 16px; height: 16px; font-size: 9px; }
 .companion-tab-close { background: none; border: 0; color: var(--cmp-muted); cursor: pointer; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
 .companion-tab-close:hover { color: var(--cmp-text); background: #21262d; }
-.companion-add, .companion-controls button {
+.companion-add, .companion-controls button:where(:not(.ui-btn, .ui-menu-item)) {
   flex: none; width: 26px; height: 26px; border-radius: 6px; background: none; border: 0;
   color: var(--cmp-muted); cursor: pointer; font-size: 14px; display: inline-grid; place-items: center;
 }
-.companion-add:hover, .companion-controls button:hover { background: #21262d; color: var(--cmp-text); }
+.companion-add:hover, .companion-controls button:where(:not(.ui-btn, .ui-menu-item)):hover { background: #21262d; color: var(--cmp-text); }
 .companion-controls { display: flex; gap: 2px; margin-left: 4px; }
 .companion-controls .companion-steward-sudo { width: auto; padding: 0 5px; font-size: 11px; }
 .companion-controls .companion-steward-roster { width: auto; padding: 0 5px; font-size: 11px; white-space: nowrap; }
@@ -176,8 +176,8 @@ body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: c
 .companion-cog-glyph { width: 16px; text-align: center; flex: 0 0 auto; }
 .companion-cog-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .companion-cog-hint { color: var(--cmp-muted); font-size: 11px; }
-.companion-controls button:disabled { opacity: 0.45; cursor: not-allowed; }
-.companion-controls button:disabled:hover { background: none; color: var(--cmp-muted); }
+.companion-controls button:where(:not(.ui-btn, .ui-menu-item)):disabled { opacity: 0.45; cursor: not-allowed; }
+.companion-controls button:where(:not(.ui-btn, .ui-menu-item)):disabled:hover { background: none; color: var(--cmp-muted); }
 
 /* Window controls. They sit outside .companion-controls so nothing there can
    push them off the bar. Tool popovers forbid clipping the tools, so a window
@@ -188,11 +188,11 @@ body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: c
   background: var(--cmp-bar); border: 1px solid var(--cmp-edge); border-radius: 8px;
   box-shadow: 0 12px 28px rgba(0, 0, 0, .55); padding: 6px; display: flex; flex-direction: column; gap: 6px;
 }
-.companion-menu button {
-  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 6px 8px;
-  background: none; border: 0; border-radius: 6px; color: var(--cmp-text); font: inherit; font-size: 12px; cursor: pointer;
+.companion-menu button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; }
+.companion-menu button:where(:not(.ui-menu-item)) {
+  padding: 6px 8px; background: none; border: 0; border-radius: 6px; color: var(--cmp-text); font: inherit; font-size: 12px; cursor: pointer;
 }
-.companion-menu button:hover, .companion-menu button:focus-visible { background: #21262d; outline: none; }
+.companion-menu button:where(:not(.ui-menu-item)):hover, .companion-menu button:where(:not(.ui-menu-item)):focus-visible { background: #21262d; outline: none; }
 .companion-menu-steward small { display: block; color: var(--cmp-muted); font-size: 11px; margin-top: 1px; }
 .companion-menu-filter {
   background: var(--cmp-bg); border: 1px solid var(--cmp-line); border-radius: 6px; color: var(--cmp-text);
@@ -212,10 +212,11 @@ body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: c
 }
 .companion-elevated-text { display: flex; flex-wrap: wrap; gap: 2px 10px; flex: 1; min-width: 0; max-height: 72px; overflow-y: auto; }
 .companion-elevated code { font-size: 11.5px; }
-.companion-elevated button {
-  flex: none; background: #da3633; border: 0; border-radius: 6px; color: #fff; cursor: pointer; font: inherit; padding: 3px 10px;
+.companion-elevated button { flex: none; }
+.companion-elevated button:where(:not(.ui-btn)) {
+  background: #da3633; border: 0; border-radius: 6px; color: #fff; cursor: pointer; font: inherit; padding: 3px 10px;
 }
-.companion-elevated button:disabled { opacity: 0.6; cursor: default; }
+.companion-elevated button:where(:not(.ui-btn)):disabled { opacity: 0.6; cursor: default; }
 .companion-needs-bar {
   flex: none; padding: 4px 10px; font-size: 12px; color: #1b1300; background: var(--cmp-amber);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
