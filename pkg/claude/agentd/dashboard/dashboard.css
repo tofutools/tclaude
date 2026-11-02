@@ -10629,7 +10629,7 @@ body.wizard nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #f
   color: #c9d1d9; padding: 6px 12px; cursor: pointer; font: inherit;
   text-decoration: none;
 }
-.process-subtab:hover, .process-action:where(:not(.ui-btn)):hover { background: #21262d; border-color: #484f58; }
+.process-subtab:hover, .process-action:where(:not(.ui-btn)):hover { background: var(--ui-bg-hover); }
 .process-subtab.active { color: #fff; background: #1f6feb; border-color: #388bfd; }
 .process-action:where(:not(.ui-btn)).primary { color: #fff; background: #238636; border-color: #2ea043; }
 .process-action:where(:not(.ui-btn)).primary:hover { background: #2ea043; }
@@ -18822,7 +18822,7 @@ body.wizard .process-editor .process-inspector-input {
   color: #f1e8ff;
   border-color: #4a3d6b;
 }
-body.wizard .process-editor .process-action:where(:not(.ui-btn)):hover,
+body.wizard .process-editor .process-action:where(:not(.ui-btn)):hover { background: #3a2a63; }
 body.wizard .process-editor .process-inspector-input:focus { border-color: #d4af37; }
 body.wizard .process-editor .process-action:where(:not(.ui-btn)).primary { background: #6d4aa2; border-color: #d4af37; }
 body.wizard .process-editor .process-layout-direction:where(:not(.ui-btn)).is-active { background: #4a3270; border-color: #d4af37; color: #ffe9a8; }
