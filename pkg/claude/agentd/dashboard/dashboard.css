@@ -11660,7 +11660,7 @@ body.wizard .open-prs-head strong {
   letter-spacing: 0.4px;
 }
 body.wizard .open-prs-age,
-body.wizard .open-pr-meta,
+body.wizard .open-pr-meta { color: #9a86c4; }
 body.wizard .open-prs-filters button { border-color: #4a3d6b; color: #b39ddb; }
 body.wizard .open-prs-filters button:hover { color: #e7d9f5; background: #3a2a63; }
 body.wizard .open-prs-filters button.active {
@@ -12853,7 +12853,7 @@ body.wizard #message-create-modal .cleanup-list {
 body.wizard #message-create-modal .cleanup-row { border-bottom-color: #241b3d; }
 body.wizard #message-create-modal .cleanup-row .title { color: #f3e6c0; }
 body.wizard #message-create-modal .cleanup-row .id,
-body.wizard #message-create-modal .cleanup-badge,
+body.wizard #message-create-modal .cleanup-badge { color: #b39ddb; }
 body.wizard #message-create-modal .cleanup-badge { border-color: #3a2a63; }
 body.wizard #message-create-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 body.wizard #message-create-modal #message-create-submit {
@@ -13610,7 +13610,7 @@ body.wizard #retire-preview-modal .delete-agent-wt input[type=checkbox] {
 }
 body.wizard #retire-preview-modal .cleanup-row .title { color: #f3e6c0; }
 body.wizard #retire-preview-modal .cleanup-row .id,
-body.wizard #retire-preview-modal .cleanup-row .meta,
+body.wizard #retire-preview-modal .cleanup-row .meta { color: #b39ddb; }
 /* Candidate status/class badges get wizard chrome. Result rows have no label,
    so their semantic green/amber/red outcome palette remains authoritative. */
 body.wizard #retire-preview-modal .cleanup-row label .cleanup-badge {
@@ -13687,7 +13687,7 @@ body.wizard #delete-retired-modal .delete-agent-wt input[type=checkbox] {
 body.wizard #delete-retired-modal .cleanup-row .title { color: #f3e6c0; }
 body.wizard #delete-retired-modal .cleanup-row .id,
 body.wizard #delete-retired-modal .cleanup-row .meta,
-body.wizard #delete-retired-modal .cleanup-row .seen,
+body.wizard #delete-retired-modal .cleanup-row .seen { color: #b39ddb; }
 body.wizard #delete-retired-modal .cleanup-badge {
   background: #1c1436;
 }
@@ -13760,7 +13760,7 @@ body.wizard #worktree-cleanup-modal .cleanup-list {
 }
 body.wizard #worktree-cleanup-modal .cleanup-row { border-bottom-color: #241b3d; }
 body.wizard #worktree-cleanup-modal .cleanup-row .branch { color: #e7d9f5; }
-body.wizard #worktree-cleanup-modal .cleanup-row .path,
+body.wizard #worktree-cleanup-modal .cleanup-row .path { color: #b39ddb; }
 body.wizard #worktree-cleanup-modal .cleanup-badge { border-color: #3a2a63; }
 body.wizard #worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn))[aria-pressed="true"] {
   background: #3a2a63; border-color: #f3e6c0; color: #f3e6c0;

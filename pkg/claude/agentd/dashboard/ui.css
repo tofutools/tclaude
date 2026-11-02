@@ -318,5 +318,9 @@ label:has(> input:disabled) { cursor: not-allowed !important; }
      .ui-empty-block  the whole content of a list or panel: padded, centred
    An area keeps its own class only for placement (a margin, a grid column),
    never for the text's colour, size or style; skins recolour --ui-muted. */
-.ui-empty, .ui-empty-block { margin: 0; color: var(--ui-muted); font-size: 12px; font-style: italic; }
-.ui-empty-block { display: block; padding: 14px 12px; text-align: center; }
+/* Box metrics are :where() (no specificity), so an area's placement class
+   (a margin, a grid column) wins although this sheet loads last. */
+:where(.ui-empty, .ui-empty-block) { margin: 0; }
+:where(.ui-empty-block) { display: block; padding: 14px 12px; }
+.ui-empty, .ui-empty-block { color: var(--ui-muted); font-size: 12px; font-style: italic; }
+.ui-empty-block { text-align: center; }
