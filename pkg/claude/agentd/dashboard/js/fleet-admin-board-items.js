@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { BundleInspectDialog } from './fleet-admin-bundle.js';
 
@@ -117,7 +117,7 @@ export function PublishDialog({ board, item, actions, confirm, onClose, onDone }
     <div class="fa-grant-form">${POSTABLE.map((s) => html`<label key=${s}><input type="checkbox" data-section=${s} checked=${sections.includes(s)}
       onChange=${(e) => setSections(e.currentTarget.checked ? [...sections, s] : sections.filter((x) => x !== s))} /> ${s}</label>`)}</div>
     <label class="fa-of-row"><span class="fa-k">or only</span><input id="fleet-board-publish-only" value=${named} placeholder="roles/reviewer, profiles/fast, skills/demo-recording" autocomplete="off" spellcheck="false" onInput=${(e) => setNamed(e.currentTarget.value)} /></label>
-    ${only.some((x) => x.startsWith('skills/')) && html`<label class="fa-of-row"><span class="fa-k">skill source</span><select id="fleet-board-skill-source" value=${skillRoot} onChange=${(e) => setSkillRoot(e.currentTarget.value)}><option value="">find in local roots (unique name)</option><option value="claude">Claude Code</option><option value="agents">Codex shared (.agents)</option><option value="codex">Codex home</option></select></label><div class="fa-warn">Post one skills/NAME directory. Skill instructions and scripts are shared as written; suspected credentials are refused.</div>`}
+    ${only.some((x) => x.startsWith('skills/')) && html`<label class="fa-of-row"><span class="fa-k">skill source</span><${Select} size="sm" id="fleet-board-skill-source" value=${skillRoot} onChange=${(e) => setSkillRoot(e.currentTarget.value)}><option value="">find in local roots (unique name)</option><option value="claude">Claude Code</option><option value="agents">Codex shared (.agents)</option><option value="codex">Codex home</option><//></label><div class="fa-warn">Post one skills/NAME directory. Skill instructions and scripts are shared as written; suspected credentials are refused.</div>`}
     ${prefilled && html`<div class="muted" id="fleet-board-publish-prefilled">Prefilled with the items version ${short(prefilled)} shares; this node's current config for them is posted. To share a whole section again, including items added since, tick it.</div>`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation boards publish --board ${board.id} --name … --only roles/NAME${item ? ` --item ${item.id} --parent ${item.latest_version}` : ''}</code></div>
@@ -152,9 +152,9 @@ function RepostDialog({ board, boards, item, version, by, actions, confirm, onCl
   return html`<${Overlay} id="fleet-board-repost" labelledby="fleet-board-repost-title" onClose=${onClose}>
     <h3 id="fleet-board-repost-title">Post ${item.name} to another board</h3>
     <div class="muted">Version ${short(version)}, from ${board.name}, by ${by}. Posted unchanged; to change it, post your own config instead.</div>
-    <label class="fa-of-row"><span class="fa-k">board</span><select id="fleet-board-repost-dest" value=${dest} onChange=${(e) => setDest(e.currentTarget.value)}>
+    <label class="fa-of-row"><span class="fa-k">board</span><${Select} size="sm" id="fleet-board-repost-dest" value=${dest} onChange=${(e) => setDest(e.currentTarget.value)}>
       <option value="">pick a board…</option>
-      ${targets.map((b) => html`<option key=${b.id} value=${b.id} selected=${dest === b.id}>${b.name}</option>`)}</select></label>
+      ${targets.map((b) => html`<option key=${b.id} value=${b.id} selected=${dest === b.id}>${b.name}</option>`)}<//></label>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation boards publish --board ${dest || 'DEST'} --from-board ${board.id} --from-item ${item.id} --from-version ${version}</code></div>
     <div class="modal-buttons"><span class="spacer"></span>
@@ -268,9 +268,9 @@ function VersionsDialog({ board, item, name, actions, confirm, toast, onOpen, on
         <td><code title=${v.version}>${short(v.version)}</code>${v.version === item.pinned_version ? html` <span class="fa-badge">kept</span>` : ''}${v.version === item.latest_version ? html` <span class="muted">latest</span>` : ''}</td>
         <td>${v.invalid ? html`<span class="fa-danger">${v.error || 'invalid'}</span>` : postedBy(v, name)}</td>
         <td>${size(v.bytes)}</td>
-        <td class="fa-acts">${!v.invalid && html`<button type="button" data-version-act="open" onClick=${() => onOpen(v)}>Open…</button>
-          ${v.version !== item.pinned_version && html`<button type="button" data-version-act="pin" onClick=${() => pin(v)}>Keep…</button>`}
-          ${onRepost && html`<button type="button" data-version-act="repost" onClick=${() => onRepost(v)}>Post to…</button>`}`}</td>
+        <td class="fa-acts">${!v.invalid && html`<${Button} size="sm" data-version-act="open" onClick=${() => onOpen(v)}>Open…<//>
+          ${v.version !== item.pinned_version && html`<${Button} size="sm" data-version-act="pin" onClick=${() => pin(v)}>Keep…<//>`}
+          ${onRepost && html`<${Button} size="sm" data-version-act="repost" onClick=${() => onRepost(v)}>Post to…<//>`}`}</td>
       </tr>`)}</tbody></table>`}
     <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${onClose}>Close</${Button}></div>
   </${Overlay}>`;
@@ -304,7 +304,7 @@ export function BoardItems({ board, boards = [], name, actions, confirm, toast, 
   };
   return html`<div class="fa-board-items" id="fleet-board-items">
     <div class="fa-row"><b>Shared config</b><span class="spacer"></span>
-      ${poster && html`<button type="button" id="fleet-board-post" onClick=${() => setDialog({ kind: 'publish' })}>Post config…</button>`}</div>
+      ${poster && html`<${Button} size="sm" id="fleet-board-post" onClick=${() => setDialog({ kind: 'publish' })}>Post config…<//>`}</div>
     ${items?.error ? html`<div class="fa-danger">${items.error}</div>` : !items ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted" id="fleet-board-items-empty">Nothing posted yet.</div>` : html`<table class="fa-table" id="fleet-board-item-list">
       <thead><tr><th>Item</th><th>Posted by</th><th>Size</th><th></th></tr></thead>
       <tbody>${list.map((it) => it.invalid ? html`<tr key=${`${it.id}/${it.version}`} data-item-id=${it.id} class="fa-invalid">
@@ -314,10 +314,10 @@ export function BoardItems({ board, boards = [], name, actions, confirm, toast, 
           <td>${postedBy(it, name)}</td>
           <td>${size(it.bytes)}</td>
           <td class="fa-acts">
-            <button type="button" data-item-act="open" onClick=${() => open(it, it.latest_version || it.version)}>Open…</button>
-            <button type="button" data-item-act="versions" onClick=${() => setDialog({ kind: 'versions', item: it })}>Versions…</button>
-            ${poster && html`<button type="button" data-item-act="update" onClick=${() => setDialog({ kind: 'publish', item: it })}>New version…</button>`}
-            ${reposter && html`<button type="button" data-item-act="repost" title="Post this item, unchanged, to another board you can post to" onClick=${() => setDialog({ kind: 'repost', item: it, version: it.latest_version || it.version })}>Post to…</button>`}
+            <${Button} size="sm" data-item-act="open" onClick=${() => open(it, it.latest_version || it.version)}>Open…<//>
+            <${Button} size="sm" data-item-act="versions" onClick=${() => setDialog({ kind: 'versions', item: it })}>Versions…<//>
+            ${poster && html`<${Button} size="sm" data-item-act="update" onClick=${() => setDialog({ kind: 'publish', item: it })}>New version…<//>`}
+            ${reposter && html`<${Button} size="sm" data-item-act="repost" title="Post this item, unchanged, to another board you can post to" onClick=${() => setDialog({ kind: 'repost', item: it, version: it.latest_version || it.version })}>Post to…<//>`}
           </td></tr>`)}</tbody></table>`}
     ${d?.kind === 'publish' && html`<${PublishDialog} board=${board} item=${d.item} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${d?.kind === 'versions' && html`<${VersionsDialog} board=${board} item=${d.item} name=${name} actions=${actions} confirm=${confirm} toast=${toast} onOpen=${(v) => open(withVersion(d.item, v), v.version)}

@@ -2,6 +2,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { SCRIPT_MAX_BYTES, TIMEOUT_DEFAULT_S, TIMEOUT_MAX_S, runActive, runOK, scriptBytes } from './fleet-run-actions.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -141,12 +142,12 @@ function Settings({ actions, confirm, toast }) {
   return html`<div class="fa-run-settings" id="fleet-run-settings">
     <span class="fa-k">This node</span>
     <span class=${on ? 'fa-warn' : 'muted'}>${on ? '⚠ accepts remote scripts from peers with node.exec' : 'does not accept remote scripts'}</span>
-    <button id="fleet-run-accept" type="button" class=${on ? '' : 'fa-danger'} onClick=${toggle}>${on ? 'Stop accepting…' : 'Accept remote scripts…'}</button>
+    <${Button} size="sm" id="fleet-run-accept" variant=${on ? '' : 'danger'} onClick=${toggle}>${on ? 'Stop accepting…' : 'Accept remote scripts…'}<//>
     <span class="fa-k">Limits</span>
     <label>memory <input id="fleet-run-memory" size="6" value=${memory} placeholder="none" onInput=${(e) => setMemory(e.currentTarget.value)} /></label>
     <label>cpu <input id="fleet-run-cpu" size="4" value=${cpu} placeholder="none" onInput=${(e) => setCpu(e.currentTarget.value)} /></label>
     <label>processes <input id="fleet-run-pids" size="5" value=${pids} placeholder="none" onInput=${(e) => setPids(e.currentTarget.value)} /></label>
-    <button id="fleet-run-limits" type="button" onClick=${saveLimits}>Save limits</button>
+    <${Button} size="sm" id="fleet-run-limits" onClick=${saveLimits}>Save limits<//>
   </div>`;
 }
 
@@ -158,10 +159,10 @@ function LogView({ node, job, actions }) {
       .catch((e) => setLog({ stream, text: '', error: errText(e) }));
   };
   return html`<span class="fa-run-logs">
-    <button type="button" class="fa-link" data-fa="log-stdout" onClick=${() => load('stdout')}>full stdout</button>
-    <button type="button" class="fa-link" data-fa="log-stderr" onClick=${() => load('stderr')}>full stderr</button>
+    <${Button} size="sm" variant="link" class="fa-link" data-fa="log-stdout" onClick=${() => load('stdout')}>full stdout<//>
+    <${Button} size="sm" variant="link" class="fa-link" data-fa="log-stderr" onClick=${() => load('stderr')}>full stderr<//>
     ${log && html`<div class="fa-run-full">
-      <div class="muted">${log.stream}${log.error ? ` — ${log.error}` : log.text == null ? ' — loading…' : ''} <button type="button" class="fa-link" onClick=${() => setLog(null)}>hide</button></div>
+      <div class="muted">${log.stream}${log.error ? ` — ${log.error}` : log.text == null ? ' — loading…' : ''} <${Button} size="sm" variant="link" class="fa-link" onClick=${() => setLog(null)}>hide<//></div>
       ${log.text != null && !log.error && html`<pre class="fa-run-out">${log.text || '(empty)'}</pre>`}
     </div>`}
   </span>`;
@@ -293,15 +294,15 @@ export function RunPage({ view, actions, confirm, toast, timers = globalThis, pr
       ${nodes.map((n) => { const r = readiness(n, probes[n.id]); return html`<label key=${n.id} class=${r.ok ? '' : 'muted'} data-node=${n.id}>
         <input type="checkbox" disabled=${!r.ok} checked=${picked.has(n.id) && r.ok} onChange=${() => toggle(n.id)} />
         ${n.local ? '⌂ ' : n.hub ? '⬡ ' : ''}${n.label} <span class="muted">${r.text}</span></label>`; })}
-      <button id="fleet-run-all" type="button" class="fa-link" onClick=${allOnline}>all online</button>
+      <${Button} size="sm" variant="link" id="fleet-run-all" class="fa-link" onClick=${allOnline}>all online<//>
     </div>
     <textarea id="fleet-run-script" class="fa-run-script" rows="8" spellcheck="false" placeholder="#!/bin/sh — runs with /bin/sh in the tclaude user's home directory" value=${script} onInput=${(e) => setScript(e.currentTarget.value)}></textarea>
     <div class="fa-run-bar">
       <span class=${bytes > maxBytes ? 'fa-danger' : 'muted'}>${bytes} / ${maxBytes} bytes</span>
       <label><span class="fa-k">Timeout</span> <input id="fleet-run-timeout" size="6" value=${timeout} onInput=${(e) => setTimeoutS(e.currentTarget.value)} /> s</label>
       ${!timeoutOK && html`<span class="fa-danger">1–${maxTimeout} s${maxTimeout < TIMEOUT_MAX_S ? ' (hub limit)' : ''}</span>`}
-      <button id="fleet-run-submit" type="button" class="primary" disabled=${!canRun} onClick=${run}>Run on ${chosen.length} node${chosen.length === 1 ? '' : 's'}…</button>
-      ${failed.length > 0 && !anyActive && html`<button id="fleet-run-rerun" type="button" onClick=${rerun}>Re-run on ${failed.length} failed…</button>`}
+      <${Button} size="sm" variant="primary" id="fleet-run-submit" disabled=${!canRun} onClick=${run}>Run on ${chosen.length} node${chosen.length === 1 ? '' : 's'}…<//>
+      ${failed.length > 0 && !anyActive && html`<${Button} size="sm" id="fleet-run-rerun" onClick=${rerun}>Re-run on ${failed.length} failed…<//>`}
     </div>
     ${Object.keys(runs).length > 0 && html`<div class="fa-run-results" id="fleet-run-results">
       ${nodes.filter((n) => runs[n.id]).map((n) => html`<${ResultPane} key=${n.id} node=${n} entry=${runs[n.id]} actions=${actions} />`)}
