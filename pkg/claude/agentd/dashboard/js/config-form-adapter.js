@@ -649,6 +649,7 @@ function populateConfigForm(cfg) {
   setSelectValue($('#cfg-steward-reads'), (cfg.steward || {}).reads || 'operator');
   setSelectValue($('#cfg-steward-writes'), (cfg.steward || {}).writes || 'messaging');
   setSelectValue($('#cfg-steward-source-download'), (cfg.steward || {}).source_download || 'ask');
+  $('#cfg-steward-external-enabled').checked = !!(cfg.steward || {}).external_enabled;
   $('#cfg-steward-name').value = (cfg.steward || {}).name || '';
   $('#cfg-steward-startup-prompt').value = (cfg.steward || {}).startup_prompt || '';
 
@@ -1078,6 +1079,7 @@ function assembleConfig() {
   if (stewardName) steward.name = stewardName; else delete steward.name;
   const stewardPrompt = controlValue($('#cfg-steward-startup-prompt')).trim();
   if (stewardPrompt) steward.startup_prompt = stewardPrompt; else delete steward.startup_prompt;
+  if ($('#cfg-steward-external-enabled').checked) steward.external_enabled = true; else delete steward.external_enabled;
   if (Object.keys(steward).length) cfg.steward = steward; else delete cfg.steward;
 
   // focus is an optional block. Clone the existing one so a future

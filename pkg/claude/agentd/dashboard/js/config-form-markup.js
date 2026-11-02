@@ -8,6 +8,7 @@ import { configLocation, configPanel, setConfigPanel } from './config-panel.js';
 import { FormFillBar } from './form-fill-bar.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { KnowledgeSourceRow } from './knowledge-source-island.js';
+import { ExternalStewardManager } from './config-external-stewards.js';
 import { StewardDefaultPermissions } from './steward-default-permissions.js';
 import { dashboardState } from './snapshot-store.js';
 import { DICTATED_MARKER } from './companion-model.js';
@@ -198,18 +199,18 @@ function Toggle({ id, label, onChange }) {
 }
 
 // What an assistant outside tclaude can do, shown before it is turned on. The
-// list comes from the daemon, so it is the list the MCP server offers.
-// Reading the signal here keeps a load from re-rendering the uncontrolled form.
+// list comes from the daemon, so it is the list the MCP server offers. The switch
+// is always rendered, because the config adapter binds to it on every load.
 function ExternalStewardGroup({ loads }) {
   const info = loads?.value?.external_steward;
-  if (!info?.tools?.length) return null;
   return html`<${Group} title="External stewards" lede=${html`An assistant you run yourself can act as a steward through
     <code>tclaude mcp serve</code>, using a credential only you can make. It can't answer permission questions, and it
     can never hold sudo.`}>
-    <${Setting} title="Status" k="steward.external_enabled"
-      summary=${info.enabled ? 'On. Credentials you made work.' : 'Off. No credential can be made or used.'}
-      more="Set steward.external_enabled in the config file to change this. Permissions decide each tool, and you can change them in the usual editor." />
-    <${Setting} title="What it can do" wide summary="These are all the tools it gets.">
+    <${Setting} title="Allow external stewards" forId="cfg-steward-external-enabled" k="steward.external_enabled"
+      summary="Off, no credential can be made or used. Check what it can do below before turning this on.">
+      <${Toggle} id="cfg-steward-external-enabled" />
+    </${Setting}>
+    ${info?.tools?.length > 0 && html`<${Setting} title="What it can do" wide summary="These are all the tools it gets.">
       <table class="cfg-tool-list">
         <thead><tr><th scope="col">Tool</th><th scope="col">What it does</th><th scope="col">Who decides</th></tr></thead>
         <tbody>${info.tools.map(tool => html`<tr key=${tool.name}>
@@ -218,7 +219,11 @@ function ExternalStewardGroup({ loads }) {
           <td>${tool.access}</td>
         </tr>`)}</tbody>
       </table>
-    </${Setting}>
+    </${Setting}>`}
+    ${info && html`<${Setting} title="Your external stewards" wide
+      summary="A credential is shown once and stored only as a hash. Renewing makes a new one, and the old ones keep working until they expire.">
+      <${ExternalStewardManager} enabled=${!!info.enabled} />
+    </${Setting}>`}
   </${Group}>`;
 }
 

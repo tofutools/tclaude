@@ -10125,6 +10125,14 @@ label.cfg-label { cursor: pointer; }
 .cfg-tool-list th { text-align: left; font-weight: 600; color: #8b949e; }
 .cfg-tool-list th, .cfg-tool-list td { padding: 6px 12px 6px 0; vertical-align: top; border-bottom: 1px solid var(--border); }
 .cfg-tool-list td code { overflow-wrap: anywhere; }
+.cfg-steward-manager { display: flex; flex-direction: column; gap: 10px; width: 100%; min-width: 0; }
+.cfg-steward-issued { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
+.cfg-steward-secret { display: block; padding: 6px 8px; font-size: 12px; overflow-wrap: anywhere; user-select: all; }
+.cfg-steward-row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.cfg-steward-add { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.cfg-steward-add input[type="number"] { width: 72px; }
+.cfg-steward-error { color: #f85149; font-size: 12px; }
+.status-dot-external { cursor: default; }
 .cfg-row-ctl .cfg-list { padding-left: 0; }
 .cfg-row-ctl .cfg-notif-types, .cfg-row-ctl .cfg-hint { padding-left: 0; }
 .cfg-row-ctl #ask-profile-state { flex-basis: 100%; text-align: right; }

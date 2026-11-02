@@ -1126,10 +1126,11 @@ test('Config lists an external steward\'s tools from the daemon, and nothing wit
   const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`);
   await harness.act(() => state.lifecycle.loaded({ raw: '{}' }));
   assert.equal(mounted.container.querySelector('.cfg-tool-list'), null);
+  assert.ok(mounted.container.querySelector('#cfg-steward-external-enabled'), 'the adapter binds to it on every load');
 
   await harness.act(() => state.lifecycle.loaded({
     raw: '{}',
-    external_steward: { enabled: false, tools: [
+    external_steward: { enabled: true, tools: [
       { name: 'whoami', description: 'Show its name.', access: 'Always available' },
       { name: 'notify_human', description: '<b>Tell</b> the human.', access: 'Needs human.notify' },
     ] },
@@ -1139,6 +1140,5 @@ test('Config lists an external steward\'s tools from the daemon, and nothing wit
   assert.match(rows[0].textContent, /whoami.*Always available/s);
   assert.match(rows[1].textContent, /human\.notify/);
   assert.equal(rows[1].querySelector('b'), null, 'descriptions are text');
-  assert.match(mounted.container.textContent, /Off\. No credential can be made or used\./);
   await mounted.unmount();
 });

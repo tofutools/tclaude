@@ -1937,6 +1937,8 @@ type dashboardMember struct {
 	// column) — see tags.go.
 	tagsView
 	Online bool `json:"online"`
+	// ExternalSteward — see dashboardAgent.ExternalSteward.
+	ExternalSteward bool `json:"external_steward,omitempty"`
 	// Waking marks a resume in flight for this conversation: offline on the
 	// wire, but seconds from either online or a failure toast. The UI renders
 	// it as a pulsing dot + "waking…" pill instead of a dead offline row.
@@ -1972,6 +1974,9 @@ type dashboardAgent struct {
 	// column) — see tags.go.
 	tagsView
 	Online bool `json:"online"`
+	// ExternalSteward marks an assistant running outside tclaude. It has no pane
+	// and tclaude can't start it, so it is never online and has no resume.
+	ExternalSteward bool `json:"external_steward,omitempty"`
 	// Waking — see dashboardMember.Waking.
 	Waking      bool       `json:"waking,omitempty"`
 	State       agentState `json:"state"`
@@ -3412,6 +3417,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			Online:            b.Online,
 			Waking:            !b.Online && isConvWaking(convID),
 			State:             b.State,
+			ExternalSteward:   db.IsExternalStewardConv(convID),
 			// init non-nil so JSON serializes [] not null;
 			// the dashboard's JS does .length / .map without a guard.
 			Groups:          []string{},
@@ -3657,6 +3663,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				tagsView:           tagsFor(b.AgentID),
 				Online:             online,
 				Waking:             !b.Online && isConvWaking(m.ConvID),
+				ExternalSteward:    db.IsExternalStewardConv(m.ConvID),
 				Owner:              ownerSet[m.ConvID],
 				State:              b.State,
 				Notify:             notifyPrefs[m.ConvID],
@@ -3703,6 +3710,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				Title:              b.Title,
 				CreatedAt:          b.Created,
 				Role:               "owner",
+				ExternalSteward:    db.IsExternalStewardConv(ownerConv),
 				agentLocationView:  b.Loc,
 				repoLinksView:      ownerLinks,
 				taskRefView:        taskRefFor(b.AgentID),
@@ -3854,6 +3862,16 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	span.addDuration("codex_telemetry", rc.codexTelemetryTiming.total)
 	span.addChildren("codex_telemetry", rc.codexTelemetryTiming.perfPhases()...)
 	span.markExcluding("roster", rc.codexTelemetryTiming.total-codexAfterGroups)
+
+	// It has no session or group to bring it in, and the roster is where the
+	// operator sees it exists.
+	if collabRoutesEnabled() {
+		if stewards, err := db.ListExternalStewards(); err == nil {
+			for _, steward := range stewards {
+				addAgent(steward.ConvID)
+			}
+		}
+	}
 
 	out.Ungrouped = []dashboardAgent{}
 	for _, a := range agentRows {

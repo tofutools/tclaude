@@ -68,11 +68,15 @@ func isEnrollmentCredentialRoute(path string) bool {
 // An external steward's credential is shown once and stored only hashed, so the
 // responses that issue one stay out of the durable replay table too.
 func isExternalStewardCredentialRoute(path string) bool {
-	if path == "/v1/external-stewards" {
-		return true
+	for _, root := range []string{"/v1/external-stewards", "/api/external-stewards"} {
+		if path == root {
+			return true
+		}
+		if rest, ok := strings.CutPrefix(path, root+"/"); ok && strings.HasSuffix(rest, "/renew") {
+			return true
+		}
 	}
-	rest, ok := strings.CutPrefix(path, "/v1/external-stewards/")
-	return ok && strings.HasSuffix(rest, "/renew")
+	return false
 }
 
 func idempotencyRequests(h http.Handler) http.Handler {

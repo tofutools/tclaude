@@ -65,6 +65,11 @@ function memberWaking(member) {
 }
 
 function AgentStatusDot({ member }) {
+  // tclaude can't start it, so this dot has nothing to do when clicked.
+  if (member.external_steward) {
+    const title = 'External steward: an assistant running outside tclaude';
+    return html`<span class="status-dot status-dot-offline status-dot-external" title=${title} aria-label=${title}>○</span>`;
+  }
   const state = member.state || {};
   const label = member.title || member.conv_id;
   const online = !!member.online;
@@ -193,6 +198,7 @@ function BrokerRefusalBadge({ member }) {
 }
 
 export function HarnessLine({ member, snapshot, local = true }) {
+  if (member.external_steward) return html`<span class="runtime-meta runtime-meta-offline">External steward</span>`;
   const state = member.state || {};
   const offline = !member.online;
   const metadataClass = `runtime-meta${offline ? ' runtime-meta-offline' : ''}`;
