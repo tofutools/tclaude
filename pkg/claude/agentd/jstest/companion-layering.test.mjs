@@ -1,28 +1,39 @@
 // The layering rule for resting companion surfaces (tcl-masauq): anything the
-// operator opens paints above the chips. A stylesheet scan rather than a
-// browser test, so a new menu or popover is held to the rule when it is added.
+// operator opens paints above the chips, overlay windows included. The chips
+// are a step over content on the one scale in ui.css (tcl-s7zf2k, held by
+// ui-layers.test.mjs); this pins where the companion's own surfaces sit on it. A stylesheet scan rather than a browser
+// test, so a new surface is held to the rule when it is added.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const sheets = ['dashboard.css', 'companion.css', 'board.css', 'mux.css', 'terminals.css', 'process-kit.css', 'process-terminal-overlay.css'];
+const LAYERS = ['content', 'window', 'chrome', 'panel', 'dialog', 'popover', 'confirm', 'toast', 'system'];
 
 // Popovers that sit inside something else's stacking context, so their own
-// number says nothing about the page: the window hides the chips, the others
+// value says nothing about the page: the window hides the chips, the others
 // are clipped to or carried by their host. A dialog's resize grip is part of it,
-// and so are an overlay window's own controls and snapped edges.
-// The scan reads the numbers only: it can't see a stacking context.
-const nested = /dialog-resizer|overlay-window-(edge|controls)|companion-(menu|decide-queue)|fleet-link-pop|dock-card-menu|mux-terminal-disconnect-overlay|pk-pane-overlay|open-prs-confirm-backdrop/;
+// and so are an overlay window's own controls and snapped edges, a dock section
+// head and the process editor's issues panel (inside its full-screen dialog).
+const nested = /process-issues-panel|dock-section-head|dialog-resizer|overlay-window-(edge|controls)|companion-(menu|decide-queue)|fleet-link-pop|mux-terminal-disconnect-overlay|pk-pane-overlay|open-prs-confirm-backdrop/;
 const opened = /menu|pop|modal|overlay|drawer|panel|dialog/i;
+
+// rank orders a z-index value on the scale: a layer plus its step, or a raw
+// in-component number, which stays under every layer above content.
+function rank(value) {
+  const layer = value.match(/--z-(\w+)\)(?: \+ (\d+))?/);
+  if (layer) return LAYERS.indexOf(layer[1]) * 1000 + Number(layer[2] || 0);
+  return Number(value);
+}
 
 async function zRules() {
   const rules = [];
   for (const sheet of sheets) {
     const css = (await readFile(new URL(`../dashboard/${sheet}`, import.meta.url), 'utf8')).replace(/\/\*[\s\S]*?\*\//g, '');
     for (const [, selector, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-      const z = body.match(/z-index:\s*(-?\d+)/);
-      if (z) rules.push({ selector: selector.trim().replace(/\s+/g, ' '), z: Number(z[1]), body });
+      const z = body.match(/z-index:\s*([^;}]+?)\s*(?:;|$)/);
+      if (z && z[1] !== 'auto') rules.push({ selector: selector.trim().replace(/\s+/g, ' '), z: rank(z[1].trim()), body });
     }
   }
   return rules;
@@ -32,54 +43,36 @@ test('everything the operator opens paints above the resting chips', async () =>
   const rules = await zRules();
   const zOf = (selector) => rules.find((r) => r.selector === selector)?.z;
   const chips = zOf('.companion-chips');
-  assert.ok(chips > 6, 'above page content');
-  assert.equal(zOf('.knowledge-source-card'), chips, 'the docs offer rests with the chips');
+  assert.ok(chips > 9 && chips < LAYERS.indexOf('window') * 1000, 'over in-component stacking, under the windows');
   assert.ok(zOf('.fleet-map:has(.fleet-edge-link.open)') > chips, 'the map carries its link popover over the chips');
   const under = rules.filter((r) => opened.test(r.selector) && !nested.test(r.selector) && r.z <= chips);
   assert.deepEqual(under.map((r) => `${r.selector} (${r.z})`), []);
 });
 
-test('the docs offer stays above a window or board, but not above a dialog', async () => {
-  const rule = (await zRules()).find((r) => /companion-window:not/.test(r.selector) && r.selector.endsWith('.knowledge-source-card'));
-  assert.ok(rule.z > 951, 'above the companion window and a front board');
-  assert.match(rule.selector, /:not\(:has\(\.modal-overlay\.show, \.manage-overlay\.show\)\)/);
+test('the docs offer stays above every window, a dialog above it', async () => {
+  const rules = await zRules();
+  const zOf = (selector) => rules.find((r) => r.selector === selector)?.z;
+  const windowTop = LAYERS.indexOf('chrome') * 1000 - 1;
+  assert.ok(zOf('.knowledge-source-card') > windowTop, 'a window or board never hides its question');
+  assert.ok(zOf('.modal-overlay') > zOf('.knowledge-source-card'), 'a dialog covers it');
   const css = await readFile(new URL('../dashboard/companion.css', import.meta.url), 'utf8');
-  assert.match(css, /@media \(max-width: 660px\) \{\s*body\.dock-open \.knowledge-source-card \{ z-index: 45; \}/, 'a narrow window keeps it off the dock\'s underside');
+  assert.match(css, /@media \(max-width: 660px\) \{\s*body\.dock-open \.knowledge-source-card \{ z-index: var\(--z-panel\); \}/, 'a narrow window keeps it off the dock\'s underside');
 });
 
 test('the chips step clear of the dock instead of covering its menus', async () => {
   const css = await readFile(new URL('../dashboard/companion.css', import.meta.url), 'utf8');
   assert.match(css, /body\.dock-open \{ --chip-right: calc\(var\(--dock-w\) \+ 16px\); \}/);
   assert.match(css, /\.companion-spot-bottom-right \{ right: var\(--chip-right\); \}/);
-  assert.match(css, /@media \(max-width: 620px\) \{\s*body\.dock-open \{ --chip-right: 16px; \}\s*body\.dock-open \.companion-chips:not\(\.dragging\) \{ z-index: 45; \}/, 'a narrow window keeps them on screen');
-});
-
-test('a row\'s action dialogs step a window aside; an editor stays beneath it', async () => {
-  const css = await readFile(new URL('../dashboard/companion.css', import.meta.url), 'utf8');
-  const rule = css.match(/body:has\(([^{}]*)\) :is\(\.companion-window, \.companion-resize-frame\) \{ z-index: 90; \}/);
-  assert.ok(rule, 'the window has a rule that steps aside');
-  const selectors = rule[1].split(',').map((selector) => selector.trim());
-  for (const id of ['term-chooser-modal', 'term-modal', 'sandbox-impl-modal', 'clone-modal', 'export-agent-modal', 'reincarnate-agent-modal', 'task-link-modal', 'command-palette-modal']) {
-    assert.ok(selectors.includes(`#${id}.show`), `${id} must not open under a window`);
-  }
-  assert.ok(!selectors.includes('#profile-editor-modal.show'), 'an agent can still be used beside an editor');
+  assert.match(css, /@media \(max-width: 620px\) \{\s*body\.dock-open \{ --chip-right: 16px; \}\s*body\.dock-open \.companion-chips:not\(\.dragging\) \{ z-index: var\(--z-panel\); \}/, 'a narrow window keeps them on screen');
 });
 
 test('the footer\'s PR popover opens above overlay windows, and the footer chips stay on the bar (tcl-rsr7pi)', async () => {
   const rules = await zRules();
   const zOf = (selector) => rules.find((r) => r.selector === selector)?.z;
-  const windows = await readFile(new URL('../dashboard/js/overlay-window.js', import.meta.url), 'utf8');
-  // A window's level tops out at OVERLAY_TOP_LEVEL, and its split lines sit two above it.
-  const top = Number(windows.match(/const OVERLAY_TOP_LEVEL = (\d+);/)[1]) + 2;
-  const footer = zOf('body:not(:has(.modal-overlay.show, .manage-overlay.show)) footer:has(.open-prs.is-open)');
-  assert.ok(footer > top, `the footer carries the popover over the windows (${footer} > ${top})`);
-  assert.ok(footer > zOf('.ui-menu.overlay-dock-actions'), 'and over the overlay dock\'s menu');
-  assert.ok(zOf('body:has(.open-prs.is-open):not(:has(.modal-overlay.show, .manage-overlay.show)) .companion-chips.compact:not(.dragging)') > footer, 'chips in the footer stay above the lifted bar');
-  // Under a dialog the bar keeps its old lift, so the dialog's backdrop covers a pinned popover.
-  assert.ok(zOf('footer:has(.open-prs.is-open)') < 100, 'a dialog still covers it');
-  const lifted = zOf('body:has([data-overlay-window]):not(:has(.modal-overlay.show, .manage-overlay.show)) footer');
-  assert.ok(lifted > top, `with overlay windows open the footer, holding their dock, rises over them (${lifted} > ${top})`);
-  assert.ok(lifted < footer, 'and under its own lifted PR popover');
-  assert.ok(zOf('body:has([data-overlay-window]):not(:has(.modal-overlay.show, .manage-overlay.show)) .companion-chips.compact:not(.dragging)') > lifted, 'the chips resting on it rise with it');
-  assert.ok(zOf('body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging)') > zOf('footer:has(.open-prs.is-open)'));
+  const footer = zOf('footer:has(.open-prs.is-open)');
+  assert.equal(footer, LAYERS.indexOf('popover') * 1000, 'the footer carries the popover on the popover layer');
+  assert.ok(footer > zOf('.overlay-dock.floating') && footer > zOf('#agent-dock'), 'over the floating overlay dock and the agent dock');
+  assert.ok(zOf('footer') >= LAYERS.indexOf('chrome') * 1000, 'resting, the bar and the window dock in it sit over every overlay window');
+  assert.ok(zOf('body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging)') > footer, 'chips in the footer stay above the lifted bar');
+  assert.ok(zOf('.companion-chips.compact') > zOf('footer'), 'and above the resting bar, so they rise over windows with it');
 });

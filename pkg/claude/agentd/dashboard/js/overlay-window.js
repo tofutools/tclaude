@@ -37,13 +37,15 @@ const TEAR_OFF_PX = 4;
 
 // The ids of the windows, front last. A window joins as it mounts: floating at
 // the front, snapped at the back, so a reload does not bury one behind a split.
-// Levels come from it: every window is below what sits at 950, such as agent
-// marks. A split moves as one, with its front window one above the rest, for
-// when an unlocked line lets two overlap, and its lines above that: anything over
-// the split covers them. Past the bottom level, windows share it and DOM order
-// decides.
-const OVERLAY_TOP_LEVEL = 947;
-export const OVERLAY_BOTTOM_LEVEL = 930;
+// Levels come from it, inside the window layer (--z-window in ui.css, 1000,
+// with the snap guide at 1090 over the front split's lines, and the chrome
+// layer from 2000), so whatever the operator opens paints over every window and
+// raising one never leaves the band. A split moves as one,
+// with its front window one above the rest, for when an unlocked line lets two
+// overlap, and its lines above that: anything over the split covers them. Past
+// the bottom level, windows share it and DOM order decides.
+export const OVERLAY_TOP_LEVEL = 1087;
+export const OVERLAY_BOTTOM_LEVEL = 1000;
 const overlayStack = signal([]);
 export const frontOverlayWindow = computed(() => overlayStack.value[overlayStack.value.length - 1] || '');
 

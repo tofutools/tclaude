@@ -19,6 +19,40 @@
    migration removes such rules as it moves an area onto ui-* classes.
    jstest/ui-controls.test.mjs holds new <button>/<select> markup to this set. */
 
+/* Layers. Every z-index in the dashboard is one of these, or calc() of one
+   plus a small step for order inside the layer; jstest/ui-layers.test.mjs
+   holds the sheets to it. Low to high:
+
+     content   the page itself. Raw 0-9 orders the parts of one component
+               (a sticky head over its rows) and never reaches past it.
+     window    overlay windows, their split lines, snap guides. A window's own
+               level is --overlay-level, set by js/overlay-window.js inside
+               this band; raising a window never leaves it.
+     chrome    the footer, the minimized-window dock, the companion's chips
+               and the marks an agent draws over the page.
+     panel     side panels: the agent dock, the notification drawer.
+     dialog    forms and editor dialogs, modal or not. A dialog opened from
+               another sits a step above it.
+     popover   menus, popovers, tooltips, hover cards, the command palette.
+     confirm   confirmations and permission prompts; nothing covers them.
+     toast     toasts and transfer progress.
+     system    out of band, above the scale: the boot bar, the disconnect
+               screen, and pointer-transparent skin effects.
+
+   Opening anything from panel up never moves or minimizes a window: the
+   window stays where it is, and the panel, dialog or popover paints over it. */
+:root {
+  --z-content: 0;
+  --z-window: 1000;
+  --z-chrome: 2000;
+  --z-panel: 3000;
+  --z-dialog: 4000;
+  --z-popover: 5000;
+  --z-confirm: 6000;
+  --z-toast: 7000;
+  --z-system: 9000;
+}
+
 :root {
   --ui-bg: #21262d;
   --ui-bg-hover: #21262d;

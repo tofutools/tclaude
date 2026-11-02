@@ -114,8 +114,8 @@ func TestDashboardOpenPRsHoverBridge(t *testing.T) {
 		}
 		if strings.TrimSpace(rule.selectors) == "footer:has(.open-prs.is-open)" {
 			foundRaisedFooter = true
-			if !strings.Contains(rule.declarations, "z-index: 46") {
-				t.Errorf("open PR footer must paint above the z-index 45 dock: %q", rule.declarations)
+			if !strings.Contains(rule.declarations, "z-index: var(--z-popover)") {
+				t.Errorf("open PR footer must lift its popover to the popover layer, over the dock and windows: %q", rule.declarations)
 			}
 		}
 	}

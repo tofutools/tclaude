@@ -226,6 +226,28 @@ control, with `data-ui-exempt`. Older markup is held by a per-file baseline;
 after moving an area onto the standard classes, lower it with
 `UPDATE_UI_CONTROLS_BASELINE=1 node --test jstest/ui-controls.test.mjs`.
 
+### Layers
+
+Every `z-index` is a layer from `ui.css`. From bottom to top:
+
+1. `--z-content`
+2. `--z-window`
+3. `--z-chrome`
+4. `--z-panel`
+5. `--z-dialog`
+6. `--z-popover`
+7. `--z-confirm`
+8. `--z-toast`
+
+`--z-system` sits above the scale, for the boot bar, the disconnect screen and
+skin effects. To order things within a layer, use `calc()` of the layer plus a
+small step, for example an editor that opens over another dialog. A raw 0–9
+orders the parts of a single component. `jstest/ui-layers.test.mjs` fails on any
+other number.
+
+Anything opened from the panel layer up paints over the overlay windows and
+never moves or minimizes them.
+
 ### Component tests
 
 Component tests live in `pkg/claude/agentd/jstest/*.test.mjs` and use Node's
