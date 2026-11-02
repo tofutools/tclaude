@@ -47,9 +47,9 @@ func LoadCredential(file string) (string, error) {
 
 // readCredentialFile refuses a file anyone else could read or replace. The mode
 // comes from the open file, so a swap between the check and the read proves
-// nothing.
+// nothing. O_NONBLOCK keeps a FIFO from hanging startup before that check.
 func readCredentialFile(path string) (string, error) {
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return "", fmt.Errorf("open credential file: %w", err)
 	}

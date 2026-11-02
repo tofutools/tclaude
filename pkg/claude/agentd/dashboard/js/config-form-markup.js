@@ -209,13 +209,13 @@ function ExternalStewardGroup({ loads }) {
     <${Setting} title="Status" k="steward.external_enabled"
       summary=${info.enabled ? 'On. Credentials you made work.' : 'Off. No credential can be made or used.'}
       more="Set steward.external_enabled in the config file to change this. Permissions decide each tool, and you can change them in the usual editor." />
-    <${Setting} title="What it can do" wide summary="These are all the tools it gets. Each one is also held to the permissions shown.">
+    <${Setting} title="What it can do" wide summary="These are all the tools it gets.">
       <table class="cfg-tool-list">
-        <thead><tr><th scope="col">Tool</th><th scope="col">What it does</th><th scope="col">Needs</th></tr></thead>
+        <thead><tr><th scope="col">Tool</th><th scope="col">What it does</th><th scope="col">Who decides</th></tr></thead>
         <tbody>${info.tools.map(tool => html`<tr key=${tool.name}>
           <td><code>${tool.name}</code></td>
           <td>${tool.description}</td>
-          <td>${tool.permissions?.length ? tool.permissions.map(slug => html`<code key=${slug}>${slug}</code>`) : 'Nothing extra'}</td>
+          <td>${tool.access}</td>
         </tr>`)}</tbody>
       </table>
     </${Setting}>

@@ -3,6 +3,7 @@ package mcpserve
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -249,6 +250,54 @@ func TestWaitForActivity_WithoutFleetReadWatchesMail(t *testing.T) {
 	inbox := `[{"id":9}]`
 	d.inbox.Store(&inbox)
 	assert.True(t, wait(t, session, map[string]any{"cursor": first.Cursor, "timeout_seconds": 1}).Changed)
+}
+
+// Quiet with attention unwatched must not read as quiet with attention watched.
+func TestWaitForActivity_TimeoutStillSaysAttentionIsUnwatched(t *testing.T) {
+	d, session := newActivityDaemon(t)
+	d.fleetStatus.Store(http.StatusForbidden)
+	first := wait(t, session, nil)
+	idle := wait(t, session, map[string]any{"cursor": first.Cursor, "timeout_seconds": 1})
+	assert.False(t, idle.Changed)
+	assert.Contains(t, idle.AttentionUnavailable, "fleet.read")
+}
+
+// An emptied list has to differ from one that did not change.
+func TestWaitForActivity_SaysWhenAttentionEmptied(t *testing.T) {
+	d, session := newActivityDaemon(t)
+	waiting := `[{"kind":"prompt","agent_id":"agt_1"}]`
+	d.attention.Store(&waiting)
+	cursor := wait(t, session, nil).Cursor
+	none, inbox := "[]", `[{"id":9}]`
+	d.attention.Store(&none)
+	d.inbox.Store(&inbox)
+	emptied := wait(t, session, map[string]any{"cursor": cursor, "timeout_seconds": 1})
+	assert.True(t, emptied.AttentionChanged)
+	assert.Empty(t, emptied.Attention)
+	require.Len(t, emptied.Messages, 1)
+
+	d.inbox.Store(&none)
+	next := wait(t, session, map[string]any{"cursor": emptied.Cursor, "timeout_seconds": 1})
+	assert.False(t, next.AttentionChanged)
+}
+
+// A dead socket and a daemon that went quiet mean different things for a send.
+func TestClient_SaysWhenASendMayHaveLanded(t *testing.T) {
+	gone := NewClientWithHTTP(&http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", "/nonexistent/socket")
+		},
+	}}, testCredential)
+	_, err := gone.call(context.Background(), http.MethodPost, "/v1/messages", map[string]any{})
+	require.ErrorContains(t, err, "not reachable")
+
+	hung := fakeDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+		hj, _ := w.(http.Hijacker)
+		conn, _, _ := hj.Hijack()
+		_ = conn.Close()
+	})
+	_, err = hung.call(context.Background(), http.MethodPost, "/v1/messages", map[string]any{})
+	require.ErrorContains(t, err, "may or may not")
 }
 
 // A revoked credential must end the wait, not look like quiet.

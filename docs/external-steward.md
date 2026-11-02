@@ -71,17 +71,19 @@ can read, and it has no option that takes the credential itself. You can set
 
 It reads the credential once when it starts, so restart it after a renewal.
 
-| Tool | What it does | Needs |
+| Tool | What it does | What decides it |
 |---|---|---|
-| `whoami` | Shows its name and identity | Nothing extra |
-| `fleet_brief` | Reads the fleet: who is working, idle, offline or needs you | `fleet.read` |
-| `list_agents` | Lists the agents and groups it can reach | `fleet.read` shows the whole fleet; without it, only its own groups |
-| `inbox` | Lists its messages, with previews | Nothing extra |
-| `read_message` | Reads one message and marks it read | Nothing extra |
-| `send_message` | Sends a message to an agent or group | `message.direct`, or a shared group |
-| `reply` | Replies to a message it received | Nothing extra |
-| `notify_human` | Sends you a message in the dashboard | `human.notify` |
-| `wait_for_activity` | Waits up to 50 seconds for new mail or a change in what needs attention | `fleet.read` for attention; without it, only mail |
+| `whoami` | Shows its name and identity | Always available |
+| `fleet_brief` | Reads the fleet: who is working, idle, offline or needs you | Needs `fleet.read` |
+| `list_agents` | Lists the agents and groups it can reach | Always shows its own groups and agents in no group; `fleet.read` adds every group |
+| `inbox` | Lists its messages, with previews | Always available |
+| `read_message` | Reads one message and marks it read | Always available |
+| `send_message` | Sends a message to an agent or group, including `member@peer` on a linked instance | An agent needs `message.direct` or a shared group, a group needs it to be a member or owner, and another instance needs a group link or `message.direct` |
+| `reply` | Replies to a message it received | Always available: having received a message is enough |
+| `notify_human` | Sends you a message in the dashboard | Needs `human.notify` |
+| `wait_for_activity` | Waits up to 50 seconds for new mail or a change in what needs attention | Always watches mail; `fleet.read` adds what needs attention |
+
+So taking `message.direct` away doesn't stop it messaging agents it shares a group with.
 
 **Config** › **Steward** shows this list with Collab on, whether or not the feature is on.
 

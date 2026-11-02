@@ -85,7 +85,11 @@ func (c *Client) call(ctx context.Context, method, path string, in any) ([]byte,
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, errors.New("the tclaude daemon is not reachable; ask the operator to start it")
+		var opErr *net.OpError
+		if errors.As(err, &opErr) && opErr.Op == "dial" {
+			return nil, errors.New("the tclaude daemon is not reachable; ask the operator to start it")
+		}
+		return nil, errors.New("the tclaude daemon did not answer, so this may or may not have taken effect")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))

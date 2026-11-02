@@ -37,7 +37,7 @@ type readMessageInput struct {
 }
 
 type sendMessageInput struct {
-	To      string `json:"to" jsonschema:"An agent's name or ID, or group:<name> for a group"`
+	To      string `json:"to" jsonschema:"An agent's name or ID, group:<name> for a group, or member@peer on a linked instance"`
 	Subject string `json:"subject,omitempty" jsonschema:"One-line subject"`
 	Body    string `json:"body" jsonschema:"The message"`
 }

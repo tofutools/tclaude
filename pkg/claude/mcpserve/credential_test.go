@@ -3,6 +3,7 @@ package mcpserve
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -46,6 +47,13 @@ func TestLoadCredential_Refusals(t *testing.T) {
 	t.Run("not a file", func(t *testing.T) {
 		t.Setenv(CredentialEnv, "")
 		_, err := LoadCredential(testutil.CanonicalTempDir(t))
+		require.ErrorContains(t, err, "not a regular file")
+	})
+	t.Run("a FIFO does not hang startup", func(t *testing.T) {
+		t.Setenv(CredentialEnv, "")
+		fifo := filepath.Join(testutil.CanonicalTempDir(t), "fifo")
+		require.NoError(t, syscall.Mkfifo(fifo, 0o600))
+		_, err := LoadCredential(fifo)
 		require.ErrorContains(t, err, "not a regular file")
 	})
 	t.Run("both sources", func(t *testing.T) {

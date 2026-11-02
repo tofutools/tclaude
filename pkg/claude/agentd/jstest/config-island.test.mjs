@@ -1130,13 +1130,13 @@ test('Config lists an external steward\'s tools from the daemon, and nothing wit
   await harness.act(() => state.lifecycle.loaded({
     raw: '{}',
     external_steward: { enabled: false, tools: [
-      { name: 'whoami', description: 'Show its name.' },
-      { name: 'notify_human', description: '<b>Tell</b> the human.', permissions: ['human.notify'] },
+      { name: 'whoami', description: 'Show its name.', access: 'Always available' },
+      { name: 'notify_human', description: '<b>Tell</b> the human.', access: 'Needs human.notify' },
     ] },
   }));
   const rows = mounted.container.querySelectorAll('.cfg-tool-list tbody tr');
   assert.equal(rows.length, 2);
-  assert.match(rows[0].textContent, /whoami.*Nothing extra/s);
+  assert.match(rows[0].textContent, /whoami.*Always available/s);
   assert.match(rows[1].textContent, /human\.notify/);
   assert.equal(rows[1].querySelector('b'), null, 'descriptions are text');
   assert.match(mounted.container.textContent, /Off\. No credential can be made or used\./);

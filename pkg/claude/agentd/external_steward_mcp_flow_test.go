@@ -118,6 +118,31 @@ func TestExternalStewardMCP_ReadingMakesRoomInTheQueue(t *testing.T) {
 	assert.Equal(t, http.StatusOK, send("room again").Code)
 }
 
+// The cap counts unread mail, so the unread view has to reach all of it, however
+// much newer mail has been read since.
+func TestExternalStewardMCP_OldUnreadMailStaysInView(t *testing.T) {
+	s := newExternalStewardFlow(t, true)
+	issued := s.create("assistant")
+	send := s.worker("worker-conv-1")
+	session := s.mcpSession(issued.Credential)
+	require.Equal(t, http.StatusOK, send("skipped").Code)
+	var inbox []struct {
+		ID int64 `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(mcpOK(t, session, stewardtools.Inbox, map[string]any{"unread_only": true})), &inbox))
+	require.Len(t, inbox, 1)
+	skipped := inbox[0].ID
+	for i := range 3 {
+		require.Equal(t, http.StatusOK, send(fmt.Sprintf("later %d", i)).Code)
+		require.NoError(t, json.Unmarshal([]byte(mcpOK(t, session, stewardtools.Inbox, map[string]any{"limit": 1})), &inbox))
+		mcpOK(t, session, stewardtools.ReadMessage, map[string]any{"id": inbox[0].ID})
+	}
+	require.NoError(t, json.Unmarshal([]byte(mcpOK(t, session, stewardtools.Inbox,
+		map[string]any{"unread_only": true, "limit": 1})), &inbox))
+	require.Len(t, inbox, 1)
+	assert.Equal(t, skipped, inbox[0].ID)
+}
+
 func TestExternalStewardMCP_RevokedCredentialFailsEveryTool(t *testing.T) {
 	s := newExternalStewardFlow(t, true)
 	issued := s.create("assistant")
@@ -155,6 +180,7 @@ func TestExternalStewardMCP_ListedPermissionsCanBeHeld(t *testing.T) {
 			assert.Truef(t, agentd.IsKnownPermSlug(slug), "%s lists unknown %s", tool.Name, slug)
 			assert.Falsef(t, agentd.ExternalStewardRefusesForTest(slug), "%s lists never-listed %s", tool.Name, slug)
 			assert.Containsf(t, issued.Grants, slug, "%s needs %s, which a new steward lacks", tool.Name, slug)
+			assert.Containsf(t, tool.Access, slug, "%s does not tell the operator about %s", tool.Name, slug)
 		}
 	}
 }

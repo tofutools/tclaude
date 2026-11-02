@@ -53,8 +53,9 @@ type waitResult struct {
 	Cursor string `json:"cursor"`
 	// Messages are unread and newer than the cursor.
 	Messages []inboxEntry `json:"messages"`
-	// Attention is the whole current list, sent when it changed.
-	Attention []attentionEntry `json:"attention,omitempty"`
+	// AttentionChanged says Attention is the whole current list, which can be empty.
+	AttentionChanged bool             `json:"attention_changed"`
+	Attention        []attentionEntry `json:"attention,omitempty"`
 	// AttentionUnavailable says the fleet could not be read, so only mail is being
 	// watched.
 	AttentionUnavailable string `json:"attention_unavailable,omitempty"`
@@ -94,11 +95,12 @@ func (c *Client) waitForActivity(ctx context.Context, _ *mcp.CallToolRequest, in
 	}
 	ctx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
+	unavailable := ""
 	for {
 		state, err := c.activitySince(ctx, since)
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
-			return unchanged(since)
+			return unchanged(since, unavailable)
 		case err != nil:
 			return nil, nil, err
 		case state.Changed || in.Cursor == "":
@@ -106,10 +108,11 @@ func (c *Client) waitForActivity(ctx context.Context, _ *mcp.CallToolRequest, in
 			result, err := jsonResult(state)
 			return result, nil, err
 		}
+		unavailable = state.AttentionUnavailable
 		select {
 		case <-ctx.Done():
 			if parent := context.Cause(ctx); errors.Is(parent, context.DeadlineExceeded) {
-				return unchanged(since)
+				return unchanged(since, unavailable)
 			}
 			return nil, nil, ctx.Err()
 		case <-time.After(activityPollInterval):
@@ -117,8 +120,8 @@ func (c *Client) waitForActivity(ctx context.Context, _ *mcp.CallToolRequest, in
 	}
 }
 
-func unchanged(since activityCursor) (*mcp.CallToolResult, any, error) {
-	result, err := jsonResult(waitResult{Cursor: since.String(), Messages: []inboxEntry{}})
+func unchanged(since activityCursor, unavailable string) (*mcp.CallToolResult, any, error) {
+	result, err := jsonResult(waitResult{Cursor: since.String(), Messages: []inboxEntry{}, AttentionUnavailable: unavailable})
 	return result, nil, err
 }
 
@@ -149,6 +152,7 @@ func (c *Client) activitySince(ctx context.Context, since activityCursor) (*wait
 	default:
 		next.attention = attentionDigest(attention)
 		if next.attention != since.attention {
+			result.AttentionChanged = true
 			result.Attention = attention
 		}
 	}
