@@ -159,6 +159,9 @@ func externalStewardProfileProblem(profile *db.SpawnProfile) error {
 		return fmt.Errorf("spawn profile %q has to confine its agents with a sandbox that still asks a human: tclaude's pane sandbox for Claude, Gemini, OpenCode and pi, read-only or workspace-write for Codex",
 			profile.Name)
 	}
+	if fail := sandboxImplementationHostFailure(h.Name, string(implementation)); fail != nil {
+		return fmt.Errorf("%s", fail.Msg)
+	}
 	return nil
 }
 

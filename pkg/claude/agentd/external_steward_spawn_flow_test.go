@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"errors"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -193,6 +194,15 @@ func TestExternalStewardSpawn_PinIsCheckedWhenGranted(t *testing.T) {
 }
 
 // What was fine when granted can stop being fine, so it is all checked again.
+// A profile this host can't launch is heard when choosing, not at every spawn.
+func TestExternalStewardSpawn_PinNeedsTheSandboxThisHostHas(t *testing.T) {
+	s := newSpawnSetup(t)
+	t.Cleanup(agentd.SetTclaudeLayerHostAvailabilityForTest(func() error { return errors.New("no bubblewrap here") }))
+	code, body := s.pin(map[string]any{"groups": []string{"crew"}, "spawn_profile": "worker", "sandbox_profile": "locked"})
+	assert.Equal(t, http.StatusBadRequest, code, body)
+	assert.Contains(t, body, "no bubblewrap here")
+}
+
 // The dashboard's permission editor writes the same override, so it holds the same line.
 func TestExternalStewardSpawn_PermissionEditorChecksThePin(t *testing.T) {
 	s := newSpawnSetup(t)
