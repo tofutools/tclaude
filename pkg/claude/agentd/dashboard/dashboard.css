@@ -5424,7 +5424,8 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 /* The inline profile picker — a <select> swapped in for a group or toolbar
    chip while choosing a spawn or sandbox profile.
    Same compact monospace look as the chip inputs above. */
-.group-default-profile-select, .toolbar-profile-select {
+.group-default-profile-select, .toolbar-profile-select { margin-left: 8px; }
+.group-default-profile-select:where(:not(.ui-select)), .toolbar-profile-select:where(:not(.ui-select)) {
   background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
   color: #d4d4d4; padding: 1px 6px; font: inherit;
   font-family: ui-monospace, monospace; font-size: 11px; margin-left: 8px;
@@ -6678,11 +6679,11 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 }
 .steward-shutdown-confirm p { margin: 0 0 8px; }
 .steward-shutdown-actions { display: flex; justify-content: flex-end; gap: 6px; }
-.steward-shutdown-actions button {
+.steward-shutdown-actions button:where(:not(.ui-btn)) {
   background: #21262d; border: 1px solid #2a3340; border-radius: 3px; padding: 3px 10px;
   font-size: 12px; color: #c9d1d9; font-family: inherit; cursor: pointer;
 }
-.steward-shutdown-actions button.danger { background: #8e1f1f; border-color: #da3633; color: #fff; }
+.steward-shutdown-actions button:where(:not(.ui-btn)).danger { background: #8e1f1f; border-color: #da3633; color: #fff; }
 .steward-shutdown-error { color: #f85149; }
 .steward-down-notice {
   display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 12px;

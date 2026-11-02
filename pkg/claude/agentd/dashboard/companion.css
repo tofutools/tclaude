@@ -225,7 +225,7 @@ body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: c
   position: absolute; top: 44px; right: 10px; z-index: 1; padding: 3px 8px; border-radius: 6px;
   background: var(--cmp-bar); border: 1px solid var(--cmp-line); color: var(--cmp-muted); font-size: 11px;
 }
-.companion-term-status button { background: none; border: 0; color: var(--cmp-blue); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
+.companion-term-status button:where(:not(.ui-btn)) { background: none; border: 0; color: var(--cmp-blue); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
 .companion-empty { margin: auto; max-width: 420px; padding: 20px; text-align: center; color: var(--cmp-text); font-size: 13px; line-height: 1.5; }
 .companion-empty-title { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 15px; font-weight: 600; }
 .companion-empty-note { color: var(--cmp-muted); font-size: 12px; }
@@ -234,6 +234,7 @@ body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: c
   color: #fff; font: inherit; font-size: 13px; cursor: pointer;
 }
 .companion-primary:disabled { opacity: .6; cursor: progress; }
+.companion-secondary.ui-btn { display: flex; width: fit-content; }
 .companion-secondary { display: block; margin: 0 auto; padding: 4px 12px; background: none; border: 1px solid var(--cmp-border, #30363d); border-radius: 6px; color: var(--cmp-text); font: inherit; font-size: 12px; cursor: pointer; }
 .companion-secondary:disabled { opacity: .6; cursor: progress; }
 
@@ -409,7 +410,7 @@ body.companion-annotating .companion-chips { visibility: hidden; }
 .annotate-btn, .annotate-send {
   padding: 4px 10px; border-radius: 6px; border: 1px solid var(--cmp-line); background: transparent; color: var(--cmp-text); font: inherit; cursor: pointer;
 }
-.annotate-send:not(:disabled) { background: #238636; border-color: #2ea043; color: #fff; }
+.annotate-send:where(:not(.ui-btn)):not(:disabled) { background: #238636; border-color: #2ea043; color: #fff; }
 .annotate-btn:disabled, .annotate-send:disabled { opacity: .5; cursor: default; }
 /* The floating tools share one button: the mic and ✎ light up alike, and only
    when they can be used. A live mic keeps its own red. */
@@ -500,8 +501,9 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
   padding: 4px 10px; border-radius: 6px; border: 1px solid var(--cmp-line);
   background: transparent; color: var(--cmp-text); font: inherit; cursor: pointer;
 }
-.knowledge-source-actions button:not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
-.knowledge-source-actions .companion-primary { margin: 0; background: var(--cmp-blue); border-color: var(--cmp-blue); color: #0d1117; }
+.knowledge-source-actions button:where(:not(.ui-btn)):not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
+.knowledge-source-actions .companion-primary { margin: 0; }
+.knowledge-source-actions .companion-primary:where(:not(.ui-btn)) { background: var(--cmp-blue); border-color: var(--cmp-blue); color: #0d1117; }
 .knowledge-source-note { color: var(--cmp-muted); }
 .knowledge-source-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .knowledge-source-error { color: var(--cmp-red); overflow-wrap: anywhere; }
@@ -521,15 +523,16 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
 .companion-decision-body { margin: 0; color: var(--cmp-text); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 6.5em; overflow: auto; }
 .companion-decision-image img { display: block; max-width: 100%; max-height: 120px; border-radius: 6px; border: 1px solid var(--cmp-line); }
 .companion-decision-options { display: flex; flex-wrap: wrap; gap: 6px; }
-.companion-decision-options button {
-  margin: 0; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
-  color: var(--cmp-text); font: inherit; font-size: 13px; cursor: pointer; text-align: left;
+.companion-decision-options button { margin: 0; text-align: left; }
+.companion-decision-options button:where(:not(.ui-btn)) {
+  padding: 6px 12px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
+  color: var(--cmp-text); font: inherit; font-size: 13px; cursor: pointer;
 }
-.companion-decision-options button:not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
+.companion-decision-options button:where(:not(.ui-btn)):not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
 .companion-decision > * { flex: none; }
-.companion-decision-options button.companion-primary { border-color: var(--cmp-blue); background: #1f6feb; color: #fff; }
+.companion-decision-options button:where(:not(.ui-btn)).companion-primary { border-color: var(--cmp-blue); background: #1f6feb; color: #fff; }
 /* Primaries brighten their own colour on hover; the neutral hovers skip them. */
-:is(.knowledge-source-actions, .companion-decision-options) button.companion-primary:hover:not(:disabled) { filter: brightness(1.2); }
+:is(.knowledge-source-actions, .companion-decision-options) button.companion-primary:where(:not(.ui-btn)):hover:not(:disabled) { filter: brightness(1.2); }
 .companion-decision-rec { opacity: 0.85; }
 .companion-decision-note {
   padding: 5px 8px; border-radius: 6px; border: 1px solid var(--cmp-line); background: var(--cmp-bg);
@@ -566,9 +569,9 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
 
 /* The title bar sizes its buttons as icons; the shut-down confirmation hanging
    off it holds ordinary ones. */
-.companion-controls .steward-shutdown-actions button { width: auto; height: auto; min-width: 0; padding: 3px 10px; font-size: 12px; white-space: nowrap; }
-.companion-controls .steward-shutdown-actions button.danger { background: #8e1f1f; border: 1px solid #da3633; color: #fff; }
-.companion-controls .steward-shutdown-actions button:not(.danger) { background: #21262d; border: 1px solid #2a3340; color: #c9d1d9; }
+.companion-controls .steward-shutdown-actions button:where(:not(.ui-btn)) { width: auto; height: auto; min-width: 0; padding: 3px 10px; font-size: 12px; white-space: nowrap; }
+.companion-controls .steward-shutdown-actions button:where(:not(.ui-btn)).danger { background: #8e1f1f; border: 1px solid #da3633; color: #fff; }
+.companion-controls .steward-shutdown-actions button:where(:not(.ui-btn)):not(.danger) { background: #21262d; border: 1px solid #2a3340; color: #c9d1d9; }
 
 /* A window's tabs. The marker shows where the tab in flight lands. */
 .overlay-tab-strip { flex: 1 1 auto; border-radius: 6px; }

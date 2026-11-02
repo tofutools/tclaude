@@ -7,6 +7,7 @@ import { openUsageRulesManager } from './modal-usage-rules.js';
 import { fmtAmount, periodLabel } from './usage-rules-model.js';
 import { shellToast } from './shell-state.js';
 import { peerViewSummary } from './fleet-model.js';
+import { Button, Select } from './ui-components.js';
 
 const html = htm.bind(h);
 const MANAGE = '/manage';
@@ -79,7 +80,7 @@ export function UsageProfileChip({ scope, group = null, target = group?.name || 
   if (remote) return null;
   if (editing) {
     const current = names.length > 1 ? SEVERAL : names[0] || '';
-    return html`<select ref=${selectRef} class="group-default-profile-select usage-profile-select" value=${current} disabled=${busy}
+    return html`<${Select} size="sm" domRef=${selectRef} class="group-default-profile-select usage-profile-select" value=${current} disabled=${busy}
       aria-label=${where}
       onKeyDown=${(event) => { if (event.key === 'Escape') { event.preventDefault(); close(); } }}
       onBlur=${() => { if (!busyRef.current) end(false); }}
@@ -107,7 +108,7 @@ export function UsageProfileChip({ scope, group = null, target = group?.name || 
       ${names.length > 1 ? html`<option value=${SEVERAL}>${names.join(' + ')} (edit in manager…)</option>` : null}
       ${profiles.map((p) => html`<option key=${p.id} value=${p.name}>${p.name}</option>`)}
       <option value=${MANAGE}>Several profiles, limits… (open manager)</option>
-    </select>`;
+    <//>`;
   }
   const limits = scope === 'group' ? groupLimitLine(snap, group) : '';
   const title = [names.length ? `${where}: ${names.join(', ')} — ${role}. Click to change.` : `No ${where.toLowerCase()} — click to set one. It ${role}.`, limits]
@@ -131,7 +132,7 @@ export function AgentBudgetBadge({ agentID, snapshot = dashboardState.snapshot }
   const reached = budget.reached ? ` · ${budget.reached.replace('_', ' ')} step reached` : '';
   const paused = budget.paused ? ` · ${budget.paused}` : '';
   const title = `Usage budget "${budget.name}"${budget.profile ? ` (${budget.profile})` : ''}: ${fmtAmount(budget.metric, budget.value)} / ${fmtAmount(budget.metric, budget.budget)} (${Math.round(budget.pct)}%)${reached}${paused}${budget.rules > 1 ? ` · tightest of ${budget.rules} rules` : ''}. Click to manage.`;
-  return html`<button type="button" class=${`activity-badge agent-budget-badge ${tone}`} title=${title} aria-label=${title}
+  return html`<button type="button" data-ui-exempt class=${`activity-badge agent-budget-badge ${tone}`} title=${title} aria-label=${title}
     data-agent-budget=${agentID}
     onClick=${(event) => { event.stopPropagation(); openUsageRulesManager({ tab: 'agents', agent: agentID }); }}>💰${Math.round(budget.pct)}%</button>`;
 }
@@ -149,9 +150,9 @@ export function RemoteUsageRulesButton({ snapshot = dashboardState.snapshot }) {
   const remote = globalThis.__tclaudeRemoteNode?.id;
   if (!remote || !peerManagesUsage(snapshot.value)) return null;
   const label = globalThis.document?.documentElement?.dataset?.remoteNodeName || remote.slice(0, 13);
-  return html`<button type="button" class="tool remote-usage-rules" data-remote-usage-rules=${remote}
+  return html`<${Button} size="sm" class="remote-usage-rules" data-remote-usage-rules=${remote}
     title=${`Manage ${label}'s usage limits, usage profiles and budgets (it granted you usage-rules.manage)`}
-    onClick=${() => openUsageRulesManager({ node: remote, nodeLabel: label })}>💰 usage rules</button>`;
+    onClick=${() => openUsageRulesManager({ node: remote, nodeLabel: label })}>💰 usage rules<//>`;
 }
 
 // fleetUsageView sums up this node's fleet limits for the fleet controls:
@@ -182,7 +183,7 @@ export function FleetUsageChip({ snapshot = dashboardState.snapshot, className =
     ...(lines.length ? lines : ['No fleet limits yet: cap spend summed across nodes or a node pool, with alerts and actions at each step.']),
     'Click to manage fleet limits and their alerts.',
   ].join('\n');
-  return html`<button type="button" class=${`tool fleet-usage-chip ${limits.length || controls.length ? tone : 'unset'} ${className}`.trim()}
+  return html`<button type="button" data-ui-exempt class=${`tool fleet-usage-chip ${limits.length || controls.length ? tone : 'unset'} ${className}`.trim()}
     data-fleet-usage title=${title} aria-label=${title}
     onClick=${() => openUsageRulesManager({ tab: 'fleet' })}>💰 ${label}${controls.length ? html` <span class="fleet-usage-held">⛔ ${controls.length}</span>` : null}</button>`;
 }
@@ -191,7 +192,7 @@ export function FleetUsageChip({ snapshot = dashboardState.snapshot, className =
 // view's toolbar, when that node lets this one manage its rules.
 export function NodeUsageRulesButton({ node }) {
   if (!node || node.local || !peerManagesUsage({ peer_view: node.peerView })) return null;
-  return html`<button type="button" class="tool remote-usage-rules" data-remote-usage-rules=${node.id}
+  return html`<${Button} size="sm" class="remote-usage-rules" data-remote-usage-rules=${node.id}
     title=${`Manage ${node.name}'s usage limits, usage profiles and budgets (it granted you usage-rules.manage)`}
-    onClick=${() => openUsageRulesManager({ node: node.id, nodeLabel: node.name })}>💰 usage rules on ${node.name}</button>`;
+    onClick=${() => openUsageRulesManager({ node: node.id, nodeLabel: node.name })}>💰 usage rules on ${node.name}<//>`;
 }

@@ -57,6 +57,7 @@ import { VOICE_PREF, createSpeaker, dictationOpen, createVoiceReader, parseVoice
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { useDismissablePopover } from './hover-popover.js';
 import { matchesShortcut, shortcutText, withShortcut } from './keybindings.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -220,10 +221,10 @@ function DecisionCard({ decision, fetchImpl, notify, from = '' }) {
     <div class="companion-decision-options">
       ${decision.options.map((option, i) => {
         const recommended = i + 1 === decision.recommended;
-        return html`<button key=${option} type="button" class=${recommended ? 'companion-primary' : ''} disabled=${!!busy}
+        return html`<${Button} key=${option} size="sm" variant=${recommended ? 'primary' : ''} class=${recommended ? 'companion-primary' : ''} disabled=${!!busy}
           title=${recommended ? 'The agent recommends this one' : ''} onClick=${() => choose(i + 1)}>
           ${busy === i + 1 ? 'Sending…' : option}${recommended && busy !== i + 1 ? html` <span class="companion-decision-rec">★</span>` : ''}
-        </button>`;
+        <//>`;
       })}
     </div>
     <input class="companion-decision-note" type="text" placeholder="Add a note (optional)" value=${note} disabled=${!!busy}
@@ -236,7 +237,7 @@ function DecisionCard({ decision, fetchImpl, notify, from = '' }) {
 function AddTab({ window, ...menu }) {
   const [shown, setShown] = useState(false);
   const trigger = useRef(null);
-  return html`<button ref=${trigger} type="button" class="companion-add" aria-label="Add a companion" aria-expanded=${shown ? 'true' : 'false'}
+  return html`<button data-ui-exempt ref=${trigger} type="button" class="companion-add" aria-label="Add a companion" aria-expanded=${shown ? 'true' : 'false'}
     title=${`Summon ${menu.stewardLabel} or pin a live agent`} onClick=${() => setShown((v) => !v)}>＋</button>
     ${shown && html`<${AddMenu} ...${menu} onPin=${(id) => { setShown(false); menu.onPin(id); }}
       onResumeSteward=${() => { setShown(false); menu.onResumeSteward(); }} onSummonSteward=${() => { setShown(false); menu.onSummonSteward(); }}
@@ -1166,7 +1167,7 @@ export function CompanionApp({
       const behind = stopped(chipAgent) ? null : unseen.find(stopped) || (own === 'needs' ? null : unseen.find((agent) => statusOf(agent) === 'needs'));
       const status = behind ? 'needs' : own;
       const peekAt = (behind || chipAgent).agentId;
-      return html`<button key=${chipAgent.agentId} type="button"
+      return html`<button key=${chipAgent.agentId} type="button" data-ui-exempt
         class=${`companion-chip ${status}`}
         ref=${(node) => { if (node) chipRects.current.set(chipAgent.agentId, node.getBoundingClientRect()); }}
         aria-label=${behind ? `${behind.name}: ${companionStatusLabel('needs')}, in the window of ${chipAgent.name}. Open it` : `${chipAgent.name}: ${companionStatusLabel(status)}. Open companion (${shortcutText('steward')})`}
@@ -1181,30 +1182,30 @@ export function CompanionApp({
         ${status === 'needs' ? html`<span class="companion-chip-needs">${behind ? 'needs you' : approvals(chipAgent).length ? '🔑 approval' : decisions(chipAgent).length ? 'decide' : 'needs you'}</span>` : html`<${StatusDot} status=${status} />`}
       </button>`;
     })()}
-    ${queue.length > 0 && html`<button type="button" class="companion-chip companion-chip-decide"
+    ${queue.length > 0 && html`<button data-ui-exempt type="button" class="companion-chip companion-chip-decide"
       aria-label=${`${queue.length} ${queue.length === 1 ? 'decision' : 'decisions'} to make. Open them`}
       title="Agents are waiting for you to choose"
       onClick=${() => { stopPeek(); openTabInWindow(queueWindow, COMPANION_PLACEMENT_PREF, decideTab()); }}>
       <span class="companion-decide-mark" aria-hidden="true">◆</span><span class="companion-chip-name">${queue.length} to decide</span>
     </button>`}
-    ${elsewhere.length > 0 && html`<button type="button" class="companion-chip companion-chip-decide"
+    ${elsewhere.length > 0 && html`<button data-ui-exempt type="button" class="companion-chip companion-chip-decide"
       aria-label=${`${elsewhere.length} permission ${elsewhere.length === 1 ? 'request' : 'requests'} from other agents. Open them`}
       title="Agents are asking for permission"
       onClick=${(event) => { stopPeek(); openAccessPanel({ launcher: event.currentTarget, documentRef: win?.document }); }}>
       <span aria-hidden="true">🔑</span><span class="companion-chip-name">${elsewhere.length} to approve</span>
     </button>`}
-    ${!chipAgent && html`<button type="button" class="companion-chip companion-chip-steward"
+    ${!chipAgent && html`<button data-ui-exempt type="button" class="companion-chip companion-chip-steward"
       aria-label=${withShortcut('Open the companion', 'steward')} title=${`${customName || 'Steward'}: your helper for all of tclaude (${shortcutText('steward')})`}
       onClick=${(event) => onChipClick('', event)}>
       <span class="companion-avatar steward" aria-hidden="true">✦</span><span class="companion-chip-name">${customName || 'Steward'}</span>
     </button>`}
   </div>`;
 
-  const offlineActions = (agent) => (agent.agentId === returning?.agentId ? html`<button type="button" class="companion-primary companion-resume-steward" disabled=${busy} onClick=${resumeSteward}>Resume</button>
+  const offlineActions = (agent) => (agent.agentId === returning?.agentId ? html`<${Button} size="sm" variant="primary" class="companion-primary companion-resume-steward" disabled=${busy} onClick=${resumeSteward}>Resume<//>
     <p class="companion-empty-note">${stewardReturnNote(returning)}</p>
-    <button type="button" class="companion-secondary companion-fresh-steward" disabled=${busy} onClick=${summonSteward}>Start fresh</button>
+    <${Button} size="sm" class="companion-secondary companion-fresh-steward" disabled=${busy} onClick=${summonSteward}>Start fresh<//>
     <p class="companion-empty-note">${stewardFreshNote(returning)}</p>`
-    : html`<button type="button" class="companion-primary" onClick=${() => resume(agent)}>Resume</button>`);
+    : html`<${Button} size="sm" variant="primary" class="companion-primary" onClick=${() => resume(agent)}>Resume<//>`);
 
 
   // A chat's moves out of the overlay, which its tab's menu offers as its ⚙ does.
