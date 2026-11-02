@@ -172,13 +172,20 @@ come and go, until the last tab leaves.
 The dock's ☰ menu and the command palette offer the same actions on every window at
 once, each only when there is something for it to do:
 
-- **Show all windows** (**Ctrl+,** from anywhere, a terminal included) spreads every
-  window out side by side over a dimmed page, minimized ones and tabs waiting on the dock
-  too. Each card shows the window's kind, its active tab, how many tabs it holds, the
-  others by name, and a small map of where it sits. Type to filter by any tab's title,
-  move with the arrow keys, and press Enter or click a card to raise that window. Escape,
-  Ctrl+, again or a click outside leaves with nothing changed. Entering and leaving
-  never moves, retiles or restores a window. It is offered only with two or more windows.
+- **Show all windows** (**Ctrl+,** from anywhere, a terminal included) dims the page and
+  spreads the open windows themselves out side by side, scaled down so none overlaps,
+  gliding from where they stand. They stay live: terminals, boards and editors keep
+  drawing, but take no clicks or typing while spread. Hover a window to highlight it and
+  see its title and how many tabs it holds. Minimized windows and tabs waiting on the
+  dock are not drawn, so they show as a row of cards along the bottom, each with its kind,
+  active tab and the other tabs by name. Type to filter by any tab's title (windows that
+  don't match dim), move with the arrow keys, and press Enter or click a window or card
+  to raise it. Escape, Ctrl+, again or a click outside leaves with nothing changed, and
+  the windows glide back. Entering and leaving never moves, retiles or restores a window:
+  the spread is only how they are drawn. With reduced motion they move without gliding.
+  It is offered only with two or more windows.
+
+  ![Show all windows: three chat windows spread side by side over the dimmed page, live, and a minimized one as a card along the bottom](assets/companion-show-all-windows.png)
 - **Untile all windows** floats every tiled window where it is, so nothing moves on
   screen, and takes it out of the split. A minimized window keeps its cell, and a
   maximized window stays maximized.

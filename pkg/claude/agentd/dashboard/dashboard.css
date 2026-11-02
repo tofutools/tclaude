@@ -2132,14 +2132,33 @@ body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) 
 .overlay-expose-kind { color: var(--cmp-muted, #8b949e); font-size: 12px; }
 .overlay-expose-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
 .overlay-expose-tab { max-width: 100%; padding: 1px 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--cmp-line, #30363d); border-radius: 6px; color: var(--cmp-muted, #8b949e); font-size: 11px; }
-/* Where the window sits on the page, as a small map of it. */
-.overlay-expose-map { position: relative; display: block; aspect-ratio: 16 / 9; margin-top: 2px; border: 1px solid var(--cmp-line, #30363d); border-radius: 4px; background: rgba(110, 118, 129, .08); }
-.overlay-expose-map-window { position: absolute; box-sizing: border-box; border: 1px solid #58a6ff; border-radius: 2px; background: rgba(88, 166, 255, .22); }
+/* The open windows themselves spread over the stage (tcl-ukrr3o): the view
+   only dims the page, and the minimized ones are a row of cards beneath. */
+.overlay-expose-stage { flex: 1; min-height: 0; }
+.overlay-expose-grid.row {
+  flex: none; display: flex; justify-content: center; align-content: normal; gap: 12px; overflow-x: auto; overflow-y: hidden; padding: 4px 4px 6px;
+}
+.overlay-expose-grid.row .overlay-expose-card { flex: none; width: 210px; padding: 9px 11px; }
+/* A target over each spread window, above the windows (971-990) and so outside
+   the view, takes the click the window may not; it names the window there. */
+.overlay-expose-targets { position: fixed; inset: 0; z-index: 992; pointer-events: none; }
+.overlay-expose-live {
+  position: fixed; box-sizing: border-box; margin: 0; padding: 0; border: 2px solid transparent; border-radius: 10px;
+  background: transparent; cursor: pointer; pointer-events: auto; transition: border-color .1s, box-shadow .1s;
+}
+.overlay-expose-live.chosen, .overlay-expose-live:focus-visible { border-color: #58a6ff; box-shadow: 0 0 0 4px rgba(88, 166, 255, .25), 0 18px 40px rgba(0, 0, 0, .5); outline: none; }
+.overlay-expose-live-label {
+  position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%); display: none; align-items: center; gap: 6px; pointer-events: none;
+  max-width: 100%; padding: 3px 10px; overflow: hidden; border: 1px solid var(--cmp-line, #30363d); border-radius: 12px;
+  background: var(--cmp-bar, #161b22); color: var(--cmp-text, #e6edf3); font-size: 12px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis;
+}
+.overlay-expose-live:is(.chosen, :hover, :focus-visible) .overlay-expose-live-label { display: inline-flex; }
 .overlay-expose-empty { grid-column: 1 / -1; margin: 0; color: var(--cmp-muted, #8b949e); text-align: center; }
 @media (prefers-reduced-motion: reduce) {
   .overlay-expose { animation: none; }
   .overlay-expose-card { transition: none; }
   .overlay-expose-card.chosen, .overlay-expose-card:focus-visible { transform: none; }
+  .overlay-expose-live { transition: none; }
 }
 /* Above the windows: a drop that splits a window lands on top of it. */
 .overlay-snap-guide {
