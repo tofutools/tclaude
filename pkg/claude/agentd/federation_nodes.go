@@ -98,8 +98,8 @@ func localNodeMetadata() *proto.NodeMetadata {
 	}
 	if cfg.Federation != nil {
 		n.Labels = append([]string{}, cfg.Federation.NodeLabels...)
-		n.MaxLiveAgents = cfg.Federation.MaxLiveAgents
 	}
+	n.MaxLiveAgents = cfg.ResolvedCapacity().MaxLiveAgents
 	h := cachedHostStatus()
 	r := proto.NodeResources{Status: h.Status, CPU: proto.NodeCPU{LogicalCores: h.CPU.LogicalCores, LoadAverage: h.CPU.LoadAverage}}
 	if !h.ObservedAt.IsZero() {

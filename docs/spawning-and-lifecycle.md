@@ -253,6 +253,91 @@ too. See [max members](agents-and-groups.md#max-members).
 Guardrail denials, like all permission denials, land in the audit trail —
 see [Permissions and audit](permissions-and-audit.md).
 
+## Capacity limits and the spawn queue
+
+An instance can cap how many agents it runs at once and require free RAM and
+disk before it launches another. Configure `capacity` in
+`~/.tclaude/data/config.json`:
+
+```json
+{
+  "capacity": {
+    "max_live_agents": 8,
+    "min_free_ram_mb": 4096,
+    "min_free_disk_mb": 10240,
+    "when_full": "queue",
+    "max_queued": 50
+  }
+}
+```
+
+Everything is off by default: with no `capacity` block nothing is limited and
+nothing changes. Each field is independent; zero or omitted disables it.
+
+- `max_live_agents` counts managed agents with a live pane, plus reservations:
+  spawns still starting up, undecided or launching federation spawn requests,
+  running remote jobs and incoming teleports. Plain `tclaude session new`
+  panes and non-interactive one-shot runs do not count. The older
+  `federation.max_live_agents` is the same cap and still applies when
+  `capacity.max_live_agents` is unset.
+- `min_free_ram_mb` is free (available) memory, and `min_free_disk_mb` the
+  free space on the data directory's and the launch directory's filesystems.
+  Both are read fresh when a launch is admitted. They only gate new launches
+  and never stop running agents. A reading that fails counts as not enough,
+  with the reason in the refusal.
+- `when_full` is `refuse` (the default) or `queue`.
+
+With `refuse`, a spawn past a limit fails with `409 node_busy` and the reason,
+for example `free RAM 512 MB is below capacity.min_free_ram_mb 1024`.
+
+With `queue`, a spawn from `tclaude agent spawn` or the dashboard spawn dialog
+that does not fit waits in one first-in-first-out queue instead. It returns
+`202` with its queue ID and position, and there is no ETA:
+
+```text
+Queued spawn #12 in group "builders" at position 2 (no ETA): node capacity reached: 8 of 8 live and reserved agents
+```
+
+While spawns wait, a new spawn queues behind them even if a slot is free, and
+other launch paths whose capacity no earlier reservation already counts
+(triggers, templates, waves, process steps, AWB pickups, agent imports) are
+refused rather than jumping the line. Approved federation spawn requests and
+incoming teleports reserved their place when admitted and are not held back. When capacity
+frees, agentd launches the head entry, then the next, in order. The launch
+replays the stored request as the original requester, so permissions, group
+membership, group state and profiles are checked again at launch time. A
+requester agent that was retired, or that left the target group while its
+spawn waited, fails the entry with that reason; no other identity stands in.
+The requester is told the outcome: an agent through its inbox, the operator
+in the dashboard Messages tab.
+
+A spawn that holds one-time authority cannot wait and is refused even in
+queue mode: one approved by a single human `--ask-human` decision, one
+authorized by a sudo grant use, one carrying attachments, external steward
+spawns, and spawns made on a peer's behalf. Directory write-proofs are checked
+when the spawn is queued; the launch accepts only the same canonical
+directories. `tclaude agent spawn --no-queue` refuses instead of queueing, and
+`tclaude --join-group` never queues because it attaches at once.
+`max_queued` (default 50) caps waiting spawns; past it the spawn is refused
+with `spawn_queue_full`.
+
+```sh
+tclaude agent queue ls          # capacity, used/max, and waiting spawns with positions
+tclaude agent queue ls --all    # also ended entries kept for a week
+tclaude agent queue rm 12       # cancel a waiting spawn
+```
+
+`tclaude agent ls` lists waiting spawns under the agent table. An agent sees
+its own queued spawns and those targeting a group it is in; the operator sees
+all. A waiting spawn can be cancelled by its requester, an owner of its target
+group, or the operator. Listings show only the name, group, requester,
+position and age, never the stored request, which may hold environment values.
+That request stays in the private database and is deleted when the entry
+launches, fails or is cancelled. The queue survives daemon restarts; an entry
+left mid-launch by a crash is settled from the launch's own records rather than
+launched twice. Queueing and cancelling are audited, and so is each launch the
+queue makes, as `spawn.queue.launched` or `spawn.queue.failed`.
+
 ## Spawn profiles and roles
 
 Two libraries make spawns repeatable instead of flag soups. Reads are open

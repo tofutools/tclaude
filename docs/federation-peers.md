@@ -467,7 +467,9 @@ Configure capacity in `~/.tclaude/data/config.json`:
 ```
 
 Zero (the default) means unlimited. The maximum is enforced when admitting spawns, jobs and
-teleports, although it isn't a resource reservation. Existing peers without a node block
+teleports, although it isn't a resource reservation. `capacity.max_live_agents` is the same
+cap for the whole instance and takes precedence when set; see
+[Capacity limits and the spawn queue](spawning-and-lifecycle.md#capacity-limits-and-the-spawn-queue). Existing peers without a node block
 continue to work and do not appear in `nodes`.
 
 ## Local node pools

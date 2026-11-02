@@ -1067,7 +1067,11 @@ func runLsDaemon(p *lsParams, stdout, stderr io.Writer) int {
 		peers = filtered
 	}
 	if !p.Remote {
-		return renderPeers(p, peers, stdout)
+		rc := renderPeers(p, peers, stdout)
+		if rc == rcOK && !p.JSON {
+			renderQueuedSpawnsSection(stdout)
+		}
+		return rc
 	}
 	rpath := "/v1/federation/reachable"
 	if g := strings.TrimSpace(p.Group); g != "" {
@@ -1099,6 +1103,7 @@ func runLsDaemon(p *lsParams, stdout, stderr io.Writer) int {
 		return rc
 	}
 	renderRemotePeers(remote, stdout, table.GetTerminalWidth())
+	renderQueuedSpawnsSection(stdout)
 	return rcOK
 }
 

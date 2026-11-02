@@ -2284,3 +2284,22 @@ CREATE TABLE external_steward_credentials (
 
 CREATE INDEX idx_external_steward_credentials_agent
 		ON external_steward_credentials (agent_id);
+
+CREATE TABLE spawn_queue (
+		id               INTEGER PRIMARY KEY AUTOINCREMENT,
+		group_id         INTEGER NOT NULL,
+		name             TEXT NOT NULL DEFAULT '',
+		requester_kind   TEXT NOT NULL,
+		requester_agent  TEXT NOT NULL DEFAULT '',
+		requester_name   TEXT NOT NULL DEFAULT '',
+		requester_member INTEGER NOT NULL DEFAULT 0,
+		request_body     TEXT,
+		proof_dirs       TEXT NOT NULL DEFAULT '',
+		state            TEXT NOT NULL,
+		reason           TEXT NOT NULL DEFAULT '',
+		reserved_agent   TEXT NOT NULL DEFAULT '',
+		created_at       INTEGER NOT NULL,
+		updated_at       INTEGER NOT NULL
+	) STRICT;
+
+CREATE INDEX idx_spawn_queue_state ON spawn_queue (state, id);
