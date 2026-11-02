@@ -197,8 +197,11 @@ all fit, the ones that don't fold into a **+N** button, which lists them; it tak
 amber edge when one of them needs you. With no room even for one pill beside **+N**,
 they fold into ☰ itself, which then shows how many and lists them under its actions.
 Only after that, with no room left at all, does the Steward's pill leave the footer.
-On a phone the footer drops the version text and keeps the refresh time, ☰ and the
-Steward's pill. The dock's menus open upwards, above any overlay window.
+On a phone the footer drops the version text and keeps the refresh time and ☰, with
+the Steward's pill beside them when it fits. The dock's menus open upwards, above any
+overlay window.
+
+![The footer at 1000 pixels wide: the version text, ☰, one minimized chat and a +3 button whose list is open above it, then the Steward's pill and Open PRs](assets/companion-footer-dock.png)
 
 A tab's × minimizes that tab to the dock and stops nothing, and so does `Minimize tab` on its
 menu, beside `Minimize other tabs` and `Minimize all tabs`. These never ask, even for a Steward,
