@@ -9,6 +9,7 @@ import htm from 'htm';
 import { ApprovalCard, OPEN_ACCESS_PANEL_EVENT } from './companion-approval.js';
 import { approvalsFor, companionAgents, pendingAccess, pendingApprovals } from './companion-model.js';
 import { applyChromeTopInset } from './chrome-inset.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -56,14 +57,14 @@ export function AccessPanel({ snapshot, fetchImpl, notify, openInMessages = () =
     <header class="access-panel-header">
       <b><span aria-hidden="true">🔑</span> Waiting for your OK</b>
       <span class="access-panel-count">${requests.length || ''}</span>
-      <button type="button" aria-label="Close" title="Close (Esc). Requests keep waiting" onClick=${close}>×</button>
+      <button type="button" data-ui-exempt aria-label="Close" title="Close (Esc). Requests keep waiting" onClick=${close}>×</button>
     </header>
     <div class="access-panel-list">
       ${ordered.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} from=${nameOf(request)}
         onMore=${() => { close(); openInMessages(request.id); }} />`)}
       ${!ordered.length && !elsewhere && html`<p class="access-panel-empty">Nothing is waiting for your OK.</p>`}
-      ${elsewhere > 0 && html`<button type="button" class="access-panel-more" onClick=${() => { close(); openInMessages(); }}>
-        ${elsewhere === 1 ? '1 request needs' : `${elsewhere} requests need`} a closer look in Messages</button>`}
+      ${elsewhere > 0 && html`<${Button} variant="link" class="access-panel-more" onClick=${() => { close(); openInMessages(); }}>
+        ${elsewhere === 1 ? '1 request needs' : `${elsewhere} requests need`} a closer look in Messages<//>`}
     </div>
   </aside>`;
 }

@@ -10,6 +10,7 @@ import htm from 'htm';
 import { openBoardPane } from './board-overlay-state.js';
 import { shellToast } from './shell-state.js';
 import { openWebTermPane } from './terminals-tab.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -64,7 +65,7 @@ export function MessageAction({ message, remote = false, buttonClass = 'primary'
   }
   const off = action.unavailable || '';
   return html`<div class="message-action" role="group" aria-label="Action from the agent">
-    <button type="button" class=${buttonClass} disabled=${busy || !!off} title=${off || 'Runs only when you click it'} onClick=${run}>${action.label}</button>
+    <${Button} variant="primary" class=${buttonClass === 'primary' ? '' : buttonClass} disabled=${busy || !!off} title=${off || 'Runs only when you click it'} onClick=${run}>${action.label}<//>
     ${action.detail && html`<code class="message-action-detail">${action.detail}</code>`}
     ${(off || action.note) && html`<span class="message-action-note">${off || action.note}</span>`}
   </div>`;

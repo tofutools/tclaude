@@ -18,6 +18,7 @@ import { refreshPageNotifications } from './peer-notifications.js';
 import { senderOnline } from './message-access-dialog-model.js';
 import { MessageDownloadMenu } from './message-download-menu.js';
 import { shellConfirm, shellToast } from './shell-state.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 const readWrites = new Map();
@@ -369,7 +370,7 @@ export function GroupsNotificationReader({
           ${message.read ? 'read' : 'unread'}
         </span>
       </div>
-      <button ref=${closeRef} type="button" class="human-notification-drawer-close"
+      <button data-ui-exempt ref=${closeRef} type="button" class="human-notification-drawer-close"
         onClick=${() => onClose(true)} aria-label="Close notification reader" title="Close (Esc)">×</button>
       <div class="human-notification-drawer-sender">
         <span class="human-notification-drawer-avatar" aria-hidden="true">${senderLabel.slice(0, 1).toUpperCase()}</span>
@@ -379,10 +380,10 @@ export function GroupsNotificationReader({
       </div>
     </header>
     <nav class="human-notification-drawer-nav" aria-label="Notifications from this agent">
-      <button type="button" disabled=${!previous}
-        onClick=${() => previous && onSelect(previous.id)} aria-label="Newer notification" title="Newer notification">‹</button>
-      <button type="button" disabled=${!next}
-        onClick=${() => next && onSelect(next.id)} aria-label="Older notification" title="Older notification">›</button>
+      <${Button} icon=${true} disabled=${!previous}
+        onClick=${() => previous && onSelect(previous.id)} aria-label="Newer notification" title="Newer notification">‹<//>
+      <${Button} icon=${true} disabled=${!next}
+        onClick=${() => next && onSelect(next.id)} aria-label="Older notification" title="Older notification">›<//>
       <span>${index + 1} of ${messages.length} from this agent</span>
       <span class="human-notification-drawer-order">newest first</span>
     </nav>
@@ -401,7 +402,7 @@ export function GroupsNotificationReader({
       </div>
     </div>
     <div class="human-notification-drawer-actions">
-      <button type="button" class="primary human-notification-drawer-reply" disabled=${!!replyLock} onClick=${() => {
+      <${Button} variant="primary" class="human-notification-drawer-reply" disabled=${!!replyLock} onClick=${() => {
         // Keep the quick viewer mounted beneath the reply dialog so it remains
         // available after the reply is sent or the dialog is dismissed.
         openHumanReplyModal({
@@ -421,26 +422,26 @@ export function GroupsNotificationReader({
               .then(() => { if (node) announceNodeChanged(node); }),
           } : {}),
         });
-      }}>Reply</button><${LockReason} why=${replyLock} />
-      <button type="button" class="human-notification-drawer-terminal" disabled=${!!terminalLock || senderLive === false}
+      }}>Reply<//><${LockReason} why=${replyLock} />
+      <${Button} class="human-notification-drawer-terminal" disabled=${!!terminalLock || senderLive === false}
         title=${terminalLock ? undefined : senderLive === false ? 'Sending agent is offline — no terminal to open' : `Open ${senderLabel}'s terminal${peer ? ` on ${peerName} here` : ''}`}
-        onClick=${openTerminal}>Terminal</button><${LockReason} why=${terminalLock} />
-      ${!node && html`<button type="button" onClick=${() => {
+        onClick=${openTerminal}>Terminal<//><${LockReason} why=${terminalLock} />
+      ${!node && html`<${Button} onClick=${() => {
         onClose(false);
         openHumanNotifications(senderID, message.id);
-      }}>Open in Messages ↗</button>`}
-      <button type="button" disabled=${!!markLock} onClick=${() =>
+      }}>Open in Messages ↗<//>`}
+      <${Button} disabled=${!!markLock} onClick=${() =>
         persistHumanMessageRead(state, message.id, !message.read, actions.reportError, found, where, (read) => {
           overrides.set(message.id, read);
           setHistoryLoaded((n) => n + 1);
         })}>
         ${message.read ? 'Mark unread' : 'Mark read'}
-      </button><${LockReason} why=${markLock} />
+      <//><${LockReason} why=${markLock} />
       <span class="human-notification-drawer-actions-break" aria-hidden="true"></span>
       <${MessageDownloadMenu} message=${message} node=${peer} toast=${toast} />
-      <button type="button" class="danger human-notification-drawer-delete" disabled=${!!deleteLock}
-        title=${deleteLock ? undefined : `Permanently delete this notification${peer ? ` on ${peerName}` : ''}`} onClick=${remove}>Delete</button><${LockReason} why=${deleteLock} align="end" />
-      <button type="button" onClick=${() => onClose(true)}>Close</button>
+      <${Button} variant="danger" class="human-notification-drawer-delete" disabled=${!!deleteLock}
+        title=${deleteLock ? undefined : `Permanently delete this notification${peer ? ` on ${peerName}` : ''}`} onClick=${remove}>Delete<//><${LockReason} why=${deleteLock} align="end" />
+      <${Button} onClick=${() => onClose(true)}>Close<//>
     </div>
   </aside>`;
 }
