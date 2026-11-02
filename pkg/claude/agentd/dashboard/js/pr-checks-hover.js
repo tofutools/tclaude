@@ -325,7 +325,15 @@ export function summaryLine(summary) {
 // say where activating it goes. aria-haspopup is deliberately absent — the
 // panel opens on hover/focus, so promising a popup on activation would be a
 // lie to anyone who presses Enter and lands on GitHub instead.
-function badgeTitle(summary, prNumber) {
+// GITLAB_MR_RE recognises a GitLab merge request URL, sub-page and all, so
+// the badge can name the right forge and link its pipelines tab.
+const GITLAB_MR_RE = /^(https:\/\/[^/]+\/(?:[^/]+\/)+-\/merge_requests\/[0-9]+)(?:\/.*)?$/;
+
+function badgeTitle(summary, prNumber, url = '') {
+  if (GITLAB_MR_RE.test(url || '')) {
+    const who = prNumber ? `!${prNumber}` : 'this merge request';
+    return `CI pipeline for ${who} — ${summaryLine(summary)}. Opens the pipeline on GitLab.`;
+  }
   const who = prNumber ? `#${prNumber}` : 'this pull request';
   return `CI checks for ${who} — ${summaryLine(summary)}. Opens the build on GitHub.`;
 }
@@ -340,8 +348,10 @@ export function prChecksPageURL(prURL) {
   const safe = safeCheckURL(prURL);
   if (!safe) return '';
   const base = safe.replace(/\/+$/, '');
-  // A GitLab merge request keeps its CI on the pipelines tab.
-  return /\/-\/merge_requests\/[0-9]+$/.test(base) ? `${base}/pipelines` : `${base}/checks`;
+  // A GitLab merge request keeps its CI on the pipelines tab, whichever of
+  // its sub-pages (/diffs, /commits) the URL names.
+  const mr = GITLAB_MR_RE.exec(base);
+  return mr ? `${mr[1]}/pipelines` : `${base}/checks`;
 }
 
 // badgeHref: the run that explains the badge's state when the server could
@@ -555,13 +565,13 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
         <p class="ci-panel-empty">
           ${error ? `Could not load checks — ${error}`
             : loading || data?.refreshing ? 'Fetching checks…'
-            : 'No checks reported for this pull request.'}
+            : GITLAB_MR_RE.test(url || '') ? 'No jobs reported for this merge request.' : 'No checks reported for this pull request.'}
         </p>
       `}
       ${checks.length && error ? html`<p class="ci-panel-empty">Refresh failed — ${error}</p>` : null}
       <p class="ci-panel-note">
         <a href=${prChecksPageURL(url)} target="_blank" rel="noopener noreferrer">
-          <span class="theme-copy-regular">Open checks on GitHub ↗</span>
+          <span class="theme-copy-regular">${GITLAB_MR_RE.test(url || '') ? 'Open the pipeline on GitLab ↗' : 'Open checks on GitHub ↗'}</span>
           <span class="theme-copy-wizard">Read the full omens ↗</span>
         </a>
       </p>
@@ -607,7 +617,7 @@ export function PRChecksBadge({ url, prNumber, summary, prState = '', countText 
         draggable=${false}
         aria-expanded=${open ? 'true' : 'false'}
         aria-controls=${panelID}
-        aria-label=${badgeTitle(summary, prNumber)}
+        aria-label=${badgeTitle(summary, prNumber, url)}
         onClick=${onTriggerClick}
         onKeyDown=${(event) => {
           if (event.key !== 'Escape') return;

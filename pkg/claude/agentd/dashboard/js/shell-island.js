@@ -422,6 +422,22 @@ function IgnorePRDialog({ pr, onCancel, onConfirm }) {
   `;
 }
 
+// useIncludeDrafts is the one "Include drafts" setting Open PRs and Open MRs
+// share: ticking it in either popover updates both, not only the next mount.
+const includeDraftsListeners = new Set();
+function useIncludeDrafts() {
+  const [value, setValue] = useState(() => dashPrefs.getItem(OPEN_PRS_INCLUDE_DRAFTS_PREF) === '1');
+  useEffect(() => {
+    includeDraftsListeners.add(setValue);
+    return () => { includeDraftsListeners.delete(setValue); };
+  }, []);
+  const update = (checked) => {
+    dashPrefs.setItem(OPEN_PRS_INCLUDE_DRAFTS_PREF, checked ? '1' : '0');
+    for (const listener of includeDraftsListeners) listener(checked);
+  };
+  return [value, update];
+}
+
 // FooterListTrigger and FooterListFilters are the parts the Open PRs and Open
 // MRs popovers share: the footer button that opens a list, and its row of
 // filter chips (each { key, text, active, onClick, title? }).
@@ -451,9 +467,7 @@ function FooterListFilters({ label, filters }) {
 
 function OpenPRs({ state }) {
   const [filter, setFilter] = useState('all');
-  const [includeDraftsInAttention, setIncludeDraftsInAttention] = useState(
-    () => dashPrefs.getItem(OPEN_PRS_INCLUDE_DRAFTS_PREF) === '1',
-  );
+  const [includeDraftsInAttention, setIncludeDraftsInAttention] = useIncludeDrafts();
   // Closed/merged work is history, so its last CI result stays quiet unless
   // the operator explicitly asks for it. This is intentionally local UI
   // state: enabling it reveals the cached snapshot summary but changes no
@@ -645,7 +659,6 @@ function OpenPRs({ state }) {
                 onChange=${(event) => {
                   const checked = event.currentTarget.checked;
                   setIncludeDraftsInAttention(checked);
-                  dashPrefs.setItem(OPEN_PRS_INCLUDE_DRAFTS_PREF, checked ? '1' : '0');
                 }} />
               <span>Include drafts</span>
             </label>` : null}
@@ -682,9 +695,7 @@ function OpenMRs({ state }) {
   const [filter, setFilter] = useState('all');
   // '' is your own list; otherwise a project tab's key.
   const [project, setProject] = useState('');
-  const [includeDraftsInAttention, setIncludeDraftsInAttention] = useState(
-    () => dashPrefs.getItem(OPEN_PRS_INCLUDE_DRAFTS_PREF) === '1',
-  );
+  const [includeDraftsInAttention, setIncludeDraftsInAttention] = useIncludeDrafts();
   const [hovered, setHovered] = useState(false);
   const [pinned, setPinned] = useState(false);
   const rootRef = useRef(null);
@@ -724,7 +735,10 @@ function OpenMRs({ state }) {
   // A failed project-wide read is not a failed instance: the project tabs
   // keep its last good lists, and say so there.
   const staleEveryone = view.instances.filter((entry) => entry.everyoneError);
-  const everyone = `${view.everyoneTotal}${view.everyoneTruncated ? '+' : ''}`;
+  // A project-wide read that failed before it ever answered leaves no tabs to
+  // carry its error, and a zero that only means "unknown".
+  const everyoneUnread = !view.projects.length && staleEveryone.length > 0;
+  const everyone = everyoneUnread ? '?' : `${view.everyoneTotal}${view.everyoneTruncated ? '+' : ''}`;
   const where = view.projectEntry;
   const heading = where ? `Open merge requests in ${where.project}` : 'Your merge requests';
   return html`
@@ -751,6 +765,8 @@ function OpenMRs({ state }) {
           ${failed.map((entry) => html`<p key=${entry.host} class="open-prs-stale" role="status">${entry.host}: ${entry.error}</p>`)}
           ${where ? staleEveryone.filter((entry) => entry.host === where.host).map((entry) => html`<p key=${`${entry.host}-everyone`}
             class="open-prs-stale" role="status">Everyone's merge requests on ${entry.host} are from an earlier read: ${entry.everyoneError}</p>`) : null}
+          ${!where && everyoneUnread ? staleEveryone.map((entry) => html`<p key=${`${entry.host}-everyone`}
+            class="open-prs-stale" role="status">Everyone's merge requests on ${entry.host} could not be read: ${entry.everyoneError}</p>`) : null}
           ${panel.items.length
             ? html`<ul class="open-pr-list">${panel.items.map((mr) => html`<${OpenPRRow} key=${mr.url} pr=${mr} kind="mr" titleDetails=${false} />`)}</ul>`
             : html`<p class="open-prs-empty">${view.filter === 'all' ? 'No open merge requests.' : 'No merge requests match this filter.'}</p>`}
@@ -773,7 +789,6 @@ function OpenMRs({ state }) {
                 onChange=${(event) => {
                   const checked = event.currentTarget.checked;
                   setIncludeDraftsInAttention(checked);
-                  dashPrefs.setItem(OPEN_PRS_INCLUDE_DRAFTS_PREF, checked ? '1' : '0');
                 }} />
               <span>Include drafts</span>
             </label>` : null}

@@ -387,6 +387,13 @@ body.dock-open .open-prs.is-open::before {
 @media (max-width: 620px) {
   .open-prs-popover, .open-prs.is-open::before { right: 8px; width: calc(100vw - 16px); }
   body.dock-open .open-prs-popover, body.dock-open .open-prs.is-open::before { right: 8px; }
+  /* Open MRs and Open PRs side by side must not clip at phone widths: the
+     triggers tighten and lose their chevrons, and if the bar still runs out
+     of room it scrolls sideways. The popovers are fixed, so they are not
+     clipped by it. Both numbers and their labels stay. */
+  .footer-inner { overflow-x: auto; gap: 8px; padding: 0 8px; }
+  .open-prs-trigger { padding: 0 8px; gap: 5px; }
+  .open-prs-chevron { display: none; }
 }
 footer .meta { color: #7d8590; font-size: 12px; }
 footer .meta-time { font-variant-numeric: tabular-nums; }

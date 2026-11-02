@@ -868,3 +868,59 @@ test('footer open MRs shows mine and all, and a tab per project for everyone\'s'
   assert.deepEqual([...mounted.container.querySelectorAll('.open-pr-title')].map((node) => node.textContent), ['Merge 1st']);
   await mounted.unmount();
 });
+
+test('include drafts is one setting across Open PRs and Open MRs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenMRs, OpenPRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<div><${OpenPRs} state=${state} /><${OpenMRs} state=${state} /></div>`);
+  const mr = 'https://gitlab.example.test:6080/acme/app/-/merge_requests/';
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, {
+    authored_open_prs: { available: true, total: 1, items: [
+      { number: 1, url: 'https://github.com/acme/app/pull/1', title: 'Draft PR', repository: 'acme/app', draft: true, checks: { total: 1, failed: 1, state: 'failing' } },
+    ] },
+    authored_open_mrs: { available: true, total: 1, items: [
+      { number: 2, url: `${mr}2`, title: 'Draft MR', repository: 'acme/app', draft: true, checks: { total: 1, failed: 1, state: 'failing' } },
+    ] },
+  }));
+  const prs = mounted.container.querySelector('.open-prs:not(.open-mrs)');
+  const mrs = mounted.container.querySelector('.open-mrs');
+  await harness.act(() => getByRole(prs, 'button', { name: /Open PRs/ }).click());
+  await harness.act(() => getByRole(prs, 'button', { name: /Needs attention 0/ }).click());
+  const box = getByLabelText(prs, 'Include drafts');
+  box.checked = true;
+  await harness.act(() => harness.fireEvent(box, 'change'));
+  assert.ok(mrs.classList.contains('has-attention'), 'ticking it in Open PRs counts the draft MR in Open MRs too');
+  await mounted.unmount();
+});
+
+test('a project-wide read that never answered says so on Mine, and all reads ?', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenMRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenMRs} state=${state} />`);
+  const base = 'https://gitlab.example.test:6080';
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_mrs: {
+    available: true, total: 1, everyone_total: 0, projects: [],
+    items: [{ number: 7, url: `${base}/acme/app/-/merge_requests/7`, title: 'Mine', repository: 'acme/app',
+      checks: { total: 1, passed: 1, state: 'passing' } }],
+    instances: [{ host: 'gitlab.example.test:6080', url: `${base}/dashboard/merge_requests?state=opened&author_username=yorick`,
+      everyone_error: 'context deadline exceeded' }],
+  } }));
+  const trigger = getByRole(mounted.container, 'button', { name: /Open MRs/ });
+  assert.equal(mounted.container.querySelector('.open-mrs-all-count').textContent, '?', 'unknown, not zero');
+  await harness.act(() => trigger.click());
+  assert.match(mounted.container.querySelector('.open-prs-stale').textContent,
+    /Everyone's merge requests on gitlab\.example\.test:6080 could not be read: context deadline exceeded/);
+  assert.match(mounted.container.querySelector('.ci-badge').getAttribute('aria-label'), /Opens the pipeline on GitLab/,
+    'a merge request badge names GitLab');
+  await mounted.unmount();
+});

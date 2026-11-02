@@ -505,3 +505,12 @@ test('the measured panel is positioned and follows the viewport', async (t) => {
     await mounted.unmount();
   }
 });
+
+test('a merge request CI badge names GitLab and links its pipelines from any sub-page', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { prChecksPageURL } = await harness.importDashboardModule('js/pr-checks-hover.js');
+  const MR = 'https://gitlab.example.test:6080/acme/app/-/merge_requests/7';
+  assert.equal(prChecksPageURL(MR), `${MR}/pipelines`);
+  assert.equal(prChecksPageURL(`${MR}/diffs`), `${MR}/pipelines`, 'a sub-page still leads to the pipelines tab');
+  assert.equal(prChecksPageURL('https://github.com/acme/app/pull/2'), 'https://github.com/acme/app/pull/2/checks');
+});
