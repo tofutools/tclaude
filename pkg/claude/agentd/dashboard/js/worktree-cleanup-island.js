@@ -436,7 +436,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
           <${Words} plain="Cancel" wizard="Dispel" />
         </${Button}>
         <${Button} variant="danger" id="worktree-cleanup-submit"
-          disabled=${busy || (selected.length === 0 && selectedPruneRepos.length === 0)} aria-busy=${busyAction === 'submit' ? 'true' : undefined}
+          disabled=${busy || (selected.length === 0 && selectedPruneRepos.length === 0)} busy=${busyAction === 'submit'}
           onClick=${() => void submit()}>
           ${busyAction === 'submit'
             ? html`<span class="btn-spinner" aria-hidden="true"></span><${Words}

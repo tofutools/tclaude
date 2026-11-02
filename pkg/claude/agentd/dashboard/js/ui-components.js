@@ -32,15 +32,17 @@ function buttonModifiers({ variant, size, icon }) {
 }
 
 // Button: busy marks aria-busy (pair it with disabled while a request runs);
-// pressed, when given, makes it a toggle with aria-pressed.
+// pressed, when given, makes it a toggle with aria-pressed. A raw aria-busy or
+// aria-pressed still applies when the prop is not given, as does a raw
+// aria-invalid on the fields below.
 export function Button({ variant, size, icon, busy, pressed, type = 'button', class: extra, className, domRef, children, ...rest }) {
   return html`<button
     ...${rest}
     ref=${domRef}
     type=${type}
     class=${join('ui-btn', buttonModifiers({ variant, size, icon }), extra, className)}
-    aria-busy=${busy ? 'true' : undefined}
-    aria-pressed=${pressed === undefined ? undefined : pressed ? 'true' : 'false'}
+    aria-busy=${busy ? 'true' : rest['aria-busy']}
+    aria-pressed=${pressed === undefined ? rest['aria-pressed'] : pressed ? 'true' : 'false'}
   >${children}</button>`;
 }
 
@@ -49,7 +51,7 @@ export function Select({ size, invalid, class: extra, className, domRef, childre
     ...${rest}
     ref=${domRef}
     class=${join('ui-select', size === 'sm' && 'ui-sm', extra, className)}
-    aria-invalid=${invalid ? 'true' : undefined}
+    aria-invalid=${invalid ? 'true' : rest['aria-invalid']}
   >${children}</select>`;
 }
 
@@ -59,7 +61,7 @@ export function Input({ size, invalid, type = 'text', class: extra, className, d
     ref=${domRef}
     type=${type}
     class=${join('ui-input', size === 'sm' && 'ui-sm', extra, className)}
-    aria-invalid=${invalid ? 'true' : undefined}
+    aria-invalid=${invalid ? 'true' : rest['aria-invalid']}
   />`;
 }
 
@@ -68,7 +70,7 @@ export function Textarea({ size, invalid, class: extra, className, domRef, ...re
     ...${rest}
     ref=${domRef}
     class=${join('ui-textarea', size === 'sm' && 'ui-sm', extra, className)}
-    aria-invalid=${invalid ? 'true' : undefined}
+    aria-invalid=${invalid ? 'true' : rest['aria-invalid']}
   />`;
 }
 

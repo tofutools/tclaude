@@ -503,7 +503,7 @@ function GroupCreateDialog({
       <${Button} id="group-create-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
       <span class="spacer"></span>
       <${Button} variant="primary" id="group-create-submit" disabled=${busy}
-        aria-busy=${busy ? 'true' : undefined}
+        busy=${busy}
         onClick=${() => { void submit(); }}>${busy
           ? (draft.workspaceMode === 'clone' && !cloneMode ? 'Cloning & creating…' : 'Creating…')
           : 'Create group'}</${Button}>

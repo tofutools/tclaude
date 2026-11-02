@@ -31,6 +31,7 @@ test('Button renders variant, size, states and passes props through', async (t) 
       <${ui.Button} id="busy" busy disabled>Saving…</${ui.Button}>
       <${ui.Button} id="toggle" size="sm" pressed=${false}>Pin</${ui.Button}>
       <${ui.Button} id="submit" type="submit" variant="ghost danger" icon aria-label="Remove">×</${ui.Button}>
+      <${ui.Button} id="raw" aria-busy="true" aria-pressed="true">Raw</${ui.Button}>
     </div>
   `, host);
   const save = host.querySelector('#save');
@@ -53,6 +54,10 @@ test('Button renders variant, size, states and passes props through', async (t) 
   const submit = getByRole(host, 'button', { name: 'Remove' });
   assert.equal(submit.getAttribute('type'), 'submit');
   assert.equal(submit.className, 'ui-btn ui-btn-ghost ui-btn-danger ui-btn-icon');
+
+  const raw = host.querySelector('#raw');
+  assert.equal(raw.getAttribute('aria-busy'), 'true', 'a raw aria-busy survives without the busy prop');
+  assert.equal(raw.getAttribute('aria-pressed'), 'true', 'a raw aria-pressed survives without the pressed prop');
   mounted.unmount();
 });
 
