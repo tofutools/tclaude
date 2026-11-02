@@ -15,7 +15,8 @@ func TestGitLabMRRefFromURL(t *testing.T) {
 	assert.Equal(t, "gitlab.yamzz.test", ref.host, "the host carries no port, as the allow-list spells it")
 	assert.Equal(t, "yamzz/sub/previewplayback", ref.project)
 	assert.Equal(t, 157, ref.number)
-	assert.Equal(t, "gitlab.yamzz.test/yamzz/sub/previewplayback!157", ref.key())
+	assert.Equal(t, "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback!157", ref.key(),
+		"the whole origin, so two instances on one host never share state")
 	assert.Equal(t, "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/157", ref.canonical())
 	assert.Equal(t, "gitlab.yamzz.test/yamzz/sub/previewplayback", ref.remote().Key())
 
@@ -44,7 +45,10 @@ func TestGitLabMRRefFromURL(t *testing.T) {
 
 func TestPRStateKeyAndNumberCoverGitLab(t *testing.T) {
 	const mr = "https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/157"
-	assert.Equal(t, "gitlab:gitlab.yamzz.test/yamzz/sub/previewplayback!157", prStateKey(mr))
+	assert.Equal(t, "gitlab:https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback!157", prStateKey(mr))
+	other, ok := gitlabMRRefFromURL("https://gitlab.yamzz.test:7080/yamzz/sub/previewplayback/-/merge_requests/157")
+	require.True(t, ok)
+	assert.NotEqual(t, prStateKey(mr), prStateKey(other.canonical()), "another port is another instance")
 	assert.Equal(t, prStateKey(mr), prStateKey(mr+"/diffs"), "sub-pages share one identity")
 	assert.True(t, samePRURL(mr, mr+"/pipelines"))
 	assert.Equal(t, 157, deriveForgePRNumber(mr))
@@ -114,7 +118,7 @@ func TestGitLabJobCheckRun(t *testing.T) {
 		{glJob{Name: "test", Status: "failed"}, "fail", "failed"},
 		{glJob{Name: "lint", Status: "failed", AllowFailure: true}, "skipped", "failed (allowed)"},
 		{glJob{Name: "deploy", Status: "manual"}, "pending", "manual"},
-		{glJob{Name: "old", Status: "canceled"}, "skipped", "canceled"},
+		{glJob{Name: "old", Status: "canceled"}, "skipped", "cancelled"}, // one spelling for the summary
 		{glJob{Name: "run", Status: "running"}, "pending", "running"},
 		{glJob{Name: "wait", Status: "waiting_for_resource"}, "pending", "waiting for resource"},
 	}

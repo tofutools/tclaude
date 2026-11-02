@@ -560,9 +560,20 @@ func branchWebURL(repoURL, defaultBranch, branch string) string {
 		sep = "/-/"
 	}
 	if defaultBranch == "" || branch == defaultBranch {
-		return repoURL + sep + "tree/" + branch
+		return repoURL + sep + "tree/" + escapeBranchPath(branch)
 	}
-	return repoURL + sep + "compare/" + defaultBranch + "..." + branch
+	return repoURL + sep + "compare/" + escapeBranchPath(defaultBranch) + "..." + escapeBranchPath(branch)
+}
+
+// escapeBranchPath escapes a branch name for a URL path, segment by segment so
+// its slashes stay path separators: a '#' or '?' in a branch name would
+// otherwise end the path and send the link somewhere else.
+func escapeBranchPath(branch string) string {
+	segments := strings.Split(branch, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	return strings.Join(segments, "/")
 }
 
 // isGitHubRepoURL reports whether a repository web URL is on github.com.
@@ -636,7 +647,7 @@ func hardenedGitInfo(policy config.GitProxyConfig, repoDir, branch string) (repo
 			// The merge request is read through the GitLab API with the proxy's
 			// token; the project is the one the gate resolved, never the
 			// directory's. See prs_gitlab.go.
-			info.PRNumber, info.PRURL, info.PRState, info.Checks = gitlabMRForBranch(policy, repo, branch)
+			info.PRNumber, info.PRURL, info.PRState, info.PRTitle, info.Checks = gitlabMRForBranch(policy, repo, branch)
 			return info, true
 		}
 		// An explicit --repo, and a working directory that is not the agent's.

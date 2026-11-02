@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -151,4 +152,60 @@ func TestHardenedGitInfoReadsTheMergeRequestFromGitLab(t *testing.T) {
 		assert.Equal(t, 0, info.PRNumber)
 		assert.Equal(t, before, len(calls))
 	})
+}
+
+// TestHardenedGitInfoPicksTheProjectsOwnOpenMergeRequest: the listing is by
+// source branch name, so a fork's merge request into this project can share
+// it; and an open one must be found even behind newer merged ones.
+func TestHardenedGitInfoPicksTheProjectsOwnOpenMergeRequest(t *testing.T) {
+	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.yamzz.test/yamzz")
+	repoDir := branchLinkGitRepo(t, gitPath, filepath.Join(root, "work"),
+		"git@gitlab.yamzz.test:yamzz/sub/previewplayback.git")
+	const list = "projects/yamzz%2Fsub%2Fpreviewplayback/merge_requests"
+	answer := func(opened, all string) {
+		t.Cleanup(SetGitLabTransportForTest(func(_ context.Context, _, _ string, req glAPIRequest) (glAPIResult, error) {
+			if req.Path == list {
+				body := all
+				if req.Query.Get("state") == "opened" {
+					body = opened
+				}
+				return glAPIResult{Status: http.StatusOK, Header: http.Header{}, Body: []byte(body)}, nil
+			}
+			if strings.HasPrefix(req.Path, list+"/") {
+				return glAPIResult{Status: http.StatusOK, Header: http.Header{}, Body: []byte(`{"iid":1,"state":"opened"}`)}, nil
+			}
+			return glAPIResult{Status: http.StatusNotFound, Header: http.Header{}, Body: []byte(`{}`)}, nil
+		}))
+	}
+
+	t.Run("a fork's merge request with the same branch name is skipped", func(t *testing.T) {
+		answer(`[
+			{"iid":9,"state":"opened","title":"From a fork","source_project_id":5,"target_project_id":1,
+			 "web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/9"},
+			{"iid":8,"state":"opened","title":"Our own","source_project_id":1,"target_project_id":1,
+			 "web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/8"}]`, `[]`)
+		info, ok := hardenedGitInfo(branchLinkPolicy(t), repoDir, "feat")
+		require.True(t, ok)
+		assert.Equal(t, 8, info.PRNumber)
+		assert.Equal(t, "Our own", info.PRTitle, "the hover shows the merge request's title")
+	})
+
+	t.Run("no open one: the newest of the project's own in any state", func(t *testing.T) {
+		answer(`[]`, `[
+			{"iid":4,"state":"closed","title":"Fork","source_project_id":5,"target_project_id":1,
+			 "web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/4"},
+			{"iid":3,"state":"merged","title":"Merged","source_project_id":1,"target_project_id":1,
+			 "web_url":"https://gitlab.yamzz.test:6080/yamzz/sub/previewplayback/-/merge_requests/3"}]`)
+		info, ok := hardenedGitInfo(branchLinkPolicy(t), repoDir, "feat")
+		require.True(t, ok)
+		assert.Equal(t, 3, info.PRNumber)
+		assert.Equal(t, "merged", info.PRState)
+	})
+}
+
+func TestBranchWebURLEscapesTheBranchName(t *testing.T) {
+	const repo = "https://gitlab.yamzz.test:6080/yamzz/app"
+	assert.Equal(t, repo+"/-/compare/main...feat/%231%3Fx", branchWebURL(repo, "main", "feat/#1?x"),
+		"a '#' or '?' stays in the path; slashes stay separators")
+	assert.Equal(t, repo+"/-/tree/feat/thing", branchWebURL(repo, "", "feat/thing"))
 }

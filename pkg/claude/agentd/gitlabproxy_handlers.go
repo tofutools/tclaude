@@ -164,6 +164,8 @@ type glMR struct {
 	SquashCommitSHA     string      `json:"squash_commit_sha"`
 	HasConflicts        bool        `json:"has_conflicts"`
 	DetailedMergeStatus string      `json:"detailed_merge_status"`
+	SourceProjectID     int64       `json:"source_project_id"`
+	TargetProjectID     int64       `json:"target_project_id"`
 	Author              *glUser     `json:"author"`
 	HeadPipeline        *glPipeline `json:"head_pipeline"`
 }

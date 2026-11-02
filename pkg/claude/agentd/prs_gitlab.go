@@ -38,8 +38,11 @@ type gitlabMRRef struct {
 	number  int
 }
 
+// key identifies the merge request across every cache: the instance's whole
+// origin (scheme, host and port), not just its host, so two instances on one
+// host never share state.
 func (r gitlabMRRef) key() string {
-	return strings.ToLower(r.host+"/"+r.project) + "!" + strconv.Itoa(r.number)
+	return strings.ToLower(r.base+"/"+r.project) + "!" + strconv.Itoa(r.number)
 }
 
 // canonical renders the one spelling the strict validator accepts.
@@ -342,41 +345,65 @@ func prStateFromGitLab(state string, draft bool) string {
 // opened FROM branch, preferring an open one, with its head pipeline's jobs
 // as the checks. The branch has passed validateBranchName on its way here and
 // travels as a query value, never in a path.
-func gitlabMRForBranch(policy config.GitProxyConfig, repo branchLinkRepo, branch string) (int, string, string, *prChecksInfo) {
+func gitlabMRForBranch(policy config.GitProxyConfig, repo branchLinkRepo, branch string) (int, string, string, string, *prChecksInfo) {
 	if !safeBranchForGH("", branch) || repo.Base == "" || repo.OwnerRepo == "" {
-		return 0, "", "", nil
+		return 0, "", "", "", nil
 	}
 	token, fault := gitlabToken(policy)
 	if fault != nil {
-		return 0, "", "", nil
+		return 0, "", "", "", nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), gitlabPresentedPRTimeout)
 	defer cancel()
 
 	projectID := url.PathEscape(repo.OwnerRepo)
-	res, err := glDo(ctx, repo.Base, token, glAPIRequest{
-		Path: "projects/" + projectID + "/merge_requests",
-		Query: url.Values{
-			"source_branch": []string{branch},
-			"state":         []string{"all"},
-			"per_page":      []string{"10"},
-			"order_by":      []string{"created_at"},
-			"sort":          []string{"desc"},
-		},
-	})
-	if err != nil || res.Status < 200 || res.Status > 299 {
-		return 0, "", "", nil
+	list := func(state string) []glMR {
+		res, err := glDo(ctx, repo.Base, token, glAPIRequest{
+			Path: "projects/" + projectID + "/merge_requests",
+			Query: url.Values{
+				"source_branch": []string{branch},
+				"state":         []string{state},
+				"per_page":      []string{"10"},
+				"order_by":      []string{"created_at"},
+				"sort":          []string{"desc"},
+			},
+		})
+		if err != nil || res.Status < 200 || res.Status > 299 {
+			return nil
+		}
+		var mrs []glMR
+		if json.Unmarshal(res.Body, &mrs) != nil {
+			return nil
+		}
+		return mrs
 	}
-	var mrs []glMR
-	if json.Unmarshal(res.Body, &mrs) != nil || len(mrs) == 0 {
-		return 0, "", "", nil
+	// The project's own branch only: a merge request INTO this project from a
+	// fork can carry the same branch name (the GitHub path skips a fork's
+	// head for the same reason).
+	ownBranch := func(mr glMR) bool {
+		return mr.SourceProjectID == 0 || mr.TargetProjectID == 0 || mr.SourceProjectID == mr.TargetProjectID
 	}
-	pick := 0
+	// Open first, so an open merge request is never hidden behind newer
+	// merged or closed ones; otherwise the newest in any state.
+	pick := -1
+	mrs := list("opened")
 	for i := range mrs {
-		if mrs[i].State == "opened" {
+		if mrs[i].State == "opened" && ownBranch(mrs[i]) {
 			pick = i
 			break
 		}
+	}
+	if pick < 0 {
+		mrs = list("all")
+		for i := range mrs {
+			if ownBranch(mrs[i]) {
+				pick = i
+				break
+			}
+		}
+	}
+	if pick < 0 {
+		return 0, "", "", "", nil
 	}
 	mr := mrs[pick]
 	// The listing carries no head pipeline; one more read fetches it, and the
@@ -388,7 +415,7 @@ func gitlabMRForBranch(policy config.GitProxyConfig, repo branchLinkRepo, branch
 	} else {
 		checks = gitlabPipelineChecks(ctx, repo.Base, token, ref, nil, time.Now())
 	}
-	return mr.IID, mr.WebURL, prStateFromGitLab(mr.State, mr.Draft), &checks
+	return mr.IID, mr.WebURL, prStateFromGitLab(mr.State, mr.Draft), truncateAuthoredPRTitle(mr.Title), &checks
 }
 
 // hostOf returns the host (without port) of a base URL, or "" when it does
