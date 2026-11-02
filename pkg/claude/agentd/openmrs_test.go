@@ -512,3 +512,57 @@ func TestAuthoredOpenMRNextDelay(t *testing.T) {
 	assert.Equal(t, authoredOpenMRPollInterval, delay)
 	assert.Equal(t, 0, failures, "success resets")
 }
+
+func TestAuthoredOpenMRItem_RequiredApprovalsStillMissing(t *testing.T) {
+	item, ok := authoredOpenMRItem(testMRBase, testMRNode(7, func(n *glOpenMRNode) {
+		n.DetailedMergeStatus = "NOT_APPROVED"
+		n.HeadPipeline = pipelineStatus("SUCCESS")
+		n.ApprovedBy.Nodes = append(n.ApprovedBy.Nodes, struct {
+			Username string `json:"username"`
+		}{"ann"})
+	}), "")
+	require.True(t, ok)
+	assert.Equal(t, 1, item.Reviews.Approved, "the real approval is still counted")
+	assert.Equal(t, "review_required", item.Reviews.Decision, "but the project wants more, so it is not approved")
+}
+
+// TestPollAuthoredOpenMRs_ARewrittenTokenDropsTheOldAccountsLists: the same
+// token FILE rewritten to another account must not keep showing the first
+// account's merge requests through a failed poll.
+func TestPollAuthoredOpenMRs_ARewrittenTokenDropsTheOldAccountsLists(t *testing.T) {
+	fail := false
+	openMRsWorld(t, map[string]string{"gitlab.example.test": testMRBase}, func(string) glAPIResult {
+		if fail {
+			return glAPIResult{Status: http.StatusBadGateway, Body: []byte(`{"message":"bad gateway"}`)}
+		}
+		return graphQLAnswer(t, "first-account", 1, testMRNode(7, nil))
+	})
+	_, err := pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, authoredOpenMRsSnapshot(loadCfg(t), nil))
+
+	cfg := loadCfg(t)
+	require.NoError(t, os.WriteFile(cfg.Agent.GitProxy.GitLabTokenFile, []byte("glpat-open-mrs-second\n"), 0o600))
+	fail = true
+	// The world's transport insists on the first token; a fresh one that
+	// accepts any token stands in for the second account's failing instance.
+	t.Cleanup(SetGitLabTransportForTest(func(context.Context, string, string, glAPIRequest) (glAPIResult, error) {
+		return glAPIResult{Status: http.StatusBadGateway, Body: []byte(`{"message":"bad gateway"}`), Header: http.Header{}}, nil
+	}))
+	_, err = pollAuthoredOpenMRs(context.Background())
+	require.Error(t, err)
+	assert.Nil(t, authoredOpenMRsSnapshot(loadCfg(t), nil), "nothing read with the new token: nothing shown")
+}
+
+func TestOpenMRProjectsSnapshot_APresentedMergeRequestMarksTheAgentsProject(t *testing.T) {
+	everyone := map[string]authoredOpenMREveryone{testMRBase: {projects: []dashboardOpenMRProject{
+		{Base: testMRBase, Project: "acme/busy", Total: 9, Items: []dashboardAuthoredOpenPR{}},
+		{Base: testMRBase, Project: "acme/app", Total: 1, Items: []dashboardAuthoredOpenPR{}},
+	}}}
+	agents := []dashboardAgent{{AgentID: "agt_p", repoLinksView: repoLinksView{
+		PresentedPRs: []presentedPRView{{URL: testMRBase + "/acme/app/-/merge_requests/3"}}}}}
+	projects, _, _ := openMRProjectsSnapshot(everyone, agents)
+	require.Len(t, projects, 2)
+	assert.Equal(t, "acme/app", projects[0].Project, "an agent known only by a presented merge request still counts")
+	assert.True(t, projects[0].Agents)
+}

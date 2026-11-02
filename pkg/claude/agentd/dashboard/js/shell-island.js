@@ -343,6 +343,7 @@ function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = nu
           <span>${pr.repository}</span><span> · ${ref}</span>
           ${mr && pr.author ? html`<span> · by ${pr.author}</span>` : null}
           ${mr && approvals > 0 ? html`<span> · ${approvals} approval${approvals === 1 ? '' : 's'}</span>` : null}
+          ${mr && pr.reviews?.decision === 'review_required' ? html`<span> · approvals required</span>` : null}
           ${mr && Number(pr.reviews?.changes_requested || 0) > 0 ? html`<span> · changes requested</span>` : null}
           ${mr && pr.conflicts ? html`<span> · conflict</span>` : null}
           ${ignored ? html`<span> · ${ignoredUntilLabel(ignored)}</span>` : null}

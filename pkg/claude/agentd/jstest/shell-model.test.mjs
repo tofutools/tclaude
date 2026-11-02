@@ -665,3 +665,17 @@ test('a conflicting merge request is never ready to merge, however green and app
   assert.deepEqual(authoredOpenMRsView(snapshot, 'attention').items.map((mr) => mr.number), [1, 2],
     'it needs attention instead');
 });
+
+test('a merge request still missing required approvals is not ready, whatever its count', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { authoredOpenMRsView } = await harness.importDashboardModule('js/shell-model.js');
+  const base = 'https://gitlab.example.test:6080/acme/app/-/merge_requests/';
+  const passing = { total: 1, passed: 1, state: 'passing' };
+  const view = authoredOpenMRsView({ authored_open_mrs: { available: true, total: 2, items: [
+    { number: 1, url: `${base}1`, checks: passing, reviews: { approved: 1 } },
+    { number: 2, url: `${base}2`, checks: passing, reviews: { approved: 1, decision: 'review_required' } },
+  ] } });
+  assert.equal(view.ready, 1);
+  assert.deepEqual(authoredOpenMRsView({ authored_open_mrs: { available: true, total: 2, items: view.items } }, 'ready')
+    .items.map((mr) => mr.number), [1]);
+});

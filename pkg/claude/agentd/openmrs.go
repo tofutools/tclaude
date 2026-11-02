@@ -27,6 +27,8 @@ package agentd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -112,9 +114,13 @@ type dashboardAuthoredOpenMRs struct {
 // credential never produced.
 var authoredOpenMRState struct {
 	sync.RWMutex
-	key       string
-	updatedAt time.Time
-	instances []dashboardAuthoredOpenMRInstance
+	key string
+	// tokenDigest is a SHA-256 digest of the token the lists were read with
+	// (never the token). The token FILE can be rewritten to another account
+	// under the same path, and lists read for the old one must not survive.
+	tokenDigest string
+	updatedAt   time.Time
+	instances   []dashboardAuthoredOpenMRInstance
 	// good is each instance's last successful answer, kept through a failed
 	// poll so one bad response does not empty the popover.
 	good map[string]authoredOpenMRAnswer
@@ -259,10 +265,12 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 		return 0, errors.New(fault.Msg)
 	}
 
+	sum := sha256.Sum256([]byte(token))
+	digest := hex.EncodeToString(sum[:])
 	authoredOpenMRState.RLock()
 	good := map[string]authoredOpenMRAnswer{}
 	everyone := map[string]authoredOpenMREveryone{}
-	if authoredOpenMRState.key == key {
+	if authoredOpenMRState.key == key && authoredOpenMRState.tokenDigest == digest {
 		for base, answer := range authoredOpenMRState.good {
 			good[base] = answer
 		}
@@ -307,6 +315,7 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 
 	authoredOpenMRState.Lock()
 	authoredOpenMRState.key = key
+	authoredOpenMRState.tokenDigest = digest
 	authoredOpenMRState.good = good
 	authoredOpenMRState.everyone = everyone
 	authoredOpenMRState.instances = instances
@@ -324,6 +333,7 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 func resetAuthoredOpenMRs(key string) {
 	authoredOpenMRState.Lock()
 	authoredOpenMRState.key = key
+	authoredOpenMRState.tokenDigest = ""
 	authoredOpenMRState.good = nil
 	authoredOpenMRState.everyone = nil
 	authoredOpenMRState.instances = nil
@@ -451,8 +461,13 @@ func authoredOpenMRItem(base string, node glOpenMRNode, fetchedAt string) (dashb
 			FetchedAt:      fetchedAt,
 		},
 	}
-	if strings.EqualFold(node.DetailedMergeStatus, "REQUESTED_CHANGES") {
+	switch strings.ToUpper(node.DetailedMergeStatus) {
+	case "REQUESTED_CHANGES":
 		item.Reviews.ChangesRequested = 1
+	case "NOT_APPROVED":
+		// The project's own approval rules still want approvals, however
+		// many people have approved: never ready to merge.
+		item.Reviews.Decision = "review_required"
 	}
 	if t, err := time.Parse(time.RFC3339, node.UpdatedAt); err == nil {
 		item.UpdatedAt = t.UTC().Format(time.RFC3339)
@@ -746,7 +761,11 @@ func openMRProjectsSnapshot(everyone map[string]authoredOpenMREveryone, agents [
 	// request), so the project root is everything before "/-/".
 	agentRepos := map[string]bool{}
 	for _, agent := range agents {
-		for _, link := range []string{agent.BranchURL, agent.StartupBranchURL, agent.BranchPRURL, agent.StartupPRURL} {
+		links := []string{agent.BranchURL, agent.StartupBranchURL, agent.BranchPRURL, agent.StartupPRURL}
+		for _, presented := range agent.PresentedPRs {
+			links = append(links, presented.URL)
+		}
+		for _, link := range links {
 			if root, _, ok := strings.Cut(link, "/-/"); ok && strings.HasPrefix(root, "https://") {
 				agentRepos[strings.ToLower(root)] = true
 			}
