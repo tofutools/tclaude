@@ -115,7 +115,7 @@ function spreadSheet(placed, dimmed, motion) {
   // and stays out of sight rather than land on it.
   const rules = [
     `[data-overlay-window] { pointer-events: none !important; transform-origin: center center; ${moving} }`,
-    ':is(.window-resize-frame, .overlay-split-line, .overlay-split-cross, .overlay-split-detach, .overlay-snap-guide) { visibility: hidden !important; }',
+    ':is(.window-resize-frame, .overlay-split-line, .overlay-split-cross, .overlay-split-detach, .overlay-split-gap, .overlay-snap-guide) { visibility: hidden !important; }',
   ];
   if (placed.length) rules.push(`[data-overlay-window]:not(${placed.map(({ windowId }) => selectorFor(windowId)).join(', ')}) { visibility: hidden !important; }`);
   for (const { windowId, box, spot } of placed) {
