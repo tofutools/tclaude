@@ -12,7 +12,16 @@ const DASHBOARD = new URL('../dashboard/', import.meta.url);
 const read = (file) => readFileSync(new URL(file, DASHBOARD), 'utf8');
 const SHEETS = readdirSync(DASHBOARD).filter((name) => name.endsWith('.css')).sort();
 const uncommented = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '');
-const BUTTON = /button|btn|\.tool\b/;
+// Classes the shared Button renders with (class="…" on <${Button}>): area
+// skins name buttons by these too, not only by button/btn.
+const BUTTON_CLASSES = new Set();
+for (const name of readdirSync(new URL('js/', DASHBOARD)).filter((file) => file.endsWith('.js'))) {
+  for (const [, tag] of read(`js/${name}`).matchAll(/<\$\{Button\}([^>]*)>/g)) {
+    for (const [, list] of tag.matchAll(/\bclass="([^"$]+)"/g)) list.split(/\s+/).forEach((c) => c && BUTTON_CLASSES.add(c));
+  }
+}
+const namesButton = (selector) => /button|btn|\.tool\b/.test(selector)
+  || [...selector.matchAll(/\.([\w-]+)/g)].some(([, c]) => BUTTON_CLASSES.has(c));
 // A border declaration that paints a colour; taking the border away on hover
 // (0, none, transparent) is not a highlight.
 const BORDER = /(?:^|[;\s])border(?:-color)?\s*:(?!\s*(?:0|none|transparent)\s*(?:!important\s*)?(?:;|$))/;
@@ -38,7 +47,7 @@ test('the standard button hovers by background, never by border', () => {
 });
 
 test('no sheet brightens a button border on hover', () => {
-  const bad = rules().filter((r) => BUTTON.test(r.selector)
+  const bad = rules().filter((r) => namesButton(r.selector)
     && r.selector.split(/,(?![^()]*\))/).some((part) => part.includes(':hover'))
     && BORDER.test(r.body));
   assert.deepEqual(bad.map((r) => `${r.sheet}: ${r.selector}`), [], [

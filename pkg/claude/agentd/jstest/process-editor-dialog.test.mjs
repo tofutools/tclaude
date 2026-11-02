@@ -330,7 +330,7 @@ test('params dialog restores focus near removed rows and to Add after the final 
     const model = new ProcessEditModel(loaded);
     const dispose = openProcessParamsDialog({ model });
     const overlay = harness.document.querySelector('.process-param-modal');
-    const remove = overlay.querySelector(`[data-process-param="${removed}"] .process-action-danger`);
+    const remove = overlay.querySelector(`[data-process-param="${removed}"] [aria-label^="Remove parameter"]`);
     remove.focus();
     harness.fireEvent(remove, 'click');
     await settle();
@@ -353,7 +353,7 @@ test('params dialog reports every raw staged field and structural edit as dirty'
   ]);
   const cases = [
     ['add', (overlay) => harness.fireEvent(overlay.querySelector('.process-param-toolbar button'), 'click')],
-    ['remove', (overlay) => harness.fireEvent(overlay.querySelector('[data-process-param="issue"] .process-action-danger'), 'click')],
+    ['remove', (overlay) => harness.fireEvent(overlay.querySelector('[data-process-param="issue"] [aria-label^="Remove parameter"]'), 'click')],
     ['raw name', (overlay) => {
       const control = overlay.querySelector('[data-process-param="issue"] .process-param-name');
       control.value = 'issue ';

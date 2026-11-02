@@ -6,7 +6,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { downloadBlob } from './paf-model.js';
 import { shellConfirm } from './shell-state.js';
@@ -194,12 +194,12 @@ async function processGroupNames(fetchImpl = fetch) {
 // none of it: each performer lands through the agent import and its own review.
 function EnvelopeSection({ envelope, workflow, disabled, onPick, onLand }) {
   return html`<div class="pwf-section" data-pwf-envelope>
-    ${envelope.workflows.length > 1 && html`<label class="pwf-group">This file holds ${envelope.workflows.length} workflows. Reviewing <select data-pwf-workflow disabled=${disabled} value=${workflow} onChange=${(e) => onPick(e.currentTarget.value)}>
+    ${envelope.workflows.length > 1 && html`<label class="pwf-group">This file holds ${envelope.workflows.length} workflows. Reviewing <${Select} data-pwf-workflow disabled=${disabled} value=${workflow} onChange=${(e) => onPick(e.currentTarget.value)}>
       ${envelope.workflows.map((w) => html`<option key=${w.key} value=${w.key}>${w.root.split('@')[0]}</option>`)}
-    </select></label>`}
+    <//></label>`}
     ${envelope.performers.length > 0 && html`<h4>Agents it ships</h4><ul class="pwf-roles">${envelope.performers.map((p) => html`<li key=${p.role} data-pwf-performer=${p.role}>
       <b>${p.target}</b> <span class="muted">· ${p.name} on ${p.harness}${p.model ? ` (${p.model})` : ''}, ${p.history ? 'with its conversation' : 'no conversation'}</span>
-      <button type="button" class="tool pwf-land" data-pwf-land=${p.agentKey} disabled=${disabled} onClick=${() => onLand(p)}>Land it…</button></li>`)}</ul>
+      <${Button} class="pwf-land" data-pwf-land=${p.agentKey} disabled=${disabled} onClick=${() => onLand(p)}>Land it…<//></li>`)}</ul>
       <p class="muted">Importing the workflow lands none of them. Land one to give a role a pre-briefed agent, with the agent import's own review; or use your own agents and ignore these.</p>`}
   </div>`;
 }
@@ -290,11 +290,11 @@ function ImportDialog({ file, source, bytes, preview: initialPreview, group: ini
     </div>
     ${review.roleMap.length > 0 ? html`<div class="pwf-section"><h4>Agent roles it asks for</h4><ul class="pwf-roles">${review.roleMap.map((r) => html`<li key=${r.name} data-pwf-role=${r.name}>
         <b>${r.name}</b> <span class="muted">· ${r.steps.join(', ')}</span>
-        <label class="pwf-role-map">use <select data-pwf-role-map=${r.name} disabled=${busy} value=${choices.roleMap[r.name] || r.name}
+        <label class="pwf-role-map">use <${Select} data-pwf-role-map=${r.name} disabled=${busy} value=${choices.roleMap[r.name] || r.name}
           onChange=${(e) => choose({ roleMap: { ...choices.roleMap, [r.name]: e.currentTarget.value } })}>
           <option value=${r.name}>${r.name} (as named)</option>
           ${review.localRoles.filter((n) => n !== r.name).map((n) => html`<option key=${n} value=${n}>${n}</option>`)}
-        </select></label>
+        <//></label>
         ${!r.known && html`<span class="pwf-role-unknown" data-pwf-role-unknown>nothing here has ${r.target} yet</span>`}</li>`)}</ul>
       <p class="muted">A step waits until a member of the run's group has the role, or its fallback spawns one. Mapping rewrites the imported steps.</p></div>`
     : review.roles.length > 0 && html`<div class="pwf-section"><h4>Agent roles it asks for</h4><ul>${review.roles.map((r) => html`<li key=${r.name}><b>${r.name}</b> <span class="muted">· ${r.steps.join(', ')}</span></li>`)}</ul>
@@ -311,10 +311,10 @@ function ImportDialog({ file, source, bytes, preview: initialPreview, group: ini
       ${review.updates > 0 && !choices.rename && html`<label class="pwf-replace"><input type="checkbox" data-pwf-replace checked=${replace} onChange=${(e) => setReplace(e.currentTarget.checked)} /> Replace my current version of ${review.updates === 1 ? 'that template' : `those ${review.updates} templates`}</label>`}
     </div>
     ${(groups.length > 0 || choices.group) && html`<div class="pwf-section"><h4>Save to a group</h4>
-      <label class="pwf-group">Pin it to <select data-pwf-group disabled=${busy} value=${choices.group} onChange=${(e) => choose({ group: e.currentTarget.value })}>
+      <label class="pwf-group">Pin it to <${Select} data-pwf-group disabled=${busy} value=${choices.group} onChange=${(e) => choose({ group: e.currentTarget.value })}>
         <option value="">no group (library only)</option>
         ${[...new Set([...(choices.group ? [choices.group] : []), ...groups])].map((g) => html`<option key=${g} value=${g}>${g}</option>`)}
-      </select></label></div>`}
+      <//></label></div>`}
     ${error && html`<div class="island-error" role="alert">${error}</div>`}
     <div class="modal-buttons"><${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <${Button} variant="primary" data-pwf-import disabled=${busy || reviewing || imported || blocked || (review.nothingToDo && !choices.group)} onClick=${submit}>${imported ? 'Imported' : review.refused ? 'Refused' : reviewing ? 'Reviewing…' : review.nothingToDo && !choices.group ? 'Already imported' : busy ? 'Importing…' : 'Import'}</${Button}></div>
@@ -325,7 +325,7 @@ function ImportDialog({ file, source, bytes, preview: initialPreview, group: ini
 // A file dropped elsewhere (the dock's Processes section) comes in as
 // `dropped` and takes the same review.
 export function WorkflowImportButton({
-  group = '', onImported, dropped = null, from = null, label = '⤒ import workflow', className = 'process-action', id = 'process-workflow-import-btn',
+  group = '', onImported, dropped = null, from = null, label = '⤒ import workflow', className = 'process-action', id = 'process-workflow-import-btn', variant = '', size = '',
 }) {
   const input = useRef(null);
   const [state, setState] = useState(null);
@@ -352,14 +352,14 @@ export function WorkflowImportButton({
   useEffect(() => { void load(dropped); }, [dropped]);
   return html`<span class="pwf-import-entry">
     <input ref=${input} type="file" accept=".pwf,.paf,${PWF_TYPE}" hidden data-pwf-file onChange=${choose} />
-    <button id=${id || undefined} class=${className} type="button" title="Import a shared .pwf workflow file, or a .paf carrying one: you review what it runs before anything is stored" onClick=${() => (from ? void load(from) : input.current?.click())}>${label}</button>
+    <${Button} id=${id || undefined} class=${className} variant=${variant} size=${size} title="Import a shared .pwf workflow file, or a .paf carrying one: you review what it runs before anything is stored" onClick=${() => (from ? void load(from) : input.current?.click())}>${label}<//>
     ${error && html`<span class="island-error pwf-inline-error" role="alert">${error}</span>`}
     ${state && html`<${ImportDialog} ...${state} group=${group} onClose=${() => setState(null)} onImported=${onImported} />`}
   </span>`;
 }
 
 // WorkflowExportButton downloads one template as a .pwf.
-export function WorkflowExportButton({ id, className = 'process-action', disabled = false, title = '' }) {
+export function WorkflowExportButton({ id, className = 'process-action', variant = '', size = '', disabled = false, title = '' }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const run = async () => {
@@ -373,7 +373,7 @@ export function WorkflowExportButton({ id, className = 'process-action', disable
       setBusy(false);
     }
   };
-  return html`<button class=${className} data-process-action="export" data-id=${id} type="button" disabled=${busy || disabled}
+  return html`<${Button} class=${className} variant=${variant} size=${size} data-process-action="export" data-id=${id} disabled=${busy || disabled}
     title=${error || title || 'Download as a .pwf workflow file to share; it carries the templates this one uses'} aria-invalid=${error ? 'true' : undefined}
-    onClick=${run}>${busy ? 'exporting…' : error ? 'export failed' : 'share'}</button>`;
+    onClick=${run}>${busy ? 'exporting…' : error ? 'export failed' : 'share'}<//>`;
 }

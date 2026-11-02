@@ -2,7 +2,7 @@ import { Fragment, h, render } from 'preact';
 import { signal } from '@preact/signals';
 import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { PALETTE_PRIMITIVES, PALETTE_SNIPPETS } from './process-edit-model.js';
 import { selectionItems } from './process-selection.js';
 import { severityGlyph } from './process-validation.js';
@@ -116,7 +116,7 @@ function EditableTitle({ controller, view }) {
   const abandon = () => { settled.current = true; setEditing(false); };
   const label = model.name || model.id || 'untitled';
   if (!editing) {
-    return html`<button
+    return html`<button data-ui-exempt
       class=${`process-editor-title${model.name ? '' : ' process-unnamed'}`}
       type="button" data-process-title-edit disabled=${blocked}
       title=${`${model.name ? `${model.name} — ` : ''}id ${model.id || 'unsaved'}. Click to rename.`}
@@ -151,32 +151,32 @@ function Header({ controller, view }) {
     <span class="process-editor-dirty" hidden=${!model.dirty}>● modified</span>
     <span class=${`process-editor-status${view.status.error ? ' is-error' : ''}`} role="status">${view.status.message}</span>
     <span class="spacer"></span>
-    <button class="process-action" type="button" disabled=${externalPending || view.scope?.depth > 0} title=${view.scope?.depth ? 'Template settings belong to the root process; exit the subgraph first' : 'Edit template name and description'} onClick=${() => controller.setSelection({ type: 'template' })}>template settings…</button>
-    <button class="process-action" type="button" disabled=${externalPending || pending.save} title="Declare template parameters" onClick=${() => controller.openParamsSettings()}>params…</button>
-    <button class="process-action" type="button" disabled=${externalPending || !model.canUndo} title=${withShortcut('Undo', 'process-undo')} onClick=${() => controller.applyHistory('undo')}>↶ undo</button>
-    <button class="process-action" type="button" disabled=${externalPending || !model.canRedo} title=${withShortcut('Redo', 'process-redo')} onClick=${() => controller.applyHistory('redo')}>↷ redo</button>
+    <${Button} class="process-action" disabled=${externalPending || view.scope?.depth > 0} title=${view.scope?.depth ? 'Template settings belong to the root process; exit the subgraph first' : 'Edit template name and description'} onClick=${() => controller.setSelection({ type: 'template' })}>template settings…<//>
+    <${Button} class="process-action" disabled=${externalPending || pending.save} title="Declare template parameters" onClick=${() => controller.openParamsSettings()}>params…<//>
+    <${Button} class="process-action" disabled=${externalPending || !model.canUndo} title=${withShortcut('Undo', 'process-undo')} onClick=${() => controller.applyHistory('undo')}>↶ undo<//>
+    <${Button} class="process-action" disabled=${externalPending || !model.canRedo} title=${withShortcut('Redo', 'process-redo')} onClick=${() => controller.applyHistory('redo')}>↷ redo<//>
     <span class="process-auto-layout-group" role="group" aria-label="Auto layout">
-      <button class="process-action" type="button" data-process-auto-layout disabled=${externalPending} title=${`Auto layout: tidy the graph, or just the selected nodes (${shortcutText('process-auto-layout')}). Undo restores hand-placed positions.`} onClick=${() => controller.autoLayout()}>▦ auto layout</button>
+      <${Button} class="process-action" data-process-auto-layout disabled=${externalPending} title=${`Auto layout: tidy the graph, or just the selected nodes (${shortcutText('process-auto-layout')}). Undo restores hand-placed positions.`} onClick=${() => controller.autoLayout()}>▦ auto layout<//>
       ${LAYOUT_DIRECTIONS.map(([direction, arrow, label]) => html`
-        <button class=${`process-action process-layout-direction${model.layoutDirection === direction ? ' is-active' : ''}`} type="button"
-          data-process-layout-direction=${direction} aria-pressed=${String(model.layoutDirection === direction)}
+        <${Button} class=${`process-action process-layout-direction${model.layoutDirection === direction ? ' is-active' : ''}`}
+          data-process-layout-direction=${direction} pressed=${model.layoutDirection === direction}
           disabled=${externalPending || (view.scope?.depth > 0 && model.layoutDirection !== direction)}
           title=${view.scope?.depth > 0 ? 'The layout direction belongs to the root process; exit the subgraph first'
             : model.layoutDirection === direction ? `The graph flows ${label}; click to tidy it` : `Auto layout flowing ${label} (whole graph; undo restores)`}
           aria-label=${`Auto layout flowing ${label}`}
-          onClick=${() => controller.autoLayout(direction)}>${arrow}</button>`)}
+          onClick=${() => controller.autoLayout(direction)}>${arrow}<//>`)}
     </span>
-    <button class="process-action" type="button" disabled=${externalPending} title="Toggle the node palette" onClick=${() => controller.togglePalette()}>⬒ palette</button>
-    <button class="process-action" type="button" title=${withShortcut('Process commands', 'process-commands')} aria-label=${withShortcut('Open process commands', 'process-commands')} onClick=${() => controller.openCommands()}>${shortcutText('process-commands')} commands</button>
-    <button class=${`process-action process-scribe-action${view.scribeDock?.open ? ' is-active' : ''}`} type="button"
+    <${Button} class="process-action" disabled=${externalPending} title="Toggle the node palette" onClick=${() => controller.togglePalette()}>⬒ palette<//>
+    <${Button} class="process-action" title=${withShortcut('Process commands', 'process-commands')} aria-label=${withShortcut('Open process commands', 'process-commands')} onClick=${() => controller.openCommands()}>${shortcutText('process-commands')} commands<//>
+    <${Button} class=${`process-action process-scribe-action${view.scribeDock?.open ? ' is-active' : ''}`}
       disabled=${!view.scribeDock?.available && (externalPending || pending.save)} aria-pressed=${view.scribeDock?.available ? String(!!view.scribeDock.open) : undefined}
       title=${view.scribeDock?.available ? 'Co-design this template with its scoped process scribe (chat or terminal)' : 'Open an agent scoped to this exact process template'}
       onClick=${() => (view.scribeDock?.available ? controller.toggleScribeDock() : controller.requestScribe('template'))}>
       <span class="process-scribe-plain">Edit with agent</span><span class="process-scribe-wizard">Consult a process scribe</span>
-    </button>
+    <//>
     <${WorkflowExportButton} id=${model.id} disabled=${externalPending || model.dirty || !model.semanticHash}
       title=${model.dirty || !model.semanticHash ? 'Save first: a workflow file carries the saved version' : ''} />
-    <button class="process-action primary" type="button" disabled=${pending.save || externalPending || (!model.dirty && !view.blank)} title=${withShortcut('Save a new version', 'process-save')} onClick=${() => controller.save()}>${pending.save ? 'Saving…' : 'Save'}</button>
+    <${Button} variant="primary" class="process-action" disabled=${pending.save || externalPending || (!model.dirty && !view.blank)} title=${withShortcut('Save a new version', 'process-save')} onClick=${() => controller.save()}>${pending.save ? 'Saving…' : 'Save'}<//>
   </div>`;
 }
 
@@ -227,17 +227,17 @@ function ExternalChange({ controller, view }) {
     <div class="process-editor-external-bar">
       <span class="process-editor-external-message" title=${change.authoredAt || change.ref || ''}>${message}</span>
       <span class="spacer"></span>
-      ${actor?.live && html`<button class="process-action process-external-actor" type="button" onClick=${() => controller.openExternalActor()}>Open ${actor.label}</button>`}
-      <button class="process-action" type="button" disabled=${pending || change.reviewPending} onClick=${() => controller.toggleExternalReview()}>
+      ${actor?.live && html`<${Button} class="process-action process-external-actor" onClick=${() => controller.openExternalActor()}>Open ${actor.label}<//>`}
+      <${Button} class="process-action" disabled=${pending || change.reviewPending} onClick=${() => controller.toggleExternalReview()}>
         ${change.reviewPending ? 'Loading review…' : change.reviewOpen ? 'Hide review' : 'Review changes'}
-      </button>
-      <button class="process-action primary" type="button" disabled=${pending || view.pending.save} onClick=${() => controller.reloadExternalChange()}>
+      <//>
+      <${Button} variant="primary" class="process-action" disabled=${pending || view.pending.save} onClick=${() => controller.reloadExternalChange()}>
         ${change.kind === 'dirty' ? 'Reload & discard' : 'Apply update'}
-      </button>
-      ${change.kind === 'dirty' && html`<button class="process-action" type="button" disabled=${pending || view.pending.save} onClick=${() => controller.keepExternalChange()}>Keep editing</button>`}
-      <button class="process-action primary" type="button" data-review-on-canvas disabled=${pending || view.pending.save || view.diff?.open}
+      <//>
+      ${change.kind === 'dirty' && html`<${Button} class="process-action" disabled=${pending || view.pending.save} onClick=${() => controller.keepExternalChange()}>Keep editing<//>`}
+      <${Button} variant="primary" class="process-action" data-review-on-canvas disabled=${pending || view.pending.save || view.diff?.open}
         title="Show this version on the canvas and accept or reject each change; your local edits stay until you decide"
-        onClick=${() => controller.openDiffReview()}>Review on canvas</button>
+        onClick=${() => controller.openDiffReview()}>Review on canvas<//>
     </div>
     ${change.reviewOpen && html`<div class="process-external-review">
       <div class="process-external-graph-summary">${review?.graph || (change.reviewPending ? 'Loading the exact polled generation…' : 'Change summary unavailable; retry Review changes.')}</div>
@@ -254,15 +254,15 @@ function Palette({ controller, hidden, snippets, view }) {
       draggable=${canInsert ? 'true' : 'false'} title=${hint || ''} data-palette-item=${JSON.stringify(payload)}
     ><span class="process-palette-card-copy"><span class="process-palette-card-label">${label}</span><span class="process-palette-card-hint">${hint || ''}</span></span>
       <span class="process-palette-card-actions">
-        <button type="button" class="process-palette-insert" disabled=${!canInsert} aria-label=${`Insert ${label}`}
+        <button data-ui-exempt type="button" class="process-palette-insert" disabled=${!canInsert} aria-label=${`Insert ${label}`}
           title=${canInsert ? `Insert ${label} at the canvas center` : available ? 'Snippet insertion is not allowed in this read-only view.' : hint}
           onClick=${() => controller.insertPaletteItem(payload)}>Insert</button>
-        ${custom && html`<button type="button" class="process-palette-manage" disabled=${pending} aria-label=${`Rename custom snippet ${label}`} title="Rename custom snippet" onClick=${() => controller.renameCustomSnippet(payload.id)}>✎</button>
-        <button type="button" class="process-palette-manage process-palette-delete" disabled=${pending} aria-label=${`Delete custom snippet ${label}`} title="Delete custom snippet" onClick=${() => controller.deleteCustomSnippet(payload.id)}>×</button>`}
+        ${custom && html`<${Button} size="sm" icon=${true} class="process-palette-manage" disabled=${pending} aria-label=${`Rename custom snippet ${label}`} title="Rename custom snippet" onClick=${() => controller.renameCustomSnippet(payload.id)}>✎<//>
+        <${Button} size="sm" icon=${true} variant="ghost danger" class="process-palette-manage" disabled=${pending} aria-label=${`Delete custom snippet ${label}`} title="Delete custom snippet" onClick=${() => controller.deleteCustomSnippet(payload.id)}>×<//>`}
       </span>
     </div>`;
   };
-  return html`<aside class="process-editor-palette process-scroll-surface" aria-label="Node palette" hidden=${hidden}
+  return html`<aside class="process-editor-palette" aria-label="Node palette" hidden=${hidden}
     onDragStart=${(event) => controller.paletteDragStart(event)}
     onDragEnd=${(event) => controller.paletteDragEnd(event)}>
     ${view && html`<${ScopeOutline} controller=${controller} view=${view} />`}
@@ -272,12 +272,11 @@ function Palette({ controller, hidden, snippets, view }) {
     ${view.templateRefs.map((item) => card({ kind: 'template', id: item.id, name: item.name }, `▣ ${item.name}`, `Run template ${item.id} as a subprocess${item.versions ? ` · ${item.versions} version${item.versions === 1 ? '' : 's'}` : ''}`))}`}
     <div class="process-palette-section">Built-in snippets</div>
     ${PALETTE_SNIPPETS.map((item) => card({ kind: 'snippet', key: item.key }, item.label, item.hint))}
-    <div class="process-palette-section process-palette-custom-heading"><span>Custom snippets</span><button
-      type="button" class="process-palette-save" disabled=${!snippets.canSaveSelection || snippets.creating}
+    <div class="process-palette-section process-palette-custom-heading"><span>Custom snippets</span><${Button} size="sm" class="process-palette-save" disabled=${!snippets.canSaveSelection || snippets.creating}
       title=${snippets.canSaveSelection ? 'Save the selected nodes and their internal edges as a reusable snippet' : 'Select one or more nodes in an editable template first.'}
-      onClick=${() => controller.saveSelectionAsSnippet()}>${snippets.creating ? 'Saving…' : 'Save selection…'}</button></div>
+      onClick=${() => controller.saveSelectionAsSnippet()}>${snippets.creating ? 'Saving…' : 'Save selection…'}<//></div>
     ${snippets.loading && html`<p class="process-palette-state" role="status">Loading custom snippets…</p>`}
-    ${!snippets.loading && snippets.error && html`<div class="process-palette-state is-error" role="alert"><span>${snippets.error}</span><button type="button" onClick=${() => controller.loadCustomSnippets()}>Retry</button></div>`}
+    ${!snippets.loading && snippets.error && html`<div class="process-palette-state is-error" role="alert"><span>${snippets.error}</span><${Button} onClick=${() => controller.loadCustomSnippets()}>Retry<//></div>`}
     ${!snippets.loading && !snippets.error && !snippets.items.length && html`<p class="process-palette-state">No custom snippets yet. Select nodes, then choose Save selection…</p>`}
     ${!snippets.loading && snippets.items.map((item) => card(
       { kind: 'custom-snippet', id: item.id }, item.name,
@@ -302,12 +301,12 @@ function Inspector({ controller, view }) {
     <${StableField} blocked=${pending} class="process-inspector-input" type="text" spellcheck="false" placeholder="display name" aria-label="Template display name" value=${view.model.name} onCommit=${(name) => controller.setTemplateMeta({ name })} />
     <span class="process-inspector-id process-template-id-locked" title="Template id: the permanent store key that pinned versions and running instances resolve through">${view.model.id}</span>
     <${StableField} blocked=${pending} class="process-inspector-input process-template-description" type="text" spellcheck="true" placeholder="description" aria-label="Template description" value=${view.model.description} onCommit=${(description) => controller.setTemplateMeta({ description })} />
-    <${StableField} blocked=${pending} multiline class="process-inspector-input process-template-doc process-scroll-surface" rows="2" spellcheck="true" placeholder="documentation" aria-label="Template documentation" value=${view.model.doc} onCommit=${(doc) => controller.setTemplateMeta({ doc })} />
+    <${StableField} blocked=${pending} multiline class="process-inspector-input process-template-doc" rows="2" spellcheck="true" placeholder="documentation" aria-label="Template documentation" value=${view.model.doc} onCommit=${(doc) => controller.setTemplateMeta({ doc })} />
   </div>`;
   if (selected.length > 1) {
     const nodes = selected.filter((item) => item.type === 'node').length;
     const edges = selected.length - nodes;
-    return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-kind">multiple selection</span><span class="process-inspector-id">${selected.length} items</span><span class="process-inspector-hint">${[nodes ? `${nodes} node${nodes === 1 ? '' : 's'}` : '', edges ? `${edges} edge${edges === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</span><button class="process-action" type="button" data-wrap-selection disabled=${!view.compose?.canWrap} title=${view.compose?.canWrap ? 'Collapse the selected nodes into one ▣ node; ports come from the connectors crossing the boundary' : view.compose?.wrapReason || ''} onClick=${() => controller.wrapSelection()}>▣ wrap as subprocess…</button><button class="process-action" type="button" disabled=${!view.snippets.canSaveSelection} onClick=${() => controller.saveSelectionAsSnippet()}>save as snippet…</button><button class="process-action process-action-danger" type="button" onClick=${() => controller.deleteSelection()}>delete selection</button></div>`;
+    return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-kind">multiple selection</span><span class="process-inspector-id">${selected.length} items</span><span class="process-inspector-hint">${[nodes ? `${nodes} node${nodes === 1 ? '' : 's'}` : '', edges ? `${edges} edge${edges === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</span><${Button} class="process-action" data-wrap-selection disabled=${!view.compose?.canWrap} title=${view.compose?.canWrap ? 'Collapse the selected nodes into one ▣ node; ports come from the connectors crossing the boundary' : view.compose?.wrapReason || ''} onClick=${() => controller.wrapSelection()}>▣ wrap as subprocess…<//><${Button} class="process-action" disabled=${!view.snippets.canSaveSelection} onClick=${() => controller.saveSelectionAsSnippet()}>save as snippet…<//><${Button} variant="danger" class="process-action" onClick=${() => controller.deleteSelection()}>delete selection<//></div>`;
   }
   if (sel?.type === 'node' && view.selectedNode) {
     // The node itself is edited in the docked node inspector beside the canvas.
@@ -318,7 +317,7 @@ function Inspector({ controller, view }) {
   }
   if (sel?.type === 'edge' && view.selectedEdge) {
     const edge = view.selectedEdge;
-    return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-kind">edge</span><span class="process-inspector-id">${edge.from} → ${edge.to}</span><${StableField} blocked=${pending} class="process-inspector-input" type="text" spellcheck="false" placeholder="outcome" aria-label="Edge outcome label" value=${edge.outcome} onCommit=${(outcome) => controller.renameEdgeOutcome(edge.from, edge.outcome, outcome.trim())} /><${EdgeLoopControls} controller=${controller} edge=${edge} loop=${view.selectedEdgeLoop} pending=${pending} /><button class="process-action process-action-danger" type="button" onClick=${() => controller.deleteSelection()}>delete edge</button></div>`;
+    return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-kind">edge</span><span class="process-inspector-id">${edge.from} → ${edge.to}</span><${StableField} blocked=${pending} class="process-inspector-input" type="text" spellcheck="false" placeholder="outcome" aria-label="Edge outcome label" value=${edge.outcome} onCommit=${(outcome) => controller.renameEdgeOutcome(edge.from, edge.outcome, outcome.trim())} /><${EdgeLoopControls} controller=${controller} edge=${edge} loop=${view.selectedEdgeLoop} pending=${pending} /><${Button} variant="danger" class="process-action" onClick=${() => controller.deleteSelection()}>delete edge<//></div>`;
   }
   return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-hint">Select a node or edge to edit it. A selected node opens in the node inspector.</span></div>`;
 }
@@ -333,9 +332,9 @@ function EdgeLoopControls({ controller, edge, loop, pending }) {
   }
   if (!loop?.loopable) return null;
   if (!loop.bound) {
-    return html`<button class="process-action process-loop-make" type="button" data-make-loop
+    return html`<${Button} class="process-action process-loop-make" data-make-loop
       title="Bound this connector so the work between its target and this decision runs at most a few rounds"
-      onClick=${() => controller.makeEdgeLoop(edge.from, edge.outcome)}>↺ make it a loop (${LOOP_DEFAULT_ROUNDS} rounds)</button>`;
+      onClick=${() => controller.makeEdgeLoop(edge.from, edge.outcome)}>↺ make it a loop (${LOOP_DEFAULT_ROUNDS} rounds)<//>`;
   }
   const { maxIterations, onExhausted } = loop.bound;
   const choices = loop.exhaustion.includes(onExhausted) || !onExhausted ? loop.exhaustion : [onExhausted, ...loop.exhaustion];
@@ -344,11 +343,11 @@ function EdgeLoopControls({ controller, edge, loop, pending }) {
       spellcheck="false" placeholder=${String(LOOP_DEFAULT_ROUNDS)} aria-label="Most rounds this loop runs; blank removes the bound"
       value=${String(maxIterations)} onCommit=${(text) => controller.setEdgeLoopRounds(edge.from, edge.outcome, text)} />
     rounds, then
-    <select class="process-loop-exhausted" aria-label="When the rounds are used up" disabled=${pending} value=${onExhausted}
+    <${Select} class="process-loop-exhausted" aria-label="When the rounds are used up" disabled=${pending} value=${onExhausted}
       onChange=${(event) => controller.setEdgeLoopExhausted(edge.from, edge.outcome, event.currentTarget.value)}>
       ${choices.map((outcome) => html`<option key=${outcome} value=${outcome}>${outcome}</option>`)}
       <option value="">refuse; the decider picks again</option>
-    </select></span>`;
+    <//></span>`;
 }
 
 function Issues({ controller, issues }) {
@@ -360,10 +359,10 @@ function Issues({ controller, issues }) {
   return html`<details class="process-issues-panel" hidden=${issues.hidden} open=${issues.open}
     onToggle=${(event) => controller.setIssuesOpen(event.currentTarget.open)}>
     <summary class="process-issues-summary">${issues.summary}</summary>
-    <ul ref=${list} class="process-issues-list process-scroll-surface">
-      ${issues.entries.map((entry, index) => html`<li key=${`${entry.code}:${entry.scope}:${entry.targetId}:${entry.message}`}><button type="button" class=${`process-issue process-issue-${entry.severity}`} data-issue-index=${index} onClick=${() => controller.focusIssueAt(index, false)}><span class="process-issue-glyph">${severityGlyph(entry.severity)}</span><span class="process-issue-target">${entry.scope === 'edge' && entry.edge ? `${entry.edge.from} → (${entry.edge.outcome})` : entry.node || 'template'}</span><span class="process-issue-message" title=${`${entry.code}: ${entry.message}`}>${entry.message}</span></button>${entry.loopFix && html`<button type="button" class="process-action process-loop-make" data-issue-loop-fix
+    <ul ref=${list} class="process-issues-list">
+      ${issues.entries.map((entry, index) => html`<li key=${`${entry.code}:${entry.scope}:${entry.targetId}:${entry.message}`}><button data-ui-exempt type="button" class=${`process-issue process-issue-${entry.severity}`} data-issue-index=${index} onClick=${() => controller.focusIssueAt(index, false)}><span class="process-issue-glyph">${severityGlyph(entry.severity)}</span><span class="process-issue-target">${entry.scope === 'edge' && entry.edge ? `${entry.edge.from} → (${entry.edge.outcome})` : entry.node || 'template'}</span><span class="process-issue-message" title=${`${entry.code}: ${entry.message}`}>${entry.message}</span></button>${entry.loopFix && html`<${Button} class="process-action process-loop-make" data-issue-loop-fix
       title=${`Bound ${entry.loopFix.from} → (${entry.loopFix.outcome}) so the cycle runs at most ${LOOP_DEFAULT_ROUNDS} rounds`}
-      onClick=${() => controller.makeEdgeLoop(entry.loopFix.from, entry.loopFix.outcome)}>↺ make it a loop (${LOOP_DEFAULT_ROUNDS} rounds)</button>`}</li>`)}
+      onClick=${() => controller.makeEdgeLoop(entry.loopFix.from, entry.loopFix.outcome)}>↺ make it a loop (${LOOP_DEFAULT_ROUNDS} rounds)<//>`}</li>`)}
     </ul>
   </details>`;
 }
@@ -378,7 +377,7 @@ function Issues({ controller, issues }) {
 function EdgePin({ controller, pin }) {
   if (!pin?.open) return null;
   const { from, outcome } = pin;
-  return html`<button
+  return html`<button data-ui-exempt
     class=${`process-edge-pin${pin.pinned ? ' is-pinned' : ''}`}
     type="button"
     style=${`left:${Math.round(pin.left)}px;top:${Math.round(pin.top)}px`}
@@ -452,12 +451,12 @@ export function ScribeDialog({ descriptor, complete }) {
       : descriptor.scribeKind === 'diagnostic' ? 'The current diagnostic identity below will be shared.'
         : 'A bounded whole-template summary will be shared.'}</p>
     <label class="process-scribe-prompt-label">Your request (editable)</label>
-    <textarea ref=${input} class="process-scribe-prompt process-scroll-surface" rows="4" maxlength=${PROCESS_SCRIBE_PROMPT_MAX}
+    <textarea ref=${input} class="process-scribe-prompt" rows="4" maxlength=${PROCESS_SCRIBE_PROMPT_MAX}
       aria-label="Request for the process scribe" spellcheck="true" data-select-on-focus
       value=${prompt} onInput=${(event) => setPrompt(event.currentTarget.value)} />
     <span class="process-scribe-prompt-count">${prompt.length} / ${PROCESS_SCRIBE_PROMPT_MAX}</span>
     <div class="process-scribe-context-label">BEGIN BOUNDED EDITOR CONTEXT · read-only · not template source</div>
-    <pre class="process-scribe-context-preview process-scroll-surface" aria-label="Read-only bounded editor context" tabindex="0">${descriptor.context}</pre>
+    <pre class="process-scribe-context-preview" aria-label="Read-only bounded editor context" tabindex="0">${descriptor.context}</pre>
     <div class=${`process-scribe-context-end${descriptor.truncated ? ' is-truncated' : ''}`}>
       ${descriptor.truncated
         ? 'END BOUNDED EDITOR CONTEXT · visibly truncated; the scribe must reread canonical YAML'

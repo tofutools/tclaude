@@ -168,7 +168,7 @@ function Preview({ row, anchor, groups, onClose, onChanged, onDelete, fetchImpl 
         <option value="">Pin to group…</option>
         ${groups.filter((group) => !pinned.has(group)).map((group) => html`<option key=${group} value=${group}>${group}</option>`)}
       </select>
-      <${WorkflowExportButton} id=${row.id} />
+      <${WorkflowExportButton} id=${row.id} size="sm" />
       <span class="dpp-spacer"></span>
       <button type="button" class="process-action process-action-danger" data-dock-process-delete onClick=${() => onDelete(row)}>${wizWord('Delete', 'Dispel')}</button>
     </div>
