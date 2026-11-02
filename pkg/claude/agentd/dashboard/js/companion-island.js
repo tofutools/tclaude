@@ -10,8 +10,8 @@
 //   peek    hovering a chip or a chat's pill previews the last lines of the
 //           agent's pane, read-only (GET /api/companion/{agent}/peek): the
 //           keyboard stays with the page until the operator clicks.
-//   home    the window the Steward opens in, which keeps the placement the
-//           companion window had, and takes any agent with nowhere else to go.
+//   landing no window is home: a tab nobody placed joins the Steward's window,
+//           its start tab's, or the chats used last, or else gets its own.
 //
 // A web terminal attach displaces any other web view of the same session, so
 // showing an agent here first closes its Terminals-tab pane, and "open in
@@ -32,9 +32,10 @@ import { compactWidth, measureFooterRoom, useFooterRest } from './companion-chip
 import { registerCompanionController } from './companion-facade.js';
 import { DecideTab, StartTab, stewardFreshNote, stewardReturnNote } from './companion-home.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
-import { readPref, reducedMotion, writePref } from './overlay-window.js';
+import { overlayWindowsByStack, readPref, reducedMotion, writePref } from './overlay-window.js';
+import { registerTabMoves } from './overlay-tab-moves.js';
 import { activateOverlayTab, closeOverlayTab, focusOverlayWindow, minimizeOverlayWindow, openOverlayWindow, openTabInWindow, overlayHostUp, overlayTabs, overlayWindows, swapOverlayTab, tearOverlayTabOut } from './overlay-instances.js';
-import { CHAT_WINDOW_KIND, DECIDE_WINDOW_KIND, HOME_WINDOW, START_WINDOW_KIND, chatTab, chatWindowId, decideTab, startTab } from './chat-window-model.js';
+import { CHAT_WINDOW_KIND, DECIDE_WINDOW_KIND, START_WINDOW_KIND, chatTab, chatWindowId, decideTab, startTab } from './chat-window-model.js';
 import { OverlayTabGhost, OverlayTabMenu } from './overlay-tab-strip.js';
 import { chatHasDraft } from './chat-window.js';
 import { OverlayTabWindow } from './overlay-tab-window.js';
@@ -283,16 +284,18 @@ export function CompanionApp({
     const held = parseTabs(readPref(prefs, COMPANION_TABS_PREF), Infinity).filter((id) => !gone.has(id) && agents.has(id) && !overlayTabs.peek().some((tab) => tab.id === chatWindowId(id)));
     const saved = readPref(sessionPrefs, COMPANION_ACTIVE_PREF) || readPref(prefs, COMPANION_ACTIVE_PREF);
     const shown = held.includes(saved) ? saved : held[0];
-    for (const id of held) openTabInWindow(HOME_WINDOW, COMPANION_PLACEMENT_PREF, chatTab(id, agents.get(id).name), { activate: false });
+    const into = held[0] ? chatWindowId(held[0]) : '';
+    for (const id of held) openTabInWindow(into, COMPANION_PLACEMENT_PREF, chatTab(id, agents.get(id).name), { activate: false });
     if (shown && readPref(sessionPrefs, COMPANION_OPEN_PREF) === '1') openOverlayWindow(chatTab(shown));
     else if (shown) activateOverlayTab(chatWindowId(shown));
   });
   const [chipSpot, setChipSpot] = useState(() => parseChipSpot(readPref(prefs, COMPANION_CHIP_SPOT_PREF)));
-  // A floating home window opens at the chips' spot until the operator moves it.
+  // A window opened from the chips, which saves its placement as the companion
+  // did, opens at their spot until the operator moves it.
   const homeOverlay = useRef(null);
   const chipRects = useRef(new Map());
   const home = {
-    id: HOME_WINDOW,
+    place: COMPANION_PLACEMENT_PREF,
     spotted: (base, viewport, top) => {
       const spot = readPref(prefs, COMPANION_WINDOW_SPOT_PREF);
       return spot ? spotPlacement(parseChipSpot(spot), base, viewport, top) : null;
@@ -352,7 +355,17 @@ export function CompanionApp({
   const stewardShown = holder
     ? !holder.minimized && activeTabOf(holder)?.agent === steward.agentId
     : !!startHolder && !startHolder.minimized && activeTabOf(startHolder)?.kind === START_WINDOW_KIND;
-  const homeWindow = overlayWindows.value.find((window) => window.id === HOME_WINDOW);
+  // Where a tab nobody placed goes: in with the Steward, its start tab, or the
+  // chats the operator was in last. No window is home: with none of those, the
+  // tab gets a window of its own.
+  const landing = holder || startHolder || null;
+  const landingId = () => {
+    const windows = overlayWindows.peek();
+    const stack = overlayWindowsByStack();
+    const chats = windows.filter((window) => window.tabs.some((tab) => tab.kind === CHAT_WINDOW_KIND));
+    const recent = chats.sort((a, b) => stack.indexOf(b.id) - stack.indexOf(a.id))[0];
+    return windowHolding(windows, steward ? chatWindowId(steward.agentId) : '')?.id || windowHolding(windows, startTab().id)?.id || recent?.id || '';
+  };
   // The chat showing at the front, for what acts on whichever agent is in view.
   const shownChats = overlayWindows.value.filter((window) => !window.minimized).map((window) => activeTabOf(window)).filter((tab) => tab?.kind === CHAT_WINDOW_KIND);
   const frontAgent = () => agents.get(shownChats.at(-1)?.agent) || null;
@@ -450,7 +463,7 @@ export function CompanionApp({
       ended.current.add(id);
       closeOverlayTab(chatWindowId(id));
     }
-    for (const id of next) if (!held.includes(id)) openTabInWindow(HOME_WINDOW, COMPANION_PLACEMENT_PREF, chatTab(id, agents.get(id).name), { activate: false });
+    for (const id of next) if (!held.includes(id)) openTabInWindow(landingId(), COMPANION_PLACEMENT_PREF, chatTab(id, agents.get(id).name), { activate: false });
   }, [agents, snapshot.value, heldKey, shownKey, resuming]);
 
   // An agent that was retired drops out of the snapshot; forget it once the
@@ -474,11 +487,11 @@ export function CompanionApp({
     return () => clearTimeout(timer);
   }, [resuming]);
 
-  const putStart = () => openTabInWindow(HOME_WINDOW, COMPANION_PLACEMENT_PREF, startTab());
+  const putStart = () => openTabInWindow(landingId(), COMPANION_PLACEMENT_PREF, startTab());
   // A detached agent stays in its own window: its tab only shows where it went.
   // Attaching here would throw that window off the terminal, and the window has
   // no idea why. Only Bring it back here reclaims it.
-  const showAgent = useCallback((agentId, { focus = true, starting = false, reclaim = false, into = HOME_WINDOW } = {}) => {
+  const showAgent = useCallback((agentId, { focus = true, starting = false, reclaim = false, into = null } = {}) => {
     if (!isAgentId(agentId)) return false;
     const agent = agents.get(agentId);
     const tab = chatTab(agentId, agent?.name);
@@ -493,7 +506,7 @@ export function CompanionApp({
       setParked((current) => without(current, agentId));
       setDetached((current) => without(current, agentId));
     }
-    openTabInWindow(into, COMPANION_PLACEMENT_PREF, tab);
+    openTabInWindow(into ?? landingId(), COMPANION_PLACEMENT_PREF, tab);
     if (focus) focusOverlayWindow(tab.id);
     if (overlayTabs.peek().some((other) => other.id === startTab().id)) closeOverlayTab(startTab().id);
     return true;
@@ -631,7 +644,11 @@ export function CompanionApp({
   // would, and Ctrl+. puts it away again.
   const toggle = useCallback(() => {
     stopPeek();
-    const window = overlayWindows.peek().find((candidate) => candidate.id === (holder?.id || HOME_WINDOW));
+    // The Steward's own window, or its start tab's. A worker's window only stands
+    // in while there is no Steward at all, as the chats kept at hand.
+    const windows = overlayWindows.peek();
+    const window = windowHolding(windows, steward ? chatWindowId(steward.agentId) : '') || windowHolding(windows, startTab().id)
+      || (!steward && windows.find((candidate) => candidate.id === landingId())) || null;
     const docked = !holder && !!steward && overlayTabs.peek().some((tab) => tab.id === chatWindowId(steward.agentId));
     if (window && !window.minimized && !docked) {
       const shrinks = home.shrinks(window, homeOverlay.current);
@@ -988,8 +1005,8 @@ export function CompanionApp({
     const typing = Date.now() - lastTerminalKey.current < CUE_TYPING_WINDOW_MS;
     const chatting = overlayWindows.peek().some((window) => !window.minimized && chatHasDraft(window.active));
     if (chatting || dictationOpen() || typing) {
-      openTabInWindow(HOME_WINDOW, COMPANION_PLACEMENT_PREF, chatTab(agent.agentId, agent.name), { activate: false });
-      notify(`${by} pinned ${agent.name} in the companion window for you.`, false);
+      openTabInWindow(landingId(), COMPANION_PLACEMENT_PREF, chatTab(agent.agentId, agent.name), { activate: false });
+      notify(`${by} pinned ${agent.name} in a tab for you.`, false);
       return;
     }
     showAgent(agent.agentId, { focus: false });
@@ -1107,8 +1124,8 @@ export function CompanionApp({
   const peekTarget = peek ? agents.get(peek.agentId) : null;
 
   // The queue is a tab of the Steward's window while that shows, as the chips are not.
-  const queueWindow = holder?.id || HOME_WINDOW;
-  const queueUp = holder ? !holder.minimized : !!homeWindow && !homeWindow.minimized;
+  const queueWindow = landing?.id || '';
+  const queueUp = !!landing && !landing.minimized;
   useEffect(() => {
     const tab = decideTab();
     const there = overlayTabs.peek().some((other) => other.id === tab.id);
@@ -1174,6 +1191,18 @@ export function CompanionApp({
     : html`<button type="button" class="companion-primary" onClick=${() => resume(agent)}>Resume</button>`);
 
 
+  // A chat's moves out of the overlay, which its tab's menu offers as its ⚙ does.
+  const chatMoves = useRef(null);
+  chatMoves.current = (tab) => {
+    const agent = agents.get(tab.agent);
+    const away = parked.has(tab.agent);
+    return {
+      toCollab: agent && openTerminalsPane && !away ? () => chatToTerminals(tab, agent) : null,
+      toWindow: agent?.online && detachWindow && !away ? ({ rect }) => detachToWindow(agent, rect) : null,
+    };
+  };
+  useEffect(() => registerTabMoves(CHAT_WINDOW_KIND, (tab) => chatMoves.current(tab)), []);
+
   const chatTabTools = {
     statusOf, offlineActions, openMorph, dictationImpl, starting: (agentId) => resuming.has(agentId) || pending.current.has(agentId),
     voice: speaker.supported ? { supported: true, on: (agentId) => voiceAgents.has(agentId), toggle: toggleVoice, quiet: () => speaker.cancel() } : null,
@@ -1207,7 +1236,7 @@ export function CompanionApp({
   return html`
     ${overlayWindows.value.map((window) => html`<${OverlayTabWindow} key=${window.id} window=${window} snapshot=${snapshot} prefs=${prefs} win=${win} kinds=${tabKinds} home=${home} add=${addTab} />`)}
     <${OverlayTabGhost} />
-    <${OverlayTabMenu} />
+    <${OverlayTabMenu} notify=${notify} />
     ${chipSlots}
     ${chips}
     ${annotation.overlay}

@@ -14,6 +14,7 @@ import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom
 import { TERMINAL_WINDOW_KIND, paneSeedOf } from './terminal-window-model.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { detachSeedWindow, openTerminalPane, setFloatingTerminals } from './terminals-tab.js';
+import { POPUP_BLOCKED, TO_COLLAB_LABEL, TO_WINDOW_LABEL, registerTabMoves, tabMoves } from './overlay-tab-moves.js';
 
 const html = htm.bind(h);
 
@@ -36,6 +37,19 @@ setFloatingTerminals((key) => {
   return overlayHostUp.peek();
 });
 
+// A shell goes back to the Terminals pane it came from, or out to a window of its
+// own; a blocked pop-up leaves it where it is.
+registerTabMoves(TERMINAL_WINDOW_KIND, (tab) => ({
+  toCollab: () => {
+    closeOverlayTab(tab.id);
+    void openTerminalPane(paneSeedOf(tab));
+  },
+  toWindow: ({ rect, win, notify }) => {
+    if (detachSeedWindow({ ...paneSeedOf(tab), floats: true }, { size: rect, at: elementScreenPoint(win, rect) })) closeOverlayTab(tab.id);
+    else notify?.(POPUP_BLOCKED, true);
+  },
+}));
+
 export function TerminalWindow({ instance, overlay, focusRef, strip, close, snapshot, prefs, win, notify, widgetFactory, loadRuntime, Terminal }) {
   const name = instance.label || 'Terminal';
   const open = !instance.minimized;
@@ -51,19 +65,11 @@ export function TerminalWindow({ instance, overlay, focusRef, strip, close, snap
   const actions = { widgetFor: () => widgetRef.current, activatePane: () => setFocusToken((n) => n + 1) };
   const look = windowControlsLook(snapshot.value?.window_controls);
   const leave = () => closeOverlayTab(instance.id);
-  const backToTab = () => {
-    leave();
-    void openTerminalPane(paneSeedOf(instance));
-  };
-  // A blocked pop-up leaves it where it is.
-  const toSeparateWindow = () => {
-    const rect = overlay.windowRef.current?.getBoundingClientRect?.();
-    if (detachSeedWindow({ ...paneSeedOf(instance), floats: true }, { size: rect, at: elementScreenPoint(win, rect) })) leave();
-    else notify('Could not open a separate window: allow pop-ups for this dashboard.', true);
-  };
+  const { toCollab, toWindow } = tabMoves(instance);
+  const toSeparateWindow = () => toWindow({ rect: overlay.windowRef.current?.getBoundingClientRect?.(), win, notify });
   const title = html`${strip}
-    <button type="button" class="board-overlay-action" title="Move this terminal back to a tab" onClick=${backToTab}>Back to a tab</button>
-    <button type="button" class="board-overlay-action" title="Move this terminal to a browser window of its own" onClick=${toSeparateWindow}>Open in separate window</button>
+    <button type="button" class="board-overlay-action" title="Move this terminal to a tab of the Collab view" onClick=${toCollab}>${TO_COLLAB_LABEL}</button>
+    <button type="button" class="board-overlay-action" title="Move this terminal to a browser window of its own" onClick=${toSeparateWindow}>${TO_WINDOW_LABEL}</button>
     ${look === 'classic' && html`<button type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${name}`} onClick=${close.onClose}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="companion-window chat-window" frameClass="companion-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Terminal ${name}`} title=${title}

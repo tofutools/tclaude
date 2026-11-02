@@ -492,6 +492,40 @@ test('Ctrl+. toggles the window, and a tab × sends it to the dock', async (t) =
   assert.deepEqual(JSON.parse(prefs.store.get('tclaude.dash.companion.tabs')), []);
 });
 
+test('no window is home: an agent joins the chats used last, or gets a window of its own', async (t) => {
+  const { harness, controller } = await setup(t);
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  const windowsOf = () => overlays.overlayWindows.peek().map((window) => window.tabs.map((tab) => tab.id));
+  await harness.act(() => controller().open(A));
+  await harness.act(() => controller().open(B));
+  assert.deepEqual(windowsOf(), [[`chat:${A}`, `chat:${B}`]], 'B joins the chat the operator was in');
+  await harness.act(async () => {
+    overlays.tearOverlayTabOut(`chat:${B}`, null);
+    overlays.closeOverlayTab(`chat:${A}`);
+  });
+  await harness.act(() => controller().open(A));
+  assert.deepEqual(windowsOf(), [[`chat:${B}`, `chat:${A}`]], 'the window B tore out to is as good as any');
+  await harness.act(async () => {
+    overlays.closeOverlayTab(`chat:${A}`);
+    overlays.closeOverlayTab(`chat:${B}`);
+    overlays.openTabInWindow('', '', { id: 'board-1', kind: 'board', label: 'plan' });
+  });
+  await harness.act(() => controller().open(A));
+  assert.deepEqual(windowsOf(), [['board-1'], [`chat:${A}`]], 'with no chat up, it takes a window of its own');
+});
+
+test('Ctrl+. opens the Steward past a worker\'s window, never minimizing that', async (t) => {
+  const { view, harness, controller } = await setup(t, { snapshot: snapshotWith({ steward: true }) });
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { overlays.closeOverlayTab(`chat:${S}`); });
+  const key = () => harness.act(() => harness.window.dispatchEvent(Object.assign(new harness.window.Event('keydown', { bubbles: true, cancelable: true }), { key: '.', ctrlKey: true })));
+  await key();
+  const shown = overlays.overlayWindows.peek().filter((window) => !window.minimized).map((window) => window.active);
+  assert.ok(shown.includes(`chat:${S}`), 'the Steward shows');
+  assert.ok(view.container.querySelector(`[data-chat-agent="${S}"]`), 'its chat is drawn');
+});
+
 test('viewportOf leaves out page scrollbars', async (t) => {
   const harness = await createPreactHarness(t);
   const o = await harness.importDashboardModule('js/overlay-window-model.js');
@@ -2850,7 +2884,8 @@ test('a prompt behind the chip shows past a decision, and a shown tab stays out 
   assert.ok(harness.getByRole(view.container, 'button', { name: /^steward-k3x: / }), 'alpha is on screen, and the chip is the Steward again');
   const overlays = await harness.importDashboardModule('js/overlay-instances.js');
   await harness.act(async () => {
-    overlays.openTabInWindow('companion', '', { id: 'term:a', kind: 'terminal', agent: A, paneKey: 'p', ws: '/x', label: 'shell' }, { activate: false });
+    const stewards = overlays.overlayWindows.peek().find((window) => window.tabs.some((tab) => tab.agent === S));
+    overlays.openTabInWindow(stewards.id, '', { id: 'term:a', kind: 'terminal', agent: A, paneKey: 'p', ws: '/x', label: 'shell' }, { activate: false });
   });
   assert.ok(harness.getByRole(view.container, 'button', { name: /^steward-k3x: / }), 'a shell of alpha, out of sight, says nothing about its chat');
 });

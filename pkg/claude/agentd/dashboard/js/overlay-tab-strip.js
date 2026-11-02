@@ -16,6 +16,7 @@ import {
 } from './overlay-instances.js';
 import { holdForMenu, startTabDrag, tabDropTarget, tabGhost } from './overlay-tab-drag.js';
 import { groupsOf, windowHolding } from './overlay-tab-model.js';
+import { TO_COLLAB_LABEL, TO_WINDOW_LABEL, tabMoves } from './overlay-tab-moves.js';
 
 const html = htm.bind(h);
 
@@ -36,10 +37,17 @@ export function OverlayTabGhost() {
   return ghost && html`<div class="overlay-tab-ghost" style=${{ left: `${ghost.x}px`, top: `${ghost.y}px` }}>${ghost.label}</div>`;
 }
 
-function tabItems(menu, window, { item, separator }) {
+function tabItems(menu, window, { item, separator }, notify) {
   const { tabId } = menu;
   const tab = window.tabs.find((candidate) => candidate.id === tabId);
   const others = window.tabs.length > 1;
+  // Out of the overlay, the same moves its title bar or ⚙ offers.
+  const { toCollab, toWindow } = tabMoves(tab);
+  const leaving = () => ({ rect: menu.trigger?.closest?.('section')?.getBoundingClientRect?.(), win: menu.trigger?.ownerDocument?.defaultView, notify });
+  const away = [
+    ...(toCollab ? [item(TO_COLLAB_LABEL, toCollab)] : []),
+    ...(toWindow ? [item(TO_WINDOW_LABEL, () => toWindow(leaving()))] : []),
+  ];
   return [
     item('New group from this tab', () => {
       const group = startOverlayGroup(tabId);
@@ -48,7 +56,9 @@ function tabItems(menu, window, { item, separator }) {
     ...groupsOf(window).filter((group) => group.id !== tab.groupId).map((group) => item(`Add to “${group.name}”`, () => groupOverlayTab(tabId, group))),
     ...(tab.groupId ? [item('Remove from group', () => groupOverlayTab(tabId))] : []),
     separator,
-    ...(others ? [item('Move to a new window', () => tearOverlayTabOut(tabId, null)), separator] : []),
+    ...(others ? [item('Move to a new window', () => tearOverlayTabOut(tabId, null))] : []),
+    ...away,
+    ...(others || away.length ? [separator] : []),
     item('Minimize tab', () => minimizeOverlayTab(tabId)),
     ...(others ? [
       item('Minimize other tabs', () => minimizeOverlayTabs(window.id, (candidate) => candidate.id !== tabId)),
@@ -78,7 +88,7 @@ const menuWindow = (menu) => {
 };
 
 // The strip's menu, shown while what it is for is there.
-export function OverlayTabMenu() {
+export function OverlayTabMenu({ notify = null }) {
   const menu = tabMenu.value;
   const window = menuWindow(menu);
   useEffect(() => { if (menu && !window) tabMenu.value = null; }, [menu, window]);
@@ -89,7 +99,7 @@ export function OverlayTabMenu() {
   };
   const focusBack = () => menu.trigger?.focus?.();
   return html`<${TabContextMenu} menu=${menu} closeMenu=${close} focusAfterAction=${() => {}} focusAfterDismiss=${focusBack}
-    items=${(parts) => (menu.tabId ? tabItems(menu, window, parts) : groupItems(menu, window, parts))} />`;
+    items=${(parts) => (menu.tabId ? tabItems(menu, window, parts, notify) : groupItems(menu, window, parts))} />`;
 }
 
 const openMenu = (what, trigger, { x, y }) => { tabMenu.value = { ...what, trigger, x, y }; };

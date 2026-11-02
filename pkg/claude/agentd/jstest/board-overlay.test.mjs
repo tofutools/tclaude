@@ -252,14 +252,14 @@ scenario('a separate window that can no longer float lands in a tab', { ...COLLA
   assert.equal(state.panes.value.length, 1, 'a handoff never loses it');
 });
 
-scenario('Back to a tab leaves a board that has since floated where it is', async ({ harness, overlayState, windows, state }) => {
+scenario('Open in the Collab tab leaves a board that has since floated where it is', async ({ harness, overlayState, windows, state }) => {
   await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
   assert.ok(await handOff(harness, { board: 'plan', label: 'Release plan' }));
   assert.equal(windows.overlayWindows.value.length, 1);
   assert.deepEqual(state.panes.value, [], 'one place at a time');
 });
 
-scenario('Back to a tab leaves an agent that has since found a place there', AGENT_ON, { companion: false }, async ({ harness, state }) => {
+scenario('Open in the Collab tab leaves an agent that has since found a place there', AGENT_ON, { companion: false }, async ({ harness, state }) => {
   const { registerCompanionController } = await harness.importDashboardModule('js/companion-facade.js');
   const shown = [];
   const stop = registerCompanionController({ open: () => true, float: () => true, reclaim: () => false, reveal: (agent) => { shown.push(agent); return true; } });
@@ -270,7 +270,7 @@ scenario('Back to a tab leaves an agent that has since found a place there', AGE
   } finally { stop(); }
 });
 
-scenario('Back to a tab from a separate window goes to the companion tab waiting on it', AGENT_ON, { companion: false }, async ({ harness, state }) => {
+scenario('A move back from a separate window goes to the companion tab waiting on it', AGENT_ON, { companion: false }, async ({ harness, state }) => {
   const { registerCompanionController } = await harness.importDashboardModule('js/companion-facade.js');
   const reclaimed = [];
   const stop = registerCompanionController({ open: () => true, float: () => true, reveal: () => false, reclaim: (agent) => { reclaimed.push(agent); return true; } });
@@ -300,7 +300,7 @@ scenario('a board moves from its tab into the overlay and back', async ({ harnes
   await harness.act(async () => { harness.fireEvent(harness.document.querySelector('nav [data-tab="groups"]'), 'click'); await wait(); });
   assert.ok(overlayHost.querySelector('.board-overlay'));
 
-  await click(button(overlayHost, 'Back to a tab'));
+  await click(button(overlayHost, 'Open in the Collab tab'));
   assertAbsent(overlayHost.querySelector('.board-overlay'));
   assert.equal(overlayState.boardOverlays.value.length, 0);
   assert.deepEqual(tabLabels(host), ['Release plan']);
@@ -762,7 +762,7 @@ const chooseItem = (harness, label) => harness.act(async () => {
 scenario('a tab\'s menu groups it, and says Minimize where Terminals says Close', async ({ harness, overlayHost, overlayState, windows }) => {
   await twoInOne(harness, overlayState, windows);
   await rightClick(harness, tabButton(overlayHost, 'Team map'));
-  assert.deepEqual(menuItems(harness), ['New group from this tab', 'Move to a new window', 'Minimize tab', 'Minimize other tabs', 'Minimize all tabs']);
+  assert.deepEqual(menuItems(harness), ['New group from this tab', 'Move to a new window', 'Open in the Collab tab', 'Open in separate window', 'Minimize tab', 'Minimize other tabs', 'Minimize all tabs']);
   await chooseItem(harness, 'New group from this tab');
   const input = overlayHost.querySelector('.mux-group-rename');
   assert.ok(input, 'a new group asks for its name');
@@ -781,6 +781,14 @@ scenario('a tab\'s menu groups it, and says Minimize where Terminals says Close'
   await chooseItem(harness, 'Minimize other tabs');
   assert.deepEqual(tabsByWindow(overlayHost), [['Team map']]);
   assert.deepEqual(windows.minimizedOverlayTabs.value.map(({ tab }) => tab.label), ['Release plan']);
+});
+
+scenario('a tab\'s menu moves it to the Collab tab, in the words of its title bar', async ({ harness, host, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  await rightClick(harness, tabButton(overlayHost, 'Team map'));
+  await chooseItem(harness, 'Open in the Collab tab');
+  assert.deepEqual(tabsByWindow(overlayHost), [['Release plan']]);
+  assert.ok(tabLabels(host).includes('Team map'), 'it is a Collab tab again');
 });
 
 scenario('a group\'s menu and pill collapse, rename, ungroup and minimize it', async ({ harness, overlayHost, overlayState, windows }) => {

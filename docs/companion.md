@@ -45,7 +45,9 @@ lines. It's read-only, and your keyboard stays with the page.
 The Steward lives in an ordinary overlay window, with any other agents you keep at
 hand as its [tabs](#overlay-tabs). Click its pill to open that window, or press
 **Ctrl+.** anywhere to open or minimize it. With no Steward running, the pill opens
-the page that summons or resumes one. The window stays above the page without
+the page that summons or resumes one. No window is special: an agent you open
+without picking a window joins the Steward's window, or the one holding that page, or
+else the chats you used last. With none of those, it gets a window of its own. The window stays above the page without
 blocking it, and comes back when you reload the tab.
 
 - **Move it** by its title bar. Resize it from any edge or corner.
@@ -141,6 +143,9 @@ another tab shows, and a minimized chat keeps its terminal for a few minutes.
 - **Group:** right-click a tab (or Shift+F10, or press and hold on a touch screen) for
   `New group from this tab`, `Add to "<group>"`, `Remove from group` and
   `Move to a new window`. Drop a tab inside a group to join it, or outside to leave it.
+- **Leave the overlay:** the same menu has `Open in the Collab tab` and `Open in separate
+  window`, for every kind of tab that can go there. They are the same moves, in the same
+  words, as a shell's or board's title bar buttons and a chat's ⚙.
 - **Work with a group:** click its pill to collapse or expand it, double-click or press F2 to
   rename it, and drag it to move the whole group along the strip, onto another window, or
   off into a window of its own. A pill that is all its window has drags the window.
@@ -353,7 +358,7 @@ processes or your sandbox.
 ### What to ask it
 
 - **"Brief me."** It tells you what needs you, most urgent first, and can open the
-  agent that's waiting in your companion window.
+  agent that's waiting, as an overlay tab.
 - **An idea.** It restates the idea, asks what it can't find out itself, writes a
   brief, then starts a worker or a task force once you approve. It follows the work
   through to presented PRs and puts taste calls to you as [decisions](#decisions).
@@ -365,7 +370,7 @@ run `tclaude setup --install-agent-skills` to install new skills.
 
 The Steward can also point at the dashboard. It can see which view you're on,
 switch you to another, ring a control with a note, mark things up, and open an agent
-in your companion window. A cue only points. It never presses anything, and it
+as an overlay tab. A cue only points. It never presses anything, and it
 can't mark approval or decision controls. It plays once and fades after about 14
 seconds. While you're typing or dictating, a hand-over only pins the agent, so your
 words still go where you meant them.
