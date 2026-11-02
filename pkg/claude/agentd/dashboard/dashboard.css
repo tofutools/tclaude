@@ -17598,7 +17598,8 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
 .dock-section-head:has(.dock-card-menu.open) { z-index: 3; }
 /* Processes keeps the .pwf importer mounted for its review dialog; the ⋯
    menu's Import… drives it, so its own button stays hidden. */
-.dock-process-import-hidden { display: none; }
+/* Hidden programmatic trigger; outranks .ui-btn's display. */
+.pwf-import-entry .dock-process-import-hidden { display: none; }
 .dock-section.is-drop-over { outline: 1.5px dashed #58a6ff; outline-offset: 2px; border-radius: 6px; }
 .dock-chip.dock-chip-default { color: #56d364; border-color: #2ea04366; }
 .dock-card-pin { font-size: 10px; margin-right: 3px; }
@@ -21348,7 +21349,8 @@ body.wizard #saved-prompts-manage-modal .modal-buttons { border-top-color: rgba(
 .pwf-replace input { flex: none; width: auto; margin: 0; }
 .pwf-roles li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .pwf-role-map, .pwf-group { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
-.pwf-role-map select, .pwf-group select { width: auto; max-width: 260px; padding: 2px 6px; font-size: 12.5px; }
+.pwf-role-map select, .pwf-group select { width: auto; max-width: 260px; }
+.pwf-role-map select:where(:not(.ui-select)), .pwf-group select:where(:not(.ui-select)) { padding: 2px 6px; font-size: 12.5px; }
 .pwf-role-unknown { font-size: 11.5px; color: #f2cc60; }
 body.wizard .pwf-import-dialog { background: #211832; border-color: #6d5695; color: #f3e6c0; }
 

@@ -290,7 +290,7 @@ export function CarriedWorkflows({ workflows, file }) {
   const names = workflows.map((w) => w.root.split('@')[0]);
   return html`<div class="paf-box" id="paf-carried-workflows"><b>Also carries ${names.length === 1 ? 'a workflow' : `${names.length} workflows`}</b>
     <div>${names.join(', ')}. This import stores none of them.</div>
-    ${dashboardState.snapshot.value?.processes_enabled && html`<${WorkflowImportButton} from=${file} id="" label="Review workflows…" className="tool" />`}</div>`;
+    ${dashboardState.snapshot.value?.processes_enabled && html`<${WorkflowImportButton} from=${file} id="" label="Review workflows…" className="" />`}</div>`;
 }
 
 export function AgentImportPreview({ preview, choices, setChoices, overrides, setOverrides, reveal }) {

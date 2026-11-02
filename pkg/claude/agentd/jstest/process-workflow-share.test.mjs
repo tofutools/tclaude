@@ -239,7 +239,7 @@ test('WorkflowExportButton takes a look, a reason and a disabled state from its 
   const { WorkflowExportButton } = await harness.importDashboardModule('js/process-workflow-share.js');
   const { container } = await harness.mount(harness.html`<${WorkflowExportButton} id="ship" className="gq-link" disabled title="Save first" />`);
   const button = container.querySelector('[data-process-action="export"]');
-  assert.equal(button.className, 'gq-link');
+  assert.ok(button.classList.contains('gq-link'), 'the surface class rides on the standard button');
   assert.equal(button.disabled, true);
   assert.equal(button.title, 'Save first');
 });

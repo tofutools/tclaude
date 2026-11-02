@@ -150,7 +150,7 @@ function StartStrip({ group, process, api, source, wizard, notify, editing = '',
       title=${editing ? 'Save or cancel the open editor first' : 'Show the scribe drafting this process'} onClick=${() => { reopenScribeDraft(process.templateId); onEdit({ mode: 'scribe', draft: scribeDraft }); }}>✎ Scribe</button>`}
     ${!process.listed && html`<button type="button" class="gq-link" data-saved-publish disabled=${!!busy} onClick=${publish}
       title="List it in the template library, for every group to reuse">publish as template</button>`}
-    <${WorkflowExportButton} id=${process.templateId} className="gq-link" />
+    <${WorkflowExportButton} id=${process.templateId} className="gq-link" variant="link" size="sm" />
     ${removing
     ? html`<span class="gq-confirm" role="group" aria-label="Confirm removal">
         ${process.listed ? `Remove from ${group.name}? It stays in the template library.` : `Remove from ${group.name}? It is not in the template library, so publish it first to keep it.`}
