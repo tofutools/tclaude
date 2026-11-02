@@ -325,7 +325,7 @@ body.dock-open .open-prs.is-open::before {
   padding: 2px 8px; border: 1px solid #303946; border-radius: 6px; background: transparent;
   color: #8b949e; cursor: pointer; font-size: 10.5px;
 }
-.open-prs-add-form .open-prs-add-ok { border-color: #385b81; background: #172a40; color: #c9d1d9; }
+.open-prs-add-form .open-prs-add-ok:where(:not(.ui-btn)) { border-color: #385b81; background: #172a40; color: #c9d1d9; }
 .open-prs-add-form button:disabled { opacity: 0.5; cursor: default; }
 .open-prs-add-form button:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .open-prs-stale { margin: 0; padding: 6px 13px; border-bottom: 1px solid #222b35; color: #d29922; font-size: 10.5px; }
@@ -347,13 +347,13 @@ body.dock-open .open-prs.is-open::before {
 .open-prs-confirm-durations label { display: inline-flex; align-items: center; gap: 4px; color: #c9d1d9; cursor: pointer; }
 .open-prs-confirm-durations input { margin: 0; accent-color: #1f6feb; }
 .open-prs-confirm-buttons { display: flex; justify-content: flex-end; gap: 8px; }
-.open-prs-confirm-buttons button {
+.open-prs-confirm-button:where(:not(.ui-btn))s button {
   padding: 4px 12px; border: 1px solid #3a4654; border-radius: 6px; background: #21262d;
   color: #c9d1d9; cursor: pointer; font-size: 11.5px;
 }
-.open-prs-confirm-buttons button:hover { background: #30363d; }
-.open-prs-confirm-buttons button.confirm-danger { border-color: #f85149; background: #4d1d1d; color: #f85149; }
-.open-prs-confirm-buttons button.confirm-danger:hover { background: #f85149; color: #fff; }
+.open-prs-confirm-button:where(:not(.ui-btn))s button:hover { background: #30363d; }
+.open-prs-confirm-button:where(:not(.ui-btn))s button.confirm-danger { border-color: #f85149; background: #4d1d1d; color: #f85149; }
+.open-prs-confirm-button:where(:not(.ui-btn))s button.confirm-danger:hover { background: #f85149; color: #fff; }
 .open-prs-confirm-buttons button:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 @media (max-width: 620px) {
   .open-prs-popover, .open-prs.is-open::before { right: 8px; width: calc(100vw - 16px); }
@@ -11687,10 +11687,10 @@ body.wizard .open-prs-title-details { color: #b39ddb; }
 body.wizard .open-prs-title-details:hover,
 body.wizard .open-prs-title-details:has(input:focus-visible) { color: #f3e6c0; }
 body.wizard .open-prs-title-details input { accent-color: #7a5db0; }
-body.wizard .open-pr-ignore,
-body.wizard .open-pr-restore { border-color: #4a3d6b; color: #b39ddb; }
-body.wizard .open-pr-ignore:hover,
-body.wizard .open-pr-restore:hover { border-color: #d9b45a; background: #3a2a63; color: #f3e6c0; }
+body.wizard .open-pr-ignore:where(:not(.ui-btn)),
+body.wizard .open-pr-restore:where(:not(.ui-btn)) { border-color: #4a3d6b; color: #b39ddb; }
+body.wizard .open-pr-ignore:where(:not(.ui-btn)):hover,
+body.wizard .open-pr-restore:where(:not(.ui-btn)):hover { border-color: #d9b45a; background: #3a2a63; color: #f3e6c0; }
 body.wizard .open-pr-row.is-ignored .open-pr-title { color: #9a86c4; }
 body.wizard .open-prs-confirm { border-color: #7a5db0; background: #241b3d; }
 body.wizard .open-prs-people { border-color: #33284d; }
@@ -11698,7 +11698,7 @@ body.wizard .open-prs-person.active { border-color: #33284d; background: #241b3d
 body.wizard .open-prs-person > button[role="tab"] { color: #b39ddb; }
 body.wizard .open-prs-person.active > button[role="tab"] { color: #f3e6c0; }
 body.wizard .open-prs-person.active .open-prs-person-n { background: #7a5db0; }
-body.wizard .open-prs-add-person { border-color: #4a3d6b; color: #b39ddb; }
+body.wizard .open-prs-add-person:where(:not(.ui-btn)) { border-color: #4a3d6b; color: #b39ddb; }
 body.wizard .open-prs-add-form input { border-color: #7a5db0; background: #140f28; color: #e7d9f5; }
 body.wizard .open-prs-confirm h4 { color: #f3e6c0; }
 body.wizard .open-prs-confirm p,

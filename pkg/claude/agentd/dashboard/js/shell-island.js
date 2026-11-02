@@ -87,7 +87,7 @@ function PeopleTabs({ active, mine, people, onSelect, onAdd, onRemove }) {
   };
   const tab = (key, label, count, extra = null) => html`
     <span key=${key || 'self'} class=${`open-prs-person${active.toLowerCase() === key.toLowerCase() ? ' active' : ''}`}>
-      <button type="button" role="tab" aria-selected=${active.toLowerCase() === key.toLowerCase() ? 'true' : 'false'}
+      <button type="button" data-ui-exempt role="tab" aria-selected=${active.toLowerCase() === key.toLowerCase() ? 'true' : 'false'}
         onClick=${() => onSelect(key)}>
         ${label} <span class="open-prs-person-n">${count ?? '…'}</span>
       </button>
@@ -99,7 +99,7 @@ function PeopleTabs({ active, mine, people, onSelect, onAdd, onRemove }) {
       <div role="tablist" aria-label="Whose pull requests" class="open-prs-people-tabs">
         ${tab('', 'You', mine)}
         ${people.map((p) => tab(p.login, p.login, p.total, html`
-          <button type="button" class="open-prs-person-x" aria-label=${`Stop tracking ${p.login}`}
+          <button data-ui-exempt type="button" class="open-prs-person-x" aria-label=${`Stop tracking ${p.login}`}
             title=${`Stop tracking ${p.login}`} onClick=${() => onRemove(p.login)}>✕</button>
         `))}
       </div>
@@ -114,12 +114,12 @@ function PeopleTabs({ active, mine, people, onSelect, onAdd, onRemove }) {
           <input ref=${inputRef} type="text" aria-label="GitHub username" placeholder="GitHub username"
             maxlength="40" autocomplete="off" spellcheck="false" value=${login} disabled=${busy}
             onInput=${(event) => { setLogin(event.currentTarget.value); setError(''); }} />
-          <button type="submit" class="open-prs-add-ok" disabled=${busy || !login.trim()}>Add</button>
-          <button type="button" class="open-prs-add-cancel" aria-label="Cancel adding a person" onClick=${cancel}>✕</button>
+          <${Button} size="sm" variant="primary" type="submit" class="open-prs-add-ok" disabled=${busy || !login.trim()}>Add<//>
+          <button data-ui-exempt type="button" class="open-prs-add-cancel" aria-label="Cancel adding a person" onClick=${cancel}>✕</button>
         </form>
       ` : people.length < TRACKED_AUTHORS_MAX ? html`
-        <button type="button" class="open-prs-add-person" title="Track another GitHub user’s open pull requests"
-          onClick=${() => setAdding(true)}>＋ Add person</button>
+        <${Button} size="sm" class="open-prs-add-person" title="Track another GitHub user’s open pull requests"
+          onClick=${() => setAdding(true)}>＋ Add person<//>
       ` : null}
       ${error ? html`<span class="open-prs-people-error" role="alert">${error}</span>` : null}
     </div>
@@ -199,7 +199,7 @@ function Usage({ state, fleet = fleetState, fetchImpl = undefined }) {
           <span class="usage-source">
             <span class="usage-unit-switch-slot">
               ${line.modes?.length ? html`<span class="usage-unit-switch" role="group" aria-label=${`${line.label.replace(':', '')} usage units`}>
-                ${line.modes.map((mode) => html`<button type="button" class=${line.mode === mode ? 'active' : ''}
+                ${line.modes.map((mode) => html`<button data-ui-exempt type="button" class=${line.mode === mode ? 'active' : ''}
                   aria-pressed=${line.mode === mode} onClick=${() => setMode(line.key, mode)}>${mode === 'usage' ? '%' : mode === 'cost' ? '≈$' : 'AIC'}</button>`)}
               </span>` : null}
             </span>
@@ -253,7 +253,7 @@ function GlobalActivity({ state, groupsState }) {
   };
   const hintLabel = 'One or more agents have unread notifications — open the latest in the quick reader';
   const badge = first
-    ? html`<button type="button" class="human-notification-hint human-notification-hint-button"
+    ? html`<button data-ui-exempt type="button" class="human-notification-hint human-notification-hint-button"
         title=${hintLabel} aria-label=${hintLabel} onClick=${openReader}>!</button>`
     : hasNotifications
       ? html`<span class="human-notification-hint" aria-hidden="true"
@@ -334,14 +334,14 @@ function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = nu
         </span>
       </span>
       <span class="open-pr-badges">
-        ${ignored ? html`<button type="button" class="open-pr-restore"
-            aria-label=${`Bring back pull request #${pr.number}`} onClick=${() => onRestore?.(pr)}>Restore</button>` : html`
+        ${ignored ? html`<${Button} size="sm" class="open-pr-restore"
+            aria-label=${`Bring back pull request #${pr.number}`} onClick=${() => onRestore?.(pr)}>Restore<//>` : html`
           <${PRChecksBadge} url=${pr.url} prNumber=${pr.number}
             summary=${terminal && !showFinalCI ? null : pr.checks} />
           ${terminal || draft ? null : html`<${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} />`}
-          ${onIgnore && !terminal ? html`<button type="button" class="open-pr-ignore"
+          ${onIgnore && !terminal ? html`<${Button} size="sm" icon=${true} class="open-pr-ignore"
             aria-label=${`Ignore pull request #${pr.number}…`} title="Ignore…"
-            onClick=${() => onIgnore(pr)}>⊘</button>` : null}
+            onClick=${() => onIgnore(pr)}>⊘<//>` : null}
         `}
       </span>
     </li>
@@ -393,8 +393,8 @@ function IgnorePRDialog({ pr, onCancel, onConfirm }) {
           `)}
         </fieldset>
         <div class="open-prs-confirm-buttons">
-          <button type="button" onClick=${onCancel}>Cancel</button>
-          <button ref=${okRef} type="button" class="confirm-danger" onClick=${() => onConfirm(chosen.ms)}>Ignore</button>
+          <${Button} size="sm" onClick=${onCancel}>Cancel<//>
+          <${Button} size="sm" variant="danger" domRef=${okRef} onClick=${() => onConfirm(chosen.ms)}>Ignore<//>
         </div>
       </div>
     </div>
@@ -551,7 +551,7 @@ function OpenPRs({ state }) {
   return html`
     <span ref=${rootRef} class=${`open-prs${open ? ' is-open' : ''}${view.total > 0 ? '' : ' is-empty'}${view.attention > 0 ? ' has-attention' : ''}`}
       onMouseEnter=${enter} onMouseLeave=${leave}>
-      <button type="button" class="open-prs-trigger" aria-haspopup="dialog"
+      <button data-ui-exempt type="button" class="open-prs-trigger" aria-haspopup="dialog"
         aria-expanded=${open ? 'true' : 'false'} aria-controls="open-prs-popover"
         onClick=${() => setPinned((value) => !value)}>
         <span class="open-prs-dot" aria-hidden="true"></span>
@@ -577,16 +577,16 @@ function OpenPRs({ state }) {
               ? `Nothing merged or closed in the last ${panel.recentWindowDays} day(s).`
               : (openFilterActive && panel.total <= 0 ? 'No open pull requests.' : 'No pull requests match this filter.')}</p>`}
           <div class="open-prs-filters" role="group" aria-label="Filter pull requests">
-            <button class=${openFilterActive ? 'active' : ''} aria-pressed=${openFilterActive} onClick=${() => setFilter('all')}>Open ${panel.total}</button>
-            <button class=${filter === 'attention' ? 'active' : ''} aria-pressed=${filter === 'attention'} onClick=${() => setFilter('attention')}>Needs attention ${panel.attention}</button>
-            <button class=${filter === 'ready' ? 'active' : ''} aria-pressed=${filter === 'ready'}
+            <button data-ui-exempt class=${openFilterActive ? 'active' : ''} aria-pressed=${openFilterActive} onClick=${() => setFilter('all')}>Open ${panel.total}</button>
+            <button data-ui-exempt class=${filter === 'attention' ? 'active' : ''} aria-pressed=${filter === 'attention'} onClick=${() => setFilter('attention')}>Needs attention ${panel.attention}</button>
+            <button data-ui-exempt class=${filter === 'ready' ? 'active' : ''} aria-pressed=${filter === 'ready'}
               title="Approved with all CI checks passing"
               onClick=${() => setFilter('ready')}>Ready to merge ${panel.ready}</button>
-            ${personEntry ? null : html`<button class=${filter === 'unattached' ? 'active' : ''} aria-pressed=${filter === 'unattached'} onClick=${() => setFilter('unattached')}>Unattached ${panel.unattached}</button>`}
-            ${panel.recentWindowDays > 0 ? html`<button class=${panel.showingRecent ? 'active' : ''} aria-pressed=${panel.showingRecent}
+            ${personEntry ? null : html`<button data-ui-exempt class=${filter === 'unattached' ? 'active' : ''} aria-pressed=${filter === 'unattached'} onClick=${() => setFilter('unattached')}>Unattached ${panel.unattached}</button>`}
+            ${panel.recentWindowDays > 0 ? html`<button data-ui-exempt class=${panel.showingRecent ? 'active' : ''} aria-pressed=${panel.showingRecent}
               title=${`Pull requests ${personEntry ? `${personEntry.login} merged or closed` : 'you merged or closed'} in the last ${panel.recentWindowDays} day(s)`}
               onClick=${() => setFilter('recent')}>${recentLabel} ${panel.recentCount}</button>` : null}
-            ${panel.ignoredCount > 0 || panel.showingIgnored ? html`<button class=${panel.showingIgnored ? 'active' : ''} aria-pressed=${panel.showingIgnored}
+            ${panel.ignoredCount > 0 || panel.showingIgnored ? html`<button data-ui-exempt class=${panel.showingIgnored ? 'active' : ''} aria-pressed=${panel.showingIgnored}
               title="Pull requests you set aside; bring them back from here"
               onClick=${() => setFilter('ignored')}>Ignored ${panel.ignoredCount}</button>` : null}
           </div>

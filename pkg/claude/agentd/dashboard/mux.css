@@ -448,14 +448,14 @@ body.hide-costs .mux-cost-toggle { display: none; }
 .mux-terminal-disconnect-status { margin: 0; font-size: 13px; color: #7d8590; }
 /* The header Reconnect is small and far from the curtain's focal point; this
    is the same action placed where the eye already is. */
-.mux-terminal-disconnect-reconnect {
+.mux-terminal-disconnect-reconnect:where(:not(.ui-btn)) {
   display: inline-flex; align-items: center; gap: 8px;
   margin: 4px 0 14px; padding: 9px 22px;
   font: inherit; font-size: 15px; font-weight: 600;
   color: #fff; background: #238636; border: 1px solid #2ea043; border-radius: 6px;
   cursor: pointer;
 }
-.mux-terminal-disconnect-reconnect:hover { background: #2ea043; border-color: #3fb950; }
+.mux-terminal-disconnect-reconnect:where(:not(.ui-btn)):hover { background: #2ea043; border-color: #3fb950; }
 .mux-terminal-disconnect-reconnect:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
   .mux-terminal-disconnect-card { animation: none; }
@@ -544,10 +544,10 @@ body.wizard .mux-drag-out-hint {
 }
 body.wizard .mux-pane-status,
 body.wizard .terminal-interaction-hint { color: #a997ca; }
-body.wizard .mux-btn {
+body.wizard .mux-btn:where(:not(.ui-btn)) {
   background: #2a1c43; border-color: #7a5db0; color: #e7d9f5;
 }
-body.wizard .mux-btn:hover {
+body.wizard .mux-btn:where(:not(.ui-btn)):hover {
   background: #3a2a63; color: #f3e6c0;
 }
 body.wizard .mux-palette-toggle { color: #d8ccea; }
@@ -669,7 +669,7 @@ body.wizard .mux-pane-xterm {
 .mux-bg-idle.stale { color: #d29922; }
 .mux-bg-attach { padding: 2px 10px; font-size: 11px; }
 .mux-bg-kill { padding: 2px 8px; font-size: 11px; color: #8b949e; }
-.mux-bg-kill.armed { color: #fff; background: #b62324; border-color: #f85149; }
+.mux-bg-kill:where(:not(.ui-btn)).armed { color: #fff; background: #b62324; border-color: #f85149; }
 .mux-bg-noattach { color: #6e7681; font-size: 11px; font-style: italic; white-space: nowrap; }
 .mux-bg-foot { display: flex; justify-content: flex-end; padding: 8px 12px; border-top: 1px solid #2a3340; }
 .mux-bg-empty {
