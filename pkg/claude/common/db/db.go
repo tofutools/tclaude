@@ -397,7 +397,7 @@ func CloseForTestTeardown(home string) {
 	stateMu.Unlock()
 	ResetForTest()
 	// ResetForTest closes the status reader before globalDB; a concurrent
-	// StatusSnapshotGeneration can reopen it in between. Nothing can reopen it
-	// now that Open refuses this HOME.
+	// StatusSnapshotGeneration can reopen it in between. Later callers find
+	// Open refusing this HOME or globalDBPath cleared, so none reopens it.
 	closeStatusVersionReader()
 }
