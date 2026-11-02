@@ -939,6 +939,38 @@ test('Config auto-close terminal tabs matrix shows defaults and persists only ov
   await mounted.unmount();
 });
 
+test('Config › Keyboard loads rebindings, and a recorded one is saved and marks the section dirty', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  let raw = JSON.stringify({ dashboard: { keybindings: { palette: 'Ctrl+Alt+KeyP' } } });
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw }) }),
+  }} />`);
+  await adapter.loadConfigTab();
+  await harness.act(() => {});
+  const row = (id) => mounted.container.querySelector(`[data-cfg-panel="keyboard"] tr[data-shortcut="${id}"]`);
+  assert.match(row('palette').textContent, /changed/, 'a saved rebinding shows as changed');
+  assert.deepEqual(adapter.assembleConfig().dashboard.keybindings, { palette: 'Ctrl+Alt+KeyP' });
+
+  await harness.act(() => harness.fireEvent(row('compose').querySelector('[data-shortcut-change]'), 'click'));
+  const recorder = mounted.container.querySelector('[data-shortcut-recorder="compose"] .shortcut-recorder-keys');
+  await harness.act(() => harness.fireEvent(recorder, 'keydown', { key: 'e', code: 'KeyE', ctrlKey: true, altKey: true }));
+  const use = [...mounted.container.querySelectorAll('[data-shortcut-recorder] button')].find((b) => b.textContent.startsWith('Use'));
+  await harness.act(() => harness.fireEvent(use, 'click'));
+  assert.deepEqual(adapter.assembleConfig().dashboard.keybindings, { palette: 'Ctrl+Alt+KeyP', compose: 'Ctrl+Alt+KeyE' });
+  assert.ok(state.dirtyPanels.value.includes('keyboard'), 'the Keyboard section has unsaved changes');
+
+  await harness.act(() => harness.fireEvent(row('palette').querySelector('[data-shortcut-reset]'), 'click'));
+  await harness.act(() => harness.fireEvent(row('compose').querySelector('[data-shortcut-reset]'), 'click'));
+  assert.equal(adapter.assembleConfig().dashboard?.keybindings, undefined, 'defaults stay sparse');
+  await mounted.unmount();
+});
+
 test('Config ask sandbox defaults to global and round-trips modes and exact library profiles', async (t) => {
   const harness = await createPreactHarness(t);
   t.mock.method(globalThis, 'fetch', async (url) => ({

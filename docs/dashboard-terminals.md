@@ -13,10 +13,10 @@ no read-only mode here: what you type lands in the agent's session.
 
 - **From [Groups](dashboard-groups.md#opening-a-terminal):** the focus icon on a
   row, `terminals & windows…` in its ⚙ menu, or click its directory.
-- **From the group:** `🖥 open web terminal` in the group's ⚙ menu, or Ctrl/Cmd-click
+- **From the group:** `🖥 open web terminal` in the group's ⚙ menu, or Ctrl-click (⌘-click on a Mac)
   its default directory.
-- **From the keyboard:** Ctrl/Cmd-K, then `terminal <group>` or `shell <group>`.
-- **In the background:** Ctrl/Cmd-click opens a pane without switching to it.
+- **From the keyboard:** Ctrl K (⌘ K on a Mac), then `terminal <group>` or `shell <group>`.
+- **In the background:** Ctrl-click (⌘-click on a Mac) opens a pane without switching to it.
 
 ## Working with tabs
 
@@ -85,10 +85,10 @@ tab until you bring it back.
 
 ## Sending things to an agent
 
-- **✉ Message** (Ctrl/Cmd+M) queues a message instead of typing into the pane.
+- **✉ Message** (Ctrl M) queues a message instead of typing into the pane.
   It has an **Insert prompt…** picker for
   [saved prompts](dashboard-library.md#saved-prompts).
-- **Files.** Paste them (Ctrl/Cmd+V) or drag them in. The dashboard uploads them
+- **Files.** Paste them (Ctrl V, or ⌘ V on a Mac) or drag them in. The dashboard uploads them
   next to the session, inside its sandbox if it has one, and types their paths
   into the prompt. Folders are skipped. A plain shell only accepts PNG, JPEG and
   WebP images.
@@ -148,7 +148,7 @@ no input or files. When someone else is attached you see `Also attached on
 downloads files there.
 
 To open a peer's shell, click a member's directory on that peer's row, or
-Ctrl/Cmd-click its group's default directory. The peer must grant `sessions.shell`
+Ctrl-click (⌘-click on a Mac) its group's default directory. The peer must grant `sessions.shell`
 on the group; without it the path is dimmed and its tooltip says why.
 
 ## Processes in terminals

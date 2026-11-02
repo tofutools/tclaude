@@ -9,6 +9,11 @@ import {
 	visibleLocalFileLinks,
 } from '../dashboard/js/terminal-interactions.js';
 import { REMOTE_FILE_ERRORS } from '../dashboard/js/remote-files.js';
+import { setShortcutPlatform } from '../dashboard/js/keybindings.js';
+
+// Shortcut text follows the host's platform; pin it so a macOS dev machine
+// expects the same "Ctrl-click" text as CI.
+setShortcutPlatform('linux');
 
 function key(overrides = {}) {
   return {
@@ -22,9 +27,10 @@ test('Shift+Enter becomes the universal Ctrl+J newline byte', () => {
   assert.equal(terminalKeyInput(key({ shiftKey: true })), '\n');
 });
 
-test('Ctrl/Cmd+M is reserved only for the exact compose chord', () => {
+test('Ctrl M is reserved only for the exact compose chord', () => {
 	assert.equal(isComposeMessageShortcut(key({ key: 'm', code: 'KeyM', ctrlKey: true })), true);
-	assert.equal(isComposeMessageShortcut(key({ key: 'M', code: 'KeyM', metaKey: true })), true);
+	// ⌘ M is macOS's minimize-window chord, so compose is Ctrl M there too.
+	assert.equal(isComposeMessageShortcut(key({ key: 'M', code: 'KeyM', metaKey: true })), false);
 	assert.equal(isComposeMessageShortcut(key({ key: 'm', code: 'KeyM' })), false);
 	assert.equal(isComposeMessageShortcut(key({ key: 'm', code: 'KeyM', ctrlKey: true, shiftKey: true })), false);
 	assert.equal(isComposeMessageShortcut(key({ key: 'm', code: 'KeyM', ctrlKey: true, isComposing: true })), false);
@@ -413,7 +419,7 @@ test('hovering a hyperlink reveals its real destination, and leaving restores th
   const { statuses, interactions, links } = linkHarness();
   try {
     links.hover({}, 'https://linear.app/doc/abc123');
-    assert.deepEqual(statuses, ['Ctrl/Cmd-click → https://linear.app/doc/abc123']);
+    assert.deepEqual(statuses, ['Ctrl-click → https://linear.app/doc/abc123']);
     links.leave();
     assert.equal(statuses.at(-1), 'BASE', 'the hint must not outlive the pointer');
   } finally {
@@ -586,9 +592,9 @@ test('file hyperlinks reveal the host path and download only on a modified click
   try {
     const raw = 'file:///tmp/final%20chart.png#L1';
     links.hover({}, raw);
-    assert.equal(statuses.at(-1), 'Ctrl/Cmd-click download → /tmp/final chart.png');
+    assert.equal(statuses.at(-1), 'Ctrl-click download → /tmp/final chart.png');
     links.activate({}, raw);
-    assert.equal(statuses.at(-1), 'Ctrl/Cmd-click to download /tmp/final chart.png');
+    assert.equal(statuses.at(-1), 'Ctrl-click to download /tmp/final chart.png');
     assert.deepEqual(downloaded, []);
     links.activate({ metaKey: true }, raw);
     assert.deepEqual(downloaded, ['/tmp/final chart.png']);
@@ -652,7 +658,7 @@ test('clicking without the modifier keeps the destination in the hint', () => {
   const { statuses, interactions, links } = linkHarness();
   try {
     links.activate({}, 'https://linear.app/doc/abc123');
-    assert.match(statuses.at(-1), /^Ctrl\/Cmd-click to open https:\/\/linear\.app\/doc\/abc123$/);
+    assert.match(statuses.at(-1), /^Ctrl-click to open https:\/\/linear\.app\/doc\/abc123$/);
   } finally {
     interactions.dispose();
   }
@@ -775,7 +781,7 @@ test('a remote terminal offers no file links: no download hint, no visible-path 
     assert.deepEqual(downloaded, []);
     assert.equal(harness.linkProvider(), null, 'visible paths are not turned into links');
     links.hover({}, 'https://example.com/docs');
-    assert.match(statuses.at(-1), /Ctrl\/Cmd-click → https:\/\/example\.com\/docs/, 'http(s) links still work');
+    assert.match(statuses.at(-1), /Ctrl-click → https:\/\/example\.com\/docs/, 'http(s) links still work');
     links.hover({}, 'javascript:alert(1)');
     assert.equal(statuses.at(-1), 'blocked unsafe link');
   } finally {
@@ -807,7 +813,7 @@ test('a remote terminal links visible paths only while the live view holds the p
     const [link] = linksAt();
     assert.equal(link.text, '/srv/proj/out/report.txt');
     link.hover({}, link.text);
-    assert.equal(statuses.at(-1), 'Ctrl/Cmd-click download → /srv/proj/out/report.txt');
+    assert.equal(statuses.at(-1), 'Ctrl-click download → /srv/proj/out/report.txt');
     link.activate({ ctrlKey: true }, link.text);
     await settle();
     const url = new URL(fetches[0][0], 'http://x');

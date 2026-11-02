@@ -45,7 +45,7 @@ lines. It's read-only, and your keyboard stays with the page.
 
 The Steward lives in an ordinary overlay window, with any other agents you keep at
 hand as its [tabs](#overlay-tabs). Click its pill to open that window, or press
-**Ctrl+.** anywhere to open or minimize it. With no Steward running, the pill opens
+**Ctrl .** anywhere to open or minimize it. With no Steward running, the pill opens
 the page that summons or resumes one. No window is special: an agent you open
 without picking a window joins the Steward's window, or the one holding that page, or
 else the chats you used last. With none of those, it gets a window of its own. The window stays above the page without
@@ -104,9 +104,9 @@ otherwise open a terminal.
 | ✦ N | Shows while agents wait on the Steward roster, and opens the roster |
 | 🔑 N | Shows while permission requests wait, and opens the [approval panel](#answering-permission-requests) |
 | 🔈 / 🔊 | Turn [voice](#voice-and-dictation) on or off for this agent |
-| ✉ | Send a queued message (Ctrl/Cmd+M) |
+| ✉ | Send a queued message (Ctrl M) |
 | ⚙ | Everything else, listed below. Type to filter it |
-| – | Minimize (Ctrl+.) |
+| – | Minimize (Ctrl .) |
 | □ | Maximize, or restore the size it had |
 | × | Send every tab in the window to the dock. They keep running. On a window holding a running Steward it asks first, then shuts the Steward down, like **Shut down…** |
 
@@ -172,13 +172,20 @@ come and go, until the last tab leaves.
 The dock's ☰ menu and the command palette offer the same actions on every window at
 once, each only when there is something for it to do:
 
-- **Show all windows** (**Ctrl+,** from anywhere, a terminal included) spreads every
-  window out side by side over a dimmed page, minimized ones and tabs waiting on the dock
-  too. Each card shows the window's kind, its active tab, how many tabs it holds, the
-  others by name, and a small map of where it sits. Type to filter by any tab's title,
-  move with the arrow keys, and press Enter or click a card to raise that window. Escape,
-  Ctrl+, again or a click outside leaves with nothing changed. Entering and leaving
-  never moves, retiles or restores a window. It is offered only with two or more windows.
+- **Show all windows** (**Ctrl ,** from anywhere, a terminal included) dims the page and
+  spreads the open windows themselves out side by side, scaled down so none overlaps,
+  gliding from where they stand. They stay live: terminals, boards and editors keep
+  drawing, but take no clicks or typing while spread. Hover a window to highlight it and
+  see its title and how many tabs it holds. Minimized windows and tabs waiting on the
+  dock are not drawn, so they show as a row of cards along the bottom, each with its kind,
+  active tab and the other tabs by name. Type to filter by any tab's title (windows that
+  don't match dim), move with the arrow keys, and press Enter or click a window or card
+  to raise it. Escape, Ctrl , again or a click outside leaves with nothing changed, and
+  the windows glide back. Entering and leaving never moves, retiles or restores a window:
+  the spread is only how they are drawn. With reduced motion they move without gliding.
+  It is offered only with two or more windows.
+
+  ![Show all windows: three chat windows spread side by side over the dimmed page, live, and a minimized one as a card along the bottom](assets/companion-show-all-windows.png)
 - **Untile all windows** floats every tiled window where it is, so nothing moves on
   screen, and takes it out of the split. A minimized window keeps its cell, and a
   maximized window stays maximized.
@@ -225,7 +232,7 @@ anywhere else reach it. **view** is ticked by default and attaches the page you'
 on to dictated messages, so the agent knows what you're looking at. A text field
 and **Send** float at the bottom while you dictate.
 
-**✎** (Ctrl+Shift+.) lets you draw over the page and send it to the agent. Circle,
+**✎** (Ctrl Shift .) lets you draw over the page and send it to the agent. Circle,
 underline, point or write freely. The agent gets a picture of the view with your ink
 on it, as a file attached to the message, plus a numbered line for each mark. Sending
 is your decision, so the agent doesn't need permission to capture your dashboard.
@@ -388,11 +395,11 @@ microphone and still works on plain HTTP.
 
 ## Marking up a page
 
-**✎**, or **Ctrl+Shift+.**, puts a drawing layer over the page. Circle, underline or
+**✎**, or **Ctrl Shift .**, puts a drawing layer over the page. Circle, underline or
 draw an arrow at what you mean, add a note, and press **Send**. The agent can't see
 your screen, so each mark goes as words: what it is and which control is under it,
 such as `1. circled "Approve plan" (button)`, along with the page you're on. **Esc**
-cancels and **Ctrl+Z** undoes the last stroke.
+cancels and **Ctrl Z** undoes the last stroke.
 
 ## The Steward
 

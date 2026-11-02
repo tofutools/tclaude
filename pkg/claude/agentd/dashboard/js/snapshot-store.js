@@ -1,4 +1,5 @@
 import { batch, computed, effect, signal } from '@preact/signals';
+import { setShortcutOverrides } from './keybindings.js';
 
 function messageOf(error) {
   if (!error) return null;
@@ -205,4 +206,13 @@ export function onFleetOverviewChange(cb, tab = dashboardState.activeTab) {
     const shown = OVERVIEW_TABS.has(tab.value);
     if (shown !== prev) { prev = shown; queueMicrotask(cb); }
   });
+}
+
+// bindShortcutOverrides applies dashboard.keybindings from each snapshot to the
+// shortcut registry, so a rebinding saved in Config takes effect on the next
+// poll. A peer's per-node page skips it: the peer's snapshot never carries
+// this node's bindings, so that page keeps the defaults.
+export function bindShortcutOverrides(state = dashboardState, global = globalThis) {
+  if (global.__tclaudeRemoteNode?.id) return () => {};
+  return effect(() => { setShortcutOverrides(state.snapshot.value?.keybindings); });
 }

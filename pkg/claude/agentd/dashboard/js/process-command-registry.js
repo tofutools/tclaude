@@ -1,5 +1,6 @@
 import { PROCESS_NODE_TYPES } from './process-node-types.js';
 import { isWizardActive } from './slop.js';
+import { shortcutText } from './keybindings.js';
 
 function presented(plain, wizard, active) {
   return active ? wizard : plain;
@@ -75,7 +76,7 @@ export function buildProcessEditorCommands({ editor, actions, wizard = isWizardA
       'select all everything bind whole', context.hasGraph, 'The graph is empty.', () => editor.selectAll()),
     command('clear-selection', '○', 'Clear selection', 'Release selection', 'Leave every graph item unselected',
       'clear deselect unselect release', context.hasSelection, 'Nothing is selected.', () => editor.clearSelection()),
-    command('auto-layout', '▦', 'Auto layout', 'Let the runes arrange themselves', 'Tidy the graph (or just the selected nodes) into the layered layout; undo restores hand-placed positions (Ctrl/Cmd+Shift+L)',
+    command('auto-layout', '▦', 'Auto layout', 'Let the runes arrange themselves', 'Tidy the graph (or just the selected nodes) into the layered layout; undo restores hand-placed positions (' + shortcutText('process-auto-layout') + ')',
       'auto layout arrange tidy organize reflow relayout clean up', context.canAutoLayout, context.autoLayoutReason, () => editor.autoLayout()),
     ...[['down', '↓', 'top to bottom'], ['right', '→', 'left to right'], ['up', '↑', 'bottom to top'], ['left', '←', 'right to left']].map(([direction, arrow, words]) => command(
       `auto-layout-${direction}`, arrow, `Auto layout ${words}`, `Let the runes flow ${direction}`,

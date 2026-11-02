@@ -14,6 +14,7 @@ import { dictationBlock } from './insecure-origin.js';
 import { SILENCE_SEND_DEFAULT, voicePhrase } from './voice-config.js';
 import { localSpeechState, speechRouteLabel } from './voice-local.js';
 import { openStewardDoor, registerWakeTarget, reserveStewardDoor, stewardRefusal } from './voice-wake.js';
+import { withShortcut } from './keybindings.js';
 
 const html = htm.bind(h);
 
@@ -483,7 +484,7 @@ export function FloatingTools({
         aria-label=${micLabel} disabled=${!!block}
         title=${block?.why || micTitle} onClick=${toggle}>${listening ? '⏺' : '🎤'}</button>
       ${onAnnotate && html`<button type="button" class="companion-tool companion-annotate" aria-label=${annotateLabel}
-        title="Draw on the page and send the marked-up view (Ctrl+Shift+.)" onClick=${onAnnotate}>✎</button>`}
+        title=${withShortcut('Draw on the page and send the marked-up view', 'annotate')} onClick=${onAnnotate}>✎</button>`}
       ${children}
   </div>`;
 }

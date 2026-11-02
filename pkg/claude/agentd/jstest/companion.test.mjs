@@ -1726,7 +1726,7 @@ async function openLook(t, look, { prefs, snapshot = snapshotWith(), reloading =
 const buttonNames = (root) => [...root.querySelectorAll('button')].map((button) => button.getAttribute('aria-label'));
 
 test('each look puts the window controls in native order, and keyboard order follows the eye', async (t) => {
-  const names = ['Minimize (Ctrl+.)', 'Maximize', 'Close alpha'];
+  const names = ['Minimize (Ctrl .)', 'Maximize', 'Close alpha'];
   for (const [look, order] of [['macos', [names[2], names[0], names[1]]], ['windows', names], ['linux', names]]) {
     const { view } = await openLook(t, look);
     const bar = view.container.querySelector('.board-overlay-titlebar');

@@ -90,9 +90,18 @@ func TestDashboardJS(t *testing.T) {
 		concurrency = parsed
 	}
 	args := []string{"--test"}
-	if help, helpErr := exec.Command(node, "--help").Output(); helpErr == nil &&
-		bytes.Contains(help, []byte("--test-concurrency")) {
+	help, helpErr := exec.Command(node, "--help").Output()
+	if helpErr == nil && bytes.Contains(help, []byte("--test-concurrency")) {
 		args = append(args, fmt.Sprintf("--test-concurrency=%d", concurrency))
+	}
+	// A test that fails midway can skip its own cleanup and leave a handle (a
+	// timer, an open terminal) keeping its file's process alive. Without
+	// force-exit that file never ends, the run sits idle under the memory
+	// guard until go test's package timeout, and the buffered output that
+	// names the failure is lost. With it, the file exits once its tests are
+	// done and the failure is reported.
+	if helpErr == nil && bytes.Contains(help, []byte("--test-force-exit")) {
+		args = append(args, "--test-force-exit")
 	}
 	args = append(args, files...)
 	// Read before the run starts: an invalid limit fails the test here, rather

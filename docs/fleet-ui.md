@@ -14,7 +14,7 @@ The right end of the tab bar picks the nodes the dashboard shows. With up to
 four nodes there is a button for this node (⌂) and one per trusted peer, with a
 dot for its presence; past four they fold into one dropdown that names the node
 on screen, filters as you type and keeps this node first. Click a node to open
-its own dashboard; ⌂ returns to this node. Alt+1 is this node and Alt+2…9 the
+its own dashboard; ⌂ returns to this node. Alt 1 is this node and Alt 2…9 the
 peers in order; the shortcut never fires while you type in a field or a web
 terminal has focus. The row is always there and adds no height to the page, but
 it is greyed out (its tooltip says why: federation is off, or the hub is
@@ -339,7 +339,7 @@ onto another node's group opens the same dialog on Move, pre-filled. A peer's
 agent moves here, or, when that peer trusts this node unrestricted, on to a
 third node: the peer sends it, and its own ⚙ Fleet config → Moves follows it. In the
 fused view a drop onto a group on the agent's own node works as on that node's
-Groups view (move or add to a group, retire to the bin, and Ctrl/Cmd-drop to
+Groups view (move or add to a group, retire to the bin, and Ctrl-drop (⌘-drop on a Mac) to
 open the clone dialog for that group) — for this node always, and for a peer that
 trusts this one unrestricted. A peer's group controls there (create a subgroup, delete a
 stuck pending spawn, and the rest its grants cover) act on that peer; the few that
@@ -349,7 +349,7 @@ peer's own page. Each node's links show on its own groups there, and its trigger
 too for this node and peers that trust it unrestricted (a queued spawn launches,
 edits and discards on its node). Group headers drag the same way there: nest a
 group under another on its node, pull it back out, reorder it (the fused view
-keeps its own order), Ctrl/Cmd-drop to clone, or drop it on the bin to delete. Nodes a
+keeps its own order), Ctrl-drop (⌘-drop on a Mac) to clone, or drop it on the bin to delete. Nodes a
 mode cannot use stay listed with the reason; the right-hand panel says what
 carries over. Until this node is connected to a hub with a linked peer, **move
 to…** and **teleport to…** stay in the menu greyed out, saying why (as the
@@ -367,7 +367,7 @@ Cloning on this node has one entry: **send elsewhere → clone…**, whose
 **Clone** mode continues in the clone dialog. The dialog can start the clone in
 another worktree, skip the conversation copy, and also copy the source's group
 ownerships (**Copy group ownership**, off by default).
-Ctrl/⌘-dragging an agent onto a group clones it into that group in one
+Ctrl-dragging (⌘-dragging on a Mac) an agent onto a group clones it into that group in one
 request: the clone and its new membership land together or not at all. In a
 peer's single-node view, the ⚙ **clone** item asks the peer instead.
 

@@ -2096,14 +2096,34 @@ body.companion-annotating :is(.overlay-split-line, .overlay-split-cross, .overla
 .overlay-expose-kind { color: var(--cmp-muted, #8b949e); font-size: 12px; }
 .overlay-expose-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
 .overlay-expose-tab { max-width: 100%; padding: 1px 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--cmp-line, #30363d); border-radius: 6px; color: var(--cmp-muted, #8b949e); font-size: 11px; }
-/* Where the window sits on the page, as a small map of it. */
-.overlay-expose-map { position: relative; display: block; aspect-ratio: 16 / 9; margin-top: 2px; border: 1px solid var(--cmp-line, #30363d); border-radius: 4px; background: rgba(110, 118, 129, .08); }
-.overlay-expose-map-window { position: absolute; box-sizing: border-box; border: 1px solid #58a6ff; border-radius: 2px; background: rgba(88, 166, 255, .22); }
+/* The open windows themselves spread over the stage (tcl-ukrr3o): the view
+   only dims the page, and the minimized ones are a row of cards beneath. */
+.overlay-expose-stage { flex: 1; min-height: 0; }
+.overlay-expose-grid.row {
+  flex: none; display: flex; justify-content: center; align-content: normal; gap: 12px; overflow-x: auto; overflow-y: hidden; padding: 4px 4px 6px;
+}
+.overlay-expose-grid.row .overlay-expose-card { flex: none; width: 210px; padding: 9px 11px; }
+/* A target over each spread window, above the windows (lifted into the dialog
+   layer just over the view, by overlay-expose.js) and so outside the view,
+   takes the click the window may not; it names the window there. */
+.overlay-expose-targets { position: fixed; inset: 0; z-index: calc(var(--z-dialog) + 100); pointer-events: none; }
+.overlay-expose-live {
+  position: fixed; box-sizing: border-box; margin: 0; padding: 0; border: 2px solid transparent; border-radius: 10px;
+  background: transparent; cursor: pointer; pointer-events: auto; transition: border-color .1s, box-shadow .1s;
+}
+.overlay-expose-live.chosen, .overlay-expose-live:focus-visible { border-color: #58a6ff; box-shadow: 0 0 0 4px rgba(88, 166, 255, .25), 0 18px 40px rgba(0, 0, 0, .5); outline: none; }
+.overlay-expose-live-label {
+  position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%); display: none; align-items: center; gap: 6px; pointer-events: none;
+  max-width: 100%; padding: 3px 10px; overflow: hidden; border: 1px solid var(--cmp-line, #30363d); border-radius: 12px;
+  background: var(--cmp-bar, #161b22); color: var(--cmp-text, #e6edf3); font-size: 12px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis;
+}
+.overlay-expose-live:is(.chosen, :hover, :focus-visible) .overlay-expose-live-label { display: inline-flex; }
 .overlay-expose-empty { grid-column: 1 / -1; margin: 0; color: var(--cmp-muted, #8b949e); text-align: center; }
 @media (prefers-reduced-motion: reduce) {
   .overlay-expose { animation: none; }
   .overlay-expose-card { transition: none; }
   .overlay-expose-card.chosen, .overlay-expose-card:focus-visible { transform: none; }
+  .overlay-expose-live { transition: none; }
 }
 /* Above the windows: a drop that splits a window lands on top of it. */
 .overlay-snap-guide {
@@ -10011,6 +10031,39 @@ label.cfg-label { cursor: pointer; }
 .cfg-tool-list th, .cfg-tool-list td { padding: 6px 12px 6px 0; vertical-align: top; border-bottom: 1px solid var(--border); }
 .cfg-tool-list td:first-child code { white-space: nowrap; }
 @media (max-width: 640px) { .cfg-tool-list td:first-child code { white-space: normal; overflow-wrap: anywhere; } }
+/* A shortcut written as key chips (shortcut-keys.js): Ctrl , → [Ctrl] [,]. */
+.shortcut-keys { display: inline-flex; gap: 3px; white-space: nowrap; }
+.shortcut-keys kbd {
+  min-width: 1.4em; text-align: center; background: #21262d; border: 1px solid #2a3340;
+  border-bottom-width: 2px; border-radius: 4px; padding: 0 5px;
+  font-family: ui-monospace, monospace; font-size: 11px; line-height: 18px; color: #c9d1d9;
+}
+.shortcut-or { color: #8b949e; font-size: 12px; }
+.cfg-shortcut-list th.is-here, .cfg-shortcut-list td.is-here { background: rgba(88, 166, 255, 0.06); }
+.cfg-shortcut-list { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+.cfg-shortcut-list th { text-align: left; font-weight: 600; color: #8b949e; white-space: normal; overflow-wrap: anywhere; }
+.cfg-shortcut-list th, .cfg-shortcut-list td { padding: 6px 12px 6px 0; vertical-align: top; border-bottom: 1px solid var(--border); }
+.cfg-shortcut-list th:first-child { width: 38%; }
+.cfg-shortcut-list th:nth-child(2), .cfg-shortcut-list th:nth-child(3) { width: 24%; }
+@media (max-width: 640px) { .cfg-shortcut-list { table-layout: auto; } .cfg-shortcut-list th { width: auto; } }
+.cfg-shortcut-list.is-editable th:first-child { width: 32%; }
+.cfg-shortcut-list.is-editable th:nth-child(2), .cfg-shortcut-list.is-editable th:nth-child(3) { width: 20%; }
+.cfg-shortcut-list th:last-child[aria-label="Change"] { width: 140px; }
+.cfg-shortcut-list .shortcut-actions { white-space: nowrap; text-align: right; }
+.cfg-shortcut-list .shortcut-actions .ui-btn { padding: 2px 8px; font-size: 12px; }
+.cfg-shortcut-list tr.is-changed td:first-child { color: #e6edf3; }
+.shortcut-changed, .shortcut-fixed { font-size: 11px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); color: #8b949e; }
+.shortcut-changed { border-color: rgba(88, 166, 255, 0.5); color: #79c0ff; }
+.shortcut-recording-row td { background: rgba(88, 166, 255, 0.06); }
+.shortcut-recorder { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.shortcut-recorder-keys { min-width: 180px; justify-content: center; }
+.shortcut-recorder-keys:focus-visible, .shortcut-recorder-keys:focus { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.shortcut-recorder-hint { color: #8b949e; font-size: 12px; }
+.shortcut-problems { flex-basis: 100%; margin: 4px 0 0; padding: 0; list-style: none; font-size: 12px; }
+.shortcut-problems li { margin: 2px 0; }
+.shortcut-problems .is-blocking { color: #ff7b72; }
+.shortcut-problems .is-warning { color: #d29922; }
+.shortcut-reset-all { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; padding: 8px 12px; border: 1px solid rgba(88, 166, 255, 0.4); border-radius: 6px; }
 .cfg-steward-manager { display: flex; flex-direction: column; gap: 10px; width: 100%; min-width: 0; }
 .cfg-steward-issued { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
 .cfg-steward-secret { display: block; padding: 6px 8px; font-size: 12px; overflow-wrap: anywhere; user-select: all; }

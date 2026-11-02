@@ -19,6 +19,7 @@ import { CHANGE_SUMMARY_MARKERS } from './process-external-change.js';
 import {
   PROCESS_SNIPPET_NAME_MAX_BYTES, PROCESS_SNIPPET_NAME_MAX_RUNES, validateProcessSnippetName,
 } from './process-snippet-library.js';
+import { shortcutText, withShortcut } from './keybindings.js';
 
 // The auto layout's flow directions, in picker order: [direction, arrow, words].
 const LAYOUT_DIRECTIONS = [['down', '↓', 'down'], ['right', '→', 'right'], ['up', '↑', 'up'], ['left', '←', 'left']];
@@ -152,10 +153,10 @@ function Header({ controller, view }) {
     <span class="spacer"></span>
     <button class="process-action" type="button" disabled=${externalPending || view.scope?.depth > 0} title=${view.scope?.depth ? 'Template settings belong to the root process; exit the subgraph first' : 'Edit template name and description'} onClick=${() => controller.setSelection({ type: 'template' })}>template settings…</button>
     <button class="process-action" type="button" disabled=${externalPending || pending.save} title="Declare template parameters" onClick=${() => controller.openParamsSettings()}>params…</button>
-    <button class="process-action" type="button" disabled=${externalPending || !model.canUndo} title="Undo (Ctrl+Z)" onClick=${() => controller.applyHistory('undo')}>↶ undo</button>
-    <button class="process-action" type="button" disabled=${externalPending || !model.canRedo} title="Redo (Ctrl+Shift+Z)" onClick=${() => controller.applyHistory('redo')}>↷ redo</button>
+    <button class="process-action" type="button" disabled=${externalPending || !model.canUndo} title=${withShortcut('Undo', 'process-undo')} onClick=${() => controller.applyHistory('undo')}>↶ undo</button>
+    <button class="process-action" type="button" disabled=${externalPending || !model.canRedo} title=${withShortcut('Redo', 'process-redo')} onClick=${() => controller.applyHistory('redo')}>↷ redo</button>
     <span class="process-auto-layout-group" role="group" aria-label="Auto layout">
-      <button class="process-action" type="button" data-process-auto-layout disabled=${externalPending} title="Auto layout: tidy the graph, or just the selected nodes (Ctrl/Cmd+Shift+L). Undo restores hand-placed positions." onClick=${() => controller.autoLayout()}>▦ auto layout</button>
+      <button class="process-action" type="button" data-process-auto-layout disabled=${externalPending} title=${`Auto layout: tidy the graph, or just the selected nodes (${shortcutText('process-auto-layout')}). Undo restores hand-placed positions.`} onClick=${() => controller.autoLayout()}>▦ auto layout</button>
       ${LAYOUT_DIRECTIONS.map(([direction, arrow, label]) => html`
         <button class=${`process-action process-layout-direction${model.layoutDirection === direction ? ' is-active' : ''}`} type="button"
           data-process-layout-direction=${direction} aria-pressed=${String(model.layoutDirection === direction)}
@@ -166,7 +167,7 @@ function Header({ controller, view }) {
           onClick=${() => controller.autoLayout(direction)}>${arrow}</button>`)}
     </span>
     <button class="process-action" type="button" disabled=${externalPending} title="Toggle the node palette" onClick=${() => controller.togglePalette()}>⬒ palette</button>
-    <button class="process-action" type="button" title="Process commands (Ctrl/Cmd-K)" aria-label="Open process commands (Ctrl/Cmd-K)" onClick=${() => controller.openCommands()}>⌘K commands</button>
+    <button class="process-action" type="button" title=${withShortcut('Process commands', 'process-commands')} aria-label=${withShortcut('Open process commands', 'process-commands')} onClick=${() => controller.openCommands()}>${shortcutText('process-commands')} commands</button>
     <button class=${`process-action process-scribe-action${view.scribeDock?.open ? ' is-active' : ''}`} type="button"
       disabled=${!view.scribeDock?.available && (externalPending || pending.save)} aria-pressed=${view.scribeDock?.available ? String(!!view.scribeDock.open) : undefined}
       title=${view.scribeDock?.available ? 'Co-design this template with its scoped process scribe (chat or terminal)' : 'Open an agent scoped to this exact process template'}
@@ -175,7 +176,7 @@ function Header({ controller, view }) {
     </button>
     <${WorkflowExportButton} id=${model.id} disabled=${externalPending || model.dirty || !model.semanticHash}
       title=${model.dirty || !model.semanticHash ? 'Save first: a workflow file carries the saved version' : ''} />
-    <button class="process-action primary" type="button" disabled=${pending.save || externalPending || (!model.dirty && !view.blank)} title="Save a new version (Ctrl/Cmd+S)" onClick=${() => controller.save()}>${pending.save ? 'Saving…' : 'Save'}</button>
+    <button class="process-action primary" type="button" disabled=${pending.save || externalPending || (!model.dirty && !view.blank)} title=${withShortcut('Save a new version', 'process-save')} onClick=${() => controller.save()}>${pending.save ? 'Saving…' : 'Save'}</button>
   </div>`;
 }
 
