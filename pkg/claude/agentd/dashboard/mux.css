@@ -21,12 +21,8 @@
 .mux-tabs {
   display: flex; flex-wrap: wrap; flex: none; gap: 4px;
   padding: 5px 6px 0; overflow: hidden auto; max-height: 40vh;
-  scrollbar-width: thin; scrollbar-color: #3d4451 transparent;
   background: #161b22; border-bottom: 1px solid #2a3340;
 }
-.mux-tabs::-webkit-scrollbar { width: 8px; }
-.mux-tabs::-webkit-scrollbar-track { background: transparent; }
-.mux-tabs::-webkit-scrollbar-thumb { background: #3d4451; border-radius: 4px; }
 .mux-tab {
   position: relative; display: flex; align-items: center; gap: 6px;
   padding: 5px 8px; border: 1px solid #2a3340; border-bottom: none;

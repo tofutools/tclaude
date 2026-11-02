@@ -19,10 +19,10 @@
 [hidden] { display: none !important; }
 /* Always reserve the document scrollbar gutter so switching tabs never
    reflows the page sideways. Every tab except Messages scrolls the page,
-   so a tall tab shows the ~15px vertical scrollbar; the Messages tab pins
+   so a tall tab shows the vertical scrollbar; the Messages tab pins
    body to 100vh (see the app-shell height lock below) and scrolls its three
    panes internally, so it has no page scrollbar at all. Without this, opening
-   Messages reclaims that ~15px and the whole chrome (header + nav/tabs bar)
+   Messages reclaims that gutter and the whole chrome (header + nav/tabs bar)
    jumps over — the "the UI shifts when I view Messages" bug. overflow-y:scroll
    keeps the gutter present on every tab, so the switch is a no-op. It only
    reserves space where the scrollbar is classic (Windows/Linux); overlay
@@ -31,8 +31,8 @@
 html { overflow-y: scroll; }
 /* The Terminals app shell needs a percentage containing block so it can inherit
    the document's scrollbar-adjusted height. Keep the document scrollbar itself
-   native and visible, just like every other dashboard tab; only xterm's nested,
-   redundant scrollbars are suppressed below. */
+   visible, the house scrollbar (ui.css) like every other dashboard tab; only
+   xterm's nested, redundant scrollbars are suppressed below. */
 html:has(#tab-terminals.active) {
   height: 100%;
 }
@@ -214,21 +214,6 @@ body.dock-open .open-prs.is-open::before {
 }
 .open-prs-filters button.active { color: #c9d1d9; border-color: #385b81; background: #172a40; }
 .open-pr-list { min-height: 0; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
-/* The list is the popover's only scrolling surface. Match the dashboard's
-   other dark panes in both Firefox and Chromium/WebKit instead of exposing
-   the browser's light native scrollbar inside the dark footer disclosure. */
-@supports not selector(::-webkit-scrollbar) {
-  .open-pr-list { scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117; }
-  body.wizard .open-pr-list { scrollbar-color: #7a5db0 #140f28; }
-}
-.open-pr-list::-webkit-scrollbar { width: 10px; height: 10px; }
-.open-pr-list::-webkit-scrollbar-track,
-.open-pr-list::-webkit-scrollbar-corner { background: #0d1117; }
-.open-pr-list::-webkit-scrollbar-thumb {
-  background: #6e7681; border: 2px solid #0d1117; border-radius: 6px;
-}
-.open-pr-list::-webkit-scrollbar-thumb:hover { background: #8b949e; }
-.open-pr-list::-webkit-scrollbar-thumb:active { background: #b1bac4; }
 .open-pr-row { display: grid; grid-template-columns: 9px minmax(0,1fr) auto; gap: 9px; align-items: center; padding: 10px 13px; border-bottom: 1px solid #222b35; }
 .open-pr-state { width: 7px; height: 7px; border-radius: 50%; background: #6e7681; }
 .open-pr-state-passing { background: #3fb950; }
@@ -649,38 +634,6 @@ body.mail-col-resizing, body.mail-col-resizing * { user-select: none; }
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   overflow-y: auto;
 }
-/* Firefox has no ::-webkit-scrollbar surface. Keep its standardized fallback
-   out of WebKit/Blink, where a non-auto scrollbar-color would suppress the
-   richer pseudo-element hover and wizard treatments below. */
-@supports not selector(::-webkit-scrollbar) {
-  .mail-sidebar, .mail-list, .mail-reader {
-    scrollbar-width: thin;
-    scrollbar-color: #6e7681 #0d1117;
-  }
-  body.wizard .mail-sidebar,
-  body.wizard .mail-list,
-  body.wizard .mail-reader { scrollbar-color: #7a5db0 #140f28; }
-}
-.mail-sidebar::-webkit-scrollbar,
-.mail-list::-webkit-scrollbar,
-.mail-reader::-webkit-scrollbar { width: 10px; height: 10px; }
-.mail-sidebar::-webkit-scrollbar-track,
-.mail-list::-webkit-scrollbar-track,
-.mail-reader::-webkit-scrollbar-track { background: #0d1117; }
-.mail-sidebar::-webkit-scrollbar-corner,
-.mail-list::-webkit-scrollbar-corner,
-.mail-reader::-webkit-scrollbar-corner { background: #161b22; }
-.mail-sidebar::-webkit-scrollbar-thumb,
-.mail-list::-webkit-scrollbar-thumb,
-.mail-reader::-webkit-scrollbar-thumb {
-  background: #6e7681; border-radius: 6px;
-}
-.mail-sidebar::-webkit-scrollbar-thumb:hover,
-.mail-list::-webkit-scrollbar-thumb:hover,
-.mail-reader::-webkit-scrollbar-thumb:hover { background: #8b949e; }
-.mail-sidebar::-webkit-scrollbar-thumb:active,
-.mail-list::-webkit-scrollbar-thumb:active,
-.mail-reader::-webkit-scrollbar-thumb:active { background: #b1bac4; }
 .mail-sidebar, .mail-list { flex: 1 1 auto; min-height: 0; }
 .mail-sidebar { padding: 6px; }
 .mail-list { padding: 6px; }
@@ -1401,22 +1354,6 @@ body:not(.show-final-pr-checks) .ci-hover.ci-final { display: none; }
 }
 .ci-panel-note a { color: #58a6ff; text-decoration: none; }
 .ci-panel-note a:hover { text-decoration: underline; }
-/* Panel scrollbar — dashboard furniture like the mail panes, so it gets the
-   same treatment: the richer ::-webkit- surface everywhere it exists, and
-   Firefox's standardized fallback kept OUT of WebKit/Blink (a non-auto
-   scrollbar-color there suppresses the ::-webkit- rules). */
-@supports not selector(::-webkit-scrollbar) {
-  .ci-panel { scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117; }
-  body.wizard .ci-panel { scrollbar-color: #7a5db0 #140f28; }
-  body.slop .ci-panel { scrollbar-color: #9e7a00 #210808; }
-}
-.ci-panel::-webkit-scrollbar { width: 10px; height: 10px; }
-.ci-panel::-webkit-scrollbar-track { background: #0d1117; }
-.ci-panel::-webkit-scrollbar-thumb {
-  background: #6e7681; border-radius: 6px; border: 2px solid #161b22;
-}
-.ci-panel::-webkit-scrollbar-thumb:hover { background: #8b949e; }
-.ci-panel::-webkit-scrollbar-thumb:active { background: #b1bac4; }
 body.wizard .ci-badge { background: #241b3d; border-color: #3a2a63; color: #9a86c4; }
 body.wizard .ci-badge.ci-passing { color: #7ee08a; border-color: rgba(126, 224, 138, 0.35); }
 body.wizard .ci-badge.ci-failing { color: #ff8a8a; border-color: rgba(255, 138, 138, 0.4); }
@@ -1444,11 +1381,6 @@ body.wizard .ci-icon-pass { color: #7ee08a; }
 body.wizard .ci-icon-fail { color: #ff8a8a; }
 body.wizard .ci-icon-pending { color: #e8c15a; }
 body.wizard .ci-icon-skipped { color: #6f5f96; }
-body.wizard .ci-panel::-webkit-scrollbar-track { background: #140f28; }
-body.wizard .ci-panel::-webkit-scrollbar-thumb {
-  background: #7a5db0; border-color: #241b3d;
-}
-body.wizard .ci-panel::-webkit-scrollbar-thumb:hover { background: #9a7fd0; }
 body.slop .ci-badge { background: #210808; border-color: #684500; color: #d8b95e; }
 /* The skin's gold .ci-badge colour outranks the plain .rv-* state colours,
    and the review pill's state is colour alone, so restate them here. */
@@ -1469,11 +1401,6 @@ body.slop .ci-panel-note { color: #d8b95e; }
 body.slop .ci-check-name { color: #fff4bd; }
 body.slop .ci-checks li + li,
 body.slop .ci-panel-note { border-color: #684500; }
-body.slop .ci-panel::-webkit-scrollbar-track { background: #210808; }
-body.slop .ci-panel::-webkit-scrollbar-thumb {
-  background: #9e7a00; border-color: #351010;
-}
-body.slop .ci-panel::-webkit-scrollbar-thumb:hover { background: #d8b95e; }
 /* Narrow viewport: a smaller panel. Horizontal placement is clamped into the
    viewport by the component, so no right-edge flip is needed here. */
 @media (max-width: 640px) {
@@ -2591,28 +2518,6 @@ body.slop .attachment-preview-position { color: #c9a86b; }
   .markdown-attachment-document { margin-top: 8px; padding-top: 10px; }
 }
 
-/* ─── Attachment-viewer scrollbars ────────────────────────────────────
-   The viewers scroll, so their scrollbars are dashboard furniture like the
-   mail panes' — the same 10px track and rounded thumb, per theme. Firefox has
-   no ::-webkit-scrollbar surface; its standardized fallback is kept OUT of
-   WebKit/Blink, where a non-auto scrollbar-color suppresses the richer
-   pseudo-element treatment. (Same split as the .mail-* panes above.) */
-@supports not selector(::-webkit-scrollbar) {
-  .markdown-preview-stage, .image-preview-stage {
-    scrollbar-width: thin; scrollbar-color: #6e7681 #0b1016;
-  }
-  body.wizard :is(.markdown-preview-stage, .image-preview-stage) { scrollbar-color: #7a5db0 #140f28; }
-  body.slop :is(.markdown-preview-stage, .image-preview-stage) { scrollbar-color: #c11a1a #1a0505; }
-}
-:is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar { width: 10px; height: 10px; }
-:is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-track,
-:is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-corner { background: #0b1016; }
-:is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb {
-  background: #6e7681; border-radius: 6px; border: 2px solid #0b1016;
-}
-:is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb:hover { background: #8b949e; }
-:is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb:active { background: #b1bac4; }
-
 /* ─── Attachment viewers under the cosmetic themes ────────────────────
    Both viewers are chrome opened FROM the notification surfaces, so they
    re-skin with the shell the way the reader below does. The dialog CHROME
@@ -2733,20 +2638,6 @@ body.slop :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer
 body.slop :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer:hover,
 body.slop :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer:focus-visible { color: #ffd700; }
 
-body.wizard :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-track,
-body.wizard :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb {
-  background: #7a5db0; border-color: #140f28;
-}
-body.wizard :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
-body.wizard :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
-body.slop :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-track,
-body.slop :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-corner { background: #1a0505; }
-body.slop :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb {
-  background: #c11a1a; border-color: #1a0505;
-}
-body.slop :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb:hover { background: #e02b2b; }
-body.slop :is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar-thumb:active { background: #ffd700; }
 
 /* The rendered document itself, on BOTH surfaces that show one: the card in
    the message and the viewer. Default-theme colours are in the .markdown-document
@@ -3272,23 +3163,6 @@ body.wizard header .activity-hover-trigger:hover { background: transparent; }
   content: ""; position: absolute; z-index: calc(var(--z-popover) - 1);
   top: 100%; left: 0; width: min(420px, calc(100vw - 32px)); height: 9px;
 }
-/* Match the dashboard's standard dark scroll surfaces, including Firefox's
-   standardized fallback and the richer Chromium/WebKit hover states. */
-@supports not selector(::-webkit-scrollbar) {
-  .activity-hover-panel {
-    scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117;
-  }
-  body.wizard .activity-hover-panel { scrollbar-color: #7a5db0 #140f28; }
-  body.slop .activity-hover-panel { scrollbar-color: #c11a1a #1a0505; }
-}
-.activity-hover-panel::-webkit-scrollbar { width: 10px; height: 10px; }
-.activity-hover-panel::-webkit-scrollbar-track,
-.activity-hover-panel::-webkit-scrollbar-corner { background: #0d1117; }
-.activity-hover-panel::-webkit-scrollbar-thumb {
-  background: #6e7681; border: 2px solid #0d1117; border-radius: 6px;
-}
-.activity-hover-panel::-webkit-scrollbar-thumb:hover { background: #8b949e; }
-.activity-hover-panel::-webkit-scrollbar-thumb:active { background: #b1bac4; }
 .activity-hover-panel-heading {
   color: #f0f6fc; font-size: 13px; font-weight: 700; letter-spacing: 0.2px;
 }
@@ -3333,13 +3207,6 @@ body.slop .activity-hover-panel {
   border-color: #9e7a00; background: linear-gradient(180deg, #351010 0%, #210808 100%);
   color: #ffe88c; box-shadow: 0 0 18px rgba(255, 215, 0, 0.25);
 }
-body.slop .activity-hover-panel::-webkit-scrollbar-track,
-body.slop .activity-hover-panel::-webkit-scrollbar-corner { background: #1a0505; }
-body.slop .activity-hover-panel::-webkit-scrollbar-thumb {
-  background: #c11a1a; border-color: #1a0505;
-}
-body.slop .activity-hover-panel::-webkit-scrollbar-thumb:hover { background: #e02b2b; }
-body.slop .activity-hover-panel::-webkit-scrollbar-thumb:active { background: #ffd700; }
 body.slop .activity-hover-panel-heading { color: #ffe88c; }
 body.slop .activity-hover-panel-summary,
 body.slop .activity-hover-worker-detail,
@@ -3353,13 +3220,6 @@ body.wizard .activity-hover-panel {
   border-color: #7a5db0; background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);
   color: #e7d9f5; box-shadow: 0 0 24px rgba(122, 93, 176, 0.35);
 }
-body.wizard .activity-hover-panel::-webkit-scrollbar-track,
-body.wizard .activity-hover-panel::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard .activity-hover-panel::-webkit-scrollbar-thumb {
-  background: #7a5db0; border-color: #140f28;
-}
-body.wizard .activity-hover-panel::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
-body.wizard .activity-hover-panel::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
 body.wizard .activity-hover-panel-heading {
   color: #f3e6c0; font-family: Papyrus, Luminari, 'Palatino Linotype', Palatino, serif;
   letter-spacing: 0.5px;
@@ -3734,31 +3594,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   color: #d4d4d4; font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
-/* Keep both scroll surfaces in the disclosure on the same dark skin as the
-   dashboard panes. Firefox has no ::-webkit-scrollbar surface, so its
-   standardized fallback stays behind the feature query used by the rest of
-   the dashboard. */
-@supports not selector(::-webkit-scrollbar) {
-  .audit-spawn-popover,
-  .audit-spawn-popover pre {
-    scrollbar-width: thin;
-    scrollbar-color: #6e7681 #0d1117;
-  }
-}
-.audit-spawn-popover::-webkit-scrollbar,
-.audit-spawn-popover pre::-webkit-scrollbar { width: 10px; height: 10px; }
-.audit-spawn-popover::-webkit-scrollbar-track,
-.audit-spawn-popover pre::-webkit-scrollbar-track { background: #0d1117; }
-.audit-spawn-popover::-webkit-scrollbar-corner,
-.audit-spawn-popover pre::-webkit-scrollbar-corner { background: #161b22; }
-.audit-spawn-popover::-webkit-scrollbar-thumb,
-.audit-spawn-popover pre::-webkit-scrollbar-thumb {
-  background: #6e7681; border-radius: 6px;
-}
-.audit-spawn-popover::-webkit-scrollbar-thumb:hover,
-.audit-spawn-popover pre::-webkit-scrollbar-thumb:hover { background: #8b949e; }
-.audit-spawn-popover::-webkit-scrollbar-thumb:active,
-.audit-spawn-popover pre::-webkit-scrollbar-thumb:active { background: #b1bac4; }
 .filter-bar label.filter-toggle select:where(:not(.ui-select)) {
   background: #161b22; color: #d4d4d4; border: 1px solid #2a3340;
   border-radius: 4px; padding: 1px 4px; font-size: 12px; cursor: pointer;
@@ -5669,41 +5504,6 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 }
 #palette-input::placeholder { color: #6e7681; }
 .palette-list { max-height: 50vh; overflow-y: auto; padding: 6px; }
-/* Keep the results scrollbar in the same dark dashboard chrome as the other
-   scrolling panes. Firefox needs the standardized properties; keeping them
-   behind this feature query preserves the richer Blink/WebKit hover states. */
-@supports not selector(::-webkit-scrollbar) {
-  #command-palette-modal .palette-list {
-    scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117;
-  }
-  body.wizard #command-palette-modal .palette-list {
-    scrollbar-color: #7a5db0 #140f28;
-  }
-}
-#command-palette-modal .palette-list::-webkit-scrollbar { width: 10px; height: 10px; }
-#command-palette-modal .palette-list::-webkit-scrollbar-track,
-#command-palette-modal .palette-list::-webkit-scrollbar-corner { background: #0d1117; }
-#command-palette-modal .palette-list::-webkit-scrollbar-thumb {
-  min-height: 24px;
-  background: #6e7681; border: 2px solid #0d1117; border-radius: 6px;
-}
-#command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover { background: #8b949e; }
-#command-palette-modal .palette-list::-webkit-scrollbar-thumb:active { background: #b1bac4; }
-@media (forced-colors: active) {
-  #command-palette-modal .palette-list {
-    scrollbar-width: auto;
-    scrollbar-color: auto;
-    forced-color-adjust: auto;
-  }
-  #command-palette-modal .palette-list::-webkit-scrollbar { width: auto; height: auto; }
-  #command-palette-modal .palette-list::-webkit-scrollbar-track,
-  #command-palette-modal .palette-list::-webkit-scrollbar-corner { background: Canvas; }
-  #command-palette-modal .palette-list::-webkit-scrollbar-thumb {
-    background: ButtonText; border: 1px solid Canvas;
-  }
-  #command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover,
-  #command-palette-modal .palette-list::-webkit-scrollbar-thumb:active { background: Highlight; }
-}
 .palette-item {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 10px; border-radius: 6px; cursor: pointer;
@@ -5796,23 +5596,6 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   max-width: min(1100px, calc(100vw - 32px));
   min-height: 260px;
 }
-/* Sandbox profiles can make this resizable surface itself scroll. Theme that
-   scrollbar (including its resize-corner) instead of exposing the browser's
-   light native chrome. Keep this id-scoped: other manage panels can choose
-   their own treatment without inheriting sandbox-profile styling. */
-@supports not selector(::-webkit-scrollbar) {
-  #sandbox-profiles-manage-modal .manage-modal {
-    scrollbar-width: thin; scrollbar-color: #3a4553 #161b22;
-  }
-}
-#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar { width: 10px; height: 10px; }
-#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-track,
-#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-corner { background: #161b22; }
-#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb {
-  background: #3a4553; border-radius: 6px; border: 2px solid #161b22;
-}
-#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb:hover { background: #4d5866; }
-#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb:active { background: #6e7681; }
 /* Let the listing absorb extra vertical space when the panel is enlarged,
    keeping the footer Close button at the bottom; the panel still scrolls as one
    unit (as it already does at the 86vh cap) when the list outgrows a shortened
@@ -6799,24 +6582,6 @@ body.wizard .filter-bar .view-btn.ui-btn:is(:hover:not(:disabled), [aria-expande
   border: 1px solid #2a3340; border-radius: 4px;
   overflow-y: auto; max-height: 52vh;
 }
-/* The slug list is the permission editor's scroll container. Keep its native
-   scrollbar in the same dark chrome as the dialog instead of letting a light
-   browser-default track cut through it. Firefox has no ::-webkit-scrollbar
-   surface; keep its standardized fallback out of Blink, where scrollbar-color
-   would suppress the richer thumb states below. */
-@supports not selector(::-webkit-scrollbar) {
-  #perm-edit-modal .perm-edit-list {
-    scrollbar-width: thin; scrollbar-color: #3a4553 #0d1117;
-  }
-}
-#perm-edit-modal .perm-edit-list::-webkit-scrollbar { width: 10px; height: 10px; }
-#perm-edit-modal .perm-edit-list::-webkit-scrollbar-track,
-#perm-edit-modal .perm-edit-list::-webkit-scrollbar-corner { background: #0d1117; }
-#perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb {
-  background: #3a4553; border-radius: 6px; border: 2px solid #0d1117;
-}
-#perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb:hover { background: #4d5866; }
-#perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb:active { background: #6e7681; }
 .perm-row {
   display: flex; align-items: center; gap: 10px;
   padding: 6px 10px; border-bottom: 1px solid #21262d;
@@ -7166,27 +6931,6 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   align-self: stretch; min-height: 0; max-height: none; resize: none;
 }
 .operator-message-modal .modal-buttons { flex: 0 0 auto; }
-/* Theme the scroll container's scrollbar to the dark dialog chrome. Without
-   this the tall spawn/clone dialogs (and the Initial-msg textarea) fall back
-   to the browser's default light, classic scrollbar — the same white-default
-   trap that bites unstyled buttons, and especially loud against the near-black
-   wizard re-skin (overridden arcane below). Chromium reads ::-webkit-scrollbar-*;
-   Firefox reads scrollbar-width/-color. scrollbar-corner keeps the resize-grip
-   corner (both bars present) from flashing white. The 10px width matches the
-   Messages tab's themed bars. */
-.cron-create-modal { scrollbar-width: thin; scrollbar-color: #3a4553 #161b22; }
-.cron-create-modal::-webkit-scrollbar { width: 10px; height: 10px; }
-.cron-create-modal::-webkit-scrollbar-track { background: #161b22; }
-.cron-create-modal::-webkit-scrollbar-thumb { background: #3a4553; border-radius: 6px; }
-.cron-create-modal::-webkit-scrollbar-thumb:hover { background: #4d5866; }
-.cron-create-modal::-webkit-scrollbar-corner { background: #161b22; }
-/* The multiline fields (Initial msg / Follow-up) scroll on their own darker
-   #0d1117 surface, so their track matches that rather than the dialog body. */
-.cron-create-row textarea { scrollbar-width: thin; scrollbar-color: #3a4553 #0d1117; }
-.cron-create-row textarea::-webkit-scrollbar { width: 10px; height: 10px; }
-.cron-create-row textarea::-webkit-scrollbar-track { background: #0d1117; }
-.cron-create-row textarea::-webkit-scrollbar-thumb { background: #3a4553; border-radius: 6px; }
-.cron-create-row textarea::-webkit-scrollbar-thumb:hover { background: #4d5866; }
 .cron-create-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
 .cron-create-modal .modal-meta {
   font-size: 11px; color: #7d8590;
@@ -11988,13 +11732,6 @@ body.wizard .open-prs-confirm-durations legend { color: #9a86c4; }
 body.wizard .open-prs-confirm-pr,
 body.wizard .open-prs-confirm-durations label { color: #e7d9f5; }
 body.wizard .open-prs-confirm-durations input { accent-color: #7a5db0; }
-body.wizard .open-pr-list::-webkit-scrollbar-track,
-body.wizard .open-pr-list::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard .open-pr-list::-webkit-scrollbar-thumb {
-  background: #7a5db0; border-color: #140f28;
-}
-body.wizard .open-pr-list::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
-body.wizard .open-pr-list::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
 /* State pills keep their default fill; a purple/gold/emerald edge makes them
    pop on the violet background (mirrors slop's gold-edge tweak). */
 body.wizard .state-working   { border-color: #a97bd6; }
@@ -12508,10 +12245,6 @@ body.wizard #agent-spawn-modal button:where(:not(.ui-btn)):not(#agent-spawn-subm
 }
 body.wizard #agent-spawn-modal button:where(:not(.ui-btn)):not(#agent-spawn-submit):not(.att-remove):hover { background: #3a2a63; }
 body.wizard #agent-spawn-modal .cron-create-sep { border-top-color: rgba(122, 93, 176, 0.4); }
-/* The Summon dialog's own scrollbar goes arcane too — see the shared wizard
-   scrollbar block after the export-agent re-skin, which themes every
-   wizard-reskinned .cron-create-modal dialog (Summon included) in one place. */
-
 /* Spawn = 🔮 Summon! — the submit button re-skinned into a gilded conjuring
    button, the wizard twin of slop's 🎰 PULL! lever. Same mechanism: the
    button's own "Spawn" text is hidden (font-size: 0) and replaced by a
@@ -12640,7 +12373,6 @@ body.wizard #group-settings-modal .cron-create-modal {
   border: 1px solid #7a5db0;
   box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
   color: #e7d9f5;
-  scrollbar-color: #7a5db0 #140f28;
 }
 body.wizard #group-settings-modal .cron-create-modal h3 {
   color: #f3e6c0;
@@ -13176,7 +12908,6 @@ body.wizard .operator-message-overlay .operator-message-modal {
   border: 1px solid #7a5db0;
   box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
   color: #e7d9f5;
-  scrollbar-color: #7a5db0 #140f28;
 }
 body.wizard .operator-message-overlay .operator-message-modal h3 {
   color: #f3e6c0;
@@ -13212,13 +12943,6 @@ body.wizard .operator-message-overlay .operator-message-submit:hover {
   box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
 }
 body.wizard .operator-message-overlay .operator-message-submit:disabled { opacity: 0.6; }
-body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar { width: 10px; height: 10px; }
-body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar-track,
-body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar-thumb {
-  background: #7a5db0; border-radius: 6px; border: 2px solid #140f28;
-}
-body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
 
 /* ─── Wizard invite-hero picker ──────────────────────────────────
    #add-member-modal shares .add-member-modal with the sudo/cron target
@@ -13601,15 +13325,6 @@ body.wizard #command-palette-modal #palette-input {
   border-bottom-color: rgba(122, 93, 176, 0.5);
 }
 body.wizard #command-palette-modal #palette-input::placeholder { color: #b39ddb; }
-
-/* The results scrollbar follows the spellbook's midnight-violet chrome. */
-body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-track,
-body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-thumb {
-  background: #7a5db0; border-color: #140f28;
-}
-body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
-body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
 
 /* Command rows — parchment label, violet icon + hint. */
 body.wizard #command-palette-modal .palette-item { color: #e7d9f5; }
@@ -14622,40 +14337,6 @@ body.wizard :is(#paf-export-modal, #group-export-modal) button:is(.primary, .ui-
 }
 body.wizard :is(#paf-export-modal, #group-export-modal) button:where(:not(.ui-btn)):disabled {
   opacity: 0.5; cursor: default; box-shadow: none;
-}
-
-/* ─── Wizard dialog scrollbars — the "scroll"-bars go arcane ─────────
-   Every wizard-reskinned .cron-create-modal dialog (Summon a hero /
-   Bind a cron / Form a party / edit a loadout / Scribe a chronicle) scrolls
-   on a violet-void surface, so its scrollbar goes arcane too — a violet thumb
-   with a gilded edge on a #140f28 track, the same "scroll"-bar pun the Messages
-   tab uses. This OVERRIDES the base dark .cron-create-modal scrollbar (defined
-   near the modal's base rule) and covers both the whole-dialog scroll and the
-   dialogs' multiline textareas.
-
-   The :is() list names the re-skinned dialogs by #id — NOT an unscoped
-   `.cron-create-modal`. This is the same positive-per-#id scoping the surface
-   re-skins above follow, collapsed with :is() so the ids don't have to be
-   spelled out as separate rules. All share the #140f28 arcane field palette.
-   Treatment mirrors the mail panes. */
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-modal,
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-row textarea {
-  scrollbar-color: #7a5db0 #140f28;
-}
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-modal::-webkit-scrollbar,
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-row textarea::-webkit-scrollbar { width: 10px; height: 10px; }
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-modal::-webkit-scrollbar-track,
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-row textarea::-webkit-scrollbar-track,
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-modal::-webkit-scrollbar-corner,
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-row textarea::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-modal::-webkit-scrollbar-thumb,
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-row textarea::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #7a5db0, #3a2a63);
-  border: 1px solid #d9b45a; border-radius: 6px;
-}
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-modal::-webkit-scrollbar-thumb:hover,
-body.wizard :is(#agent-spawn-modal, #clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #profile-export-modal, #profile-import-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal, #sandbox-profile-editor-modal, #sandbox-profile-export-modal, #sandbox-profile-import-modal, #paf-export-modal, #group-export-modal) .cron-create-row textarea::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #8f6fca, #4a367d);
 }
 
 /* ─── Wizard edit-agent modal — "Enchant this hero" ─────────────
@@ -15805,8 +15486,7 @@ body.wizard :is(#profile-import-modal, #sandbox-profile-import-modal) .profile-t
    the same arcane chrome as the spawn-profile ("loadout") dialogs —
    the sandbox dialog is now their sibling (wizard vocabulary, export/import).
    Each block is scoped to its own id so the shared .manage-modal / .cron-create-
-   modal surfaces on sibling dialogs keep the default chrome; the scrollbar theme
-   is folded into the shared :is() list above. */
+   modal surfaces on sibling dialogs keep the default chrome. */
 
 /* Manage overlay (the ward picker), mirror of #profiles-manage-modal. */
 body.wizard #sandbox-profiles-manage-modal .manage-modal {
@@ -15815,18 +15495,6 @@ body.wizard #sandbox-profiles-manage-modal .manage-modal {
   box-shadow: 0 0 32px rgba(122, 93, 176, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
   color: #e7d9f5;
 }
-@supports not selector(::-webkit-scrollbar) {
-  body.wizard #sandbox-profiles-manage-modal .manage-modal {
-    scrollbar-color: #7a5db0 #140f28;
-  }
-}
-body.wizard #sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-track,
-body.wizard #sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard #sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb {
-  background: #7a5db0; border-color: #140f28;
-}
-body.wizard #sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
-body.wizard #sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
 body.wizard #sandbox-profiles-manage-modal .manage-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -16290,16 +15958,6 @@ body.wizard #perm-edit-modal .perm-edit-toolbar .perm-edit-filter button:hover {
 /* Slug list: violet frame + dividers, gilt slug label, violet description. */
 body.wizard #perm-edit-modal .perm-edit-list,
 body.wizard #context-features-modal .perm-edit-list { border-color: rgba(122, 93, 176, 0.4); }
-@supports not selector(::-webkit-scrollbar) {
-  body.wizard #perm-edit-modal .perm-edit-list { scrollbar-color: #7a5db0 #140f28; }
-}
-body.wizard #perm-edit-modal .perm-edit-list::-webkit-scrollbar-track,
-body.wizard #perm-edit-modal .perm-edit-list::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard #perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb {
-  background: #7a5db0; border-color: #140f28;
-}
-body.wizard #perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
-body.wizard #perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
 body.wizard #perm-edit-modal .perm-row,
 body.wizard #context-features-modal .perm-row { border-bottom-color: rgba(122, 93, 176, 0.2); }
 body.wizard #perm-edit-modal .perm-row-slug,
@@ -16925,7 +16583,7 @@ body.wizard .action-menu[data-menu-empty]::after {
    The audit table itself keeps its readable dark default, but the [?]
    disclosure is a dialog surface, so it takes the same midnight-violet void +
    mystic-purple frame as the Summon / Bind dialogs rather than staying on the
-   #0d1117 chrome its scrollbars had already left behind. The <pre> bodies stay
+   #0d1117 default chrome. The <pre> bodies stay
    a legible violet-tinted dark so the JSON is still readable. */
 body.wizard .audit-spawn-popover {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
@@ -16950,31 +16608,8 @@ body.wizard .audit-spawn-popover pre {
   border-color: rgba(122, 93, 176, 0.5);
   color: #e7d9f5;
 }
-@supports not selector(::-webkit-scrollbar) {
-  body.wizard .audit-spawn-popover,
-  body.wizard .audit-spawn-popover pre { scrollbar-color: #7a5db0 #140f28; }
-}
-body.wizard .audit-spawn-popover::-webkit-scrollbar,
-body.wizard .audit-spawn-popover pre::-webkit-scrollbar { width: 10px; height: 10px; }
-body.wizard .audit-spawn-popover::-webkit-scrollbar-track,
-body.wizard .audit-spawn-popover pre::-webkit-scrollbar-track,
-body.wizard .audit-spawn-popover::-webkit-scrollbar-corner,
-body.wizard .audit-spawn-popover pre::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard .audit-spawn-popover::-webkit-scrollbar-thumb,
-body.wizard .audit-spawn-popover pre::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #7a5db0, #3a2a63);
-  border: 1px solid #d9b45a; border-radius: 6px;
-}
-body.wizard .audit-spawn-popover::-webkit-scrollbar-thumb:hover,
-body.wizard .audit-spawn-popover pre::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #8f6fca, #4a367d);
-}
 /* The default skin brightens the thumb again while it is dragged; without an
    arcane twin that drag flashes light grey through the violet frame. */
-body.wizard .audit-spawn-popover::-webkit-scrollbar-thumb:active,
-body.wizard .audit-spawn-popover pre::-webkit-scrollbar-thumb:active {
-  background: linear-gradient(180deg, #a98fdc, #5c458f);
-}
 
 /* ═══ Wizard Messages tab — "The Rookery & the Unfurled Scroll" ═══════
    Unlike the rest of the wizard re-skin (which only re-paints chrome and
@@ -16994,31 +16629,12 @@ body.wizard .audit-spawn-popover pre::-webkit-scrollbar-thumb:active {
    purple / gold palette as the rest of the wizard chrome, plus a warm
    parchment + ink palette that only the scroll/broadsheet surfaces use. */
 
-/* ─── The panes: arcane void bodies + "scroll"-bar thumbs ────────────
-   The literal scrollbars go arcane too — a small pun on the theme. */
+/* ─── The panes: arcane void bodies ──────────────────────────────── */
 body.wizard .mail-sidebar,
 body.wizard .mail-list {
   background: linear-gradient(180deg, #1a1233 0%, #140f28 100%);
   border-color: #4a3a6b;
 }
-body.wizard .mail-sidebar::-webkit-scrollbar,
-body.wizard .mail-list::-webkit-scrollbar,
-body.wizard .mail-reader::-webkit-scrollbar { width: 10px; height: 10px; }
-body.wizard .mail-sidebar::-webkit-scrollbar-track,
-body.wizard .mail-list::-webkit-scrollbar-track,
-body.wizard .mail-reader::-webkit-scrollbar-track,
-body.wizard .mail-sidebar::-webkit-scrollbar-corner,
-body.wizard .mail-list::-webkit-scrollbar-corner,
-body.wizard .mail-reader::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard .mail-sidebar::-webkit-scrollbar-thumb,
-body.wizard .mail-list::-webkit-scrollbar-thumb,
-body.wizard .mail-reader::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #7a5db0, #3a2a63);
-  border: 1px solid #d9b45a; border-radius: 6px;
-}
-body.wizard .mail-sidebar::-webkit-scrollbar-thumb:hover,
-body.wizard .mail-list::-webkit-scrollbar-thumb:hover,
-body.wizard .mail-reader::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #8f6fca, #4a367d); }
 /* Empty-state prompts across the three panes read as muted arcane. */
 body.wizard .mail-sidebar .empty,
 body.wizard .mail-list .empty,
@@ -17941,74 +17557,6 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
 .dock-collapse:hover { color: #58a6ff; border-color: #2a3340; background: #21262d; }
 .dock-body { flex: 1 1 auto; overflow-y: auto; padding: 8px; }
 
-/* The dock body is an independent scroll surface, so it needs the same
-   dashboard scrollbar treatment as the Messages panes. Keep the card-details
-   popover on the same skin when a long profile or role needs to scroll there.
-   Firefox has no ::-webkit-scrollbar surface; the standardized fallback stays
-   behind the feature query so Chromium can use the richer hover treatments. */
-#agent-dock .dock-body,
-#agent-dock .dock-card-details {
-  --dock-scrollbar-track: #0d1117;
-  --dock-scrollbar-corner: #161b22;
-  --dock-scrollbar-thumb-color: #6e7681;
-  --dock-scrollbar-thumb: #6e7681;
-  --dock-scrollbar-thumb-hover: #8b949e;
-  --dock-scrollbar-thumb-active: #b1bac4;
-}
-@supports not selector(::-webkit-scrollbar) {
-  #agent-dock .dock-body,
-  #agent-dock .dock-card-details {
-    scrollbar-width: thin;
-    scrollbar-color: var(--dock-scrollbar-thumb-color) var(--dock-scrollbar-track);
-  }
-}
-#agent-dock .dock-body::-webkit-scrollbar,
-#agent-dock .dock-card-details::-webkit-scrollbar { width: 10px; height: 10px; }
-#agent-dock .dock-body::-webkit-scrollbar-track,
-#agent-dock .dock-card-details::-webkit-scrollbar-track { background: var(--dock-scrollbar-track); }
-#agent-dock .dock-body::-webkit-scrollbar-corner,
-#agent-dock .dock-card-details::-webkit-scrollbar-corner { background: var(--dock-scrollbar-corner); }
-#agent-dock .dock-body::-webkit-scrollbar-thumb,
-#agent-dock .dock-card-details::-webkit-scrollbar-thumb {
-  background: var(--dock-scrollbar-thumb); border-radius: 6px;
-}
-#agent-dock .dock-body::-webkit-scrollbar-thumb:hover,
-#agent-dock .dock-card-details::-webkit-scrollbar-thumb:hover { background: var(--dock-scrollbar-thumb-hover); }
-#agent-dock .dock-body::-webkit-scrollbar-thumb:active,
-#agent-dock .dock-card-details::-webkit-scrollbar-thumb:active { background: var(--dock-scrollbar-thumb-active); }
-
-/* Vegas/slop mode uses the casino's oxblood track and gilded thumb. Cover both
-   the full casino re-skin and the regular-mode Vegas opt-in; the latter still
-   only changes this scrollbar surface, leaving the rest of the dashboard's
-   regular chrome untouched. */
-body.slop #agent-dock .dock-body,
-body.slop #agent-dock .dock-card-details,
-body.vegas #agent-dock .dock-body,
-body.vegas #agent-dock .dock-card-details {
-  --dock-scrollbar-track: #2a0808;
-  --dock-scrollbar-corner: #4a0a0a;
-  --dock-scrollbar-thumb-color: #d4a017;
-  --dock-scrollbar-thumb: linear-gradient(180deg, #d4a017, #8b0000);
-  --dock-scrollbar-thumb-hover: linear-gradient(180deg, #ffe88c, #a31515);
-  --dock-scrollbar-thumb-active: linear-gradient(180deg, #fff0ad, #d4a017);
-}
-
-/* Wizard mode turns the same scroll surfaces into violet "scroll" bars with
-   a gilded edge, matching the wizard Messages and dialog scrollbars. */
-body.wizard #agent-dock .dock-body,
-body.wizard #agent-dock .dock-card-details {
-  --dock-scrollbar-track: #140f28;
-  --dock-scrollbar-corner: #211832;
-  --dock-scrollbar-thumb-color: #7a5db0;
-  --dock-scrollbar-thumb: linear-gradient(180deg, #7a5db0, #3a2a63);
-  --dock-scrollbar-thumb-hover: linear-gradient(180deg, #8f6fca, #4a367d);
-  --dock-scrollbar-thumb-active: linear-gradient(180deg, #a98fdc, #5c458f);
-}
-body.wizard #agent-dock .dock-body::-webkit-scrollbar-thumb,
-body.wizard #agent-dock .dock-card-details::-webkit-scrollbar-thumb {
-  border: 1px solid #d9b45a;
-}
-
 .dock-section { margin-bottom: 12px; }
 .dock-section:last-child { margin-bottom: 0; }
 /* Each section is a <details> now (JOH-388 req 5) — collapsible on its own.
@@ -18555,69 +18103,6 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
 body.process-solo > header, body.process-solo > #slop-marquee, body.process-solo > nav, body.process-solo > footer,
 body.process-solo .process-subnav, body.process-solo .process-scribe-status, body.process-solo [data-process-close-view],
 body.process-solo #companion-root, body.process-solo #board-overlay-root { display: none !important; }
-/* Actual editor-owned overflow containers carry this marker. */
-.process-scroll-surface {
-  --process-scrollbar-track: #0d1117;
-  --process-scrollbar-thumb: #6e7681;
-  --process-scrollbar-thumb-hover: #8b949e;
-  --process-scrollbar-thumb-active: #b1bac4;
-  --process-scrollbar-corner: #161b22;
-  scrollbar-width: thin;
-  scrollbar-color: var(--process-scrollbar-thumb) var(--process-scrollbar-track);
-}
-body.wizard .process-scroll-surface {
-  --process-scrollbar-track: #181226;
-  --process-scrollbar-thumb: #755da0;
-  --process-scrollbar-thumb-hover: #957ac0;
-  --process-scrollbar-thumb-active: #d4af37;
-  --process-scrollbar-corner: #211832;
-}
-.process-scroll-surface::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-.process-scroll-surface::-webkit-scrollbar-track {
-  background: var(--process-scrollbar-track);
-}
-.process-scroll-surface::-webkit-scrollbar-thumb {
-  min-height: 24px;
-  background: var(--process-scrollbar-thumb);
-  border-radius: 6px;
-}
-.process-scroll-surface::-webkit-scrollbar-thumb:hover {
-  background: var(--process-scrollbar-thumb-hover);
-}
-.process-scroll-surface::-webkit-scrollbar-thumb:active {
-  background: var(--process-scrollbar-thumb-active);
-}
-.process-scroll-surface::-webkit-scrollbar-corner {
-  background: var(--process-scrollbar-corner);
-}
-/* High contrast returns to native geometry/Firefox colors. System keywords
-   provide a safe fallback where Chromium still exposes the pseudo-elements. */
-@media (forced-colors: active) {
-  .process-scroll-surface {
-    scrollbar-width: auto;
-    scrollbar-color: auto;
-    forced-color-adjust: auto;
-  }
-  .process-scroll-surface::-webkit-scrollbar {
-    width: auto;
-    height: auto;
-  }
-  .process-scroll-surface::-webkit-scrollbar-track,
-  .process-scroll-surface::-webkit-scrollbar-corner {
-    background: Canvas;
-  }
-  .process-scroll-surface::-webkit-scrollbar-thumb {
-    background: ButtonText;
-    border: 1px solid Canvas;
-  }
-  .process-scroll-surface::-webkit-scrollbar-thumb:hover,
-  .process-scroll-surface::-webkit-scrollbar-thumb:active {
-    background: Highlight;
-  }
-}
 .process-editor-header {
   display: flex;
   align-items: center;
@@ -19766,7 +19251,6 @@ body.wizard .process-node-readonly-badge { color: #d4af37; border-color: #d4af37
   flex: 1 1 auto; min-height: 0; overflow: auto;
   contain: layout paint; will-change: scroll-position;
   border: 1px solid #2a3340; border-radius: 5px;
-  scrollbar-width: thin; scrollbar-color: #3a4553 #0d1117;
 }
 .spawn-harness-matrix { width: max-content; min-width: 100%; table-layout: fixed; }
 .spawn-harness-matrix col.spawn-harness-axis { width: 180px; }
@@ -19812,7 +19296,6 @@ body.wizard #spawn-harness-policy-modal .manage-intro,
 body.wizard #spawn-harness-policy-modal .empty { color: #b39ddb; }
 body.wizard #spawn-harness-policy-modal .spawn-harness-matrix-wrap {
   border-color: rgba(122, 93, 176, 0.55);
-  scrollbar-color: #5a4385 #140f28;
 }
 body.wizard #spawn-harness-policy-modal .spawn-harness-matrix th {
   background: #1c1436; color: #d9b45a;
@@ -20085,13 +19568,9 @@ body.wizard .usage-history-error { color: #f0a3bf; }
 .git-repos-toolbar input { flex: 1; min-width: 0; background: #101720; color: #d4d4d4; border: 1px solid #354356; border-radius: 5px; padding: 8px 10px; }
 .git-repos-list {
   min-height: 44px; max-height: 352px; overflow: auto; flex: 0 1 auto;
-  scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117;
+  scrollbar-gutter: stable;
   border: 1px solid #2d3947; border-radius: 6px;
 }
-.git-repos-list::-webkit-scrollbar { width: 8px; height: 8px; }
-.git-repos-list::-webkit-scrollbar-track { background: #0d1117; }
-.git-repos-list::-webkit-scrollbar-thumb { background: #6e7681; border-radius: 5px; }
-.git-repos-list::-webkit-scrollbar-thumb:hover { background: #8b949e; }
 .git-repo-entry + .git-repo-entry { border-top: 1px solid #2d3947; }
 .git-repo-row { display: flex; align-items: center; height: 44px; gap: 10px; padding: 5px 10px; cursor: pointer; }
 .git-repo-name { flex: 1; min-width: 0; }
@@ -20115,10 +19594,7 @@ body.wizard .usage-history-error { color: #f0a3bf; }
 body.wizard .git-repositories-modal { background: #1c162c; border-color: #51406b; color: #e7d9f5; }
 body.wizard .git-repos-heading h3 { color: #f0e3c9; font-family: Georgia, serif; }
 body.wizard .git-repos-options, body.wizard .git-repos-toolbar input { background: #140f28; border-color: #51406b; color: #e7d9f5; }
-body.wizard .git-repos-list { scrollbar-color: #7a5db0 #140f28; border-color: #483758; }
-body.wizard .git-repos-list::-webkit-scrollbar-track { background: #140f28; }
-body.wizard .git-repos-list::-webkit-scrollbar-thumb { background: #7a5db0; }
-body.wizard .git-repos-list::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
+body.wizard .git-repos-list { border-color: #483758; }
 body.wizard .git-repo-entry + .git-repo-entry, body.wizard .git-repos-footer { border-color: #443353; }
 body.wizard .git-repositories-modal input[type=checkbox] { accent-color: #a97bd6; }
 body.wizard .git-repositories-modal button:where(:not(.ui-btn)) { background: #30253f; border-color: #655080; color: #e7d9f5; }
