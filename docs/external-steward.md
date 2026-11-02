@@ -153,6 +153,7 @@ sender gets a `queue_full` error it can retry, and reading a message makes room.
 
 tclaude can't start or resume an external steward. It runs where you put it, and shows
 on the roster as an offline agent labelled **External steward**, with no resume.
+Bulk "offline" actions pass over it, so a routine tidy-up doesn't end its credential.
 
 ## What the credential protects against
 

@@ -47,7 +47,7 @@ type memberOpResult struct {
 	AgentID  string   `json:"agent_id,omitempty"`
 	ConvID   string   `json:"conv_id"`
 	Title    string   `json:"title,omitempty"`
-	Action   string   `json:"action"`           // "soft_stopped", "killed", "killed_no_soft_exit", "resumed", "skipped:already_online", "skipped:no_conv_id", "error"
+	Action   string   `json:"action"`           // "soft_stopped", "killed", "killed_no_soft_exit", "resumed", "skipped:already_online", "skipped:no_conv_id", "skipped:external_steward", "error"
 	Detail   string   `json:"detail,omitempty"` // human-readable note (e.g. error message)
 	TmuxSes  string   `json:"tmux_session,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
@@ -2381,7 +2381,7 @@ func handleGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		selected = map[string]struct{}{}
 		for _, member := range members {
 			online, status := convLiveStatus(member.ConvID, alive)
-			if filter.matches(online, status) {
+			if filter.matchesConv(member.ConvID, online, status) {
 				selected[member.ConvID] = struct{}{}
 				affected = append(affected, member.ConvID)
 			}
@@ -2554,7 +2554,7 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 				}
 			case filter != nil:
 				online, status := convLiveStatus(m.ConvID, alive)
-				if !filter.matches(online, status) {
+				if !filter.matchesConv(m.ConvID, online, status) {
 					return // filtered out — omit from the response
 				}
 			}
@@ -2771,6 +2771,17 @@ func (f retireStatusFilter) matches(online bool, status string) bool {
 		return true
 	}
 	return f[normalizeMemberStatus(online, status)]
+}
+
+// matchesConv is matches for a real member. An external steward runs outside
+// tclaude, so it has no status to filter on: it always looks offline, and a
+// "retire offline" tidy-up would end its credential. A status filter never
+// selects one; retiring it stays a deliberate act that names it.
+func (f retireStatusFilter) matchesConv(convID string, online bool, status string) bool {
+	if f == nil {
+		return true
+	}
+	return f.matches(online, status) && !db.IsExternalStewardConv(convID)
 }
 
 // normalizeMemberStatus folds a member's (online, hook-status) pair into

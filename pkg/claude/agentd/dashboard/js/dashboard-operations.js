@@ -207,7 +207,7 @@ function groupMembersByStatus(group, status) {
     if (!m.conv_id || seen.has(m.conv_id)) continue; // dedupe owner + member rows
     seen.add(m.conv_id);
     const matches = status === 'offline'
-      ? !m.online
+      ? !m.online && !m.external_steward
       : (m.online && m.state && m.state.status === status);
     if (matches) {
       out.push({
@@ -271,7 +271,7 @@ function retireCandidatesByStatus(rows, status = '') {
     if (!a.conv_id || seen.has(a.conv_id)) continue;
     seen.add(a.conv_id);
     const matches = !status || (status === 'offline'
-      ? !a.online
+      ? !a.online && !a.external_steward
       : (a.online && a.state && a.state.status === status));
     if (!matches) continue;
     out.push({

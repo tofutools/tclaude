@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -161,4 +162,39 @@ func TestExternalStewardDashboard_BulkResumeLeavesItOut(t *testing.T) {
 	rec := testharness.Serve(s.f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/groups/crew/resume", map[string]any{})))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "skipped:external_steward")
+}
+
+// An external steward always looks offline, so a "retire offline" tidy-up has to
+// pass over it: retiring one ends its credential and takes the assistant away.
+func TestExternalStewardDashboard_RetireOfflineLeavesItOut(t *testing.T) {
+	s := newExternalStewardFlow(t, true)
+	s.create("assistant")
+	stewards, err := db.ListExternalStewards()
+	require.NoError(t, err)
+	conv := stewards[0].ConvID
+	group := s.f.HaveGroup("crew")
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: group.ID, ConvID: conv}))
+	const offline = "ofln-1111-2222-3333-4444"
+	s.f.HaveConvWithTitle(offline, "offline-worker")
+	s.f.HaveMember("crew", offline)
+
+	code, resp := postGroupRetire(t, s.f.Mux, agentd.AsHumanPeer, "crew", "status=offline")
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, "retired", retireMemberAction(resp, offline), "members=%+v", resp.Members)
+	assert.Len(t, resp.Members, 1, "members=%+v", resp.Members)
+
+	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
+		testharness.JSONRequest(t, http.MethodPost, "/api/groups/crew/retire?status=offline", nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), conv, "the dashboard route filters on its own")
+
+	state, err := db.AgentState(conv)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentStateActive, state)
+	stewards, err = db.ListExternalStewards()
+	require.NoError(t, err)
+	require.Len(t, stewards, 1)
+	assert.False(t, stewards[0].Retired)
+	require.Len(t, stewards[0].Credentials, 1)
+	assert.True(t, stewards[0].Credentials[0].Live(time.Now()), "the credential must survive the tidy-up")
 }

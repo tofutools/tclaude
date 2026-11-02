@@ -135,3 +135,20 @@ test('the roster row has no resume and says what it is', async (t) => {
   assert.match(mounted.container.textContent, /External steward/);
   await mounted.unmount();
 });
+
+test('palette offline commands pass over an external steward, which only looks offline', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', `export let lastSnapshot = null; export function setLastSnapshot(v) { lastSnapshot=v; } export function webTerminalDefault() { return false; }`);
+  const { buildCommands } = await harness.importDashboardModule('js/palette.js');
+  const steward = { agent_id: 'agt_steward', conv_id: 'steward-conv', title: 'Assistant',
+    online: false, external_steward: true };
+  const offlineCommands = (snapshot) => buildCommands(snapshot)
+    .map((command) => command.label).filter((label) => /offline|Power on/.test(label));
+  assert.deepEqual(offlineCommands({
+    agents: [steward], ungrouped: [steward], groups: [{ name: 'crew', members: [steward] }],
+  }), []);
+  const worker = { ...steward, conv_id: 'worker-conv', external_steward: false };
+  assert.ok(offlineCommands({
+    agents: [worker], ungrouped: [worker], groups: [{ name: 'crew', members: [worker] }],
+  }).includes('Retire offline agents in crew'), 'an ordinary offline agent keeps its commands');
+});
