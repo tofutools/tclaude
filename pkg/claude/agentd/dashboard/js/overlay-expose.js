@@ -121,7 +121,7 @@ function spreadSheet(placed, dimmed, motion) {
   for (const { windowId, box, spot } of placed) {
     const dx = spot.x - (box.x + box.w / 2);
     const dy = spot.y - (box.y + box.h / 2);
-    rules.push(`${selectorFor(windowId)} { z-index: calc(var(--overlay-level, 930) + 41) !important; transform: translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) scale(${spot.scale.toFixed(4)}) !important;${dimmed.has(windowId) ? ' opacity: .25;' : ''} }`);
+    rules.push(`${selectorFor(windowId)} { z-index: calc(var(--overlay-level, var(--z-window)) - var(--z-window) + var(--z-dialog) + 1) !important; transform: translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) scale(${spot.scale.toFixed(4)}) !important;${dimmed.has(windowId) ? ' opacity: .25;' : ''} }`);
   }
   return rules.join('\n');
 }

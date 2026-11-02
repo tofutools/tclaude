@@ -2130,9 +2130,10 @@ body.companion-annotating :is(.overlay-split-line, .overlay-split-cross, .overla
   flex: none; display: flex; justify-content: center; align-content: normal; gap: 12px; overflow-x: auto; overflow-y: hidden; padding: 4px 4px 6px;
 }
 .overlay-expose-grid.row .overlay-expose-card { flex: none; width: 210px; padding: 9px 11px; }
-/* A target over each spread window, above the windows (971-990) and so outside
-   the view, takes the click the window may not; it names the window there. */
-.overlay-expose-targets { position: fixed; inset: 0; z-index: 992; pointer-events: none; }
+/* A target over each spread window, above the windows (lifted into the dialog
+   layer just over the view, by overlay-expose.js) and so outside the view,
+   takes the click the window may not; it names the window there. */
+.overlay-expose-targets { position: fixed; inset: 0; z-index: calc(var(--z-dialog) + 100); pointer-events: none; }
 .overlay-expose-live {
   position: fixed; box-sizing: border-box; margin: 0; padding: 0; border: 2px solid transparent; border-radius: 10px;
   background: transparent; cursor: pointer; pointer-events: auto; transition: border-color .1s, box-shadow .1s;
