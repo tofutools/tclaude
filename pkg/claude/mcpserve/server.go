@@ -81,6 +81,15 @@ type setTaskLinkInput struct {
 	Label string `json:"label,omitempty" jsonschema:"Short text to show in place of the link"`
 }
 
+type spawnAgentInput struct {
+	Group          string `json:"group" jsonschema:"The group to start it in, one the human chose"`
+	Name           string `json:"name,omitempty" jsonschema:"A name for the worker"`
+	Profile        string `json:"profile,omitempty" jsonschema:"The spawn profile. Leave it out for the one the human chose"`
+	InitialMessage string `json:"initial_message,omitempty" jsonschema:"What the worker should do"`
+	TaskURL        string `json:"task_url,omitempty" jsonschema:"An http(s) link to the work"`
+	TaskLabel      string `json:"task_label,omitempty" jsonschema:"Short text to show in place of the link"`
+}
+
 // NewServer returns an MCP server offering exactly stewardtools.List.
 func NewServer(client *Client, version string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "tclaude", Version: version}, nil)
@@ -144,6 +153,13 @@ func register(server *mcp.Server, c *Client, tool stewardtools.Tool) {
 		}))
 	case stewardtools.DashboardCapture:
 		mcp.AddTool(server, def, c.dashboardCapture)
+	case stewardtools.SpawnAgent:
+		mcp.AddTool(server, def, post(c, func(in spawnAgentInput) (string, any) {
+			return "/v1/groups/" + url.PathEscape(in.Group) + "/spawn", map[string]any{
+				"name": in.Name, "profile": in.Profile, "initial_message": in.InitialMessage,
+				"task_ref_url": in.TaskURL, "task_ref_label": in.TaskLabel,
+			}
+		}))
 	case stewardtools.SetTaskLink:
 		mcp.AddTool(server, def, post(c, func(in setTaskLinkInput) (string, any) {
 			return "/v1/agent/" + url.PathEscape(in.Agent) + "/task", map[string]any{"url": in.URL, "label": in.Label}

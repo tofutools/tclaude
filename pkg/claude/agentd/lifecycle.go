@@ -3648,6 +3648,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// will inherit — so a grant naming the operator's default profile does not
 	// force every caller to restate it. The check further down refuses the
 	// launch modes that would drop that inherited tier again.
+	externalSpawn := peerFromContext(r.Context()).ExternalSteward
+	if externalSpawn && !prepareExternalStewardSpawn(w, r, &body) {
+		return
+	}
 	sandboxProfileForScope := resolvedSandboxProfileNameForScope(g, body.SandboxProfile)
 	spawnActionContext := ActionContext{
 		Group: g.Name, SpawnProfile: resolvedSpawnProfileNameForScope(g, body.Profile),
@@ -3680,6 +3684,26 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// that had nothing to do with the scope feature. See the check below.
 	sandboxScopePinned := scopePinsDimension(r, spawnerConvID,
 		authorizedPermissionForRequest(r, ""), spawnActionContext, ScopeDimSandboxProfile)
+	if externalSpawn {
+		slug := authorizedPermissionForRequest(r, "")
+		if slug != PermAgentSpawn || !sandboxScopePinned ||
+			!scopePinsDimension(r, spawnerConvID, slug, spawnActionContext, ScopeDimGroup) ||
+			!scopePinsDimension(r, spawnerConvID, slug, spawnActionContext, ScopeDimSpawnProfile) {
+			writeError(w, http.StatusForbidden, externalStewardCeilingCode,
+				"an external steward starts workers only through its pinned agent.spawn grant")
+			return
+		}
+		if strings.TrimSpace(g.DefaultCwd) == "" {
+			writeError(w, http.StatusConflict, "external_steward_no_directory",
+				fmt.Sprintf("group %q has no default directory, which is where an external steward's worker has to start", g.Name))
+			return
+		}
+		release, ok := claimExternalStewardChild(w, spawnerConvID)
+		if !ok {
+			return
+		}
+		defer release()
+	}
 	if !requireGroupActive(w, g) {
 		return
 	}
@@ -4766,7 +4790,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	} else {
 		effectiveSandbox = applied
 	}
-	if spawnerConvID != "" {
+	// A principal has no sandbox to contain the child. Its pinned profile is the
+	// bound, and sandboxScopePinned above refused a launch that wouldn't enforce it.
+	if spawnerConvID != "" && !externalSpawn {
 		parentSnapshot, err := db.AgentEffectiveSandboxConfigForConv(spawnerConvID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", "load parent sandbox snapshot: "+err.Error())
@@ -4896,7 +4922,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// is excluded: it is forced on precisely so a detached child cannot stall on
 	// the trust dialog, and it carries its own proof pairing when the child
 	// takes repository grants.
-	if spawnerConvID != "" && (childSandboxGrantsDirWrite(
+	if spawnerConvID != "" && !externalSpawn && (childSandboxGrantsDirWrite(
 		h.Name, harnessBuiltinMode, body.SandboxImplementation) ||
 		(body.TrustDir && !autoTrustSiblingWorktree)) {
 		dirs := []string{cwd}
@@ -5158,6 +5184,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		FastModeSet:                 fastModeSet,
 		ReplyToConv:                 replyToConv,
 		SpawnedByConv:               spawnerConvID,
+		externalStewardGated:        externalSpawn,
 		IsOwner:                     isOwner,
 		PermissionOverrides:         permOverrides,
 		Timeout:                     timeout,
@@ -5717,6 +5744,10 @@ type spawnParams struct {
 	// reply-to is *where its brief-replies route*; a coordinator can
 	// hand a worker off by setting them apart.
 	SpawnedByConv string
+
+	// externalStewardGated records that handleGroupSpawn's checks for an external
+	// steward ran. Every other way to executeSpawn refuses a principal.
+	externalStewardGated bool
 	// ReplyToAgent / SpawnedByAgent are the stable agent_id companions of
 	// ReplyToConv / SpawnedByConv (JOH-321 F2), set ONLY on the pending-spawn
 	// sweeper path — it reconstructs spawnParams from a persisted row minutes
@@ -6924,6 +6955,10 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 // an Async PENDING success the outcome carries an empty conv-id and the agent
 // is enrolled later by the sweeper.
 func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failure *spawnFailure) {
+	if db.IsExternalStewardConv(p.SpawnedByConv) && !p.externalStewardGated {
+		return nil, &spawnFailure{Status: http.StatusForbidden, Kind: externalStewardCeilingCode,
+			Msg: "an external steward starts workers only through its pinned agent.spawn grant"}
+	}
 	privateAttachmentsLaunched := false
 	// Registered first: a deferred launch hands its state over before the
 	// checks below, and the conversation is undone while its store still exists.
@@ -9152,6 +9187,12 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 		if err := db.SetAgentPermissionOverrideWithScope(convID, slug, override.Effect, override.Scope, permissionGranter); err != nil {
 			slog.Warn("spawn: failed to apply birth permission override",
 				"conv", convID, "slug", slug, "effect", override.Effect, "scope", override.Scope, "error", err)
+		}
+	}
+
+	if db.IsExternalStewardConv(p.SpawnedByConv) {
+		if err := writeExternalStewardChildDenies(convID, p.SpawnedByConv); err != nil {
+			return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "external_steward", err.Error()}
 		}
 	}
 

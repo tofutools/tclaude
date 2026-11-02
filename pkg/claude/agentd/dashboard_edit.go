@@ -2463,6 +2463,11 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, refusal, http.StatusConflict)
 			return
 		}
+		// This route carries no scope, so it can't make the pin spawning needs.
+		if refusal := refuseExternalStewardSpawnGrant(res.ConvID, slug, nil); refusal != "" {
+			http.Error(w, refusal, http.StatusConflict)
+			return
+		}
 	}
 	steward := isLiveSteward(res.ConvID)
 	var overridesBefore map[string]db.PermissionOverride

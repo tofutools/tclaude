@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -29,7 +30,7 @@ func stewardExternalCmd() *cobra.Command {
 		Long:        "An external steward is an assistant you run yourself, proved by a credential you make here. It reads and messages like the Steward, and it can never approve a permission request or hold sudo.\n\n" + externalStewardNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
-			externalStewardLsCmd(), externalStewardAddCmd(), externalStewardRenewCmd(), externalStewardRevokeCmd(),
+			externalStewardLsCmd(), externalStewardAddCmd(), externalStewardRenewCmd(), externalStewardRevokeCmd(), externalStewardSpawnCmd(),
 		},
 	}.ToCobra()
 }
@@ -40,11 +41,35 @@ type externalStewardCredentialRow struct {
 	Live      bool      `json:"live"`
 }
 
+type externalStewardChildRow struct {
+	AgentID string `json:"agent_id"`
+	Title   string `json:"title"`
+	Online  bool   `json:"online"`
+}
+
+type externalStewardSpawnPin struct {
+	Groups         []string `json:"groups"`
+	SpawnProfile   string   `json:"spawn_profile"`
+	SandboxProfile string   `json:"sandbox_profile"`
+}
+
 type externalStewardRow struct {
 	AgentID     string                         `json:"agent_id"`
 	Name        string                         `json:"name"`
 	Retired     bool                           `json:"retired"`
 	Credentials []externalStewardCredentialRow `json:"credentials"`
+	Spawn       *externalStewardSpawnPin       `json:"spawn"`
+	Children    []externalStewardChildRow      `json:"children"`
+}
+
+func printExternalStewardChildren(w io.Writer, children []externalStewardChildRow) {
+	for _, c := range children {
+		status := "stopped"
+		if c.Online {
+			status = "running"
+		}
+		fmt.Fprintf(w, "  worker %s  %-7s  %s\n", c.AgentID, status, c.Title)
+	}
 }
 
 type externalStewardIssuedResp struct {
@@ -109,6 +134,11 @@ func runExternalStewardLs(p *externalStewardLsParams, stdout, stderr io.Writer) 
 			}
 			fmt.Fprintf(stdout, "  %s  %-5s  expires %s\n", c.TokenID, status, c.ExpiresAt.Format(time.DateOnly))
 		}
+		if s.Spawn != nil {
+			fmt.Fprintf(stdout, "  starts workers in %s, spawn profile %s, sandbox profile %s\n",
+				strings.Join(s.Spawn.Groups, ", "), s.Spawn.SpawnProfile, s.Spawn.SandboxProfile)
+		}
+		printExternalStewardChildren(stdout, s.Children)
 	}
 	return rcOK
 }
@@ -188,6 +218,8 @@ func runExternalStewardRenew(p *externalStewardRenewParams, stdout, stderr io.Wr
 type externalStewardRevokeParams struct {
 	Name    string `pos:"true" help:"The external steward"`
 	TokenID string `long:"token" optional:"true" help:"End only this credential; without it, all of them"`
+
+	StopChildren bool `long:"stop-children" help:"Also stop the workers it started; without this they keep running"`
 }
 
 func externalStewardRevokeCmd() *cobra.Command {
@@ -207,13 +239,63 @@ func runExternalStewardRevoke(p *externalStewardRevokeParams, stdout, stderr io.
 		return rc
 	}
 	var resp struct {
-		Revoked int64 `json:"revoked"`
+		Revoked  int64                     `json:"revoked"`
+		Children []externalStewardChildRow `json:"children"`
 	}
-	body := map[string]any{"token_id": p.TokenID}
+	body := map[string]any{"token_id": p.TokenID, "stop_children": p.StopChildren}
 	if err := DaemonPost("/v1/external-stewards/"+url.PathEscape(p.Name)+"/revoke", body, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
 	fmt.Fprintf(stdout, "Revoked %d credential(s).\n", resp.Revoked)
+	if len(resp.Children) > 0 {
+		if p.StopChildren {
+			fmt.Fprintln(stdout, "Stopping its workers:")
+		} else {
+			fmt.Fprintln(stdout, "Its workers keep running. Use --stop-children to stop them too:")
+		}
+		printExternalStewardChildren(stdout, resp.Children)
+	}
+	return rcOK
+}
+
+type externalStewardSpawnParams struct {
+	Name           string   `pos:"true" help:"The external steward"`
+	Groups         []string `long:"group" optional:"true" help:"A group it can start workers in; repeat for more"`
+	SpawnProfile   string   `long:"spawn-profile" optional:"true" help:"The spawn profile its workers use"`
+	SandboxProfile string   `long:"sandbox-profile" optional:"true" help:"The sandbox profile its workers run under"`
+	Off            bool     `long:"off" help:"Stop it starting workers"`
+}
+
+func externalStewardSpawnCmd() *cobra.Command {
+	return boa.CmdT[externalStewardSpawnParams]{
+		Use:   "spawn",
+		Short: "Choose where an external steward can start workers",
+		Long: "Name its groups, one spawn profile and one sandbox profile, or pass --off. The spawn profile has to set an " +
+			"approval mode where you answer every action, so its workers stop at the first action that isn't read-only " +
+			"until you do.\n\n" + externalStewardNeeds,
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *externalStewardSpawnParams, _ *cobra.Command, _ []string) {
+			os.Exit(runExternalStewardSpawn(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runExternalStewardSpawn(p *externalStewardSpawnParams, stdout, stderr io.Writer) int {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	body := map[string]any{
+		"groups": p.Groups, "spawn_profile": p.SpawnProfile, "sandbox_profile": p.SandboxProfile, "off": p.Off,
+	}
+	if err := DaemonPost("/v1/external-stewards/"+url.PathEscape(p.Name)+"/spawn", body, nil); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if p.Off {
+		fmt.Fprintf(stdout, "%s can't start workers now. Any it started keep running.\n", p.Name)
+		return rcOK
+	}
+	fmt.Fprintf(stdout, "%s can start workers in %s.\n", p.Name, strings.Join(p.Groups, ", "))
 	return rcOK
 }

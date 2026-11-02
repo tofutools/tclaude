@@ -2568,3 +2568,11 @@ func identitySocketClientForTest(t *testing.T, h http.Handler) *http.Client {
 		},
 	}}
 }
+
+// ExternalStewardChildDeniesForTest is what a principal's child is denied at birth.
+func ExternalStewardChildDeniesForTest() []string { return externalStewardChildDenies() }
+
+// NotifyExternalStewardExpiriesForTest runs one pass of the expiry watch.
+func NotifyExternalStewardExpiriesForTest(now time.Time) {
+	notifyExternalStewardExpiries(now)
+}

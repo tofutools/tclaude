@@ -132,9 +132,8 @@ editor. There are four differences:
 - **No screen capture.** `dashboard.capture` is off until you grant it, because a
   capture shows whatever you have open and would go to your assistant's own model
   provider. `dashboard.forms.capture` and `dashboard.forms.fill` are separate opt-ins.
-- **No starting agents.** It doesn't get `agent.spawn`, even with **Message agents and
-  start workers**. Spawning needs the launch record of a running agent, which it
-  doesn't have, so a grant wouldn't work yet.
+- **No starting agents, until you choose where.** It doesn't get `agent.spawn`, even
+  with **Message agents and start workers**. See [Starting workers](#starting-workers).
 - **No default permissions.** `agent.default_permissions` is for agents tclaude runs,
   and doesn't apply.
 - **No sudo.** It can't request or hold sudo, and what you stored for future Stewards
@@ -160,9 +159,47 @@ the editor rather than saving a grant that does nothing:
 | Handing out permissions | `permissions.grant`, `permissions.revoke`, `config.import`, `roles.manage`, `profiles.manage`, `templates.manage`, `groups.owners.manage`, `groups.settings.member-permissions`, `groups.settings.owner-scopes`, `groups.members.spawn.permissions`, `groups.members.spawn.owner`, `groups.members.spawn.all` |
 | Acting later without a credential, because a schedule or trigger would keep firing after you revoke it | `self.schedule`, `agent.schedule`, `groups.members.schedule`, `groups.messages.schedule`, `triggers.manage`, `groups.triggers.manage` |
 | Receiving your harness credentials | `node.credentials.receive` |
+| Starting or changing a launch any other way than [below](#starting-workers) | `groups.members.spawn`, `agent.clone`, `groups.members.clone`, `agent.morph`, `groups.members.morph` |
 
 Password fields and fields marked secret are masked in the page before a capture
 leaves it, as for the [Steward](companion.md#capture).
+
+## Starting workers
+
+An external steward can start workers only where you choose. In **Config** › **Steward**,
+press **Choose** on its row, or run:
+
+```bash
+tclaude agent steward external spawn assistant \
+  --group crew --spawn-profile worker --sandbox-profile locked
+```
+
+You name its groups, one spawn profile and one sandbox profile. All three are required,
+and they are checked when you set them and again at every spawn.
+
+- **Its workers stop for you.** The spawn profile has to set an approval mode where you
+  answer every action: `default` on Claude, `untrusted` on Codex, `default` on Gemini, `ask`
+  on OpenCode or pi. A worker stops at the first action that isn't read-only until you
+  answer, and the assistant can't answer for you. Copilot and a shell have no such mode, so
+  they can't be used.
+- **A request can't change the launch.** The assistant chooses the group, a name, the first
+  message and a task link. Everything else comes from what you chose, and a request that
+  sets anything else is refused. A worker starts in the group's default directory, so a
+  group without one can't be chosen. A directory the harness doesn't trust yet waits at its
+  dialog for you.
+- **Workers can't do what it can't.** Each is denied everything in the table above, plus
+  `agent.spawn`, at birth, ahead of what its group or `agent.default_permissions` would give
+  it. So they can't start workers of their own or schedule anything. You can still lift a
+  deny, grant sudo or approve a one-off request for a worker yourself.
+- **There's a cap.** Each external steward can have 3 workers running, or the number you
+  set under **Workers per external steward**. Past that, it's refused.
+- **This instance only.** It can't start workers on a linked instance.
+
+Workers keep running if its credential ends, because stopping one mid-edit does damage and
+they can't act without you. Revoking lists them and offers to stop them, or use
+`tclaude agent steward external revoke assistant --stop-children`. When a credential expires
+with workers running, you're notified in the dashboard. Each worker's row says which
+assistant started it.
 
 ## Mail
 

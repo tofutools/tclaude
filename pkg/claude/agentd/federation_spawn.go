@@ -111,6 +111,10 @@ func handleFederationSpawnRequestSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	via := ""
+	if db.IsExternalStewardConv(fromConv) {
+		writeError(w, http.StatusForbidden, externalStewardCeilingCode, "an external steward can start workers only on this instance")
+		return
+	}
 	if fromConv != "" {
 		actx := ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: req.Group}
 		global, _, _ := permissionAllowsAction(r, fromConv, PermAgentSpawn, actx)

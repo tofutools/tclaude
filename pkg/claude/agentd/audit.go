@@ -282,6 +282,7 @@ var auditRoutes = []auditRoute{
 	// these is ever buffered.
 	{method: http.MethodPost, segs: []string{"external-stewards"}, verb: "external-steward.create", pathOnly: true},
 	{method: http.MethodPost, segs: []string{"external-stewards", "{name}", "renew"}, verb: "external-steward.renew", pathOnly: true},
+	{method: http.MethodPost, segs: []string{"external-stewards", "{name}", "spawn"}, verb: "external-steward.spawn-pin"},
 	{method: http.MethodPost, segs: []string{"external-stewards", "{name}", "revoke"}, verb: "external-steward.revoke", pathOnly: true},
 	{method: http.MethodPut, segs: []string{"steward", "default-permissions"}, verb: "steward.default-permissions", describe: describeStewardDefaults},
 	{method: http.MethodPost, segs: []string{"permissions", "deny"}, verb: "permissions.deny", describe: describePerm},

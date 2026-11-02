@@ -199,6 +199,12 @@ function BrokerRefusalBadge({ member }) {
 
 export function HarnessLine({ member, snapshot, local = true }) {
   if (member.external_steward) return html`<span class="runtime-meta runtime-meta-offline">External steward</span>`;
+  const parent = member.spawned_by_external_steward;
+  if (parent) return html`<${HarnessLineBody} member=${member} snapshot=${snapshot} local=${local} /><span class="runtime-meta">Started by ${parent}</span>`;
+  return html`<${HarnessLineBody} member=${member} snapshot=${snapshot} local=${local} />`;
+}
+
+function HarnessLineBody({ member, snapshot, local }) {
   const state = member.state || {};
   const offline = !member.online;
   const metadataClass = `runtime-meta${offline ? ' runtime-meta-offline' : ''}`;

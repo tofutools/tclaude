@@ -60,6 +60,9 @@ func placementSpawnAllowed(r *http.Request, caller, peer, group string) bool {
 	if caller == "" {
 		return true
 	}
+	if db.IsExternalStewardConv(caller) {
+		return false
+	}
 	actx := ActionContext{RemotePeer: peer, RemoteGroup: group}
 	for _, slug := range []string{PermAgentSpawn, PermGroupsMembersSpawn} {
 		allowed, _, err := permissionAllowsAction(r, caller, slug, actx)

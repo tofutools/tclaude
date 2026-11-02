@@ -1797,6 +1797,10 @@ func handlePermissionsGrant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, externalStewardCeilingCode, refusal)
 		return
 	}
+	if refusal := refuseExternalStewardSpawnGrant(target.Key, body.Slug, scope); refusal != "" {
+		writeError(w, http.StatusConflict, externalStewardCeilingCode, refusal)
+		return
+	}
 	// Attenuation-only delegation: an AGENT granter may not hand out a scope
 	// wider than its own for this slug. granter is "" for the human operator,
 	// who is unconstrained. Selector-bearing target_agent scopes additionally
