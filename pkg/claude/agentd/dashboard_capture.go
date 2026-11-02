@@ -14,8 +14,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/tofutools/tclaude/pkg/claude/agent"
 )
 
 // Dashboard capture (tcl-7i8b1t): a permitted agent, the Steward by default,
@@ -492,11 +490,7 @@ func handleDashboardCapture(w http.ResponseWriter, r *http.Request) {
 // its answer. It names the calling agent on the request, and writes the error
 // response itself when it returns false.
 func awaitTab(w http.ResponseWriter, r *http.Request, convID string, pending *pendingCapture) (captureResult, bool) {
-	if convID != "" {
-		if res, _, err := agent.ResolveSelector(convID); err == nil && res.Row != nil {
-			pending.AgentName = guideText(res.Row.CustomTitle, 80)
-		}
-	}
+	_, pending.AgentName = callerIdentity(convID)
 
 	captureState.Lock()
 	if captureState.pending != nil {

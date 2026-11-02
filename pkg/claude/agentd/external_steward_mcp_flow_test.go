@@ -2,16 +2,19 @@ package agentd_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/stewardtools"
 	"github.com/tofutools/tclaude/pkg/claude/mcpserve"
@@ -32,6 +35,15 @@ func (s *externalStewardFlow) mcpSession(credential string) *mcp.ClientSession {
 	require.NoError(s.t, err)
 	s.t.Cleanup(func() { _ = session.Close() })
 	return session
+}
+
+// conv is the principal's conv, for grants the operator would make.
+func (s *externalStewardFlow) conv() string {
+	s.t.Helper()
+	stewards, err := db.ListExternalStewards()
+	require.NoError(s.t, err)
+	require.Len(s.t, stewards, 1)
+	return stewards[0].ConvID
 }
 
 func mcpCall(t *testing.T, session *mcp.ClientSession, tool string, args map[string]any) (string, bool) {
@@ -155,6 +167,10 @@ func TestExternalStewardMCP_RevokedCredentialFailsEveryTool(t *testing.T) {
 		stewardtools.SendMessage: {"to": "worker", "body": "y"},
 		stewardtools.Reply:       {"id": 1, "body": "y"},
 		stewardtools.NotifyHuman: {"body": "y"},
+		stewardtools.ReadBoard:   {"id": "plan"},
+		stewardtools.CreateBoard: {"title": "plan"},
+		stewardtools.UpdateBoard: {"id": "plan", "elements": []map[string]any{}},
+		stewardtools.SetTaskLink: {"agent": "worker"},
 	}
 	for _, tool := range stewardtools.List() {
 		text, isError := mcpCall(t, session, tool.Name, args[tool.Name])
@@ -170,17 +186,162 @@ func TestExternalStewardMCP_IdleKindMatchesTheFleet(t *testing.T) {
 }
 
 // What Config tells the operator has to be true: each listed permission is a real
-// one, can actually be held, and comes with a default level. A tool on the
-// never-list could only fail.
+// one, can actually be held, and comes with a level unless it is opt-in. A tool on
+// the never-list could only fail.
 func TestExternalStewardMCP_ListedPermissionsCanBeHeld(t *testing.T) {
 	s := newExternalStewardFlow(t, true)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	cfg.Steward.Writes = config.StewardWritesWorkers
+	require.NoError(t, config.Save(cfg))
 	issued := s.create("assistant")
 	for _, tool := range stewardtools.List() {
 		for _, slug := range tool.Permissions {
 			assert.Truef(t, agentd.IsKnownPermSlug(slug), "%s lists unknown %s", tool.Name, slug)
 			assert.Falsef(t, agentd.ExternalStewardRefusesForTest(slug), "%s lists never-listed %s", tool.Name, slug)
-			assert.Containsf(t, issued.Grants, slug, "%s needs %s, which a new steward lacks", tool.Name, slug)
+			if slug != agentd.PermDashboardCapture {
+				assert.Containsf(t, issued.Grants, slug, "%s needs %s, which a new steward lacks", tool.Name, slug)
+			}
 			assert.Containsf(t, tool.Access, slug, "%s does not tell the operator about %s", tool.Name, slug)
 		}
 	}
+}
+
+func TestExternalStewardMCP_Boards(t *testing.T) {
+	s := newExternalStewardFlow(t, true)
+	session := s.mcpSession(s.create("assistant").Credential)
+
+	var board struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(mcpOK(t, session, stewardtools.CreateBoard, map[string]any{"title": "Plan"})), &board))
+	require.NotEmpty(t, board.ID)
+	assert.Contains(t, mcpOK(t, session, stewardtools.UpdateBoard, map[string]any{"id": board.ID, "elements": []map[string]any{
+		{"id": "note", "type": "text", "x": 1, "y": 2, "width": 50, "height": 20, "text": "ship it", "version": 1},
+	}}), `"accepted":1`)
+	assert.Contains(t, mcpOK(t, session, stewardtools.ReadBoard, map[string]any{"id": board.ID}), "ship it")
+	assert.Contains(t, mcpOK(t, session, stewardtools.ListBoards, nil), board.ID)
+}
+
+// With no page open each dashboard tool says so, rather than pretend.
+func TestExternalStewardMCP_NoDashboardIsPlain(t *testing.T) {
+	s := newExternalStewardFlow(t, true)
+	issued := s.create("assistant")
+	session := s.mcpSession(issued.Credential)
+	agentd.ResetDashboardGuideForTest()
+	t.Cleanup(agentd.ResetDashboardGuideForTest)
+
+	assert.Contains(t, mcpOK(t, session, stewardtools.DashboardView, nil), `"known":false`)
+	assert.Contains(t, mcpOK(t, session, stewardtools.DashboardCue, map[string]any{"tab": "groups"}), `"dashboard_on_screen":false`)
+
+	refused, isError := mcpCall(t, session, stewardtools.DashboardCapture, nil)
+	require.True(t, isError)
+	assert.Contains(t, refused, agentd.PermDashboardCapture, "off until the operator grants it")
+
+	require.NoError(t, db.GrantAgentPermissionWithScope(s.conv(), agentd.PermDashboardCapture, "", "test"))
+	closed, isError := mcpCall(t, session, stewardtools.DashboardCapture, nil)
+	require.True(t, isError)
+	assert.Contains(t, closed, "no dashboard")
+}
+
+// The operator is told who is looking and pointing, by the name they gave it.
+func TestExternalStewardMCP_DashboardNamesTheAssistant(t *testing.T) {
+	s := newExternalStewardFlow(t, true)
+	issued := s.create("assistant")
+	require.NoError(t, db.GrantAgentPermissionWithScope(s.conv(), agentd.PermDashboardCapture, "", "test"))
+	session := s.mcpSession(issued.Credential)
+	agentd.ResetDashboardGuideForTest()
+	t.Cleanup(agentd.ResetDashboardGuideForTest)
+	dash := agentd.BuildDashboardHandlerForTest()
+	type capture struct {
+		ID        string `json:"id"`
+		AgentName string `json:"agent_name"`
+		Form      bool   `json:"form"`
+	}
+	ping := func() capture {
+		rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost, "/api/companion/presence",
+			map[string]any{"client": "tab", "focused": true, "visible": true}))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var resp struct {
+			Capture capture `json:"capture"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		return resp.Capture
+	}
+	present := func(visible bool) {
+		rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost, "/api/companion/presence",
+			map[string]any{"client": "tab", "focused": visible, "visible": visible}))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	}
+	present(false)
+	assert.Contains(t, mcpOK(t, session, stewardtools.DashboardCue, map[string]any{"tab": "groups"}), `"dashboard_on_screen":false`,
+		"a tab in the background is open but nobody sees it")
+	agentd.ResetDashboardGuideForTest()
+	present(true)
+	assert.Contains(t, mcpOK(t, session, stewardtools.DashboardCue, map[string]any{"tab": "groups"}), `"dashboard_on_screen":true`)
+	snapReq := testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil)
+	snapReq.Header.Set("Origin", "http://127.0.0.1:0")
+	snapshot := testharness.Serve(dash, snapReq)
+	require.Equal(t, http.StatusOK, snapshot.Code, snapshot.Body.String())
+	var snap struct {
+		Cues []struct {
+			AgentID   string `json:"agent_id"`
+			AgentName string `json:"agent_name"`
+		} `json:"companion_cues"`
+	}
+	require.NoError(t, json.Unmarshal(snapshot.Body.Bytes(), &snap))
+	require.Len(t, snap.Cues, 1)
+	assert.Equal(t, "assistant", snap.Cues[0].AgentName)
+	assert.Equal(t, issued.AgentID, snap.Cues[0].AgentID)
+
+	result := make(chan *mcp.CallToolResult, 1)
+	go func() {
+		res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: stewardtools.DashboardCapture})
+		assert.NoError(t, err)
+		result <- res
+	}()
+	var asked capture
+	require.Eventually(t, func() bool {
+		asked = ping()
+		return asked.ID != ""
+	}, 5*time.Second, 5*time.Millisecond)
+	assert.Equal(t, "assistant", asked.AgentName)
+	assert.False(t, asked.Form, "the tool never asks for form text")
+	answer := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost, "/api/companion/capture/"+asked.ID, map[string]any{
+		"png": capturePNG, "context": map[string]any{"tab": "groups"},
+	}))
+	require.Equal(t, http.StatusNoContent, answer.Code, answer.Body.String())
+	got := <-result
+	require.False(t, got.IsError)
+	require.Len(t, got.Content, 2)
+	image, ok := got.Content[0].(*mcp.ImageContent)
+	require.True(t, ok, "%T", got.Content[0])
+	want, err := base64.StdEncoding.DecodeString(capturePNG)
+	require.NoError(t, err)
+	assert.Equal(t, want, image.Data)
+	assert.Equal(t, "image/png", image.MIMEType)
+	assert.Contains(t, got.Content[1].(*mcp.TextContent).Text, "groups")
+}
+
+func TestExternalStewardMCP_TaskLink(t *testing.T) {
+	s := newExternalStewardFlow(t, true)
+	issued := s.create("assistant")
+	session := s.mcpSession(issued.Credential)
+	s.worker("worker-conv-1")
+	args := map[string]any{"agent": "worker-conv-1", "url": "https://example.com/issue/1"}
+
+	refused, isError := mcpCall(t, session, stewardtools.SetTaskLink, args)
+	require.True(t, isError)
+	assert.Contains(t, refused, agentd.PermAgentTask)
+
+	require.NoError(t, db.GrantAgentPermissionWithScope(s.conv(), agentd.PermAgentTask, "", "test"))
+	mcpOK(t, session, stewardtools.SetTaskLink, args)
+	read := func() string {
+		code, body := s.call(issued.Credential, http.MethodGet, "/v1/agent/worker-conv-1/task", nil)
+		require.Equal(t, http.StatusOK, code, body)
+		return body
+	}
+	assert.Contains(t, read(), "example.com/issue/1")
+	mcpOK(t, session, stewardtools.SetTaskLink, map[string]any{"agent": "worker-conv-1"})
+	assert.NotContains(t, read(), "example.com/issue/1", "leaving the link out clears it")
 }

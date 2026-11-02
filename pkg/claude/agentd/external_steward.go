@@ -341,6 +341,22 @@ type externalStewardIssued struct {
 	Grants     []string  `json:"grants,omitempty"`
 }
 
+// externalStewardIdentity names a principal for what the operator sees. Its conv
+// has no conversation row for a selector to find.
+func externalStewardIdentity(convID string) (agentID, name string) {
+	stewards, err := db.ListExternalStewards()
+	if err != nil {
+		slog.Warn("external steward: list for its name failed", "error", err)
+		return "", ""
+	}
+	for _, steward := range stewards {
+		if steward.ConvID == convID {
+			return steward.AgentID, guideText(steward.Name, 80)
+		}
+	}
+	return "", ""
+}
+
 // soleExternalSteward finds who the address "steward" falls to when no built-in
 // Steward runs. Only a principal that can authenticate counts, since mail to any
 // other would wait for nobody. able says how many are, and address is usable only
