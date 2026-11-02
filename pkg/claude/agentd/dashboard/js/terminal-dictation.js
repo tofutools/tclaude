@@ -67,9 +67,7 @@ export function PaneDictation({
     if (draft) keep?.drafts.set(pane.key, draft);
     else keep?.drafts.delete(pane.key);
   }, [draft]);
-  const draftNow = useRef(draft);
-  draftNow.current = draft;
-  const draftSent = useRef('');
+  const typedOn = useRef(false);
   const [sending, setSending] = useState(false);
   const [fieldFocused, setFieldFocused] = useState(false);
   const field = useRef(null);
@@ -122,9 +120,8 @@ export function PaneDictation({
     if (keep?.drafts.get(pane.key) === text) keep.drafts.delete(pane.key);
     setDraftText((current) => (current === text ? '' : current));
     // Anyone still typing, here or in another window, keeps the keyboard.
-    const typedOn = draftNow.current !== draftSent.current;
     const focused = win?.document?.activeElement;
-    if (!focused || focused === win.document.body || (!typedOn && field.current?.closest('.companion-input')?.contains(focused))) toTerminal();
+    if (!focused || focused === win.document.body || (!typedOn.current && field.current?.closest('.companion-input')?.contains(focused))) toTerminal();
   }
 
   async function mailAgent(text) {
@@ -155,7 +152,7 @@ export function PaneDictation({
   async function send(event, text = draft) {
     event?.preventDefault?.();
     if (sending || !text.trim()) return false;
-    draftSent.current = draft;
+    typedOn.current = false;
     // An open mic would bring the sent text back. Enter or the button sends
     // what the draft holds; a failed send leaves it there.
     if (event) dictation.abort();
@@ -189,7 +186,7 @@ export function PaneDictation({
       label=${talks ? `Message ${name}` : 'Draft for this terminal'}
       submitLabel=${talks ? 'Send' : 'Paste'}
       submitTitle=${talks ? null : 'Paste at the prompt, without a newline: press Enter in the terminal to run it'}
-      onSubmit=${send} onEdit=${(text) => { quietSpeech(); setDraftText(text); }}
+      onSubmit=${send} onEdit=${(text) => { typedOn.current = true; quietSpeech(); setDraftText(text); }}
       onFocus=${() => setFieldFocused(true)} onBlur=${() => setFieldFocused(false)} />`}
     ${annotation.overlay}`;
 }
