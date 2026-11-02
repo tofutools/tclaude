@@ -209,7 +209,9 @@ type FeaturesConfig struct {
 	// decisions and dashboard guidance. It defaults on; an explicit false
 	// turns them off and gates their dashboard chrome, daemon routes and CLI
 	// commands. A *bool so absent (on) is distinguishable from an explicit
-	// false that an upgrade must keep.
+	// false that an upgrade must keep. The daemon stores it on its first start
+	// after the upgrade (agentd resolveCollabDefault), as older builds deleted
+	// the key instead of storing false.
 	Collab *bool `json:"collab,omitempty"`
 
 	// GroupAttachments selects how the in-development persistent http(s)

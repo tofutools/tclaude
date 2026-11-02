@@ -877,14 +877,15 @@ function assembleConfig() {
   // the existing one so a future flag with no widget round-trips. Groups Route
   // map, Processes, Triggers, terminal_command_palette_shortcut, and
   // recorded_sandbox_details default off; group_attachments omits its "off"
-  // default; collab and agent_dirs_mount_parent default on. Drop the block when it is
+  // default; collab is always stored and agent_dirs_mount_parent defaults on. Drop the block when it is
   // empty so an all-default config does not marshal a spurious "features": {}
   // diff.
   const feats = (cfg.features && typeof cfg.features === 'object') ? cfg.features : {};
   if ($('#cfg-feature-processes').checked) feats.processes = true; else delete feats.processes;
   if ($('#cfg-feature-triggers').checked) feats.triggers = true; else delete feats.triggers;
   if ($('#cfg-feature-groups-route-map').checked) feats.groups_route_map = true; else delete feats.groups_route_map;
-  if ($('#cfg-feature-collab').checked) delete feats.collab; else feats.collab = false;
+  // Collab is stored either way: the daemon decided its default once, on upgrade.
+  feats.collab = $('#cfg-feature-collab').checked;
   const groupAttachments = controlValue($('#cfg-feature-group-attachments'));
   if (groupAttachments === 'float' || groupAttachments === 'fixed') {
     feats.group_attachments = groupAttachments;

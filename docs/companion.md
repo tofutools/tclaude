@@ -8,7 +8,10 @@ what you can do, how things are set up, or to get work started.
 
 The companion, the Steward, [boards](boards.md), the fleet brief and decisions
 make up Collab, which is on by default. Turning it on spawns no agent and grants
-no permission: a Steward exists only once you make one. To turn Collab off,
+no permission: a Steward exists only once you make one. On the first daemon start
+after an upgrade, tclaude stores the setting once: if you had Collab on, it stays
+on; if you had turned it off again (it left Steward settings, a Steward or boards
+behind), it stays off; anyone else gets it on. To turn Collab off,
 uncheck **Collab** under [Config › Appearance](dashboard-config.md#appearance), or
 set `features.collab` to `false` in `config.json`. You don't need to restart
 anything; the next dashboard refresh picks it up.
