@@ -166,7 +166,7 @@ func TestDashboardContextFeaturesButtonsStyled(t *testing.T) {
 func TestDashboardContextFeaturesEditorStacksAboveProfileEditor(t *testing.T) {
 	zIndexOf := func(selector string) int {
 		t.Helper()
-		re := regexp.MustCompile(regexp.QuoteMeta(selector) + `\s*\{[^}]*z-index:\s*(\d+)`)
+		re := regexp.MustCompile(regexp.QuoteMeta(selector) + `\s*\{[^}]*z-index:\s*calc\(var\(--z-dialog\) \+ (\d+)\)`)
 		m := re.FindStringSubmatch(dashboardAssets)
 		if m == nil {
 			t.Fatalf("no z-index rule found for %s", selector)

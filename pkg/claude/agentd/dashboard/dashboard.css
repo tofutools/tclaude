@@ -69,7 +69,7 @@ body.dashboard-booting > #boot-progress {
   position: fixed;
   inset: 50% auto auto 50%;
   transform: translate(-50%, -50%);
-  z-index: 1000;
+  z-index: var(--z-system);
   width: 260px;
   max-width: 70vw;
   text-align: center;
@@ -122,9 +122,9 @@ header .meta { color: #7d8590; font-size: 12px; }
    position, with no flow/flex restructuring. Unlike header/nav it stays
    OUT of the JOH-313 horizontal-scroll widening: left/right:0 keep it
    spanning the visible viewport at all times, so it's never ragged when the
-   page scrolls sideways (and needs no .bar-inner). z-index sits above
-   <main> but below dropdowns (50+), modals (100+) and tooltips so an open
-   menu/dialog near the bottom is never hidden behind it. --footer-h is the
+   page scrolls sideways (and needs no .bar-inner). It is chrome (ui.css
+   layers): above <main> and the overlay windows, below panels, dialogs and
+   popovers so an open menu/dialog near the bottom is never hidden behind it. --footer-h is the
    bar's height; the page reserves that much bottom space (below) so no
    content ever hides behind the fixed bar. */
 /* --popover-close-grace is how long a hover popover outlives the pointer
@@ -138,7 +138,7 @@ footer {
      bottom space the page reserves below — the bar holds a single short
      line, so a fixed height won't clip anything. */
   height: var(--footer-h);
-  z-index: 40;
+  z-index: var(--z-chrome);
   background: #161b22;
   border-top: 1px solid #2a3340;
 }
@@ -178,7 +178,7 @@ footer {
 .open-prs.is-empty:not(.is-open) .open-prs-trigger:not(:hover):not(:focus-visible) { color: #7d8590; }
 .open-prs.is-empty .open-prs-dot { background: #30363d; }
 .open-prs-popover {
-  position: fixed; right: 12px; bottom: calc(var(--footer-h) + 10px); z-index: 43;
+  position: fixed; right: 12px; bottom: calc(var(--footer-h) + 10px); z-index: var(--z-popover);
   width: min(470px, calc(100vw - 24px)); max-height: min(560px, calc(100vh - var(--footer-h) - 24px));
   display: flex; flex-direction: column; overflow: hidden; border: 1px solid #3a4654;
   border-radius: 9px; background: #161b22; box-shadow: 0 14px 45px rgba(0,0,0,.55);
@@ -191,22 +191,15 @@ footer {
    to its popover. The bridge matches the popover's fixed positioning so it
    continues to work when the agent dock shifts both surfaces left. */
 .open-prs.is-open::before {
-  content: ""; position: fixed; right: 12px; bottom: var(--footer-h); z-index: 42;
+  content: ""; position: fixed; right: 12px; bottom: var(--footer-h); z-index: calc(var(--z-popover) - 1);
   width: min(470px, calc(100vw - 24px)); height: 10px;
 }
 /* The dock normally paints above the footer. Lift the footer only while this
    disclosure is open so the bridge can receive hover across the dock's bottom
    edge; its visible popover is already shifted clear of the dock. The footer is
-   the popover's stacking context, so the lift also has to clear the overlay
-   windows (930-949, overlay-window.js): a popover the operator opened belongs
-   above them, and above the overlay dock and its menu (950-951) too. A dialog
-   opened over a pinned popover still covers it. */
-footer:has(.open-prs.is-open) { z-index: 46; }
-body:not(:has(.modal-overlay.show, .manage-overlay.show)) footer:has(.open-prs.is-open) { z-index: 952; }
-/* With overlay windows on the page, the footer holds their dock and the chips:
-   it rises over the windows (930-949), which may reach down over the bar, so
-   nothing there is ever covered. A dialog still covers it. */
-body:has([data-overlay-window]):not(:has(.modal-overlay.show, .manage-overlay.show)) footer { z-index: 950; }
+   the popover's stacking context, so the lift takes it to the popover layer
+   (ui.css), over the overlay windows, the dock and any dialog. */
+footer:has(.open-prs.is-open) { z-index: var(--z-popover); }
 body.dock-open .open-prs-popover { right: calc(var(--dock-w) + 12px); }
 body.dock-open .open-prs.is-open::before {
   right: 12px; width: calc(var(--dock-w) + min(470px, calc(100vw - 24px)));
@@ -414,9 +407,9 @@ body.hscroll-overflow.hscroll-follow .bar-inner { position: sticky; left: 0; }
 body.hscroll-overflow.hscroll-follow header .bar-inner { z-index: 2; }
 body.hscroll-overflow.hscroll-follow nav .bar-inner { z-index: 1; }
 /* The peer-view marker opens its popover and request dialog inside the header;
-   while one is open, lift the sticky header layer over the dock (45) so the
+   while one is open, lift the sticky header layer to the popover layer so the
    sticky context doesn't trap the dialog underneath it. */
-body.hscroll-overflow.hscroll-follow header .bar-inner:has(.remote-node-pop, .modal-overlay.show) { z-index: 100; }
+body.hscroll-overflow.hscroll-follow header .bar-inner:has(.remote-node-pop, .modal-overlay.show) { z-index: var(--z-popover); }
 /* The tab controls are real <a href> anchors (so hover previews the URL and
    Cmd/Ctrl/middle-click open the location in a new tab), except Vegas which
    stays a <button> (not URL-routed). The [data-tab] selector styles both, and
@@ -457,7 +450,7 @@ nav [data-tab].overlay-drop { color: #d4d4d4; background: #1f6feb2e; box-shadow:
    full-screen overlay, so the operator can keep working. Hidden by default;
    renderAccessRequests toggles .show from access_requests_pending. */
 .access-banner {
-  position: fixed; top: 10px; left: 50%; z-index: 9000;
+  position: fixed; top: 10px; left: 50%; z-index: var(--z-confirm);
   display: flex; align-items: center; gap: 10px;
   padding: 8px 10px 8px 14px;
   background: #161b22; color: #e6c07b;
@@ -1084,7 +1077,7 @@ button.tool:hover { border-color: #58a6ff; }
 .mail-reader .mail-reader-actions .mail-download .mail-download-caret[type] { border-radius: 0 4px 4px 0; border-left: none; padding: 3px 6px; }
 .mail-reader .mail-reader-actions .mail-download .mail-download-caret[type][aria-expanded="true"] { color: #d4d4d4; border-color: #58a6ff; border-left: none; }
 .mail-download-menu {
-  position: absolute; top: calc(100% + 4px); right: 0; z-index: 20; width: 280px;
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: var(--z-popover); width: 280px;
   background: #1c2330; border: 1px solid #58a6ff; border-radius: 6px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, .5); padding: 4px;
 }
@@ -1206,7 +1199,7 @@ table tr:hover { background: #161b22; }
 .state-pill-wrap:focus { outline: 2px solid #58a6ff; outline-offset: 2px; }
 .state-pill-wrap:focus::after {
   content: attr(data-full-status);
-  position: absolute; z-index: 300; left: 0; top: calc(100% + 5px);
+  position: absolute; z-index: var(--z-popover); left: 0; top: calc(100% + 5px);
   box-sizing: border-box; width: max-content;
   max-width: min(48ch, calc(100vw - 24px)); padding: 5px 7px;
   border: 1px solid #30363d; border-radius: 4px;
@@ -1376,7 +1369,7 @@ body:not(.show-final-pr-checks) .ci-hover.ci-final { display: none; }
    `contain: paint` on any wrapper silently turns this back into `absolute`
    and reinstates the scroll-area growth this rule exists to fix. */
 .ci-panel {
-  display: block; position: fixed; z-index: 30;
+  display: block; position: fixed; z-index: var(--z-popover);
   width: min(360px, calc(100vw - 32px)); max-height: min(52vh, 320px);
   overflow: auto; padding: 10px 12px;
   border: 1px solid #3b4654; border-radius: 8px;
@@ -1393,7 +1386,7 @@ body:not(.show-final-pr-checks) .ci-hover.ci-final { display: none; }
    scroll area and can span both boxes however the placement lands. It exists
    only while the panel is open. It cannot live on .ci-panel: that box is
    overflow:auto and would clip anything outside its padding box. */
-.ci-bridge { position: fixed; z-index: 29; }
+.ci-bridge { position: fixed; z-index: calc(var(--z-popover) - 1); }
 .ci-panel-heading { color: #f0f6fc; font-size: 12px; font-weight: 700; letter-spacing: 0.2px; }
 .ci-panel-heading a { color: inherit; text-decoration: none; }
 .ci-panel-heading a:hover { text-decoration: underline; }
@@ -1696,7 +1689,7 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   outline: 2px solid #58a6ff; outline-offset: 1px;
 }
 .human-notification-preview {
-  position: absolute; z-index: 60; left: 16px; top: 21px;
+  position: absolute; z-index: var(--z-popover); left: 16px; top: 21px;
   width: min(350px, calc(100vw - 48px)); box-sizing: border-box;
   padding: 10px 12px; border: 1px solid #7a5b14; border-radius: 6px;
   background: #161b22; color: #c9d1d9; text-align: left;
@@ -1770,12 +1763,10 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
    Reserving would reflow the whole page — and refit every open xterm — twice
    per notification.
 
-   z-index sits above the dock (45), the footer (40) and the row/menu dropdowns
-   (50-60) — the reader is raised deliberately and should not be half-covered by
-   a menu left open behind it — and below the modal overlays (100+), so Reply
-   still opens over the reader. */
+   It is a side panel (ui.css layers), with the dock: above the footer and the
+   overlay windows, and below dialogs, so Reply still opens over the reader. */
 .human-notification-drawer {
-  position: fixed; z-index: 90;
+  position: fixed; z-index: var(--z-panel);
   top: var(--dock-top); right: 0; bottom: var(--footer-h);
   width: min(440px, calc(100vw - 24px)); display: flex; flex-direction: column;
   box-sizing: border-box; border-left: 1px solid #30363d;
@@ -2061,9 +2052,9 @@ header.overlay-look-windows { padding-right: 0; }
 /* An empty cell of a split, outlined so a tiling reads as one: a window snapped
    alone is a side panel and has none. It takes no clicks: the page shows through. */
 .overlay-split-gap { position: fixed; pointer-events: none; border: 1px dashed var(--cmp-line); border-radius: 8px; box-sizing: border-box; }
-/* The windows step down for a dialog and aside for annotation. The lines between
-   them go, as they would cut across either and take its clicks. */
-body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) :is(.overlay-split-line, .overlay-split-cross, .overlay-split-detach, .overlay-split-gap) { display: none; }
+/* The windows step aside for annotation. The lines between them go, as they
+   would cut across it and take its clicks. */
+body.companion-annotating :is(.overlay-split-line, .overlay-split-cross, .overlay-split-detach, .overlay-split-gap) { display: none; }
 /* The overlay windows' dock (overlay-dock.js). It rests in the footer, in the
    room the bar has left: it grows into none and is clipped rather than push the
    Open PRs trigger. It is right-aligned, ☰ last beside the chips, and the pills
@@ -2076,7 +2067,7 @@ body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) 
 .overlay-dock.overlay-dock-measure { position: fixed; left: -10000px; top: 0; visibility: hidden; pointer-events: none; }
 /* Without the footer (a page that has none), the dock floats over the room,
    clear of the chips in a corner. */
-.overlay-dock.floating { position: fixed; z-index: 950; left: 50%; bottom: calc(var(--footer-h, 29px) + 8px); transform: translateX(-50%); flex-wrap: wrap; justify-content: center; max-width: 70vw; max-height: 40vh; overflow: auto; }
+.overlay-dock.floating { position: fixed; z-index: var(--z-chrome); left: 50%; bottom: calc(var(--footer-h, 29px) + 8px); transform: translateX(-50%); flex-wrap: wrap; justify-content: center; max-width: 70vw; max-height: 40vh; overflow: auto; }
 .overlay-dock :is(.overlay-dock-pill, .overlay-dock-menu, .overlay-dock-more) { display: inline-flex; align-items: center; flex: none; height: 21px; box-sizing: border-box; border: 1px solid var(--cmp-line); border-radius: 11px; background: var(--cmp-bar); }
 .overlay-dock.floating :is(.overlay-dock-pill, .overlay-dock-menu) { height: 27px; border-radius: 16px; }
 .overlay-dock :is(.overlay-dock-pill, .overlay-dock-menu, .overlay-dock-more):hover { border-color: #58a6ff; }
@@ -2092,17 +2083,17 @@ body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) 
 .overlay-dock .overlay-dock-remove.ui-sm:hover:not(:disabled) { color: var(--cmp-text); }
 .overlay-dock-count { padding: 0 5px; border-radius: 7px; background: #30363d; font-size: 10px; }
 /* The dock's menus: ☰'s actions on every window, and the pills that did not fit.
-   They open upwards from their button, fixed and outside the footer: inside, the
-   footer's level would put them under the overlay windows (930-949). */
-.ui-menu.overlay-dock-actions { position: fixed; z-index: 951; min-width: 190px; max-height: calc(100vh - var(--footer-h, 29px) - 24px); overflow: auto; box-sizing: border-box; }
+   They open upwards from their button, fixed and outside the footer, on the
+   popover layer (ui.css): inside, the footer's overflow would clip them. */
+.ui-menu.overlay-dock-actions { position: fixed; z-index: var(--z-popover); min-width: 190px; max-height: calc(100vh - var(--footer-h, 29px) - 24px); overflow: auto; box-sizing: border-box; }
 .overlay-dock-actions .ui-menu-item { white-space: nowrap; }
 .overlay-dock-entry-note { color: var(--ui-muted); }
 .overlay-dock-entry-needs { color: var(--cmp-amber-text); font-weight: 600; }
 /* Show all windows (overlay-expose.js): a dimmed view over everything, the
    companion's chips included, with a card per window laid out without overlap.
-   Under toasts and tooltips (1000). */
+   On the dialog layer: under popovers, confirmations and toasts. */
 .overlay-expose {
-  position: fixed; inset: 0; z-index: 970; display: flex; flex-direction: column; gap: 16px; box-sizing: border-box;
+  position: fixed; inset: 0; z-index: var(--z-dialog); display: flex; flex-direction: column; gap: 16px; box-sizing: border-box;
   padding: 24px 32px calc(var(--footer-h, 29px) + 24px); background: rgba(1, 4, 9, .72); backdrop-filter: blur(3px);
   animation: overlay-expose-in .14s ease-out;
 }
@@ -2139,9 +2130,10 @@ body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) 
   flex: none; display: flex; justify-content: center; align-content: normal; gap: 12px; overflow-x: auto; overflow-y: hidden; padding: 4px 4px 6px;
 }
 .overlay-expose-grid.row .overlay-expose-card { flex: none; width: 210px; padding: 9px 11px; }
-/* A target over each spread window, above the windows (971-990) and so outside
-   the view, takes the click the window may not; it names the window there. */
-.overlay-expose-targets { position: fixed; inset: 0; z-index: 992; pointer-events: none; }
+/* A target over each spread window, above the windows (lifted into the dialog
+   layer just over the view, by overlay-expose.js) and so outside the view,
+   takes the click the window may not; it names the window there. */
+.overlay-expose-targets { position: fixed; inset: 0; z-index: calc(var(--z-dialog) + 100); pointer-events: none; }
 .overlay-expose-live {
   position: fixed; box-sizing: border-box; margin: 0; padding: 0; border: 2px solid transparent; border-radius: 10px;
   background: transparent; cursor: pointer; pointer-events: auto; transition: border-color .1s, box-shadow .1s;
@@ -2162,7 +2154,7 @@ body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) 
 }
 /* Above the windows: a drop that splits a window lands on top of it. */
 .overlay-snap-guide {
-  position: fixed; z-index: 952; pointer-events: none; border-radius: 8px;
+  position: fixed; z-index: calc(var(--z-window) + 90); pointer-events: none; border-radius: 8px;
   background: rgba(88, 166, 255, .10); border: 1px dashed #58a6ff;
 }
 /* A dragged window that would float where it is let go, as a tear-off out of a
@@ -2172,7 +2164,7 @@ body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) 
 /* Edges and corners of a floating window (overlay-window.js): 6px strips that
    straddle the edge, with the corners on top. The frame matches the window's
    layer and passes every other pointer through. */
-.window-resize-frame { position: fixed; z-index: var(--overlay-level, 930); pointer-events: none; }
+.window-resize-frame { position: fixed; z-index: var(--overlay-level, var(--z-window)); pointer-events: none; }
 .window-resize-zone { position: absolute; pointer-events: auto; touch-action: none; }
 .window-resize-zone.n, .window-resize-zone.s { left: 9px; right: 9px; height: 6px; cursor: ns-resize; }
 .window-resize-zone.e, .window-resize-zone.w { top: 9px; bottom: 9px; width: 6px; cursor: ew-resize; }
@@ -3287,7 +3279,7 @@ body.slop header .activity-hover-trigger:hover,
 body.wizard header .activity-hover-trigger:hover { background: transparent; }
 .activity-hover-trigger-visual { display: inline-flex; align-items: center; }
 .activity-hover-panel {
-  display: none; position: absolute; z-index: 30;
+  display: none; position: absolute; z-index: var(--z-popover);
   top: calc(100% + 9px); left: 0;
   width: min(420px, calc(100vw - 32px)); max-height: min(68vh, 560px);
   overflow: auto; padding: 12px 14px;
@@ -3301,7 +3293,7 @@ body.wizard header .activity-hover-trigger:hover { background: transparent; }
    the compact bot trigger and its scrollable panel. Without this transparent
    bridge, mouseleave closes the panel before its scrollbar can be reached. */
 .activity-hover.is-open::after {
-  content: ""; position: absolute; z-index: 29;
+  content: ""; position: absolute; z-index: calc(var(--z-popover) - 1);
   top: 100%; left: 0; width: min(420px, calc(100vw - 32px)); height: 9px;
 }
 /* Match the dashboard's standard dark scroll surfaces, including Firefox's
@@ -3637,7 +3629,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .gfm-dot { position: absolute; right: 2px; bottom: 1px; box-shadow: 0 0 0 1px #0d1117; }
 .group-federation-chip.live .gfm-dot, .gfm-state.live { background: #3fb950; }
 .group-federation-pop {
-  position: absolute; top: calc(100% + 4px); left: 0; z-index: 50; min-width: 340px; max-width: 440px;
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: var(--z-popover); min-width: 340px; max-width: 440px;
   background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 6px 0;
   box-shadow: 0 8px 24px rgba(0,0,0,.45); font-size: 12px; font-weight: normal; color: #d4d4d4;
   cursor: default; white-space: normal;
@@ -3738,7 +3730,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .audit-spawn-info { position: relative; display: inline-block; margin-left: 6px; vertical-align: top; }
 .audit-spawn-info-trigger { width: 20px; height: 20px; line-height: 16px; }
 .audit-spawn-popover {
-  position: absolute; z-index: 80; top: calc(100% + 6px); right: 0;
+  position: absolute; z-index: var(--z-popover); top: calc(100% + 6px); right: 0;
   width: min(720px, 70vw); max-height: min(620px, 70vh); overflow: auto;
   padding: 10px; background: #0d1117; border: 1px solid #3b4754;
   border-radius: 7px; box-shadow: 0 10px 28px rgba(1, 4, 9, 0.9);
@@ -4035,7 +4027,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-node { position: relative; display: inline-flex; font-style: normal; }
 .usage-node-pill { display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid var(--nc); border-radius: 10px; background: transparent; color: var(--nc); font: 500 11px ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; white-space: nowrap; }
 .usage-node-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--nc); flex: none; }
-.usage-node-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 50; min-width: 220px; display: flex; flex-direction: column; padding: 4px 0; background: #0b1520; border: 1px solid #1f6feb; border-radius: 6px; box-shadow: 0 6px 18px rgba(0, 0, 0, .6); }
+.usage-node-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: var(--z-popover); min-width: 220px; display: flex; flex-direction: column; padding: 4px 0; background: #0b1520; border: 1px solid #1f6feb; border-radius: 6px; box-shadow: 0 6px 18px rgba(0, 0, 0, .6); }
 .usage-node-item { display: flex; align-items: center; gap: 6px; padding: 3px 10px; border: 0; background: transparent; color: #c9d1d9; font: 11.5px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; text-align: left; cursor: pointer; }
 .usage-node-item:hover:not(:disabled), .usage-node-item.on { background: #1f6feb22; }
 .usage-node-item.locked { opacity: .55; cursor: not-allowed; }
@@ -4362,7 +4354,7 @@ details.cost-filter-menu[open] > summary::before { content: none; }
 .cost-filter-menu > summary strong { color: #79c0ff; }
 .cost-filter-menu > summary span { color: #aab4bf; font-variant-numeric: tabular-nums; }
 .cost-filter-popover {
-  position: fixed; z-index: 200; visibility: hidden;
+  position: fixed; z-index: var(--z-popover); visibility: hidden;
   box-sizing: border-box; width: min(370px, calc(100vw - 16px)); max-height: calc(100vh - 16px);
   overflow: auto; padding: 11px; background: #111820; border: 1px solid #3a4656;
   border-radius: 7px; box-shadow: 0 14px 35px rgba(0,0,0,.72);
@@ -4442,7 +4434,7 @@ details.cost-filter-menu[open] > summary::before { content: none; }
 .cost-accumulated-tooltip rect { fill: #161b22; stroke: #536275; }
 .cost-accumulated-tooltip text { fill: #c9d1d9; font-size: 10px; }
 .cost-accumulated-tip-panel {
-  position: fixed; z-index: 200; box-sizing: border-box;
+  position: fixed; z-index: var(--z-popover); box-sizing: border-box;
   width: min(288px, calc(100vw - 8px)); max-height: calc(100vh - 8px); overflow: auto;
   padding: 8px 10px;
   background: rgba(22, 27, 34, .97); border: 1px solid #536275; border-radius: 5px;
@@ -4545,7 +4537,7 @@ details.cost-filter-menu[open] > summary::before { content: none; }
 .cost-col[data-tip]:hover .cost-bar { background: #8fbf9e; }
 .cost-col.projected[data-tip]:hover .cost-bar { background: transparent; border-color: #8fbf9e; opacity: 1; }
 .cost-tip {
-  display: none; position: fixed; z-index: 200; pointer-events: none;
+  display: none; position: fixed; z-index: var(--z-popover); pointer-events: none;
   background: #1c2128; border: 1px solid #2a3340; border-radius: 4px;
   padding: 3px 8px; font-size: 11px; color: #d4d4d4; white-space: nowrap;
 }
@@ -4772,7 +4764,7 @@ tr:hover .row-actions { opacity: 1; }
 .agent-harness[data-full-metadata]:focus { outline: 2px solid #58a6ff; outline-offset: 2px; }
 .agent-harness[data-full-metadata]:focus::after {
   content: attr(data-full-metadata);
-  position: absolute; z-index: 300; left: 0; top: calc(100% + 5px);
+  position: absolute; z-index: var(--z-popover); left: 0; top: calc(100% + 5px);
   box-sizing: border-box; width: max-content;
   max-width: min(64ch, calc(100vw - 24px)); padding: 5px 7px;
   border: 1px solid #30363d; border-radius: 4px;
@@ -5108,7 +5100,7 @@ body.wizard .subgroup-btn .subgroup-ico { display: none; }
 }
 .filter-bar-cog .cog-btn:hover { color: #ffb52e; border-color: #e3a008; }
 .action-menu {
-  display: none; position: absolute; top: 100%; z-index: 50;
+  display: none; position: absolute; top: 100%; z-index: var(--z-popover);
   margin-top: 4px; min-width: 150px; flex-direction: column; gap: 4px;
   padding: 6px; background: #0d1117; border: 1px solid #2a3340;
   border-radius: 6px; box-shadow: 0 8px 24px rgba(1, 4, 9, 0.85);
@@ -5535,7 +5527,7 @@ details[data-group-key][open] > summary .group-usage-profile {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: 60;
+  z-index: var(--z-popover);
   min-width: 220px;
   flex-direction: column;
   gap: 2px;
@@ -5685,19 +5677,18 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 }
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.6);
-  display: none; align-items: center; justify-content: center; z-index: 100;
+  display: none; align-items: center; justify-content: center; z-index: var(--z-dialog);
 }
 .modal-overlay.show { display: flex; }
 
 /* Disconnected overlay — connection.js adds .show when the 2s poll can't
    reach agentd for FAIL_THRESHOLD consecutive ticks, and removes it the moment
    a poll succeeds again. Deliberately NOT .modal-overlay: the auto-refresh
-   must keep polling beneath it to notice the reconnect. z-index sits above
-   every modal/palette/toast
-   (ceiling 10003) so nothing can paint over the "you are disconnected"
-   message. */
+   must keep polling beneath it to notice the reconnect. It sits in the
+   system layer, over every dialog, palette and toast, so nothing can paint
+   over the "you are disconnected" message. */
 .disconnect-overlay {
-  position: fixed; inset: 0; z-index: 10050;
+  position: fixed; inset: 0; z-index: calc(var(--z-system) + 50);
   display: none; align-items: center; justify-content: center;
   padding: 24px;
   background: rgba(0,0,0,0.72);
@@ -5737,8 +5728,9 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 
 /* Command palette ("spotlight") — palette.js. It rides on .modal-overlay
    for the shared backdrop and the auto-refresh suspend, but anchors near
-   the top like a launcher rather than vertically centred. */
-.palette-overlay { align-items: flex-start; }
+   the top like a launcher rather than vertically centred, and on the
+   popover layer (ui.css) rather than the dialog one: it opens over a form. */
+.modal-overlay.palette-overlay { align-items: flex-start; z-index: var(--z-popover); }
 .palette-box {
   margin-top: 12vh;
   width: min(640px, calc(100vw - 32px));
@@ -5843,7 +5835,7 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
    close/reopen. Same visual treatment as .modal-overlay otherwise. */
 .manage-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.6);
-  display: none; align-items: center; justify-content: center; z-index: 100;
+  display: none; align-items: center; justify-content: center; z-index: var(--z-dialog);
 }
 .manage-overlay.show { display: flex; }
 .manage-modal {
@@ -5911,38 +5903,39 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 #sandbox-profiles-manage-modal #sandbox-profiles-list { flex: 1 1 auto; }
 /* The cron-pick-target overlay is opened FROM inside the cron-create
    form (Owner / Target 🔍 buttons), so it has to stack on top of the
-   create modal — not below it. Plain z-index:100 ties with the create
-   modal and the later DOM order wins, hiding the picker. Bumping the
-   picker to 150 keeps it on top regardless of DOM order. */
-#cron-pick-target-modal { z-index: 150; }
+   create modal — not below it. On the plain dialog layer it would tie with
+   the create modal and the later DOM order would win, hiding the picker. A
+   step up keeps it on top regardless of DOM order. */
+#cron-pick-target-modal { z-index: calc(var(--z-dialog) + 50); }
 /* The permanent-permission editor opens standalone (the ⚙ "permissions"
    button) AND from inside the edit-member modal (its Permissions…
    button). In the stacked case it must sit ON TOP of whatever opened it:
-   the edit-member + spawn modals (plain z-index:100) AND the profile
-   editor (150), which now also opens it from its Permissions… button.
-   Pin it to 160 — above the 150 profile editor (equal z-index would break
+   the edit-member + spawn modals (the plain dialog layer) AND the profile
+   editor (+50), which now also opens it from its Permissions… button.
+   Pin it to +60 — above the profile editor (equal z-index would break
    the tie by DOM order, and this overlay comes EARLIER in the DOM, so it
-   would paint behind). Still below the toast (200) and the shared confirm
-   (1000) its own backdrop-discard guard pops. */
-#perm-edit-modal { z-index: 160; }
+   would paint behind). The shared confirm its own backdrop-discard guard
+   pops sits on the confirm layer above. */
+#perm-edit-modal { z-index: calc(var(--z-dialog) + 60); }
 /* The startup-context editor opens from the SAME two places as the permission
    editor above — the spawn dialog and the spawn-profile editor — so it needs the
-   same escape-correctness treatment: strictly above #profile-editor-modal (150),
+   same escape-correctness treatment: strictly above #profile-editor-modal (+50),
    or Escape would rank the editor BENEATH it topmost and close the wrong one. */
-#context-features-modal { z-index: 160; }
+#context-features-modal { z-index: calc(var(--z-dialog) + 60); }
 /* The profile editor opens standalone (the profiles-manage overlay's edit / +
    new) AND on top of the spawn modal ("Save as profile") and the inline
    default-profile pickers ("＋ new profile…"). The spawn modal is a plain
-   z-index:100 overlay that comes LATER in the DOM, so without this the editor
-   would paint behind it; pin it to 150 so it's always the topmost editor.
-   Below the toast (200) and the shared confirm (1000). */
-#profile-editor-modal { z-index: 150; }
-#sandbox-profile-editor-modal { z-index: 150; }
+   dialog-layer overlay that comes LATER in the DOM, so without this the editor
+   would paint behind it; pin it a step up (+50) so it's always the topmost
+   editor. */
+#profile-editor-modal { z-index: calc(var(--z-dialog) + 50); }
+#sandbox-profile-editor-modal { z-index: calc(var(--z-dialog) + 50); }
 /* The usage manager opens over the spawn-profile and template editors and the
-   spawn dialog (their "new usage profile…"), so it sits above the editors' 150
-   and below the permission editor and confirms. */
-#usage-rules-modal { z-index: 155; }
-#sandbox-profile-diff-modal { z-index: 1000; }
+   spawn dialog (their "new usage profile…"), so it sits above the editors' +50
+   and below the permission editor (+60). The sandbox diff review confirms a
+   save, on the confirm layer. */
+#usage-rules-modal { z-index: calc(var(--z-dialog) + 55); }
+#sandbox-profile-diff-modal { z-index: var(--z-confirm); }
 #sandbox-profile-editor-filesystem,
 #sandbox-profile-editor-environment {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -6186,20 +6179,18 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   .sandbox-import-effect { margin-left: 0; }
 }
 /* The role editor (JOH-240) opens on top of the roles-manage overlay, the same
-   pattern as the profile editor above — pin it above plain z-index:100 overlays
-   so it's always the topmost editor. */
-#role-editor-modal { z-index: 150; }
+   pattern as the profile editor above — pin it above plain dialog-layer
+   overlays so it's always the topmost editor. */
+#role-editor-modal { z-index: calc(var(--z-dialog) + 50); }
 /* #confirm-modal is opened FROM inside other modals — by each Preact
    overlay's discard transaction for dirty data-entry dialogs, and
    ahead-of-time by destructive-action confirms invoked from list rows.
-   With plain z-index:100 it ties with the modal that triggered it and
-   loses on DOM order (it appears earlier in dashboard.html), leaving
-   the user with only a darkened backdrop and no visible dialog. 1000
-   keeps it clearly above every normal overlay (modals at 100, cron
-   picker at 150, toast at 200, hover tooltip at 300) with plenty of
-   headroom — only the system-tray / approval popup family (9998–10000)
-   sits higher, which is correct since those are out-of-band. */
-#confirm-modal { z-index: 1000; }
+   On the dialog layer it would tie with the modal that triggered it and
+   lose on DOM order (it appears earlier in dashboard.html), leaving the
+   user with only a darkened backdrop and no visible dialog. The confirm
+   layer keeps it above every dialog and popover; only toasts and the
+   out-of-band system layer sit higher. */
+#confirm-modal { z-index: var(--z-confirm); }
 .modal {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 20px 24px; max-width: 480px; width: calc(100% - 32px);
@@ -6484,7 +6475,7 @@ details[data-group-key].group-drop-into.group-drop-clone {
   padding: 2px 8px;
   font-size: 11px;
   color: #c9d1d9;
-  z-index: 300;
+  z-index: var(--z-popover);
   display: none;
   box-shadow: 0 2px 6px rgba(0,0,0,0.4);
 }
@@ -6506,7 +6497,7 @@ details[data-group-key].group-drop-into.group-drop-clone {
   right: 22px;
   top: 50%;
   transform: translateY(-50%);
-  z-index: 250;
+  z-index: var(--z-popover);
   /* display:none when idle (not visibility:hidden) so the box has ZERO
      layout footprint — it can never nudge the document's scrollWidth and
      latch the sticky-bar hscroll-overflow state (hscroll.js). Mirrors the
@@ -6612,7 +6603,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
   padding: 0 6px; font-size: 11px; line-height: 16px;
 }
 .queued-spawns-popover {
-  position: fixed; z-index: 60;
+  position: fixed; z-index: var(--z-popover);
   width: min(380px, calc(100vw - 32px)); max-height: 60vh; overflow-y: auto;
   padding: 6px; background: #0d1117; border: 1px solid #9e6a03; border-radius: 6px;
   box-shadow: 0 8px 24px rgba(1, 4, 9, 0.9);
@@ -6729,12 +6720,12 @@ body.wizard .group-pending-title-wizard { display: inline; }
   position: fixed; bottom: calc(var(--footer-h) + 16px); left: 50%;
   background: #161b22; border: 1px solid #2a3340; border-left: 3px solid #3fb950;
   border-radius: 4px; padding: 10px 14px; color: #c9d1d9;
-  font-size: 13px; width: max-content; max-width: min(360px, calc(100vw - 48px)); z-index: 960;
+  font-size: 13px; width: max-content; max-width: min(360px, calc(100vw - 48px)); z-index: var(--z-toast);
   opacity: 0; transform: translate(-50%, 8px); pointer-events: none;
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
-.toast.error { border-left-color: #f85149; z-index: 10003; }
+.toast.error { border-left-color: #f85149; z-index: calc(var(--z-toast) + 1); }
 .filter-bar {
   display: flex; align-items: center; gap: 8px;
   margin: 0 0 12px 0;
@@ -6823,7 +6814,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
   font-size: 10px; font-weight: 500; line-height: 13px; vertical-align: middle;
 }
 .view-menu {
-  display: none; position: absolute; top: 100%; left: 0; z-index: 50;
+  display: none; position: absolute; top: 100%; left: 0; z-index: var(--z-popover);
   margin-top: 4px; min-width: 180px; flex-direction: column; gap: 2px;
   padding: 6px; background: #0d1117; border: 1px solid #2a3340;
   border-radius: 6px; box-shadow: 0 8px 24px rgba(1, 4, 9, 0.85);
@@ -7024,7 +7015,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
    window. The confirmation hangs off the button because neither has room. */
 .steward-shutdown { position: relative; display: inline-flex; }
 .steward-shutdown-confirm {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; width: 280px; padding: 10px 12px;
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: var(--z-confirm); width: 280px; padding: 10px 12px;
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px; color: #c9d1d9;
   font-size: 12px; line-height: 1.45; text-align: left; white-space: normal;
   box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
@@ -8784,7 +8775,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 }
 .spawn-field-help-trigger[aria-expanded="true"] + .spawn-field-description,
 .spawn-field-description:focus {
-  z-index: 30; bottom: calc(100% + 4px); left: 0; right: 0;
+  z-index: var(--z-popover); bottom: calc(100% + 4px); left: 0; right: 0;
   width: auto; height: auto; max-height: min(180px, 30vh); overflow: auto;
   margin: 0; padding: 8px 10px; clip-path: none; white-space: normal;
   color: #c9d1d9; background: #0d1117; border: 1px solid #30363d;
@@ -9296,9 +9287,9 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
 /* Shared web directory chooser. It is a bounded Preact island mounted outside
    feature tabs so every Browse… caller can use it, including remote browsers. */
 #directory-picker-modal {
-  /* Above every interactive/cosmetic surface, while error toasts (10003) and
-     the disconnected curtain (10050) remain visible over the picker. */
-  z-index: 10002;
+  /* Opened from forms and editors, so a step above every one of them; toasts
+     and the disconnected curtain remain visible over the picker. */
+  z-index: calc(var(--z-dialog) + 100);
 }
 .directory-picker-modal {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
@@ -9370,7 +9361,7 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
 
 /* Create/rename/delete dialogs stack over the shared picker at the same layer;
    DOM order puts the later action dialog above it while toasts stay visible. */
-.directory-picker-action-overlay { z-index: 10002; }
+.directory-picker-action-overlay { z-index: calc(var(--z-dialog) + 100); }
 .directory-picker-action-modal {
   background: #161b22; border: 1px solid #484f58; border-radius: 6px;
   box-shadow: 0 12px 36px rgba(0,0,0,.7); color: #c9d1d9;
@@ -10460,7 +10451,7 @@ label.cfg-label { cursor: pointer; }
 /* Sticky save bar — pinned so the Save/Reload buttons stay reachable while
    the (tall) settings list scrolls under it. Pin ABOVE the global fixed
    footer bar (var(--footer-h)), NOT at bottom:0: the footer bar is
-   position:fixed at bottom:0 with z-index 40, so a bottom:0 sticky bar has
+   position:fixed at bottom:0 on the chrome layer, so a bottom:0 sticky bar has
    its lower --footer-h occluded behind it — you'd see only the buttons'
    upper edge until you scrolled to the very end (where the sticky bar drops
    to its natural spot above body's --footer-h bottom-padding). Pinning at
@@ -10803,7 +10794,7 @@ body.slop .slop-machine[data-status="exited"] {
   /* Anchor on the centre so the emoji starts where the click landed
      instead of with its bounding box's top-left at (x,y). */
   transform: translate(-50%, -50%);
-  z-index: 9999;
+  z-index: var(--z-system);
   animation: slop-coin-arc 0.9s ease-out forwards;
   will-change: transform, opacity;
   user-select: none;
@@ -10819,7 +10810,7 @@ body.slop .slop-machine[data-status="exited"] {
   align-items: center;
   justify-content: center;
   pointer-events: none;
-  z-index: 10000;
+  z-index: calc(var(--z-system) + 1);
   font-size: 84px;
   font-weight: 900;
   letter-spacing: 2px;
@@ -11500,7 +11491,7 @@ body.slop .slop-machine.slop-transition-flash {
   font-size: 13px;
   line-height: 1;
   transform: translate(-50%, -50%);
-  z-index: 9998;
+  z-index: var(--z-system);
   opacity: 0.85;
   animation: slop-trail-fade 0.7s ease-out forwards;
   will-change: transform, opacity;
@@ -11638,7 +11629,7 @@ body.vegas:not(.slop) #vegas-leaderboard { display: none; }
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: 60;
+  z-index: var(--z-popover);
   flex-direction: column;
   gap: 8px;
   padding: 10px 12px;
@@ -11738,7 +11729,7 @@ body.slop:has(#tab-groups.active) #slop-lever {
   right: 10px;
   top: 50%;
   transform: translateY(-50%);
-  z-index: 9997;
+  z-index: var(--z-chrome);
   cursor: pointer;
   user-select: none;
 }
@@ -11814,7 +11805,7 @@ body.slop #slop-lever.slop-lever-pulled .slop-lever-track {
   height: 14px;
   border-radius: 2px;
   pointer-events: none;
-  z-index: 10001;
+  z-index: calc(var(--z-system) + 2);
   opacity: 0.95;
   animation: slop-confetti-fall 1.8s ease-in forwards;
   will-change: transform, opacity;
@@ -16672,7 +16663,7 @@ body.wizard #perm-edit-modal #perm-edit-submit:disabled::before { content: "✒ 
   pointer-events: none;
   line-height: 1;
   transform: translate(-50%, -50%);
-  z-index: 9999;
+  z-index: var(--z-system);
   user-select: none;
   will-change: transform, opacity;
 }
@@ -16691,7 +16682,7 @@ body.wizard #perm-edit-modal #perm-edit-submit:disabled::before { content: "✒ 
   pointer-events: none;
   font-size: 22px;
   line-height: 1;
-  z-index: 10001;
+  z-index: calc(var(--z-system) + 2);
   will-change: transform, opacity;
   animation: wizard-meteor-fall 1.8s ease-in forwards;
 }
@@ -16706,7 +16697,7 @@ body.wizard #perm-edit-modal #perm-edit-submit:disabled::before { content: "✒ 
   align-items: center;
   justify-content: center;
   pointer-events: none;
-  z-index: 10000;
+  z-index: calc(var(--z-system) + 1);
   font-size: 76px;
   font-weight: 900;
   letter-spacing: 2px;
@@ -18123,13 +18114,14 @@ body.wizard .cost-whatif-mark:focus-visible { color: #f0d066; }
    under the nav and, as the page scrolls the chrome away, it rises to fill the
    full height. The bottom is pinned to the fixed footer bar. overflow is
    visible so the edge toggle (negative-left, see below) isn't clipped; the
-   inner panel owns the scroll + chrome. z-index sits above the footer (40) but
-   below dropdowns (50+) and modals (100+) so a manager overlay covers it. */
+   inner panel owns the scroll + chrome. It is the side-panel layer (ui.css):
+   above the footer and overlay windows, below dialogs and popovers so a
+   manager overlay covers it. */
 #agent-dock {
   position: fixed;
   top: var(--dock-top); right: 0; bottom: var(--footer-h);
   width: var(--dock-w);
-  z-index: 45;
+  z-index: var(--z-panel);
 }
 body:not(.dock-open) #agent-dock { transform: translateX(100%); }
 /* The dock is offered ONLY on the Groups tab — its cards drag onto group rows,
@@ -18504,7 +18496,7 @@ body.wizard #agent-dock .dock-search-input:focus { border-color: #7c5cc4; }
 .dock-chips-full .dock-chip { white-space: normal; overflow-wrap: anywhere; }
 .dock-card-details {
   visibility: hidden; opacity: 0; pointer-events: none;
-  position: fixed; z-index: 55;
+  position: fixed; z-index: var(--z-popover);
   display: flex; flex-direction: column; gap: 6px;
   box-sizing: border-box; padding: 8px;
   overflow-y: auto; overscroll-behavior: contain;
@@ -18559,7 +18551,7 @@ body.wizard #agent-dock .dock-search-input:focus { border-color: #7c5cc4; }
    card (the cog otherwise fades to opacity:0 with the card-hover reveal). */
 .dock-card:has(.dock-card-menu.open) .dock-card-manage { opacity: 1; }
 .dock-card-menu {
-  display: none; position: absolute; top: 100%; right: 0; z-index: 60;
+  display: none; position: absolute; top: 100%; right: 0; z-index: var(--z-popover);
   margin-top: 4px; min-width: 132px; flex-direction: column; gap: 3px;
   padding: 5px; background: #0d1117; border: 1px solid #2a3340;
   border-radius: 6px; box-shadow: 0 8px 24px rgba(1, 4, 9, 0.85);
@@ -18790,7 +18782,7 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
   border-color: var(--pg-invalid); border-style: dashed;
 }
 .process-action-tooltip {
-  position: absolute; z-index: 35; box-sizing: border-box; width: max-content;
+  position: absolute; z-index: var(--z-popover); box-sizing: border-box; width: max-content;
   max-width: min(300px, calc(100% - 16px)); padding: 7px 9px;
   color: var(--pg-text); background: var(--pg-panel); border: 1px solid var(--pg-border);
   border-radius: 6px; box-shadow: 0 5px 18px rgba(0, 0, 0, .42);
@@ -19344,7 +19336,7 @@ body.wizard .process-scope-ports { background: #140f28; border-left-color: #4a3d
 .process-editor-canvas-host .process-graph:focus-visible { box-shadow: none; }
 .process-node-chooser {
   position: absolute;
-  z-index: 40;
+  z-index: var(--z-popover);
   width: min(320px, calc(100% - 16px));
   max-height: min(430px, calc(100% - 16px));
   display: flex;
@@ -19389,7 +19381,7 @@ body.wizard .process-scope-ports { background: #140f28; border-left-color: #4a3d
 }
 .process-editor-inline-input {
   position: absolute;
-  z-index: 30;
+  z-index: 9;
   transform: translate(-50%, -50%);
   min-width: 110px;
   background: #0d1117;
@@ -19406,7 +19398,7 @@ body.wizard .process-scope-ports { background: #140f28; border-left-color: #4a3d
    never obscured by the button that hides it. */
 .process-edge-pin {
   position: absolute;
-  z-index: 29;
+  z-index: 8;
   transform: translate(-50%, -50%);
   display: flex;
   align-items: center;
@@ -19631,7 +19623,7 @@ body.wizard .process-list .process-actions .process-delete-btn:focus-visible .tr
   position: absolute;
   left: 10px;
   bottom: 10px;
-  z-index: 20;
+  z-index: 7;
   max-width: min(430px, 75%);
   background: rgba(22, 27, 34, .94);
   border: 1px solid #30363d;
@@ -20614,7 +20606,7 @@ nav [data-tab="map"].node-chip { display: none; }
 .node-pick { flex: none; }
 /* Fixed, placed under its button by the island: the chip host clips. */
 .node-pop {
-  position: fixed; z-index: 60; width: 290px; max-height: 60vh; overflow-y: auto;
+  position: fixed; z-index: var(--z-popover); width: 290px; max-height: 60vh; overflow-y: auto;
   background: #161b22; border: 1px solid #30363d; border-radius: 8px; box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
   padding: 6px; font: 13px/1.3 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; text-align: left;
 }
@@ -20667,7 +20659,7 @@ html.scope-fused #messages-root { display: none !important; }
 .node-select-label { color: #7d8590; }
 .node-select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .node-select-button .mailbox-unread { margin-left: 0; }
-.node-select-menu { position: absolute; z-index: 60; top: calc(100% + 4px); left: 0; min-width: 220px; max-width: min(360px, 90vw); max-height: 50vh; overflow: auto; padding: 4px; border: 1px solid #30363d; border-radius: 8px; background: #161b22; box-shadow: 0 8px 24px #01040999; }
+.node-select-menu { position: absolute; z-index: var(--z-popover); top: calc(100% + 4px); left: 0; min-width: 220px; max-width: min(360px, 90vw); max-height: 50vh; overflow: auto; padding: 4px; border: 1px solid #30363d; border-radius: 8px; background: #161b22; box-shadow: 0 8px 24px #01040999; }
 .node-select-row { padding: 4px 6px; gap: 6px; }
 .node-select-row.sel { box-shadow: none; }
 .node-select-row input[type=radio] { margin: 0; accent-color: #1f6feb; cursor: pointer; }
@@ -20762,8 +20754,9 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
 .fleet-edge-link { position: absolute; transform: translate(-50%, -50%); z-index: 2; }
 .fleet-edge-link.open { z-index: 6; }
 /* The map's transform traps the popover, so the whole map rises while it's open:
-   above the resting chips (10), and below anything else the operator opens. */
-.fleet-map:has(.fleet-edge-link.open) { z-index: 11; }
+   a step above the resting chips, and below the overlay windows and anything
+   else the operator opens. */
+.fleet-map:has(.fleet-edge-link.open) { z-index: calc(var(--z-content) + 11); }
 .fleet-edge-label { display: inline-flex; gap: 10px; text-align: left; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 3px 9px; font: 11px/1.5 system-ui, sans-serif; color: #c9d1d9; white-space: nowrap; cursor: pointer; }
 .fleet-edge-label:hover, .fleet-edge-label[aria-expanded="true"] { border-color: #58a6ff; }
 .fleet-edge-label.asymmetric { border-color: #6e5a1f; }
@@ -20876,7 +20869,7 @@ body.wizard nav:has(#node-chips-root .node-chip) .nav-inner > [data-tab]:not(.no
    "peer view" pill opens what the peer shares. No colour means "remote" in
    general — only that node. */
 html.remote-node body::before {
-  content: ''; position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 10000;
+  content: ''; position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: var(--z-system);
   background: var(--remote-node-color, #8b949e); pointer-events: none;
 }
 .remote-node-host:empty { display: none; }
@@ -20891,7 +20884,7 @@ html.remote-node body::before {
 .remote-node-pill:not(.live) { border-style: dashed; color: #e3b341; }
 .remote-node-health { color: #e3b341; }
 .remote-node-pop {
-  position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; width: 340px;
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: var(--z-popover); width: 340px;
   background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 6px 0;
   box-shadow: 0 8px 24px rgba(0,0,0,.45); font-size: 12px; font-weight: normal; color: #d4d4d4; white-space: normal;
 }
@@ -20956,7 +20949,7 @@ tr.presence-flash > td { animation: presence-flash 1.6s ease-out; }
    overlay tracks the landed row / chip / group header, under the modals.
    A blip is a tint that fades while a ring eases outward; a move to another
    node first shows a marching "arriving" outline with a tag. */
-#drop-landing-layer { position: fixed; inset: 0; pointer-events: none; z-index: 95; overflow: hidden; }
+#drop-landing-layer { position: fixed; inset: 0; pointer-events: none; z-index: calc(var(--z-panel) + 50); overflow: hidden; }
 .drop-landing { position: absolute; left: 0; top: 0; border-radius: 6px; pointer-events: none; --dl: 88, 166, 255; }
 body.wizard .drop-landing { --dl: 188, 140, 255; }
 .drop-landing.failed { --dl: 248, 81, 73; }
@@ -21493,7 +21486,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .groups-focus-count { position: absolute; bottom: -6px; right: -6px; z-index: 1; min-width: 1.4em; padding: 0 3px; border-radius: 7px; background: #30363d; color: #fff; font-size: 9px; font-weight: 700; line-height: 1.2; text-align: center; box-shadow: 0 0 0 1.5px #0d1117; }
 .groups-focus-option.active .groups-focus-count { background: #1f6feb; color: #fff; }
 .groups-run-menu {
-  position: absolute; top: calc(100% + 7px); left: -2px; z-index: 60;
+  position: absolute; top: calc(100% + 7px); left: -2px; z-index: var(--z-popover);
   display: flex; flex-direction: column; gap: 2px; min-width: 170px; padding: 6px;
   background: #161b22; border: 1px solid #30363d; border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   /* Closing waits a moment after the pointer leaves, so a brief slip off the
@@ -21870,7 +21863,7 @@ body.wizard .gq-link { color: #d4af37; }
 .gm-handle:disabled { border-color: #30363d; color: #6e7681; cursor: default; }
 .gm-handle span { font-size: 10.5px; }
 .gm-ghost { position: absolute; transform: translate(-50%, -50%); padding: 4px 10px; border: 1px dashed #58a6ff; border-radius: 7px; font-size: 11.5px; color: #58a6ff; background: rgba(13, 17, 23, .85); pointer-events: none; z-index: 4; }
-.gm-picker, .gm-menu { position: fixed; z-index: 50; border: 1px solid #30363d; border-radius: 8px; background: #161b22; box-shadow: 0 8px 24px rgba(1, 4, 9, .5); }
+.gm-picker, .gm-menu { position: fixed; z-index: var(--z-popover); border: 1px solid #30363d; border-radius: 8px; background: #161b22; box-shadow: 0 8px 24px rgba(1, 4, 9, .5); }
 .gm-picker { display: flex; align-items: center; gap: 6px; padding: 6px 8px; }
 .gm-kinds { display: inline-flex; gap: 4px; }
 .gm-kind { font: inherit; font-size: 11.5px; white-space: nowrap; padding: 2px 8px; border: 1px solid #30363d; border-radius: 999px; background: #21262d; color: #e6edf3; cursor: pointer; }
@@ -22271,7 +22264,7 @@ body.wizard .pwf-import-dialog { background: #211832; border-color: #6d5695; col
 .dock-process-card.is-open { border-color: #58a6ff; box-shadow: 0 0 0 2px #58a6ff22; }
 .dock-process-drop { border: 1.5px dashed #2a3340; border-radius: 6px; color: #6e7681; font-size: 11px; text-align: center; padding: 7px; margin-top: 4px; }
 .dock-processes.dock-section .dock-process-drop.is-over, .dock-process-drop.is-over { border-color: #58a6ff; color: #79c0ff; background: #58a6ff10; }
-.dock-process-preview { position: fixed; z-index: 60; width: 460px; max-width: calc(100vw - 32px); box-sizing: border-box; background: #161b22; border: 1px solid #3d444d; border-radius: 8px; box-shadow: 0 12px 30px rgba(1, 4, 9, 0.85); padding: 10px 12px; font-size: 12px; color: #c9d1d9; }
+.dock-process-preview { position: fixed; z-index: var(--z-popover); width: 460px; max-width: calc(100vw - 32px); box-sizing: border-box; background: #161b22; border: 1px solid #3d444d; border-radius: 8px; box-shadow: 0 12px 30px rgba(1, 4, 9, 0.85); padding: 10px 12px; font-size: 12px; color: #c9d1d9; }
 .dpp-head { display: flex; align-items: center; gap: 8px; }
 .dpp-head b { font-size: 13.5px; color: #e6edf3; }
 .dpp-meta { color: #6e7681; font-size: 11px; }
@@ -22307,7 +22300,7 @@ body.wizard .dock-process-toggle button.on { background: #2d2145; }
 }
 .lock-why:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .lock-why:hover::after, .lock-why:focus::after {
-  content: attr(data-why); position: absolute; z-index: 60; top: calc(100% + 6px); left: -10px;
+  content: attr(data-why); position: absolute; z-index: var(--z-popover); top: calc(100% + 6px); left: -10px;
   width: max-content; max-width: 260px; white-space: normal; text-align: left;
   padding: 7px 9px; border-radius: 6px; border: 1px solid #1f6feb;
   background: #0b1520; color: #d4d4d4; font-size: 11.5px; font-weight: 400; line-height: 1.4;
@@ -22382,7 +22375,7 @@ body.wizard .dock-process-toggle button.on { background: #2d2145; }
 /* Make Steward: the roster in the Steward window's header, and the confirmation. */
 .steward-roster { position: relative; display: inline-flex; }
 .steward-roster-menu {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; width: 280px; max-height: 340px; overflow: auto;
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: var(--z-popover); width: 280px; max-height: 340px; overflow: auto;
   display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid #2a3340; border-radius: 8px;
   background: #161b22; color: #c9d1d9; font-size: 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, .45); cursor: default;
 }

@@ -1,7 +1,7 @@
 /* The dashboard companion (js/companion-island.js, tcl-6i0283): chips, the
    hover peek and the floating window hosting agents' native terminals. The
-   window sits above page content, the dock (45) and ordinary modal overlays
-   (100) but below the confirmation dialog (1000), which still covers it. */
+   window is an overlay window (ui.css layers): over page content, under the
+   chrome, panels, dialogs and popovers the operator opens. */
 
 :root {
   --cmp-bg: #0d1117; --cmp-bar: #161b22; --cmp-line: #30363d; --cmp-edge: #4b5a6e;
@@ -11,11 +11,11 @@
 }
 
 /* The resting chips float over page content (at most 6) and under everything
-   the operator opens: menus and popovers (20 and up), drawers and dialogs. They
-   stay clear of the dock instead of rising above it, because its menus live
+   the operator opens, overlay windows included: a step over content on the
+   ui.css scale. They stay clear of the dock instead of rising above it, because its menus live
    inside it. Asserted over the stylesheets in jstest/companion-layering.test.mjs. */
 .companion-chips {
-  position: fixed; z-index: 10;
+  position: fixed; z-index: calc(var(--z-content) + 10);
   display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap-reverse; justify-content: flex-end;
   max-width: calc(100vw - var(--chip-right) - 16px); pointer-events: none;
 }
@@ -25,11 +25,11 @@
    and the footer, and the insets match spotPlacement. */
 :root { --chip-right: 16px; }
 body.dock-open { --chip-right: calc(var(--dock-w) + 16px); }
-/* Too narrow to fit beside the dock: rest on it, tying its 45 and winning by
-   DOM order, still under an open PR popover (46). */
+/* Too narrow to fit beside the dock: rest on it, tying its layer and winning by
+   DOM order, still under an open PR popover. */
 @media (max-width: 620px) {
   body.dock-open { --chip-right: 16px; }
-  body.dock-open .companion-chips:not(.dragging) { z-index: 45; }
+  body.dock-open .companion-chips:not(.dragging) { z-index: var(--z-panel); }
 }
 /* On the elements, not :root: --chip-right changes on body. */
 .companion-chips, .companion-chip-slot {
@@ -59,23 +59,20 @@ body.dock-open { --chip-right: calc(var(--dock-w) + 16px); }
   width: max-content; justify-content: center; max-width: calc(var(--chip-room-w) / 2);
 }
 .companion-chip-slot:is(.companion-spot-top-q1, .companion-spot-top-q3, .companion-spot-bottom-q1, .companion-spot-bottom-q3) { max-width: calc(var(--chip-room-w) / 2); }
-/* In the footer, on its level (its 40), and over it while the PR popover lifts
-   it (to 952, over the overlay windows and dock): the popover opens above the bar, so they never meet. The row stays on one
-   line, with left set from the measured free room. */
+/* In the footer, a step over it, and over it still while the PR popover lifts
+   it to the popover layer: the popover opens above the bar, so they never
+   meet. The row stays on one line, with left set from the measured free room. */
 [class*="companion-spot-footer-"] { bottom: calc((var(--footer-h, 29px) - 23px) / 2); }
 .companion-chip-slot[class*="companion-spot-footer-"] { height: 23px; }
-.companion-chips.compact { z-index: 41; flex-wrap: nowrap; width: max-content; max-width: none; align-items: center; }
-/* Over overlay windows with the bar they rest on (dashboard.css). */
-body:has([data-overlay-window]):not(:has(.modal-overlay.show, .manage-overlay.show)) .companion-chips.compact:not(.dragging) { z-index: 951; }
-body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: 47; }
-body:has(.open-prs.is-open):not(:has(.modal-overlay.show, .manage-overlay.show)) .companion-chips.compact:not(.dragging) { z-index: 953; }
+.companion-chips.compact { z-index: calc(var(--z-chrome) + 1); flex-wrap: nowrap; width: max-content; max-width: none; align-items: center; }
+body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: calc(var(--z-popover) + 1); }
 .companion-chips.compact .companion-chip { height: 23px; box-sizing: border-box; padding: 0 9px 0 3px; gap: 5px; font-size: 11px; box-shadow: none; }
 .companion-chips.compact .companion-avatar { width: 17px; height: 17px; font-size: 9px; }
 /* A drag lifts the row and its outlines over everything it crosses. */
-.companion-chips.dragging { z-index: 961; }
+.companion-chips.dragging { z-index: var(--z-popover); }
 .companion-chips.dragging .companion-chip { cursor: grabbing; scale: 1.04; box-shadow: 0 12px 28px rgba(0, 0, 0, .55); }
 .companion-chip-slot {
-  position: fixed; z-index: 960; box-sizing: border-box; pointer-events: none; border-radius: 20px;
+  position: fixed; z-index: var(--z-popover); box-sizing: border-box; pointer-events: none; border-radius: 20px;
   border: 1.5px dashed color-mix(in srgb, var(--cmp-blue) 55%, transparent); background: rgba(88, 166, 255, .05);
   animation: companion-slot-in .16s ease-out; transition: background .12s, border-color .12s, box-shadow .12s, scale .18s cubic-bezier(.3,1.5,.5,1);
 }
@@ -110,7 +107,7 @@ body:has(.open-prs.is-open):not(:has(.modal-overlay.show, .manage-overlay.show))
 .companion-dot.offline { background: transparent; border: 1px solid var(--cmp-muted); }
 
 .companion-peek {
-  position: fixed; z-index: 951; width: min(420px, calc(100vw - 32px));
+  position: fixed; z-index: calc(var(--z-chrome) + 1); width: min(420px, calc(100vw - 32px));
   background: var(--cmp-bg); color: var(--cmp-text); border: 1px solid var(--cmp-edge); border-radius: 10px;
   box-shadow: 0 14px 34px rgba(0, 0, 0, .55); overflow: hidden; pointer-events: none;
   animation: companion-peek-in .12s ease-out;
@@ -125,11 +122,11 @@ body:has(.open-prs.is-open):not(:has(.modal-overlay.show, .manage-overlay.show))
 }
 .companion-peek-foot { padding: 5px 10px; border-top: 1px solid var(--cmp-line); color: var(--cmp-muted); font-size: 11px; }
 
-/* The companion stays above page chrome (tooltips, pills, plain modals), and
-   under toasts (960), confirmations (1000) and the access banner. A plain
-   modal's document-level keys (Esc, Tab) still reach it from the draft row. */
+/* The companion window lives in the window layer, so anything opened paints
+   over it. A modal's document-level keys (Esc, Tab) still reach it from the
+   draft row. */
 .companion-window {
-  position: fixed; z-index: var(--overlay-level, 930); display: flex; flex-direction: column;
+  position: fixed; z-index: var(--overlay-level, var(--z-window)); display: flex; flex-direction: column;
   background: var(--cmp-bg); color: var(--cmp-text);
   border: 1px solid var(--cmp-edge); border-radius: 10px; overflow: hidden;
   box-shadow: 0 18px 44px rgba(0, 0, 0, .6); transform-origin: 0 0;
@@ -165,7 +162,7 @@ body:has(.open-prs.is-open):not(:has(.modal-overlay.show, .manage-overlay.show))
 .companion-cog { position: relative; display: inline-flex; }
 .companion-controls .companion-state-sudo, .companion-controls .companion-state-roster { width: auto; padding: 0 5px; font-size: 11px; white-space: nowrap; color: #e3b341; }
 .companion-controls .companion-state-sudo:disabled { opacity: 1; cursor: default; color: #e3b341; }
-.companion-cog-menu { right: 0; width: 280px; overflow-y: auto; gap: 1px; z-index: 60; }
+.companion-cog-menu { right: 0; width: 280px; overflow-y: auto; gap: 1px; z-index: var(--z-popover); }
 .companion-cog-menu { cursor: default; }
 .companion-cog-head { padding: 6px 8px 2px; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--cmp-muted); }
 .companion-controls .companion-cog-menu button.companion-cog-item { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; width: 100%; height: auto; min-width: 0; padding: 5px 8px; border: 0; border-radius: 4px; background: none; color: var(--cmp-text); font-size: 12px; text-align: left; white-space: nowrap; }
@@ -306,15 +303,16 @@ body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-windo
 .companion-approval-deny:hover { border-color: var(--cmp-red); }
 
 /* Guidance cues (js/companion-guide.js): a ring around the control an agent
-   points at, and its note. Above the companion, below modal overlays. */
+   points at, and its note. Over whatever they point into: the
+   dock, a drawer, a dialog or a popover. Under confirmations. */
 .companion-guide-ring {
-  position: fixed; z-index: 952; pointer-events: none; border-radius: 8px;
+  position: fixed; z-index: calc(var(--z-popover) + 52); pointer-events: none; border-radius: 8px;
   border: 2px dashed #a371f7; box-shadow: 0 0 0 6px rgba(163, 113, 247, .18), 0 0 24px rgba(163, 113, 247, .35);
   animation: companion-guide-in .25s ease-out, companion-guide-pulse 1.6s ease-in-out .25s infinite;
 }
 @keyframes companion-guide-in { from { opacity: 0; transform: scale(1.15); } }
 @keyframes companion-guide-pulse { 50% { box-shadow: 0 0 0 10px rgba(163, 113, 247, .08), 0 0 24px rgba(163, 113, 247, .35); } }
-.companion-guide-anchor { position: fixed; z-index: 953; }
+.companion-guide-anchor { position: fixed; z-index: calc(var(--z-popover) + 53); }
 /* What an agent filled stays visible until the operator edits or undoes it. */
 [data-agent-filled="plain"] { outline: 2px solid #58a6ff; outline-offset: 1px; }
 [data-agent-filled="widens"] { outline: 2px solid #f0883e; outline-offset: 1px; }
@@ -324,11 +322,11 @@ body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-windo
 .form-fill-warn { margin-top: 6px; color: #f0883e; font-weight: 600; }
 
 .companion-capture-notice {
-  position: fixed; z-index: 954; top: 12px; left: 50%; transform: translateX(-50%);
+  position: fixed; z-index: var(--z-toast); top: 12px; left: 50%; transform: translateX(-50%);
   padding: 6px 14px; border-radius: 999px; pointer-events: none;
   background: #1f6feb; color: #fff; font-size: 13px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
 }
-.companion-marks { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 950; pointer-events: none; overflow: visible; }
+.companion-marks { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: calc(var(--z-popover) + 50); pointer-events: none; overflow: visible; }
 .companion-mark { fill: none; stroke: var(--mark, #a371f7); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
 .companion-mark.filled { fill: var(--mark, #a371f7); fill-opacity: .16; }
 .companion-mark.mark-red { --mark: #ff4d4f; }
@@ -339,7 +337,7 @@ body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-windo
 .companion-mark.blink { animation: companion-mark-blink 1s ease-in-out infinite; }
 @keyframes companion-mark-blink { 50% { opacity: .2; } }
 .companion-mark-tip {
-  position: fixed; z-index: 951; width: 300px; box-sizing: border-box; padding: 7px 9px; pointer-events: none;
+  position: fixed; z-index: calc(var(--z-popover) + 51); width: 300px; box-sizing: border-box; padding: 7px 9px; pointer-events: none;
   background: #1f1636; color: #e6edf3; border: 1px solid #a371f7; border-radius: 9px;
   box-shadow: 0 10px 26px rgba(0, 0, 0, .5); font-size: 12.5px; line-height: 1.4;
 }
@@ -354,11 +352,11 @@ body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-windo
 .companion-mark-tip form { display: flex; gap: 6px; align-items: flex-end; margin-top: 5px; }
 .companion-mark-tip textarea { flex: 1; min-width: 0; resize: vertical; background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; font: inherit; padding: 3px 5px; }
 .companion-marks-clear {
-  position: fixed; z-index: 951; left: 50%; bottom: calc(var(--footer-h, 29px) + 8px); transform: translateX(-50%);
+  position: fixed; z-index: calc(var(--z-popover) + 51); left: 50%; bottom: calc(var(--footer-h, 29px) + 8px); transform: translateX(-50%);
   padding: 4px 11px; pointer-events: auto; cursor: pointer;
   background: #1f1636; color: #e6edf3; border: 1px solid #a371f7; border-radius: 999px; font-size: 12px;
 }
-.companion-guide-float { position: fixed; z-index: 953; right: 16px; bottom: calc(var(--footer-h, 29px) + 58px); }
+.companion-guide-float { position: fixed; z-index: calc(var(--z-popover) + 53); right: 16px; bottom: calc(var(--footer-h, 29px) + 58px); }
 .companion-guide-note {
   display: flex; align-items: flex-start; gap: 8px; max-width: 330px; padding: 8px 10px;
   background: #1f1636; color: #e6edf3; border: 1px solid #a371f7; border-radius: 9px;
@@ -385,7 +383,7 @@ body.wizard .companion-chip.companion-chip-steward, body.wizard .companion-windo
 body.companion-annotating .companion-window,
 body.companion-annotating .companion-resize-frame,
 body.companion-annotating .companion-chips { visibility: hidden; }
-.annotate-root { position: fixed; inset: 0; z-index: 955; }
+.annotate-root { position: fixed; inset: 0; z-index: var(--z-confirm); }
 .annotate-canvas {
   position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none;
   background: rgba(13, 17, 23, .08); outline: 2px dashed var(--cmp-amber); outline-offset: -3px;
@@ -449,7 +447,7 @@ body:not(.solo) .mux-pane .companion-input { right: 120px; }
 }
 /* The wake listener's indicator: on whenever it can hear the room. */
 .voice-wake {
-  position: fixed; left: 200px; top: 12px; z-index: 950; display: flex; align-items: center; gap: 8px; max-width: min(calc(100vw - 216px), 520px); padding: 5px 8px;
+  position: fixed; left: 200px; top: 12px; z-index: var(--z-chrome); display: flex; align-items: center; gap: 8px; max-width: min(calc(100vw - 216px), 520px); padding: 5px 8px;
   border: 1px solid var(--cmp-line); border-radius: 8px; background: var(--cmp-bar); color: var(--cmp-text); font-size: 12px; box-shadow: 0 4px 12px rgba(0, 0, 0, .45);
 }
 body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; }
@@ -467,7 +465,7 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
 
 /* Agent marks on the operator's view (tcl-0waby5): hand-drawn circles,
    underlines and arrows a cue draws over the page. */
-.companion-guide-marks { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 952; pointer-events: none; overflow: visible; }
+.companion-guide-marks { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: calc(var(--z-popover) + 52); pointer-events: none; overflow: visible; }
 .companion-guide-marks path {
   fill: none; stroke: #a371f7; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;
   filter: drop-shadow(0 0 3px rgba(163, 113, 247, .55));
@@ -476,21 +474,19 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
 @keyframes companion-mark-draw { to { stroke-dashoffset: 0; } }
 @media (prefers-reduced-motion: reduce) { .companion-guide-marks path { animation: none; stroke-dashoffset: 0; } }
 
-/* A decision an agent put to the operator (notify-human --option). */
+/* A decision an agent put to the operator (notify-human --option). Chrome, a
+   layer over the chips: an open window or board never hides its question, and
+   whatever else the operator opens covers it. */
 .knowledge-source-card {
-  position: fixed; left: 16px; bottom: calc(var(--footer-h, 29px) + 12px); z-index: 10;
+  position: fixed; left: 16px; bottom: calc(var(--footer-h, 29px) + 12px); z-index: var(--z-chrome);
   display: flex; flex-direction: column; gap: 8px; box-sizing: border-box;
   width: 380px; max-width: calc(100vw - 32px); padding: 12px 14px; border-radius: 8px;
   background: var(--cmp-bar); color: var(--cmp-text); border: 1px solid var(--cmp-blue);
   box-shadow: 0 6px 18px rgba(0, 0, 0, .45); font-size: 12px; line-height: 1.45;
 }
-/* Rests on the chips' layer, under whatever the operator opens. An open window
-   or board must not hide its question, so it rises over them, unless a dialog
-   is up. */
-body:has(.companion-window:not(.companion-window-warm), .board-overlay):not(:has(.modal-overlay.show, .manage-overlay.show)) .knowledge-source-card { z-index: 952; }
 /* Too narrow to fit beside the dock: rest on it, as the chips do. */
 @media (max-width: 660px) {
-  body.dock-open .knowledge-source-card { z-index: 45; }
+  body.dock-open .knowledge-source-card { z-index: var(--z-panel); }
 }
 .knowledge-source-card.failed { border-color: var(--cmp-red); }
 .knowledge-source-card p { margin: 0; overflow-wrap: anywhere; }
@@ -552,7 +548,7 @@ body:has(.companion-window:not(.companion-window-warm), .board-overlay):not(:has
 
 /* The quick permissions panel takes the notification drawer's shape, above the
    companion window it is usually raised from. */
-.access-panel { z-index: 956; outline: none; }
+.access-panel { z-index: calc(var(--z-panel) + 1); outline: none; }
 .access-panel-header { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid #30363d; }
 .access-panel-count { color: var(--cmp-amber-text, #e6c07b); font-variant-numeric: tabular-nums; }
 .access-panel-header button { margin-left: auto; background: none; border: 0; color: inherit; font-size: 18px; line-height: 1; cursor: pointer; }
@@ -561,13 +557,6 @@ body:has(.companion-window:not(.companion-window-warm), .board-overlay):not(:has
 .access-panel-more { background: none; border: 0; padding: 0; color: #58a6ff; cursor: pointer; font-size: 12.5px; text-align: left; }
 .companion-approval-from { color: #8b949e; font-size: 12px; }
 .companion-access { background: none; border: 1px solid #d29922; border-radius: 6px; color: #e6c07b; cursor: pointer; font-size: 12px; padding: 1px 7px; }
-
-/* The dialogs the window opens must not land behind it, and neither must the
-   small action dialogs a row opens: a window would cover the very options they
-   ask about. The command palette comes up over everything too. Other plain
-   modals stay under it, so an agent can be used beside the editor it is
-   helping with. */
-body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.show, #perm-edit-modal.show, #steward-handover-modal.show, #term-chooser-modal.show, #term-modal.show, #sandbox-impl-modal.show, #clone-modal.show, #export-agent-modal.show, #reincarnate-agent-modal.show, #task-link-modal.show, #command-palette-modal.show) :is(.companion-window, .companion-resize-frame) { z-index: 90; }
 
 /* The title bar sizes its buttons as icons; the shut-down confirmation hanging
    off it holds ordinary ones. */
@@ -592,7 +581,7 @@ body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.s
 .overlay-tab-drop-end { flex: none; width: 2px; height: 22px; background: var(--cmp-blue); border-radius: 1px; }
 /* Snap Assist: the cell left empty, with a card for each window that could fill it. */
 .snap-assist {
-  position: fixed; z-index: 948; box-sizing: border-box; padding: 14px; overflow: auto;
+  position: fixed; z-index: calc(var(--z-window) + 89); box-sizing: border-box; padding: 14px; overflow: auto;
   display: flex; flex-wrap: wrap; align-content: flex-start; gap: 10px;
   border: 1.5px dashed color-mix(in srgb, var(--cmp-blue) 55%, transparent); border-radius: 10px;
   background: color-mix(in srgb, var(--cmp-bg) 82%, transparent); backdrop-filter: blur(6px);
@@ -608,6 +597,6 @@ body:has(#operator-message-modal.show, #launch-target.show, #clone-agent-modal.s
 .snap-assist-more, .snap-assist-note { font-size: 11px; color: var(--cmp-muted); }
 @media (max-width: 640px) { .snap-assist-card { width: 100%; min-height: 0; } }
 .overlay-tab-ghost {
-  position: fixed; z-index: 1000; pointer-events: none; padding: 4px 8px; border-radius: 6px; font-size: 12px; white-space: nowrap;
+  position: fixed; z-index: var(--z-popover); pointer-events: none; padding: 4px 8px; border-radius: 6px; font-size: 12px; white-space: nowrap;
   background: var(--cmp-bg); color: var(--cmp-text); border: 1px solid var(--cmp-blue); box-shadow: 0 8px 20px rgba(0, 0, 0, .6);
 }
