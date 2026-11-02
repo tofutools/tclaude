@@ -199,6 +199,24 @@ Dependency upgrades are deliberately rare and reviewed as vendored-code
 changes. Update the exact versions, hashes, source maps, and license metadata
 in that directory's `README.md` together, then run the ordinary Go test suite.
 
+### Standard controls
+
+Buttons, selects, text fields, checkboxes and menus use the `ui-*` classes in
+`pkg/claude/agentd/dashboard/ui.css`: `ui-btn` plus at most one of
+`ui-btn-primary` (the main action), `-success` (approve, run, start),
+`-danger`, `-ghost` or `-link`, with `ui-sm` for row and toolbar sizes;
+`ui-input`, `ui-select`, `ui-textarea`; `ui-check` and `ui-switch`; and
+`ui-menu` with `ui-menu-item`, `ui-menu-sep` and `ui-menu-heading`. State goes in
+attributes (`disabled`, `aria-pressed`, `aria-busy`, `aria-invalid`), and
+colours are `--ui-*` variables that the wizard and slop skins override, so a
+new control needs no CSS of its own.
+
+`jstest/ui-controls.test.mjs` fails when a file gains a `<button>` or `<select>`
+without a `ui-*` class. Mark a deliberate one-off, such as an overlay window
+control, with `data-ui-exempt`. Older markup is held by a per-file baseline;
+after moving an area onto the standard classes, lower it with
+`UPDATE_UI_CONTROLS_BASELINE=1 node --test jstest/ui-controls.test.mjs`.
+
 ### Component tests
 
 Component tests live in `pkg/claude/agentd/jstest/*.test.mjs` and use Node's
