@@ -38,7 +38,7 @@ test('a window raised over a split sits above the split and its lines', async (t
   await harness.act(() => overlay.raiseOverlayWindow('a'));
   assert.equal(level('a'), level('b') + 1, 'a split moves as one, its front window one above the rest');
   assert.equal(lineLevel(), level('a') + 1, 'its lines sit just above it');
-  assert.ok(lineLevel() < 950, 'under agent marks');
+  assert.ok(lineLevel() < 1090, 'under the snap guide, in the window layer');
   await harness.act(() => overlay.raiseOverlayWindow('c'));
   assert.ok(level('c') > lineLevel(), 'so a window raised over it covers them');
   await harness.act(() => overlay.raiseOverlayWindow('b'));
@@ -58,7 +58,7 @@ test('every window has its own level from the start, so a reload keeps lines und
   const { overlay, level, lineLevel } = await setup(t, PAIR);
   assert.ok(level('c') > lineLevel(), 'c mounted last, over the split');
   assert.equal(overlay.frontOverlayWindow.value, 'c');
-  assert.ok(level('c') < 950, 'under agent marks');
+  assert.ok(level('c') < 1090, 'under the snap guide, in the window layer');
   assert.ok(level('a') >= overlay.OVERLAY_BOTTOM_LEVEL);
 });
 
