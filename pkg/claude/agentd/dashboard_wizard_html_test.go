@@ -106,19 +106,19 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	// wearing the app-default grey. Pin the field + a couple of the satellite
 	// controls; the general rules are the fallback beneath the id-scoped Config
 	// and profile-modal bars, so a dropped line silently un-themes ~6 tabs.
-	must("body.wizard .filter-bar input {", "the general filter-bar field is themed in wizard mode")
+	must("body.wizard .filter-bar input:where(:not(.ui-input)) {", "the general filter-bar field is themed in wizard mode")
 	must("body.wizard .filter-bar label.filter-toggle select {", "filter-bar dropdowns (audit/logs) are themed")
-	must("body.wizard .filter-bar button.primary {", "unscoped filter-bar primary levers are gilded")
+	must("body.wizard .filter-bar button.primary:where(:not(.ui-btn)) {", "unscoped filter-bar primary levers are gilded")
 	// The Treasury's bespoke span selector opts out of the generic tool re-skin
 	// so the Costs re-skin can gild it itself — pin the exclusion.
-	must("body.wizard .filter-bar:not(#costs-spans) button.tool {", "the costs span control opts out of the generic tool re-skin")
+	must("body.wizard .filter-bar:not(#costs-spans) button.tool:where(:not(.ui-btn)) {", "the costs span control opts out of the generic tool re-skin")
 
 	// The Wards (Access) tab's inset sub-nav (Permissions / Slug registry /
 	// Sudo) is themed too — frame + active chamber.
 	must("body.wizard .access-subnav {", "the access sub-nav frame is themed in wizard mode")
 	must("body.wizard .access-subtab.active {", "the active access sub-tab is gilt-lit in wizard mode")
 	must("body.wizard #access-slugs .filter-bar {", "the slug-registry filter gets a scoped wizard treatment")
-	must("body.wizard #access-slugs .filter-bar input:focus {", "the slug-registry scrying field has an arcane focus state")
+	must("body.wizard #access-slugs .filter-bar input:where(:not(.ui-input)):focus {", "the slug-registry scrying field has an arcane focus state")
 }
 
 // TestDashboardHTML_WizardTabNames pins the arcane nav-tab names — every tab
@@ -620,7 +620,7 @@ func TestDashboardHTML_WizardProfilesManage(t *testing.T) {
 
 	// The overlay surface + the gilded "+ new profile" action, both scoped.
 	must("body.wizard #profiles-manage-modal .manage-modal", "the profiles overlay surface is re-skinned")
-	must("body.wizard #profiles-manage-modal #profile-create-open.primary", "the + new profile button gets the gilded-arcane treatment")
+	must("body.wizard #profiles-manage-modal #profile-create-open.ui-btn-primary", "the + new profile button gets the gilded-arcane treatment")
 	must("body.wizard #profiles-manage-modal .template-card", "the profile cards are re-skinned")
 	must("body.wizard :is(#profile-import-modal, #sandbox-profile-import-modal) .profile-transfer-preview-button", "the profile import Preview action has a scoped wizard skin")
 }
@@ -713,7 +713,7 @@ func TestDashboardHTML_WizardSandboxProfiles(t *testing.T) {
 
 	// The dialog surfaces are re-skinned arcane, each scoped to its own id.
 	must("body.wizard #sandbox-profiles-manage-modal .manage-modal", "the ward overlay surface is re-skinned")
-	must("body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.primary", "the + new ward button gets the gilded-arcane treatment")
+	must("body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.ui-btn-primary", "the + new ward button gets the gilded-arcane treatment")
 	must("body.wizard #sandbox-profile-editor-modal .cron-create-modal", "the ward editor surface is re-skinned")
 	must(`content: "🛡 Inscribe ward!"`, "the ward editor submit reads 'Inscribe ward!' in wizard mode")
 	must("body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal", "the ward export/import surfaces are re-skinned")
@@ -1044,8 +1044,8 @@ func TestDashboardHTML_WizardPartyButton(t *testing.T) {
 	must("body.wizard .group-create-label-wizard", "wizard shows the party label")
 
 	// The button itself is re-skinned arcane, scoped to its id so the base
-	// .filter-bar button.primary rule still styles it in the default theme.
-	must("body.wizard #group-create-open.primary", "the party button is re-skinned in wizard mode")
+	// standard .ui-btn-primary still styles it in the default theme.
+	must("body.wizard #group-create-open.ui-btn-primary", "the party button is re-skinned in wizard mode")
 
 	// The same span pair swaps the empty-state hint that names the button, so
 	// "No groups yet…" reads "⚔ Form a party" in wizard mode too. groups-list.js
@@ -1134,8 +1134,8 @@ func TestDashboardHTML_WizardCronDialog(t *testing.T) {
 	must(".cron-open-label-wizard { display: none; }", "the default theme hides the wizard label")
 	must("body.wizard .cron-open-label-regular", "wizard hides the default label")
 	must("body.wizard .cron-open-label-wizard", "wizard shows the ritual label")
-	must("body.wizard #cron-create-open.primary", "the open button is re-skinned in wizard mode")
-	must("body.wizard #cron-create-open.primary:hover", "the open button has a wizard hover re-skin")
+	must("body.wizard #cron-create-open.ui-btn-primary", "the open button is re-skinned in wizard mode")
+	must("body.wizard #cron-create-open.ui-btn-primary:hover", "the open button has a wizard hover re-skin")
 
 	// The same span pair swaps the Jobs island's "No jobs yet…" hint. The label
 	// spans above already pin both variants; this pins their empty-state context.
@@ -1717,7 +1717,7 @@ func TestDashboardHTML_WizardTemplatesManage(t *testing.T) {
 	// The overlay surface + the gilded "+ chalk a new circle" primary +
 	// the circle cards, all scoped to the overlay.
 	must("body.wizard #templates-manage-modal .manage-modal", "the templates overlay surface is re-skinned")
-	must("body.wizard #templates-manage-modal #template-create-open.primary", "the + new template button gets the gilded-arcane treatment")
+	must("body.wizard #templates-manage-modal #template-create-open.ui-btn-primary", "the + new template button gets the gilded-arcane treatment")
 	must("body.wizard #templates-manage-modal .template-card", "the template cards are re-skinned")
 	must(`<${Words} plain="+ new template" wizard="+ chalk a new circle"/>`, "the create button ships both voices")
 	must(`<${Words} plain="⤓ from a group" wizard="⤓ trace a party"/>`, "the from-a-group button ships both voices")
@@ -2011,7 +2011,7 @@ func TestDashboardHTML_WizardTemplateNativeControlSweep(t *testing.T) {
 
 	// Roles library overlay + role editor (two whole modals, never themed).
 	must("body.wizard #roles-manage-modal .manage-modal", "the roles-library overlay surface is re-skinned")
-	must("body.wizard #roles-manage-modal #role-create-open.primary", "the + new class primary gets the gilded-arcane chrome")
+	must("body.wizard #roles-manage-modal #role-create-open.ui-btn-primary", "the + new class primary gets the gilded-arcane chrome")
 	must("body.wizard #role-editor-modal .cron-create-modal", "the role-editor surface is re-skinned")
 	must("body.wizard #role-editor-modal button:where(:not(.ui-btn)):not(#role-editor-submit)", "the shared permission editor entry gets the secondary wizard chrome")
 	must("body.wizard #role-editor-modal #role-editor-submit", "the Save-role button gets the gilded lever chrome")

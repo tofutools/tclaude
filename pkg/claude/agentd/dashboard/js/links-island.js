@@ -1,7 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Input } from './ui-components.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -50,7 +50,7 @@ export function LinksControls({ state, actions }) {
     ? `${current.filtered} / ${current.total}`
     : `${current.total} channel${current.total === 1 ? '' : 's'}`;
   return html`
-    <input ref=${inputRef} id="filter-links" type="text"
+    <${Input} domRef=${inputRef} id="filter-links"
       aria-label="Filter inter-group links" placeholder="Filter (from / to / mode)"
       autocomplete="off" spellcheck=${false} value=${current.query}
       onInput=${(event) => state.setQuery(event.currentTarget.value)} />
@@ -64,11 +64,11 @@ export function LinksControls({ state, actions }) {
         inputRef.current?.focus();
       }}>×</button>
     <span class="spacer"></span>
-    <button id="link-new-open" class="primary"
+    <${Button} id="link-new-open" variant="primary"
       onClick=${() => actions.openCreate()}
       title="Add a new inter-group communication link">
       <${Words} plain="+ new link" wizard="+ weave channel" />
-    </button>
+    <//>
   `;
 }
 

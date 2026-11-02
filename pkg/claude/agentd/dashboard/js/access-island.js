@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { ACCESS_SUBTABS, SUDO_COLUMNS, fmtRemaining } from './access-model.js';
 import { idTooltip, relTime, shortAgentId } from './helpers.js';
+import { Button, Input } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -49,7 +50,7 @@ function SlugsView({ state, current }) {
   }
   return html`<${Fragment}>
     <div class="filter-bar">
-      <input ref=${filterRef} id="filter-slugs" type="text" aria-label="Filter permission slugs by name"
+      <${Input} domRef=${filterRef} id="filter-slugs" aria-label="Filter permission slugs by name"
         placeholder="Filter by slug name" autocomplete="off" spellcheck=${false}
         value=${current.slugQuery} onInput=${(event) => {
           const normalized = state.setSlugQuery(event.currentTarget.value);
@@ -105,7 +106,7 @@ function SudoView({ state, actions, current }) {
   const filterRef = useRef(null);
   return html`<${Fragment}>
     <div class="filter-bar">
-      <input ref=${filterRef} id="filter-sudo" type="text" aria-label="Filter active sudo grants"
+      <${Input} domRef=${filterRef} id="filter-sudo" aria-label="Filter active sudo grants"
         placeholder="Filter active sudo grants (matches conv title / id / slug / reason)" autocomplete="off" spellcheck=${false}
         value=${current.sudoQuery} onInput=${(event) => state.setSudoQuery(event.currentTarget.value)}
         onKeyDown=${(event) => { if (event.key === 'Escape') state.setSudoQuery(''); }} />
@@ -115,8 +116,8 @@ function SudoView({ state, actions, current }) {
       <button class="clear-filter" id="filter-sudo-clear" title="Clear filter" aria-label="Clear sudo filter"
         onClick=${() => { state.setSudoQuery(''); filterRef.current?.focus(); }}>×</button>
       <span class="spacer"></span>
-      <button id="sudo-grant-open" class="primary" title="Proactively grant a time-bounded sudo elevation to an agent"
-        onClick=${actions.openGrant}>+ Grant sudo</button>
+      <${Button} id="sudo-grant-open" variant="primary" title="Proactively grant a time-bounded sudo elevation to an agent"
+        onClick=${actions.openGrant}>+ Grant sudo<//>
     </div>
     ${current.mutation.error && html`<div role="alert" class="island-error access-mutation-error">${current.mutation.error}</div>`}
     <div id="sudo-list">

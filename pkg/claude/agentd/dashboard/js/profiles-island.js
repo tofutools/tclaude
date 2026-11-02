@@ -197,9 +197,9 @@ export function ProfilesApp({
         <strong>Daemon profiling</strong>
         <span class="muted">CPU/heap/goroutine profiles of this agentd process, viewable in pprof's web UI.</span>
         <span class="spacer"></span>
-        <button class="tool" id="profile-start" type="button" disabled=${running}
+        <${Button} id="profile-start" disabled=${running}
           title=${running ? 'A capture is already running' : 'Capture a CPU profile and friends of this daemon'}
-          onClick=${() => state.openModal()}>${running ? '⏱ profiling…' : '⏱ Profile daemon…'}</button>
+          onClick=${() => state.openModal()}>${running ? '⏱ profiling…' : '⏱ Profile daemon…'}<//>
       </div>
       ${current.notice && html`<div class="muted profile-notice" aria-live="polite">${current.notice}</div>`}
       ${current.loaded && current.request.phase === 'error' && html`<div class="island-error" role="alert">Refresh failed: ${current.request.error}</div>`}

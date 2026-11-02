@@ -122,10 +122,10 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
       <p class="modal-hint">Reusable text shared across all groups. Add prompts to a spawn, profile or group so their text opens the agent's task brief, or insert one into a message and edit before sending.</p>
       <div class="filter-bar saved-prompts-transfer">
         <span class="spacer"></span>
-        <button type="button" class="tool" id="saved-prompts-export" disabled=${busy || !prompts.length}
-          title="Download every saved prompt as a JSON file" onClick=${() => downloadBlob(savedPromptsExportBlob(prompts), 'tclaude-saved-prompts.json')}>⇪ export</button>
-        <button type="button" class="tool" id="saved-prompts-import-open" disabled=${busy}
-          title="Load saved prompts from an exported JSON file; you confirm before anything is written" onClick=${() => fileRef.current?.click()}>⤒ import</button>
+        <${Button} id="saved-prompts-export" disabled=${busy || !prompts.length}
+          title="Download every saved prompt as a JSON file" onClick=${() => downloadBlob(savedPromptsExportBlob(prompts), 'tclaude-saved-prompts.json')}>⇪ export<//>
+        <${Button} id="saved-prompts-import-open" disabled=${busy}
+          title="Load saved prompts from an exported JSON file; you confirm before anything is written" onClick=${() => fileRef.current?.click()}>⤒ import<//>
         <input ref=${fileRef} type="file" accept="application/json,.json" hidden
           onChange=${(event) => { void readImport(event.currentTarget.files?.[0]); event.currentTarget.value = ''; }}/>
       </div>

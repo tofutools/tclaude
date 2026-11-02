@@ -1,7 +1,7 @@
 import { Fragment, h } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Input } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { relTime, shortAgentId } from './helpers.js';
 import { SpawnActionFields, TemplatePlaceholderChips } from './spawn-action-fields.js';
@@ -277,12 +277,12 @@ export function TriggerWorkspace({ state, actions }) {
   }, [rules, query]);
   return html`<div class="triggers-workspace">
     <div class="filter-bar trigger-filter-bar">
-      <input type="search" aria-label="Filter triggers" placeholder="Filter triggers (name + source + scope + action)"
+      <${Input} type="search" aria-label="Filter triggers" placeholder="Filter triggers (name + source + scope + action)"
         value=${query} onInput=${(event) => setQuery(event.currentTarget.value)} />
       <span class="filter-count">${shown.length}${query ? ` / ${rules.length}` : ` trigger${rules.length === 1 ? '' : 's'}`}</span>
       <button class="clear-filter" title="Clear trigger filter" onClick=${() => setQuery('')}>×</button>
       <span class="spacer"></span>
-      <button id="trigger-create-open" class="primary" onClick=${() => state.openTriggerCreate()}>+ new trigger</button>
+      <${Button} id="trigger-create-open" variant="primary" onClick=${() => state.openTriggerCreate()}>+ new trigger<//>
     </div>
     ${error && html`<div class="jobs-error" role="alert">${error}<button onClick=${() => void load()}>retry</button></div>`}
     ${loading ? html`<div class="empty">Loading triggers…</div>` : shown.length === 0

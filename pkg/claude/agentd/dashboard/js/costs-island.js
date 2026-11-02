@@ -13,6 +13,7 @@ import { idTooltip, isModifiedClick, shortAgentId } from './helpers.js';
 import { fromPath } from './nav-history-core.js';
 import { shellToast } from './shell-state.js';
 import { watchPopover } from './hover-popover.js';
+import { Button, Input } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -117,18 +118,18 @@ function Controls({ state, actions, current }) {
   // past the window edge, so it gets a row of its own regardless of length.
   return html`<div class="costs-header">
     <div class="filter-bar" id="costs-spans">
-      ${COST_SPANS.map((span) => html`<button class=${`tool${current.span === span.key ? ' active' : ''}`}
+      ${COST_SPANS.map((span) => html`<${Button} class=${`tool${current.span === span.key ? ' active' : ''}`}
         data-span=${span.key} title=${span.key === 'month' ? 'Calendar month to date — the only span with a projection' : `Trailing ${span.days} days`}
-        onClick=${() => loadAfter(() => state.setSpan(span.key))}>${span.label}</button>`)}
+        onClick=${() => loadAfter(() => state.setSpan(span.key))}>${span.label}<//>`)}
       <span id="costs-month-nav" title="Browse a month — click the month, then ‹ / › to step">
-        <button class="tool costs-month-step" id="costs-month-prev" title="Older month" aria-label="Older month"
+        <${Button} class="tool costs-month-step" id="costs-month-prev" title="Older month" aria-label="Older month"
           disabled=${current.monthOffset >= current.oldestMonthOffset}
-          onClick=${() => loadAfter(() => state.activateMonth(monthView ? current.monthOffset + 1 : current.monthOffset))}>‹</button>
-        <button class=${`tool${monthView ? ' active' : ''}`} id="costs-month-cur" data-span="calmonth" title="View this month"
-          onClick=${() => loadAfter(() => state.activateMonth(current.monthOffset))}>${current.monthLabel}</button>
-        <button class="tool costs-month-step" id="costs-month-next" title="Newer month" aria-label="Newer month"
+          onClick=${() => loadAfter(() => state.activateMonth(monthView ? current.monthOffset + 1 : current.monthOffset))}>‹<//>
+        <${Button} class=${`tool${monthView ? ' active' : ''}`} id="costs-month-cur" data-span="calmonth" title="View this month"
+          onClick=${() => loadAfter(() => state.activateMonth(current.monthOffset))}>${current.monthLabel}<//>
+        <${Button} class="tool costs-month-step" id="costs-month-next" title="Newer month" aria-label="Newer month"
           disabled=${current.monthOffset <= 0}
-          onClick=${() => loadAfter(() => state.activateMonth(monthView ? current.monthOffset - 1 : current.monthOffset))}>›</button>
+          onClick=${() => loadAfter(() => state.activateMonth(monthView ? current.monthOffset - 1 : current.monthOffset))}>›<//>
       </span>
       <label class=${`filter-toggle${current.span !== 'month' ? ' disabled' : ''}`} id="costs-fill-weekdays-label"
         title="Fill the empty weekdays before your first run this month with the per-weekday average.">
@@ -540,7 +541,7 @@ function CostsTable({ state, current, ignore }) {
   }
   return html`<${Fragment}>
     <div class="filter-bar" id="costs-table-filter">
-      <input ref=${inputRef} id="filter-costs" type="text" aria-label="Filter cost agents"
+      <${Input} domRef=${inputRef} id="filter-costs" aria-label="Filter cost agents"
         placeholder="Filter agents (name / id / harness / model)" autocomplete="off" spellcheck=${false}
         value=${current.query} onInput=${(event) => state.setQuery(event.currentTarget.value)}
         onKeyDown=${(event) => { if (event.key === 'Escape') state.setQuery(''); }} />
