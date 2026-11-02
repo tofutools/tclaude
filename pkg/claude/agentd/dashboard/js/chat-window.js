@@ -6,10 +6,10 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { actionsFor, approvalsFor, companionAgents, companionStatus, companionStatusLabel, decisionsFor } from './companion-model.js';
+import { actionsFor, approvalsFor, companionAgents, decisionsFor } from './companion-model.js';
 import { ApprovalCard } from './companion-approval.js';
 import { AgentCog } from './companion-cog.js';
-import { closeOverlayWindow, minimizeOverlayWindow } from './overlay-instances.js';
+import { closeOverlayTab, minimizeOverlayWindow, overlayCloseHeard } from './overlay-instances.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { OverlayWindow } from './overlay-window.js';
 import { PaneDictation } from './terminal-dictation.js';
@@ -20,7 +20,7 @@ import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom
 const html = htm.bind(h);
 
 export function ChatWindow({
-  instance, overlay, focusRef, snapshot, prefs, win, fetchImpl, notify, widgetFactory, loadRuntime, closeTerminalPanes, onBackToTab, onSeparateWindow = null, onStewardDown, stewardRoster = [], openPermissions = null, openSudo = null, openStewardHandover = null, showAgent = null, Terminal, DecisionCard, StatusDot,
+  instance, overlay, focusRef, strip, close, snapshot, prefs, win, fetchImpl, notify, widgetFactory, loadRuntime, closeTerminalPanes, onBackToTab, onSeparateWindow = null, onStewardDown, stewardRoster = [], openPermissions = null, openSudo = null, openStewardHandover = null, showAgent = null, Terminal, DecisionCard, StatusDot,
 }) {
   const agentId = instance.agent;
   const agent = companionAgents(snapshot.value).get(agentId) || null;
@@ -42,32 +42,31 @@ export function ChatWindow({
   const showRoster = !!(openStewardHandover && agent && (agent.steward || stewardRoster.some((entry) => entry.agent_id === agentId)));
   // A running Steward isn't closed in passing: its ✕ asks what ⏻ asks.
   const closeShutsDown = !!(agent?.steward && agent.online);
-  const closeTitle = closeShutsDown ? 'Close: shut it down, after asking' : 'Close (the agent keeps running)';
   const askShutDown = useRef(null);
-  const close = () => {
-    if (closeShutsDown) askShutDown.current?.();
-    else closeOverlayWindow(instance.id);
-  };
+  useEffect(() => {
+    if (!instance.closeAsked) return;
+    overlayCloseHeard(instance.id);
+    askShutDown.current?.();
+  }, [instance.closeAsked]);
   const stewardDown = (down) => {
-    closeOverlayWindow(instance.id);
+    closeOverlayTab(instance.id);
     onStewardDown?.(down);
   };
-  const label = agent ? companionStatusLabel(companionStatus(agent)) : 'not on this node any more';
   const approvals = approvalsFor(snapshot.value, agent);
   const decisions = decisionsFor(snapshot.value, agent);
   const actionMessages = actionsFor(snapshot.value, agent);
   const pane = { key: instance.id, id: instance.id, label: name, seed: { agent: agentId, harness: agent?.harness || '' } };
   const actions = { widgetFor: () => widgetRef.current, activatePane: () => setFocusToken((n) => n + 1) };
-  const title = html`<span class="chat-window-title" title=${`${name}: ${label}`}><${StatusDot} status=${agent ? companionStatus(agent) : 'offline'} /> ${name}</span>
+  const title = html`${strip}
     <button type="button" class="board-overlay-action" title="Move this agent back to a tab of the companion" onClick=${() => onBackToTab(instance)}>Back to a tab</button>
     ${agent?.online && onSeparateWindow && html`<button type="button" class="board-overlay-action" title="Move this agent to a browser window of its own" onClick=${() => onSeparateWindow(instance, overlay.windowRef.current?.getBoundingClientRect?.())}>Open in separate window</button>`}
     <div class="companion-controls"><${AgentCog} agent=${agent} roster=${stewardRoster} canShutDown=${closeShutsDown} showRoster=${showRoster}
       openPermissions=${openPermissions} openSudo=${openSudo} openHandover=${openStewardHandover} agents=${companionAgents(snapshot.value)} showAgent=${showAgent}
       fetchImpl=${fetchImpl} notify=${notify} onDown=${stewardDown} askShutDownRef=${askShutDown} /></div>
-    ${look === 'classic' && html`<button type="button" class="board-overlay-close" title=${closeTitle} aria-label=${`Close ${name}`} onClick=${close}>×</button>`}`;
+    ${look === 'classic' && html`<button type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${name}`} onClick=${close.onClose}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="companion-window chat-window" frameClass="companion-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Chat with ${name}`} title=${title}
-    controls=${{ look, closeLabel: `Close ${name}`, closeTitle, onClose: close, onMinimize: () => minimizeOverlayWindow(instance.id) }}>
+    controls=${{ look, closeLabel: `Close ${name}`, closeTitle: close.title, onClose: close.onClose, onMinimize: () => minimizeOverlayWindow(instance.id) }}>
     <div class="companion-body" id=${instance.id}>
       ${approvals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${decisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}

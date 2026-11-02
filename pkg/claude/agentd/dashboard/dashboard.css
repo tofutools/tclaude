@@ -2046,9 +2046,14 @@ header.overlay-look-windows { padding-right: 0; }
 body:is(:has(.modal-overlay.show, .manage-overlay.show), .companion-annotating) :is(.overlay-split-line, .overlay-split-cross, .overlay-split-detach) { display: none; }
 /* The minimized windows (board-overlay.js), clear of the chips in a corner. */
 .overlay-dock { position: fixed; z-index: 950; left: 50%; bottom: calc(var(--footer-h, 29px) + 8px); transform: translateX(-50%); display: flex; gap: 6px; max-width: 70vw; overflow: hidden; }
-.overlay-dock-item { padding: 5px 12px; border: 1px solid var(--cmp-line); border-radius: 16px; background: var(--cmp-bar); color: var(--cmp-text); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
-.overlay-dock-item:hover { border-color: #58a6ff; }
-.overlay-dock-item.needs { border-color: var(--cmp-amber); }
+.overlay-dock-pill { display: inline-flex; align-items: center; flex: none; border: 1px solid var(--cmp-line); border-radius: 16px; background: var(--cmp-bar); }
+.overlay-dock-pill:hover { border-color: #58a6ff; }
+.overlay-dock-pill.needs { border-color: var(--cmp-amber); }
+.overlay-dock-item { padding: 5px 12px; border: 0; background: none; color: var(--cmp-text); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.overlay-dock-item:has(+ .overlay-dock-remove) { padding-right: 4px; }
+.overlay-dock-count { padding: 0 6px; border-radius: 8px; background: #30363d; font-size: 10px; }
+.overlay-dock-remove { padding: 2px 8px 2px 4px; border: 0; background: none; color: var(--cmp-muted); font-size: 13px; cursor: pointer; }
+.overlay-dock-remove:hover { color: var(--cmp-text); }
 /* Above the windows: a drop that splits a window lands on top of it. */
 .overlay-snap-guide {
   position: fixed; z-index: 952; pointer-events: none; border-radius: 8px;

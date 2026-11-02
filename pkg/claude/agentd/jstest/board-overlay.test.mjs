@@ -292,7 +292,7 @@ scenario('a board moves from its tab into the overlay and back', async ({ harnes
   assert.deepEqual(tabLabels(host), [], 'the tab left: a board opens in one place');
   const win = overlayHost.querySelector('.board-overlay');
   assert.ok(win.querySelector('svg.board-canvas'), 'the overlay shows the editor');
-  assert.match(win.querySelector('.board-overlay-title').textContent, /Release plan/);
+  assert.match(win.querySelector('[role="tab"]').textContent, /Release plan/);
   assert.ok(harness.document.getElementById('tab-terminals').classList.contains('active'),
     'moving the last tab out does not send the operator to Groups');
 
@@ -332,7 +332,7 @@ scenario('several boards float at once, each in its own window', async ({ harnes
   await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
   await harness.act(async () => { overlayState.openBoardOverlay('map', 'Team map'); await wait(); await wait(); });
   const [first, second] = overlayHost.querySelectorAll('.board-overlay');
-  assert.deepEqual([...overlayHost.querySelectorAll('.board-overlay-title')].map((title) => title.textContent.trim()), ['✎ Release plan', '✎ Team map']);
+  assert.deepEqual([...overlayHost.querySelectorAll('.board-overlay [role="tab"]')].map((title) => title.textContent.trim()), ['✎Release plan', '✎Team map']);
   assert.notEqual(first.style.left, second.style.left, 'stepped clear of each other');
   assert.deepEqual(tabLabels(host), []);
   assert.ok(second.classList.contains('overlay-window-front'));
@@ -583,7 +583,11 @@ scenario('the overlay has the native controls, and classic keeps its ×', async 
   assert.ok(overlayHost.querySelector('.board-overlay-close'));
   await harness.act(async () => { dashboardState.publishLocalEdit({ ...COLLAB_ON, window_controls: 'linux' }); await wait(); });
   await harness.act(async () => { overlayHost.querySelector('.overlay-wc-close').click(); await wait(); });
-  assert.equal(overlayState.boardOverlays.value.length, 0);
+  assert.equal(overlayHost.querySelector('.board-overlay'), null);
+  assert.equal(overlayHost.querySelector('.overlay-dock-item').textContent.trim(), '✎ Release plan', 'closing sends it to the dock');
+  await harness.act(async () => { overlayHost.querySelector('.overlay-dock-remove').click(); await wait(); });
+  assert.equal(overlayState.boardOverlays.value.length, 0, 'and the pill takes it off for good');
+  assert.equal(overlayHost.querySelector('.overlay-dock'), null);
 });
 
 scenario('Ctrl+wheel over the title bar goes to the board, not the page', async ({ harness, overlayHost, overlayState }) => {
@@ -614,9 +618,238 @@ scenario('Ctrl+wheel over the title bar goes to the board, not the page', async 
 scenario('a board in a window is page content to the agents, and a chat window is not', async ({ harness, overlayState, overlayHost }) => {
   await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
   const guide = await harness.importDashboardModule('js/companion-guide.js');
-  const title = overlayHost.querySelector('.board-overlay .board-overlay-title');
+  const title = overlayHost.querySelector('.board-overlay .overlay-tab-strip');
   assert.ok(title.closest('#companion-root'), 'every window is shown from one island');
   assert.equal(title.closest(guide.COMPANION_CHROME), null, 'so a board stays open to marks and annotation');
   const chrome = overlayHost.querySelector('#companion-root').appendChild(harness.document.createElement('button'));
   assert.ok(chrome.closest(guide.COMPANION_CHROME), 'and the rest of the island stays out of them');
 });
+
+// Two boards side by side, as a browser lays them out: a strip for each window
+// and each tab a span of it. happy-dom lays nothing out, so this draws them.
+function layOut(harness, overlayHost, ...onTop) {
+  const strips = () => [...overlayHost.querySelectorAll('[data-tab-strip]')];
+  harness.document.elementsFromPoint = (x, y) => {
+    const hit = strips()[Math.min(strips().length - 1, Math.floor(x / 500))]?.closest('header');
+    return y > 30 || !hit ? [harness.document.body] : [...onTop, hit, harness.document.body];
+  };
+  const rect = (left, width) => ({ left, right: left + width, width, top: 0, bottom: 30, height: 30, x: left, y: 0 });
+  for (const [at, strip] of strips().entries()) {
+    strip.getBoundingClientRect = () => rect(at * 500, 400);
+    for (const [index, tab] of [...strip.querySelectorAll('[data-tab-id]')].entries()) tab.getBoundingClientRect = () => rect(at * 500 + index * 100, 100);
+  }
+}
+
+function pointer(harness, node, moves = harness.window, pointerType = 'mouse') {
+  const fire = (target, type, clientX, clientY) => harness.act(async () => {
+    target.dispatchEvent(Object.assign(new harness.window.Event(type, { bubbles: true, cancelable: true }), { button: 0, pointerId: 1, pointerType, clientX, clientY }));
+    await wait();
+  });
+  return {
+    down: (x, y) => fire(node, 'pointerdown', x, y),
+    move: (x, y) => fire(moves, 'pointermove', x, y),
+    up: (x, y) => fire(moves, 'pointerup', x, y),
+    cancel: (x, y) => fire(moves, 'pointercancel', x, y),
+  };
+}
+
+const tabButton = (root, name) => [...root.querySelectorAll('[role="tab"]')].find((tab) => tab.textContent.includes(name));
+const tabsByWindow = (overlayHost) => [...overlayHost.querySelectorAll('[data-tab-strip]')].map((strip) => [...strip.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent.replace('✎', '')));
+
+async function twoInOne(harness, overlayState, windows) {
+  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
+  await harness.act(async () => { overlayState.openBoardOverlay('map', 'Team map'); await wait(); await wait(); });
+  await harness.act(async () => { windows.moveOverlayTab('board:map', 'board:plan', 1); await wait(); await wait(); });
+}
+
+scenario('a tab drags out into a window of its own, and that window does not share a placement', async ({ harness, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  layOut(harness, overlayHost);
+  const drag = pointer(harness, tabButton(overlayHost, 'Release plan'));
+  await drag.down(50, 15);
+  await drag.move(60, 200);
+  assert.ok(harness.document.querySelector('.overlay-tab-ghost'), 'it follows the pointer');
+  await drag.up(300, 300);
+  assert.deepEqual(tabsByWindow(overlayHost), [['Team map'], ['Release plan']]);
+  assert.equal(harness.document.querySelector('.overlay-tab-ghost'), null);
+  const places = windows.overlayWindows.value.map((window) => window.place);
+  assert.equal(new Set(places).size, 2, places.join());
+});
+
+scenario('a finger swiping along a strip too full for its bar scrolls it and moves no tab', async ({ harness, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  layOut(harness, overlayHost);
+  const strip = overlayHost.querySelector('[data-tab-strip]');
+  Object.defineProperties(strip, { scrollWidth: { value: 600 }, clientWidth: { value: 200 } });
+  strip.scrollLeft = 10;
+  const swipe = pointer(harness, tabButton(overlayHost, 'Team map'), harness.window, 'touch');
+  await swipe.down(150, 15);
+  await swipe.move(90, 18);
+  await swipe.up(70, 18);
+  assert.equal(strip.scrollLeft, 70);
+  assert.equal(harness.document.querySelector('.overlay-tab-ghost'), null);
+  assert.deepEqual(tabsByWindow(overlayHost), [['Release plan', 'Team map']]);
+  const pull = pointer(harness, tabButton(overlayHost, 'Team map'), harness.window, 'touch');
+  await pull.down(150, 15);
+  await pull.move(150, 200);
+  await pull.up(150, 300);
+  assert.deepEqual(tabsByWindow(overlayHost), [['Release plan'], ['Team map']], 'a pull still takes the tab out');
+});
+
+scenario('a tab reorders along its strip, and joins another window at the marker', async ({ harness, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  await harness.act(async () => { overlayState.openBoardOverlay('third', 'Third'); await wait(); await wait(); });
+  layOut(harness, overlayHost);
+  let drag = pointer(harness, tabButton(overlayHost, 'Release plan'));
+  await drag.down(50, 15);
+  await drag.move(90, 15);
+  await drag.move(150, 15);
+  assert.ok(overlayHost.querySelector('.overlay-tab-drop-end'), 'the marker shows it lands last');
+  await drag.up(150, 15);
+  assert.deepEqual(tabsByWindow(overlayHost), [['Team map', 'Release plan'], ['Third']]);
+  layOut(harness, overlayHost);
+  drag = pointer(harness, tabButton(overlayHost, 'Team map'));
+  await drag.down(50, 15);
+  await drag.move(520, 15);
+  assert.ok(overlayHost.querySelectorAll('[data-tab-strip]')[1].classList.contains('joining'));
+  await drag.up(520, 15);
+  assert.deepEqual(tabsByWindow(overlayHost), [['Release plan'], ['Team map', 'Third']]);
+});
+
+scenario('a window of one tab joins the window under it, looking through itself and its frame', async ({ t, harness, overlayHost, overlayState }) => {
+  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
+  await harness.act(async () => { overlayState.openBoardOverlay('map', 'Team map'); await wait(); await wait(); });
+  const dragged = overlayHost.querySelectorAll('.board-overlay')[1].querySelector('header');
+  const frame = harness.document.body.appendChild(harness.document.createElement('div'));
+  frame.className = 'window-resize-frame';
+  t.after(() => frame.remove());
+  layOut(harness, overlayHost, dragged, frame);
+  const drag = pointer(harness, tabButton(overlayHost, 'Team map'), tabButton(overlayHost, 'Team map'));
+  await drag.down(550, 15);
+  await drag.move(560, 15);
+  await drag.move(40, 15);
+  assert.ok(overlayHost.querySelectorAll('[data-tab-strip]')[0].classList.contains('joining'), 'the dragged window is on top there');
+  await drag.up(40, 15);
+  assert.deepEqual(tabsByWindow(overlayHost), [['Team map', 'Release plan']]);
+  assert.equal(overlayHost.querySelector('.joining'), null);
+});
+
+scenario('a window of one tab that stays clear of the others just moves', async ({ harness, overlayHost, overlayState, windows }) => {
+  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
+  await harness.act(async () => { overlayState.openBoardOverlay('map', 'Team map'); await wait(); await wait(); });
+  layOut(harness, overlayHost);
+  const drag = pointer(harness, tabButton(overlayHost, 'Team map'), tabButton(overlayHost, 'Team map'));
+  await drag.down(550, 15);
+  await drag.move(560, 200);
+  await drag.up(560, 200);
+  assert.deepEqual(tabsByWindow(overlayHost), [['Release plan'], ['Team map']]);
+  assert.equal(windows.overlayWindows.value.length, 2);
+});
+
+scenario('Escape and a cancelled pointer leave a dragged tab where it was, and a short press stays a click', async ({ harness, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  layOut(harness, overlayHost);
+  const before = tabsByWindow(overlayHost);
+  let drag = pointer(harness, tabButton(overlayHost, 'Release plan'));
+  await drag.down(50, 15);
+  await drag.move(50, 300);
+  await harness.act(async () => { harness.window.dispatchEvent(Object.assign(new harness.window.Event('keydown', { bubbles: true, cancelable: true }), { key: 'Escape' })); await wait(); });
+  assert.equal(harness.document.querySelector('.overlay-tab-ghost'), null);
+  await drag.up(300, 300);
+  assert.deepEqual(tabsByWindow(overlayHost), before);
+  drag = pointer(harness, tabButton(overlayHost, 'Release plan'));
+  await drag.down(50, 15);
+  await drag.move(50, 300);
+  await drag.cancel(50, 300);
+  assert.deepEqual(tabsByWindow(overlayHost), before);
+  const button = tabButton(overlayHost, 'Release plan');
+  await harness.act(async () => { button.click(); await wait(); });
+  assert.equal(windows.overlayWindows.value[0].active, 'board:plan', 'a click chooses the tab');
+});
+
+scenario('the tools and the title belong to the active tab', async ({ harness, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  assert.equal(overlayHost.querySelector('.board-overlay').getAttribute('aria-label'), 'Board Team map', 'a tab that joins shows');
+  await harness.act(async () => { tabButton(overlayHost, 'Release plan').click(); await wait(); await wait(); });
+  assert.equal(overlayHost.querySelector('.board-overlay').getAttribute('aria-label'), 'Board Release plan');
+  assert.equal(tabButton(overlayHost, 'Release plan').getAttribute('aria-selected'), 'true');
+});
+
+scenario('a tab × minimizes only that tab, and it comes back to its window', async ({ harness, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  await harness.act(async () => { overlayHost.querySelector('[aria-label="Minimize Release plan"]').click(); await wait(); await wait(); });
+  assert.deepEqual(tabsByWindow(overlayHost), [['Team map']]);
+  assert.equal(overlayHost.querySelector('.overlay-dock-item').textContent.trim(), '✎ Release plan');
+  assert.equal(overlayState.boardOverlays.value.length, 2, 'it keeps its one place');
+  await harness.act(async () => { overlayHost.querySelector('.overlay-dock-item').click(); await wait(); await wait(); });
+  assert.deepEqual(tabsByWindow(overlayHost), [['Team map', 'Release plan']]);
+  assert.equal(overlayHost.querySelector('.overlay-dock'), null);
+});
+
+scenario('a minimized window of several tabs is one pill, with a count and no way to lose them all', async ({ harness, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  await harness.act(async () => { overlayHost.querySelector('.overlay-wc-minimize, [aria-label^="Minimize ("]').click(); await wait(); });
+  assert.equal(overlayHost.querySelectorAll('.overlay-dock-pill').length, 1);
+  assert.match(overlayHost.querySelector('.overlay-dock-item').textContent, /Team map 2/);
+  assert.equal(overlayHost.querySelector('.overlay-dock-remove'), null);
+  await harness.act(async () => { overlayHost.querySelector('.overlay-dock-item').click(); await wait(); await wait(); });
+  assert.deepEqual(tabsByWindow(overlayHost), [['Release plan', 'Team map']]);
+});
+
+scenario('a window closed with several tabs leaves one pill for each', async ({ harness, overlayHost, overlayState, windows, dashboardState }) => {
+  dashboardState.publishLocalEdit({ ...COLLAB_ON, window_controls: 'linux' });
+  await twoInOne(harness, overlayState, windows);
+  await harness.act(async () => { overlayHost.querySelector('.overlay-wc-close').click(); await wait(); await wait(); });
+  assert.deepEqual(windows.overlayWindows.value, []);
+  assert.equal(overlayHost.querySelectorAll('.overlay-dock-pill').length, 2);
+  assert.equal(overlayHost.querySelectorAll('.overlay-dock-remove').length, 2);
+});
+
+scenario('a deleted board leaves the window it shared', async ({ harness, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  await harness.act(async () => { windows.closeOverlayTab('board:map'); await wait(); await wait(); });
+  assert.deepEqual(tabsByWindow(overlayHost), [['Release plan']]);
+});
+
+test('a tab that fails to draw shows so in its own window, and can try again', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { TabBoundary } = await harness.importDashboardModule('js/overlay-tab-window.js');
+  let broken = true;
+  const Body = () => { if (broken) throw new Error('boom'); return harness.html`<p>fine</p>`; };
+  const fallback = (retry) => harness.html`<button class="again" onClick=${retry}>Try again</button>`;
+  const quiet = globalThis.console.error;
+  globalThis.console.error = () => {};
+  t.after(() => { globalThis.console.error = quiet; });
+  const view = await harness.mount(harness.html`<div><${TabBoundary} fallback=${fallback}><${Body} /><//><p class="beside">beside</p></div>`);
+  await harness.act(() => wait());
+  assert.ok(view.container.querySelector('.again'));
+  assert.ok(view.container.querySelector('.beside'), 'what is beside it lives on');
+  broken = false;
+  await harness.act(async () => { view.container.querySelector('.again').click(); await wait(); });
+  assert.equal(view.container.querySelector('.again'), null);
+  assert.match(view.container.textContent, /fine/);
+});
+
+test('a fallback that fails too goes up, rather than round for ever', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { TabBoundary } = await harness.importDashboardModule('js/overlay-tab-window.js');
+  const Body = () => { throw new Error('boom'); };
+  const Bad = () => { throw new Error('the fallback too'); };
+  const fallback = () => harness.html`<${Bad} />`;
+  const heard = [];
+  class Outer extends harness.preact.Component {
+    state = { failed: false };
+
+    componentDidCatch(error) { heard.push(error.message); this.setState({ failed: true }); }
+
+    render({ children }, { failed }) { return failed ? harness.html`<p>outer</p>` : children; }
+  }
+  const quiet = globalThis.console.error;
+  globalThis.console.error = () => {};
+  t.after(() => { globalThis.console.error = quiet; });
+  const view = await harness.mount(harness.html`<${Outer}><${TabBoundary} fallback=${fallback}><${Body} /><//><//>`);
+  await harness.act(() => wait());
+  assert.deepEqual(heard, ['the fallback too']);
+  assert.match(view.container.textContent, /outer/);
+});
+

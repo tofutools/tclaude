@@ -18,11 +18,11 @@ import { OVERLAY_FOOTER_ROOM, clampPlacement, parsePlacement } from './overlay-w
 import { companionAgents, companionStatus, decisionsFor, approvalsFor, isAgentId } from './companion-model.js';
 import { openInCompanion } from './companion-facade.js';
 import { windowControlsLook } from './overlay-window-controls.js';
-import { closeOverlayWindow, keepOverlayWindows, minimizeOverlayWindow, overlayTabs, overlayWindows } from './overlay-instances.js';
+import { closeOverlayTab, keepOverlayWindows, minimizeOverlayWindow, minimizedOverlayTabs, openOverlayWindow, overlayWindows } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND } from './chat-window-model.js';
 import { TERMINAL_WINDOW_KIND, validTerminalWindow } from './terminal-window-model.js';
 import { OverlayWindow, overlayStackReset, readPref } from './overlay-window.js';
-import { BOARD_OVERLAY_PLACEMENT_PREF } from './overlay-tab-model.js';
+import { BOARD_OVERLAY_PLACEMENT_PREF, dockEntriesOf } from './overlay-tab-model.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { detachSeedWindow } from './terminals-tab.js';
 
@@ -32,7 +32,7 @@ const html = htm.bind(h);
 // there were several: what a window for a board not yet moved starts from.
 export { BOARD_OVERLAY_PLACEMENT_PREF };
 const CASCADE_PX = 28;
-const WINDOW_GLYPHS = { [BOARD_WINDOW_KIND]: '✎', [TERMINAL_WINDOW_KIND]: '⌨' };
+export const WINDOW_GLYPHS = { [BOARD_WINDOW_KIND]: '✎', [TERMINAL_WINDOW_KIND]: '⌨' };
 const DEFAULT_W = 760;
 const DEFAULT_H = 540;
 
@@ -52,19 +52,19 @@ export function boardStartPlacement(prefs, index) {
   };
 }
 
-export function BoardOverlayWindow({ instance, overlay, snapshot, fetchImpl, notify, win }) {
+export function BoardOverlayWindow({ instance, overlay, strip, close, snapshot, fetchImpl, notify, win }) {
   const board = { id: instance.board, label: instance.label };
   const open = !instance.minimized;
   const look = windowControlsLook(snapshot.value?.window_controls);
-  const close = () => closeOverlayWindow(instance.id);
+  const leave = () => closeOverlayTab(instance.id);
   // A blocked pop-up leaves it where it is.
   const toSeparateWindow = () => {
     const rect = overlay.windowRef.current?.getBoundingClientRect?.();
-    if (detachSeedWindow({ ...boardPaneSeed(board.id, board.label), floats: true }, { size: rect, at: elementScreenPoint(win, rect) })) close();
+    if (detachSeedWindow({ ...boardPaneSeed(board.id, board.label), floats: true }, { size: rect, at: elementScreenPoint(win, rect) })) leave();
     else notify('Could not open a separate window: allow pop-ups for this dashboard.', true);
   };
   useEffect(() => onBoardDeleted((id) => {
-    if (id === instance.board) closeOverlayWindow(instance.id);
+    if (id === instance.board) leave();
   }), [instance.id, instance.board]);
   // The title bar is outside the editor, whose Ctrl+wheel zooms the board.
   // Anywhere else in the window that gesture would zoom the whole page.
@@ -74,38 +74,54 @@ export function BoardOverlayWindow({ instance, overlay, snapshot, fetchImpl, not
     const { deltaY, ctrlKey, metaKey } = event;
     overlay.windowRef.current?.querySelector?.('.board-editor')?.dispatchEvent(new win.WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY, ctrlKey, metaKey }));
   }
-  const title = html`<span class="board-overlay-title">✎ ${board.label}</span>
+  const title = html`${strip}
     <button type="button" class="board-overlay-action" title="Move this board back to a tab of the Collab view"
       onClick=${() => void returnBoardToTab(board.id)}>Back to a tab</button>
     <button type="button" class="board-overlay-action" title="Move this board to a browser window of its own" onClick=${toSeparateWindow}>Open in separate window</button>
-    ${look === 'classic' && html`<button type="button" class="board-overlay-close" title="Close this window" aria-label=${`Close ${board.label}`}
-      onClick=${close}>×</button>`}`;
+    ${look === 'classic' && html`<button type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${board.label}`}
+      onClick=${close.onClose}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="board-overlay" frameClass="board-overlay-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Board ${board.label}`} title=${title}
-    controls=${{ look, closeLabel: `Close ${board.label}`, closeTitle: 'Close this window', onClose: close, onMinimize: () => minimizeOverlayWindow(instance.id) }} onTitleWheel=${onTitleWheel}>
+    controls=${{ look, closeLabel: `Close ${board.label}`, closeTitle: close.title, onClose: close.onClose, onMinimize: () => minimizeOverlayWindow(instance.id) }} onTitleWheel=${onTitleWheel}>
     <${BoardEditor} key=${board.id} boardId=${board.id} snapshot=${snapshot} win=${win} fetchImpl=${fetchImpl}
       notify=${notify} onTitle=${(title) => setBoardOverlayLabel(board.id, title)} onOpenAgent=${(agent) => openInCompanion(agent)} />
   <//>`;
 }
 
-// OverlayDock holds the minimized windows of every kind. A chat that needs the
-// operator says so here, as a chip does, so it never looks silently busy.
+// What taking a pill off for good does, by kind. A Steward has none: only its ⚙
+// shuts it down.
+const REMOVE_TITLES = {
+  [CHAT_WINDOW_KIND]: ['Unpin', 'Unpin (the agent keeps running)'],
+  [TERMINAL_WINDOW_KIND]: ['Close', 'Close (the shell keeps running)'],
+  [BOARD_WINDOW_KIND]: ['Close', 'Close this board\u2019s window'],
+};
+
+// OverlayDock holds the minimized windows and tabs of every kind: a window shows
+// its active tab and how many it holds, and a tab comes back from here to the
+// window it left. A chat that needs the operator says so here, as a chip does, so
+// it never looks silently busy.
 function OverlayDock({ snapshot }) {
-  const minimized = overlayTabs.value.filter((tab) => tab.minimized);
-  if (!minimized.length) return null;
+  const entries = dockEntriesOf(overlayWindows.value, minimizedOverlayTabs.value);
+  if (!entries.length) return null;
   const agents = companionAgents(snapshot.value);
   const needs = ({ kind, agent }) => {
     const row = kind === CHAT_WINDOW_KIND ? agents.get(agent) : null;
     return !!row && (companionStatus(row) === 'needs' || approvalsFor(snapshot.value, row).length + decisionsFor(snapshot.value, row).length > 0);
   };
   return html`<div class="overlay-dock" role="group" aria-label="Minimized windows">
-    ${minimized.map((window) => html`<button type="button" key=${window.id} class=${`overlay-dock-item${needs(window) ? ' needs' : ''}`}
-      title=${`Bring back ${window.label}`} onClick=${() => minimizeOverlayWindow(window.id, false)}>${WINDOW_GLYPHS[window.kind] || '▣'} ${window.label}</button>`)}
+    ${entries.map(({ key, tab, tabs }) => {
+      const removes = tabs.length === 1 && !(tab.kind === CHAT_WINDOW_KIND && agents.get(tab.agent)?.steward) && REMOVE_TITLES[tab.kind];
+      return html`<span key=${key} class=${`overlay-dock-pill${tabs.some(needs) ? ' needs' : ''}`}>
+        <button type="button" class="overlay-dock-item" title=${`Bring back ${tab.label}`}
+          onClick=${() => openOverlayWindow(tab)}>${WINDOW_GLYPHS[tab.kind] || '▣'} ${tab.label}${tabs.length > 1 && html` <span class="overlay-dock-count" aria-label=${`${tabs.length} tabs`}>${tabs.length}</span>`}</button>
+        ${removes && html`<button type="button" class="overlay-dock-remove" aria-label=${`${removes[0]} ${tab.label}`} title=${removes[1]} onClick=${() => closeOverlayTab(tab.id)}>×</button>`}
+      </span>`;
+    })}
   </div>`;
 }
 
 export function BoardOverlay({ snapshot }) {
-  if (!overlayWindows.value.length) return null;
+  if (!overlayWindows.value.length && !minimizedOverlayTabs.value.length) return null;
   return html`<${BoardsGate} snapshot=${snapshot}><${OverlayDock} snapshot=${snapshot} /><//>`;
 }
 

@@ -65,11 +65,11 @@ test('every window has its own level from the start, so a reload keeps lines und
 test('closing a window leaves its cell empty, and the last one ends the split', async (t) => {
   const { harness, instances, overlay, prefs } = await setup(t, PAIR);
   await harness.act(() => instances.openOverlayWindow({ id: 'a', kind: 'k', label: 'A' }));
-  await harness.act(() => instances.closeOverlayWindow('a'));
+  await harness.act(() => instances.closeOverlayTab('a'));
   assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), { ...PAIR, a: { gap: true } });
   assert.equal(instances.overlayWindows.value.length, 0);
   await harness.act(() => instances.openOverlayWindow({ id: 'b', kind: 'k', label: 'B' }));
-  await harness.act(() => instances.closeOverlayWindow('b'));
+  await harness.act(() => instances.closeOverlayTab('b'));
   assert.equal(prefs.getItem(overlay.OVERLAY_SPLIT_PREF), '');
 });
 
@@ -151,8 +151,51 @@ test('every way into a window finds it by its tab', async (t) => {
   assert.equal(instances.overlayWindows.value[0].focusAsked, 1);
   instances.minimizeOverlayWindow('p');
   assert.equal(instances.overlayWindows.value[0].minimized, true, 'minimizing takes the whole window');
-  instances.closeOverlayWindow('q');
+  instances.closeOverlayTab('q');
+  assert.deepEqual(instances.overlayTabs.value.map((tab) => tab.id), ['p'], 'taking a tab off leaves the rest');
+  instances.closeOverlayTab('p');
   assert.deepEqual(instances.overlayWindows.value, []);
+});
+
+test('a tab on the dock keeps its one place, and opening it brings it back', async (t) => {
+  const { instances, overlay } = await setup(t);
+  t.after(() => { instances.overlayWindows.value = []; instances.minimizedOverlayTabs.value = []; });
+  instances.openOverlayWindow({ id: 'x', kind: 'k', label: 'X' });
+  instances.minimizeOverlayTab('x');
+  assert.deepEqual(instances.overlayWindows.value, [], 'its last tab takes the window');
+  assert.deepEqual(instances.overlayTabs.value.map(({ id, windowId, minimized }) => [id, windowId, minimized]), [['x', '', true]]);
+  instances.labelOverlayWindow('x', 'Renamed');
+  instances.openOverlayWindow({ id: 'x', kind: 'k', label: 'stale' });
+  assert.deepEqual(instances.minimizedOverlayTabs.value, []);
+  assert.deepEqual(instances.overlayTabs.value.map(({ label, minimized }) => [label, minimized]), [['Renamed', false]]);
+  assert.equal(overlay.frontOverlayWindow.value, 'x');
+});
+
+test('the last tab to leave a window gives up its cell, as closing it does', async (t) => {
+  const { instances, overlay, prefs, harness } = await setup(t, PAIR);
+  await harness.act(() => instances.openOverlayWindow({ id: 'a', kind: 'k', label: 'A' }));
+  await harness.act(() => instances.openOverlayWindow({ id: 'b', kind: 'k', label: 'B' }));
+  t.after(() => { instances.overlayWindows.value = []; instances.minimizedOverlayTabs.value = []; });
+  await harness.act(() => instances.moveOverlayTab('a', 'b', 0));
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), { ...PAIR, a: { gap: true } });
+  assert.deepEqual(instances.overlayWindows.value.map((window) => window.tabs.map((tab) => tab.id)), [['a', 'b']]);
+  await harness.act(() => instances.tearOverlayTabOut('a', { x: 5, y: 6 }));
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), { ...PAIR, a: { gap: true } }, 'one tab leaving leaves the cell in place');
+  assert.deepEqual(instances.overlayWindows.value.map((window) => [window.id, window.tabs.map((tab) => tab.id)]), [['b', ['b']], ['a', ['a']]]);
+});
+
+test('closing a window sends each tab to the dock, and a question goes to the tab that asks', async (t) => {
+  const { instances } = await setup(t);
+  t.after(() => { instances.overlayWindows.value = []; instances.minimizedOverlayTabs.value = []; });
+  instances.overlayWindows.value = [{ id: 'w', tabs: [{ id: 'p', kind: 'k' }, { id: 'q', kind: 'k' }], active: 'p', minimized: false, place: '' }];
+  instances.askOverlayClose('q');
+  assert.deepEqual(instances.overlayTabs.value.find((tab) => tab.id === 'q').closeAsked, 1);
+  assert.equal(instances.overlayWindows.value[0].active, 'q', 'it asks where it can be seen');
+  instances.overlayCloseHeard('q');
+  assert.equal(instances.overlayTabs.value[0].closeAsked, undefined, 'and only once');
+  instances.minimizeEveryTab('w');
+  assert.deepEqual(instances.overlayWindows.value, []);
+  assert.deepEqual(instances.minimizedOverlayTabs.value.map(({ tab, home }) => [tab.id, home]), [['p', 'w'], ['q', 'w']]);
 });
 
 // A pointer on an unlocked edge of the window, in the room's coordinates.

@@ -216,7 +216,7 @@ test('shutting down a floated Steward leaves an open companion on Resume', async
 
 test('moving to the Collab tab leaves no tab behind, and a Terminals tab floats as a chat', async (t) => {
   const { view, harness, controller } = await setup(t, { openTerminalsPane: () => {} });
-  const tabOfAlpha = () => [...view.container.querySelectorAll('.companion-tab')].find((tab) => tab.textContent.includes('alpha'));
+  const tabOfAlpha = () => [...view.container.querySelectorAll('.companion-titlebar .companion-tab')].find((tab) => tab.textContent.includes('alpha'));
   await harness.act(() => controller().open(A));
   await harness.act(() => view.container.querySelector('[aria-label="Open in the Collab tab"]').click());
   assert.equal(tabOfAlpha(), undefined, 'nothing left to close by hand');
@@ -911,7 +911,7 @@ test('live scribes and Stewards keep a tab by themselves, and a closed one stays
   // Closing a helper sticks, through a poll that sees it offline and a reload.
   await harness.act(() => controller().open(P));
   await harness.act(() => harness.getByRole(view.container, 'button', { name: /Unpin process-scribe-a1/ }).click());
-  const hasTab = () => [...view.container.querySelectorAll('.companion-tab')].some((tab) => /process-scribe-a1/.test(tab.textContent));
+  const hasTab = () => [...view.container.querySelectorAll('.companion-titlebar .companion-tab')].some((tab) => /process-scribe-a1/.test(tab.textContent));
   await harness.act(async () => { snap.value = withHelpers({ scribe: false, second: true }); });
   await harness.act(async () => { snap.value = withHelpers({ second: true }); });
   assert.equal(hasTab(), false, 'closed stays closed');
