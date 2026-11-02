@@ -710,8 +710,8 @@ function Confirm({ feedback }) {
           </label>`)}
         </div>` : null}
         <div class="modal-buttons">
-          ${model?.informational ? null : html`<button id="confirm-cancel" disabled=${busy} onClick=${() => feedback.resolveConfirmation(false)}>${model?.cancelLabel || 'Cancel'}</button>`}
-          <button ref=${okRef} id="confirm-ok" class=${model?.informational ? '' : 'confirm-danger'}
+          ${model?.informational ? null : html`<button class="ui-btn" id="confirm-cancel" disabled=${busy} onClick=${() => feedback.resolveConfirmation(false)}>${model?.cancelLabel || 'Cancel'}</button>`}
+          <button ref=${okRef} id="confirm-ok" class=${model?.informational ? 'ui-btn' : 'ui-btn ui-btn-danger'}
             disabled=${busy} aria-busy=${busy ? 'true' : undefined}
             onClick=${() => feedback.resolveConfirmation(true)}>
             ${busy

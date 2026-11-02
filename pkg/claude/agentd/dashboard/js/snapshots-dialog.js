@@ -340,6 +340,6 @@ export function SnapshotsDialog({ descriptor, state, actions, confirm, confirmDi
     ${notice && html`<div class="paf-ok" id="snapshots-notice">✓ ${notice}</div>`}
     <div class="cron-create-error" role="alert" id="snapshots-error">${error}</div>
     <${PolicyStatus} policies=${policies} />
-    <div class="modal-buttons"><span class="spacer"></span><button type="button" id="snapshots-close" onClick=${() => { void requestClose(); }}>Close</button></div>
+    <div class="modal-buttons"><span class="spacer"></span><button class="ui-btn" type="button" id="snapshots-close" onClick=${() => { void requestClose(); }}>Close</button></div>
   </${Overlay}>`;
 }

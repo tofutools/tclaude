@@ -155,8 +155,8 @@ export function RequestAccessDialog({ node, perm, groups = [], gateway = '', onC
       ${error && html`<div class="fa-danger" role="alert">${error}</div>`}`}
     <div class="modal-buttons">
       <span class="spacer"></span>
-      <button type="button" onClick=${onClose}>${request ? 'Close' : 'Cancel'}</button>
-      ${!request && html`<button id="peer-access-submit" type="button" class="primary" disabled=${busy || (scope === 'scoped' && !groupID) || maxUSD === null} onClick=${send}>Send request</button>`}
+      <button class="ui-btn" type="button" onClick=${onClose}>${request ? 'Close' : 'Cancel'}</button>
+      ${!request && html`<button id="peer-access-submit" type="button" class="ui-btn ui-btn-primary" disabled=${busy || (scope === 'scoped' && !groupID) || maxUSD === null} onClick=${send}>Send request</button>`}
     </div>
     <div class="muted fa-cli-note">CLI: <code>tclaude federation access request --node … --permission ${perm}${scope !== 'node' ? ' [--group-id …]' : ''}${usage ? ' --max-usd … [--http-proxy …]' : ''}</code></div>
   </${Overlay}>`;

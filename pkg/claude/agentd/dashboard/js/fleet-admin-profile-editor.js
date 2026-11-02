@@ -125,8 +125,8 @@ export function ProfileEditor({ profile = null, pools = [], groups = [], actions
     </details>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons"><span class="spacer"></span>
-      <button type="button" onClick=${onClose}>Cancel</button>
-      <button id="fleet-profile-save" type="button" class="primary" onClick=${save}>${profile ? 'Save…' : 'Create…'}</button>
+      <button class="ui-btn" type="button" onClick=${onClose}>Cancel</button>
+      <button id="fleet-profile-save" type="button" class="ui-btn ui-btn-primary" onClick=${save}>${profile ? 'Save…' : 'Create…'}</button>
     </div>
   </${Overlay}>`;
 }

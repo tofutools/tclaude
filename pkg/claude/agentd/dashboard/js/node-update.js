@@ -168,11 +168,11 @@ export function NodeUpdateDialog({ node, confirm, toast, onClose, actions = defa
         ${job.deadline && updateJobActive(job) && html`<span class="muted"> · healthy by ${new Date(job.deadline).toLocaleTimeString()} or it rolls back</span>`}
       </div>`}`}
     <div class="modal-buttons">
-      ${status && html`<button id="fleet-node-update-check" type="button" disabled=${busy || active} onClick=${() => start('check')}>Check now</button>
-        ${v.update && html`<button id="fleet-node-update-apply" type="button" class="primary" disabled=${busy || active || !!blocked} onClick=${apply}>Update to ${v.latest}…</button>`}
-        ${status.rollback_available && html`<button id="fleet-node-update-rollback" type="button" class="danger" disabled=${busy || active || !!blocked} onClick=${rollback}>Roll back…</button>`}`}
+      ${status && html`<button class="ui-btn" id="fleet-node-update-check" type="button" disabled=${busy || active} onClick=${() => start('check')}>Check now</button>
+        ${v.update && html`<button id="fleet-node-update-apply" type="button" class="ui-btn ui-btn-primary" disabled=${busy || active || !!blocked} onClick=${apply}>Update to ${v.latest}…</button>`}
+        ${status.rollback_available && html`<button id="fleet-node-update-rollback" type="button" class="ui-btn ui-btn-danger" disabled=${busy || active || !!blocked} onClick=${rollback}>Roll back…</button>`}`}
       <span class="spacer"></span>
-      <button type="button" disabled=${busy} onClick=${onClose}>Close</button>
+      <button class="ui-btn" type="button" disabled=${busy} onClick=${onClose}>Close</button>
     </div>
     <div class="muted fa-cli-note">CLI: <code>${node.hub ? 'tclaude federation hub update' : `tclaude update${node.local ? '' : ` --node ${node.id}`}`} --check|--apply|--rollback</code></div>
   </${Overlay}>`;

@@ -247,9 +247,9 @@ export function TrustDialog({ row, actions, onClose, onDone }) {
       <span>I compared this fingerprint with ${row.label}'s operator over another channel (e.g. <code>tclaude federation identity</code> on their node)</span></label>
     <div class="cron-create-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
+      <button class="ui-btn" type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
       <span class="spacer"></span>
-      <button id="fleet-trust-submit" type="button" class=${effective === 'unrestricted' ? 'danger' : 'primary'} disabled=${busy || !preview || !checked || !labelOK} onClick=${submit}>
+      <button id="fleet-trust-submit" type="button" class=${effective === 'unrestricted' ? 'ui-btn ui-btn-danger' : 'ui-btn ui-btn-primary'} disabled=${busy || !preview || !checked || !labelOK} onClick=${submit}>
         ${busy ? 'Trusting…' : effective === 'unrestricted' ? 'Trust unrestricted' : 'Trust'}
       </button>
     </div>
@@ -281,9 +281,9 @@ export function UnrestrictDialog({ row, actions, onClose, onDone }) {
       <span>I understand, and this is ${row.label}'s fingerprint</span></label>
     <div class="cron-create-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
+      <button class="ui-btn" type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
       <span class="spacer"></span>
-      <button id="fleet-level-submit" type="button" class="danger" disabled=${busy || !checked || !row.fingerprint} onClick=${submit}>${busy ? 'Saving…' : 'Make unrestricted'}</button>
+      <button id="fleet-level-submit" type="button" class="ui-btn ui-btn-danger" disabled=${busy || !checked || !row.fingerprint} onClick=${submit}>${busy ? 'Saving…' : 'Make unrestricted'}</button>
     </div>
   </${Overlay}>`;
 }

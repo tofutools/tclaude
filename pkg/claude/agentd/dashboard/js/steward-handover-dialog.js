@@ -84,9 +84,9 @@ export function StewardHandoverDialog({ descriptor, actions }) {
       </fieldset>`}`}
     ${error && html`<p class="steward-handover-line warn" role="alert">${error}</p>`}
     <div class="modal-buttons">
-      <button id="steward-handover-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+      <button class="ui-btn" id="steward-handover-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
       <span class="spacer"></span>
-      <button id="steward-handover-submit" class="primary" type="button" disabled=${!preview || !!blocked || busy} onClick=${submit}>${busy ? 'Handing over…' : 'Make Steward'}</button>
+      <button id="steward-handover-submit" class="ui-btn ui-btn-primary" type="button" disabled=${!preview || !!blocked || busy} onClick=${submit}>${busy ? 'Handing over…' : 'Make Steward'}</button>
     </div>
   </${Overlay}>`;
 }

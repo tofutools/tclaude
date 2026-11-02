@@ -105,9 +105,9 @@ function DirectoryOperationDialog({ operation, currentPath, actions, browse, onC
     <div class="directory-picker-action-path">${destination}</div>
     <div role="alert" class="directory-picker-error">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
+      <button class="ui-btn" type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
       <span class="spacer"></span>
-      <button type="button" class=${deleting ? 'danger' : 'primary'} disabled=${busy || !valid}
+      <button type="button" class=${deleting ? 'ui-btn ui-btn-danger' : 'ui-btn ui-btn-primary'} disabled=${busy || !valid}
         onClick=${submit}>${busy ? (deleting ? 'Deleting…' : renaming ? 'Renaming…' : 'Creating…')
           : deleting ? 'Delete folder' : renaming ? 'Rename' : 'Create'}</button>
     </div>
@@ -284,9 +284,9 @@ export function DirectoryPickerApp({ state, actions }) {
     </div>
     <div role="alert" class="directory-picker-error">${error}</div>
     <div class="modal-buttons">
-      <button type="button" onClick=${close}>Cancel</button>
+      <button class="ui-btn" type="button" onClick=${close}>Cancel</button>
       <span class="spacer"></span>
-      <button type="button" class="primary" disabled=${busy || !validated}
+      <button type="button" class="ui-btn ui-btn-primary" disabled=${busy || !validated}
         onClick=${choose}>Use this folder</button>
     </div>
   </${Overlay}>

@@ -190,7 +190,7 @@ export function GatewayDialog({ setup, actions, confirm, onClose, onDone }) {
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">Restricted peers also need a <code>models.proxy</code> grant for this gateway (Peer grants), and their worker a matching permission on their side.</div>
     <div class="modal-buttons"><span class="spacer"></span>
-      <button id="fleet-mg-save" type="button" class="primary" onClick=${save}>${create ? 'Add…' : 'Save…'}</button>
-      <button type="button" onClick=${onClose}>Close</button></div>
+      <button id="fleet-mg-save" type="button" class="ui-btn ui-btn-primary" onClick=${save}>${create ? 'Add…' : 'Save…'}</button>
+      <button class="ui-btn" type="button" onClick=${onClose}>Close</button></div>
   </${Overlay}>`;
 }

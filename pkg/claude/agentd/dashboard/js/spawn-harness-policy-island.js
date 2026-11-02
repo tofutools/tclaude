@@ -264,9 +264,9 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
       ` : null}
       <div class="cron-create-error" role="alert">${error}</div>
       <div class="modal-buttons">
-        <button type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>${copy.cancel}</button>
+        <button class="ui-btn" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>${copy.cancel}</button>
         <span class="spacer"></span>
-        <button type="button" class="primary" disabled=${busy || !view} onClick=${submit}>${copy.save}</button>
+        <button type="button" class="ui-btn ui-btn-primary" disabled=${busy || !view} onClick=${submit}>${copy.save}</button>
       </div>
     </${Overlay}>
   `;

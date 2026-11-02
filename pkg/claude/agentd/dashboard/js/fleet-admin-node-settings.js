@@ -135,6 +135,6 @@ export function NodeSettingsDialog({ self, peers = [], actions, confirm, toast, 
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <${HealthPolicySection} peers=${peers} actions=${actions} confirm=${confirm} toast=${toast} />
     <${IdentityRotationSection} actions=${actions} confirm=${confirm} toast=${toast} />
-    <div class="modal-buttons"><span class="spacer"></span><button type="button" onClick=${onClose}>Close</button></div>
+    <div class="modal-buttons"><span class="spacer"></span><button class="ui-btn" type="button" onClick=${onClose}>Close</button></div>
   </${Overlay}>`;
 }

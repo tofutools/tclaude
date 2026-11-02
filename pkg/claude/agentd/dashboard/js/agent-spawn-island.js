@@ -1945,22 +1945,22 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     <${FormFillBar} form="spawn" keepValues=${!!queued} fillable=${!current.options.autoSpawn} provenance=${provenance.current}
       claims=${Object.keys(draft.contextFeatures || {}).length ? SPAWN_CONTEXT_CLAIM : NO_CLAIMS} />
     <div class="modal-buttons">
-      ${queued && html`<button id="agent-spawn-queued-discard" class="confirm-danger" type="button" disabled=${busy}
+      ${queued && html`<button id="agent-spawn-queued-discard" class="ui-btn ui-btn-danger" type="button" disabled=${busy}
         title="Remove this prepared spawn from the queue without launching it"
         onClick=${() => { void discardQueued(); }}>Discard</button>`}
-      <button id="agent-spawn-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>${queued ? 'Close' : 'Cancel'}</button>
+      <button class="ui-btn" id="agent-spawn-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>${queued ? 'Close' : 'Cancel'}</button>
       <span id="agent-spawn-progress" class="agent-spawn-progress" role="status" aria-live="polite">
         ${busy ? progress : ''}
       </span>
       <span class="spacer"></span>
-      <button id="agent-spawn-queue" class="agent-spawn-queue-btn" type="button" disabled=${busy}
+      <button id="agent-spawn-queue" class="ui-btn agent-spawn-queue-btn" type="button" disabled=${busy}
         title=${queued
           ? 'Save changes and keep it queued (Ctrl/⌘+Enter)'
           : 'Prepare this agent without starting it — launch it later from ⏸ queued. Worktree creation, branch fetch and the spawn itself happen at launch. (Ctrl/⌘+Shift+Enter)'}
         onClick=${() => { void saveQueued(); }}>
         ${queued ? 'Save' : '⏸ Add to queue'}
       </button>
-      <button id="agent-spawn-submit" class=${`${queued ? 'agent-spawn-launch-btn' : 'primary'}${busy ? ' slop-pull-active' : ''}`} type="button"
+      <button id="agent-spawn-submit" class=${`ui-btn ${queued ? 'ui-btn-success agent-spawn-launch-btn' : 'ui-btn-primary'}${busy ? ' slop-pull-active' : ''}`} type="button"
         disabled=${busy} aria-busy=${busy ? 'true' : undefined}
         title=${queued ? 'Launch it now and remove it from the queue' : requestOnly ? `Send the request to ${remote.node}'s operator (Ctrl/⌘+Enter)` : 'Spawn the agent now (Ctrl/⌘+Enter)'}
         onClick=${() => { void submit(); }}>

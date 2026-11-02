@@ -191,7 +191,7 @@ function LinksManager({ state, actions, confirmDiscard }) {
       <div id="links-list"><${LinksList} state=${state} actions=${actions} /></div>
       <div class="modal-buttons">
         <span class="spacer"></span>
-        <button id="links-manage-close" type="button" onClick=${actions.closeManager}><${Words} plain="Close" wizard="Dispel" /></button>
+        <button class="ui-btn" id="links-manage-close" type="button" onClick=${actions.closeManager}><${Words} plain="Close" wizard="Dispel" /></button>
       </div>
     </${Overlay}>
   `;
@@ -393,9 +393,9 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
       `}
       <${ErrorBanner} error=${error} />
       <div class="modal-buttons">
-        <button id="link-modal-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel" /></button>
+        <button class="ui-btn" id="link-modal-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel" /></button>
         <span class="spacer"></span>
-        <button id="link-modal-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>
+        <button id="link-modal-submit" class="ui-btn ui-btn-primary" type="button" disabled=${busy} onClick=${submit}>
           <${Words}
             plain=${busy ? (edit ? 'Saving…' : 'Creating…') : (edit ? 'Save changes' : remote && peerGroup && !peerGroup.auto ? 'Send link request' : 'Create link')}
             wizard=${busy ? (edit ? 'Rebinding…' : 'Weaving…') : (edit ? 'Rebind channel' : remote && peerGroup && !peerGroup.auto ? 'Send link petition' : 'Weave channel')}
@@ -504,9 +504,9 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
         </div>`}`}
       <${ErrorBanner} error=${error} />
       <div class="modal-buttons">
-        <button id="proposal-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+        <button class="ui-btn" id="proposal-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
         <span class="spacer"></span>
-        <button id="proposal-submit" class="primary" type="button" disabled=${busy || !peer || !connected || !items.length} onClick=${submit}>
+        <button id="proposal-submit" class="ui-btn ui-btn-primary" type="button" disabled=${busy || !peer || !connected || !items.length} onClick=${submit}>
           ${busy ? 'Sending…' : 'Send proposal'}</button>
       </div>
     </${Overlay}>

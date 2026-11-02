@@ -28,9 +28,9 @@ function ConfigDiffModal({ model, close }) {
       <p id="config-diff-sub" class="cfg-diff-sub">${adds} line(s) added, ${dels} removed — writing to ${model.path}</p>
       <div id="config-diff-body" class="config-diff"><${DiffLines} diff=${diff} sign=${sign} unreadable=${!!model.malformed} /></div>
       <div class="modal-buttons">
-        <button id="config-diff-cancel" type="button" onClick=${() => close(false)}>Cancel</button>
+        <button class="ui-btn" id="config-diff-cancel" type="button" onClick=${() => close(false)}>Cancel</button>
         <span class="spacer"></span>
-        <button ref=${confirmRef} id="config-diff-confirm" class="primary" type="button"
+        <button ref=${confirmRef} id="config-diff-confirm" class="ui-btn ui-btn-primary" type="button"
           onClick=${() => close(true)}>${model.malformed ? 'Replace corrupt config.json' : 'Save to config.json'}</button>
       </div>
     </div>

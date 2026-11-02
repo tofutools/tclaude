@@ -522,7 +522,7 @@ func TestDashboardHTML_WizardEnvironmentEditors(t *testing.T) {
 		"the consolidated party editor carries a wizard title")
 	must(`id="group-settings-submit"`, "the party editor submit lever has a stable styling hook")
 	must(`id="group-settings-default-cwd-browse"`, "the party sanctum has a directory-picker affordance")
-	must("button:not(#group-settings-submit):not(.cron-create-error-x)",
+	must("button:where(:not(.ui-btn)):not(#group-settings-submit):not(.cron-create-error-x)",
 		"the party button skin preserves the error banner's ghost dismiss control")
 }
 
@@ -856,7 +856,6 @@ func TestDashboardHTML_WizardConfirmModal(t *testing.T) {
 	// unscoped-needle guards above.
 	must("body.wizard #confirm-modal .modal {", "the confirm dialog surface is re-skinned")
 	must("body.wizard #confirm-modal #confirm-ok {", "the OK button gets the gilded lever, scoped to the confirm modal")
-	must("body.wizard #confirm-modal .modal-buttons button:not(#confirm-ok) {", "Cancel gets the tarnished-gold secondary treatment")
 }
 
 // TestDashboardHTML_WizardEditMemberModal pins the wizard re-skin of the
@@ -935,7 +934,6 @@ func TestDashboardHTML_WizardTermPickerModal(t *testing.T) {
 	// #term-modal.
 	must("body.wizard #term-modal .modal {", "the terminal-picker dialog surface is re-skinned")
 	must("body.wizard #term-modal #term-current {", "Current dir becomes the gilded primary lever, scoped to the term modal")
-	must("body.wizard #term-modal .modal-buttons button:not(#term-current) {", "Cancel / Launch / Worktree get the tarnished-gold secondary treatment")
 }
 
 // TestDashboardHTML_TerminalChooserModal pins the ⚙ "terminals & windows…"
@@ -1097,7 +1095,7 @@ func TestDashboardHTML_WizardGroupCreateDialog(t *testing.T) {
 	must("body.wizard #group-create-modal .cron-create-row input[type=number]", "the number field is re-skinned")
 	must("body.wizard #group-create-modal .cron-create-row input[type=url]", "the attachment URL field is re-skinned")
 	// Non-primary buttons (Cancel / Browse…) get the secondary arcane skin.
-	must("body.wizard #group-create-modal button:not(.primary)", "non-primary buttons get the secondary arcane skin")
+	must("body.wizard #group-create-modal button:where(:not(.ui-btn)):not(.primary)", "non-primary buttons get the secondary arcane skin")
 }
 
 // TestDashboardCSS_WizardGroupCreateModalScoped guards that the wizard
@@ -1170,7 +1168,7 @@ func TestDashboardHTML_WizardCronDialog(t *testing.T) {
 	// tarnished-gold chips. Excluding the submit via :not(.primary) (not
 	// :not(#id)) is what lets this .selected rule out-specify the chip skin.
 	must("body.wizard #cron-create-modal .cron-schedule-chips button.selected", "the picked schedule chip gets a gilded highlight")
-	must("body.wizard #cron-create-modal button:not(.primary)", "non-primary buttons get the secondary arcane skin")
+	must("body.wizard #cron-create-modal button:where(:not(.ui-btn)):not(.primary)", "non-primary buttons get the secondary arcane skin")
 }
 
 // TestDashboardCSS_WizardCronDialogScoped guards that the wizard cron-dialog
@@ -1493,7 +1491,7 @@ func TestDashboardHTML_WizardConfigTab(t *testing.T) {
 
 	// The diff-confirm dialog is re-skinned too, scoped to #config-diff-modal.
 	must("body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .config-diff-modal", "the config and sandbox-profile diff-confirm surfaces are re-skinned")
-	must("body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .modal-buttons button.primary", "the diff-confirm Save levers are re-skinned")
+	must("body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .modal-buttons button:is(.primary, .ui-btn-primary)", "the diff-confirm Save levers are re-skinned")
 }
 
 // TestDashboardCSS_WizardConfigTabScoped guards that the config-tab re-skin's
@@ -1598,8 +1596,6 @@ func TestDashboardHTML_WizardWindowModal(t *testing.T) {
 	must("const plainVerb = direction === 'focus' ? 'Focus' : 'Unfocus';", "the plain submit verb tracks direction")
 	must("const wizardVerb = direction === 'focus' ? 'Reveal' : 'Veil';", "the wizard submit verb swaps to Reveal/Veil")
 	must("wizard=${`${retrying ? 'Retry ' : ''}${wizardVerb} ${count} hero", "the submit count noun swaps to hero in wizard mode")
-	// Cancel gets the tarnished-gold secondary treatment (scoped away from the submit).
-	must("body.wizard #window-modal .modal-buttons button:not(#window-submit)", "Cancel gets the secondary arcane skin")
 }
 
 // TestDashboardCSS_WizardWindowModalScoped guards that the wizard window-dialog
@@ -1643,9 +1639,7 @@ func TestDashboardHTML_WizardCleanupModal(t *testing.T) {
 	// The submit becomes a gilded lever; the delete tier keeps a danger-ember
 	// variant so the irreversible action still signals danger.
 	must("body.wizard #cleanup-modal #cleanup-submit {", "the submit button gets the gilded lever chrome")
-	must("body.wizard #cleanup-modal #cleanup-submit.danger {", "the delete-tier submit keeps a danger-ember lever")
-	// Cancel gets the tarnished-gold secondary treatment (scoped off the submit).
-	must("body.wizard #cleanup-modal .modal-buttons button:not(#cleanup-submit)", "Cancel gets the secondary arcane skin")
+	must("body.wizard #cleanup-modal #cleanup-submit:is(.danger, .ui-btn-danger) {", "the delete-tier submit keeps a danger-ember lever")
 }
 
 // TestDashboardCSS_WizardCleanupModalScoped guards that the wizard bulk-cleanup
@@ -1686,8 +1680,7 @@ func TestDashboardHTML_WizardDeleteRetiredModal(t *testing.T) {
 	must("body.wizard #delete-retired-modal .cleanup-row label .cleanup-badge:not(.online)", "wizard badge chrome leaves online and result status colors semantic")
 	must("body.wizard #delete-retired-modal .delete-agent-wt", "the worktree option is re-skinned")
 	must("body.wizard #delete-retired-modal #delete-retired-submit {", "the result-phase Done button gets gilded chrome")
-	must("body.wizard #delete-retired-modal #delete-retired-submit.danger {", "the selection-phase delete action stays destructive")
-	must("body.wizard #delete-retired-modal .modal-buttons button:not(#delete-retired-submit)", "Cancel gets the secondary arcane skin")
+	must("body.wizard #delete-retired-modal #delete-retired-submit:is(.danger, .ui-btn-danger) {", "the selection-phase delete action stays destructive")
 }
 
 // TestDashboardHTML_WizardDeleteGroupModal pins the wizard re-skin of the
@@ -1717,7 +1710,6 @@ func TestDashboardHTML_WizardDeleteGroupModal(t *testing.T) {
 	must("body.wizard #delete-group-modal #delete-group-submit {", "the submit gets the retire-modal-style gilded lever")
 	must("body.wizard #delete-group-modal #delete-group-submit:active", "the submit uses the retire-modal pressed lever state")
 	must("body.wizard #delete-group-modal .cleanup-row input[type=checkbox]", "member checkboxes use the wizard accent")
-	must("body.wizard #delete-group-modal .modal-buttons button:not(#delete-group-submit)", "Cancel gets the secondary arcane skin")
 }
 
 // TestDashboardHTML_WizardTemplatesManage pins the wizard re-skin of the
@@ -1884,7 +1876,7 @@ func TestDashboardHTML_WizardActionDialogs(t *testing.T) {
 	must(actionDialogs+" .cron-create-modal", "all three action-dialog surfaces get scoped wizard chrome")
 	must(actionDialogs+" .cron-create-modal h3", "all three action-dialog titles get the fantasy type treatment")
 	must(actionDialogs+" :is(.cron-create-row, .lt-row) :is(input[type=text], input:not([type]), select, textarea)", "the action-dialog fields and dropdowns get the violet-void skin")
-	must(actionDialogs+" .modal-buttons button.primary", "the primary action buttons get the gilded lever treatment")
+	must(actionDialogs+" .modal-buttons button:is(.primary, .ui-btn-primary)", "the primary action buttons get the gilded lever treatment")
 	must("body.wizard #reincarnate-agent-modal .reincarnate-mode", "the reincarnate mode selector gets wizard panel chrome")
 	must("body.wizard #reincarnate-agent-modal .reincarnate-mode label", "the reincarnate mode labels override their explicit plain-mode color")
 
@@ -2037,7 +2029,7 @@ func TestDashboardHTML_WizardTemplateNativeControlSweep(t *testing.T) {
 	must("body.wizard #roles-manage-modal .manage-modal", "the roles-library overlay surface is re-skinned")
 	must("body.wizard #roles-manage-modal #role-create-open.primary", "the + new class primary gets the gilded-arcane chrome")
 	must("body.wizard #role-editor-modal .cron-create-modal", "the role-editor surface is re-skinned")
-	must("body.wizard #role-editor-modal button:not(#role-editor-submit)", "the shared permission editor entry gets the secondary wizard chrome")
+	must("body.wizard #role-editor-modal button:where(:not(.ui-btn)):not(#role-editor-submit)", "the shared permission editor entry gets the secondary wizard chrome")
 	must("body.wizard #role-editor-modal #role-editor-submit", "the Save-role button gets the gilded lever chrome")
 }
 
@@ -2302,4 +2294,23 @@ func wizardUsageSelectorLists(css string) []string {
 		lists = append(lists, selector)
 	}
 	return lists
+}
+
+// TestDashboardHTML_WizardStandardButtons pins the wizard skin of the standard
+// ui-* buttons, which dialogs use for their footers: the tarnished-gold
+// secondary and the gilded gradient primary the per-dialog rules used to repeat.
+func TestDashboardHTML_WizardStandardButtons(t *testing.T) {
+	css := dashboardAssetFile(t, "ui.css")
+	for _, want := range []string{
+		"--ui-bg: #241b3d;",
+		"--ui-bg-hover: #3a2a63;",
+		"--ui-btn-line: #d9b45a;",
+		"--ui-text: #e7d9f5;",
+		"--ui-primary: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);",
+		"body.wizard .ui-btn-primary {",
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("ui.css wizard skin missing %q", want)
+		}
+	}
 }

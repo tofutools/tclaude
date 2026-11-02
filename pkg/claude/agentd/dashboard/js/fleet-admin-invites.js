@@ -31,10 +31,10 @@ function TokenDialog({ created, self, copy, toast, onClose }) {
       <span class="fa-k">On the node</span><code class="fa-wrap">${joinCommand(self.id)}</code>
     </div>
     <div class="modal-buttons">
-      <button type="button" onClick=${() => onCopy(created.token, 'Token')}>Copy token</button>
-      <button type="button" onClick=${() => onCopy(joinCommand(self.id), 'Command')}>Copy command</button>
+      <button class="ui-btn" type="button" onClick=${() => onCopy(created.token, 'Token')}>Copy token</button>
+      <button class="ui-btn" type="button" onClick=${() => onCopy(joinCommand(self.id), 'Command')}>Copy command</button>
       <span class="spacer"></span>
-      <button id="fleet-token-close" type="button" class="primary" onClick=${onClose}>Done</button>
+      <button id="fleet-token-close" type="button" class="ui-btn ui-btn-primary" onClick=${onClose}>Done</button>
     </div>
   </${Overlay}>`;
 }
@@ -91,11 +91,11 @@ export function JoinDialog({ masters, actions, onClose, onDone }) {
       <span>I compared the master fingerprint with its operator over another channel</span></label>`}
     <div class="cron-create-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
+      <button class="ui-btn" type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
       <span class="spacer"></span>
       ${preview
-        ? html`<button id="fleet-join-submit" type="button" class=${c.trust_level === 'unrestricted' ? 'danger' : 'primary'} disabled=${busy || !checked} onClick=${enroll}>${busy ? 'Enrolling…' : 'Enroll'}</button>`
-        : html`<button id="fleet-join-preview" type="button" class="primary" disabled=${busy || !master || !token.trim()} onClick=${doPreview}>${busy ? 'Checking…' : 'Preview'}</button>`}
+        ? html`<button id="fleet-join-submit" type="button" class=${c.trust_level === 'unrestricted' ? 'ui-btn ui-btn-danger' : 'ui-btn ui-btn-primary'} disabled=${busy || !checked} onClick=${enroll}>${busy ? 'Enrolling…' : 'Enroll'}</button>`
+        : html`<button id="fleet-join-preview" type="button" class="ui-btn ui-btn-primary" disabled=${busy || !master || !token.trim()} onClick=${doPreview}>${busy ? 'Checking…' : 'Preview'}</button>`}
     </div>
   </${Overlay}>`;
 }

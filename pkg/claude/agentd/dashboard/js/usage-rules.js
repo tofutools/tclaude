@@ -315,10 +315,10 @@ function LimitEditor({ limit, overview, busy, onSave, onDelete, onCancel, onDirt
       onChange=${touch(setDraft)}/>
     <div role="alert" class="cron-create-error">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${onCancel}>Back</button>
-      ${limit.id ? html`<button type="button" disabled=${busy} onClick=${() => onDelete(limit)}>Delete limit</button>` : null}
+      <button class="ui-btn" type="button" disabled=${busy} onClick=${onCancel}>Back</button>
+      ${limit.id ? html`<button class="ui-btn" type="button" disabled=${busy} onClick=${() => onDelete(limit)}>Delete limit</button>` : null}
       <span class="spacer"></span>
-      <button type="button" class="primary" id="usage-limit-save" disabled=${busy} onClick=${save}>${busy ? 'Saving…' : 'Save limit'}</button>
+      <button type="button" class="ui-btn ui-btn-primary" id="usage-limit-save" disabled=${busy} onClick=${save}>${busy ? 'Saving…' : 'Save limit'}</button>
     </div>
   </div>`;
 }
@@ -353,10 +353,10 @@ function ProfileEditor({ profile, busy, onSave, onDelete, onCancel, onDirty }) {
       onPick=${(preset) => touch(setRules)([...rules, ruleToDraft(preset ? preset.rule : blankRule('agent'))])}/>
     <div role="alert" class="cron-create-error">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${onCancel}>Back</button>
-      ${profile.id ? html`<button type="button" disabled=${busy} onClick=${() => onDelete(profile)}>Delete profile</button>` : null}
+      <button class="ui-btn" type="button" disabled=${busy} onClick=${onCancel}>Back</button>
+      ${profile.id ? html`<button class="ui-btn" type="button" disabled=${busy} onClick=${() => onDelete(profile)}>Delete profile</button>` : null}
       <span class="spacer"></span>
-      <button type="button" class="primary" id="usage-profile-save" disabled=${busy} onClick=${save}>${busy ? 'Saving…' : 'Save profile'}</button>
+      <button type="button" class="ui-btn ui-btn-primary" id="usage-profile-save" disabled=${busy} onClick=${save}>${busy ? 'Saving…' : 'Save profile'}</button>
     </div>
   </div>`;
 }
@@ -537,7 +537,7 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api: api
     ${editing ? null : html`<div class="modal-buttons">
       ${overview?.evaluated_at ? html`<span class="muted usage-rules-evaluated">readings from ${new Date(overview.evaluated_at).toLocaleTimeString()}</span>` : null}
       <span class="spacer"></span>
-      <button type="button" disabled=${busy} onClick=${() => void requestClose()}>Close</button>
+      <button class="ui-btn" type="button" disabled=${busy} onClick=${() => void requestClose()}>Close</button>
     </div>`}
   </${Overlay}>`;
 }

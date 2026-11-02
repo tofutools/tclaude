@@ -327,11 +327,11 @@ export function SkillInstallDialog({ row, actions, confirm, onClose, onDone }) {
       ${(preview.warnings || []).map((w) => html`<div class="fa-warn">${w}</div>`)}`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons"><span class="spacer"></span>
-      <button type="button" onClick=${onClose}>Cancel</button>
+      <button class="ui-btn" type="button" onClick=${onClose}>Cancel</button>
       ${opts.target === 'download'
-        ? html`<button type="button" class="primary" id="fleet-cb-download" disabled=${busy} onClick=${download}>Download</button>`
-        : html`<button type="button" id="fleet-cb-preview-btn" disabled=${busy || !targetReady} onClick=${() => run(opts)}>${busy ? 'Previewing…' : preview && !stale ? 'Preview again' : 'Preview'}</button>
-          <button type="button" class="primary" id="fleet-cb-install-btn" disabled=${blocked} title=${stale ? 'Preview first' : ''} onClick=${install}>Install…</button>`}
+        ? html`<button type="button" class="ui-btn ui-btn-primary" id="fleet-cb-download" disabled=${busy} onClick=${download}>Download</button>`
+        : html`<button class="ui-btn" type="button" id="fleet-cb-preview-btn" disabled=${busy || !targetReady} onClick=${() => run(opts)}>${busy ? 'Previewing…' : preview && !stale ? 'Preview again' : 'Preview'}</button>
+          <button type="button" class="ui-btn ui-btn-primary" id="fleet-cb-install-btn" disabled=${blocked} title=${stale ? 'Preview first' : ''} onClick=${install}>Install…</button>`}
     </div>
   </${Overlay}>`;
 }
@@ -343,7 +343,7 @@ function UploadPicker({ boards, onPick, onClose }) {
     <h3 id="fleet-cb-upload-title">Upload to which board?</h3>
     <div class="muted">Skills and config you post are signed by this node and readable by every member of the board.</div>
     <div class="fa-cb-pick">${boards.map((b) => html`<button type="button" key=${b.id} data-upload-board=${b.id} onClick=${() => onPick(b)}>${b.name}</button>`)}</div>
-    <div class="modal-buttons"><span class="spacer"></span><button type="button" onClick=${onClose}>Cancel</button></div>
+    <div class="modal-buttons"><span class="spacer"></span><button class="ui-btn" type="button" onClick=${onClose}>Cancel</button></div>
   </${Overlay}>`;
 }
 
@@ -445,7 +445,7 @@ export function ContentBrowser({ boards, view, actions, confirm, toast, onOpenBo
           <div class="fa-cb-pane">${detail(sel)}</div>
         </div>`}
     ${d?.kind === 'detail' && html`<${Overlay} id="fleet-cb-detail" ariaLabel=${d.row.name} onClose=${() => setDialog(null)}>${detail(d.row)}
-      <div class="modal-buttons"><span class="spacer"></span><button type="button" onClick=${() => setDialog(null)}>Close</button></div></${Overlay}>`}
+      <div class="modal-buttons"><span class="spacer"></span><button class="ui-btn" type="button" onClick=${() => setDialog(null)}>Close</button></div></${Overlay}>`}
     ${d?.kind === 'skill' && html`<${SkillInstallDialog} row=${d.row} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${d?.kind === 'config' && html`<${ImportDialog} board=${d.row.board} item=${d.row} version=${d.row.version} by=${d.row.by} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${d?.kind === 'pick' && html`<${UploadPicker} boards=${posters} onPick=${(b) => setDialog({ kind: 'publish', board: b })} onClose=${() => setDialog(null)} />`}

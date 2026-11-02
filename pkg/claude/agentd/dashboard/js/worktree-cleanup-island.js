@@ -333,7 +333,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
       <${CleanupOutcomeList} response=${result} />
       <div class="cleanup-error" id="worktree-cleanup-error"></div>
       <div class="modal-buttons">
-        <button ref=${doneRef} id="worktree-cleanup-submit" class="primary" type="button" onClick=${close}>Done</button>
+        <button ref=${doneRef} id="worktree-cleanup-submit" class="ui-btn ui-btn-primary" type="button" onClick=${close}>Done</button>
       </div>
     ` : html`
       <p class="cleanup-hint" id="worktree-cleanup-hint"><${Words}
@@ -431,10 +431,10 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
           ? `Stale-record scan incomplete: ${pruneScanErrors.map((entry) => `${entry.repo_root}: ${entry.detail}`).join('; ')}`
           : '')}</div>
       <div class="modal-buttons">
-        <button id="worktree-cleanup-cancel" type="button" disabled=${closeBlocked} onClick=${close}>
+        <button class="ui-btn" id="worktree-cleanup-cancel" type="button" disabled=${closeBlocked} onClick=${close}>
           <${Words} plain="Cancel" wizard="Dispel" />
         </button>
-        <button id="worktree-cleanup-submit" class="primary danger" type="button"
+        <button id="worktree-cleanup-submit" class="ui-btn ui-btn-danger" type="button"
           disabled=${busy || (selected.length === 0 && selectedPruneRepos.length === 0)} aria-busy=${busyAction === 'submit' ? 'true' : undefined}
           onClick=${() => void submit()}>
           ${busyAction === 'submit'

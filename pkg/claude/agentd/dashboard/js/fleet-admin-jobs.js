@@ -118,8 +118,8 @@ function RunJobDialog({ peers, pools, actions, confirm, onClose, onDone }) {
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation job run --node … --repo … --ref … --group … --command … [--follow]</code></div>
     <div class="modal-buttons"><span class="spacer"></span>
-      <button id="fleet-job-send" type="button" class="primary" onClick=${submit}>Send…</button>
-      <button type="button" onClick=${onClose}>Close</button></div>
+      <button id="fleet-job-send" type="button" class="ui-btn ui-btn-primary" onClick=${submit}>Send…</button>
+      <button class="ui-btn" type="button" onClick=${onClose}>Close</button></div>
   </${Overlay}>`;
 }
 
@@ -238,7 +238,7 @@ function OutputDialog({ job, label, actions, timers, active, onClose }) {
       <div class="fa-k">stdout</div><pre class="fa-run-out" ref=${pre} onScroll=${onScroll}>${shown.stdout || ''}</pre>
       ${shown.stderr ? html`<div class="fa-k">stderr</div><pre class="fa-run-out err">${shown.stderr}</pre>` : ''}`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation job status ${job.id}</code>${live ? html`; live output: <code>job run … --follow</code>` : ''}</div>
-    <div class="modal-buttons"><span class="spacer"></span><button type="button" onClick=${onClose}>Close</button></div>
+    <div class="modal-buttons"><span class="spacer"></span><button class="ui-btn" type="button" onClick=${onClose}>Close</button></div>
   </${Overlay}>`;
 }
 
@@ -273,8 +273,8 @@ function RepoDialog({ repo, groups, actions, confirm, onClose, onDone }) {
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation repos ${repo ? 'update' : 'add'} …</code></div>
     <div class="modal-buttons"><span class="spacer"></span>
-      <button id="fleet-repo-save" type="button" class="primary" onClick=${save}>${repo ? 'Save…' : 'Allow…'}</button>
-      <button type="button" onClick=${onClose}>Close</button></div>
+      <button id="fleet-repo-save" type="button" class="ui-btn ui-btn-primary" onClick=${save}>${repo ? 'Save…' : 'Allow…'}</button>
+      <button class="ui-btn" type="button" onClick=${onClose}>Close</button></div>
   </${Overlay}>`;
 }
 

@@ -73,7 +73,7 @@ func TestDashboardCSS_StylingSweep(t *testing.T) {
 
 	// C1 — the spawn-dialog attachment ✕ stays a ghost button in the wizard skin:
 	// the blanket repaint now excludes .att-remove.
-	must("button:not(#agent-spawn-submit):not(.att-remove) {", "the wizard spawn blanket excludes the ghost att-remove button")
+	must("button:where(:not(.ui-btn)):not(#agent-spawn-submit):not(.att-remove) {", "the wizard spawn blanket excludes the ghost att-remove button")
 
 	// Anti-regression: the plain-mode gaps must NOT be closed by widening a
 	// body.wizard rule (the wizard selectors stay modal-id-scoped). A bare

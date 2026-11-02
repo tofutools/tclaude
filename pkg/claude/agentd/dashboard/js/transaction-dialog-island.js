@@ -27,11 +27,11 @@ export function TransactionDialogFrame({
   error = '',
   primaryLabel,
   busyLabel = primaryLabel,
-  primaryClass = 'confirm-danger',
+  primaryClass = 'ui-btn-danger',
   submitDisabled = false,
   alternateLabel = '',
   alternateBusyLabel = alternateLabel,
-  alternateClass = 'confirm-danger',
+  alternateClass = 'ui-btn-danger',
   alternateDisabled = false,
   alternateID = '',
   alternateTitle = '',
@@ -90,11 +90,11 @@ export function TransactionDialogFrame({
       ${children}
       <div class="cleanup-error" id=${errorID || undefined} role=${error ? 'alert' : undefined}>${error}</div>
       <div class="modal-buttons">
-        ${hideCancel ? null : html`<button id=${cancelID || `${baseID}-cancel`} type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>`}
+        ${hideCancel ? null : html`<button class="ui-btn" id=${cancelID || `${baseID}-cancel`} type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>`}
         <span class="spacer"></span>
         ${alternateLabel ? html`<button
           id=${alternateID || `${baseID}-alternate`}
-          class=${alternateClass}
+          class=${`ui-btn ${alternateClass}`}
           type="button"
           title=${alternateTitle || undefined}
           disabled=${busy || alternateDisabled}
@@ -104,7 +104,7 @@ export function TransactionDialogFrame({
         <button
           ref=${submitRef}
           id=${submitID || `${baseID}-submit`}
-          class=${primaryClass}
+          class=${`ui-btn ${primaryClass}`}
           type="button"
           disabled=${busy || submitDisabled}
           aria-busy=${busy && busyAction === 'primary' ? 'true' : undefined}
@@ -247,7 +247,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
       plain=${`${plainVerb}ing…`}
       wizard=${`${wizardVerb}ing…`}
     />`}
-    primaryClass="primary"
+    primaryClass="ui-btn-primary"
     submitDisabled=${count === 0}
     cancelID="window-cancel"
     submitID="window-submit"
@@ -551,7 +551,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
       title=${title}
       dialogClass="cleanup-modal"
       primaryLabel="Done"
-      primaryClass="primary"
+      primaryClass="ui-btn-primary"
       hideCancel=${true}
       submitID="cleanup-submit"
       onClose=${close}
@@ -584,7 +584,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
     primaryLabel=${primaryLabel}
     busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
       plain="Cleaning up…" wizard="Tidying…" />`}
-    primaryClass=${effectiveTier === 'delete' ? 'primary danger' : 'primary'}
+    primaryClass=${effectiveTier === 'delete' ? 'ui-btn-danger' : 'ui-btn-primary'}
     submitDisabled=${count === 0}
     cancelID="cleanup-cancel"
     submitID="cleanup-submit"
@@ -809,7 +809,7 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
     busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
       plain="Deleting…" wizard="Disbanding…"
     />`}
-    primaryClass="primary danger"
+    primaryClass="ui-btn-danger"
     cancelID="delete-group-cancel"
     submitID="delete-group-submit"
     onClose=${actions.close}
@@ -1092,7 +1092,7 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
       plain=${result ? 'Refreshing…' : 'Retiring…'}
       wizard=${result ? 'Refreshing…' : 'Banishing…'}
     />`}
-    primaryClass=${result ? 'primary' : 'primary danger'}
+    primaryClass=${result ? 'ui-btn-primary' : 'ui-btn-danger'}
     submitDisabled=${!result && selectedCandidates.length === 0}
     hideCancel=${!!result}
     cancelID="retire-preview-cancel"
@@ -1320,7 +1320,7 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
       plain=${result ? 'Refreshing…' : 'Deleting…'}
       wizard=${result ? 'Refreshing…' : 'Dispelling…'}
     />`}
-    primaryClass=${result ? 'primary' : 'primary danger'}
+    primaryClass=${result ? 'ui-btn-primary' : 'ui-btn-danger'}
     submitDisabled=${!result && visibleSelected.length === 0}
     hideCancel=${!!result}
     cancelID="delete-retired-cancel"

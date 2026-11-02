@@ -177,8 +177,8 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
             ${plan.missing.length > 0 && html`<div class="fa-warn">Pick a group for ${plan.missing.join(', ')}.</div>`}`}
         </div>
         <div class="modal-buttons"><span class="spacer"></span>
-          <button type="button" onClick=${onClose}>Cancel</button>
-          <button id="fleet-grant-submit" type="button" class="primary" disabled=${!canGrant} onClick=${grant}>${todo.length > 1 ? `Grant ${todo.length}…` : 'Grant…'}</button>
+          <button class="ui-btn" type="button" onClick=${onClose}>Cancel</button>
+          <button id="fleet-grant-submit" type="button" class="ui-btn ui-btn-primary" disabled=${!canGrant} onClick=${grant}>${todo.length > 1 ? `Grant ${todo.length}…` : 'Grant…'}</button>
         </div>
       </div>
     </div>

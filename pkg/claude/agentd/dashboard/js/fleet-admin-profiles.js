@@ -59,9 +59,9 @@ export function ApplyDialog({ profile, peers, actions, poolNames = new Map(), on
         <span>I understand, and this is ${row.label}'s fingerprint</span></label>`}
     <div class="cron-create-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
+      <button class="ui-btn" type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
       <span class="spacer"></span>
-      <button id="fleet-apply-submit" type="button" class=${widens ? 'danger' : 'primary'} disabled=${busy || !ready || !changes.length} onClick=${apply}>${busy ? 'Applying…' : 'Apply'}</button>
+      <button id="fleet-apply-submit" type="button" class=${widens ? 'ui-btn ui-btn-danger' : 'ui-btn ui-btn-primary'} disabled=${busy || !ready || !changes.length} onClick=${apply}>${busy ? 'Applying…' : 'Apply'}</button>
     </div>
   </${Overlay}>`;
 }

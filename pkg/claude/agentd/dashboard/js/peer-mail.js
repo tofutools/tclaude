@@ -126,8 +126,8 @@ export function PeerMailDialog({ initial = {}, onClose, toast, actions = default
       : 'Delivered as mail from you, this node\'s operator, if the peer lets you message that agent or group.'} It waits in the outbox while the peer is offline.</div>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons"><span class="spacer"></span>
-      <button type="button" onClick=${onClose}>Close</button>
-      <button id="peer-mail-send" type="button" class="primary" disabled=${busy || !ready} onClick=${send}>${busy ? 'Sending…' : 'Send'}</button>
+      <button class="ui-btn" type="button" onClick=${onClose}>Close</button>
+      <button id="peer-mail-send" type="button" class="ui-btn ui-btn-primary" disabled=${busy || !ready} onClick=${send}>${busy ? 'Sending…' : 'Send'}</button>
     </div>
     <h4 class="peer-mail-h">Outbox <button type="button" class="fa-link" onClick=${() => setTick((n) => n + 1)}>refresh</button></h4>
     ${outbox?.error ? html`<div class="fa-danger">${outbox.error}</div>` : !outbox ? html`<div class="muted">Loading…</div>` : outbox.length === 0 ? html`<div class="muted">Nothing sent yet.</div>` : html`

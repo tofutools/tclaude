@@ -161,6 +161,6 @@ export function RemoteSessionsDialog({ node, onClose, fetchImpl, toast = shellTo
         </tr>`;
       })}</tbody></table>`}
     <div class="muted fa-cli-note">Opening never stops the agent. Viewers share the size: the smallest attached terminal sets it. With the take-over grant you can disconnect the others. ${node.name} shows REMOTE WATCH or REMOTE INPUT on its pane and can disconnect you.</div>
-    <div class="modal-buttons"><span class="spacer"></span><button type="button" onClick=${onClose}>Close</button></div>
+    <div class="modal-buttons"><span class="spacer"></span><button class="ui-btn" type="button" onClick=${onClose}>Close</button></div>
   </${Overlay}>`;
 }

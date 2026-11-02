@@ -135,9 +135,9 @@ export function AgentExportDialog({ descriptor, state, actions, confirmDiscard }
       ${redacting && html`<${RedactPanel} actions=${actions} source=${unredacted} filename=${safeFilename(label, '.redacted.paf')} onDone=${state.closeDialog} />`}`}
     <div class="cron-create-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button type="button" id="paf-export-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+      <button class="ui-btn" type="button" id="paf-export-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
       <span class="spacer"></span>
-      <button type="button" id="paf-export-download" class="primary"
+      <button type="button" id="paf-export-download" class="ui-btn ui-btn-primary"
         disabled=${busy || (history && !native && !neutral) || (!!findings && !ack)} onClick=${download}>
         ${busy ? 'Exporting…' : '⤓ Download .paf'}</button>
     </div>
@@ -182,9 +182,9 @@ export function GroupExportDialog({ descriptor, state, actions, confirmDiscard }
       <${Check} id="group-export-ack" checked=${ack} onChange=${setAck}>Export anyway; I have checked the findings</${Check}>`}
     <div class="cron-create-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+      <button class="ui-btn" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
       <span class="spacer"></span>
-      <button type="button" id="group-export-download" class="primary" disabled=${busy || (!!findings && !ack)} onClick=${download}>
+      <button type="button" id="group-export-download" class="ui-btn ui-btn-primary" disabled=${busy || (!!findings && !ack)} onClick=${download}>
         ${busy ? 'Exporting…' : `⤓ Download .${format}`}</button>
     </div>
   </${Overlay}>`;

@@ -187,13 +187,13 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
     </div>
     <div class="cron-create-error" id="edit-member-error" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button id="edit-member-perms" type="button" disabled=${busy || !here}
+      <button class="ui-btn" id="edit-member-perms" type="button" disabled=${busy || !here}
         title="Open this agent / hero's permanent permission grimoire (grant / deny / inherit per slug)"
         onClick=${() => actions.openMemberPermissions(descriptor)}><span class="em-btn-regular">Permissions…</span><span class="em-btn-wizard">Grimoire…</span></button><${LockReason} id="edit-member-perms-lock" why=${adminLock}/>
       <span class="spacer"></span>
-      <button id="edit-member-cancel" type="button" disabled=${busy}
+      <button class="ui-btn" id="edit-member-cancel" type="button" disabled=${busy}
         onClick=${() => { void requestClose(); }}><span class="em-btn-regular">Cancel</span><span class="em-btn-wizard">Dispel</span></button>
-      <button id="edit-member-save" type="button" disabled=${busy} onClick=${submit}>${busy ? 'Saving…' : 'Save'}</button>
+      <button class="ui-btn" id="edit-member-save" type="button" disabled=${busy} onClick=${submit}>${busy ? 'Saving…' : 'Save'}</button>
     </div>
   </${Overlay}>`;
 }

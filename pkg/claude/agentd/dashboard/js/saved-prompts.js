@@ -40,9 +40,9 @@ function SavedPromptImport({ incoming, prompts, busy, onImport, onCancel }) {
     ${changed.length ? html`<label class="saved-prompts-import-overwrite"><input type="checkbox" checked=${overwrite} disabled=${busy}
       onChange=${(event) => setOverwrite(event.currentTarget.checked)}/> Overwrite the ${changed.length} existing prompt${changed.length === 1 ? '' : 's'} that differ</label>` : null}
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${onCancel}>Cancel import</button>
+      <button class="ui-btn" type="button" disabled=${busy} onClick=${onCancel}>Cancel import</button>
       <span class="spacer"></span>
-      <button type="button" class="primary" id="saved-prompts-import-submit" disabled=${busy || !writes}
+      <button type="button" class="ui-btn ui-btn-primary" id="saved-prompts-import-submit" disabled=${busy || !writes}
         onClick=${() => onImport([...fresh.map((prompt) => ['', prompt]), ...(overwrite ? changed.map((prompt) => [prompt.name, prompt]) : [])])}>
         ${busy ? 'Importing…' : `Import ${writes}`}</button>
     </div>
@@ -149,13 +149,13 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
           onInput=${(event) => setDraft({ ...draft, body: event.currentTarget.value })}/></label>
       <div role="alert" class="cron-create-error">${error}</div>
       <div class="modal-buttons">
-        <button type="button" disabled=${busy} onClick=${() => void requestClose()}>Close</button>
-        ${original ? html`<button type="button" disabled=${busy} onClick=${() => {
+        <button class="ui-btn" type="button" disabled=${busy} onClick=${() => void requestClose()}>Close</button>
+        ${original ? html`<button class="ui-btn" type="button" disabled=${busy} onClick=${() => {
           if (deleting) void mutate(true); else setDeleting(true);
         }}>${deleting ? 'Confirm delete' : 'Delete prompt'}</button>
-        <button type="button" id="saved-prompts-clone" disabled=${busy} onClick=${() => void startClone()}>Clone</button>` : null}
+        <button class="ui-btn" type="button" id="saved-prompts-clone" disabled=${busy} onClick=${() => void startClone()}>Clone</button>` : null}
         <span class="spacer"></span>
-        <button type="button" class="primary" disabled=${busy || !draft.name.trim() || !draft.body.trim()}
+        <button type="button" class="ui-btn ui-btn-primary" disabled=${busy || !draft.name.trim() || !draft.body.trim()}
           onClick=${() => void mutate()}>${busy ? 'Saving…' : 'Save prompt'}</button>
       </div>
     </${Overlay}>
