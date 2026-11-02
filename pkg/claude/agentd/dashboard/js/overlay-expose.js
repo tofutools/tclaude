@@ -126,33 +126,30 @@ function spreadSheet(placed, dimmed, motion) {
   return rules.join('\n');
 }
 
-// useSpreadSheet keeps that stylesheet in the page while the view shows. When
-// it goes, the windows glide back: the transition outlives the transforms for
-// as long as the glide takes.
+// The stylesheet the spread is, rendered by OverlayExpose, which outlives the
+// view: when the view goes, the windows glide back, as the transition outlives
+// the transforms for as long as the glide takes.
+const spreadCss = signal('');
+let settling = null;
+
+// useSpreadSheet keeps that stylesheet in the page while the view shows.
 function useSpreadSheet(win, css, motion) {
-  const sheet = useRef(null);
   useLayoutEffect(() => {
-    const doc = win?.document;
-    if (!doc?.head) return undefined;
-    const node = doc.createElement('style');
-    node.dataset.overlayExpose = '';
-    doc.head.appendChild(node);
-    sheet.current = node;
-    return () => {
-      sheet.current = null;
-      if (!motion) { node.remove(); return; }
-      node.textContent = `[data-overlay-window] { transition: transform ${SPREAD_MS}ms ease, opacity ${SPREAD_MS}ms ease; }`;
-      win.setTimeout(() => node.remove(), SPREAD_MS + 40);
-    };
-  }, []);
-  useLayoutEffect(() => {
-    if (sheet.current) sheet.current.textContent = css;
+    win?.clearTimeout?.(settling);
+    spreadCss.value = css;
   }, [css]);
+  useLayoutEffect(() => () => {
+    if (!motion) { spreadCss.value = ''; return; }
+    spreadCss.value = `[data-overlay-window] { transition: transform ${SPREAD_MS}ms ease, opacity ${SPREAD_MS}ms ease; }`;
+    settling = win?.setTimeout?.(() => { spreadCss.value = ''; }, SPREAD_MS + 40);
+  }, []);
 }
 
 export function OverlayExpose({ win = globalThis.window }) {
-  if (!overlayExposeOpen.value || !overlayExposeAvailable.value) return null;
-  return html`<${ExposeView} win=${win} />`;
+  const css = spreadCss.value;
+  const sheet = css && html`<style data-overlay-expose="">${css}</style>`;
+  if (!overlayExposeOpen.value || !overlayExposeAvailable.value) return sheet || null;
+  return html`${sheet}<${ExposeView} win=${win} />`;
 }
 
 const optionId = (index) => `overlay-expose-option-${index}`;

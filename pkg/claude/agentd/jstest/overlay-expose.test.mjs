@@ -197,7 +197,7 @@ function liveWindows(s, boxes) {
   return () => { proto.getBoundingClientRect = original; for (const node of nodes) node.remove(); };
 }
 
-const sheet = (s) => s.harness.window.document.head.querySelector('style[data-overlay-expose]')?.textContent || '';
+const sheet = (s) => s.harness.window.document.querySelector('style[data-overlay-expose]')?.textContent || '';
 
 test('the open windows themselves spread out, live, and the minimized ones are cards beneath', async (t) => {
   const s = await setup(t);
@@ -244,5 +244,5 @@ test('with reduced motion the windows jump to the same spread, and back', async 
   assert.match(sheet(s), /transform: translate/);
   assert.doesNotMatch(sheet(s), /transition/);
   await s.key({ key: 'Escape' }, s.mounted.container.querySelector('.overlay-expose-filter'));
-  assert.equal(s.harness.window.document.head.querySelector('style[data-overlay-expose]'), null, 'gone at once');
+  assert.equal(s.harness.window.document.querySelector('style[data-overlay-expose]'), null, 'gone at once');
 });
