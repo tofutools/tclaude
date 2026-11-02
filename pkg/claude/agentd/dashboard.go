@@ -3863,16 +3863,6 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	span.addChildren("codex_telemetry", rc.codexTelemetryTiming.perfPhases()...)
 	span.markExcluding("roster", rc.codexTelemetryTiming.total-codexAfterGroups)
 
-	// It has no session or group to bring it in, and the roster is where the
-	// operator sees it exists.
-	if collabRoutesEnabled() {
-		if stewards, err := db.ListExternalStewards(); err == nil {
-			for _, steward := range stewards {
-				addAgent(steward.ConvID)
-			}
-		}
-	}
-
 	out.Ungrouped = []dashboardAgent{}
 	for _, a := range agentRows {
 		// Defensive: a retired conv must never appear on the roster,

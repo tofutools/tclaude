@@ -104,10 +104,18 @@ func TestExternalStewardDashboard_NeverReachesPeersOrOtherOrigins(t *testing.T) 
 	assert.Equal(t, http.StatusForbidden, testharness.Serve(agentd.BuildDashboardHandlerForTest(), req).Code)
 }
 
-// A principal has no session or group, and the roster still has to show it.
+// A principal has no session or group, and the roster shows it even with every
+// grant taken away.
 func TestExternalStewardDashboard_OnTheRoster(t *testing.T) {
 	s := newExternalStewardFlow(t, true)
 	issued := s.create("assistant")
+	steward, err := db.ListExternalStewards()
+	require.NoError(t, err)
+	require.Len(t, steward, 1)
+	for _, slug := range issued.Grants {
+		_, err := db.RevokeAgentPermission(steward[0].ConvID, slug)
+		require.NoError(t, err)
+	}
 	rec := s.dashboard(http.MethodGet, "/api/snapshot", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 	var snapshot struct {

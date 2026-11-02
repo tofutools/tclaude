@@ -10124,7 +10124,8 @@ label.cfg-label { cursor: pointer; }
 .cfg-tool-list { width: 100%; border-collapse: collapse; font-size: 13px; }
 .cfg-tool-list th { text-align: left; font-weight: 600; color: #8b949e; }
 .cfg-tool-list th, .cfg-tool-list td { padding: 6px 12px 6px 0; vertical-align: top; border-bottom: 1px solid var(--border); }
-.cfg-tool-list td code { overflow-wrap: anywhere; }
+.cfg-tool-list td:first-child code { white-space: nowrap; }
+@media (max-width: 640px) { .cfg-tool-list td:first-child code { white-space: normal; overflow-wrap: anywhere; } }
 .cfg-steward-manager { display: flex; flex-direction: column; gap: 10px; width: 100%; min-width: 0; }
 .cfg-steward-issued { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
 .cfg-steward-secret { display: block; padding: 6px 8px; font-size: 12px; overflow-wrap: anywhere; user-select: all; }

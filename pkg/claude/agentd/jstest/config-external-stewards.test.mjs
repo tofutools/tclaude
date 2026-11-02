@@ -49,12 +49,16 @@ async function setup(t, { stewards, enabled = true, confirm = async () => true }
 const row = { agent_id: 'agt_a', name: 'assistant', credentials: [{ token_id: 't1', live: true, expires_at: '2099-01-01T00:00:00Z' }] };
 
 test('a new credential is shown once, inside the capture mask, until Done', async (t) => {
-  const { mounted, add, button, settle } = await setup(t);
+  const { harness, mounted, add, button, settle } = await setup(t);
   await add('assistant');
   const secret = mounted.container.querySelector('[data-capture-mask]');
   assert.equal(secret?.textContent, CREDENTIAL);
   assert.match(mounted.container.textContent, /can't be shown again/);
   assert.equal(mounted.container.textContent.split(CREDENTIAL).length, 2, 'it appears once and only in the mask');
+  const { CAPTURE_MASK, snapshotPage, snapshotText } = await harness.importDashboardModule('js/capture-snapshot.js');
+  const captured = snapshotText(snapshotPage(mounted.container.ownerDocument.defaultView));
+  assert.ok(!captured.includes('tcls_'), 'a Steward capturing this page does not get it');
+  assert.ok(captured.includes(CAPTURE_MASK));
   await settle(() => button('Done').click());
   assert.ok(!mounted.container.textContent.includes(CREDENTIAL));
   assert.match(mounted.container.textContent, /assistant/, 'the list refreshed');

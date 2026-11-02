@@ -207,7 +207,7 @@ function ExternalStewardGroup({ loads }) {
     <code>tclaude mcp serve</code>, using a credential only you can make. It can't answer permission questions, and it
     can never hold sudo.`}>
     <${Setting} title="Allow external stewards" forId="cfg-steward-external-enabled" k="steward.external_enabled"
-      summary="Off, no credential can be made or used. Check what it can do below before turning this on.">
+      summary="While this is off, no credential can be made or used. Check what it can do below before turning it on.">
       <${Toggle} id="cfg-steward-external-enabled" />
     </${Setting}>
     ${info?.tools?.length > 0 && html`<${Setting} title="What it can do" wide summary="These are all the tools it gets.">
