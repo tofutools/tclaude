@@ -23,6 +23,10 @@ const glOpenMRsAnswer = `{"data":{"currentUser":{"username":"yorick","authoredMe
 ]}}}}`
 
 func TestOpenMRs_SnapshotCarriesTheTokenUsersMergeRequests(t *testing.T) {
+	// The dashboard handler checks Origin against the popup base. Set it here
+	// rather than relying on an earlier test leaving the global set, which
+	// holds in a full package run but not under -run.
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	_, _, gl := glWorld(t, []string{"gitlab.yamzz.test/yamzz"})
 	t.Cleanup(agentd.ResetAuthoredOpenMRsForTest)
 	gl.route = func(req agentd.GitLabRequestForTest) (glCanned, bool) {
