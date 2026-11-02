@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"encoding/json"
 	"net/url"
 	"testing"
@@ -48,6 +49,20 @@ func TestGLRequestURL(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "https://gitlab.example.com:6080/api/v4/projects/1/notes?page=3", got)
 	})
+}
+
+// TestNewGitLabHTTPRequest_TokenRidesTheBearerHeader pins the one header the
+// token travels in. PRIVATE-TOKEN was dropped by a reverse proxy in front of a
+// real instance (every call then read as anonymous), and Go forwards a custom
+// header across a cross-host redirect where it strips Authorization.
+func TestNewGitLabHTTPRequest_TokenRidesTheBearerHeader(t *testing.T) {
+	req, err := newGitLabHTTPRequest(context.Background(), "https://gitlab.example.com:6080",
+		"glpat-secret", glAPIRequest{Path: "user"})
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer glpat-secret", req.Header.Get("Authorization"))
+	assert.Empty(t, req.Header.Get("PRIVATE-TOKEN"), "the token travels in one header only")
+	assert.NotContains(t, req.URL.String(), "glpat-secret", "never in the URL")
+	assert.Equal(t, "https://gitlab.example.com:6080/api/v4/user", req.URL.String())
 }
 
 func TestGLStripDraftPrefix(t *testing.T) {

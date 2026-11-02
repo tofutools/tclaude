@@ -3208,9 +3208,9 @@ type GitProxyConfig struct {
 	GitLabHosts map[string]string `json:"gitlab_hosts,omitempty"`
 
 	// GitLabTokenFile names a file whose contents are the GitLab personal or
-	// project access token the GitLab proxy sends as a PRIVATE-TOKEN header.
-	// There is no CLI fallback: with no file configured the GitLab proxy
-	// refuses every call and says so. One token for every configured host.
+	// project access token the GitLab proxy sends as an Authorization: Bearer
+	// header. There is no CLI fallback: with no file configured the GitLab
+	// proxy refuses every call and says so. One token for every configured host.
 	GitLabTokenFile string `json:"gitlab_token_file,omitempty"`
 }
 

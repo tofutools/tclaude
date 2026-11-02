@@ -59,7 +59,7 @@ type glProxySession struct {
 	projectID string
 	remoteKey string
 	// token is the operator's GitLab credential, held for one request and sent
-	// only as a PRIVATE-TOKEN header. Never logged, never rendered.
+	// only as an `Authorization: Bearer` header. Never logged, never rendered.
 	token string
 	// branch is the agent's current branch, read while the git session is
 	// open; `mr create` needs it as the source branch.

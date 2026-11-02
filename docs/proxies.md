@@ -170,8 +170,10 @@ resolves to, and only when that remote is allowed **and** its host is a
 configured instance (`gitlab_hosts`, or `gitlab.com`). The project is the
 full namespace path, `group/subgroup/project`, exactly as the allow-list
 admitted it; a nested path is ordinary on GitLab and is never re-derived
-from its first and last segments. The token travels as a `PRIVATE-TOKEN`
-header, never through argv or a child's environment.
+from its first and last segments. The token travels as an
+`Authorization: Bearer` header, never through argv or a child's environment.
+That is the standard header, so a reverse proxy in front of the instance
+passes it through, and Go drops it if a redirect leaves the instance's host.
 
 To authorise some projects and not others, write them out:
 

@@ -230,8 +230,8 @@ func SetGitLabStreamForTestBytes(
 //
 // A Path carrying a scheme is a pagination link GitLab handed back, and it is
 // GitLab-supplied data: it is used as given only when its scheme, host and port
-// are the base's own. Go strips Authorization across a cross-host redirect; it
-// does not strip a PRIVATE-TOKEN header from a URL handed straight to Do.
+// are the base's own. Go strips Authorization across a cross-host redirect, but
+// a URL handed straight to Do gets the header with no such check.
 func glRequestURL(base string, req glAPIRequest) (string, error) {
 	baseURL, err := url.Parse(base)
 	if err != nil || baseURL.Scheme != "https" || baseURL.Host == "" {
@@ -283,11 +283,17 @@ func newGitLabHTTPRequest(ctx context.Context, base, token string, req glAPIRequ
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
-	// PRIVATE-TOKEN rather than a bearer header: it is the one form every
-	// GitLab token kind accepts (personal, project and group access tokens
-	// alike), and it cannot be mistaken for an OAuth token by an instance that
-	// treats the two differently.
-	httpReq.Header.Set("PRIVATE-TOKEN", token)
+	// The OAuth-compliant bearer header rather than PRIVATE-TOKEN. GitLab
+	// documents both for personal, project and group access tokens, but they
+	// do not travel alike:
+	//   - a reverse proxy in front of the instance may drop a non-standard
+	//     header (one in the field forwarded Authorization and silently lost
+	//     PRIVATE-TOKEN, so every call read as anonymous and came back 401);
+	//   - Go's client drops Authorization when a redirect leaves the host, but
+	//     forwards a custom header to wherever the redirect points, so an
+	//     artifact download redirected to object storage would have carried
+	//     PRIVATE-TOKEN along with it.
+	httpReq.Header.Set("Authorization", "Bearer "+token)
 	accept := req.Accept
 	if accept == "" {
 		accept = "application/json"
