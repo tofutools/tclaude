@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button, Select } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -84,9 +85,9 @@ export function HealthPolicySection({ peers, actions, confirm, toast }) {
 
   return html`<div id="fleet-health">
     <h4 class="fa-ns-h">Fleet health notices</h4>
-    <label class="fa-ns-row"><span class="fa-k">policy for</span><select id="fleet-health-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
+    <label class="fa-ns-row"><span class="fa-k">policy for</span><${Select} size="sm" id="fleet-health-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
       <option value="">defaults (peers without their own)</option>
-      ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}</select></label>
+      ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//></label>
     ${form?.error ? html`<div class="fa-danger">${form.error}</div>` : !form ? html`<div class="muted">Loading…</div>` : html`
       <div class="fa-ns-check fa-hp-signals">${HEALTH_SIGNALS.map((s) => html`<label key=${s.key}><input type="checkbox" data-signal=${s.key} checked=${form[s.key]} onChange=${set(s.key)} /> ${s.label}</label>`)}</div>
       <div class="fa-hp-rows">
@@ -94,7 +95,7 @@ export function HealthPolicySection({ peers, actions, confirm, toast }) {
         <div>disk free under ${num('disk_free_percent')} %, RAM free under ${num('ram_free_percent')} % for ${num('memory_seconds')} s</div>
         <div>${num('failure_count')} failures within ${num('failure_window_seconds')} s, then at most one notice per ${num('cooldown_seconds')} s</div>
       </div>
-      <div class="fa-ns-actions"><button id="fleet-health-save" type="button" onClick=${save}>Save policy…</button>
+      <div class="fa-ns-actions"><${Button} size="sm" id="fleet-health-save" onClick=${save}>Save policy…<//>
         <span class="muted">CLI: <code>tclaude federation nodes health [--peer …] [--set '{…}']</code></span></div>`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
   </div>`;

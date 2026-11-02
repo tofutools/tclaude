@@ -1,5 +1,6 @@
 import { h } from 'preact';
 import htm from 'htm';
+import { Select } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -80,10 +81,10 @@ export function LandingPicker({ landing: l, refusal = '', choice = '', cwd = '',
     </div>
     ${!refused && landingMissing(l) && html`<div class="fa-warn" id="fleet-landing-missing" role="alert"><code>${l.cwd}</code> does not exist on this node — create it, or choose another directory.</div>`}
     ${candidates.length > 0 && html`<label class="fa-of-row"><span class="fa-k">choose</span>
-      <select id="fleet-landing-choice" value=${choice} onChange=${(e) => onChoose(e.currentTarget.value)}>
+      <${Select} size="sm" id="fleet-landing-choice" value=${choice} onChange=${(e) => onChoose(e.currentTarget.value)}>
         <option value="">automatic (first match)</option>
         ${candidates.map((c) => html`<option key=${c.id} value=${c.id}>${candidateText(c)}</option>`)}
-      </select></label>`}
+      <//></label>`}
     <label class="fa-of-row"><span class="fa-k">or path</span><input id="fleet-offer-cwd" value=${cwd} placeholder="any directory on this node you own" autocomplete="off" spellcheck="false" onInput=${(e) => onCwd(e.currentTarget.value)} /></label>
     ${(l.source_cwd || l.source_repo) && html`<div class="muted fa-wrap" id="fleet-landing-source">On the sender: ${l.source_cwd ? html`<code>${l.source_cwd}</code>` : ''}${l.source_cwd && l.source_repo ? ' · ' : ''}${l.source_repo ? html`repo <code>${l.source_repo}</code>` : ''} — a hint only; this node decides.</div>`}
   </div>`;

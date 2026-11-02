@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { shortID } from './fleet-admin-model.js';
 import { BundleInspectDialog } from './fleet-admin-bundle.js';
@@ -250,8 +250,8 @@ function SendConfigDialog({ peers, actions, confirm, onClose, onDone }) {
   };
   return html`<${Overlay} id="fleet-offer-config" labelledby="fleet-offer-config-title" onClose=${onClose}>
     <h3 id="fleet-offer-config-title">Offer my config to a peer</h3>
-    <label class="fa-of-row"><span class="fa-k">peer</span><select id="fleet-offer-config-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
-      ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}</select></label>
+    <label class="fa-of-row"><span class="fa-k">peer</span><${Select} size="sm" id="fleet-offer-config-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
+      ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//></label>
     <div class="fa-cli-note">Sections (none ticked = all):</div>
     <div class="fa-grant-form">${CONFIG_SECTIONS.map((s) => html`<label key=${s}><input type="checkbox" data-section=${s} checked=${only.includes(s)} onChange=${toggle(s)} /> ${s}</label>`)}</div>
     ${flags && html`<div class="fa-plan"><ul>${flags.map((f) => html`<li class="fa-warn"><code>${f.item}</code> ${f.field}: ${f.hint}</li>`)}</ul></div>
@@ -287,10 +287,10 @@ function ShareAgentDialog({ peers, agents, actions, confirm, onClose, onDone }) 
   };
   return html`<${Overlay} id="fleet-share-agent" labelledby="fleet-share-agent-title" onClose=${onClose}>
     <h3 id="fleet-share-agent-title">Offer an agent to a peer</h3>
-    <label class="fa-of-row"><span class="fa-k">agent</span><select id="fleet-share-agent-agent" value=${form.agent} onChange=${set('agent')}>
-      ${agents.map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}</select></label>
-    <label class="fa-of-row"><span class="fa-k">peer</span><select id="fleet-share-agent-peer" value=${form.peer} onChange=${set('peer')}>
-      ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}</select></label>
+    <label class="fa-of-row"><span class="fa-k">agent</span><${Select} size="sm" id="fleet-share-agent-agent" value=${form.agent} onChange=${set('agent')}>
+      ${agents.map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}<//></label>
+    <label class="fa-of-row"><span class="fa-k">peer</span><${Select} size="sm" id="fleet-share-agent-peer" value=${form.peer} onChange=${set('peer')}>
+      ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//></label>
     <label class="fa-of-row"><span class="fa-k">group</span><input id="fleet-share-agent-group" value=${form.group} placeholder="receiving group on the peer (it must grant agents.receive)" autocomplete="off" onInput=${set('group')} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!(findings && !allow)) send(); } }} /></label>
     <label class="fa-of-check"><input id="fleet-share-agent-history" type="checkbox" checked=${form.history} onChange=${set('history')} /> include a copy of the conversation history</label>
     <label class="fa-of-check"><input id="fleet-share-agent-carry" type="checkbox" checked=${form.carryPermissions} onChange=${set('carryPermissions')} /> request receiver-approved permission carry (ownership and sudo leases stay here)</label>
@@ -328,10 +328,10 @@ function OfferProfileDialog({ peers, profiles, actions, confirm, onClose, onDone
   };
   return html`<${Overlay} id="fleet-offer-profile" labelledby="fleet-offer-profile-title" onClose=${onClose}>
     <h3 id="fleet-offer-profile-title">Offer a profile's config to a peer</h3>
-    <label class="fa-of-row"><span class="fa-k">profile</span><select id="fleet-offer-profile-name" value=${profile} onChange=${(e) => setProfile(e.currentTarget.value)}>
-      ${profiles.map((p) => html`<option key=${p} value=${p}>${p}</option>`)}</select></label>
-    <label class="fa-of-row"><span class="fa-k">peer</span><select id="fleet-offer-profile-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
-      ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}</select></label>
+    <label class="fa-of-row"><span class="fa-k">profile</span><${Select} size="sm" id="fleet-offer-profile-name" value=${profile} onChange=${(e) => setProfile(e.currentTarget.value)}>
+      ${profiles.map((p) => html`<option key=${p} value=${p}>${p}</option>`)}<//></label>
+    <label class="fa-of-row"><span class="fa-k">peer</span><${Select} size="sm" id="fleet-offer-profile-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
+      ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//></label>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation profile offer NAME PEER</code></div>
     <div class="modal-buttons"><span class="spacer"></span>
@@ -378,10 +378,10 @@ export function OffersPage({ view, agents, actions, confirm, toast }) {
   const noPeers = !peers.length;
   return html`<div class="fa-offers">
     <div class="fa-grant-form">
-      <button id="fleet-offer-config-open" type="button" disabled=${noPeers} onClick=${() => setDialog({ kind: 'config' })}>Offer my config…</button>
-      <button id="fleet-share-agent-open" type="button" disabled=${noPeers || !agents.length} onClick=${() => setDialog({ kind: 'agent' })}>Offer an agent…</button>
-      <button id="fleet-offer-profile-open" type="button" disabled=${noPeers || !profiles.length} onClick=${() => setDialog({ kind: 'profile' })}>Offer a profile's config…</button>
-      <button id="fleet-offers-refresh" type="button" onClick=${() => setTick((n) => n + 1)}>Refresh</button>
+      <${Button} size="sm" id="fleet-offer-config-open" disabled=${noPeers} onClick=${() => setDialog({ kind: 'config' })}>Offer my config…<//>
+      <${Button} size="sm" id="fleet-share-agent-open" disabled=${noPeers || !agents.length} onClick=${() => setDialog({ kind: 'agent' })}>Offer an agent…<//>
+      <${Button} size="sm" id="fleet-offer-profile-open" disabled=${noPeers || !profiles.length} onClick=${() => setDialog({ kind: 'profile' })}>Offer a profile's config…<//>
+      <${Button} size="sm" id="fleet-offers-refresh" onClick=${() => setTick((n) => n + 1)}>Refresh<//>
       <span class="muted">${noPeers ? 'Trust a peer first. ' : ''}CLI: <code>tclaude federation offers [--outgoing]</code></span>
     </div>
     ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
@@ -396,7 +396,7 @@ export function OffersPage({ view, agents, actions, confirm, toast }) {
         <td class="fa-nowrap">${size(o.offer?.bytes)}</td>
         <td class="fa-nowrap">${when(o.offer?.expires_at)}</td>
         <td class=${o.last_error ? 'fa-danger' : ''} title=${o.last_error || ''}>${o.state}</td>
-        <td class="fa-acts">${OPEN.has(o.state) && html`<button type="button" data-fa="inspect" onClick=${() => setDialog({ kind: 'inspect', offer: o })}>Inspect…</button><button type="button" data-fa="preview" onClick=${() => setDialog({ kind: 'import', offer: o })}>Preview…</button><button type="button" data-fa="decline" onClick=${() => decline(o)}>Decline…</button>`}</td>
+        <td class="fa-acts">${OPEN.has(o.state) && html`<${Button} size="sm" data-fa="inspect" onClick=${() => setDialog({ kind: 'inspect', offer: o })}>Inspect…<//><${Button} size="sm" data-fa="preview" onClick=${() => setDialog({ kind: 'import', offer: o })}>Preview…<//><${Button} size="sm" data-fa="decline" onClick=${() => decline(o)}>Decline…<//>`}</td>
       </tr>`)}</tbody>
     </table>`}
     <h4>Sent by this node</h4>
