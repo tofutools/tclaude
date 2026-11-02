@@ -65,7 +65,7 @@
   --ui-muted: #7d8590;
   --ui-placeholder: #6e7681;
   --ui-focus: #58a6ff;
-  --ui-pressed-bg: #1f6feb33;
+  --ui-pressed-bg: #30363d;
   --ui-field-bg: #0d1117;
   --ui-menu-bg: #0d1117;
   --ui-menu-hover: #1f6feb33;
@@ -92,7 +92,7 @@ body.wizard {
   --ui-text-strong: #f3e6c0;
   --ui-muted: #ad9abb;
   --ui-focus: #a97bd6;
-  --ui-pressed-bg: rgba(169, 123, 214, 0.25);
+  --ui-pressed-bg: #3b2a63;
   --ui-field-bg: #100c17;
   --ui-menu-bg: #100c17;
   --ui-menu-hover: rgba(169, 123, 214, 0.25);
@@ -138,7 +138,8 @@ body.slop {
 .ui-btn:hover:not(:disabled) { background: var(--ui-bg-hover); border-color: var(--ui-btn-hover-line); color: var(--ui-text-strong); }
 .ui-btn:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 1px; }
 .ui-btn:disabled { opacity: .45; cursor: not-allowed; }
-.ui-btn[aria-pressed="true"] { background: var(--ui-pressed-bg); border-color: var(--ui-focus); color: var(--ui-text-strong); }
+.ui-btn[aria-pressed="true"],
+.ui-btn[aria-pressed="true"]:hover:not(:disabled) { background: var(--ui-pressed-bg); color: var(--ui-text-strong); }
 .ui-btn[aria-busy="true"] { opacity: .7; cursor: progress; }
 
 .ui-btn-primary { background: var(--ui-primary); border-color: var(--ui-primary-line); color: var(--ui-primary-text); }
@@ -163,13 +164,22 @@ body.slop {
 .ui-btn.ui-btn-icon { width: 28px; height: 28px; padding: 0; }
 .ui-btn.ui-btn-icon.ui-sm { width: 22px; height: 22px; }
 
-/* Segmented: adjacent .ui-btn share borders; aria-pressed marks the choice. */
-.ui-seg { display: inline-flex; }
-.ui-seg > .ui-btn { border-radius: 0; margin-left: -1px; }
-.ui-seg > .ui-btn:first-child { border-radius: var(--ui-radius) 0 0 var(--ui-radius); margin-left: 0; }
-.ui-seg > .ui-btn:last-child { border-radius: 0 var(--ui-radius) var(--ui-radius) 0; }
-.ui-seg > .ui-btn:only-child { border-radius: var(--ui-radius); }
-.ui-seg > .ui-btn:is(:hover, :focus-visible, [aria-pressed="true"]) { position: relative; }
+/* Segmented: one quiet framed group of borderless options, the pre-migration
+   look the operator asked to keep. Options read muted; hover lifts them a
+   little; aria-pressed marks the choice with a subtle fill, no outline box.
+   Keyboard focus keeps .ui-btn's ring. */
+.ui-seg {
+  display: inline-flex; gap: 2px; padding: 2px;
+  border: 1px solid var(--ui-line); border-radius: var(--ui-radius); background: var(--ui-field-bg);
+}
+.ui-seg > .ui-btn {
+  margin: 0; border-color: transparent; border-radius: calc(var(--ui-radius) - 1px);
+  background: transparent; color: var(--ui-muted); font-weight: normal;
+}
+.ui-seg > .ui-btn:hover:not(:disabled) { background: var(--ui-bg); border-color: transparent; color: var(--ui-text); }
+.ui-seg > .ui-btn[aria-pressed="true"],
+.ui-seg > .ui-btn[aria-pressed="true"]:hover:not(:disabled) { background: var(--ui-pressed-bg); border-color: transparent; color: var(--ui-text-strong); }
+.ui-seg > .ui-btn:focus-visible { position: relative; }
 
 /* Fields */
 .ui-input, .ui-select, .ui-textarea {

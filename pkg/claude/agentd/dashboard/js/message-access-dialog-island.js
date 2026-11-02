@@ -773,7 +773,7 @@ function SudoLimits({ duration, setDuration, uses, setUses, usesBad, uncounted, 
     : seconds ? `Ends about ${new Date(Date.now() + seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · maximum ${sudoDurationText(maxSeconds)}` : '';
   return html`<div class="sudo-limits" id="sudo-limits">
     <div class="sudo-limits-row"><span class="sudo-limits-label">Duration</span>
-      <div class="sudo-presets" role="group" aria-label="Duration presets">${presets.map((preset) => html`<${Button} size="sm" key=${preset}
+      <div class="ui-seg sudo-presets" role="group" aria-label="Duration presets">${presets.map((preset) => html`<${Button} size="sm" key=${preset}
         pressed=${preset === duration} class=${preset === duration ? 'active' : ''} onClick=${() => setDuration(preset)}>${preset}<//>`)}</div>
       <input id="sudo-duration" type="text" value=${duration} aria-label="Custom duration" placeholder="custom" autocomplete="off" spellcheck="false"
         onInput=${(event) => setDuration(event.currentTarget.value)} />

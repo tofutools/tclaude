@@ -910,6 +910,9 @@ button.tool:hover { border-color: #58a6ff; }
 .mailbox-load-more:disabled { cursor: default; opacity: .6; }
 .mailbox-load-more.nested { margin-left: 16px; width: calc(100% - 16px); }
 .mailbox-load-more.capped { cursor: default; border-style: dotted; }
+/* As a standard button it stays the full-width list closer. */
+.ui-btn.mailbox-load-more { display: flex; width: 100%; margin: 2px 0 6px; }
+.ui-btn.mailbox-load-more.nested { margin-left: 16px; width: calc(100% - 16px); }
 
 /* Retired-agent folders (only shown when the sidebar toggle is on): dim
    the row and tag it so it reads as demoted, not a live agent. Empty-mailbox
@@ -5116,11 +5119,9 @@ body.show-group-description .group-descr { display: inline; }
   padding: 2px; border: 1px solid #2a3340; border-radius: 5px; background: #0d1117;
 }
 .group-create-clone-transport { flex: 1; }
-/* As standard .ui-seg groups the choices keep their equal-width grid; the
-   segment buttons carry the frame. */
-.ui-seg:is(.group-create-origin-options, .group-create-workspace-modes, .group-create-clone-transport) {
-  display: grid; padding: 0; border: 0; background: none;
-}
+/* As standard .ui-seg groups the choices keep their equal-width grid inside
+   the segment's quiet frame. */
+.ui-seg:is(.group-create-origin-options, .group-create-workspace-modes, .group-create-clone-transport) { display: grid; }
 .group-create-workspace-modes { margin-bottom: 10px; }
 .group-create-workspace-modes button:where(:not(.ui-btn)),
 .group-create-clone-transport button:where(:not(.ui-btn)) {
@@ -6896,8 +6897,8 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 }
 #sudo-duration { width: 72px; }
 #sudo-reason { flex: 1; min-width: 160px; }
-.sudo-presets { display: flex; gap: 4px; }
-.sudo-presets .ui-btn.active { background: #9e6a03; border-color: #d29922; color: #fff; }
+/* A standard .ui-seg; the chosen duration keeps the sudo amber. */
+.sudo-presets.ui-seg .ui-btn.active { --ui-pressed-bg: #9e6a03; --ui-text-strong: #fff; background: #9e6a03; border-color: #d29922; color: #fff; }
 .sudo-limits-hint { font-size: 11px; color: #7d8590; }
 .sudo-limits-hint.bad { color: #f85149; }
 .sudo-picked { margin-right: auto; align-self: center; font-size: 11px; color: #8b949e; }
@@ -7067,18 +7068,20 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   font-size: 11px; line-height: 1.5; padding: 6px 8px;
 }
 /* A standard .ui-seg of small buttons; the chosen effect keeps its meaning
-   colour (grant green, deny red) over the standard pressed frame. */
+   colour (grant green, deny red) in place of the neutral pressed fill. The
+   colour goes through the pressed tokens too, so the higher-ranked pressed
+   hover rule in ui.css paints the same colour. */
 .perm-tristate { flex: 0 0 auto; }
-.perm-tristate .ui-btn.active[data-effect=default] { background: #30363d; color: #c9d1d9; }
-.perm-tristate .ui-btn.active[data-effect=grant] { background: #238636; color: #fff; }
-.perm-tristate .ui-btn.active[data-effect=deny] { background: #da3633; color: #fff; }
+.perm-tristate .ui-btn.active[data-effect=default] { --ui-pressed-bg: #30363d; --ui-text-strong: #c9d1d9; background: #30363d; color: #c9d1d9; }
+.perm-tristate .ui-btn.active[data-effect=grant] { --ui-pressed-bg: #238636; --ui-text-strong: #fff; background: #238636; color: #fff; }
+.perm-tristate .ui-btn.active[data-effect=deny] { --ui-pressed-bg: #da3633; --ui-text-strong: #fff; background: #da3633; color: #fff; }
 /* Startup-context states. Deliberately NOT green/red: trimming a capability is a
    routine tuning choice, not a safety veto, and borrowing the permission
    editor's danger palette would overstate it. Keep = neutral-positive blue,
    Trim = amber "changed from stock". */
-.perm-tristate .ui-btn.active[data-state=default] { background: #30363d; color: #c9d1d9; }
-.perm-tristate .ui-btn.active[data-state=on] { background: #1f6feb; color: #fff; }
-.perm-tristate .ui-btn.active[data-state=off] { background: #9e6a03; color: #fff; }
+.perm-tristate .ui-btn.active[data-state=default] { --ui-pressed-bg: #30363d; --ui-text-strong: #c9d1d9; background: #30363d; color: #c9d1d9; }
+.perm-tristate .ui-btn.active[data-state=on] { --ui-pressed-bg: #1f6feb; --ui-text-strong: #fff; background: #1f6feb; color: #fff; }
+.perm-tristate .ui-btn.active[data-state=off] { --ui-pressed-bg: #9e6a03; --ui-text-strong: #fff; background: #9e6a03; color: #fff; }
 .perm-edit-modal .modal-buttons {
   display: flex; justify-content: flex-end; gap: 8px;
   border-top: 1px solid #2a3340; padding-top: 10px;
@@ -11733,16 +11736,16 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
      • sudo-grants table "revoke"    → #sudo-list td > button  */
 .plugin-step-edit-head button,
 .plugin-head > button.primary,
-#sudo-list td > button {
+#sudo-list td > button:where(:not(.ui-btn)) {
   background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
   color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
   font-family: inherit;
 }
 .plugin-step-edit-head button:hover,
 .plugin-head > button.primary:hover,
-#sudo-list td > button:hover { color: #d4d4d4; border-color: #58a6ff; }
+#sudo-list td > button:where(:not(.ui-btn)):hover { color: #d4d4d4; border-color: #58a6ff; }
 .plugin-step-edit-head button.danger:hover,
-#sudo-list td > button.danger:hover { color: #f85149; border-color: #f85149; }
+#sudo-list td > button.danger:where(:not(.ui-btn)):hover { color: #f85149; border-color: #f85149; }
 #plugin-modal .cron-create-modal { max-width: 720px; }
 #plugin-modal-steps { max-height: 50vh; overflow-y: auto; }
 
@@ -12863,9 +12866,6 @@ body.wizard #confirm-modal .modal .modal-meta {
   border-color: rgba(122, 93, 176, 0.5);
   color: #f3e6c0;
 }
-/* Cancel — the tarnished-gold secondary treatment the spawn / retire
-   dialogs' secondary buttons get. Scoped away from #confirm-ok, which
-   takes the gilded lever below. */
 /* The confirm button — Summon / Banish's gilded-lever sibling, minus the
    font-size:0 label swap: the caller-supplied text ("Move", "Remove", …)
    stays visible. The #confirm-modal id out-specifies the base
@@ -16314,12 +16314,6 @@ body.wizard #context-features-modal .perm-row-desc { color: #b39ddb; }
    them. */
 body.wizard #perm-edit-modal .perm-tristate,
 body.wizard #context-features-modal .perm-tristate { border-color: rgba(122, 93, 176, 0.5); }
-body.wizard #perm-edit-modal .perm-tristate button,
-body.wizard #context-features-modal .perm-tristate button { border-right-color: rgba(122, 93, 176, 0.4); }
-body.wizard #perm-edit-modal .perm-tristate button:not(.active),
-body.wizard #context-features-modal .perm-tristate button:not(.active) { background: #140f28; color: #b39ddb; }
-body.wizard #perm-edit-modal .perm-tristate button:not(.active):hover,
-body.wizard #context-features-modal .perm-tristate button:not(.active):hover { background: #241b3d; }
 body.wizard #perm-edit-modal .perm-tristate .ui-btn.active[data-effect=default],
 body.wizard #context-features-modal .perm-tristate .ui-btn.active[data-effect=default],
 body.wizard #context-features-modal .perm-tristate .ui-btn.active[data-state=default] {

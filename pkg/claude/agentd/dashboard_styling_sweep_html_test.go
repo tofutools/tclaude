@@ -61,7 +61,7 @@ func TestDashboardCSS_StylingSweep(t *testing.T) {
 	// Group 5 — B1/B2/B3 buttons that sit outside a .row-actions wrapper.
 	must(".plugin-step-edit-head button,", "the plugin step-editor remove button is themed")
 	must(".plugin-head > button.primary,", "the catalog +install button is themed (direct child only)")
-	must("#sudo-list td > button {", "the sudo-grants revoke button is themed")
+	must("#sudo-list td > button:where(:not(.ui-btn)) {", "the sudo-grants revoke button is themed (raw skin fenced off the standard button)")
 
 	// Group 6 — B4/B5/B6 remote-access controls (both skins for buttons; plain +
 	// the wizard twin for the fields).

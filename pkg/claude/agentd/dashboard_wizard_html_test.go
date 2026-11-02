@@ -750,11 +750,17 @@ func TestDashboardHTML_WizardPermEditor(t *testing.T) {
 	must("body.wizard #perm-edit-modal .perm-edit-modal", "the permissions editor surface is re-skinned")
 
 	// The active Grant/Deny tri-state fills are the safety signal and must stay
-	// their base green/red. The re-skin protects them by repainting only the
-	// INACTIVE cells (:not(.active)) — pin that mechanism so a refactor to a
-	// blanket `.perm-tristate button` rule (which would swallow the green/red via
-	// the id's specificity) trips here.
-	must("body.wizard #perm-edit-modal .perm-tristate button:not(.active)", "only inactive tri-state cells are repainted (Grant/Deny keep their green/red)")
+	// their base green/red. The tri-state is a standard .ui-seg, themed through
+	// the wizard tokens, so the re-skin repaints only the frame and the neutral
+	// Default; a blanket `.perm-tristate button` rule would swallow the green/red
+	// via the id's specificity.
+	must(".perm-tristate .ui-btn.active[data-effect=grant] {", "Grant keeps its green")
+	must(".perm-tristate .ui-btn.active[data-effect=deny] {", "Deny keeps its red")
+	must(".perm-tristate .ui-btn.active[data-effect=grant] { --ui-pressed-bg: #238636;", "Grant stays green while hovered (the pressed hover paints --ui-pressed-bg)")
+	must(".perm-tristate .ui-btn.active[data-effect=deny] { --ui-pressed-bg: #da3633;", "Deny stays red while hovered")
+	if dashboardSourceContains(dashboardAssets, "body.wizard #perm-edit-modal .perm-tristate button") || dashboardSourceContains(dashboardAssets, "body.wizard #context-features-modal .perm-tristate button") {
+		t.Errorf("a wizard rule repaints the tri-state buttons; the standard segment styles them")
+	}
 }
 
 // TestDashboardCSS_WizardPermEditorScoped guards that the wizard perm-editor
