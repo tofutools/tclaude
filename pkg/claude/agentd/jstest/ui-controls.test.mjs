@@ -149,8 +149,30 @@ test('no file gains a button or select without a standard ui-* class', () => {
     const count = found[file]?.length ?? 0;
     if (count < allowed) stale.push(`${file}: ${count} (baseline ${allowed})`);
   }
-  assert.deepEqual(over, [],
-    'use the ui-* classes from dashboard/ui.css (ui-btn, ui-select, ui-menu-item, …) or mark a deliberate one-off data-ui-exempt');
-  assert.deepEqual(stale, [],
-    'fewer non-standard controls than the baseline: lower it with UPDATE_UI_CONTROLS_BASELINE=1 so the count cannot creep back');
+  if (over.length) {
+    assert.fail([
+      'New <button>/<select> markup without a standard control class (dashboard/ui.css, tcl-32qwip):',
+      ...over.map((line) => `  ${line}`),
+      '',
+      'Fix each one with one of:',
+      '  - a class at the tag: class="ui-btn" plus at most one of ui-btn-primary | -success | -danger | -ghost | -link',
+      '    (ui-sm for row/toolbar size); class="ui-select" on a select; class="ui-menu-item" on a menu row.',
+      '    In a ${…} class expression, write the class as a string there: class=${`ui-btn ${extra}`}.',
+      '  - in Preact code, where js/ui-components.js exists: <${Button} variant="primary">, <${Select}>, <${MenuItem}>.',
+      '  - a deliberate one-off that must not look standard (window controls, canvas tools): add data-ui-exempt.',
+      '',
+      'Only when the count is right but the baseline is behind (e.g. your branch predates a baseline change),',
+      'regenerate it from pkg/claude/agentd:',
+      '  UPDATE_UI_CONTROLS_BASELINE=1 node --test jstest/ui-controls.test.mjs',
+    ].join('\n'));
+  }
+  if (stale.length) {
+    assert.fail([
+      'Fewer non-standard controls than ui-controls-baseline.json records:',
+      ...stale.map((line) => `  ${line}`),
+      '',
+      'Good: lower the baseline so the count cannot creep back. From pkg/claude/agentd:',
+      '  UPDATE_UI_CONTROLS_BASELINE=1 node --test jstest/ui-controls.test.mjs',
+    ].join('\n'));
+  }
 });
