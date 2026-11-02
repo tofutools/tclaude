@@ -86,6 +86,36 @@ export function holdsText(root) {
 // closes one layer of a popover opened from inside another.
 const watched = [];
 
+const DIALOG = '.modal-overlay.show, .manage-overlay.show';
+
+// onDialogShown calls listener(dialog) for each modal dialog shown in doc from
+// now on, until the returned function stops it. One observer serves every
+// listener, and runs only while one is listening.
+const dialogWatch = new Map();
+function onDialogShown(doc, listener) {
+  const MutationObserverImpl = doc?.defaultView?.MutationObserver || globalThis.MutationObserver;
+  if (!doc?.body || !MutationObserverImpl) return () => {};
+  let watch = dialogWatch.get(doc);
+  if (!watch) {
+    watch = { listeners: new Set(), shown: new Set(doc.querySelectorAll(DIALOG)) };
+    watch.observer = new MutationObserverImpl(() => {
+      const now = new Set(doc.querySelectorAll(DIALOG));
+      const fresh = [...now].filter((dialog) => !watch.shown.has(dialog));
+      watch.shown = now;
+      for (const dialog of fresh) for (const notify of [...watch.listeners]) notify(dialog);
+    });
+    watch.observer.observe(doc.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+    dialogWatch.set(doc, watch);
+  }
+  watch.listeners.add(listener);
+  return () => {
+    watch.listeners.delete(listener);
+    if (watch.listeners.size) return;
+    watch.observer.disconnect();
+    dialogWatch.delete(doc);
+  };
+}
+
 // watchPopover is the one close rule for popovers opened by a click: a press
 // outside closes at once, Escape closes, and the pointer staying away for
 // CLICK_CLOSE_MS closes. Text in the popover, a field the operator is using, or
@@ -101,8 +131,11 @@ const watched = [];
 //
 // roots() gives the elements that are the popover, usually one holding both the
 // trigger and the panel; a pointer moving between separate ones is not away.
-// close(why) gets 'outside', 'escape' or 'away'. A shown dialog above the
-// popover owns the page: its presses and Escape are its own, and the popover
+// close(why) gets 'outside', 'escape', 'away' or 'dialog'. The thing opened
+// last wins (tcl-s7zf2k): a modal dialog shown while the popover is open closes
+// it ('dialog'), pinned or not, unless the popover is inside that dialog or the
+// dialog inside the popover. A dialog that was already up when the popover
+// opened owns the page: its presses and Escape are its own, and the popover
 // waits behind it. A popover inside that dialog carries on as usual. escape:
 // false is for a menu whose Escape does something first, like clearing its
 // filter. The returned function stops watching.
@@ -120,7 +153,7 @@ export function watchPopover({ roots, close, hold = null, hoverOpened = null, es
     if (timer) globalThis.clearTimeout(timer);
     timer = 0;
   };
-  const dialogAbove = () => [...(owner?.querySelectorAll?.('.modal-overlay.show, .manage-overlay.show') || [])]
+  const dialogAbove = () => [...(owner?.querySelectorAll?.(DIALOG) || [])]
     .some((overlay) => !parts().some((root) => overlay.contains(root)));
   const held = () => {
     if (pressed || hold?.() || dialogAbove()) return true;
@@ -179,8 +212,13 @@ export function watchPopover({ roots, close, hold = null, hoverOpened = null, es
   owner?.addEventListener?.('pointerup', onPointerUp, true);
   owner?.addEventListener?.('keydown', onKeyDown, true);
   watched.push(entry);
+  const stopDialogs = onDialogShown(owner, (dialog) => {
+    if (parts().some((root) => dialog.contains(root) || root.contains?.(dialog))) return;
+    close('dialog');
+  });
   return () => {
     cancel();
+    stopDialogs();
     watched.splice(watched.indexOf(entry), 1);
     for (const root of listening) {
       root.removeEventListener?.('mouseleave', onLeave);

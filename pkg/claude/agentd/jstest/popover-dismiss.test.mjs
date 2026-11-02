@@ -5,9 +5,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
-async function watched(t, markup = '<button id="trigger"></button><div id="panel"></div>', options = {}) {
+async function watched(t, markup = '<button id="trigger"></button><div id="panel"></div>', options = {}, before = null) {
   const harness = await createPreactHarness(t);
   const { CLICK_CLOSE_MS, watchPopover } = await harness.importDashboardModule('js/hover-popover.js');
+  before?.(harness);
   const root = harness.document.body.appendChild(harness.document.createElement('div'));
   root.innerHTML = markup;
   const closed = [];
@@ -136,10 +137,12 @@ test('hold keeps it through hover-away and ends with the reason', async (t) => {
   assert.deepEqual(closed, ['away']);
 });
 
-test('a shown dialog above owns the page, a dialog around the popover does not', async (t) => {
-  const { harness, root, closed, leave, wait } = await watched(t);
-  const dialog = harness.document.body.appendChild(harness.document.createElement('div'));
-  dialog.className = 'modal-overlay show';
+test('a dialog already up owns the page, a dialog around the popover does not', async (t) => {
+  let dialog = null;
+  const { harness, root, closed, leave, wait } = await watched(t, undefined, {}, ({ document }) => {
+    dialog = document.body.appendChild(document.createElement('div'));
+    dialog.className = 'modal-overlay show';
+  });
   leave();
   await wait();
   harness.fireEvent(dialog, 'pointerdown');
@@ -150,6 +153,23 @@ test('a shown dialog above owns the page, a dialog around the popover does not',
   dialog.appendChild(root);
   harness.fireEvent(harness.document.body, 'keydown', { key: 'Escape' });
   assert.deepEqual(closed, ['escape'], 'a popover inside the dialog closes first');
+});
+
+test('a modal shown later closes it, as the thing opened last wins; its own dialogs do not', async (t) => {
+  const { harness, root, closed } = await watched(t);
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const own = root.appendChild(harness.document.createElement('div'));
+  own.className = 'modal-overlay show';
+  await flush();
+  assert.deepEqual(closed, [], 'a dialog inside the popover is its own');
+
+  const later = harness.document.body.appendChild(harness.document.createElement('div'));
+  later.className = 'modal-overlay';
+  await flush();
+  assert.deepEqual(closed, [], 'a hidden one is not shown yet');
+  later.classList.add('show');
+  await flush();
+  assert.deepEqual(closed, ['dialog']);
 });
 
 test('stopping cancels a pending close', async (t) => {
