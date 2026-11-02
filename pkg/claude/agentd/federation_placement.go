@@ -133,6 +133,11 @@ func placementCandidateWithAuthority(r *http.Request, p db.FederationPeer, req f
 			return reject("advertised capacity busy")
 		}
 	}
+	// A request to a node whose capacity queue is not empty would wait behind
+	// it (or be refused); a node with free capacity is always the better pick.
+	if a := n.Resources.Agents; a != nil && a.QueuedSpawns > 0 {
+		return reject(fmt.Sprintf("advertised capacity busy: %d spawn(s) queued", a.QueuedSpawns))
+	}
 	switch req.Prefer {
 	case "least-loaded":
 		if n.Resources.CPU.LoadAverage == nil || n.Resources.CPU.LogicalCores <= 0 {

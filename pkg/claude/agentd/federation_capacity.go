@@ -3,6 +3,7 @@ package agentd
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/hostmetrics"
 )
 
@@ -107,6 +109,7 @@ func nodeCapacityUsed(exclude string) (int, error) {
 	delete(used, exclude)
 	return len(used), nil
 }
+
 // capacityPreAdmittedKey marks an in-process launch whose capacity a durable
 // reservation already counts (see spawnParams.capacityPreAdmitted).
 type capacityPreAdmittedKey struct{}
@@ -236,40 +239,112 @@ func nodeCapacityFull(limits config.CapacityLimits, launchDirs []string) (string
 
 var errNodeBusy = errors.New("node live and reserved agent capacity reached")
 
-func insertFederationSpawnWithCapacity(req *db.FederationSpawnRequest) (int64, error) {
+// insertFederationSpawnWithCapacity stores a peer's spawn request when the
+// node has room for it. When it does not, the request is refused with
+// errNodeBusy, or, with capacity.when_full "queue" and allowQueue, stored as
+// queued with a place in the spawn queue: position is then that place, and
+// zero for a request stored as pending.
+func insertFederationSpawnWithCapacity(req *db.FederationSpawnRequest, allowQueue bool) (int64, int, error) {
 	nodeAdmission.Lock()
 	defer nodeAdmission.Unlock()
 	prior, err := db.FederationSpawnRequestByEnvelope(req.FromInstance, req.EnvelopeID)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	if prior != nil {
-		return 0, db.ErrFederationDuplicate
+		return 0, 0, db.ErrFederationDuplicate
 	}
 	// A terminal busy receipt permits placement elsewhere. Persist that verdict
 	// before acknowledging it so an in-flight resend cannot later create a
 	// second worker when capacity becomes available (including after restart).
 	busyKey := "spawnbusy:" + req.EnvelopeID
 	if busy, err := db.FederationEnvelopeSeen(req.FromInstance, busyKey); err != nil {
-		return 0, err
+		return 0, 0, err
 	} else if busy {
-		return 0, errNodeBusy
+		return 0, 0, errNodeBusy
 	}
-	limit, err := nodeCapacityLimit()
+	limits, err := nodeCapacityLimits()
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	if limit > 0 {
-		used, err := nodeCapacityUsed("")
-		if err != nil {
-			return 0, err
-		}
-		if used >= limit {
-			if _, err := db.MarkFederationEnvelopeSeen(req.FromInstance, busyKey, req.ExpiresAt); err != nil {
-				return 0, err
-			}
-			return 0, errNodeBusy
+	queued, err := db.CountActiveSpawnQueue()
+	if err != nil {
+		return 0, 0, err
+	}
+	reason := ""
+	if queued > 0 {
+		// One line for local and remote spawns: a request does not pass those already waiting.
+		reason = fmt.Sprintf("%d spawn(s) already wait for capacity", queued)
+	} else if limits.Limited() {
+		if reason, err = nodeCapacityFullLocked(limits, "", []string{fedSpawnRequestDir(req)}); err != nil {
+			return 0, 0, err
 		}
 	}
-	return db.InsertFederationSpawnRequest(req, fedSpawnPendingLimit)
+	if reason == "" {
+		id, err := db.InsertFederationSpawnRequest(req, fedSpawnPendingLimit)
+		return id, 0, err
+	}
+	if limits.Queue && allowQueue {
+		entry := &db.SpawnQueueEntry{GroupID: req.GroupID, Name: req.Name, RequesterName: fedSpawnRequesterLabel(req)}
+		id, queueID, position, err := db.InsertQueuedFederationSpawnRequest(req, fedSpawnPendingLimit, entry, limits.MaxQueued)
+		if err == nil {
+			slog.Info("remote spawn request queued for capacity", "request", id, "queue_id", queueID, "position", position,
+				"group", req.GroupName, "from", req.FromInstance, "reason", reason)
+			kickSpawnQueue()
+			return id, position, nil
+		}
+		if !errors.Is(err, db.ErrSpawnQueueFull) {
+			return 0, 0, err
+		}
+		reason += fmt.Sprintf(", and the spawn queue already holds capacity.max_queued (%d) entries", limits.MaxQueued)
+	}
+	if _, err := db.MarkFederationEnvelopeSeen(req.FromInstance, busyKey, req.ExpiresAt); err != nil {
+		return 0, 0, err
+	}
+	return 0, 0, fmt.Errorf("%w: %s", errNodeBusy, reason)
+}
+
+// fedSpawnRequestDir is the directory a remote spawn request would launch
+// in, for the free-disk threshold: its requested one, else its group's.
+func fedSpawnRequestDir(req *db.FederationSpawnRequest) string {
+	if req.Overrides.Cwd != "" {
+		return req.Overrides.Cwd
+	}
+	if g, _ := db.GetAgentGroupByID(req.GroupID); g != nil {
+		return g.DefaultCwd
+	}
+	return ""
+}
+
+// fedSpawnRequesterLabel names a remote requester in queue listings.
+func fedSpawnRequesterLabel(req *db.FederationSpawnRequest) string {
+	peer := req.FromInstance
+	if p, _ := db.GetFederationPeer(req.FromInstance); p != nil {
+		peer = peerDisplay(p)
+	}
+	return req.FromName + "@" + proto.SafeName(peer, true) + " (remote)"
+}
+
+// remoteJobCapacityFullLocked is why a remote job does not fit now, or "".
+// The caller holds nodeAdmission.
+func remoteJobCapacityFullLocked(g *db.AgentGroup) (string, error) {
+	limits, err := nodeCapacityLimits()
+	if err != nil {
+		return "", err
+	}
+	queued, err := db.CountActiveSpawnQueue()
+	if err != nil {
+		return "", err
+	}
+	if queued > 0 {
+		return fmt.Sprintf("%d spawn(s) already wait for capacity", queued), nil
+	}
+	if !limits.Limited() {
+		return "", nil
+	}
+	dir := ""
+	if g != nil {
+		dir = g.DefaultCwd
+	}
+	return nodeCapacityFullLocked(limits, "", []string{dir})
 }

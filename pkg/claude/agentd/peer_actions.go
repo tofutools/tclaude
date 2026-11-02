@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -438,7 +439,13 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 		// Only the mode is stored; the token waits in memory for the launch.
 		req.Credentials = claudeSubscriptionMode
 	}
-	id, err := insertFederationSpawnWithCapacity(req)
+	// A peer-view spawn acts on the peer's live authority, which a queue
+	// cannot hold for later (as for local spawns on behalf of a peer).
+	id, _, err := insertFederationSpawnWithCapacity(req, false)
+	if errors.Is(err, errNodeBusy) {
+		writeError(w, 409, fedCodeNodeBusy, err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, 409, "spawn_capacity", "remote spawn request capacity unavailable")
 		return
