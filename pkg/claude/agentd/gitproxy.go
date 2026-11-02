@@ -686,9 +686,10 @@ func gitProxyConfigPins(hooksDir, sshCommand string, credentialHelpers []string)
 
 // gitProxyConfigPinsScoped is gitProxyConfigPins with URL-scoped credential
 // pins ("credential.<origin>.helper=…", see gitLabCredentialHelpers) placed
-// right after the helper-list reset. Git asks the helpers in list order and
-// stops at the first that answers, so a scoped helper wins for its origin and
-// the operator's own helpers still answer everywhere else.
+// AFTER the operator's own helpers. Git collects every matching helper entry
+// in config order, and an empty value clears the list collected so far. A
+// scoped reset followed by a scoped helper therefore leaves that one origin
+// with only its scoped helper, and every other origin with the operator's.
 func gitProxyConfigPinsScoped(hooksDir, sshCommand string, scopedHelpers, credentialHelpers []string) []string {
 	pins := []string{
 		// Command execution vectors.
@@ -735,10 +736,10 @@ func gitProxyConfigPinsScoped(hooksDir, sshCommand string, scopedHelpers, creden
 		// repo-local one — an arbitrary command.
 		"credential.helper=",
 	}
-	pins = append(pins, scopedHelpers...)
 	for _, helper := range credentialHelpers {
 		pins = append(pins, "credential.helper="+helper)
 	}
+	pins = append(pins, scopedHelpers...)
 	out := make([]string, 0, len(pins)*2+1)
 	for _, p := range pins {
 		out = append(out, "-c", p)
@@ -813,12 +814,17 @@ func gitProxyEnv() []string {
 // https push or fetch to the instance authenticates with the same token the
 // GitLab proxy spends, not with whatever the operator's own helper holds.
 //
-// Each pin is scoped to one instance's exact origin (scheme, host and port), a
-// scope git itself enforces: another host, or another port on the same host,
-// never sees the token and falls through to the operator's helpers. The token
-// never enters argv or the child's environment. The helper reads the FILE at
-// the moment git asks, and only the path is on the command line. An unreadable
-// or empty file answers nothing, which also falls through.
+// Each instance gets two pins scoped to its exact origin (scheme, host and
+// port), a scope git itself enforces: an empty one that clears the helpers
+// collected so far for that origin, then the token helper. So the token is
+// the ONLY credential for the instance. The operator's own helpers are never
+// asked for it, and are never told to erase what they store for it when the
+// token is rejected (git erases through every helper on a 401). Another host,
+// or another port on the same host, never sees the token and keeps the
+// operator's helpers. The token never enters argv or the child's environment:
+// the helper reads the FILE when git asks, and only the path is on the
+// command line. An unreadable or empty file answers nothing, so git reports a
+// missing credential rather than falling back.
 //
 // SSH remotes never consult a credential helper, so they are untouched.
 func gitLabCredentialHelpers(policy config.GitProxyConfig) []string {
@@ -833,7 +839,8 @@ func gitLabCredentialHelpers(policy config.GitProxyConfig) []string {
 		if err != nil || !strings.EqualFold(u.Scheme, "https") || u.Host == "" || u.User != nil {
 			continue
 		}
-		out = append(out, "credential.https://"+strings.ToLower(u.Host)+".helper="+helper)
+		key := "credential.https://" + strings.ToLower(u.Host) + ".helper="
+		out = append(out, key, key+helper)
 	}
 	return out
 }

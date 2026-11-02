@@ -245,13 +245,15 @@ An agent's remote can take either form GitLab's clone button offers:
   is still refused.
 
 Over `https`, git asks a credential helper for a password. For each
-configured instance the daemon answers with `gitlab_token_file`. The
-answer is scoped to the instance's exact origin (scheme, host and port), so
-no other host or port ever sees the token. Those requests get the operator's
-own global credential helper as before. The token stays off the command line
-and out of git's environment: the helper reads the file when git asks.
-With no token file, or an unreadable one, the operator's helper answers for
-the instance too.
+configured instance the daemon answers with `gitlab_token_file`, and that is
+the only answer for the instance's exact origin (scheme, host and port). The
+operator's own credential helpers are not asked for it, and are never told to
+erase what they store for it when GitLab rejects the token. Every other host
+or port keeps the operator's helpers, and never sees the token. The token
+stays off the command line and out of git's environment: the helper reads
+the file when git asks. With no token file configured, the operator's helper
+answers for the instance as before. With one configured but missing or empty,
+the push fails rather than falling back.
 
 A merge request opened through the proxy, or presented with
 `tclaude agent present-pr <merge-request URL>`, shows on the dashboard like a

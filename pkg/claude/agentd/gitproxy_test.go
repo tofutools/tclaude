@@ -207,18 +207,13 @@ func TestGitLabCredentialHelpers(t *testing.T) {
 		GitLabHosts:     map[string]string{"gitlab.example.test": "https://GitLab.example.test:6080"},
 		GitLabTokenFile: "/etc/tclaude/gitlab token",
 	})
-	require.Len(t, pins, 1, "only the listed instance: gitlab.com is not attached to a self-hosted token")
-	keys := map[string]bool{}
-	for _, pin := range pins {
-		keys[pin[:strings.Index(pin, "=")]] = true
-	}
-	assert.Equal(t, map[string]bool{
-		"credential.https://gitlab.example.test:6080.helper": true,
-	}, keys, "keyed by exact origin, host lower-cased, port kept")
-	for _, pin := range pins {
-		assert.Contains(t, pin, `'/etc/tclaude/gitlab token'`, "the path is single-quoted for the shell")
-		assert.Contains(t, pin, "username=oauth2")
-	}
+	require.Len(t, pins, 2, "only the listed instance: gitlab.com is not attached to a self-hosted token")
+	assert.Equal(t, "credential.https://gitlab.example.test:6080.helper=", pins[0],
+		"a scoped reset first: the operator's helpers are cleared for this origin only")
+	assert.True(t, strings.HasPrefix(pins[1], "credential.https://gitlab.example.test:6080.helper=!"),
+		"then the token helper, keyed by exact origin, host lower-cased, port kept: %s", pins[1])
+	assert.Contains(t, pins[1], `'/etc/tclaude/gitlab token'`, "the path is single-quoted for the shell")
+	assert.Contains(t, pins[1], "username=oauth2")
 
 	pins = gitLabCredentialHelpers(config.GitProxyConfig{
 		GitLabHosts:     map[string]string{"mounted.example.test": "https://mounted.example.test/gitlab"},
@@ -228,12 +223,14 @@ func TestGitLabCredentialHelpers(t *testing.T) {
 		"the scope is the origin; git does not match credential paths by default")
 }
 
-// TestGitProxyConfigPinsScoped_ScopedHelpersFollowTheReset — order is what
-// makes the scoped helper effective: after the reset (or it would be cleared)
-// and before the operator's helpers (or theirs would answer first).
-func TestGitProxyConfigPinsScoped_ScopedHelpersFollowTheReset(t *testing.T) {
-	args := gitProxyConfigPinsScoped("/h", "ssh",
-		[]string{"credential.https://gitlab.example.test:6080.helper=!scoped"}, []string{"osxkeychain"})
+// TestGitProxyConfigPinsScoped_ScopedHelpersFollowTheOperators — order is
+// what makes the scoped helper exclusive: after the operator's helpers, so
+// its scoped reset clears them for that origin (and only that origin).
+func TestGitProxyConfigPinsScoped_ScopedHelpersFollowTheOperators(t *testing.T) {
+	args := gitProxyConfigPinsScoped("/h", "ssh", []string{
+		"credential.https://gitlab.example.test:6080.helper=",
+		"credential.https://gitlab.example.test:6080.helper=!scoped",
+	}, []string{"osxkeychain"})
 	var credential []string
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == "-c" && strings.HasPrefix(args[i+1], "credential.") {
@@ -242,8 +239,9 @@ func TestGitProxyConfigPinsScoped_ScopedHelpersFollowTheReset(t *testing.T) {
 	}
 	assert.Equal(t, []string{
 		"credential.helper=",
-		"credential.https://gitlab.example.test:6080.helper=!scoped",
 		"credential.helper=osxkeychain",
+		"credential.https://gitlab.example.test:6080.helper=",
+		"credential.https://gitlab.example.test:6080.helper=!scoped",
 	}, credential)
 }
 
