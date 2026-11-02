@@ -762,7 +762,7 @@ button.tool:where(:hover) { background: var(--ui-bg-hover); }
   border-radius: 5px; color: #7d8590; cursor: pointer;
   padding: 4px 6px; font-size: 13px; line-height: 1;
 }
-.mail-row-del:hover { color: #f85149; border-color: #f85149; }
+.mail-row-del:hover { color: #f85149; }
 /* The "all messages" firehose row renders sender → recipient rather
    than a single counterparty. */
 .mail-row-arrow { color: #7d8590; flex: 0 0 auto; }
@@ -5323,7 +5323,7 @@ details[data-group-key][open] > summary .group-usage-profile {
   color: #c9d1d9; cursor: pointer; padding: 5px 8px; font: inherit; font-size: 12px;
   text-align: center;
 }
-.notify-pop-config:hover { color: #d4d4d4; border-color: #58a6ff; }
+.notify-pop-config:hover { color: #d4d4d4; }
 /* The delivery selector is a row with a label on the left and the <select>
    pushed to the right, unlike the checkbox rows whose control leads. */
 .notify-pop-delivery { justify-content: space-between; gap: 10px; }
@@ -6806,9 +6806,9 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   background: #0d1117; border: 1px solid #2a3340; border-radius: 3px; color: #c9d1d9;
   font-size: 10px; font-family: inherit; line-height: 1; padding: 3px 6px; cursor: pointer;
 }
-.perm-scope-free-add:hover { border-color: #58a6ff; color: #f0f6fc; }
+.perm-scope-free-add:hover { color: #f0f6fc; }
 .perm-scope-free-add[aria-disabled="true"] { opacity: 0.4; cursor: default; }
-.perm-scope-free-add[aria-disabled="true"]:hover { border-color: #2a3340; color: #c9d1d9; }
+.perm-scope-free-add[aria-disabled="true"]:hover { color: #c9d1d9; }
 .perm-row-eff { flex: 0 0 78px; font-size: 10px; text-align: right; }
 .perm-row-eff.granted { color: #3fb950; }
 .perm-row-eff.denied { color: #f85149; }
@@ -7890,7 +7890,6 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .sbx-prelaunch-actions button:where(:not(.ui-btn)):hover { background: #2d333b; }
 .sbx-prelaunch-actions button:where(:not(.ui-btn)):disabled { cursor: default; opacity: .35; }
 .sbx-prelaunch-actions .sbx-prelaunch-remove { color: #f0b0b0; }
-.sbx-prelaunch-actions .sbx-prelaunch-remove:hover { border-color: #6e3a3a; }
 .sbx-prelaunch-error { color: #ff7b72; font-size: .76rem; line-height: 1.35; }
 .sbx-prelaunch-add:disabled { cursor: default; opacity: .45; }
 
@@ -8081,7 +8080,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   color: #7d8590; font-family: inherit; font-size: 12px;
   padding: 4px 10px; cursor: pointer;
 }
-.sbx-add-row:hover { background: #1c2330; border-color: #3a4553; color: #c9d1d9; }
+.sbx-add-row:hover { background: #1c2330; color: #c9d1d9; }
 .sbx-effective-environment-toggle {
   background: transparent; border: 1px solid #30363d; border-radius: 4px;
   color: #8b949e; font-family: inherit; font-size: 12px; padding: 4px 9px;
@@ -8391,7 +8390,8 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .spawn-field-help-trigger.warn {
   color: #d29922; border-color: #9e6a03; background: #1c1710;
 }
-.spawn-field-help-trigger.warn:hover, .spawn-field-help-trigger.warn:focus {
+.spawn-field-help-trigger.warn:hover { color: #f0b72f; background: rgba(210, 153, 34, 0.15); }
+.spawn-field-help-trigger.warn:focus {
   color: #f0b72f; border-color: #d29922;
 }
 .spawn-field-description {
@@ -16720,7 +16720,7 @@ body.wizard .mail-row-arrow { color: #9a86c4; }
 body.wizard .mail-dir.in { color: #6ee7b7; }
 body.wizard .mail-dir.out { color: #d9b45a; }
 body.wizard .mail-row-del { color: #9a86c4; }
-body.wizard .mail-row-del:hover { color: #f2777a; border-color: #f2777a; }
+body.wizard .mail-row-del:hover { color: #f2777a; }
 
 /* Per-kind wax seal — the unread dot recoloured + haloed, and the row's
    left edge tinted to match. Read rows keep the default (no seal). Base =
@@ -18785,7 +18785,8 @@ body.wizard .process-list .process-actions .process-delete-btn:focus-visible .tr
 .process-loop-exhausted {
   background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; padding: 3px 6px; font-size: 13px;
 }
-.process-loop-make { color: #e3a341; border-color: #6b5a1e; }
+/* The loop fix keeps its amber warning look on the standard button. */
+.process-loop-make, .ui-btn.process-loop-make { color: #e3a341; border-color: #6b5a1e; }
 .process-issues-list li:has(> .process-loop-make) { display: flex; align-items: center; gap: 6px; }
 .process-issues-list li:has(> .process-loop-make) > .process-issue { width: auto; flex: 1; min-width: 0; }
 .process-issues-list li > .process-loop-make { flex: none; font-size: 12px; padding: 2px 8px; }
@@ -18928,12 +18929,13 @@ body.wizard .process-param-check { color: #f3e6c0; }
 .pni-block-head .spacer { flex: 1; }
 .pni-grip { color: #6e7681; cursor: grab; user-select: none; }
 .pni-block-title { font-weight: 600; font-size: 12.5px; color: #e6edf3; }
-.pni-block-move, .pni-block-remove {
+.pni-block-move:where(:not(.ui-btn)), .pni-block-remove:where(:not(.ui-btn)) {
   background: transparent; border: 1px solid transparent; border-radius: 4px; color: #8b949e;
   font: inherit; font-size: 11px; padding: 0 5px; cursor: pointer;
 }
-.pni-block-move:hover:not(:disabled), .pni-block-remove:hover, .pni-block-move:focus-visible, .pni-block-remove:focus-visible { border-color: #30363d; color: #e6edf3; }
-.pni-block-move:disabled { opacity: .35; cursor: default; }
+.pni-block-move:where(:not(.ui-btn)):hover:not(:disabled), .pni-block-remove:where(:not(.ui-btn)):hover { background: var(--ui-bg-hover); color: #e6edf3; }
+.pni-block-move:where(:not(.ui-btn)):focus-visible, .pni-block-remove:where(:not(.ui-btn)):focus-visible { border-color: #30363d; color: #e6edf3; }
+.pni-block-move:where(:not(.ui-btn)):disabled { opacity: .35; cursor: default; }
 .pni-block-body { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 10px; }
 .pni-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
 .pni-stage-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
@@ -18943,8 +18945,9 @@ body.wizard .process-param-check { color: #f3e6c0; }
 .pni-input-list { margin: 0; padding-left: 16px; font-size: 12px; color: #c9d1d9; }
 .pni-params { margin: 0; font-size: 12px; color: #8b949e; }
 .pni-add { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; border: 1px dashed #30363d; border-radius: 8px; font-size: 12px; color: #8b949e; }
-.pni-add-block { background: transparent; border: 1px solid #30363d; border-radius: 999px; color: #c9d1d9; font: inherit; font-size: 11.5px; padding: 1px 9px; cursor: pointer; }
-.pni-add-block:hover, .pni-add-block:focus-visible { border-color: #58a6ff; }
+.pni-add-block:where(:not(.ui-btn)) { background: transparent; border: 1px solid #30363d; border-radius: 999px; color: #c9d1d9; font: inherit; font-size: 11.5px; padding: 1px 9px; cursor: pointer; }
+.pni-add-block:where(:not(.ui-btn)):hover { background: var(--ui-bg-hover); }
+.pni-add-block:where(:not(.ui-btn)):focus-visible { border-color: #58a6ff; }
 body.wizard .process-node-inspector { background: #140f28; border-left-color: #4a3d6b; }
 body.wizard .pni-block { background: #181226; border-color: #4a3d6b; }
 body.wizard .pni-block-head { border-bottom-color: #4a3d6b; }
@@ -18999,11 +19002,12 @@ body.wizard .pni-add, body.wizard .pni-add-block:where(:not(.ui-btn)) { border-c
 .pdr-verdict { font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; }
 .pdr-verdict.is-accepted { color: #56d364; }
 .pdr-verdict.is-rejected { color: #ff7b72; }
-.pdr-step, .pdr-close {
+.pdr-step:where(:not(.ui-btn)), .pdr-close {
   background: transparent; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9;
   font: inherit; padding: 0 8px; cursor: pointer; line-height: 22px;
 }
-.pdr-step:hover, .pdr-close:hover, .pdr-step:focus-visible, .pdr-close:focus-visible { border-color: #58a6ff; }
+.pdr-step:where(:not(.ui-btn)):hover, .pdr-close:hover { background: var(--ui-bg-hover); }
+.pdr-step:where(:not(.ui-btn)):focus-visible, .pdr-close:focus-visible { border-color: #58a6ff; }
 body.wizard .process-diff-review { background: #160f2c; border-top-color: #7c5cff; }
 body.wizard .pdr-current { background: #181226; border-color: #4a3d6b; }
 
