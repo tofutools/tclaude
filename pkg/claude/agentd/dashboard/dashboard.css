@@ -970,10 +970,14 @@ html.remote-node .activity-subtab.pv-off { opacity: .4; }
   margin: 0 0 12px; max-width: 760px;
 }
 table { border-collapse: collapse; width: 100%; }
+/* Tables come in two densities (operator pick A): this roomy default for
+   main lists, and .ui-compact (ui.css) for tables inside dialogs, panels
+   and dense views. Header lines are #2a3340, row lines a quieter #21262d. */
 table th, table td {
-  text-align: left; padding: 8px 12px; border-bottom: 1px solid #2a3340;
+  text-align: left; padding: 8px 12px; border-bottom: 1px solid #21262d;
   vertical-align: top;
 }
+table th { border-bottom-color: #2a3340; }
 /* Column titles never wrap: a narrow column (e.g. "Task link") must keep
    its header on one line rather than stacking into two rows — the header
    text sets a hard floor on the column width instead. */
@@ -3481,13 +3485,8 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   margin-right: 1px; flex: none;
 }
 .debug-table { border-collapse: collapse; font-size: 12px; margin-top: 8px; }
-.debug-table th {
-  text-align: left; padding: 3px 14px 3px 0; border-bottom: 1px solid #2a3340;
-  color: #7d8590; font-weight: 600; white-space: nowrap;
-}
-.debug-table td {
-  padding: 3px 14px 3px 0; border-bottom: 1px solid #1b2029; white-space: nowrap;
-}
+
+.debug-table td { white-space: nowrap; }
 .debug-table td .debug-legend-chip { margin-right: 6px; }
 .debug-phase-toggle,
 .debug-phase-toggle-placeholder {
@@ -3526,11 +3525,8 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    The message column is greedy + monospace; When / Level shrink to fit.
    Warn/error rows get a faint tinted gutter so they catch the eye. */
 .logs-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.logs-table th {
-  text-align: left; padding: 4px 8px; border-bottom: 1px solid #2a3340;
-  color: #7d8590; font-weight: 600; white-space: nowrap;
-}
-.logs-table td { vertical-align: top; padding: 3px 8px; border-bottom: 1px solid #1b2029; }
+
+
 .logs-table td.logs-nowrap { white-space: nowrap; width: 1%; }
 .logs-table td.logs-msg-cell { white-space: normal; overflow-wrap: anywhere; width: 100%; }
 .logs-msg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #d4d4d4; }
@@ -3658,7 +3654,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-node-peak { margin-left: auto; color: #8b949e; }
 .fused-usage { margin: 0 0 14px; padding: 8px 12px; }
 .fused-usage-table { border-collapse: collapse; font-size: 12.5px; min-width: 460px; }
-.fused-usage-table th, .fused-usage-table td { padding: 3px 12px 3px 0; text-align: left; border-bottom: 1px solid #21262d; }
+
 .fused-usage-table .n { text-align: right; font-variant-numeric: tabular-nums; }
 .fused-usage-table .muted { color: #8b949e; }
 .fused-usage-table tr .usage-node-dot { display: inline-block; }
@@ -4835,8 +4831,7 @@ body.show-group-description .group-descr { display: inline; }
 .spawn-queue-chip.waiting { color: #58a6ff; border-color: #1f6feb; }
 .spawn-queue-limits { font-size: 11.5px; }
 .spawn-queue-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.spawn-queue-table th { text-align: left; color: var(--muted, #8b949e); font-weight: 600; font-size: 11px; padding: 5px 10px; border-bottom: 1px solid var(--border, #30363d); }
-.spawn-queue-table td { padding: 5px 10px; border-bottom: 1px solid #21262d; vertical-align: middle; }
+.spawn-queue-table td { vertical-align: middle; }
 .spawn-queue-table tr:last-child td { border-bottom: 0; }
 .spawn-queue-pos { font-variant-numeric: tabular-nums; font-weight: 700; color: #58a6ff; width: 2.5em; }
 .spawn-queue-remote { font-size: 10px; color: #d2a8ff; border: 1px solid #6e40c9; border-radius: 8px; padding: 0 5px; }
@@ -5773,7 +5768,7 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 .term-files-link:where(:not(.ui-btn)) { background: none; border: none; color: #58a6ff; cursor: pointer; padding: 0 2px; font: inherit; }
 .term-files-link:where(:not(.ui-btn)):hover { text-decoration: underline; }
 .term-files-table { width: 100%; border-collapse: collapse; }
-.term-files-table td { padding: 2px 6px; border-bottom: 1px solid #1c222a; }
+
 .term-files-acts { text-align: right; white-space: nowrap; }
 .term-files-text { margin: 0; max-height: 40vh; overflow: auto; white-space: pre; font-size: 12px; color: #d4d4d4; }
 /* The "auto" self-rename checkbox sits under the Title input in the
@@ -8726,8 +8721,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .paf-rung.translated { background: #10233d; color: #79c0ff; border-color: #1f4f8f; }
 .paf-rung.none { background: #3a2a0b; color: #e3b341; border-color: #9e6a03; }
 .paf-member-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
-.paf-member-table th { text-align: left; color: #7d8590; font-weight: normal; border-bottom: 1px solid #2a3340; padding: 3px 6px; }
-.paf-member-table td { border-bottom: 1px solid #1c2128; padding: 4px 6px; vertical-align: top; }
+
 /* The id names the overlay; size the dialog inside it, so the backdrop
    still covers the whole viewport. */
 #paf-export-modal .cron-create-modal, #group-import-modal .cron-create-modal { max-width: 760px; }
@@ -10069,8 +10063,7 @@ body.hide-usage-costs #costs-root { display: none; }
 .usage-ov-chart .cumulative { fill: none; stroke: #d4d4d4; stroke-width: 2; vector-effect: non-scaling-stroke; }
 .usage-ov-chart .projection { fill: none; stroke: #d4d4d4; stroke-dasharray: 6 4; opacity: .6; vector-effect: non-scaling-stroke; }
 .usage-ov-agents { width: 100%; border-collapse: collapse; border: 1px solid #2a3340; border-radius: 7px; }
-.usage-ov-agents th { text-align: left; color: #8b949e; font-size: 11px; font-weight: 600; padding: 8px 10px; border-bottom: 1px solid #2a3340; }
-.usage-ov-agents td { padding: 7px 10px; border-bottom: 1px solid #21262d; }
+
 .usage-ov-agents td.cost { color: #3fb950; text-align: right; white-space: nowrap; }
 .usage-ov-agents th:last-child { text-align: right; }
 .usage-ov-note { color: #7d8590; font-size: 12px; margin: 10px 0 0; }
@@ -17467,8 +17460,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-subtabs > .fa-subtab.on { color: #f0f6fc; border-bottom-color: #1f6feb; }
 .fleet-admin h4 { margin: 14px 0 6px; font-size: 13px; }
 .fa-table { width: 100%; border-collapse: collapse; }
-.fa-table th { text-align: left; font-weight: 600; color: #7d8590; font-size: 11px; padding: 4px 8px; border-bottom: 1px solid #30363d; }
-.fa-table td { padding: 5px 8px; border-bottom: 1px solid #21262d; vertical-align: middle; }
+.fa-table td { vertical-align: middle; }
 .fa-acts { text-align: right; white-space: nowrap; }
 .fa-acts button + button { margin-left: 6px; }
 .fa-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #484f58; }

@@ -151,7 +151,7 @@ export function RemoteSessionsDialog({ node, onClose, fetchImpl, toast = shellTo
     ${rows?.error ? html`<div class="fa-danger" role="alert">${rows.error}</div>`
       : !rows ? html`<div class="muted">Loading…</div>`
       : rows.length === 0 ? html`<div class="muted">${node.name} shares no sessions with you (it needs sessions.watch to look, sessions.attach to type).</div>`
-      : html`<table class="fa-table" id="remote-sessions"><tbody>${rows.map((r) => {
+      : html`<table class="fa-table ui-compact" id="remote-sessions"><tbody>${rows.map((r) => {
         const mode = remoteTerminalMode(r);
         const cmd = nativeAttachCommand(r.agent, node.id);
         return html`<tr key=${r.agent} data-agent=${r.agent}>

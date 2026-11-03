@@ -147,7 +147,7 @@ export function MovesPage({ view, agents = [], actions, confirm, toast, now = Da
     </div>
     ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
     ${!moves && !error ? html`<div class="empty">Loading…</div>` : list.length === 0 && !error ? html`<div class="empty">No agent moves or teleports.</div>` : html`
-    <table class="fa-table" id="fleet-moves">
+    <table class="fa-table ui-compact" id="fleet-moves">
       <thead><tr><th></th><th>Kind</th><th>Agent</th><th>Peer</th><th>Group</th><th>State</th><th>Expires</th><th></th></tr></thead>
       <tbody>${list.map((m) => html`<tr key=${m.id} data-move=${m.id}>
         <td title=${m.direction === 'out' ? 'leaving this node' : 'arriving here'}>${m.direction === 'out' ? '⇢' : '⇠'}</td>

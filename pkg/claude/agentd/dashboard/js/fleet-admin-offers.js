@@ -194,7 +194,7 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
       ${preview?.agent?.carry_permissions && html`
         <label class="fa-of-check"><input id="fleet-offer-drop-permissions" type="checkbox" checked=${opts.dropPermissions} onChange=${set('dropPermissions')} /> discard carried permissions; use this node's defaults only</label>
         <label class="fa-of-check"><input id="fleet-offer-sensitive-permissions" type="checkbox" checked=${opts.allowSensitivePermissions} disabled=${opts.dropPermissions} onChange=${set('allowSensitivePermissions')} /> I explicitly authorize carried permission administration, sandbox administration, human interaction and federation administration grants. These can change security policy and contact the operator; unrestricted trust is also required.</label>
-        <table class="fa-table" id="fleet-offer-permissions"><thead><tr><th>Permission</th><th>Effect</th><th>Source scope</th><th>Receiving scope</th><th>Decision</th><th>Reason</th></tr></thead>
+        <table class="fa-table ui-compact" id="fleet-offer-permissions"><thead><tr><th>Permission</th><th>Effect</th><th>Source scope</th><th>Receiving scope</th><th>Decision</th><th>Reason</th></tr></thead>
           <tbody>${(preview.permissions || []).map((p, i) => html`<tr key=${i}><td><code>${p.slug}</code></td><td>${p.effect}</td><td>${p.source_scope ? JSON.stringify(p.source_scope) : 'all'}</td><td>${p.scope ? JSON.stringify(p.scope) : p.decision === 'drop' ? '—' : 'all'}</td><td>${p.decision}</td><td>${p.reason}</td></tr>`)}</tbody></table>`}
       <${ImportConfirmList} confirm=${preview?.confirm} overrides=${overrides} setOverrides=${setOverrides} />
       ${preview && html`<div class="fa-plan"><ul>
@@ -204,7 +204,7 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
         ${preview.security && html`<li class="muted">${preview.security}</li>`}
       </ul></div>`}`
     : html`
-      ${changes.length > 0 && html`<table class="fa-table" id="fleet-offer-changes"><thead><tr><th></th><th>Item</th><th>Change</th><th></th></tr></thead>
+      ${changes.length > 0 && html`<table class="fa-table ui-compact" id="fleet-offer-changes"><thead><tr><th></th><th>Item</th><th>Change</th><th></th></tr></thead>
         <tbody>${changes.map((c) => html`<tr key=${c.item} data-item=${c.item}>
           <td><input type="checkbox" aria-label=${`include ${c.item}`} checked=${!opts.skip.includes(c.item)} disabled=${c.action === 'unchanged'} onChange=${toggleItem(c.item)} /></td>
           <td><code>${c.item}</code></td>
@@ -387,7 +387,7 @@ export function OffersPage({ view, agents, actions, confirm, toast }) {
     ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
     <h4>Offered to this node</h4>
     ${incoming == null ? (error ? '' : html`<div class="empty">Loading…</div>`) : !incoming.length ? html`<div class="empty">No offers from peers.</div>` : html`
-    <table class="fa-table" id="fleet-offers-in">
+    <table class="fa-table ui-compact" id="fleet-offers-in">
       <thead><tr><th>From</th><th>Kind</th><th>Summary</th><th>Size</th><th>Expires</th><th>State</th><th></th></tr></thead>
       <tbody>${incoming.map((o) => html`<tr key=${`${o.peer}/${o.offer?.id}`} data-offer=${o.offer?.id}>
         <td>${label(o.peer)}${o.sender_agent ? html` <span class="muted">(${o.sender_agent})</span>` : ''}</td>
@@ -401,7 +401,7 @@ export function OffersPage({ view, agents, actions, confirm, toast }) {
     </table>`}
     <h4>Sent by this node</h4>
     ${outgoing == null ? '' : !outgoing.length ? html`<div class="empty">No offers sent.</div>` : html`
-    <table class="fa-table" id="fleet-offers-out">
+    <table class="fa-table ui-compact" id="fleet-offers-out">
       <thead><tr><th>To</th><th>Kind</th><th>Summary</th><th>Expires</th><th>State</th></tr></thead>
       <tbody>${outgoing.map((o) => html`<tr key=${`${o.peer}/${o.offer?.id}`} data-offer=${o.offer?.id}>
         <td>${label(o.peer)}</td><td>${offerKind(o)}</td><td class="fa-wrap">${o.offer?.summary || ''}${o.last_error ? html`<div class="fa-danger">${o.last_error}</div>` : ''}</td>

@@ -299,7 +299,7 @@ function grantsCell(g) {
 function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, onGrants, onKey, onPropose, proposable }) {
   return html`<div class="fa-peers">
     <h4>This node</h4>
-    <table class="fa-table" id="fleet-self">
+    <table class="fa-table ui-compact" id="fleet-self">
       <thead><tr><th>Node</th><th>Instance</th><th>Fingerprint</th><th>Level</th><th>Seen</th></tr></thead>
       <tbody><tr data-self=${view.self.id}>
         <td><span class="fa-dot on" title="online"></span> <b>${view.self.name}</b> <span class="muted">(this node)</span></td>
@@ -311,7 +311,7 @@ function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, on
     <h4>Trusted peers <span class="muted">${view.trusted.length}</span></h4>
     ${view.trusted.length === 0
       ? html`<div class="empty">No trusted peers yet. Trust an instance below once its operator has read you its fingerprint.</div>`
-      : html`<table class="fa-table" id="fleet-trusted">
+      : html`<table class="fa-table ui-compact" id="fleet-trusted">
         <thead><tr><th>Peer</th><th>Instance</th><th>Fingerprint</th><th>Level</th><th>Seen</th><th>Grants</th><th>Pools</th><th></th></tr></thead>
         <tbody>${view.trusted.map((r) => html`<tr key=${r.id} data-peer=${r.id}>
           <td><span class=${`fa-dot${r.online ? ' on' : ''}`} title=${r.online ? 'online' : 'offline'}></span> <b>${r.label}</b>${r.name && r.name !== r.label ? html` <span class="muted">${r.name}</span>` : ''}</td>
@@ -334,7 +334,7 @@ function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, on
     <h4>Waiting to be trusted <span class="muted">${view.waiting.length}</span></h4>
     ${view.waiting.length === 0
       ? html`<div class="empty">No other instances visible on the hub.</div>`
-      : html`<table class="fa-table" id="fleet-waiting">
+      : html`<table class="fa-table ui-compact" id="fleet-waiting">
         <thead><tr><th>Reports name</th><th>Instance</th><th>Fingerprint</th><th>Seen</th><th></th></tr></thead>
         <tbody>${view.waiting.map((r) => html`<tr key=${r.id} data-peer=${r.id}>
           <td><span class=${`fa-dot${r.online ? ' on' : ''}`}></span> ${r.name || html`<span class="muted">unnamed</span>`}${r.asks && html` <span class="fa-asks" title="This instance asked to be trusted; its note is on the map">🤝 asks to be trusted</span>`}</td>

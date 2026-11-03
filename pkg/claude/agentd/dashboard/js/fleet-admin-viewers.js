@@ -55,7 +55,7 @@ export function ViewersPanel({ view, actions, confirm, toast, timers = globalThi
     <h4>Watching this node's terminals now <span class="muted">${rows.length}</span></h4>
     ${focus && html`<div class="muted" id="fleet-viewers-focus">${shown.length ? 'Showing who views' : 'No one is viewing'} <code title=${focus}>${shown[0]?.session || focus}</code> now · <${Button} size="sm" variant="link" class="fa-link" onClick=${() => { viewersFocus.value = ''; }}>show all<//></div>`}
     ${error && html`<div class="fa-danger">${error}</div>`}
-    ${shown.length > 0 && html`<table class="fa-table"><thead><tr><th>Peer</th><th>Agent</th><th>Group</th><th>Mode</th><th>For</th><th></th></tr></thead>
+    ${shown.length > 0 && html`<table class="fa-table ui-compact"><thead><tr><th>Peer</th><th>Agent</th><th>Group</th><th>Mode</th><th>For</th><th></th></tr></thead>
       <tbody>${shown.map((v) => html`<tr key=${v.id} data-viewer=${v.id}>
         <td>${label(v.peer)}</td>
         <td><code title=${v.agent}>${v.session || v.agent}</code></td>

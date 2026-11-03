@@ -67,7 +67,7 @@ export function AuditPage({ view, actions, now }) {
     </div>
     ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
     ${rows == null ? (error ? '' : html`<div class="empty">Loading…</div>`) : list.length === 0 ? html`<div class="empty">No federation activity in this window.</div>` : html`
-    <table class="fa-table" id="fleet-audit">
+    <table class="fa-table ui-compact" id="fleet-audit">
       <thead><tr><th>When</th><th></th><th>Peer</th><th>Kind</th><th>Actor</th><th>Target</th><th>Group</th><th>Outcome</th></tr></thead>
       <tbody>${list.map((r) => html`<tr key=${r.id} data-kind=${r.kind}>
         <td class="fa-nowrap">${when(r.at)}</td>

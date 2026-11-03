@@ -372,7 +372,7 @@ function TrustStep({ view, copy, toast, onTrust, onPeers }) {
     ${!connected && html`<p class="fs-warn">Join a hub first: other nodes show up here once this node is connected.</p>`}
     ${connected && (view.waiting.length === 0
       ? html`<div class="empty">No other nodes in your space yet. Each node joins the same space with its own invite; it shows up here once it connects.</div>`
-      : html`<table class="fa-table" id="fleet-setup-waiting">
+      : html`<table class="fa-table ui-compact" id="fleet-setup-waiting">
         <thead><tr><th>Node</th><th>Fingerprint</th><th></th></tr></thead>
         <tbody>${view.waiting.map((r) => html`<tr key=${r.id} data-peer=${r.id}>
           <td><span class=${`fa-dot${r.online ? ' on' : ''}`} title=${r.online ? 'online' : 'offline'}></span> ${r.name || html`<span class="muted">unnamed</span>`} <code class="muted" title=${r.id}>${shortID(r.id)}</code></td>
@@ -595,7 +595,7 @@ function AgentsStep({ view, groups, agents, actions, confirm, copy, toast, reloa
       ${!r.catalog.length
         ? html`<div class="muted">Shares nothing with this node yet; its operator grants that on their node (their step 5).</div>`
         : html`${alike && html`<div class="fs-shared-alike" data-shared-alike>All ${r.catalog.length} groups share: <span>${alike}</span></div>`}
-        <table class="fa-table fs-reach-table">
+        <table class="fa-table fs-reach-table ui-compact">
           <thead><tr><th>Its group</th>${!alike && html`<th>Shared with you</th>`}<th>Your agents that use it</th></tr></thead>
           <tbody>${r.catalog.map((g) => {
             const usable = agentSlugs(g.caps);

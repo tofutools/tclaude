@@ -321,7 +321,7 @@ export function SkillInstallDialog({ row, actions, confirm, onClose, onDone }) {
     ${opts.target !== 'download' && html`<label class="fa-cb-check"><input type="checkbox" id="fleet-cb-replace" checked=${opts.replace} onChange=${(e) => change({ replace: e.currentTarget.checked })} />
       Overwrite a skill with this name if one exists <span class="muted">(the preview shows which)</span></label>`}
     ${opts.target !== 'download' && preview && !stale && html`<div class="fa-cb-sect">Preview</div>
-      ${changes.length ? html`<table class="fa-table" id="fleet-cb-preview"><tbody>${changes.map((c) => html`<tr key=${c.item} data-change=${c.item}>
+      ${changes.length ? html`<table class="fa-table ui-compact" id="fleet-cb-preview"><tbody>${changes.map((c) => html`<tr key=${c.item} data-change=${c.item}>
         <td><code>${c.path || c.item}</code></td>
         <td class=${c.action === 'replace' ? 'fa-warn' : c.action === 'unchanged' ? 'muted' : ''}>${c.action === 'replace' ? 'overwrites existing' : c.action === 'create' ? 'new' : 'unchanged'}</td></tr>`)}</tbody></table>`
         : html`<div class="muted">Nothing to install for this target.</div>`}
@@ -432,7 +432,7 @@ export function ContentBrowser({ boards, view, actions, confirm, toast, onOpenBo
           <div class="fa-cb-list">
             <div class="fa-cb-tabs" role="tablist">${[{ id: '', label: 'All' }, ...KINDS].map((k) => html`<button type="button" data-ui-exempt role="tab" key=${k.id || 'all'} data-kind-tab=${k.id || 'all'} aria-selected=${f.kind === k.id ? 'true' : 'false'} class=${f.kind === k.id ? 'on' : ''}
               onClick=${() => setQuery(withToken(query, 'kind', k.id || f.kind))}>${k.label} <span class="muted">${k.id ? rows.filter((r) => r.kind === k.id).length : rows.length}</span></button>`)}</div>
-            <table class="fa-table" id="fleet-cb-table" tabindex="0" onKeyDown=${(e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); move(e.key === 'ArrowDown' ? 1 : -1); } }}>
+            <table class="fa-table ui-compact" id="fleet-cb-table" tabindex="0" onKeyDown=${(e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); move(e.key === 'ArrowDown' ? 1 : -1); } }}>
               <thead><tr>${SORT_COLS.map((c) => {
                 return html`<${SortTh} key=${c.col} active=${sort?.col === c.col} dir=${sort?.dir} data-sort-col=${c.col} sortLabel=${c.label}
                   onSort=${() => setSort((cur) => nextSort(cur, c.col))}>${c.label}<//>`;

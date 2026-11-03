@@ -138,7 +138,7 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
     const visible = sections.filter((x) => !q || x.shown.length);
     if (allGrants) count = q ? `${shownN} of ${total} grants` : `${total} grant${total === 1 ? '' : 's'} across ${allGrants.length} peer${allGrants.length === 1 ? '' : 's'} and pool${allGrants.length === 1 ? '' : 's'}`;
     body = !allGrants ? html`<div class="empty">Loading…</div>` : visible.length === 0 ? html`<div class="empty">No grants match.</div>` : html`
-      <table class="fa-table" id="fleet-grants">
+      <table class="fa-table ui-compact" id="fleet-grants">
         <thead><tr><th>Peer / pool</th><th>Permission</th><th>Where</th><th>Allows</th><th></th></tr></thead>
         <tbody>${visible.map(({ t, err, full, rows, shown }) => html`
           <tr key=${`h|${t.id}`} class="fa-grant-peer" data-peer=${t.id}>
@@ -158,7 +158,7 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
     body = html`
       ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
       ${!grants && !error ? html`<div class="empty">Loading…</div>` : rows.length === 0 ? html`<div class="empty">No grants: ${current.label} can do nothing on this node beyond being trusted.</div>` : shown.length === 0 ? html`<div class="empty">No grants match.</div>` : html`
-      <table class="fa-table" id="fleet-grants">
+      <table class="fa-table ui-compact" id="fleet-grants">
         <thead><tr><th>Permission</th><th>Where</th><th>Allows</th><th></th></tr></thead>
         <tbody>${shown.map((r) => html`<tr key=${r.key} data-slug=${r.slug}>${grantCells(r, () => revoke(current, r))}</tr>`)}</tbody>
       </table>`}

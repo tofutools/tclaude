@@ -182,7 +182,7 @@ export function InvitesPage({ view, actions, confirm, toast, copy, now }) {
         <//></label>
         <${Button} size="sm" variant="primary" id="fleet-invite-create" disabled=${!chosen} onClick=${create}>Create invite…<//>
       </div>`}
-    ${tokens.length > 0 && html`<table class="fa-table" id="fleet-tokens">
+    ${tokens.length > 0 && html`<table class="fa-table ui-compact" id="fleet-tokens">
       <thead><tr><th>Token</th><th>Uses</th><th>Expires</th><th>State</th><th></th></tr></thead>
       <tbody>${tokens.map((t) => { const st = tokenState(t, now); return html`<tr key=${t.id} data-token=${t.id}>
         <td><code>${t.id}</code></td><td>${t.used} / ${t.max_uses}</td><td>${until(t.expires_at, now)}</td>
@@ -195,7 +195,7 @@ export function InvitesPage({ view, actions, confirm, toast, copy, now }) {
       <${Button} size="sm" id="fleet-join-open" disabled=${!masters.length} onClick=${() => setJoining(true)}>Join with a token…<//>
       <span class="muted">${masters.length ? 'Enroll this node with an invite token another node issued.' : 'The issuing node must be online on the hub.'}</span>
     </div>
-    ${enrollments.length > 0 && html`<h4>Enrollments</h4><table class="fa-table" id="fleet-enrollments">
+    ${enrollments.length > 0 && html`<h4>Enrollments</h4><table class="fa-table ui-compact" id="fleet-enrollments">
       <thead><tr><th>Direction</th><th>Peer</th><th>Token</th><th>State</th></tr></thead>
       <tbody>${enrollments.map((e) => html`<tr key=${`${e.direction}|${e.token_id}|${e.peer}`}>
         <td>${e.direction}</td><td>${peerName(e.peer)}</td><td><code>${e.token_id}</code></td><td class=${e.retired ? 'muted' : ''}>${e.retired ? 'retired' : 'bound'}</td>

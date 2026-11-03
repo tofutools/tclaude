@@ -146,7 +146,7 @@ function CaptureList({ current, actions, now }) {
   if (!current.captures.length) {
     return html`<div class="empty">No captures yet. Start one while agentd is busy to see where its CPU goes; captures from <code>tclaude agentd profile</code> appear here too.</div>`;
   }
-  return html`<table class="debug-table profile-table">
+  return html`<table class="debug-table profile-table ui-compact">
     <thead><tr>
       <th scope="col">Started</th><th scope="col">Label</th><th scope="col">Status</th>
       <th scope="col">agentd CPU</th><th scope="col">child CPU</th><th scope="col">subproc</th>

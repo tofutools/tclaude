@@ -79,7 +79,7 @@ function PhaseBreakdown({ phases }) {
         </span>`)}
       </div>
     </${Fragment}>`}
-    <table class="debug-table">
+    <table class="debug-table ui-compact">
       <thead><tr><th scope="col">Phase</th><th scope="col">latest</th><th scope="col">p50</th><th scope="col">p90</th><th scope="col">p99</th><th scope="col">max</th></tr></thead>
       <tbody>
         <${PhaseRows} phases=${phases} expanded=${expanded} toggle=${toggle} />

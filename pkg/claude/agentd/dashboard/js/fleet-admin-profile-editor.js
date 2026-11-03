@@ -102,7 +102,7 @@ export function ProfileEditor({ profile = null, pools = [], groups = [], actions
     <label class="fa-pe-row"><span class="fa-k">requester pays</span><${Select} size="sm" id="fleet-profile-pays" value=${requesterPays} onChange=${(e) => setRequesterPays(e.currentTarget.value)}>
       ${REQUESTER_PAYS.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}<//></label>
     <div class="fa-pe-row fa-pe-top"><span class="fa-k">peer grants</span><div>
-      ${grants.length === 0 ? html`<div class="muted">none</div>` : html`<table class="fa-table" id="fleet-profile-grants"><tbody>${grants.map((g) => html`<tr key=${g.key} data-slug=${g.slug}>
+      ${grants.length === 0 ? html`<div class="muted">none</div>` : html`<table class="fa-table ui-compact" id="fleet-profile-grants"><tbody>${grants.map((g) => html`<tr key=${g.key} data-slug=${g.slug}>
         <td><code class=${slugInfo(g.slug).sensitive ? 'fa-sensitive' : ''}>${g.slug}</code></td>
         <td>${scopeText(g.scope, groupNames) || (slugInfo(g.slug).kind === 'group' ? html`<span class="fa-warn">all groups, incl. future</span>` : slugInfo(g.slug).gateway ? 'all gateways' : html`<span class="muted">node-wide</span>`)}</td>
         <td>${slugInfo(g.slug).policy ? html`cap <input type="number" min="1" style="width:4em" value=${g.spawn_policy?.max_live || 2}

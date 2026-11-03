@@ -114,7 +114,7 @@ export function PeerMailDialog({ initial = {}, onClose, toast, actions = default
       <${Button} variant="primary" id="peer-mail-send" disabled=${busy || !ready} onClick=${send}>${busy ? 'Sending…' : 'Send'}</${Button}>`}
     after=${html`<h4 class="peer-mail-h">Outbox <${Button} size="sm" variant="link" class="fa-link" onClick=${() => setTick((n) => n + 1)}>refresh<//></h4>
     ${outbox?.error ? html`<div class="fa-danger">${outbox.error}</div>` : !outbox ? html`<div class="muted">Loading…</div>` : outbox.length === 0 ? html`<div class="muted">Nothing sent yet.</div>` : html`
-      <table class="fa-table" id="peer-mail-outbox"><tbody>${outbox.slice(0, 10).map((o) => html`<tr key=${o.envelope_id}>
+      <table class="fa-table ui-compact" id="peer-mail-outbox"><tbody>${outbox.slice(0, 10).map((o) => html`<tr key=${o.envelope_id}>
         <td>${o.to}</td><td title=${o.preview || ''}>${o.subject || o.preview}</td>
         <td class=${o.last_error ? 'fa-danger' : ''} title=${o.last_error || ''}>${o.state}${o.attempts > 1 ? ` · ${o.attempts} tries` : ''}</td>
         <td class="muted">${o.updated_at ? new Date(o.updated_at).toLocaleString() : ''}</td></tr>`)}</tbody></table>`}

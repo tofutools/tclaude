@@ -35,7 +35,7 @@ export function KeyTransitionDialog({ row, resolved = false, copy, toast, onClos
   const onCopy = (text) => copy(text).then(() => toast('Command copied', false)).catch(() => toast(text, false));
   return html`<${Dialog} id="fleet-key-transition" title=${t.state === 'conflict' ? `${row.label}: competing new signing keys` : `${row.label} announced a new signing key`}
     onClose=${onClose} footer=${html`<${DialogClose}>Close<//>`}>
-    <table class="fa-table fa-kv"><tbody>
+    <table class="fa-table fa-kv ui-compact"><tbody>
       <tr><th>current</th><td><code>${t.oldID || row.id}</code><br /><code>${row.fingerprint}</code></td></tr>
       <tr><th>${t.state === 'conflict' ? 'one candidate' : 'announced'}</th><td><code>${t.newID}</code><br /><code>${t.newFingerprint}</code>${t.state === 'conflict' ? html`<br /><span class="muted">others: <code>tclaude federation identity rotations</code></span>` : ''}</td></tr>
       <tr><th>received</th><td>${when(t.receivedAt)}</td></tr>
