@@ -12757,7 +12757,7 @@ body.wizard #export-agent-modal #export-agent-submit:disabled::before { content:
 body.wizard :is(#paf-export-modal, #group-export-modal) .modal-meta {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #b39ddb;
 }
-body.wizard :is(#paf-export-modal, #group-export-modal) .paf-hint { color: #b39ddb; }
+body.wizard :is(#paf-export-modal, #group-export-modal) :is(.paf-hint, .paf-sec) { color: #b39ddb; }
 body.wizard :is(#paf-export-modal, #group-export-modal) .paf-check input { accent-color: #a97bd6; }
 /* Findings stay amber-on-dark so a warning still reads as one, just warmed
    toward the gold trim. */

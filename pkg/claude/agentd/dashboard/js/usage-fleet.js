@@ -165,7 +165,7 @@ export function FleetLimitEditor({ limit, fleet, busy, RuleEditor, onSave, onDel
     } catch (cause) { setError(cause.message); }
   };
   return html`<div class="usage-rules-tab usage-editor" id="usage-fleet-limit-editor">
-    <h4 class="ui-eyebrow">${limit.id ? `Edit fleet limit "${limit.rule.name}"` : 'New fleet limit'}</h4>
+    <h4>${limit.id ? `Edit fleet limit "${limit.rule.name}"` : 'New fleet limit'}</h4>
     <div class="usage-rule-fields">
       <label>Covers <${Select} size="sm" aria-label="Fleet limit target" value=${target} disabled=${busy}
         onChange=${(e) => touch(setTarget)(e.currentTarget.value)}>${options.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}<//></label>

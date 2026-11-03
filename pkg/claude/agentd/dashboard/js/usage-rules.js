@@ -298,7 +298,7 @@ function LimitEditor({ limit, overview, busy, onSave, onDelete, onCancel, onDirt
     } catch (cause) { setError(cause.message); }
   };
   return html`<div class="usage-rules-tab usage-editor" id="usage-limit-editor">
-    <h4 class="ui-eyebrow">${limit.id ? `Edit limit "${limit.rule.name}"` : 'New limit'}</h4>
+    <h4>${limit.id ? `Edit limit "${limit.rule.name}"` : 'New limit'}</h4>
     <div class="usage-rule-fields">
       <label>Scope <${Select} size="sm" aria-label="Limit scope" value=${scope} disabled=${busy || !!limit.id}
         onChange=${(e) => {
@@ -340,7 +340,7 @@ function ProfileEditor({ profile, busy, onSave, onDelete, onCancel, onDirty }) {
     } catch (cause) { setError(cause.message); }
   };
   return html`<div class="usage-rules-tab usage-editor" id="usage-profile-editor">
-    <h4 class="ui-eyebrow">${profile.id ? `Edit usage profile "${profile.name}"` : 'New usage profile'}</h4>
+    <h4>${profile.id ? `Edit usage profile "${profile.name}"` : 'New usage profile'}</h4>
     <div class="usage-rule-fields">
       <label>Name <input aria-label="Usage profile name" value=${name} disabled=${busy} maxlength="64" placeholder="e.g. standard"
         onInput=${(e) => touch(setName)(e.currentTarget.value)}/></label>

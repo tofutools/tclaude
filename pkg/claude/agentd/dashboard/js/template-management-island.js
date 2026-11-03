@@ -796,7 +796,7 @@ function GroupImportPreview({ inspection, into }) {
           >
         </div>`,
     )}
-    <div class="gi-sep gi-head">Collisions on this machine</div>
+    <div class="ui-eyebrow gi-sep gi-head">Collisions on this machine</div>
     ${collisions.length
       ? html`<div class="gi-warn">
             ⚠ ${collisions.length}
