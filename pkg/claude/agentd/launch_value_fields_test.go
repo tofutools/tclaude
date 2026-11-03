@@ -163,3 +163,42 @@ func TestResolveLaunchValueFields_ModelValidatorOverride(t *testing.T) {
 	assert.Equal(t, "custom!", res.Values.Model)
 	assert.Empty(t, res.Source[launchValueEffort], "fields not named are not resolved")
 }
+
+// TestLaunchValueFieldSpecs_ProfileColumns pins which SpawnProfile column
+// feeds each field: every string column is set to its own Go field name and
+// every int column to a distinct number, so a spec reading the wrong column
+// reports the column it actually read.
+func TestLaunchValueFieldSpecs_ProfileColumns(t *testing.T) {
+	want := map[string]string{
+		"model_proxy":               "ModelProxy",
+		modelField:                  "Model",
+		effortField:                 "Effort",
+		"sandbox":                   "Sandbox",
+		"approval":                  "Approval",
+		"tools":                     "ToolGovernance",
+		"ask_user_question_timeout": "AskUserQuestionTimeout",
+		"auto_compact_window":       "AutoCompactWindow",
+		contextWindowMaxField:       "ContextWindowMax",
+	}
+	var p db.SpawnProfile
+	rv := reflect.ValueOf(&p).Elem()
+	intColumn := map[int64]string{}
+	for i := 0; i < rv.NumField(); i++ {
+		field := rv.Field(i)
+		switch field.Kind() {
+		case reflect.String:
+			field.SetString(rv.Type().Field(i).Name)
+		case reflect.Int64:
+			field.SetInt(int64(i + 1))
+			intColumn[int64(i+1)] = rv.Type().Field(i).Name
+		}
+	}
+	require.Len(t, want, int(launchValueFieldCount))
+	for _, spec := range launchValueFieldSpecs {
+		if spec.profileStr != nil {
+			assert.Equal(t, want[spec.name], spec.profileStr(&p), spec.name)
+		} else {
+			assert.Equal(t, want[spec.name], intColumn[spec.profileNum(&p)], spec.name)
+		}
+	}
+}
