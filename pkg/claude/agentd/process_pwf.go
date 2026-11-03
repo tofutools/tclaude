@@ -443,6 +443,16 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 			rows = append(rows, &view.Templates[i])
 		}
 	}
+	// An operator's lock on a template refuses the whole import before any
+	// of it is stored (group_resource_locks.go).
+	for _, row := range rows {
+		if row.Status == "identical" {
+			continue
+		}
+		if id := planned[row.Ref].Tmpl.ID; refuseLockedForAgent(w, r, resourceKindProcess, id, "process template "+id) {
+			return
+		}
+	}
 	for _, row := range rows {
 		tmpl := planned[row.Ref].Tmpl
 		switch row.Status {

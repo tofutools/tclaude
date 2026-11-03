@@ -219,6 +219,31 @@ would consult, and for messaging specifically,
 `tclaude agent groups why-can-i-message <target>` explains which path
 authorizes a send.
 
+### The operator's lock on a resource
+
+The operator can lock a process template, a collab board or a live page
+against every agent. While it is locked, any change an agent makes is refused
+with `resource_locked` (403), and no grant overrides that: not a slug, a sudo
+elevation, group ownership or `groups.admin`. Reads stay open. For a process
+template the lock refuses a save, a delete, a library-listing change, an
+unpin and an import over it; pinning it to another group is still allowed.
+For a board it refuses the agent's patches, and for a page it refuses
+patches, eval, close and a re-show, by the shower as well as by members.
+
+Only the operator sets or clears a lock, from the dashboard
+(`POST /api/resource-locks`). No agent route reaches it. A process or board
+lock is stored and is removed when its board or template is deleted, so a new
+resource with the same id starts unlocked. A page lock lasts until the page
+is closed. A resource is unlocked by default.
+
+What a lock does not cover:
+- It locks a page's tclaude-side state, not its content: an agent still
+  serves the page from its own dev server or files, and a page still
+  closes when its agent retires.
+- A linked peer's operator reaching this node's process editor through
+  peer view acts as an operator, not as an agent, so the lock does not
+  refuse that. A peer never toggles a lock.
+
 ## Sudo: time-bounded elevation
 
 For work that needs a slug an agent doesn't hold — and shouldn't hold

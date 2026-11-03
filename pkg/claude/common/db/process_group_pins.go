@@ -156,7 +156,7 @@ func ListProcessGroupPins(groupID int64) ([]string, error) {
 	return out, rows.Err()
 }
 
-// ForgetProcessTemplate removes a deleted template's listing and pins.
+// ForgetProcessTemplate removes a deleted template's listing, pins and lock.
 func ForgetProcessTemplate(templateID string) error {
 	d, err := Open()
 	if err != nil {
@@ -165,7 +165,12 @@ func ForgetProcessTemplate(templateID string) error {
 	if _, err := d.Exec(`DELETE FROM process_group_pins WHERE template_id = ?`, templateID); err != nil {
 		return err
 	}
-	_, err = d.Exec(`DELETE FROM process_template_listing WHERE template_id = ?`, templateID)
+	if _, err := d.Exec(`DELETE FROM process_template_listing WHERE template_id = ?`, templateID); err != nil {
+		return err
+	}
+	// Its lock goes too: a template imported later under the id starts
+	// unlocked.
+	_, err = d.Exec(`DELETE FROM group_resource_locks WHERE kind = ? AND resource_id = ?`, GroupResourceProcess, templateID)
 	return err
 }
 

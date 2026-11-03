@@ -95,6 +95,10 @@ type livePage struct {
 	// groupID is the agent group the page is shared in, 0 for none
 	// (pages_share.go). Guarded by livePages.mu.
 	groupID int64
+	// agentsLocked is the operator's lock (group_resource_locks.go): no
+	// agent, not even the shower, patches, evals, closes or re-shows the
+	// page while it is set. Guarded by livePages.mu.
+	agentsLocked bool
 }
 
 type livePageRegistry struct {
@@ -400,6 +404,8 @@ type pageView struct {
 	// current name (pages_share.go).
 	GroupID int64  `json:"group_id,omitempty"`
 	Group   string `json:"group,omitempty"`
+	// AgentsLocked is the operator's lock on the page (group_resource_locks.go).
+	AgentsLocked bool `json:"agents_locked,omitempty"`
 	// ShareNote says, in show's answer, why a page is not shared.
 	ShareNote string `json:"share_note,omitempty"`
 }
@@ -434,6 +440,7 @@ func (p *livePage) view() pageView {
 		ID: p.id, Name: p.name, Title: p.title, Owner: p.owner, Target: p.target, Kind: p.kind,
 		Worktree: p.worktree, State: p.state, Origin: origin, URL: u, Rev: p.rev,
 		ShownAt: p.shownAt, Updated: p.updated, GroupID: p.groupID,
+		AgentsLocked: p.agentsLocked,
 	}
 }
 
@@ -631,6 +638,12 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 	reg := livePages
 	reg.mu.Lock()
 	existing := reg.byOwner[agentID][name]
+	if existing != nil && existing.agentsLocked {
+		reg.mu.Unlock()
+		closeStageUpstream(up)
+		writeResourceLocked(w, "page "+name)
+		return
+	}
 	if existing == nil {
 		if len(reg.byOwner[agentID]) >= pageMaxPerAgent {
 			reg.mu.Unlock()

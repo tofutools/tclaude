@@ -352,6 +352,8 @@ type boardJSON struct {
 	// board (GroupMembers) without an invitation (tcl-4yhow7).
 	Group        string   `json:"group,omitempty"`
 	GroupMembers []string `json:"group_members,omitempty"`
+	// AgentsLocked is the operator's lock on the board (group_resource_locks.go).
+	AgentsLocked bool `json:"agents_locked,omitempty"`
 }
 
 // boardElementJSON stamps the stored body with its server_version.
@@ -371,7 +373,7 @@ func boardToJSON(b *db.CollabBoard, elems []db.CollabBoardElement) boardJSON {
 	out := boardJSON{
 		ID: b.ID, Title: b.Title, Version: b.Version, CreatedAt: b.CreatedAt, UpdatedAt: b.UpdatedAt,
 		UpdatedBy: b.UpdatedBy, Participants: b.Participants, Elements: make([]json.RawMessage, 0, len(elems)),
-		Group: b.GroupName,
+		Group: b.GroupName, AgentsLocked: db.GroupResourceLocked(db.GroupResourceBoard, b.ID),
 	}
 	if members, err := db.CollabBoardGroupMembers(b); err == nil {
 		out.GroupMembers = members
@@ -673,6 +675,7 @@ func registerDashboardBoardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/boards/{id}/events", handleDashboardBoardEvent)
 	mux.HandleFunc("POST /api/boards/{id}/view", handleDashboardBoardView)
 	mux.HandleFunc("POST /api/boards/{id}/group", handleDashboardBoardGroup)
+	mux.HandleFunc("POST /api/resource-locks", handleDashboardResourceLock)
 	mux.HandleFunc("GET /api/boards/{id}/live", handleDashboardBoardLive)
 	mux.HandleFunc("POST /api/boards/{id}/undo", handleDashboardBoardUndo)
 	mux.HandleFunc("DELETE /api/boards/{id}/sessions", handleDashboardBoardSessionsEnd)
@@ -1167,6 +1170,9 @@ func handleBoardPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	id, ok := boardPathID(w, r)
 	if !ok {
+		return
+	}
+	if refuseLockedForAgent(w, r, resourceKindBoard, id, "board "+id) {
 		return
 	}
 	author, participant, ok := boardCaller(w, convID)
