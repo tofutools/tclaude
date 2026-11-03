@@ -405,6 +405,7 @@ const (
 	PermSelfDirRepair                     = "self.dir-repair"
 	PermSelfMorph                         = "self.morph"
 	PermSelfProcess                       = "self.process"
+	PermSelfPage                          = "self.page"
 	PermAgentProcess                      = "agent.process"
 	PermGroupsMembersProcess              = "groups.members.process"
 	PermAgentMorph                        = "agent.morph"

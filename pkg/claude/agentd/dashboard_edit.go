@@ -617,6 +617,8 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 	// session-env + sync tombstone. Actor-aware (JOH-26 PR3d): deleting an
 	// agent's head generation also sweeps its predecessor generations'
 	// rows + .jsonl, so a multi-generation actor leaves nothing orphaned.
+	// Pages close while the agent ID still resolves (before the purge).
+	closeLivePagesForConv(convID)
 	if _, err := removeAgentDirectoriesForConv(convID); err != nil {
 		http.Error(w, "delete agent-owned directories: "+err.Error(), http.StatusInternalServerError)
 		return
