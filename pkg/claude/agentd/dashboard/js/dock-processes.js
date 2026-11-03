@@ -24,7 +24,7 @@ import { wizWord } from './slop.js';
 import { ProcessMiniGraph } from './process-kit.js';
 import { processContext, processRunApi } from './process-context.js';
 import { WorkflowExportButton, WorkflowImportButton } from './process-workflow-share.js';
-import { handOffProcessDraft } from './process-draft-handoff.js';
+import { handOffProcessDraft, openProcessDraft } from './process-draft-handoff.js';
 import { requestProcessStart } from './process-start-handoff.js';
 import { dashPrefs } from './prefs.js';
 import { groupsState } from './groups-state.js';
@@ -164,7 +164,7 @@ function Preview({ row, anchor, groups, onClose, onChanged, onDelete, fetchImpl 
         <option value="">${wizWord('▶ Start in…', '▶ Begin in…')}</option>
         ${groups.map((group) => html`<option key=${group} value=${group}>${group}</option>`)}
       <//>
-      <${Button} size="sm" class="process-action" data-dock-process-edit onClick=${() => { onClose(); handOffProcessDraft({ id: row.id, name: row.name || row.id }); }}>✎ Edit<//>
+      <${Button} size="sm" class="process-action" data-dock-process-edit onClick=${() => { onClose(); void openProcessDraft({ id: row.id, name: row.name || row.id }); }}>✎ Edit<//>
       <${Select} size="sm" class="dpp-pin" aria-label="Pin to group" disabled=${busy} data-dock-process-pin onChange=${(event) => pick(event, pin)}>
         <option value="">Pin to group…</option>
         ${groups.filter((group) => !pinned.has(group)).map((group) => html`<option key=${group} value=${group}>${group}</option>`)}
@@ -233,7 +233,7 @@ function ProcessCard({
       <div ref=${menuRef} class=${`dock-card-menu${menuOpen ? ' open' : ''}${placement.up ? ' opens-up' : ''}`}
           style=${placement.maxHeight != null ? `max-height:${placement.maxHeight}px;overflow-y:auto` : null} role="menu" aria-label=${name}>
         <button type="button" role="menuitem" class="ui-menu-item dock-card-menu-item" data-dock-act="edit-item" data-dock-kind="processes" data-dock-name=${row.id}
-          onClick=${(event) => act(event, () => handOffProcessDraft({ id: row.id, name }))}>Edit</button>
+          onClick=${(event) => act(event, () => { void openProcessDraft({ id: row.id, name }); })}>Edit</button>
         ${[
           ['clone-item', wizWord('Clone', 'Mirror')],
           ['rename-item', 'Rename…'],
