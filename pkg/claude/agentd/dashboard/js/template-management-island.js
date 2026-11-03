@@ -786,7 +786,7 @@ function GroupImportPreview({ inspection, into }) {
     ['Format version', `v${inspection.format_version} — supported`],
   ];
   return html`<div class="group-import-preview" id="group-import-preview">
-    <div class="gi-head">Archive contents</div>
+    <div class="ui-eyebrow gi-head">Archive contents</div>
     ${rows.map(
       ([key, value], index) =>
         html`<div key=${key} class="gi-row">
@@ -796,7 +796,7 @@ function GroupImportPreview({ inspection, into }) {
           >
         </div>`,
     )}
-    <div class="gi-sep gi-head">Collisions on this machine</div>
+    <div class="ui-eyebrow gi-sep gi-head">Collisions on this machine</div>
     ${collisions.length
       ? html`<div class="gi-warn">
             ⚠ ${collisions.length}
@@ -1060,10 +1060,10 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
           spellcheck="false" /></label
       >`}${phase === 'loading' &&
       html`<div class="group-import-preview" id="group-import-preview">
-        <div class="gi-head">Inspecting file…</div>
+        <div class="ui-eyebrow gi-head">Inspecting file…</div>
       </div>`}${phase === 'error' &&
       html`<div class="group-import-preview" id="group-import-preview">
-        <div class="gi-head">File</div>
+        <div class="ui-eyebrow gi-head">File</div>
         <div class="gi-verdict gi-bad">✗ ${error}</div>
         <div class="gi-bad">
           This file is not an importable group or agent — pick a .zip or .paf

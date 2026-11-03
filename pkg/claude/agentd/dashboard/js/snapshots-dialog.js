@@ -65,7 +65,7 @@ function CreatePanel({ actions, preset, onDone, onError }) {
     } catch (e) { onError(message(e)); } finally { setBusy(false); }
   };
   return html`<div class="snap-panel ui-card ui-inset" id="snapshot-create">
-    <div class="paf-sec">Take a snapshot</div>
+    <div class="ui-eyebrow paf-sec">Take a snapshot</div>
     <${Field} label="Agent"><${Select} id="snapshot-create-agent" value=${agent} onChange=${(e) => setAgent(e.currentTarget.value)}>
       ${agents.map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}<//></${Field}>
     <${Field} label="Name"><input id="snapshot-create-name" value=${name} placeholder="default: <agent>-<UTC time>" onInput=${(e) => setName(e.currentTarget.value)} /></${Field}>
@@ -99,7 +99,7 @@ function SpawnPanel({ actions, snap, onDone, onError }) {
     } finally { setBusy(false); }
   };
   return html`<div class="snap-panel ui-card ui-inset" id="snapshot-spawn">
-    <div class="paf-sec">Spawn from ${snap.name}</div>
+    <div class="ui-eyebrow paf-sec">Spawn from ${snap.name}</div>
     <div class="paf-hint ui-hint">Each agent is a new identity that continues from the snapshot's conversation; ${snap.agent_name || 'the original'} is untouched.</div>
     <${Field} label="Group"><${Select} id="snapshot-spawn-group" value=${group} onChange=${(e) => setGroup(e.currentTarget.value)}>
       <option value="">(pick a group)</option>${groups.map((g) => html`<option key=${g} value=${g}>${g}</option>`)}<//></${Field}>
@@ -185,7 +185,7 @@ function SharePanel({ actions, snap, onDone, onError, fleet }) {
   const toggle = (id, on) => { setTo(on ? [...to, id] : to.filter((x) => x !== id)); changed(); };
   const s = review?.summary;
   return html`<div class="snap-panel ui-card ui-inset" id="snapshot-share">
-    <div class="paf-sec">Share ${snap.name} on a Board</div>
+    <div class="ui-eyebrow paf-sec">Share ${snap.name} on a Board</div>
     ${boards && !boards.length ? html`<div class="paf-hint ui-hint">This node is on no Board. Join or create one in ⚙ Fleet config → Boards.</div>` : html`
     <${Field} label="Board"><${Select} id="snapshot-share-board" value=${board} disabled=${!!busy} onChange=${(e) => { changed(); setBoard(e.currentTarget.value); }}>
       ${(boards || []).map((b) => html`<option key=${b.id} value=${b.id}>${b.name || b.id}</option>`)}<//></${Field}>
@@ -238,7 +238,7 @@ function PublishPanel({ actions, snap, onDone, onError }) {
   };
   const s = review?.summary;
   return html`<div class="snap-panel ui-card ui-inset" id="snapshot-publish">
-    <div class="paf-sec">Publish ${snap.name}</div>
+    <div class="ui-eyebrow paf-sec">Publish ${snap.name}</div>
     <div class="paf-hint ui-hint">Publishing always masks suspected credentials, replaces paths with placeholders, strips the agent's name, ids and repository, and drops the native history. It is signed with this node's pseudonymous publisher key, never its federation key.</div>
     <label class="paf-check"><input type="checkbox" id="snapshot-publish-stub" checked=${opts.stub_tool_results} onChange=${set('stub_tool_results')} /><span>Stub old tool results</span></label>
     <label class="paf-check"><input type="checkbox" id="snapshot-publish-reasoning" checked=${opts.drop_reasoning} onChange=${set('drop_reasoning')} /><span>Drop reasoning</span></label>
@@ -260,7 +260,7 @@ function PublishPanel({ actions, snap, onDone, onError }) {
 function PolicyStatus({ policies }) {
   if (!policies?.length) return null;
   return html`<div id="snapshot-policies">
-    <div class="paf-sec">Resilience policies</div>
+    <div class="ui-eyebrow paf-sec">Resilience policies</div>
     <table class="paf-member-table ui-compact"><thead><tr><th>Target</th><th>Every</th><th>To</th><th>Agent</th><th>Last good</th><th>Status</th><th>Next due</th></tr></thead><tbody>
       ${policies.flatMap((p) => (p.agents?.length ? p.agents : [null]).map((a, i) => html`<tr key=${`${p.id}:${a?.agent || i}`} data-policy=${p.id}>
         <td>${i === 0 ? p.target : ''}</td><td>${i === 0 ? everyText(p.every_seconds) : ''}</td><td>${i === 0 ? (p.peer_label || p.dest?.peer || '') : ''}</td>

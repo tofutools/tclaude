@@ -202,15 +202,15 @@ function AssignmentsTab({ overview, busy, onAssign }) {
   const pickable = (overview.agents || []).filter((a) => !agentRows.includes(a.id));
   return html`<div class="usage-rules-tab">
     <p class="modal-hint ui-hint">An agent uses the profiles of its nearest non-empty layer: agent › its groups (combined) › global default. A spawn profile's usage profiles are added to each agent it spawns, on top of its group or global ones; an agent's own assignment replaces them. A group deployed from a template starts with the template's usage profiles as its group layer.</p>
-    <h4>Global default</h4>
+    <h4 class="ui-eyebrow">Global default</h4>
     ${row('global', '', 'All agents')}
-    <h4>Groups</h4>
+    <h4 class="ui-eyebrow">Groups</h4>
     ${(overview.groups || []).length ? overview.groups.map((g) => row('group', g, g)) : html`<div class="muted">No groups.</div>`}
-    <h4>Spawn profiles</h4>
+    <h4 class="ui-eyebrow">Spawn profiles</h4>
     ${(overview.spawn_profiles || []).length ? overview.spawn_profiles.map((sp) => row('spawn_profile', sp, sp)) : html`<div class="muted">No spawn profiles.</div>`}
-    <h4>Group templates</h4>
+    <h4 class="ui-eyebrow">Group templates</h4>
     ${(overview.templates || []).length ? overview.templates.map((t) => row('template', t, t)) : html`<div class="muted">No group templates.</div>`}
-    <h4>Agents</h4>
+    <h4 class="ui-eyebrow">Agents</h4>
     ${agentRows.map((id) => row('agent', id, agentTitle(overview, id) || id, agentTitle(overview, id) ? id : ''))}
     <div class="usage-assign-row">
       <${Select} size="sm" aria-label="Agent to assign" value=${agentPick} disabled=${busy || !pickable.length} onChange=${(e) => setAgentPick(e.currentTarget.value)}>

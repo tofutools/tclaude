@@ -140,14 +140,14 @@ function TriggerInspector({ rule, actions, onEdit }) {
     </div>
     <div class="trigger-inspector-grid">
       <section>
-        <h4>Configured match</h4>
+        <h4 class="ui-eyebrow">Configured match</h4>
         <div class="trigger-verdicts">${configured.map(([label, detail]) => html`
           <div key=${label}><span class="muted">•</span>
             <strong>${label}</strong><span class="muted">— ${detail}</span></div>`)}</div>
         <div class="trigger-fact-note">${stateSource
           ? 'Live observations are persisted below. Unknown means the fact could not be observed; it is never treated as false and resets the sustained timer.'
           : 'The current API does not expose a live PR fact snapshot. Unknown event facts are evaluated at firing time, never displayed as false.'}</div>
-        ${stateSource && html`<div class="trigger-dwell-section"><h4>Current agent observations</h4>
+        ${stateSource && html`<div class="trigger-dwell-section"><h4 class="ui-eyebrow">Current agent observations</h4>
           ${dwellStates.length === 0 ? html`<div class="muted">No agent observations recorded yet.</div>`
             : html`<div class="trigger-dwell-states">${dwellStates.map((dwell) => {
                 const result = firingField(dwell, 'result', 'Result') || 'unknown';
@@ -166,7 +166,7 @@ function TriggerInspector({ rule, actions, onEdit }) {
         </div>`}
       </section>
       <section>
-        <h4>Recent firings</h4>
+        <h4 class="ui-eyebrow">Recent firings</h4>
         ${error && html`<div class="jobs-error ui-error-box" role="alert">${error}</div>`}
         ${loading ? html`<div class="muted">Loading firing history…</div>` : firings.length === 0
           ? html`<div class="muted">No firings recorded.</div>`

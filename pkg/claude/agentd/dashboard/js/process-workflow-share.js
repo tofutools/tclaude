@@ -197,7 +197,7 @@ function EnvelopeSection({ envelope, workflow, disabled, onPick, onLand }) {
     ${envelope.workflows.length > 1 && html`<label class="pwf-group">This file holds ${envelope.workflows.length} workflows. Reviewing <${Select} data-pwf-workflow disabled=${disabled} value=${workflow} onChange=${(e) => onPick(e.currentTarget.value)}>
       ${envelope.workflows.map((w) => html`<option key=${w.key} value=${w.key}>${w.root.split('@')[0]}</option>`)}
     <//></label>`}
-    ${envelope.performers.length > 0 && html`<h4>Agents it ships</h4><ul class="pwf-roles">${envelope.performers.map((p) => html`<li key=${p.role} data-pwf-performer=${p.role}>
+    ${envelope.performers.length > 0 && html`<h4 class="ui-eyebrow">Agents it ships</h4><ul class="pwf-roles">${envelope.performers.map((p) => html`<li key=${p.role} data-pwf-performer=${p.role}>
       <b>${p.target}</b> <span class="muted">· ${p.name} on ${p.harness}${p.model ? ` (${p.model})` : ''}, ${p.history ? 'with its conversation' : 'no conversation'}</span>
       <${Button} class="pwf-land" data-pwf-land=${p.agentKey} disabled=${disabled} onClick=${() => onLand(p)}>Land it…<//></li>`)}</ul>
       <p class="muted">Importing the workflow lands none of them. Land one to give a role a pre-briefed agent, with the agent import's own review; or use your own agents and ignore these.</p>`}
@@ -282,11 +282,11 @@ function ImportDialog({ file, source, bytes, preview: initialPreview, group: ini
     ${review.credit && html`<p class="muted" data-pwf-credit>${review.credit}</p>`}
     <p class=${`pwf-signer ${review.trusted ? 'is-trusted' : 'is-untrusted'}`} data-pwf-signer>${review.signer}</p>
     ${review.refused && html`<div class="island-error" role="alert" data-pwf-refused>Import refused: ${review.refused}. Change this in Config › Experimental.</div>`}
-    <div class="pwf-section"><h4>Commands it would run</h4>
+    <div class="pwf-section"><h4 class="ui-eyebrow">Commands it would run</h4>
       ${review.programs.length === 0 ? html`<p class="muted">None. Every step is an agent or you.</p>` : html`<ul class="pwf-commands">${review.programs.map((p) => html`<li key=${p.step} data-pwf-command=${p.step}><code>${p.command}</code> <span class="muted">· ${p.step} · program profile <b>${p.profile || 'default'}</b></span></li>`)}</ul>
       <p class="muted">Nothing runs on import. Starting a run asks you to allow each program profile first.</p>`}
     </div>
-    ${review.roleMap.length > 0 ? html`<div class="pwf-section"><h4>Agent roles it asks for</h4><ul class="pwf-roles">${review.roleMap.map((r) => html`<li key=${r.name} data-pwf-role=${r.name}>
+    ${review.roleMap.length > 0 ? html`<div class="pwf-section"><h4 class="ui-eyebrow">Agent roles it asks for</h4><ul class="pwf-roles">${review.roleMap.map((r) => html`<li key=${r.name} data-pwf-role=${r.name}>
         <b>${r.name}</b> <span class="muted">· ${r.steps.join(', ')}</span>
         <label class="pwf-role-map">use <${Select} data-pwf-role-map=${r.name} disabled=${busy} value=${choices.roleMap[r.name] || r.name}
           onChange=${(e) => choose({ roleMap: { ...choices.roleMap, [r.name]: e.currentTarget.value } })}>
@@ -295,20 +295,20 @@ function ImportDialog({ file, source, bytes, preview: initialPreview, group: ini
         <//></label>
         ${!r.known && html`<span class="pwf-role-unknown" data-pwf-role-unknown>nothing here has ${r.target} yet</span>`}</li>`)}</ul>
       <p class="muted">A step waits until a member of the run's group has the role, or its fallback spawns one. Mapping rewrites the imported steps.</p></div>`
-    : review.roles.length > 0 && html`<div class="pwf-section"><h4>Agent roles it asks for</h4><ul>${review.roles.map((r) => html`<li key=${r.name}><b>${r.name}</b> <span class="muted">· ${r.steps.join(', ')}</span></li>`)}</ul>
+    : review.roles.length > 0 && html`<div class="pwf-section"><h4 class="ui-eyebrow">Agent roles it asks for</h4><ul>${review.roles.map((r) => html`<li key=${r.name}><b>${r.name}</b> <span class="muted">· ${r.steps.join(', ')}</span></li>`)}</ul>
       <p class="muted">A step waits until a member of the run's group has the role, or its fallback spawns one.</p></div>`}
-    ${review.humans.length > 0 && html`<div class="pwf-section"><h4>Asks you</h4><p class="muted">${review.humans.join(', ')}</p></div>`}
-    ${review.params.length > 0 && html`<div class="pwf-section"><h4>Start inputs</h4><p>${review.params.map((p) => html`<span key=${p.name} class="pwf-param">${p.name}${p.required ? ' *' : ''}</span>`)}</p></div>`}
-    ${review.problems.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-problems><h4>Fails validation</h4><p class="muted">It imports as it is, but cannot run until these are fixed here.</p><ul>${review.problems.map((p, i) => html`<li key=${i}>${p}</li>`)}</ul></div>`}
-    ${review.assignees.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-assignees><h4>Not portable</h4><ul>${review.assignees.map((a) => html`<li key=${a.name}>${a.steps.join(', ')} name the agent <b>${a.name}</b>, which may not exist here. Those steps fall to their profile, or wait until reassigned.</li>`)}</ul></div>`}
-    ${review.paths.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-paths><h4>Paths from another machine</h4><p class="muted">Steps using these may need changing here.</p><ul>${review.paths.map((p, i) => html`<li key=${i}><code>${p.path}</code> <span class="muted">· ${p.where}</span></li>`)}</ul></div>`}
+    ${review.humans.length > 0 && html`<div class="pwf-section"><h4 class="ui-eyebrow">Asks you</h4><p class="muted">${review.humans.join(', ')}</p></div>`}
+    ${review.params.length > 0 && html`<div class="pwf-section"><h4 class="ui-eyebrow">Start inputs</h4><p>${review.params.map((p) => html`<span key=${p.name} class="pwf-param">${p.name}${p.required ? ' *' : ''}</span>`)}</p></div>`}
+    ${review.problems.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-problems><h4 class="ui-eyebrow">Fails validation</h4><p class="muted">It imports as it is, but cannot run until these are fixed here.</p><ul>${review.problems.map((p, i) => html`<li key=${i}>${p}</li>`)}</ul></div>`}
+    ${review.assignees.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-assignees><h4 class="ui-eyebrow">Not portable</h4><ul>${review.assignees.map((a) => html`<li key=${a.name}>${a.steps.join(', ')} name the agent <b>${a.name}</b>, which may not exist here. Those steps fall to their profile, or wait until reassigned.</li>`)}</ul></div>`}
+    ${review.paths.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-paths><h4 class="ui-eyebrow">Paths from another machine</h4><p class="muted">Steps using these may need changing here.</p><ul>${review.paths.map((p, i) => html`<li key=${i}><code>${p.path}</code> <span class="muted">· ${p.where}</span></li>`)}</ul></div>`}
     ${review.envelope && html`<${EnvelopeSection} envelope=${review.envelope} workflow=${choices.workflow} disabled=${busy}
       onPick=${(workflow) => choose({ workflow, roleMap: {} })} onLand=${(performer) => { managementController().openGroupImport(source, { agent: performer.agentKey, role: performer.target }); onClose(); }} />`}
-    <div class="pwf-section"><h4>What changes here</h4><ul class="pwf-templates">${review.templates.map((t) => html`<li key=${t.ref} data-pwf-template=${t.id} data-pwf-status=${t.status}><b>${t.name || t.id}</b> <span class=${`pwf-status is-${t.status}`}>${t.label}</span></li>`)}</ul>
+    <div class="pwf-section"><h4 class="ui-eyebrow">What changes here</h4><ul class="pwf-templates">${review.templates.map((t) => html`<li key=${t.ref} data-pwf-template=${t.id} data-pwf-status=${t.status}><b>${t.name || t.id}</b> <span class=${`pwf-status is-${t.status}`}>${t.label}</span></li>`)}</ul>
       ${(review.updates > 0 || choices.rename) && html`<label class="pwf-replace"><input type="checkbox" data-pwf-rename checked=${choices.rename} disabled=${busy} onChange=${(e) => { setReplace(false); choose({ rename: e.currentTarget.checked }); }} /> Import under new ids (${'<id>-2'}, …) instead of replacing mine</label>`}
       ${review.updates > 0 && !choices.rename && html`<label class="pwf-replace"><input type="checkbox" data-pwf-replace checked=${replace} onChange=${(e) => setReplace(e.currentTarget.checked)} /> Replace my current version of ${review.updates === 1 ? 'that template' : `those ${review.updates} templates`}</label>`}
     </div>
-    ${(groups.length > 0 || choices.group) && html`<div class="pwf-section"><h4>Save to a group</h4>
+    ${(groups.length > 0 || choices.group) && html`<div class="pwf-section"><h4 class="ui-eyebrow">Save to a group</h4>
       <label class="pwf-group">Pin it to <${Select} data-pwf-group disabled=${busy} value=${choices.group} onChange=${(e) => choose({ group: e.currentTarget.value })}>
         <option value="">no group (library only)</option>
         ${[...new Set([...(choices.group ? [choices.group] : []), ...groups])].map((g) => html`<option key=${g} value=${g}>${g}</option>`)}

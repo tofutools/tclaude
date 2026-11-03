@@ -452,7 +452,7 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
             ${peers.map((candidate) => html`<option key=${candidate.peer} value=${candidate.peer}>${candidate.label || candidate.peer} · ${candidate.trust}</option>`)}
           <//>
         </label>
-        <div class="proposal-sec"><span>Groups to share with ${label}</span><span>name, description and member count</span></div>
+        <div class="ui-eyebrow proposal-sec"><span>Groups to share with ${label}</span><span>name, description and member count</span></div>
         ${groups.map((group) => html`<div key=${group.name} class=${`proposal-item${shared(group.name) ? '' : ' off'}`} data-group=${group.name}>
           <label class="grow"><input type="checkbox" class="proposal-share" checked=${!!shared(group.name)} disabled=${busy}
             onChange=${(event) => toggleShare(group.name, event.currentTarget.checked)} /> <b>${group.name}</b> · ${group.members} member${group.members === 1 ? '' : 's'}</label>
@@ -460,7 +460,7 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
             <input type="checkbox" class="proposal-share-members" checked=${shared(group.name).includeMembers} disabled=${busy}
               onChange=${(event) => setMembers(group.name, event.currentTarget.checked)} /> include member list</label>`}
         </div>`)}
-        <div class="proposal-sec"><span>Links</span><span>each direction is a separate edge</span></div>
+        <div class="ui-eyebrow proposal-sec"><span>Links</span><span>each direction is a separate edge</span></div>
         ${!peerGroups.length && html`<div class="proposal-hint ui-hint">${label} has not shared a group with you yet, so there is nothing to link to. Share yours and ${label} can propose links back.</div>`}
         ${pairs.map((pair, index) => html`<div key=${index} class="proposal-item proposal-pair">
           <${Select} size="sm" class="proposal-pair-ours" value=${pair.ours} disabled=${busy} onChange=${(event) => setPair(index, { ours: event.currentTarget.value })}>
@@ -481,7 +481,7 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
             placeholder=${`Optional, shown to ${label}'s operator`} onInput=${(event) => setNote(event.currentTarget.value)}></textarea>
         </label>
         ${summary.length > 0 && html`<div class="proposal-preview" id="proposal-preview">
-          <div class="proposal-sec"><span>What you're proposing</span></div>
+          <div class="ui-eyebrow proposal-sec"><span>What you're proposing</span></div>
           <ul>${summary.map((line, index) => html`<li key=${index}>${line}</li>`)}</ul>
           <div class="proposal-hint ui-hint">No other permission changes; nothing reaches further than these items.</div>
         </div>`}`}
