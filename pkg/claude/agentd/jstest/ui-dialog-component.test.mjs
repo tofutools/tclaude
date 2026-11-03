@@ -33,14 +33,16 @@ test('the scanner counts direct overlays under any alias', () => {
 });
 
 test('no file renders ManagementOverlay directly', () => {
+  // Any mention (an import, an htm tag, an h() call) outside the owners
+  // counts, so neither an alias nor hyperscript slips past.
   const raw = readdirSync(JS).filter((f) => f.endsWith('.js') && !OWNERS.has(f)).sort()
-    .filter((name) => rawOverlays(readFileSync(new URL(name, JS), 'utf8')) > 0);
+    .filter((name) => /\bManagementOverlay\b/.test(readFileSync(new URL(name, JS), 'utf8')));
   assert.deepEqual(raw, [], 'render dialogs with Dialog from js/ui-dialog.js, not ManagementOverlay directly');
   // Dialog registers its own guarded close; a dialog that owns one passes it
   // as guard=${{ requestClose, registerClose }}. A registerClose prop would be
   // replaced silently and its Cancel would stop closing.
   const passthrough = readdirSync(JS).filter((f) => f.endsWith('.js') && !OWNERS.has(f)).sort()
-    .filter((name) => /\bregisterClose=\$\{/.test(readFileSync(new URL(name, JS), 'utf8')));
+    .filter((name) => /\bregisterClose(?:=\$\{|\s*:|,\s*$)/m.test(readFileSync(new URL(name, JS), 'utf8')));
   assert.deepEqual(passthrough, [], 'pass a dialog-owned close to Dialog as guard, not registerClose');
 });
 
