@@ -189,11 +189,9 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 	}
 	cwd := filepath.Join(home, "workspace")
 	require.NoError(t, os.MkdirAll(cwd, 0o700))
-	// Write the debug config BEFORE agentd starts. agentd binds its socket and
-	// only then stores its first-start config defaults (features.collab) by
-	// read-modify-write, so a config written once the socket answers can be
-	// replaced by agentd's copy read moments earlier. The launcher then logs at
-	// info and every debug-level proxy decision is silently dropped.
+	// Write the debug config BEFORE agentd starts, so the launcher reads it from
+	// the first launch; otherwise it logs at info and every debug-level proxy
+	// decision is silently dropped.
 	writeOpenCodeFloorDebugConfig(t, home)
 
 	db.ResetForTest()

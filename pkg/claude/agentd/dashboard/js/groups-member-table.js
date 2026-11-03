@@ -943,11 +943,11 @@ function SendElsewhereItems({ member, group, snapshot }) {
 }
 
 // MakeStewardMenuItem hands this agent the Steward role, with a confirmation.
-// It is this node's operator's: not on another node's row, and absent with Collab
-// off like the rest of the Steward.
+// It is this node's operator's: not on another node's row, and absent while the
+// operator has opted out of stewards (steward.disabled).
 function MakeStewardMenuItem({ member, group, snapshot }) {
   const remote = snapshot?.peer_view || (group?.fleet_node && !group.fleet_node.local) || (member.fleet_node?.id && !isPageNode(member.fleet_node.id));
-  if (snapshot?.collab_enabled !== true || remote || !member.agent_id) return null;
+  if (snapshot?.stewards_disabled || remote || !member.agent_id) return null;
   if (member.state?.harness === 'shell' || member.agent_id === snapshot.steward_active) return null;
   const label = member.title || member.conv_id;
   return html`<${MenuButton} member=${member} act="make-steward" regular="✦ make Steward…" wizard="✦ crown Steward…"

@@ -59,6 +59,7 @@ import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { useDismissablePopover } from './hover-popover.js';
 import { matchesShortcut, shortcutText, withShortcut } from './keybindings.js';
 import { Button } from './ui-components.js';
+import { onPeerPage } from './node-api.js';
 
 const html = htm.bind(h);
 
@@ -153,7 +154,7 @@ const STEWARD_WAKE_MS = 3000;
 // How recently a key in the terminal counts as still typing when a cue lands.
 const CUE_TYPING_WINDOW_MS = 3000;
 
-function AddMenu({ agents, tabs, steward, stewardLabel, returning, onResumeSteward, onSummonSteward, onPin, onClose, busy, trigger }) {
+function AddMenu({ agents, tabs, steward, stewardsOn = true, stewardLabel, returning, onResumeSteward, onSummonSteward, onPin, onClose, busy, trigger }) {
   const [filter, setFilter] = useState('');
   const menuRef = useRef(null);
   const filterRef = useRef(null);
@@ -172,15 +173,15 @@ function AddMenu({ agents, tabs, steward, stewardLabel, returning, onResumeStewa
   }, [agents, tabs, steward, filter]);
   const stewardPinned = steward && tabs.includes(steward.agentId);
   return html`<div ref=${menuRef} class="companion-menu" role="menu" aria-label="Add a companion">
-    ${returning && html`<button type="button" role="menuitem" class="ui-menu-item companion-menu-steward companion-menu-resume" disabled=${busy} onClick=${onResumeSteward}>
+    ${stewardsOn && returning && html`<button type="button" role="menuitem" class="ui-menu-item companion-menu-steward companion-menu-resume" disabled=${busy} onClick=${onResumeSteward}>
       <span class="companion-avatar steward" aria-hidden="true">✦</span>
       <span><b>Resume ${returning.name}</b><small>${stewardReturnNote(returning)}</small></span>
     </button>`}
-    ${returning && html`<button type="button" role="menuitem" class="ui-menu-item companion-menu-steward companion-menu-fresh" disabled=${busy} onClick=${onSummonSteward}>
+    ${stewardsOn && returning && html`<button type="button" role="menuitem" class="ui-menu-item companion-menu-steward companion-menu-fresh" disabled=${busy} onClick=${onSummonSteward}>
       <span class="companion-avatar steward" aria-hidden="true">✦</span>
       <span><b>Start fresh</b><small>${stewardFreshNote(returning)}</small></span>
     </button>`}
-    ${!stewardPinned && !returning && html`<button type="button" role="menuitem" class="ui-menu-item companion-menu-steward" disabled=${busy} onClick=${onSummonSteward}>
+    ${stewardsOn && !stewardPinned && !returning && html`<button type="button" role="menuitem" class="ui-menu-item companion-menu-steward" disabled=${busy} onClick=${onSummonSteward}>
       <span class="companion-avatar steward" aria-hidden="true">✦</span>
       <span><b>${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}</b><small>Helper for all of tclaude. Config > Steward sets what it can do without asking.</small></span>
     </button>`}
@@ -239,7 +240,7 @@ function AddTab({ window, ...menu }) {
   const [shown, setShown] = useState(false);
   const trigger = useRef(null);
   return html`<button data-ui-exempt ref=${trigger} type="button" class="companion-add" aria-label="Add a companion" aria-expanded=${shown ? 'true' : 'false'}
-    title=${`Summon ${menu.stewardLabel} or pin a live agent`} onClick=${() => setShown((v) => !v)}>＋</button>
+    title=${menu.stewardsOn === false ? 'Pin a live agent' : `Summon ${menu.stewardLabel} or pin a live agent`} onClick=${() => setShown((v) => !v)}>＋</button>
     ${shown && html`<${AddMenu} ...${menu} onPin=${(id) => { setShown(false); menu.onPin(id); }}
       onResumeSteward=${() => { setShown(false); menu.onResumeSteward(); }} onSummonSteward=${() => { setShown(false); menu.onSummonSteward(); }}
       onClose=${() => setShown(false)} trigger=${trigger} />`}`;
@@ -272,6 +273,9 @@ export function CompanionApp({
   const agents = useMemo(() => companionAgents(snapshot.value), [snapshot.value]);
   const customName = snapshot.value?.steward_name || '';
   const stewardLabel = customName || 'the Steward';
+  // The steward opt-out (steward.disabled) takes out only what is the Steward's:
+  // the chips, summoning it, Ctrl+. and its phrase. The windows stay.
+  const stewardsOn = snapshot.value?.stewards_disabled !== true;
   const steward = useMemo(() => stewardAgent(agents), [agents]);
   const stewardRoster = snapshot.value?.steward_roster || [];
   const sessionPrefs = useMemo(() => {
@@ -385,6 +389,7 @@ export function CompanionApp({
   wakeDoor.current = {
     refusal() {
       const name = customName || 'The Steward';
+      if (!stewardsOn) return 'Stewards are turned off in Config › Steward.';
       if (!steward?.online || steward.agentId === shutDown?.agentId) return `${name} isn’t running. Start it from the companion.`;
       // Only Bring it back here takes a detached agent from its window.
       if (detachedRef.current.has(steward.agentId)) {
@@ -673,7 +678,7 @@ export function CompanionApp({
     const onKey = (event) => {
       // Show all windows covers the companion's window and marks: Escape first.
       if (overlayExposeOpen.peek()) return;
-      if (matchesShortcut(event, 'steward')) {
+      if (stewardsOn && matchesShortcut(event, 'steward')) {
         event.preventDefault();
         event.stopPropagation();
         toggle();
@@ -686,7 +691,7 @@ export function CompanionApp({
     };
     win?.addEventListener?.('keydown', onKey, true);
     return () => win?.removeEventListener?.('keydown', onKey, true);
-  }, [toggle, win, shownKey, agents]);
+  }, [toggle, win, shownKey, agents, stewardsOn]);
 
   function moveChips(spot) {
     setChipSpot(spot);
@@ -1155,7 +1160,7 @@ export function CompanionApp({
     class=${`companion-chip-slot companion-spot-${spot}${near ? ' near' : ''}`} data-chip-spot=${spot}
     style=${`width:${width}px;${left === undefined ? `height:${height}px` : `left:${left}px`}`} aria-hidden="true"></div>`);
 
-  const chips = !stewardShown && html`<div ref=${chipRow} class=${`companion-chips companion-spot-${shownSpot}${inFooter ? ' compact' : ''}${chipDrag.slots ? ' dragging' : ''}`}
+  const chips = stewardsOn && !stewardShown && html`<div ref=${chipRow} class=${`companion-chips companion-spot-${shownSpot}${inFooter ? ' compact' : ''}${chipDrag.slots ? ' dragging' : ''}`}
     style=${inFooter ? `left:${footerSpotLeft(shownSpot, footerRest.room, footerRest.width)}px` : null}
     role="toolbar" aria-label="Companions" onPointerDown=${chipDrag.onPointerDown} onClickCapture=${chipDrag.onClickCapture}>
     ${chipAgent && (() => {
@@ -1253,7 +1258,7 @@ export function CompanionApp({
     [START_WINDOW_KIND]: { Body: StartTab, view: () => ({ label: customName || 'Steward', lead: html`<span class="companion-avatar steward" aria-hidden="true">✦</span>`, title: customName || 'Steward' }), ...stewardHome, onResume: resumeSteward, onSummon: summonSteward },
     [DECIDE_WINDOW_KIND]: { Body: DecideTab, view: () => ({ label: `${queue.length} to decide`, lead: html`<span class="companion-decide-mark" aria-hidden="true">◆</span>`, title: 'Decisions agents are waiting on' }), snapshot, queue, askerName, fetchImpl, notify, DecisionCard },
   };
-  const addTab = (window) => html`<${AddTab} window=${window} agents=${agents} tabs=${held} steward=${steward} busy=${busy}
+  const addTab = (window) => html`<${AddTab} window=${window} agents=${agents} tabs=${held} steward=${steward} stewardsOn=${stewardsOn} busy=${busy}
     stewardLabel=${stewardLabel} returning=${returning} onResumeSteward=${resumeSteward} onSummonSteward=${summonSteward} onPin=${(id) => showAgent(id, { into: window.id })} />`;
 
   return html`
@@ -1270,16 +1275,13 @@ export function CompanionApp({
     <${Peek} agent=${peekTarget} lines=${peek?.lines ?? null} anchor=${peek?.anchor} />`;
 }
 
-// CompanionGate keeps the whole companion out of the page while
-// features.collab is off: no chips, no Ctrl+., and no registered controller,
-// so callers of openInCompanion take their usual path. A peer's page carries a
-// peer snapshot, which never says collab is on, and shows that node's agents,
-// so it gets no window; but the operator is still looking at this node's
-// dashboard, so this node's agents can capture and mark it. The channel's route
-// answers 404 here while this node has Collab off.
+// CompanionGate mounts the companion once there is a snapshot. A peer's page
+// shows that node's agents, so it gets no companion and no registered
+// controller, and callers of openInCompanion take their usual path; but the
+// operator is still looking at this node's dashboard, so this node's agents
+// can capture and mark it through the view channel.
 export function CompanionGate(props) {
-  if (props.snapshot.value?.collab_enabled === true) return html`<${CompanionApp} ...${props} />`;
-  if (!globalThis.__tclaudeRemoteNode?.id) return null;
+  if (!onPeerPage()) return props.snapshot.value ? html`<${CompanionApp} ...${props} />` : null;
   return html`<${CompanionViewChannel} activeTab=${props.activeTab} notify=${props.notify} fetchImpl=${props.fetchImpl} win=${props.win} />`;
 }
 

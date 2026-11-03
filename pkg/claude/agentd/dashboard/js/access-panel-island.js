@@ -10,6 +10,7 @@ import { ApprovalCard, OPEN_ACCESS_PANEL_EVENT } from './companion-approval.js';
 import { approvalsFor, companionAgents, pendingAccess, pendingApprovals } from './companion-model.js';
 import { applyChromeTopInset } from './chrome-inset.js';
 import { Button } from './ui-components.js';
+import { onPeerPage } from './node-api.js';
 
 const html = htm.bind(h);
 
@@ -69,9 +70,9 @@ export function AccessPanel({ snapshot, fetchImpl, notify, openInMessages = () =
   </aside>`;
 }
 
-// AccessPanelGate leaves the panel out while features.collab is off.
+// AccessPanelGate leaves the panel out of a peer's page.
 export function AccessPanelGate(props) {
-  return props.snapshot.value?.collab_enabled === true ? html`<${AccessPanel} ...${props} />` : null;
+  return onPeerPage() ? null : html`<${AccessPanel} ...${props} />`;
 }
 
 export function mountAccessPanelIsland({ host, registerCleanup, ...props }) {

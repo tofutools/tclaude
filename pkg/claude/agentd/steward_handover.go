@@ -766,6 +766,10 @@ func handleStewardHandover(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !cfg.StewardsEnabled() {
+		writeError(w, http.StatusNotFound, stewardsDisabledCode, stewardsDisabledMessage)
+		return
+	}
 	out, fail := handOverSteward(cfg, res, then, stewardActor(r), auditRequestEventID(r))
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)

@@ -23,7 +23,7 @@ export const overlayTabs = computed(() => [
   ...tabsOfWindows(overlayWindows.value),
   ...minimizedOverlayTabs.value.map(({ tab }) => ({ ...tab, windowId: '', minimized: true })),
 ]);
-// Whether anything is there to show a window, which Collab off leaves there not.
+// Whether anything is there to show a window, which a peer's page has not.
 export const overlayHostUp = signal(false);
 
 function sessionStore(win) {

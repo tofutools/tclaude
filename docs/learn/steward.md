@@ -6,14 +6,13 @@ optional.
 
 **You need:** [Your first agent](first-agent.md) completed.
 
-## 1. Check that Collab is on
+## 1. Check that stewards are on
 
-The Steward is part of **Collab**, which is on by default: the dashboard has a
-**Collab** tab, and a **✦ Steward** pill sits at the bottom right of every tab.
+A **✦ Steward** pill sits at the bottom right of every tab.
 
-If the tab is called **Terminals** instead, Collab was turned off. Open **Config**,
-then **🎨 Appearance**, turn on **Collab**, and click **Save changes…**. You don't
-need to restart; the next refresh picks it up.
+If it is missing, stewards were turned off. Open **Config**, then **Steward**,
+check **Stewards**, and save. You don't need to restart; the next refresh picks
+it up.
 
 ## 2. Summon it
 
@@ -77,7 +76,7 @@ it needs your taste, it sends a **decision**: a question with one button per opt
 
 ## What you learned
 
-- **Collab**, on by default under **Config › Appearance**, gives you the Steward and the companion.
+- Stewards are on by default; **Config › Steward › Stewards** turns them off.
 - **✦ Steward** summons it; **Ctrl .** opens and hides the window.
 - "Brief me" tells you what needs you.
 - The Steward asks before it acts, and you approve in the dashboard.

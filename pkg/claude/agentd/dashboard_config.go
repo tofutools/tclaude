@@ -213,9 +213,6 @@ func handleDashboardConfigPost(w http.ResponseWriter, r *http.Request) {
 // the load and in the save, which replaces it: the tool list has to be there
 // before the feature can be turned on.
 func addExternalStewardInfo(resp map[string]any, cfg *config.Config) {
-	if !cfg.CollabEnabled() {
-		return
-	}
 	resp["external_steward"] = map[string]any{
 		"enabled": cfg.ExternalStewardsEnabled(),
 		"tools":   stewardtools.List(),

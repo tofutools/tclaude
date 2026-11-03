@@ -172,8 +172,8 @@ func summonScribeHTTP(w http.ResponseWriter, r *http.Request, defaultFocus scrib
 		if !requireHuman(w, r, "summon a Steward") {
 			return
 		}
-		if !collabRoutesEnabled() {
-			writeError(w, http.StatusNotFound, collabDisabledCode, config.CollabDisabledMessage)
+		if !stewardsEnabled() {
+			writeError(w, http.StatusNotFound, stewardsDisabledCode, stewardsDisabledMessage)
 			return
 		}
 		// Grants stored for future Stewards reach only the one real Steward.

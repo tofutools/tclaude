@@ -345,21 +345,15 @@ func cleanupAfterBackgroundDrain(t *testing.T, restore func()) {
 	t.Cleanup(func() { restoreAfterBackgroundDrain(restore) })
 }
 
-// enableCollab turns on features.collab, keeping the rest of the test's config.
-// Collab is on by default; this states it explicitly for tests that rely on it.
-func enableCollab(t *testing.T) { setCollab(t, new(true)) }
-
-// disableCollab turns features.collab off explicitly, as an operator would.
-func disableCollab(t *testing.T) { setCollab(t, new(false)) }
-
-// setCollab sets features.collab; nil removes it, which is the default (on).
-func setCollab(t *testing.T, on *bool) {
+// setStewardsDisabled sets the steward opt-out (steward.disabled), keeping the
+// rest of the test's config.
+func setStewardsDisabled(t *testing.T, off bool) {
 	t.Helper()
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	if cfg.Features == nil {
-		cfg.Features = &config.FeaturesConfig{}
+	if cfg.Steward == nil {
+		cfg.Steward = &config.StewardConfig{}
 	}
-	cfg.Features.Collab = on
+	cfg.Steward.Disabled = off
 	require.NoError(t, config.Save(cfg))
 }

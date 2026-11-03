@@ -77,9 +77,8 @@ their corner grip, maximize to the window (`T`), and go full screen (button or
 The **🔐 Access requests** folder is where blocked permission requests (such as
 `--ask-human`) arrive as cards: Approve, Decline, and scoped Always-allow, with a
 countdown that declines at zero and a **+5m** button. A banner and blinking badge show
-pending requests from any tab, and their history survives restarts. With Collab on,
-**Review** on the banner opens the
-[approval panel](companion.md#answering-permission-requests) instead.
+pending requests from any tab, and their history survives restarts. **Review** on the banner opens the
+[approval panel](companion.md#answering-permission-requests).
 
 ## Mail between nodes
 

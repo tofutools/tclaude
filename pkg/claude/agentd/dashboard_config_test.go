@@ -517,16 +517,6 @@ func TestDashboardConfig_ExternalStewardToolList(t *testing.T) {
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 		return body
 	}
-	setCollab := func(on bool) {
-		cfg, err := config.Load()
-		require.NoError(t, err)
-		if cfg.Features == nil {
-			cfg.Features = &config.FeaturesConfig{}
-		}
-		cfg.Features.Collab = new(on)
-		require.NoError(t, config.Save(cfg))
-	}
-	setCollab(true)
 	shown, ok := load()["external_steward"].(map[string]any)
 	require.True(t, ok, "shown before it is enabled")
 	assert.Equal(t, false, shown["enabled"])
@@ -541,16 +531,13 @@ func TestDashboardConfig_ExternalStewardToolList(t *testing.T) {
 	assert.Equal(t, want, names)
 
 	// Saving replaces what the page loaded, so the save has to carry it as well.
-	w, _ := postConfig(t, "/api/config", wrapBody(`{"features":{"collab":true},"steward":{"external_enabled":true}}`, ""))
+	w, _ := postConfig(t, "/api/config", wrapBody(`{"steward":{"external_enabled":true}}`, ""))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	var saved map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &saved))
 	shown, ok = saved["external_steward"].(map[string]any)
 	require.True(t, ok, w.Body.String())
 	assert.Equal(t, true, shown["enabled"])
-
-	setCollab(false)
-	assert.NotContains(t, load(), "external_steward")
 }
 
 func TestDashboardConfig_Keybindings(t *testing.T) {

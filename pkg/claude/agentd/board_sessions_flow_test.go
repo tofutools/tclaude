@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -38,7 +37,6 @@ func boardSessionFlow(t *testing.T) (*testharness.Flow, boardSessionFixture) {
 	t.Helper()
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	f := newFlow(t)
-	enableCollab(t)
 	fx := boardSessionFixture{t: t, mux: f.Mux, dash: agentd.BuildDashboardHandlerForTest()}
 	require.Equal(t, http.StatusCreated, fx.operator(http.MethodPost, "/api/boards", map[string]any{"id": "plan", "title": "Release plan"}).Code)
 	return f, fx
@@ -259,25 +257,3 @@ func TestBoardSessionsOperatorEndKeepsTheBoard(t *testing.T) {
 	fx.requireAgents(idA)
 }
 
-// Scenario: with Collab off the rows and every session route are absent, while
-// the sessions themselves wait for it to come back on.
-func TestBoardSessionsAreHiddenWithCollabOff(t *testing.T) {
-	f, fx := boardSessionFlow(t)
-	const conv = "board-session-off"
-	agentID := boardAgent(t, f, conv, "drawer")
-	fx.draw(conv, "n1", 1, 1)
-	fx.requireAgents(agentID)
-
-	cfg, err := config.Load()
-	require.NoError(t, err)
-	cfg.Features.Collab = new(false)
-	require.NoError(t, config.Save(cfg))
-
-	fx.requireAgents()
-	require.Equal(t, http.StatusNotFound, fx.agent(conv, http.MethodPost, "/v1/boards/plan/session", nil).Code)
-	require.Equal(t, http.StatusNotFound, fx.agent(conv, http.MethodDelete, "/v1/boards/plan/session", nil).Code)
-	require.Equal(t, http.StatusNotFound, fx.operator(http.MethodDelete, "/api/boards/plan/sessions", nil).Code)
-
-	enableCollab(t)
-	fx.requireAgents(agentID)
-}

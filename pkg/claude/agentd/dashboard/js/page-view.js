@@ -285,7 +285,7 @@ export function PageView({ pageId, snapshot, tools = null, onOpenSender = null, 
 
 // PagePane is a page in a tab of the Collab strip, or the one tab of its
 // separate window (solo).
-export function PagePane({ pane, active, solo = false, manageTitle = false, actions, snapshot, scope = null, fetchImpl, notify, collab = true }) {
+export function PagePane({ pane, active, solo = false, manageTitle = false, actions, snapshot, scope = null, fetchImpl, notify }) {
   const id = pane.seed.page;
   const page = findLivePage(snapshot?.value, id);
   const label = page ? pageLabel(page) : '';
@@ -304,8 +304,8 @@ export function PagePane({ pane, active, solo = false, manageTitle = false, acti
     ? html`<${Button} size="sm" class="mux-btn" title="Move this page back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${TO_COLLAB_LABEL}<//>
       ${pane.seed.floats && globalThis.window?.opener && !globalThis.window.opener.closed
         ? html`<${Button} size="sm" class="mux-btn" title="Float this page in a window over the dashboard" onClick=${() => void actions.reattachPane(pane.key, { overlay: true })}>Open in overlay<//>` : null}`
-    : html`${collab ? html`<${Button} size="sm" class="mux-btn" title="Float this page in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay<//>` : null}
-      <${Button} size="sm" class="mux-btn" title="Move this page to a browser window of its own" onClick=${() => void actions.popOutPane(pane.key, { floats: collab })}>Pop out<//>`;
+    : html`<${Button} size="sm" class="mux-btn" title="Float this page in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay<//>
+      <${Button} size="sm" class="mux-btn" title="Move this page to a browser window of its own" onClick=${() => void actions.popOutPane(pane.key, { floats: true })}>Pop out<//>`;
   return html`<div class=${`mux-pane mux-pane-page${active ? ' active' : ''}${scope?.hidden ? ' scope-hidden' : ''}`} id=${pane.id}
     role=${solo ? null : 'tabpanel'} data-page-pane=${id}>
     <${PageView} pageId=${id} snapshot=${snapshot} tools=${tools} fetchImpl=${fetchImpl} notify=${notify}
@@ -362,7 +362,7 @@ export function PageOverlayWindow({ instance, overlay, strip, close, snapshot, f
       onClick=${close.onClose}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="board-overlay page-overlay" frameClass="board-overlay-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Page ${label}`} title=${title}
-    controls=${{ look, closeLabel: `Close ${label}`, closeTitle: close.title, onClose: close.onClose, onMinimize: () => minimizeOverlayWindow(instance.id), onCollab: snapshot.value?.collab_enabled === true ? toCollab : null }}>
+    controls=${{ look, closeLabel: `Close ${label}`, closeTitle: close.title, onClose: close.onClose, onMinimize: () => minimizeOverlayWindow(instance.id), onCollab: toCollab }}>
     <${PageView} pageId=${instance.page} snapshot=${snapshot} tools=${tools} fetchImpl=${fetchImpl} notify=${notify} win=${win}
       onOpenSender=${(sender) => void openWebWindowPane(sender.agent, sender.name, { harness: sender.harness })} />
   <//>`;

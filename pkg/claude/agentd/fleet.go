@@ -26,7 +26,7 @@ const PermFleetRead = "fleet.read"
 // agent can message is decided at send. A federated action runs as its source
 // conv but is not that conv's local read, so it stays scoped.
 func readsWholeFleet(r *http.Request, conv string) bool {
-	return conv != "" && peerActionFromRequest(r) == nil && collabRoutesEnabled() && holdsPermission(conv, PermFleetRead)
+	return conv != "" && peerActionFromRequest(r) == nil && holdsPermission(conv, PermFleetRead)
 }
 
 // fleetIdleAfter is how long an online agent has to sit idle before the

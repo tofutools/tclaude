@@ -462,12 +462,28 @@ func stewardBrief(brief string, cfg *config.Config) string {
 	return brief
 }
 
+// stewardsDisabledCode and stewardsDisabledMessage answer a request that would
+// make a Steward while the operator has opted out with steward.disabled. As
+// for any surface that is absent, the status is 404.
+const (
+	stewardsDisabledCode    = "stewards_disabled"
+	stewardsDisabledMessage = "stewards are turned off on this instance; unset steward.disabled in tclaude config to use them"
+)
+
+// stewardsEnabled reports the steward opt-out. Only making a Steward checks it
+// (summon and handover); the companion window reads it from the snapshot, and
+// external stewards through ExternalStewardsEnabled.
+func stewardsEnabled() bool {
+	cfg, err := config.LoadShared()
+	return err == nil && cfg.StewardsEnabled()
+}
+
 // tellStewardsNewName passes a changed steward.name to the active Steward, the
 // one that name means: the summon's brief is the only other place one hears it, and the companion
 // does not summon a Steward that is already live.
 func tellStewardsNewName(before, after *config.Config) {
 	name := after.StewardName()
-	if name == before.StewardName() || !collabRoutesEnabled() {
+	if name == before.StewardName() {
 		return
 	}
 	body := "The operator now calls you " + name + ". Use that name."
@@ -559,12 +575,9 @@ var stewardSlugsBeforeRecords = []string{PermDashboardCapture, PermDashboardMark
 // daemon starts, which is also when an upgrade leaves an old source behind and
 // the operator's each-version choice takes effect. See reconcileSteward.
 func reconcileStewardAccess(cfg *config.Config) {
-	var convs []string
-	if collabRoutesEnabled() {
-		convs = stewardConvs()
-		for _, conv := range convs {
-			reconcileSteward(conv, cfg)
-		}
+	convs := stewardConvs()
+	for _, conv := range convs {
+		reconcileSteward(conv, cfg)
 	}
 	base := knowledgeBase()
 	knowledgeStartup.Add(1)
@@ -580,7 +593,7 @@ func reconcileStewardAccess(cfg *config.Config) {
 // reconcileResumingSteward catches a Steward up as it comes back: it may have
 // missed a Config change while it was down.
 func reconcileResumingSteward(conv string) {
-	if !collabRoutesEnabled() || !slices.Contains(stewardConvs(), conv) {
+	if !slices.Contains(stewardConvs(), conv) {
 		return
 	}
 	cfg, err := config.LoadShared()
@@ -749,7 +762,7 @@ func hasAnyPrefix(source string, prefixes ...permSource) bool {
 // fixed address, or the name the operator gave it.
 func isStewardAddress(to string) bool {
 	to = strings.TrimSpace(to)
-	if to == "" || !collabRoutesEnabled() {
+	if to == "" {
 		return false
 	}
 	if strings.EqualFold(to, stewardAddress) {
@@ -810,9 +823,6 @@ func resolveStewardAddresses(w http.ResponseWriter, req *sendReq) bool {
 // agent answers a Steward through the reply path, which needs only the message
 // it received, and writing first takes the usual group or message.direct.
 func isLiveSteward(conv string) bool {
-	if !collabRoutesEnabled() {
-		return false
-	}
 	for _, steward := range liveStewardConvs() {
 		if steward == conv {
 			return true

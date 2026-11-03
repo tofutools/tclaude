@@ -18,7 +18,7 @@ import (
 // command here is the human's alone: the daemon refuses an agent, with no
 // permission or sudo path.
 
-const stewardNeeds = "Only the human operator can run this; agents are refused. Needs Collab."
+const stewardNeeds = "Only the human operator can run this; agents are refused."
 
 func stewardCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{

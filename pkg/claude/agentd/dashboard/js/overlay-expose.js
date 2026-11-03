@@ -40,8 +40,8 @@ export function exposeEntriesOf(windows, minimizedTabs, stack) {
   return entries.filter((entry) => entry.tab);
 }
 
-// The view has something to show only with two or more, and only while Collab
-// is there to hold windows at all.
+// The view has something to show only with two or more, and only while there
+// is a host to hold windows at all.
 export const overlayExposeAvailable = computed(() => overlayHostUp.value && overlayWindows.value.length + minimizedOverlayTabs.value.length >= 2);
 
 export function showAllOverlayWindows(open = true) {

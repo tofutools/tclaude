@@ -19,7 +19,7 @@ function fakeRecognition() {
 }
 
 async function setup(t, {
-  seed = { agent: 'agt_0123456789abcdef0123456789abcdef', harness: 'claude' }, collab = true, status = 'connected',
+  seed = { agent: 'agt_0123456789abcdef0123456789abcdef', harness: 'claude' }, status = 'connected',
   canType = true, secure = true, phrase, agents = [], solo = false, silence = 0, mark, pauses = {}, harnesses = [], fetchImpl = async () => ({ ok: true, json: async () => ({}) }),
 } = {}) {
   const harness = await createPreactHarness(t);
@@ -36,7 +36,7 @@ async function setup(t, {
   let result = true;
   const widget = { paste: (text) => { pasted.push(text); return result; } };
   const actions = { widgetFor: () => widget, activatePane: (key) => activated.push(key) };
-  const snapshot = signal({ collab_enabled: collab, agents, harnesses, ...(phrase === undefined && !silence && mark === undefined && !Object.keys(pauses).length ? {} : { voice: { phrases: phrase === undefined ? [] : [{ action: 'send', phrase }], silence_send_seconds: silence, mark_dictated: mark, ...pauses } }) });
+  const snapshot = signal({ agents, harnesses, ...(phrase === undefined && !silence && mark === undefined && !Object.keys(pauses).length ? {} : { voice: { phrases: phrase === undefined ? [] : [{ action: 'send', phrase }], silence_send_seconds: silence, mark_dictated: mark, ...pauses } }) });
   const win = harness.window;
   win.SpeechRecognition = speech.Recognition;
   win.isSecureContext = secure;
@@ -62,7 +62,7 @@ async function setup(t, {
 const SHELL = { seed: {} };
 const paneTalks = async (s, seed, agents) => {
   const { paneTalksToAgent } = await s.harness.importDashboardModule('js/terminal-dictation.js');
-  return paneTalksToAgent({ seed }, { agent: seed.agent }, { collab_enabled: true, agents });
+  return paneTalksToAgent({ seed }, { agent: seed.agent }, { agents });
 };
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -99,8 +99,10 @@ test('a pane opened without a harness takes it from the roster', async (t) => {
   assert.equal(await paneTalks(s, { agent }, []), false, 'unknown stays a terminal');
 });
 
-test('with Collab off an agent terminal pastes and never mails', async (t) => {
-  const s = await setup(t, { collab: false });
+test('on a peer\'s page an agent terminal pastes and never mails', async (t) => {
+  globalThis.__tclaudeRemoteNode = { id: 'inst_forge7' };
+  t.after(() => { delete globalThis.__tclaudeRemoteNode; });
+  const s = await setup(t);
   await s.mic();
   await s.harness.act(() => s.speech.last().hear('hello send now'));
   assert.deepEqual(s.posted, []);

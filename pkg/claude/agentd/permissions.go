@@ -219,7 +219,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug:        PermSelfPage,
-		Description: "Show the operator a live page of own port or worktree files, and list or close own pages (tclaude agent show / agent page). Acts only on pages this agent showed; needs Collab on. Default-granted, mirroring the self-lifecycle slugs.",
+		Description: "Show the operator a live page of own port or worktree files, and list or close own pages (tclaude agent show / agent page). Acts only on pages this agent showed. Default-granted, mirroring the self-lifecycle slugs.",
 	},
 	{
 		Slug: PermAgentProcess, GroupSibling: PermGroupsMembersProcess,

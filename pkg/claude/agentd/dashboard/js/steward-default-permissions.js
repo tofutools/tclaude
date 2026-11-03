@@ -20,9 +20,7 @@ export function stewardPermissionSummary(access) {
 
 // StewardDefaultPermissions is the Config row for what is stored for future
 // Stewards. It shows a count and hands the editing to the common permission
-// editor, which saves straight away: this is not part of the config form. The
-// daemon sends steward_access only with Collab on, and without it the routes
-// behind this are closed.
+// editor, which saves straight away: this is not part of the config form.
 export function StewardDefaultPermissions({ fetchImpl = (...args) => globalThis.fetch(...args), openEditor = null }) {
   const [error, setError] = useState('');
   const access = dashboardState.snapshot.value?.steward_access;

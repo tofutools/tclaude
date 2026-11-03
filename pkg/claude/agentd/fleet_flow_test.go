@@ -42,7 +42,6 @@ type fleetBriefResp struct {
 // brief ranks what needs the operator.
 func TestFleetBriefSeesWholeFleetAndRanksAttention(t *testing.T) {
 	f := newFlow(t)
-	enableCollab(t)
 	f.HaveGroup("steward")
 	f.HaveConvWithTitle("steward-conv", "steward")
 	f.HaveMember("steward", "steward-conv")

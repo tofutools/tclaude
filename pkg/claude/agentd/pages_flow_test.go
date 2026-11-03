@@ -43,7 +43,7 @@ type pageOut struct {
 	AgentOrigin string `json:"-"`
 }
 
-// pageEnv is a daemon with Collab on, a live dashboard listener (for the
+// pageEnv is a daemon with a live dashboard listener (for the
 // stage origins) and agents that may show pages.
 type pageEnv struct {
 	f   *testharness.Flow
@@ -57,7 +57,6 @@ type pageAgent struct {
 func newPageEnv(t *testing.T) *pageEnv {
 	t.Helper()
 	f := newFlow(t)
-	enableCollab(t)
 	srv := httptest.NewServer(agentd.BuildPopupHandlerForTest())
 	t.Cleanup(srv.Close)
 	t.Cleanup(agentd.SetPopupBaseURLForTest(srv.URL))
@@ -323,25 +322,6 @@ func TestPageNeedsTheSlugAndAnAgent(t *testing.T) {
 	rec = testharness.Serve(e.f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/pages", map[string]any{"target": ":" + strconv.Itoa(port)})))
 	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "belongs to an agent")
-}
-
-func TestPageRefusedWithCollabOff(t *testing.T) {
-	e := newPageEnv(t)
-	a := e.agent(t, "nocollab", true)
-	port := devServer(t, "x")
-	p, rec := e.show(t, a, ":"+strconv.Itoa(port), "p", "")
-	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-
-	disableCollab(t)
-	for _, c := range []struct{ method, path string }{
-		{http.MethodPost, "/v1/pages"}, {http.MethodGet, "/v1/pages"}, {http.MethodDelete, "/v1/pages/p"},
-	} {
-		rec := e.call(t, a, c.method, c.path, map[string]any{"target": ":" + strconv.Itoa(port)})
-		assert.Equal(t, http.StatusNotFound, rec.Code, c.path)
-		assert.Contains(t, rec.Body.String(), "collab_disabled", c.path)
-	}
-	code, _ := e.frame(t, p.Origin, "/")
-	assert.Equal(t, http.StatusNotFound, code, "the stage serves nothing with Collab off")
 }
 
 func TestPageClosedWhenTheAgentRetires(t *testing.T) {

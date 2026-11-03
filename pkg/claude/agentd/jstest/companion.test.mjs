@@ -18,7 +18,7 @@ function snapshotWith({ aStatus = 'idle', steward = false } = {}) {
     ],
   }];
   if (steward) groups.push({ name: 'steward', scribe: true, members: [{ agent_id: S, conv_id: 'conv-s', title: 'steward-k3x', online: true, state: { status: 'idle', harness: 'claude' } }] });
-  return { collab_enabled: true, groups, ...(steward ? { steward_roster: [{ agent_id: S, name: 'steward-k3x', seat: 'active', online: true }] } : {}) };
+  return { groups, ...(steward ? { steward_roster: [{ agent_id: S, name: 'steward-k3x', seat: 'active', online: true }] } : {}) };
 }
 
 // A hand-over's claim is asynchronous and starts as an act's render ends.
@@ -1145,20 +1145,20 @@ test('an agent moved to Terminals before a reload stays there', async (t) => {
   assert.equal(closed.some((selectors) => selectors.includes(B)), false);
 });
 
-test('the companion stays out of the page until features.collab is on', async (t) => {
+test('with stewards opted out the companion keeps its windows but has no Steward chips', async (t) => {
   const harness = await createPreactHarness(t);
   const { CompanionGate } = await harness.importDashboardModule('js/companion-island.js');
-  const snap = harness.signals.signal({ ...snapshotWith(), collab_enabled: false });
+  const snap = harness.signals.signal({ ...snapshotWith(), stewards_disabled: true });
   const activeTab = harness.signals.signal('groups');
   const controllers = [];
   const view = await harness.mount(harness.html`<${CompanionGate} snapshot=${snap} activeTab=${activeTab} prefs=${memoryPrefs()} sessionPrefs=${memoryPrefs()}
     fetchImpl=${async () => ({ ok: true, status: 200, json: async () => ({}) })} widgetFactory=${fakeWidgetFactory([])} closeTerminalPanes=${() => {}}
     registerController=${(c) => { controllers.push(c); return () => {}; }} />`);
   assert.ok(!view.container.querySelector('.companion-chips'));
-  assert.equal(controllers.length, 0, 'no controller, so callers take their usual path');
-  await harness.act(async () => { snap.value = { ...snapshotWith(), collab_enabled: true }; });
+  assert.equal(controllers.length, 1, 'still the overlay host: boards, pages and terminals can float');
+  await harness.act(async () => { snap.value = snapshotWith(); });
   assert.ok(view.container.querySelector('.companion-chips'), 'turning it on needs no reload');
-  await harness.act(async () => { snap.value = { ...snapshotWith(), collab_enabled: false }; });
+  await harness.act(async () => { snap.value = { ...snapshotWith(), stewards_disabled: true }; });
   assert.ok(!view.container.querySelector('.companion-chips'));
 });
 
@@ -1172,7 +1172,7 @@ test("a peer's page has no companion window but stays reachable for capture and 
     urls.push(url);
     return { ok: true, status: 200, json: async () => ({ marks: [] }) };
   };
-  const snap = harness.signals.signal({ ...snapshotWith(), collab_enabled: false, peer_view: { level: 'restricted' } });
+  const snap = harness.signals.signal({ ...snapshotWith(), peer_view: { level: 'restricted' } });
   const view = await harness.mount(harness.html`<${CompanionGate} snapshot=${snap} activeTab=${harness.signals.signal('groups')} prefs=${memoryPrefs()} sessionPrefs=${memoryPrefs()}
     fetchImpl=${fetchImpl} widgetFactory=${fakeWidgetFactory([])} closeTerminalPanes=${() => {}} />`);
   await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
@@ -1222,12 +1222,11 @@ test('a permission request opens in a right-hand panel from its pill, and the pa
 test('a Terminals tab knows its agent is asking for permission', async (t) => {
   const harness = await createPreactHarness(t);
   const { paneApprovals } = await harness.importDashboardModule('js/terminal-shell-island.js');
-  const snapshot = { collab_enabled: true, access_requests: [{ id: 'r', perm: 'x', agent_id: A, status: 'pending' }, { id: 'c', perm: 'y', conv_id: 'conv-b', status: 'pending' }] };
+  const snapshot = { access_requests: [{ id: 'r', perm: 'x', agent_id: A, status: 'pending' }, { id: 'c', perm: 'y', conv_id: 'conv-b', status: 'pending' }] };
   assert.equal(paneApprovals({ seed: { agent: A } }, snapshot).length, 1);
   assert.equal(paneApprovals({ seed: { agent: 'conv-b' } }, snapshot).length, 1, 'a pane seeded with a conv id');
-  assert.equal(paneApprovals({ seed: { agent: 'conv-a' } }, { collab_enabled: true, access_requests: [{ id: 'r', perm: 'x', agent_id: A, conv_id: 'conv-a', status: 'pending' }] }).length, 1, 'a conv-seeded pane finds a request naming its agent');
+  assert.equal(paneApprovals({ seed: { agent: 'conv-a' } }, { access_requests: [{ id: 'r', perm: 'x', agent_id: A, conv_id: 'conv-a', status: 'pending' }] }).length, 1, 'a conv-seeded pane finds a request naming its agent');
   assert.equal(paneApprovals({ seed: { agent: B } }, snapshot).length, 0);
-  assert.equal(paneApprovals({ seed: { agent: A } }, { ...snapshot, collab_enabled: false }).length, 0, 'the panel is part of Collab');
 });
 
 test('decisions from every agent wait in one "to decide" queue', async (t) => {
@@ -2598,7 +2597,7 @@ async function floated(t, options = {}) {
 
 test('a chat tab takes dictation, and keeps an unsent draft while its window shows another tab', async (t) => {
   const fake = fakeDictation();
-  const { view, harness, controller } = await floated(t, { dictationImpl: fake.impl, snapshot: { ...snapshotWith(), collab_enabled: true } });
+  const { view, harness, controller } = await floated(t, { dictationImpl: fake.impl, snapshot: { ...snapshotWith() } });
   await harness.act(() => controller().open(B));
   await harness.act(() => controller().float(B));
   const windows = await harness.importDashboardModule('js/overlay-instances.js');
@@ -2728,7 +2727,7 @@ test('a hidden chat attaches nothing: not for an agent that came up, nor one tha
 });
 
 const mailable = (extra = {}) => {
-  const snapshot = { ...structuredClone(snapshotWith()), collab_enabled: true, ...extra };
+  const snapshot = { ...structuredClone(snapshotWith()), ...extra };
   snapshot.groups[0].members[0].state.harness = 'claude';
   snapshot.agents = [{ agent_id: A, conv_id: 'conv-a', state: { harness: 'claude' } }];
   return snapshot;
@@ -2757,7 +2756,7 @@ test('voice stays on when a tab floats, and typing in a chat draft stops speech'
   const fake = fakeDictation();
   const prefs = memoryPrefs();
   const speakerImpl = { supported: true, speak() {}, cancel() { cancelled += 1; } };
-  const { view, harness, controller } = await setup(t, { prefs, speakerImpl, dictationImpl: fake.impl, snapshot: { ...snapshotWith(), collab_enabled: true } });
+  const { view, harness, controller } = await setup(t, { prefs, speakerImpl, dictationImpl: fake.impl, snapshot: { ...snapshotWith() } });
   await harness.act(() => controller().open(A));
   await harness.act(() => view.container.querySelector('.companion-voice').click());
   await harness.act(() => controller().float(A));
@@ -2781,7 +2780,7 @@ test('a chat tab notes capture off, and offers Reconnect after an error', async 
 test('a hand-over waits while the operator has a draft in a chat tab', async (t) => {
   const fake = fakeDictation();
   const notes = [];
-  const snapshot = { ...snapshotWith(), collab_enabled: true };
+  const snapshot = { ...snapshotWith() };
   const { view, harness, snap } = await floated(t, { dictationImpl: fake.impl, snapshot, notify: (text) => notes.push(text) });
   await flushed(harness);
   await fake.say(harness, view, 'still writing');

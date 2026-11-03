@@ -1259,16 +1259,16 @@ test('making a board a group\'s board shows its members and tells the online one
   await view.unmount();
 });
 
-test('boards stay out of the page until features.collab is on, then load fresh', async (t) => {
+test('boards stay out of a peer\'s page', async (t) => {
   const harness = await createPreactHarness(t);
   const { BoardList, BoardsGate } = await harness.importDashboardModule('js/board-island.js');
   const requests = [];
   const fetchImpl = async (url) => { requests.push(String(url)); return { ok: true, status: 200, json: async () => ({ boards: [] }) }; };
-  const snapshot = harness.signals.signal({ collab_enabled: false });
-  await harness.mount(harness.html`<${BoardsGate} snapshot=${snapshot}><${BoardList} fetchImpl=${fetchImpl} notify=${() => {}} onOpen=${() => {}} /><//>`);
-  assert.deepEqual(requests, [], 'a disabled surface is not asked for');
-  await harness.act(async () => { snapshot.value = { collab_enabled: true }; await new Promise((r) => setTimeout(r, 0)); });
-  assert.ok(requests.includes('/api/boards'), 'turning it on needs no reload');
+  globalThis.__tclaudeRemoteNode = { id: 'inst_forge7' };
+  t.after(() => { delete globalThis.__tclaudeRemoteNode; });
+  await harness.mount(harness.html`<${BoardsGate}><${BoardList} fetchImpl=${fetchImpl} notify=${() => {}} onOpen=${() => {}} /><//>`);
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(requests, [], 'another node\'s boards are not asked for');
 });
 
 test('a change summary never quotes what an agent wrote', async (t) => {

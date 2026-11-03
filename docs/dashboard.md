@@ -59,7 +59,7 @@ Across the top, from left to right:
 | Tab | Use it to |
 |---|---|
 | [Groups](dashboard-groups.md) | See your agents, start new ones, open terminals |
-| [Collab / Terminals](dashboard-terminals.md) | Work in terminals and [boards](boards.md) in the browser. Called Terminals until Collab is on. |
+| [Collab](dashboard-terminals.md) | Work in terminals and [boards](boards.md) in the browser. |
 | [Automations](dashboard-automations.md) | Schedule jobs, set standing orders and triggers, edit processes |
 | [Plugins](dashboard-automations.md#plugins) | Run shell-step plugins. Hidden until you have one. |
 | [Access](dashboard-access.md) | See and change permissions, grant sudo |
@@ -72,7 +72,7 @@ On the right of the tab bar are **⌂** for this node, **nodes ▾**, and **Flee
 with a **set up** pill until you've looked at it. See
 [Fleet UI](fleet-ui.md) to link machines.
 
-On every tab, the [companion](companion.md) sits at the bottom right with Collab on.
+On every tab, the [companion](companion.md) sits at the bottom right.
 The footer shows the tclaude version, the last refresh,
 [Open PRs](dashboard-groups.md#open-prs) and, with a GitLab instance
 configured, [Open MRs](dashboard-groups.md#open-mrs).
@@ -104,17 +104,16 @@ macOS, and lets you [rebind](dashboard-config.md#keyboard) the dashboard-wide an
 terminal ones. The table below shows the defaults. Keys are written one name at a time: **Ctrl ,** is Ctrl and the comma
 key, not a plus. Shortcuts follow the key's position, so they sit on the same
 keys on any keyboard layout, and the list labels them with what those keys type
-on yours. Shortcuts marked (Collab) belong to features that need
-[Collab](companion.md#turning-collab-off) on.
+on yours.
 
 <!-- shortcuts:begin -->
 | Action | Windows & Linux | macOS | In a terminal |
 |---|---|---|---|
 | **Anywhere** | | | |
 | Open the command palette | <kbd>Ctrl</kbd> <kbd>K</kbd> | <kbd>⌘</kbd> <kbd>K</kbd> | with **Command palette in terminals** |
-| Open or minimize the Steward window (Collab) | <kbd>Ctrl</kbd> <kbd>.</kbd> | <kbd>Ctrl</kbd> <kbd>.</kbd> | yes |
-| Mark up the page for the agent in the window (Collab) | <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>.</kbd> | <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>.</kbd> | yes |
-| Show all windows side by side, to pick one (Collab) | <kbd>Ctrl</kbd> <kbd>,</kbd> | <kbd>Ctrl</kbd> <kbd>,</kbd> | yes |
+| Open or minimize the Steward window | <kbd>Ctrl</kbd> <kbd>.</kbd> | <kbd>Ctrl</kbd> <kbd>.</kbd> | yes |
+| Mark up the page for the agent in the window | <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>.</kbd> | <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>.</kbd> | yes |
+| Show all windows side by side, to pick one | <kbd>Ctrl</kbd> <kbd>,</kbd> | <kbd>Ctrl</kbd> <kbd>,</kbd> | yes |
 | Message the agent in the current terminal or window | <kbd>Ctrl</kbd> <kbd>M</kbd> | <kbd>Ctrl</kbd> <kbd>M</kbd> | yes |
 | Next dashboard tab | <kbd>]</kbd> | <kbd>]</kbd> | no |
 | Previous dashboard tab | <kbd>[</kbd> | <kbd>[</kbd> | no |

@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -32,7 +31,6 @@ type actionFlow struct {
 
 func newActionFlow(t *testing.T, sender string) *actionFlow {
 	f := newFlow(t)
-	enableCollab(t)
 	f.HaveGroup("design")
 	f.HaveMember("design", sender)
 	dir := f.TestCwd("work")
@@ -226,24 +224,6 @@ func TestHumanAction_GoneTargetIsUnavailable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusConflict, a.click(map[string]any{"id": plain}).Code)
 	require.Equal(t, http.StatusNotFound, a.click(map[string]any{"id": plain + 1000}).Code)
-}
-
-func TestHumanAction_HiddenWithCollabOff(t *testing.T) {
-	a := newActionFlow(t, "hact-aaaa-bbbb-cccc-000000000005")
-	id := a.send("tab:usage")
-	require.NotNil(t, a.view(id))
-
-	cfg, err := config.Load()
-	require.NoError(t, err)
-	cfg.Features.Collab = new(false)
-	require.NoError(t, config.Save(cfg))
-
-	assert.Nil(t, a.view(id))
-	rec := a.click(map[string]any{"id": id})
-	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "collab_disabled")
-	refused := a.notify(map[string]any{"body": "x", "action": "tab:usage"})
-	require.Equal(t, http.StatusNotFound, refused.Code, refused.Body.String())
 }
 
 // The Messages tab gets the button from the mailbox route; a peer reading that

@@ -46,7 +46,6 @@ func useKnowledge(t *testing.T, build knowledge.Build) {
 func TestKnowledge_StewardReadsPinnedDocs(t *testing.T) {
 	useKnowledge(t, knowledge.Build{Version: "v1", State: knowledge.StateExact, Commit: knowledgeTestCommit, Ref: knowledgeTestCommit})
 	f, _ := processAuthoringFlow(t)
-	enableCollab(t)
 	stubScribeTerminal(t)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
@@ -124,7 +123,6 @@ func TestKnowledge_NothingDownloadsSourceOnItsOwn(t *testing.T) {
 	base := knowledge.New(build, knowledgeTestDocs(), t.TempDir()).WithSourceURL(server.URL + "/")
 	t.Cleanup(agentd.SetKnowledgeBaseForTest(base))
 	f, _ := processAuthoringFlow(t)
-	enableCollab(t)
 	stubScribeTerminal(t)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
@@ -173,7 +171,6 @@ func newKnowledgeSourceFlow(t *testing.T) *knowledgeSourceFlow {
 	base := knowledge.New(build, knowledgeTestDocs(), t.TempDir()).WithSourceURL(server.URL + "/")
 	t.Cleanup(agentd.SetKnowledgeBaseForTest(base))
 	f, _ := processAuthoringFlow(t)
-	enableCollab(t)
 	stubScribeTerminal(t)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	summon := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
@@ -312,7 +309,6 @@ func TestKnowledge_InexactBuildsAreLabelled(t *testing.T) {
 		t.Run(string(tc.build.State), func(t *testing.T) {
 			useKnowledge(t, tc.build)
 			f, _ := processAuthoringFlow(t)
-			enableCollab(t)
 			rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/knowledge/read?path=index.md", nil)))
 			require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 			var body struct {

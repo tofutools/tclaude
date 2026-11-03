@@ -25,7 +25,6 @@ lives. Each section has its own address, such as `/config/notifications`. Bare
 | Activity bots | Regular mode, Wizard mode 🧙, Slop mode 🎰 | `dashboard.activity_bots.*` | emoji; emoji; sprites |
 | Tabs | Plugins tab | `dashboard.always_show_plugins_tab` | off |
 | Tabs | Vegas music in regular mode | `slop.vegas_in_regular_mode` | off |
-| Collab | Collab: the [companion, Steward](companion.md) and [boards](boards.md) | `features.collab` | **on** |
 | Header & rows | Horizontal scroll | `dashboard.hscroll_follow` | on |
 | Header & rows | Group quick options | `dashboard.group_quick_options` | `hover` |
 | Overlays | Preview background | `dashboard.overlay_backdrop` | `dim`; also `blur`, `both`, `none` |
@@ -62,8 +61,7 @@ lives. Each section has its own address, such as `/config/notifications`. Bare
 
 Lists every dashboard shortcut by where it works, with its keys on Windows and
 Linux and on macOS (this browser's column is marked), and whether it still works
-while a web terminal has focus. Shortcuts of Collab-only features show only with
-Collab on. See [Keyboard shortcuts](dashboard.md#keyboard-shortcuts) for the
+while a web terminal has focus. See [Keyboard shortcuts](dashboard.md#keyboard-shortcuts) for the
 defaults.
 
 To rebind a shortcut, click **Change** on its row and press the new keys; Escape
@@ -183,11 +181,12 @@ options, see [Ask sandbox policy](ask.md#sandbox-policy).
 
 ## Steward
 
-`/config/steward`: only shown with Collab on. See
+`/config/steward`: the [Steward](companion.md). See
 [What the Steward may do](companion.md#what-the-steward-may-do).
 
 | Group | Label | Key | Default |
 |---|---|---|---|
+| Stewards | Stewards | `steward.disabled` | off (stewards on); see [Opting out of stewards](companion.md#opting-out-of-stewards) |
 | Access | Reads | `steward.reads` | `operator` |
 | Access | Writes | `steward.writes` | `messaging` |
 | Access | Default permissions | stored permissions, saved from their own editor | Reads and Writes only |

@@ -246,7 +246,7 @@ func (stageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Set("Content-Security-Policy", stageRefusalCSP)
 
 	port, ok := stageLoopbackPort(r)
-	if !ok || !collabRoutesEnabled() {
+	if !ok {
 		stageNotFound(w)
 		return
 	}

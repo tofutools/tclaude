@@ -33,6 +33,13 @@ export function peerPath(node, path) {
   return `/api/peer/${encodeURIComponent(node)}/${url.pathname.slice('/api/'.length)}${url.search}`;
 }
 
+// onPeerPage reports whether this page is a peer's per-node view. Collab (the
+// companion, boards, overlays, live pages, the access panel) is this node's own,
+// so a peer's page leaves it out.
+export function onPeerPage(remote = globalThis.__tclaudeRemoteNode) {
+  return !!remote?.id;
+}
+
 // isPageNode reports whether node is the page's own node (blank included):
 // its requests are the page's plain fetch, and its data the page snapshot.
 export function isPageNode(node, { self = selfNode, remote = globalThis.__tclaudeRemoteNode } = {}) {

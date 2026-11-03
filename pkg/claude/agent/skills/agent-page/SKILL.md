@@ -14,7 +14,7 @@ description: >-
   interactive in a sandboxed frame. Use when you want the operator to look at a
   UI you are building (instead of rendering a mock to a PNG), or when they ask
   to "show me", "let me see it", or "put it in the dashboard". Needs
-  `self.page` (default-granted) and Collab on.
+  `self.page` (default-granted).
 ---
 
 # Live pages

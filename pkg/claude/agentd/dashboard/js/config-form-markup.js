@@ -175,7 +175,7 @@ export const CONFIG_PANELS = Object.freeze([
   { id: 'context', icon: '🧠', title: 'Context & sessions', lede: 'Compaction, context nudges, resume prompts and how long Claude Code keeps transcripts.' },
   { id: 'costs', icon: '💲', title: 'Usage & costs', lede: 'Cost display, WHAT-IF estimates, subscription usage bars and rate-limit gating.' },
   { id: 'assistants', icon: '💬', title: 'Ask & scribe', lede: 'Defaults for tclaude ask and for the scribe agents behind the 🤖 Edit with agent buttons.' },
-  { id: 'steward', icon: '✦', title: 'Steward', lede: 'What a Steward, your helper in the companion window, may do without asking. Part of Collab.' },
+  { id: 'steward', icon: '✦', title: 'Steward', lede: 'Whether you have a Steward, your helper in the companion window, and what it may do without asking.' },
   { id: 'git', icon: '🔀', title: 'Git & forges', lede: 'What agents may fetch, push and open pull or merge requests against through the credential proxy, and the keys and tokens it uses. Changes apply to the next proxy call; no restart.' },
   { id: 'daemon', icon: '🌐', title: 'Daemon & network', lede: 'How agentd starts, where the dashboard listens, operator tokens and remote access.' },
   { id: 'logs', icon: '🧾', title: 'Logs & housekeeping', lede: 'Log verbosity and rotation, and long-horizon cleanup of retired agents.' },
@@ -418,14 +418,6 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           summary="show the Vegas tab, volume controls & play music outside slop mode"
           more=${html`The dashboard's casino "slop" mode (the 🎰 in the header) bundles a <strong>Vegas</strong> tab with a lounge-radio player and a header volume mixer. Enable this to surface those — the tab, the 🔊 sound switch and 🎚️ volume sliders, and the music — on the <em>plain</em> dashboard too, without the slot machines, coins and sound FX. Music starts muted and plays on your first click (browsers block autoplay); the 🔊 button mutes it (remembered per browser). Off by default. Stored in the <code>slop</code> block of config.json alongside the volume/channel settings.`}>
           <${Toggle} id="cfg-slop-vegas-regular" />
-        </${Setting}>
-      </${Group}>
-
-      <${Group} title="Collab">
-        <${Setting} title="Collab" forId="cfg-feature-collab" k="features.collab" badges=${['refresh']}
-          summary=${html`show the <strong>Collab</strong> surfaces: the companion window, the Steward and shared boards`}
-          more="The floating companion window for talking to agents from any view, with the Steward as your helper for all of tclaude; shared boards you draw on with agents; the fleet brief and map; decisions agents put to you with options; and agents pointing at the dashboard for you. On by default. Turning it on spawns nothing and grants nothing: a Steward exists only once you make one. Uncheck to hide these views; their API and CLI commands then answer that Collab is turned off.">
-          <${Toggle} id="cfg-feature-collab" />
         </${Setting}>
       </${Group}>
 
@@ -1114,6 +1106,13 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     </${Panel}>
 
     <${Panel} id="steward" active=${active}>
+      <${Group} title="Stewards">
+        <${Setting} title="Stewards" forId="cfg-steward-enabled" k="steward.disabled" badges=${['refresh']}
+          summary=${html`a Steward in the companion window, and external stewards if allowed below`}
+          more="On by default. Turning it on spawns nothing and grants nothing: a Steward exists only once you summon one. Uncheck to opt out: no Steward can be summoned or made, the companion offers no Steward (no chips, no summon, no Ctrl+.), and external stewards are refused. Boards, live pages, decisions and the rest of Collab stay on. A Steward already running is not stopped; retire it from its row.">
+          <${Toggle} id="cfg-steward-enabled" />
+        </${Setting}>
+      </${Group}>
       <${Group} title="Access" lede="Set when a Steward is summoned, so a running Steward keeps what it was born with: retire it to apply a change. Anything beyond this asks you first. Agents can reply to a Steward that wrote to them; writing to it first needs message.direct or a shared group.">
         <${Setting} title="Reads" forId="cfg-steward-reads" k="steward.reads"
           summary="What a Steward can read."

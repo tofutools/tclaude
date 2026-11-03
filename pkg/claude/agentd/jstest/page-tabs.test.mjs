@@ -18,7 +18,7 @@ const PAGE = Object.freeze({
   target: ':5173', kind: 'port', worktree: '/home/op/git/shop-feat', state: 'open', origin: ORIGIN, url: `${ORIGIN}/checkout`, rev: 1,
 });
 const GROUPS = [{ name: 'shop', members: [{ agent_id: PAGE.owner, conv_id: 'conv-ui', title: 'ui-worker', online: true, harness: 'claude' }] }];
-const snap = (pages, extra = {}) => ({ collab_enabled: true, agents: [], groups: GROUPS, live_pages: pages, ...extra });
+const snap = (pages, extra = {}) => ({ agents: [], groups: GROUPS, live_pages: pages, ...extra });
 
 function installHosts(harness) {
   const doc = harness.document;
@@ -224,7 +224,7 @@ test('a page leaves when the snapshot drops it, floats without closing, and a ta
   env.stop();
 });
 
-test('pages already open when the dashboard loads open quietly, and Collab off takes the tabs away', async (t) => {
+test('pages already open when the dashboard loads open quietly', async (t) => {
   fakeDaemon(t);
   const env = await mountShell(t, snap([PAGE]));
   const { harness, host, shellState } = env;
@@ -232,10 +232,6 @@ test('pages already open when the dashboard loads open quietly, and Collab off t
   assert.ok(pageTab(host), 'a page with no place opens');
   assert.equal(pageTab(host).querySelector('.mux-tab-unseen'), null, 'no news: no dot');
   assert.notEqual(shellState.toast.peek().action?.label, 'Open', 'and no toast');
-  await env.setSnapshot({ ...snap([PAGE]), collab_enabled: false });
-  assert.equal(pageTab(host), null, 'Collab off takes the tab away');
-  await env.setSnapshot(snap([PAGE]));
-  assert.ok(pageTab(host), 'and Collab on gives the open page its place back');
   env.stop();
 });
 

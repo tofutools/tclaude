@@ -216,10 +216,6 @@ func handleNotifyHuman(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
-	if len(body.Options) > 0 && !collabRoutesEnabled() {
-		writeError(w, http.StatusNotFound, collabDisabledCode, config.CollabDisabledMessage)
-		return
-	}
 	if len(body.Options) > 0 && callerConv == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "a decision needs an agent to send the pick back to; options are for agents")
 		return
@@ -274,10 +270,6 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 	meta.Name = sanitizeExportFilename(meta.Name)
 	if err := meta.normalize(); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-		return
-	}
-	if len(meta.Options) > 0 && !collabRoutesEnabled() {
-		writeError(w, http.StatusNotFound, collabDisabledCode, config.CollabDisabledMessage)
 		return
 	}
 	if len(meta.Options) > 0 && callerConv == "" {
@@ -1211,9 +1203,8 @@ func buildHumanMessagesSnapshot() ([]dashboardHumanMessage, int) {
 	}
 	loaded := len(rows)
 	// Decisions still waiting on the operator ride along even once read, so
-	// the companion window can keep offering their buttons. With Collab off
-	// there are no buttons to offer.
-	if undecided, err := db.ListUndecidedHumanMessages(snapshotRecentHumanMessages); err == nil && collabRoutesEnabled() {
+	// the companion window can keep offering their buttons.
+	if undecided, err := db.ListUndecidedHumanMessages(snapshotRecentHumanMessages); err == nil {
 		have := make(map[int64]bool, len(rows))
 		for _, m := range rows {
 			have[m.ID] = true
@@ -1274,9 +1265,6 @@ func humanMessageViews(rows []*db.HumanMessage) ([]dashboardHumanMessage, int) {
 		pendingNames = map[string]string{}
 	}
 
-	// Decisions are a Collab surface: with it off a stored one reads as a
-	// plain notification, with no options to answer.
-	decisions := collabRoutesEnabled()
 	actionDirs := map[string]string{}
 	out := make([]dashboardHumanMessage, 0, len(rows))
 	unread := 0
@@ -1304,12 +1292,10 @@ func humanMessageViews(rows []*db.HumanMessage) ([]dashboardHumanMessage, int) {
 			Read:      m.IsRead(),
 			Decision:  m.Decision,
 		}
-		if decisions && len(m.Options) > 0 {
+		if len(m.Options) > 0 {
 			view.Options, view.Recommended = m.Options, m.Recommended
 		}
-		if decisions {
-			view.Action = humanActionView(m, actionDirs)
-		}
+		view.Action = humanActionView(m, actionDirs)
 		if !m.DecidedAt.IsZero() {
 			view.DecidedAt = m.DecidedAt.Format(time.RFC3339)
 		}
@@ -1626,10 +1612,6 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 	}
 	decision := ""
 	if body.Choice != 0 {
-		if !collabRoutesEnabled() {
-			writeError(w, http.StatusNotFound, collabDisabledCode, config.CollabDisabledMessage)
-			return
-		}
 		switch {
 		case len(orig.Options) == 0:
 			writeError(w, http.StatusBadRequest, "invalid_arg", "this notification is not a decision")

@@ -3,7 +3,7 @@
 The **Access** tab shows and changes what agents may do. For the model behind it,
 see [Permissions and audit](permissions-and-audit.md).
 
-Waiting permission requests aren't here. With Collab on they open in the
+Waiting permission requests aren't here. They open in the
 [approval panel](companion.md#answering-permission-requests), and they're always
 in [Messages › 🔐 Access requests](dashboard-messages.md#access-requests).
 

@@ -177,7 +177,7 @@ func newKnowledgeSourceView(cfg *config.Config) knowledgeSourceView {
 // autoFetchKnowledgeSource starts a download the operator has already agreed to
 // for every version. It never blocks: progress and failure show in the dashboard.
 func autoFetchKnowledgeSource(cfg *config.Config) {
-	if cfg.CollabEnabled() && cfg.StewardSourceDownload() == config.StewardSourceEachVersion {
+	if cfg.StewardSourceDownload() == config.StewardSourceEachVersion {
 		knowledgeBase().StartFetch()
 	}
 }

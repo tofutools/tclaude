@@ -1087,10 +1087,10 @@ type snapshotPayload struct {
 	// surface. It is re-read on every snapshot so changing config takes effect
 	// without restarting agentd, matching processRoute.
 	ProcessesEnabled bool `json:"processes_enabled"`
-	// CollabEnabled gates the companion window, boards and the
-	// Collab switch. Re-read on every snapshot so a Config-tab change takes
-	// effect without restarting agentd, matching collabRoute.
-	CollabEnabled bool `json:"collab_enabled"`
+	// StewardsDisabled is the steward opt-out (steward.disabled): the
+	// companion offers no Steward, though its windows stay. Re-read on
+	// every snapshot so a Config-tab change takes effect without a restart.
+	StewardsDisabled bool `json:"stewards_disabled,omitempty"`
 	// Voice is the resolved dashboard.voice: spoken phrases and the opt-in
 	// hands-free settings.
 	Voice config.VoiceConfig `json:"voice"`
@@ -1101,7 +1101,7 @@ type snapshotPayload struct {
 	StewardActive string               `json:"steward_active,omitempty"`
 	StewardRoster []stewardRosterEntry `json:"steward_roster,omitempty"`
 	// StewardElevated is what each live Steward holds beyond Config and the
-	// defaults, by agent id. Sent only with Collab on.
+	// defaults, by agent id.
 	StewardElevated map[string]stewardElevation `json:"steward_elevated,omitempty"`
 	// StewardAccess is where a live Steward's access comes from, for its editors.
 	StewardAccess *stewardAccess `json:"steward_access,omitempty"`
@@ -3541,7 +3541,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		FusedToolbarFixedNode:         cfg.FusedToolbarFixedNode(),
 		UsageCollapseSubviews:         cfg.UsageCollapseSubviews(),
 		ProcessesEnabled:              cfg.ProcessesEnabled(),
-		CollabEnabled:                 cfg.CollabEnabled(),
+		StewardsDisabled:              !cfg.StewardsEnabled(),
 		Voice:                         cfg.Voice(),
 		StewardName:                   cfg.StewardName(),
 		TriggersEnabled:               triggersEnabled,
@@ -4061,26 +4061,24 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.CostTabWhatIf = showOnSub
 	out.BrokerRefusalsTotal, out.BrokerRefusalsUnplaceable = brokerRefusals.counts()
 	out.UsageTabVisible = usage.historyAvailable || openCodeActivity
-	if cfg.CollabEnabled() {
-		stewardState := permissionsState{
-			Defaults:  out.Permissions.Defaults,
-			Grants:    out.Permissions.Grants,
-			Overrides: out.Permissions.Overrides,
-		}
-		out.StewardElevated = stewardElevations(cfg, stewardState)
-		out.StewardAccess = stewardAccessView(cfg, stewardState)
-		out.StewardRoster = stewardRosterView()
-		if len(out.StewardRoster) > 0 && out.StewardRoster[0].Seat == db.StewardSeatActive {
-			out.StewardActive = out.StewardRoster[0].AgentID
-		}
-		source := newKnowledgeSourceView(cfg)
-		out.KnowledgeSource = &source
-		out.CompanionCues = activeCompanionCues()
-		// The origins are the pages' keys: the local dashboard only, never a
-		// peer's snapshot, restricted or not.
-		if !isPeerSnapshot(r) {
-			out.LivePages = livePagesSnapshot()
-		}
+	stewardState := permissionsState{
+		Defaults:  out.Permissions.Defaults,
+		Grants:    out.Permissions.Grants,
+		Overrides: out.Permissions.Overrides,
+	}
+	out.StewardElevated = stewardElevations(cfg, stewardState)
+	out.StewardAccess = stewardAccessView(cfg, stewardState)
+	out.StewardRoster = stewardRosterView()
+	if len(out.StewardRoster) > 0 && out.StewardRoster[0].Seat == db.StewardSeatActive {
+		out.StewardActive = out.StewardRoster[0].AgentID
+	}
+	source := newKnowledgeSourceView(cfg)
+	out.KnowledgeSource = &source
+	out.CompanionCues = activeCompanionCues()
+	// The origins are the pages' keys: the local dashboard only, never a
+	// peer's snapshot, restricted or not.
+	if !isPeerSnapshot(r) {
+		out.LivePages = livePagesSnapshot()
 	}
 	out.Templates = templates
 	out.Profiles = profiles

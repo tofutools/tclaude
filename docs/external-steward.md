@@ -10,8 +10,9 @@ remote access is not supported.
 
 ## Turning it on
 
-External stewards are off by default. They need [Collab](companion.md#turning-collab-off)
-on, plus **Allow external stewards** under **Config** › **Steward**. That page lists what
+External stewards are off by default. Turn on **Allow external stewards** under
+**Config** › **Steward**. They are refused while you have
+[opted out of stewards](companion.md#opting-out-of-stewards). That page lists what
 an assistant can do, so you can read it first. In `~/.tclaude/config.json` the setting is:
 
 ```json
@@ -101,7 +102,7 @@ It reads the credential once when it starts, so restart it after a renewal.
 
 So taking `message.direct` away doesn't stop it messaging agents it can reach through a group.
 
-**Config** › **Steward** shows this list with Collab on, whether or not the feature is on.
+**Config** › **Steward** shows this list whether or not the feature is on.
 
 Boards work with no dashboard open. The dashboard tools depend on your page, and say so
 when it isn't there. `dashboard_view` reports `known: false` if no dashboard has reported

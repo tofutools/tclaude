@@ -1,8 +1,7 @@
 # Terminals and Collab
 
 This tab is where you work inside agents' sessions from the browser. It is
-called **Terminals**. With [Collab](companion.md#turning-collab-off) on it is called
-**Collab**, and [boards](boards.md) open as tabs here too. It is always shown,
+called **Collab**, and [boards](boards.md) open as tabs here too. It is always shown,
 and its badge reads `N +M`: N open terminals plus M sessions running in the
 background.
 
@@ -39,23 +38,22 @@ pending permission request, a **🔑** opens the
   and a separate browser window. Each place offers the other two. A tab has **Open in
   overlay** and **Open in separate window**, an overlay window has **Open in the Collab
   tab** and **Open in separate window**, and a separate window has **Open in the Collab
-  tab** (**Open in the Terminals tab** with Collab off) and **Open in overlay**. Every
+  tab** and **Open in overlay**. Every
   overlay tab's right-click menu has the same two. Dragging a separate window's header
   back works like its button back to the dashboard. A separate window offers **Open in overlay** only while the dashboard that
   opened it is there to take it, and a terminal that can't float any more lands in a tab.
 - **Drag a tab off the strip** to float it where you drop it. What can't float opens in
-  a separate window instead: a peer's terminal, an offline agent, and anything with
-  Collab off. Drop it on an overlay window's title bar instead to join that window,
+  a separate window instead: a peer's terminal and an offline agent. Drop it on an overlay window's title bar instead to join that window,
   where a marker shows. Overlay tabs drag back the same way, onto this strip or onto
   **Collab** in the main nav.
-- **Float** a directory or group shell with **Open in overlay** (needs Collab). It
+- **Float** a directory or group shell with **Open in overlay**. It
   moves, snaps and splits like a board's window, on the same tmux session, and
   **Open in the Collab tab** returns it. Closing the window leaves the shell running. A peer's
   terminal stays a tab.
-- **Float** a running local agent with **Open in overlay** (needs Collab). It moves to the
-  same chat window a tab dragged off the companion gets, and leaves the Terminals tab: a
+- **Float** a running local agent with **Open in overlay**. It moves to the
+  same chat window a tab dragged off the companion gets, and leaves the Collab tab: a
   terminal is in one place at a time. **⚙ > Open in the Collab tab**, or the same item on
-  its tab's menu, returns it to the Terminals tab.
+  its tab's menu, returns it to the Collab tab.
 - **`$`** after the last tab shows or hides costs next to agent names. It works
   separately from the one in Groups. Green is API spend, and muted italic `≈$…` is
   a subscription what-if estimate. A tab's tooltip always has its cost.
@@ -171,6 +169,5 @@ terminal.
 - **Plain shells** and shell sessions show only the mic. Enter or **Paste** puts the
   draft at the prompt as one line with no newline, so nothing runs until you press
   Enter in the terminal. Spoken send and send after silence are off.
-- With Collab off, every terminal works like a plain shell.
 
 The wake phrase works here too, for the terminal with focus.

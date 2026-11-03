@@ -585,7 +585,7 @@ body.wizard .mux-pane-xterm {
    reminder, not an alert. */
 .mux-tabbar { display: flex; flex: none; min-width: 0; }
 .mux-tabbar > .mux-tabs { flex: 1 1 auto; min-width: 0; }
-/* The strip's + menu of boards (features.collab). It shares .mux-bg-slot's
+/* The strip's + menu of boards. It shares .mux-bg-slot's
    bottom anchor and vertical padding, and the chip's height, so the two stay
    level on the strip's last row however many rows the strip wraps to. */
 .mux-board-slot {

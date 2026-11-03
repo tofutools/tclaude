@@ -15,7 +15,7 @@ func registerDashboardExternalStewardRoutes(mux *http.ServeMux) {
 }
 
 func dashboardExternalStewardRoute(next http.HandlerFunc) http.HandlerFunc {
-	return collabRoute(func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if !checkDashboardAuth(w, r) {
 			return
 		}
@@ -25,5 +25,5 @@ func dashboardExternalStewardRoute(next http.HandlerFunc) http.HandlerFunc {
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		next(w, asDashboardHumanPeer(r))
-	})
+	}
 }

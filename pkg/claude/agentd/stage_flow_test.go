@@ -67,7 +67,6 @@ type stageEnv struct {
 func newStageEnv(t *testing.T) *stageEnv {
 	t.Helper()
 	_ = newFlow(t)
-	enableCollab(t)
 	srv := httptest.NewServer(agentd.BuildPopupHandlerForTest())
 	t.Cleanup(srv.Close)
 	t.Cleanup(agentd.SetPopupBaseURLForTest(srv.URL))
@@ -300,14 +299,6 @@ func TestStageNeverRoutesToTheDashboard(t *testing.T) {
 		res = e.do(t, http.MethodGet, "f-"+strings.Repeat("a", 32)+".ui.localhost:"+e.port, p, nil)
 		assert.Equal(t, http.StatusNotFound, res.StatusCode, p)
 	}
-}
-
-func TestStageRefusedWithCollabOff(t *testing.T) {
-	e := newStageEnv(t)
-	disableCollab(t)
-	res := e.do(t, http.MethodGet, e.host(), "/", nil)
-	assert.Equal(t, http.StatusNotFound, res.StatusCode)
-	assert.Zero(t, e.fake.count())
 }
 
 const stageProbeMarker = "<script data-tclaude-probe>"

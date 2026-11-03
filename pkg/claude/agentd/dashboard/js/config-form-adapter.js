@@ -572,7 +572,6 @@ function populateConfigForm(cfg) {
   $('#cfg-processes-refuse-unsigned').checked = !!(cfg.processes && cfg.processes.refuse_unsigned_imports);
   $('#cfg-feature-triggers').checked = !!(cfg.features && cfg.features.triggers);
   $('#cfg-feature-groups-route-map').checked = !!(cfg.features && cfg.features.groups_route_map);
-  $('#cfg-feature-collab').checked = cfg.features?.collab !== false;
   setSelectValue(
     $('#cfg-feature-group-attachments'),
     (cfg.features && cfg.features.group_attachments) || 'off',
@@ -709,6 +708,7 @@ function populateConfigForm(cfg) {
   setSelectValue($('#cfg-steward-reads'), (cfg.steward || {}).reads || 'operator');
   setSelectValue($('#cfg-steward-writes'), (cfg.steward || {}).writes || 'messaging');
   setSelectValue($('#cfg-steward-source-download'), (cfg.steward || {}).source_download || 'ask');
+  $('#cfg-steward-enabled').checked = !(cfg.steward || {}).disabled;
   $('#cfg-steward-external-enabled').checked = !!(cfg.steward || {}).external_enabled;
   $('#cfg-steward-external-max-children').value = (cfg.steward || {}).external_max_children || '';
   $('#cfg-steward-name').value = (cfg.steward || {}).name || '';
@@ -952,8 +952,8 @@ function assembleConfig() {
   if ($('#cfg-feature-processes').checked) feats.processes = true; else delete feats.processes;
   if ($('#cfg-feature-triggers').checked) feats.triggers = true; else delete feats.triggers;
   if ($('#cfg-feature-groups-route-map').checked) feats.groups_route_map = true; else delete feats.groups_route_map;
-  // Collab is stored either way: the daemon decided its default once, on upgrade.
-  feats.collab = $('#cfg-feature-collab').checked;
+  // Collab is always on; a features.collab left by an older build goes.
+  delete feats.collab;
   const groupAttachments = controlValue($('#cfg-feature-group-attachments'));
   if (groupAttachments === 'float' || groupAttachments === 'fixed') {
     feats.group_attachments = groupAttachments;
@@ -1164,6 +1164,7 @@ function assembleConfig() {
   if (stewardName) steward.name = stewardName; else delete steward.name;
   const stewardPrompt = controlValue($('#cfg-steward-startup-prompt')).trim();
   if (stewardPrompt) steward.startup_prompt = stewardPrompt; else delete steward.startup_prompt;
+  if ($('#cfg-steward-enabled').checked) delete steward.disabled; else steward.disabled = true;
   if ($('#cfg-steward-external-enabled').checked) steward.external_enabled = true; else delete steward.external_enabled;
   const maxChildren = Number(controlValue($('#cfg-steward-external-max-children')));
   if (maxChildren > 0) steward.external_max_children = maxChildren; else delete steward.external_max_children;
@@ -1506,8 +1507,7 @@ function applyConfigFilter() {
       rows.forEach(row => {
         const match = terms.length === 0 || sectionMatch || cfgMatches(row, terms);
         row.hidden = !match;
-        // Collab off hides this row too (dashboard.css): it is no match.
-        if (match && !row.matches('body.hide-collab [data-cfg-key="dashboard.window_controls"], body.hide-collab [data-cfg-key="dashboard.no_snap_assist"]')) hits++;
+        if (match) hits++;
       });
       // A card without rows (the remote-access certificate panel) is one block.
       const blockMatch = rows.length ? hits > 0 : (terms.length === 0 || sectionMatch || cfgMatches(section, terms));
@@ -1516,8 +1516,6 @@ function applyConfigFilter() {
       panelHits += hits;
     });
     const id = panel.getAttribute('data-cfg-panel');
-    // Collab off hides this panel (dashboard.css): its rows are no matches.
-    if (id === 'steward' && document.body.classList.contains('hide-collab')) panelHits = 0;
     setFlag(panel, 'data-cfg-nomatch', terms.length > 0 && panelHits === 0);
     shown += panelHits;
     const hitsEl = $(`#tab-config [data-cfg-hits="${id}"]`);

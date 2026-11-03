@@ -93,7 +93,7 @@ test('Config › Keyboard lists every shortcut with both platforms', async (t) =
   const harness = await createPreactHarness(t);
   const [{ KeyboardShortcutList }] = await Promise.all([harness.importDashboardModule('js/shortcut-keys.js')]);
   const Setting = ({ children }) => children;
-  const mounted = await harness.mount(harness.html`<${KeyboardShortcutList} Setting=${Setting} collab=${true} />`);
+  const mounted = await harness.mount(harness.html`<${KeyboardShortcutList} Setting=${Setting} />`);
   const rows = [...mounted.container.querySelectorAll('tr[data-shortcut]')];
   assert.equal(rows.length, kb.SHORTCUTS.length);
   const expose = mounted.container.querySelector('tr[data-shortcut="expose"]');
@@ -103,17 +103,6 @@ test('Config › Keyboard lists every shortcut with both platforms', async (t) =
   assert.equal(cells[3], 'yes');
   const palette = mounted.container.querySelector('tr[data-shortcut="palette"] td:nth-child(3)');
   assert.deepEqual([...palette.querySelectorAll('kbd')].map((k) => k.textContent), ['⌘', 'K']);
-});
-
-test('with Collab off, the list leaves out the shortcuts of Collab-only features', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ KeyboardShortcutList }] = await Promise.all([harness.importDashboardModule('js/shortcut-keys.js')]);
-  const Setting = ({ children }) => children;
-  const mounted = await harness.mount(harness.html`<${KeyboardShortcutList} Setting=${Setting} collab=${false} />`);
-  const ids = [...mounted.container.querySelectorAll('tr[data-shortcut]')].map((row) => row.dataset.shortcut);
-  assert.ok(ids.includes('palette') && ids.includes('compose'));
-  assert.ok(!ids.includes('steward') && !ids.includes('expose') && !ids.includes('board-undo'));
-  assert.equal(mounted.container.querySelector('[data-shortcut-scope="board"]'), null, 'an emptied scope has no section');
 });
 
 test('a rebinding replaces the chord everywhere, and a bad or fixed one is ignored', (t) => {
