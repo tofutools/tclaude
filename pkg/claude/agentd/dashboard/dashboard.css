@@ -14557,7 +14557,8 @@ body.wizard #links-manage-modal #links-list th,
 body.wizard #links-manage-modal #links-list td { border-bottom-color: rgba(122, 93, 176, 0.35); }
 body.wizard #links-manage-modal #links-list th { color: #b39ddb; }
 body.wizard #links-manage-modal #links-list th.sortable:hover,
-body.wizard #links-manage-modal #links-list th.sort-active { color: #d9b45a; }
+body.wizard #links-manage-modal #links-list th.sort-active,
+body.wizard #links-manage-modal #links-list th.sort-active .sort-arrow { color: #d9b45a; }
 body.wizard #links-manage-modal #links-list tr:hover { background: #241b3d; }
 body.wizard #links-manage-modal #links-list .rowname { color: #f3e6c0; }
 body.wizard #links-manage-modal #links-list .id,
@@ -17180,7 +17181,8 @@ body.wizard #costs-table tr.cost-chain td:first-child { box-shadow: inset 2px 0 
 body.wizard #costs-table tr.cost-chain-hl td { background: rgba(122, 93, 176, 0.14); }
 body.wizard #costs-table .cost-total-row td { border-top-color: #4a3a6b; }
 body.wizard #costs-table th.sortable:hover,
-body.wizard #costs-table th.sort-active { color: #d9b45a; }
+body.wizard #costs-table th.sort-active,
+body.wizard #costs-table th.sort-active .sort-arrow { color: #d9b45a; }
 body.wizard .cost-ignored { border-color: #4a3a6b; }
 
 /* ─── Per-model spend strip: a treasury split between the summoned ─────
