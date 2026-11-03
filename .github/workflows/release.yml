@@ -27,14 +27,10 @@ jobs:
     if: ${{ inputs.homebrew_only != true }}
     uses: ./.github/workflows/reusable-sandbox-v2-smoke.yml
 
-  sandbox-v2-seatbelt-smoke:
-    if: ${{ inputs.homebrew_only != true }}
-    uses: ./.github/workflows/reusable-sandbox-v2-seatbelt-smoke.yml
-
   # golangci-lint is platform-independent, so run it once on a single runner
   # rather than duplicating it across the test matrix. Lint, tests, version,
-  # builds, and the two sandbox smokes all run in parallel; publishing waits
-  # for every one of those boundaries.
+  # builds, the sandbox smoke and the macOS job all run in parallel;
+  # publishing waits for every one of those boundaries.
   lint:
     if: ${{ inputs.homebrew_only != true }}
     uses: ./.github/workflows/reusable-lint.yml
@@ -49,11 +45,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        # Same shard split as PR CI, via the shared test-suite action — one
-        # partition definition for both flows. Unlike PR CI there is no
-        # macOS-jstest exclusion: this post-merge run is where that cell's
-        # cross-OS coverage lives.
+        # Linux only: macOS runs in the single `macos` job below.
+        os: [ubuntu-latest]
         shard: [agentd, jstest, process, sandbox, rest]
     steps:
       - name: Checkout code
@@ -112,9 +105,6 @@ jobs:
           - os: ubuntu-24.04-arm
             goos: linux
             goarch: arm64
-          - os: macos-latest
-            goos: darwin
-            goarch: arm64
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -166,6 +156,101 @@ jobs:
           name: dist-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
 
+  # Every macOS check of a merge, in one job: the darwin build, the agentd
+  # and rest-all test shards, and the Sandbox v2 Seatbelt smoke, in sequence.
+  # Hosted macOS runners are concurrency-capped and PR CI runs no macOS at all
+  # (see ci.yml), so this job is where darwin breaks surface, and asking for
+  # one macOS slot per merge instead of several keeps the pool free. Expected
+  # wall clock is ~25 minutes (build ~3, agentd ~10, rest-all ~7, Seatbelt ~4).
+  #
+  # - No macOS jstest: it runs browser-targeted dashboard JS under Node + the
+  #   vendored LinkeDOM runtime, so nothing in it varies by runner OS.
+  # - rest-all is rest + process + sandbox: every Go package but agentd and
+  #   jstest, which the shared test-suite action derives by subtraction.
+  # - Every step after the build runs even when an earlier one failed, so one
+  #   red check does not hide the others; any failure still fails the job.
+  #
+  # Restoring per-shard macOS jobs, or moving to self-hosted macOS runners:
+  # see "macOS CI" in CONTRIBUTING.md.
+  macos:
+    name: macOS (build, test, Seatbelt smoke)
+    needs: [version]
+    permissions:
+      contents: read
+      actions: write # Prune only this job's bounded main build snapshots.
+    if: ${{ inputs.homebrew_only != true }}
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build with GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: latest
+          args: build --single-target --snapshot --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TCLAUDE_RELEASE_VERSION: ${{ needs.version.outputs.new_version }}
+          TCLAUDE_INSTALL_METHOD: release
+          # Keep the release build out of the default GOCACHE, which the
+          # agentd step below restores, measures and saves as its bounded
+          # build snapshot.
+          GOCACHE: ${{ runner.temp }}/gocache-release-build
+
+      # Same assertion as the Linux build job.
+      - name: Verify every binary was built and version stamped
+        env:
+          EXPECTED_VERSION: ${{ needs.version.outputs.new_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for binary in tclaude tclaude-agentd tclaude-hub; do
+            count=$(find dist -type f -name "$binary" -perm -u+x | wc -l)
+            if [ "$count" -eq 0 ]; then
+              echo "::error::goreleaser produced no $binary binary in dist/"
+              exit 1
+            fi
+            echo "$binary: $count binary(s)"
+            while IFS= read -r path; do
+              "$path" --tclaude-build-info | python3 -c 'import json,os,sys; info=json.load(sys.stdin); assert info["version"] == os.environ["EXPECTED_VERSION"]; assert info["install_method"] == "release"; assert info["protocol_version"] > 0'
+            done < <(find dist -type f -name "$binary" -perm -u+x)
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-darwin-arm64
+          path: dist/*
+
+      - name: Test suite (agentd)
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/test-suite
+        with:
+          shard: agentd
+          race: ${{ vars.RUN_RACE }}
+          save-build-cache: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+      - name: Test suite (rest-all)
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/test-suite
+        with:
+          shard: rest-all
+          race: ${{ vars.RUN_RACE }}
+
+      - name: Sandbox v2 Seatbelt smoke
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/seatbelt-smoke
+
   # Publishing gate: only runs once tests, lint, builds, and both real sandbox
   # smokes have all succeeded. This is where the side effects happen — pushing
   # the release tag and creating the GitHub release — so neither can occur
@@ -175,7 +260,7 @@ jobs:
     if: ${{ inputs.homebrew_only != true }}
     runs-on: ubuntu-latest
     needs:
-      [test, lint, version, build, sandbox-v2-smoke, sandbox-v2-seatbelt-smoke,
+      [test, macos, lint, version, build, sandbox-v2-smoke,
        filtered-proxy-smoke, proxy-posture-e2e]
     permissions:
       contents: write
@@ -250,9 +335,9 @@ jobs:
     # Runs after a normal release, OR standalone when homebrew_only is set
     # (in which case test/version/build/smoke/release jobs are skipped, so this
     # gates on !cancelled() rather than success of those jobs).
-    if: ${{ !cancelled() && (inputs.homebrew_only == true || (needs.version.result == 'success' && needs.release.result == 'success' && needs['sandbox-v2-smoke'].result == 'success' && needs['sandbox-v2-seatbelt-smoke'].result == 'success')) }}
+    if: ${{ !cancelled() && (inputs.homebrew_only == true || (needs.version.result == 'success' && needs.release.result == 'success' && needs['sandbox-v2-smoke'].result == 'success' && needs.macos.result == 'success')) }}
     runs-on: ubuntu-latest
-    needs: [version, release, sandbox-v2-smoke, sandbox-v2-seatbelt-smoke]
+    needs: [version, release, sandbox-v2-smoke, macos]
     permissions:
       contents: read
     steps:

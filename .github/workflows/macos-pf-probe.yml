@@ -1,10 +1,8 @@
 name: macOS PF evidence probe
 
+# On demand only: PRs run no macOS jobs (hosted macOS runners are
+# concurrency-capped; see "macOS CI" in CONTRIBUTING.md).
 on:
-  pull_request:
-    paths:
-      - .github/workflows/macos-pf-probe.yml
-      - scripts/macos-pf-probe.sh
   workflow_dispatch:
 
 permissions:

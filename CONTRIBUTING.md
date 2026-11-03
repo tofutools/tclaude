@@ -65,21 +65,107 @@ so a job the change cannot need never claims a runner:
 - **docs**: only docs changed — only the mkdocs and Learn-commands checks run.
 - **ui**: only dashboard/jstest assets, agentd's `dashboard_*_test.go` and
   docs changed — the Linux agentd, jstest and rest shards run (plus lint when
-  a Go test changed); every smoke and every macOS job is skipped.
-- **code**: everything else runs on Linux. The macOS jobs (Seatbelt smoke,
-  agentd, rest-all) run only for platform code: a file with a GOOS/GOARCH
-  suffix, an OS or `cgo` build constraint, `import "C"` or a darwin/Seatbelt
-  name; any file in a small package that holds such files; or sandbox, proxy,
-  session and harness-launch code, which also runs the filtered-proxy and
-  proxy-posture smokes. The Copilot, Gemini and pi smokes run when
-  `scripts/ci/affected` says the change reaches their fixture package. Lint
-  also type-checks every package and its tests as `GOOS=darwin`
-  (`scripts/ci/darwin-vet.sh`), so a darwin compile break fails on Linux.
+  a Go test changed); every smoke is skipped.
+- **code**: everything else runs every test shard. Sandbox, proxy, session
+  and harness-launch code also runs the filtered-proxy and proxy-posture
+  smokes. The Copilot, Gemini and pi smokes run when `scripts/ci/affected`
+  says the change reaches their fixture package. Lint also type-checks every
+  package and its tests as `GOOS=darwin` (`scripts/ci/darwin-vet.sh`), so a
+  darwin compile break fails on Linux.
 - **full**: `.github/`, `scripts/ci/`, `scripts/test.sh`, `go.mod`, `go.sum`,
   `mise.toml`, an unknown path or an empty diff — everything runs.
 
-`CI complete` checks every job against that verdict, and release.yml runs every
-job, macOS included, on every merge to main.
+PR CI runs on Linux only; see [macOS CI](#macos-ci). `CI complete` checks every
+job against that verdict, and release.yml runs every job, including the macOS
+one, on every merge to main.
+
+### macOS CI
+
+Hosted macOS runners are concurrency-capped, and PR CI and Release share them.
+When none is free, a job fails with "The job was not acquired by Runner of type
+hosted even after multiple attempts" (in the jobs API: `conclusion: cancelled`,
+`runner_id: 0`, no steps), and that failed `CI complete` and Release without
+anything having been tested. So:
+
+- **PRs run no macOS jobs.** That covers ci.yml and the classifier, and the
+  macOS parts of `copilot-lab.yml`, `group-route-feasibility.yml` and
+  `macos-pf-probe.yml`, which run on macOS only when started by hand
+  (`workflow_dispatch`). Lint's `GOOS=darwin` vet still catches darwin compile
+  breaks on PRs.
+- **Every merge to main runs one macOS job**: `macos` in `release.yml` (and
+  in `manual-release.yml`). It runs the darwin goreleaser build, the `agentd`
+  and `rest-all` test shards, and the Sandbox v2 Seatbelt smoke
+  (`.github/actions/seatbelt-smoke`) in sequence, in about 25 minutes. macOS
+  skips the `jstest` shard, which runs browser JS under Node and LinkeDOM and
+  does not vary by OS. A darwin-only break therefore shows up as a red Release
+  after the merge, and blocks publishing until it is fixed on main.
+
+#### Bringing macOS back to PRs
+
+1. Find the commit that removed it:
+   `git log --oneline -S MACOS_SHARDS -- scripts/ci/classify-changes.py`
+   (the newest hit). Revert it, or restore `scripts/ci/classify-changes.py` and
+   `scripts/ci/test_classify_changes.py` from its parent
+   (`git show <sha>^:scripts/ci/classify-changes.py`). That brings back the
+   `MACOS` / `MACOS_SHARDS` (`agentd`, `rest-all`) matrix entries, the
+   platform-file rules that decide when a `code` change needs macOS, the macOS
+   entries in the `full` matrix, and `sandbox-v2-seatbelt-smoke` in `JOBS`.
+2. In `ci.yml`, add a `sandbox-v2-seatbelt-smoke` job back:
+   `needs: changes`,
+   `if: needs.changes.outputs.run_sandbox_v2_seatbelt_smoke == 'true'`, a
+   macOS `runs-on`, checkout, then `uses: ./.github/actions/seatbelt-smoke`.
+   Also add the `run_sandbox_v2_seatbelt_smoke` output to the `changes` job,
+   and add the job to `ci-complete`'s `needs`. The `WorkflowConsistency` tests
+   in `test_classify_changes.py` fail until the classifier's `JOBS` and the
+   ci.yml wiring agree. Delete `test_pr_ci_runs_no_macos` there, and the
+   Linux-only assertion in `Decisions.check_shape` (a restore from the parent
+   drops both).
+3. `CI complete` itself needs no edit. It compares each job with the
+   classifier's `expected` verdict, so once `JOBS` lists the Seatbelt smoke
+   again, the gate requires it to succeed when the classifier asks for it and
+   to be skipped otherwise. The macOS test shards are entries in the `test`
+   matrix, which the gate already treats as one job.
+4. In the other workflows, remove `if: github.event_name != 'pull_request'`
+   from `group-route-feasibility.yml`'s `darwin` job, restore the
+   `pull_request` paths in `macos-pf-probe.yml`, and make `copilot-lab.yml`'s
+   `platform` list include `macos` for every event.
+
+#### Restoring the per-shard macOS split on main
+
+Find the commit with
+`git log --oneline -S 'os: [ubuntu-latest, macos-latest]' -- .github/workflows/release.yml`
+(the newest hit) and restore `release.yml`, `manual-release.yml` and
+`.github/workflows/reusable-sandbox-v2-seatbelt-smoke.yml` from its parent
+(`git show <sha>^:<path>`). That parent has `macos-latest` in the test matrix
+`os` list (every shard, `jstest` included) and in the `build` matrix, plus the
+Seatbelt smoke as its own reusable workflow. If you do this, put the `release`
+job's `needs` and the `homebrew` job's `if` back on those jobs. Also set
+`SAVERS` in `scripts/ci/build-cache.py` to the number of release jobs that
+save a build cache (the `agentd` and `sandbox` shards on each OS).
+
+#### Self-hosted macOS runners
+
+- **Labels.** Give the runners a single custom label (for example
+  `tclaude-macos`) and use it wherever `macos-latest` appears: the classifier's
+  `MACOS`, the `macos` jobs, and the Seatbelt smoke job. A single label keeps
+  `matrix.os` a plain string. To target the default label set instead, use
+  `runs-on: [self-hosted, macOS, ARM64]` in jobs that do not take it from the
+  matrix.
+- **Security.** This repository is public. A fork's pull request can run
+  arbitrary code on any runner it reaches, so never let fork PRs reach
+  self-hosted runners. Gate macOS PR jobs on
+  `github.event.pull_request.head.repo.full_name == github.repository`.
+  Require approval for outside contributors' workflow runs. Put the runners in
+  a runner group restricted to this repository.
+- **Ephemeral runners.** Prefer ephemeral runners (`config.sh --ephemeral`,
+  one job per machine). The sandbox tests change their environment, and the
+  Seatbelt smoke runs `npm install --global`, so a persistent runner carries
+  state from one job into the next.
+- **Concurrency.** The pool size is how many macOS jobs run at once. With
+  macOS back on PRs, each code PR asks for up to three (the agentd and rest-all
+  shards plus the Seatbelt smoke), and each merge asks for one. Jobs queue
+  rather than fail on self-hosted runners, but a small pool still makes PRs
+  wait, so size it for the PRs you expect at once.
 
 A test that reads a file outside its own package directory without importing
 that package is invisible to the graph. Keep such reads inside the package, or
