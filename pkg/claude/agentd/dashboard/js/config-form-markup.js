@@ -169,7 +169,7 @@ const BADGES = {
 };
 function Badge({ kind }) {
   const [cls, label, title] = BADGES[kind];
-  return html`<span class=${`cfg-badge ${cls}`} title=${title}>${label}</span>`;
+  return html`<span class=${`ui-tag cfg-badge ${cls}`} title=${title}>${label}</span>`;
 }
 
 // Setting is one row. `forId` makes the title the <label> of a single control

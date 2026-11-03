@@ -103,7 +103,7 @@ function SpawnQueueRow({ entry }) {
     <td class="spawn-queue-pos">${entry.position || ''}</td>
     <td><span class="rowname">${entry.name || '(unnamed)'}</span></td>
     <td>${entry.group}</td>
-    <td class="muted">${entry.requested_by || entry.requester_kind}${entry.requester_kind === 'federation' ? html` <span class="spawn-queue-remote">remote</span>` : null}</td>
+    <td class="muted">${entry.requested_by || entry.requester_kind}${entry.requester_kind === 'federation' ? html` <span class="ui-tag spawn-queue-remote">remote</span>` : null}</td>
     <td class="muted">${launching ? 'launching…' : formatWait(entry.age_seconds)}</td>
     <td><div class="spawn-queue-actions">
       <button type="button" class="ui-btn ui-btn-danger spawn-queue-cancel" data-act="spawn-queue-cancel" disabled=${launching}

@@ -12,7 +12,7 @@ import { Input, Select, SortTh } from './ui-components.js';
 const html = htm.bind(h); const REPOLL_MS = 30000;
 
 function Actor({ entry }) {
-  if (entry.actor_kind === 'human') return html`<span class="audit-actor human" title="the human operator">operator</span>`;
+  if (entry.actor_kind === 'human') return html`<span class="ui-tag ui-tag-accent audit-actor human" title="the human operator">operator</span>`;
   if (entry.actor_kind === 'agent') { const id = shortAgentId(entry.actor_agent, entry.actor_conv); return html`<${Fragment}><span class="rowname">${entry.actor_label || '(agent)'}</span>${id && html` <span class="id" title=${idTooltip(entry.actor_agent, entry.actor_conv)}>${id}</span>`}</${Fragment}>`; }
   if (entry.actor_kind === 'system') return html`<span class="audit-actor" title="tclaude system observer">tclaude</span>`;
   return html`<span class="muted" title="caller identity could not be resolved">${entry.actor_label || 'unknown'}</span>`;
