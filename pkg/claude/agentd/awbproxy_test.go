@@ -726,6 +726,7 @@ func TestVisiblePermissionRegistryGatesEachProxyFamily(t *testing.T) {
 		got := slugs(proxyVisibility{git: true, linear: true, awb: true})
 		for _, slug := range []string{
 			PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge,
+			PermGitLabRead, PermGitLabWrite, PermGitLabMerge,
 			PermLinearRead, PermLinearWrite, PermAWBRead, PermAWBWrite,
 		} {
 			assert.True(t, got[slug], "%s", slug)
@@ -745,6 +746,7 @@ func TestVisiblePermissionRegistryGatesEachProxyFamily(t *testing.T) {
 		got := slugs(proxyVisibility{})
 		for _, slug := range []string{
 			PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge,
+			PermGitLabRead, PermGitLabWrite, PermGitLabMerge,
 			PermLinearRead, PermLinearWrite, PermAWBRead, PermAWBWrite,
 		} {
 			assert.False(t, got[slug], "%s must not be advertised with no proxy configured", slug)

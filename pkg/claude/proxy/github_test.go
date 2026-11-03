@@ -23,7 +23,7 @@ func TestGHProxyOutcome_RenderPreservesTheBytesGitHubSent(t *testing.T) {
 	o := &ghProxyOutcome{JSON: json.RawMessage(raw)}
 
 	var stdout, stderr bytes.Buffer
-	require.Equal(t, rcOK, o.render(&stdout, &stderr, "pr ls"), "stderr=%s", stderr.String())
+	require.Equal(t, rcOK, o.render(&stdout, &stderr, "github", "pr ls"), "stderr=%s", stderr.String())
 
 	out := stdout.String()
 	assert.Contains(t, out, "9007199254740993",
@@ -44,7 +44,7 @@ func TestGHProxyOutcome_RenderFallsBackToRawOnUnparseableJSON(t *testing.T) {
 	o := &ghProxyOutcome{JSON: json.RawMessage(`[{"number":7,"title":"a p`)}
 
 	var stdout, stderr bytes.Buffer
-	require.Equal(t, rcOK, o.render(&stdout, &stderr, "pr ls"))
+	require.Equal(t, rcOK, o.render(&stdout, &stderr, "github", "pr ls"))
 	assert.Contains(t, stdout.String(), `"number":7`)
 }
 
@@ -62,7 +62,7 @@ func TestGHProxyOutcome_RenderPassesTextPayloadsThrough(t *testing.T) {
 	o := &ghProxyOutcome{Stdout: log, Truncated: true}
 
 	var stdout, stderr bytes.Buffer
-	require.Equal(t, rcOK, o.render(&stdout, &stderr, "pr comments"))
+	require.Equal(t, rcOK, o.render(&stdout, &stderr, "github", "pr comments"))
 	got := stdout.String()
 	assert.Contains(t, got, "file:\tmain.go:42", "tabs inside a line are not reflowed")
 	assert.Contains(t, got, "\n    indented body", "leading indentation survives")

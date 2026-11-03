@@ -173,7 +173,7 @@ shows its name as text.
 | Last | The last hook event |
 | Age | How long since it started |
 | CWD | Start directory and current directory, marked `init` and `now`. Click to open a terminal there. |
-| Branch | `⎇ branch`, then [PR and CI pills](#pr-ci-and-review-pills) and any PRs presented with `tclaude agent present-pr` |
+| Branch | `⎇ branch` (a link to the forge), then [PR and CI pills](#pr-ci-and-review-pills) and any PRs presented with `tclaude agent present-pr`. GitLab merge requests get the same treatment when the project is on a configured instance. |
 | Role | `+ role` to set it; `owner` marks a group owner |
 | Task link | A link to the work item; `＋ attach` to add one (or `tclaude agent task`) |
 | Description | `+ descr / tags` to add text and tags |
@@ -258,18 +258,30 @@ Subscription quota is not on the row; see
 
 ### PR, CI and review pills
 
-- **PR pill** (`#1234`): colored by open, draft, merged or closed.
+- **PR pill** (`#1234`, or `!7` for a merge request): colored by open, draft,
+  merged or closed. Rest the pointer on it for a details card: title, author,
+  branches, diffstat and the start of the description. A merge request's card
+  is read from the GitLab API and names its project; on an instance without
+  the diffstat fields it leaves the counts out.
 - **CI pill** (`✓ 12/14`): glyphs ✓ ✕ ◐ ·, not counting skipped checks. Hover or
   focus it for a checks panel, failures first, with live timers and a link to
-  GitHub. On merged and closed PRs it only shows when the final run failed,
+  GitHub (the pipelines tab, for a GitLab merge request). On merged and closed PRs it only shows when the final run failed,
   unless **CI on finished PRs** is on in
   [Config › Appearance](dashboard-config.md#appearance).
 - **Review pill**: a person icon on open, non-draft PRs. Green with a count is
   approved, red with a count is changes requested, amber means a review is
   required, grey means none yet. Only human reviews count. Hover for each
-  reviewer's latest review.
+  reviewer's latest review. A GitLab merge request gets the same pill: its
+  approvals, its reviewers' change requests, and amber while the project's
+  approval rules want more approvals. GitLab records no time on an approval,
+  so its rows show no age. An instance older than reviewer states (GitLab
+  added them after approvals) shows approvals only. agentd notes, per
+  instance, which newer fields an instance lacks (reviewer states, the
+  details card's diffstat, the recently closed query) and stops asking for
+  them until it restarts. After upgrading GitLab, restart agentd to get them.
 
-PR and CI data comes from `git` and `gh`, cached for 90 seconds.
+PR and CI data comes from `git` and `gh`, or the GitLab API for a merge
+request, cached for 90 seconds.
 
 ### Open PRs
 
@@ -281,7 +293,7 @@ PR and CI data comes from `git` and `gh`, cached for 90 seconds.
   drafts** there. **Ready to merge** is approved PRs with passing CI. Requested
   changes count toward **Needs attention**.
 - **Hover a title** for the PR details card. Untick **Hover details** in the
-  popover's footer if it gets in the way.
+  popover's footer if it gets in the way. It is one setting with Open MRs.
 - **⊘** ignores a PR for 1 day, 1 week, 30 days or permanently. **Restore** under
   **Ignored** brings it back.
 - **＋ Add person** adds a tab for someone else's PRs, up to eight people. ✕ on
@@ -292,6 +304,63 @@ PR and CI data comes from `git` and `gh`, cached for 90 seconds.
 Rows stay ordered by repository and PR number, so updates don't move them.
 Archived repositories are never listed. If GitHub rate-limits you, agentd pauses
 its background GitHub calls for 5 minutes, up to 30 while the limit holds.
+
+### Open MRs
+
+**Open MRs** sits next to **Open PRs** and covers the GitLab instances in
+`agent.git_proxy.gitlab_hosts` (see [GitLab proxy](proxies.md#gitlab-proxy)).
+It shows once a configured instance has answered, whether or not `gh` is
+installed. Without a `gitlab_hosts` entry or a token it does not show at all;
+a gitlab.com project needs a `"gitlab.com": "https://gitlab.com"` entry.
+
+The footer carries two numbers. **mine** counts your open merge requests,
+where "your" means the user that `gitlab_token_file` belongs to; it turns blue
+when one of them needs attention. **all** counts everyone's open merge
+requests that the token can see. For an admin token that is every project on
+the instance.
+
+The popover opens on **Mine**. Next to it is one tab per project with open
+merge requests, holding everyone's: projects your agents work in come first,
+then the busiest. A project tab's rows also say who wrote each merge request,
+and **Open in GitLab** opens the project's own list.
+
+- **Filters:** **Open**, **Needs attention**, **Ready to merge** and
+  **Unattached**, with counts. **Ready to merge** is at least one approval, a
+  passing head pipeline, and no merge conflict. **Needs attention** means
+  ready for a decision: the pipeline has finished, red or green, or there is
+  none; or the merge request conflicts with its target; or changes were
+  requested. A pipeline still running with nothing failed does not count. Drafts are grey and stay out of **Needs attention** unless you tick
+  **Include drafts**, which is the same setting as in Open PRs.
+- **Rows** read `!7` for merge request 7, and note conflicts. The CI pill
+  shows the head pipeline's state; hover it for the pipeline's jobs. The
+  [review pill](#pr-ci-and-review-pills) follows it. A project tab's row shows
+  approvals, and a reviewer's change requests too when the merge request is
+  yours or an agent's.
+- **Open all on _host_** (on **Mine**) opens that instance's list of your
+  merge requests. An instance that could not be read says why, above the list.
+
+agentd asks each instance once every 30 seconds. Your own list is a single
+GraphQL query, and its reviewers' states a second one. Everyone's list starts with GitLab's REST merge request list,
+which names the projects and covers the 500 most recently updated open merge
+requests. Up to 20 projects per instance are then read through GraphQL, five
+per query: those your agents work in first, then the ones with the most open
+merge requests. Past either cap, the remaining projects are left out and the
+**all** count ends in `+`. If the project-wide read fails while your own list
+answers, the project tabs keep their last lists and say so. The instance is
+not marked as failed. That needs a GitLab recent enough to have
+`detailedMergeStatus` (16.x is safe); an older one reports the missing field
+instead of a list. A rate-limited instance is retried after the wait GitLab
+names, up to 5 minutes, and keeps showing its last list meanwhile. Hovering a
+title opens the merge request's details card, under the same **Hover details**
+setting as Open PRs. **⊘** ignores a merge request for 1 day, 1 week, 30 days
+or permanently, as in Open PRs and in the same store. It leaves Mine, every
+project tab and both footer numbers, and waits under **Ignored** with a
+**Restore** button. On **Mine**, **Closed _N_d** lists your merge requests
+merged or closed in the last _N_ days, the same `dashboard.recent_pr_window_days`
+window as Open PRs (0 turns it off), with the same **Final CI** switch. It is
+read every 150 seconds; a closed merge request keeps its last pipeline status
+and is not read again. Project tabs have no closed list, and the people tabs
+are Open PRs only.
 
 ## Starting agents
 

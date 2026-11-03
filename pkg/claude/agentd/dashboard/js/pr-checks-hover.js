@@ -325,7 +325,21 @@ export function summaryLine(summary) {
 // say where activating it goes. aria-haspopup is deliberately absent — the
 // panel opens on hover/focus, so promising a popup on activation would be a
 // lie to anyone who presses Enter and lands on GitHub instead.
-function badgeTitle(summary, prNumber) {
+// GITLAB_MR_RE recognises a GitLab merge request URL, sub-page and all, so
+// the badge can name the right forge and link its pipelines tab.
+const GITLAB_MR_RE = /^(https:\/\/[^/?#]+\/(?:[^/?#]+\/)+-\/merge_requests\/[0-9]+)(?:[/?#].*)?$/;
+
+// isGitLabMRURL is the same test for the badges beside the CI pill, so every
+// surface names a merge request the way GitLab does (!N, not #N).
+export function isGitLabMRURL(url) {
+  return GITLAB_MR_RE.test(String(url || '').trim());
+}
+
+function badgeTitle(summary, prNumber, url = '') {
+  if (GITLAB_MR_RE.test(url || '')) {
+    const who = prNumber ? `!${prNumber}` : 'this merge request';
+    return `CI pipeline for ${who} — ${summaryLine(summary)}. Opens the pipeline on GitLab.`;
+  }
   const who = prNumber ? `#${prNumber}` : 'this pull request';
   return `CI checks for ${who} — ${summaryLine(summary)}. Opens the build on GitHub.`;
 }
@@ -338,7 +352,12 @@ function badgeTitle(summary, prNumber) {
 // covers one branch of badgeHref and not the other is the asymmetry that rots.
 export function prChecksPageURL(prURL) {
   const safe = safeCheckURL(prURL);
-  return safe ? `${safe.replace(/\/+$/, '')}/checks` : '';
+  if (!safe) return '';
+  const base = safe.replace(/\/+$/, '');
+  // A GitLab merge request keeps its CI on the pipelines tab, whichever of
+  // its sub-pages (/diffs, /commits) the URL names.
+  const mr = GITLAB_MR_RE.exec(base);
+  return mr ? `${mr[1]}/pipelines` : `${base}/checks`;
 }
 
 // badgeHref: the run that explains the badge's state when the server could
@@ -506,6 +525,10 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
   const live = data?.summary && (data.summary.total || 0) > 0 ? data.summary : summary;
   const checks = data?.checks || [];
   const orderedChecks = orderChecks(checks);
+  // A GitLab merge request is !N and runs a pipeline; a GitHub pull request
+  // is #N and runs checks.
+  const isMR = GITLAB_MR_RE.test(url || '');
+  const ref = prNumber ? `${isMR ? '!' : '#'}${prNumber}` : '';
   const [now, setNow] = useState(() => Date.now());
   const hasRunningClock = checks.some(isRunningCheck);
 
@@ -531,8 +554,8 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
       id=${panelID} role="dialog" aria-labelledby=${headingID}>
       <div class="ci-panel-heading" id=${headingID}>
         <a href=${badgeHref(summary, url)} target="_blank" rel="noopener noreferrer">
-          <span class="theme-copy-regular">${prNumber ? `#${prNumber} · checks` : 'Pull request checks'}</span>
-          <span class="theme-copy-wizard">${prNumber ? `#${prNumber} · omens of the rite` : 'Omens of the rite'}</span>
+          <span class="theme-copy-regular">${ref ? `${ref} · checks` : (isMR ? 'Merge request pipeline' : 'Pull request checks')}</span>
+          <span class="theme-copy-wizard">${ref ? `${ref} · omens of the rite` : 'Omens of the rite'}</span>
         </a>
       </div>
       <div class="ci-panel-summary">${summaryLine(live)}</div>
@@ -546,13 +569,13 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
         <p class="ci-panel-empty ui-empty">
           ${error ? `Could not load checks — ${error}`
             : loading || data?.refreshing ? 'Fetching checks…'
-            : 'No checks reported for this pull request.'}
+            : GITLAB_MR_RE.test(url || '') ? 'No jobs reported for this merge request.' : 'No checks reported for this pull request.'}
         </p>
       `}
       ${checks.length && error ? html`<p class="ci-panel-empty ui-empty">Refresh failed — ${error}</p>` : null}
       <p class="ci-panel-note">
         <a href=${prChecksPageURL(url)} target="_blank" rel="noopener noreferrer">
-          <span class="theme-copy-regular">Open checks on GitHub ↗</span>
+          <span class="theme-copy-regular">${GITLAB_MR_RE.test(url || '') ? 'Open the pipeline on GitLab ↗' : 'Open checks on GitHub ↗'}</span>
           <span class="theme-copy-wizard">Read the full omens ↗</span>
         </a>
       </p>
@@ -566,7 +589,10 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
 // had rather than growing an empty indicator. A merged/closed PR (prState)
 // whose checks are not failing is tagged .ci-final, which CSS hides unless
 // config dashboard.show_final_pr_checks opts back in.
-export function PRChecksBadge({ url, prNumber, summary, prState = '' }) {
+// countText replaces the passed/total count, for a summary that is not a
+// count of checks: a GitLab merge request in the footer's Open MRs list carries
+// its head pipeline as one pipeline-level entry and reads "pipeline".
+export function PRChecksBadge({ url, prNumber, summary, prState = '', countText = '' }) {
   const rootRef = useRef(null);
   const instanceID = useId();
   const { open, close, rootProps, onTriggerClick } = useHoverPopover(rootRef);
@@ -595,7 +621,7 @@ export function PRChecksBadge({ url, prNumber, summary, prState = '' }) {
         draggable=${false}
         aria-expanded=${open ? 'true' : 'false'}
         aria-controls=${panelID}
-        aria-label=${badgeTitle(summary, prNumber)}
+        aria-label=${badgeTitle(summary, prNumber, url)}
         onClick=${onTriggerClick}
         onKeyDown=${(event) => {
           if (event.key !== 'Escape') return;
@@ -605,7 +631,7 @@ export function PRChecksBadge({ url, prNumber, summary, prState = '' }) {
         }}
       >
         <span class="ci-glyph" aria-hidden="true">${checkStateGlyph(stateName)}</span>
-        <span class="ci-count">${summary.passed}/${denominator}</span>
+        <span class="ci-count">${countText || `${summary.passed}/${denominator}`}</span>
       </a>
       ${open ? html`
         <${PRChecksPanel} url=${url} prNumber=${prNumber} summary=${summary}

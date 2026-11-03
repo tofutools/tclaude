@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -3214,6 +3215,83 @@ type GitProxyConfig struct {
 	// environment or this file — never through argv, which is world-readable
 	// for the process lifetime via /proc/<pid>/cmdline.
 	GitHubTokenFile string `json:"github_token_file,omitempty"`
+
+	// GitLabHosts maps a remote HOST (as it appears in the allow-list and in
+	// the agent's remote URL, without a port) to the base URL of the GitLab
+	// instance that serves it:
+	//
+	//   "gitlab_hosts": {"gitlab.example.com": "https://gitlab.example.com:8929"}
+	//
+	// The map does two jobs. It is how the daemon RECOGNISES a remote as a
+	// GitLab project — a self-hosted instance cannot be told apart from any
+	// other git server by its name — and it is where the web/API base lives,
+	// which may differ from the SSH host in scheme and port. gitlab.com needs
+	// no entry. The base must be https; the token is only ever sent to it.
+	GitLabHosts map[string]string `json:"gitlab_hosts,omitempty"`
+
+	// GitLabTokenFile names a file whose contents are the GitLab personal or
+	// project access token the GitLab proxy sends as an Authorization: Bearer
+	// header. There is no CLI fallback: with no file configured the GitLab
+	// proxy refuses every call and says so. One token for every configured host.
+	GitLabTokenFile string `json:"gitlab_token_file,omitempty"`
+
+	// gitlabHostsListed records that the operator listed instances in
+	// gitlab_hosts, even if normalisation dropped every one of them. It is
+	// what keeps the gitlab.com default off: a list whose entries were all
+	// invalid is still a statement that the token is not gitlab.com's.
+	gitlabHostsListed bool
+}
+
+// defaultGitLabHosts are the GitLab instances recognised without a
+// gitlab_hosts entry.
+var defaultGitLabHosts = map[string]string{"gitlab.com": "https://gitlab.com"}
+
+// GitLabBase returns the web/API base URL for a remote host that is a known
+// GitLab instance, or "" when the host is not one. The host is matched
+// case-insensitively and without a port, which is how the allow-list spells
+// it too.
+//
+// The built-in gitlab.com applies only while gitlab_hosts is empty. The one
+// gitlab_token_file goes to every instance this recognises. Once the operator
+// lists an instance, the token is that instance's, and gitlab.com, a third
+// party, must be listed too before it is treated as GitLab and receives the
+// token.
+func (p GitProxyConfig) GitLabBase(host string) string {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return ""
+	}
+	if base, ok := p.GitLabHosts[host]; ok {
+		return base
+	}
+	if len(p.GitLabHosts) > 0 || p.gitlabHostsListed {
+		return ""
+	}
+	return defaultGitLabHosts[host]
+}
+
+// GitLabBases lists the base URL of every GitLab instance the policy
+// recognises — the configured gitlab_hosts plus the defaults they do not
+// override — sorted, so a caller that derives configuration from it is
+// deterministic. These are exactly the bases GitLabBase can answer with, and
+// so the only places the GitLab token is ever sent.
+func (p GitProxyConfig) GitLabBases() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(base string) {
+		if base != "" && !seen[base] {
+			seen[base] = true
+			out = append(out, base)
+		}
+	}
+	for host := range p.GitLabHosts {
+		add(p.GitLabBase(host))
+	}
+	for host := range defaultGitLabHosts {
+		add(p.GitLabBase(host))
+	}
+	sort.Strings(out)
+	return out
 }
 
 // DefaultGitProxyProtectedRefs are the branches the Git proxy refuses to push
@@ -3233,6 +3311,9 @@ func (c *Config) ResolvedGitProxy() GitProxyConfig {
 		out.AllowForcePush = src.AllowForcePush
 		out.SSHKey = strings.TrimSpace(src.SSHKey)
 		out.GitHubTokenFile = strings.TrimSpace(src.GitHubTokenFile)
+		out.GitLabTokenFile = strings.TrimSpace(src.GitLabTokenFile)
+		out.GitLabHosts = normalizeGitLabHosts(src.GitLabHosts)
+		out.gitlabHostsListed = len(src.GitLabHosts) > 0
 		if src.ProtectedRefs != nil {
 			// An explicit list — including an explicit empty one, which
 			// deliberately turns the protection off — wins over the default.
@@ -3428,6 +3509,51 @@ func normalizeHarnessList(in HarnessList) HarnessList {
 		}
 		seen[name] = true
 		out = append(out, name)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// normalizeGitLabHosts lower-cases the host keys and trims the base URLs,
+// dropping entries that are empty or whose base is not https: the daemon
+// sends a credential to the base, and a base that is not https would send it
+// in clear text, so such an entry is ignored rather than honoured.
+func normalizeGitLabHosts(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	// Two entries can normalise to one host (" GitLab.x " and "gitlab.x").
+	// With different bases, map order would pick the winner, so neither is
+	// trusted: the host is dropped with a warning.
+	conflicted := map[string]bool{}
+	for rawHost, rawBase := range in {
+		host := strings.ToLower(strings.TrimSpace(rawHost))
+		base := strings.TrimRight(strings.TrimSpace(rawBase), "/")
+		if host == "" || !strings.HasPrefix(strings.ToLower(base), "https://") {
+			continue
+		}
+		// A base is an origin: https://host[:port]. An instance mounted
+		// under a path (a GitLab "relative URL root") is refused rather than
+		// half-served: its merge request URLs carry the mount in the path,
+		// which every merge request, allow-list and project read here would
+		// misread as part of the project.
+		if u, err := url.Parse(base); err != nil || u.Host == "" || u.Path != "" ||
+			u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+			slog.Warn("agent.git_proxy.gitlab_hosts: ignoring a base that is not an https origin (no path)",
+				"host", host, "base", base)
+			continue
+		}
+		if prev, ok := out[host]; ok && !strings.EqualFold(prev, base) {
+			conflicted[host] = true
+		}
+		out[host] = base
+	}
+	for host := range conflicted {
+		slog.Warn("agent.git_proxy.gitlab_hosts: ignoring a host listed twice with different bases", "host", host)
+		delete(out, host)
 	}
 	if len(out) == 0 {
 		return nil
@@ -4427,6 +4553,7 @@ func Validate(c *Config) []string {
 		}
 	}
 	errs = append(errs, validateCapacity(c.Capacity)...)
+	errs = append(errs, validateGitProxy(c)...)
 	if h := c.Host; h != nil {
 		for _, entry := range []struct {
 			name  string

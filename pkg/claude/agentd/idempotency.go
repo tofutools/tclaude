@@ -53,6 +53,8 @@ var bulkReadRoutes = map[string]bool{
 	"/v1/github/pr/comments":    true,
 	"/v1/github/run/log-failed": true,
 	"/v1/dashboard/capture":     true,
+	"/v1/gitlab/mr/comments":    true,
+	"/v1/gitlab/job/log-failed": true,
 }
 
 func isBulkReadRoute(path string) bool { return bulkReadRoutes[path] }

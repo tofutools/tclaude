@@ -196,6 +196,40 @@ options, see [Ask sandbox policy](ask.md#sandbox-policy).
 | Name and startup | Name | `steward.name` | Steward |
 | Name and startup | Startup prompt | `steward.startup_prompt` | empty |
 
+## Git & forges
+
+`/config/git`: what agents may reach through the
+[credential proxy](proxies.md), and the keys and tokens it uses. Every key starts
+with `agent.git_proxy.`, left out below. Changes apply to the next proxy call,
+with no restart. Open MRs and merge request badges follow within 30 seconds.
+
+| Group | Label | Key | Default |
+|---|---|---|---|
+| Proxy access | Allowed remotes | `allowed_remotes` | empty: the proxy is off |
+| Proxy access | Protected branches | `protected_refs` | Default: `main`, `master` |
+| Proxy access | Force push with lease | `allow_force_push` | off |
+| Credentials | SSH key | `ssh_key` | empty: the daemon's ssh-agent |
+| Credentials | GitHub token file | `github_token_file` | empty: `gh`'s own login |
+| GitLab | GitLab instances | `gitlab_hosts` | none: `gitlab.com` only |
+| GitLab | GitLab token file | `gitlab_token_file` | none: the GitLab proxy refuses |
+
+- **Protected branches** has three choices because the file has three meanings:
+  **Default** leaves the key out, **None** saves `[]` (protection off), and
+  **Custom** saves the list. A Custom list left empty is refused, so it never
+  saves as "protect nothing".
+- **GitLab instances** are rows of remote host → https base URL. Listing any
+  instance turns off the built-in `gitlab.com`; list it too to keep it.
+- The paths are saved as typed, and `~` expands. The form never reads the
+  files. The save dialog's diff masks the three paths, as it masks every key
+  named like a key or token.
+- Save checks the block: an allow-list entry that is a URL or has an empty
+  segment, a blank protected branch, and a GitLab base that is not an https
+  origin are named, row by row, before anything is written. Values typed into
+  `config.json` by hand are not refused on load: the daemon ignores a bad
+  entry, with a log warning where it drops one. Until such a value is
+  corrected, though, the Config tab cannot save any section, because a save
+  checks the whole file.
+
 ## Daemon & network
 
 `/config/daemon`: how agentd starts, where the dashboard listens, and remote access.
@@ -261,6 +295,6 @@ These keys only exist in `config.json`. The form keeps them when it saves.
   `session_watch`, `audit`, `federation`, `updates`, `snapshots`, `routes`.
 - `agent`: `branch_history_pr_enrichment`, `resource_delegation_dir`, `morph`,
   `spawn_legacy_injection`, `spawn_inline_max_chars`, `message_inline_max_chars`,
-  `git_proxy`, `linear_proxy`, `awb_proxy`, `http_proxies`, `model_proxy_disabled`.
+  `linear_proxy`, `awb_proxy`, `http_proxies`, `model_proxy_disabled`.
 - `session`: `tmux_name_style`, `auto_name_from_prompt`.
 - `notifications`: `known_types`.

@@ -130,6 +130,29 @@ function ThresholdList({ values = [], onChange }) {
   </div>`;
 }
 
+// GitLabHostList edits agent.git_proxy.gitlab_hosts as rows of remote host →
+// instance base URL. The map's keys are the hosts, so the rows are the map's
+// entries in a stable order; the adapter turns them back into the map.
+function GitLabHostList({ values = [], onChange }) {
+  const id = 'cfg-gitproxy-gitlab-hosts';
+  const update = (index, field, value) => onChange(id, values.map((item, i) => i === index ? { ...item, [field]: value } : item));
+  return html`<div class="cfg-list" id=${id}>
+    ${values.map((item, index) => html`<div class="cfg-list-row" key=${index}>
+      <${ConfigInput} type="text" value=${item.host || ''} placeholder="remote host" aria-label="remote host"
+        data-role="host" autocomplete="off" spellcheck=${false}
+        onInput=${event => update(index, 'host', event.currentTarget.value)} />
+      <span class="cfg-arrow">→</span>
+      <${ConfigInput} type="text" value=${item.base || ''} placeholder="https://gitlab.example.com:8929" aria-label="instance base URL"
+        data-role="base" autocomplete="off" spellcheck=${false} style="min-width:240px"
+        onInput=${event => update(index, 'base', event.currentTarget.value)} />
+      <${ConfigButton} type="button" class="cfg-row-del" title="Remove"
+        onClick=${() => onChange(id, values.filter((_, i) => i !== index))}>×</${ConfigButton}>
+    </div>`)}
+    <${ConfigButton} type="button" class="cfg-list-add"
+      onClick=${event => appendAndFocus(event, id, values, { host: '', base: '' }, onChange)}>+ add instance</${ConfigButton}>
+  </div>`;
+}
+
 // ===================================================================
 // Settings-app layout. A left rail picks one panel at a time; each panel
 // groups settings into .cfg-section cards of .cfg-row rows. Every row has
@@ -153,6 +176,7 @@ export const CONFIG_PANELS = Object.freeze([
   { id: 'costs', icon: '💲', title: 'Usage & costs', lede: 'Cost display, WHAT-IF estimates, subscription usage bars and rate-limit gating.' },
   { id: 'assistants', icon: '💬', title: 'Ask & scribe', lede: 'Defaults for tclaude ask and for the scribe agents behind the 🤖 Edit with agent buttons.' },
   { id: 'steward', icon: '✦', title: 'Steward', lede: 'What a Steward, your helper in the companion window, may do without asking. Part of Collab.' },
+  { id: 'git', icon: '🔀', title: 'Git & forges', lede: 'What agents may fetch, push and open pull or merge requests against through the credential proxy, and the keys and tokens it uses. Changes apply to the next proxy call; no restart.' },
   { id: 'daemon', icon: '🌐', title: 'Daemon & network', lede: 'How agentd starts, where the dashboard listens, operator tokens and remote access.' },
   { id: 'logs', icon: '🧾', title: 'Logs & housekeeping', lede: 'Log verbosity and rotation, and long-horizon cleanup of retired agents.' },
   { id: 'experimental', icon: '🧪', title: 'Experimental', lede: 'Opt-in flags for features under active development.' },
@@ -893,6 +917,69 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           summary="The spawn profile a freshly summoned scribe launches with."
           more=${html`Optional. Pick a saved <strong>spawn profile</strong> (from the Groups tab) that a freshly <em>summoned</em> scribe — the chat agent behind the <strong>🤖 Edit with agent</strong> buttons — launches with: its harness / model / effort / sandbox. This is the harness-independent way to run scribes on <strong>Codex</strong> as well as Claude, or to pin a cheaper model for their light editing. Leave as <em>(default)</em> to use the harness default (Claude Code). Every click summons a fresh, independently named scribe, so the current setting applies without disturbing scribes already working. Stored in the <code>scribe</code> block of config.json.`}>
           <${ConfigSelect} id="scribe-profile" aria-label="Scribe default profile" style="min-width:160px"></${ConfigSelect}>
+        </${Setting}>
+      </${Group}>
+    </${Panel}>
+
+    <${Panel} id="git" active=${active}>
+      <${Group} title="Proxy access" lede=${html`Agents without credentials of their own fetch, push and use GitHub and
+        GitLab through <code>tclaude proxy</code>; agentd runs the call with the key or token below. See
+        <code>docs/proxies.md</code>.`}>
+        <${Setting} title="Allowed remotes" wide k="agent.git_proxy.allowed_remotes"
+          summary="Repositories the proxy may work with, as host/owner/repo patterns. Empty turns the proxy off."
+          more=${html`<code>github.com</code> covers every repository on the host, <code>github.com/acme</code> or
+            <code>github.com/acme/*</code> every repository of one owner, and <code>github.com/acme/app</code> one
+            repository. <code>*</code> matches one segment. A GitLab group path is written whole:
+            <code>gitlab.example.com/team/sub/*</code>. Write the host without a port, even for an instance on
+            another port. Agents also need a <code>proxy.*</code> permission; none is granted by default.`}>
+          <${StringList} id="cfg-gitproxy-remotes" values=${lists['cfg-gitproxy-remotes']} placeholder="gitlab.example.com/team/*" onChange=${onListChange} />
+        </${Setting}>
+        <${Setting} title="Protected branches" wide k="agent.git_proxy.protected_refs"
+          summary="Branches no agent may push to through the proxy, force or not."
+          more=${html`<em>Default</em> protects <code>main</code> and <code>master</code>. <em>None</em> turns the
+            protection off. A custom entry may use <code>*</code> within one segment, so <code>release/*</code>
+            protects the whole namespace. Pull and merge requests may still target any branch.`}>
+          <${ConfigSelect} id="cfg-gitproxy-protected-mode" aria-label="Protected branches">
+            <option value="default">Default (main, master)</option>
+            <option value="custom">Custom</option>
+            <option value="none">None</option>
+          </${ConfigSelect}>
+          <div id="cfg-gitproxy-protected-wrap">
+            <${StringList} id="cfg-gitproxy-protected" values=${lists['cfg-gitproxy-protected']} placeholder="branch or release/*" onChange=${onListChange} />
+          </div>
+        </${Setting}>
+        <${Setting} title="Force push with lease" forId="cfg-gitproxy-forcepush" k="agent.git_proxy.allow_force_push"
+          summary="Let agents push --force-with-lease to their own branches. Protected branches are never force-pushable.">
+          <${Toggle} id="cfg-gitproxy-forcepush" />
+        </${Setting}>
+      </${Group}>
+
+      <${Group} title="Credentials" lede="Paths to files on this machine. The form never reads them; ~ expands to your home directory.">
+        <${Setting} title="SSH key" forId="cfg-gitproxy-sshkey" k="agent.git_proxy.ssh_key"
+          summary="Empty uses the daemon's ssh-agent, which is preferred: no key file is handed to git."
+          more=${html`The path to a private key, not its passphrase. The proxy runs ssh with <code>BatchMode=yes</code>,
+            so a key with a passphrase must already be loaded into an agent.`}>
+          <${ConfigInput} type="text" id="cfg-gitproxy-sshkey" placeholder="~/.ssh/id_ed25519" autocomplete="off" spellcheck="false" style="min-width:240px" />
+        </${Setting}>
+        <${Setting} title="GitHub token file" forId="cfg-gitproxy-ghtoken" k="agent.git_proxy.github_token_file"
+          summary=${html`Empty lets <code>gh</code> use its own login.`}>
+          <${ConfigInput} type="text" id="cfg-gitproxy-ghtoken" placeholder="~/.config/tclaude/github-token" autocomplete="off" spellcheck="false" style="min-width:240px" />
+        </${Setting}>
+      </${Group}>
+
+      <${Group} title="GitLab" lede="Open MRs and merge request badges follow these within 30 seconds.">
+        <${Setting} title="GitLab instances" wide k="agent.git_proxy.gitlab_hosts"
+          summary=${html`The host in a remote URL → the https base URL of the instance that serves it. Listing any
+            instance turns off the built-in <code>gitlab.com</code>; list it too to keep it.`}
+          more=${html`A self-hosted instance cannot be told from any other git server by its name, so it must be
+            listed here. The base may carry a port (<code>https://gitlab.example.com:8929</code>) but no path. The
+            token below is sent only to these bases.`}>
+          <${GitLabHostList} values=${lists['cfg-gitproxy-gitlab-hosts']} onChange=${onListChange} />
+        </${Setting}>
+        <${Setting} title="GitLab token file" forId="cfg-gitproxy-gltoken" k="agent.git_proxy.gitlab_token_file"
+          summary="One token for every instance above, with the api scope."
+          more="With no file the GitLab proxy refuses every call and says so; there is no CLI fallback.">
+          <${ConfigInput} type="text" id="cfg-gitproxy-gltoken" placeholder="~/.config/tclaude/gitlab-token" autocomplete="off" spellcheck="false" style="min-width:240px" />
         </${Setting}>
       </${Group}>
     </${Panel}>

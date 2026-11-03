@@ -1081,6 +1081,60 @@ func TestGHProxy_PRReadyOnANonDraftIsNotAFailure(t *testing.T) {
 	assert.Equal(t, 1, gh.count(), "no mutation is sent")
 }
 
+// TestGHProxy_PRReadyRecordsTheNewState: the dashboard row of a pull request
+// created as a draft reads open as soon as it is marked ready, not at the
+// next refresh.
+func TestGHProxy_PRReadyRecordsTheNewState(t *testing.T) {
+	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+	const url = "https://github.com/tofutools/tclaude/pull/42"
+	gh.seq = []ghCanned{
+		{Status: 201, Body: `{"number":42,"html_url":"` + url + `"}`},
+		{Status: 200, Body: `{"data":{"repository":{"pullRequest":{"id":"PR_node1","number":42,"url":"` + url + `","isDraft":true,"state":"OPEN"}}}}`},
+		{Status: 200, Body: `{"data":{"markPullRequestReadyForReview":{"pullRequest":{"number":42,"isDraft":false}}}}`},
+	}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubWrite, "test"))
+	agentID, err := db.AgentIDForConv(gitProxyTestConv)
+	require.NoError(t, err)
+
+	res := gitProxyPost(t, f, "/v1/github/pr/create", map[string]any{"title": "Add a thing", "base": "main", "draft": true})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	row, err := db.GetAgentPR(agentID, url)
+	require.NoError(t, err)
+	require.Equal(t, "draft", row.State)
+
+	res = gitProxyPost(t, f, "/v1/github/pr/ready", map[string]any{"number": 42})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	row, err = db.GetAgentPR(agentID, url)
+	require.NoError(t, err)
+	assert.Equal(t, "open", row.State, "the row follows the pull request out of draft")
+}
+
+// TestGHProxy_PRCreateSaysWhenTheDashboardCouldNotRecordIt: the pull request
+// exists, so the answer is still a success with its URL, but the agent is told
+// the dashboard missed it and how to show it there.
+func TestGHProxy_PRCreateSaysWhenTheDashboardCouldNotRecordIt(t *testing.T) {
+	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+	const url = "https://github.com/tofutools/tclaude/pull/42"
+	gh.def = ghCanned{Status: 201, Body: `{"number":42,"html_url":"` + url + `"}`}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubWrite, "test"))
+	t.Cleanup(agentd.SetCreatedPRRecorderForTest(func(string, string, string, string, string, bool, string) (db.AgentPR, error) {
+		return db.AgentPR{}, errors.New("database is locked")
+	}))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/create", map[string]any{"title": "Add a thing", "base": "main"})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	var out struct {
+		ExitCode int    `json:"exit_code"`
+		Stdout   string `json:"stdout"`
+		Stderr   string `json:"stderr"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+	assert.Zero(t, out.ExitCode, "the pull request was created")
+	assert.Equal(t, url+"\n", out.Stdout)
+	assert.Contains(t, out.Stderr, "the dashboard could not record it (database is locked)")
+	assert.Contains(t, out.Stderr, "tclaude agent present-pr "+url)
+}
+
 // ---------------------------------------------------------------------------
 // Merging
 // ---------------------------------------------------------------------------

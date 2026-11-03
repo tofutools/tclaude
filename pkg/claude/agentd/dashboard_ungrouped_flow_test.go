@@ -159,12 +159,27 @@ type dashAgent struct {
 }
 
 type dashPR struct {
-	URL       string      `json:"url"`
-	Number    int         `json:"number,omitempty"`
-	Summary   string      `json:"summary,omitempty"`
-	State     string      `json:"state,omitempty"`
-	UpdatedAt string      `json:"updated_at,omitempty"`
-	Checks    *dashChecks `json:"checks,omitempty"`
+	URL       string       `json:"url"`
+	Number    int          `json:"number,omitempty"`
+	Summary   string       `json:"summary,omitempty"`
+	State     string       `json:"state,omitempty"`
+	UpdatedAt string       `json:"updated_at,omitempty"`
+	Checks    *dashChecks  `json:"checks,omitempty"`
+	Reviews   *dashReviews `json:"reviews,omitempty"`
+}
+
+// dashReviews mirrors the review summary agentd attaches to every PR badge.
+type dashReviews struct {
+	Decision         string `json:"decision,omitempty"`
+	Approved         int    `json:"approved"`
+	ChangesRequested int    `json:"changes_requested"`
+	ReviewersKnown   bool   `json:"reviewers_known,omitempty"`
+	Reviewers        []struct {
+		Login string `json:"login"`
+		State string `json:"state"`
+		Bot   bool   `json:"bot,omitempty"`
+		URL   string `json:"url,omitempty"`
+	} `json:"reviewers,omitempty"`
 }
 
 // dashChecks mirrors the CI summary agentd attaches to every PR badge.

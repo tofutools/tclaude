@@ -258,7 +258,7 @@ func describeProxyRemote(ctx context.Context, s *gitProxySession, name, convID s
 	// Every configured URL must pass, not just the first — that asymmetry is
 	// exactly what a second, unlisted url line would exploit.
 	for _, raw := range append(append([]string{}, fetchURLs...), pushURLs...) {
-		ref, err := parseRemoteURL(raw)
+		ref, err := parseRemoteURLFor(raw, s.policy)
 		if err != nil {
 			view.RefusedFor = err.Error()
 			return view

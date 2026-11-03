@@ -2640,3 +2640,30 @@ func SetCapacityResourcesForTest(ramMB, diskMB int64) func() {
 	}
 	return func() { capacityProbe = prev }
 }
+
+// PollAuthoredOpenMRsForTest runs one Open MRs poll synchronously, against
+// whatever GitLab transport the test installed.
+func PollAuthoredOpenMRsForTest() (time.Duration, error) {
+	return pollAuthoredOpenMRs(context.Background())
+}
+
+// ResetAuthoredOpenMRsForTest forgets the Open MRs poller's last result.
+func ResetAuthoredOpenMRsForTest() { resetAuthoredOpenMRs("") }
+
+// ResetGitLabReviewStatesForTest forgets which GitLab instances lack reviewer
+// states, the recently closed query's fields or the diffstat, so one test's
+// old instance does not carry into the next.
+func ResetGitLabReviewStatesForTest() {
+	glReviewStatesMissing.Clear()
+	glRecentMRsMissing.Clear()
+	glDiffStatsMissing.Clear()
+}
+
+// SetCreatedPRRecorderForTest swaps how `pr create` and `mr create` record a
+// created pull or merge request for the dashboard, so a test can make that
+// record fail.
+func SetCreatedPRRecorderForTest(fn func(agentID, prURL, summary, state, branch string, draft bool, repoRoot string) (db.AgentPR, error)) func() {
+	prev := recordCreatedPR
+	recordCreatedPR = fn
+	return func() { recordCreatedPR = prev }
+}

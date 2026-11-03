@@ -23,7 +23,7 @@ import { bodilessNotice } from './human-attachments.js';
 import { HarnessMark } from './harness-mark.js';
 import { fmtCredits, fmtExactUSD, fmtUSD } from './costs-model.js';
 import { isPendingWake, clearPendingWake } from './waking-state.js';
-import { PRChain } from './pr-chain.js';
+import { PRChain, prDescription } from './pr-chain.js';
 import { ViewersBadge, remoteViewers, viewersOf } from './remote-viewers.js';
 import { fleetState } from './fleet-state.js';
 import { nodeRef, presenceView } from './agent-presence.js';
@@ -1247,7 +1247,7 @@ function BranchCell({ member }) {
   const branch = (name, url, pr) => {
     if (!name) return html`<span class="muted">—</span>`;
     const branchNode = url
-      ? html`<a class="branch branch-link" href=${url} target="_blank" rel="noopener noreferrer" draggable=${false} title=${`Open branch on GitHub — ${name}`}>⎇ ${name}</a>`
+      ? html`<a class="branch branch-link" href=${url} target="_blank" rel="noopener noreferrer" draggable=${false} title=${`Open branch — ${name}`}>⎇ ${name}</a>`
       : html`<span class="branch" title=${`git branch: ${name}`}>⎇ ${name}</span>`;
     // .pr-chain keeps the link and its badges one inline run: inside an
     // init/now .loc-row (a flex row with a gap) they would otherwise each
@@ -1269,7 +1269,7 @@ function BranchCell({ member }) {
     seen.add(url); return true;
   });
   return html`<${StackedLocation} start=${start} current=${current} differ=${(member.startup_branch || '') !== (member.branch || '')} wrap />${presented.length ? html` <span class="presented-prs">${presented.map((pr) => html`<${PRChain} key=${pr.url} pr=${pr} className="presented-pr"
-    describe=${pr.summary ? `${pr.summary} — ${pr.url}` : `Presented pull request — ${pr.url}`} />`)}</span>` : null}`;
+    describe=${prDescription(pr, { presented: true })} />`)}</span>` : null}`;
 }
 
 function TaskCell({ member }) {

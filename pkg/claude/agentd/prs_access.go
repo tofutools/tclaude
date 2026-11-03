@@ -15,11 +15,10 @@ import (
 // inside the caller's daemon-recorded launch tree, and that the operator has
 // allow-listed that repository for credentialed GitHub access.
 func livePresentedPRAccessValidator(ctx context.Context, caller, requestedDir, rawURL string) (string, error) {
-	ref, ok := githubPRRefFromURL(rawURL)
-	if !ok {
-		return "", fmt.Errorf("the URL does not identify a GitHub pull request")
+	prRemote, prRepo, err := presentedPRRemoteOf(rawURL)
+	if err != nil {
+		return "", err
 	}
-	prRemote := remoteRef{Scheme: "https", Host: "github.com", Path: strings.Split(ref.repo, "/")}
 	if err := presentedPRRemotePolicyCheck(rawURL); err != nil {
 		return "", err
 	}
@@ -46,14 +45,32 @@ func livePresentedPRAccessValidator(ctx context.Context, caller, requestedDir, r
 		return "", fmt.Errorf("could not validate the calling agent's repository: %s", fault.Msg)
 	}
 	remote := strings.TrimSpace(runInDir(repoRoot, "git", "remote", "get-url", "origin"))
-	remoteParsed, err := parseRemoteURL(remote)
+	// Under the operator's policy, so an https origin on a configured GitLab
+	// instance's own port is read the way the proxy reads it.
+	var policy config.GitProxyConfig
+	if cfg, err := config.Load(); err == nil {
+		policy = cfg.ResolvedGitProxy()
+	}
+	remoteParsed, err := parseRemoteURLFor(remote, policy)
 	if err != nil {
 		return "", fmt.Errorf("could not validate repository origin: %w", err)
 	}
 	if !strings.EqualFold(remoteParsed.Key(), prRemote.Key()) {
-		return "", fmt.Errorf("pull request repository github.com/%s does not match repository origin %s", ref.repo, remoteParsed.Key())
+		return "", fmt.Errorf("pull request repository %s does not match repository origin %s", prRepo, remoteParsed.Key())
 	}
 	return repoRoot, nil
+}
+
+// presentedPRRemoteOf renders the repository a pull or merge request URL
+// names as a remote reference, for comparison against the caller's origin.
+func presentedPRRemoteOf(rawURL string) (remoteRef, string, error) {
+	if ref, ok := githubPRRefFromURL(rawURL); ok {
+		return remoteRef{Scheme: "https", Host: "github.com", Path: strings.Split(ref.repo, "/")}, "github.com/" + ref.repo, nil
+	}
+	if ref, ok := gitlabMRRefFromURL(rawURL); ok {
+		return ref.remote(), ref.host + "/" + ref.project, nil
+	}
+	return remoteRef{}, "", fmt.Errorf("the URL does not identify a GitHub pull request or a GitLab merge request")
 }
 
 func presentedPRViewArgs(rawURL, fields string, strict bool) ([]string, bool) {
@@ -79,11 +96,17 @@ func validatePresentedPRRemotePolicy(rawURL string) error {
 	if !cfg.GitProxyEnabled() {
 		return nil
 	}
+	policy := cfg.ResolvedGitProxy()
+	if glRef, ok := gitlabMRRefFromURL(rawURL); ok {
+		// The instance must be configured and the project allow-listed; both
+		// are the same gate the GitLab proxy applies before spending the token.
+		_, err := gitlabMRPolicyBase(glRef, policy)
+		return err
+	}
 	ref, ok := githubPRRefFromURL(rawURL)
 	if !ok {
-		return fmt.Errorf("the URL does not identify a GitHub pull request")
+		return fmt.Errorf("the URL does not identify a GitHub pull request or a GitLab merge request")
 	}
-	policy := cfg.ResolvedGitProxy()
 	if !presentedPRRemoteAllowed(ref, policy.AllowedRemotes) {
 		return fmt.Errorf("repository github.com/%s is not on the operator's agent.git_proxy.allowed_remotes list", ref.repo)
 	}

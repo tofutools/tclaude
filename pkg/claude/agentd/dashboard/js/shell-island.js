@@ -3,13 +3,16 @@ import { SpendLimitBanner } from './spend-limits.js';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
 import { syncBotAnimations } from './helpers.js';
 import { ActivityModes } from './activity-bots.js';
 import { ActivityHover } from './activity-hover.js';
 import {
   footerMetaView,
+  authoredOpenMRsView,
   authoredOpenPRsView,
   ignorePR,
+  ignoresOfKind,
   OPEN_PR_IGNORE_DURATIONS,
   parseIgnoredPRs,
   serializeIgnoredPRs,
@@ -37,6 +40,9 @@ import { useDismissablePopover, useExclusivePopover, useLeaveGrace } from './hov
 const html = htm.bind(h);
 const OPEN_PRS_INCLUDE_DRAFTS_PREF = 'tclaude.dash.open-prs.include-drafts-attention';
 const OPEN_PRS_IGNORED_PREF = 'tclaude.dash.open-prs.ignored';
+// Merge request ignores share the pull request store, their kinds kept apart
+// by key (ignoresOfKind). Give this its own key to store them separately.
+const OPEN_MRS_IGNORED_PREF = OPEN_PRS_IGNORED_PREF;
 // Title hover cards are on unless the operator turns them off: a card can
 // cover a good part of the list, so the popover keeps a checkbox for it.
 const OPEN_PRS_TITLE_DETAILS_PREF = 'tclaude.dash.open-prs.title-details';
@@ -59,6 +65,20 @@ async function postTrackedAuthor(action, login) {
 
 // PeopleTabs switches the popover between the operator's own pull requests
 // and each tracked colleague's, and adds or removes colleagues inline.
+// ListTab is one tab of Open PRs' people strip, with an optional control after
+// it (a tracked colleague's ✕), which the standard Tabs row has no place for.
+function ListTab({ active, label, count, title = '', onSelect, extra = null }) {
+  return html`
+    <span class=${`open-prs-person${active ? ' active' : ''}`}>
+      <button type="button" data-ui-exempt role="tab" aria-selected=${active ? 'true' : 'false'} title=${title || undefined}
+        onClick=${onSelect}>
+        ${label} <span class="open-prs-person-n">${count ?? '…'}</span>
+      </button>
+      ${extra}
+    </span>
+  `;
+}
+
 function PeopleTabs({ active, mine, people, onSelect, onAdd, onRemove }) {
   const [adding, setAdding] = useState(false);
   const [login, setLogin] = useState('');
@@ -85,15 +105,9 @@ function PeopleTabs({ active, mine, people, onSelect, onAdd, onRemove }) {
       setBusy(false);
     }
   };
-  const tab = (key, label, count, extra = null) => html`
-    <span key=${key || 'self'} class=${`open-prs-person${active.toLowerCase() === key.toLowerCase() ? ' active' : ''}`}>
-      <button type="button" data-ui-exempt role="tab" aria-selected=${active.toLowerCase() === key.toLowerCase() ? 'true' : 'false'}
-        onClick=${() => onSelect(key)}>
-        ${label} <span class="open-prs-person-n">${count ?? '…'}</span>
-      </button>
-      ${extra}
-    </span>
-  `;
+  const tab = (key, label, count, extra = null) => html`<${ListTab} key=${key || 'self'}
+    active=${active.toLowerCase() === key.toLowerCase()} label=${label} count=${count}
+    onSelect=${() => onSelect(key)} extra=${extra} />`;
   return html`
     <div class="open-prs-people">
       <div role="tablist" aria-label="Whose pull requests" class="open-prs-people-tabs">
@@ -308,12 +322,18 @@ function ignoredUntilLabel(ignored) {
 // — checks on something already landed say nothing useful — and it drops the
 // "no active agent" note, which only means something for open work. An
 // ignored row says until when instead, and offers only its way back.
-function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = null, onRestore = null }) {
+//
+// kind 'mr' is a GitLab merge request in the Open MRs list: numbered !N, its
+// CI pill one head pipeline, its reviews and details card the same as a pull
+// request's, and a conflict written into the meta line.
+function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = null, onRestore = null, kind = 'pr' }) {
+  const mr = kind === 'mr';
   const terminal = pr.state === 'merged' || pr.state === 'closed';
   const draft = !!pr.draft && !terminal;
   const ignored = pr.ignored || null;
   const dot = terminal ? pr.state : (draft ? 'draft' : (pr?.checks?.state || 'unknown'));
-  const titleText = pr.title || `Pull request #${pr.number}`;
+  const ref = `${mr ? '!' : '#'}${pr.number}`;
+  const titleText = pr.title || `${mr ? 'Merge request' : 'Pull request'} ${ref}`;
   const prState = terminal ? pr.state : (draft ? 'draft' : 'open');
   return html`
     <li class=${`open-pr-row${draft ? ' is-draft' : ''}${ignored ? ' is-ignored' : ''}`}>
@@ -324,7 +344,9 @@ function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = nu
               linkClass="open-pr-title" label=${titleText} describe=${titleText} />`
           : html`<a class="open-pr-title" href=${pr.url} target="_blank" rel="noopener noreferrer">${titleText}</a>`}
         <span class="open-pr-meta">
-          <span>${pr.repository}</span><span> · #${pr.number}</span>
+          <span>${pr.repository}</span><span> · ${ref}</span>
+          ${mr && pr.author ? html`<span> · by ${pr.author}</span>` : null}
+          ${mr && pr.conflicts ? html`<span> · conflict</span>` : null}
           ${ignored ? html`<span> · ${ignoredUntilLabel(ignored)}</span>` : null}
           ${!ignored && terminal ? html`<span> · ${pr.state}${pr.closed_at ? ` ${new Date(pr.closed_at).toLocaleDateString()}` : ''}</span>` : null}
           ${!ignored && !terminal && pr.agent_title ? html`<span> · ${pr.agent_title}</span>` : null}
@@ -335,12 +357,12 @@ function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = nu
       </span>
       <span class="open-pr-badges">
         ${ignored ? html`<${Button} size="sm" class="open-pr-restore"
-            aria-label=${`Bring back pull request #${pr.number}`} onClick=${() => onRestore?.(pr)}>Restore<//>` : html`
+            aria-label=${`Bring back ${mr ? 'merge' : 'pull'} request ${ref}`} onClick=${() => onRestore?.(pr)}>Restore<//>` : html`
           <${PRChecksBadge} url=${pr.url} prNumber=${pr.number}
-            summary=${terminal && !showFinalCI ? null : pr.checks} />
+            summary=${terminal && !showFinalCI ? null : pr.checks} countText=${mr ? 'pipeline' : ''} />
           ${terminal || draft ? null : html`<${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} />`}
           ${onIgnore && !terminal ? html`<${Button} size="sm" icon=${true} class="open-pr-ignore"
-            aria-label=${`Ignore pull request #${pr.number}…`} title="Ignore…"
+            aria-label=${`Ignore ${mr ? 'merge' : 'pull'} request ${ref}…`} title="Ignore…"
             onClick=${() => onIgnore(pr)}>⊘<//>` : null}
         `}
       </span>
@@ -351,7 +373,8 @@ function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = nu
 // IgnorePRDialog confirms an ignore and picks how long it lasts. It is drawn
 // inside the popover rather than as the page's modal, so the popover's own
 // hover and outside-click handling keep treating it as part of the popover.
-function IgnorePRDialog({ pr, onCancel, onConfirm }) {
+function IgnorePRDialog({ pr, onCancel, onConfirm, kind = 'pr' }) {
+  const what = kind === 'mr' ? `merge request !${pr.number}` : `pull request #${pr.number}`;
   const [duration, setDuration] = useState('7d');
   const okRef = useRef(null);
   useLayoutEffect(() => { okRef.current?.focus(); }, []);
@@ -377,7 +400,7 @@ function IgnorePRDialog({ pr, onCancel, onConfirm }) {
           event.stopPropagation();
           onCancel();
         }}>
-        <h4 id="open-prs-confirm-title">Ignore pull request #${pr.number}?</h4>
+        <h4 id="open-prs-confirm-title">Ignore ${what}?</h4>
         <p id="open-prs-confirm-body">
           <span class="open-prs-confirm-pr">${pr.title || pr.url}</span>
           It leaves these lists and counts and waits under Ignored, where you can bring it back.
@@ -401,26 +424,122 @@ function IgnorePRDialog({ pr, onCancel, onConfirm }) {
   `;
 }
 
+// useIncludeDrafts is the one "Include drafts" setting Open PRs and Open MRs
+// share: ticking it in either popover updates both, not only the next mount.
+const includeDraftsListeners = new Set();
+function useIncludeDrafts() {
+  const [value, setValue] = useState(() => dashPrefs.getItem(OPEN_PRS_INCLUDE_DRAFTS_PREF) === '1');
+  useEffect(() => {
+    includeDraftsListeners.add(setValue);
+    return () => { includeDraftsListeners.delete(setValue); };
+  }, []);
+  const update = (checked) => {
+    dashPrefs.setItem(OPEN_PRS_INCLUDE_DRAFTS_PREF, checked ? '1' : '0');
+    for (const listener of includeDraftsListeners) listener(checked);
+  };
+  return [value, update];
+}
+
+// useIgnoredPRs is the ignore store behind a pref, shared by every popover
+// that reads it: Open PRs and Open MRs hold one live copy, so a save from
+// either never writes back a set missing the other's ignores.
+const ignoredListeners = new Map();
+function useIgnoredPRs(pref) {
+  const [value, setValue] = useState(() => parseIgnoredPRs(dashPrefs.getItem(pref)));
+  useEffect(() => {
+    if (!ignoredListeners.has(pref)) ignoredListeners.set(pref, new Set());
+    const listeners = ignoredListeners.get(pref);
+    listeners.add(setValue);
+    return () => { listeners.delete(setValue); };
+  }, [pref]);
+  const save = (next) => {
+    const serialized = serializeIgnoredPRs(next);
+    if (serialized) dashPrefs.setItem(pref, serialized);
+    else dashPrefs.removeItem(pref);
+    // Re-read what was stored: serialization may have evicted old entries.
+    const stored = parseIgnoredPRs(serialized);
+    setValue(stored);
+    for (const listener of ignoredListeners.get(pref) || []) listener(stored);
+  };
+  return [value, save];
+}
+
+// useTitleDetails is the one "Hover details" setting the two popovers share:
+// whether a row's title opens its details card. On unless turned off.
+const titleDetailsListeners = new Set();
+function useTitleDetails() {
+  const [value, setValue] = useState(() => dashPrefs.getItem(OPEN_PRS_TITLE_DETAILS_PREF) !== '0');
+  useEffect(() => {
+    titleDetailsListeners.add(setValue);
+    return () => { titleDetailsListeners.delete(setValue); };
+  }, []);
+  const update = (checked) => {
+    dashPrefs.setItem(OPEN_PRS_TITLE_DETAILS_PREF, checked ? '1' : '0');
+    for (const listener of titleDetailsListeners) listener(checked);
+  };
+  return [value, update];
+}
+
+// TitleDetailsToggle is that setting's checkbox, in each popover's footer.
+function TitleDetailsToggle({ checked, onChange, noun }) {
+  return html`<label class="open-prs-title-details"
+    title=${`Show a ${noun}'s details card when hovering its title`}>
+    <input type="checkbox" checked=${checked}
+      onChange=${(event) => onChange(event.currentTarget.checked)} />
+    <span>Hover details</span>
+  </label>`;
+}
+
+// FooterListTrigger and FooterListFilters are the parts the Open PRs and Open
+// MRs popovers share: the footer button that opens a list, and its row of
+// filter chips (each { key, text, active, onClick, title? }).
+// totalLabel names the count when a trigger carries more than one (Open MRs:
+// "mine" and, in extra, "all").
+// The counts are standard badges (.ui-badge), accented while something needs
+// attention; the trigger itself is the footer's own control (data-ui-exempt).
+function FooterListTrigger({ label, total, open, controls, onClick, totalLabel = '', extra = null, title = '', attention = false }) {
+  return html`
+    <button data-ui-exempt type="button" class="open-prs-trigger" aria-haspopup="dialog"
+      aria-expanded=${open ? 'true' : 'false'} aria-controls=${controls} title=${title || undefined}
+      onClick=${onClick}>
+      <span class="open-prs-dot" aria-hidden="true"></span>
+      <span>${label}</span>${totalLabel ? html`<span class="open-mrs-scope">${totalLabel}</span>` : null}<span class=${footerCountClass(attention)}>${total}</span>${extra}
+      <span class="open-prs-chevron" aria-hidden="true">⌃</span>
+    </button>
+  `;
+}
+
+function footerCountClass(attention = false) {
+  return `open-prs-count ui-badge${attention ? ' ui-badge-accent' : ''}`;
+}
+
+function FooterListFilters({ label, filters }) {
+  return html`
+    <div class="open-prs-filters" role="group" aria-label=${label}>
+      ${filters.map((chip) => html`<button data-ui-exempt key=${chip.key} class=${chip.active ? 'active' : ''}
+        aria-pressed=${chip.active} title=${chip.title || undefined}
+        onClick=${chip.onClick}>${chip.text}</button>`)}
+    </div>
+  `;
+}
+
 function OpenPRs({ state }) {
   const [filter, setFilter] = useState('all');
-  const [includeDraftsInAttention, setIncludeDraftsInAttention] = useState(
-    () => dashPrefs.getItem(OPEN_PRS_INCLUDE_DRAFTS_PREF) === '1',
-  );
+  const [includeDraftsInAttention, setIncludeDraftsInAttention] = useIncludeDrafts();
   // Closed/merged work is history, so its last CI result stays quiet unless
   // the operator explicitly asks for it. This is intentionally local UI
   // state: enabling it reveals the cached snapshot summary but changes no
   // daemon setting and triggers no terminal-PR refresh on its own.
   const [showFinalCI, setShowFinalCI] = useState(false);
-  const [ignored, setIgnored] = useState(() => parseIgnoredPRs(dashPrefs.getItem(OPEN_PRS_IGNORED_PREF)));
+  const [ignored, saveIgnored] = useIgnoredPRs(OPEN_PRS_IGNORED_PREF);
+  const prIgnores = ignoresOfKind(ignored, 'pr');
   const [confirmIgnore, setConfirmIgnore] = useState(null);
   // Where focus goes back to once the ignore dialog closes or a Restore
   // removes its own row: the ⊘ button that opened the dialog while it is
   // still mounted, the popover trigger otherwise.
   const returnFocus = useRef(null);
   const [focusBack, setFocusBack] = useState(0);
-  const [titleDetails, setTitleDetails] = useState(
-    () => dashPrefs.getItem(OPEN_PRS_TITLE_DETAILS_PREF) !== '0',
-  );
+  const [titleDetails, setTitleDetails] = useTitleDetails();
   const [person, setPerson] = useState('');
   // The tracked list as the daemon last answered an edit, held until the
   // next snapshot (which the daemon builds from the saved list): a new tab
@@ -434,7 +553,7 @@ function OpenPRs({ state }) {
   const dock = fusedDock.value;
   const peers = dock ? (dock.nodes || []).filter((n) => n.id !== dock.page)
     .map((n) => ({ name: n.name, snapshot: dock.snapshots?.[n.id] })) : [];
-  const view = authoredOpenPRsView(state.snapshot.value, filter, includeDraftsInAttention, peers, ignored);
+  const view = authoredOpenPRsView(state.snapshot.value, filter, includeDraftsInAttention, peers, prIgnores);
   const snapshotAuthors = Array.isArray(state.snapshot.value?.tracked_pr_authors)
     ? state.snapshot.value.tracked_pr_authors.filter((entry) => GITHUB_LOGIN_RE.test(entry?.login || '')) : [];
   const editedAuthors = edited && edited.snapshot === state.snapshot.value ? edited.authors : null;
@@ -447,7 +566,7 @@ function OpenPRs({ state }) {
   // Unattached filter; the operator's own view keeps driving the trigger.
   const panelFilter = personEntry && filter === 'unattached' ? 'all' : filter;
   const colleagueView = (entry, which = 'all') => authoredOpenPRsView(
-    { authored_open_prs: { ...entry, available: true } }, which, includeDraftsInAttention, peers, ignored,
+    { authored_open_prs: { ...entry, available: true } }, which, includeDraftsInAttention, peers, prIgnores,
     Date.now(), entry.login);
   const panel = personEntry ? colleagueView(personEntry, panelFilter) : view;
   const people = tracked.map((entry) => ({ login: entry.login, total: entry.available ? colleagueView(entry).total : null }));
@@ -463,13 +582,6 @@ function OpenPRs({ state }) {
     } catch (_) {
       // The tab stays; the next snapshot shows the daemon's list either way.
     }
-  };
-  const saveIgnored = (next) => {
-    const value = serializeIgnoredPRs(next);
-    // Re-read what was stored: serialization may have evicted old entries.
-    setIgnored(parseIgnoredPRs(value));
-    if (value) dashPrefs.setItem(OPEN_PRS_IGNORED_PREF, value);
-    else dashPrefs.removeItem(OPEN_PRS_IGNORED_PREF);
   };
   const askIgnore = (pr) => {
     returnFocus.current = document.activeElement;
@@ -551,16 +663,11 @@ function OpenPRs({ state }) {
   return html`
     <span ref=${rootRef} class=${`open-prs${open ? ' is-open' : ''}${view.total > 0 ? '' : ' is-empty'}${view.attention > 0 ? ' has-attention' : ''}`}
       onMouseEnter=${enter} onMouseLeave=${leave}>
-      <button data-ui-exempt type="button" class="open-prs-trigger" aria-haspopup="dialog"
-        aria-expanded=${open ? 'true' : 'false'} aria-controls="open-prs-popover"
-        onClick=${() => setPinned((value) => !value)}>
-        <span class="open-prs-dot" aria-hidden="true"></span>
-        <span>Open PRs</span><span class=${`open-prs-count ui-badge${view.attention > 0 ? ' ui-badge-accent' : ''}`}>${view.total}</span>
-        <span class="open-prs-chevron" aria-hidden="true">⌃</span>
-      </button>
+      <${FooterListTrigger} label="Open PRs" total=${view.total} attention=${view.attention > 0} open=${open}
+        controls="open-prs-popover" onClick=${() => setPinned((value) => !value)} />
       ${open ? html`
         <div id="open-prs-popover" class="open-prs-popover ui-popover" role="dialog" aria-label=${heading}>
-          <div class="open-prs-head"><strong>${heading}</strong><span class=${`open-prs-count ui-badge${view.attention > 0 ? ' ui-badge-accent' : ''}`}>${panel.total}</span>${panelAge ? html`<span class="open-prs-age">updated ${panelAge}</span>` : null}</div>
+          <div class="open-prs-head"><strong>${heading}</strong><span class=${footerCountClass(view.attention > 0)}>${panel.total}</span>${panelAge ? html`<span class="open-prs-age">updated ${panelAge}</span>` : null}</div>
           <${PeopleTabs} active=${personEntry ? personEntry.login : ''} mine=${view.total} people=${people}
             onSelect=${setPerson} onAdd=${addPerson} onRemove=${removePerson} />
           ${panelWarning ? html`<p class="open-prs-stale" role="status">${panelWarning}</p>` : null}
@@ -576,20 +683,18 @@ function OpenPRs({ state }) {
               : panel.showingRecent
               ? `Nothing merged or closed in the last ${panel.recentWindowDays} day(s).`
               : (openFilterActive && panel.total <= 0 ? 'No open pull requests.' : 'No pull requests match this filter.')}</p>`}
-          <div class="open-prs-filters" role="group" aria-label="Filter pull requests">
-            <button data-ui-exempt class=${openFilterActive ? 'active' : ''} aria-pressed=${openFilterActive} onClick=${() => setFilter('all')}>Open ${panel.total}</button>
-            <button data-ui-exempt class=${filter === 'attention' ? 'active' : ''} aria-pressed=${filter === 'attention'} onClick=${() => setFilter('attention')}>Needs attention ${panel.attention}</button>
-            <button data-ui-exempt class=${filter === 'ready' ? 'active' : ''} aria-pressed=${filter === 'ready'}
-              title="Approved with all CI checks passing"
-              onClick=${() => setFilter('ready')}>Ready to merge ${panel.ready}</button>
-            ${personEntry ? null : html`<button data-ui-exempt class=${filter === 'unattached' ? 'active' : ''} aria-pressed=${filter === 'unattached'} onClick=${() => setFilter('unattached')}>Unattached ${panel.unattached}</button>`}
-            ${panel.recentWindowDays > 0 ? html`<button data-ui-exempt class=${panel.showingRecent ? 'active' : ''} aria-pressed=${panel.showingRecent}
-              title=${`Pull requests ${personEntry ? `${personEntry.login} merged or closed` : 'you merged or closed'} in the last ${panel.recentWindowDays} day(s)`}
-              onClick=${() => setFilter('recent')}>${recentLabel} ${panel.recentCount}</button>` : null}
-            ${panel.ignoredCount > 0 || panel.showingIgnored ? html`<button data-ui-exempt class=${panel.showingIgnored ? 'active' : ''} aria-pressed=${panel.showingIgnored}
-              title="Pull requests you set aside; bring them back from here"
-              onClick=${() => setFilter('ignored')}>Ignored ${panel.ignoredCount}</button>` : null}
-          </div>
+          <${FooterListFilters} label="Filter pull requests" filters=${[
+            { key: 'all', text: `Open ${panel.total}`, active: openFilterActive, onClick: () => setFilter('all') },
+            { key: 'attention', text: `Needs attention ${panel.attention}`, active: filter === 'attention', onClick: () => setFilter('attention') },
+            { key: 'ready', text: `Ready to merge ${panel.ready}`, active: filter === 'ready',
+              title: 'Approved with all CI checks passing', onClick: () => setFilter('ready') },
+            personEntry ? null : { key: 'unattached', text: `Unattached ${panel.unattached}`, active: filter === 'unattached', onClick: () => setFilter('unattached') },
+            panel.recentWindowDays > 0 ? { key: 'recent', text: `${recentLabel} ${panel.recentCount}`, active: panel.showingRecent,
+              title: `Pull requests ${personEntry ? `${personEntry.login} merged or closed` : 'you merged or closed'} in the last ${panel.recentWindowDays} day(s)`,
+              onClick: () => setFilter('recent') } : null,
+            panel.ignoredCount > 0 || panel.showingIgnored ? { key: 'ignored', text: `Ignored ${panel.ignoredCount}`, active: panel.showingIgnored,
+              title: 'Pull requests you set aside; bring them back from here', onClick: () => setFilter('ignored') } : null,
+          ].filter(Boolean)} />
           <div class="open-prs-foot">
             <span>${panel.truncated ? html`<span>Showing the first ${panel.items.length} · </span>` : null}${panel.searchURL ? html`<a href=${panel.searchURL} target="_blank" rel="noopener noreferrer">${panel.showingRecent ? 'See them all on GitHub ↗' : 'Open all on GitHub ↗'}</a>` : null}</span>
             ${panel.showingRecent ? html`<label class="open-prs-final-ci"
@@ -604,22 +709,192 @@ function OpenPRs({ state }) {
                 onChange=${(event) => {
                   const checked = event.currentTarget.checked;
                   setIncludeDraftsInAttention(checked);
-                  dashPrefs.setItem(OPEN_PRS_INCLUDE_DRAFTS_PREF, checked ? '1' : '0');
                 }} />
               <span>Include drafts</span>
             </label>` : null}
-            <label class="open-prs-title-details"
-              title="Show a pull request's details card when hovering its title">
-              <input type="checkbox" checked=${titleDetails}
-                onChange=${(event) => {
-                  const checked = event.currentTarget.checked;
-                  setTitleDetails(checked);
-                  dashPrefs.setItem(OPEN_PRS_TITLE_DETAILS_PREF, checked ? '1' : '0');
-                }} />
-              <span>Hover details</span>
-            </label>
+            <${TitleDetailsToggle} checked=${titleDetails} onChange=${setTitleDetails} noun="pull request" />
           </div>
           ${confirmIgnore ? html`<${IgnorePRDialog} pr=${confirmIgnore.pr}
+            onCancel=${closeIgnoreDialog}
+            onConfirm=${(ms) => {
+              saveIgnored(ignorePR(ignored, confirmIgnore.pr, ms, Date.now(), confirmIgnore.owner));
+              closeIgnoreDialog();
+            }} />` : null}
+        </div>
+      ` : null}
+    </span>
+  `;
+}
+
+// OpenMRs is the GitLab counterpart of OpenPRs: the token user's open merge
+// requests on every configured instance (authored_open_mrs). It shows only
+// once the daemon has read a list, so it is absent without gitlab_hosts or a
+// token. It keeps Open PRs' look and its Open / Needs attention / Ready to
+// merge / Unattached filters, its Ignored filter, whose ignores share Open
+// PRs' store, and on Mine the recently closed list with its Final CI switch.
+// Colleagues' tabs are GitHub's and are not offered here.
+// MINE_TAB is the Open MRs tab key for your own list; a project tab's key is
+// host/project, which never collides with it.
+const MINE_TAB = 'mine';
+
+function OpenMRs({ state }) {
+  const [filter, setFilter] = useState('all');
+  // '' is your own list; otherwise a project tab's key.
+  const [project, setProject] = useState('');
+  const [includeDraftsInAttention, setIncludeDraftsInAttention] = useIncludeDrafts();
+  const [titleDetails, setTitleDetails] = useTitleDetails();
+  const [ignored, saveIgnored] = useIgnoredPRs(OPEN_MRS_IGNORED_PREF);
+  const [confirmIgnore, setConfirmIgnore] = useState(null);
+  // As in Open PRs: a local switch that reveals the last pipeline result a
+  // closed row already carries, and asks GitLab nothing.
+  const [showFinalCI, setShowFinalCI] = useState(false);
+  const returnFocus = useRef(null);
+  const [focusBack, setFocusBack] = useState(0);
+  const [hovered, setHovered] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const rootRef = useRef(null);
+  const view = authoredOpenMRsView(state.snapshot.value, filter, includeDraftsInAttention, project, ignored);
+  const panel = view.panel;
+  // Ignored merge requests keep it reachable: they come back only from here.
+  const visible = view.available && (view.total > 0 || view.everyoneTotal > 0 || view.alwaysShow || view.ignoredCount > 0);
+  const open = visible && (hovered || pinned || !!confirmIgnore);
+  const askIgnore = (mr) => {
+    returnFocus.current = document.activeElement;
+    setConfirmIgnore({ pr: mr, owner: view.ignoreOwner });
+  };
+  const closeIgnoreDialog = () => {
+    setConfirmIgnore(null);
+    setFocusBack((n) => n + 1);
+  };
+
+  const hoverClose = useLeaveGrace(() => setHovered(false));
+  const cancelHoverClose = hoverClose.cancel;
+  const enter = () => {
+    cancelHoverClose();
+    setHovered(true);
+  };
+  useExclusivePopover(rootRef, open, () => { cancelHoverClose(); setHovered(false); }, pinned || !!confirmIgnore);
+  useEffect(() => {
+    if (!focusBack) return;
+    const target = returnFocus.current;
+    returnFocus.current = null;
+    if (target?.isConnected && rootRef.current?.contains(target)) target.focus();
+    else rootRef.current?.querySelector('.open-prs-trigger')?.focus();
+  }, [focusBack]);
+  useDismissablePopover(rootRef, pinned || !!confirmIgnore, () => {
+    cancelHoverClose();
+    setPinned(false);
+    setHovered(false);
+    setConfirmIgnore(null);
+  }, { escape: false, hold: () => !!confirmIgnore });
+  useEffect(() => {
+    if (!open) return undefined;
+    const escape = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      if (confirmIgnore) {
+        closeIgnoreDialog();
+        return;
+      }
+      setPinned(false);
+      setHovered(false);
+      rootRef.current?.querySelector('.open-prs-trigger')?.focus();
+    };
+    document.addEventListener('keydown', escape);
+    return () => document.removeEventListener('keydown', escape);
+  }, [open, confirmIgnore]);
+
+  if (!visible) return null;
+  const age = view.updatedAt ? new Date(view.updatedAt).toLocaleTimeString() : '';
+  const failed = view.instances.filter((entry) => entry.error);
+  // A failed project-wide read is not a failed instance: the project tabs
+  // keep its last good lists, and say so there.
+  const staleEveryone = view.instances.filter((entry) => entry.everyoneError);
+  // A project-wide read that failed before it ever answered leaves no tabs to
+  // carry its error, and a zero that only means "unknown".
+  const everyoneUnread = !view.projects.length && staleEveryone.length > 0;
+  const everyone = everyoneUnread ? '?' : `${view.everyoneTotal}${view.everyoneTruncated ? '+' : ''}`;
+  const where = view.projectEntry;
+  const heading = where ? `Open merge requests in ${where.project}` : 'Your merge requests';
+  // A filter a list cannot show (recently closed on a project tab) falls back
+  // to the open list, so the Open chip, not a vanished one, reads as active.
+  const mrOpenActive = !panel.showingRecent && !panel.showingIgnored && !['attention', 'ready', 'unattached'].includes(view.filter);
+  return html`
+    <span ref=${rootRef} class=${`open-prs open-mrs${open ? ' is-open' : ''}${view.total > 0 ? '' : ' is-empty'}${view.attention > 0 ? ' has-attention' : ''}`}
+      onMouseEnter=${enter} onMouseLeave=${hoverClose.schedule}>
+      <${FooterListTrigger} label="Open MRs" totalLabel="mine" total=${view.total} open=${open}
+        controls="open-mrs-popover" onClick=${() => setPinned((value) => !value)}
+        title=${`Open merge requests: ${view.total} of yours, ${everyone} by everyone`}
+        attention=${view.attention > 0}
+        extra=${html`<span class="open-mrs-scope">all</span><span class=${`${footerCountClass()} open-mrs-all-count`}>${everyone}</span>`} />
+      ${open ? html`
+        <div id="open-mrs-popover" class="open-prs-popover ui-popover" role="dialog" aria-label=${heading}>
+          <div class="open-prs-head"><strong>${heading}</strong><span class=${footerCountClass(view.attention > 0)}>${panel.total}</span>${age ? html`<span class="open-prs-age">updated ${age}</span>` : null}</div>
+          ${view.projects.length ? html`
+            <div class="open-prs-people">
+              <${Tabs} label="Whose merge requests" class="open-prs-people-tabs" value=${where ? where.key : MINE_TAB}
+                onSelect=${(key) => setProject(key === MINE_TAB ? '' : key)}
+                items=${[
+                  { key: MINE_TAB, label: html`Mine <span class="open-prs-person-n">${view.total}</span>` },
+                  ...view.projects.map((entry) => ({
+                    key: entry.key,
+                    label: html`${entry.label} <span class="open-prs-person-n">${entry.total}${entry.truncated ? '+' : ''}</span>`,
+                    title: `Everyone's open merge requests in ${entry.host}/${entry.project}${entry.agents ? ' (your agents work here)' : ''}`,
+                  })),
+                ]} />
+            </div>
+          ` : null}
+          ${failed.map((entry) => html`<p key=${entry.host} class="open-prs-stale" role="status">${entry.host}: ${entry.error}</p>`)}
+          ${where ? staleEveryone.filter((entry) => entry.host === where.host).map((entry) => html`<p key=${`${entry.host}-everyone`}
+            class="open-prs-stale" role="status">Everyone's merge requests on ${entry.host} are from an earlier read: ${entry.everyoneError}</p>`) : null}
+          ${!where && everyoneUnread ? staleEveryone.map((entry) => html`<p key=${`${entry.host}-everyone`}
+            class="open-prs-stale" role="status">Everyone's merge requests on ${entry.host} could not be read: ${entry.everyoneError}</p>`) : null}
+          ${panel.items.length
+            ? html`<ul class="open-pr-list">${panel.items.map((mr) => html`<${OpenPRRow} key=${mr.url} pr=${mr} kind="mr"
+                showFinalCI=${panel.showingRecent && showFinalCI}
+                titleDetails=${titleDetails} onIgnore=${view.canIgnore ? askIgnore : null} onRestore=${(target) => {
+                  saveIgnored(unignorePR(ignored, target.url));
+                  setFocusBack((n) => n + 1);
+                }} />`)}</ul>`
+            : html`<p class="ui-empty-block">${panel.showingIgnored ? 'No ignored merge requests.'
+              : panel.showingRecent ? `Nothing merged or closed in the last ${panel.recentWindowDays} day(s).`
+              : mrOpenActive ? 'No open merge requests.' : 'No merge requests match this filter.'}</p>`}
+          <${FooterListFilters} label="Filter merge requests" filters=${[
+            { key: 'all', text: `Open ${panel.total}`, active: mrOpenActive, onClick: () => setFilter('all') },
+            { key: 'attention', text: `Needs attention ${panel.attention}`, active: view.filter === 'attention', onClick: () => setFilter('attention') },
+            { key: 'ready', text: `Ready to merge ${panel.ready}`, active: view.filter === 'ready',
+              title: 'At least one approval and a passing head pipeline', onClick: () => setFilter('ready') },
+            { key: 'unattached', text: `Unattached ${panel.unattached}`, active: view.filter === 'unattached', onClick: () => setFilter('unattached') },
+            panel.recentWindowDays > 0 ? { key: 'recent', text: `Closed ${panel.recentWindowDays}d ${panel.recentCount}`,
+              active: panel.showingRecent, title: `Merge requests you merged or closed in the last ${panel.recentWindowDays} day(s)`,
+              onClick: () => setFilter('recent') } : null,
+            panel.ignoredCount > 0 || panel.showingIgnored ? { key: 'ignored', text: `Ignored ${panel.ignoredCount}`, active: panel.showingIgnored,
+              title: 'Merge requests you set aside; bring them back from here', onClick: () => setFilter('ignored') } : null,
+          ].filter(Boolean)} />
+          <div class="open-prs-foot">
+            <span class="open-mrs-links">${panel.truncated ? html`<span>Showing the first ${panel.items.length} · </span>` : null}${where
+              ? (where.url ? html`<a href=${where.url} target="_blank" rel="noopener noreferrer">Open in GitLab ↗</a>` : null)
+              : view.instances
+                .filter((entry) => entry.url)
+                .map((entry, index) => html`${index > 0 ? ' · ' : null}<a key=${entry.host} href=${entry.url} target="_blank" rel="noopener noreferrer">Open all on ${entry.host} ↗</a>`)}</span>
+            ${panel.showingRecent ? html`<label class="open-prs-final-ci"
+              title="Show the last pipeline result. Merged and closed merge requests are never read again.">
+              <input type="checkbox" checked=${showFinalCI}
+                onChange=${(event) => setShowFinalCI(event.currentTarget.checked)} />
+              <span>Final CI</span>
+            </label>` : null}
+            ${view.filter === 'attention' && panel.hasDrafts ? html`<label class="open-prs-include-drafts"
+              title="Include draft merge requests in Needs attention">
+              <input type="checkbox" checked=${includeDraftsInAttention}
+                onChange=${(event) => {
+                  const checked = event.currentTarget.checked;
+                  setIncludeDraftsInAttention(checked);
+                }} />
+              <span>Include drafts</span>
+            </label>` : null}
+            <${TitleDetailsToggle} checked=${titleDetails} onChange=${setTitleDetails} noun="merge request" />
+          </div>
+          ${confirmIgnore ? html`<${IgnorePRDialog} pr=${confirmIgnore.pr} kind="mr"
             onCancel=${closeIgnoreDialog}
             onConfirm=${(ms) => {
               saveIgnored(ignorePR(ignored, confirmIgnore.pr, ms, Date.now(), confirmIgnore.owner));
@@ -735,6 +1010,7 @@ export function mountShellIsland({ hosts, state, groupsState, feedback, register
     [hosts.statusHost, html`<${Status} feedback=${feedback} />`],
     [hosts.messagesBadgeHost, html`<${MessagesBadge} state=${state} />`],
     [hosts.metaHost, html`<${FooterMeta} state=${state} />`],
+    [hosts.openMRsHost, html`<${OpenMRs} state=${state} />`],
     [hosts.openPRsHost, html`<${OpenPRs} state=${state} />`],
     [hosts.disconnectHost, html`<${Disconnect} state=${state} />`],
     [hosts.toastHost, html`<${Toast} feedback=${feedback} />`],
@@ -751,4 +1027,4 @@ export function mountShellIsland({ hosts, state, groupsState, feedback, register
   }
 }
 
-export { Confirm, Disconnect, FooterMeta, GlobalActivity, MessagesBadge, OpenPRs, Status, Toast, Usage };
+export { Confirm, Disconnect, FooterMeta, GlobalActivity, MessagesBadge, OpenMRs, OpenPRs, Status, Toast, Usage };

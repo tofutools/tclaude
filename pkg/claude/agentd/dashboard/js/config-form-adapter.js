@@ -346,6 +346,55 @@ function readCfgThresholdList() {
 
 // syncCfgEnables greys out the companion inputs of any unchecked
 // enable toggle, so the form reads the way it behaves.
+// GITLAB_HOSTS_LIST holds agent.git_proxy.gitlab_hosts as {host, base} rows.
+const GITLAB_HOSTS_LIST = 'cfg-gitproxy-gitlab-hosts';
+
+// syncCfgGitProxy shows the custom protected-branch list only while Custom is
+// picked.
+function syncCfgGitProxy() {
+  const wrap = $('#cfg-gitproxy-protected-wrap');
+  if (wrap) wrap.hidden = $('#cfg-gitproxy-protected-mode').value !== 'custom';
+}
+
+// assembleGitProxy writes the keys the Git & forges form owns onto the agent
+// block, keeping any git_proxy key it has no control for. It throws on what
+// the server could not tell apart from a deliberate choice: a Custom list
+// left empty (which would save as "protect nothing") and one host given two
+// bases.
+function assembleGitProxy(agent) {
+  const gp = (agent.git_proxy && typeof agent.git_proxy === 'object') ? agent.git_proxy : {};
+  const remotes = readCfgStringList('cfg-gitproxy-remotes');
+  if (remotes.length) gp.allowed_remotes = remotes; else delete gp.allowed_remotes;
+  const mode = $('#cfg-gitproxy-protected-mode').value;
+  if (mode === 'custom') {
+    const refs = readCfgStringList('cfg-gitproxy-protected');
+    if (!refs.length) throw new Error('Protected branches: Custom needs at least one branch. To protect none, pick None.');
+    gp.protected_refs = refs;
+  } else if (mode === 'none') {
+    gp.protected_refs = [];
+  } else {
+    delete gp.protected_refs;
+  }
+  if ($('#cfg-gitproxy-forcepush').checked) gp.allow_force_push = true; else delete gp.allow_force_push;
+  for (const [id, key] of [['cfg-gitproxy-sshkey', 'ssh_key'], ['cfg-gitproxy-ghtoken', 'github_token_file'],
+    ['cfg-gitproxy-gltoken', 'gitlab_token_file']]) {
+    const value = $(`#${id}`).value.trim();
+    if (value) gp[key] = value; else delete gp[key];
+  }
+  const hosts = {};
+  for (const row of configDependencies.lists.get(GITLAB_HOSTS_LIST) || []) {
+    const host = String(row.host || '').trim();
+    const base = String(row.base || '').trim();
+    if (!host && !base) continue;
+    if (Object.hasOwn(hosts, host) && hosts[host] !== base) {
+      throw new Error(`GitLab instances: ${host || 'an empty host'} is listed twice with different base URLs.`);
+    }
+    hosts[host] = base;
+  }
+  if (Object.keys(hosts).length) gp.gitlab_hosts = hosts; else delete gp.gitlab_hosts;
+  if (Object.keys(gp).length) agent.git_proxy = gp; else delete agent.git_proxy;
+}
+
 function syncCfgEnables() {
   $('#cfg-precompact-blockmanual').disabled = !$('#cfg-precompact-enabled').checked;
   const rl = $('#cfg-ratelimit-enabled').checked;
@@ -739,6 +788,23 @@ function populateConfigForm(cfg) {
   renderCfgStringList('cfg-agent-allowedgroups', a.spawn_allowed_groups || [], 'cfg-group-list', 'group name');
 
   $('#cfg-sudo-json').value = a.sudo ? JSON.stringify(a.sudo, null, 2) : '';
+
+  // agent.git_proxy (Config › Git & forges). protected_refs has three
+  // meanings: absent protects the default branches, [] protects none, and a
+  // list protects exactly those.
+  const gp = (a.git_proxy && typeof a.git_proxy === 'object') ? a.git_proxy : {};
+  renderCfgStringList('cfg-gitproxy-remotes', gp.allowed_remotes || [], null, 'gitlab.example.com/team/*');
+  const refs = Array.isArray(gp.protected_refs) ? gp.protected_refs : null;
+  setSelectValue($('#cfg-gitproxy-protected-mode'), refs === null ? 'default' : (refs.length ? 'custom' : 'none'));
+  renderCfgStringList('cfg-gitproxy-protected', refs || [], null, 'branch or release/*');
+  $('#cfg-gitproxy-forcepush').checked = !!gp.allow_force_push;
+  $('#cfg-gitproxy-sshkey').value = gp.ssh_key || '';
+  $('#cfg-gitproxy-ghtoken').value = gp.github_token_file || '';
+  $('#cfg-gitproxy-gltoken').value = gp.gitlab_token_file || '';
+  configDependencies.lists.set(GITLAB_HOSTS_LIST, Object.entries(gp.gitlab_hosts || {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([host, base]) => ({ host, base: String(base ?? '') })));
+  syncCfgGitProxy();
 
   // Remote access — the single `bind` string splits into the interface + port
   // fields; status is rendered live from the snapshot (material/running state).
@@ -1284,6 +1350,8 @@ function assembleConfig() {
     if (Object.keys(rc).length) a.retired_cleanup = rc; else delete a.retired_cleanup;
   }
 
+  assembleGitProxy(a);
+
   const sudoRaw = $('#cfg-sudo-json').value.trim();
   if (sudoRaw) {
     let parsed;
@@ -1660,6 +1728,7 @@ function handleConfigEvent(event) {
     const notifyType = target.getAttribute?.('data-cfg-notify-type');
     if (notifyType) setCfgNotifyType(notifyType, target.checked);
     if (id === 'ask-profile') applyAskProfileState();
+    if (id === 'cfg-gitproxy-protected-mode') syncCfgGitProxy();
     if (id === 'cfg-remote-host' || id === 'cfg-remote-port') syncCfgRemoteStatus();
     if (id === 'cfg-remote-enabled') {
       const portEl = $('#cfg-remote-port');

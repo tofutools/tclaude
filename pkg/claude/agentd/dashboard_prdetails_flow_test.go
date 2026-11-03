@@ -28,6 +28,7 @@ type prDetailsResp struct {
 		Commits      int    `json:"commits"`
 		CreatedAt    string `json:"created_at"`
 		MergedAt     string `json:"merged_at"`
+		NoDiffstat   bool   `json:"no_diffstat"`
 	} `json:"details"`
 	Resolved   bool `json:"resolved"`
 	Refreshing bool `json:"refreshing"`

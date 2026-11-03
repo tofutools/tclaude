@@ -138,6 +138,23 @@ func prChecksCacheKey(rawURL string) string {
 }
 
 // summarize recomputes the aggregate counts from a check list.
+// resolvedChecksSummary is the summary to store for a resolver's answer. A
+// resolver that computed its own keeps it: for a GitLab merge request it
+// covers every job read and takes the pipeline's verdict when the read was
+// incomplete, while Checks is capped for display, so recomputing from Checks
+// would undo both. Only an empty summary is computed here, and a kept one is
+// re-stamped with the fetch time.
+func resolvedChecksSummary(info prChecksInfo, fetchedAt time.Time) prChecksSummary {
+	if info.Summary.State == "" {
+		return summarizePRChecks(info.Checks, fetchedAt)
+	}
+	summary := info.Summary
+	if !fetchedAt.IsZero() {
+		summary.FetchedAt = fetchedAt.Format(time.RFC3339)
+	}
+	return summary
+}
+
 func summarizePRChecks(checks []prCheckRun, fetchedAt time.Time) prChecksSummary {
 	s := prChecksSummary{Total: len(checks)}
 	cancelled := 0
@@ -564,7 +581,7 @@ func schedulePRChecksRefresh(rawURL string) bool {
 			}
 		}
 		info.FetchedAt = time.Now()
-		info.Summary = summarizePRChecks(info.Checks, info.FetchedAt)
+		info.Summary = resolvedChecksSummary(info, info.FetchedAt)
 		savePRChecks(rawURL, info)
 	})
 	return true
@@ -575,6 +592,9 @@ func schedulePRChecksRefresh(rawURL string) bool {
 // rides an existing `gh pr view`; this one is the extra call a hovering
 // human explicitly asked for.
 func livePRChecksResolver(rawURL string) (prChecksInfo, bool) {
+	if isGitLabPresentedPRURL(rawURL) {
+		return gitlabPRChecks(rawURL)
+	}
 	args, ok := presentedPRViewArgs(rawURL, "state,statusCheckRollup", gitProxyHardeningActive())
 	if !ok {
 		return prChecksInfo{}, false
@@ -651,8 +671,8 @@ func handleDashboardPRChecks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "url is required")
 		return
 	}
-	if len(rawURL) > maxAgentPRURLLen || !isGitHubPresentedPRURL(rawURL) {
-		writeError(w, http.StatusBadRequest, "bad_request", "url must be a GitHub pull request URL")
+	if len(rawURL) > maxAgentPRURLLen || !isForgePresentedPRURL(rawURL) {
+		writeError(w, http.StatusBadRequest, "bad_request", "url must be a GitHub pull request or GitLab merge request URL")
 		return
 	}
 	info, ok := loadPRChecks(rawURL)

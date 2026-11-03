@@ -87,31 +87,35 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
       { number: 3, url: 'https://github.com/acme/app/pull/3', checks: { total: 2, passed: 2, state: 'passing' } },
       { number: 4, url: 'https://github.com/acme/app/pull/4' },
       { number: 5, url: 'https://github.com/acme/app/pull/5', draft: true, checks: { total: 0, state: 'none' } },
+      // A GitLab merge request on a self-hosted port survives the URL filter.
+      { number: 6, url: 'https://gitlab.example.test:8929/acme/sub/app/-/merge_requests/6', checks: { total: 1, failed: 1, state: 'failing' } },
+      // Anything else does not.
+      { number: 7, url: 'https://example.com/review/7', checks: { total: 1, failed: 1, state: 'failing' } },
     ],
   };
   assert.deepEqual(
     authoredOpenPRsView({ authored_open_prs: prs }, 'attention').items.map((pr) => pr.number),
-    [1, 3, 4],
+    [1, 3, 4, 6],
     'failed, completed, and no-CI PRs need attention; clean CI still running and drafts do not',
   );
   assert.deepEqual(
     authoredOpenPRsView({ authored_open_prs: prs }, 'attention', true).items.map((pr) => pr.number),
-    [1, 3, 4, 5],
+    [1, 3, 4, 5, 6],
     'the explicit opt-in adds otherwise-attention-worthy drafts to the queue',
   );
-  assert.deepEqual(authoredOpenPRsView({ authored_open_prs: prs }, 'unattached').items.map((pr) => pr.number), [2, 3, 4, 5]);
-  assert.equal(authoredOpenPRsView({ authored_open_prs: prs }).attention, 3);
+  assert.deepEqual(authoredOpenPRsView({ authored_open_prs: prs }, 'unattached').items.map((pr) => pr.number), [2, 3, 4, 5, 6]);
+  assert.equal(authoredOpenPRsView({ authored_open_prs: prs }).attention, 4);
   assert.equal(authoredOpenPRsView({ authored_open_prs: prs }).hasDrafts, true);
   assert.equal(authoredOpenPRsView({ authored_open_prs: { ...prs, search_url: 'javascript:alert(1)' } }).searchURL, '');
   const localPR = {
-    number: 6, url: 'https://github.com/acme/app/pull/6', local: true, agent_id: 'agt_2',
+    number: 8, url: 'https://github.com/acme/app/pull/8', local: true, agent_id: 'agt_2',
   };
-  const withLocal = { ...prs, total: 6, items: [...prs.items, localPR] };
+  const withLocal = { ...prs, total: 8, items: [...prs.items, localPR] };
   assert.equal(authoredOpenPRsView({ authored_open_prs: withLocal }).items.at(-1), localPR,
     'a locally unioned row passes the normal open-PR URL filter');
   assert.deepEqual(
     authoredOpenPRsView({ authored_open_prs: withLocal }, 'unattached').items.map((pr) => pr.number),
-    [2, 3, 4, 5],
+    [2, 3, 4, 5, 6],
     'an associated local row does not inflate the unattached count',
   );
   // The fused Groups view's peers: their agents' PRs count as attached.
@@ -126,8 +130,9 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   const fused = authoredOpenPRsView({ authored_open_prs: prs }, 'all', false, peers);
   assert.deepEqual(fused.items.map((pr) => [pr.number, pr.agent_id || '', pr.agent_title || '']), [
     [1, 'agt_1', ''], [2, 'agt_p', 'paste-files@brain'], [3, 'agt_q', 'other@brain'], [4, '', ''], [5, '', ''],
+    [6, '', ''],
   ], 'a peer agent fills in only PRs the page daemon left unattached');
-  assert.equal(fused.unattached, 2);
+  assert.equal(fused.unattached, 3);
   assert.equal(prs.items[1].agent_id, undefined, 'the snapshot rows are not mutated');
 
   // Recently closed PRs live in their own filter: they must not reach the open
@@ -143,9 +148,9 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
     ],
   };
   const openView = authoredOpenPRsView({ authored_open_prs: withRecent });
-  assert.deepEqual(openView.items.map((pr) => pr.number), [1, 2, 3, 4, 5]);
+  assert.deepEqual(openView.items.map((pr) => pr.number), [1, 2, 3, 4, 5, 6]);
   assert.equal(openView.recentCount, 1, 'a malformed recent URL is dropped');
-  assert.equal(openView.attention, 3, 'recent PRs never inflate the open tallies');
+  assert.equal(openView.attention, 4, 'recent PRs never inflate the open tallies');
   assert.equal(openView.alwaysShow, true);
   const recentView = authoredOpenPRsView({ authored_open_prs: withRecent }, 'recent');
   assert.deepEqual(recentView.items.map((pr) => pr.number), [9]);
@@ -163,7 +168,7 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   const off = authoredOpenPRsView({ authored_open_prs: { ...withRecent, recent_window_days: 0 } }, 'recent');
   assert.equal(off.showingRecent, false);
   assert.equal(off.recentCount, 0);
-  assert.deepEqual(off.items.map((pr) => pr.number), [1, 2, 3, 4, 5]);
+  assert.deepEqual(off.items.map((pr) => pr.number), [1, 2, 3, 4, 5, 6]);
 
   const member = { conv_id: 'same', online: true, state: { status: 'working' } };
   const activity = globalActivityView({
@@ -564,4 +569,209 @@ test('ignored PRs leave every open list and count until they expire or come back
   const kept = parseIgnoredPRs(bounded, now);
   assert.ok(kept['acme/app#200'] && !kept['acme/app#1'], 'the oldest ignores are evicted first');
   assert.deepEqual(Object.keys(parseIgnoredPRs(JSON.stringify({ x: { url: 'javascript:alert(1)', until: 0, at: 1 } }))), []);
+});
+
+test('the Open MRs model filters merge requests like PRs and keeps only safe instance links', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { authoredOpenMRsView } = await harness.importDashboardModule('js/shell-model.js');
+  const base = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/';
+  const snapshot = { authored_open_mrs: {
+    available: true, total: 5,
+    items: [
+      { number: 1, url: `${base}1`, checks: { total: 1, passed: 1, state: 'passing' }, reviews: { approved: 1 }, agent_id: 'agt_1' },
+      { number: 2, url: `${base}2`, checks: { total: 1, passed: 1, state: 'passing' }, reviews: { approved: 0 } },
+      { number: 3, url: `${base}3`, checks: { total: 1, pending: 1, state: 'pending' }, conflicts: true },
+      { number: 4, url: `${base}4`, checks: { total: 1, pending: 1, state: 'pending' }, reviews: { changes_requested: 1 } },
+      { number: 5, url: `${base}5`, draft: true, checks: { total: 1, failed: 1, state: 'failing' } },
+      { number: 6, url: 'https://example.com/not-a-merge-request/6' },
+    ],
+    instances: [
+      { host: 'gitlab.example.test:8929', url: 'https://gitlab.example.test:8929/dashboard/merge_requests?state=opened&author_username=jdoe' },
+      { host: 'evil.example.test', url: 'javascript:alert(1)' },
+      { host: 'down.example.test', error: 'GitLab returned HTTP 502' },
+    ],
+  } };
+  const all = authoredOpenMRsView(snapshot);
+  assert.deepEqual(all.items.map((mr) => mr.number), [1, 2, 3, 4, 5], 'a URL that is not a merge request is dropped');
+  assert.equal(all.ready, 1, 'ready needs an approval as well as a passing pipeline');
+  assert.equal(all.attention, 4, 'green, conflicting and changes-requested need attention; a draft does not');
+  assert.equal(all.unattached, 4);
+  assert.deepEqual(authoredOpenMRsView(snapshot, 'attention').items.map((mr) => mr.number), [1, 2, 3, 4]);
+  assert.deepEqual(authoredOpenMRsView(snapshot, 'attention', true).items.map((mr) => mr.number), [1, 2, 3, 4, 5]);
+  assert.deepEqual(authoredOpenMRsView(snapshot, 'ready').items.map((mr) => mr.number), [1]);
+  assert.equal(authoredOpenMRsView(snapshot, 'bogus').filter, 'all', 'filters it does not offer fall back to Open');
+  const noWindow = authoredOpenMRsView(snapshot, 'recent');
+  assert.equal(noWindow.showingRecent, false, 'no recently closed list without a window');
+  assert.deepEqual(noWindow.items.map((mr) => mr.number), all.items.map((mr) => mr.number), 'so the open list shows');
+  assert.deepEqual(all.instances, [
+    { host: 'gitlab.example.test:8929', url: 'https://gitlab.example.test:8929/dashboard/merge_requests?state=opened&author_username=jdoe', error: '', everyoneError: '' },
+    { host: 'evil.example.test', url: '', error: '', everyoneError: '' },
+    { host: 'down.example.test', url: '', error: 'GitLab returned HTTP 502', everyoneError: '' },
+  ]);
+  assert.equal(authoredOpenMRsView({}).available, false, 'no list, no indicator');
+});
+
+test('Open MRs project tabs that share a name show their full paths', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { authoredOpenMRsView } = await harness.importDashboardModule('js/shell-model.js');
+  const tab = (host, project) => ({ host, project, total: 1, items: [] });
+  const view = authoredOpenMRsView({ authored_open_mrs: { available: true, total: 0, items: [], projects: [
+    tab('gitlab.example.test', 'team-a/api'),
+    tab('gitlab.example.test', 'team-b/api'),
+    tab('gitlab.example.test', 'acme/web'),
+    tab('gitlab.example.test', 'acme/tools/cli'),
+    tab('other.example.test', 'acme/tools/cli'),
+  ] } });
+  assert.deepEqual(view.projects.map((p) => p.label), [
+    'team-a/api', 'team-b/api', 'web',
+    'gitlab.example.test/acme/tools/cli', 'other.example.test/acme/tools/cli',
+  ], 'a unique name stays short; a shared one shows its path, and its host when the path is shared too');
+});
+
+test('the Open MRs model keeps your list on top and serves project tabs from everyone\'s', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { authoredOpenMRsView } = await harness.importDashboardModule('js/shell-model.js');
+  const base = 'https://gitlab.example.test:8929';
+  const mr = (project, n, extra = {}) => ({ number: n, url: `${base}/${project}/-/merge_requests/${n}`, ...extra });
+  const snapshot = { authored_open_mrs: {
+    available: true, total: 1, items: [mr('acme/app', 1, { checks: { total: 1, failed: 1, state: 'failing' } })],
+    everyone_total: 4, everyone_truncated: true,
+    projects: [
+      { host: 'gitlab.example.test:8929', project: 'contoso/player', url: `${base}/contoso/player/-/merge_requests`,
+        total: 3, agents: true, items: [
+          mr('contoso/player', 249, { author: 'martin', checks: { total: 1, passed: 1, state: 'passing' }, reviews: { approved: 1 } }),
+          mr('contoso/player', 250, { author: 'ann', checks: { total: 1, pending: 1, state: 'pending' } }),
+          mr('contoso/player', 251, { author: 'bob', draft: true }),
+        ] },
+      { host: 'gitlab.example.test:8929', project: 'acme/app', url: 'javascript:alert(1)', total: 1, items: [mr('acme/app', 1)] },
+    ],
+  } };
+  const mine = authoredOpenMRsView(snapshot);
+  assert.equal(mine.total, 1, 'the top level is always yours');
+  assert.equal(mine.attention, 1);
+  assert.equal(mine.everyoneTotal, 4);
+  assert.equal(mine.everyoneTruncated, true);
+  assert.equal(mine.panel.total, 1, 'no project selected: the panel is yours');
+  assert.deepEqual(mine.projects.map((p) => [p.key, p.label, p.total, p.agents]), [
+    ['gitlab.example.test:8929/contoso/player', 'player', 3, true],
+    ['gitlab.example.test:8929/acme/app', 'app', 1, false],
+  ]);
+  assert.equal(mine.projects[1].url, '', 'an unsafe project link is dropped');
+
+  const pp = authoredOpenMRsView(snapshot, 'all', false, 'gitlab.example.test:8929/contoso/player');
+  assert.equal(pp.total, 1, 'the footer number does not follow the tab');
+  assert.equal(pp.project, 'gitlab.example.test:8929/contoso/player');
+  assert.deepEqual(pp.panel.items.map((x) => x.number), [249, 250, 251]);
+  assert.equal(pp.panel.ready, 1);
+  assert.equal(pp.panel.attention, 1, 'green needs attention; running and draft do not');
+  assert.deepEqual(authoredOpenMRsView(snapshot, 'ready', false, 'gitlab.example.test:8929/contoso/player')
+    .panel.items.map((x) => x.number), [249]);
+  assert.equal(authoredOpenMRsView(snapshot, 'all', false, 'gone/project').panel.total, 1,
+    'a tab that disappeared falls back to your list');
+});
+
+test('a conflicting merge request is never ready to merge, however green and approved', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { authoredOpenMRsView } = await harness.importDashboardModule('js/shell-model.js');
+  const base = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/';
+  const green = { checks: { total: 1, passed: 1, state: 'passing' }, reviews: { approved: 1 } };
+  const snapshot = { authored_open_mrs: { available: true, total: 2, items: [
+    { number: 1, url: `${base}1`, ...green },
+    { number: 2, url: `${base}2`, ...green, conflicts: true },
+  ] } };
+  const view = authoredOpenMRsView(snapshot);
+  assert.equal(view.ready, 1, 'the conflicting one is not counted');
+  assert.deepEqual(authoredOpenMRsView(snapshot, 'ready').items.map((mr) => mr.number), [1]);
+  assert.deepEqual(authoredOpenMRsView(snapshot, 'attention').items.map((mr) => mr.number), [1, 2],
+    'it needs attention instead');
+});
+
+test('a merge request still missing required approvals is not ready, whatever its count', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { authoredOpenMRsView } = await harness.importDashboardModule('js/shell-model.js');
+  const base = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/';
+  const passing = { total: 1, passed: 1, state: 'passing' };
+  const view = authoredOpenMRsView({ authored_open_mrs: { available: true, total: 2, items: [
+    { number: 1, url: `${base}1`, checks: passing, reviews: { approved: 1 } },
+    { number: 2, url: `${base}2`, checks: passing, reviews: { approved: 1, decision: 'review_required' } },
+  ] } });
+  assert.equal(view.ready, 1);
+  assert.deepEqual(authoredOpenMRsView({ authored_open_mrs: { available: true, total: 2, items: view.items } }, 'ready')
+    .items.map((mr) => mr.number), [1]);
+});
+
+test('merge requests share the ignore store under their own key, and leave every list', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { prKey, ignoresOfKind, ignorePR, authoredOpenMRsView, authoredOpenPRsView, MR_PROJECT_TAB_OWNER } =
+    await harness.importDashboardModule('js/shell-model.js');
+  const base = 'https://gitlab.example.test:8929/contoso/player/-/merge_requests/';
+  assert.equal(prKey(`${base}7/diffs?view=inline`), 'mr:gitlab.example.test:8929/contoso/player!7', 'the kind prefix, sub-page dropped');
+  assert.equal(prKey('https://GitLab.Example.test:8929/Contoso/Player/-/merge_requests/7'), prKey(`${base}7`), 'case folds');
+  assert.equal(prKey('https://github.com/Acme/App/pull/3/files'), 'acme/app#3', 'a pull request keeps its unprefixed key');
+
+  const now = Date.parse('2026-11-03T10:00:00Z');
+  let ignored = ignorePR({}, { url: 'https://github.com/acme/app/pull/3', number: 3, title: 'A PR' }, 0, now);
+  ignored = ignorePR(ignored, { url: `${base}7`, number: 7, title: 'Mine, ignored', repository: 'contoso/player' }, 0, now);
+  ignored = ignorePR(ignored, { url: `${base}9`, number: 9, title: 'Someone else\'s', repository: 'contoso/player' },
+    0, now, MR_PROJECT_TAB_OWNER);
+  ignored = ignorePR(ignored, { url: `${base}5`, number: 5, title: 'Gone from every list', repository: 'contoso/player' }, 0, now);
+  assert.deepEqual(Object.keys(ignoresOfKind(ignored, 'pr')), ['acme/app#3']);
+  assert.equal(Object.keys(ignoresOfKind(ignored, 'mr')).length, 3);
+
+  const mr = (n, extra = {}) => ({ number: n, url: `${base}${n}`, title: `MR ${n}`, repository: 'contoso/player',
+    checks: { total: 1, passed: 1, state: 'passing' }, ...extra });
+  const snapshot = { authored_open_mrs: {
+    available: true, total: 2, items: [mr(7), mr(8)], everyone_total: 3,
+    projects: [{ host: 'gitlab.example.test:8929', project: 'contoso/player', url: `${base.slice(0, -1)}`,
+      total: 3, items: [mr(7), mr(8), mr(9, { author: 'martin' })] }],
+  } };
+
+  const mine = authoredOpenMRsView(snapshot, 'all', false, '', ignored, now);
+  assert.deepEqual(mine.items.map((pr) => pr.number), [8], 'ignored merge requests leave Mine');
+  assert.equal(mine.total, 1);
+  assert.equal(mine.ignoredCount, 2, 'Mine keeps its own ignore, and the one it no longer lists');
+  assert.equal(mine.everyoneTotal, 1, 'the footer\'s second number leaves both ignored rows out');
+  const tabKey = mine.projects[0].key;
+  assert.equal(mine.projects[0].total, 1, 'and so does the tab');
+  assert.deepEqual(authoredOpenMRsView(snapshot, 'ignored', false, '', ignored, now).items.map((pr) => pr.number), [7, 5]);
+
+  const tab = authoredOpenMRsView(snapshot, 'all', false, tabKey, ignored, now);
+  assert.deepEqual(tab.panel.items.map((pr) => pr.number), [8], 'hidden in the project tab too');
+  assert.equal(tab.panel.total, 1);
+  assert.equal(tab.ignoreOwner, MR_PROJECT_TAB_OWNER);
+  assert.ok(tab.canIgnore);
+  assert.deepEqual(authoredOpenMRsView(snapshot, 'ignored', false, tabKey, ignored, now).panel.items.map((pr) => pr.number),
+    [7, 9], 'the tab lists what it would show, and not what was ignored from Mine and is gone');
+
+  const prs = authoredOpenPRsView({ authored_open_prs: { available: true, total: 0, items: [] } },
+    'ignored', false, [], ignoresOfKind(ignored, 'pr'), now);
+  assert.deepEqual(prs.items.map((pr) => pr.number), [3], 'Open PRs never lists a merge request ignore');
+});
+
+test('Open MRs lists your recently closed merge requests on Mine only', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { authoredOpenMRsView } = await harness.importDashboardModule('js/shell-model.js');
+  const base = 'https://gitlab.example.test:8929/contoso/player/-/merge_requests/';
+  const snapshot = { authored_open_mrs: {
+    available: true, total: 1, recent_window_days: 3,
+    items: [{ number: 7, url: `${base}7`, title: 'Open', repository: 'contoso/player',
+      checks: { total: 1, pending: 1, state: 'pending' } }],
+    recent: [
+      { number: 5, url: `${base}5`, title: 'Landed', repository: 'contoso/player', state: 'merged', closed_at: '2026-11-02T10:00:00Z',
+        checks: { total: 1, failed: 1, state: 'failing' } },
+    ],
+    projects: [{ host: 'gitlab.example.test:8929', project: 'contoso/player', total: 1,
+      items: [{ number: 7, url: `${base}7`, title: 'Open', repository: 'contoso/player' }] }],
+  } };
+  const mine = authoredOpenMRsView(snapshot, 'recent');
+  assert.equal(mine.recentWindowDays, 3);
+  assert.equal(mine.recentCount, 1);
+  assert.ok(mine.panel.showingRecent);
+  assert.deepEqual(mine.panel.items.map((mr) => [mr.number, mr.state]), [[5, 'merged']]);
+  assert.equal(mine.total, 1, 'a closed merge request never counts as open work');
+  assert.equal(mine.attention, 0, 'nor as needing attention, however red its last pipeline');
+
+  const tab = authoredOpenMRsView(snapshot, 'recent', false, mine.projects[0].key);
+  assert.equal(tab.panel.recentWindowDays, 0, 'a project tab has no recently closed list');
+  assert.deepEqual(tab.panel.items.map((mr) => mr.number), [7]);
 });

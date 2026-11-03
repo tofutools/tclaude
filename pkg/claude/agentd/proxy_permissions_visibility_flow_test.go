@@ -38,6 +38,9 @@ func TestProxyPermissionSlugsFollowProxyVisibility(t *testing.T) {
 		agentd.PermGitHubRead,
 		agentd.PermGitHubWrite,
 		agentd.PermGitHubMerge,
+		agentd.PermGitLabRead,
+		agentd.PermGitLabWrite,
+		agentd.PermGitLabMerge,
 	}
 	linearSlugs := []string{
 		agentd.PermLinearRead,

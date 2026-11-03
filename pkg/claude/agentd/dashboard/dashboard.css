@@ -148,6 +148,18 @@ footer {
   gap: 16px;
 }
 .open-prs { display: inline-flex; height: calc(var(--footer-h) - 1px); align-items: stretch; margin-left: auto; }
+/* Open MRs sits just left of Open PRs. Whichever comes first takes the auto
+   margin that pushes the pair right; two auto margins would split the space
+   between them and strand Open MRs mid-footer. */
+#shell-open-mrs-root:has(.open-mrs) + #shell-open-prs-root .open-prs { margin-left: 0; }
+/* Open MRs carries two numbers: "mine" (the usual badge, blue when one of
+   yours needs attention) and "all" (everyone's, an outlined neutral badge
+   that never takes the attention colour), each named by a small label. */
+.open-mrs-scope { color: #6e7681; font-size: 10px; text-transform: lowercase; margin-right: -3px; }
+.open-mrs-all-count,
+.open-prs.has-attention .open-mrs-all-count {
+  background: transparent; color: #8b949e; box-shadow: inset 0 0 0 1px #30363d;
+}
 .open-prs-trigger {
   display: inline-flex; align-items: center; gap: 7px; height: 100%; padding: 0 12px;
   border: 0; border-left: 1px solid #2a3340; border-right: 1px solid #2a3340;
@@ -342,6 +354,13 @@ body.dock-open .open-prs.is-open::before {
 @media (max-width: 620px) {
   .open-prs-popover, .open-prs.is-open::before { right: 8px; width: calc(100vw - 16px); }
   body.dock-open .open-prs-popover, body.dock-open .open-prs.is-open::before { right: 8px; }
+  /* Open MRs and Open PRs side by side must not clip at phone widths: the
+     triggers tighten and lose their chevrons, and if the bar still runs out
+     of room it scrolls sideways. The popovers are fixed, so they are not
+     clipped by it. Both numbers and their labels stay. */
+  .footer-inner { overflow-x: auto; gap: 8px; padding: 0 8px; }
+  .open-prs-trigger { padding: 0 8px; gap: 5px; }
+  .open-prs-chevron { display: none; }
 }
 footer .meta { color: var(--ui-muted-text); font-size: 12px; }
 footer .meta-time { font-variant-numeric: tabular-nums; }

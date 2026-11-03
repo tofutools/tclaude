@@ -794,6 +794,33 @@ var permissionRegistry = []PermSlug{
 			"would make honouring it here a no-op for most of the merges a grant is given for. Not default-granted and " +
 			"not owner-implied.",
 	},
+	{
+		Slug:      PermGitLabRead,
+		ScopeDims: []ScopeDim{ScopeDimRemote},
+		Description: "Read GitLab merge requests, issues and CI results through the daemon's GitLab token (tclaude proxy gitlab " +
+			"mr ls/view/checks/comments, issue ls/view, pipeline ls, job log-failed/artifacts/download). Restricted to the project " +
+			"the agent's own remote resolves to, and only when that remote is on the operator's allow-list and its host is a " +
+			"configured GitLab instance (agent.git_proxy.gitlab_hosts, or gitlab.com). Not default-granted: it reads private " +
+			"project data as the token's owner. job download also WRITES, under the same bounds as the GitHub proxy: into " +
+			".tclaude-artifacts/ in the agent's own work tree, 512 MiB compressed and 2 GiB unpacked per download, at most 3 " +
+			"directories kept.",
+	},
+	{
+		Slug:      PermGitLabWrite,
+		ScopeDims: []ScopeDim{ScopeDimRemote},
+		Description: "Create and comment on GitLab merge requests and issues through the daemon's GitLab token " +
+			"(tclaude proxy gitlab mr create/edit/comment/ready, issue comment). Everything it writes is attributed to the " +
+			"token's owner, so it is not default-granted and not owner-implied. It does NOT confer proxy.gitlab.merge.",
+	},
+	{
+		Slug:      PermGitLabMerge,
+		ScopeDims: []ScopeDim{ScopeDimRemote},
+		Description: "Merge a GitLab merge request through the daemon's GitLab token (tclaude proxy gitlab mr merge). " +
+			"Split off from proxy.gitlab.write, and not implied by it: opening a merge request proposes a change, while " +
+			"merging one lands it on the target branch. GitLab's own protected-branch rules and approval requirements still " +
+			"apply. agent.git_proxy.protected_refs does NOT, for the reason given on proxy.github.merge. Not default-granted " +
+			"and not owner-implied.",
+	},
 	{Slug: PermModelsProxy, Description: "Use a named peer model gateway. Scope with peer= and http_proxy=.", ScopeDims: []ScopeDim{ScopeDimPeer, ScopeDimHTTPProxy}},
 	{Slug: PermHTTP, Description: "Send HTTP requests through a named daemon proxy with its configured credential header. Grants full service access; scope with http_proxy=name.", ScopeDims: []ScopeDim{ScopeDimHTTPProxy}},
 
@@ -880,7 +907,8 @@ func visiblePermissionRegistry(vis proxyVisibility) []PermSlug {
 // proxy permission is always visible.
 func proxyPermissionVisible(slug string, vis proxyVisibility) bool {
 	switch slug {
-	case PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge:
+	case PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge,
+		PermGitLabRead, PermGitLabWrite, PermGitLabMerge:
 		return vis.git
 	case PermLinearRead, PermLinearWrite:
 		return vis.linear
@@ -896,6 +924,7 @@ func proxyPermissionVisible(slug string, vis proxyVisibility) bool {
 func isSemanticProxyPermission(slug string) bool {
 	switch slug {
 	case PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge,
+		PermGitLabRead, PermGitLabWrite, PermGitLabMerge,
 		PermLinearRead, PermLinearWrite, PermAWBRead, PermAWBWrite, PermHTTP:
 		return true
 	default:

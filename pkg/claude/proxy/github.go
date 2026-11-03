@@ -87,7 +87,10 @@ type ghProxyOutcome struct {
 	TimedOut  bool            `json:"timed_out"`
 }
 
-func (o *ghProxyOutcome) render(stdout, stderr io.Writer, what string) int {
+// render prints an outcome. family names the proxy in the error lines
+// ("github", "gitlab"), because the GitLab CLI shares this type and its
+// daemon's wire shape.
+func (o *ghProxyOutcome) render(stdout, stderr io.Writer, family, what string) int {
 	if len(o.JSON) > 0 {
 		// json.Indent, NOT unmarshal-into-any-then-re-marshal. Decoding the
 		// response into `any` would turn every JSON number into a float64, so a
@@ -99,7 +102,7 @@ func (o *ghProxyOutcome) render(stdout, stderr io.Writer, what string) int {
 		if json.Indent(&pretty, o.JSON, "", "  ") == nil {
 			pretty.WriteByte('\n')
 			if _, err := stdout.Write(pretty.Bytes()); err != nil {
-				fmt.Fprintln(stderr, "Error: could not write the GitHub response")
+				fmt.Fprintf(stderr, "Error: could not write the %s response\n", family)
 				return rcIOFailure
 			}
 		} else {
@@ -115,11 +118,11 @@ func (o *ghProxyOutcome) render(stdout, stderr io.Writer, what string) int {
 		fmt.Fprintln(stderr, "(output truncated by the daemon; the tail is shown)")
 	}
 	if o.TimedOut {
-		fmt.Fprintf(stderr, "Error: github %s timed out in the daemon; it may or may not have taken effect.\n", what)
+		fmt.Fprintf(stderr, "Error: %s %s timed out in the daemon; it may or may not have taken effect.\n", family, what)
 		return rcIOFailure
 	}
 	if o.ExitCode != 0 {
-		fmt.Fprintf(stderr, "Error: github %s failed (exit %d) against %s.\n", what, o.ExitCode, o.Repo)
+		fmt.Fprintf(stderr, "Error: %s %s failed (exit %d) against %s.\n", family, what, o.ExitCode, o.Repo)
 		return rcIOFailure
 	}
 	return rcOK
@@ -133,6 +136,13 @@ func ghProxyCall(path string, body map[string]any, askHuman, what string, stdout
 // ghProxyCallTimeout is ghProxyCall for the verbs the daemon allows longer
 // than its own 60s default.
 func ghProxyCallTimeout(path string, body map[string]any, askHuman, what string, timeout time.Duration, stdout, stderr io.Writer) int {
+	return forgeProxyCallTimeout("github", path, body, askHuman, what, timeout, stdout, stderr)
+}
+
+// forgeProxyCallTimeout is the shared tail of the GitHub and GitLab verbs:
+// the two daemons answer in the same wire shape, so one call path renders
+// both, with family naming the proxy in the error lines.
+func forgeProxyCallTimeout(family, path string, body map[string]any, askHuman, what string, timeout time.Duration, stdout, stderr io.Writer) int {
 	ask, err := agent.ParseAskHuman(askHuman)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -151,7 +161,7 @@ func ghProxyCallTimeout(path string, body map[string]any, askHuman, what string,
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return agent.MapDaemonErrorToRC(err)
 	}
-	return resp.render(stdout, stderr, what)
+	return resp.render(stdout, stderr, family, what)
 }
 
 // ---------------------------------------------------------------------------
