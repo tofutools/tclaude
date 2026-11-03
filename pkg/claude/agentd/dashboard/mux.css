@@ -220,11 +220,8 @@ body.hide-costs .mux-cost-toggle { display: none; }
 .mux-group-pill:focus-visible { outline: 2px solid var(--mux-group-accent); outline-offset: 1px; }
 .mux-group-caret { font-size: 10px; opacity: 0.85; }
 .mux-group-name { overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
-.mux-group-count {
-  min-width: 15px; padding: 0 4px; border-radius: 8px; text-align: center;
-  font-size: 10px; line-height: 15px;
-  background: color-mix(in srgb, var(--mux-group-accent) 45%, #0d1117); color: #f0f6fc;
-}
+/* .ui-badge draws the pill; the stack's count keeps its group-accent tint. */
+.mux-group-count.ui-badge { background: color-mix(in srgb, var(--mux-group-accent) 45%, #0d1117); color: #f0f6fc; }
 .mux-group-rename {
   flex: none; margin-bottom: 3px; padding: 4px 7px; width: 150px;
   font: inherit; font-size: 12px; border-radius: 11px;
@@ -665,10 +662,6 @@ body.wizard .page-head-glyph { color: var(--ui-wizard-gold); }
 .mux-bg-trigger:hover, .mux-bg.open .mux-bg-trigger { background: #1b222b; color: #e6edf3; border-color: #58a6ff; }
 .mux-bg-trigger:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .mux-bg-icon { flex: none; }
-.mux-bg-count {
-  min-width: 18px; padding: 0 5px; border-radius: 9px; background: #21262d;
-  color: #c9d1d9; font-size: 11px; font-weight: 600; text-align: center;
-}
 .mux-bg-pop {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: var(--z-popover);
   width: min(440px, calc(100vw - 24px)); max-height: min(70vh, 560px); overflow-y: auto;

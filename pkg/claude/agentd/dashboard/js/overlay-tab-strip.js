@@ -188,7 +188,7 @@ function GroupStack({ window, group, overlay, win, renderTab }) {
         onContextMenu=${menu.onContextMenu} onKeyDown=${onKeyDown}>
         <span class="mux-group-caret" aria-hidden="true">${group.collapsed ? '▸' : '▾'}</span>
         <span class="mux-group-name">${group.name}</span>
-        <span class="mux-group-count" aria-hidden="true">${members.length}</span>
+        <span class="mux-group-count ui-badge" aria-hidden="true">${members.length}</span>
       </button>`}
     ${visible.map(renderTab)}
   </div>`;

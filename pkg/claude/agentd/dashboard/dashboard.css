@@ -7262,7 +7262,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .sbx-rule-bucket-unjudged > summary {
   color: #8b949e;
 }
-.sbx-rule-bucket-unjudged .sbx-rule-count {
+.sbx-rule-bucket-unjudged .sbx-rule-count.ui-badge {
   background: #1c2128;
   color: #8b949e;
 }
@@ -7298,16 +7298,10 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .sbx-launch-blocked > strong {
   display: block;
 }
+/* .ui-badge draws the pill; this pins it to the summary's right edge. */
 .sbx-rule-count {
-  background: #21262d;
-  border-radius: 999px;
-  font-size: .75rem;
-  font-weight: 500;
-  min-width: 1.4rem;
-  padding: .05rem .4rem;
   position: absolute;
   right: 0;
-  text-align: center;
   top: 50%;
   transform: translateY(-50%);
 }
@@ -17689,7 +17683,7 @@ body.wizard .groups-processes-placeholder-glyph { color: #d4af37; }
 .gp-avatar-states { display: inline-flex; align-items: center; gap: 10px; padding: 2px; }
 .gp-member { position: relative; width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex: none; background: #30363d; color: #c9d1d9; }
 .gp-member-glyph { width: 13px; height: 13px; fill: currentColor; }
-.gp-member-count { position: absolute; bottom: -6px; right: -7px; min-width: 1.4em; padding: 0 3px; border-radius: 7px; background: #30363d; color: #fff; font-size: 9px; font-weight: 700; line-height: 1.2; text-align: center; box-shadow: 0 0 0 1.5px #0d1117; }
+.gp-member-count { bottom: -6px; right: -7px; }
 .gp-member.busy { box-shadow: 0 0 0 2px #58a6ff; }
 .gp-member.is-working { box-shadow: 0 0 0 2px #3fb950; }
 .gp-member.is-waiting { box-shadow: 0 0 0 2px #ff7b72; }
@@ -17803,7 +17797,6 @@ body.wizard .gf-section-head { border-bottom-color: rgba(122, 93, 176, 0.35); }
 body.wizard .gf-label { color: #f3e6c0; }
 body.wizard .gp-card-head { border-bottom-color: rgba(122, 93, 176, 0.4); }
 body.wizard .gp-member.busy { box-shadow: 0 0 0 2px #a97bd6; }
-body.wizard .gp-member-count { background: #2c2248; color: #e7d9f5; box-shadow: 0 0 0 1.5px #0f0a1f; }
 .gp-start-form select:where(:not(.ui-select)) { font: inherit; font-size: 12px; border: 1px solid #30363d; border-radius: 6px; padding: 3px 10px; background: #21262d; color: #e6edf3; cursor: pointer; }
 .gp-start-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px 18px; padding: 8px 12px; border: 1px solid #2a3340; border-radius: 8px; background: #11161d; }
 .gp-start-note { color: #8b949e; font-size: 12px; }

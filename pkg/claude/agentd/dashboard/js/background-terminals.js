@@ -430,7 +430,7 @@ export function BackgroundTerminalsChip({ rows, snapshot = null }) {
         aria-label=${`${count} tclaude ${noun} running in the background without a terminal`}
         title=${`${count} tclaude ${noun} still running with no terminal attached`}
         onClick=${() => { if (pinned) close(); else { setOpen(true); setPinned(true); } }}>
-        <${BackgroundIcon} /><span class="mux-bg-count">${count}</span>
+        <${BackgroundIcon} /><span class="mux-bg-count ui-badge">${count}</span>
       </button>
       ${open ? html`
         <div class="mux-bg-pop" role="dialog" aria-label="Background terminals">

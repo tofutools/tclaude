@@ -1101,7 +1101,7 @@ function GroupStack({
         >
           <span class="mux-group-caret" aria-hidden="true">${group.collapsed ? '▸' : '▾'}</span>
           <span class="mux-group-name">${group.name}</span>
-          <span class="mux-group-count" aria-hidden="true">${panes.length}</span>
+          <span class="mux-group-count ui-badge" aria-hidden="true">${panes.length}</span>
           ${hiddenUnread ? html`<span class="human-notification-attention-glyph mux-group-attention"
             aria-hidden="true" title=${`${hiddenUnread} unread notification${hiddenUnread === 1 ? '' : 's'} in a collapsed tab — open quick reader`}
             onClick=${openHiddenNotification} onDblClick=${(event) => event.stopPropagation()}>!</span>` : null}
