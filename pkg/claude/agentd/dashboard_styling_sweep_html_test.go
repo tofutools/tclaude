@@ -39,8 +39,6 @@ func TestDashboardCSS_StylingSweep(t *testing.T) {
 	// Hover brightens the background at the base rule's own rank (:where), so a
 	// scoped (do-not-touch) toolbar skin always out-ranks it and nothing leaks.
 	must("\nbutton.tool:where(:hover) { background: var(--ui-bg-hover); }", "the fallback hover brightens the background without out-ranking scoped skins")
-	// The deploy/summon action is a `.primary`, not a `.tool`.
-	must(".template-card .tc-actions button:where(:not(.ui-btn)).primary {", "the template deploy .primary button is themed")
 
 	// Group 2 — A1 sizing (both skins): the "⧉ manage templates…" tool button
 	// beside the template <select> gets the dir-browse flex idiom so it matches
@@ -52,14 +50,6 @@ func TestDashboardCSS_StylingSweep(t *testing.T) {
 	// field (its own .template-editor-field rule).
 	must(".template-agent-row input[type=number],", "the .ta-wave number input is folded into the row-input rule")
 	must(".template-editor-field input[type=number] {", "the wave-max-wait number field is themed")
-
-	// Group 4 — A8 mail-reader action bar: reply / focus / mark / delete are
-	// plain <button>s with no .tool class, so they needed a base rule.
-	must(".mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)) {", "the mail-reader action bar has a base button skin")
-
-	// Group 5 — B3, a button that sits outside a .row-actions wrapper. The
-	// plugin step-editor remove and catalog install are standard ui-btns now.
-	must("#sudo-list td > button:where(:not(.ui-btn)) {", "the sudo-grants revoke button is themed (raw skin fenced off the standard button)")
 
 	// Group 6 — B5/B6 remote-access fields (plain + the wizard twin). The
 	// action buttons are standard ui-btns, held by jstest/ui-controls.

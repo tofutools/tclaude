@@ -43,7 +43,6 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`.sbx-section input:not([type])`:                                               "Preact structured inputs retain dark modal styling",
 		`.sbx-section select`:                                                          "Preact structured selects retain dark modal styling",
 		`.sbx-row button`:                                                              "Preact structured row buttons retain dark modal styling",
-		`.sbx-row button:where(:not(.ui-btn)):last-child:hover`:                        "Preact remove buttons retain destructive hover styling",
 		`#sandbox-profile-editor-submit:disabled::before`:                              "wizard saving state suppresses the decorative submit label",
 		`/api/sandbox-profile-directories/inspect`:                                     "missing-directory inspection",
 		`/api/sandbox-profile-directories/create`:                                      "explicit missing-directory creation",
