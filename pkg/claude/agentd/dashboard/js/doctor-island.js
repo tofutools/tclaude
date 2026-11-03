@@ -68,7 +68,7 @@ function SandboxDefaultControl({ check, state, actions }) {
   if (check.severity === 'decision' || !check.value) {
     return html`<div class="doctor-choice">
       <div class="doctor-opt ui-card ui-inset rec">
-        <div class="doctor-opt-title">tclaude sandbox <span class="doctor-tag">recommended</span></div>
+        <div class="doctor-opt-title">tclaude sandbox <span class="ui-tag doctor-tag">recommended</span></div>
         <div class="doctor-opt-detail">bubblewrap on Linux, Seatbelt on macOS. The same wall for every harness, and it enforces your sandbox profiles.</div>
       </div>
       <div class="doctor-opt ui-card ui-inset">

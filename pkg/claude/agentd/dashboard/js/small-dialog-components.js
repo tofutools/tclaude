@@ -391,7 +391,7 @@ function TerminalChoice({ choice, index, onPick, autofocus }) {
       <span class="term-choice-icon" aria-hidden="true"><${Words} plain=${choice.icon} wizard=${choice.wizardIcon} /></span>
       <span class="term-choice-body">
         <span class="term-choice-title"><${Words} plain=${choice.title} wizard=${choice.wizardTitle} /></span>
-        <span class="term-choice-tag"><${Words} plain=${choice.tag} wizard=${choice.wizardTag} /></span>
+        <span class="ui-tag term-choice-tag"><${Words} plain=${choice.tag} wizard=${choice.wizardTag} /></span>
         <span class="term-choice-desc"><${Words} plain=${choice.plain} wizard=${choice.wizard} /></span>
       </span>
       <kbd class="term-choice-key" aria-hidden="true">${index + 1}</kbd>
@@ -571,7 +571,7 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
                   disabled=${busy} onChange=${() => { setChoice(value); setMoveOut(''); }} />
                 <span class="sandbox-impl-option-body">
                   <span class="sandbox-impl-option-name">${value}
-                    ${value === current && html`<span class="sandbox-impl-tag">current</span>`}
+                    ${value === current && html`<span class="ui-tag sandbox-impl-tag">current</span>`}
                   </span>
                   ${/* The catalog label names the harness ("Claude Code built-in"); the
                         value above is the enum the CLI and the API take. Both are shown

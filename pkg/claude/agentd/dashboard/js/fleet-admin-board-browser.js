@@ -130,7 +130,7 @@ export function browserRows(perBoard, view) {
 
 function TrustBadge({ trust, compact = false }) {
   const t = TRUST[trust] || TRUST.unknown;
-  return html`<span class=${`fa-cb-trust ${t.cls}`} title=${t.title} data-trust=${trust}>${compact ? t.label.split(' ')[0] : t.label}</span>`;
+  return html`<span class=${`ui-tag fa-cb-trust ${t.cls}`} title=${t.title} data-trust=${trust}>${compact ? t.label.split(' ')[0] : t.label}</span>`;
 }
 
 function KindChip({ kind }) {
