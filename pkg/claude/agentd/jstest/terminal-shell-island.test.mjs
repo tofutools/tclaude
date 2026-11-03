@@ -328,6 +328,50 @@ test('a disconnected active pane gets a terminal-area notice while keeping Recon
   assert.equal(badgeHost.childElementCount, 0);
 });
 
+test('every settled loss that offers Reconnect gets the terminal-area notice, not only a plain disconnect', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host, badgeHost } = installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const cleanup = await mountTerminalsFeature({ widgetFactory: fake.factory });
+
+  await harness.act(async () => {
+    controller.openTerminalPane({ ws: '/early', key: 'early', label: 'early', agent: 'agt_early' });
+    await Promise.resolve();
+  });
+  const pane = host.querySelector('.mux-pane.active');
+
+  // Attaching to a just-spawned agent before its tmux session exists runs out
+  // the initial retries and settles on agentd's 'session ended' close.
+  await harness.act(() => {
+    fake.widgets[0].options.onStatus('session ended');
+    fake.widgets[0].options.onReconnectChange(true);
+  });
+  const notice = pane.querySelector('.mux-terminal-disconnect-overlay');
+  assert.ok(notice, 'an early attach that settled on session ended still shows the big Reconnect');
+  assert.match(notice.querySelector('.mux-terminal-disconnect-body').textContent, /\(session ended\)/,
+    'the card says why the terminal is down');
+  assert.ok(getByRole(notice, 'button', { name: 'Reconnect terminal' }));
+
+  // The same close also ends a session that finished normally; Dismiss
+  // uncovers its final output, and the next settled loss shows the card again.
+  await harness.act(() => harness.fireEvent(getByRole(notice, 'button', { name: 'Dismiss' }), 'click'));
+  assertAbsent(pane.querySelector('.mux-terminal-disconnect-overlay'), 'Dismiss uncovers the terminal');
+  await harness.act(() => fake.widgets[0].options.onReconnectChange(false));
+  await harness.act(() => fake.widgets[0].options.onReconnectChange(true));
+  assert.ok(pane.querySelector('.mux-terminal-disconnect-overlay'), 'a later loss shows the card again');
+
+  await harness.act(() => {
+    fake.widgets[0].options.onStatus('closed: the peer revoked your access to this terminal');
+    fake.widgets[0].options.onReconnectChange(false);
+  });
+  assertAbsent(pane.querySelector('.mux-terminal-disconnect-overlay'),
+    'a final close that offers no Reconnect shows no Reconnect card');
+  cleanup();
+  assert.equal(badgeHost.childElementCount, 0);
+});
+
 test('background pane open and focus leave the current dashboard tab visible', async (t) => {
   const harness = await createPreactHarness(t);
   const { host, badgeHost, terminals } = installHosts(harness);
