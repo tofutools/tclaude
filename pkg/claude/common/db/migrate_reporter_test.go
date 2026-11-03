@@ -181,3 +181,16 @@ func TestMigrate_ReporterFailedFiresAndAborts(t *testing.T) {
 	// The DB is left at the last version that actually committed.
 	assert.Equal(t, 2, schemaVersion(d))
 }
+
+// applyMigrationsAfter advances d through every migration step after version,
+// up to the head. Fixture tests that seed an old schema use it to reach the
+// current one, so a new migration needs no edit to them.
+func applyMigrationsAfter(t *testing.T, d *sql.DB, version int) {
+	t.Helper()
+	for _, step := range migrationSteps {
+		if step.version <= version {
+			continue
+		}
+		require.NoErrorf(t, step.apply(d), "migration v%d", step.version)
+	}
+}
