@@ -50,7 +50,7 @@ export function processStartPlacement(viewport) {
   return clampPlacement({ x: Math.max(24, (viewport.width - w) / 2), y: 48, w, h, snap: '' }, viewport);
 }
 
-export function ProcessOverlayWindow({ instance, overlay, strip, close, snapshot, fetchImpl, notify, win }) {
+export function ProcessOverlayWindow({ instance, overlay, strip, more = null, close, snapshot, fetchImpl, notify, win }) {
   const slot = useRef(null);
   const open = !instance.minimized;
   const look = windowControlsLook(snapshot.value?.window_controls);
@@ -64,12 +64,13 @@ export function ProcessOverlayWindow({ instance, overlay, strip, close, snapshot
   const label = instance.label || instance.template;
   const toCollab = () => void processTabToCollab(instance);
   const title = html`${strip}
+    ${look !== 'classic' ? more : html`
     <button data-ui-exempt type="button" class="board-overlay-action" title="Move this editor to a tab of the Collab view, unsaved edits and all"
       onClick=${toCollab}>${TO_COLLAB_LABEL}</button>
     <button data-ui-exempt type="button" class="board-overlay-action" title="Move this editor back to the Processes tab, unsaved edits and all"
       onClick=${() => void dockProcessEditor(instance.template)}>${TO_PROCESSES_LABEL}</button>
     <button data-ui-exempt type="button" class="board-overlay-action" title="Move this editor to a browser window of its own, unsaved edits and all"
-      onClick=${() => floatingProcessEditor(instance.template) && moveToWindow(instance, { rect: overlay.windowRef.current?.getBoundingClientRect?.(), win, notify })}>${TO_WINDOW_LABEL}</button>
+      onClick=${() => floatingProcessEditor(instance.template) && moveToWindow(instance, { rect: overlay.windowRef.current?.getBoundingClientRect?.(), win, notify })}>${TO_WINDOW_LABEL}</button>`}
     ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title="Minimize" aria-label=${`Minimize ${label}`}
       onClick=${() => minimizeOverlayWindow(instance.id)}>–</button>`}
     ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${label}`}

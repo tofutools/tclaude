@@ -36,6 +36,8 @@ const GLYPHS = Object.freeze({
   standard: {
     minimize: 'M1.5 5h7', collab: 'M1 3.5h7.5M6.5 1.5l2 2-2 2M9 6.5H1.5M3.5 4.5l-2 2 2 2',
     maximize: SQUARE, restore: STACKED, close: 'M2 2l6 6M8 2l-6 6',
+    // ⋯, three dots: round caps on zero-length strokes (overlay-tab-strip.js).
+    more: 'M1.5 5h0M5 5h0M8.5 5h0',
   },
 });
 

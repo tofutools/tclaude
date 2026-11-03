@@ -1836,6 +1836,15 @@ header.overlay-look-windows { padding-right: 0; }
 .overlay-look-standard .overlay-window-controls button:hover { background: #21262d; color: var(--cmp-text); }
 .overlay-look-standard .overlay-window-controls .overlay-wc-close:hover { color: var(--cmp-red); }
 .overlay-look-standard .overlay-window-controls button:focus-visible { outline: 2px solid var(--cmp-blue); outline-offset: -2px; }
+/* The ⋯ beside the symbols (overlay-tab-strip.js): the tab's menu of moves,
+   in the standard symbol's box whatever the look. */
+.board-overlay-titlebar .overlay-tab-more {
+  flex: none; display: grid; place-items: center; width: 26px; height: 26px; margin-left: 4px; padding: 0; border: 0;
+  border-radius: 6px; background: none; color: var(--cmp-muted); line-height: 1; cursor: pointer;
+}
+.overlay-tab-more svg { display: block; width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; pointer-events: none; }
+.board-overlay-titlebar .overlay-tab-more:is(:hover, [aria-expanded="true"]) { background: #21262d; color: var(--cmp-text); }
+.overlay-tab-more:focus-visible { outline: 2px solid var(--cmp-blue); outline-offset: -2px; }
 /* A split's shared edges (overlay-window.js): above both windows they divide. */
 .overlay-split-line { position: fixed; touch-action: none; }
 .overlay-split-line.x { margin-left: -4px; width: 8px !important; cursor: ew-resize; }
@@ -11001,14 +11010,14 @@ body.wizard header button:where(:not(.ui-btn, .ui-menu-item)):hover { background
 /* An overlay window's title bar is a header too, so its icon buttons take the
    gilded box above. They keep it, centred: the page-level padding would leave
    a fixed-size box a few pixels of content and push the glyph off its middle. */
-body.wizard .board-overlay-titlebar :is(.overlay-window-controls button, .companion-tab-minimize, .companion-tab-close, .companion-add, .board-overlay-close) {
+body.wizard .board-overlay-titlebar :is(.overlay-window-controls button, .overlay-tab-more, .companion-tab-minimize, .companion-tab-close, .companion-add, .board-overlay-close) {
   display: inline-grid; place-items: center; padding: 0; line-height: 1;
 }
 /* The standard look's own plain fill would undo the gilding, and its group's
    bar colour would show as a dark strip on the wizard's gradient. */
 body.wizard .board-overlay-titlebar.overlay-look-standard .overlay-window-controls { background: transparent; gap: 4px; }
-body.wizard .board-overlay-titlebar.overlay-look-standard .overlay-window-controls button { background: #241b3d; color: #f3e6c0; }
-body.wizard .board-overlay-titlebar.overlay-look-standard .overlay-window-controls button:hover { background: #3a2a63; }
+body.wizard .board-overlay-titlebar.overlay-look-standard :is(.overlay-window-controls button, .overlay-tab-more) { background: #241b3d; color: #f3e6c0; }
+body.wizard .board-overlay-titlebar.overlay-look-standard :is(.overlay-window-controls button, .overlay-tab-more):hover { background: #3a2a63; }
 body.wizard .board-overlay-titlebar.overlay-look-standard .overlay-window-controls .overlay-wc-close:hover { color: var(--cmp-red); }
 body.wizard .board-overlay-titlebar .companion-controls > .companion-cog > .companion-cog-button,
 body.wizard .board-overlay-titlebar .companion-controls > button:where(:not(.ui-btn, .ui-menu-item)) {

@@ -109,6 +109,18 @@ export function OverlayTabMenu({ notify = null }) {
 
 const openMenu = (what, trigger, { x, y }) => { tabMenu.value = { ...what, trigger, x, y }; };
 
+// OverlayTabMore is a window's ⋯, just left of its − ⇄ ×: the tab's own menu,
+// which a right-click or a hold on the tab also opens. Its moves (to Collab, a
+// kind's dock such as the Processes tab, a separate window) are how the title
+// bar offers them, rather than spelled out as buttons beside the symbols
+// (tcl-aukxip). The classic look keeps its words.
+export function OverlayTabMore({ tab, label }) {
+  const open = tabMenu.value?.tabId === tab.id;
+  return html`<button data-ui-exempt type="button" class="overlay-tab-more" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
+    title="Move, group or minimize this tab" aria-label=${`More for ${label}`}
+    onClick=${(event) => openFromKeys({ tabId: tab.id, label }, event.currentTarget)}><${Glyph} path=${STANDARD_GLYPHS.more} /></button>`;
+}
+
 // A press from the keyboard has no point of its own, so it opens under the control.
 const openFromKeys = (what, trigger) => {
   const rect = trigger.getBoundingClientRect();
