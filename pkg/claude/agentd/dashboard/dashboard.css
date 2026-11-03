@@ -647,8 +647,7 @@ body.mail-col-resizing, body.mail-col-resizing * { user-select: none; }
    back to the browser's white UA chrome in plain mode. Placed FIRST, before every
    container button rule, so equal-specificity `container button` rules (e.g.
    .modal-buttons button) always win the tie — this only styles .tool buttons that
-   nothing else matches. Mirrors .filter-bar button.tool; body.wizard modal rules
-   recolor per skin. */
+   nothing else matches; body.wizard modal rules recolor per skin. */
 button.tool {
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
   border-radius: 4px; padding: 5px 12px; font-size: 12px;
@@ -923,9 +922,7 @@ button.tool:where(:hover) { background: var(--ui-bg-hover); }
 /* "⤓ download ▾" split button (message-download-menu.js). It sits at the far
    end of the action bar, just before delete, and its menu opens DOWNWARD: the
    reader scrolls, so a menu below the bar only lengthens the scroll area,
-   while one above a short message would be clipped by the pane's top edge.
-   The split halves and menu items carry [type] so they outrank the wizard
-   skin's per-kind .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)) chrome. */
+   while one above a short message would be clipped by the pane's top edge. */
 .mail-download { position: relative; display: inline-flex; margin-left: auto; }
 .mail-reader .mail-reader-actions .mail-download .mail-download-main[type] { border-radius: 4px 0 0 4px; }
 .mail-reader .mail-reader-actions .mail-download .mail-download-caret[type] { border-radius: 0 4px 4px 0; border-left: none; padding: 3px 6px; }
@@ -11989,8 +11986,7 @@ body.wizard #confirm-modal #confirm-ok:active {
    span swap (the .cron-open-label-regular / .cron-open-label-wizard pair),
    same idiom as "+ new group" → "⚔ Form a party". The swap rules are unscoped
    so the "No cron jobs yet…" empty-state hint that names the button swaps too;
-   the gilded re-skin is scoped to the #cron-create-open id, which out-specifies
-   the base .filter-bar button.primary rule. */
+   the gilded re-skin is scoped to the #cron-create-open id. */
 .cron-open-label-wizard { display: none; }
 body.wizard .cron-open-label-regular { display: none; }
 body.wizard .cron-open-label-wizard { display: inline; }
@@ -12264,8 +12260,7 @@ body.wizard #cron-pick-target-modal .add-member-foot kbd {
    rules are unscoped, not tied to #group-create-open. The button itself becomes
    a small gilded-arcane action — violet gradient, candle-gold frame, mystic
    glow + fantasy serif — matching the header chrome without shouting like the
-   modal's 🔮 Summon lever. The #group-create-open id out-specifies the base
-   .filter-bar button.primary rule, so it wins without !important. */
+   modal's 🔮 Summon lever. */
 .group-create-label-wizard { display: none; }
 body.wizard .group-create-label-regular { display: none; }
 body.wizard .group-create-label-wizard { display: inline; }
@@ -13371,9 +13366,7 @@ body.wizard #profiles-manage-modal .filter-bar button.clear-filter { color: #b39
 body.wizard #profiles-manage-modal .filter-bar button.clear-filter:hover { color: #f3e6c0; }
 
 /* "+ new profile" — the small gilded-arcane action, the same treatment the
-   filter bar's "⚔ Form a party" primary gets. #profile-create-open out-
-   specifies the base .filter-bar button.primary rule, so it wins without
-   !important. */
+   filter bar's "⚔ Form a party" primary gets. */
 body.wizard #profiles-manage-modal #profile-create-open.ui-btn-primary {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   border: 1px solid #d9b45a;
@@ -14391,13 +14384,11 @@ body.wizard-shake { animation: wizard-shake 0.6s ease-in-out; }
    list, the Chronicle/Audit search, the Runes/Logs search, the Treasury's
    agent-table filter …) shares one chrome, so one general re-skin themes
    them all: a violet-void scrying field with gilt runes, a dim-violet
-   count, arcane toggles + selects, and gilded primary/secondary levers.
+   count, arcane toggles + selects.
    These stay GENERAL (class-only) so the more-specific id-scoped filter
    bars — the Config tab and the profile/perm-edit modals — keep their own
    rules by specificity; this block is the fallback for every other bar.
-   The Treasury's span selector (#costs-spans) is a bespoke segmented
-   control the Costs re-skin gilds itself, so its `.tool` buttons opt out
-   below. Palette matches the rest of the wizard chrome: void #140f28,
+   Palette matches the rest of the wizard chrome: void #140f28,
    violet frame rgba(122,93,176,.5), gilt text #f3e6c0, arcane focus. */
 body.wizard .filter-bar input:where(:not(.ui-input))::placeholder { color: #8f7bbf; font-style: italic; }
 body.wizard .filter-bar .filter-count { color: #b39ddb; }
