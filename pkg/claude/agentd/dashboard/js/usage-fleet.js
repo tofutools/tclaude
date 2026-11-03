@@ -71,7 +71,7 @@ export function FleetTab({ api, busy, reloadKey = 0, onEdit, onToggle, onManageN
   useEffect(() => () => { live.current = false; }, []);
   if (!fleet) {
     return error
-      ? html`<div class="cron-create-error" role="alert">${error} <button type="button" onClick=${() => void load()}>Retry</button></div>`
+      ? html`<div class="cron-create-error" role="alert">${error} <${Button} size="sm" onClick=${() => void load()}>Retry<//></div>`
       : html`<div class="empty">Reading the fleet…</div>`;
   }
   const statusFor = (limit) => (fleet.statuses || []).find((s) => s.fleet_id === limit.id);
@@ -88,7 +88,7 @@ export function FleetTab({ api, busy, reloadKey = 0, onEdit, onToggle, onManageN
           ${limit.rule.dry_run ? html`<span class="usage-rule-tag">dry run</span>` : null}
           <span class="spacer"></span>
           <label class="usage-rule-enabled"><input type="checkbox" checked=${limit.enabled} disabled=${busy} onChange=${() => onToggle(limit)}/> enabled</label>
-          <button type="button" class="tool" disabled=${busy} onClick=${() => onEdit(limit, fleet)}>edit</button>
+          <${Button} size="sm" disabled=${busy} onClick=${() => onEdit(limit, fleet)}>edit<//>
         </div>
         <div class="usage-rule-summary">${ruleSummary(limit.rule)}</div>
         ${limit.enabled ? html`<${FleetBar} status=${status}/>${status ? html`<${MemberRows} status=${status}/>` : null}` : null}
@@ -110,7 +110,7 @@ export function FleetTab({ api, busy, reloadKey = 0, onEdit, onToggle, onManageN
             ${t ? html`<td class="num">${money(t.day?.total_usd)}</td><td class="num">${money(t.week?.total_usd)}</td><td class="num">${money(t.month?.total_usd)}</td><td>${limitCell(n.summary)}</td>`
               : html`<td class="muted" colspan="4">${n.summary ? 'shares no usage with you' : 'not read'}</td>`}
             <td><${GrantChips} node=${n}/></td>
-            <td>${g.manage ? html`<button type="button" class="tool" disabled=${busy} onClick=${() => onManageNode(n)}>manage its rules…</button>` : null}</td>
+            <td>${g.manage ? html`<${Button} size="sm" disabled=${busy} onClick=${() => onManageNode(n)}>manage its rules…<//>` : null}</td>
           </tr>`;
         })}
       </tbody>
@@ -124,7 +124,7 @@ export function FleetTab({ api, busy, reloadKey = 0, onEdit, onToggle, onManageN
     <div class="usage-fleet-foot">
       ${fleet.evaluated_at ? html`<span class="muted">fleet readings from ${new Date(fleet.evaluated_at).toLocaleTimeString()}</span>` : null}
       <span class="spacer"></span>
-      <button type="button" class="tool" disabled=${loading} onClick=${() => void load(true)}>${loading ? 'Reading…' : '↻ read nodes now'}</button>
+      <${Button} size="sm" disabled=${loading} onClick=${() => void load(true)}>${loading ? 'Reading…' : '↻ read nodes now'}<//>
     </div>
   </div>`;
 }
@@ -141,9 +141,9 @@ function limitCell(summary) {
 
 function FleetPresets({ disabled, onPick }) {
   return html`<div class="usage-presets">
-    <button type="button" class="tool" disabled=${disabled} onClick=${() => onPick(null)}>＋ Blank fleet limit</button>
-    ${FLEET_PRESETS.map((preset) => html`<button key=${preset.id} type="button" class="tool" disabled=${disabled}
-      title=${ruleSummary(preset.rule)} onClick=${() => onPick(preset)}>＋ Fleet ${preset.label.toLowerCase()}</button>`)}
+    <${Button} size="sm" disabled=${disabled} onClick=${() => onPick(null)}>＋ Blank fleet limit<//>
+    ${FLEET_PRESETS.map((preset) => html`<${Button} size="sm" key=${preset.id} disabled=${disabled}
+      title=${ruleSummary(preset.rule)} onClick=${() => onPick(preset)}>＋ Fleet ${preset.label.toLowerCase()}<//>`)}
   </div>`;
 }
 

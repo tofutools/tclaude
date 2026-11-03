@@ -6,6 +6,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
@@ -86,13 +87,13 @@ export function NodeSelect({
         ? html`<input type="checkbox" checked=${on} disabled=${!!why} aria-label=${`Include ${n.name}`} onChange=${pick} />`
         : html`<input type="radio" name=${id ? `${id}-pick` : undefined} checked=${on} disabled=${!!why} aria-label=${`Show ${n.name}`} onChange=${pick} />`}
       <span class="node-pop-swatch" aria-hidden="true"></span>
-      <button type="button" class="node-pop-name" disabled=${!!why} onClick=${pick}>${nodeName(n)}</button>
-      ${multiple && !why && html`<button type="button" class="node-pop-only" tabindex="-1" title=${`Show only ${n.name}`} onClick=${() => choose([n.id])}>only</button>`}
+      <button data-ui-exempt type="button" class="node-pop-name" disabled=${!!why} onClick=${pick}>${nodeName(n)}</button>
+      ${multiple && !why && html`<${Button} size="sm" variant="link" class="node-pop-only" tabindex="-1" title=${`Show only ${n.name}`} onClick=${() => choose([n.id])}>only<//>`}
       <span class="node-pop-meta">${count ? html`<span class="mailbox-unread ui-badge ui-badge-accent">${count > 99 ? '99+' : count}</span>` : null}${status && html`<span class="node-select-note">${status}</span>`}${!status && offline ? 'offline' : ''}</span>
     </div>`;
   };
   return html`<div class="node-select" ref=${root} id=${id} data-node-select=${multiple ? 'multiple' : 'single'}>
-    <button type="button" class=${`node-select-button${all ? '' : ' narrowed'}`} aria-haspopup="true" aria-expanded=${open ? 'true' : 'false'}
+    <button data-ui-exempt type="button" class=${`node-select-button${all ? '' : ' narrowed'}`} aria-haspopup="true" aria-expanded=${open ? 'true' : 'false'}
       disabled=${disabled} title=${title || label} onClick=${() => setOpen(!open)}>
       <span class="node-select-label">${label}</span>
       <span class="node-select-value">${nodeSelectSummary(nodes, value, { multiple, allLabel })}</span>
@@ -106,7 +107,7 @@ export function NodeSelect({
         ${multiple
           ? html`<input type="checkbox" checked=${all} aria-label=${allLabel} onChange=${() => choose([])} />`
           : html`<input type="radio" name=${id ? `${id}-pick` : undefined} checked=${all} aria-label=${allLabel} onChange=${() => choose('')} />`}
-        <button type="button" class="node-pop-name" onClick=${() => choose(multiple ? [] : '')}>${allLabel}</button>
+        <button data-ui-exempt type="button" class="node-pop-name" onClick=${() => choose(multiple ? [] : '')}>${allLabel}</button>
         <span class="node-pop-meta">${nodes.length}</span>
       </div>`}
       ${list.map(row)}
