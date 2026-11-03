@@ -54,7 +54,7 @@ export function agentCogSections({
     onMaximize && { key: 'maximize', glyph: maximized ? '❐' : '□', label: maximized ? 'Restore' : 'Maximize', className: 'companion-maximize', ariaLabel: maximized ? 'Restore the window' : 'Maximize the window', run: onMaximize },
     running && onFloat && { key: 'float', glyph: '▣', label: 'Open in overlay', className: 'companion-float', ariaLabel: `Open ${agent.name} in an overlay window`, run: onFloat },
     running && onDetach && !parked && { key: 'detach', glyph: '⧉', label: TO_WINDOW_LABEL, className: 'companion-detach', ariaLabel: `Open ${agent.name} in a separate window`, run: onDetach },
-    running && onMorph && { key: 'morph', glyph: '⇄', label: 'Morph', hint: 'harness, model, profile', className: 'companion-morph', ariaLabel: `Morph ${agent.name}`, run: onMorph },
+    running && onMorph && { key: 'morph', glyph: '⤨', label: 'Morph', hint: 'harness, model, profile', className: 'companion-morph', ariaLabel: `Morph ${agent.name}`, run: onMorph },
     running && agent.harness !== 'shell' && { key: 'clear', glyph: '⟲', label: 'Clear context', className: 'companion-clear-open', ariaLabel: `Clear ${agent.name}'s context`, run: onClearContext },
   ];
   const access = agent.steward ? [
@@ -73,7 +73,7 @@ export function agentCogSections({
 }
 
 function collabItem(onCollab) {
-  return { key: 'collab', glyph: '⤢', label: TO_COLLAB_LABEL, ariaLabel: TO_COLLAB_LABEL, run: onCollab };
+  return { key: 'collab', glyph: '⇄', label: TO_COLLAB_LABEL, ariaLabel: TO_COLLAB_LABEL, run: onCollab };
 }
 
 // CompanionCog is the button and its menu. Choosing an item closes the menu first,
