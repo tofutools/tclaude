@@ -81,6 +81,11 @@
   --ui-danger-bg: #4d1d1d;
   --ui-switch-off: #30363d;
   --ui-radius: 4px;
+  --ui-badge-bg: #21262d;
+  --ui-badge-text: #8b949e;
+  --ui-badge-accent: #1f6feb;
+  --ui-badge-accent-text: #fff;
+  --ui-badge-warn: #9e6a03;
 }
 body.wizard {
   --ui-bg: #241b3d;
@@ -100,6 +105,10 @@ body.wizard {
   --ui-primary-hover: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   --ui-primary-text: #f3e6c0;
   --ui-switch-off: #2f2350;
+  --ui-badge-bg: #2a2140;
+  --ui-badge-text: #b39ddb;
+  --ui-badge-accent: #a97bd6;
+  --ui-badge-accent-text: #14102a;
 }
 /* The wizard dialogs' house primary: a gilded, glowing gradient. */
 body.wizard .ui-btn-primary { text-shadow: 0 0 6px rgba(169, 123, 214, 0.6); box-shadow: 0 0 10px rgba(122, 93, 176, 0.4); }
@@ -122,6 +131,8 @@ body.slop {
   --ui-primary-hover: #6a1010;
   --ui-primary-text: #ffe88c;
   --ui-switch-off: #4a1a1a;
+  --ui-badge-bg: #2a0a0a;
+  --ui-badge-text: #c0a080;
 }
 
 /* Buttons. One hover for every variant: the background brightens a step and
@@ -338,3 +349,28 @@ label:has(> input:disabled) { cursor: not-allowed !important; }
   border-left: 3px solid var(--ui-danger); background: rgba(248, 81, 73, .08);
   color: var(--ui-danger-text); font-size: 12px; line-height: 1.4;
 }
+
+/* Count badges: the small number beside a tab, button or list entry.
+     .ui-badge          a quiet neutral count (open panes, tabs, members)
+     .ui-badge-accent   something new for you (unread, attention)
+     .ui-badge-danger   an alert (unread messages, blocking problems)
+     .ui-badge-warn     needs attention soon (pending plugins, queued spawns)
+     .ui-badge-corner   the smaller bubble pinned to an icon button's corner;
+                        the area sets position and offsets
+   An area class keeps placement (margins, position); size, shape and tone
+   come from here. Domain chips (CI, review, sandbox, owner) are not counts. */
+.ui-badge {
+  display: inline-block; box-sizing: border-box; min-width: 16px; padding: 0 5px;
+  border-radius: 8px; background: var(--ui-badge-bg); color: var(--ui-badge-text);
+  font-size: 10px; font-weight: 600; line-height: 16px; text-align: center;
+  font-variant-numeric: tabular-nums; vertical-align: middle;
+}
+.ui-badge-corner {
+  position: absolute; min-width: 14px; padding: 0 3px; border-radius: 7px;
+  background: var(--ui-pressed-bg); color: var(--ui-text-strong);
+  font-size: 9px; font-weight: 700; line-height: 13px;
+  box-shadow: 0 0 0 1px var(--ui-field-bg);
+}
+.ui-badge-accent { background: var(--ui-badge-accent); color: var(--ui-badge-accent-text); }
+.ui-badge-danger { background: var(--ui-danger); color: #fff; }
+.ui-badge-warn { background: var(--ui-badge-warn); color: #fff; }

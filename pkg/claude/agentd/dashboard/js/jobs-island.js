@@ -495,7 +495,7 @@ export function JobsApp({ state, actions, fleet = fleetState, activeTab = dashbo
 
 export function JobsBadge({ state }) {
   const count = state.view.value.activeExports;
-  return html`<span id="jobs-badge" class="tab-badge count" hidden=${count === 0}>${count}</span>`;
+  return html`<span id="jobs-badge" class="tab-badge ui-badge" hidden=${count === 0}>${count}</span>`;
 }
 
 export function mountJobsIsland({

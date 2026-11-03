@@ -257,7 +257,7 @@ function ExposeView({ win }) {
       return html`<button ...${option(entry, index)} class=${`overlay-expose-live${index === at ? ' chosen' : ''}`} data-ui-exempt
         onPointerDown=${(event) => event.preventDefault()}
         style=${`left:${(spot.x - w / 2).toFixed(1)}px;top:${(spot.y - h / 2).toFixed(1)}px;width:${w.toFixed(1)}px;height:${h.toFixed(1)}px`}>
-        <span class="overlay-expose-live-label">${KIND_GLYPHS[tab.kind] || '▣'} ${titleOf(tab)}${tabs.length > 1 && html` <span class="overlay-expose-count" aria-label=${`${tabs.length} tabs`}>${tabs.length}</span>`}</span>
+        <span class="overlay-expose-live-label">${KIND_GLYPHS[tab.kind] || '▣'} ${titleOf(tab)}${tabs.length > 1 && html` <span class="overlay-expose-count ui-badge" aria-label=${`${tabs.length} tabs`}>${tabs.length}</span>`}</span>
       </button>`;
     })}
   </div>`;
@@ -282,7 +282,7 @@ function ExposeView({ win }) {
           <span class="overlay-expose-head">
             <span class="overlay-expose-glyph" aria-hidden="true">${KIND_GLYPHS[tab.kind] || '▣'}</span>
             <span class="overlay-expose-title">${titleOf(tab)}</span>
-            ${tabs.length > 1 && html`<span class="overlay-expose-count" aria-label=${`${tabs.length} tabs`}>${tabs.length}</span>`}
+            ${tabs.length > 1 && html`<span class="overlay-expose-count ui-badge" aria-label=${`${tabs.length} tabs`}>${tabs.length}</span>`}
           </span>
           <span class="overlay-expose-kind">${KIND_NAMES[tab.kind] || 'Window'}${entry.docked ? ' · on the dock' : entry.minimized ? ' · minimized' : ''}</span>
           ${others.length > 0 && html`<span class="overlay-expose-tabs">${others.map((other) => html`<span key=${other.id} class="overlay-expose-tab">${other.label || KIND_NAMES[other.kind] || 'Tab'}</span>`)}</span>`}

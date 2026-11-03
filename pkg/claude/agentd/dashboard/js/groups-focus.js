@@ -213,7 +213,7 @@ export function GroupsFocusSwitch({ state, groups, wizard = false, source = proc
       data-groups-focus=${value}
       title=${title}
       onClick=${() => chooseGroupsFocus(state, value)}
-    >${icon}${count != null && html`<span class="groups-focus-count">${count}</span>`}</button>`;
+    >${icon}${count != null && html`<span class=${`groups-focus-count ui-badge ui-badge-corner${focus === value ? ' ui-badge-accent' : ''}`}>${count}</span>`}</button>`;
   const counts = ready ? runKindCounts(source.context.value) : null;
   return html`<div class="groups-focus-switch" role="group" aria-label=${wizard ? 'Party lens' : 'Groups focus'}>
     <span class="groups-focus-runs groups-focus-lead">

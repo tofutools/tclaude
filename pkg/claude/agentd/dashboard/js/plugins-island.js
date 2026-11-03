@@ -223,7 +223,7 @@ export function PluginsApp({ state, actions, fleet = fleetState, confirm = shell
 
 export function PluginsBadge({ state }) {
   const count = state.view.value.warningCount;
-  return html`<span id="plugins-badge" class="tab-badge warn" hidden=${count === 0}>${count > 99 ? '99+' : count}</span>`;
+  return html`<span id="plugins-badge" class="tab-badge ui-badge ui-badge-warn" hidden=${count === 0}>${count > 99 ? '99+' : count}</span>`;
 }
 
 function StepEditor({ step, index, state }) {

@@ -88,7 +88,7 @@ export function NodeSelect({
       <span class="node-pop-swatch" aria-hidden="true"></span>
       <button type="button" class="node-pop-name" disabled=${!!why} onClick=${pick}>${nodeName(n)}</button>
       ${multiple && !why && html`<button type="button" class="node-pop-only" tabindex="-1" title=${`Show only ${n.name}`} onClick=${() => choose([n.id])}>only</button>`}
-      <span class="node-pop-meta">${count ? html`<span class="mailbox-unread">${count > 99 ? '99+' : count}</span>` : null}${status && html`<span class="node-select-note">${status}</span>`}${!status && offline ? 'offline' : ''}</span>
+      <span class="node-pop-meta">${count ? html`<span class="mailbox-unread ui-badge ui-badge-accent">${count > 99 ? '99+' : count}</span>` : null}${status && html`<span class="node-select-note">${status}</span>`}${!status && offline ? 'offline' : ''}</span>
     </div>`;
   };
   return html`<div class="node-select" ref=${root} id=${id} data-node-select=${multiple ? 'multiple' : 'single'}>
@@ -96,7 +96,7 @@ export function NodeSelect({
       disabled=${disabled} title=${title || label} onClick=${() => setOpen(!open)}>
       <span class="node-select-label">${label}</span>
       <span class="node-select-value">${nodeSelectSummary(nodes, value, { multiple, allLabel })}</span>
-      ${total ? html`<span class="mailbox-unread">${total > 99 ? '99+' : total}</span>` : null}
+      ${total ? html`<span class="mailbox-unread ui-badge ui-badge-accent">${total > 99 ? '99+' : total}</span>` : null}
       <span class="node-pick-caret" aria-hidden="true">▾</span>
     </button>
     ${open && html`<div class="node-select-menu" role="group" aria-label=${menuLabel || label}>
