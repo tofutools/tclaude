@@ -199,7 +199,7 @@ export function ManagementOverlay({
   >
     <div
       ref=${dialogRef}
-      class=${manage ? 'manage-modal' : modalClass}
+      class=${`${manage ? 'manage-modal' : modalClass} ui-dialog`}
       role="dialog"
       aria-modal=${suspended ? 'false' : 'true'}
       aria-labelledby=${labelledby}

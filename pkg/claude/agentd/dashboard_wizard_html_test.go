@@ -580,7 +580,6 @@ func TestDashboardHTML_WizardExportModal(t *testing.T) {
 	}
 
 	// The whole dialog surface is re-skinned arcane, scoped to the export modal.
-	must("body.wizard #export-agent-modal .cron-create-modal", "the export dialog surface is re-skinned")
 
 	// The static title becomes "📜 Scribe a chronicle" via the font-size:0 +
 	// ::before glyph trick (the h3 doubles as the dialog's aria-labelledby name,
@@ -861,7 +860,7 @@ func TestDashboardHTML_WizardConfirmModal(t *testing.T) {
 	// Needles are " {"-anchored so a prefix match on a sibling rule (e.g. the
 	// h3 / :hover variants) can't satisfy them — same trick as the
 	// unscoped-needle guards above.
-	must("body.wizard #confirm-modal .modal {", "the confirm dialog surface is re-skinned")
+	must(`class="modal ui-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title"`, "the confirm dialog surface is re-skinned")
 	must("body.wizard #confirm-modal #confirm-ok {", "the OK button gets the gilded lever, scoped to the confirm modal")
 }
 
@@ -939,7 +938,6 @@ func TestDashboardHTML_WizardTermPickerModal(t *testing.T) {
 	// The whole dialog surface is re-skinned arcane, and the default Current dir
 	// button becomes a gilded lever (Summon / Banish's sibling), both scoped to
 	// #term-modal.
-	must("body.wizard #term-modal .modal {", "the terminal-picker dialog surface is re-skinned")
 	must("body.wizard #term-modal #term-current {", "Current dir becomes the gilded primary lever, scoped to the term modal")
 }
 
@@ -960,7 +958,6 @@ func TestDashboardHTML_TerminalChooserModal(t *testing.T) {
 		must("act: '"+act+"'", "the chooser offers the "+act+" row action")
 	}
 	must(`plain="Terminals & windows" wizard="🔮 Scrying portals"`, "the chooser title has both voices")
-	must("body.wizard #term-chooser-modal .modal {", "the chooser surface is re-skinned, scoped")
 	must("body.wizard #term-chooser-modal .term-choice {", "the chooser cards are re-skinned, scoped")
 	for _, retired := range []string{`act="web-term" regular="web term"`, `act="open-window" regular="open window"`, `act="web-open-window" regular="web window"`} {
 		if dashboardSourceContains(dashboardAssets, retired) {
@@ -1150,7 +1147,6 @@ func TestDashboardHTML_WizardCronDialog(t *testing.T) {
 
 	// The dialog surface + title are re-skinned, scoped to #cron-create-modal so
 	// the sibling .cron-create-modal dialogs keep the default chrome.
-	must("body.wizard #cron-create-modal .cron-create-modal", "the cron dialog surface is re-skinned")
 	// Title/submit copy is JS-set, so it's swapped via font-size:0 + ::before
 	// glyphs, with the create/edit split driven by the .cron-editing mode class.
 	must(`body.wizard #cron-create-modal #cron-create-title::before {`, "the title uses a ::before glyph swap")
@@ -1565,7 +1561,6 @@ func TestDashboardHTML_WizardWindowModal(t *testing.T) {
 	must("body.wizard #window-title .window-title-wizard { display: inline; }", "wizard shows the heroes title")
 
 	// The whole dialog surface is re-skinned arcane, scoped to #window-modal.
-	must("body.wizard #window-modal .cleanup-modal {", "the window dialog surface is re-skinned")
 	must("body.wizard #window-modal .cleanup-modal h3", "the dialog title is re-skinned")
 	must("body.wizard #window-modal .window-direction", "the focus/unfocus direction picker is re-skinned")
 	must("body.wizard #window-modal .window-role-chip", "the group/role quick-select chips are re-skinned")
@@ -1619,7 +1614,6 @@ func TestDashboardHTML_WizardCleanupModal(t *testing.T) {
 	}
 
 	// The whole dialog surface is re-skinned arcane, scoped to #cleanup-modal.
-	must("body.wizard #cleanup-modal .cleanup-modal {", "the cleanup dialog surface is re-skinned")
 	must("body.wizard #cleanup-modal .cleanup-modal h3", "the dialog title is re-skinned")
 	// The cleanup-modal-unique controls: the category-filter row, the tier
 	// selector panel, and the sticky per-category list sub-header.
@@ -1661,7 +1655,6 @@ func TestDashboardHTML_WizardDeleteRetiredModal(t *testing.T) {
 		}
 	}
 
-	must("body.wizard #delete-retired-modal .cleanup-modal {", "the delete-retired surface is re-skinned")
 	must("body.wizard #delete-retired-modal .cleanup-modal h3", "the dialog title is re-skinned")
 	must("body.wizard #delete-retired-modal .cleanup-hint.danger", "the irreversible warning keeps an ember caution color")
 	must("body.wizard #delete-retired-modal .cleanup-toolbar button", "selection controls get arcane chrome")
@@ -1686,7 +1679,6 @@ func TestDashboardHTML_WizardDeleteGroupModal(t *testing.T) {
 		}
 	}
 
-	must("body.wizard #delete-group-modal .cleanup-modal {", "the delete-group dialog surface is re-skinned")
 	must("body.wizard #delete-group-modal .cleanup-modal h3", "the dialog title is re-skinned")
 	must("body.wizard #delete-group-modal .cleanup-list {", "the preview list is re-skinned")
 	must("body.wizard #delete-group-modal .cleanup-row .title", "preview row titles are parchment")
@@ -1951,7 +1943,6 @@ func TestDashboardHTML_WizardCogDialogThemes(t *testing.T) {
 	}
 
 	// Send-message / missive dialog, including its group-recipient list.
-	must("body.wizard #message-create-modal .cron-create-modal {", "missive dialog surface is re-skinned")
 	must("body.wizard #message-create-modal .cron-create-row textarea", "missive fields are re-skinned")
 	must("body.wizard #message-create-modal .cleanup-list", "party recipient list is re-skinned")
 	must("body.wizard #message-create-modal #message-create-submit {", "send-missive lever is re-skinned")
@@ -1961,7 +1952,6 @@ func TestDashboardHTML_WizardCogDialogThemes(t *testing.T) {
 	must(`'Missive text is required.'`, "missive validation stays in wizard voice")
 
 	// Party worktree cleanup dialog, including dynamic category/submit copy.
-	must("body.wizard #worktree-cleanup-modal .cleanup-modal {", "worktree cleanup surface is re-skinned")
 	must("body.wizard #worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)).active", "worktree category chips are re-skinned")
 	must("body.wizard #worktree-cleanup-modal .cleanup-list", "worktree candidate list is re-skinned")
 	must("body.wizard #worktree-cleanup-modal #worktree-cleanup-submit {", "prune lever is re-skinned")
@@ -1972,13 +1962,11 @@ func TestDashboardHTML_WizardCogDialogThemes(t *testing.T) {
 	must("document.addEventListener('tclaude:wizard', updateWizard);", "open worktree dialog follows live theme flips")
 
 	// Invite-hero picker.
-	must("body.wizard #add-member-modal .add-member-modal {", "invite dialog surface is re-skinned")
 	must("body.wizard #add-member-modal .add-member-search", "invite search is re-skinned")
 	must("body.wizard #add-member-modal .add-member-row.highlighted", "invite selection highlight is re-skinned")
 	must("body.wizard #add-member-modal .add-member-foot kbd", "invite keyboard hints are re-skinned")
 	must(`<span class="theme-copy-wizard">Include slumbering / archived</span>`, "invite footer uses wizard copy")
 	must(`(Try ticking "Include slumbering / archived" for a wider pool.)`, "invite empty state matches its wizard checkbox")
-	must("body.wizard #cron-pick-target-modal .add-member-modal {", "the shared Preact chooser has readable wizard chrome")
 	must("body.wizard #cron-pick-target-modal .add-member-row .rowname", "the shared chooser keeps agent/hero names readable in wizard mode")
 
 	if strings.Contains(dashboardAssets, "body.wizard .add-member-modal {") {

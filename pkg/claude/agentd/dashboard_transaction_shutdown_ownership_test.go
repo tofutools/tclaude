@@ -38,7 +38,6 @@ func TestDashboardTransactionShutdownExclusiveOwnership(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		"body.wizard #shutdown-modal .modal {",
 		"body.wizard #shutdown-modal #shutdown-soft {",
 		"body.wizard #shutdown-modal #shutdown-force {",
 	} {

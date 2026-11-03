@@ -86,6 +86,10 @@
   --ui-badge-accent: #1f6feb;
   --ui-badge-accent-text: #fff;
   --ui-badge-warn: #9e6a03;
+  --ui-dialog-bg: #161b22;
+  --ui-dialog-line: #2a3340;
+  --ui-dialog-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --ui-dialog-text: #c9d1d9;
 }
 body.wizard {
   --ui-bg: #241b3d;
@@ -109,6 +113,10 @@ body.wizard {
   --ui-badge-text: #b39ddb;
   --ui-badge-accent: #a97bd6;
   --ui-badge-accent-text: #14102a;
+  --ui-dialog-bg: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  --ui-dialog-line: #7a5db0;
+  --ui-dialog-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  --ui-dialog-text: #e7d9f5;
 }
 /* The wizard dialogs' house primary: a gilded, glowing gradient. */
 body.wizard .ui-btn-primary { text-shadow: 0 0 6px rgba(169, 123, 214, 0.6); box-shadow: 0 0 10px rgba(122, 93, 176, 0.4); }
@@ -374,3 +382,12 @@ label:has(> input:disabled) { cursor: not-allowed !important; }
 .ui-badge-accent { background: var(--ui-badge-accent); color: var(--ui-badge-accent-text); }
 .ui-badge-danger { background: var(--ui-danger); color: #fff; }
 .ui-badge-warn { background: var(--ui-badge-warn); color: #fff; }
+
+/* Dialog box: the panel a modal dialog sits in. ManagementOverlay puts it on
+   every dialog it renders; a dialog built without it adds the class itself.
+   The box paint (background, edge, corners, shadow, text colour) comes from
+   here and the skin tokens; an area class keeps size, padding and layout. */
+.ui-dialog {
+  background: var(--ui-dialog-bg); border: 1px solid var(--ui-dialog-line);
+  border-radius: 6px; box-shadow: var(--ui-dialog-shadow); color: var(--ui-dialog-text);
+}

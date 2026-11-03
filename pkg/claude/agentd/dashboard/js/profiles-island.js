@@ -111,7 +111,7 @@ function ProfileModal({ state, actions }) {
   const field = (key) => (event) => state.updateModal({ [key]: event.currentTarget.value, error: '' });
   return html`<div ref=${dialogRef} class="modal-overlay show" id="profile-modal"
     onClick=${(event) => { if (event.target === event.currentTarget) close(); }}>
-    <form class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="profile-modal-title"
+    <form class="cron-create-modal ui-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-modal-title"
       onSubmit=${(event) => { event.preventDefault(); void actions.start(); }}>
       <h3 id="profile-modal-title">Profile the daemon</h3>
       <p class="muted">Captures a CPU profile of this agentd process while it keeps running normally, plus heap,

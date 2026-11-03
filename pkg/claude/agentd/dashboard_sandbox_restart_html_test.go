@@ -29,6 +29,6 @@ func TestDashboardHTML_TemporarySandboxRestartWired(t *testing.T) {
 		"Codex-owned sandbox agents explain why temporary unlock is unavailable")
 	must("event.key !== 'Enter' || (!event.ctrlKey && !event.metaKey)",
 		"the confirmation accepts Ctrl/Cmd+Enter")
-	must("body.wizard #confirm-modal .modal {",
+	must(`class="modal ui-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title"`,
 		"the shared confirmation receives the wizard-mode skin")
 }
