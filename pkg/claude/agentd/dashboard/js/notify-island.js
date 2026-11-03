@@ -53,7 +53,7 @@ export function NotifyApp({ state, actions, documentRef = document }) {
   // Re-read live each render (not cached): the human may grant/revoke
   // permission in another tab or the browser UI while the popover is open.
   const deliveryNote = browserPermissionNote(settings.delivery, browserNotifyPermission(globalThis));
-  const popClass = [current.open && 'open', !settings.enabled && 'master-off'].filter(Boolean).join(' ');
+  const popClass = ['ui-popover', current.open && 'open', !settings.enabled && 'master-off'].filter(Boolean).join(' ');
 
   return html`<span class="notify-bell-wrap" ref=${rootRef}>
     <button data-ui-exempt class=${`notify-bell${current.bellEnabled ? '' : ' muted'}`} id="notify-global"
@@ -62,7 +62,7 @@ export function NotifyApp({ state, actions, documentRef = document }) {
       hidden=${!current.bellReady} title=${bellTitle} onClick=${() => { void actions.toggle(); }}>
       ${current.bellEnabled ? '🔔' : '🔕'}
     </button>
-    <div id="notify-pop" class=${popClass || undefined} role="group" aria-label="Notification settings">
+    <div id="notify-pop" class=${popClass} role="group" aria-label="Notification settings">
       <label class="notify-pop-master" title="The master switch — off means nothing notifies, regardless of the per-type or per-group/agent settings.">
         <input type="checkbox" id="notify-pop-enabled" checked=${settings.enabled}
           onChange=${(event) => { void actions.setEnabled(event.currentTarget.checked); }} /> <b>All notifications</b>

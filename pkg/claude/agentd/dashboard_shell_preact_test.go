@@ -134,9 +134,10 @@ func TestDashboardOpenPRsThemed(t *testing.T) {
 	css := string(mustReadFS(dashboardAssetsFS, "dashboard.css"))
 	island := string(mustReadFS(dashboardAssetsFS, "js/shell-island.js"))
 
+	if !strings.Contains(island, `class="open-prs-popover ui-popover"`) {
+		t.Error("the open PR panel must be a .ui-popover so every skin paints it")
+	}
 	for _, want := range []string{
-		"body.wizard .open-prs-popover {",
-		"background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);",
 		"body.wizard .open-prs-filters button.active {",
 		"body.wizard .open-prs-final-ci { color: #b39ddb; }",
 	} {

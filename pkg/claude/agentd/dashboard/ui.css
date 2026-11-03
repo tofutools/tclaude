@@ -406,3 +406,11 @@ label:has(> input:disabled) { cursor: not-allowed !important; }
   color: var(--ui-dialog-title); font-family: var(--ui-dialog-title-font);
   letter-spacing: var(--ui-dialog-title-spacing); text-shadow: var(--ui-dialog-title-shadow);
 }
+/* Popover: a floating panel anchored to a control (a node picker, the open-PRs
+   list, filter and settings panels). Same paint as a dialog box from the
+   --ui-dialog-* tokens, with a slightly rounder corner; the area keeps
+   position, size and layout. Menus of actions use .ui-menu instead. */
+.ui-popover {
+  background: var(--ui-dialog-bg); border: 1px solid var(--ui-dialog-line);
+  border-radius: 8px; box-shadow: var(--ui-dialog-shadow); color: var(--ui-dialog-text);
+}

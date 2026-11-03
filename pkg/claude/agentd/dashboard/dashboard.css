@@ -174,9 +174,7 @@ footer {
 .open-prs-popover {
   position: fixed; right: 12px; bottom: calc(var(--footer-h) + 10px); z-index: var(--z-popover);
   width: min(470px, calc(100vw - 24px)); max-height: min(560px, calc(100vh - var(--footer-h) - 24px));
-  display: flex; flex-direction: column; overflow: hidden; border: 1px solid #3a4654;
-  border-radius: 9px; background: #161b22; box-shadow: 0 14px 45px rgba(0,0,0,.55);
-  color: #c9d1d9; text-align: left;
+  display: flex; flex-direction: column; overflow: hidden; text-align: left;
   /* Native controls (the footer's checkboxes, the ignore dialog's radios)
      otherwise render light: accent-color only tints their checked state. */
   color-scheme: dark;
@@ -3440,9 +3438,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .gfm-dot { position: absolute; right: 2px; bottom: 1px; box-shadow: 0 0 0 1px #0d1117; }
 .group-federation-chip.live .gfm-dot, .gfm-state.live { background: #3fb950; }
 .group-federation-pop {
-  position: absolute; top: calc(100% + 4px); left: 0; z-index: var(--z-popover); min-width: 340px; max-width: 440px;
-  background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 6px 0;
-  box-shadow: 0 8px 24px rgba(0,0,0,.45); font-size: 12px; font-weight: normal; color: #d4d4d4;
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: var(--z-popover); min-width: 340px; max-width: 440px; padding: 6px 0; font-size: 12px; font-weight: normal;
   cursor: default; white-space: normal;
 }
 .gfm-head { padding: 2px 10px 6px; color: #7d8590; font-size: 11px; border-bottom: 1px solid #21262d; }
@@ -3543,9 +3539,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .audit-spawn-popover {
   position: absolute; z-index: var(--z-popover); top: calc(100% + 6px); right: 0;
   width: min(720px, 70vw); max-height: min(620px, 70vh); overflow: auto;
-  padding: 10px; background: #0d1117; border: 1px solid #3b4754;
-  border-radius: 7px; box-shadow: 0 10px 28px rgba(1, 4, 9, 0.9);
-  color: #c9d1d9; text-align: left;
+  padding: 10px; text-align: left;
 }
 .audit-spawn-popover-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -3565,7 +3559,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 }
 .audit-spawn-popover pre {
   margin: 0; padding: 8px; max-height: 220px; overflow: auto;
-  background: #161b22; border: 1px solid #21262d; border-radius: 4px;
+  background: #0d1117; border: 1px solid #21262d; border-radius: 4px;
   color: #d4d4d4; font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
@@ -4113,8 +4107,7 @@ details.cost-filter-menu[open] > summary::before { content: none; }
 .cost-filter-popover {
   position: fixed; z-index: var(--z-popover); visibility: hidden;
   box-sizing: border-box; width: min(370px, calc(100vw - 16px)); max-height: calc(100vh - 16px);
-  overflow: auto; padding: 11px; background: #111820; border: 1px solid #3a4656;
-  border-radius: 7px; box-shadow: 0 14px 35px rgba(0,0,0,.72);
+  overflow: auto; padding: 11px;
 }
 .cost-filter-popover.model { width: min(560px, calc(100vw - 40px)); }
 .cost-filter-popover.breakdown { width: min(390px, calc(100vw - 40px)); }
@@ -5241,12 +5234,7 @@ details[data-group-key][open] > summary .group-usage-profile {
   flex-direction: column;
   gap: 2px;
   padding: 8px;
-  background: #0d1117;
-  border: 1px solid #2a3340;
-  border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(1, 4, 9, 0.85);
   font-size: 12px;
-  color: #c9d1d9;
 }
 #notify-pop.open { display: flex; }
 .notify-pop-master,
@@ -5260,7 +5248,7 @@ details[data-group-key][open] > summary .group-usage-profile {
   white-space: nowrap;
 }
 .notify-pop-master:hover,
-.notify-pop-row:hover { background: #161b22; }
+.notify-pop-row:hover { background: #21262d; }
 .notify-pop-master input,
 .notify-pop-row input { cursor: pointer; margin: 0; }
 .notify-pop-sep { height: 1px; background: #2a3340; margin: 4px 2px; }
@@ -6240,9 +6228,9 @@ body.wizard .group-pending-title-wizard { display: inline; }
 .queued-spawns-popover {
   position: fixed; z-index: var(--z-popover);
   width: min(380px, calc(100vw - 32px)); max-height: 60vh; overflow-y: auto;
-  padding: 6px; background: #0d1117; border: 1px solid #9e6a03; border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(1, 4, 9, 0.9);
+  padding: 6px;
 }
+.queued-spawns-popover.ui-popover { border-color: #9e6a03; }
 .queued-spawns-popover-head {
   display: flex; justify-content: space-between; gap: 8px; margin: 2px 4px 6px;
   color: #e3b341; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
@@ -6252,7 +6240,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
   display: flex; align-items: center; gap: 8px; padding: 6px;
   border: 1px solid transparent; border-radius: 4px; cursor: pointer;
 }
-.queued-spawn-row:hover { background: #161b22; border-color: #30363d; }
+.queued-spawn-row:hover { background: #21262d; border-color: #30363d; }
 .queued-spawn-play {
   flex: none; width: 24px; height: 24px; padding: 0; border-radius: 50%;
   background: #238636; border: 1px solid #2ea043; color: #fff;
@@ -11504,12 +11492,7 @@ body.wizard footer {
 body.wizard footer .meta { color: #e7d9f5; opacity: 0.85; }
 /* The PR disclosure lives above the themed footer but is fixed outside its
    visual box, so it needs its own arcane surface and descendant colours. */
-body.wizard .open-prs-popover {
-  border-color: #7a5db0;
-  background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);
-  color: #e7d9f5;
-  box-shadow: 0 0 24px rgba(122, 93, 176, 0.35), 0 14px 45px rgba(0, 0, 0, 0.55);
-}
+
 body.wizard .open-prs-head,
 body.wizard .open-prs-filters,
 body.wizard .open-pr-row { border-color: #33284d; }
@@ -15847,12 +15830,7 @@ body.wizard .action-menu[data-menu-empty]::after {
    mystic-purple frame as the Summon / Bind dialogs rather than staying on the
    #0d1117 default chrome. The <pre> bodies stay
    a legible violet-tinted dark so the JSON is still readable. */
-body.wizard .audit-spawn-popover {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border-color: #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard .audit-spawn-popover-head {
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 / dialog titles use. */
@@ -18911,7 +18889,6 @@ nav [data-tab="map"].node-chip { display: none; }
 /* Fixed, placed under its button by the island: the chip host clips. */
 .node-pop {
   position: fixed; z-index: var(--z-popover); width: 290px; max-height: 60vh; overflow-y: auto;
-  background: #161b22; border: 1px solid #30363d; border-radius: 8px; box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
   padding: 6px; font: 13px/1.3 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; text-align: left;
 }
 /* A node popover the pointer has left fades out (useNodePopover). */
@@ -18963,7 +18940,7 @@ html.scope-fused #messages-root { display: none !important; }
 .node-select-label { color: #7d8590; }
 .node-select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .node-select-button .mailbox-unread { margin-left: 0; }
-.node-select-menu { position: absolute; z-index: var(--z-popover); top: calc(100% + 4px); left: 0; min-width: 220px; max-width: min(360px, 90vw); max-height: 50vh; overflow: auto; padding: 4px; border: 1px solid #30363d; border-radius: 8px; background: #161b22; box-shadow: 0 8px 24px #01040999; }
+.node-select-menu { position: absolute; z-index: var(--z-popover); top: calc(100% + 4px); left: 0; min-width: 220px; max-width: min(360px, 90vw); max-height: 50vh; overflow: auto; padding: 4px; }
 .node-select-row { padding: 4px 6px; gap: 6px; }
 .node-select-row.sel { box-shadow: none; }
 .node-select-row input[type=radio] { margin: 0; accent-color: #1f6feb; cursor: pointer; }
@@ -19067,7 +19044,7 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
 .fleet-link-dir { color: #58a6ff; margin-right: 4px; font-size: 14px; line-height: 1; }
 .fleet-link-row.unrestricted .fleet-link-dir { color: #e3b341; }
 .fleet-link-row.unknown { color: #7d8590; }
-.fleet-link-pop { position: absolute; left: 50%; top: calc(100% + 6px); transform: translateX(-50%); width: 340px; background: #1c2128; border: 1px solid #30363d; border-radius: 8px; padding: 9px 12px; font-size: 12px; line-height: 1.5; color: #c9d1d9; box-shadow: 0 8px 24px rgba(0,0,0,.5); z-index: 5; }
+.fleet-link-pop { position: absolute; left: 50%; top: calc(100% + 6px); transform: translateX(-50%); width: 340px; padding: 9px 12px; font-size: 12px; line-height: 1.5; z-index: 5; }
 .fleet-link-pop p { margin: 6px 0 0; overflow-wrap: anywhere; }
 .fleet-link-pop p + p { border-top: 1px solid #30363d; padding-top: 6px; }
 .fleet-link-pop-head { color: #7d8590; font-size: 11px; }
@@ -19187,9 +19164,7 @@ html.remote-node body::before {
 .remote-node-pill:not(.live) { border-style: dashed; color: #e3b341; }
 .remote-node-health { color: #e3b341; }
 .remote-node-pop {
-  position: absolute; top: calc(100% + 6px); left: 0; z-index: var(--z-popover); width: 340px;
-  background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 6px 0;
-  box-shadow: 0 8px 24px rgba(0,0,0,.45); font-size: 12px; font-weight: normal; color: #d4d4d4; white-space: normal;
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: var(--z-popover); width: 340px; padding: 6px 0; font-size: 12px; font-weight: normal; white-space: normal;
 }
 .rnp-head { padding: 2px 10px 6px; border-bottom: 1px solid #21262d; color: #7d8590; font-size: 11px; }
 .rnp-head b { color: var(--nc); }
@@ -20674,8 +20649,7 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .steward-roster { position: relative; display: inline-flex; }
 .steward-roster-menu {
   position: absolute; top: calc(100% + 6px); right: 0; z-index: var(--z-popover); width: 280px; max-height: 340px; overflow: auto;
-  display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid #2a3340; border-radius: 8px;
-  background: #161b22; color: #c9d1d9; font-size: 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, .45); cursor: default;
+  display: flex; flex-direction: column; gap: 4px; padding: 8px; font-size: 12px; cursor: default;
 }
 .steward-roster-note { margin: 0; color: #7d8590; }
 .steward-roster-row { display: flex; align-items: center; gap: 6px; padding: 3px 2px; }
