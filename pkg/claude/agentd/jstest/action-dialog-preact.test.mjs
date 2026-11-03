@@ -118,6 +118,27 @@ test('group settings emits complete wizard copy and browses for its default dire
   await mounted.cleanup();
 });
 
+test('group settings remote policy round-trips inherit, a set policy and a clear back to inherit', async (t) => {
+  const saves = [];
+  const snapshot = { value: { groups: [{ name: 'alpha', remote_control_policy: 'deny' }], profiles: [], sandbox_profiles: [] } };
+  const mounted = await mountDialogs(t, 'group-settings', { group: 'alpha' }, {
+    saveGroupSettings: async (value) => { saves.push(value); },
+  }, async () => true, snapshot);
+  const { host, harness } = mounted;
+  const policy = host.querySelector('#group-settings-remote-policy');
+  assert.ok(policy.hasAttribute('data-optional-select'));
+  assert.deepEqual([...policy.options].map((option) => option.value), ['inherit', 'optin', 'deny']);
+  assert.equal(policy.getAttribute('value') ?? policy.value, 'deny', 'the saved policy reopens');
+  for (const option of policy.options) option.selected = option.value === 'inherit';
+  Object.defineProperty(policy, 'value', { configurable: true, writable: true, value: 'inherit' });
+  await harness.act(() => harness.fireEvent(policy, 'change'));
+  host.querySelector('#group-settings-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(saves[0].values.remoteControlPolicy, 'inherit', 'clearing sends the inherit value the API expects');
+  assert.equal(saves[0].initial.remoteControlPolicy, 'deny');
+  await mounted.cleanup();
+});
+
 test('dirty clone Cancel rejects and accepts through the overlay close transaction', async (t) => {
   let allowDiscard = false;
   let confirmations = 0;

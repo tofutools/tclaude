@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Select } from './ui-components.js';
+import { Button, OptionalSelect } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { HUB_CONSEQUENCE } from './fleet-admin-run.js';
 import { HubBoards } from './fleet-admin-boards.js';
@@ -324,7 +324,7 @@ function SettingsSection({ settings, actions, confirm, toast, reload }) {
         <td>${s.remote_writable === false
           ? html`<span class="muted" data-host-only>set on the hub host</span>`
           : s.type === 'bool'
-          ? html`<${Select} size="sm" aria-label=${`New ${s.key}`} value=${s.key in edits && edits[s.key] !== null ? edits[s.key] : ''} onChange=${(e) => edit(s.key, e.currentTarget.value)}><option value="">—</option><option value="true">true</option><option value="false">false</option><//>`
+          ? html`<${OptionalSelect} size="sm" aria-label=${`New ${s.key}`} value=${s.key in edits && edits[s.key] !== null ? edits[s.key] : ''} onChange=${(value) => edit(s.key, value)} unset="—" options=${[['true', 'true'], ['false', 'false']]}/>`
           : html`<input aria-label=${`New ${s.key}`} inputmode=${s.type === 'string' ? null : 'numeric'} value=${s.key in edits && edits[s.key] !== null ? edits[s.key] : ''} placeholder=${s.min != null || s.max != null ? `${s.min ?? ''}–${s.max ?? ''}` : ''}
               title=${s.min != null || s.max != null ? `${settingValue(s, s.min)} to ${settingValue(s, s.max)}${s.unit ? `, entered in ${s.unit}` : ''}` : ''} onInput=${(e) => edit(s.key, e.currentTarget.value)} />${typed(s)}`}</td>
         <td class="fa-acts">${(s.source === 'remote' || s.source === 'db') && html`<${Button} size="sm" variant="link" class="fa-link" data-revert=${s.key} onClick=${() => edit(s.key, null)}>${edits[s.key] === null ? 'reverts on save' : 'revert'}<//>`}</td>

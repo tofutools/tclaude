@@ -1,38 +1,29 @@
 import { readReviewer, reviewerValue } from './approval-controls.js';
 import { parseContextWindowMax } from './agent-spawn-model.js';
 
-export const TRI_OPTIONS = [
-  ['', "Default (leave dialog's own)"], ['1', 'on'], ['0', 'off'],
-];
+// The labels of the profile editor's optional (inherit / on / off) settings,
+// spread onto OptionalSelect from ui-components.js. Its values are '' / '1' /
+// '0', which triValue and readTri below convert.
+export const TRI_OPTIONS = { unset: "Default (leave dialog's own)" };
 
 // Auto memory's unset case is NOT "leave the dialog's own default" — tclaude
 // resolves an unset profile to OFF and injects CLAUDE_CODE_DISABLE_AUTO_MEMORY,
 // because agents sharing a repo cross-pollute one project memory store. Label
 // it so the operator can see what "Default" actually does here.
-export const AUTO_MEMORY_TRI_OPTIONS = [
-  ['', 'Default (off — recommended)'], ['1', 'on'], ['0', 'off'],
-];
+export const AUTO_MEMORY_TRI_OPTIONS = { unset: 'Default (off — recommended)' };
 
 // Peer messaging shares auto memory's shape and its load-bearing default: unset
 // means tclaude closes Claude Code's own cross-session messaging mesh.
-export const PEER_MESSAGING_TRI_OPTIONS = [
-  ['', 'Default (off — recommended)'], ['1', 'on'], ['0', 'off'],
-];
+export const PEER_MESSAGING_TRI_OPTIONS = { unset: 'Default (off — recommended)' };
 
 // The Copilot drive's unset default is send-keys — the path every Copilot agent
 // took before the API drive existed. Spell that out so "Default" is not read as
 // "whatever tclaude prefers today".
-export const COPILOT_API_TRI_OPTIONS = [
-  ['', 'Default (send-keys)'], ['1', 'API (experimental)'], ['0', 'send-keys'],
-];
+export const COPILOT_API_TRI_OPTIONS = { unset: 'Default (send-keys)', on: 'API (experimental)', off: 'send-keys' };
 
-export const CODEX_APP_SERVER_TRI_OPTIONS = [
-  ['', 'Default (send-keys)'], ['1', 'app-server (experimental)'], ['0', 'send-keys'],
-];
+export const CODEX_APP_SERVER_TRI_OPTIONS = { unset: 'Default (send-keys)', on: 'app-server (experimental)', off: 'send-keys' };
 
-export const FAST_MODE_TRI_OPTIONS = [
-  ['', 'Harness default (config.toml)'], ['1', 'on'], ['0', 'off'],
-];
+export const FAST_MODE_TRI_OPTIONS = { unset: 'Harness default (config.toml)' };
 
 // The two provenance tiers that need no announcement: an explicit request was
 // typed by whoever is reading the result, and a harness default names no tier

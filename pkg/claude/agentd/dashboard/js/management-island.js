@@ -1,7 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Input, Select as UISelect } from './ui-components.js';
+import { Button, Input, OptionalSelect, Select as UISelect } from './ui-components.js';
 import { profileSummary, profileAliasesLabel } from './profiles.js';
 import { roleSummary } from './roles.js';
 import { SavedPromptChips, SavedPromptsDialog } from './saved-prompts.js';
@@ -607,12 +607,14 @@ function CommonRuleEntry({ entry, onAdd, variant = 'filesystem' }) {
   </div>`;
 }
 
-const ACCESS_MODE_OPTIONS = [
-  ['', 'No override'],
-  ['open', 'Full access'],
-  ['closed', 'No access'],
-  ['list', 'Access list'],
-];
+const ACCESS_MODE_OPTIONS = {
+  unset: 'No override',
+  options: [
+    ['open', 'Full access'],
+    ['closed', 'No access'],
+    ['list', 'Access list'],
+  ],
+};
 
 const NETWORK_BASELINE_OPTIONS = [
   ['deny', 'Deny all'],
@@ -625,17 +627,21 @@ const NETWORK_BASELINE_OPTIONS = [
 // "No override" is the fourth state and the default: it inherits the next
 // composition layer, and when no layer names one it is today's behavior for the
 // platform.
-const NETWORK_ENGINE_OPTIONS = [
-  ['', 'No override'],
-  ['packet', 'Packet filter'],
-  ['proxy', 'Proxy filter'],
-];
+const NETWORK_ENGINE_OPTIONS = {
+  unset: 'No override',
+  options: [
+    ['packet', 'Packet filter'],
+    ['proxy', 'Proxy filter'],
+  ],
+};
 
-const NETWORK_NAMESPACE_OPTIONS = [
-  ['', 'No override'],
-  ['host', 'Shared host'],
-  ['private', 'Private, routed'],
-];
+const NETWORK_NAMESPACE_OPTIONS = {
+  unset: 'No override',
+  options: [
+    ['host', 'Shared host'],
+    ['private', 'Private, routed'],
+  ],
+};
 
 const DEFAULT_NETWORK_PACKS = [
   'net-local',
@@ -793,8 +799,8 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
       entryCount=${rules.packs.length + rules.deny_packs.length + manualRows.length}>
     <div class="sbx-network-controls">
       <label class="sbx-network-control"><span class="sbx-network-control-kind">Traffic policy</span><span class="sbx-network-control-label">Baseline</span><${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/><span class="sbx-network-control-help ui-hint">What destinations are permitted before individual rules are applied.</span></label>
-      <label class="sbx-network-control"><span class="sbx-network-control-kind">Filtering mechanism</span><span class="sbx-network-control-label">Engine</span><${Select} id="sandbox-profile-editor-network-engine" value=${rules.engine || ''} onChange=${(engine) => update({ engine })} options=${NETWORK_ENGINE_OPTIONS}/><span class="sbx-network-control-help ui-hint">How destination rules are enforced when the composed policy has them.</span></label>
-      <label class="sbx-network-control"><span class="sbx-network-control-kind">Network isolation</span><span class="sbx-network-control-label">Namespace</span><${Select} id="sandbox-profile-editor-network-namespace" value=${rules.namespace || ''} onChange=${(namespace) => update({ namespace })} options=${NETWORK_NAMESPACE_OPTIONS}/><span class="sbx-network-control-help ui-hint">Whether the agent shares host localhost and abstract Unix sockets.</span></label>
+      <label class="sbx-network-control"><span class="sbx-network-control-kind">Filtering mechanism</span><span class="sbx-network-control-label">Engine</span><${OptionalSelect} id="sandbox-profile-editor-network-engine" value=${rules.engine || ''} onChange=${(engine) => update({ engine })} ...${NETWORK_ENGINE_OPTIONS}/><span class="sbx-network-control-help ui-hint">How destination rules are enforced when the composed policy has them.</span></label>
+      <label class="sbx-network-control"><span class="sbx-network-control-kind">Network isolation</span><span class="sbx-network-control-label">Namespace</span><${OptionalSelect} id="sandbox-profile-editor-network-namespace" value=${rules.namespace || ''} onChange=${(namespace) => update({ namespace })} ...${NETWORK_NAMESPACE_OPTIONS}/><span class="sbx-network-control-help ui-hint">Whether the agent shares host localhost and abstract Unix sockets.</span></label>
     </div>
     ${rules.namespace === 'private' && html`<p class="sbx-inline-note sbx-network-namespace-note"><strong>Private, routed:</strong> internet traffic is routed normally, while host localhost services, IDE bridges, and abstract Unix sockets are not shared. Requires tclaude’s sandbox on Linux.</p>`}
     ${packVisibilityError && html`<div class="sbx-network-pack-visibility-error" role="alert"><span>⚠ ${packVisibilityError}</span>
@@ -938,10 +944,10 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice, platf
   return html`<${SandboxSection} id="sandbox-profile-editor-unix-sockets-section"
       className="sbx-access-axis" label="Unix sockets" help=${UNIX_SOCKETS_HELP}
       entryCount=${rules.allow.length}>
-    <${Select} id="sandbox-profile-editor-unix-sockets-mode" value=${rules.mode || ''} onChange=${(mode) => {
+    <${OptionalSelect} id="sandbox-profile-editor-unix-sockets-mode" value=${rules.mode || ''} onChange=${(mode) => {
       updateMode(mode, mode === 'list' ? rules.allow : []);
       setNotice(null);
-    }} options=${ACCESS_MODE_OPTIONS}/>
+    }} ...${ACCESS_MODE_OPTIONS}/>
     ${platform === 'linux' && rules.mode === 'closed' && html`<div class=${`sbx-inline-note sbx-unix-root-note${linuxClosedAligned ? '' : ' sbx-unix-root-note-incomplete'}`} role="note">
       <strong>⚠ ${linuxClosedAligned
         ? 'Linux “No access” uses an isolated filesystem and network boundary'
@@ -1401,13 +1407,13 @@ function ProfileEditor({ descriptor, roles = [], state, actions, confirmDiscard,
     <${Row} label="Operator only" hidden=${local} title="Allow humans to spawn with this profile, but reject agent-originated spawns."><input id="profile-editor-operator-only" type="checkbox" checked=${draft.operator_only} onChange=${(event) => change(setDraft, 'operator_only', event.currentTarget.checked)} /></${Row}>
     <${HarnessFields} draft=${draft} setDraft=${setDraft} catalog=${catalog} actions=${actions}
       sandboxImpl=${descriptor.sandboxImpl} profile />
-    <${Row} label="Trust dir" hidden=${hEntry && !hEntry.can_dir_trust} title=${`Pre-trust the launch directory so the agent doesn't freeze on the harness's trust-folder dialog${hEntry?.dir_trust_store ? ` (edits ${hEntry.dir_trust_store})` : ''}.`}><${Select} id="profile-editor-trust-dir" value=${draft.trust_dir} onChange=${(value) => change(setDraft, 'trust_dir', value)} options=${TRI_OPTIONS}/></${Row}>
-    <${Row} label="Remote control" hidden=${hEntry && !hEntry.can_remote_control}><${Select} id="profile-editor-remote-control" value=${draft.remote_control} onChange=${(value) => change(setDraft, 'remote_control', value)} options=${TRI_OPTIONS}/></${Row}>
-    <${Row} label="Auto memory" hidden=${hEntry && !hEntry.can_auto_memory} title="Claude Code's built-in auto memory. tclaude disables it by default: agents sharing a repo all read one per-project memory store and cross-pollute each other's notes. Does not affect CLAUDE.md."><${Select} id="profile-editor-auto-memory" value=${draft.auto_memory} onChange=${(value) => change(setDraft, 'auto_memory', value)} options=${AUTO_MEMORY_TRI_OPTIONS}/></${Row}>
-    <${Row} label="Peer messaging" hidden=${hEntry && !hEntry.can_peer_messaging} title="Claude Code's built-in cross-session messaging (the ListAgents and SendMessage tools over a per-session socket). tclaude closes it by default: it is a second coordination channel outside tclaude's groups, permissions and audit trail — use tclaude agent send instead. In-harness subagents are unaffected; the deny names ListAgents, never SendMessage."><${Select} id="profile-editor-peer-messaging" value=${draft.peer_messaging} onChange=${(value) => change(setDraft, 'peer_messaging', value)} options=${PEER_MESSAGING_TRI_OPTIONS}/></${Row}>
-    <${Row} label="Copilot drive" hidden=${hEntry && !hEntry.can_copilot_api} title="EXPERIMENTAL: drive the agent over Copilot's embedded JSON-RPC API (copilot --ui-server) instead of typing into its pane with tmux send-keys. Messages, rename and compaction become typed calls, context is read live, and an agent blocked on a permission prompt becomes visible; soft exit still uses keystrokes. A spawn is refused unless the launch directory is already trusted — set the Trust dir row above, or pre-trust it by hand — and unless the pane shares host loopback. The endpoint is unauthenticated and loopback-bound. Unset means send-keys — the two drives run side by side and agents move over one at a time."><${Select} id="profile-editor-copilot-api" value=${draft.copilot_api} onChange=${(value) => change(setDraft, 'copilot_api', value)} options=${COPILOT_API_TRI_OPTIONS}/></${Row}>
-    <${Row} label="Codex drive" hidden=${hEntry && !hEntry.can_codex_app_server} title="EXPERIMENTAL: launch the normal Codex TUI against a private per-agent app-server. The TUI is the sole birth writer and agentd binds the created thread without replay. Requires Codex 0.147.x and fails closed if unavailable. Unset means send-keys for deliberate A/B testing."><${Select} id="profile-editor-codex-app-server" value=${draft.codex_app_server} onChange=${(value) => change(setDraft, 'codex_app_server', value)} options=${CODEX_APP_SERVER_TRI_OPTIONS}/></${Row}>
-    <${Row} label="Fast mode" hidden=${hEntry && !hEntry.can_fast_mode} title="Codex fast mode uses a higher-cost, lower-latency service tier. Harness default leaves the global Codex config in charge."><${Select} id="profile-editor-fast-mode" value=${draft.fast_mode} onChange=${(value) => change(setDraft, 'fast_mode', value)} options=${FAST_MODE_TRI_OPTIONS}/></${Row}>
+    <${Row} label="Trust dir" hidden=${hEntry && !hEntry.can_dir_trust} title=${`Pre-trust the launch directory so the agent doesn't freeze on the harness's trust-folder dialog${hEntry?.dir_trust_store ? ` (edits ${hEntry.dir_trust_store})` : ''}.`}><${OptionalSelect} id="profile-editor-trust-dir" value=${draft.trust_dir} onChange=${(value) => change(setDraft, 'trust_dir', value)} ...${TRI_OPTIONS}/></${Row}>
+    <${Row} label="Remote control" hidden=${hEntry && !hEntry.can_remote_control}><${OptionalSelect} id="profile-editor-remote-control" value=${draft.remote_control} onChange=${(value) => change(setDraft, 'remote_control', value)} ...${TRI_OPTIONS}/></${Row}>
+    <${Row} label="Auto memory" hidden=${hEntry && !hEntry.can_auto_memory} title="Claude Code's built-in auto memory. tclaude disables it by default: agents sharing a repo all read one per-project memory store and cross-pollute each other's notes. Does not affect CLAUDE.md."><${OptionalSelect} id="profile-editor-auto-memory" value=${draft.auto_memory} onChange=${(value) => change(setDraft, 'auto_memory', value)} ...${AUTO_MEMORY_TRI_OPTIONS}/></${Row}>
+    <${Row} label="Peer messaging" hidden=${hEntry && !hEntry.can_peer_messaging} title="Claude Code's built-in cross-session messaging (the ListAgents and SendMessage tools over a per-session socket). tclaude closes it by default: it is a second coordination channel outside tclaude's groups, permissions and audit trail — use tclaude agent send instead. In-harness subagents are unaffected; the deny names ListAgents, never SendMessage."><${OptionalSelect} id="profile-editor-peer-messaging" value=${draft.peer_messaging} onChange=${(value) => change(setDraft, 'peer_messaging', value)} ...${PEER_MESSAGING_TRI_OPTIONS}/></${Row}>
+    <${Row} label="Copilot drive" hidden=${hEntry && !hEntry.can_copilot_api} title="EXPERIMENTAL: drive the agent over Copilot's embedded JSON-RPC API (copilot --ui-server) instead of typing into its pane with tmux send-keys. Messages, rename and compaction become typed calls, context is read live, and an agent blocked on a permission prompt becomes visible; soft exit still uses keystrokes. A spawn is refused unless the launch directory is already trusted — set the Trust dir row above, or pre-trust it by hand — and unless the pane shares host loopback. The endpoint is unauthenticated and loopback-bound. Unset means send-keys — the two drives run side by side and agents move over one at a time."><${OptionalSelect} id="profile-editor-copilot-api" value=${draft.copilot_api} onChange=${(value) => change(setDraft, 'copilot_api', value)} ...${COPILOT_API_TRI_OPTIONS}/></${Row}>
+    <${Row} label="Codex drive" hidden=${hEntry && !hEntry.can_codex_app_server} title="EXPERIMENTAL: launch the normal Codex TUI against a private per-agent app-server. The TUI is the sole birth writer and agentd binds the created thread without replay. Requires Codex 0.147.x and fails closed if unavailable. Unset means send-keys for deliberate A/B testing."><${OptionalSelect} id="profile-editor-codex-app-server" value=${draft.codex_app_server} onChange=${(value) => change(setDraft, 'codex_app_server', value)} ...${CODEX_APP_SERVER_TRI_OPTIONS}/></${Row}>
+    <${Row} label="Fast mode" hidden=${hEntry && !hEntry.can_fast_mode} title="Codex fast mode uses a higher-cost, lower-latency service tier. Harness default leaves the global Codex config in charge."><${OptionalSelect} id="profile-editor-fast-mode" value=${draft.fast_mode} onChange=${(value) => change(setDraft, 'fast_mode', value)} ...${FAST_MODE_TRI_OPTIONS}/></${Row}>
     <${Row} label="SSH workaround" hidden=${!hEntry?.can_ssh_workaround} title="Use an agent-owned SSH client config when the launch needs it. It activates only for the Codex managed sandbox or tclaude's sandbox layer, and overrides Git core.sshCommand."><input id="profile-editor-ssh-workaround" type="checkbox" checked=${draft.ssh_workaround} onChange=${(event) => change(setDraft, 'ssh_workaround', event.currentTarget.checked)} /></${Row}>
     <${Row} label="Roles" hidden=${local} title="Behavioral guidance and default access from the role library. Launch settings remain owned by this spawn profile."><div class="agent-spawn-role-picker">
       <div class="agent-spawn-role-chips" id="profile-editor-role-refs">${selectedRoles.map((role) => html`<span key=${role.name} class=${`agent-spawn-role-chip${role.missing ? ' missing' : ''}`}>
@@ -1423,7 +1429,7 @@ function ProfileEditor({ descriptor, roles = [], state, actions, confirmDiscard,
     <${Row} label="Initial msg" hidden=${local}><textarea value=${draft.initial_message} onInput=${(event) => change(setDraft, 'initial_message', event.currentTarget.value)} rows="3" placeholder="optional — task brief pre-filled into the spawn dialog" spellcheck="false" /></${Row}>
     <${Row} label="Profile context" title="Extra startup guidance delivered to every agent that resolves this profile. It is kept separate from the per-spawn task brief and group context."><textarea id="profile-editor-startup-context" value=${draft.startup_context} onInput=${(event) => change(setDraft, 'startup_context', event.currentTarget.value)} rows="5" placeholder="optional — model/profile-specific guidance injected into every spawn" spellcheck="false" /></${Row}>
 		<div class="cron-create-row" id="profile-editor-environment-row"><span class="cron-create-label"><${Words} plain="Environment" wizard="Summoning runes" /></span><div class="cron-create-target"><div class="sbx-rows">${draft.environment.map((row, index) => html`<div key=${index} class="sbx-row sbx-environment-row"><input class="sbx-env-name" value=${row.name} placeholder="NAME" onInput=${(event) => setEnvironment(index, { name: event.currentTarget.value })}/><input data-capture-mask class="sbx-env-value" value=${row.value} placeholder="value" onInput=${(event) => setEnvironment(index, { value: event.currentTarget.value })}/><${Button} size="sm" icon=${true} variant="ghost danger" onClick=${() => change(setDraft, 'environment', draft.environment.filter((_, rowIndex) => rowIndex !== index))}>×<//></div>`)}</div><div class="sbx-add-row-help"><${Button} size="sm" class="sbx-add-row" onClick=${() => change(setDraft, 'environment', [...draft.environment, { name: '', value: '' }])}><${Words} plain="＋ add variable" wizard="✦ bind rune" /><//><${HelpDisclosure} id="profile-editor-environment-help" label=${wizWord('Profile environment variables', 'Loadout runes')} help=${wizWord(PROFILE_ENVIRONMENT_HELP, PROFILE_ENVIRONMENT_HELP_WIZARD)} open=${environmentHelpOpen === 'profile-editor-environment-help'} setOpen=${setEnvironmentHelpOpen} /></div></div></div>
-    ${[['Sync worktree', 'sync_worktree'], ['Fetch latest worktree base', 'fetch_latest_worktree'], ['Auto focus', 'auto_focus'], ['Group context', 'include_group_default_context'], ['Group owner', 'is_owner']].map(([label, key]) => html`<${Row} key=${key} label=${label} hidden=${local && key !== 'is_owner'}><${Select} id=${key === 'is_owner' ? 'profile-editor-owner' : `profile-editor-${key.replaceAll('_', '-')}`} value=${draft[key]} onChange=${(value) => change(setDraft, key, value)} options=${TRI_OPTIONS}/></${Row}>`)}
+    ${[['Sync worktree', 'sync_worktree'], ['Fetch latest worktree base', 'fetch_latest_worktree'], ['Auto focus', 'auto_focus'], ['Group context', 'include_group_default_context'], ['Group owner', 'is_owner']].map(([label, key]) => html`<${Row} key=${key} label=${label} hidden=${local && key !== 'is_owner'}><${OptionalSelect} id=${key === 'is_owner' ? 'profile-editor-owner' : `profile-editor-${key.replaceAll('_', '-')}`} value=${draft[key]} onChange=${(value) => change(setDraft, key, value)} ...${TRI_OPTIONS}/></${Row}>`)}
     <div class="cron-create-row"><span class="cron-create-label">Permissions</span><${Button} id="profile-editor-perms" onClick=${() => openProfilePermissions({ node: descriptor.node || '', overrides: draft.permission_overrides, ownsGroup: readTri(draft.is_owner) === true, label: draft.agent_name.trim(), roleGrants: selectedRoles.filter((role) => !role.missing).flatMap((role) => (role.permissions || []).map((grant) => ({ slug: roleGrantSlug(grant), scope: roleGrantScope(grant), role: role.name }))), onSave: (kept) => change(setDraft, 'permission_overrides', kept) })}>Permissions…<//><span>${Object.keys(draft.permission_overrides).length || ''}</span></div>
     ${(!hEntry || hEntry.can_context_features) && html`<div class="cron-create-row" title="How much of Claude Code's startup context agents from this profile load. Trimming bundled skills, unused tool schemas and system-prompt blocks leaves more of the window for the actual task."><span class="cron-create-label">Startup context</span><${Button} id="profile-editor-context-features" onClick=${() => openProfileContextFeatures({ catalog: hEntry?.context_features || [], selection: draft.context_features, label: draft.agent_name.trim(), onSave: (kept) => change(setDraft, 'context_features', kept) })}>Context…<//><span>${contextFeatureSummary(draft.context_features)}</span></div>`}
     <div class="cron-create-error" role="alert">${state.error.value}</div><div class="modal-buttons"><${Button} disabled=${saving} onClick=${() => { void requestClose(); }}>Cancel</${Button}><span class="spacer"></span><${Button} variant="primary" id="profile-editor-submit" disabled=${saving} onClick=${submit}>${saving ? 'Saving…' : local ? 'Apply' : 'Save profile'}</${Button}></div>
@@ -1892,16 +1898,10 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       help=${FILESYSTEM_HELP} hidden=${advanced}
       attention=${globalConfigWarnings.length > 0 || !!commonRuleFeedError}
       entryCount=${draft.filesystem.length}>
-      <div class="sbx-resource-fields"><label>Filesystem root <${UISelect} id="sandbox-profile-editor-filesystem-root" value=${draft.filesystem_root || ''} onChange=${(event) => setDraft((value) => ({ ...value, filesystem_root: event.currentTarget.value }))}>
-        <option value="">Automatic (from other rules)</option>
-        <option value="inherit">Inherit host filesystem root</option>
-        <option value="separate">Separate/minimal filesystem root</option>
-      <//></label>
-      <label>Harness config <${UISelect} id="sandbox-profile-editor-harness-config" value=${draft.harness_config || ''} onChange=${(event) => setDraft((value) => ({ ...value, harness_config: event.currentTarget.value }))}>
-        <option value="">Default (read-only floor)</option>
-        <option value="read">Read-only (pinned)</option>
-        <option value="write">Writable (opt out of the floor)</option>
-      <//></label></div>
+      <div class="sbx-resource-fields"><label>Filesystem root <${OptionalSelect} id="sandbox-profile-editor-filesystem-root" value=${draft.filesystem_root || ''} onChange=${(root) => setDraft((value) => ({ ...value, filesystem_root: root }))}
+        unset="Automatic (from other rules)" options=${[['inherit', 'Inherit host filesystem root'], ['separate', 'Separate/minimal filesystem root']]}/></label>
+      <label>Harness config <${OptionalSelect} id="sandbox-profile-editor-harness-config" value=${draft.harness_config || ''} onChange=${(config) => setDraft((value) => ({ ...value, harness_config: config }))}
+        unset="Default (read-only floor)" options=${[['read', 'Read-only (pinned)'], ['write', 'Writable (opt out of the floor)']]}/></label></div>
       <div class="sbx-resource-intro">The harness config floor binds the harness's own settings file and its hook/skill/agent/command directories read-only, so a confined agent cannot rewrite the policy that confines it or drop code that runs in your next unsandboxed session. It applies under tclaude’s sandbox. Writable restores the old posture; a single surface can also be reopened with an explicit write row at or below it.</div>
       <div class="sbx-resource-intro">A separate root exposes only the fixed read-only OS/runtime surface and the directory mounts in this policy. Network or Unix-socket restrictions can still require it even when “inherit” is selected. Explicit separation currently requires tclaude’s sandbox on Linux.</div>
       ${(globalFilesystem.length > 0 || globalConfigWarnings.length > 0 || globalHarnessNotes.length > 0) && html`<div class="sbx-global-filesystem">

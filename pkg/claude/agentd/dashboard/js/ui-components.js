@@ -147,3 +147,29 @@ export function SortTh({ active = false, dir = 'asc', onSort, sortLabel, title, 
     onKeyDown=${activate}
   >${children}<span class="sort-arrow" aria-hidden="true">${active ? (dir === 'asc' ? '▲' : '▼') : '▾'}</span></th>`;
 }
+
+// OptionalSelect: the control for an optional setting, one that is either
+// left unset (inherit the next tier: a profile, the group, the harness's own
+// default) or set. The first option is the unset one; its value is '' unless
+// unsetValue names the wire value a form already uses for it (such as
+// 'inherit'). Without options it is the tri-state inherit / on / off on the
+// values '' / '1' / '0', the shape management-model's triValue and readTri
+// convert to and from a nullable boolean; on and off relabel those two.
+// options ([value, label] pairs) make it inherit / value instead.
+//
+// value is the option value as a string; onChange gets the new one (not the
+// event). Every other prop goes to the Select, so ids, disabled, title and
+// the ui-select look stay the caller's. jstest/ui-optional-select.test.mjs
+// keeps forms from hand-writing the unset/on/off options again.
+export const OPTIONAL_ON = '1';
+export const OPTIONAL_OFF = '0';
+
+export function OptionalSelect({ value, onChange, unset = 'Default', unsetValue = '', on = 'on', off = 'off', options, ...rest }) {
+  const set = options || [[OPTIONAL_ON, on], [OPTIONAL_OFF, off]];
+  return html`<${Select}
+    ...${rest}
+    data-optional-select
+    value=${value ?? unsetValue}
+    onChange=${(event) => onChange?.(event.currentTarget.value)}
+  ><option key=${`unset:${unsetValue}`} value=${unsetValue}>${unset}</option>${set.map(([key, label]) => html`<option key=${key} value=${key}>${label}</option>`)}<//>`;
+}
