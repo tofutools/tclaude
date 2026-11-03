@@ -7,7 +7,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { downloadBlob } from './download.js';
 import { shellConfirm } from './shell-state.js';
 import { managementController } from './management-controller.js';
@@ -276,9 +276,7 @@ function ImportDialog({ file, source, bytes, preview: initialPreview, group: ini
       setBusy(false);
     }
   };
-  return html`<${Overlay} id="process-workflow-import" dialogClass="modal pwf-import-dialog" overlayClass="pwf-import-modal"
-      labelledby="pwf-import-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="pwf-import-title">Import workflow: ${review.title}</h3>
+  return html`<${Dialog} id="process-workflow-import" dialogClass="modal pwf-import-dialog" overlayClass="pwf-import-modal" onClose=${onClose} blocked=${busy} titleId="pwf-import-title" title=${html`Import workflow: ${review.title}`}>
     <p class="muted pwf-file">${file}</p>
     ${review.summary && html`<p class="pwf-summary">${review.summary}</p>`}
     ${review.credit && html`<p class="muted" data-pwf-credit>${review.credit}</p>`}
@@ -318,7 +316,7 @@ function ImportDialog({ file, source, bytes, preview: initialPreview, group: ini
     ${error && html`<div class="island-error" role="alert">${error}</div>`}
     <div class="modal-buttons"><${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <${Button} variant="primary" data-pwf-import disabled=${busy || reviewing || imported || blocked || (review.nothingToDo && !choices.group)} onClick=${submit}>${imported ? 'Imported' : review.refused ? 'Refused' : reviewing ? 'Reviewing…' : review.nothingToDo && !choices.group ? 'Already imported' : busy ? 'Importing…' : 'Import'}</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // WorkflowImportButton picks a .pwf file, previews it and opens the review.

@@ -7,7 +7,6 @@ import { PALETTE_PRIMITIVES, PALETTE_SNIPPETS } from './process-edit-model.js';
 import { selectionItems } from './process-selection.js';
 import { severityGlyph } from './process-validation.js';
 import { LOOP_DEFAULT_ROUNDS } from './process-loops.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { PROCESS_SCRIBE_PROMPT_MAX } from './process-scribe.js';
 import { NodeInspector } from './process-node-inspector.js';
@@ -410,7 +409,7 @@ function InlineEditor({ controller, inline }) {
 export function ChoiceDialog({ descriptor, complete }) {
   const initial = useRef(null);
   const preferred = descriptor.choices.find((choice) => choice.initialFocus || choice.primary);
-  return html`<${Overlay}
+  return html`<${Dialog}
     id="process-editor-choice-modal"
     dialogClass="modal"
     overlayClass="process-editor-modal"
@@ -431,7 +430,7 @@ export function ChoiceDialog({ descriptor, complete }) {
         onClick=${() => complete(choice.key)}
       >${choice.label}</${Button}>`)}
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 export function ScribeDialog({ descriptor, complete }) {

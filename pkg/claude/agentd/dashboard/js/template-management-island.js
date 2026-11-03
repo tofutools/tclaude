@@ -4,7 +4,8 @@ import htm from 'htm';
 import { Button, Input, Select } from './ui-components.js';
 import { profileSummary, getDashDefaultProfile, findProfileByHandle, profileChoices } from './profiles.js';
 import { pickDirectory } from './helpers.js';
-import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { wizWord } from './slop.js';
 import { ProfileChips, useUsageProfileLink } from './usage-rules.js';
 import { usageRulesApi } from './usage-rules-actions.js';
@@ -198,7 +199,7 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
   const list = filterTemplates(current.templates, current.templateFilter);
   const filtered = !!current.templateFilter.trim();
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'templates-manage-modal',
       manage: true,
@@ -348,7 +349,7 @@ export function TemplateDuplicateDialog({
     }
   };
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'template-duplicate-modal',
       labelledby: 'template-duplicate-title',
@@ -357,7 +358,7 @@ export function TemplateDuplicateDialog({
       dirty: name !== `${descriptor.source.name}-copy`,
       blocked: busy,
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
     },
     html`<h3 id="template-duplicate-title">
         <${Words} plain="Duplicate a template" wizard="🪞 Mirror the circle" />
@@ -435,7 +436,7 @@ export function TemplateImportDialog({ initialRaw = '', state, actions, confirmD
     }
   };
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'template-import-modal',
       labelledby: 'template-import-title',
@@ -443,7 +444,7 @@ export function TemplateImportDialog({ initialRaw = '', state, actions, confirmD
       dirty: !!(file || raw || as || update),
       blocked: busy,
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
     },
     html`<h3 id="template-import-title">
         <${Words}
@@ -557,7 +558,7 @@ export function TemplateFromGroupDialog({
     }
   };
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'template-from-group-modal',
       // Update mode re-labels the wizard lever (dashboard.css .tfg-updating).
@@ -570,7 +571,7 @@ export function TemplateFromGroupDialog({
         group !== (descriptor.presetGroup || descriptor.groups[0] || ''),
       blocked: busy,
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
     },
     html`<h3 id="template-from-group-title">
         <${Words}
@@ -668,7 +669,7 @@ export function TemplateStartersDialog({
     }
   };
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'starters-modal',
       labelledby: 'starters-title',
@@ -984,7 +985,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
   const ready = kind === 'agent' ? agentReady : groupReady;
   if (landed) {
     return h(
-      Overlay,
+      Dialog,
       {
         id: 'group-import-modal',
         labelledby: 'group-import-title',
@@ -992,7 +993,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
         onSubmitHotkey: state.closeDialog,
         dirty: false,
         confirmDiscard,
-        registerClose,
+        guard: { requestClose, registerClose },
       },
       html`<h3 id="group-import-title">Imported</h3>
         <div class="modal-meta" id="group-import-result-summary">${landed.summary}</div>
@@ -1005,7 +1006,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
     );
   }
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'group-import-modal',
       labelledby: 'group-import-title',
@@ -1016,7 +1017,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
       dirty: !!(file || into || as),
       blocked: phase === 'importing',
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
     },
     html`<h3 id="group-import-title">
         <${Words}
@@ -1128,7 +1129,7 @@ export function GroupContextDialog({
     }
   };
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'group-context-modal',
       labelledby: 'group-context-title',
@@ -1137,7 +1138,7 @@ export function GroupContextDialog({
       dirty: context !== descriptor.context,
       blocked: busy,
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
     },
     html`<h3 id="group-context-title">
         <${Words}
@@ -1617,7 +1618,7 @@ export function TemplateDeployDialog({
   const worktreeLoading =
     !reinforcing && wtPhase === 'loading' && !!(worktree || perAgent);
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'template-deploy-modal',
       labelledby: 'template-deploy-title',
@@ -1626,7 +1627,7 @@ export function TemplateDeployDialog({
       dirty,
       blocked: busy || worktreeLoading,
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
     },
     html`<h3 id="template-deploy-title">
         <${Words} plain="Deploy a task force" wizard="🧙 Summon a hero party" />
@@ -2537,7 +2538,7 @@ export function TemplateEditor({
     );
   };
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'template-editor-modal',
       labelledby: 'template-editor-title',
@@ -2546,7 +2547,7 @@ export function TemplateEditor({
       dirty,
       blocked: saving,
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
       resizeKey: 'tclaude.dash.modalSize.template-editor',
     },
     html`<h3 id="template-editor-title">

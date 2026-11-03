@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { isWizardActive } from './slop.js';
 
 const html = htm.bind(h);
@@ -104,7 +104,7 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
     }
   };
 
-  return html`<${Overlay}
+  return html`<${Dialog}
     id="group-standing-orders-modal"
     labelledby="group-standing-orders-title"
     onClose=${actions.closeStandingOrders}

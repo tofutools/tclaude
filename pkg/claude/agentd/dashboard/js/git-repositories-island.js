@@ -2,7 +2,7 @@ import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { registerGitRepositoriesController } from './git-repositories-controller.js';
 import { gitRepoRequests, matchingGitRepos, readGitConcurrency, rememberGitConcurrency } from './git-repositories-actions.js';
 import { withShortcut } from './keybindings.js';
@@ -62,7 +62,7 @@ export function GitRepositoriesDialog({ current, state, actions }) {
     } catch (err) { setError(err.message); }
     finally { running.current = false; setBusy(false); setDone(true); }
   };
-  return html`<${Overlay} id="git-repositories-modal" dialogClass="cron-create-modal git-repositories-modal"
+  return html`<${Dialog} id="git-repositories-modal" dialogClass="cron-create-modal git-repositories-modal"
     labelledby="git-repositories-title" onClose=${state.close} blocked=${busy}
     onSubmitHotkey=${done ? state.close : submit} onSubmitEnter=${done ? state.close : null} initialFocusRef=${filterRef}>
     <div class="git-repos-heading">
@@ -122,7 +122,7 @@ export function GitRepositoriesDialog({ current, state, actions }) {
           <${Words} plain=${busy ? `${verb === 'Sync' ? 'Syncing' : 'Pulling'}…` : `${verb} ${selected.size} ${selected.size === 1 ? 'repository' : 'repositories'}`}
             wizard=${busy ? 'Channeling…' : `${wizardVerb} ${selected.size} ${selected.size === 1 ? 'repository' : 'repositories'}`} /><//>` : null}</div>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function GitRepositoriesApp({ state, actions }) {

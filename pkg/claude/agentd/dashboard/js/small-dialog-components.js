@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { exportChecklistSteps, fmtBytes } from './export-progress.js';
 import { relTime, shortId } from './helpers.js';
@@ -54,14 +54,14 @@ export function PresetCloneDialog({ descriptor, actions, confirmDiscard }) {
     }
   };
   return html`
-    <${Overlay}
+    <${Dialog}
       id="clone-modal"
       labelledby="clone-modal-title"
       onClose=${() => actions.close(descriptor)}
       dirty=${name !== suggested}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
-      registerClose=${registerClose}
+      guard=${{ requestClose, registerClose }}
     >
       <h3 id="clone-modal-title"><${Words}
         plain=${`Clone ${descriptor.presetKind}: ${descriptor.source.name}`}
@@ -97,7 +97,7 @@ export function PresetCloneDialog({ descriptor, actions, confirmDiscard }) {
           <${Words} plain=${busy ? 'Creating…' : 'Create copy'} wizard=${busy ? 'Mirroring…' : 'Mirror it'}/>
         </${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 
@@ -415,7 +415,7 @@ export function TerminalChooserDialog({ descriptor, actions, confirmDiscard }) {
     ${TERMINAL_CHOICES.map((choice, index) => choice.section === name && html`<${TerminalChoice} key=${choice.act} choice=${choice} index=${index} onPick=${pick} autofocus=${index === 0} />`)}
   `;
   return html`
-    <${Overlay}
+    <${Dialog}
       id="term-chooser-modal"
       dialogClass="modal"
       labelledby="term-chooser-title"
@@ -439,7 +439,7 @@ export function TerminalChooserDialog({ descriptor, actions, confirmDiscard }) {
           <${Button} id="term-chooser-cancel" onClick=${() => actions.finishChoice(descriptor, null)}>Cancel</${Button}>
         </div>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 
