@@ -7966,8 +7966,8 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   color: #8b949e; font-family: inherit; font-size: 12px; padding: 4px 9px;
   cursor: pointer;
 }
-.sbx-effective-environment-toggle:hover,
-.sbx-effective-environment-toggle:focus { border-color: #58a6ff; color: #c9d1d9; }
+.sbx-effective-environment-toggle:hover { background: var(--ui-bg-hover); color: #c9d1d9; }
+.sbx-effective-environment-toggle:focus-visible { border-color: #58a6ff; color: #c9d1d9; }
 /* Keep explanatory copy available without permanently adding a paragraph
    below compact add-row controls. The wrapper anchors the disclosure to the
    whole control pair, so its panel can use the dialog column's useful width. */
@@ -8090,21 +8090,10 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   padding-top: 6px; color: #c9d1d9; white-space: nowrap; cursor: pointer;
 }
 .spawn-role-row .spawn-owner-toggle input { margin: 0; }
-/* Match the dialog's other inline buttons (Clear / Save as profile… / Attach…),
-   which use this dark theme — without it the button falls back to the browser's
-   default (white) styling and clashes with the dialog. Permissions… and its
-   Context… twin (TCL-597) share the row and the treatment; listing both here
-   keeps them from drifting apart the way Context… did when it shipped
-   unstyled. */
+/* Permissions… and its Context… twin (TCL-597) are standard small buttons; the
+   row only keeps them from stretching. */
 .spawn-role-row #agent-spawn-perms,
-.spawn-role-row #agent-spawn-context-features {
-  flex: 0 0 auto; align-self: flex-start; white-space: nowrap;
-  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
-  padding: 5px 10px; font-size: 12px; color: #c9d1d9; font-family: inherit;
-  cursor: pointer;
-}
-.spawn-role-row #agent-spawn-perms:hover,
-.spawn-role-row #agent-spawn-context-features:hover { background: #2d333b; }
+.spawn-role-row #agent-spawn-context-features { flex: 0 0 auto; align-self: flex-start; }
 .spawn-role-row .spawn-perms-indicator {
   flex: 0 0 auto; padding-top: 6px; color: var(--ui-muted-text); white-space: nowrap;
 }
@@ -20066,7 +20055,6 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .doctor-cat { color: #adbac7; }
 .doctor-fix { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 6px; padding: 4px 4px 4px 8px; border: 1px solid #2a3340; border-radius: 4px; background: #0d1117; }
 .doctor-fix code { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: #c9d1d9; overflow-wrap: anywhere; }
-.doctor-copy { border: 0; background: transparent; color: #58a6ff; font-size: 11px; cursor: pointer; }
 .doctor-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
 .doctor-opt { padding: 8px 10px; }
 .doctor-opt.rec { border-color: #2ea043; }
@@ -20074,8 +20062,6 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .doctor-opt-detail { margin-top: 3px; color: #8b949e; font-size: 11px; }
 .doctor-tag { margin-left: 6px; padding: 0 6px; border: 1px solid #2ea043; border-radius: 8px; color: #3fb950; font-size: 10px; font-weight: 500; }
 .doctor-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; grid-column: 1 / -1; }
-.doctor-acts button.tool.doctor-primary { background: #238636; border-color: #2ea043; color: #fff; }
-.doctor-acts button.tool:disabled { opacity: .6; cursor: default; }
 @media (max-width: 720px) {
   .doctor-island { grid-template-columns: minmax(0, 1fr); }
   .doctor-side { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid #2a3340; border-radius: 6px 6px 0 0; }
