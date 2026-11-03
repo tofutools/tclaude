@@ -5,8 +5,10 @@ import { installFastClock } from './fast-clock.mjs';
 
 // The silence countdown, the recognizer reopen and the idle stop run on
 // second-scale timers; run them, and this file's waits, on a 5x clock (see
-// fast-clock.mjs). Several tests check that a countdown has not fired yet with
-// a 200 ms margin, which 5x keeps at 40 ms of real time even on a loaded runner.
+// fast-clock.mjs). On that clock real render time counts 5x, so a check that a
+// countdown has or has not fired needs a margin of several hundred clock ms.
+// The two checks that sat within 250 ms flaked under parallel load and were
+// widened; give a new one the same room.
 installFastClock(0.2);
 
 function fakeRecognition() {
@@ -280,15 +282,21 @@ test('silence sends after a countdown that shows, and never when off', async (t)
 });
 
 test('speaking again restarts the countdown, and Esc ends it for good', async (t) => {
-  const s = await setup(t, { silence: 1 });
+  // A 2 s countdown leaves wide margins on both sides of each check: the
+  // countdown shows (and Esc can cancel it) from 500 ms of quiet, and sends
+  // at 2000 ms.
+  const s = await setup(t, { silence: 2 });
   await s.mic();
   await s.harness.act(() => s.speech.last().hear('one', false));
-  await s.harness.act(() => wait(750));
+  await s.harness.act(() => wait(1200));
   await s.harness.act(() => s.speech.last().hear('two', false));
-  await s.harness.act(() => wait(750));
+  // 2200 ms after 'one', 1000 ms after 'two'.
+  await s.harness.act(() => wait(1000));
   assert.deepEqual(s.posted, [], 'new speech pushed it back');
+  assert.ok(s.$('.companion-silence'), 'the countdown shows');
   await s.harness.act(() => s.$('.companion-draft').dispatchEvent(Object.assign(new s.win.Event('keydown', { bubbles: true, cancelable: true }), { key: 'Escape' })));
-  await s.harness.act(() => wait(600));
+  // Past where the countdown would have sent.
+  await s.harness.act(() => wait(1500));
   assert.deepEqual(s.posted, []);
   assert.ok(!s.$('.companion-silence'));
   assert.equal(s.speech.last().aborted, true, 'a late result can\'t start it again');
@@ -319,7 +327,9 @@ test('a one-breath wake starts the silence countdown', async (t) => {
   pane.id = 'pane-p';
   await s.harness.act(() => pickWakeTarget(s.harness.document).start('fix the bug'));
   assert.equal(s.$('.companion-draft').value, 'fix the bug');
-  await s.harness.act(() => wait(1200));
+  // Well past the 1 s countdown: it ticks every 250 ms, and on a loaded
+  // runner those ticks run late.
+  await s.harness.act(() => wait(2000));
   assert.match(s.posted[0].body.body, /^\[dictated\] fix the bug/);
 });
 
