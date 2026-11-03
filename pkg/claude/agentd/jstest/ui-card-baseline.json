@@ -1,13 +1,9 @@
 [
-  ".cost-accumulated-tip-panel",
   ".disconnect-card",
-  ".fleet-card",
   ".knowledge-source-card",
   ".mux-terminal-disconnect-card",
   ".overlay-expose-card",
-  ".sbx-prelaunch-card",
   ".snap-assist-card",
-  ".transfer-card",
   ".vegas-card",
   "body.wizard .vegas-card"
 ]

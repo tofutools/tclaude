@@ -368,12 +368,8 @@ body.hide-costs .mux-cost-toggle { display: none; }
   max-width: calc(100% - 20px);
 }
 .transfer-tray { position: fixed; top: 16px; right: 16px; z-index: var(--z-toast); }
-.transfer-card {
-  width: 280px; max-width: 100%;
-  background: #161b22; border: 1px solid #30363d; border-radius: 8px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
-  color: #c9d1d9; font-size: 12px;
-}
+/* .ui-popover paints the floating surface. */
+.transfer-card { width: 280px; max-width: 100%; font-size: 12px; }
 .transfer-top {
   display: flex; align-items: center; gap: 6px;
   padding: 7px 10px; border-bottom: 1px solid #30363d; font-weight: 600;

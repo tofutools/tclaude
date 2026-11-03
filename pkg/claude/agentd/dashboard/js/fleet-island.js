@@ -499,7 +499,7 @@ function NodeCard({ node, card, selfName, focused, onOpen, onUpdate, onSilence, 
   const kind = node.local ? 'this node' : 'peer';
   const asleep = node.partTime && card.presence === 'offline';
   const presence = card.presence === 'online' ? (node.local ? 'online' : 'online') : asleep ? 'asleep' : card.presence === 'offline' ? 'offline' : card.presence === 'error' ? 'error' : '…';
-  return html`<article ref=${cardRef} data-node-id=${node.id} class=${`fleet-card${node.local ? ' local' : ''}${card.stale || card.presence === 'offline' ? ' stale' : ''}${node.partTime ? ' part-time' : ''}${focused ? ' focused' : ''}`}
+  return html`<article ref=${cardRef} data-node-id=${node.id} class=${`fleet-card ui-card${node.local ? ' local' : ''}${card.stale || card.presence === 'offline' ? ' stale' : ''}${node.partTime ? ' part-time' : ''}${focused ? ' focused' : ''}`}
     style=${`--nc:${node.color}`} aria-label=${`${node.name} node`}>
     <div class="fleet-card-head"><span class="fleet-card-name">${node.local ? '⌂ ' : ''}${node.name}</span>
       <span class="ui-tag fleet-card-kind">${kind}</span>${node.partTime && html`<span class="ui-tag fleet-card-kind part-time" title="Often off on purpose: no offline or back-online messages">part-time</span>`}
@@ -521,7 +521,7 @@ function NodeCard({ node, card, selfName, focused, onOpen, onUpdate, onSilence, 
 function HubCard({ hub, now, admin, onConfigure }) {
   const connected = hub.state === 'connected';
   const shortID = hub.id.length > 16 ? `${hub.id.slice(0, 16)}…` : hub.id;
-  return html`<article class=${`fleet-card hub${connected ? '' : ' stale'}`} data-node-id=":hub" aria-label="federation hub">
+  return html`<article class=${`fleet-card ui-card hub${connected ? '' : ' stale'}`} data-node-id=":hub" aria-label="federation hub">
     <div class="fleet-card-head"><span class="fleet-card-name">hub</span><span class="ui-tag fleet-card-kind">relay</span>
       <span class=${`fleet-card-presence ${connected ? 'online' : 'offline'}`}><i aria-hidden="true"></i>${hub.state}</span></div>
     <dl class="fleet-card-body">
@@ -601,7 +601,7 @@ function TrustAsk({ row, now, onAsk, onDismiss }) {
 // Trust… opens the same fingerprint-checked dialog as Fleet config → Peers.
 function StrangerCard({ row, now, onTrust, onAsk, onDismiss }) {
   const seen = row.online ? 'online' : row.lastSeen ? `seen ${fmtAge(Math.max(0, now - Date.parse(row.lastSeen)))} ago` : 'offline';
-  return html`<article data-node-id=${row.id} class=${`fleet-card untrusted${row.online ? '' : ' stale'}${row.request ? ' asks' : ''}`} aria-label=${`${row.label} untrusted instance`}>
+  return html`<article data-node-id=${row.id} class=${`fleet-card ui-card untrusted${row.online ? '' : ' stale'}${row.request ? ' asks' : ''}`} aria-label=${`${row.label} untrusted instance`}>
     <div class="fleet-card-head"><span class="fleet-card-name" title="Name reported by the instance itself">${row.name || html`<span class="muted">unnamed</span>`}</span>
       <span class="ui-tag fleet-card-kind">not trusted</span>
       <span class=${`fleet-card-presence ${row.online ? 'online' : 'offline'}`}><i aria-hidden="true"></i>${seen}</span></div>

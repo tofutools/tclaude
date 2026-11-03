@@ -41,7 +41,7 @@ export function TransferCard({ transfer }) {
     return html`<button data-ui-exempt type="button" class="transfer-pill" title="Show upload progress"
       onClick=${() => setTransferMinimized(transfer.id, false)}>⇪ ${transfer.phase === 'uploading' ? `${percent(transfer)}%` : heading(transfer)}</button>`;
   }
-  return html`<div class=${`transfer-card transfer-${transfer.phase}`} role="status" aria-live="polite">
+  return html`<div class=${`transfer-card ui-popover transfer-${transfer.phase}`} role="status" aria-live="polite">
     <div class="transfer-top">
       <span class="transfer-title">${heading(transfer)}</span>
       ${transfer.cancel ? html`<${Button} size="sm" class="transfer-cancel" onClick=${transfer.cancel}>
