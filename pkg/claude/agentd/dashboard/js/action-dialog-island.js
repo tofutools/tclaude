@@ -1,7 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -96,7 +96,7 @@ function WorktreeFields({ repo, actions, value, setValue, branch, setBranch, bas
   return html`
     <label class="cron-create-row">
       <span class="cron-create-label">Worktree</span>
-      <select
+      <${Select}
         id="clone-agent-worktree"
         value=${value}
         disabled=${request.phase !== 'ready' || !isRepo}
@@ -116,7 +116,7 @@ function WorktreeFields({ repo, actions, value, setValue, branch, setBranch, bas
           `;
         })}
         ${isRepo && html`<option value=${WT_NEW}>+ create new worktree…</option>`}
-      </select>
+      <//>
     </label>
     ${value === WT_NEW && html`
       <label class="cron-create-row" id="clone-agent-wt-new-row">
@@ -134,9 +134,9 @@ function WorktreeFields({ repo, actions, value, setValue, branch, setBranch, bas
       ${hasCommits ? html`
         <label class="cron-create-row" id="clone-agent-wt-base-row">
           <span class="cron-create-label">Base branch</span>
-          <select id="clone-agent-wt-base" value=${base} onChange=${(event) => setBase(event.currentTarget.value)}>
+          <${Select} id="clone-agent-wt-base" value=${base} onChange=${(event) => setBase(event.currentTarget.value)}>
             ${branches.map((name) => html`<option key=${name} value=${name}>${name}</option>`)}
-          </select>
+          <//>
         </label>
       ` : html`
         <p class="wt-orphan-warn" id="clone-agent-wt-orphan-hint">
@@ -278,7 +278,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
         setBase=${setBase}
       />` : html`<label class="cron-create-row locked-field" id="clone-agent-worktree-row">
         <span class="cron-create-label">Worktree</span>
-        <select id="clone-agent-worktree" disabled aria-disabled="true"><option>(same directory as source)</option></select>
+        <${Select} id="clone-agent-worktree" disabled aria-disabled="true"><option>(same directory as source)</option><//>
         <${LockReason} id="clone-agent-worktree-lock" why=${locked}/>
       </label>`}
       <${ErrorBanner} id="clone-agent-error" error=${error} onDismiss=${() => setError('')} />
@@ -421,10 +421,10 @@ function NestGroupDialog({ descriptor, actions, confirmDiscard }) {
       /></div>
       <label class="cron-create-row">
         <span class="cron-create-label">Parent</span>
-        <select id="group-nest-parent" value=${parent} onChange=${(event) => setParent(event.currentTarget.value)}>
+        <${Select} id="group-nest-parent" value=${parent} onChange=${(event) => setParent(event.currentTarget.value)}>
           <option value="">— top level (no parent) —</option>
           ${model.candidates.map((name) => html`<option key=${name} value=${name}>${name}</option>`)}
-        </select>
+        <//>
       </label>
       <${ErrorBanner} id="group-nest-error" error=${error} onDismiss=${() => setError('')} />
       <div class="modal-buttons">
@@ -646,14 +646,14 @@ function GroupSettingsDialog({ descriptor, snapshot, actions, confirmDiscard }) 
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Description" wizard="Lore" /></span><input ...${off('set-group-descr')} value=${values.descr} onInput=${(event) => set('descr', event.currentTarget.value)}/></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Default dir" wizard="Sanctum" /></span><input id="group-settings-default-cwd" ...${off('set-group-dir')} value=${values.defaultCwd} placeholder="absolute path" spellcheck="false" onInput=${(event) => set('defaultCwd', event.currentTarget.value)}/><${Button} id="group-settings-default-cwd-browse" class="dir-browse-btn" disabled=${busy || browseBusy || !!browseLock || !can('set-group-dir')} title=${browseLock ? undefined : 'Browse for a directory'} onClick=${() => { void browseDefaultCwd(); }}><${Words} plain=${browseBusy ? 'Opening…' : 'Browse…'} wizard=${browseBusy ? 'Scrying…' : 'Scry…'} /><//><${LockReason} id="group-settings-default-cwd-browse-lock" why=${browseLock}/></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Startup context" wizard="Opening lore" /></span><textarea rows="5" ...${off('set-group-context')} value=${values.defaultContext} onInput=${(event) => set('defaultContext', event.currentTarget.value)}></textarea></label>
-    <label class="cron-create-row" title="What tclaude re-injects into member agents after their context is compacted or cleared (/clear gets identity only, or nothing when off)"><span class="cron-create-label"><${Words} plain="Re-inject after compact" wizard="Memory ward" /></span><select id="group-settings-reinject" ...${off('set-group-context')} value=${values.reinjectAfterCompact} onChange=${(event) => set('reinjectAfterCompact', event.currentTarget.value)}><option value="contexts">identity + startup context</option><option value="identity">identity only</option><option value="off">off</option></select></label>
-    <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Spawn profile" wizard="Loadout" /></span><select ...${off('set-group-profile')} value=${values.defaultProfile} onChange=${(event) => set('defaultProfile', event.currentTarget.value)}><option value="">— none —</option>${profileNames.map((name) => html`<option value=${name}>${name}</option>`)}</select></label>
+    <label class="cron-create-row" title="What tclaude re-injects into member agents after their context is compacted or cleared (/clear gets identity only, or nothing when off)"><span class="cron-create-label"><${Words} plain="Re-inject after compact" wizard="Memory ward" /></span><${Select} id="group-settings-reinject" ...${off('set-group-context')} value=${values.reinjectAfterCompact} onChange=${(event) => set('reinjectAfterCompact', event.currentTarget.value)}><option value="contexts">identity + startup context</option><option value="identity">identity only</option><option value="off">off</option><//></label>
+    <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Spawn profile" wizard="Loadout" /></span><${Select} ...${off('set-group-profile')} value=${values.defaultProfile} onChange=${(event) => set('defaultProfile', event.currentTarget.value)}><option value="">— none —</option>${profileNames.map((name) => html`<option value=${name}>${name}</option>`)}<//></label>
     <div class="cron-create-row" id="group-settings-prompts-row" title="Saved prompts that open the task brief of agents spawned into this group, in order, when the spawn's profile names none."><span class="cron-create-label">Saved prompts</span><${SavedPromptChips} id="group-settings-prompt-refs" value=${values.defaultPrompts} onChange=${(refs) => set('defaultPrompts', refs)} disabled=${busy || !!promptsLock || !can('set-group-prompts')} confirmDiscard=${confirmDiscard}/><${LockReason} id="group-settings-prompts-lock" why=${promptsLock}/></div>
-    <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Sandbox profile" wizard="Ward" /></span><select ...${off('set-group-sandbox-profile')} value=${values.sandboxProfile} onChange=${(event) => set('sandboxProfile', event.currentTarget.value)}><option value="">— inherit global —</option>${sandboxNames.map((name) => html`<option value=${name}>${name}</option>`)}</select></label>
+    <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Sandbox profile" wizard="Ward" /></span><${Select} ...${off('set-group-sandbox-profile')} value=${values.sandboxProfile} onChange=${(event) => set('sandboxProfile', event.currentTarget.value)}><option value="">— inherit global —</option>${sandboxNames.map((name) => html`<option value=${name}>${name}</option>`)}<//></label>
     <div class="cron-create-row" id="group-settings-environment-row"><span class="cron-create-label"><${Words} plain="Environment" wizard="Summoning runes" /></span><div class="cron-create-target"><div class="sbx-rows">${values.environment.map((entry, index) => html`<div class="sbx-row sbx-environment-row"><input class="sbx-env-name" ...${off('set-group-environment')} placeholder="NAME" value=${entry.name} onInput=${(event) => set('environment', values.environment.map((row, rowIndex) => rowIndex === index ? { ...row, name: event.currentTarget.value } : row))}/><input data-capture-mask class="sbx-env-value" ...${off('set-group-environment')} placeholder="value" value=${entry.value} onInput=${(event) => set('environment', values.environment.map((row, rowIndex) => rowIndex === index ? { ...row, value: event.currentTarget.value } : row))}/><${Button} size="sm" variant="ghost danger" icon=${true} aria-label="Remove variable" ...${off('set-group-environment')} onClick=${() => set('environment', values.environment.filter((_, rowIndex) => rowIndex !== index))}>×<//></div>`)}</div><div class="sbx-add-row-help"><${Button} size="sm" class="sbx-add-row" ...${off('set-group-environment')} onClick=${() => set('environment', [...values.environment, { name: '', value: '' }])}><${Words} plain="＋ add variable" wizard="✦ bind rune" /><//><${HelpDisclosure} id="group-settings-environment-help" label="Group environment variables" help=${GROUP_ENVIRONMENT_HELP} content=${html`<${Words} plain=${GROUP_ENVIRONMENT_HELP} wizard=${GROUP_ENVIRONMENT_HELP_WIZARD} />`} open=${environmentHelpOpen === 'group-settings-environment-help'} setOpen=${setEnvironmentHelpOpen} /></div></div></div>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Member cap" wizard="Party limit" /></span><input type="number" min="0" ...${off('set-group-max-members')} value=${values.maxMembers} onInput=${(event) => set('maxMembers', event.currentTarget.value)}/></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Notifications" wizard="Omens" /></span><input type="checkbox" ...${off('toggle-group-notify')} checked=${values.notifyEnabled} onChange=${(event) => set('notifyEnabled', event.currentTarget.checked)}/></label>
-    <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Remote policy" wizard="Scrying policy" /></span><select ...${off('set-group-remote-control')} value=${values.remoteControlPolicy} onChange=${(event) => set('remoteControlPolicy', event.currentTarget.value)}><option value="inherit">inherit profile</option><option value="optin">opt in</option><option value="deny">deny</option></select></label>
+    <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Remote policy" wizard="Scrying policy" /></span><${Select} ...${off('set-group-remote-control')} value=${values.remoteControlPolicy} onChange=${(event) => set('remoteControlPolicy', event.currentTarget.value)}><option value="inherit">inherit profile</option><option value="optin">opt in</option><option value="deny">deny</option><//></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Link / attachment" wizard="Quest portal" /></span><input type="url" ...${off('group-attachment')} placeholder="https://…" value=${values.attachmentURL} onInput=${(event) => set('attachmentURL', event.currentTarget.value)}/></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Link label" wizard="Portal name" /></span><input ...${off('group-attachment')} placeholder="optional display label" value=${values.attachmentLabel} onInput=${(event) => set('attachmentLabel', event.currentTarget.value)}/></label>
     <${ErrorBanner} id="group-settings-error" error=${error} onDismiss=${() => setError('')} />

@@ -6,7 +6,7 @@ import { dashboardState } from './snapshot-store.js';
 import { Fragment, h, render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { TransferTray } from './transfer-card.js';
 import { LockReason } from './lock-reason.js';
 import { isPageNode } from './node-api.js';
@@ -1366,13 +1366,13 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       title=${`Pre-fill this dialog from a saved spawn profile — a reusable bundle of the harness / model / effort / sandbox + name / role / descr / initial-message fields (NOT the directory or worktree). Fields left blank here fall through to the resolved defaults. ${RESOLVED_DEFAULTS_CHAIN}`}>
       <span class="cron-create-label"><${Words} prefix="profiles-word" plain="Profile" wizard="Loadout" /></span>
       <div class="cron-create-target"><div class="cron-target-input-row">
-        <select id="agent-spawn-load-profile" value=${draft.profile} disabled=${busy}
+        <${Select} id="agent-spawn-load-profile" value=${draft.profile} disabled=${busy}
           onChange=${(event) => changeProfile(event.currentTarget.value)}>
           <option value="">${remote ? `— ${remote.node}'s defaults —` : '— none (blank form) —'}</option>
           ${remote
             ? html`<${RemoteProfileOptions} profiles=${profiles} remote=${remote} showFrom=${showFrom} selected=${draft.profile} />`
             : spawnProfileChoices(profiles).map((choice) => html`<option key=${choice.value} value=${choice.value}>${choice.label}</option>`)}
-        </select>
+        <//>
         <${Button} size="sm" id="agent-spawn-clear" disabled=${busy}
           title="Reset the profile-filled fields (harness / model / effort / name / role / …) to blank — leaves the group, directory and worktree untouched"
           onClick=${() => changeProfile('')}>Clear<//>
@@ -1384,10 +1384,10 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     </label>
     <label class="cron-create-row" id="agent-spawn-group-row" hidden=${draft.fixedGroup}>
       <span class="cron-create-label"><${Words} prefix="spawn-group-word" plain="Group" wizard="Party" /></span>
-      <select id="agent-spawn-group" value=${draft.group} disabled=${busy}
+      <${Select} id="agent-spawn-group" value=${draft.group} disabled=${busy}
         onChange=${(event) => changeGroup(event.currentTarget.value)}>
         ${context.groups.filter((group) => group?.name).map((group) => html`<option key=${group.name} value=${group.name}>${group.name}</option>`)}
-      </select>
+      <//>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Name</span>
@@ -1448,7 +1448,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
                 update('roleRefs', (draft.roleRefs || []).filter((name) => name !== role.name));
               }}>×</button>
           </span>`)}
-          <select id="agent-spawn-role-add" value="" disabled=${busy || (context.roles || []).every((role) => (draft.roleRefs || []).includes(role.name))}
+          <select data-ui-exempt id="agent-spawn-role-add" value="" disabled=${busy || (context.roles || []).every((role) => (draft.roleRefs || []).includes(role.name))}
             aria-label=${wizard ? 'Add class' : 'Add role'} onChange=${(event) => {
               const next = event.currentTarget.value;
               if (!next) return;
@@ -1503,31 +1503,31 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     <label class="cron-create-row" id="agent-spawn-harness-row"
       title="Coding harness for the new agent. The harness switches the Model + Effort menus and launch controls.">
       <span class="cron-create-label">Harness</span>
-      <select id="agent-spawn-harness" value=${draft.harness} disabled=${busy}
+      <${Select} id="agent-spawn-harness" value=${draft.harness} disabled=${busy}
         onChange=${(event) => changeHarness(event.currentTarget.value)}>
         ${context.harnesses.map((harness) => html`<option key=${harness.name} value=${harness.name}>${harness.display_name || harness.name}</option>`)}
-      </select>
+      <//>
     </label>
     <label class="cron-create-row" id="agent-spawn-fast-mode-row" hidden=${!view.showFastMode}
       title="Codex fast mode uses a higher-cost, lower-latency service tier. Harness default leaves ~/.codex/config.toml in charge.">
       <span class="cron-create-label">Fast mode</span>
-      <select id="agent-spawn-fast-mode" value=${draft.fastMode} disabled=${busy}
+      <${Select} id="agent-spawn-fast-mode" value=${draft.fastMode} disabled=${busy}
         onChange=${(event) => update('fastMode', event.currentTarget.value)}>
         <option value="">Harness default (config.toml)</option>
         <option value="1">On</option>
         <option value="0">Off</option>
-      </select>
+      <//>
     </label>
     <div class="spawn-inline-fields">
       <label class="cron-create-row" id="agent-spawn-model-claude-row" hidden=${!view.hasModelList}
         title="Model suggested by the selected harness. Default passes no --model; Custom model id accepts an out-of-catalog model.">
         <span class="cron-create-label">Model</span>
-        <select id="agent-spawn-model" value=${selectedModel} disabled=${busy}
+        <${Select} id="agent-spawn-model" value=${selectedModel} disabled=${busy}
           onChange=${(event) => changeModel(event.currentTarget.value)}>
           <option value="">${spawnModelDefaultLabel(draft, context, profiles)}</option>
           ${view.models.map((model) => html`<option key=${model} value=${model}>${model}</option>`)}
           <option value=${MODEL_CUSTOM_VALUE}>Custom model id…</option>
-        </select>
+        <//>
       </label>
       <label class="cron-create-row" id="agent-spawn-model-codex-row" hidden=${view.hasModelList}
         title="Free-text model id for a harness with no curated suggestions. Blank passes no --model.">
@@ -1545,11 +1545,11 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           placeholder="blank = harness default; model id or alias" autocomplete="off" spellcheck="false" />
       </label>
       <label class="cron-create-row" title="Reasoning effort for the new agent.">
-        <select id="agent-spawn-effort" aria-label="Effort" value=${draft.effort} disabled=${busy}
+        <${Select} id="agent-spawn-effort" aria-label="Effort" value=${draft.effort} disabled=${busy}
           onChange=${(event) => update('effort', event.currentTarget.value)}>
           <option value="">Default (harness's own)</option>
           ${view.efforts.map((effort) => html`<option key=${effort} value=${effort}>${effort}</option>`)}
-        </select>
+        <//>
       </label>
       <label class="cron-create-row" id="agent-spawn-auto-compact-window-row" hidden=${!view.showAutoCompactWindow}
         title=${AUTO_COMPACT_WINDOW_TITLE}>
@@ -1600,7 +1600,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       title="Whose provider account pays for this agent's model calls. A peer's share routes them through that peer's model gateway; the agent still runs here.">
       <label class="cron-create-label" for="agent-spawn-usage">Usage from</label>
       <div class="cron-create-target">
-        <select id="agent-spawn-usage" value=${usageChoice && !usageChoice.reason ? draft.usageFrom : ''} disabled=${busy}
+        <${Select} id="agent-spawn-usage" value=${usageChoice && !usageChoice.reason ? draft.usageFrom : ''} disabled=${busy}
           onChange=${(event) => {
             const value = event.currentTarget.value;
             const pick = usageChoices.find((o) => o.value === value);
@@ -1608,7 +1608,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           }}>
           <option value="">⌂ Your own account</option>
           ${usageChoices.map((o) => html`<option key=${o.value} value=${o.value} disabled=${!!o.reason}>${o.label} — ${o.reason || o.detail}</option>`)}
-        </select>
+        <//>
         ${usageChoice && !usageChoice.reason && html`<div class="spawn-field-hint ui-hint info" id="agent-spawn-usage-hint">${shareHint(usageChoice.share)}</div>`}
         ${usageChoice?.reason && html`<div class="spawn-field-hint ui-hint warn" id="agent-spawn-usage-hint">${usageChoice.label} cannot pay for this spawn: ${usageChoice.reason}. It will use your own account.</div>`}
       </div>
@@ -1617,14 +1617,14 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       title="Which Claude login the agent runs on. Your subscription: the token you stored on this node travels in the encrypted spawn request, stays in memory on the node running the agent, and reaches Claude Code through a pipe — never its disk or environment.">
       <label class="cron-create-label" for="agent-spawn-claude-login">Claude login</label>
       <div class="cron-create-target">
-        <select id="agent-spawn-claude-login" value=${draft.claudeSubscription && subscription?.set ? 'mine' : ''} disabled=${busy}
+        <${Select} id="agent-spawn-claude-login" value=${draft.claudeSubscription && subscription?.set ? 'mine' : ''} disabled=${busy}
           onChange=${(event) => {
             const mine = event.currentTarget.value === 'mine';
             setDraft((before) => ({ ...before, claudeSubscription: mine }));
           }}>
           <option value="">${spawnNodeName}'s own login</option>
           <option value="mine" disabled=${!subscription?.set}>Your Claude subscription${subscription?.set ? '' : ' (not set up)'}</option>
-        </select>
+        <//>
         ${draft.claudeSubscription && subscription?.set
           ? html`<div class="spawn-field-hint ui-hint info" id="agent-spawn-claude-login-hint">Runs on your subscription and is billed to it. ${spawnNodeName} holds the token in memory only: if its tclaude restarts, the agent cannot be restarted, and you spawn a new one.</div>`
           : !subscription?.set && html`<div class="spawn-field-hint ui-hint" id="agent-spawn-claude-login-hint">To run it on your own subscription, store a token from <code>claude setup-token</code> under Fleet config → Model gateways → My Claude subscription.</div>`}
@@ -1635,7 +1635,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <label class="cron-create-label" for="agent-spawn-sandbox-impl">Sandbox</label>
       <div class="cron-create-target spawn-field-help-column">
         <div class="spawn-field-with-help">
-          <select id="agent-spawn-sandbox-impl" value=${draft.sandboxImpl} disabled=${busy}
+          <${Select} id="agent-spawn-sandbox-impl" value=${draft.sandboxImpl} disabled=${busy}
             aria-describedby="agent-spawn-sandbox-impl-help"
             onChange=${(event) => {
     const value = event.currentTarget.value;
@@ -1647,7 +1647,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
             <option value="">${resolvedDefaultOption(resolvedSandboxImplLabel)}</option>
             ${(view.sandboxImplOptions || []).map((option) => html`
               <option key=${option.value} value=${option.value}>${option.label}</option>`)}
-          </select>
+          <//>
           <${HelpDisclosure} id="agent-spawn-sandbox-impl"
             descriptionID="agent-spawn-sandbox-impl-help" label="Sandbox"
             help=${sandboxImplHelp} warn=${!!sandboxImplCaveat}
@@ -1820,7 +1820,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Worktree</span>
-      <select id="agent-spawn-worktree" value=${draft.worktree} disabled=${busy || !worktreeUsable}
+      <${Select} id="agent-spawn-worktree" value=${draft.worktree} disabled=${busy || !worktreeUsable}
         onChange=${(event) => {
           for (const key of ['worktree', 'worktreeBranch', 'syncWorktree']) touched.current.add(key);
           profileOverrides.current.add('syncWorktree');
@@ -1834,7 +1834,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
             title=${`${branch}${main} — ${worktree.path}`}>${branch}${main} — ${shortCwd(worktree.path)}</option>`;
         })}
         ${worktreeUsable && html`<option value=${WT_NEW}>+ create new worktree…</option>`}
-      </select>
+      <//>
     </label>
     <label class=${`cron-create-enabled cron-check-aligned${worktreeUsable ? '' : ' disabled'}`} id="agent-spawn-wt-sync-row"
       title="Spawn the agent in a fresh git worktree whose branch is named after the name above. Needs a CWD inside a git repo.">
@@ -1871,10 +1871,10 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     <label class="cron-create-row" id="agent-spawn-wt-base-row"
       hidden=${draft.worktree !== WT_NEW || !worktrees.hasCommits}>
       <span class="cron-create-label">Base branch</span>
-      <select id="agent-spawn-wt-base" value=${draft.worktreeBase} disabled=${busy}
+      <${Select} id="agent-spawn-wt-base" value=${draft.worktreeBase} disabled=${busy}
         onChange=${(event) => update('worktreeBase', event.currentTarget.value)}>
         ${(worktrees.branches || []).map((branch) => html`<option key=${branch} value=${branch}>${branch}</option>`)}
-      </select>
+      <//>
     </label>
     <p class="wt-orphan-warn" id="agent-spawn-wt-orphan-hint"
       hidden=${draft.worktree !== WT_NEW || worktrees.hasCommits}>

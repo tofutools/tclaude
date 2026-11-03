@@ -11654,15 +11654,15 @@ body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal,
   color: #b39ddb;
 }
 body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .cron-create-enabled { color: #e7d9f5; }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(.cron-create-row, .lt-row) :is(input[type=text], input:not([type]), select, textarea) {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(.cron-create-row, .lt-row) :is(input[type=text], input:not([type]), select:where(:not(.ui-select)), textarea) {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
   color: #f3e6c0;
 }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(.cron-create-row, .lt-row) :is(input[type=text], input:not([type]), select, textarea):focus {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(.cron-create-row, .lt-row) :is(input[type=text], input:not([type]), select:where(:not(.ui-select)), textarea):focus {
   border-color: #a97bd6;
 }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(.cron-create-row, .lt-row) select option {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(.cron-create-row, .lt-row) select:where(:not(.ui-select)) option {
   color: #1a1330;
   background: #e7d9f5;
 }
@@ -18670,6 +18670,8 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 }
 .lock-why-end:hover::after, .lock-why-end:focus::after { left: auto; right: -4px; }
 .locked-field { opacity: .45; cursor: not-allowed; }
+/* The row already dims; a disabled field inside it must not dim twice. */
+.locked-field :is(.ui-input, .ui-select, .ui-textarea):disabled { opacity: 1; }
 .dialog-node-chip {
   display: inline-block; margin-left: 8px; padding: 0 7px; border-radius: 10px; vertical-align: 2px;
   border: 1px solid #1f3a5f; background: #0f2135; color: #58a6ff; font-size: 11px; font-weight: 500;
