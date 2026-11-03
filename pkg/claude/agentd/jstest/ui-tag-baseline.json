@@ -12,7 +12,6 @@
     ".open-pr-draft-label",
     ".perm-scope-chip",
     ".presence-badge",
-    ".process-node-readonly-badge",
     ".remote-node-pill",
     ".remote-viewers-badge.term-viewers-badge",
     ".sandbox-import-conflict-count",
@@ -23,11 +22,6 @@
     ".window-role-chip"
   ],
   "process-kit.css": [
-    ".pk-chip",
-    ".pk-round",
-    ".pk-run-icon-badge"
-  ],
-  "process-terminal-overlay.css": [
-    ".pk-bounds-chip"
+    ".pk-round"
   ]
 }

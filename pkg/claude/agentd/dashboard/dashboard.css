@@ -10087,7 +10087,6 @@ body.wizard #tab-processes .process-scribe-wizard { display: inline; }
   padding: 8px 10px; border: 1px solid #30363d; border-radius: 7px; background: #0d1117;
 }
 .process-scribe-session { display: flex; align-items: center; gap: 7px; padding-left: 8px; border-left: 1px solid #30363d; }
-.process-scribe-state { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .process-scribe-state.online { color: #3fb950; }
 .process-scribe-state.stopped { color: #d29922; }
 .process-scribe-open { border: 0; padding: 0; color: #58a6ff; background: none; font: inherit; cursor: pointer; text-decoration: underline dotted; }
@@ -15694,9 +15693,6 @@ body.process-solo #companion-root, body.process-solo #board-overlay-root { displ
   gap: 2px;
   padding: 7px 9px;
   margin-bottom: 6px;
-  background: #1d2631;
-  border: 1px solid #30363d;
-  border-radius: 8px;
   cursor: grab;
 }
 .process-palette-card:hover { border-color: #58a6ff; }
@@ -15718,8 +15714,7 @@ body.process-solo #companion-root, body.process-solo #board-overlay-root { displ
 .process-palette-state { display: flex; align-items: center; gap: 6px; color: #8b949e; font-size: 11px; line-height: 1.35; margin: 6px 0; }
 .process-palette-state.is-error { color: #ff7b72; }
 .process-palette-card-label { color: #e6edf3; font-size: 13px; font-weight: 600; }
-.process-palette-card-hint { color: #8b949e; font-size: 11px; }
-.process-palette-help { color: #8b949e; font-size: 11px; margin: 10px 0 0; }
+.process-palette-help { margin: 10px 0 0; }
 .process-editor-stage { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; }
 /* Subprocess drill-in (E1): breadcrumb bar, parent minimap, port panel, outline. */
 .process-scope-bar {
@@ -15838,8 +15833,6 @@ body.wizard .process-scope-ports { background: #140f28; border-left-color: #4a3d
 .process-node-chooser-icon { flex: none; width: 18px; color: #79c0ff; text-align: center; }
 .process-node-chooser-copy { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
 .process-node-chooser-label { color: var(--ui-strong-text); font-size: 13px; font-weight: 600; }
-.process-node-chooser-hint,
-.process-node-chooser-empty { color: #8b949e; font-size: 11px; }
 .process-node-chooser-empty { margin: 5px 0; }
 .process-node-chooser-cancel {
   align-self: flex-end; padding: 5px 10px; color: #c9d1d9; background: #21262d;
@@ -15910,9 +15903,7 @@ body.wizard .process-scope-ports { background: #140f28; border-left-color: #4a3d
   border-radius: 0 0 8px 8px;
   flex-wrap: wrap;
 }
-.process-inspector-kind { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .process-inspector-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #79c0ff; font-size: 12px; }
-.process-inspector-hint { color: #8b949e; font-size: 12px; }
 
 /* ─── Process template delete (row button + drag-to-bin) ──────────────
    The row's 🗑 delete button is icon-only, so it overrides the text-shaped
@@ -16022,7 +16013,7 @@ body.wizard .process-list .process-actions .process-delete-btn:focus-visible .tr
   border: 1px solid #30363d;
 }
 .process-param-list { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 80px; }
-.process-param-empty { padding: 20px; text-align: center; color: #8b949e; border: 1px dashed #30363d; border-radius: 8px; }
+.process-param-empty { padding: 20px; border: 1px dashed #30363d; border-radius: 8px; }
 .process-param-row {
   display: grid;
   grid-template-columns: minmax(105px, .8fr) minmax(90px, .6fr) minmax(150px, 1.35fr) minmax(150px, 1fr) auto auto;
@@ -16048,7 +16039,7 @@ body.wizard .process-list .process-actions .process-delete-btn:focus-visible .tr
 .process-param-default-control .process-param-default-enabled { flex: none; }
 .process-param-check { display: flex; align-items: center; gap: 5px; min-height: 31px; color: #c9d1d9; font-size: 12px; white-space: nowrap; }
 .process-param-toolbar { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
-.process-param-error { min-height: 18px; color: #f85149; font-size: 12px; text-align: right; }
+.process-param-error { min-height: 18px; text-align: right; }
 /* Chrome only: the .process-editor-modal skin supplies the field, button, and
    wizard treatment, so this must not restate colours the skin already owns. */
 .process-rename-dialog { width: min(460px, 94vw); }
@@ -16069,9 +16060,6 @@ body.wizard .process-list .process-actions .process-delete-btn:focus-visible .tr
   bottom: 10px;
   z-index: 7;
   max-width: min(430px, 75%);
-  background: rgba(22, 27, 34, .94);
-  border: 1px solid #30363d;
-  border-radius: 8px;
   color: #c9d1d9;
   font-size: 12px;
   box-shadow: 0 4px 18px rgba(0, 0, 0, .45);
@@ -16122,7 +16110,7 @@ body.wizard .process-list .process-actions .process-delete-btn:focus-visible .tr
 .process-issues-list li:has(> .process-loop-make) { display: flex; align-items: center; gap: 6px; }
 .process-issues-list li:has(> .process-loop-make) > .process-issue { width: auto; flex: 1; min-width: 0; }
 .process-issues-list li > .process-loop-make { flex: none; font-size: 12px; padding: 2px 8px; }
-.process-loop-hint { color: #e3a341; }
+.process-inspector-hint.process-loop-hint { color: #e3a341; }
 .process-issue-glyph { flex: none; font-weight: 800; }
 .process-issue-error .process-issue-glyph { color: #f85149; }
 .process-issue-warning .process-issue-glyph { color: #e3a341; }
@@ -16138,7 +16126,6 @@ body.wizard .process-list .process-actions .process-delete-btn:focus-visible .tr
 .process-issue-message { color: #8b949e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Wizard skin: keep the editor chrome legible on the parchment/violet theme;
    the graph core repaints itself via its own body.wizard variable block. */
-body.wizard .process-issues-panel { background: rgba(33, 24, 50, .95); border-color: #4a3d6b; }
 body.wizard .process-issues-panel[open] .process-issues-summary { border-color: #4a3d6b; }
 body.wizard .process-issue:hover, body.wizard .process-issue:focus-visible { background: #2c2042; }
 body.wizard .process-issue-target { color: #d4af37; }
@@ -16155,7 +16142,6 @@ body.wizard .process-editor .process-inspector-input {
   border-color: #4a3d6b;
 }
 body.wizard .process-editor .process-inspector-input:focus { border-color: #d4af37; }
-body.wizard .process-palette-card { background: #2c2042; border-color: #4a3d6b; }
 body.wizard .process-palette-card:hover { border-color: #d4af37; }
 body.wizard .process-palette-card.is-built-in { border-left-color: #8b6fb3; }
 body.wizard .process-palette-card.is-custom { border-left-color: #d4af37; }
@@ -16175,8 +16161,6 @@ body.wizard .process-node-chooser-option.is-selected { background: #2c2042; bord
 body.wizard .process-node-chooser-option.is-disabled:hover,
 body.wizard .process-node-chooser-option.is-disabled.is-selected { background: #302032; border-color: #8b607f; }
 body.wizard .process-node-chooser-icon { color: #d4af37; }
-body.wizard .process-node-chooser-hint,
-body.wizard .process-node-chooser-empty { color: #a99bc0; }
 body.wizard .process-node-chooser-cancel { color: #f3e6c0; background: #2c2042; border-color: #6d5695; }
 body.wizard .process-editor-inspector .process-template-id-locked { color: #a99bc0; }
 body.wizard .process-editor-modal {
@@ -16317,15 +16301,6 @@ body.wizard .pdr-current { background: #181226; border-color: #4a3d6b; }
   background: #161b22; /* matches .modal so scrolled sections pass under it */
 }
 .process-node-detail-head .spacer { flex: 1; }
-.process-node-readonly-badge {
-  color: #e3a341;
-  border: 1px solid #e3a341;
-  border-radius: 10px;
-  padding: 1px 8px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .04em;
-}
 /* Explicitly dark-themed button (UA-white trap for row-inline buttons). */
 .process-node-close {
   background: #21262d;
@@ -16397,7 +16372,7 @@ body.wizard .pdr-current { background: #181226; border-color: #4a3d6b; }
 .process-node-check-head .process-node-field { flex: 1 1 180px; min-width: 0; }
 .process-node-check-head .spacer { flex: 0; }
 .process-node-add { align-self: flex-start; }
-.process-node-empty { margin: 0; color: #8b949e; font-size: 12px; }
+.process-node-empty { margin: 0; }
 .process-node-edges { display: flex; flex-direction: column; gap: 3px; }
 .process-node-edge-row { display: flex; gap: 8px; align-items: baseline; font-size: 13px; }
 .process-node-edge-outcome { color: #79c0ff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -16420,7 +16395,6 @@ body.wizard .process-node-textarea:focus,
 body.wizard .process-node-select:focus { border-color: #d4af37; }
 body.wizard .process-node-close:hover { border-color: #d4af37; }
 body.wizard .process-performer-editor { border-left-color: #4a3d6b; }
-body.wizard .process-node-readonly-badge { color: #d4af37; border-color: #d4af37; }
 /* Cross-harness spawn policy matrix. This form is deliberately table-shaped,
    so its controls do not live in the shared .cron-create-row wrapper. Give
    them the same dark form chrome explicitly instead of leaving native selects

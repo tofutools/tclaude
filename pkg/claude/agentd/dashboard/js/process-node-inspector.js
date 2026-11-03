@@ -125,7 +125,7 @@ function InputsBlock({ inputs }) {
   return html`<div class="pni-inputs">
     ${inputs.captures.length
     ? html`<ul class="pni-input-list">${inputs.captures.map((capture) => html`<li key=${`${capture.from}:${capture.name}`}><code>${capture.name}</code> ← ${capture.fromName}</li>`)}</ul>`
-    : html`<p class="process-node-empty">No upstream captures reach this node.</p>`}
+    : html`<p class="process-node-empty ui-empty">No upstream captures reach this node.</p>`}
     ${inputs.params.length > 0 && html`<p class="pni-params">params: ${inputs.params.map((name, i) => html`${i > 0 && ', '}<code key=${name}>${name}</code>`)}</p>`}
   </div>`;
 }
@@ -156,7 +156,7 @@ function WaitBlock({ node, commit, readOnly }) {
 function OutcomesBlock({ edges, nameOf }) {
   return html`<div class="process-node-edges">
     ${edges.map((edge) => html`<div key=${edge.outcome} class="process-node-edge-row"><span class="process-node-edge-outcome">${edge.outcome}</span><span class="process-node-edge-arrow">→</span><span class="process-node-edge-target">${nameOf(edge.to)}</span></div>`)}
-    ${!edges.length && html`<p class="process-node-empty">No outgoing edges yet.</p>`}
+    ${!edges.length && html`<p class="process-node-empty ui-empty">No outgoing edges yet.</p>`}
     <p class="process-node-edges-note">Edges are drawn and relabelled on the canvas.</p>
   </div>`;
 }
@@ -189,12 +189,12 @@ function SubprocessBlock({ node, nodeId, controller, commit, readOnly, edges }) 
       ${params.length ? params.map((param) => html`<${NodeField} key=${param} fieldKey=${`subprocess.inputs.${param}`} label=${`${param} ←`}
           placeholder="literal or {{ params.x }}" value=${sub.inputs?.[param] || ''} readOnly=${readOnly}
           apply=${(key, raw) => commit(key, (draft) => setSubprocessPort(draft, 'inputs', param, raw))} />`)
-        : html`<p class="process-node-empty">${isRef ? 'Bindings for the referenced template\'s params appear once set.' : 'The body declares no params.'}</p>`}
+        : html`<p class="process-node-empty ui-empty">${isRef ? 'Bindings for the referenced template\'s params appear once set.' : 'The body declares no params.'}</p>`}
       <span class="process-node-field-label">out-ports · body end → outcome</span>
       ${ends.length ? ends.map((end) => html`<${NodeSelect} key=${end} fieldKey=${`subprocess.outputs.${end}`} label=${`${end} →`}
           options=${outcomes} value=${sub.outputs?.[end] || ''} blankLabel=${outcomes.length === 1 ? `default (${outcomes[0]})` : 'unmapped'} readOnly=${readOnly}
           apply=${(key, raw) => commit(key, (draft) => setSubprocessPort(draft, 'outputs', end, raw))} />`)
-        : html`<p class="process-node-empty">No end nodes to map.</p>`}
+        : html`<p class="process-node-empty ui-empty">No end nodes to map.</p>`}
     </div>
   </div>`;
 }
@@ -298,8 +298,8 @@ export function NodeInspector({ controller, view }) {
         <button data-ui-exempt type="button" class="pni-close process-node-close" title="Close the inspector" aria-label="Close node inspector"
           onClick=${() => { controller.setSelection(null); refocusCanvas(controller); }}>✕</button>
       </div>
-      <div class="pni-meta"><span class="process-inspector-kind">${type} node</span> · <span class="process-inspector-id">${nodeId}</span>
-        ${readOnly && html` <span class="process-node-readonly-badge">read-only</span>`}</div>
+      <div class="pni-meta"><span class="process-inspector-kind ui-eyebrow">${type} node</span> · <span class="process-inspector-id">${nodeId}</span>
+        ${readOnly && html` <span class="process-node-readonly-badge ui-tag ui-tag-warn">read-only</span>`}</div>
       <div class="pni-actions">
         ${view.selectedNodeIncoming > 1 && html`<${Select} size="sm" class="process-inspector-select" aria-label="Join semantics" disabled=${readOnly}
           value=${node.join || ''} onChange=${(event) => controller.setJoin(nodeId, event.currentTarget.value || null)}>

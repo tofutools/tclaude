@@ -55,7 +55,7 @@ export function openProcessNodeTypeChooser({
     'aria-label': wizard ? 'Available runes' : 'Available node types',
   });
   const empty = h(documentRef, 'p', {
-    class: 'process-node-chooser-empty', text: 'No matching node types.', hidden: '',
+    class: 'process-node-chooser-empty ui-empty', text: 'No matching node types.', hidden: '',
   });
   const cancel = h(documentRef, 'button', {
     class: 'process-node-chooser-cancel', type: 'button', text: 'Cancel',
@@ -125,7 +125,7 @@ export function openProcessNodeTypeChooser({
       h(documentRef, 'span', { class: 'process-node-chooser-copy' },
         h(documentRef, 'span', { class: 'process-node-chooser-label', text: command.label }),
         h(documentRef, 'span', {
-          class: 'process-node-chooser-hint',
+          class: 'process-node-chooser-hint ui-hint',
           text: command.enabled === false ? command.disabledReason : command.hint,
         })));
       option.addEventListener('pointermove', () => {

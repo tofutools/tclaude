@@ -146,17 +146,17 @@ export function stepperRows(run, agentId, now = Date.now()) {
 
 function BoundsStrip({ bounds }) {
   if (!bounds) {
-    return html`<div class="pk-bounds" data-process-bounds><span class="pk-bounds-chip pk-bounds-unknown">bounds unavailable: the agent is not in the snapshot</span></div>`;
+    return html`<div class="pk-bounds" data-process-bounds><span class="pk-bounds-chip ui-tag pk-bounds-unknown">bounds unavailable: the agent is not in the snapshot</span></div>`;
   }
   const grants = bounds.grants.length
     ? `${bounds.grants.length} grant${bounds.grants.length === 1 ? '' : 's'}`
     : 'defaults only';
   return html`<div class="pk-bounds" data-process-bounds>
-    <span class="pk-bounds-chip" title=${bounds.cwd || 'working directory unknown'}>📁 ${bounds.dir || 'unknown dir'}</span>
-    <span class="pk-bounds-chip" title="Sandbox the agent was launched with">🛡 sandbox: ${bounds.sandbox || 'none'}</span>
-    <span class="pk-bounds-chip" title=${bounds.grants.length ? bounds.grants.join('\n') : 'No per-agent grants beyond the defaults'}>🔑 perms: ${grants}</span>
-    <span class="pk-bounds-chip" title="Spend so far; runs have no budget cap">$ ${bounds.costUSD.toFixed(2)} spent · no cap</span>
-    <span class="pk-bounds-chip" title="The run is bound to the agent's stable id, so it follows the agent across new conversations">⟲ survives reincarnate</span>
+    <span class="pk-bounds-chip ui-tag" title=${bounds.cwd || 'working directory unknown'}>📁 ${bounds.dir || 'unknown dir'}</span>
+    <span class="pk-bounds-chip ui-tag" title="Sandbox the agent was launched with">🛡 sandbox: ${bounds.sandbox || 'none'}</span>
+    <span class="pk-bounds-chip ui-tag" title=${bounds.grants.length ? bounds.grants.join('\n') : 'No per-agent grants beyond the defaults'}>🔑 perms: ${grants}</span>
+    <span class="pk-bounds-chip ui-tag" title="Spend so far; runs have no budget cap">$ ${bounds.costUSD.toFixed(2)} spent · no cap</span>
+    <span class="pk-bounds-chip ui-tag" title="The run is bound to the agent's stable id, so it follows the agent across new conversations">⟲ survives reincarnate</span>
   </div>`;
 }
 
@@ -219,7 +219,7 @@ export function ProcessAgentStepper({ run, agentId, bounds = null, actions = {},
           ${groups.map((entry) => html`<option key=${entry.id} value=${entry.name}>${entry.name}</option>`)}</select>` : null}
         <${Button} size="sm" disabled=${busy || !actions.promote || !groups.length}
           title=${promoteTitle} onClick=${() => void promote()}>⇪ promote to group run<//>
-        ${error ? html`<span class="pk-run-popover-error" role="alert">${error}</span>` : null}
+        ${error ? html`<span class="pk-run-popover-error ui-error" role="alert">${error}</span>` : null}
       </div>
     </div>
   `;

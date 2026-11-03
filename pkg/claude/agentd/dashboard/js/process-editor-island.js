@@ -265,9 +265,9 @@ function Palette({ controller, hidden, snippets, view }) {
   const card = (payload, label, hint, { custom = false, available = true, pending = false } = {}) => {
     const canInsert = snippets.canInsert && available && !pending;
     return html`<div
-      key=${JSON.stringify(payload)} class=${`process-palette-card${custom ? ' is-custom' : ' is-built-in'}${available ? '' : ' is-unavailable'}`}
+      key=${JSON.stringify(payload)} class=${`process-palette-card ui-card${custom ? ' is-custom' : ' is-built-in'}${available ? '' : ' is-unavailable'}`}
       draggable=${canInsert ? 'true' : 'false'} title=${hint || ''} data-palette-item=${JSON.stringify(payload)}
-    ><span class="process-palette-card-copy"><span class="process-palette-card-label">${label}</span><span class="process-palette-card-hint">${hint || ''}</span></span>
+    ><span class="process-palette-card-copy"><span class="process-palette-card-label">${label}</span><span class="process-palette-card-hint ui-hint">${hint || ''}</span></span>
       <span class="process-palette-card-actions">
         <button data-ui-exempt type="button" class="process-palette-insert" disabled=${!canInsert} aria-label=${`Insert ${label}`}
           title=${canInsert ? `Insert ${label} at the canvas center` : available ? 'Snippet insertion is not allowed in this read-only view.' : hint}
@@ -298,7 +298,7 @@ function Palette({ controller, hidden, snippets, view }) {
       item.available ? 'Your reusable node selection' : item.unavailableReason,
       { custom: true, available: item.available, pending: snippets.pendingID === item.id },
     ))}
-    <p class="process-palette-help">Drag or use Insert to add. Drag a port to another node to connect.</p>
+    <p class="process-palette-help ui-hint">Drag or use Insert to add. Drag a port to another node to connect.</p>
   </aside>`;
 }
 
@@ -312,7 +312,7 @@ function Inspector({ controller, view }) {
   const selected = selectionItems(view.selection);
   const sel = view.selection;
   if (sel?.type === 'template') return html`<div ref=${root} class="process-editor-inspector" inert=${pending}>
-    <span class="process-inspector-kind">template</span>
+    <span class="process-inspector-kind ui-eyebrow">template</span>
     <${StableField} blocked=${pending} class="process-inspector-input" type="text" spellcheck="false" placeholder="display name" aria-label="Template display name" value=${view.model.name} onCommit=${(name) => controller.setTemplateMeta({ name })} />
     <span class="process-inspector-id process-template-id-locked" title="Template id: the permanent store key that pinned versions and running instances resolve through">${view.model.id}</span>
     <${StableField} blocked=${pending} class="process-inspector-input process-template-description" type="text" spellcheck="true" placeholder="description" aria-label="Template description" value=${view.model.description} onCommit=${(description) => controller.setTemplateMeta({ description })} />
@@ -321,20 +321,20 @@ function Inspector({ controller, view }) {
   if (selected.length > 1) {
     const nodes = selected.filter((item) => item.type === 'node').length;
     const edges = selected.length - nodes;
-    return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-kind">multiple selection</span><span class="process-inspector-id">${selected.length} items</span><span class="process-inspector-hint">${[nodes ? `${nodes} node${nodes === 1 ? '' : 's'}` : '', edges ? `${edges} edge${edges === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</span><${Button} class="process-action" data-wrap-selection disabled=${!view.compose?.canWrap} title=${view.compose?.canWrap ? 'Collapse the selected nodes into one ▣ node; ports come from the connectors crossing the boundary' : view.compose?.wrapReason || ''} onClick=${() => controller.wrapSelection()}>▣ wrap as subprocess…<//><${Button} class="process-action" disabled=${!view.snippets.canSaveSelection} onClick=${() => controller.saveSelectionAsSnippet()}>save as snippet…<//><${Button} variant="danger" class="process-action" onClick=${() => controller.deleteSelection()}>delete selection<//></div>`;
+    return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-kind ui-eyebrow">multiple selection</span><span class="process-inspector-id">${selected.length} items</span><span class="process-inspector-hint ui-hint">${[nodes ? `${nodes} node${nodes === 1 ? '' : 's'}` : '', edges ? `${edges} edge${edges === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</span><${Button} class="process-action" data-wrap-selection disabled=${!view.compose?.canWrap} title=${view.compose?.canWrap ? 'Collapse the selected nodes into one ▣ node; ports come from the connectors crossing the boundary' : view.compose?.wrapReason || ''} onClick=${() => controller.wrapSelection()}>▣ wrap as subprocess…<//><${Button} class="process-action" disabled=${!view.snippets.canSaveSelection} onClick=${() => controller.saveSelectionAsSnippet()}>save as snippet…<//><${Button} variant="danger" class="process-action" onClick=${() => controller.deleteSelection()}>delete selection<//></div>`;
   }
   if (sel?.type === 'node' && view.selectedNode) {
     // The node itself is edited in the docked node inspector beside the canvas.
     return html`<div ref=${root} class="process-editor-inspector" inert=${pending}>
-      <span class="process-inspector-kind">${view.selectedNode.type || 'task'} node</span><span class="process-inspector-id">${sel.id}</span>
-      <span class="process-inspector-hint">Editing in the node inspector →</span>
+      <span class="process-inspector-kind ui-eyebrow">${view.selectedNode.type || 'task'} node</span><span class="process-inspector-id">${sel.id}</span>
+      <span class="process-inspector-hint ui-hint">Editing in the node inspector →</span>
     </div>`;
   }
   if (sel?.type === 'edge' && view.selectedEdge) {
     const edge = view.selectedEdge;
-    return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-kind">edge</span><span class="process-inspector-id">${edge.from} → ${edge.to}</span><${StableField} blocked=${pending} class="process-inspector-input" type="text" spellcheck="false" placeholder="outcome" aria-label="Edge outcome label" value=${edge.outcome} onCommit=${(outcome) => controller.renameEdgeOutcome(edge.from, edge.outcome, outcome.trim())} /><${EdgeLoopControls} controller=${controller} edge=${edge} loop=${view.selectedEdgeLoop} pending=${pending} /><${Button} variant="danger" class="process-action" onClick=${() => controller.deleteSelection()}>delete edge<//></div>`;
+    return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-kind ui-eyebrow">edge</span><span class="process-inspector-id">${edge.from} → ${edge.to}</span><${StableField} blocked=${pending} class="process-inspector-input" type="text" spellcheck="false" placeholder="outcome" aria-label="Edge outcome label" value=${edge.outcome} onCommit=${(outcome) => controller.renameEdgeOutcome(edge.from, edge.outcome, outcome.trim())} /><${EdgeLoopControls} controller=${controller} edge=${edge} loop=${view.selectedEdgeLoop} pending=${pending} /><${Button} variant="danger" class="process-action" onClick=${() => controller.deleteSelection()}>delete edge<//></div>`;
   }
-  return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-hint">Select a node or edge to edit it. A selected node opens in the node inspector.</span></div>`;
+  return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-hint ui-hint">Select a node or edge to edit it. A selected node opens in the node inspector.</span></div>`;
 }
 
 // EdgeLoopControls bounds a decision connector that goes back (tcl-eu70x9):
@@ -343,7 +343,7 @@ function Inspector({ controller, view }) {
 // that only a decision can send work back.
 function EdgeLoopControls({ controller, edge, loop, pending }) {
   if (loop?.backFromTask) {
-    return html`<span class="process-inspector-hint process-loop-hint">This connector goes back. Only a decision can send work back for another round: route it through a decision and bound that outcome.</span>`;
+    return html`<span class="process-inspector-hint process-loop-hint ui-hint">This connector goes back. Only a decision can send work back for another round: route it through a decision and bound that outcome.</span>`;
   }
   if (!loop?.loopable) return null;
   if (!loop.bound) {
@@ -371,7 +371,7 @@ function Issues({ controller, issues }) {
     if (!issues.focusRequest || issues.issueCursor < 0) return;
     list.current?.querySelector(`[data-issue-index="${issues.issueCursor}"]`)?.focus();
   }, [issues.focusRequest]);
-  return html`<details class="process-issues-panel" hidden=${issues.hidden} open=${issues.open}
+  return html`<details class="process-issues-panel ui-card" hidden=${issues.hidden} open=${issues.open}
     onToggle=${(event) => controller.setIssuesOpen(event.currentTarget.open)}>
     <summary class="process-issues-summary">${issues.summary}</summary>
     <ul ref=${list} class="process-issues-list">

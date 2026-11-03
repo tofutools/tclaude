@@ -286,7 +286,7 @@ function ReassignControl({ run, node, actions, candidatesFor }) {
     <//>
     <${Button} size="sm" class="mux-btn" disabled=${busy || !chosen || !enabled} onClick=${() => void assign()}>assign<//>
     <${Button} size="sm" class="mux-btn" disabled=${busy} onClick=${() => { setOpen(false); setError(''); }}>cancel<//>
-    ${error ? html`<span class="pk-run-popover-error" role="alert">${error}</span>` : null}
+    ${error ? html`<span class="pk-run-popover-error ui-error" role="alert">${error}</span>` : null}
   </span>`;
 }
 
@@ -328,15 +328,15 @@ function ProcessRunGraphPopover({ run, agentId, agentName = '', actions = {}, on
       <div class="pk-run-popover-body">
         <div class="pk-run-popover-node">
           ${node ? html`
-            <div class="pk-run-popover-kicker">${mine ? "This agent's node" : 'The run is at'}${view.badge ? ` · ${view.badge.replace('/', ' of ')}` : ''}</div>
+            <div class="pk-run-popover-kicker ui-eyebrow">${mine ? "This agent's node" : 'The run is at'}${view.badge ? ` · ${view.badge.replace('/', ' of ')}` : ''}</div>
             <div class="pk-run-popover-title">${node.label || node.id}</div>
             ${node.description ? html`<p class="pk-run-popover-desc">${node.description}</p>` : null}
             ${around.outcomes.length ? html`<div class="pk-run-popover-outcomes"><b>Outcomes:</b>
-              ${around.outcomes.map((outcome) => html`<span key=${outcome} class="pk-chip">${outcome}</span>`)}</div>` : null}
-          ` : html`<div class="pk-run-popover-kicker">No step of this run is current for this agent.</div>`}
+              ${around.outcomes.map((outcome) => html`<span key=${outcome} class="pk-chip ui-tag">${outcome}</span>`)}</div>` : null}
+          ` : html`<div class="pk-run-popover-kicker ui-eyebrow">No step of this run is current for this agent.</div>`}
         </div>
         <div class="pk-run-popover-around">
-          <div class="pk-run-popover-kicker">Around it</div>
+          <div class="pk-run-popover-kicker ui-eyebrow">Around it</div>
           <${NeighbourList} items=${around.upstream} prefix="↑" />
           <${NeighbourList} items=${around.siblings} prefix="⇉" />
           <${NeighbourList} items=${around.downstream} prefix="↓" />
@@ -356,7 +356,7 @@ function ProcessRunGraphPopover({ run, agentId, agentName = '', actions = {}, on
               disabled=${deciding} title=${`Decide ${verdict} as the human`} onClick=${() => void decide(verdict)}>✓ ${verdict} (as human)<//>`)
           : html`<${Button} size="sm" class="mux-btn" disabled=${true}
               title="Marking an outcome as the human applies to a node waiting on a decision">✓ mark outcome (as human)<//>`}
-        ${decideError ? html`<span class="pk-run-popover-error" role="alert">${decideError}</span>` : null}
+        ${decideError ? html`<span class="pk-run-popover-error ui-error" role="alert">${decideError}</span>` : null}
       </div>
     </div>
   `;

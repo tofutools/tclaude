@@ -86,14 +86,14 @@ export function ScopePorts({ controller, view }) {
         label=${`${param} ←`} placeholder=${ports.parentParams[0] ? `{{ params.${ports.parentParams[0]} }}` : 'literal value'}
         value=${ports.inputs[param] || ''} readOnly=${readOnly}
         apply=${(key, raw) => (controller.setScopeInput(param, raw) ? { accepted: true } : { blocked: true })} />`)
-      : html`<p class="process-node-empty">The body declares no params.</p>`}
+      : html`<p class="process-node-empty ui-empty">The body declares no params.</p>`}
     <span class="process-node-field-label">out-ports · body end → parent outcome</span>
     ${ports.ends.length ? ports.ends.map((end) => html`<${NodeSelect} key=${end} fieldKey=${`scope.outputs.${end}`} label=${`${end} →`}
         options=${ports.outcomes} value=${ports.outputs[end] || ''} readOnly=${readOnly}
         blankLabel=${ports.outcomes.length === 1 ? `default (${ports.outcomes[0]})` : 'unmapped'}
         apply=${(key, raw) => controller.setScopeOutput(end, raw)} />`)
-      : html`<p class="process-node-empty">The body has no end nodes yet.</p>`}
-    ${!ports.outcomes.length && html`<p class="process-node-empty">The ▣ node has no outgoing edges in the parent graph yet.</p>`}
+      : html`<p class="process-node-empty ui-empty">The body has no end nodes yet.</p>`}
+    ${!ports.outcomes.length && html`<p class="process-node-empty ui-empty">The ▣ node has no outgoing edges in the parent graph yet.</p>`}
   </aside>`;
 }
 
