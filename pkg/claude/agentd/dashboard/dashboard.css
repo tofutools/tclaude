@@ -18266,10 +18266,10 @@ body.wizard .usage-current span { color: #9a86c4; }
 /* Span controls: muted violet labels, gold on the chosen span. */
 body.wizard .usage-control-label { color: #b39ddb; }
 body.wizard .usage-control-divider { background: rgba(122, 93, 176, 0.5); }
-body.wizard .usage-card-controls .ui-btn[aria-pressed="true"],
-body.wizard .usage-card-controls .ui-btn[aria-pressed="true"]:hover:not(:disabled) {
+body.wizard .usage-card-controls .ui-btn[aria-pressed="true"] {
   background: #3a2a63; border-color: #d9b45a; color: #f3e6c0;
 }
+body.wizard .usage-card-controls .ui-btn[aria-pressed="true"]:hover:not(:disabled) { background: #3a2a63; color: #f3e6c0; }
 /* Gridlines + axis ticks go arcane: faint violet rules, gilded % labels. */
 body.wizard .usage-grid line { stroke: rgba(122, 93, 176, 0.22); }
 body.wizard .usage-x-tick line { stroke: rgba(122, 93, 176, 0.12); }
