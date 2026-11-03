@@ -93,7 +93,7 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = n
       titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Failed: ${tab.label}`} title=${strip}
       controls=${{ look, closeLabel: `Close ${tab.label}`, closeTitle: close.title, onClose: close.onClose }}>
       <div class="companion-empty" role="alert"><p><b>${tab.label}</b> stopped drawing. Nothing it runs has stopped.</p>
-        <${Button} size="sm" variant="primary" onClick=${retry}>Try again<//></div>
+        <${Button} size="sm" variant="primary" class="companion-primary" onClick=${retry}>Try again<//></div>
     <//>`;
   };
   return html`<${TabBoundary} key=${tab.id} fallback=${fallback}>
