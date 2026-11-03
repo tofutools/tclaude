@@ -146,6 +146,7 @@ func TestSpawnProfile_EveryColumnRoundTrips(t *testing.T) {
 			want.ID, want.Aliases = id, []string{}
 			want.CreatedAt, want.UpdatedAt = got.CreatedAt, got.UpdatedAt
 			assert.Equal(t, want, got, "create round-trip")
+			assertStoredRoleRef(t, id, want.RoleRefs[0])
 
 			update := fillSpawnProfile(t, (run+1)%3, "update")
 			update.ID = id
@@ -157,8 +158,21 @@ func TestSpawnProfile_EveryColumnRoundTrips(t *testing.T) {
 			update.Aliases = []string{}
 			update.CreatedAt, update.UpdatedAt = got.CreatedAt, got.UpdatedAt
 			assert.Equal(t, update, got, "update round-trip")
+			assertStoredRoleRef(t, id, update.RoleRefs[0])
 		})
 	}
+}
+
+// assertStoredRoleRef reads role_ref directly: the read path re-derives
+// RoleRef from role_refs, so a round trip alone cannot see what was stored
+// in the column older binaries and migrations read.
+func assertStoredRoleRef(t *testing.T, id int64, want string) {
+	t.Helper()
+	d, err := Open()
+	require.NoError(t, err)
+	var got string
+	require.NoError(t, d.QueryRow(`SELECT role_ref FROM spawn_profiles WHERE id = ?`, id).Scan(&got))
+	assert.Equal(t, want, got, "stored role_ref is the first role_refs entry")
 }
 
 // TestSpawnProfileColumnsWriteTheirNamedField catches a symmetric mix-up the
