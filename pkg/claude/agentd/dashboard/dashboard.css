@@ -5834,9 +5834,9 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   max-height: 50vh; overflow-y: auto;
 }
 .modal .modal-meta {
-  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  background: var(--ui-card-inset-bg); border: 1px solid var(--ui-card-line); border-radius: 4px;
   padding: 8px 12px; font-family: ui-monospace, monospace; font-size: 12px;
-  color: #c9d1d9; margin: 8px 0;
+  color: var(--ui-meta-text); margin: 8px 0;
 }
 .modal-buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 .modal .confirm-checks { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 4px; }
@@ -6825,9 +6825,10 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .cron-create-modal h3 { margin: 0; font-size: 14px; }
 .cron-create-modal .modal-meta {
   font-size: 11px; color: #7d8590;
-  padding: 4px 8px; background: #0d1117;
-  border-left: 2px solid #2a3340; margin-top: -4px;
+  padding: 4px 8px; background: var(--ui-card-inset-bg);
+  border-left: 2px solid var(--ui-note-edge); margin-top: -4px;
 }
+body.wizard .cron-create-modal .modal-meta { color: var(--ui-muted-text); }
 /* Shared hint paragraph inside dialogs — the styles the group-context /
    group-clone hints used to carry inline; a class so theme re-skins can
    recolor them (an inline style would always win). */
@@ -11926,11 +11927,6 @@ body.wizard .spawn-group-word-wizard { display: inline; }
    rest of the wizard re-skin we recolor the chrome; the input fields stay a
    legible dark (violet-tinted) so the form is still readable. */
 
-body.wizard #agent-spawn-modal .modal-meta {
-  background: #140f28;
-  border-left-color: #d9b45a;
-  color: #b39ddb;
-}
 body.wizard #agent-spawn-modal .cron-create-label,
 body.wizard #agent-spawn-modal .spawn-owner-toggle,
 body.wizard #agent-spawn-modal .spawn-perms-indicator { color: #b39ddb; }
@@ -12011,11 +12007,6 @@ body.wizard #agent-spawn-modal #agent-spawn-submit:disabled::before { content: "
    as the other wizard forms. Keep this scoped to the three action-dialog
    overlays: .cron-create-modal is also used by several unrelated dialogs. */
 
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .modal-meta {
-  background: #140f28;
-  border-left-color: #d9b45a;
-  color: #b39ddb;
-}
 body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(.cron-create-label, .modal-hint) {
   color: #b39ddb;
 }
@@ -12123,11 +12114,6 @@ body.wizard #retire-title .retire-title-wizard { display: inline; }
    card. Chrome is recolored; the copy stays honest and legible. */
 
 body.wizard #retire-modal .modal p { color: #e7d9f5; }
-body.wizard #retire-modal .modal .modal-meta {
-  background: #140f28;
-  border-color: rgba(122, 93, 176, 0.5);
-  color: #f3e6c0;
-}
 /* Cancel (and any other non-confirm button) — the same tarnished-gold
    secondary treatment the spawn dialog's Clear / Cancel get. Scoped away
    from #retire-ok, which keeps its gilded Banish lever below. */
@@ -12191,11 +12177,6 @@ body.wizard #retire-modal #retire-ok:disabled::after {
    .modal surface with unrelated destructive dialogs. */
 
 body.wizard #shutdown-modal .modal p { color: #e7d9f5; }
-body.wizard #shutdown-modal .modal .modal-meta {
-  background: #140f28;
-  border-color: rgba(122, 93, 176, 0.5);
-  color: #f3e6c0;
-}
 body.wizard #shutdown-modal #shutdown-soft {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   border: 2px solid #d9b45a;
@@ -12233,11 +12214,6 @@ body.wizard #shutdown-modal #shutdown-force:hover {
    .modal would repaint every sibling dialog. */
 
 body.wizard #confirm-modal .modal p { color: #e7d9f5; }
-body.wizard #confirm-modal .modal .modal-meta {
-  background: #140f28;
-  border-color: rgba(122, 93, 176, 0.5);
-  color: #f3e6c0;
-}
 /* The confirm button — Summon / Banish's gilded-lever sibling, minus the
    font-size:0 label swap: the caller-supplied text ("Move", "Remove", …)
    stays visible. The #confirm-modal id out-specifies the base
@@ -12333,11 +12309,6 @@ body.wizard #cron-create-modal.cron-editing #cron-create-title::before {
 }
 body.wizard #cron-create-modal.cron-duplicating #cron-create-title::before {
   content: "⏳ Duplicate the ritual";
-}
-body.wizard #cron-create-modal .modal-meta {
-  background: #140f28;
-  border-left-color: #d9b45a;
-  color: #b39ddb;
 }
 body.wizard #cron-create-modal .cron-create-label,
 body.wizard #cron-create-modal .cron-create-enabled { color: #b39ddb; }
@@ -13246,13 +13217,6 @@ body.wizard #term-title .term-title-wizard { display: inline; }
 
 body.wizard #term-modal .modal p { color: #e7d9f5; }
 body.wizard #term-modal .modal p strong { color: #f3e6c0; }
-/* The resolved-path meta line — the violet inset the retire / spawn dialogs
-   give their .modal-meta. */
-body.wizard #term-modal .modal-meta {
-  background: #140f28;
-  border-color: rgba(122, 93, 176, 0.5);
-  color: #f3e6c0;
-}
 
 /* Buttons: Cancel + the two non-default dir choices (Launch / Worktree) take
    the tarnished-gold secondary skin; the default Current dir — the focused
@@ -13435,11 +13399,6 @@ body.wizard #export-agent-modal #export-agent-title::before {
   font-size: 15px;
   letter-spacing: 1px;
 }
-body.wizard #export-agent-modal .modal-meta {
-  background: #140f28;
-  border-left-color: #d9b45a;
-  color: #b39ddb;
-}
 body.wizard #export-agent-modal .cron-create-label { color: #b39ddb; }
 /* Open <select> options render on the OS layer — keep them dark-on-parchment
    so the format picker stays readable (mirrors the Summon dialog). */
@@ -13580,11 +13539,6 @@ body.wizard #edit-member-modal .em-btn-wizard { display: inline; }
 /* The dialog surface: midnight-violet void, mystic-purple frame + glow,
    parchment text — the same palette as the spawn / retire dialogs. */
 
-body.wizard #edit-member-modal .modal .modal-meta {
-  background: #140f28;
-  border-color: rgba(122, 93, 176, 0.5);
-  color: #f3e6c0;
-}
 /* Field labels + the checkbox-row labels/hints go violet-parchment; the
    inputs/textareas take the void + mystic-purple frame, gold on focus. */
 body.wizard #edit-member-modal .modal .field label { color: #b39ddb; }
@@ -13647,9 +13601,6 @@ body.wizard #edit-member-modal #edit-member-save:disabled::before { content: non
    Mirrors the Enchant-hero dialog while keeping this two-field editor
    compact: violet void, parchment copy, gold focus, and a gilded bind lever. */
 
-body.wizard #task-link-modal .modal-meta {
-  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
-}
 body.wizard #task-link-modal .field label { color: #b39ddb; }
 body.wizard #task-link-modal .field input {
   background: #140f28; border-color: rgba(122, 93, 176, 0.6); color: #e7d9f5;
@@ -14108,11 +14059,6 @@ body.wizard #template-deploy-modal #template-deploy-group.locked {
    circle. Scoped to #template-from-group-modal. */
 
 body.wizard #template-from-group-modal .cron-create-label { color: #b39ddb; }
-body.wizard #template-from-group-modal .modal-meta {
-  background: #140f28;
-  border-left-color: #d9b45a;
-  color: #b39ddb;
-}
 body.wizard #template-from-group-modal .cron-create-row select:where(:not(.ui-select)) option {
   color: #1a1330; background: #e7d9f5;
 }
@@ -14163,11 +14109,6 @@ body.wizard #template-from-group-modal.tfg-updating #template-from-group-submit:
    positive-per-#id scoping the trace dialog above follows. */
 
 body.wizard #template-duplicate-modal .cron-create-label { color: #b39ddb; }
-body.wizard #template-duplicate-modal .modal-meta {
-  background: #140f28;
-  border-left-color: #d9b45a;
-  color: #b39ddb;
-}
 body.wizard #template-duplicate-modal button:where(:not(.ui-btn)):not(#template-duplicate-submit) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
@@ -14213,11 +14154,6 @@ body.wizard #template-duplicate-modal #template-duplicate-submit:disabled::befor
    The submit keeps its JS text (no font-size:0 / ::before swap) — just gilded. */
 
 body.wizard #clone-modal .cron-create-label { color: #b39ddb; }
-body.wizard #clone-modal .modal-meta {
-  background: #140f28;
-  border-left-color: #d9b45a;
-  color: #b39ddb;
-}
 body.wizard #clone-modal button:where(:not(.ui-btn)):not(#clone-modal-submit) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
@@ -14252,11 +14188,6 @@ body.wizard #clone-modal #clone-modal-submit:disabled { opacity: 0.7; }
    copy button keeps its honest tpl-word text (copy-not-cast is the whole
    point), so it gets the tarnished-gold secondary treatment, not a lever. */
 
-body.wizard #starters-modal .modal-meta {
-  background: #140f28;
-  border-left-color: #d9b45a;
-  color: #b39ddb;
-}
 /* Starter rows: violet-framed void, gilt name, violet descr + meta chips —
    the same treatment the circle cards get in the templates overlay. */
 body.wizard #starters-modal .starter-row .tc-name { color: #f3e6c0; }
@@ -14276,11 +14207,6 @@ body.wizard #starters-modal .modal-buttons { border-top-color: rgba(122, 93, 176
    (same reasoning as the reply dialog's Send). */
 
 body.wizard #group-import-modal .cron-create-label { color: #b39ddb; }
-body.wizard #group-import-modal .modal-meta {
-  background: #140f28;
-  border-left-color: #d9b45a;
-  color: #b39ddb;
-}
 /* All three inputs — the file picker included. */
 body.wizard #group-import-modal .cron-create-row input {
   background: #140f28;
@@ -14333,11 +14259,6 @@ body.wizard #group-import-modal #group-import-submit:disabled { opacity: 0.55; }
    checkbox — scoped to #template-import-modal. */
 
 body.wizard #template-import-modal .cron-create-label { color: #b39ddb; }
-body.wizard #template-import-modal .modal-meta {
-  background: #140f28;
-  border-left-color: #d9b45a;
-  color: #b39ddb;
-}
 /* All inputs — the file picker, the "import as" text field and the paste
    textarea — go violet-void. */
 body.wizard #template-import-modal .cron-create-row input {
@@ -14635,11 +14556,6 @@ body.wizard #role-editor-modal #role-editor-submit:disabled { opacity: 0.7; }
    #group-context-modal. */
 
 body.wizard #group-context-modal .cron-create-label { color: #b39ddb; }
-body.wizard #group-context-modal .modal-meta {
-  background: #140f28;
-  border-left-color: #d9b45a;
-  color: #b39ddb;
-}
 body.wizard #group-context-modal button:where(:not(.ui-btn)):not(#group-context-submit) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }

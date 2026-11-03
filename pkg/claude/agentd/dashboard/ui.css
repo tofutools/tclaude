@@ -100,6 +100,10 @@
   --ui-card-bg: #161b22;
   --ui-card-inset-bg: #0d1117;
   --ui-card-line: #2a3340;
+  /* Dialog meta lines (.modal-meta): the boxed one's text, and the left
+     edge of the note one in .cron-create-modal dialogs. */
+  --ui-meta-text: #c9d1d9;
+  --ui-note-edge: #2a3340;
 }
 body.wizard {
   --ui-bg: #241b3d;
@@ -137,6 +141,8 @@ body.wizard {
   --ui-card-bg: #140f28;
   --ui-card-inset-bg: #140f28;
   --ui-card-line: rgba(122, 93, 176, 0.5);
+  --ui-meta-text: #f3e6c0;
+  --ui-note-edge: #d9b45a;
 }
 /* The wizard dialogs' house primary: a gilded, glowing gradient. */
 body.wizard .ui-btn-primary { text-shadow: 0 0 6px rgba(169, 123, 214, 0.6); box-shadow: 0 0 10px rgba(122, 93, 176, 0.4); }
