@@ -352,8 +352,12 @@ title opens the merge request's details card, under the same **Hover details**
 setting as Open PRs. **⊘** ignores a merge request for 1 day, 1 week, 30 days
 or permanently, as in Open PRs and in the same store. It leaves Mine, every
 project tab and both footer numbers, and waits under **Ignored** with a
-**Restore** button. The people tabs and the recently closed list are Open PRs
-only.
+**Restore** button. On **Mine**, **Closed _N_d** lists your merge requests
+merged or closed in the last _N_ days, the same `dashboard.recent_pr_window_days`
+window as Open PRs (0 turns it off), with the same **Final CI** switch. It is
+read every 150 seconds; a closed merge request keeps its last pipeline status
+and is not read again. Project tabs have no closed list, and the people tabs
+are Open PRs only.
 
 ## Starting agents
 

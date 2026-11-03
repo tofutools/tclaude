@@ -599,7 +599,10 @@ test('the Open MRs model filters merge requests like PRs and keeps only safe ins
   assert.deepEqual(authoredOpenMRsView(snapshot, 'attention').items.map((mr) => mr.number), [1, 2, 3, 4]);
   assert.deepEqual(authoredOpenMRsView(snapshot, 'attention', true).items.map((mr) => mr.number), [1, 2, 3, 4, 5]);
   assert.deepEqual(authoredOpenMRsView(snapshot, 'ready').items.map((mr) => mr.number), [1]);
-  assert.equal(authoredOpenMRsView(snapshot, 'recent').filter, 'all', 'filters it does not offer fall back to Open');
+  assert.equal(authoredOpenMRsView(snapshot, 'bogus').filter, 'all', 'filters it does not offer fall back to Open');
+  const noWindow = authoredOpenMRsView(snapshot, 'recent');
+  assert.equal(noWindow.showingRecent, false, 'no recently closed list without a window');
+  assert.deepEqual(noWindow.items.map((mr) => mr.number), all.items.map((mr) => mr.number), 'so the open list shows');
   assert.deepEqual(all.instances, [
     { host: 'gitlab.example.test:8929', url: 'https://gitlab.example.test:8929/dashboard/merge_requests?state=opened&author_username=jdoe', error: '', everyoneError: '' },
     { host: 'evil.example.test', url: '', error: '', everyoneError: '' },
@@ -743,4 +746,32 @@ test('merge requests share the ignore store under their own key, and leave every
   const prs = authoredOpenPRsView({ authored_open_prs: { available: true, total: 0, items: [] } },
     'ignored', false, [], ignoresOfKind(ignored, 'pr'), now);
   assert.deepEqual(prs.items.map((pr) => pr.number), [3], 'Open PRs never lists a merge request ignore');
+});
+
+test('Open MRs lists your recently closed merge requests on Mine only', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { authoredOpenMRsView } = await harness.importDashboardModule('js/shell-model.js');
+  const base = 'https://gitlab.example.test:8929/contoso/player/-/merge_requests/';
+  const snapshot = { authored_open_mrs: {
+    available: true, total: 1, recent_window_days: 3,
+    items: [{ number: 7, url: `${base}7`, title: 'Open', repository: 'contoso/player',
+      checks: { total: 1, pending: 1, state: 'pending' } }],
+    recent: [
+      { number: 5, url: `${base}5`, title: 'Landed', repository: 'contoso/player', state: 'merged', closed_at: '2026-11-02T10:00:00Z',
+        checks: { total: 1, failed: 1, state: 'failing' } },
+    ],
+    projects: [{ host: 'gitlab.example.test:8929', project: 'contoso/player', total: 1,
+      items: [{ number: 7, url: `${base}7`, title: 'Open', repository: 'contoso/player' }] }],
+  } };
+  const mine = authoredOpenMRsView(snapshot, 'recent');
+  assert.equal(mine.recentWindowDays, 3);
+  assert.equal(mine.recentCount, 1);
+  assert.ok(mine.panel.showingRecent);
+  assert.deepEqual(mine.panel.items.map((mr) => [mr.number, mr.state]), [[5, 'merged']]);
+  assert.equal(mine.total, 1, 'a closed merge request never counts as open work');
+  assert.equal(mine.attention, 0, 'nor as needing attention, however red its last pipeline');
+
+  const tab = authoredOpenMRsView(snapshot, 'recent', false, mine.projects[0].key);
+  assert.equal(tab.panel.recentWindowDays, 0, 'a project tab has no recently closed list');
+  assert.deepEqual(tab.panel.items.map((mr) => mr.number), [7]);
 });

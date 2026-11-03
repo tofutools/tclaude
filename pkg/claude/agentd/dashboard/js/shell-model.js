@@ -440,8 +440,9 @@ export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAtt
 }
 
 // authoredOpenMRsView is the footer's Open MRs model: the Open PRs model over
-// the daemon's GitLab list (authored_open_mrs), which has no peers, ignores or
-// recently closed list, plus each instance's "Open all" link. A link is kept
+// the daemon's GitLab list (authored_open_mrs), which has no peers, plus each
+// instance's "Open all" link. Its recently closed list is your own merge
+// requests', so a project tab has none. A link is kept
 // only when it is an https merge request list; an instance that failed
 // carries its error instead.
 //
@@ -461,7 +462,7 @@ const MR_IGNORES_HIDE_IN_PROJECT_TABS = true;
 export const MR_PROJECT_TAB_OWNER = '-project';
 export function authoredOpenMRsView(snapshot, filter = 'all', includeDraftsInAttention = false, project = '', ignored = null, now = Date.now()) {
   const source = snapshot?.authored_open_mrs;
-  const known = ['attention', 'ready', 'unattached', 'ignored'].includes(filter) ? filter : 'all';
+  const known = ['attention', 'ready', 'unattached', 'ignored', 'recent'].includes(filter) ? filter : 'all';
   const mrIgnores = ignoresOfKind(ignored, 'mr');
   const view = authoredOpenPRsView({ authored_open_prs: source }, known, includeDraftsInAttention, [], mrIgnores, now, '');
   const instances = (Array.isArray(source?.instances) ? source.instances : [])

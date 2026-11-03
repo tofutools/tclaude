@@ -667,6 +667,41 @@ test('footer open MRs ignores a merge request in the store Open PRs uses, and br
   await mounted.unmount();
 });
 
+test('footer open MRs shows your recently closed merge requests with their final CI on request', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenMRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenMRs} state=${state} />`);
+  const mr = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/';
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_mrs: {
+    available: true, total: 1, recent_window_days: 3,
+    items: [{ number: 7, url: `${mr}7`, title: 'Open one', repository: 'acme/app', checks: { total: 1, pending: 1, state: 'pending' } }],
+    recent: [{ number: 5, url: `${mr}5`, title: 'Landed', repository: 'acme/app', state: 'merged',
+      closed_at: '2026-11-02T10:00:00Z', checks: { total: 1, failed: 1, state: 'failing' } }],
+  } }));
+  const c = mounted.container;
+  await harness.act(() => getByRole(c, 'button', { name: /Open MRs/ }).click());
+  await harness.act(() => getByRole(c, 'button', { name: /Closed 3d 1/ }).click());
+  const rows = [...c.querySelectorAll('.open-pr-row')];
+  assert.equal(rows.length, 1);
+  assert.match(rows[0].textContent, /Landed/);
+  assert.match(rows[0].textContent, /merged/);
+  assert.equal(rows[0].querySelector('.open-pr-ignore'), null, 'history is not ignored');
+  assert.equal(rows[0].querySelector('.rv-badge'), null, 'nor reviewed');
+  assert.equal(rows[0].querySelector('.ci-badge'), null, 'its last pipeline stays quiet until asked for');
+  const finalCI = getByLabelText(c, 'Final CI');
+  finalCI.checked = true;
+  await harness.act(() => harness.fireEvent(finalCI, 'change'));
+  assert.ok(c.querySelector('.open-pr-row .ci-badge'), 'Final CI shows the last pipeline result');
+  await harness.act(() => getByRole(c, 'button', { name: /Open 1/ }).click());
+  assert.match(c.querySelector('.open-pr-row').textContent, /Open one/);
+  await mounted.unmount();
+});
+
 test('footer open PR titles open the PR details card unless turned off', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, { dashPrefs }, { OpenPRs }] = await Promise.all([

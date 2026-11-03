@@ -723,9 +723,9 @@ function OpenPRs({ state }) {
 // requests on every configured instance (authored_open_mrs). It shows only
 // once the daemon has read a list, so it is absent without gitlab_hosts or a
 // token. It keeps Open PRs' look and its Open / Needs attention / Ready to
-// merge / Unattached filters, and its Ignored filter, whose ignores share
-// Open PRs' store. Colleagues' tabs and the recently closed list are
-// GitHub's and are not offered here.
+// merge / Unattached filters, its Ignored filter, whose ignores share Open
+// PRs' store, and on Mine the recently closed list with its Final CI switch.
+// Colleagues' tabs are GitHub's and are not offered here.
 function OpenMRs({ state }) {
   const [filter, setFilter] = useState('all');
   // '' is your own list; otherwise a project tab's key.
@@ -734,6 +734,9 @@ function OpenMRs({ state }) {
   const [titleDetails, setTitleDetails] = useTitleDetails();
   const [ignored, saveIgnored] = useIgnoredPRs(OPEN_MRS_IGNORED_PREF);
   const [confirmIgnore, setConfirmIgnore] = useState(null);
+  // As in Open PRs: a local switch that reveals the last pipeline result a
+  // closed row already carries, and asks GitLab nothing.
+  const [showFinalCI, setShowFinalCI] = useState(false);
   const returnFocus = useRef(null);
   const [focusBack, setFocusBack] = useState(0);
   const [hovered, setHovered] = useState(false);
@@ -802,6 +805,9 @@ function OpenMRs({ state }) {
   const everyone = everyoneUnread ? '?' : `${view.everyoneTotal}${view.everyoneTruncated ? '+' : ''}`;
   const where = view.projectEntry;
   const heading = where ? `Open merge requests in ${where.project}` : 'Your merge requests';
+  // A filter a list cannot show (recently closed on a project tab) falls back
+  // to the open list, so the Open chip, not a vanished one, reads as active.
+  const mrOpenActive = !panel.showingRecent && !panel.showingIgnored && !['attention', 'ready', 'unattached'].includes(view.filter);
   return html`
     <span ref=${rootRef} class=${`open-prs open-mrs${open ? ' is-open' : ''}${view.total > 0 ? '' : ' is-empty'}${view.attention > 0 ? ' has-attention' : ''}`}
       onMouseEnter=${enter} onMouseLeave=${hoverClose.schedule}>
@@ -830,18 +836,23 @@ function OpenMRs({ state }) {
             class="open-prs-stale" role="status">Everyone's merge requests on ${entry.host} could not be read: ${entry.everyoneError}</p>`) : null}
           ${panel.items.length
             ? html`<ul class="open-pr-list">${panel.items.map((mr) => html`<${OpenPRRow} key=${mr.url} pr=${mr} kind="mr"
+                showFinalCI=${panel.showingRecent && showFinalCI}
                 titleDetails=${titleDetails} onIgnore=${view.canIgnore ? askIgnore : null} onRestore=${(target) => {
                   saveIgnored(unignorePR(ignored, target.url));
                   setFocusBack((n) => n + 1);
                 }} />`)}</ul>`
             : html`<p class="open-prs-empty">${panel.showingIgnored ? 'No ignored merge requests.'
-              : view.filter === 'all' ? 'No open merge requests.' : 'No merge requests match this filter.'}</p>`}
+              : panel.showingRecent ? `Nothing merged or closed in the last ${panel.recentWindowDays} day(s).`
+              : mrOpenActive ? 'No open merge requests.' : 'No merge requests match this filter.'}</p>`}
           <${FooterListFilters} label="Filter merge requests" filters=${[
-            { key: 'all', text: `Open ${panel.total}`, active: view.filter === 'all', onClick: () => setFilter('all') },
+            { key: 'all', text: `Open ${panel.total}`, active: mrOpenActive, onClick: () => setFilter('all') },
             { key: 'attention', text: `Needs attention ${panel.attention}`, active: view.filter === 'attention', onClick: () => setFilter('attention') },
             { key: 'ready', text: `Ready to merge ${panel.ready}`, active: view.filter === 'ready',
               title: 'At least one approval and a passing head pipeline', onClick: () => setFilter('ready') },
             { key: 'unattached', text: `Unattached ${panel.unattached}`, active: view.filter === 'unattached', onClick: () => setFilter('unattached') },
+            panel.recentWindowDays > 0 ? { key: 'recent', text: `Closed ${panel.recentWindowDays}d ${panel.recentCount}`,
+              active: panel.showingRecent, title: `Merge requests you merged or closed in the last ${panel.recentWindowDays} day(s)`,
+              onClick: () => setFilter('recent') } : null,
             panel.ignoredCount > 0 || panel.showingIgnored ? { key: 'ignored', text: `Ignored ${panel.ignoredCount}`, active: panel.showingIgnored,
               title: 'Merge requests you set aside; bring them back from here', onClick: () => setFilter('ignored') } : null,
           ].filter(Boolean)} />
@@ -851,6 +862,12 @@ function OpenMRs({ state }) {
               : view.instances
                 .filter((entry) => entry.url)
                 .map((entry, index) => html`${index > 0 ? ' · ' : null}<a key=${entry.host} href=${entry.url} target="_blank" rel="noopener noreferrer">Open all on ${entry.host} ↗</a>`)}</span>
+            ${panel.showingRecent ? html`<label class="open-prs-final-ci"
+              title="Show the last pipeline result. Merged and closed merge requests are never read again.">
+              <input type="checkbox" checked=${showFinalCI}
+                onChange=${(event) => setShowFinalCI(event.currentTarget.checked)} />
+              <span>Final CI</span>
+            </label>` : null}
             ${view.filter === 'attention' && panel.hasDrafts ? html`<label class="open-prs-include-drafts"
               title="Include draft merge requests in Needs attention">
               <input type="checkbox" checked=${includeDraftsInAttention}
