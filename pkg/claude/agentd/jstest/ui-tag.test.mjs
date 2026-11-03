@@ -2,7 +2,8 @@
 // one round outlined pill, 11px, coloured by -accent / -warn / -own. Areas
 // used to draw their own (about forty rules mixing radius 8/9/10/12/999px,
 // 0-2px x 5-9px padding and 10-11.5px text). An area class keeps placement,
-// and a state modifier on it may still set color / border-color.
+// and a state modifier on it may still set color / border-color (two
+// classes out-rank .ui-tag; the wizard paint sits in :where() so it does too).
 //
 // A rule that draws a pill itself (a 1px border, a radius of 8px or more,
 // text of 11.5px or less and 0-2px vertical padding) is a hand-rolled chip,
@@ -63,5 +64,5 @@ test('no new hand-rolled chips', () => {
 
 test('ui.css defines the tag and its variants', () => {
   const ui = readFileSync(new URL('ui.css', DASHBOARD), 'utf8');
-  for (const sel of ['.ui-tag {', '.ui-tag-accent {', '.ui-tag-warn {', '.ui-tag-own {', 'body.wizard .ui-tag {']) assert.ok(ui.includes(sel), sel);
+  for (const sel of ['.ui-tag {', '.ui-tag-accent {', '.ui-tag-warn {', '.ui-tag-own {', 'body.wizard :where(.ui-tag) {']) assert.ok(ui.includes(sel), sel);
 });
