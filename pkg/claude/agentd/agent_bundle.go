@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1060,16 +1059,13 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	if noStart {
 		inner = inner.WithContext(context.WithValue(inner.Context(), bundleNoLaunchContextKey{}, true))
 	}
-	rec := httptest.NewRecorder()
-	handleGroupSpawn(rec, inner, group)
-	if rec.Code != 200 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(rec.Code)
-		_, _ = w.Write(rec.Body.Bytes())
+	res := serveInternalGroupSpawn(inner, group)
+	if res.Status != 200 {
+		res.WriteTo(w)
 		return
 	}
-	var spawned agent.SpawnResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &spawned); err != nil {
+	spawned, err := res.Response()
+	if err != nil {
 		writeError(w, 500, "spawn", err.Error())
 		return
 	}
