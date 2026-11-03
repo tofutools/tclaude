@@ -136,7 +136,7 @@ function TriggerInspector({ rule, actions, onEdit }) {
   return html`<div class="trigger-inspector" onClick=${(event) => event.stopPropagation()}>
     <div class="trigger-inspector-head">
       <div><strong>Why this rule matches</strong><span class="muted">Configured conditions; fire-time permission checks are recorded below.</span></div>
-      <button type="button" onClick=${onEdit}>edit rule</button>
+      <${Button} size="sm" onClick=${onEdit}>edit rule<//>
     </div>
     <div class="trigger-inspector-grid">
       <section>
@@ -280,11 +280,11 @@ export function TriggerWorkspace({ state, actions }) {
       <${Input} type="search" aria-label="Filter triggers" placeholder="Filter triggers (name + source + scope + action)"
         value=${query} onInput=${(event) => setQuery(event.currentTarget.value)} />
       <span class="filter-count">${shown.length}${query ? ` / ${rules.length}` : ` trigger${rules.length === 1 ? '' : 's'}`}</span>
-      <button class="clear-filter" title="Clear trigger filter" onClick=${() => setQuery('')}>×</button>
+      <button data-ui-exempt class="clear-filter" title="Clear trigger filter" onClick=${() => setQuery('')}>×</button>
       <span class="spacer"></span>
       <${Button} id="trigger-create-open" variant="primary" onClick=${() => state.openTriggerCreate()}>+ new trigger<//>
     </div>
-    ${error && html`<div class="jobs-error ui-error-box" role="alert">${error}<button onClick=${() => void load()}>retry</button></div>`}
+    ${error && html`<div class="jobs-error ui-error-box" role="alert">${error}<${Button} size="sm" onClick=${() => void load()}>retry<//></div>`}
     ${loading ? html`<div class="empty">Loading triggers…</div>` : shown.length === 0
       ? html`<div class="empty">${rules.length ? 'No triggers match this filter.' : 'No triggers yet. Create an event rule to automate a bounded response.'}</div>`
       : html`<table class="triggers-table"><thead><tr><th></th><th>Trigger</th><th>When</th><th>Where</th><th>Then</th><th>Last fired</th><th>State</th><th>Enabled</th><th></th></tr></thead>
@@ -322,7 +322,7 @@ function draftValid(draft) {
 
 function Step({ name, summary, expanded, onToggle, valid, children }) {
   return html`<section class=${`trigger-editor-step${expanded ? ' expanded' : ''}`}>
-    <button type="button" class="trigger-step-head" onClick=${onToggle} aria-expanded=${expanded ? 'true' : 'false'}>
+    <button data-ui-exempt type="button" class="trigger-step-head" onClick=${onToggle} aria-expanded=${expanded ? 'true' : 'false'}>
       <span class=${`trigger-step-label ${name.toLowerCase()}`}>${name}</span>
       <span class="trigger-step-summary">${summary}</span>
       <span class=${valid ? 'trigger-step-valid' : 'trigger-step-required'}>${valid ? '✓' : 'required'}</span>
@@ -359,7 +359,7 @@ function ActionEditor({ action, index, update, remove, profileOptions, stateSour
     <div class="trigger-action-editor-head"><strong>${index + 1} · ${action.type === 'spawn' ? '⚡ Spawn agent' : '✉ Message'}</strong>
       <select value=${action.type} onChange=${(event) => update(emptyAction(event.currentTarget.value, stateSource))}>
         <option value="spawn">spawn agent</option><option value="message">message</option>
-      </select><button type="button" class="danger" onClick=${remove} disabled=${false}>×</button></div>
+      </select><${Button} size="sm" variant="ghost danger" onClick=${remove}>×<//></div>
     ${action.type === 'spawn' ? html`<${Fragment}>
       <${SpawnActionFields} fieldPrefix=${`trigger-action-${index}`} placeholderTokens=${placeholders}
         profileOptions=${profileOptions}
@@ -493,8 +493,8 @@ function TriggerDialog({ descriptor, state, actions }) {
         valid=${thenValid} summary=${draft.actions.length ? draft.actions.map(actionSummary).join(' → ') : 'action required'}>
         <div class="trigger-actions-editor">${draft.actions.map((action, index) => html`<${ActionEditor} key=${index} action=${action} index=${index}
           update=${(next) => updateAction(index, next)} remove=${() => removeAction(index)} profileOptions=${profileOptions} stateSource=${stateSource} />`)}
-          <div class="trigger-add-actions"><button type="button" onClick=${() => setDraft({ ...draft, actions: [...draft.actions, emptyAction('spawn', stateSource)] })}>+ spawn action</button>
-            <button type="button" onClick=${() => setDraft({ ...draft, actions: [...draft.actions, emptyAction('message', stateSource)] })}>+ message action</button></div>
+          <div class="trigger-add-actions"><${Button} size="sm" onClick=${() => setDraft({ ...draft, actions: [...draft.actions, emptyAction('spawn', stateSource)] })}>+ spawn action<//>
+            <${Button} size="sm" onClick=${() => setDraft({ ...draft, actions: [...draft.actions, emptyAction('message', stateSource)] })}>+ message action<//></div>
           ${draft.actions.some((action) => action.type === 'spawn') && html`<div class="trigger-permission-warning" role="note">
             ⚠ This rule spawns agents. Firings are re-authorized as the owning principal; revoked or missing permissions are recorded as denied, not silently dropped.
           </div>`}

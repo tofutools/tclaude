@@ -93,8 +93,8 @@ function CronRunInspector({ id, runs, loading, error, onRefresh }) {
   return html`<div class="cron-run-inspector" id=${id}>
     <div class="cron-run-inspector-head"><strong>Recent runs</strong>
       <span class="muted">Recorded scheduler outcomes; worker identity appears when a spawn reached a managed worker.</span>
-      <button type="button" onClick=${onRefresh} disabled=${loading}>refresh</button></div>
-    ${error && html`<div class="jobs-error ui-error-box" role="alert">${error}<button type="button" onClick=${onRefresh}>retry</button></div>`}
+      <${Button} size="sm" onClick=${onRefresh} disabled=${loading}>refresh<//></div>
+    ${error && html`<div class="jobs-error ui-error-box" role="alert">${error}<${Button} size="sm" onClick=${onRefresh}>retry<//></div>`}
     ${loading ? html`<div class="muted">Loading run history…</div>` : !error && runs.length === 0
       ? html`<div class="muted">No runs recorded.</div>`
       : html`<div class="cron-runs">${runs.map((run) => html`<div class="cron-run" key=${run.id}>
@@ -450,7 +450,7 @@ export function JobsApp({ state, actions, fleet = fleetState, activeTab = dashbo
         autocomplete="off" spellcheck=${false} value=${current.query}
         onInput=${(event) => onQuery(event.currentTarget.value)} />
       <span class="filter-count" id="filter-jobs-count" aria-live="polite">${count}</span>
-      <button class="clear-filter" id="filter-jobs-clear" title="Clear filter" aria-label="Clear automation filter"
+      <button data-ui-exempt class="clear-filter" id="filter-jobs-clear" title="Clear filter" aria-label="Clear automation filter"
         onClick=${() => { onQuery(''); inputRef.current?.focus(); }}>×</button>
       <span class="spacer"></span>
       ${(displayKind === 'all' || displayKind === 'cron') && html`

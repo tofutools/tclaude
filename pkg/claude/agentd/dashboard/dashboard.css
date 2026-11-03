@@ -8429,21 +8429,7 @@ body.wizard #agent-spawn-role-add { background: #140f28; color: #f3e6c0; }
   font-size: 19px !important; line-height: 1; box-shadow: none !important;
 }
 .group-standing-orders-close:hover { color: #c9d1d9 !important; }
-#group-standing-orders-modal .cron-create-modal button:where(:not(.ui-btn)):not(.group-standing-orders-close) {
-  border: 1px solid #3a4654; border-radius: 4px;
-  padding: 6px 10px; background: #21262d; color: #c9d1d9;
-  font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
-}
-#group-standing-orders-modal .cron-create-modal button:where(:not(.ui-btn)):not(.group-standing-orders-close):hover:not(:disabled) {
-  background: #2d333b;
-}
-#group-standing-orders-modal .cron-create-modal button:where(:not(.ui-btn)).primary {
-  background: #1f6feb; border-color: #388bfd; color: #fff;
-}
-#group-standing-orders-modal .cron-create-modal button:where(:not(.ui-btn)).primary:hover:not(:disabled) {
-  background: #388bfd;
-}
-#group-standing-orders-modal .cron-create-modal button:where(:not(.ui-btn)):disabled { opacity: 0.65; cursor: not-allowed; }
+.group-standing-orders-close:disabled { opacity: 0.45; cursor: not-allowed; }
 .group-standing-orders-summary {
   display: flex; align-items: center; gap: 18px;
   padding: 9px 11px; margin-bottom: 14px;
@@ -8540,12 +8526,6 @@ body.wizard #group-standing-orders-modal .group-standing-orders-heading p,
 body.wizard #group-standing-orders-modal .muted { color: #ad9abb; }
 body.wizard #group-standing-orders-modal .group-standing-orders-close { color: #9d87ad !important; }
 body.wizard #group-standing-orders-modal .group-standing-orders-close:hover { color: #f3e6c0 !important; }
-body.wizard #group-standing-orders-modal .cron-create-modal button:where(:not(.ui-btn)):not(.group-standing-orders-close) {
-  background: #2a2034; border-color: #59466b; color: #e7d9f5;
-}
-body.wizard #group-standing-orders-modal .cron-create-modal button:where(:not(.ui-btn)):not(.group-standing-orders-close):hover:not(:disabled) {
-  background: #39294a;
-}
 body.wizard #group-standing-orders-modal .cron-create-modal button:is(.primary, .ui-btn-primary) {
   background: linear-gradient(180deg, #7650a5, #563477);
   border-color: #b184d1; color: #fff7dc; box-shadow: 0 0 12px #b26de840;
@@ -15271,15 +15251,11 @@ body.wizard .jobs-subnav {
 .trigger-template-field { grid-column: 1 / -1; }
 .trigger-template-field textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .trigger-placeholder-chips { display: flex; flex-wrap: wrap; gap: 5px; }
-.trigger-placeholder-chips button { padding: 2px 6px; color: #e3a54b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
-.trigger-inspector-head button, .trigger-action-editor-head button, .trigger-placeholder-chips button, .trigger-add-actions button {
-  background: #161b22; border: 1px solid #30363d; color: #c9d1d9;
+.trigger-placeholder-chips button {
+  padding: 2px 6px; background: #161b22; border: 1px solid #30363d; color: #e3a54b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px;
 }
-.trigger-inspector-head button:hover, .trigger-action-editor-head button:hover, .trigger-placeholder-chips button:hover, .trigger-add-actions button:hover {
-  background: #21262d;
-}
-.trigger-action-editor-head button.danger { color: #ff7b72; }
-.trigger-placeholder-chips button { color: #e3a54b; }
+.trigger-placeholder-chips button:hover { background: #21262d; }
 .trigger-harness-capabilities {
   display: flex; flex-direction: column; gap: 5px; margin-top: 10px; padding: 8px 10px;
   border: 1px solid #30363d; border-radius: 6px; background: #0d141c; font-size: 10px;
@@ -15340,10 +15316,10 @@ body.wizard #trigger-modal .trigger-action-editor { background: #18122b; border-
 body.wizard #trigger-modal .trigger-step-head,
 body.wizard #trigger-modal .trigger-action-editor-head { background: #241b3d; border-color: rgba(122, 93, 176, .55); }
 body.wizard #trigger-modal .trigger-step-body { border-color: rgba(122, 93, 176, .55); }
-body.wizard :is(.trigger-inspector-head button, #trigger-modal .trigger-action-editor-head button, #trigger-modal .trigger-placeholder-chips button, #trigger-modal .trigger-add-actions button, #trigger-modal .modal-buttons button:where(:not(.ui-btn)):not(.primary)) {
+body.wizard :is(#trigger-modal .trigger-placeholder-chips button, #trigger-modal .modal-buttons button:where(:not(.ui-btn)):not(.primary)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard :is(.trigger-inspector-head button, #trigger-modal .trigger-action-editor-head button, #trigger-modal .trigger-placeholder-chips button, #trigger-modal .trigger-add-actions button, #trigger-modal .modal-buttons button:where(:not(.ui-btn)):not(.primary)):hover {
+body.wizard :is(#trigger-modal .trigger-placeholder-chips button, #trigger-modal .modal-buttons button:where(:not(.ui-btn)):not(.primary)):hover {
   background: #3a2a63;
 }
 body.wizard #trigger-modal .trigger-placeholder-chips button { color: #f0d066; }

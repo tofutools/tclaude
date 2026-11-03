@@ -5,7 +5,7 @@ const html = htm.bind(h);
 
 export function TemplatePlaceholderChips({ tokens, onInsert }) {
   return html`<span class="trigger-placeholder-chips">${tokens.map((token) => html`
-    <button type="button" key=${token} onClick=${() => onInsert(token)}>${token}</button>`)}</span>`;
+    <button data-ui-exempt type="button" key=${token} onClick=${() => onInsert(token)}>${token}</button>`)}</span>`;
 }
 
 export function SpawnActionFields({
