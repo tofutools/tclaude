@@ -205,7 +205,7 @@ export function GroupsFocusSwitch({ state, groups, wizard = false, source = proc
   const ready = source.status.value === 'ready';
   const runs = ready ? activeRunCount(source.context.value) : null;
   const focus = effectiveGroupsFocus(state);
-  const button = (value, icon, plain, arcane, count, title) => html`<button
+  const button = (value, icon, plain, arcane, count, title) => html`<button data-ui-exempt
       type="button"
       class=${`groups-focus-option${focus === value ? ' active' : ''}`}
       aria-pressed=${focus === value ? 'true' : 'false'}

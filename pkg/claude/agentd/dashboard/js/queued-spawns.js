@@ -116,7 +116,7 @@ export function QueuedSpawnRow({ entry, showGroup = true, Tag = 'div' }) {
   return html`<${Tag} class="queued-spawn-row" data-queued-id=${entry.id}
     title=${`Queued${entry.created_at ? ` ${relTime(entry.created_at)}` : ''} — click to review or edit the full spawn dialog`}
     onClick=${() => editQueuedSpawn(entry)}>
-    <button type="button" class="queued-spawn-play" data-act="queued-spawn-launch"
+    <button data-ui-exempt type="button" class="queued-spawn-play" data-act="queued-spawn-launch"
       title="Spawn now — opens the dialog and launches it; worktree, fetch and spawn checks run now"
       aria-label=${`Spawn ${label} now`} onClick=${stop(launchQueuedSpawn)}>▶</button>
     <span class="queued-spawn-meta">
@@ -124,7 +124,7 @@ export function QueuedSpawnRow({ entry, showGroup = true, Tag = 'div' }) {
       <span class="queued-spawn-detail">${queuedSpawnDetail(entry, { group: showGroup })}</span>
     </span>
     <span class="queued-spawn-age">${entry.created_at ? relTime(entry.created_at) : ''}</span>
-    <button type="button" class="queued-spawn-discard" data-act="queued-spawn-discard"
+    <button data-ui-exempt type="button" class="queued-spawn-discard" data-act="queued-spawn-discard"
       title="Discard — remove from the queue without launching" aria-label=${`Discard queued ${label}`}
       onClick=${stop(discardQueuedSpawn)}>✕</button>
   </${Tag}>`;

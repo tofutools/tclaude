@@ -129,7 +129,7 @@ export function GroupsControls({ state, actions }) {
         title=${wizard ? 'Parties shown / all parties' : 'Groups shown / all groups'}
       >${filtering ? `${current.shownReal} / ${current.total}` : ''}</span>
       ${filtering && html`
-        <button
+        <button data-ui-exempt
           class="clear-filter"
           id="filter-groups-clear"
           type="button"
@@ -446,7 +446,7 @@ export function BrokerRefusalNotice({ snapshot }) {
   return html`<div class="broker-refusal-notice" role="status" title=${title}>
     <span class="broker-refusal-notice-glyph" aria-hidden="true">🚫</span>
     <span>agentd refused ${total} brokered callback${plural}${detail} in the last 15 minutes — telemetry for at least one agent is being lost. Look for a 🚫 on an agent row; if there is none, the affected row is hidden or unplaceable, and the daemon log has the caller pid.</span>
-    <button type="button" class="broker-refusal-notice-dismiss" aria-label="Dismiss this warning"
+    <button data-ui-exempt type="button" class="broker-refusal-notice-dismiss" aria-label="Dismiss this warning"
       title="Dismiss this warning. It comes back if agentd refuses another callback." onClick=${dismiss}>×</button>
   </div>`;
 }

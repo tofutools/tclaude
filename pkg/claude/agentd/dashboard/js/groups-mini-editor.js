@@ -140,7 +140,7 @@ function StructureMenu({ view, menu, onRun, onWrap, onClose }) {
   if (!node) return null;
   const step = isStep(node);
   const orphans = step || node.type === 'end' ? deleteOrphans(view, id) : [];
-  const item = (key, text, why, onClick) => html`<button type="button" role="menuitem" class="gm-menu-item" data-mini-menu=${key}
+  const item = (key, text, why, onClick) => html`<button data-ui-exempt type="button" role="menuitem" class="gm-menu-item" data-mini-menu=${key}
     disabled=${!!why} title=${why} onClick=${onClick}>${text}</button>`;
   const kinds = (key, text, why, op) => html`<div class="gm-menu-kinds" data-mini-menu=${key}><span class=${why ? 'gm-off' : ''} title=${why}>${text}</span>
     <${KindChips} label=${text} disabled=${why} onPick=${(kind) => onRun(() => op(view, id, kind))} /></div>`;
