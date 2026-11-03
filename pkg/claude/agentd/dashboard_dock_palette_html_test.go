@@ -75,7 +75,9 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	must("body:not(.dock-open) #agent-dock { transform: translateX(100%); }",
 		"a collapsed dock slides off-screen")
 	must("body.dock-anim #agent-dock { transition: transform", "the slide is gated behind .dock-anim (no flash-in on load)")
-	must("body.wizard #agent-dock .dock-card {", "the wizard skin is scoped under #agent-dock")
+	// The card surface is .ui-card (skinned by its tokens); the wizard's dock
+	// states stay scoped under #agent-dock.
+	must("body.wizard #agent-dock .dock-card:hover {", "the wizard skin is scoped under #agent-dock")
 	// JOH-388 req 5: each category is a collapsible <details>; its per-section
 	// fold persists via dashPrefs and the disclosure chevron flips on [open].
 	must(".dock-section[open] > .dock-section-head .dock-section-chevron", "the section chevron flips with the <details> open state")

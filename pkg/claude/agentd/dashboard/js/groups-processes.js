@@ -285,7 +285,7 @@ function RunCard({ run, entry, nameOf, wizard, onOpen }) {
   const duration = formatRunDuration(named.startedAt, terminal && named.updatedAt ? Date.parse(named.updatedAt) : Date.now());
   const template = named.templateRef || named.templateId || '';
   const owner = named.scope?.owner ? nameOf(named.scope.owner) || named.scope.owner : '';
-  return html`<article class="gp-card" data-process-run-card=${named.runId}>
+  return html`<article class="gp-card ui-card" data-process-run-card=${named.runId}>
     <div class="gp-card-head">
       <span class="gp-card-name">${runName(named)}</span>
       <${ProcessStateChip} state=${state} label=${`${stateLabel(state)}${duration ? ` · ${duration}` : ''}`} />

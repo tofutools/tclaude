@@ -104,7 +104,9 @@ func TestDashboardHTML_TemplateDrop(t *testing.T) {
 	// CSS: the chooser is styled in both skins, wizard SCOPED under the modal (the
 	// anti-pin invariant — no unscoped body.wizard widening).
 	must(".deploy-mode {", "the drop-mode chooser has a base CSS rule")
-	must("body.wizard #template-deploy-modal .deploy-mode {", "the wizard chooser skin is scoped to the summon modal")
+	// The chooser box is .ui-card (skinned by its tokens); the wizard's label
+	// colour stays scoped under the modal.
+	must("body.wizard #template-deploy-modal .deploy-mode label {", "the wizard chooser skin is scoped to the summon modal")
 	must("#template-deploy-group.locked {", "the locked group field is visibly muted")
 
 	// The chooser + copy-only rows must actually hide when marked `hidden` on a

@@ -66,7 +66,7 @@ function PRReviewPanel({ prURL, prNumber, reviews, panelID, headingID, panelRef,
     : 'visibility:hidden';
   const updated = relativeAge(reviews.reviewers_fetched_at, now);
   return html`
-    <div ref=${panelRef} class="ci-panel rv-panel" style=${style}
+    <div ref=${panelRef} class="ci-panel rv-panel ui-popover" style=${style}
       id=${panelID} role="dialog" aria-labelledby=${headingID}>
       <div class="ci-panel-heading" id=${headingID}>
         <a href=${prURL} target="_blank" rel="noopener noreferrer">

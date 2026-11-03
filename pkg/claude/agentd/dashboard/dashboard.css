@@ -1231,9 +1231,6 @@ body:not(.show-final-pr-checks) .ci-hover.ci-final { display: none; }
   display: block; position: fixed; z-index: var(--z-popover);
   width: min(360px, calc(100vw - 32px)); max-height: min(52vh, 320px);
   overflow: auto; padding: 10px 12px;
-  border: 1px solid #3b4654; border-radius: 8px;
-  background: linear-gradient(180deg, #1c232d 0%, #161b22 100%);
-  color: #c9d1d9; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
   font-size: 12px; line-height: 1.35; text-align: left; white-space: normal;
 }
 /* The 7px between badge and panel belongs to neither, so a pointer travelling
@@ -1291,10 +1288,6 @@ body.wizard .ci-badge.ci-pending { color: #e8c15a; border-color: rgba(232, 193, 
 body.wizard .rv-badge.rv-approved { color: #7ee08a; }
 body.wizard .rv-badge.rv-changes { color: #ff8a8a; }
 body.wizard .rv-badge.rv-required { color: #e8c15a; }
-body.wizard .ci-panel {
-  border-color: #7a5db0; background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);
-  color: #e7d9f5; box-shadow: 0 0 24px rgba(122, 93, 176, 0.35);
-}
 body.wizard .ci-panel-heading {
   color: #f3e6c0; font-family: Papyrus, Luminari, 'Palatino Linotype', Palatino, serif;
   letter-spacing: 0.5px;
@@ -1316,9 +1309,14 @@ body.slop .rv-badge.rv-approved { color: #7ee08a; }
 body.slop .rv-badge.rv-changes { color: #ff8a8a; }
 body.slop .rv-badge.rv-required { color: #ffd700; }
 body.slop .rv-badge.rv-none { color: #8a6d3b; }
-body.slop .ci-panel {
-  border-color: #9e7a00; background: linear-gradient(180deg, #351010 0%, #210808 100%);
-  color: #ffe88c; box-shadow: 0 0 18px rgba(255, 215, 0, 0.25);
+/* The slop skin has no shared popover tokens yet; its casino surface for the
+   CI / PR / review and activity hover panels (.ui-popover) is set through
+   them here, so the panels keep one box rule in ui.css. */
+body.slop :is(.ci-panel, .activity-hover-panel) {
+  --ui-dialog-bg: linear-gradient(180deg, #351010 0%, #210808 100%);
+  --ui-dialog-line: #9e7a00;
+  --ui-dialog-text: #ffe88c;
+  --ui-dialog-shadow: 0 0 18px rgba(255, 215, 0, 0.25);
 }
 body.slop .ci-panel-heading { color: #ffe88c; }
 body.slop .ci-panel-summary,
@@ -3036,9 +3034,6 @@ body.wizard header .activity-hover-trigger:hover { background: transparent; }
   top: calc(100% + 9px); left: 0;
   width: min(420px, calc(100vw - 32px)); max-height: min(68vh, 560px);
   overflow: auto; padding: 12px 14px;
-  border: 1px solid #3b4654; border-radius: 8px;
-  background: linear-gradient(180deg, #1c232d 0%, #161b22 100%);
-  color: #c9d1d9; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
   font-size: 12px; line-height: 1.35; text-align: left;
 }
 .activity-hover.is-open .activity-hover-panel { display: block; }
@@ -3085,10 +3080,6 @@ body.wizard header .activity-hover-trigger:hover { background: transparent; }
   margin: 11px 0 0; padding-top: 9px; border-top: 1px solid #30363d;
   color: #8b949e; font-size: 11px;
 }
-body.slop .activity-hover-panel {
-  border-color: #9e7a00; background: linear-gradient(180deg, #351010 0%, #210808 100%);
-  color: #ffe88c; box-shadow: 0 0 18px rgba(255, 215, 0, 0.25);
-}
 body.slop .activity-hover-panel-heading { color: #ffe88c; }
 body.slop .activity-hover-panel-summary,
 body.slop .activity-hover-worker-detail,
@@ -3098,10 +3089,6 @@ body.slop .activity-hover-group + .activity-hover-group,
 body.slop .activity-hover-note { border-color: #684500; }
 body.slop .activity-hover-group h3 { color: #ffd700; }
 body.slop .activity-hover-worker-name { color: #fff4bd; }
-body.wizard .activity-hover-panel {
-  border-color: #7a5db0; background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);
-  color: #e7d9f5; box-shadow: 0 0 24px rgba(122, 93, 176, 0.35);
-}
 body.wizard .activity-hover-panel-heading {
   color: #f3e6c0; font-family: Papyrus, Luminari, 'Palatino Linotype', Palatino, serif;
   letter-spacing: 0.5px;
@@ -7686,8 +7673,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .sbx-row .sbx-mount-btn.is-invalid:disabled { opacity: .75; }
 .sbx-row .sbx-mount-btn:disabled:hover { background: #0d1117; }
 .sbx-mount-panel {
-  border: 1px solid #3b3566; border-radius: 5px;
-  background: #12111f; padding: 9px 10px;
+  padding: 9px 10px;
   display: flex; flex-direction: column; gap: 7px;
 }
 /* The panel's own [?] sits on the title line, inside the card — the table row
@@ -13185,9 +13171,6 @@ body.wizard #template-deploy-modal #template-deploy-submit::before {
 body.wizard #template-deploy-modal #template-deploy-submit:disabled::before { content: "🧙 Summoning…"; }
 /* Drop-mode chooser + notes re-skinned to the parchment palette (JOH-377),
    scoped under #template-deploy-modal so this feature never widens body.wizard. */
-body.wizard #template-deploy-modal .deploy-mode {
-  background: #241b3d; border-color: var(--ui-wizard-gold);
-}
 body.wizard #template-deploy-modal .deploy-mode label { color: #f3e6c0; }
 body.wizard #template-deploy-modal #template-deploy-group.locked {
   background: #1a1430; color: #b39ddb;
@@ -13382,10 +13365,6 @@ body.wizard #sandbox-profile-editor-modal .sbx-row > button.sbx-mount-btn:not(#s
   background: rgba(248, 81, 73, .24);
   border-color: #b4553f;
   color: #ffb4a8;
-}
-body.wizard #sandbox-profile-editor-modal .sbx-mount-panel {
-  background: #1c1436;
-  border-color: #a97bd6;
 }
 body.wizard #sandbox-profile-editor-modal .sbx-mount-title { color: #f3e6c0; }
 body.wizard #sandbox-profile-editor-modal .sbx-segmented-control {
@@ -13740,13 +13719,6 @@ body.wizard .debug-wizard-title {
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   font-size: 22px; letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
-body.wizard #activity-performance .debug-card {
-  background:
-    radial-gradient(120% 90% at 50% 0%, rgba(122, 93, 176, 0.14), transparent 68%),
-    linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border-color: #7a5db0;
-  box-shadow: inset 0 0 18px rgba(169, 123, 214, 0.12);
 }
 body.wizard #activity-performance .debug-card-head .rowname {
   color: #f3e6c0;
@@ -14122,11 +14094,6 @@ body.wizard .audit-spawn-popover pre {
    parchment + ink palette that only the scroll/broadsheet surfaces use. */
 
 /* ─── The panes: arcane void bodies ──────────────────────────────── */
-body.wizard .mail-sidebar,
-body.wizard .mail-list {
-  background: linear-gradient(180deg, #1a1233 0%, #140f28 100%);
-  border-color: #4a3a6b;
-}
 /* Empty-state prompts across the three panes read as muted arcane. */
 body.wizard .mail-sidebar .empty,
 body.wizard .mail-list .empty,
@@ -14255,10 +14222,6 @@ body.wizard .mail-progress-fill { background: linear-gradient(90deg, #7a5db0, va
 /* ─── The Unfurled Scroll (reader) ──────────────────────────────────
    The empty reader (no data-kind) sits on the arcane void; once a message
    opens, [data-kind] selects one of three surfaces below. */
-body.wizard .mail-reader {
-  background: linear-gradient(180deg, #1a1233 0%, #140f28 100%);
-  border-color: #4a3a6b;
-}
 
 /* Shared seal + head layout for any opened scroll: the header leaves room
    on the right for a round wax seal (::after), pressed at a jaunty angle. */
@@ -15057,9 +15020,6 @@ body.wizard #agent-dock .dock-search-input:focus { border-color: #7c5cc4; }
   position: relative;
   display: flex; align-items: center; gap: 6px;
   padding: 6px 8px; margin-bottom: 4px;
-  background: #161b22;
-  border: 1px solid #2a3340;
-  border-radius: 6px;
   cursor: grab;
 }
 .dock-card:hover { border-color: #3d444d; background: #1a2029; }
@@ -15156,7 +15116,6 @@ body.wizard #agent-dock .dock-section-head:hover .dock-section-title { color: #e
 body.wizard #agent-dock .dock-section-title { color: #c9b8f0; text-shadow: 0 0 6px rgba(139, 109, 214, 0.4); }
 body.wizard #agent-dock .dock-section-chevron { color: #8b6dd6; }
 body.wizard #agent-dock .dock-section-count { color: #9a86c9; }
-body.wizard #agent-dock .dock-card { background: #1d1730; border-color: #3a2f57; }
 body.wizard #agent-dock .dock-card:hover { border-color: #7c5cc4; background: #241a3a; }
 body.wizard #agent-dock .dock-card-name { color: #e6dcff; }
 body.wizard #agent-dock .dock-grip { color: #6b5a94; }
@@ -17750,7 +17709,7 @@ body.wizard .groups-processes-placeholder-glyph { color: #d4af37; }
 .gp-member.is-offline .gp-member-glyph { opacity: .35; }
 .gp-run-controls .group-actions button:disabled { opacity: .4; cursor: default; }
 .gp-strip-text { color: #8b949e; font-size: 11px; }
-.gp-card { background: #161b22; border: 1px solid #2a3340; border-radius: 10px; margin: 0 0 10px 18px; }
+.gp-card { margin: 0 0 10px 18px; }
 .gp-card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-bottom: 1px solid #2a3340; }
 .gp-card-name { font-weight: 700; font-size: 13.5px; color: var(--ui-strong-text); }
 .gp-card-meta { color: #8b949e; font-size: 11px; }
@@ -17856,7 +17815,6 @@ body.wizard tr.gf-link-hot > td:first-child { box-shadow: inset 2px 0 0 #d4af37;
 body.wizard .pk-gnode.gf-link-hot { box-shadow: 0 0 0 2px #a97bd6, 0 0 12px rgba(169, 123, 214, 0.35); }
 body.wizard .gf-section-head { border-bottom-color: rgba(122, 93, 176, 0.35); }
 body.wizard .gf-label { color: #f3e6c0; }
-body.wizard .gp-card { background: #1a1430; border-color: rgba(122, 93, 176, 0.4); }
 body.wizard .gp-card-head { border-bottom-color: rgba(122, 93, 176, 0.4); }
 body.wizard .gp-member.busy { box-shadow: 0 0 0 2px #a97bd6; }
 body.wizard .gp-member-count { background: #2c2248; color: #e7d9f5; box-shadow: 0 0 0 1.5px #0f0a1f; }
@@ -18016,7 +17974,7 @@ body.wizard .gq-chip, body.wizard .gq-who-select:where(:not(.ui-select)), body.w
 body.wizard .gq-ask-in, body.wizard .gq-step-text, body.wizard .gq-param input, body.wizard .gq-answers-in input { background: #1a1430; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
 body.wizard .gq-fallback { background: #1a1430; border-color: rgba(122, 93, 176, 0.35); }
 /* The inline mini editor (mock M1): a saved process as an editable graph. */
-.gm-card { display: block; margin: 4px 0 12px 18px; border: 1px solid #2a3340; border-radius: 10px; background: #11161d; }
+.gm-card { display: block; margin: 4px 0 12px 18px; }
 .gm-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 14px; border-bottom: 1px solid #21262d; }
 .gm-name { font-size: 14px; color: var(--ui-strong-text); }
 .gm-toggle { display: inline-flex; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
@@ -18068,7 +18026,6 @@ body.wizard .gq-fallback { background: #1a1430; border-color: rgba(122, 93, 176,
 .gq-saved-edit { font: inherit; font-size: 11px; line-height: 1; width: 20px; height: 20px; border-radius: 50%; border: 1px solid #30363d; background: transparent; color: #8b949e; cursor: pointer; }
 .gq-saved-edit:hover:not(:disabled), .gq-saved-edit:focus-visible { border-color: #58a6ff; color: #e6edf3; outline: none; }
 .gq-saved-editing { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: #1f6feb; color: #fff; }
-body.wizard .gm-card { background: #140f28; border-color: rgba(122, 93, 176, 0.4); }
 body.wizard .gm-head, body.wizard .gm-foot { border-color: rgba(122, 93, 176, 0.3); }
 body.wizard .gm-toggle { border-color: rgba(122, 93, 176, 0.5); }
 body.wizard .gm-toggle button.on { background: #241b3d; color: #f3e6c0; }

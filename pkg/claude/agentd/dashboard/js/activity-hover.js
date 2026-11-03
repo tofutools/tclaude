@@ -33,7 +33,7 @@ function ActivityState({ state, wizard }) {
 function ActivityHoverPanel({ details, wizard, panelID, headingID }) {
   if (!details?.groups?.length) return null;
   return html`
-    <div class="activity-hover-panel" id=${panelID} role="dialog" aria-labelledby=${headingID}>
+    <div class="activity-hover-panel ui-popover" id=${panelID} role="dialog" aria-labelledby=${headingID}>
       <div class="activity-hover-panel-heading" id=${headingID}>Worker activity</div>
       <div class="activity-hover-panel-summary">
         ${plural(details.total || 0, 'worker')} · grouped by current state

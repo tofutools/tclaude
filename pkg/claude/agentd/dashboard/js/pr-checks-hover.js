@@ -550,7 +550,7 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
       (placement.placement === 'above' ? 'transform:translateY(-100%)' : '')
     : 'visibility:hidden';
   return html`
-    <div ref=${panelRef} class="ci-panel" style=${style}
+    <div ref=${panelRef} class="ci-panel ui-popover" style=${style}
       id=${panelID} role="dialog" aria-labelledby=${headingID}>
       <div class="ci-panel-heading" id=${headingID}>
         <a href=${badgeHref(summary, url)} target="_blank" rel="noopener noreferrer">
