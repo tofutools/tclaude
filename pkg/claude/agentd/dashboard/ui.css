@@ -224,6 +224,16 @@ body.slop {
 .ui-select { text-overflow: ellipsis; cursor: pointer; }
 .ui-select option { background: var(--ui-field-bg); color: var(--ui-text); }
 .ui-textarea { resize: vertical; }
+/* Raw fields inside a wizard dialog (markup not yet .ui-input/.ui-select/
+   .ui-textarea) take the wizard dialog field paint here, once, instead of a
+   per-dialog copy. A dialog that needs a different field look still wins with
+   its own id-scoped rule. */
+body.wizard .ui-dialog :is(input:not([type]), input[type=text], input[type=url], input[type=search], input[type=number], input[type=password], input[type=email], select, textarea):where(:not(.ui-input, .ui-select, .ui-textarea)) {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard .ui-dialog :is(input:not([type]), input[type=text], input[type=url], input[type=search], input[type=number], input[type=password], input[type=email], select, textarea):where(:not(.ui-input, .ui-select, .ui-textarea)):focus {
+  border-color: #a97bd6;
+}
 .ui-input.ui-sm, .ui-select.ui-sm, .ui-textarea.ui-sm { padding: 3px 8px; font-size: 12px; }
 
 /* Checkbox / radio with its label, and the on/off switch. */
