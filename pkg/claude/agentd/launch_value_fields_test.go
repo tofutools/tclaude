@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // TestLaunchValueFieldSpecs_Complete pins the table's shape: every field has a
@@ -294,4 +296,39 @@ func TestResolveLaunchBoolFields(t *testing.T) {
 		require.Len(t, notes, 1)
 		assert.Contains(t, notes[0], "trust_dir")
 	})
+}
+
+// TestLaunchBoolFieldSpecs_Validators pins each bool spec's validator to the
+// harness function it must call: for every registered harness and both
+// values, the spec answers exactly what that function answers.
+func TestLaunchBoolFieldSpecs_Validators(t *testing.T) {
+	want := map[launchBoolField]func(*harness.Harness, bool) (bool, error){
+		launchBoolAutoReview: harness.ResolveAutoReview,
+		launchBoolTrustDir:   harness.ResolveTrustDir,
+		launchBoolCopilotAPI: func(h *harness.Harness, v bool) (bool, error) { return harness.ResolveCopilotAPI(h, &v) },
+		launchBoolCodexAppServer: func(h *harness.Harness, v bool) (bool, error) {
+			return harness.ResolveCodexAppServer(h, &v)
+		},
+		launchBoolFastMode: func(h *harness.Harness, v bool) (bool, error) {
+			_, err := harness.ResolveFastMode(h, &v)
+			return v, err
+		},
+		launchBoolSSHWorkaround: func(h *harness.Harness, v bool) (bool, error) {
+			return harness.ResolveSSHWorkaround(h, &v)
+		},
+	}
+	require.Len(t, want, int(launchBoolFieldCount))
+	for _, name := range []string{"claude", "codex", "opencode", "copilot", "gemini", "pi"} {
+		h, err := resolveSpawnHarness(name)
+		require.NoError(t, err)
+		for f, expected := range want {
+			spec := launchBoolFieldSpecs[f]
+			for _, v := range []bool{true, false} {
+				gotV, gotErr := spec.validate(h)(v)
+				wantV, wantErr := expected(h, v)
+				assert.Equal(t, wantV, gotV, "%s on %s (%v)", spec.name, name, v)
+				assert.Equal(t, fmt.Sprint(wantErr), fmt.Sprint(gotErr), "%s on %s (%v)", spec.name, name, v)
+			}
+		}
+	}
 }
