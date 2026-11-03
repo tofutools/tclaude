@@ -98,9 +98,6 @@ It reads the credential once when it starts, so restart it after a renewal.
 | `dashboard_capture` | Sees your dashboard as an image | Off until you grant `dashboard.capture`, because the image goes to your assistant's provider |
 | `spawn_agent` | Starts a worker in a group you chose | Off until you [set where it can start workers](#starting-workers) |
 | `set_task_link` | Sets or clears the task link beside an agent | Needs `agent.task`, which comes with the Workers level, or owning every group that agent is in |
-| `show_page` | Shows you a [live page](live-page.md) of its own dev server or worktree files | Needs `self.page`; acts only on its own pages |
-| `list_pages` | Lists the live pages it is showing | Needs `self.page` |
-| `close_page` | Closes one of its live pages | Needs `self.page`; acts only on its own pages |
 
 So taking `message.direct` away doesn't stop it messaging agents it can reach through a group.
 

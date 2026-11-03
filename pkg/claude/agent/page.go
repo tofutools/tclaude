@@ -34,14 +34,16 @@ const pageShowLong = "Shows the operator a live web page in the dashboard: a dev
 	"The target is one of:\n" +
 	"  :PORT[/path]                    your own dev server (Vite, Next, Storybook, ...), e.g. :5173/app\n" +
 	"  http://localhost:PORT/path      the same, as a URL\n" +
-	"  DIR                             a static directory in your worktree (serves its index.html)\n" +
-	"  FILE.html                       one HTML file in your worktree\n\n" +
-	"Nothing else: no host names or IPs, no other agent's port, nothing outside your worktree. " +
+	"  DIR                             a static directory in your startup directory (serves its index.html)\n" +
+	"  FILE.html                       one HTML file in your startup directory\n\n" +
+	"Nothing else: no host names or IPs, no other agent's port, nothing outside the directory you were started in. " +
 	"The dev server must listen on 127.0.0.1 (start it with --host 127.0.0.1 if it binds ::1 only), and is checked to be yours.\n\n" +
 	"Showing again with the same --name updates that page in place: a new path or port reloads it on the same origin. " +
 	"Switching between a port and static files gives the page a new origin. Without --name the name comes from the target. " +
 	"A static source is watched, so saving a file reloads the page; a dev server reloads through its own HMR.\n\n" +
-	"Anything the operator types into the page can be read by you. The printed origin is the page's only key: keep it to yourself. " +
+	"Pages end when the daemon restarts; run show again to bring one back. " +
+	"Anything the operator types into the page can be read by you. The page's token is its only key: it goes to the operator's dashboard " +
+	"and is masked in what you are shown, so you act on a page by its name. " +
 	"Needs the self.page permission and Collab on."
 
 func showCmd() *cobra.Command {
@@ -171,7 +173,7 @@ func runPageShow(p *pageShowParams, target string, stdout, stderr io.Writer) int
 		fmt.Fprintf(stdout, "  worktree: %s\n", resp.Worktree)
 	}
 	if resp.Origin != "" {
-		fmt.Fprintf(stdout, "  origin:   %s  (sandboxed frame, its own origin)\n", resp.Origin)
+		fmt.Fprintf(stdout, "  origin:   %s  (sandboxed frame, its own origin; the token goes only to the dashboard)\n", resp.Origin)
 	} else {
 		fmt.Fprintln(stdout, "  origin:   (the dashboard is not listening; the page opens when it is)")
 	}

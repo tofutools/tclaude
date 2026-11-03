@@ -25,10 +25,11 @@ tclaude agent page close landing
 ```
 
 The target is `:PORT[/path]`, `http://localhost:PORT/path`, a directory, or an
-`.html` file. A file target must be inside the agent's worktree or its startup
-directory. The command prints the source, the page's origin and the rules.
-The same commands exist as MCP tools (`show_page`, `list_pages`, `close_page`)
-for an [external steward](external-steward.md).
+`.html` file. A file target must be inside the agent's startup directory, the
+one its launch chose. The directory the agent's hooks report it last edited in
+is never used, because the agent steers that with any path it touches. The
+command prints the source, the page's origin with the token masked, and the
+rules.
 
 - **Validation happens before anything is dialled.** A host name or IP is
   refused, and so is `::1`, `https:`, a URL with credentials, a port of the
@@ -47,11 +48,12 @@ for an [external steward](external-steward.md).
   dev server.
 - **Own pages only.** Every command resolves the page by name among the
   caller's own pages, so an agent cannot list, update or close another agent's
-  page. The permission is `self.page`, default-granted with the other `self.*`
+  page, and only the agent's current conversation can act (not a predecessor
+  still running after a reincarnation). The permission is `self.page`, default-granted with the other `self.*`
   slugs. The commands are hidden, and the routes answer 404, while
   [Collab is off](companion.md#turning-collab-off).
 - **Lifecycle.** A page belongs to the agent ID, so it survives a
-  reincarnation. Retiring the agent closes its pages. When the operator closes a
+  reincarnation. Retiring or deleting the agent closes its pages. When the operator closes a
   page in the dashboard, the agent gets an inbox message `[page <name>] closed`.
   Pages live in the daemon's memory only: restarting the daemon closes them, and
   page tokens are never written to disk.
@@ -64,10 +66,13 @@ that changes whenever the page is shown or updated. The Page tab uses it.
 
 The stage admits a frame's `Origin: null` requests, because a sandboxed frame
 has no other origin to send. So the 128-bit token in the page's host name is
-what decides who reaches the page. The token goes only to the agent that showed
-the page (in its `show` and `page ls` output) and to the local dashboard. It is
-never sent to another agent or to a linked instance's view. An agent should
-never pass its page's origin on, or put it in a commit, PR or ticket.
+what decides who reaches the page. The token goes only to the local dashboard
+(its snapshot). It never goes to a linked instance's view, even an unrestricted
+one, and not to any agent, including the one that showed the page. That agent
+sees its page's origin with the token masked and acts on it by name. An agent
+holding the token could fetch its page itself, and so read files through the
+daemon's view of the file system (see the known limits below). Keeping the
+token from it also keeps it out of the agent's transcript, and out of a clone's.
 
 ## Page sources
 

@@ -21,9 +21,12 @@ package agentd
 //     source kind is unchanged (same origin, new upstream, reload). A change
 //     of kind (port <-> static) mints a new origin: page code that read the
 //     static files must not keep an origin that now talks to the agent's port.
-//   - Page tokens reach only the owning agent (its own show/ls output) and the
-//     dashboard (the snapshot). They never go to a peer projection or another
-//     agent. Origin: null is admitted by the stage, so the token is the gate.
+//   - Page tokens reach only the local dashboard (the snapshot). They never go
+//     to a peer's snapshot or to any agent, the owner included: the stage
+//     admits Origin: null, so the token is the gate, and an agent holding it
+//     could fetch its page itself, reading files through the daemon's view of
+//     the file system rather than its sandbox's (tcl-kxiqqd). Agents see the
+//     origin with the token masked, and act on pages by name.
 
 import (
 	"context"
@@ -294,11 +297,13 @@ func pageStartPathOK(p string) bool {
 }
 
 // pageRoots are the directories a static target may live in: the agent's
-// current worktree and its startup directory, most specific first.
+// startup directory, which the operator's launch chose. Never the edit
+// directory the agent's hooks report: an agent steers that with any file path
+// it touches, even one its sandbox refused.
 var pageRoots = func(convID string) []string {
 	loc := agent.ResolveLocation(convID)
 	var roots []string
-	for _, d := range []string{loc.CurrentDir, loc.StartupDir} {
+	for _, d := range []string{loc.StartupDir} {
 		if d = strings.TrimSpace(d); d != "" && filepath.IsAbs(d) && !slices.Contains(roots, filepath.Clean(d)) {
 			roots = append(roots, filepath.Clean(d))
 		}
@@ -359,8 +364,8 @@ type pageShowRequest struct {
 	Name   string `json:"name"`
 }
 
-// pageView is a page as its owner and the dashboard see it. It carries the
-// origin, so it is never built for anyone else.
+// pageView is a page as the dashboard sees it (its origin carries the token)
+// or, through agentView, as its owner sees it (token masked).
 type pageView struct {
 	ID       string    `json:"id"`
 	Name     string    `json:"name"`
@@ -410,6 +415,19 @@ func (p *livePage) view() pageView {
 	}
 }
 
+// pageMaskedHost stands in for the token in what an agent is shown.
+const pageMaskedHost = stageHostPrefix + "<token>." + stageHostSuffix
+
+// agentView is the page as its owning agent sees it: everything but the key.
+func (p *livePage) agentView() pageView {
+	v := p.view()
+	if u, err := url.Parse(v.Origin); err == nil && v.Origin != "" {
+		v.Origin = "http://" + net.JoinHostPort(pageMaskedHost, u.Port())
+	}
+	v.URL = ""
+	return v
+}
+
 // pageRules are printed with every show, so the agent knows what its page can
 // and cannot do and what the operator's typing exposes.
 func pageRules(kind string) []string {
@@ -417,7 +435,8 @@ func pageRules(kind string) []string {
 		"The page runs in a sandboxed frame on its own origin: no dashboard cookies, storage or API reach it, and it can fetch only its own origin.",
 		"Cookies, IndexedDB and service workers do not work in the frame; an app behind a login needs a dev bypass or a fixture user.",
 		"Anything the operator types into the page can be read by you, the agent that showed it.",
-		"Keep the origin URL to yourself: it is the page's only key.",
+		"The page's token is its only key and goes only to the operator's dashboard; you act on the page by name.",
+		"Pages end when the daemon restarts; show again to bring one back.",
 		"Show again with the same --name to update this page in place; `tclaude agent page close <name>` closes it.",
 	}
 	if kind == pageKindStatic {
@@ -471,6 +490,12 @@ func pageCaller(w http.ResponseWriter, r *http.Request) (convID, agentID string,
 	agentID, err := db.AgentIDForConv(convID)
 	if err != nil || agentID == "" {
 		writeError(w, http.StatusForbidden, "unknown_agent", "the calling conversation has no agent identity")
+		return "", "", false
+	}
+	// Only the agent's current generation: a predecessor still running after
+	// a reincarnation must not read the pages' origins or change them.
+	if cur, err := db.CurrentConvForAgent(agentID); err != nil || cur != convID {
+		writeError(w, http.StatusForbidden, "not_current", "only the agent's current conversation can act on its live pages")
 		return "", "", false
 	}
 	return convID, agentID, true
@@ -617,7 +642,7 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 	p.title, p.target, p.kind, p.port, p.worktree = title, t.declared, t.kind, t.port, worktree
 	p.path = start
 	p.state, p.rev, p.updated = pageStateOpen, reg.rev, now
-	resp.pageView = p.view()
+	resp.pageView = p.agentView()
 	reg.mu.Unlock()
 
 	resp.Rules = pageRules(t.kind)
@@ -658,15 +683,15 @@ func handlePageList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"pages": pageViews(livePages.list(agentID))})
+	writeJSON(w, http.StatusOK, map[string]any{"pages": pageViews(livePages.list(agentID), (*livePage).agentView)})
 }
 
-func pageViews(pages []*livePage) []pageView {
+func pageViews(pages []*livePage, view func(*livePage) pageView) []pageView {
 	livePages.mu.Lock()
 	defer livePages.mu.Unlock()
 	out := make([]pageView, 0, len(pages))
 	for _, p := range pages {
-		out = append(out, p.view())
+		out = append(out, view(p))
 	}
 	return out
 }
@@ -696,7 +721,7 @@ func handlePageClose(w http.ResponseWriter, r *http.Request) {
 // page origins, which only the local dashboard may see (peer projections deny
 // the field).
 func livePagesSnapshot() []pageView {
-	return pageViews(livePages.list(""))
+	return pageViews(livePages.list(""), (*livePage).view)
 }
 
 // DELETE /api/pages/{id} — the operator closed a page's tab. The page closes

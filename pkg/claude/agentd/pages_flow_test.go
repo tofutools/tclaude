@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -35,6 +36,9 @@ type pageOut struct {
 	Created   bool     `json:"created"`
 	NewOrigin bool     `json:"new_origin"`
 	Rules     []string `json:"rules"`
+	// AgentOrigin is what the agent was shown (token masked); Origin and URL
+	// are filled from the dashboard snapshot, the only holder of the token.
+	AgentOrigin string `json:"-"`
 }
 
 // pageEnv is a daemon with Collab on, a live dashboard listener (for the
@@ -87,6 +91,16 @@ func (e *pageEnv) show(t *testing.T, a pageAgent, target, name, title string) (p
 	var out pageOut
 	if rec.Code < 300 {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out), rec.Body.String())
+		assert.Empty(t, out.URL, "the agent is never given the page's URL")
+		out.AgentOrigin = out.Origin
+		out.Origin, out.URL = "", ""
+		for _, sp := range e.snapshotPages(t) {
+			if sp.ID == out.ID {
+				out.Origin, out.URL = sp.Origin, sp.URL
+			}
+		}
+		require.NotEmpty(t, out.Origin, "the dashboard has the page")
+		e.assertNoToken(t, rec.Body.String())
 	}
 	return out, rec
 }
@@ -95,6 +109,7 @@ func (e *pageEnv) ls(t *testing.T, a pageAgent) []pageOut {
 	t.Helper()
 	rec := e.call(t, a, http.MethodGet, "/v1/pages", nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	e.assertNoToken(t, rec.Body.String())
 	var out struct {
 		Pages []pageOut `json:"pages"`
 	}
@@ -117,6 +132,19 @@ func (e *pageEnv) frame(t *testing.T, origin, path string) (int, string) {
 	b, err := io.ReadAll(res.Body)
 	require.NoError(t, err)
 	return res.StatusCode, string(b)
+}
+
+// assertNoToken checks that no open page's token appears in an agent-facing
+// answer.
+func (e *pageEnv) assertNoToken(t *testing.T, body string) {
+	t.Helper()
+	for _, sp := range e.snapshotPages(t) {
+		u, err := url.Parse(sp.Origin)
+		require.NoError(t, err)
+		token := strings.TrimSuffix(strings.TrimPrefix(u.Hostname(), "f-"), ".ui.localhost")
+		require.Len(t, token, 32)
+		assert.NotContains(t, body, token, "an agent is never given a page token")
+	}
 }
 
 // dash sends an operator request from the dashboard's own origin.
@@ -164,6 +192,7 @@ func TestPageShowPortThenUpdateInPlace(t *testing.T) {
 	assert.Equal(t, ":"+strconv.Itoa(port)+"/app", p.Target)
 	assert.Equal(t, "open", p.State)
 	assert.Regexp(t, `^http://f-[0-9a-f]{32}\.ui\.localhost:\d+$`, p.Origin)
+	assert.Regexp(t, `^http://f-<token>\.ui\.localhost:\d+$`, p.AgentOrigin)
 	assert.Equal(t, p.Origin+"/app", p.URL)
 	assert.NotEmpty(t, p.Rules)
 	assert.Contains(t, strings.Join(p.Rules, " "), "can be read by you")
@@ -276,7 +305,7 @@ func TestPageAnotherAgentsPageIsOutOfReach(t *testing.T) {
 	assert.NotEqual(t, p.Origin, mine.Origin)
 	pages := e.ls(t, owner)
 	require.Len(t, pages, 1)
-	assert.Equal(t, p.Origin, pages[0].Origin)
+	assert.Equal(t, p.ID, pages[0].ID)
 	code, _ := e.frame(t, p.Origin, "/")
 	assert.Equal(t, http.StatusOK, code)
 }
@@ -410,4 +439,51 @@ func TestPageTargetsAreValidatedBeforeAnythingIsDialled(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "daemon's own")
 
 	assert.Empty(t, e.ls(t, a), "nothing refused was opened")
+}
+
+func TestPageClosedWhenTheAgentIsDeleted(t *testing.T) {
+	e := newPageEnv(t)
+	a := e.agent(t, "deleted", true)
+	port := devServer(t, "x")
+	p, rec := e.show(t, a, ":"+strconv.Itoa(port), "p", "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	resp := e.f.AsHuman().Delete(a.id, true /* force */)
+	require.Equal(t, "deleted", resp.Action, resp.Raw)
+
+	code, _ := e.frame(t, p.Origin, "/")
+	assert.Equal(t, http.StatusNotFound, code, "a deleted agent's page stops admitting")
+	assert.Empty(t, e.snapshotPages(t))
+}
+
+func TestPageOriginsNeverReachAPeersSnapshot(t *testing.T) {
+	e := newPageEnv(t)
+	a := e.agent(t, "peered", true)
+	port := devServer(t, "x")
+	_, rec := e.show(t, a, ":"+strconv.Itoa(port), "p", "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	require.Len(t, e.snapshotPages(t), 1)
+
+	carol, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: carol.ID(), PubKey: carol.Pub, Label: "carol", TrustLevel: db.FederationTrustUnrestricted}))
+	peer := testharness.Serve(agentd.PeerViewHandler(carol.ID()), testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
+	require.Equal(t, http.StatusOK, peer.Code, peer.Body.String())
+	assert.NotContains(t, peer.Body.String(), "live_pages", "even an unrestricted peer never gets page origins")
+	e.assertNoToken(t, peer.Body.String())
+}
+
+func TestPageStaticRootIsTheStartupDirNotTheReportedEditDir(t *testing.T) {
+	e := newPageEnv(t)
+	a := e.agent(t, "steerer", true)
+	// The agent's hooks report it edited somewhere outside its startup
+	// directory (a path it chose, even one its sandbox refused).
+	elsewhere := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(elsewhere, "secret.html"), []byte("<html>secret</html>"), 0o644))
+	require.NoError(t, db.UpsertAgentWorkdir(a.conv, elsewhere, elsewhere, ""))
+
+	_, rec := e.show(t, a, filepath.Join(elsewhere, "secret.html"), "", "")
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "outside your worktree")
+	assert.Empty(t, e.ls(t, a))
 }

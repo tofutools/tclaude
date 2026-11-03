@@ -482,6 +482,8 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 				out.Result, out.Detail = "failed", stopErr.Error()
 				break
 			}
+			// Pages close while the agent ID still resolves (before the purge).
+			closeLivePagesForConv(tg.convID)
 			if _, cleanupErr := removeAgentDirectoriesForConv(tg.convID); cleanupErr != nil {
 				out.Result, out.Detail = "failed", "delete agent-owned directories: "+cleanupErr.Error()
 				break

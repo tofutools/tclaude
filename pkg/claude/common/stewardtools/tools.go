@@ -43,9 +43,6 @@ const (
 	DashboardCapture = "dashboard_capture"
 	SetTaskLink      = "set_task_link"
 	SpawnAgent       = "spawn_agent"
-	ShowPage         = "show_page"
-	ListPages        = "list_pages"
-	ClosePage        = "close_page"
 )
 
 // List returns the tools in the order they are offered.
@@ -184,31 +181,6 @@ func List() []Tool {
 			Routes:      []string{"POST /v1/groups/{name}/spawn"},
 			Access:      "Off until you set agent.spawn for it here, naming its groups, spawn profile and sandbox profile",
 			Permissions: []string{"agent.spawn"},
-			Writes:      true,
-		},
-		{
-			Name: ShowPage,
-			Description: "Show the human a live web page in the dashboard's Collab tab: your own dev server (:PORT/path) or " +
-				"a static directory or HTML file in your worktree, never a host name. Showing again with the same name updates " +
-				"that page in place. The answer's origin is the page's only key: keep it to yourself.",
-			Routes:      []string{"POST /v1/pages"},
-			Access:      "Needs self.page, and acts only on this assistant's own pages",
-			Permissions: []string{"self.page"},
-			Writes:      true,
-		},
-		{
-			Name:        ListPages,
-			Description: "List the live pages this assistant is showing.",
-			Routes:      []string{"GET /v1/pages"},
-			Access:      "Needs self.page; lists only this assistant's own pages",
-			Permissions: []string{"self.page"},
-		},
-		{
-			Name:        ClosePage,
-			Description: "Close one of this assistant's live pages by name.",
-			Routes:      []string{"DELETE /v1/pages/{name}"},
-			Access:      "Needs self.page, and acts only on this assistant's own pages",
-			Permissions: []string{"self.page"},
 			Writes:      true,
 		},
 	}

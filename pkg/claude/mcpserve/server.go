@@ -53,16 +53,6 @@ type notifyHumanInput struct {
 	Body    string `json:"body" jsonschema:"The message for the human"`
 }
 
-type showPageInput struct {
-	Target string `json:"target" jsonschema:"What to show: :PORT[/path] or http://localhost:PORT/path for your own dev server, or a directory or HTML file in your worktree (absolute, or relative to the worktree)"`
-	Title  string `json:"title,omitempty" jsonschema:"The tab's title. Default: the name"`
-	Name   string `json:"name,omitempty" jsonschema:"The page's name (a-z, 0-9, - and _). Showing again with the same name updates it in place. Default: from the target"`
-}
-
-type closePageInput struct {
-	Name string `json:"name" jsonschema:"The page's name"`
-}
-
 type readBoardInput struct {
 	ID    string `json:"id" jsonschema:"The board's ID"`
 	Since *int64 `json:"since,omitempty" jsonschema:"Only elements changed after this board version, tombstones included. Without it, the live elements"`
@@ -181,16 +171,6 @@ func register(server *mcp.Server, c *Client, tool stewardtools.Tool) {
 	case stewardtools.SetTaskLink:
 		mcp.AddTool(server, def, post(c, func(in setTaskLinkInput) (string, any) {
 			return "/v1/agent/" + url.PathEscape(in.Agent) + "/task", map[string]any{"url": in.URL, "label": in.Label}
-		}))
-	case stewardtools.ShowPage:
-		mcp.AddTool(server, def, post(c, func(in showPageInput) (string, any) {
-			return "/v1/pages", map[string]any{"target": in.Target, "title": in.Title, "name": in.Name}
-		}))
-	case stewardtools.ListPages:
-		mcp.AddTool(server, def, get[noInput](c, func(noInput) string { return "/v1/pages" }))
-	case stewardtools.ClosePage:
-		mcp.AddTool(server, def, send(c, http.MethodDelete, func(in closePageInput) (string, any) {
-			return "/v1/pages/" + url.PathEscape(in.Name), nil
 		}))
 	default:
 		panic("stewardtools lists a tool with no handler: " + tool.Name)

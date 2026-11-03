@@ -4069,7 +4069,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		source := newKnowledgeSourceView(cfg)
 		out.KnowledgeSource = &source
 		out.CompanionCues = activeCompanionCues()
-		out.LivePages = livePagesSnapshot()
+		// The origins are the pages' keys: the local dashboard only, never a
+		// peer's snapshot, restricted or not.
+		if !isPeerSnapshot(r) {
+			out.LivePages = livePagesSnapshot()
+		}
 	}
 	out.Templates = templates
 	out.Profiles = profiles
