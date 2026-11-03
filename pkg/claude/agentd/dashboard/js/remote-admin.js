@@ -77,7 +77,7 @@ function renderDevices(clients) {
     const name = esc(d.name);
     const exp = fmtExpiry(d.not_after);
     const dl = d.has_p12
-      ? `<a class="ra-link" href="/api/remote-access/client?name=${encodeURIComponent(d.name)}" download>Download .p12</a>`
+      ? `<a class="ui-btn ui-btn-link ui-sm ra-link" href="/api/remote-access/client?name=${encodeURIComponent(d.name)}" download>Download .p12</a>`
       : `<span class="cfg-hint" style="padding-left:0">.p12 removed</span>`;
     return `<div class="ra-device"><span class="ra-device-name">${name}</span>` +
       `<span class="ra-device-exp">${esc(exp)}</span>${dl}</div>`;

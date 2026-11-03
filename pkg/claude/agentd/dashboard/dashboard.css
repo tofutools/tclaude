@@ -16882,13 +16882,11 @@ body.wizard #tab-config .ra-form-grid input:focus,
 body.wizard #tab-config .cfg-advanced textarea:focus { border-color: #a97bd6; }
 body.wizard #tab-config .cfg-field select option { color: #1a1330; background: #e7d9f5; }
 
-/* The list add chip gets the tarnished-gold secondary skin, brightening its
-   background on hover. The delete chip stays the standard quiet danger, its
-   red hover a destructive action's safety signal. */
-body.wizard #tab-config .cfg-list-add {
-  background: #241b3d; border-color: #d9b45a; color: #f3e6c0;
-}
-body.wizard #tab-config .cfg-list-add:hover:not(:disabled) { background: #33275a; color: #f3e6c0; }
+/* The list add chip keeps its parchment text over the standard wizard button.
+   The delete chip stays the standard quiet danger, its red hover a destructive
+   action's safety signal. */
+body.wizard #tab-config .cfg-list-add,
+body.wizard #tab-config .cfg-list-add:hover:not(:disabled) { color: #f3e6c0; }
 
 /* Remote-access cert chrome (neutral bits only): device rows, chips, the
    inline link + form labels. The .ra-msg success/error banner is semantic and
