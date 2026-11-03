@@ -1595,7 +1595,7 @@ func TestDashboardHTML_WizardCleanupModal(t *testing.T) {
 	// The cleanup-modal-unique controls: the category-filter row, the tier
 	// selector panel, and the sticky per-category list sub-header.
 	must("body.wizard #cleanup-modal .cleanup-cats", "the category-filter row is re-skinned")
-	must("body.wizard #cleanup-modal .cleanup-tier {", "the tier selector panel is re-skinned")
+	must(`class="cleanup-tier ui-card"`, "the tier selector panel is a .ui-card so every skin paints it")
 	must("body.wizard #cleanup-modal .cleanup-cat-head {", "the sticky category sub-header repaints violet")
 	must("body.wizard #cleanup-modal .cleanup-list {", "the candidate list is re-skinned")
 	// The submit becomes a gilded lever; the delete tier keeps a danger-ember

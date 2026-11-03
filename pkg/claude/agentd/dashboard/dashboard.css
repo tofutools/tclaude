@@ -5004,8 +5004,7 @@ body.show-group-description .group-descr { display: inline; }
    waves). Dark-theme inline chrome like the rest of the subtable; new inline
    buttons render browser-white without an explicit skin. */
 .group-force-block {
-  margin: 2px 0 10px; padding: 8px 10px; border-radius: 6px;
-  background: #161b22; border: 1px solid #2a3340; font-size: 12px;
+  margin: 2px 0 10px; padding: 8px 10px; font-size: 12px;
   display: flex; flex-direction: column; gap: 6px;
 }
 .force-mission { color: #c9d1d9; }
@@ -5635,9 +5634,6 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 .sandbox-import-profile {
   flex: 0 0 auto;
   overflow: hidden;
-  border: 1px solid #2a3340;
-  border-radius: 6px;
-  background: #0d1117;
 }
 .sandbox-import-profile[open] { border-color: #3d4d60; }
 .sandbox-import-profile > summary {
@@ -5765,9 +5761,6 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   gap: 8px;
   align-items: center;
   padding: 8px 10px;
-  background: #0d1117;
-  border: 1px solid #2a3340;
-  border-radius: 6px;
 }
 .profile-transfer-row input[type=checkbox] {
   width: 16px;
@@ -8976,7 +8969,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .paf-findings-head { color: #e3b341; font-weight: 600; }
 .paf-findings ul { margin: 4px 0 0; padding-left: 18px; }
 .paf-flagged-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.paf-redact, .paf-box { border: 1px solid #2a3340; background: #0d1117; border-radius: 5px; padding: 7px 10px; margin: 8px 0; font-size: 12.5px; }
+.paf-redact, .paf-box { padding: 7px 10px; margin: 8px 0; font-size: 12.5px; }
 .paf-report { margin: 6px 0; }
 .paf-ok { color: #3fb950; }
 .paf-row-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
@@ -9020,7 +9013,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .snap-trunc { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .snap-trunc.paf-hint { max-width: 190px; }
 .snap-toolbar { display: flex; gap: 8px; margin: 6px 0; }
-.snap-panel { border: 1px solid #2a3340; background: #0d1117; border-radius: 5px; padding: 8px 11px; margin: 8px 0; }
+.snap-panel { padding: 8px 11px; margin: 8px 0; }
 .snap-acts { white-space: nowrap; text-align: right; }
 .snap-acts button { padding: 1px 7px; margin-left: 3px; }
 #snapshots-list tr.active td { background: #111d2b; }
@@ -9216,7 +9209,6 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .template-preview .tp-default-tag { color: #6e7681; font-style: italic; }
 /* Templates tab list — one card per template. */
 .template-card {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 10px 14px; margin-bottom: 10px;
   display: flex; flex-direction: column; gap: 6px;
 }
@@ -9293,7 +9285,6 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
    a slimmer template card so the section reads as part of the same family. */
 .starters-list { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 10px; }
 .starter-row {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 8px 12px; display: flex; flex-direction: column; gap: 4px;
 }
 .starter-row .starter-head { display: flex; align-items: baseline; gap: 10px; }
@@ -9479,7 +9470,6 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .cleanup-tier {
   display: flex; flex-direction: column; gap: 4px;
   padding: 6px 8px; margin-bottom: 2px;
-  border: 1px solid #30363d; border-radius: 6px; background: #161b22;
 }
 .cleanup-error { min-height: 14px; }
 .cleanup-warn { color: #f0883e; font-size: 12px; white-space: pre-line; }
@@ -9504,8 +9494,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
    the by-role quick-select chips. */
 .window-direction {
   display: flex; flex-direction: column; gap: 4px;
-  padding: 6px 8px; border: 1px solid #30363d; border-radius: 6px;
-  background: #161b22;
+  padding: 6px 8px;
 }
 .window-direction label {
   display: flex; gap: 6px; align-items: baseline; cursor: pointer;
@@ -9524,8 +9513,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
    radio-list-with-notes shape as .window-direction above. */
 .reincarnate-mode {
   display: flex; flex-direction: column; gap: 4px;
-  padding: 6px 8px; border: 1px solid #30363d; border-radius: 6px;
-  background: #161b22; margin: 6px 0;
+  padding: 6px 8px; margin: 6px 0;
 }
 .reincarnate-mode label {
   display: flex; gap: 6px; align-items: baseline; cursor: pointer;
@@ -9538,8 +9526,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
    an existing group. */
 .deploy-mode {
   display: flex; flex-direction: column; gap: 4px;
-  padding: 6px 8px; border: 1px solid #30363d; border-radius: 6px;
-  background: #161b22; margin: 6px 0;
+  padding: 6px 8px; margin: 6px 0;
 }
 /* .deploy-mode sets `display: flex`; the chooser is shown only when a template
    is dragged onto a group, hidden (via the `hidden` attribute) on a plain 🚀
@@ -11259,7 +11246,6 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 
 /* === Plugins tab ====================================================== */
 .plugin-card {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 10px 14px; margin-bottom: 10px;
 }
 .plugin-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -11282,7 +11268,7 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 .plugin-out { font-size: 12px; }
 .plugin-dot-fail { color: #f85149; }
 .plugins-section-head { margin: 20px 0 8px; font-size: 14px; color: #7d8590; }
-.plugin-catalog-card { border-style: dashed; }
+.plugin-catalog-card.ui-card { border-style: dashed; }
 .plugin-catalog-steps { margin: 8px 0 0; padding-left: 22px; font-size: 13px; }
 .plugin-catalog-steps li { margin: 3px 0; }
 /* Modal step blocks — one fieldset per step, visually separated so a
@@ -12101,11 +12087,7 @@ body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal,
 body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(input[type=checkbox], input[type=radio]) {
   accent-color: #d9b45a;
 }
-body.wizard #reincarnate-agent-modal .reincarnate-mode {
-  background: rgba(20, 15, 40, 0.72);
-  border-color: rgba(122, 93, 176, 0.5);
-  color: #e7d9f5;
-}
+body.wizard #reincarnate-agent-modal .reincarnate-mode { color: #e7d9f5; }
 body.wizard #reincarnate-agent-modal .reincarnate-mode label { color: #e7d9f5; }
 body.wizard #reincarnate-agent-modal .reincarnate-mode .opt-note { color: #b39ddb; }
 body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .modal-buttons {
@@ -12967,9 +12949,6 @@ body.wizard #window-title .window-title-wizard { display: inline; }
 
 /* The focus/unfocus direction picker — a violet-tinted panel, parchment
    labels + muted violet notes. The native radios stay legible either way. */
-body.wizard #window-modal .window-direction {
-  background: #140f28; border-color: rgba(122, 93, 176, 0.5);
-}
 body.wizard #window-modal .window-direction label { color: #f3e6c0; }
 body.wizard #window-modal .window-direction .opt-note { color: #b39ddb; }
 
@@ -13106,9 +13085,6 @@ body.wizard #cleanup-modal .cleanup-options .opt-note { color: #b39ddb; }
 body.wizard #cleanup-modal .cleanup-related { border-top-color: rgba(122, 93, 176, 0.5); }
 body.wizard #cleanup-modal .cleanup-related button {
   background: #241b3d; border-color: #d9b45a; color: #f3e6c0;
-}
-body.wizard #cleanup-modal .cleanup-tier {
-  background: #140f28; border-color: rgba(122, 93, 176, 0.5);
 }
 
 /* Footer: Cancel gets the tarnished-gold secondary treatment; the submit
@@ -13687,9 +13663,6 @@ body.wizard :is(#paf-export-modal, #group-export-modal) .paf-findings {
   background: #2a1d10; border-color: #d9b45a;
 }
 body.wizard :is(#paf-export-modal, #group-export-modal) .paf-findings-head { color: #f0c860; }
-body.wizard :is(#paf-export-modal, #group-export-modal) .paf-redact {
-  background: #140f28; border-color: rgba(122, 93, 176, 0.5);
-}
 body.wizard :is(#paf-export-modal, #group-export-modal) .paf-ok { color: #7ee2a8; }
 body.wizard :is(#paf-export-modal, #group-export-modal) .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 body.wizard :is(#paf-export-modal, #group-export-modal) button:where(:not(.ui-btn)):not(.primary) {
@@ -13923,9 +13896,6 @@ body.wizard #profiles-manage-modal #profile-create-open.ui-btn-primary:hover {
 
 /* Recipe cards: violet-framed void, gilt name, violet summary + arcane
    edit/delete actions. */
-body.wizard #profiles-manage-modal .template-card {
-  background: #140f28; border-color: rgba(122, 93, 176, 0.4);
-}
 body.wizard #profiles-manage-modal .template-card .tc-name { color: #f3e6c0; }
 body.wizard #profiles-manage-modal .template-card .tc-descr { color: #b39ddb; }
 body.wizard #profiles-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)) {
@@ -14060,9 +14030,6 @@ body.wizard #templates-manage-modal #template-create-open.ui-btn-primary:hover {
    chips go violet with a gold owner-star. The 🕯 cast action wears a
    small gilded fill so the "go" action pops out of the tarnished
    edit/delete pair. */
-body.wizard #templates-manage-modal .template-card {
-  background: #140f28; border-color: rgba(122, 93, 176, 0.4);
-}
 body.wizard #templates-manage-modal .template-card .tc-name { color: #f3e6c0; }
 body.wizard #templates-manage-modal .template-card .tc-descr,
 body.wizard #templates-manage-modal .template-card .tc-count { color: #b39ddb; }
@@ -14439,9 +14406,6 @@ body.wizard #starters-modal .modal-meta {
 }
 /* Starter rows: violet-framed void, gilt name, violet descr + meta chips —
    the same treatment the circle cards get in the templates overlay. */
-body.wizard #starters-modal .starter-row {
-  background: #140f28; border-color: rgba(122, 93, 176, 0.4);
-}
 body.wizard #starters-modal .starter-row .tc-name { color: #f3e6c0; }
 body.wizard #starters-modal .starter-row .tc-descr,
 body.wizard #starters-modal .starter-row .tc-count { color: #b39ddb; }
@@ -14563,10 +14527,6 @@ body.wizard :is(#profile-export-modal, #profile-import-modal) .modal-meta,
 body.wizard :is(#profile-export-modal, #profile-import-modal) .cron-create-label {
   color: #b39ddb;
 }
-body.wizard :is(#profile-export-modal, #profile-import-modal) .profile-transfer-row {
-  background: rgba(20, 15, 40, 0.78);
-  border-color: rgba(122, 93, 176, 0.5);
-}
 body.wizard :is(#profile-export-modal, #profile-import-modal) input {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
@@ -14610,9 +14570,6 @@ body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.ui-btn-p
 body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.ui-btn-primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
-}
-body.wizard #sandbox-profiles-manage-modal .template-card {
-  background: #140f28; border-color: rgba(122, 93, 176, 0.4);
 }
 body.wizard #sandbox-profiles-manage-modal .template-card .tc-name { color: #f3e6c0; }
 body.wizard #sandbox-profiles-manage-modal .template-card .tc-descr { color: #b39ddb; }
@@ -14734,14 +14691,6 @@ body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .m
 body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-label {
   color: #b39ddb;
 }
-body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .profile-transfer-row {
-  background: rgba(20, 15, 40, 0.78);
-  border-color: rgba(122, 93, 176, 0.5);
-}
-body.wizard #sandbox-profile-import-modal .sandbox-import-profile {
-  background: rgba(20, 15, 40, 0.78);
-  border-color: rgba(122, 93, 176, 0.5);
-}
 body.wizard #sandbox-profile-import-modal .sandbox-import-profile[open] { border-color: #7a5db0; }
 body.wizard #sandbox-profile-import-modal .sandbox-import-profile-name { color: #f3e6c0; }
 body.wizard #sandbox-profile-import-modal .sandbox-import-profile-summary,
@@ -14786,9 +14735,6 @@ body.wizard #roles-manage-modal #role-create-open.ui-btn-primary:hover {
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 /* Class cards: violet-framed void, gilt name, violet meta + descr. */
-body.wizard #roles-manage-modal .template-card {
-  background: #140f28; border-color: rgba(122, 93, 176, 0.4);
-}
 body.wizard #roles-manage-modal .template-card .tc-name { color: #f3e6c0; }
 body.wizard #roles-manage-modal .template-card .tc-descr,
 body.wizard #roles-manage-modal .template-card .tc-sub { color: #b39ddb; }
@@ -20075,7 +20021,7 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
 .usage-rules-tab h4 { margin: 10px 0 2px; font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: .06em; }
 .usage-presets { display: flex; flex-wrap: wrap; gap: 6px; }
 .usage-rule-cards { display: flex; flex-direction: column; gap: 8px; }
-.usage-rule-card { border: 1px solid #2a3340; border-radius: 6px; padding: 8px 10px; background: #0d1117; display: flex; flex-direction: column; gap: 5px; }
+.usage-rule-card { padding: 8px 10px; display: flex; flex-direction: column; gap: 5px; }
 .usage-rule-card.disabled { opacity: .6; }
 .usage-rule-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .usage-rule-card-head .spacer, .usage-rules-modal .spacer { flex: 1; }

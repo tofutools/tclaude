@@ -50,7 +50,7 @@ function TemplateCard({ template, groups, profiles, actions }) {
   );
   const waves = templateWaveCount(template);
   return html`<div
-    class="template-card"
+    class="template-card ui-card"
     data-key=${template.name}
     data-template=${template.name}
   >
@@ -695,7 +695,7 @@ export function TemplateStartersDialog({
                 (starter) =>
                   html`<div
                     key=${starter.name}
-                    class="starter-row"
+                    class="starter-row ui-card"
                     data-starter=${starter.name}
                   >
                     <div class="starter-head">
@@ -1633,7 +1633,7 @@ export function TemplateDeployDialog({
       </h3>
       ${dropGroup &&
       html`<div
-        class="deploy-mode"
+        class="deploy-mode ui-card"
         id="template-deploy-mode"
         role="radiogroup"
         aria-label="Drop mode"

@@ -111,7 +111,7 @@ function LimitsTab({ overview, busy, onEdit, onToggle }) {
     <p class="modal-hint ui-hint">Limits cap an aggregate — the whole instance or one group — with one shared counter. Every agent in scope is affected when a step fires.</p>
     <${PresetButtons} presets=${LIMIT_PRESETS} disabled=${busy} blankLabel="＋ Blank limit"
       onPick=${(preset) => onEdit({ id: 0, scope: 'global', group: '', enabled: true, rule: preset ? preset.rule : blankRule('global') })}/>
-    ${limits.length ? html`<div class="usage-rule-cards">${limits.map((limit) => html`<div key=${limit.id} class=${`usage-rule-card${limit.enabled ? '' : ' disabled'}`} data-limit-id=${limit.id}>
+    ${limits.length ? html`<div class="usage-rule-cards">${limits.map((limit) => html`<div key=${limit.id} class=${`usage-rule-card ui-card ui-inset${limit.enabled ? '' : ' disabled'}`} data-limit-id=${limit.id}>
       <div class="usage-rule-card-head">
         <span class="usage-rule-name">${limit.rule.name}</span>
         <span class="usage-rule-scope">${limit.scope === 'group' ? `group ${limit.group}` : 'global'}</span>
@@ -134,7 +134,7 @@ function ProfilesTab({ overview, busy, onEdit }) {
       onPick=${(preset) => onEdit({ id: 0, name: '', descr: '', rules: [preset ? preset.rule : blankRule('agent')] })}/>
     ${profiles.length ? html`<div class="usage-rule-cards">${profiles.map((profile) => {
       const uses = profileUses(overview.assignments, profile.id);
-      return html`<div key=${profile.id} class="usage-rule-card" data-profile-id=${profile.id}>
+      return html`<div key=${profile.id} class="usage-rule-card ui-card ui-inset" data-profile-id=${profile.id}>
         <div class="usage-rule-card-head">
           <span class="usage-rule-name">${profile.name}</span>
           ${uses.length ? html`<span class="usage-rule-scope">${uses.join(' · ')}</span>` : html`<span class="usage-rule-scope muted">unassigned</span>`}
@@ -247,7 +247,7 @@ function AgentsTab({ overview, busy, onAdjust, onAssign, focus = '', onClearFocu
     ${rows.length ? rows.map((entry) => {
       const snoozed = snoozeActive(entry.override);
       const exempt = !!entry.override?.exempt;
-      return html`<div key=${entry.agentID} class="usage-rule-card" data-agent-id=${entry.agentID}>
+      return html`<div key=${entry.agentID} class="usage-rule-card ui-card ui-inset" data-agent-id=${entry.agentID}>
         <div class="usage-rule-card-head">
           <span class="usage-rule-name">${entry.title || entry.agentID}</span>
           ${entry.title ? html`<span class="usage-rule-scope muted">${entry.agentID}</span>` : null}

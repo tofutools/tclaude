@@ -255,7 +255,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
     confirmDiscard=${confirmDiscard}
   >
     <p class="cleanup-hint ui-hint" id="window-hint"><${Words} plain=${plainHint} wizard=${wizardHint} /></p>
-    <div class="window-direction" id="window-direction" role="radiogroup" aria-label="Window action">
+    <div class="window-direction ui-card" id="window-direction" role="radiogroup" aria-label="Window action">
       <label><input
         type="radio" name="window-direction" value="focus"
         checked=${direction === 'focus'} disabled=${busy || locked}
@@ -667,7 +667,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
           wizard="— also revokes their party-owner mark"
         /></span>
       </label>` : html`
-        <div class="cleanup-tier">
+        <div class="cleanup-tier ui-card">
           ${tierOption('unjoin', 'Unjoin from groups', 'stays an agent — only its group memberships are dropped')}
           ${tierOption('retire', 'Retire (soft-delete)', 'demote to a plain conversation: revokes groups + permissions, keeps the .jsonl, reinstatable')}
           ${tierOption('delete', 'Delete permanently', 'wipes the conversation from disk and every agent row — cannot be undone')}

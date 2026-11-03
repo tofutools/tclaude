@@ -94,6 +94,9 @@
   --ui-dialog-title-font: inherit;
   --ui-dialog-title-spacing: normal;
   --ui-dialog-title-shadow: none;
+  --ui-card-bg: #161b22;
+  --ui-card-inset-bg: #0d1117;
+  --ui-card-line: #2a3340;
 }
 body.wizard {
   --ui-bg: #241b3d;
@@ -125,6 +128,9 @@ body.wizard {
   --ui-dialog-title-font: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   --ui-dialog-title-spacing: 1px;
   --ui-dialog-title-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+  --ui-card-bg: #140f28;
+  --ui-card-inset-bg: #140f28;
+  --ui-card-line: rgba(122, 93, 176, 0.5);
 }
 /* The wizard dialogs' house primary: a gilded, glowing gradient. */
 body.wizard .ui-btn-primary { text-shadow: 0 0 6px rgba(169, 123, 214, 0.6); box-shadow: 0 0 10px rgba(122, 93, 176, 0.4); }
@@ -418,6 +424,15 @@ label:has(> input:disabled) { cursor: not-allowed !important; }
   color: var(--ui-dialog-title); font-family: var(--ui-dialog-title-font);
   letter-spacing: var(--ui-dialog-title-spacing); text-shadow: var(--ui-dialog-title-shadow);
 }
+/* Card: a bordered surface inside a page or dialog (a list entry, a choice
+   tile, a framed note). .ui-card is the raised surface; add .ui-inset for the
+   darker, recessed one. The paint (background, edge, corners) comes from the
+   --ui-card-* tokens; an area class keeps size, padding, layout and its own
+   state edges (selected, hover, danger). */
+.ui-card {
+  background: var(--ui-card-bg); border: 1px solid var(--ui-card-line); border-radius: 6px;
+}
+.ui-card.ui-inset { background: var(--ui-card-inset-bg); }
 /* Popover: a floating panel anchored to a control (a node picker, the open-PRs
    list, filter and settings panels). Same paint as a dialog box from the
    --ui-dialog-* tokens, with a slightly rounder corner; the area keeps

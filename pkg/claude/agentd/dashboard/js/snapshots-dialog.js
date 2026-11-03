@@ -62,7 +62,7 @@ function CreatePanel({ actions, preset, onDone, onError }) {
       onDone(`Snapshot ${meta.name} taken`);
     } catch (e) { onError(message(e)); } finally { setBusy(false); }
   };
-  return html`<div class="snap-panel" id="snapshot-create">
+  return html`<div class="snap-panel ui-card ui-inset" id="snapshot-create">
     <div class="paf-sec">Take a snapshot</div>
     <${Field} label="Agent"><select id="snapshot-create-agent" value=${agent} onChange=${(e) => setAgent(e.currentTarget.value)}>
       ${agents.map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}</select></${Field}>
@@ -96,7 +96,7 @@ function SpawnPanel({ actions, snap, onDone, onError }) {
       onError(partial ? `${message(e)} (${partial} already spawned and kept)` : message(e));
     } finally { setBusy(false); }
   };
-  return html`<div class="snap-panel" id="snapshot-spawn">
+  return html`<div class="snap-panel ui-card ui-inset" id="snapshot-spawn">
     <div class="paf-sec">Spawn from ${snap.name}</div>
     <div class="paf-hint ui-hint">Each agent is a new identity that continues from the snapshot's conversation; ${snap.agent_name || 'the original'} is untouched.</div>
     <${Field} label="Group"><select id="snapshot-spawn-group" value=${group} onChange=${(e) => setGroup(e.currentTarget.value)}>
@@ -182,7 +182,7 @@ function SharePanel({ actions, snap, onDone, onError, fleet }) {
   };
   const toggle = (id, on) => { setTo(on ? [...to, id] : to.filter((x) => x !== id)); changed(); };
   const s = review?.summary;
-  return html`<div class="snap-panel" id="snapshot-share">
+  return html`<div class="snap-panel ui-card ui-inset" id="snapshot-share">
     <div class="paf-sec">Share ${snap.name} on a Board</div>
     ${boards && !boards.length ? html`<div class="paf-hint ui-hint">This node is on no Board. Join or create one in ⚙ Fleet config → Boards.</div>` : html`
     <${Field} label="Board"><select id="snapshot-share-board" value=${board} disabled=${!!busy} onChange=${(e) => { changed(); setBoard(e.currentTarget.value); }}>
@@ -196,7 +196,7 @@ function SharePanel({ actions, snap, onDone, onError, fleet }) {
       ${SHARE_TTLS.map((d) => html`<option key=${d} value=${d}>in ${d.replace('d', d === '1d' ? ' day' : ' days')}</option>`)}</select></${Field}>
     ${review?.flagged && html`<div class="paf-findings" id="snapshot-share-flagged">⚠ This snapshot has suspected credentials, so it cannot go on a board as it is.
       <div class="paf-row-buttons"><button type="button" id="snapshot-share-redact" disabled=${!!busy} onClick=${redactThenReview}>${busy === 'redact' ? 'Redacting…' : 'Redact a copy and review'}</button></div></div>`}
-    ${s && html`<div class="paf-box" id="snapshot-share-review">
+    ${s && html`<div class="paf-box ui-card ui-inset" id="snapshot-share-review">
       <b>You are about to share${review.sent?.blob ? ' a redacted copy' : ''}</b>
       <div>${bytesText(s.bytes)} · ${s.turns} turn${s.turns === 1 ? '' : 's'}${s.from ? ` · ${new Date(s.from).toLocaleString()} → ${new Date(s.to).toLocaleString()}` : ''}</div>
       <div>To: ${review.recipients.join(', ')}</div>
@@ -235,13 +235,13 @@ function PublishPanel({ actions, snap, onDone, onError }) {
     } catch (e) { onError(message(e)); } finally { setBusy(''); }
   };
   const s = review?.summary;
-  return html`<div class="snap-panel" id="snapshot-publish">
+  return html`<div class="snap-panel ui-card ui-inset" id="snapshot-publish">
     <div class="paf-sec">Publish ${snap.name}</div>
     <div class="paf-hint ui-hint">Publishing always masks suspected credentials, replaces paths with placeholders, strips the agent's name, ids and repository, and drops the native history. It is signed with this node's pseudonymous publisher key, never its federation key.</div>
     <label class="paf-check"><input type="checkbox" id="snapshot-publish-stub" checked=${opts.stub_tool_results} onChange=${set('stub_tool_results')} /><span>Stub old tool results</span></label>
     <label class="paf-check"><input type="checkbox" id="snapshot-publish-reasoning" checked=${opts.drop_reasoning} onChange=${set('drop_reasoning')} /><span>Drop reasoning</span></label>
     <label class="paf-check"><input type="checkbox" id="snapshot-publish-media" checked=${opts.drop_media} onChange=${set('drop_media')} /><span>Drop images and documents</span></label>
-    ${s && html`<div class="paf-box" id="snapshot-publish-review">
+    ${s && html`<div class="paf-box ui-card ui-inset" id="snapshot-publish-review">
       <div>${bytesText(s.bytes)} · ${s.turns} turn${s.turns === 1 ? '' : 's'}</div>
       ${redactionText(s).map((line) => html`<div key=${line}>✓ ${line}</div>`)}
       ${findingsText(s.findings).length ? html`<div class="gi-warn">⚠ Still flagged: ${findingsText(s.findings).join('; ')}</div>` : html`<div class="paf-ok">✓ No suspected credentials remain.</div>`}

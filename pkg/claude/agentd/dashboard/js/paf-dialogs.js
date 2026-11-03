@@ -50,7 +50,7 @@ function RedactPanel({ actions, source, filename, onDone }) {
       else { downloadBlob(out, filename); onDone?.(); }
     } catch (e) { setError(message(e)); } finally { setBusy(''); }
   };
-  return html`<div class="paf-redact" id="paf-redact">
+  return html`<div class="paf-redact ui-card ui-inset" id="paf-redact">
     <div class="paf-sec">Redact before sharing</div>
     <${Check} id="paf-redact-mask" checked=${opts.mask_flagged} onChange=${set('mask_flagged')}>Mask suspected credentials</${Check}>
     <${Check} id="paf-redact-paths" checked=${opts.paths_to_placeholders} onChange=${set('paths_to_placeholders')}>Replace home, working dir and user name with placeholders</${Check}>
@@ -224,7 +224,7 @@ function HistoryLanding({ landing }) {
   const badge = rungBadge(landing.rung);
   const from = [landing.source_harness, landing.source_model].filter(Boolean).join(' · ');
   const to = [landing.harness, landing.model].filter(Boolean).join(' · ');
-  return html`<div class="paf-box" id="paf-history-landing">
+  return html`<div class="paf-box ui-card ui-inset" id="paf-history-landing">
     <div><b>History:</b> <span class=${`paf-rung ${badge.cls}`} title=${badge.title}>${badge.text}</span> ${from}${to && to !== from ? ` → ${to}` : ''}</div>
     ${landing.losses && html`<div class="paf-hint ui-hint">${lossSummary(landing.losses)}</div>`}
     ${landing.rung !== 'native' && html`<div class="paf-hint ui-hint">The full transcript stays readable with <code>tclaude paf render</code>.</div>`}
@@ -234,7 +234,7 @@ function HistoryLanding({ landing }) {
 // ImportWarnings lists what an import warned of, on its preview and its result.
 export function ImportWarnings({ id, title, warnings }) {
   if (!warnings?.length) return null;
-  return html`<div class="paf-preview paf-box" id=${id}><b>${title}</b>
+  return html`<div class="paf-preview paf-box ui-card ui-inset" id=${id}><b>${title}</b>
     ${warnings.map((warning) => html`<div key=${warning} class="gi-warn">⚠ ${warning}</div>`)}</div>`;
 }
 
@@ -254,7 +254,7 @@ export function ImportConfirmList({ confirm, overrides, setOverrides, reveal }) 
       setShown((current) => ({ ...current, [item.id]: { error: message(err) } }));
     }
   };
-  return html`<div class="paf-preview paf-box" id="import-confirm">
+  return html`<div class="paf-preview paf-box ui-card ui-inset" id="import-confirm">
     <b>Elevated items in this file</b>
     <div class="paf-hint ui-hint">${canKeep ? 'Untick what this import should not keep. Anything unticked is dropped.' : 'Only a human on this node can keep these, so all of them are dropped.'}</div>
     ${confirmGroups(confirm.items).map((group) => html`<div key=${group.heading} class="import-confirm-group">
@@ -273,7 +273,7 @@ export function ImportConfirmList({ confirm, overrides, setOverrides, reveal }) 
 // ImportOutcome lists what became of a file's elevated items.
 export function ImportOutcome({ kept, dropped }) {
   if (!kept?.length && !dropped?.length) return null;
-  return html`<div class="paf-preview paf-box" id="import-outcome">
+  return html`<div class="paf-preview paf-box ui-card ui-inset" id="import-outcome">
     ${kept?.length > 0 && html`<div id="import-outcome-kept"><b>Kept</b> ${kept.join(', ')}</div>`}
     ${dropped?.length > 0 && html`<div id="import-outcome-dropped"><b>Dropped</b> ${dropped.join(', ')}</div>`}
   </div>`;
@@ -288,7 +288,7 @@ export function ImportOutcome({ kept, dropped }) {
 export function CarriedWorkflows({ workflows, file }) {
   if (!workflows?.length) return null;
   const names = workflows.map((w) => w.root.split('@')[0]);
-  return html`<div class="paf-box" id="paf-carried-workflows"><b>Also carries ${names.length === 1 ? 'a workflow' : `${names.length} workflows`}</b>
+  return html`<div class="paf-box ui-card ui-inset" id="paf-carried-workflows"><b>Also carries ${names.length === 1 ? 'a workflow' : `${names.length} workflows`}</b>
     <div>${names.join(', ')}. This import stores none of them.</div>
     ${dashboardState.snapshot.value?.processes_enabled && html`<${WorkflowImportButton} from=${file} id="" label="Review workflows…" className="" />`}</div>`;
 }
@@ -303,7 +303,7 @@ export function AgentImportPreview({ preview, choices, setChoices, overrides, se
   const warnings = (preview.confirm?.can_keep && preview.confirm.items?.length ? preview.confirm.warnings : preview.warnings) || [];
   return html`<div class="paf-preview" id="agent-import-preview">
     <div class="gi-head">Agent “${agent.name || '(unnamed)'}”${agent.role ? ` · ${agent.role}` : ''}</div>
-    ${rows.length > 0 && html`<div class="paf-box"><b>Provenance</b>${rows.map(([key, value]) => html`<div key=${key} class="gi-row"><span class="gi-k">${key}</span><span class="gi-v">${value}</span></div>`)}</div>`}
+    ${rows.length > 0 && html`<div class="paf-box ui-card ui-inset"><b>Provenance</b>${rows.map(([key, value]) => html`<div key=${key} class="gi-row"><span class="gi-k">${key}</span><span class="gi-v">${value}</span></div>`)}</div>`}
     <label class="cron-create-row"><span class="cron-create-label">Name</span>
       <input id="agent-import-name" value=${choices.name} placeholder=${agent.name || ''} onInput=${(event) => set('name')(event.currentTarget.value)} /></label>
     <label class="cron-create-row"><span class="cron-create-label">Group</span>
@@ -321,13 +321,13 @@ export function AgentImportPreview({ preview, choices, setChoices, overrides, se
       <${LandingSelects} idPrefix="agent-import" harness=${choices.harness} model=${choices.model}
         onChange=${(patch) => setChoices({ ...choices, ...patch })} sameLabel=${`${agent.harness || 'own harness'} (as exported)`} /></div>
     <${HistoryLanding} landing=${preview.history_landing} />
-    ${preview.posture && html`<div class="paf-box" id="paf-landing-posture"><b>Sandbox</b> <${LandingPosture} posture=${preview.posture} /></div>`}
+    ${preview.posture && html`<div class="paf-box ui-card ui-inset" id="paf-landing-posture"><b>Sandbox</b> <${LandingPosture} posture=${preview.posture} /></div>`}
     ${historyCutNeedsConfirm(preview) && html`<${Check} id="agent-import-confirm-loss" checked=${!!choices.confirmHistoryLoss} onChange=${set('confirmHistoryLoss')}
       hint="The full history stays in the file and is saved beside the agent, which is told where. A model with a larger window keeps more.">Accept cutting about ${preview.history_landing.losses.dropped_percent}% of the conversation to fit the landing model</${Check}>`}
     ${(preview.findings || []).length > 0 && html`<${FindingsPanel} findings=${preview.findings} title="This node's scan" />`}
     ${unresolved.length > 0 && html`<div class="gi-warn" id="agent-import-unresolved">⚠ ${unresolved.length} recorded path${unresolved.length === 1 ? '' : 's'} need a value here: set a working dir or keep the recorded paths.</div>`}
     <${ImportConfirmList} confirm=${preview.confirm} overrides=${overrides} setOverrides=${setOverrides} reveal=${reveal} />
-    <div class="paf-box"><b>Security posture</b><div>${preview.security}</div>
+    <div class="paf-box ui-card ui-inset"><b>Security posture</b><div>${preview.security}</div>
       ${warnings.map((warning) => html`<div key=${warning} class="gi-warn">⚠ ${warning}</div>`)}</div>
   </div>`;
 }

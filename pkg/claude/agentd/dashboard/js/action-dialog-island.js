@@ -332,7 +332,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
     >
       <h3 id="reincarnate-agent-title"><${Words} plain="Reincarnate agent" wizard="Reincarnate hero"/></h3>
       <div class="modal-meta" id="reincarnate-agent-meta">target: ${target}</div>
-      <div class="reincarnate-mode" id="reincarnate-mode" role="radiogroup" aria-label="Reincarnate mode">
+      <div class="reincarnate-mode ui-card" id="reincarnate-mode" role="radiogroup" aria-label="Reincarnate mode">
         <label>
           <input type="radio" name="reincarnate-mode" value="self" checked=${mode === 'self'} onChange=${() => setMode('self')} />
           <span><${Words} plain="Ask the agent to reincarnate itself" wizard="Ask the hero to reincarnate itself"/></span>
