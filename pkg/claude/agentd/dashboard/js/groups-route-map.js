@@ -2,6 +2,7 @@ import { h, render } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
 import { effectiveGroupsFocus, groupsFocusLocation } from './groups-focus.js';
 import { isLoopbackDashboard } from './helpers.js';
 import { remoteNodeID } from './fleet-model.js';
@@ -254,10 +255,8 @@ export function GroupsRouteMap({ state }) {
   };
   if (!enabled) return null;
   return html`<div class=${`groups-route-map-surface${isRoutes ? ' is-routes' : ''}`}>
-    <div class="groups-subnav" role="tablist" aria-label="Groups views">
-      <button data-ui-exempt type="button" role="tab" aria-selected=${state.subview.value === 'members'} class=${state.subview.value === 'members' ? 'active' : ''} onClick=${() => changeSubview('members')}>Members</button>
-      <button data-ui-exempt type="button" role="tab" aria-selected=${state.subview.value === 'routes'} class=${state.subview.value === 'routes' ? 'active' : ''} onClick=${() => changeSubview('routes')}>Route map</button>
-    </div>
+    <${Tabs} class="groups-subnav" label="Groups views" value=${state.subview.value} onSelect=${changeSubview}
+      items=${[{ key: 'members', label: 'Members' }, { key: 'routes', label: 'Route map' }]} />
     ${isRoutes && html`<div class="route-map-toolbar">
       <label>Group <select value=${groupName} onChange=${selectGroup}>${groups.map((group) => html`<option key=${group.name} value=${group.name}>${group.label || group.name}</option>`)}</select></label>
       <div class="ui-seg route-map-mode" role="group" aria-label="Route map view mode"><${Button} size="sm" pressed=${mode === 'graph'} onClick=${() => setMode('graph')}>Graph<//><${Button} size="sm" pressed=${mode === 'list'} onClick=${() => setMode('list')}>Exact list<//></div>

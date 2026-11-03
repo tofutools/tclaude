@@ -111,10 +111,11 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 		t.Error("filter-bar and config fields must take the shared wizard field paint in ui.css")
 	}
 
-	// The Wards (Access) tab's inset sub-nav (Permissions / Slug registry /
-	// Sudo) is themed too — frame + active chamber.
-	must("body.wizard .access-subnav {", "the access sub-nav frame is themed in wizard mode")
-	must("body.wizard .access-subtab.active {", "the active access sub-tab is gilt-lit in wizard mode")
+	// Sub-navs (Access, Usage, Automations, …) take the wizard tab paint from
+	// ui.css: the frame from the wizard card tokens, the active tab gilt-lit.
+	if ui := dashboardAssetFile(t, "ui.css"); !strings.Contains(ui, `body.wizard .ui-tab:is(.active, [aria-selected="true"]) {`) {
+		t.Error("ui.css missing the wizard active-tab paint")
+	}
 	must("body.wizard #access-slugs .filter-bar {", "the slug-registry filter gets a scoped wizard treatment")
 	must("body.wizard #access-slugs .filter-bar input:where(:not(.ui-input)):focus {", "the slug-registry scrying field has an arcane focus state")
 }

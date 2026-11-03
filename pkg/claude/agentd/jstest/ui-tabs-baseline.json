@@ -1,0 +1,19 @@
+{
+  "markup": {
+    "js/doctor-island.js": 1,
+    "js/fleet-admin-board-browser.js": 1,
+    "js/launch-target-dialog.js": 1,
+    "js/overlay-tab-strip.js": 1,
+    "js/process-scribe-dock.js": 1,
+    "js/shell-island.js": 1,
+    "js/terminal-shell-island.js": 1,
+    "js/usage-rules.js": 1
+  },
+  "skins": {
+    "dashboard.css": [
+      ".fa-subtabs > .fa-subtab",
+      ".fa-subtabs > .fa-subtab.on",
+      ".usage-subtab-meta"
+    ]
+  }
+}

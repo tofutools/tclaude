@@ -6,7 +6,8 @@
 // path (nav click → tclaude:navigated) intact.
 import { h } from 'preact';
 import htm from 'htm';
-import { $, isModifiedClick } from './helpers.js';
+import { $ } from './helpers.js';
+import { Tabs } from './ui-tabs.js';
 import { featureState } from './feature-state-registry.js';
 import { toPath } from './nav-history-core.js';
 import { clickNavExactly } from './automations-nav.js';
@@ -54,22 +55,9 @@ export function openAutomationsEntry(key) {
 // activation; modified clicks fall through to the anchor's href so the view
 // opens in a new browser tab.
 export function AutomationsSubnav({ entries, active, onSelect }) {
-  const activate = (event, key) => {
-    if (isModifiedClick(event)) return;
-    event.preventDefault();
-    onSelect(key);
-  };
-  const keyDown = (event, key) => {
-    if (event.key !== ' ' && event.key !== 'Spacebar') return;
-    event.preventDefault();
-    onSelect(key);
-  };
-  return html`<div class="jobs-subnav" role="tablist" aria-label="Automation views">
-    ${entries.map((key) => html`<a href=${entryHref(key)}
-      class=${`jobs-subtab${active === key ? ' active' : ''}`}
-      data-automations-subtab=${key}
-      role="tab" aria-selected=${active === key ? 'true' : 'false'}
-      onClick=${(event) => activate(event, key)}
-      onKeyDown=${(event) => keyDown(event, key)}>${LABELS[key]}</a>`)}
-  </div>`;
+  return html`<${Tabs} class="jobs-subnav" label="Automation views" value=${active} onSelect=${onSelect}
+    items=${entries.map((key) => ({
+      key, label: LABELS[key], href: entryHref(key), class: 'jobs-subtab',
+      attrs: { 'data-automations-subtab': key },
+    }))} />`;
 }

@@ -958,17 +958,6 @@ section.active { display: block; }
   margin: 0 0 14px; max-width: 760px;
 }
 .access-intro strong { color: #c9d1d9; font-weight: 600; }
-.access-subnav {
-  display: inline-flex; gap: 2px; margin: 0 0 16px;
-  background: #161b22; border: 1px solid #2a3340; border-radius: 6px; padding: 2px;
-}
-.access-subtab {
-  background: none; border: none; color: #7d8590; cursor: pointer;
-  font-family: inherit; font-size: 13px; padding: 6px 16px; border-radius: 4px;
-  text-decoration: none;
-}
-.access-subtab:hover { color: #d4d4d4; }
-.access-subtab.active { background: #21262d; color: #d4d4d4; font-weight: 500; }
 .access-panel { display: none; }
 .access-panel.active { display: block; }
 /* Activity tab — Audit, Logs and Performance share one nav tab and reuse the
@@ -9973,15 +9962,6 @@ body.hide-usage-tab #tab-usage { display: none; }
 #tab-usage[data-subview]:not([data-subview="costs"]) #costs-root,
 body.hide-usage-quota #usage-root,
 body.hide-usage-costs #costs-root { display: none; }
-.usage-subnav {
-  display: inline-flex; gap: 2px; margin: 0 0 16px;
-  background: #161b22; border: 1px solid #2a3340; border-radius: 6px; padding: 2px;
-}
-.usage-subtab {
-  color: #7d8590; font-size: 13px; padding: 6px 16px; border-radius: 4px; text-decoration: none;
-}
-.usage-subtab:hover { color: #d4d4d4; }
-.usage-subtab.active { background: #21262d; color: #d4d4d4; font-weight: 500; }
 .usage-subtab-meta { margin-left: 7px; color: #6e7681; font-size: 11px; font-weight: 400; }
 .usage-overview .empty { margin: 0; }
 .usage-ov-kpis, .usage-ov-quota-grid {
@@ -10096,12 +10076,6 @@ body.hide-usage-costs #costs-root { display: none; }
 .usage-ov-note { color: #7d8590; font-size: 12px; margin: 10px 0 0; }
 @media (max-width: 760px) {
   .usage-ov-spend { grid-template-columns: 1fr; }
-}
-body.wizard .usage-subtab { color: #b39ddb; }
-body.wizard .usage-subtab:hover { color: #f3e6c0; }
-body.wizard .usage-subtab.active {
-  background: #3a2a63; color: #f3e6c0;
-  text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
 }
 body.wizard .usage-ov-agents { background: #140f28; border-color: #3a2a63; }
 
@@ -11011,17 +10985,6 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 .export-stepper .export-spinner { width: 11px; height: 11px; }
 
 /* --- Jobs tab (the unified export + cron job table) --- */
-.jobs-subnav {
-  display: inline-flex; gap: 2px; margin: 0 0 12px;
-  background: #161b22; border: 1px solid #2a3340; border-radius: 6px; padding: 2px;
-}
-.jobs-subtab {
-  background: none; border: none; color: #7d8590; cursor: pointer;
-  font-family: inherit; font-size: 13px; padding: 6px 14px; border-radius: 4px;
-  text-decoration: none;
-}
-.jobs-subtab:hover { color: #d4d4d4; }
-.jobs-subtab.active { background: #21262d; color: #d4d4d4; font-weight: 500; }
 .order-evaluation-detail {
   max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -13866,18 +13829,8 @@ body.wizard #activity-performance .debug-table td {
 }
 body.wizard #activity-performance .empty { color: #8f7bbf; }
 
-/* ─── Wizard Wards sub-nav — the three chambers of access control ─────
-   The Access tab's inset segmented control (Permissions / Slug registry /
-   Sudo) still wore the app-default grey in wizard mode. Re-skin the frame
-   to arcane violet-void, dim-violet idle tabs, and a gilt-lit active
-   chamber, plus a light violet tint on the intro copy so the whole tab
-   reads as themed. */
-body.wizard .access-subnav {
-  background: #140f28; border-color: rgba(122, 93, 176, 0.5);
-}
-body.wizard .jobs-subnav {
-  background: #140f28; border-color: rgba(122, 93, 176, 0.5);
-}
+/* Wizard Access tab: a light violet tint on the intro copy (the sub-nav
+   takes the wizard tab paint from ui.css). */
 
 /* PR triggers are a distinct automation kind. Their list stays information
    dense, while the expanded row owns the diagnostic ledger instead of adding
@@ -14030,18 +13983,6 @@ body.wizard .jobs-subnav {
   .trigger-inspector-grid { grid-template-columns: 1fr; }
   .trigger-fields, .trigger-action-fields { grid-template-columns: 1fr; }
   .trigger-template-field { grid-column: auto; }
-}
-body.wizard .access-subtab,
-body.wizard .jobs-subtab { color: #b39ddb; }
-body.wizard .access-subtab:hover,
-body.wizard .jobs-subtab:hover { color: #f3e6c0; }
-body.wizard .access-subtab.active {
-  background: #3a2a63; color: #f3e6c0;
-  text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
-}
-body.wizard .jobs-subtab.active {
-  background: #3a2a63; color: #f3e6c0;
-  text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
 }
 /* Trigger automation surfaces have their own component structure, so they
    need the same explicit arcane field and panel treatment as the older cron
@@ -16880,9 +16821,6 @@ body.wizard .usage-history-note {
    the process editor's restrained node/edge vocabulary without exposing
    endpoint, target, credential, or payload data. */
 .groups-route-map-surface { margin: 0 0 14px; }
-.groups-subnav { display: flex; align-items: center; gap: 3px; margin: 0 0 10px; border-bottom: 1px solid var(--border, #30363d); }
-.groups-subnav button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 12px; color: var(--muted, #8b949e); background: transparent; cursor: pointer; font-weight: 650; }
-.groups-subnav button:hover, .groups-subnav button.active { color: var(--text, #e6edf3); border-bottom-color: var(--accent, #58a6ff); }
 .route-map-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; }
 .route-map-toolbar label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted, #8b949e); font-size: 12px; }
 .route-map-toolbar select { border: 1px solid var(--border, #30363d); background: var(--panel, #161b22); color: var(--text, #e6edf3); border-radius: 5px; padding: 5px 8px; }
@@ -17523,9 +17461,10 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-hub.off { color: #7d8590; }
 .fa-link { border: 0; background: none; padding: 0; color: #58a6ff; cursor: pointer; font: inherit; font-size: 12px; }
 /* Narrow windows wrap whole tabs onto a second row, never their labels. */
+.fa-subnav { margin: 12px 0 8px; }
 .fa-subtabs { display: flex; flex-wrap: wrap; gap: 2px; margin: 12px 0 8px; border-bottom: 1px solid #30363d; }
-.fa-subtab { border: 0; border-bottom: 2px solid transparent; background: none; color: #8b949e; padding: 6px 10px; font: inherit; cursor: pointer; white-space: nowrap; }
-.fa-subtab.on { color: #f0f6fc; border-bottom-color: #1f6feb; }
+.fa-subtabs > .fa-subtab { border: 0; border-bottom: 2px solid transparent; background: none; color: #8b949e; padding: 6px 10px; font: inherit; cursor: pointer; white-space: nowrap; }
+.fa-subtabs > .fa-subtab.on { color: #f0f6fc; border-bottom-color: #1f6feb; }
 .fleet-admin h4 { margin: 14px 0 6px; font-size: 13px; }
 .fa-table { width: 100%; border-collapse: collapse; }
 .fa-table th { text-align: left; font-weight: 600; color: #7d8590; font-size: 11px; padding: 4px 8px; border-bottom: 1px solid #30363d; }

@@ -2463,7 +2463,7 @@ test('a node never set up opens Fleet on the setup guide and joins a hub from it
   const s = await setup(t, { statusFn: freshStatus });
   await s.show();
   assert.ok(s.q('#fleet-setup'), 'the guide is the landing page');
-  assert.equal(s.q('.fa-subtab.on').textContent.trim(), 'Setup guide 0/3');
+  assert.equal(s.q('.fa-subtab[aria-selected="true"]').textContent.trim(), 'Setup guide 0/3');
   assert.equal(s.state.view.value.setupSeen, true, 'opening the guide retires the chip hint');
   assert.equal(s.q('.fs-step.on').dataset.step, 'hub');
   assert.match(s.q('.fs-identity').textContent, /inst_self.*self-fp-0000/, 'the identity a hub admin can admit by');

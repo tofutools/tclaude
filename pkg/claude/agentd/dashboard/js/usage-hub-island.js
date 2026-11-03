@@ -17,6 +17,7 @@ import { tickedNodes } from './fleet-scope.js';
 import { dashboardState } from './snapshot-store.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { barTone, fmtAmount, periodLabel } from './usage-rules-model.js';
+import { Tabs } from './ui-tabs.js';
 
 export { topCostAgents };
 
@@ -253,16 +254,17 @@ function subtabMeta(name, quota, costs) {
 }
 
 function Subnav({ current, wizard, open, quota, costs }) {
-  return html`<nav class="usage-subnav" aria-label="Usage views">
-    ${['overview', 'quota', 'costs'].map((name) => {
+  return html`<${Tabs} class="usage-subnav" label="Usage views" value=${current.subview}
+    onSelect=${(name, event) => open(name)(event)}
+    items=${['overview', 'quota', 'costs'].map((name) => {
       const loc = usageLocation(name);
-      const href = loc.subtab ? `/usage/${loc.subtab}` : '/usage';
-      return html`<a key=${name} class=${`usage-subtab${current.subview === name ? ' active' : ''}`} href=${href}
-        data-usage-subtab=${name} aria-current=${current.subview === name ? 'page' : undefined}
-        onClick=${open(name)}>${SUBVIEW_LABELS[name][wizard ? 1 : 0]}${subtabMeta(name, quota, costs)
-          && html`<span class="usage-subtab-meta">${subtabMeta(name, quota, costs)}</span>`}</a>`;
-    })}
-  </nav>`;
+      const meta = subtabMeta(name, quota, costs);
+      return {
+        key: name, href: loc.subtab ? `/usage/${loc.subtab}` : '/usage', class: 'usage-subtab',
+        attrs: { 'data-usage-subtab': name },
+        label: html`${SUBVIEW_LABELS[name][wizard ? 1 : 0]}${meta && html`<span class="usage-subtab-meta">${meta}</span>`}`,
+      };
+    })} />`;
 }
 
 // FusedUsage is the fused view's per-node summary (usage-nodes.js), read
