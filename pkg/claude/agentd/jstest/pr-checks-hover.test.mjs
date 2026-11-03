@@ -204,6 +204,30 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
       await mounted.unmount();
     }
   });
+
+  await t.test('a tapped panel stays until a press outside it', async () => {
+    stubFetch(t, () => ({ summary: {}, checks: [], resolved: false }));
+    const win = globalThis.window;
+    const saved = win.matchMedia;
+    win.matchMedia = (query) => ({ matches: query === '(hover: none)', addEventListener() {}, removeEventListener() {} });
+    const mounted = await harness.mount(harness.html`
+      <${PRChecksBadge} url=${PR} prNumber=${2143}
+        summary=${{ total: 2, passed: 2, failed: 0, pending: 0, skipped: 0, state: 'passing' }} />
+    `);
+    const press = (el) => el.dispatchEvent(new win.Event('pointerdown', { bubbles: true }));
+    try {
+      const panel = () => mounted.container.querySelector('.ci-panel');
+      await harness.act(() => { mounted.container.querySelector('a.ci-badge').click(); });
+      assert.ok(panel(), 'a tap opens the panel');
+      await harness.act(() => { press(panel()); });
+      assert.ok(panel(), 'a press inside keeps it');
+      await harness.act(() => { press(win.document.body); });
+      assert.equal(panel(), null, 'a press outside closes it');
+    } finally {
+      await mounted.unmount();
+      win.matchMedia = saved;
+    }
+  });
 });
 
 test('the panel is placed against the usable area, flipping above when that is where the room is', async (t) => {

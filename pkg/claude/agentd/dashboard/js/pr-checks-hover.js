@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { HOVER_CLOSE_MS, useExclusivePopover, useLeaveGrace } from './hover-popover.js';
+import { HOVER_CLOSE_MS, useDismissablePopover, useExclusivePopover, useLeaveGrace } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -399,14 +399,8 @@ export function useHoverPopover(rootRef) {
   };
   useExclusivePopover(rootRef, open, close);
 
-  useEffect(() => {
-    if (!tapped) return undefined;
-    const onPointerDown = (event) => {
-      if (!rootRef.current?.contains(event.target)) close();
-    };
-    document.addEventListener('pointerdown', onPointerDown);
-    return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [tapped]);
+  // A tapped panel stays until a press outside or Escape; hover keeps its own grace.
+  useDismissablePopover(rootRef, tapped, close, { hold: () => true });
 
   useEffect(() => {
     if (!open) return undefined;
