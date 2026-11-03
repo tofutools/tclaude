@@ -1,6 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { isModifiedClick, shortAgentId } from './helpers.js';
 import { isWizardActive } from './slop.js';
 import { COST_SPANS, dayKey, fmtUSD } from './costs-model.js';
@@ -223,7 +224,7 @@ function UsageLimits({ snapshot, wizard }) {
   const manage = () => openUsageRulesManager();
   return html`<div class="usage-hub-limits">
     <h3 class="usage-ov-heading">${w('Limits', 'Wards on the coffers')}
-      <button type="button" class="usage-limits-manage" id="usage-limits-manage" onClick=${manage}>${w('limits & budgets', 'wards & tithes')} ›</button></h3>
+      <${Button} size="sm" variant="link" class="usage-limits-manage" id="usage-limits-manage" onClick=${manage}>${w('limits & budgets', 'wards & tithes')} ›<//></h3>
     ${limits.length ? html`<div class="usage-hub-limit-list">${limits.map((limit) => html`<div key=${limit.rule_key}
       class=${`usage-hub-limit ${limit.dry_run ? 'dry' : barTone(limit)}`} title=${limit.next ? `next: ${limit.next.action.replace('_', ' ')} at ${limit.next.at}%` : ''}>
       <span class="usage-hub-limit-name">${limit.name}<span class="muted"> · ${limit.scope === 'group' ? `group ${limit.group}` : 'global'}${limit.metric === 'window_pct' ? '' : ` · ${periodLabel(limit.period)}`}</span></span>
@@ -231,7 +232,7 @@ function UsageLimits({ snapshot, wizard }) {
       <span class="usage-hub-limit-figure">${fmtAmount(limit.metric, limit.value)} / ${fmtAmount(limit.metric, limit.budget)}${limit.reached ? ` · ${limit.reached.replace('_', ' ')}` : ''}${limit.dry_run ? ' · dry run' : ''}</span>
     </div>`)}</div>`
       : html`<div class="empty usage-hub-limits-empty">${w('No spend or quota limits set.', 'The coffers are unwarded.')}
-        <button type="button" class="tool" onClick=${manage}>${w('Set a limit…', 'Ward them…')}</button></div>`}
+        <${Button} size="sm" onClick=${manage}>${w('Set a limit…', 'Ward them…')}<//></div>`}
   </div>`;
 }
 

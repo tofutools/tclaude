@@ -1,5 +1,6 @@
 import { h } from 'preact';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 
 const html = htm.bind(h);
@@ -45,6 +46,6 @@ export function SpendLimitBanner({ state }) {
   const fleetOnly = !globalThis.__tclaudeRemoteNode?.id && !crossed.some(limit => limit.scope !== 'fleet');
   return html`<div class=${`spend-limit-banner${over ? ' over-limit' : ''}`} role="status">
     ${text}.${estimates ? ' Cost-ledger estimates may differ from charges.' : ''}
-    <button type="button" class="tool spend-limit-manage" onClick=${() => openUsageRulesManager(fleetOnly ? { tab: 'fleet' } : {})}>Manage limits…</button>
+    <${Button} size="sm" class="spend-limit-manage" onClick=${() => openUsageRulesManager(fleetOnly ? { tab: 'fleet' } : {})}>Manage limits…<//>
   </div>`;
 }

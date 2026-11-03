@@ -3966,9 +3966,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
   margin: 2px 0 8px;
 }
-.usage-card-controls button.tool.active {
-  border-color: #58a6ff; color: #d4d4d4; background: #2a3340;
-}
 .usage-empty-range {
   justify-content: center; margin-top: 12px; font-style: normal;
 }
@@ -3985,9 +3982,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-current { display: flex; flex-direction: column; align-items: flex-end; white-space: nowrap; }
 .usage-current strong { color: #d4d4d4; font-size: 20px; line-height: 1; }
 .usage-current span { color: #7d8590; font-size: 11px; margin-top: 4px; }
-.usage-current .usage-unit-toggle { display: inline-flex; margin: 0 0 6px; padding: 1px; border: 1px solid #2a3340; border-radius: 4px; background: #0d1117; }
-.usage-current .usage-unit-toggle button { padding: 2px 7px; border: 0; border-radius: 3px; background: transparent; color: #8b949e; font: inherit; cursor: pointer; }
-.usage-current .usage-unit-toggle button.active { color: #d4d4d4; background: #263446; }
+.usage-current .usage-unit-toggle { margin: 0 0 6px; }
 .usage-line-chart { display: block; width: 100%; height: auto; min-height: 180px; overflow: visible; }
 .usage-grid line { stroke: #1c2430; stroke-width: 1; }
 .usage-grid text, .usage-x-tick text { fill: #6e7681; font-size: 10px; }
@@ -18271,7 +18266,7 @@ body.wizard .usage-current span { color: #9a86c4; }
 /* Span controls: muted violet labels, gold on the chosen span. */
 body.wizard .usage-control-label { color: #b39ddb; }
 body.wizard .usage-control-divider { background: rgba(122, 93, 176, 0.5); }
-body.wizard .usage-card-controls button.tool.active {
+body.wizard .usage-card-controls .ui-btn[aria-pressed="true"] {
   background: #3a2a63; border-color: #d9b45a; color: #f3e6c0;
 }
 /* Gridlines + axis ticks go arcane: faint violet rules, gilded % labels. */
@@ -18523,10 +18518,6 @@ body.wizard .git-repos-concurrency select:focus-visible { outline-color: #bb86fc
 .cost-factor-row small { display: block; color: #8b949e; font-size: 11px; margin-top: 3px; }
 .cost-factor-row input { width: 74px; min-width: 0; padding: 6px; background: #0d131b; border: 1px solid #445263; border-radius: 4px; color: #d4d4d4; font: inherit; }
 .cost-factor-row input::placeholder { color: #8b949e; }
-.cost-factor-footer .tool { color: #79c0ff; font-size: 11px; }
-.cost-factor-reset button.tool { background: transparent; border-color: transparent; color: #8b949e; font-size: 11px; }
-.cost-factor-reset button.tool:hover { border-color: transparent; color: #c9d1d9; text-decoration: underline; }
-.cost-factor-reset button.tool:focus-visible { outline: 2px solid #79c0ff; outline-offset: 2px; }
 .cost-factor-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-top: 12px; border-top: 1px solid #293440; font-size: 11px; }
 .cfg-cost-factors { max-width: 440px; }
 
@@ -20148,8 +20139,7 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
 .usage-rules-modal input:disabled, .usage-rules-modal select:disabled { opacity: .6; }
 
 /* Usage tab: the limits strip under the overview. */
-.usage-limits-manage { border: 0; background: none; padding: 0; color: #58a6ff; font: inherit; font-size: 12px; letter-spacing: 0; text-transform: none; cursor: pointer; }
-.usage-limits-manage:hover { text-decoration: underline; }
+.ui-btn.usage-limits-manage { letter-spacing: 0; text-transform: none; }
 .usage-hub-limit-list { display: flex; flex-direction: column; gap: 6px; }
 .usage-hub-limit { display: grid; grid-template-columns: minmax(0, 1fr) 200px minmax(140px, auto); gap: 12px; align-items: center; padding: 7px 10px; border: 1px solid #2a3340; border-radius: 7px; background: #0d1117; font-size: 13px; }
 .usage-hub-limit .usage-rule-bar { width: 100%; }

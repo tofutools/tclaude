@@ -55,7 +55,7 @@ function StepRow({ step, scope, disabled, onChange, onRemove }) {
         aria-label="Repeat every" title="Repeat this notification every N percentage points (10%) or every N minutes (30m) while above"
         onInput=${(e) => set({ repeat: e.currentTarget.value })}/>
     </span>` : html`<span class="usage-step-targets muted">${{ wrap_up: 'ask to hand off and go idle', hard_stop: 'kill the agent process', block_spawn: 'refuse new spawns until the period rolls over' }[step.action]}</span>`}
-    <button type="button" class="tool" aria-label="Remove step" disabled=${disabled} onClick=${onRemove}>×</button>
+    <${Button} size="sm" variant="ghost danger" aria-label="Remove step" disabled=${disabled} onClick=${onRemove}>×<//>
   </div>`;
 }
 
@@ -90,17 +90,17 @@ function RuleEditor({ draft, scope, windows, disabled, onChange }) {
       ${draft.steps.map((step, index) => html`<${StepRow} key=${index} step=${step} scope=${scope} disabled=${disabled}
         onChange=${(next) => set({ steps: draft.steps.map((s, i) => (i === index ? next : s)) })}
         onRemove=${() => set({ steps: draft.steps.filter((_, i) => i !== index) })}/>`)}
-      <button type="button" class="tool usage-step-add" disabled=${disabled || draft.steps.length >= 16}
-        onClick=${() => set({ steps: [...draft.steps, blankStep(Math.min(1000, Math.max(100, ...draft.steps.map((s) => Number(s.at) || 0)) + (draft.steps.length ? 20 : 0)))] })}>＋ step</button>
+      <${Button} size="sm" class="usage-step-add" disabled=${disabled || draft.steps.length >= 16}
+        onClick=${() => set({ steps: [...draft.steps, blankStep(Math.min(1000, Math.max(100, ...draft.steps.map((s) => Number(s.at) || 0)) + (draft.steps.length ? 20 : 0)))] })}>＋ step<//>
     </div>
   </div>`;
 }
 
 function PresetButtons({ presets, disabled, onPick, blankLabel }) {
   return html`<div class="usage-presets">
-    <button type="button" class="tool" disabled=${disabled} onClick=${() => onPick(null)}>${blankLabel}</button>
-    ${presets.map((preset) => html`<button key=${preset.id} type="button" class="tool" disabled=${disabled}
-      title=${ruleSummary(preset.rule)} onClick=${() => onPick(preset)}>＋ ${preset.label}</button>`)}
+    <${Button} size="sm" disabled=${disabled} onClick=${() => onPick(null)}>${blankLabel}<//>
+    ${presets.map((preset) => html`<${Button} size="sm" key=${preset.id} disabled=${disabled}
+      title=${ruleSummary(preset.rule)} onClick=${() => onPick(preset)}>＋ ${preset.label}<//>`)}
   </div>`;
 }
 
@@ -118,7 +118,7 @@ function LimitsTab({ overview, busy, onEdit, onToggle }) {
         ${limit.rule.dry_run ? html`<span class="usage-rule-tag">dry run</span>` : null}
         <span class="spacer"></span>
         <label class="usage-rule-enabled"><input type="checkbox" checked=${limit.enabled} disabled=${busy} onChange=${() => onToggle(limit)}/> enabled</label>
-        <button type="button" class="tool" disabled=${busy} onClick=${() => onEdit(limit)}>edit</button>
+        <${Button} size="sm" disabled=${busy} onClick=${() => onEdit(limit)}>edit<//>
       </div>
       <div class="usage-rule-summary">${ruleSummary(limit.rule)}</div>
       ${limit.enabled ? html`<${Bar} status=${statusFor(limit)}/>` : null}
@@ -139,8 +139,8 @@ function ProfilesTab({ overview, busy, onEdit }) {
           <span class="usage-rule-name">${profile.name}</span>
           ${uses.length ? html`<span class="usage-rule-scope">${uses.join(' · ')}</span>` : html`<span class="usage-rule-scope muted">unassigned</span>`}
           <span class="spacer"></span>
-          <button type="button" class="tool" disabled=${busy} onClick=${() => onEdit({ ...profile, id: 0, name: `${profile.name} copy` })}>clone</button>
-          <button type="button" class="tool" disabled=${busy} onClick=${() => onEdit(profile)}>edit</button>
+          <${Button} size="sm" disabled=${busy} onClick=${() => onEdit({ ...profile, id: 0, name: `${profile.name} copy` })}>clone<//>
+          <${Button} size="sm" disabled=${busy} onClick=${() => onEdit(profile)}>edit<//>
         </div>
         ${profile.descr ? html`<div class="usage-rule-descr">${profile.descr}</div>` : null}
         ${(profile.rules || []).map((rule) => html`<div key=${rule.name} class="usage-rule-summary"><strong>${rule.name}</strong>: ${ruleSummary(rule)}</div>`)}
@@ -169,7 +169,7 @@ export function ProfileChips({ names, profiles, disabled, onChange, label, onNew
   return html`<span class="usage-assign-chips">
     ${names.map((name) => html`<span key=${name} class="agent-spawn-role-chip">
       <span class="role-chip-inspect">${name}</span>
-      <button type="button" class="role-chip-remove" disabled=${disabled} aria-label=${`Remove ${name} from ${label}`}
+      <button data-ui-exempt type="button" class="role-chip-remove" disabled=${disabled} aria-label=${`Remove ${name} from ${label}`}
         onClick=${() => onChange(names.filter((n) => n !== name))}>×</button></span>`)}
     <select value="" disabled=${disabled || (!free.length && !onNew)} aria-label=${`Add usage profile to ${label}`}
       onChange=${(e) => {
@@ -243,7 +243,7 @@ function AgentsTab({ overview, busy, onAdjust, onAssign, focus = '', onClearFocu
   };
   return html`<div class="usage-rules-tab">
     <p class="modal-hint ui-hint">Each agent's budgets from its usage profiles. Snoozed or exempt agents keep counting but nothing fires; extra budget raises one rule for one agent.
-      ${focus ? html` <button type="button" class="tool" onClick=${onClearFocus}>show all agents</button>` : null}</p>
+      ${focus ? html` <${Button} size="sm" onClick=${onClearFocus}>show all agents<//>` : null}</p>
     ${rows.length ? rows.map((entry) => {
       const snoozed = snoozeActive(entry.override);
       const exempt = !!entry.override?.exempt;
@@ -252,10 +252,10 @@ function AgentsTab({ overview, busy, onAdjust, onAssign, focus = '', onClearFocu
           <span class="usage-rule-name">${entry.title || entry.agentID}</span>
           ${entry.title ? html`<span class="usage-rule-scope muted">${entry.agentID}</span>` : null}
           <span class="spacer"></span>
-          <button type="button" class="tool" disabled=${busy} title="Pause this agent's steps for an hour"
-            onClick=${() => onAdjust(entry.agentID, { snooze_minutes: snoozed ? 0 : 60 })}>${snoozed ? 'unsnooze' : 'snooze 1h'}</button>
-          <button type="button" class="tool" disabled=${busy} title="Exempt this agent from every usage profile"
-            onClick=${() => onAdjust(entry.agentID, { exempt: !exempt })}>${exempt ? 'unexempt' : 'exempt'}</button>
+          <${Button} size="sm" disabled=${busy} title="Pause this agent's steps for an hour"
+            onClick=${() => onAdjust(entry.agentID, { snooze_minutes: snoozed ? 0 : 60 })}>${snoozed ? 'unsnooze' : 'snooze 1h'}<//>
+          <${Button} size="sm" disabled=${busy} title="Exempt this agent from every usage profile"
+            onClick=${() => onAdjust(entry.agentID, { exempt: !exempt })}>${exempt ? 'unexempt' : 'exempt'}<//>
         </div>
         ${entry.statuses.map((status) => html`<div key=${status.rule_key} class="usage-agent-rule">
           <span class="usage-agent-rule-name" title=${`${status.profile} (${status.layer} layer)`}>${status.name}</span>
@@ -265,10 +265,10 @@ function AgentsTab({ overview, busy, onAdjust, onAssign, focus = '', onClearFocu
             <input type="number" min="0" step="1" value=${amount} aria-label="Extra budget" placeholder="extra (0 clears)"
               onInput=${(e) => setAmount(e.currentTarget.value)}
               onKeyDown=${(e) => { if (e.key === 'Enter') { e.preventDefault(); applyExtend(entry, status); } }}/>
-            <button type="button" class="tool" disabled=${busy} onClick=${() => applyExtend(entry, status)}>set</button>
-            <button type="button" class="tool" onClick=${() => setExtending('')}>cancel</button>
-          </span>` : html`<button type="button" class="tool" disabled=${busy} title="Raise this rule's budget for this agent only"
-            onClick=${() => openExtend(entry, status)}>extend…</button>`}
+            <${Button} size="sm" disabled=${busy} onClick=${() => applyExtend(entry, status)}>set<//>
+            <${Button} size="sm" onClick=${() => setExtending('')}>cancel<//>
+          </span>` : html`<${Button} size="sm" disabled=${busy} title="Raise this rule's budget for this agent only"
+            onClick=${() => openExtend(entry, status)}>extend…<//>`}
         </div>`)}
         ${!entry.statuses.length ? html`<div class="muted">No active budgets.${exempt ? ' Exempt.' : ''}${snoozed ? ' Snoozed.' : ''}</div>` : null}
         <div class="usage-assign-row usage-agent-own">
@@ -348,7 +348,7 @@ function ProfileEditor({ profile, busy, onSave, onDelete, onCancel, onDirty }) {
     ${rules.map((rule, index) => html`<div key=${index} class="usage-rule-block">
       <${RuleEditor} draft=${rule} scope="agent" windows=${[]} disabled=${busy}
         onChange=${touch((next) => setRules(rules.map((r, i) => (i === index ? next : r))))}/>
-      <button type="button" class="tool usage-rule-remove" disabled=${busy} onClick=${() => touch(setRules)(rules.filter((_, i) => i !== index))}>remove rule</button>
+      <${Button} size="sm" variant="ghost danger" class="usage-rule-remove" disabled=${busy} onClick=${() => touch(setRules)(rules.filter((_, i) => i !== index))}>remove rule<//>
     </div>`)}
     <${PresetButtons} presets=${PROFILE_PRESETS} disabled=${busy} blankLabel="＋ Blank rule"
       onPick=${(preset) => touch(setRules)([...rules, ruleToDraft(preset ? preset.rule : blankRule('agent'))])}/>
@@ -500,7 +500,7 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api: api
   let body;
   if (!overview) {
     body = loadError
-      ? html`<div class="cron-create-error" role="alert">${loadError} <button type="button" onClick=${() => void reload()}>Retry</button></div>`
+      ? html`<div class="cron-create-error" role="alert">${loadError} <${Button} size="sm" onClick=${() => void reload()}>Retry<//></div>`
       : html`<div class="empty">Loading…</div>`;
   } else if (editing?.kind === 'limit') {
     body = html`<${LimitEditor} limit=${editing.item} overview=${overview} busy=${busy} onDirty=${markDirty}
@@ -531,7 +531,7 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api: api
     onClose=${onClose} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
     <h3 id="usage-rules-title">Usage limits & budgets${node ? html` <span class="usage-rules-node">on ${nodeLabel}</span>` : null}</h3>
     ${node ? html`<p class="modal-hint ui-hint usage-rules-node-hint">You manage ${nodeLabel}'s usage rules through the <code>usage-rules.manage</code> grant it gave you; changes apply on that node.</p>` : null}
-    <div class="fa-subtabs usage-rules-tabs" role="tablist">${tabs.map((t) => html`<button type="button" role="tab" key=${t.id}
+    <div class="fa-subtabs usage-rules-tabs" role="tablist">${tabs.map((t) => html`<button data-ui-exempt type="button" role="tab" key=${t.id}
       class=${`fa-subtab${tab === t.id ? ' on' : ''}`} aria-selected=${tab === t.id ? 'true' : 'false'} data-usage-rules-tab=${t.id}
       onClick=${() => void switchTab(t.id)}>${t.label}</button>`)}</div>
     ${body}
