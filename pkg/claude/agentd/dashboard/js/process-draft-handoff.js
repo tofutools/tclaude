@@ -24,8 +24,14 @@ export function handOffProcessDraft(draft, { doc = document } = {}) {
 // 'processes'.
 export async function openProcessDraft(draft, { doc = document } = {}) {
   if (draft?.id && !doc.querySelector('nav [data-tab="processes"].active')) {
-    const { openProcessOverlay } = await import('./process-editor-place.js');
-    if (openProcessOverlay(draft.id, draft.name || '', { view: draft.view || null, readable: true })) return 'overlay';
+    try {
+      const { openProcessOverlay } = await import('./process-editor-place.js');
+      if (openProcessOverlay(draft.id, draft.name || '', { view: draft.view || null, readable: true })) return 'overlay';
+    } catch (error) {
+      // A failed overlay (a stale module after an upgrade) still opens the
+      // process, in the Processes tab.
+      console.warn('process overlay failed; opening in the Processes tab', error);
+    }
   }
   handOffProcessDraft(draft, { doc });
   return 'processes';
