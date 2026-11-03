@@ -16,12 +16,15 @@ import { Button } from './ui-components.js';
 import { BOARD_COLORS, BOARD_TOOLS, newElement, normalizeBox, simplifyStroke } from './board-model.js';
 import { BoardElement } from './board-island.js';
 import {
-  acceptProbeMessage, cleanText, newProbeNonce, newProbeRequestId, probeDom, probeElementsAt, probeHello, samplePoints,
+  acceptProbeMessage, cleanText, newProbeNonce, newProbeRequestId, planPatchSync, probeDom, probeElementsAt, probeEval, probeHello,
+  probePatch, samplePoints,
 } from './page-probe-model.js';
 
 const html = htm.bind(h);
 
 const PROBE_TIMEOUT_MS = 3000;
+// An eval may await a promise; the daemon waits ten seconds for its answer.
+const PROBE_EVAL_TIMEOUT_MS = 8000;
 export const PAGE_NOTE_MAX = 4000;
 export const PAGE_MARKS_MAX = 100;
 // The daemon takes at most 2000 points a mark; a long stroke is thinned to this.
@@ -46,12 +49,22 @@ export const PAGE_DRAW_COLORS = Object.freeze(['#e03131', ...BOARD_COLORS.filter
 // usePageProbe talks to the probe in the frame: a fresh nonce per load (sent
 // in the hello the probe's 'ready' asks for), the frame's last scroll report,
 // and requests answered by id. frameRef holds the iframe.
-export function usePageProbe(frameRef, { win = globalThis.window } = {}) {
+//
+// It also keeps the frame in step with the page's live patch journal
+// (tcl-14z3fq): syncPatches takes the journal the daemon sent, and each load
+// replays it after the hello. A load holding a patch the journal dropped, or
+// a switch to "without", asks onReload for a fresh load.
+export function usePageProbe(frameRef, { win = globalThis.window, onReload = null } = {}) {
   const [scroll, setScroll] = useState(null);
   const [connected, setConnected] = useState(false);
+  const onReloadRef = useRef(onReload);
+  onReloadRef.current = onReload;
   const api = useRef(null);
   if (!api.current) {
-    const s = { nonce: '', acked: false, pending: new Map() };
+    const s = {
+      nonce: '', acked: false, pending: new Map(),
+      journal: [], applied: [], results: new Map(), without: false, chain: Promise.resolve(),
+    };
     const post = (message) => {
       try { frameRef.current?.contentWindow?.postMessage(message, '*'); } catch { /* the frame went away */ }
     };
@@ -66,10 +79,12 @@ export function usePageProbe(frameRef, { win = globalThis.window } = {}) {
       dropPending();
       s.nonce = newProbeNonce();
       s.acked = false;
+      s.applied = [];
+      s.results = new Map();
       setConnected(false);
       post(probeHello(s.nonce));
     };
-    const request = (build) => new Promise((resolve, reject) => {
+    const request = (build, timeout = PROBE_TIMEOUT_MS) => new Promise((resolve, reject) => {
       if (!s.acked) {
         reject(new Error('the page has no probe answering'));
         return;
@@ -78,18 +93,64 @@ export function usePageProbe(frameRef, { win = globalThis.window } = {}) {
       const timer = setTimeout(() => {
         s.pending.delete(id);
         reject(new Error('the page did not answer'));
-      }, PROBE_TIMEOUT_MS);
+      }, timeout);
       s.pending.set(id, { resolve, reject, timer });
       post(build(s.nonce, id));
     });
+    const reload = () => {
+      s.acked = false;
+      dropPending();
+      onReloadRef.current?.();
+    };
+    // sync brings the current load in step with the journal, one step at a
+    // time, and answers for patch number answerFor: what applying it did, or
+    // the state that kept it from applying now.
+    const sync = (answerFor = null) => {
+      const run = s.chain.then(async () => {
+        if (s.without) return { applied: 0, state: 'without' };
+        if (!s.acked) return { applied: 0, state: 'loading' };
+        const plan = planPatchSync(s.applied, s.journal);
+        if (plan.reload) {
+          reload();
+          return { applied: 0, state: 'loading' };
+        }
+        const load = s.nonce;
+        for (const patch of plan.apply) {
+          if (s.nonce !== load || !s.acked) return { applied: 0, state: 'loading' };
+          s.applied.push(patch.n);
+          let result;
+          try {
+            const m = await request((nonce, id) => probePatch(nonce, id, patch));
+            result = { applied: typeof m.applied === 'number' ? m.applied : 0, ...(m.error ? { error: m.error } : {}) };
+          } catch (cause) {
+            result = { applied: 0, error: String(cause?.message || cause).slice(0, 200) };
+          }
+          s.results.set(patch.n, result);
+        }
+        return s.results.get(answerFor) || { applied: 0, state: 'loading' };
+      });
+      s.chain = run.catch(() => {});
+      return run;
+    };
     api.current = {
       state: s,
+      syncPatches: (journal, answerFor = null) => {
+        s.journal = Array.isArray(journal) ? journal : [];
+        return sync(answerFor);
+      },
+      setWithout: (without) => {
+        if (s.without === !!without) return;
+        s.without = !!without;
+        if (s.without && s.applied.length) reload();
+        else if (!s.without) void sync();
+      },
+      eval: (js) => request((nonce, id) => probeEval(nonce, id, js), PROBE_EVAL_TIMEOUT_MS),
       onMessage: (event) => {
         const message = acceptProbeMessage(event, frameRef.current?.contentWindow, s.nonce);
         if (!message) return;
         switch (message.kind) {
           case 'ready': hello(); break;
-          case 'hello': s.acked = true; setConnected(true); break;
+          case 'hello': s.acked = true; setConnected(true); void sync(); break;
           case 'scroll': setScroll(message); break;
           case 'result': {
             const p = s.pending.get(message.id);

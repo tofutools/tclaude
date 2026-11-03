@@ -29,6 +29,7 @@ import { elementScreenPoint } from './terminal-drag-out.js';
 import { shellToast } from './shell-state.js';
 import { dashboardState } from './snapshot-store.js';
 import { PageDrawBar, PageDrawLayer, marksPayload, sendPageMarks, usePageMarks, usePageProbe } from './page-draw.js';
+import { patchChip } from './page-probe-model.js';
 
 const html = htm.bind(h);
 
@@ -43,14 +44,28 @@ const LIVE_RETRY_MAX_MS = 30000;
 // ({"type":"dom",req,selector,mode}, answered by onDom with
 // {"type":"dom-result",req,...}) and this view's viewport and scroll
 // ({"type":"view",...}, from report), which `page snapshot` renders at.
+//
+// It also carries the page's live patch journal (tcl-14z3fq):
+// {"type":"patches",seq,patches,req?} on connect and on every change, which
+// onPatches applies (answering {"type":"patch-result",req,...} for the newest
+// patch when asked), and {"type":"eval",req,js}, answered by onEval with
+// {"type":"eval-result",req,json|error}. The view relays only what this
+// socket delivered; journal is the last one, for the header.
 const VIEW_REPORT_MS = 500;
-export function usePageLive(id, origin, { win = globalThis.window, WebSocketCtor = globalThis.WebSocket, onDom = null } = {}) {
+export function usePageLive(id, origin, {
+  win = globalThis.window, WebSocketCtor = globalThis.WebSocket, onDom = null, onPatches = null, onEval = null,
+} = {}) {
   const [reach, setReach] = useState('checking');
   const [reloads, setReloads] = useState(0);
   const [attempt, setAttempt] = useState(0);
+  const [journal, setJournal] = useState(null);
   const socketRef = useRef(null);
   const onDomRef = useRef(onDom);
   onDomRef.current = onDom;
+  const onPatchesRef = useRef(onPatches);
+  onPatchesRef.current = onPatches;
+  const onEvalRef = useRef(onEval);
+  onEvalRef.current = onEval;
   const lastView = useRef({ json: '', at: 0, timer: null });
   const sendJSON = (message) => {
     const socket = socketRef.current;
@@ -113,6 +128,30 @@ export function usePageLive(id, origin, { win = globalThis.window, WebSocketCtor
               .catch((cause) => answer({ error: String(cause?.message || cause).slice(0, 200) }));
             break;
           }
+          case 'patches': {
+            const patches = Array.isArray(message.patches) ? message.patches : [];
+            const seq = Number.isFinite(message.seq) ? message.seq : 0;
+            setJournal({ seq, patches });
+            const req = typeof message.req === 'string' ? message.req : '';
+            const newest = patches.length ? Math.max(...patches.map((p) => p.n)) : null;
+            const done = Promise.resolve(onPatchesRef.current ? onPatchesRef.current(patches, req ? newest : null) : { applied: 0, state: 'loading' });
+            if (req) {
+              done.then((result) => sendJSON({ type: 'patch-result', req, applied: result?.applied || 0,
+                ...(result?.state ? { state: result.state } : {}), ...(result?.error ? { error: result.error } : {}) }))
+                .catch((cause) => sendJSON({ type: 'patch-result', req, applied: 0, error: String(cause?.message || cause).slice(0, 200) }));
+            }
+            break;
+          }
+          case 'eval': {
+            const req = typeof message.req === 'string' ? message.req : '';
+            if (!req) break;
+            const answer = (body) => sendJSON({ type: 'eval-result', req, ...body });
+            if (!onEvalRef.current) { answer({ error: 'this view has no probe' }); break; }
+            Promise.resolve(onEvalRef.current(String(message.js || '')))
+              .then((result) => answer(result.error ? { error: result.error } : { json: result.json }))
+              .catch((cause) => answer({ error: String(cause?.message || cause).slice(0, 200) }));
+            break;
+          }
           default: break;
         }
       };
@@ -138,7 +177,7 @@ export function usePageLive(id, origin, { win = globalThis.window, WebSocketCtor
     setAttempt((n) => n + 1);
     setReloads((n) => n + 1);
   };
-  return { reach, reloads, retry, report };
+  return { reach, reloads, retry, report, journal };
 }
 
 const baseName = (path) => String(path || '').split('/').filter(Boolean).pop() || String(path || '');
@@ -159,9 +198,16 @@ export function PageView({ pageId, snapshot, tools = null, onOpenSender = null, 
   const value = snapshot?.value;
   const page = findLivePage(value, pageId);
   const frameRef = useRef(null);
-  const probe = usePageProbe(frameRef, { win });
-  const live = usePageLive(pageId, page?.origin || '', { win, ...(WebSocketCtor && { WebSocketCtor }), onDom: probe.dom });
   const [manual, setManual] = useState(0);
+  const [without, setWithout] = useState(false);
+  const probe = usePageProbe(frameRef, { win, onReload: () => setManual((n) => n + 1) });
+  const live = usePageLive(pageId, page?.origin || '', {
+    win, ...(WebSocketCtor && { WebSocketCtor }), onDom: probe.dom, onPatches: probe.syncPatches, onEval: probe.eval,
+  });
+  useEffect(() => probe.setWithout(without), [without]);
+  const chip = patchChip(live.journal);
+  // A reset to no patches ends "without": the next patch shows.
+  useEffect(() => { if (without && !chip?.live) setWithout(false); }, [without, chip?.live]);
   const [closing, setClosing] = useState(false);
   const [drawing, setDrawing] = useState(false);
   const [tool, setTool] = useState('freedraw');
@@ -209,6 +255,11 @@ export function PageView({ pageId, snapshot, tools = null, onOpenSender = null, 
       ${page.worktree ? html`<span class="page-head-worktree" title=${`Worktree: ${page.worktree}`}>${baseName(page.worktree)}</span>` : null}
       <span class="ui-tag page-sandbox-chip" tabIndex="0" role="note" title=${rules.join('\n')} aria-label=${`Sandboxed. ${rules.join(' ')}`}>🔒 sandboxed</span>
       <span class="spacer"></span>
+      ${chip ? html`<span class=${`ui-tag page-patch-chip${chip.live ? ' live' : ''}`} role="status"
+        title=${chip.live ? `The agent changed this page live. Its source does not have these changes yet.` : 'The page shows its source.'}>${chip.text}</span>` : null}
+      ${chip?.live ? html`<${Button} size="sm" class="mux-btn" pressed=${without}
+        title=${without ? 'Show the page with the live patches again' : 'Show the page as its source is, without the live patches'}
+        onClick=${() => setWithout((v) => !v)}>Show without<//>` : null}
       <span class="page-mode" role="group" aria-label="Mode">
         <${Button} size="sm" class="mux-btn" pressed=${!drawing} title="Use the page" onClick=${() => setDrawing(false)}>Interact<//>
         <${Button} size="sm" class="mux-btn" pressed=${drawing} title="Draw on top of the page to show the agent what to change" onClick=${() => setDrawing(true)}>Draw${marks.marks.length ? ` (${marks.marks.length})` : ''}<//>

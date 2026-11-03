@@ -190,6 +190,7 @@ func TestPageDOMReadsGoThroughAnOpenView(t *testing.T) {
 		return m
 	}
 	assert.Equal(t, "reachable", next()["type"])
+	assert.Equal(t, "patches", next()["type"], "the view starts with the page's live patch journal")
 	require.NoError(t, conn.WriteJSON(map[string]any{"type": "view", "vw": 900, "vh": 700, "x": 0, "y": 50, "path": "/"}))
 
 	type domOut struct {
@@ -284,4 +285,3 @@ func TestPageSnapshotRendersAtTheOperatorsViewWithTheMarks(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	assert.Contains(t, rec.Body.String(), "chrome broke")
 }
-

@@ -520,6 +520,7 @@ func TestPageLiveSocketSignalsReloadsAndTheEnd(t *testing.T) {
 		return string(raw)
 	}
 	assert.Equal(t, `{"type":"reachable"}`, next(), "the view first hears whether the source answers")
+	assert.JSONEq(t, `{"type":"patches","seq":0,"patches":[]}`, next(), "then the page's live patch journal, empty")
 
 	require.NoError(t, os.WriteFile(index, []byte("<html><head></head><body>v2</body></html>"), 0o644))
 	assert.Equal(t, `{"type":"reload"}`, next(), "a saved file reloads the view")

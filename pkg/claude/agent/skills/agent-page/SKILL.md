@@ -6,7 +6,9 @@ description: >-
   or close your pages with `tclaude agent page ls|close`. When the operator draws
   on a page and sends it (`[page <name>] marks` in your inbox), read the marks
   with `page marks`, render the page with them with `page snapshot`, and read
-  its DOM with `page dom`. The target is your own
+  its DOM with `page dom`. Try a change live, without a source change, with
+  `page css`, `page dom --set-*` and `page eval`; manage those with `page
+  patches`. The target is your own
   dev server (`:5173/path` or `http://localhost:5173/path`) or a static
   directory or HTML file in the directory you were started in. The operator sees it live and
   interactive in a sandboxed frame. Use when you want the operator to look at a
@@ -90,6 +92,32 @@ tclaude agent page dom landing 'button.pay' --styles      # read-only: --text (d
   `dom` refuse it and its marks come without the page text, path or scroll:
   serve it from your own dev server instead. Under tclaude's sandbox the page
   serves nothing (503) while your sandbox is not running.
+
+## Try a change live
+
+To ask the operator "like this?" without editing source, patch the open page:
+
+```bash
+tclaude agent page css landing 'button.pay { background: #1971c2 }'
+tclaude agent page dom landing 'h1' --set-text 'Pay in one step'
+tclaude agent page dom landing '.promo' --remove
+tclaude agent page eval landing 'document.querySelectorAll("li").length'
+tclaude agent page patches landing             # what is live
+tclaude agent page patches landing --reset     # drop them all (or --reset 3)
+```
+
+- Each css or dom call is patch #N: applied in every open view, replayed after
+  each reload, shown in `page snapshot`, until you reset it or the page closes.
+  The operator's header says "⚡ live patch #N · not in source", with **Show
+  without** to compare.
+- `eval` runs once in one open view and prints the value as JSON; it is not
+  replayed. It needs the page open.
+- **Patches never write your files.** When the operator approves, port the
+  change into source and reset the patches.
+- A dom patch changes the elements present when it runs; an app that renders
+  them again can undo it. Prefer css for those.
+- On a static page that is not read back, a patch reports only how many views
+  it went to, and `eval` is refused.
 
 ## What the page can and cannot do
 

@@ -53,7 +53,7 @@ const (
 	pageDOMErrorMax      = 200
 	pageDOMTimeout       = 10 * time.Second
 	pageLiveReadLimit    = 512 << 10
-	pageViewQueueSize    = 4
+	pageViewQueueSize    = 16
 	pageDOMMaxConcurrent = 8
 )
 
@@ -129,10 +129,11 @@ type pageDOMResult struct {
 }
 
 // pageViewConn is one open live socket of a page: out queues messages to
-// it, pending holds its unanswered DOM reads.
+// it, pending holds its unanswered requests (DOM reads, patches, evals), each
+// answered with the view's raw message.
 type pageViewConn struct {
 	out     chan []byte
-	pending map[string]chan pageDOMResult
+	pending map[string]chan []byte
 	viewAt  time.Time // when it last reported a viewport
 }
 
@@ -144,6 +145,10 @@ type pageCollabState struct {
 	view    *pageViewReport
 	views   map[*pageViewConn]struct{}
 	domReqs int
+	// The live patch journal (pages_patches.go).
+	patchSeq   int64
+	patches    []pagePatch
+	patchBytes int
 }
 
 var pageCollab = struct {
@@ -387,13 +392,17 @@ func pageMarksMessage(name string, b pageMarkBatch) (subject, body string) {
 // registerPageView adds an open live socket to its page's views. A page that
 // closed meanwhile gets no state; its socket ends with its origin.
 func registerPageView(id string) (*pageViewConn, func()) {
-	c := &pageViewConn{out: make(chan []byte, pageViewQueueSize), pending: map[string]chan pageDOMResult{}}
+	c := &pageViewConn{out: make(chan []byte, pageViewQueueSize), pending: map[string]chan []byte{}}
 	livePages.mu.Lock()
 	open := livePages.byID[id] != nil
 	pageCollab.mu.Lock()
 	livePages.mu.Unlock()
 	if open {
-		pageCollabLocked(id).views[c] = struct{}{}
+		s := pageCollabLocked(id)
+		s.views[c] = struct{}{}
+		// The view starts with the journal, so it replays the patches on
+		// its first load. The queue is empty: this always fits.
+		c.out <- pagePatchStateLocked(s, "")
 	}
 	pageCollab.mu.Unlock()
 	return c, func() {
@@ -404,14 +413,15 @@ func registerPageView(id string) (*pageViewConn, func()) {
 		for _, ch := range c.pending {
 			close(ch)
 		}
-		c.pending = map[string]chan pageDOMResult{}
+		c.pending = map[string]chan []byte{}
 		pageCollab.mu.Unlock()
 	}
 }
 
 // pageViewMessage takes one message a view sent on its live socket: a
-// viewport report or a DOM read's answer. Anything else, or anything
-// malformed, is dropped.
+// viewport report, or the answer to a request (a DOM read, a patch, an eval),
+// which goes to its asker as sent, to be checked there. Anything else, or
+// anything malformed, is dropped.
 func pageViewMessage(id string, c *pageViewConn, data []byte) {
 	var head struct {
 		Type string `json:"type"`
@@ -432,17 +442,13 @@ func pageViewMessage(id string, c *pageViewConn, data []byte) {
 			c.viewAt = time.Now()
 		}
 		pageCollab.mu.Unlock()
-	case "dom-result":
-		var res pageDOMResult
-		if json.Unmarshal(data, &res) != nil || !checkPageDOMResult(&res) {
-			res = pageDOMResult{Error: "the page's answer was malformed"}
-		}
+	case "dom-result", "patch-result", "eval-result":
 		pageCollab.mu.Lock()
-		ch := c.pending[head.Req]
-		delete(c.pending, head.Req)
+		ch := c.pending[head.Type+":"+head.Req]
+		delete(c.pending, head.Type+":"+head.Req)
 		pageCollab.mu.Unlock()
 		if ch != nil {
-			ch <- res
+			ch <- data
 			close(ch)
 		}
 	}
@@ -450,11 +456,9 @@ func pageViewMessage(id string, c *pageViewConn, data []byte) {
 
 var errPageNoView = errors.New("no dashboard view of this page is open, so there is no DOM to read; ask the operator to open the page")
 
-// pageDOMRead asks one open view of the page (the one that reported its
-// viewport last) to read the DOM.
-func pageDOMRead(ctx context.Context, id, selector, mode string) (pageDOMResult, error) {
-	pageCollab.mu.Lock()
-	s := pageCollab.byID[id]
+// bestPageViewLocked is the view a one-view request goes to: the one that
+// reported its viewport last. Caller holds pageCollab.mu.
+func bestPageViewLocked(s *pageCollabState) *pageViewConn {
 	var best *pageViewConn
 	if s != nil {
 		for c := range s.views {
@@ -463,6 +467,59 @@ func pageDOMRead(ctx context.Context, id, selector, mode string) (pageDOMResult,
 			}
 		}
 	}
+	return best
+}
+
+// pageViewAskLocked queues a request to one view and returns the channel its
+// answer comes on (closed unanswered when the view goes), or nil when the
+// view's queue is full. msg gets the request id as "req"; answer is the type
+// the view answers with. The caller holds pageCollab.mu and must call
+// pageViewForget when done waiting.
+func pageViewAskLocked(c *pageViewConn, answer string, msg map[string]any) (req string, ch chan []byte) {
+	pageCollab.req++
+	req = "q" + strconv.FormatInt(pageCollab.req, 36)
+	msg["req"] = req
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return req, nil
+	}
+	select {
+	case c.out <- data:
+	default:
+		return req, nil
+	}
+	ch = make(chan []byte, 1)
+	c.pending[answer+":"+req] = ch
+	return req, ch
+}
+
+func pageViewForget(c *pageViewConn, answer, req string) {
+	pageCollab.mu.Lock()
+	delete(c.pending, answer+":"+req)
+	pageCollab.mu.Unlock()
+}
+
+// pageViewWait waits for a view's answer. ok is false when the view went
+// first; err is set on a timeout or a cancelled request.
+func pageViewWait(ctx context.Context, ch chan []byte, timeout time.Duration) (data []byte, ok bool, err error) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case data, ok = <-ch:
+		return data, ok, nil
+	case <-timer.C:
+		return nil, false, errors.New("the dashboard view did not answer in time")
+	case <-ctx.Done():
+		return nil, false, ctx.Err()
+	}
+}
+
+// pageDOMRead asks one open view of the page (the one that reported its
+// viewport last) to read the DOM.
+func pageDOMRead(ctx context.Context, id, selector, mode string) (pageDOMResult, error) {
+	pageCollab.mu.Lock()
+	s := pageCollab.byID[id]
+	best := bestPageViewLocked(s)
 	if best == nil {
 		pageCollab.mu.Unlock()
 		return pageDOMResult{}, errPageNoView
@@ -471,41 +528,34 @@ func pageDOMRead(ctx context.Context, id, selector, mode string) (pageDOMResult,
 		pageCollab.mu.Unlock()
 		return pageDOMResult{}, errors.New("too many DOM reads of this page at once")
 	}
+	req, ch := pageViewAskLocked(best, "dom-result", map[string]any{"type": "dom", "selector": selector, "mode": mode})
+	if ch == nil {
+		pageCollab.mu.Unlock()
+		return pageDOMResult{}, errors.New("the dashboard view is busy; try again")
+	}
 	s.domReqs++
-	pageCollab.req++
-	req := "d" + strconv.FormatInt(pageCollab.req, 36)
-	ch := make(chan pageDOMResult, 1)
-	best.pending[req] = ch
 	pageCollab.mu.Unlock()
 	defer func() {
 		pageCollab.mu.Lock()
 		s.domReqs--
-		delete(best.pending, req)
+		delete(best.pending, "dom-result:"+req)
 		pageCollab.mu.Unlock()
 	}()
-
-	msg, _ := json.Marshal(map[string]string{"type": "dom", "req": req, "selector": selector, "mode": mode})
-	select {
-	case best.out <- msg:
-	default:
-		return pageDOMResult{}, errors.New("the dashboard view is busy; try again")
+	data, ok, err := pageViewWait(ctx, ch, pageDOMTimeout)
+	if err != nil {
+		return pageDOMResult{}, err
 	}
-	timer := time.NewTimer(pageDOMTimeout)
-	defer timer.Stop()
-	select {
-	case res, ok := <-ch:
-		if !ok {
-			return pageDOMResult{}, errPageNoView
-		}
-		if res.Items == nil {
-			res.Items = []pageDOMItem{}
-		}
-		return res, nil
-	case <-timer.C:
-		return pageDOMResult{}, errors.New("the dashboard view did not answer in time")
-	case <-ctx.Done():
-		return pageDOMResult{}, ctx.Err()
+	if !ok {
+		return pageDOMResult{}, errPageNoView
 	}
+	var res pageDOMResult
+	if json.Unmarshal(data, &res) != nil || !checkPageDOMResult(&res) {
+		res = pageDOMResult{Error: "the page's answer was malformed"}
+	}
+	if res.Items == nil {
+		res.Items = []pageDOMItem{}
+	}
+	return res, nil
 }
 
 // ---- agent routes ----

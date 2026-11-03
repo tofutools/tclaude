@@ -113,6 +113,13 @@ func (e *pageEnv) assertLiveReadBack(t *testing.T, a pageAgent, p pageOut, name 
 	} else {
 		assert.Contains(t, rec.Body.String(), "cannot be read back")
 	}
+	rec = e.call(t, a, http.MethodPost, "/v1/pages/"+name+"/eval", map[string]any{"js": "document.title"})
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	if want {
+		assert.Contains(t, rec.Body.String(), "not open", "refused for want of a view, not for being static")
+	} else {
+		assert.Contains(t, rec.Body.String(), "cannot be read back", "an eval's value is the page's content")
+	}
 	rec = e.dashJSON(t, http.MethodPost, "/api/pages/"+p.ID+"/marks", sampleMarks())
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	got := e.marks(t, a, name, "")
