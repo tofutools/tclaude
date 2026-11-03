@@ -218,7 +218,7 @@ function Carries({ rows, title }) {
 // the reason beside them.
 function NodePicker({ targets, value, onPick, locked }) {
   return html`<div class="lt-nodes" role="radiogroup" aria-label="Target node">
-    ${targets.map((n) => html`<button key=${n.id} type="button" role="radio" aria-checked=${n.id === value ? 'true' : 'false'}
+    ${targets.map((n) => html`<button data-ui-exempt key=${n.id} type="button" role="radio" aria-checked=${n.id === value ? 'true' : 'false'}
       class=${`lt-node${n.id === value ? ' sel' : ''}`} disabled=${!n.ok || locked} data-lt-node=${n.id}
       title=${n.ok ? `Send it to ${n.plain}` : n.why} onClick=${() => onPick(n.id)}>
       <i style=${n.color ? `--nc:${n.color}` : undefined}></i><span class="lt-node-name">${n.name}</span><span class="lt-node-why">${n.ok ? '' : n.why}</span></button>`)}
@@ -325,9 +325,9 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
     onClose();
   };
   return html`
-    ${waiting && html`<div role="status" data-lt-state="waiting-summary">Waiting for ${agent.name}'s history summary · ${Math.floor(remaining/60)}m ${remaining%60}s left. Timeout leaves it unchanged.<button type="button" onClick=${cancelPending} disabled=${busy}>Cancel pending morph</button><button type="button" onClick=${onClose}>Close</button></div>`}
+    ${waiting && html`<div role="status" data-lt-state="waiting-summary">Waiting for ${agent.name}'s history summary · ${Math.floor(remaining/60)}m ${remaining%60}s left. Timeout leaves it unchanged.<${Button} size="sm" onClick=${cancelPending} disabled=${busy}>Cancel pending morph<//><${Button} size="sm" onClick=${onClose}>Close<//></div>`}
     ${(waiting || preview?.history?.needs_summary || preview?.history?.needs_handoff) && html`<label key="loss-fallback" class="lt-check"><input id="lt-proceed-without-summary" type="checkbox" checked=${proceedWithoutSummary} onChange=${(e) => setProceedWithoutSummary(e.currentTarget.checked)} /> Source cannot answer (for example, provider outage): continue with readable history and the full-transcript pointer. Earlier context may be lost.</label>`}
-    ${waiting && html`<button type="button" id="lt-proceed-loss" disabled=${!proceedWithoutSummary || busy || !(profile || waiting.target?.profile)} onClick=${continueWithoutSummary}>Continue now without a summary</button>`}
+    ${waiting && html`<${Button} size="sm" id="lt-proceed-loss" disabled=${!proceedWithoutSummary || busy || !(profile || waiting.target?.profile)} onClick=${continueWithoutSummary}>Continue now without a summary<//>`}
     <label class="lt-row"><span class="lt-k">Stays on</span><span class="muted">this node · ${agent.group || 'its groups'}</span></label>
     <label class="lt-row"><span class="lt-k">Profile</span>${profiles === null ? html`<span class="muted">loading…</span>` : html`<select id="lt-morph-profile" value=${profile} disabled=${busy || !!waiting} onChange=${(e) => { setConfirmCut(false); setProceedWithoutSummary(false); setProfile(e.currentTarget.value); }}>
       <option value="">pick a spawn profile…</option>
@@ -555,7 +555,7 @@ export function LaunchTargetDialog({
   return html`<${Overlay} id="launch-target" labelledby="launch-target-title" onClose=${onClose} initialFocusRef=${okRef} onSubmitEnter=${enter}>
     <h3 id="launch-target-title">${title}</h3>
     <div class="lt-modes" role="tablist" aria-label="What to do">
-      ${MODES.map((m) => { const st = modeState(m.key, ctx); return html`<button key=${m.key} type="button" role="tab" aria-selected=${m.key === mode ? 'true' : 'false'}
+      ${MODES.map((m) => { const st = modeState(m.key, ctx); return html`<button data-ui-exempt key=${m.key} type="button" role="tab" aria-selected=${m.key === mode ? 'true' : 'false'}
         class=${`lt-mode${m.key === mode ? ' sel' : ''}`} disabled=${!st.ok || (locked && m.key !== mode)} title=${st.ok ? m.hint : st.why} data-lt-mode=${m.key} onClick=${() => switchMode(m.key)}>${m.label}</button>`; })}
     </div>
     <div class="muted lt-mode-hint" data-lt-hint="">${MODES.find((m) => m.key === mode)?.hint}</div>
