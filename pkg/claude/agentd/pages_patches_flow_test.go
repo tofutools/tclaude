@@ -239,13 +239,19 @@ func TestPageLivePatchOnAPageNotReadBackTellsNothingOfThePage(t *testing.T) {
 	view := e.openView(t, p.ID)
 	view.journal()
 	done := e.async(t, a, http.MethodPost, "/v1/pages/site/patches", map[string]any{"kind": "dom", "selector": "#secret", "op": "remove"})
-	msg, _, _ := view.journal()
-	// The page's scripts can forge the answer: here it carries page text.
-	require.NoError(t, view.conn.WriteJSON(map[string]any{"type": "patch-result", "req": msg["req"], "applied": 7, "error": "SECRET"}))
-	out := <-done
+	// The view never answers: how long it takes is the page's to choose,
+	// so the agent's call does not wait on it.
+	var out patchOut
+	select {
+	case out = <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("a patch on a page that is not read back waited on the view")
+	}
+	msg, ns, _ := view.journal()
+	assert.Equal(t, []int{1}, ns, "the view still gets the patch")
+	assert.Nil(t, msg["req"], "and is asked for no answer")
 	require.Equal(t, http.StatusOK, out.code, out.raw)
 	assert.Equal(t, true, out.body["withheld"])
 	assert.EqualValues(t, 1, out.body["views"])
-	assert.NotContains(t, out.raw, "SECRET")
-	assert.NotContains(t, out.raw, "7")
+	assert.NotContains(t, out.body, "results")
 }

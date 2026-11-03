@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -129,18 +130,39 @@ func checkPagePatch(req pagePatchRequest) (pagePatch, error) {
 // when set, asks the view to answer for the newest patch. Caller holds
 // pageCollab.mu.
 func pagePatchStateLocked(s *pageCollabState, req string) []byte {
+	return pagePatchStateMessage(pagePatchReplayJSONLocked(s), s.patchSeq, req)
+}
+
+// pagePatchReplayJSONLocked encodes the replayed patches once, for every view
+// a change goes to. It goes over a websocket, not into HTML, so <, > and &
+// stay as they are (escaped, an HTML-heavy journal would grow sixfold).
+func pagePatchReplayJSONLocked(s *pageCollabState) []byte {
 	replay := []pagePatch{}
 	for _, p := range s.patches {
 		if p.Replay {
 			replay = append(replay, p)
 		}
 	}
-	msg := map[string]any{"type": "patches", "seq": s.patchSeq, "patches": replay}
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(replay)
+	return bytes.TrimRight(b.Bytes(), "\n")
+}
+
+func pagePatchStateMessage(replay []byte, seq int64, req string) []byte {
+	var b bytes.Buffer
+	b.Grow(len(replay) + 64)
+	b.WriteString(`{"type":"patches","seq":`)
+	b.WriteString(strconv.FormatInt(seq, 10))
 	if req != "" {
-		msg["req"] = req
+		// req is the daemon's own id: "q" and base-36 digits.
+		b.WriteString(`,"req":"` + req + `"`)
 	}
-	data, _ := json.Marshal(msg)
-	return data
+	b.WriteString(`,"patches":`)
+	b.Write(replay)
+	b.WriteString(`}`)
+	return b.Bytes()
 }
 
 // pagePatchResult is a view's answer for a patch. State is "" when the probe
@@ -170,12 +192,13 @@ func pagePatchBroadcast(ctx context.Context, id string) []pagePatchResult {
 	s := pageCollab.byID[id]
 	var asks []ask
 	if s != nil {
+		replay := pagePatchReplayJSONLocked(s)
 		for c := range s.views {
 			pageCollab.req++
 			req := "q" + strconv.FormatInt(pageCollab.req, 36)
 			a := ask{c: c, req: req}
 			select {
-			case c.out <- pagePatchStateLocked(s, req):
+			case c.out <- pagePatchStateMessage(replay, s.patchSeq, req):
 				a.ch = make(chan []byte, 1)
 				c.pending["patch-result:"+req] = a.ch
 			default:
@@ -210,21 +233,26 @@ func pagePatchBroadcast(ctx context.Context, id string) []pagePatchResult {
 
 // pagePatchNotify sends the journal to every open view, answering nothing:
 // after a reset, a view whose load has a dropped patch reloads and replays
-// the rest. A view with a full queue picks it up with the next change.
-func pagePatchNotify(id string) {
+// the rest; for a page that is not read back, a new patch goes this way too.
+// A view with a full queue picks it up with the next change. It returns how
+// many views it was sent to.
+func pagePatchNotify(id string) int {
 	pageCollab.mu.Lock()
 	defer pageCollab.mu.Unlock()
 	s := pageCollab.byID[id]
 	if s == nil {
-		return
+		return 0
 	}
 	msg := pagePatchStateLocked(s, "")
+	sent := 0
 	for c := range s.views {
 		select {
 		case c.out <- msg:
+			sent++
 		default:
 		}
 	}
+	return sent
 }
 
 var errPagePatchClosed = errors.New("the page closed")
@@ -283,15 +311,15 @@ func handlePagePatch(w http.ResponseWriter, r *http.Request) {
 		pagePatchAppendError(w, err)
 		return
 	}
-	results := pagePatchBroadcast(r.Context(), p.id)
-	out := map[string]any{"page": p.name, "patch": patch.N, "views": len(results)}
-	if readBack {
-		out["results"] = results
-	} else {
-		// The answers are the page's content; this page is not read back.
-		out["withheld"] = true
+	if !readBack {
+		// The answers are the page's content, and so is how long they take:
+		// for a page that is not read back, nothing waits on the view.
+		views := pagePatchNotify(p.id)
+		writeJSON(w, http.StatusOK, map[string]any{"page": p.name, "patch": patch.N, "views": views, "withheld": true})
+		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	results := pagePatchBroadcast(r.Context(), p.id)
+	writeJSON(w, http.StatusOK, map[string]any{"page": p.name, "patch": patch.N, "views": len(results), "results": results})
 }
 
 func pagePatchAppendError(w http.ResponseWriter, err error) {
