@@ -18,6 +18,19 @@ const PAGE_ORIGIN = /^http:\/\/f-[0-9a-f]{32}\.ui\.localhost(?::\d{1,5})?$/;
 // A remote viewer's page path (pages.go remotePageURL).
 const REMOTE_PAGE_PATH = /^\/p\/[0-9a-f]{32}(?:[/?#]|$)/;
 
+// remotePagePathOK checks a remote page path as the browser will resolve it:
+// still under /p/<token>/ once dot segments (spelled any way) are resolved.
+function remotePagePathOK(url) {
+  if (!REMOTE_PAGE_PATH.test(url)) return false;
+  try {
+    const base = 'http://page.invalid';
+    const u = new URL(url, base);
+    return u.origin === base && REMOTE_PAGE_PATH.test(u.pathname) && url.startsWith(u.pathname.slice(0, 35));
+  } catch {
+    return false;
+  }
+}
+
 export const isPageId = (id) => typeof id === 'string' && PAGE_ID.test(id);
 
 export const pagePaneKey = (id) => `page:${id}`;
@@ -53,7 +66,7 @@ export function findLivePage(snapshotValue, id) {
 export function pageFrameSrc(page) {
   const origin = String(page?.origin || '');
   const url = String(page?.url || '');
-  if (!origin) return REMOTE_PAGE_PATH.test(url) ? url : '';
+  if (!origin) return remotePagePathOK(url) ? url : '';
   if (!PAGE_ORIGIN.test(origin)) return '';
   if (url !== origin && !url.startsWith(`${origin}/`)) return '';
   return url;

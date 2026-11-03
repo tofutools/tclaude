@@ -298,6 +298,7 @@ func handleDashboardPageMarks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := r.PathValue("id")
+	req.Path = pageLocalPath(id, req.Path)
 	// Whether the page's text may go to the agent is decided first, outside
 	// the registry lock (it can read the agent's session row).
 	livePages.mu.Lock()
@@ -387,6 +388,32 @@ func pageMarksMessage(name string, b pageMarkBatch) (subject, body string) {
 	return "[page " + name + "] marks", sb.String()
 }
 
+// pageLocalPath is a path a view reported, as the page's own source knows it.
+// A remote viewer's frame runs a static page under /p/<remote token>/
+// (remote_stage.go), which its source never sees: that prefix comes off, so
+// a snapshot renders the right file and the token is not kept. A dev server
+// keeps the prefix: it serves under it as its --base.
+func pageLocalPath(id, p string) string {
+	livePages.mu.Lock()
+	lp := livePages.byID[id]
+	var stage *stagePage
+	if lp != nil {
+		stage = lp.stage
+	}
+	livePages.mu.Unlock()
+	if stage == nil || !stage.static.Load() {
+		return p
+	}
+	prefix := remoteStagePrefix + stage.remoteToken
+	if rest, ok := strings.CutPrefix(p, prefix); ok && (rest == "" || rest[0] == '/' || rest[0] == '?') {
+		if rest == "" || rest[0] == '?' {
+			rest = "/" + rest
+		}
+		return rest
+	}
+	return p
+}
+
 // ---- views, over the live socket ----
 
 // registerPageView adds an open live socket to its page's views. A page that
@@ -436,6 +463,7 @@ func pageViewMessage(id string, c *pageViewConn, data []byte) {
 		if json.Unmarshal(data, &v) != nil || !checkPageViewReport(&v) || v.VW == 0 || v.VH == 0 {
 			return
 		}
+		v.Path = pageLocalPath(id, v.Path)
 		pageCollab.mu.Lock()
 		if s := pageCollab.byID[id]; s != nil {
 			s.view = &v

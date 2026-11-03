@@ -272,6 +272,12 @@ func TestPageRemoteViewerDevServerUnderItsBase(t *testing.T) {
 			http.Redirect(w, r, "http://evil.example/x", http.StatusFound)
 		case "/to-up":
 			http.Redirect(w, r, "../../api/snapshot", http.StatusFound)
+		case "/to-encoded-up":
+			w.Header().Set("Location", r.URL.Path[:strings.Index(r.URL.Path[3:], "/")+3]+"/%2e%2e/%2e%2e/api/snapshot")
+			w.WriteHeader(http.StatusFound)
+		case "/to-encoded-rel":
+			w.Header().Set("Location", ".%2E/%2E./api")
+			w.WriteHeader(http.StatusFound)
 		case "/to-next":
 			http.Redirect(w, r, "next?x=1", http.StatusFound)
 		case "/to-own-abs":
@@ -310,7 +316,7 @@ func TestPageRemoteViewerDevServerUnderItsBase(t *testing.T) {
 	mu.Unlock()
 	assert.Empty(t, last.Header.Get("Cookie"), "no dashboard or remote session cookie reaches the upstream")
 
-	for _, path := range []string{"/to-api", "/to-other", "/to-elsewhere", "/to-up"} {
+	for _, path := range []string{"/to-api", "/to-other", "/to-elsewhere", "/to-up", "/to-encoded-up", "/to-encoded-rel"} {
 		res := remoteGet(t, e.srv, http.MethodGet, remoteHost, prefix+path, iframe, nil)
 		assert.Equal(t, http.StatusBadGateway, res.StatusCode, path)
 		assert.Empty(t, res.Header.Get("Location"), path)
@@ -336,6 +342,66 @@ func TestPageRemoteViewerStaticRedirectKeepsThePrefix(t *testing.T) {
 	loc, err := url.Parse(res.Header.Get("Location"))
 	require.NoError(t, err)
 	assert.Equal(t, prefix+"/public/", loc.Path, "and the redirect keeps the prefix the static source never saw")
+}
+
+func TestPageRemoteViewerReportsAStaticPathWithoutItsToken(t *testing.T) {
+	e := newPageEnv(t)
+	a := e.agent(t, "remotemarks", true)
+	site := staticSite(t, a.cwd)
+	e.sandboxAgent(t, a, "off", nil, claudeSandbox("off", false))
+	p, rec := e.show(t, a, site, "site", "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	prefix := strings.TrimSuffix(e.remoteURL(t, p.ID), "/")
+
+	// The operator opens it from a phone and draws: the frame's path
+	// carries the prefix.
+	res := remoteGet(t, e.srv, http.MethodGet, remoteHost, prefix+"/", iframe, nil)
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	m := sampleMarks()
+	m["path"] = prefix + "/public/ok.html?x=1"
+	rec = e.dashJSON(t, http.MethodPost, "/api/pages/"+p.ID+"/marks", m)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	got := e.marks(t, a, "site", "")
+	require.NotEmpty(t, got.Batches)
+	assert.Equal(t, "/public/ok.html?x=1", got.Batches[len(got.Batches)-1].Path, "kept as the source knows it")
+
+	var jobs []agentd.PageSnapshotJobForTest
+	t.Cleanup(agentd.SetPageSnapshotRenderForTest(func(j agentd.PageSnapshotJobForTest) ([]byte, error) {
+		jobs = append(jobs, j)
+		return []byte("\x89PNG"), nil
+	}))
+	rec = e.call(t, a, http.MethodPost, "/v1/pages/site/snapshot", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, jobs, 1)
+	assert.Equal(t, p.Origin+"/public/ok.html?x=1", jobs[0].URL, "the snapshot renders the file, not a 404 under the prefix")
+	assert.NotContains(t, rec.Body.String(), agentd.PageRemoteTokenForTest(p.ID))
+}
+
+func TestPageRemoteViewerRefusesDotSegmentsAndIPv6Hosts(t *testing.T) {
+	e := newPageEnv(t)
+	a := e.agent(t, "remotedots", true)
+	port := strconv.Itoa(devServer(t, "x"))
+	for _, target := range []string{":" + port + "/../../api/snapshot", ":" + port + "/a/%2e%2e/%2E%2e/api", ":" + port + "/./x"} {
+		_, rec := e.show(t, a, target, "dots", "")
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "%s: %s", target, rec.Body.String())
+	}
+	p, rec := e.show(t, a, ":"+port, "app", "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	for _, host := range []string{"[fd7a:115c:a1e0::1]:7000", "[fd7a:115c:a1e0::1]"} {
+		for _, sp := range e.remoteSnapshotPages(t, host) {
+			if sp.ID == p.ID {
+				assert.Empty(t, sp.URL, "%s: CSP cannot name an IPv6 literal, so no frame address is given", host)
+			}
+		}
+	}
+	for _, sp := range e.remoteSnapshotPages(t, "box.lan.") {
+		if sp.ID == p.ID {
+			assert.NotEmpty(t, sp.URL)
+		}
+	}
+	res := remoteGet(t, e.srv, http.MethodGet, "box.lan.", e.remoteURL(t, p.ID), iframe, nil)
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	assert.Contains(t, res.Header.Get("Content-Security-Policy"), "frame-ancestors http://box.lan. https://box.lan.", "a trailing-dot name is named as the browser spells it")
 }
 
 func TestPageRemoteViewerSkipsAPageThatLoadsOtherHosts(t *testing.T) {

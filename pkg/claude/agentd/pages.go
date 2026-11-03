@@ -294,7 +294,11 @@ func pageStartPathOK(p string) bool {
 			return false
 		}
 	}
-	return true
+	// No dot segments, spelled any way: a browser resolves them before it
+	// asks, so /p/<token>/../../api would leave the page's path.
+	pathPart, _, _ := strings.Cut(p, "?")
+	decoded, err := url.PathUnescape(pathPart)
+	return err == nil && !stageHasDotSegment(decoded)
 }
 
 // pageRoots are the directories a static target may live in: the agent's
@@ -743,7 +747,7 @@ func livePagesSnapshotFor(r *http.Request) []pageView {
 	}
 	return pageViews(livePages.list(""), func(p *livePage) pageView {
 		v := p.view()
-		v.Origin, v.URL = "", remotePageURL(p)
+		v.Origin, v.URL = "", remotePageURL(p, r.Host)
 		return v
 	})
 }

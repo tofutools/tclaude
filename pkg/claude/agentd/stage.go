@@ -858,6 +858,20 @@ func stageAfterTag(buf []byte, open string) int {
 	}
 }
 
+// stageHasDotSegment reports a "." or ".." segment in a decoded path, or a
+// backslash, which a browser takes for a slash.
+func stageHasDotSegment(p string) bool {
+	if strings.Contains(p, "\\") {
+		return true
+	}
+	for seg := range strings.SplitSeq(p, "/") {
+		if seg == "." || seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
 // stageStripPrefix is r with the page's remote path prefix taken off.
 func stageStripPrefix(r *http.Request, prefix string) *http.Request {
 	r2 := r.Clone(r.Context())
@@ -887,7 +901,9 @@ func stageKeepRedirectInPrefix(res *http.Response, site stageSite) error {
 		}
 	}
 	u, err := url.Parse(loc)
-	if err != nil {
+	if err != nil || stageHasDotSegment(u.Path) {
+		// A browser takes %2e%2e for "..", which Go's resolver leaves be:
+		// a Location with a dot segment, spelled any way, is refused.
 		return errStageRedirectOut
 	}
 	if u.Scheme != "" || u.Host != "" || u.Opaque != "" || u.User != nil {
@@ -901,7 +917,7 @@ func stageKeepRedirectInPrefix(res *http.Response, site stageSite) error {
 		u.RawPath = ""
 	}
 	abs := base.ResolveReference(u)
-	if abs.Path != site.prefix && !strings.HasPrefix(abs.Path, site.prefix+"/") {
+	if abs.Path != site.prefix && !strings.HasPrefix(abs.Path, site.prefix+"/") || stageHasDotSegment(abs.Path) {
 		return errStageRedirectOut
 	}
 	// Relative to the viewer's own scheme and host.

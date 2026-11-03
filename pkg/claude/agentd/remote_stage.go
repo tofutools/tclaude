@@ -103,7 +103,7 @@ func remoteStageHostport(hostport string) (string, bool) {
 	if err != nil {
 		host, port = hostport, ""
 	}
-	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	host = strings.ToLower(host)
 	if host == "" || len(host) > 253 {
 		return "", false
 	}
@@ -113,10 +113,12 @@ func remoteStageHostport(hostport string) (string, bool) {
 		}
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		host = ip.String()
+		// CSP has no IPv6-literal host source (Chrome rejects one), so a
+		// page cannot be framed for a viewer at a bare IPv6 address.
 		if ip.To4() == nil {
-			host = "[" + host + "]"
+			return "", false
 		}
+		host = ip.String()
 	} else {
 		for i := 0; i < len(host); i++ {
 			c := host[i]
@@ -135,8 +137,8 @@ func remoteStageHostport(hostport string) (string, bool) {
 // /p/<remote token> and the page's path (unless that already starts with it:
 // a dev server shown at its --base), so the viewer's browser supplies its own
 // scheme and host. "" for a page the remote stage does not serve.
-func remotePageURL(p *livePage) string {
-	if p.stage == nil || p.stage.otherHostsAllowed() {
+func remotePageURL(p *livePage, hostport string) string {
+	if _, ok := remoteStageHostport(hostport); !ok || p.stage == nil || p.stage.otherHostsAllowed() {
 		return ""
 	}
 	prefix := remoteStagePrefix + p.stage.remoteToken

@@ -118,7 +118,7 @@ test('the page model keeps the token in the frame src and nowhere else', async (
   const remote = { ...PAGE, origin: '', url: `/p/${TOKEN}/checkout?x=1` };
   assert.equal(model.pageFrameSrc(remote), remote.url);
   assert.equal(model.pageFrameSrc({ ...remote, url: `/p/${TOKEN}` }), `/p/${TOKEN}`);
-  for (const url of ['/api/snapshot', `//evil.example/p/${TOKEN}/`, `https://evil.example/p/${TOKEN}/`, '/p/short/', `/p/${TOKEN}x/`, 'javascript:alert(1)']) {
+  for (const url of ['/api/snapshot', `//evil.example/p/${TOKEN}/`, `https://evil.example/p/${TOKEN}/`, '/p/short/', `/p/${TOKEN}x/`, 'javascript:alert(1)', `/p/${TOKEN}/../../api/snapshot`, `/p/${TOKEN}/%2e%2e/%2e%2e/api/snapshot`, `/p/${TOKEN}/.%2E/x`]) {
     assert.equal(model.pageFrameSrc({ ...remote, url }), '', `${url} loads nothing`);
   }
   assert.match(model.pageSandboxRules(remote)[0], /\/p\/‹token›\//, 'the chip names the path, its token masked');

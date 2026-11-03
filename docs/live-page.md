@@ -148,8 +148,10 @@ A page has a second token for dashboards on other machines (see [Viewing
 pages from another machine](#viewing-pages-from-another-machine)). The agent
 is shown it only for a dev server page, which needs it as its `--base`. A dev
 server is the agent's own process, so the token lets the agent read nothing it
-could not already read. A static page's remote token is never shown to the
-agent.
+could not already read. tclaude never shows the agent a static page's remote
+token, and paths the dashboard reports from a remote view are kept without
+it. The page's own code can still read its address, as with the loopback
+token.
 
 ### Viewing pages from another machine
 
@@ -188,6 +190,12 @@ so the browser supplies its own scheme and host.
   same path. The remote token lasts as long as the page's origin, so it does
   not change when the page is re-shown with the same kind of source. A static
   page needs nothing; its files are served with the prefix taken off.
+- A dashboard reached at a bare IPv6 address gets no frame address: CSP has no
+  IPv6-literal host source. Use a DNS name (a tailnet name, say) or an IPv4
+  address.
+- Redirects and start paths with dot segments, spelled any way (`..`,
+  `%2e%2e`), are refused, because the browser would resolve them out of the
+  page's path.
 - A page the operator let load other hosts is not served this way: its wider
   sources would reach every other page on the shared origin.
 - A proxy that rewrites `Host` to the backend's address makes each page's CSP
