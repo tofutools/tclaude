@@ -13020,8 +13020,6 @@ body.wizard #cleanup-modal .cleanup-row { border-bottom-color: #241b3d; }
 body.wizard #cleanup-modal .cleanup-row .title { color: #f3e6c0; }
 body.wizard #cleanup-modal .cleanup-row .id { color: #b39ddb; }
 
-/* The tier selector + its sub-options: an arcane inset panel, parchment
-   labels, violet notes. The native radios / checkboxes stay legible. */
 body.wizard #cleanup-modal .cleanup-related { border-top-color: rgba(122, 93, 176, 0.5); }
 body.wizard #cleanup-modal .cleanup-related button {
   background: #241b3d; border-color: #d9b45a; color: #f3e6c0;

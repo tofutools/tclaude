@@ -53,7 +53,9 @@ export function copiedTextColour(css, wizardValue = '#b39ddb', token = '--ui-mut
     const colours = new Set(baseColours.get(s));
     for (const [t, c] of baseColours) {
       const tc = classesOf(t);
-      if (t !== s && tc.size > own.size && [...own].every((x) => tc.has(x)) && (tagOf(t) === '' || tagOf(t) === tagOf(s))) for (const x of c) colours.add(x);
+      const sameTag = tagOf(t) === '' || tagOf(t) === tagOf(s);
+      const narrower = tc.size > own.size || (t.startsWith(s) && /^[[:]/.test(t.slice(s.length)));
+      if (t !== s && sameTag && narrower && [...own].every((x) => tc.has(x))) for (const x of c) colours.add(x);
     }
     if (colours.size !== 1 || !colours.has(`var(${token})`)) return false;
     return tokenParts.some((b) => {
@@ -86,6 +88,9 @@ test('the scanner finds wizard copies of a content text colour', () => {
     '.f-badge { color: var(--ui-muted-text); }',
     '.f-badge.online { color: #58a6ff; }',
     'body.wizard #v-modal .f-badge { color: #b39ddb; }',
+    '.g-link { color: var(--ui-muted-text); }',
+    '.g-link[aria-current="page"] { color: #e6edf3; }',
+    'body.wizard #u-modal .g-link { color: #b39ddb; }',
   ].join('\n');
   // Flagged: a copy the base rule reaches. Kept: a wider wizard scope than the
   // base reaches (.c-note outside .row), a base hard-coding another colour,
