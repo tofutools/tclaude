@@ -862,8 +862,9 @@ test('the sandbox scribe opens in its chat window, and its draft reopens clones 
   const windows = [];
   t.after(registerCompanionController({ open: (agentId, options) => { windows.push({ agentId, ...options }); return true; } }));
   let opened = null;
+  let deliveries = 0;
   const unregister = registerManagementController({
-    openSandboxProfileEditor(seed, options) { opened = { seed, options }; },
+    openSandboxProfileEditor(seed, options) { opened = { seed, options }; deliveries += 1; },
   });
   t.after(unregister);
   const originalFetch = globalThis.fetch;
@@ -900,6 +901,13 @@ test('the sandbox scribe opens in its chat window, and its draft reopens clones 
   for (let i = 0; i < 3; i++) await harness.act(() => Promise.resolve());
   assert.ok(opened, 'the draft it hands back still reaches the review queue');
   assert.equal(opened.seed.name, 'restricted-copy');
+  // Once that review's editor is gone, the next scribe's draft opens too,
+  // rather than waiting in the queue for good.
+  await summonSandboxScribe({ name: 'restricted-copy', filesystem: [] }, '', null, { editExisting: false, cloneSourceName: 'restricted' }, { confirm: async () => true });
+  for (let i = 0; i < 20 && deliveries < 2; i++) await harness.act(() => new Promise((resolve) => setTimeout(resolve, 100)));
+  assert.equal(deliveries, 2, 'the review queue is released when the editor closes');
+  // Its own watch ends on the next tick, with no editor and nothing waiting.
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 700)));
   assert.equal(opened.options.targetName, '');
   assert.equal(opened.options.editExisting, false, 'the returned named draft remains a create');
   assert.equal(opened.options.cloneSourceName, 'restricted', 'the returned editor remains labeled as a clone');

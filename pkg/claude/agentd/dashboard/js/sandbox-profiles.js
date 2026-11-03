@@ -50,20 +50,37 @@ function sandboxScribeBrief(token, targetName, seed) {
 function openSandboxProfileEditor(seed = null, options = {}) { return managementController().openSandboxProfileEditor(seed, options); }
 function openSandboxProfilesManageModal() { return managementController().openSandboxProfilesManageModal(); }
 
+const sandboxEditorOpen = () => !!document.querySelector('#sandbox-profile-editor-modal');
+
 const sandboxDraftQueue = createSandboxDraftQueue({
-  canDeliver: () => !document.querySelector('#sandbox-profile-editor-modal'),
+  canDeliver: () => !sandboxEditorOpen(),
   deliver: ({ draft, targetName, onCreate, editorOptions }) => {
     openSandboxProfileEditor(draft.profile, { ...editorOptions, targetName, onCreate, notice: 'Agent draft loaded. Review every field, then explicitly save.' });
     toast('sandbox scribe draft ready — review and explicitly save');
+    awaitSandboxEditorClose();
   },
 });
+
+// awaitSandboxEditorClose frees the review once the editor closes: a delivered
+// draft holds the queue until then, and a draft that arrived while any editor
+// was open waits for it. It watches only while something waits on it.
+let editorWatch = null;
+function awaitSandboxEditorClose() {
+  if (editorWatch) return;
+  editorWatch = setInterval(() => {
+    if (sandboxEditorOpen()) return;
+    clearInterval(editorWatch);
+    editorWatch = null;
+    sandboxDraftQueue.release();
+  }, 500);
+}
 
 async function pollSandboxScribeDraft(token, targetName, onCreate, editorOptions) {
   const deadline = Date.now() + 30 * 60 * 1000;
   while (Date.now() < deadline) {
     try {
       const response = await fetch(`/api/sandbox-profile-drafts/${encodeURIComponent(token)}`, { credentials: 'same-origin' });
-      if (response.ok) { const draft = await response.json(); const opened = sandboxDraftQueue.enqueue({ draft, targetName, onCreate, editorOptions }); if (!opened) toast(`sandbox scribe draft ready — queued for review (${sandboxDraftQueue.pendingCount()} waiting)`); return; }
+      if (response.ok) { const draft = await response.json(); const opened = sandboxDraftQueue.enqueue({ draft, targetName, onCreate, editorOptions }); if (!opened) awaitSandboxEditorClose(); if (!opened) toast(`sandbox scribe draft ready — queued for review (${sandboxDraftQueue.pendingCount()} waiting)`); return; }
       if (response.status !== 404) throw new Error((await response.text()) || `HTTP ${response.status}`);
     } catch (error) { toast(`sandbox draft handoff failed: ${error.message || String(error)}`, true); return; }
     await new Promise((resolve) => setTimeout(resolve, 1500));
