@@ -21,6 +21,8 @@ type SpawnProfileJSON struct {
 	Aliases []string `json:"aliases,omitempty"`
 	// Disabled is the authoritative spawn gate. DisabledReason is remembered
 	// independently so enabling does not discard the operator's explanation.
+	// It is a pointer so CLI file input can tell an explicit false from the
+	// pre-v122 shape where disabled_reason was the disable switch.
 	Disabled       *bool  `json:"disabled,omitempty"`
 	DisabledReason string `json:"disabled_reason,omitempty"`
 	// OperatorOnly permits human/operator launches but rejects an agent caller
@@ -65,17 +67,37 @@ type SpawnProfileJSON struct {
 	// JSON-RPC API). Unset resolves to send-keys at spawn. A value on a
 	// non-Copilot profile is a 400 (buildProfileFromJSON gates it on the
 	// profile's harness).
+	//
+	// NOTE (CLI): like remote_control and auto_memory, `tclaude agent spawn
+	// --profile` does NOT fold this in client-side (mergeProfileIntoSpawn).
+	// The daemon resolves it down the full tier stack, so leaving it out there
+	// is what lets the group/global tiers speak too.
 	CopilotAPI     *bool `json:"copilot_api,omitempty"`
 	CodexAppServer *bool `json:"codex_app_server,omitempty"`
-	FastMode       *bool `json:"fast_mode,omitempty"`
-	AutoReview     *bool `json:"auto_review,omitempty"`
-	TrustDir       *bool `json:"trust_dir,omitempty"`
-	AutoMemory     *bool `json:"auto_memory,omitempty"`
-	PeerMessaging  *bool `json:"peer_messaging,omitempty"`
-	SSHWorkaround  *bool `json:"ssh_workaround,omitempty"`
+	// FastMode is Codex's nullable service-tier choice: nil inherits the
+	// global Codex config, true forces fast, false forces standard.
+	FastMode   *bool `json:"fast_mode,omitempty"`
+	AutoReview *bool `json:"auto_review,omitempty"`
+	TrustDir   *bool `json:"trust_dir,omitempty"`
+	// AutoMemory is the "keep Claude Code's auto memory on" default
+	// (tri-state). Unset resolves to OFF at spawn, so agents sharing a repo
+	// don't cross-pollute one project memory store. Claude-Code-only.
+	AutoMemory *bool `json:"auto_memory,omitempty"`
+	// PeerMessaging is the "keep Claude Code's own cross-session messaging
+	// on" default (tri-state), unset resolving to OFF at spawn.
+	PeerMessaging *bool `json:"peer_messaging,omitempty"`
+	// SSHWorkaround is the Git-over-SSH compatibility default. nil leaves the
+	// launch default in place; false explicitly opts out. The launch applies
+	// it only to an ownership-isolating sandbox shape that needs it.
+	SSHWorkaround *bool `json:"ssh_workaround,omitempty"`
 	// RemoteControl is the profile's "start with Claude Code Remote Access on"
 	// default — tri-state (null = unset, false = off, true = on). A group's
 	// remote-control policy overrides it at spawn (JOH-262).
+	//
+	// NOTE (CLI): `tclaude agent spawn --profile` does not fold this in
+	// client-side: the CLI can't see the group's remote-control policy, which
+	// must win. The daemon resolves it down the full tier stack under that
+	// policy. Use the explicit --remote-control flag to force it on.
 	RemoteControl *bool `json:"remote_control,omitempty"`
 
 	// Identity / enrollment fields (dialog-side).
