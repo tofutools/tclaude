@@ -4,7 +4,7 @@
 // picker is a standard Dialog. What a helper does lives in get-help.js.
 
 import { h } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Input, Menu, MenuItem, MenuSep } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
@@ -42,6 +42,32 @@ export function AgentPicker({ helpers, slugs = [], onPick, onClose }) {
   <//>`;
 }
 
+// clipBounds is the horizontal span el can show in: the viewport of its own
+// window (a separate window has its own), narrowed by every ancestor that
+// clips its overflow, such as an overlay window's frame.
+export function clipBounds(el) {
+  const view = el?.ownerDocument?.defaultView || globalThis.window;
+  let left = 0;
+  let right = view?.innerWidth || Infinity;
+  for (let node = el?.parentElement; node; node = node.parentElement) {
+    const overflow = view?.getComputedStyle?.(node)?.overflowX || 'visible';
+    if (overflow === 'visible') continue;
+    const rect = node.getBoundingClientRect();
+    left = Math.max(left, rect.left);
+    right = Math.min(right, rect.right);
+  }
+  return { left, right };
+}
+
+// menuSide says which edge of the button the menu hangs from: 'start' (its
+// left edge, the default) unless the menu would run past the right of bounds
+// and hanging from the button's right edge cuts it off less.
+export function menuSide(button, menuWidth, bounds) {
+  const startOver = Math.max(0, button.left + menuWidth - bounds.right);
+  const endOver = Math.max(0, bounds.left - (button.right - menuWidth));
+  return endOver < startOver ? 'end' : 'start';
+}
+
 // GetHelpMenu is the button and its menu. help says what a helper is for:
 // { name, slugs, scope, exclusive, taskRef, subject, brief(), confirmation,
 // askConfirmation(missing, helper) }; brief may be async. before() runs first
@@ -59,8 +85,19 @@ export function GetHelpMenu({
   const [open, setOpen] = useState(false);
   const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [side, setSide] = useState('start');
   const rootRef = useRef(null);
+  const menuRef = useRef(null);
   useDismissablePopover(rootRef, open, () => setOpen(false));
+  // Measured as it opens, before paint, hanging from the start: the menu flips
+  // to the button's right edge only when it would be cut off otherwise.
+  useLayoutEffect(() => {
+    if (!open) { setSide('start'); return; }
+    const root = rootRef.current;
+    const menu = menuRef.current;
+    if (!root || !menu) return;
+    setSide(menuSide(root.getBoundingClientRect(), menu.getBoundingClientRect().width, clipBounds(root)));
+  }, [open]);
   const run = async (work) => {
     setOpen(false);
     if (busy) return;
@@ -92,7 +129,7 @@ export function GetHelpMenu({
   return html`<div ref=${rootRef} class=${`get-help${extra ? ` ${extra}` : ''}`}>
     <${Button} class="get-help-toggle" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'} title=${title} aria-label=${label} disabled=${busy || disabled}
       onClick=${() => setOpen((value) => !value)}>${busy ? 'Starting…' : html`${labelNode || label} ▾`}<//>
-    ${open && html`<${Menu} class="get-help-menu" aria-label=${label}>
+    ${open && html`<${Menu} domRef=${menuRef} class=${`get-help-menu get-help-menu-${side}`} aria-label=${label}>
       <${MenuItem} data-get-help="new" title="Start an agent scoped to this page's work, and open its chat window" onClick=${newHelper}>New helper<//>
       <${MenuItem} data-get-help="ask" title="Brief an agent that is already running, and open its chat window" onClick=${() => { setOpen(false); setPicking(true); }}>Ask an existing agent…<//>
       ${actions.length > 0 && html`<${MenuSep} />`}

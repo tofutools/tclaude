@@ -177,3 +177,43 @@ test('the Get help menu offers a new helper, an existing agent, and the page act
   assert.deepEqual(opened.at(-1), { agentId: 'agt_b', starting: false });
   await mounted.unmount();
 });
+
+test('the Get help menu hangs from its button and flips rather than be cut off by the window it sits in', async (t) => {
+  const { harness } = await setup(t);
+  const { GetHelpMenu, menuSide, clipBounds } = await harness.importDashboardModule('js/get-help-menu.js');
+
+  // A button near the left of a window hangs from its left edge; one near the
+  // right flips to its right edge; neither fitting picks the one cut off less.
+  const button = (left) => ({ left, right: left + 100 });
+  assert.equal(menuSide(button(10), 220, { left: 0, right: 800 }), 'start');
+  assert.equal(menuSide(button(650), 220, { left: 0, right: 800 }), 'end');
+  assert.equal(menuSide(button(10), 220, { left: 0, right: 200 }), 'start');
+
+  // The bounds are the viewport narrowed by each clipping ancestor, such as an
+  // overlay window frame: the frame here spans 200..600 of a 1000px viewport.
+  const win = harness.window;
+  const proto = win.HTMLElement.prototype;
+  const saved = { rect: proto.getBoundingClientRect, style: win.getComputedStyle, width: win.innerWidth };
+  t.after(() => { proto.getBoundingClientRect = saved.rect; win.getComputedStyle = saved.style; win.innerWidth = saved.width; });
+  win.innerWidth = 1000;
+  let buttonLeft = 210;
+  proto.getBoundingClientRect = function rect() {
+    if (this.classList.contains('frame')) return { left: 200, right: 600, width: 400, top: 0, bottom: 400 };
+    if (this.classList.contains('get-help')) return { left: buttonLeft, right: buttonLeft + 90, width: 90, top: 0, bottom: 30 };
+    if (this.classList.contains('get-help-menu')) return { left: 0, right: 220, width: 220, top: 0, bottom: 120 };
+    return { left: 0, right: 0, width: 0, top: 0, bottom: 0 };
+  };
+  win.getComputedStyle = (node) => ({ overflowX: node.classList?.contains('frame') ? 'hidden' : 'visible' });
+
+  const mounted = await harness.mount(harness.html`<div class="frame"><${GetHelpMenu} help=${{ name: 'h', slugs: [], brief: 'b' }} /></div>`);
+  const { container } = mounted;
+  assert.deepEqual(clipBounds(container.querySelector('.get-help')), { left: 200, right: 600 });
+  const toggle = () => harness.act(async () => { harness.fireEvent(container.querySelector('.get-help-toggle'), 'click'); await wait(); });
+  await toggle();
+  assert.ok(container.querySelector('.get-help-menu-start'), 'a button at the left of the frame opens its menu rightward');
+  await toggle();
+  buttonLeft = 500;
+  await toggle();
+  assert.ok(container.querySelector('.get-help-menu-end'), 'one at the right of the frame opens it leftward, inside the frame');
+  await mounted.unmount();
+});
