@@ -54,3 +54,15 @@ never runs with the dashboard's origin, cookies or API.
 What a page cannot use in the frame: cookies, `localStorage` (until the probe
 provides a stand-in), IndexedDB and service workers. An app behind a login needs
 a development bypass or a fixture user.
+
+Known limits of the boundary:
+
+- A page can still navigate its own frame to any URL. CSP does not govern
+  navigation, so a page can send data out in a GET or make blind GETs to other
+  loopback services. Its fetches stay limited to its own origin unless the
+  operator allows other hosts.
+- The frame may open `alert`, `confirm` and `prompt` dialogs (`allow-modals`). A
+  dialog comes from the page, not from tclaude. Never type the operator token
+  into one.
+- Browsers resolve `*.localhost` to loopback themselves. A browser that hands
+  these names to the system resolver instead trusts that resolver for them.

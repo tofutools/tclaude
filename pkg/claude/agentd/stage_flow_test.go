@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -416,4 +417,62 @@ func TestStageProbeStaysBehindMetaCharsetAndOutOfRanges(t *testing.T) {
 	body := readBody(t, e.do(t, http.MethodGet, e.host(), "/", nil))
 	assert.Contains(t, body, "<meta charset=\"windows-1252\">"+stageProbeMarker, body)
 	assert.Equal(t, "<head>0123", readBody(t, e.do(t, http.MethodGet, e.host(), "/part", nil)))
+}
+
+// realUpstream serves h on a real loopback server and returns a RoundTripper
+// that always dials it, so 1xx and trailers travel the real http.Transport.
+func realUpstream(t *testing.T, h http.HandlerFunc) http.RoundTripper {
+	t.Helper()
+	up := httptest.NewServer(h)
+	t.Cleanup(up.Close)
+	addr := up.Listener.Addr().String()
+	tr := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", addr)
+	}}
+	t.Cleanup(tr.CloseIdleConnections)
+	return tr
+}
+
+func TestStageRealTransportEarlyHintsAndTrailers(t *testing.T) {
+	e := newStageEnv(t)
+	e.page.SetUpstream(realUpstream(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Set-Cookie", "early=1")
+		w.Header().Set("Content-Security-Policy", "default-src *")
+		w.WriteHeader(http.StatusEarlyHints)
+		clear(w.Header())
+		w.Header().Set("Trailer", "Set-Cookie, X-A")
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "<html><head></head></html>")
+		w.Header().Set("Set-Cookie", "t=1; Domain=ui.localhost")
+		w.Header().Set("X-A", "a")
+		w.Header().Set(http.TrailerPrefix+"Content-Security-Policy", "default-src *")
+		w.Header().Set(http.TrailerPrefix+"Set-Cookie2", "x=1")
+	}))
+	res := e.do(t, http.MethodGet, e.host(), "/", nil)
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	body := readBody(t, res)
+	assert.Contains(t, body, stageProbeMarker)
+	assertStageCSP(t, res)
+	assert.NotContains(t, res.Header.Get("Content-Security-Policy"), "default-src *")
+	assert.Empty(t, res.Header.Values("Set-Cookie"))
+	assert.Empty(t, res.Trailer, "no trailers reach the browser")
+}
+
+func TestStageDuplicateContentTypeUsesTheLast(t *testing.T) {
+	e := newStageEnv(t)
+	e.fake.h = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-Type", "text/plain")
+		w.Header().Add("Content-Type", "text/html")
+		if r.URL.Path == "/enc" {
+			w.Header().Add("Content-Encoding", "identity")
+			w.Header().Add("Content-Encoding", "gzip")
+		}
+		_, _ = io.WriteString(w, "<html><head></head></html>")
+	}
+	res := e.do(t, http.MethodGet, e.host(), "/", nil)
+	assert.Equal(t, []string{"text/html"}, res.Header.Values("Content-Type"))
+	assert.Contains(t, readBody(t, res), stageProbeMarker)
+	assert.Equal(t, http.StatusBadGateway, e.do(t, http.MethodGet, e.host(), "/enc", nil).StatusCode)
 }

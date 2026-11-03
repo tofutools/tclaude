@@ -45,7 +45,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -429,20 +428,17 @@ func stageCSP(token string, port int, allowOtherHosts bool) string {
 		"object-src 'none'",
 		"base-uri " + self,
 		"form-action " + self + other,
-		"frame-ancestors " + strings.Join(append(stageDashboardOrigins(), "http://"+hp), " "),
+		"frame-ancestors " + strings.Join(append(stageDashboardOrigins(port), "http://"+hp), " "),
 		"sandbox allow-scripts allow-forms allow-modals",
 	}
 	return strings.Join(directives, "; ")
 }
 
 // stageDashboardOrigins are the dashboard origins allowed to frame a page:
-// the loopback forms of the dashboard's own port.
-func stageDashboardOrigins() []string {
-	u, err := url.Parse(popupBaseURL)
-	if err != nil || u.Port() == "" {
-		return []string{"'none'"}
-	}
-	p := u.Port()
+// the loopback forms of the dashboard's own port. The stage is served on the
+// dashboard listener, so that is the port the request arrived on.
+func stageDashboardOrigins(port int) []string {
+	p := strconv.Itoa(port)
 	return []string{
 		"http://127.0.0.1:" + p,
 		"http://localhost:" + p,
@@ -469,6 +465,8 @@ func stripStageRequestHeaders(h http.Header) {
 		case lk == "cookie", lk == "cookie2", lk == "authorization",
 			strings.HasPrefix(lk, "proxy-"),
 			lk == "forwarded", strings.HasPrefix(lk, "x-forwarded-"), lk == "x-real-ip",
+			lk == "via", lk == "true-client-ip", lk == "x-client-ip",
+			lk == "x-original-url", lk == "x-rewrite-url", lk == "x-http-method-override",
 			lk == "referer",
 			lk == strings.ToLower(stageSnapshotHeader),
 			// Bodies are rewritten for probe injection; ask for identity.
@@ -488,10 +486,12 @@ func stageDroppedResponseHeader(lk string) bool {
 		"content-security-policy", "content-security-policy-report-only",
 		"x-frame-options", "x-content-type-options", "referrer-policy",
 		"clear-site-data", "service-worker-allowed", "alt-svc",
-		"strict-transport-security", "report-to", "reporting-endpoints", "nel":
+		"strict-transport-security", "report-to", "reporting-endpoints", "nel",
+		"set-login", "origin-trial", "speculation-rules", "supports-loading-mode",
+		"accept-ch", "critical-ch", "timing-allow-origin":
 		return true
 	}
-	return strings.HasPrefix(lk, "access-control-")
+	return strings.HasPrefix(lk, "access-control-") || strings.HasPrefix(lk, "attribution-reporting-")
 }
 
 func stageModifyResponse(res *http.Response) error {
@@ -500,15 +500,25 @@ func stageModifyResponse(res *http.Response) error {
 			delete(res.Header, k)
 		}
 	}
-	for k := range res.Trailer {
-		if stageDroppedResponseHeader(strings.ToLower(k)) {
-			delete(res.Trailer, k)
-		}
+	// No trailers at all: a page has no use for them. The transport fills (or
+	// replaces) res.Trailer only at body EOF, after any filtering here could
+	// run, so the body's Close, which ReverseProxy calls just before relaying
+	// trailers, drops whatever arrived.
+	res.Trailer = nil
+	res.Body = &stageNoTrailerBody{ReadCloser: res.Body, res: res}
+	// Browsers take the last Content-Type; decide (and serve) on that one so
+	// a leading text/plain cannot hide an HTML document from the probe.
+	if cts := res.Header.Values("Content-Type"); len(cts) > 1 {
+		res.Header.Set("Content-Type", cts[len(cts)-1])
 	}
 	if !stageInjectable(res) {
 		return nil
 	}
 	body := res.Body
+	encs := res.Header.Values("Content-Encoding")
+	if len(encs) > 1 {
+		return fmt.Errorf("stage: html with %d content-encoding headers", len(encs))
+	}
 	switch enc := strings.ToLower(strings.TrimSpace(res.Header.Get("Content-Encoding"))); enc {
 	case "", "identity":
 	case "gzip":
@@ -528,6 +538,18 @@ func stageModifyResponse(res *http.Response) error {
 	res.ContentLength = -1
 	res.Body = newStageInjector(body)
 	return nil
+}
+
+// stageNoTrailerBody forgets the response's trailers when the body closes.
+type stageNoTrailerBody struct {
+	io.ReadCloser
+	res *http.Response
+}
+
+func (b *stageNoTrailerBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.res.Trailer = nil
+	return err
 }
 
 // stageInjectable reports whether a response is an HTML document body the
