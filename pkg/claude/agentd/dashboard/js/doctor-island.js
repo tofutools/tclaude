@@ -66,11 +66,11 @@ function SandboxDefaultControl({ check, state, actions }) {
   const busy = state.busy.value;
   if (check.severity === 'decision' || !check.value) {
     return html`<div class="doctor-choice">
-      <div class="doctor-opt rec">
+      <div class="doctor-opt ui-card ui-inset rec">
         <div class="doctor-opt-title">tclaude sandbox <span class="doctor-tag">recommended</span></div>
         <div class="doctor-opt-detail">bubblewrap on Linux, Seatbelt on macOS. The same wall for every harness, and it enforces your sandbox profiles.</div>
       </div>
-      <div class="doctor-opt">
+      <div class="doctor-opt ui-card ui-inset">
         <div class="doctor-opt-title">Harness sandboxes</div>
         <div class="doctor-opt-detail">Keep current behaviour: each harness confines itself with its own sandbox, or not at all.</div>
       </div>
@@ -121,7 +121,7 @@ function DoctorApp({ state, actions, notify }) {
     lede = counts.attention === 0 ? 'Nothing needs your attention.'
       : `${counts.attention} item${counts.attention === 1 ? '' : 's'} across ${Object.keys(counts.byCategory).length} categor${Object.keys(counts.byCategory).length === 1 ? 'y' : 'ies'}.`;
   }
-  return html`<div class="doctor-island">
+  return html`<div class="doctor-island ui-card">
     <div class="doctor-side" role="tablist" aria-label="Doctor categories">
       <button type="button" role="tab" class=${category === 'attention' ? 'on' : ''} aria-selected=${category === 'attention'}
         onClick=${() => select('attention')}>Needs attention <span>${counts.attention}</span></button>

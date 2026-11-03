@@ -172,7 +172,7 @@ export function SpendChart({ costs, label }) {
   const pointerDown = useRef(false);
   const { slots, recorded } = useMemo(() => spendSlots(costs), [costs]);
   const recordedCount = slots.filter((slot) => !slot.projected).length;
-  if (!recordedCount) return html`<div class="usage-ov-chart empty">No days in span.</div>`;
+  if (!recordedCount) return html`<div class="usage-ov-chart ui-card ui-inset empty">No days in span.</div>`;
   const W = SPEND_W;
   const H = SPEND_H;
   // Two scales, as in the mock: the bars read the day-to-day pace, the line
@@ -229,7 +229,7 @@ export function SpendChart({ costs, label }) {
   const summary = `${label} spend ${fmtExactUSD(recorded)}${costs.projection ? `, projected ${fmtExactUSD(costs.projection.total)}` : ''}. Focus and use Left and Right Arrow keys to inspect each day.`;
 
   return html`<div class="usage-ov-chart-wrap">
-    <div class="usage-ov-chart">
+    <div class="usage-ov-chart ui-card ui-inset">
       <div ref=${plot} class=${`usage-ov-plot${hover ? ' hovering' : ''}${focusProvider ? ' has-focus' : ''}`}
         role="img" tabIndex="0" aria-label=${summary}
         onmousemove=${move} onmouseleave=${leave} onmousedown=${() => { pointerDown.current = true; }}

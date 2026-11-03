@@ -24,7 +24,9 @@ const SURFACE = [/(?:^|[;\s])background(?:-color)?\s*:/, /(?:^|[;\s])border(?:-c
 const MIGRATED = new Set([
   'starter-row', 'cleanup-tier', 'window-direction', 'reincarnate-mode', 'deploy-mode',
   'group-force-block', 'sandbox-import-profile', 'profile-transfer-row', 'paf-redact',
-  'paf-box', 'snap-panel',
+  'paf-box', 'snap-panel', 'mail-sidebar', 'mail-list', 'mail-reader', 'mail-attachment',
+  'cost-accumulated', 'cost-chart', 'usage-ov-chart', 'usage-rule-editor', 'usage-hub-limit',
+  'doctor-island', 'doctor-opt',
 ]);
 
 // handRolledCards lists the selectors (whitespace-normalised) whose subject is
@@ -79,13 +81,16 @@ test('no stylesheet hand-paints a new card', () => {
 });
 
 test('migrated card classes keep .ui-card in their markup', () => {
-  const classes = [...MIGRATED, 'template-card', 'plugin-card', 'usage-rule-card'];
+  const classes = [...MIGRATED, 'template-card', 'plugin-card', 'usage-rule-card', 'debug-card', 'usage-series-card', 'usage-ov-card'];
   const JS = new URL('js/', DASHBOARD);
   const bare = [];
   for (const file of readdirSync(JS).filter((f) => f.endsWith('.js'))) {
     const source = readFileSync(new URL(file, JS), 'utf8');
-    for (const m of source.matchAll(/class=(?:"([^"]*)"|\$\{`([^`]*)`\})/g)) {
-      const value = m[1] ?? m[2];
+    // class="…", class=${`…`} (one level of nested `…` allowed), and the
+    // imperative element('div', '…') helper.
+    const attrs = /class=(?:"([^"]*)"|\$\{`((?:[^`]|`[^`]*`)*?)`\})|element\('[\w-]+', '([^']*)'/g;
+    for (const m of source.matchAll(attrs)) {
+      const value = m[1] ?? m[2] ?? m[3];
       const tokens = value.split(/[\s${}'?:]+/);
       for (const cls of classes) if (tokens.includes(cls) && !tokens.includes('ui-card')) bare.push(`${file}: ${value}`);
     }

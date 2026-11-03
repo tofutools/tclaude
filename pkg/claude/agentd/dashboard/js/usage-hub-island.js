@@ -125,7 +125,7 @@ export function quotaStatusLine(item, wizard = false) {
 function QuotaCard({ item, wizard, onOpen }) {
   const { series, latest } = item;
   const tone = item.atRisk ? 'danger' : item.view.tone;
-  return html`<a class=${`usage-ov-card usage-ov-quota${item.atRisk ? ' at-risk' : ''}`} href="/usage/quota"
+  return html`<a class=${`usage-ov-card ui-card ui-inset usage-ov-quota${item.atRisk ? ' at-risk' : ''}`} href="/usage/quota"
     data-series=${item.key} onClick=${onOpen}>
     <div class="usage-ov-card-head"
       title=${`${usageProviderLabel(series.provider)} ${usageWindowScopeLabel(series, wizard)} — open the full forecast`}>
@@ -140,7 +140,7 @@ function QuotaCard({ item, wizard, onOpen }) {
 }
 
 function Kpi({ label, value, meta, tone = '', onOpen, href }) {
-  return html`<a class=${`usage-ov-card usage-ov-kpi${tone ? ` ${tone}` : ''}`} href=${href} onClick=${onOpen}>
+  return html`<a class=${`usage-ov-card ui-card ui-inset usage-ov-kpi${tone ? ` ${tone}` : ''}`} href=${href} onClick=${onOpen}>
     <span class="usage-provider">${label}</span>
     <span class="usage-ov-value">${value}</span>
     <span class="usage-ov-meta">${meta}</span>
@@ -226,7 +226,7 @@ function UsageLimits({ snapshot, wizard }) {
     <h3 class="usage-ov-heading">${w('Limits', 'Wards on the coffers')}
       <${Button} size="sm" variant="link" class="usage-limits-manage" id="usage-limits-manage" onClick=${manage}>${w('limits & budgets', 'wards & tithes')} ›<//></h3>
     ${limits.length ? html`<div class="usage-hub-limit-list">${limits.map((limit) => html`<div key=${limit.rule_key}
-      class=${`usage-hub-limit ${limit.dry_run ? 'dry' : barTone(limit)}`} title=${limit.next ? `next: ${limit.next.action.replace('_', ' ')} at ${limit.next.at}%` : ''}>
+      class=${`usage-hub-limit ui-card ui-inset ${limit.dry_run ? 'dry' : barTone(limit)}`} title=${limit.next ? `next: ${limit.next.action.replace('_', ' ')} at ${limit.next.at}%` : ''}>
       <span class="usage-hub-limit-name">${limit.name}<span class="muted"> · ${limit.scope === 'group' ? `group ${limit.group}` : 'global'}${limit.metric === 'window_pct' ? '' : ` · ${periodLabel(limit.period)}`}</span></span>
       <span class="usage-rule-bar"><span class="usage-rule-bar-fill" style=${`width:${Math.min(100, Math.max(0, limit.pct || 0))}%`}></span></span>
       <span class="usage-hub-limit-figure">${fmtAmount(limit.metric, limit.value)} / ${fmtAmount(limit.metric, limit.budget)}${limit.reached ? ` · ${limit.reached.replace('_', ' ')}` : ''}${limit.dry_run ? ' · dry run' : ''}</span>

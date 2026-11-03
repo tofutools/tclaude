@@ -333,7 +333,7 @@ function Reader({ item, remote, snapshot, peerView, timers, actions, confirm, to
     if (key && item.kind === 'human' && !item.read && humanMarkable(item.node, peerView)) actions.humanRead(item.node, item.id, true).then(onDone, () => {});
   }, [item?.key]);
   if (!item) {
-    return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader" role="region" aria-label="Message reader" tabindex="0">
+    return html`<div class="mail-reader fused-mail-reader ui-card" id="fused-mail-reader" role="region" aria-label="Message reader" tabindex="0">
       <div class="empty">Select a message to read.</div></div>`;
   }
   const { node } = item;
@@ -364,7 +364,7 @@ function Reader({ item, remote, snapshot, peerView, timers, actions, confirm, to
         focus: node.local ? null : (m) => openRemote({ instance: node.id, agent: m.from_agent, peerLabel: node.name, label: m.from_title || '', toast }),
         mark: (id, read) => actions.humanRead(node, id, read), reply: (id, body) => actions.humanReply(node, id, body),
       };
-      return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader" data-kind="decree" role="region" aria-label="Message reader" tabindex="0"
+      return html`<div class="mail-reader fused-mail-reader ui-card" id="fused-mail-reader" data-kind="decree" role="region" aria-label="Message reader" tabindex="0"
         onClick=${(e) => { if (!peer && e.target?.closest?.('[data-act]')) timers.setTimeout(onDone, 800); }}>
         ${headers}
         <${MessageAttachments} message=${item} />
@@ -384,7 +384,7 @@ function Reader({ item, remote, snapshot, peerView, timers, actions, confirm, to
     const deleteLock = canActOnHuman(node, peerView) ? '' : `${node.name} keeps deleting its messages to its own operator: it needs unrestricted trust from ${node.name}.`;
     buttons = html`${buttons}<${Button} size="sm" variant="danger" data-fused="delete" disabled=${busy || !!deleteLock} title=${deleteLock ? undefined : `Permanently delete this message on ${node.name}`} onClick=${() => onDelete([item])}>delete<//><${LockReason} why=${deleteLock} />`;
   }
-  return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader" data-kind=${item.kind === 'access' ? 'decree' : messageKind(item, item.kind === 'human')}
+  return html`<div class="mail-reader fused-mail-reader ui-card" id="fused-mail-reader" data-kind=${item.kind === 'access' ? 'decree' : messageKind(item, item.kind === 'human')}
     role="region" aria-label="Message reader" tabindex="0">
     ${body}
     <div class="mail-reader-actions fused-mail-actions">${buttons}<span class="spacer"></span>${open}</div>
@@ -759,7 +759,7 @@ export function FusedMail({
       countId="fused-mail-filter-count" countText=${countText} clearId="fused-mail-filter-clear" onClear=${() => { nav.current = 'q'; setQuery(''); setQ(''); }} />
     <div class="mail-col mail-sidebar-col">
       ${chips}
-      <aside class="mail-sidebar" id="fused-mail-sidebar" onKeyDown=${sidebarKeyDown}>
+      <aside class="mail-sidebar ui-card" id="fused-mail-sidebar" onKeyDown=${sidebarKeyDown}>
         ${fusedRows}
         ${sections}
       </aside>
@@ -769,7 +769,7 @@ export function FusedMail({
     </div>
     <div class="mail-col mail-list-col">
       ${bulkBar}
-      <div class="mail-list" id="fused-mail-list" role="list" onKeyDown=${listKeyDown}>
+      <div class="mail-list ui-card" id="fused-mail-list" role="list" onKeyDown=${listKeyDown}>
         ${!rows.length && html`<div class="empty">${loaded ? (q ? 'No messages match the filter.' : 'No messages here.') : 'Loading…'}</div>`}
         ${rows.map((m) => (m.kind === 'access'
           ? html`<div class="mail-row-wrap access-row-wrap" key=${m.key} data-key=${m.key} data-kind="decree" role="listitem">

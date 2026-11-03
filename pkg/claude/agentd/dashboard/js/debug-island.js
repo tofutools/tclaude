@@ -123,7 +123,7 @@ function EndpointCard({ endpoint }) {
   const samples = Array.isArray(endpoint.samples) ? endpoint.samples : [];
   const phases = Array.isArray(endpoint.phases) ? endpoint.phases : [];
   const latest = samples.length ? samples[samples.length - 1].total_ms : NaN;
-  return html`<div class="debug-card" data-key=${`debug-${endpoint.endpoint}`}>
+  return html`<div class="debug-card ui-card" data-key=${`debug-${endpoint.endpoint}`}>
     <div class="debug-card-head">
       <span class="rowname">${endpoint.endpoint}</span>
       <span class="muted">${endpoint.count} sample${endpoint.count === 1 ? '' : 's'}</span>

@@ -2131,7 +2131,7 @@ func TestDashboardHTML_WizardUsageTab(t *testing.T) {
 	}
 
 	// The panel and the three chart strokes the legend keys.
-	must("body.wizard .usage-series-card {", "each graph becomes a scrying pool — the violet void in a gilded frame")
+	must("body.wizard .usage-series-card.ui-card {", "each graph becomes a scrying pool — the violet void in a gilded frame")
 	must("body.wizard .usage-observed-line {", "the channeled trace is re-skinned")
 	must("body.wizard .usage-forecast-line {", "the prophecy is re-skinned")
 	must("body.wizard .usage-reset-mark circle {", "replenishment marks are re-skinned")

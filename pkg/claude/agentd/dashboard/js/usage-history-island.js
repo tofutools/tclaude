@@ -116,7 +116,7 @@ function UsageSeriesCard({
   const scope = usageScopeLabel(series, wizard);
   const sampled = latest ? `${w('sampled', 'scried')} ${formatUsageTime(latest.at, now)}` : w('no sample', 'no reading');
   const reset = latest?.resets_at ? formatUsageResetCountdown(latest.resets_at, now, wizard) : '';
-  return html`<article class="usage-series-card" data-series-key=${usageSeriesKeyOf(series)}>
+  return html`<article class="usage-series-card ui-card ui-inset" data-series-key=${usageSeriesKeyOf(series)}>
     <div class="usage-card-header">
       <div><span class="usage-provider">${usageProviderLabel(series.provider)}</span>
         <h3>${windowLabel}</h3></div>

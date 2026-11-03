@@ -65,7 +65,7 @@ function RuleEditor({ draft, scope, windows, disabled, onChange }) {
   const set = (patch) => onChange({ ...draft, ...patch });
   const windowPct = draft.metric === 'window_pct';
   const periods = periodsFor(scope);
-  return html`<div class="usage-rule-editor">
+  return html`<div class="usage-rule-editor ui-card ui-inset">
     <div class="usage-rule-fields">
       <label>Name <input value=${draft.name} disabled=${disabled} maxlength="64" placeholder="e.g. Monthly spend"
         aria-label="Rule name" onInput=${(e) => set({ name: e.currentTarget.value })}/></label>

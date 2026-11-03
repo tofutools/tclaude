@@ -36,7 +36,7 @@ func TestDashboardMessagesPreactOwnershipAndParityHooks(t *testing.T) {
 		`<${MailGutters} />`,
 		`class="mail-gutter" data-boundary="sidebar-list"`,
 		`class="mail-gutter" data-boundary="list-reader"`,
-		`class="mail-attachment"`,
+		`class="mail-attachment ui-card ui-inset"`,
 		`kind=${controller.msgKind(message)}`,
 		`data-kind=${kind}`,
 	} {
