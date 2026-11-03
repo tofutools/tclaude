@@ -1487,9 +1487,7 @@ func receiverApprovalDrops(p spawnProfileJSON, h *harness.Harness, group, profil
 	if fail != nil || err != nil {
 		return unjudged()
 	}
-	landingApproval, _, _, fail := resolveStringLaunchField("approval", "", h.Name, landing.tiers,
-		func(tier *db.SpawnProfile) string { return tier.Approval },
-		func(raw string) (string, error) { return harness.ValidateApprovalPolicy(h, raw) })
+	landingApproval, _, fail := resolveLaunchValueField(h, landing.tiers, launchValueApproval)
 	if fail != nil {
 		return unjudged()
 	}
@@ -1502,9 +1500,7 @@ func receiverApprovalDrops(p spawnProfileJSON, h *harness.Harness, group, profil
 	if fail != nil {
 		return unjudged()
 	}
-	landingTools, _, _, fail := resolveStringLaunchField("tools", "", h.Name, landing.tiers,
-		func(tier *db.SpawnProfile) string { return tier.ToolGovernance },
-		func(raw string) (string, error) { return harness.ValidateToolGovernance(h, raw) })
+	landingTools, _, fail := resolveLaunchValueField(h, landing.tiers, launchValueTools)
 	if fail != nil {
 		return unjudged()
 	}

@@ -3995,13 +3995,20 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
-	var modelProxyNote string
-	var modelProxyFail *spawnFailure
-	body.ModelProxy, _, modelProxyNote, modelProxyFail = resolveStringLaunchField("model_proxy", body.ModelProxy, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.ModelProxy }, validateLaunchModelProxy(h))
-	if modelProxyFail != nil {
-		writeError(w, modelProxyFail.Status, modelProxyFail.Kind, modelProxyFail.Msg)
+	// The string/int launch value fields ride one table
+	// (launch_value_fields.go). The model proxy is resolved on its own first so
+	// its permission gate still refuses before any other field is judged.
+	launchValues := launchValueResolution{Values: launchValueFields{
+		ModelProxy: body.ModelProxy, Model: body.Model, Effort: body.Effort,
+		Sandbox: body.HarnessBuiltinMode, Approval: body.ApprovalPolicy, Tools: body.ToolGovernance,
+		AskUserQuestionTimeout: body.AskUserQuestionTimeout, AutoCompactWindow: body.AutoCompactWindow,
+		ContextWindowMax: body.ContextWindowMax,
+	}}
+	if fail := resolveLaunchValueFields(h, profileTiers, &launchValues, launchValueOptions{}, launchValueModelProxy); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	body.ModelProxy = launchValues.Values.ModelProxy
 	if body.ModelProxy != "" && body.ModelProxy != "off" && spawnerConvID != "" {
 		peer, name, err := resolveModelProxyReference(body.ModelProxy)
 		if err != nil {
@@ -4026,14 +4033,31 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return "", fmt.Errorf("model %q is not valid for %s; pass --harness %s or a matching --model: %w",
 			strings.TrimSpace(raw), h.Name, other, err)
 	}
-	var fieldFail *spawnFailure
-	var modelSource, modelNote, effortSource, effortNote string
-	body.Model, modelSource, modelNote, fieldFail = resolveStringLaunchField(
-		modelField, body.Model, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Model }, validateModel)
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+	if fail := resolveLaunchValueFields(h, profileTiers, &launchValues, launchValueOptions{validateModel: validateModel},
+		allLaunchValueFields[launchValueModel:]...); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	resolvedValues := launchValues.Values
+	body.Model, body.Effort = resolvedValues.Model, resolvedValues.Effort
+	body.HarnessBuiltinMode, body.ApprovalPolicy, body.ToolGovernance = resolvedValues.Sandbox, resolvedValues.Approval, resolvedValues.Tools
+	body.AskUserQuestionTimeout, body.AutoCompactWindow = resolvedValues.AskUserQuestionTimeout, resolvedValues.AutoCompactWindow
+	body.ContextWindowMax = resolvedValues.ContextWindowMax
+	modelProxyNote := launchValues.Note[launchValueModelProxy]
+	modelSource, modelNote := launchValues.Source[launchValueModel], launchValues.Note[launchValueModel]
+	effortSource, effortNote := launchValues.Source[launchValueEffort], launchValues.Note[launchValueEffort]
+	// The tier that chose the sandbox is kept, not discarded: it is the only
+	// party that can say a global/group default profile forced the containment,
+	// and the badge would otherwise credit "this launch" — i.e. the operator.
+	sandboxSource, sandboxNote := launchValues.Source[launchValueSandbox], launchValues.Note[launchValueSandbox]
+	approvalNote := launchValues.Note[launchValueApproval]
+	toolsNote := launchValues.Note[launchValueTools]
+	askTimeoutNote := launchValues.Note[launchValueAskUserQuestionTimeout]
+	autoCompactWindowNote := launchValues.Note[launchValueAutoCompactWindow]
+	contextWindowMaxSource := launchValues.Source[launchValueContextWindowMax]
+	contextWindowMaxNote := launchValues.Note[launchValueContextWindowMax]
+	// Fast mode is a bool-family field, resolved after the value fields.
+	var fieldFail *spawnFailure
 	var fastMode, fastModeSet bool
 	var fastModeNote, fastModeSource string
 	requestedFastMode := strings.TrimSpace(body.FastMode)
@@ -4060,70 +4084,6 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 				return v, err
 			})
 	}
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
-		return
-	}
-	body.Effort, effortSource, effortNote, fieldFail = resolveStringLaunchField(
-		effortField, body.Effort, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Effort }, h.Models.ValidateEffort)
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
-		return
-	}
-	var sandboxNote, approvalNote, toolsNote, askTimeoutNote string
-	// The tier that chose the sandbox is kept, not discarded: it is the only
-	// party that can say a global/group default profile forced the containment,
-	// and the badge would otherwise credit "this launch" — i.e. the operator.
-	var sandboxSource string
-	body.HarnessBuiltinMode, sandboxSource, sandboxNote, fieldFail = resolveStringLaunchField(
-		"sandbox", body.HarnessBuiltinMode, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Sandbox },
-		func(raw string) (string, error) { return harness.ValidateHarnessBuiltinMode(h, raw) })
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
-		return
-	}
-	body.ApprovalPolicy, _, approvalNote, fieldFail = resolveStringLaunchField(
-		"approval", body.ApprovalPolicy, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Approval },
-		func(raw string) (string, error) { return harness.ValidateApprovalPolicy(h, raw) })
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
-		return
-	}
-	body.ToolGovernance, _, toolsNote, fieldFail = resolveStringLaunchField(
-		"tools", body.ToolGovernance, h.Name, profileTiers,
-		func(p *db.SpawnProfile) string { return p.ToolGovernance },
-		func(raw string) (string, error) { return harness.ValidateToolGovernance(h, raw) })
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
-		return
-	}
-	body.AskUserQuestionTimeout, _, askTimeoutNote, fieldFail = resolveStringLaunchField(
-		"ask_user_question_timeout", body.AskUserQuestionTimeout, h.Name, profileTiers,
-		func(p *db.SpawnProfile) string { return p.AskUserQuestionTimeout },
-		func(raw string) (string, error) { return harness.ResolveAskTimeoutMode(h, raw) })
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
-		return
-	}
-	// The auto-compaction window rides the same tier stack as effort. The
-	// validator both gates it on the harness and NORMALIZES the spelling, so a
-	// profile saved as "450k" and a spawn body carrying "450000" resolve to the
-	// same canonical value before anything downstream compares them.
-	var autoCompactWindowNote string
-	body.AutoCompactWindow, _, autoCompactWindowNote, fieldFail = resolveStringLaunchField(
-		"auto_compact_window", body.AutoCompactWindow, h.Name, profileTiers,
-		func(p *db.SpawnProfile) string { return p.AutoCompactWindow },
-		func(raw string) (string, error) { return harness.ResolveAutoCompactWindow(h, raw) })
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
-		return
-	}
-	var contextWindowMaxNote string
-	var contextWindowMaxSource string
-	body.ContextWindowMax, contextWindowMaxSource, contextWindowMaxNote, fieldFail = resolveIntLaunchField(
-		contextWindowMaxField, body.ContextWindowMax, h.Name, profileTiers,
-		func(p *db.SpawnProfile) int64 { return p.ContextWindowMax },
-		func(value int64) (int64, error) { return harness.ResolveCopilotContextWindow(h, value) })
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
@@ -6779,68 +6739,24 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 		}
 		fieldNote = ""
 	}
-	p.ModelProxy, _, fieldNote, fail = resolveStringLaunchField("model_proxy", p.ModelProxy, h.Name, tiers, func(prof *db.SpawnProfile) string { return prof.ModelProxy }, validateLaunchModelProxy(h))
-	if fail != nil {
+	launchValues := launchValueResolution{Values: launchValueFields{
+		ModelProxy: p.ModelProxy, Model: p.Model, Effort: p.Effort,
+		Sandbox: p.HarnessBuiltinMode, Approval: p.ApprovalPolicy, Tools: p.ToolGovernance,
+		AskUserQuestionTimeout: p.AskUserQuestionTimeout, AutoCompactWindow: p.AutoCompactWindow,
+		ContextWindowMax: p.ContextWindowMax,
+	}}
+	if fail := resolveLaunchValueFields(h, tiers, &launchValues, launchValueOptions{}); fail != nil {
 		return fail
 	}
-	noteLaunch()
-	p.Model, fieldSource, fieldNote, fail = resolveStringLaunchField(modelField, p.Model, h.Name, tiers,
-		func(prof *db.SpawnProfile) string { return prof.Model }, h.Models.ValidateModel)
-	if fail != nil {
-		return fail
-	}
-	noteLaunch()
-	p.ModelSource = preferResolvedSource(p.ModelSource, fieldSource)
-	p.Effort, fieldSource, fieldNote, fail = resolveStringLaunchField(effortField, p.Effort, h.Name, tiers,
-		func(prof *db.SpawnProfile) string { return prof.Effort }, h.Models.ValidateEffort)
-	if fail != nil {
-		return fail
-	}
-	noteLaunch()
-	p.EffortSource = preferResolvedSource(p.EffortSource, fieldSource)
-	p.HarnessBuiltinMode, _, fieldNote, fail = resolveStringLaunchField("sandbox", p.HarnessBuiltinMode, h.Name, tiers,
-		func(prof *db.SpawnProfile) string { return prof.Sandbox },
-		func(raw string) (string, error) { return harness.ValidateHarnessBuiltinMode(h, raw) })
-	if fail != nil {
-		return fail
-	}
-	noteLaunch()
-	p.ApprovalPolicy, _, fieldNote, fail = resolveStringLaunchField("approval", p.ApprovalPolicy, h.Name, tiers,
-		func(prof *db.SpawnProfile) string { return prof.Approval },
-		func(raw string) (string, error) { return harness.ValidateApprovalPolicy(h, raw) })
-	if fail != nil {
-		return fail
-	}
-	noteLaunch()
-	p.ToolGovernance, _, fieldNote, fail = resolveStringLaunchField("tools", p.ToolGovernance, h.Name, tiers,
-		func(prof *db.SpawnProfile) string { return prof.ToolGovernance },
-		func(raw string) (string, error) { return harness.ValidateToolGovernance(h, raw) })
-	if fail != nil {
-		return fail
-	}
-	noteLaunch()
-	p.AskUserQuestionTimeout, _, fieldNote, fail = resolveStringLaunchField("ask_user_question_timeout", p.AskUserQuestionTimeout, h.Name, tiers,
-		func(prof *db.SpawnProfile) string { return prof.AskUserQuestionTimeout },
-		func(raw string) (string, error) { return harness.ResolveAskTimeoutMode(h, raw) })
-	if fail != nil {
-		return fail
-	}
-	noteLaunch()
-	p.AutoCompactWindow, _, fieldNote, fail = resolveStringLaunchField("auto_compact_window", p.AutoCompactWindow, h.Name, tiers,
-		func(prof *db.SpawnProfile) string { return prof.AutoCompactWindow },
-		func(raw string) (string, error) { return harness.ResolveAutoCompactWindow(h, raw) })
-	if fail != nil {
-		return fail
-	}
-	noteLaunch()
-	p.ContextWindowMax, fieldSource, fieldNote, fail = resolveIntLaunchField(contextWindowMaxField, p.ContextWindowMax, h.Name, tiers,
-		func(prof *db.SpawnProfile) int64 { return prof.ContextWindowMax },
-		func(raw int64) (int64, error) { return harness.ResolveCopilotContextWindow(h, raw) })
-	if fail != nil {
-		return fail
-	}
-	noteLaunch()
-	p.ContextWindowMaxSource = preferResolvedSource(p.ContextWindowMaxSource, fieldSource)
+	resolvedValues := launchValues.Values
+	p.ModelProxy, p.Model, p.Effort = resolvedValues.ModelProxy, resolvedValues.Model, resolvedValues.Effort
+	p.HarnessBuiltinMode, p.ApprovalPolicy, p.ToolGovernance = resolvedValues.Sandbox, resolvedValues.Approval, resolvedValues.Tools
+	p.AskUserQuestionTimeout, p.AutoCompactWindow = resolvedValues.AskUserQuestionTimeout, resolvedValues.AutoCompactWindow
+	p.ContextWindowMax = resolvedValues.ContextWindowMax
+	p.LaunchNotes = append(p.LaunchNotes, launchValues.Notes()...)
+	p.ModelSource = preferResolvedSource(p.ModelSource, launchValues.Source[launchValueModel])
+	p.EffortSource = preferResolvedSource(p.EffortSource, launchValues.Source[launchValueEffort])
+	p.ContextWindowMaxSource = preferResolvedSource(p.ContextWindowMaxSource, launchValues.Source[launchValueContextWindowMax])
 	if strings.TrimSpace(p.ProfileContext) == "" {
 		p.ProfileContext, fieldNote = resolveProfileStartupContext(h.Name, tiers)
 		noteLaunch()

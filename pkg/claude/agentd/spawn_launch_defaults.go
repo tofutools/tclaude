@@ -132,11 +132,7 @@ func resolveLaunchDefaults(
 		return launchDefaults{}, nil, err
 	}
 
-	requestedSandbox, sandboxSource, _, fail := resolveStringLaunchField(
-		"sandbox", "", resolvedHarness.Name, tiers,
-		func(profile *db.SpawnProfile) string { return profile.Sandbox },
-		func(raw string) (string, error) { return harness.ValidateHarnessBuiltinMode(resolvedHarness, raw) },
-	)
+	requestedSandbox, sandboxSource, fail := resolveLaunchValueField(resolvedHarness, tiers, launchValueSandbox)
 	if fail != nil {
 		return launchDefaults{}, fail, nil
 	}
