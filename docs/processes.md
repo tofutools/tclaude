@@ -387,7 +387,7 @@ same draft (saved first) in the full graph editor, which also edits parallel,
 wait and subprocess nodes. With Collab on it opens in an overlay window over
 Groups, so it can sit beside a *Get help* chat; its *Open in the Processes
 tab* and *Open in the Collab tab* still move it there. With Collab off it
-opens in Automations › Processes; *Save new version* writes it against the
+opens in Automations › Processes. *Save new version* writes it against the
 version it was opened at. A process the step list cannot
 show (parallel, wait or subprocess nodes) opens in the graph editor instead.
 

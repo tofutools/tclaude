@@ -128,9 +128,17 @@ export function openProcessOverlay(id, label = '', { view = null, readable = fal
     return true;
   }
   const docked = processEditorHost.peek()?.release?.(id) || null;
-  if (docked) {
+  if (docked && (editorDirty(docked.editor) || !view)) {
+    // Unsaved edits there move here as they are; a newer save shows as the
+    // head-review banner, as for any editor that falls behind.
     floatProcessEditor({ id, label: label || docked.label, editor: docked.editor });
   } else {
+    // A clean one is behind the version just handed here: it goes, and the
+    // overlay's editor opens on that version.
+    if (docked) {
+      docked.mount?.remove();
+      docked.editor.destroy?.();
+    }
     if (view) seeds.set(id, { view, readable });
     openOverlayWindow({ id: processWindowId(id), kind: PROCESS_WINDOW_KIND, template: id, label: label || id });
   }
@@ -222,6 +230,9 @@ export function floatHandoff(id, label, handoff) {
 // reload, in a mount it puts in slot first. A tab shown twice while that loads
 // gets the one editor.
 export function openFloatingEditor(id, label, slot) {
+  // A seed is for the next editor of this template only, taken or not.
+  const seed = seeds.get(id) || {};
+  seeds.delete(id);
   if (floating.has(id)) return Promise.resolve(floating.get(id));
   if (opening.has(id)) return opening.get(id);
   const host = processEditorHost.peek();
@@ -230,8 +241,6 @@ export function openFloatingEditor(id, label, slot) {
   slot.appendChild(mount);
   const back = handoffs.get(id) || null;
   handoffs.delete(id);
-  const seed = seeds.get(id) || {};
-  seeds.delete(id);
   const pending = Promise.resolve(host.open(mount, id, label, back?.handoff || null, seed)).then((editor) => {
     opening.delete(id);
     back?.settle(!!editor);

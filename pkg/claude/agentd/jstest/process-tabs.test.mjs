@@ -316,10 +316,22 @@ test('the Groups full editor opens in an overlay window over the tab, on the ver
   assert.equal(place.floatingProcessEditor('release-train').editor, docked);
   assert.equal(processes.opened.length, 1, 'no second editor opens');
 
+  // A clean one there is behind the version just saved on Groups: it goes, and
+  // the overlay opens on that version.
+  const cleanMount = place.processEditorMount(harness.document);
+  const clean = { mount: cleanMount, model: { dirty: false, template: { id: 'review' } }, destroyed: 0, destroy() { this.destroyed += 1; } };
+  processes.held = { mount: cleanMount, editor: clean, label: 'Code review' };
+  const saved = { template: { id: 'review', name: 'Code review' }, currentRef: 'review@sha256:2', sourceHash: 's2' };
+  await harness.act(async () => { await openProcessDraft({ id: 'review', name: 'Code review', view: saved }); await wait(10); });
+  assert.equal(clean.destroyed, 1, 'the stale clean editor goes');
+  const reviewSlot = harness.document.body.appendChild(harness.document.createElement('div'));
+  await harness.act(async () => { await place.openFloatingEditor('review', 'Code review', reviewSlot); });
+  assert.deepEqual(processes.opened.at(-1).seed, { view: saved, readable: true }, 'the overlay opens on the saved version');
+
   // Without overlay windows it goes to the Processes tab as before.
   instances.overlayHostUp.value = false;
-  await harness.act(async () => { where = await openProcessDraft({ id: 'review', name: 'Code review', view }); await wait(); });
+  await harness.act(async () => { where = await openProcessDraft({ id: 'night-shift', name: 'Night shift', view }); await wait(); });
   assert.equal(where, 'processes');
-  assert.deepEqual(takeProcessDraft(), { id: 'review', name: 'Code review', view });
+  assert.deepEqual(takeProcessDraft(), { id: 'night-shift', name: 'Night shift', view });
   env.stop();
 });
