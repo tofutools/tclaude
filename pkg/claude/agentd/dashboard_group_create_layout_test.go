@@ -7,14 +7,15 @@ import (
 
 // TestDashboardGroupCreate_AttachmentFieldsAreLast pins the shared form order
 // used by blank, group, template, and clone creation in both visual themes.
+// The error slot and footer follow the body; Dialog renders them after its
+// children (jstest/ui-dialog-component.test.mjs).
 func TestDashboardGroupCreate_AttachmentFieldsAreLast(t *testing.T) {
 	island := dashboardAssetFile(t, "js/group-create-island.js")
 	anchors := []string{
 		`id="group-create-max-members-row"`,
 		`id="group-create-attachment-url"`,
 		`id="group-create-attachment-label"`,
-		`id="group-create-error"`,
-		`class="modal-buttons"`,
+		"</${Dialog}>",
 	}
 
 	previous := -1

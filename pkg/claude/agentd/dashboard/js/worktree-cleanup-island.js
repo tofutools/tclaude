@@ -2,7 +2,7 @@ import { h, render } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { registerWorktreeCleanupController } from './worktree-cleanup-controller.js';
 import {
   WORKTREE_CATEGORIES,
@@ -314,21 +314,20 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
   else if (selectedStaleRecords) actionCore = `Prune ${pruneCopy}`;
   const actionCopy = `${retrying ? 'Retry ' : ''}${actionCore}`;
 
-  return html`<${Overlay}
+  return html`<${Dialog}
     id="worktree-cleanup-modal"
     dialogClass="cleanup-modal"
-    labelledby="worktree-cleanup-title"
-    onClose=${close}
-    blocked=${closeBlocked}
-  >
-    <h3 id="worktree-cleanup-title"><${Words}
+    title=${html`<${Words}
       plain=${allGroups
         ? 'Clean up worktrees across all groups'
         : `Clean up worktrees in group "${descriptor.group}"`}
       wizard=${allGroups
         ? 'Prune stray branches across all parties'
         : `Clean up worktrees in party "${descriptor.group}"`}
-    /></h3>
+    />`}
+    onClose=${close}
+    blocked=${closeBlocked}
+  >
     ${result ? html`
       <p class="cleanup-hint ui-hint" id="worktree-cleanup-hint">${worktreeCleanupSummary(result)}</p>
       <${CleanupOutcomeList} response=${result} />
@@ -447,7 +446,7 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
         </${Button}>
       </div>
     `}
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 export function WorktreeCleanupApp({ state, actions }) {

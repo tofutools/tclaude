@@ -4,7 +4,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { holdsMoreThanSteward, loadStewardHandover } from './steward-roster.js';
 
 const html = htm.bind(h);
@@ -30,7 +30,6 @@ function Slugs({ label, slugs, warn = false }) {
 }
 
 export function StewardHandoverDialog({ descriptor, actions }) {
-  const { requestClose, registerClose } = useGuardedOverlayClose();
   const [preview, setPreview] = useState(null);
   const [then, setThen] = useState('roster');
   const [busy, setBusy] = useState(false);
@@ -60,10 +59,11 @@ export function StewardHandoverDialog({ descriptor, actions }) {
   };
   const name = preview?.name || descriptor.label || 'this agent';
   const previous = preview?.previous;
-  return html`<${Overlay} id="steward-handover-modal" labelledby="steward-handover-title"
-    onClose=${() => actions.close(descriptor)} onSubmitHotkey=${submit} blocked=${busy} registerClose=${registerClose}
-    resizeKey="tclaude.dash.modalSize.steward-handover">
-    <h3 id="steward-handover-title">Make ${name} the Steward</h3>
+  return html`<${Dialog} id="steward-handover-modal" title=${`Make ${name} the Steward`}
+    onClose=${() => actions.close(descriptor)} onSubmitHotkey=${submit} busy=${busy}
+    resizeKey="tclaude.dash.modalSize.steward-handover"
+    cancel="Cancel"
+    footer=${html`<${Button} variant="primary" id="steward-handover-submit" disabled=${!preview || !!blocked || busy} onClick=${submit}>${busy ? 'Handing over…' : 'Make Steward'}</${Button}>`}>
     <div class="modal-meta">It keeps its conversation, working directory and groups${preview?.harness ? `, and stays on ${preview.harness}` : ''}.</div>
     ${!preview && !error && html`<p class="modal-hint ui-hint">Reading its access…</p>`}
     ${blocked && html`<p class="steward-handover-line warn" role="alert">${blocked}</p>`}
@@ -84,10 +84,5 @@ export function StewardHandoverDialog({ descriptor, actions }) {
         ${then !== 'retire' && html`<${Folded} label="Loses" slugs=${previous.loses} /><${Folded} label="Keeps" slugs=${previous.keeps} />`}
       </fieldset>`}`}
     ${error && html`<p class="steward-handover-line warn" role="alert">${error}</p>`}
-    <div class="modal-buttons">
-      <${Button} id="steward-handover-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
-      <span class="spacer"></span>
-      <${Button} variant="primary" id="steward-handover-submit" disabled=${!preview || !!blocked || busy} onClick=${submit}>${busy ? 'Handing over…' : 'Make Steward'}</${Button}>
-    </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
