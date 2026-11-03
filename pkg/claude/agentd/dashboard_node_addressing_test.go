@@ -27,7 +27,7 @@ var bareAPIFetchBaseline = map[string]int{
 	"agent-jump.js":         1,
 	"pr-checks-hover.js":    1,
 	"pr-link-hover.js":      1,
-	"process-editor.js":     3,
+	"process-editor.js":     2,
 	"profiles.js":           1,
 	"refresh.js":            1,
 	"remote-admin.js":       1,
