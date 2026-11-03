@@ -594,8 +594,6 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         setStarting(false);
         setQuick(edit.mode === 'graph' ? { ...edit, stored: edit.view, key: Date.now() } : { ...edit, key: Date.now() });
       }} />`}
-    ${fused && html`<${GroupResources} group=${group} boards=${entry?.boards || []} pages=${entry?.pages || []} api=${api} source=${source}
-      notify=${notify || defaultNotify} nameOf=${nameOf} />`}
     ${starting && html`<${StartRunForm} key=${starting.scope || 'group'} group=${group} api=${api} source=${source} wizard=${wizard}
       members=${starting.scope === 'agent' ? members : null} onBuild=${() => { setStarting(false); setQuick('pick'); }}
       initialTemplateId=${starting?.templateId || ''} scribes=${scribes} onClose=${() => setStarting(false)}
@@ -610,7 +608,9 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     ${planned.length > 0 && html`<div class="gp-planned-list">${planned.map((item) => html`<${PlannedRow} key=${item.id} item=${item} wizard=${wizard} />`)}</div>`}
     ${!runs.length && !planned.length && !memberRuns.length && !fresh && html`<div class="gp-empty ui-empty">${!label
       ? (wizard ? 'No rites in this party yet.' : 'No processes in this group yet.')
-      : `No ${label} ${wizard ? 'rites' : 'processes'}.`}</div>`}`;
+      : `No ${label} ${wizard ? 'rites' : 'processes'}.`}</div>`}
+    ${fused && html`<${GroupResources} group=${group} boards=${entry?.boards || []} pages=${entry?.pages || []} api=${api} source=${source}
+      notify=${notify || defaultNotify} nameOf=${nameOf} />`}`;
   if (fused) {
     const shown = runs.length > 0 || planned.length > 0 || memberRuns.length > 0
       || (entry?.boards || []).length > 0 || (entry?.pages || []).length > 0;
