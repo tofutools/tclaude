@@ -430,7 +430,10 @@ func launchSpawnQueueHead(e *db.SpawnQueueEntry) bool {
 		// only while the queue's own check agrees there is no room. A gate
 		// refusal the head check cannot see would otherwise hold the head of
 		// the queue, and every entry behind it, without saying why; that one
-		// fails visibly with the gate's reason instead.
+		// fails visibly with the gate's reason instead. Accepted trade-off: a
+		// condition that flips twice within one replay (free RAM at the
+		// threshold, a transient capacity read error) fails the entry rather
+		// than keeping its place; failing is visible, a stalled head is not.
 		limits, err := nodeCapacityLimits()
 		if started, _ := spawnQueueLaunchStarted(reserved); !started && (err != nil || spawnQueueHeadFull(e, g, limits)) {
 			_, _ = db.RequeueSpawnQueueEntry(e.ID)
