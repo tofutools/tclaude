@@ -18555,12 +18555,12 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
 @media (max-width: 640px) {
   .usage-fleet-nodes th:nth-child(2), .usage-fleet-nodes td:nth-child(2), .usage-fleet-nodes th:nth-child(3), .usage-fleet-nodes td:nth-child(3) { display: none; }
 }
-.usage-rules-modal input:not([type=checkbox]), .usage-rules-modal select {
+.usage-rules-modal input:not([type=checkbox]), .usage-rules-modal select:where(:not(.ui-select)) {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
   padding: 4px 8px; font-size: 12px; color: #c9d1d9; font-family: inherit; min-width: 0;
 }
-.usage-rules-modal input:not([type=checkbox]):focus, .usage-rules-modal select:focus { outline: none; border-color: #58a6ff; }
-.usage-rules-modal input:disabled, .usage-rules-modal select:disabled { opacity: .6; }
+.usage-rules-modal input:not([type=checkbox]):focus, .usage-rules-modal select:where(:not(.ui-select)):focus { outline: none; border-color: #58a6ff; }
+.usage-rules-modal input:disabled, .usage-rules-modal select:where(:not(.ui-select)):disabled { opacity: .6; }
 
 /* Usage tab: the limits strip under the overview. */
 .ui-btn.usage-limits-manage { letter-spacing: 0; text-transform: none; }

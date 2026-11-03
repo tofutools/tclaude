@@ -8,7 +8,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { MovePanel, dropPlan, moveProgress, MOVE_POLL_MS, openFleetPage } from './fleet-move-drop.js';
 import { shellToast } from './shell-state.js';
@@ -230,10 +230,10 @@ function GroupPicker({ groups, value, onChange, idPrefix, disabled }) {
   // A dropped group the catalog does not list stays as typed text, so what
   // is shown is what is sent.
   if (groups.length && !typed && (!value || groups.includes(value))) {
-    return html`<select id=${`${idPrefix}-group`} value=${value} disabled=${disabled} onChange=${(e) => { if (e.currentTarget.value === '\u0000other') { setTyped(true); onChange(''); } else onChange(e.currentTarget.value); }}>
+    return html`<${Select} size="sm" id=${`${idPrefix}-group`} value=${value} disabled=${disabled} onChange=${(e) => { if (e.currentTarget.value === '\u0000other') { setTyped(true); onChange(''); } else onChange(e.currentTarget.value); }}>
       <option value="">pick a receiving group…</option>
       ${groups.map((g) => html`<option key=${g} value=${g} selected=${value === g}>${g}</option>`)}
-      <option value=${'\u0000other'}>another group (type its name)…</option></select>`;
+      <option value=${'\u0000other'}>another group (type its name)…</option><//>`;
   }
   return html`<input id=${`${idPrefix}-group`} value=${value} disabled=${disabled} placeholder="receiving group there (it must grant agents.receive)" autocomplete="off" onInput=${(e) => onChange(e.currentTarget.value)} />`;
 }
@@ -329,9 +329,9 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
     ${(waiting || preview?.history?.needs_summary || preview?.history?.needs_handoff) && html`<label key="loss-fallback" class="lt-check"><input id="lt-proceed-without-summary" type="checkbox" checked=${proceedWithoutSummary} onChange=${(e) => setProceedWithoutSummary(e.currentTarget.checked)} /> Source cannot answer (for example, provider outage): continue with readable history and the full-transcript pointer. Earlier context may be lost.</label>`}
     ${waiting && html`<${Button} size="sm" id="lt-proceed-loss" disabled=${!proceedWithoutSummary || busy || !(profile || waiting.target?.profile)} onClick=${continueWithoutSummary}>Continue now without a summary<//>`}
     <label class="lt-row"><span class="lt-k">Stays on</span><span class="muted">this node · ${agent.group || 'its groups'}</span></label>
-    <label class="lt-row"><span class="lt-k">Profile</span>${profiles === null ? html`<span class="muted">loading…</span>` : html`<select id="lt-morph-profile" value=${profile} disabled=${busy || !!waiting} onChange=${(e) => { setConfirmCut(false); setProceedWithoutSummary(false); setProfile(e.currentTarget.value); }}>
+    <label class="lt-row"><span class="lt-k">Profile</span>${profiles === null ? html`<span class="muted">loading…</span>` : html`<${Select} size="sm" id="lt-morph-profile" value=${profile} disabled=${busy || !!waiting} onChange=${(e) => { setConfirmCut(false); setProceedWithoutSummary(false); setProfile(e.currentTarget.value); }}>
       <option value="">pick a spawn profile…</option>
-      ${profiles.map((p) => html`<option key=${p.name} value=${p.name}>${p.name}${p.harness || p.model ? ` — ${[p.harness, p.model, p.effort && `effort ${p.effort}`].filter(Boolean).join(' · ')}` : ''}</option>`)}</select>`}</label>
+      ${profiles.map((p) => html`<option key=${p.name} value=${p.name}>${p.name}${p.harness || p.model ? ` — ${[p.harness, p.model, p.effort && `effort ${p.effort}`].filter(Boolean).join(' · ')}` : ''}</option>`)}<//>`}</label>
     ${preview && html`<div class="lt-morph-preview"><div><span class="lt-k">was</span> ${formLine(preview.before)}</div><div><span class="lt-k">now</span> ${formLine(preview.after)}</div></div>`}
     ${preview?.history?.needs_handoff && html`<div role="status">Compaction summary unreadable. Ask ${agent.name} for a handoff, carried beside its readable tail. If the source cannot answer, explicitly confirm readable-history-only continuation below.</div>`}
     ${preview?.history?.budget_warning && html`<div role="status">${preview.history.kept_percent}% kept · ${preview.history.dropped_percent}% dropped from inline history. ${preview.history.selection_reason}</div>`}
@@ -477,9 +477,9 @@ function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, o
         ? `Sends a copy of ${agent.name} with its full conversation history (it may hold code or pasted secrets) to ${target.group} on ${dest}. The original keeps running ${from}.`
         : `Sends ${agent.name} with its full conversation history (it may hold code or pasted secrets) to ${target.group} on ${dest}. It leaves at once: it keeps running ${from} until its copy runs ${pullActions ? 'here' : 'there'}, then stops ${pullActions ? 'there' : 'here'}; its groups keep a placeholder row.`}</p>
       ${accessOptions && html`<label class="lt-row" title="Whose provider account the agent's model calls use where it lands: that node's own login, or a model gateway. Your own gateway is paid by you through a lease."><span class="lt-k">Model access</span>
-        <select id="lt-model-access" value=${accessPick} disabled=${phase !== 'confirm'} onChange=${(e) => setAccess(e.currentTarget.value)}>
+        <${Select} size="sm" id="lt-model-access" value=${accessPick} disabled=${phase !== 'confirm'} onChange=${(e) => setAccess(e.currentTarget.value)}>
           ${accessOptions.map((o) => html`<option key=${o.value} value=${o.value} disabled=${!!o.reason} title=${o.reason}>${o.label}${o.reason ? ` — ${o.reason}` : ''}</option>`)}
-        </select></label>`}
+        <//></label>`}
       ${viaPeer ? '' : html`<label class="lt-row"><span class="lt-k">Note</span><textarea id="lt-note" rows="2" placeholder="Optional: told to the agent on arrival" value=${note} onInput=${(e) => setNote(e.currentTarget.value)}></textarea></label>`}`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons"><span class="spacer"></span>

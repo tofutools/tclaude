@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { usageRulesApi, usageRulesApiFor } from './usage-rules-actions.js';
 import { FleetLimitEditor, FleetTab } from './usage-fleet.js';
@@ -44,10 +44,10 @@ function StepRow({ step, scope, disabled, onChange, onRemove }) {
   return html`<div class="usage-step-row">
     <label class="usage-step-at">at <input type="number" min="1" max="1000" step="1" value=${step.at} disabled=${disabled}
       aria-label="Step threshold percent" onInput=${(e) => set({ at: e.currentTarget.value })}/>%</label>
-    <select aria-label="Step action" value=${step.action} disabled=${disabled}
+    <${Select} size="sm" aria-label="Step action" value=${step.action} disabled=${disabled}
       onChange=${(e) => set({ action: e.currentTarget.value, notify: e.currentTarget.value === 'notify' ? (step.notify.length ? step.notify : ['operator']) : [] })}>
       ${actionsFor(scope).map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}
-    </select>
+    <//>
     ${notify ? html`<span class="usage-step-targets">
       <label><input type="checkbox" checked=${step.notify.includes('operator')} disabled=${disabled} onChange=${() => toggle('operator')}/> operator</label>
       <label title=${scope === 'agent' ? 'The agent itself' : 'Every active agent in scope'}><input type="checkbox" checked=${step.notify.includes('agent')} disabled=${disabled} onChange=${() => toggle('agent')}/> ${scope === 'agent' ? 'agent' : 'agents'}</label>
@@ -69,20 +69,20 @@ function RuleEditor({ draft, scope, windows, disabled, onChange }) {
     <div class="usage-rule-fields">
       <label>Name <input value=${draft.name} disabled=${disabled} maxlength="64" placeholder="e.g. Monthly spend"
         aria-label="Rule name" onInput=${(e) => set({ name: e.currentTarget.value })}/></label>
-      <label>Measure <select aria-label="Metric" value=${draft.metric} disabled=${disabled}
+      <label>Measure <${Select} size="sm" aria-label="Metric" value=${draft.metric} disabled=${disabled}
         onChange=${(e) => {
           const metric = e.currentTarget.value;
           set(metric === 'window_pct'
             ? { metric, period: 'window', window: draft.window || windows[0] || DEFAULT_WINDOWS[0], budget: 100 }
             : { metric, period: periods.some((p) => p.id === draft.period) ? draft.period : periods[0].id });
-        }}>${metricsFor(scope).map((m) => html`<option key=${m.id} value=${m.id} title=${m.hint}>${m.label}</option>`)}</select></label>
+        }}>${metricsFor(scope).map((m) => html`<option key=${m.id} value=${m.id} title=${m.hint}>${m.label}</option>`)}<//></label>
       ${windowPct ? html`<label>Window <input list="usage-rule-windows" value=${draft.window} disabled=${disabled}
           aria-label="Quota window" placeholder="anthropic:five_hour" onInput=${(e) => set({ window: e.currentTarget.value })}/>
         <datalist id="usage-rule-windows">${[...new Set([...windows, ...DEFAULT_WINDOWS])].map((w) => html`<option key=${w} value=${w}/>`)}</datalist></label>`
     : html`<label>Budget $<input type="number" min="0.01" step="0.01" value=${draft.budget} disabled=${disabled}
           aria-label="Budget USD" onInput=${(e) => set({ budget: e.currentTarget.value })}/></label>
-        <label>Period <select aria-label="Period" value=${draft.period} disabled=${disabled}
-          onChange=${(e) => set({ period: e.currentTarget.value })}>${periods.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}</select></label>`}
+        <label>Period <${Select} size="sm" aria-label="Period" value=${draft.period} disabled=${disabled}
+          onChange=${(e) => set({ period: e.currentTarget.value })}>${periods.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//></label>`}
       <label class="usage-rule-dry" title="Record and tell the operator what would happen, without messaging agents, stopping them or blocking spawns">
         <input type="checkbox" checked=${draft.dry_run} disabled=${disabled} onChange=${(e) => set({ dry_run: e.currentTarget.checked })}/> dry run</label>
     </div>
@@ -171,7 +171,7 @@ export function ProfileChips({ names, profiles, disabled, onChange, label, onNew
       <span class="role-chip-inspect">${name}</span>
       <button data-ui-exempt type="button" class="role-chip-remove" disabled=${disabled} aria-label=${`Remove ${name} from ${label}`}
         onClick=${() => onChange(names.filter((n) => n !== name))}>×</button></span>`)}
-    <select value="" disabled=${disabled || (!free.length && !onNew)} aria-label=${`Add usage profile to ${label}`}
+    <${Select} size="sm" value="" disabled=${disabled || (!free.length && !onNew)} aria-label=${`Add usage profile to ${label}`}
       onChange=${(e) => {
         const next = e.currentTarget.value; e.currentTarget.value = '';
         if (next === NEW_PROFILE) onNew();
@@ -180,7 +180,7 @@ export function ProfileChips({ names, profiles, disabled, onChange, label, onNew
       <option value="">${profiles.length ? '＋ add…' : 'no usage profiles yet'}</option>
       ${free.map((p) => html`<option key=${p.id} value=${p.name}>${p.name}</option>`)}
       ${onNew ? html`<option value=${NEW_PROFILE}>＋ new usage profile…</option>` : null}
-    </select>
+    <//>
   </span>`;
 }
 
@@ -211,10 +211,10 @@ function AssignmentsTab({ overview, busy, onAssign }) {
     <h4>Agents</h4>
     ${agentRows.map((id) => row('agent', id, agentTitle(overview, id) || id, agentTitle(overview, id) ? id : ''))}
     <div class="usage-assign-row">
-      <select aria-label="Agent to assign" value=${agentPick} disabled=${busy || !pickable.length} onChange=${(e) => setAgentPick(e.currentTarget.value)}>
+      <${Select} size="sm" aria-label="Agent to assign" value=${agentPick} disabled=${busy || !pickable.length} onChange=${(e) => setAgentPick(e.currentTarget.value)}>
         <option value="">${pickable.length ? 'Pick an agent…' : 'No other agents'}</option>
         ${pickable.map((a) => html`<option key=${a.id} value=${a.id}>${a.title || a.id}</option>`)}
-      </select>
+      <//>
       ${agentPick ? html`<${ProfileChips} names=${[]} profiles=${profiles} disabled=${busy} label=${agentTitle(overview, agentPick) || agentPick}
         onChange=${(next) => { setAgentPick(''); onAssign('agent', agentPick, next); }}/>` : null}
     </div>
@@ -298,7 +298,7 @@ function LimitEditor({ limit, overview, busy, onSave, onDelete, onCancel, onDirt
   return html`<div class="usage-rules-tab usage-editor" id="usage-limit-editor">
     <h4>${limit.id ? `Edit limit "${limit.rule.name}"` : 'New limit'}</h4>
     <div class="usage-rule-fields">
-      <label>Scope <select aria-label="Limit scope" value=${scope} disabled=${busy || !!limit.id}
+      <label>Scope <${Select} size="sm" aria-label="Limit scope" value=${scope} disabled=${busy || !!limit.id}
         onChange=${(e) => {
           const next = e.currentTarget.value;
           touch(setScope)(next);
@@ -307,9 +307,9 @@ function LimitEditor({ limit, overview, busy, onSave, onDelete, onCancel, onDirt
         }}>
         <option value="global">Global (whole instance)</option>
         <option value="group" disabled=${!(overview.groups || []).length}>Group</option>
-      </select></label>
-      ${scope === 'group' ? html`<label>Group <select aria-label="Limit group" value=${group} disabled=${busy || !!limit.id}
-        onChange=${(e) => touch(setGroup)(e.currentTarget.value)}>${(overview.groups || []).map((g) => html`<option key=${g} value=${g}>${g}</option>`)}</select></label>` : null}
+      <//></label>
+      ${scope === 'group' ? html`<label>Group <${Select} size="sm" aria-label="Limit group" value=${group} disabled=${busy || !!limit.id}
+        onChange=${(e) => touch(setGroup)(e.currentTarget.value)}>${(overview.groups || []).map((g) => html`<option key=${g} value=${g}>${g}</option>`)}<//></label>` : null}
       <label><input type="checkbox" checked=${enabled} disabled=${busy} onChange=${(e) => touch(setEnabled)(e.currentTarget.checked)}/> enabled</label>
     </div>
     <${RuleEditor} draft=${draft} scope=${scope} windows=${overview.windows || []} disabled=${busy}
