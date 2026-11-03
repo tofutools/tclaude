@@ -84,7 +84,7 @@ function leftIn(deadline) {
 }
 
 function statePill(text, cls, title = '') {
-  return html`<span class=${`link-state ${cls}`} title=${title}>${text}</span>`;
+  return html`<span class=${`ui-tag link-state ${cls}`} title=${title}>${text}</span>`;
 }
 
 function localState(link) {

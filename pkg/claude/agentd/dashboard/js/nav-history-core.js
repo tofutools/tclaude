@@ -42,7 +42,7 @@ export const DEFAULT_TAB = 'groups';
 // rather than an invalid tab, which keeps a stale/typo'd URL from breaking
 // navigation (AC #5).
 export const KNOWN_TABS = new Set([
-  'groups', 'terminals', 'boards', 'jobs', 'processes', 'plugins',
+  'groups', 'terminals', 'boards', 'collab-processes', 'jobs', 'processes', 'plugins',
   'access', 'messages', 'usage', 'diagnostics', 'config', 'vegas',
   'map',
   'fleet-admin',
@@ -124,9 +124,11 @@ export const SELECTABLE_SUBTABS = {
 //   - terminals/<agent-id> — the Terminals tab is viewing that agent's terminal.
 //   - messages/<folder> — the Messages tab has that folder open.
 //   - boards/<board-id> — that board's tab is active in the Terminals section.
+//   - collab-processes/<template-id> — that process template's editor is the
+//     active tab of the Collab strip; its path is /collab/processes/<id>.
 // These tabs must not also appear in KNOWN_SUBTABS: a tab cannot have both a
 // subtab and a tab-level selection, because both would claim segment two.
-export const SELECTABLE_TABS = new Set(['terminals', 'boards', 'messages']);
+export const SELECTABLE_TABS = new Set(['terminals', 'boards', 'collab-processes', 'messages']);
 
 // ITEM_TABS enumerates tab-level-selection tabs whose selection can itself
 // have one entry open, carried as `item` in the THIRD path segment:
@@ -395,7 +397,9 @@ export function toPath(loc) {
   }
   // Processes is presented as an Automations subtab, so its canonical route
   // nests under /automations; the internal tab id stays "processes".
-  const segs = l.tab === 'processes' ? ['automations', 'processes'] : [l.tab];
+  // A process editor in a Collab tab is /collab/processes/<id>.
+  const segs = l.tab === 'processes' ? ['automations', 'processes']
+    : l.tab === 'collab-processes' ? ['collab', 'processes'] : [l.tab];
   if (l.subtab) segs.push(l.subtab);
   if (l.selection) segs.push(encodeSegment(l.selection));
   if (l.item) segs.push(encodeSegment(l.item));
@@ -449,6 +453,9 @@ export function fromPath(pathname, search) {
   if (tab === 'automations' && second === 'processes') {
     [tab, second, third, fourth] = ['processes', third, parts[3], parts[4]];
   } else if (tab === 'automations') tab = 'jobs';
+  if (tab === 'collab' && second === 'processes') {
+    [tab, second, third] = ['collab-processes', third, fourth];
+  }
   // /fleet was the merged all-nodes view; it is now Groups with every node
   // fused (fleet-state.js reads the path for that), healed in place.
   if (tab === 'fleet') return defaultLocation();
@@ -470,7 +477,7 @@ export function fromPath(pathname, search) {
 // caller that must refuse a bad path asks this first: the two parse alike.
 export function isKnownPath(pathname) {
   const [first] = String(pathname || '').split(/[?#]/, 1)[0].split('/').filter(Boolean);
-  return first === undefined || first === 'dashboard' || first === 'automations' || first === 'fleet'
+  return first === undefined || first === 'dashboard' || first === 'automations' || first === 'fleet' || first === 'collab'
     || KNOWN_TABS.has(first) || Object.hasOwn(RENAMED_TABS, first) || Object.hasOwn(LEGACY_TAB_LOCATIONS, first);
 }
 

@@ -225,7 +225,7 @@ function HistoryLanding({ landing }) {
   const from = [landing.source_harness, landing.source_model].filter(Boolean).join(' · ');
   const to = [landing.harness, landing.model].filter(Boolean).join(' · ');
   return html`<div class="paf-box ui-card ui-inset" id="paf-history-landing">
-    <div><b>History:</b> <span class=${`paf-rung ${badge.cls}`} title=${badge.title}>${badge.text}</span> ${from}${to && to !== from ? ` → ${to}` : ''}</div>
+    <div><b>History:</b> <span class=${`ui-tag paf-rung ${badge.cls}`} title=${badge.title}>${badge.text}</span> ${from}${to && to !== from ? ` → ${to}` : ''}</div>
     ${landing.losses && html`<div class="paf-hint ui-hint">${lossSummary(landing.losses)}</div>`}
     ${landing.rung !== 'native' && html`<div class="paf-hint ui-hint">The full transcript stays readable with <code>tclaude paf render</code>.</div>`}
   </div>`;
@@ -390,7 +390,7 @@ export function MemberLandings({ landings, landing, setLanding, confirmCut, setC
           <td>${[row.source_harness, row.source_model].filter(Boolean).join(' · ')}</td>
           <td><${LandingSelects} idPrefix=${`group-import-member-${row.conv_id}`} harness=${choice.harness} model=${choice.model}
             onChange=${(patch) => setMember(key, patch)} sameLabel="(as above)" /></td>
-          <td><span class=${`paf-rung ${badge.cls}`} title=${badge.title}>${badge.text}</span>
+          <td><span class=${`ui-tag paf-rung ${badge.cls}`} title=${badge.title}>${badge.text}</span>
             ${row.losses && html`<div class="paf-hint ui-hint">${lossSummary(row.losses)}</div>`}
             ${(row.warnings || []).map((warning) => html`<div key=${warning} class="gi-warn">⚠ ${warning}</div>`)}</td>
           <td><${LandingPosture} posture=${row.posture} /></td>

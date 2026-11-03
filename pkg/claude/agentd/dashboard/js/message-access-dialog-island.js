@@ -450,7 +450,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
       <div class="cleanup-list" id="message-create-members">${members.length ? members.map((member) => html`<div class=${`cleanup-row${member.online ? '' : ' recipient-offline'}`} key=${member.key}><label>
         <input type="checkbox" data-conv=${member.conv_id} checked=${selectedKeys.has(member.key)}
           onChange=${(event) => toggleMember(member, event.currentTarget.checked)} />
-        <span class=${`cleanup-badge ${member.online ? 'online' : 'offline'}`}>${member.online ? 'online' : 'offline'}</span>
+        <span class=${`ui-tag cleanup-badge ${member.online ? 'online' : 'offline'}`}>${member.online ? 'online' : 'offline'}</span>
         <span class="title">${member.title || '(untitled)'}</span><span class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</span>
       </label>${openMemberPRs(member).length
         // Outside the <label>: a click inside a PR hover panel must not toggle the recipient.

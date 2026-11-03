@@ -66,19 +66,19 @@ function CleanupCandidateRow({ candidate, locked, wizard, onToggle }) {
       onChange=${(event) => onToggle(candidate.path, event.currentTarget.checked)}
     />
     <span class="branch">${candidate.branch || '(detached)'}</span>
-    <span class=${`cleanup-badge cat-${candidate.category}`}>
+    <span class=${`ui-tag cleanup-badge cat-${candidate.category}`}>
       <${Words} plain=${candidate.category} wizard=${wizardCategory} />
     </span>
-    ${candidate.merged ? html`<span class="cleanup-badge merged" title=${candidate.base_ref}>merged</span>` : null}
-    ${candidate.unpushed_commits ? html`<span class="cleanup-badge dirty">${candidate.unpushed_commits} unpublished</span>` : null}
-    ${candidate.upstream_gone ? html`<span class="cleanup-badge upstream-gone">upstream gone</span>` : null}
-    ${candidate.stale ? html`<span class="cleanup-badge stale">stale ≥30d</span>` : null}
-    ${candidate.last_commit ? html`<span class="cleanup-badge"
+    ${candidate.merged ? html`<span class="ui-tag cleanup-badge merged" title=${candidate.base_ref}>merged</span>` : null}
+    ${candidate.unpushed_commits ? html`<span class="ui-tag cleanup-badge dirty">${candidate.unpushed_commits} unpublished</span>` : null}
+    ${candidate.upstream_gone ? html`<span class="ui-tag cleanup-badge upstream-gone">upstream gone</span>` : null}
+    ${candidate.stale ? html`<span class="ui-tag cleanup-badge stale">stale ≥30d</span>` : null}
+    ${candidate.last_commit ? html`<span class="ui-tag cleanup-badge"
       title=${`Last commit: ${new Date(candidate.last_commit * 1000).toLocaleString()}; activity: ${new Date(candidate.last_activity * 1000).toLocaleString()}`}>
       activity ${new Date(candidate.last_activity * 1000).toLocaleDateString()}</span>` : null}
-    ${candidate.signal_error ? html`<span class="cleanup-badge signal-error" title=${candidate.signal_error}>Git signals unavailable</span>` : null}
-    ${candidate.dirty ? html`<span class="cleanup-badge dirty">uncommitted</span>` : null}
-    ${candidate.agents.length ? html`<span class="cleanup-badge">
+    ${candidate.signal_error ? html`<span class="ui-tag cleanup-badge signal-error" title=${candidate.signal_error}>Git signals unavailable</span>` : null}
+    ${candidate.dirty ? html`<span class="ui-tag cleanup-badge dirty">uncommitted</span>` : null}
+    ${candidate.agents.length ? html`<span class="ui-tag cleanup-badge">
       <${Words}
         plain=${agentLabel(candidate.agents)}
         wizard=${agentLabel(candidate.agents, true)}
@@ -97,7 +97,7 @@ function PrunableRepoRow({ repo, locked, onToggle }) {
         disabled=${locked}
         onChange=${(event) => onToggle(repo.repo_root, event.currentTarget.checked)} />
       <span class="branch">${repo.count} stale Git record${repo.count === 1 ? '' : 's'}</span>
-      <span class="cleanup-badge cat-stale">bookkeeping only</span>
+      <span class="ui-tag cleanup-badge cat-stale">bookkeeping only</span>
       <span class="path" title=${repo.repo_root}>${repo.repo_root}</span>
     </label>
     <div class="cleanup-prune-note">Safe to prune: removes broken <code>.git/worktrees</code>
@@ -120,7 +120,7 @@ function CleanupOutcomeList({ response }) {
     ${pruneOutcomes.map((outcome) => html`
       <div class="cleanup-row cleanup-prune-row" key=${`prune:${outcome.repo_root}`}
         data-prune-root=${outcome.repo_root}>
-        <span class=${`cleanup-badge ${outcome.result || ''}`}>${outcome.result || 'unknown'}</span>
+        <span class=${`ui-tag cleanup-badge ${outcome.result || ''}`}>${outcome.result || 'unknown'}</span>
         <span class="branch">${outcome.cleared} pruned / ${outcome.remaining} remain</span>
         <span class="path" title=${outcome.repo_root}>${outcome.repo_root}</span>
         <span class="meta">${outcome.detail || ''}</span>
@@ -128,7 +128,7 @@ function CleanupOutcomeList({ response }) {
     `)}
     ${outcomes.length ? outcomes.map((outcome) => html`
       <div class="cleanup-row" key=${outcome.path} data-path=${outcome.path}>
-        <span class=${`cleanup-badge ${outcome.result || ''}`}>${outcome.result || 'unknown'}</span>
+        <span class=${`ui-tag cleanup-badge ${outcome.result || ''}`}>${outcome.result || 'unknown'}</span>
         <span class="branch">${outcome.branch || '(detached)'}</span>
         <span class="path" title=${outcome.path}>${outcome.path}</span>
         <span class="meta">${outcome.detail || ''}</span>

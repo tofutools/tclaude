@@ -8,6 +8,7 @@ import { chatWindowId } from './chat-window-model.js';
 import { moveOverlayTab, openOverlayWindow, overlayTabs } from './overlay-instances.js';
 import { agentSessionSeed, overlayablePane, terminalWindowOf } from './terminal-window-model.js';
 import { companionAvailable, floatInCompanion } from './companion-facade.js';
+import { confirmProcessTabClose, floatProcessTab, floatingProcessEditor, processTabToWindow } from './process-editor-place.js';
 
 export function createTerminalShellActions({
   state,
@@ -65,8 +66,8 @@ export function createTerminalShellActions({
     return new Promise((resolve) => {
       const poll = () => {
         const pane = state.panes.value.find((candidate) => candidate.key === key);
-        // A board has no attach to wait for.
-        if (pane?.seed.board) { resolve(true); return; }
+        // A board or a process has no attach to wait for.
+        if (pane?.seed.board || pane?.seed.process) { resolve(true); return; }
         const widget = pane && widgets.get(pane.id);
         const remaining = timeoutMs - (Date.now() - started);
         if (widget?.settled) {
@@ -156,10 +157,21 @@ export function createTerminalShellActions({
     return closePanes(state.groupMembers(id).map((pane) => pane.key));
   }
 
-  async function closePanes(keys, { skipDetach = false } = {}) {
+  // moving says the panes' contents went somewhere else, so a process tab's
+  // unsaved edits went with them; otherwise a close asks before dropping them,
+  // and a tab whose edits the operator keeps stays.
+  async function closePanes(keys, { skipDetach = false, moving = false } = {}) {
     if (disposed) return;
     const wanted = new Set(keys || []);
-    const panes = state.panes.value.filter((candidate) => wanted.has(candidate.key));
+    let panes = state.panes.value.filter((candidate) => wanted.has(candidate.key));
+    if (!moving && panes.some((pane) => pane.seed.process)) {
+      const kept = new Set();
+      for (const pane of panes) {
+        if (pane.seed.process && !(await confirmProcessTabClose(pane.seed.process))) kept.add(pane.key);
+      }
+      if (disposed) return;
+      panes = state.panes.value.filter((candidate) => wanted.has(candidate.key) && !kept.has(candidate.key));
+    }
     if (!panes.length) return;
     for (const pane of panes) widgetFor(pane.id)?.dispose();
     state.removePanes(panes.map((pane) => pane.key));
@@ -215,6 +227,15 @@ export function createTerminalShellActions({
     const pane = state.panes.value.find((candidate) => candidate.key === key);
     if (!pane) return false;
     const rect = documentRef.querySelector?.('.mux-panes')?.getBoundingClientRect?.();
+    // A process editor goes to a browser window of its own as the Processes
+    // tab sends it, its draft handed over.
+    if (pane.seed.process) {
+      if (floatingProcessEditor(pane.seed.process)) return processTabToWindow(pane.seed.process, pane.label, { rect, win: windowRef, notify });
+      // A tab never looked at has no editor to hand over yet: show it, and say so.
+      state.activatePane(key);
+      notify('The editor is opening here first: move it to a separate window once it has loaded.', true);
+      return false;
+    }
     const features = detachWindowFeatures({
       ...(detachTo || { size: rect, at: elementScreenPoint(windowRef, rect) }),
       screen: windowRef.screen,
@@ -270,6 +291,7 @@ export function createTerminalShellActions({
       openBoardOverlay(pane.seed.board, pane.label, at);
       return boardWindowId(pane.seed.board);
     }
+    if (pane.seed.process) return floatProcessTab(pane.seed.process, pane.label, at);
     if (overlayablePane(pane)) {
       await closePane(key, { skipDetach: true });
       const tab = terminalWindowOf(pane);

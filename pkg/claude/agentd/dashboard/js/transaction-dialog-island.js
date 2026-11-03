@@ -318,7 +318,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
           />
           <span class="title">${candidate.title || '(untitled)'}</span>
           <span class="id">${candidate.conv_id.slice(0, 8)}</span>
-          ${candidate.roles.map((role) => html`<span class="cleanup-badge" key=${role}>${role}</span>`)}
+          ${candidate.roles.map((role) => html`<span class="ui-tag cleanup-badge" key=${role}>${role}</span>`)}
         </label></div>
       `) : html`<div class="ui-empty-block"><${Words} plain="no agents match the filter" wizard="no heroes match the filter" /></div>`}
     </div>
@@ -361,7 +361,7 @@ function CleanupResult({ response }) {
   return html`<div class="cleanup-list" id="cleanup-list">
     ${outcomes.length ? outcomes.map((outcome) => html`
       <div class="cleanup-row" key=${outcome.conv_id || outcome.agent_id}>
-        <span class=${`cleanup-badge ${outcome.result || ''}`}>${outcome.result || 'unknown'}</span>
+        <span class=${`ui-tag cleanup-badge ${outcome.result || ''}`}>${outcome.result || 'unknown'}</span>
         <span class="title">${outcome.title || String(outcome.conv_id || '').slice(0, 8)}</span>
         <span class="id">${String(outcome.conv_id || '').slice(0, 8)}</span>
         <span class="meta">${outcome.detail || ''}</span>
@@ -639,8 +639,8 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
               />
                 <span class="title">${candidate.title || candidate.conv_id.slice(0, 8)}</span>
                 <span class="id">${candidate.conv_id.slice(0, 8)}</span>
-                ${candidate.owner ? html`<span class="cleanup-badge owner">owner</span>` : null}
-                ${candidate.online ? html`<span class="cleanup-badge online">online</span>` : null}
+                ${candidate.owner ? html`<span class="ui-tag cleanup-badge owner">owner</span>` : null}
+                ${candidate.online ? html`<span class="ui-tag cleanup-badge online">online</span>` : null}
                 <span class="meta">${candidate.category === 'agent'
                   ? candidate.groups.length
                     ? `in: ${candidate.groups.join(', ')}`
@@ -843,9 +843,9 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
           />
           <span class="title">${member.title || '(untitled)'}</span>
           <span class="id">${member.conv_id.slice(0, 8)}</span>
-          <span class="cleanup-badge">${member.status}</span>
-          ${member.role ? html`<span class="cleanup-badge">${member.role}</span>` : null}
-          <span class="cleanup-badge"><${Words}
+          <span class="ui-tag cleanup-badge">${member.status}</span>
+          ${member.role ? html`<span class="ui-tag cleanup-badge">${member.role}</span>` : null}
+          <span class="ui-tag cleanup-badge"><${Words}
             plain=${willRetire ? 'retire + stop' : 'detach only'}
             wizard=${willRetire ? 'banish hero + stop' : 'detach only'}
           /></span>
@@ -880,11 +880,11 @@ function BulkRetireResult({ descriptor, response }) {
       const status = group ? row.action : row.result;
       const worktree = group ? row.worktree : null;
       return html`<div class="cleanup-row" key=${row.conv_id || row.agent_id}>
-        <span class=${`cleanup-badge ${status || ''}`}>${status || 'unknown'}</span>
+        <span class=${`ui-tag cleanup-badge ${status || ''}`}>${status || 'unknown'}</span>
         <span class="title">${row.title || row.conv_id || '(untitled)'}</span>
         <span class="id">${String(row.conv_id || '').slice(0, 8)}</span>
         <span class="meta">${row.detail || ''}</span>
-        ${worktree ? html`<span class=${`cleanup-badge ${worktree.action || ''}`}>
+        ${worktree ? html`<span class=${`ui-tag cleanup-badge ${worktree.action || ''}`}>
           worktree ${worktree.action || 'unknown'}
         </span><span class="meta">${worktree.detail || ''}</span>` : null}
       </div>`;
@@ -1125,8 +1125,8 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
             />
             <span class="title">${candidate.title || '(untitled)'}</span>
             <span class="id">${candidate.conv_id.slice(0, 8)}</span>
-            <span class="cleanup-badge">${candidate.status}</span>
-            ${candidate.role ? html`<span class="cleanup-badge">${candidate.role}</span>` : null}
+            <span class="ui-tag cleanup-badge">${candidate.status}</span>
+            ${candidate.role ? html`<span class="ui-tag cleanup-badge">${candidate.role}</span>` : null}
             ${descriptor.kind === 'retire-all-preview' ? html`<span class="meta retire-preview-groups"><${Words}
               plain=${candidate.groups?.length ? `in: ${candidate.groups.join(', ')}` : 'in: Ungrouped'}
               wizard=${candidate.groups?.length ? `parties: ${candidate.groups.join(', ')}` : 'in: Unbound'}
@@ -1176,7 +1176,7 @@ function DeleteRetiredResult({ response }) {
   return html`<div class="cleanup-list" id="delete-retired-list">
     ${outcomes.length ? outcomes.map((outcome) => html`
       <div class="cleanup-row" key=${outcome.conv_id}>
-        <span class=${`cleanup-badge ${outcome.result || ''}`}>${outcome.result || 'unknown'}</span>
+        <span class=${`ui-tag cleanup-badge ${outcome.result || ''}`}>${outcome.result || 'unknown'}</span>
         <span class="title">${outcome.title || String(outcome.conv_id || '').slice(0, 8)}</span>
         <span class="id">${String(outcome.conv_id || '').slice(0, 8)}</span>
         <span class="meta">${outcome.detail || ''}</span>
@@ -1368,8 +1368,8 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
             <span class="title">${candidate.title || '(untitled)'}</span>
             <span class="id">${candidate.conv_id.slice(0, 8)}</span>
             <span class="seen">${age}</span>
-            ${candidate.online ? html`<span class="cleanup-badge online">online — will skip</span>` : null}
-            ${candidate.retired_by ? html`<span class="cleanup-badge">by ${candidate.retired_by}</span>` : null}
+            ${candidate.online ? html`<span class="ui-tag cleanup-badge online">online — will skip</span>` : null}
+            ${candidate.retired_by ? html`<span class="ui-tag cleanup-badge">by ${candidate.retired_by}</span>` : null}
           </label></div>`;
         }) : html`<div class="ui-empty-block">no retired agents match the filter</div>`}
       </div>

@@ -76,6 +76,8 @@
 .mux-tab-status-waking::before,
 .mux-tab-status-restarting::before { animation: mux-tab-status-pulse 1.2s ease-in-out infinite; }
 .mux-tab-status-board { color: #58a6ff; --mux-status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><path d='M2.5 12.5l.8-3 6.6-6.6 2.2 2.2-6.6 6.6z' fill='none' stroke='black' stroke-width='1.4' stroke-linejoin='round'/></svg>"); }
+/* A process tab: a small graph, two nodes and an edge. */
+.mux-tab-status-process { color: #a371f7; --mux-status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><circle cx='4' cy='4' r='2.2' fill='none' stroke='black' stroke-width='1.4'/><circle cx='11' cy='11' r='2.2' fill='none' stroke='black' stroke-width='1.4'/><path d='M5.6 5.6l3.8 3.8' stroke='black' stroke-width='1.4'/></svg>"); }
 .mux-tab.active .mux-tab-status-working { color: #56d364; }
 .mux-pane-agent-status { margin-left: 2px; }
 @keyframes mux-tab-status-pulse {
@@ -594,6 +596,17 @@ body.wizard .mux-pane-xterm {
 }
 /* A board pane brings its own header: none of the terminal chrome. */
 .mux-pane-board { background: #0d1117; }
+/* The ＋ menu's Boards | Processes switch (features.processes). */
+.mux-board-menu .mux-add-sections { margin: 10px 10px 0; }
+/* A process pane (process-pane.js): a slim bar of where the editor can go, and
+   the editor, which brings its own toolbar. */
+.mux-pane-process { background: #0d1117; }
+.mux-process-head {
+  flex: none; display: flex; align-items: center; gap: 6px; padding: 4px 8px;
+  border-bottom: 1px solid #2a3340; background: #161b22;
+}
+.mux-process-head .mux-process-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #c9d1d9; }
+.mux-process-head .spacer { flex: 1 1 auto; }
 .mux-bg-slot {
   position: relative; flex: none; display: flex; align-items: flex-end;
   padding: 5px 6px 3px; background: #161b22; border-bottom: 1px solid #2a3340;

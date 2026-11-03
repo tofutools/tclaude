@@ -634,9 +634,9 @@ function GroupTriggersSection({ group, triggers }) {
       <a href="/automations/triggers" onClick=${(event) => event.stopPropagation()}>edit in Automations →</a></summary>
     <table class="ui-compact"><thead><tr><th>Name</th><th>When</th><th>State</th><th>Enabled</th></tr></thead><tbody>
       ${visible.map((rule) => html`<tr key=${rule.id}>
-        <td><span class="rowname">${rule.name}</span>${rule.scope === 'global' && html`<span class="trigger-scope global">global</span>`}</td>
+        <td><span class="rowname">${rule.name}</span>${rule.scope === 'global' && html`<span class="ui-tag trigger-scope global">global</span>`}</td>
         <td><code>${rule.source}</code><span class="muted">${rule.author_is_agent === true ? ' · agent PRs' : ''}</span></td>
-        <td><span class=${`trigger-state ${compactTriggerState(rule)}`}>${compactTriggerState(rule)}</span></td>
+        <td><span class=${`ui-tag trigger-state ${compactTriggerState(rule)}`}>${compactTriggerState(rule)}</span></td>
         <td>${rule.enabled ? 'yes' : 'no'}</td>
       </tr>`)}</tbody></table>
     ${rows.length > visible.length && html`<div class="muted">+ ${rows.length - visible.length} more — edit in Automations</div>`}

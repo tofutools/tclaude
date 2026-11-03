@@ -8,7 +8,7 @@ import {
 } from './process-scribe.js';
 import { randomUUID } from './insecure-origin.js';
 import { focusOverlayWindow, openOverlayWindow, overlayHostUp } from './overlay-instances.js';
-import { floatProcessEditor, floatingProcessTab, returnLiveEditor, takeFloatingEditor } from './process-editor-place.js';
+import { floatProcessEditor, floatingProcessTab, returnLiveEditor, revealProcessTab, stripProcesses, takeFloatingEditor } from './process-editor-place.js';
 import { editorToWindow, processEditorAway } from './process-editor-window.js';
 
 export function processActorPresentation(snapshot, actor) {
@@ -165,6 +165,18 @@ export function createProcessesActions({
       elsewhere.focus?.();
       state.setNotice(`${called} is open in a separate window.`);
       return false;
+    }
+    // One open as a Collab tab comes forward there when the operator opens it
+    // here. A location restored from the URL (Back, a bookmark) names this tab,
+    // so the editor comes back here instead, unsaved edits and all, rather
+    // than bouncing to Collab.
+    if (!blank && !live && !handoff && stripProcesses.peek().includes(id)) {
+      if (navigate && revealProcessTab(id)) {
+        state.setNotice(`${called} is open in a Collab tab.`);
+        return false;
+      }
+      const held = takeFloatingEditor(id);
+      if (held) return openEditor(id, false, called, { navigate, live: held });
     }
     let floating = !blank && !live && !handoff ? floatingProcessTab(id) : null;
     // With no overlay to show it (Collab off), a floating editor docks here
@@ -653,6 +665,20 @@ export function createProcessesActions({
     void load('templates', { quiet: true });
     return true;
   }
+  // releaseEditor lets the open editor of template id go, as it is, to a place
+  // that takes it (a Collab tab), and answers it: { mount, editor, label }.
+  function releaseEditor(id) {
+    const editor = state.currentEditor();
+    const spec = state.canvas.value;
+    if (!editor || !spec?.id || spec.blank || spec.id !== id) return null;
+    const label = editor.model?.template?.name || spec.name || spec.id;
+    const shown = state.view.value.active;
+    state.setEditor(null); state.setCanvas(null);
+    state.setNotice(`${label} is open in a Collab tab.`);
+    if (shown) announceLocation();
+    void load('templates', { quiet: true });
+    return { mount: editor.mount, editor, label };
+  }
   // editorToSeparateWindow moves the open editor's draft to a browser window of
   // its own. Should that window close before it takes the draft up, the editor
   // comes back here as it was.
@@ -686,6 +712,6 @@ export function createProcessesActions({
     openScribe, stopScribe, retireScribe,
     openRename, closeRename, submitRename, renameTemplate, describeTemplate, deleteTemplate,
     openCreate, closeCreate, submitCreate,
-    closeCanvas, floatEditor, editorToSeparateWindow, refreshActive,
+    closeCanvas, floatEditor, releaseEditor, editorToSeparateWindow, refreshActive,
   });
 }

@@ -57,6 +57,13 @@ import { PaneDictation } from './terminal-dictation.js';
 import { ShellHere, paneShellAgent } from './terminal-here.js';
 import { matchesShortcut, shortcutText, withShortcut } from './keybindings.js';
 import { Button } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
+import {
+  dockProcessEditor, editorDirty, floatingProcessEditor, openProcessTab, processPaneKey, registerProcessStrip, returnLiveEditor, stripProcesses, takeFloatingEditor,
+} from './process-editor-place.js';
+import { ProcessPane } from './process-pane.js';
+import { ProcessMenuList } from './process-collab-menu.js';
+import { isWizardActive } from './slop.js';
 
 const html = htm.bind(h);
 // Read at render time, so the label follows the keyboard layout once it loads.
@@ -90,7 +97,7 @@ export function tabDragStartedOnClose(target) {
 // floats through the companion, which a page without one cannot do.
 function paneFloats(pane, snapshot) {
   if (snapshot?.collab_enabled !== true) return false;
-  return !!pane.seed.board || overlayablePane(pane) || (companionAvailable() && !!chatAgentOfPane(pane, snapshot));
+  return !!pane.seed.board || !!pane.seed.process || overlayablePane(pane) || (companionAvailable() && !!chatAgentOfPane(pane, snapshot));
 }
 
 // soloFloats reports whether a separate window offers Open in overlay: the page
@@ -555,25 +562,50 @@ function BoardPane({ pane, active, solo, manageTitle, actions, snapshot, scope =
   >${solo ? editor : html`<${BoardsGate} snapshot=${snapshot}>${editor}<//>`}</div>`;
 }
 
-// BoardMenu is the strip's + button: open a board as a tab, or make a new one.
-// It reads the snapshot itself so the strip does not re-render on each poll.
+// BoardMenu is the strip's ＋ button: open a board or, with Processes on, a
+// process template as a tab, or make a new one. It reads the snapshot itself so
+// the strip does not re-render on each poll.
+const ADD_MENU_SECTION_PREF = 'tclaude.dash.collabAdd.section';
+
+function readAddMenuSection() {
+  try { return globalThis.localStorage?.getItem(ADD_MENU_SECTION_PREF) === 'processes' ? 'processes' : 'boards'; } catch { return 'boards'; }
+}
+
 function BoardMenu({ state, snapshot }) {
   const [open, setOpen] = useState(false);
   const [picking, setPicking] = useState(false);
+  const [section, setSection] = useState(readAddMenuSection);
   const rootRef = useRef(null);
   const request = state.boardMenuRequest.value;
-  useEffect(() => { if (request) setOpen(true); }, [request]);
+  useEffect(() => {
+    if (!request) return;
+    if (state.boardMenuSection?.peek()) setSection(state.boardMenuSection.peek());
+    setOpen(true);
+  }, [request]);
   // The delete dialog and the file picker are outside the menu, and the menu is
   // waiting for them.
   useDismissablePopover(rootRef, open && !boardDeleteRequest.value && !picking, () => setOpen(false));
   if (snapshot?.value?.collab_enabled !== true) return null;
+  const processes = snapshot?.value?.processes_enabled === true;
+  const shown = processes ? section : 'boards';
+  const wizard = isWizardActive();
+  const pick = (next) => {
+    setSection(next);
+    try { globalThis.localStorage?.setItem(ADD_MENU_SECTION_PREF, next); } catch { /* a convenience only */ }
+  };
   return html`<div ref=${rootRef} class="mux-board-slot">
     <button data-ui-exempt type="button" class="mux-board-add" aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
-      title="Open a board in a tab, or create one" aria-label="Open or create a board"
+      title=${processes ? 'Open a board or a process in a tab, or create one' : 'Open a board in a tab, or create one'}
+      aria-label=${processes ? 'Open or create a board or a process' : 'Open or create a board'}
       onClick=${() => setOpen((value) => !value)}>＋</button>
-    ${open ? html`<div class="mux-board-menu" role="dialog" aria-label="Boards">
-      <${BoardList} compact fetchImpl=${fetchFromPage} notify=${shellToast} onPicking=${setPicking}
-        onOpen=${(id, label) => { setOpen(false); void openBoardPane(id, label); }} />
+    ${open ? html`<div class="mux-board-menu" role="dialog" aria-label=${shown === 'processes' ? 'Processes' : 'Boards'}>
+      ${processes ? html`<${Tabs} variant="seg" class="mux-add-sections" label="Open in a tab" value=${shown} onSelect=${pick}
+        items=${[{ key: 'boards', label: 'Boards' }, { key: 'processes', label: wizard ? 'Rites' : 'Processes' }]} />` : null}
+      ${shown === 'processes'
+        ? html`<${ProcessMenuList} fetchImpl=${fetchFromPage} notify=${shellToast} wizard=${wizard}
+          onOpen=${(id, label) => { setOpen(false); void openProcessTab(id, label); }} />`
+        : html`<${BoardList} compact fetchImpl=${fetchFromPage} notify=${shellToast} onPicking=${setPicking}
+          onOpen=${(id, label) => { setOpen(false); void openBoardPane(id, label); }} />`}
     </div>` : null}
   </div>`;
 }
@@ -807,13 +839,20 @@ function boardTabStatus(pane) {
   return { key: 'board', className: 'board', symbol: '✎', title: label, ariaLabel: label, agent: null };
 }
 
+// Nor has a process template's editor.
+function processTabStatus(pane) {
+  const label = `Process ${paneTitle(pane)}`;
+  return { key: 'process', className: 'process', symbol: '⬡', title: label, ariaLabel: label, agent: null };
+}
+
 function PaneTab({
   pane, active, menuOpen, groupId = null, actions, openMenu, dragging, dropSide,
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onReordered, snapshot = null, scope = null,
   peerNotifications = {},
 }) {
   const board = !!pane.seed.board;
-  const agentStatus = board ? boardTabStatus(pane) : terminalTabStatus(pane, snapshot?.value, remoteSessionAgents.value);
+  const process = !!pane.seed.process;
+  const agentStatus = board ? boardTabStatus(pane) : process ? processTabStatus(pane) : terminalTabStatus(pane, snapshot?.value, remoteSessionAgents.value);
   const unreadMessages = paneUnreadNotifications(pane, snapshot?.value, peerNotifications);
   const notificationLabel = unreadNotificationLabel(pane, unreadMessages.length);
   const ariaLabel = [agentStatus.ariaLabel, notificationLabel].filter(Boolean).join('. ');
@@ -846,6 +885,7 @@ function PaneTab({
       key: pane.key,
       board,
       boardId: pane.seed.board,
+      process: pane.seed.process || '',
       floats: paneFloats(pane, snapshot?.value),
       groupId,
       label: pane.label,
@@ -910,7 +950,7 @@ function PaneTab({
         type="button"
         class="mux-tab-close"
         draggable="false"
-        title=${board ? 'Close this board' : 'Close this terminal'}
+        title=${board ? 'Close this board' : process ? 'Close this editor (asks first if it has unsaved edits)' : 'Close this terminal'}
         aria-label=${`Close ${pane.label}`}
         onClick=${(event) => { event.stopPropagation(); void actions.closePane(pane.key); }}
       >×</button>
@@ -1104,6 +1144,7 @@ function PaneContextMenu({
         ...(menu.groupId ? [item('Remove from group', () => actions.assignPaneToGroup(menu.key, null))] : []),
         separator,
         ...(menu.floats ? [item('Open in overlay', () => actions.openPaneInOverlay(menu.key))] : []),
+        ...(menu.process ? [item('Open in the Processes tab', () => dockProcessEditor(menu.process, menu.label), { refocus: false })] : []),
         item('Open in separate window', () => actions.popOutPane(menu.key, { floats: menu.floats })),
         separator,
         ...(menu.board ? [item('Delete board…', () => askDeleteBoard({ id: menu.boardId, title: menu.label }), { className: 'ui-btn-danger mux-tab-menu-item danger', refocus: false })] : []),
@@ -1834,12 +1875,22 @@ function TerminalTabs({
           ${hasBackground
             ? html`<div>${backgroundRows.length} tclaude ${backgroundRows.length === 1 ? 'session is' : 'sessions are'} still running without a tab open here. Hover the counter at the top right to attach or review them.</div>`
             : html`<div>Open one from an agent's ⚙ <code>terminals &amp; windows…</code> menu and pick a browser option.</div>`}
-          ${snapshot ? html`<${BoardsGate} snapshot=${snapshot}><div>Or open a board from the ＋ above.</div><//>` : null}
+          ${snapshot ? html`<${BoardsGate} snapshot=${snapshot}><div>Or open a board${snapshot.value?.processes_enabled === true ? ' or a process' : ''} from the ＋ above.</div><//>` : null}
         </div>
       ` : null}
       ${hasPanes || !empty ? html`
         <div ref=${panesRef} class="mux-panes">
-          ${current.panes.map((pane) => (pane.seed.board ? html`
+          ${current.panes.map((pane) => (pane.seed.process ? html`
+            <${ProcessPane}
+              key=${pane.key}
+              pane=${pane}
+              active=${current.activeKey === pane.key}
+              actions=${actions}
+              fetchImpl=${fetchFromPage}
+              collab=${snapshot?.value?.collab_enabled === true}
+              scope=${scopeOf(pane)}
+            />
+          ` : pane.seed.board ? html`
             <${BoardPane}
               key=${pane.key}
               pane=${pane}
@@ -1899,7 +1950,7 @@ export async function receiveSeparateWindow(seed, { actions, snapshot = null, ru
 }
 
 function TerminalBadge({ state }) {
-  const count = state.view.value.panes.filter((pane) => !pane.seed.board).length;
+  const count = state.view.value.panes.filter((pane) => !pane.seed.board && !pane.seed.process).length;
   const background = visibleBackgroundTerminals(backgroundTerminals.value, state.panes.value).length;
   const title = background
     ? `${count} open, ${background} running in the background without a terminal`
@@ -1940,12 +1991,37 @@ export function mountTerminalShellIsland({
     snapshot,
     openAgentPane: (agent, label, harness) => openWebWindowPane(agent, label, { harness }),
     openBoardPane: (id) => openLinkedBoard(id),
+    openProcessPane: (id) => openProcessTab(id),
+  });
+  // Process editors open as tabs here (process-editor-place.js), and the place
+  // module hears which templates the strip holds.
+  const unregisterProcessStrip = registerProcessStrip({
+    open: (seed) => actions.openPane(seed),
+    reveal: (id) => actions.activatePane(processPaneKey(id)),
+    close: (id) => actions.closePane(processPaneKey(id), { moving: true }),
+  });
+  const stopStripProcesses = effect(() => {
+    const ids = state.panes.value.filter((pane) => pane.seed.process).map((pane) => pane.seed.process);
+    const held = stripProcesses.peek();
+    if (ids.length !== held.length || ids.some((id, index) => id !== held[index])) stripProcesses.value = ids;
   });
   // A board has no tab while features.collab is off. The router keeps /boards
   // URLs from opening one; this takes away what was open, or came by handoff.
   const stopCollabGate = snapshot ? snapshot.subscribe((value) => {
     if (!value || value.collab_enabled === true) return;
     state.removePanes(state.panes.peek().filter((pane) => pane.seed.board).map((pane) => pane.key));
+    // A process editor with unsaved edits goes back to the Processes tab rather
+    // than lose them, one at a time so none replaces another there, and never to
+    // an overlay window, which goes with Collab. One with nothing unsaved closes.
+    void (async () => {
+      for (const pane of state.panes.peek().filter((candidate) => candidate.seed.process)) {
+        const id = pane.seed.process;
+        const live = floatingProcessEditor(id) ? takeFloatingEditor(id) : null;
+        if (!live) void actions.closePane(pane.key, { moving: true });
+        else if (editorDirty(live.editor)) await returnLiveEditor(id, pane.label, live, { overlay: false });
+        else { live.mount.remove(); live.editor?.destroy?.(); }
+      }
+    })();
   }) : () => {};
   render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory}
     onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind}
@@ -1970,6 +2046,8 @@ export function mountTerminalShellIsland({
     stopPeerWatch();
     stopBackgroundPoll();
     stopCollabGate();
+    stopStripProcesses();
+    unregisterProcessStrip();
     unbindNavRouting();
     unbindHandoff();
     unregisterController();

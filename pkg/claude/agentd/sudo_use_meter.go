@@ -27,7 +27,7 @@ var countableSudoSlugs = []string{
 	PermAgentSpawn, PermGroupsMembersSpawn,
 
 	PermSelfRename, PermSelfCompact, PermSelfInterrupt, PermSelfClone, PermSelfMorph,
-	PermSelfRemoteControl, PermSelfTask, PermSelfPR, PermSelfTags, PermSelfDirRepair, PermSelfProcess,
+	PermSelfRemoteControl, PermSelfTask, PermSelfPR, PermSelfTags, PermSelfDirRepair, PermSelfProcess, PermSelfPage,
 
 	PermAgentStop, PermAgentResume, PermAgentRetire, PermAgentDelete, PermAgentRename, PermAgentCompact,
 	PermAgentInterrupt, PermAgentClone, PermAgentMorph, PermAgentPromote, PermAgentReincarnate,

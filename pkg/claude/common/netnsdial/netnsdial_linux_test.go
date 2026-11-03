@@ -22,6 +22,19 @@ import (
 
 const serveEnv = "NETNSDIAL_TEST_SERVE"
 
+// requireEnv turns the environment skips into failures. CI sets it in the
+// job that unlocks unprivileged user namespaces, so the live nsenter round
+// trip cannot silently skip there.
+const requireEnv = "TCLAUDE_REQUIRE_USERNS"
+
+func skipOrFail(t *testing.T, format string, args ...any) {
+	t.Helper()
+	if os.Getenv(requireEnv) == "1" {
+		t.Fatalf(requireEnv+"=1 but: "+format, args...)
+	}
+	t.Skipf(format, args...)
+}
+
 func TestMain(m *testing.M) {
 	if handled, code := RunHelper(os.Args); handled {
 		os.Exit(code)
@@ -65,10 +78,10 @@ func freePort(t *testing.T) int {
 func startNamespace(t *testing.T, servePort int) int {
 	t.Helper()
 	if _, err := exec.LookPath("ip"); err != nil {
-		t.Skip("ip not available")
+		skipOrFail(t, "ip not available")
 	}
 	if err := exec.Command("unshare", "--user", "--map-root-user", "--net", "true").Run(); err != nil {
-		t.Skipf("unprivileged user+net namespaces unavailable: %v", err)
+		skipOrFail(t, "unprivileged user+net namespaces unavailable: %v", err)
 	}
 	self, err := os.Executable()
 	require.NoError(t, err)
@@ -81,7 +94,7 @@ func startNamespace(t *testing.T, servePort int) int {
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
 	line, err := bufio.NewReader(out).ReadString('\n')
 	if err != nil || strings.TrimSpace(line) != "ready" {
-		t.Skipf("namespace echo server did not start: %q %v", line, err)
+		skipOrFail(t, "namespace echo server did not start: %q %v", line, err)
 	}
 	return cmd.Process.Pid
 }
@@ -102,7 +115,7 @@ func TestDialReachesThePortInsideTheNamespaceOnly(t *testing.T) {
 	pid := startNamespace(t, port)
 	nsenter, err := exec.LookPath("nsenter")
 	if err != nil {
-		t.Skip("nsenter not available")
+		skipOrFail(t, "nsenter not available")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

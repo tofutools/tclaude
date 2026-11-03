@@ -1,6 +1,6 @@
 // process-editor-place.js -- where a process template's editor is (tcl-kjl2fr):
-// docked in the Processes tab, where it has always been, or in a tab of an
-// overlay window. A template is edited in one place at a time, and moving it
+// docked in the Processes tab, where it has always been, in a tab of an
+// overlay window, or in a tab of the Collab strip (tcl-tnbtwp). A template is edited in one place at a time, and moving it
 // moves the live editor itself: its mount, with the draft, the undo history,
 // the selection, the scribe dock and the version a save is checked against, so
 // nothing is saved or lost on the way.
@@ -16,17 +16,39 @@
 // when one opens.
 
 import { effect, signal } from '@preact/signals';
-import { closeOverlayTab, openOverlayWindow, overlayHostUp, overlayTabs } from './overlay-instances.js';
+import { closeOverlayTab, focusOverlayWindow, openOverlayWindow, overlayHostUp, overlayTabs } from './overlay-instances.js';
+import { editorToWindow, processEditorAway } from './process-editor-window.js';
+import { isProcessTemplateId, processPaneKey, processPaneSeed } from './process-pane-model.js';
 
 export const PROCESS_WINDOW_KIND = 'process';
 export const processWindowId = (id) => `process:${id}`;
 
+export { isProcessTemplateId, processPaneKey, processPaneSeed };
+
 // The editors out of the Processes tab, by template id: { mount, editor }. The
-// overlay tab showing one borrows its mount, and gives it back when it hides.
+// overlay tab or strip tab showing one borrows its mount, and gives it back
+// when it hides.
 const floating = new Map();
 
+// The templates the Collab strip holds a tab for. The terminal shell keeps it
+// current; an editor neither it nor an overlay tab holds is let go.
+export const stripProcesses = signal([]);
+
+// The Collab strip, as the terminal shell registers it: { open(seed),
+// reveal(id), close(id) }. open answers the pane, reveal whether a tab of the
+// template was there to show, and close takes a tab off without asking, the
+// editor having moved on.
+let strip = null;
+export function registerProcessStrip(next) {
+  strip = next;
+  return () => {
+    if (strip === next) strip = null;
+  };
+}
+
 // The Processes tab: { open(mount, id, name, handoff), dock(id, live, name),
-// canLeave(), confirmDiscard() }.
+// release(id), canLeave(), confirmDiscard() }. release lets the editor open
+// there go to another place, and answers it, { mount, editor, label }, or null.
 export const processEditorHost = signal(null);
 
 // registerProcessEditorHost installs the Processes tab, and returns the way to
@@ -77,6 +99,70 @@ export function floatProcessEditor({ id, label, editor, at = null }) {
 export const editorDirty = (editor) => !!(editor?.dirty ?? editor?.model?.dirty);
 
 const opening = new Map();
+// openProcessTab opens a template's editor as a Collab strip tab. A template is
+// edited in one place: one in a browser window of its own or an overlay window
+// comes forward there, and one docked in the Processes tab moves to the strip,
+// unsaved edits and all.
+export function openProcessTab(id, label = '') {
+  if (!isProcessTemplateId(id) || !strip) return Promise.resolve(null);
+  const away = processEditorAway(id);
+  if (away) {
+    try { away.focus?.(); } catch { /* browser focus is best-effort */ }
+    return Promise.resolve({ key: processPaneKey(id), floating: true });
+  }
+  const tab = floatingProcessTab(id);
+  if (tab) {
+    openOverlayWindow(tab);
+    focusOverlayWindow(tab.id);
+    return Promise.resolve({ key: processPaneKey(id), floating: true });
+  }
+  if (strip.reveal(id)) return Promise.resolve({ key: processPaneKey(id) });
+  const docked = processEditorHost.peek()?.release?.(id) || null;
+  if (docked) floating.set(id, docked);
+  return Promise.resolve(strip.open(processPaneSeed(id, label || docked?.label || id)));
+}
+
+// revealProcessTab shows the template's strip tab, if it has one.
+export const revealProcessTab = (id) => !!strip?.reveal(id);
+
+// processTabToCollab moves an overlay tab's editor to a strip tab: the strip
+// takes it before the overlay tab lets it go.
+export function processTabToCollab(tab) {
+  if (!strip) return Promise.resolve(null);
+  const pane = strip.open(processPaneSeed(tab.template, tab.label));
+  closeOverlayTab(tab.id);
+  return Promise.resolve(pane);
+}
+
+// floatProcessTab moves a strip tab's editor to an overlay window, and answers
+// that window's id. The overlay tab takes it before the strip lets it go.
+export function floatProcessTab(id, label, at = null) {
+  openOverlayWindow({ id: processWindowId(id), kind: PROCESS_WINDOW_KIND, template: id, label: label || id, at });
+  strip?.close(id);
+  return processWindowId(id);
+}
+
+// processTabToWindow moves a strip tab's editor to a browser window of its own.
+// One whose window never takes the draft comes back as returnLiveEditor says.
+export function processTabToWindow(id, label, { rect = null, win = globalThis.window, notify = null } = {}) {
+  const live = floating.get(id);
+  if (!live) return false;
+  const restore = (back) => void returnLiveEditor(id, label, back);
+  if (!editorToWindow({ id, label, live, rect, win, notify, restore })) return false;
+  floating.delete(id);
+  live.mount.remove();
+  strip?.close(id);
+  return true;
+}
+
+// confirmProcessTabClose asks before a strip tab's close drops unsaved edits.
+export async function confirmProcessTabClose(id) {
+  const live = floating.get(id);
+  if (!editorDirty(live?.editor)) return true;
+  const confirmDiscard = processEditorHost.peek()?.confirmDiscard;
+  return confirmDiscard ? !!(await confirmDiscard()) : false;
+}
+
 // Drafts back from a browser window of their own, by id, for the overlay tab
 // opening to take up (process-editor-window.js): { handoff, settle }.
 const handoffs = new Map();
@@ -122,23 +208,24 @@ export function openFloatingEditor(id, label, slot) {
   return pending;
 }
 
-// takeFloatingEditor hands a floating editor over to be docked. Its overlay tab
-// goes, and the editor with it is not torn down.
+// takeFloatingEditor hands a floating editor over to be docked. Its overlay or
+// strip tab goes, and the editor with it is not torn down.
 export function takeFloatingEditor(id) {
   const live = floating.get(id) || null;
   floating.delete(id);
   live?.mount.remove();
   const tab = floatingProcessTab(id);
   if (tab) closeOverlayTab(tab.id);
+  if (stripProcesses.peek().includes(id)) strip?.close(id);
   return live;
 }
 
 // dockProcessEditor moves a floating editor back to the Processes tab, unless the
 // editor open there has unsaved edits the operator keeps.
-export async function dockProcessEditor(id) {
+export async function dockProcessEditor(id, label = '') {
   const host = processEditorHost.peek();
   if (!host || !(await host.canLeave())) return false;
-  const label = floatingProcessTab(id)?.label || '';
+  label = floatingProcessTab(id)?.label || label;
   const live = takeFloatingEditor(id);
   host.dock(id, live, label);
   return true;
@@ -152,8 +239,8 @@ export const returningEditor = signal(null);
 // overlay window, which takes it without a question, or else to the Processes
 // tab, if the editor open there may go. If that one stays, this one waits until
 // it closes (processes-island.js), so neither loses its edits.
-export async function returnLiveEditor(id, label, live) {
-  if (overlayHostUp.peek()) {
+export async function returnLiveEditor(id, label, live, { overlay = true } = {}) {
+  if (overlay && overlayHostUp.peek()) {
     floatProcessEditor({ id, label, editor: live.editor });
     return;
   }
@@ -184,18 +271,24 @@ export async function closeFloatingEditor(id) {
   return true;
 }
 
+// processDocked is whether the editor in mount is the Processes tab's own: not
+// in an overlay window or a Collab tab.
+export const processDocked = (mount) => !mount?.closest?.('.process-overlay, .mux-pane-process');
+
 // processShortcutLive is whether Ctrl/Cmd+S and +O belong to the editor in mount:
-// docked, when the Processes tab shows; floating, when its window has the keyboard.
+// docked, when the Processes tab shows; elsewhere, when its place has the keyboard.
 export function processShortcutLive(mount, docked) {
   if (!mount?.isConnected) return false;
-  if (!mount.closest?.('.process-overlay')) return docked();
+  if (processDocked(mount)) return docked();
   return !!mount.contains?.(mount.ownerDocument?.activeElement);
 }
 
-// An overlay tab closed for good, from the dock or a reload that dropped it, takes
-// its editor with it. One moving to the Processes tab has already left this map.
-export function settleFloatingEditors(tabs = overlayTabs.peek()) {
-  const shown = new Set(tabs.filter((tab) => tab.kind === PROCESS_WINDOW_KIND).map((tab) => tab.template));
+// An overlay or strip tab closed for good, from the dock or a reload that dropped
+// it, takes its editor with it. One moving to the Processes tab has already left
+// this map, and one moving between an overlay and the strip is held by both a
+// moment.
+export function settleFloatingEditors(tabs = overlayTabs.peek(), stripped = stripProcesses.peek()) {
+  const shown = new Set([...tabs.filter((tab) => tab.kind === PROCESS_WINDOW_KIND).map((tab) => tab.template), ...stripped]);
   for (const [id, live] of floating) {
     if (shown.has(id)) continue;
     floating.delete(id);
@@ -204,7 +297,7 @@ export function settleFloatingEditors(tabs = overlayTabs.peek()) {
   }
 }
 
-effect(() => settleFloatingEditors(overlayTabs.value));
+effect(() => settleFloatingEditors(overlayTabs.value, stripProcesses.value));
 
 // The mount of the editor last clicked or focused, so the command palette
 // serves the editor the operator is at, docked or floating.

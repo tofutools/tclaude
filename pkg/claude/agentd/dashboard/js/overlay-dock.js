@@ -19,6 +19,7 @@ import htm from 'htm';
 import { companionAgents, companionStatus, decisionsFor, approvalsFor, stewardAgent } from './companion-model.js';
 import { endCompanionPeek, peekInCompanion } from './companion-facade.js';
 import { footerChipReserve } from './companion-chip-footer.js';
+import { useDismissablePopover } from './hover-popover.js';
 import { closeOverlayTab, focusOverlayWindow, minimizedOverlayTabs, openOverlayWindow, overlayHostUp, overlayWindows } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND, DECIDE_WINDOW_KIND, START_WINDOW_KIND } from './chat-window-model.js';
 import { TERMINAL_WINDOW_KIND } from './terminal-window-model.js';
@@ -212,19 +213,13 @@ export function OverlayDockPopup({ snapshot, win }) {
   }, [popup, listed.length, shownActions.length]);
   // A menu open when the last window goes, or Collab with it, is not open when one comes back.
   useEffect(() => () => { dockPopup.value = null; }, []);
-  useEffect(() => {
-    if (!popup) return undefined;
-    const doc = win?.document;
-    const close = () => { dockPopup.value = null; };
-    const away = (event) => { if (!event.target?.closest?.('.overlay-dock-menu, .overlay-dock-more, .overlay-dock-actions')) close(); };
-    const key = (event) => { if (event.key === 'Escape') close(); };
-    doc?.addEventListener('pointerdown', away, true);
-    doc?.addEventListener('keydown', key, true);
-    return () => {
-      doc?.removeEventListener('pointerdown', away, true);
-      doc?.removeEventListener('keydown', key, true);
-    };
-  }, [popup, win]);
+  // A press outside the menu and its two buttons, or Escape, closes it.
+  useDismissablePopover(
+    () => [node.current, ...(win?.document?.querySelectorAll?.('.overlay-dock-menu, .overlay-dock-more') || [])],
+    popup,
+    () => { dockPopup.value = null; },
+    { hold: () => true, doc: win?.document },
+  );
   if (!popup || empty) return null;
   const close = () => { dockPopup.value = null; };
   return html`<div ref=${node} class="ui-menu overlay-dock-actions" role="menu" style=${`left:${left ?? popup.at.left}px;bottom:${popup.at.bottom}px`}>

@@ -230,6 +230,10 @@ var auditRoutes = []auditRoute{
 	{method: http.MethodPost, segs: []string{"groups", "import"}, verb: "group.import"},
 	{method: http.MethodDelete, segs: []string{"groups", "{name}"}, verb: "group.delete"},
 	{method: http.MethodDelete, segs: []string{"boards", "{id}"}, verb: "board.delete"},
+	// Live pages: an agent showing or closing its own page (/v1/pages), and
+	// the operator closing one from the dashboard (/api/pages/{id}).
+	{method: http.MethodPost, segs: []string{"pages"}, verb: "page.show"},
+	{method: http.MethodDelete, segs: []string{"pages", "{id}"}, verb: "page.close"},
 	{method: http.MethodPatch, segs: []string{"groups", "{name}"}, verb: "group.update"},
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "rename"}, verb: "group.rename", describe: describeNewName},
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "clone"}, verb: "group.clone"},

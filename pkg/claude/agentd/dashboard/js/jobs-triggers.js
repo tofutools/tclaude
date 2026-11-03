@@ -230,10 +230,10 @@ function TriggerRow({ rule, selected, actions, onSelect, onEdit, onChanged }) {
       <td class="trigger-disclosure">${selected ? '▾' : '▸'}</td>
       <td><div class="rowname">${rule.name}</div><div class="muted">${ownerSummary(rule)}</div></td>
       <td><strong class="trigger-source">${rule.source}</strong><div class="muted">${whenSummary(rule).replace(`${rule.source} · `, '')}</div></td>
-      <td><span class=${`trigger-scope ${rule.scope}`}>${scopeSummary(rule)}</span></td>
+      <td><span class=${`ui-tag trigger-scope ${rule.scope}`}>${scopeSummary(rule)}</span></td>
       <td>${(rule.actions || []).map((action, index) => html`<div key=${index} class="trigger-action-chip">${actionSummary(action)}</div>`)}</td>
       <td><${Fragment}>${lastFiring(rule)}</${Fragment}></td>
-      <td><span class=${`trigger-state ${state.key}`}>${state.label}</span></td>
+      <td><span class=${`ui-tag trigger-state ${state.key}`}>${state.label}</span></td>
       <td><label class="trigger-switch" onClick=${(event) => event.stopPropagation()}>
         <input type="checkbox" checked=${!!rule.enabled} aria-label=${`${rule.enabled ? 'Disable' : 'Enable'} ${rule.name}`}
           onChange=${async (event) => {

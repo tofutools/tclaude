@@ -46,6 +46,7 @@ var defaultPermsForBundledSkills = []string{
 	"self.tags",
 	"self.dir-repair",
 	"self.process",
+	"self.page",
 	"process.templates.read",
 	"usage.read",
 	"costs.read",

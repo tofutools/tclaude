@@ -191,7 +191,7 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
                 >
                   <span class=${`group-standing-order-origin ${locked ? 'locked' : ''}`} aria-hidden="true">${locked ? '◆' : '✓'}</span>
                   <${OrderDetails} row=${row} wizard=${wizard} />
-                  <span class=${`group-standing-order-scope ${row.global ? 'global' : 'group'}`}>${scopeLabel(row, wizard)}</span>
+                  <span class=${`ui-tag group-standing-order-scope ${row.global ? 'global' : 'group'}`}>${scopeLabel(row, wizard)}</span>
                   ${locked
                     ? html`<span class="group-standing-order-lock" aria-label=${wizard ? 'governed elsewhere' : 'managed elsewhere'}>◇</span>`
                     : html`<${Button} size="sm" variant="ghost danger" class="group-standing-order-remove" disabled=${busy}
@@ -211,7 +211,7 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
               return html`<div key=${order.id} class="standing-order-choice group-standing-order-choice disabled">
                 <span class=${`group-standing-order-origin ${locked ? 'locked' : ''}`} aria-hidden="true">○</span>
                 <${OrderDetails} row=${row} wizard=${wizard} />
-                <span class=${`group-standing-order-scope ${row.global ? 'global' : 'group'}`}>${scopeLabel(row, wizard)}</span>
+                <span class=${`ui-tag group-standing-order-scope ${row.global ? 'global' : 'group'}`}>${scopeLabel(row, wizard)}</span>
                 ${locked
                   ? html`<span class="group-standing-order-lock" aria-label=${wizard ? 'governed elsewhere' : 'managed elsewhere'}>◇</span>`
                   : html`<${Button} size="sm" variant="ghost danger" class="group-standing-order-remove" disabled=${busy}

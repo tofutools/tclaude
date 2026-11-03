@@ -117,7 +117,7 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onC
         <${Select} size="sm" aria-label=${`After ${outcome}`} value=${to} onChange=${(event) => onApply(setOutcomeTarget(view, id, outcome, event.currentTarget.value))}>
           ${targetsFor(view, id, outcome).map((target) => html`<option key=${target.id} value=${target.id} data-mini-back=${target.back ? '' : undefined}>${target.back ? `↺ ${target.label} (again)` : target.label}</option>`)}
         <//>
-        ${loopBound(node, outcome) && html`<label class="gm-loop" data-mini-loop=${outcome} title="Going back runs that work again; past the last round this outcome is refused">
+        ${loopBound(node, outcome) && html`<label class="ui-tag ui-tag-warn gm-loop" data-mini-loop=${outcome} title="Going back runs that work again; past the last round this outcome is refused">
           ≤<input type="number" min=${LOOP_MIN_ROUNDS} max=${LOOP_MAX_ROUNDS} aria-label=${`Rounds for ${outcome}`} value=${loopBound(node, outcome).maxIterations}
             onChange=${(event) => { const rounds = normalizeRounds(event.currentTarget.value); if (rounds) onApply(setLoopRounds(view, id, outcome, rounds)); else event.currentTarget.value = String(loopBound(node, outcome).maxIterations); }} /> rounds</label>`}
         ${node.type === 'decision' && !canRemoveOutcome(view, id, outcome) && html`<${Button} size="sm" icon=${true} variant="ghost danger" aria-label=${`Remove ${outcome}`}

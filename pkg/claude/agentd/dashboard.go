@@ -401,6 +401,8 @@ var dashboardAppTabs = map[string]bool{
 	"groups": true, "automations": true, "jobs": true, "processes": true, "plugins": true, "access": true,
 	"messages": true, "usage": true, "costs": true, "diagnostics": true, "config": true,
 	"map": true, "fleet": true, "fleet-admin": true, "boards": true,
+	// A process template's Collab tab, /collab/processes/<template-id>.
+	"collab": true,
 	// Retired tabs the client heals to their Diagnostics subtab (/audit →
 	// /diagnostics/audit, /logs → /diagnostics/logs, /debug →
 	// /diagnostics/performance), and Diagnostics' former name (/activity/<subtab>
@@ -1296,6 +1298,10 @@ type snapshotPayload struct {
 	// CompanionCues are agents' recent dashboard-guidance cues (dashboard_guide.go),
 	// played once each by the companion island.
 	CompanionCues []companionCue `json:"companion_cues,omitempty"`
+	// LivePages are the pages agents are showing (pages.go). Each carries its
+	// stage origin, whose token is the page's key: local dashboard only. A
+	// page's rev changes whenever it is shown or updated.
+	LivePages []pageView `json:"live_pages,omitempty"`
 	// RemoteAccess surfaces the optional network-exposed dashboard listener's
 	// live state so the Config tab can guide setup: whether the cert/passphrase
 	// material has been generated (run `tclaude remote-access setup` first) and
@@ -4070,6 +4076,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		source := newKnowledgeSourceView(cfg)
 		out.KnowledgeSource = &source
 		out.CompanionCues = activeCompanionCues()
+		// The origins are the pages' keys: the local dashboard only, never a
+		// peer's snapshot, restricted or not.
+		if !isPeerSnapshot(r) {
+			out.LivePages = livePagesSnapshot()
+		}
 	}
 	out.Templates = templates
 	out.Profiles = profiles

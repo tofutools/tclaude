@@ -246,6 +246,27 @@ jobs:
             exit 1
           fi
 
+      # The live-page stage dials into an agent's private network namespace
+      # through nsenter + a probehelper mode (pkg/claude/common/netnsdial).
+      # Elsewhere the round trip skips, because unprivileged user namespaces
+      # are blocked; this job has unlocked them above, so here it must pass.
+      - name: Run live-page netns dial round trip
+        env:
+          TCLAUDE_REQUIRE_USERNS: "1"
+        run: |
+          netns_log="$RUNNER_TEMP/netnsdial.log"
+          go test ./pkg/claude/common/netnsdial -run '^TestDialReachesThePortInsideTheNamespaceOnly$' -count=1 -v -timeout=120s |
+            tee "$netns_log"
+          if ! grep -q '^--- PASS: TestDialReachesThePortInsideTheNamespaceOnly ' "$netns_log"; then
+            {
+              echo "### Live-page netns dial round trip did not pass"
+              echo
+              echo "The nsenter + SCM_RIGHTS dial into a private network namespace did not report an explicit pass."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestDialReachesThePortInsideTheNamespaceOnly did not report an explicit pass"
+            exit 1
+          fi
+
       - name: Run sandbox v2 bubblewrap smoke
         env:
           TCLAUDE_SANDBOX_V2_SMOKE: "1"
