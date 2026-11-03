@@ -75,3 +75,36 @@ test('component harness covers events, keyed focus, controlled state, cleanup, a
   await callerView.unmount();
   assert.equal(callerRoot.isConnected, true, 'caller-owned root is preserved');
 });
+
+// Every harness of a test file shares one rewritten copy of the dashboard
+// tree through hard links. That sharing must stay invisible: each harness
+// still gets its own module instances, and a module one harness replaces
+// never reaches another harness or the shared tree.
+test('harnesses get their own module instances, and a replaced module stays in its harness', async (t) => {
+  // Each harness's directory goes at the end of its own subtest, so import
+  // inside it; the module objects outlive the files.
+  const load = async (st) => {
+    const harness = await createPreactHarness(st);
+    return { harness, model: await harness.importDashboardModule('js/access-model.js') };
+  };
+  let first;
+  let second;
+  await t.test('first', async (st) => { first = await load(st); });
+  await t.test('second', async (st) => { second = await load(st); });
+  const a = first.model;
+  assert.notEqual(a, second.model, 'two harnesses must not share a module instance');
+  assert.notEqual(first.harness.preact, second.harness.preact, 'nor share Preact');
+
+  await t.test('replace', async (st) => {
+    const harness = await createPreactHarness(st);
+    await harness.replaceDashboardModule('js/access-model.js', 'export const ACCESS_SUBTABS = ["replaced"];\n');
+    const replaced = await harness.importDashboardModule('js/access-model.js');
+    assert.deepEqual(replaced.ACCESS_SUBTABS, ['replaced']);
+  });
+  await t.test('after', async (st) => {
+    const harness = await createPreactHarness(st);
+    const fresh = await harness.importDashboardModule('js/access-model.js');
+    assert.deepEqual(fresh.ACCESS_SUBTABS, a.ACCESS_SUBTABS, 'a later harness sees the original module');
+    assert.notDeepEqual(fresh.ACCESS_SUBTABS, ['replaced']);
+  });
+});

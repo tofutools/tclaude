@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import './assert-dom-safe.mjs';
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { rmSync } from 'node:fs';
+import { copyFile, cp, link, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -39,17 +40,17 @@ async function walkJS(dir) {
 // modules into a temporary ESM package, then rewrite only the map's bare
 // specifiers to their exact same-origin targets. Relative application imports
 // keep working unchanged, so tests exercise production module boundaries.
-async function materializeDashboardModules(t) {
+async function buildDashboardTree() {
   const dashboardHTML = await readFile(join(dashboardDir, 'dashboard.html'), 'utf8');
   const match = dashboardHTML.match(/<script type="importmap">\s*([\s\S]*?)\s*<\/script>/);
   assert.ok(match, 'dashboard contains an import map');
   const importMap = JSON.parse(match[1]);
   assert.equal(typeof importMap.imports, 'object', 'import map contains imports');
 
-  const workDir = await mkdtemp(join(tmpdir(), 'tclaude-preact-dom-'));
-  t.after(() => rm(workDir, { recursive: true, force: true }));
-  await writeFile(join(workDir, 'package.json'), '{"type":"module"}\n');
-  await cp(join(dashboardDir, 'js'), join(workDir, 'js'), { recursive: true });
+  const root = await mkdtemp(join(tmpdir(), 'tclaude-preact-tree-'));
+  process.once('exit', () => rmSync(root, { recursive: true, force: true }));
+  await writeFile(join(root, 'package.json'), '{"type":"module"}\n');
+  await cp(join(dashboardDir, 'js'), join(root, 'js'), { recursive: true });
 
   const targets = new Map();
   for (const [specifier, target] of Object.entries(importMap.imports)) {
@@ -57,17 +58,17 @@ async function materializeDashboardModules(t) {
     // the property dashboard_preact_assets_test.go asserts for the browser.
     assert.match(target, /^\/static\/third_party\/[a-z0-9-]+\/[^/]+\.m?js$/);
     const source = join(dashboardDir, target.slice('/static/'.length));
-    const output = join(workDir, target.slice('/static/'.length));
+    const output = join(root, target.slice('/static/'.length));
     await mkdir(dirname(output), { recursive: true });
     await cp(source, output);
     targets.set(specifier, output);
   }
 
-  const testUtils = join(workDir, 'third_party/preact/preact-test-utils.mjs');
+  const testUtils = join(root, 'third_party/preact/preact-test-utils.mjs');
   await cp(testUtilsSource, testUtils);
   targets.set('preact/test-utils', testUtils);
 
-  for (const file of await walkJS(workDir)) {
+  for (const file of await walkJS(root)) {
     const source = await readFile(file, 'utf8');
     await writeFile(file, rewriteBareImports(source, file, targets));
   }
@@ -77,6 +78,43 @@ async function materializeDashboardModules(t) {
     rewriteBareImports(await readFile(testUtils, 'utf8'), testUtils, targets),
   );
 
+  const dirs = [];
+  const files = [];
+  const walk = async (dir) => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) { dirs.push(relative(root, path)); await walk(path); }
+      else if (entry.isFile()) files.push(relative(root, path));
+    }
+  };
+  await walk(root);
+  const targetPaths = new Map([...targets].map(([specifier, path]) => [specifier, relative(root, path)]));
+  return { root, dirs, files, targetPaths };
+}
+
+// Built once per test file (node --test runs each file in its own process):
+// copying and rewriting the whole dashboard tree for every harness cost
+// ~140ms of CPU and I/O per test on a fast machine, and it grows with the
+// dashboard. Each harness then gets its own directory of hard links to it.
+let dashboardTree;
+
+async function materializeDashboardModules(t) {
+  dashboardTree ??= buildDashboardTree();
+  const { root, dirs, files, targetPaths } = await dashboardTree;
+  // A fresh directory per harness still gives every harness fresh module
+  // instances: Node keys ES modules by path, not by inode.
+  const workDir = await mkdtemp(join(tmpdir(), 'tclaude-preact-dom-'));
+  t.after(() => rm(workDir, { recursive: true, force: true }));
+  for (const dir of dirs) await mkdir(join(workDir, dir), { recursive: true });
+  await Promise.all(files.map(async (file) => {
+    try {
+      await link(join(root, file), join(workDir, file));
+    } catch {
+      // A filesystem without hard links: copy instead.
+      await copyFile(join(root, file), join(workDir, file));
+    }
+  }));
+  const targets = new Map([...targetPaths].map(([specifier, path]) => [specifier, join(workDir, path)]));
   return { workDir, targets };
 }
 
@@ -300,7 +338,14 @@ export async function createPreactHarness(t) {
   const html = htmModule.default.bind(preact.h);
 
   const importDashboardModule = (path) => import(pathToFileURL(join(workDir, path)));
-  const replaceDashboardModule = (path, source) => writeFile(join(workDir, path), source);
+  // The tree's files are hard links shared with every other harness of this
+  // test file: unlink before writing, so an edit replaces only this harness's
+  // copy instead of writing through to all of them.
+  const replaceDashboardModule = async (path, source) => {
+    const file = join(workDir, path);
+    await rm(file, { force: true });
+    await writeFile(file, source);
+  };
   const fireEvent = (element, type, init = {}) => {
     const event = new window.Event(type, { bubbles: true, cancelable: true });
     Object.assign(event, init);

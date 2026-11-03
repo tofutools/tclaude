@@ -103,6 +103,15 @@ func TestDashboardJS(t *testing.T) {
 	if helpErr == nil && bytes.Contains(help, []byte("--test-force-exit")) {
 		args = append(args, "--test-force-exit")
 	}
+	// CI's jstest shard asks for each suite file's wall time
+	// (file-timings-reporter.mjs) and prints the slowest. A passing go test
+	// keeps Node's output to itself, so the times go to a file the step
+	// reads, next to the usual spec output on stdout.
+	if timings := os.Getenv("TCLAUDE_JS_TEST_TIMINGS"); timings != "" {
+		args = append(args,
+			"--test-reporter=spec", "--test-reporter-destination=stdout",
+			"--test-reporter=./file-timings-reporter.mjs", "--test-reporter-destination="+timings)
+	}
 	args = append(args, files...)
 	// Read before the run starts: an invalid limit fails the test here, rather
 	// than leaving node --test running behind a t.Fatalf.
