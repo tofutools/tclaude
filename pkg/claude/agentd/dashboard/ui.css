@@ -151,25 +151,27 @@ body.wizard {
 body.wizard .ui-btn-primary { text-shadow: 0 0 6px rgba(169, 123, 214, 0.6); box-shadow: 0 0 10px rgba(122, 93, 176, 0.4); }
 body.wizard .ui-btn-primary:hover:not(:disabled) { box-shadow: 0 0 16px rgba(169, 123, 214, 0.7); }
 /* A wizard dialog's footer submit is a lever: a thicker gold rim on a drop
-   shadow that presses in on click, crimson when it destroys. Toolbar and
-   inline primaries stay flat. */
-body.wizard .modal-buttons :is(.ui-btn-primary, .ui-btn-danger:not(.ui-btn-ghost)) {
+   shadow that presses in on click, crimson when the submit destroys (only the
+   <dialog>-submit button: a danger secondary such as Discard or Force stays
+   flat beside it). Toolbar and inline primaries stay flat. */
+body.wizard .modal-buttons :is(.ui-btn-primary, .ui-btn-danger:not(.ui-btn-ghost)[id$="-submit"]) {
   border-width: 2px; border-radius: 6px; padding: 6px 16px;
   box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
 }
 body.wizard .modal-buttons .ui-btn-primary:hover:not(:disabled) { box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8); }
-body.wizard .modal-buttons .ui-btn-danger:not(.ui-btn-ghost) {
+body.wizard .modal-buttons .ui-btn-danger:not(.ui-btn-ghost)[id$="-submit"] {
   background: linear-gradient(180deg, #6e1f2a 0%, #3a1018 100%); border-color: #f0883e; color: var(--ui-text-strong);
   box-shadow: 0 4px 0 #1e1640, 0 0 10px rgba(240, 136, 62, 0.5);
 }
-body.wizard .modal-buttons .ui-btn-danger:not(.ui-btn-ghost):hover:not(:disabled) {
+body.wizard .modal-buttons .ui-btn-danger:not(.ui-btn-ghost)[id$="-submit"]:hover:not(:disabled) {
   background: linear-gradient(180deg, #8a2836 0%, #4a141f 100%); color: var(--ui-text-strong);
   box-shadow: 0 4px 0 #1e1640, 0 0 16px rgba(240, 136, 62, 0.8);
 }
-body.wizard .modal-buttons :is(.ui-btn-primary, .ui-btn-danger:not(.ui-btn-ghost)):active:not(:disabled) {
+body.wizard .modal-buttons :is(.ui-btn-primary, .ui-btn-danger:not(.ui-btn-ghost)[id$="-submit"]):active:not(:disabled) {
   transform: translateY(2px); box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
 }
-body.wizard .modal-buttons :is(.ui-btn-primary, .ui-btn-danger):disabled { box-shadow: none; transform: none; }
+/* A busy lever keeps its wizard copy ("🕯 Sealing…") legible. */
+body.wizard .modal-buttons :is(.ui-btn-primary, .ui-btn-danger[id$="-submit"]):disabled { opacity: .7; box-shadow: none; transform: none; }
 body.slop {
   --ui-bg: #2a0a0a;
   --ui-bg-hover: #4a1414;

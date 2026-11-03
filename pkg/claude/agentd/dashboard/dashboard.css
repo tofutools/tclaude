@@ -12562,6 +12562,8 @@ body.wizard #worktree-cleanup-modal #worktree-cleanup-submit:hover {
   background: linear-gradient(180deg, #8a2836 0%, #4a141f 100%);
   box-shadow: 0 0 16px rgba(240, 136, 62, 0.8);
 }
+/* Its flat ember glow has no drop shadow to press into, so it does not sink. */
+body.wizard #worktree-cleanup-modal #worktree-cleanup-submit:active { transform: none; }
 body.wizard #worktree-cleanup-modal #worktree-cleanup-submit:disabled { opacity: 0.6; }
 
 /* ─── Wizard delete group — drag-to-banish group preview ────────────

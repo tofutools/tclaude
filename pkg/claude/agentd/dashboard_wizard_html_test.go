@@ -2227,9 +2227,9 @@ func TestDashboardHTML_WizardStandardButtons(t *testing.T) {
 		"body.wizard .ui-btn-primary {",
 		// Every wizard dialog's footer submit is the one shared lever, crimson
 		// when destructive; the per-dialog lever rules are gone.
-		"body.wizard .modal-buttons :is(.ui-btn-primary, .ui-btn-danger:not(.ui-btn-ghost)) {",
-		"body.wizard .modal-buttons .ui-btn-danger:not(.ui-btn-ghost) {",
-		"body.wizard .modal-buttons :is(.ui-btn-primary, .ui-btn-danger:not(.ui-btn-ghost)):active:not(:disabled) {",
+		"body.wizard .modal-buttons :is(.ui-btn-primary, .ui-btn-danger:not(.ui-btn-ghost)[id$=\"-submit\"]) {",
+		"body.wizard .modal-buttons .ui-btn-danger:not(.ui-btn-ghost)[id$=\"-submit\"] {",
+		"body.wizard .modal-buttons :is(.ui-btn-primary, .ui-btn-danger:not(.ui-btn-ghost)[id$=\"-submit\"]):active:not(:disabled) {",
 	} {
 		if !strings.Contains(css, want) {
 			t.Errorf("ui.css wizard skin missing %q", want)
