@@ -122,9 +122,10 @@ test('dialog titles take the skin title face from ui.css, not per-dialog copies'
   assert.deepEqual(found, [], 'dialog headings get the wizard face from the --ui-dialog-title-* tokens');
 });
 
-// Raw fields inside a wizard dialog take the shared wizard field paint from
-// ui.css (`body.wizard .ui-dialog :is(input…, select, textarea)`), and checkboxes
-// and radios take the wizard accent from the global zero-specificity rule at
+// Raw fields inside a wizard dialog, filter bar or config form take the
+// shared wizard field paint from ui.css (`body.wizard :is(.ui-dialog,
+// .filter-bar, …) :is(input…, select, textarea)`), and checkboxes and radios
+// take the wizard accent from the global zero-specificity rule at
 // the top of dashboard.css. The wizard skin used to repeat both once per
 // dialog id; a rule that only repeats them fails here. A dialog that wants a
 // different field look still writes its own rule with its own values.
@@ -177,13 +178,13 @@ export function copiedFieldPaints(css) {
   const source = css.replace(/\/\*[\s\S]*?\*\//g, '');
   const found = new Set();
   for (const [, selector, body] of source.matchAll(/([^{};]*)\{([^{}]*)\}/g)) {
-    const decls = body.split(';').map((d) => d.trim().replace(/\s+/g, ' ')).filter(Boolean);
+    const decls = body.split(';').map((d) => d.trim().replace(/\s+/g, ' ').replace(/([ (,])\.(\d)/g, '$10.$2')).filter(Boolean);
     if (!decls.length || !decls.every((d) => SHARED_FIELD_DECLS.has(d))) continue;
     for (const part of splitTop(selector.replace(/\s+/g, ' '), /,/)) {
       const key = part;
       if (!key.startsWith('body.wizard ')) continue;
       const tokens = splitTop(key, /\s/);
-      if (!tokens.slice(1, -1).some((t) => /[.#][\w-]*(?:modal|dialog)\b/.test(t))) continue;
+      if (!tokens.slice(1, -1).some((t) => /[.#][\w-]*(?:modal|dialog)\b|\.(?:filter-bar|cfg-field|cfg-row-ctl)\b/.test(t))) continue;
       if (!/(?:^|[(,\s])(?:input|select|textarea)\b|\.add-member-search/.test(tokens.at(-1))) continue;
       if (!FIELD_COPY_EXEMPT.has(key)) found.add(key);
     }
@@ -195,8 +196,9 @@ test('wizard dialog fields take the shared paint, not per-dialog copies', () => 
   assert.deepEqual([...copiedFieldPaints('body.wizard #x-modal .row input[type=text], .y { background: #140f28; color: #f3e6c0; }')], ['body.wizard #x-modal .row input[type=text]']);
   assert.deepEqual([...copiedFieldPaints('body.wizard #x-modal :is(input[type=checkbox], input[type=radio]) { accent-color: #a97bd6; }')], ['body.wizard #x-modal :is(input[type=checkbox], input[type=radio])']);
   assert.deepEqual([...copiedFieldPaints('body.wizard #x-modal input { background: #241b3d; }')], []);
+  assert.deepEqual([...copiedFieldPaints('body.wizard .filter-bar input { border-color: rgba(122, 93, 176, .5); }')], ['body.wizard .filter-bar input']);
   const ui = readFileSync(new URL('ui.css', DASHBOARD), 'utf8');
-  assert.match(ui, /body\.wizard \.ui-dialog :is\(input:not\(\[type\]\), input\[type=text\][^{]*\{\s*background: #140f28/);
+  assert.match(ui, /body\.wizard :is\(\.ui-dialog, \.filter-bar, [^)]*\) :is\(input:not\(\[type\]\), input\[type=text\][^{]*\{\s*background: #140f28/);
   const found = [];
   for (const file of readdirSync(DASHBOARD).filter((f) => f.endsWith('.css') && f !== 'ui.css')) {
     for (const sel of copiedFieldPaints(readFileSync(new URL(file, DASHBOARD), 'utf8'))) found.push(`${file}: ${sel}`);

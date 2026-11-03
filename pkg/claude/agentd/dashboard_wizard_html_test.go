@@ -104,11 +104,12 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 
 	// Every tab's shared .filter-bar chrome gets a general (class-only) wizard
 	// re-skin so the Parties/Labours/Plugins/Sudo/Audit/Logs filter inputs stop
-	// wearing the app-default grey. Pin the field + a couple of the satellite
-	// controls; the general rules are the fallback beneath the id-scoped Config
-	// and profile-modal bars, so a dropped line silently un-themes ~6 tabs.
-	must("body.wizard .filter-bar input:where(:not(.ui-input)) {", "the general filter-bar field is themed in wizard mode")
-	must("body.wizard .filter-bar label.filter-toggle select:where(:not(.ui-select)) {", "filter-bar dropdowns (audit/logs) are themed")
+	// wearing the app-default grey. The fields (inputs and the audit/logs
+	// toggle selects) take the shared wizard field paint in ui.css, whose scope
+	// must keep naming .filter-bar; a dropped area silently un-themes ~6 tabs.
+	if !strings.Contains(dashboardAssetFile(t, "ui.css"), "body.wizard :is(.ui-dialog, .filter-bar, .cfg-field, .cfg-row-ctl) :is(input:not([type])") {
+		t.Error("filter-bar and config fields must take the shared wizard field paint in ui.css")
+	}
 	must("body.wizard .filter-bar button.primary:where(:not(.ui-btn)) {", "unscoped filter-bar primary levers are gilded")
 	// The Treasury's bespoke span selector opts out of the generic tool re-skin
 	// so the Costs re-skin can gild it itself — pin the exclusion.
@@ -1454,7 +1455,7 @@ func TestDashboardHTML_WizardConfigTab(t *testing.T) {
 	// is touched.
 	must("body.wizard #tab-config .cfg-section", "the config sections are re-skinned in wizard mode")
 	must("body.wizard #tab-config .cfg-section > h3", "the section headings are re-skinned")
-	must("body.wizard #tab-config .cfg-field input[type=text]", "the config inputs are re-skinned")
+	must("body.wizard #tab-config .ra-form-grid input", "the remote-access setup inputs are re-skinned")
 	must("body.wizard #tab-config .cfg-footer", "the sticky footer is re-skinned")
 	must("body.wizard #tab-config .cfg-footer button.primary", "the Save lever gets the gilded-arcane treatment")
 
@@ -1467,14 +1468,11 @@ func TestDashboardHTML_WizardConfigTab(t *testing.T) {
 // CONFIG-SPECIFIC chrome stays scoped to #tab-config (or #config-diff-modal), so
 // a config-only treatment can't leak onto sibling tabs.
 //
-// Note: the shared `.filter-bar` field itself now DOES carry a general
-// `body.wizard .filter-bar input { … }` rule on purpose — the "some wizard
-// elements lack styling" pass themes every tab's filter bar (Parties, Labours,
-// Plugins, Sudo, Audit, Logs). That general rule is the intended fallback; the
-// config tab's own #tab-config-scoped filter rule still wins by specificity
-// where it needs to. So this test no longer forbids the general filter rule
-// (TestDashboardHTML_WizardTheme asserts it positively) — it only guards the
-// config chrome that is NOT a shared filter bar.
+// Note: the shared `.filter-bar` fields take the general wizard field paint
+// in ui.css on purpose, on every tab's filter bar (Parties, Labours, Plugins,
+// Sudo, Audit, Logs, Config); TestDashboardHTML_WizardTheme asserts it
+// positively. This test only guards the config chrome that is NOT a shared
+// filter bar.
 func TestDashboardCSS_WizardConfigTabScoped(t *testing.T) {
 	// The confirm button's re-skin must not leak to sibling .primary buttons —
 	// .cfg-footer is config-only chrome, so its wizard rule stays #tab-config-scoped.

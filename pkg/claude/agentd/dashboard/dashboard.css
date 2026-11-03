@@ -14776,11 +14776,7 @@ body.wizard-shake { animation: wizard-shake 0.6s ease-in-out; }
    control the Costs re-skin gilds itself, so its `.tool` buttons opt out
    below. Palette matches the rest of the wizard chrome: void #140f28,
    violet frame rgba(122,93,176,.5), gilt text #f3e6c0, arcane focus. */
-body.wizard .filter-bar input:where(:not(.ui-input)) {
-  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
-}
 body.wizard .filter-bar input:where(:not(.ui-input))::placeholder { color: #8f7bbf; font-style: italic; }
-body.wizard .filter-bar input:where(:not(.ui-input)):focus { border-color: #a97bd6; }
 body.wizard .filter-bar .filter-count { color: #b39ddb; }
 body.wizard .filter-bar button.clear-filter { color: #b39ddb; }
 body.wizard .filter-bar button.clear-filter:hover { color: #f3e6c0; }
@@ -14790,9 +14786,6 @@ body.wizard .filter-bar .muted { color: #9a86c4; }
    view-menu items) + their little dropdowns. */
 body.wizard .filter-bar label.filter-toggle { color: #b39ddb; }
 body.wizard .filter-bar label.filter-toggle:hover { color: #f3e6c0; }
-body.wizard .filter-bar label.filter-toggle select:where(:not(.ui-select)) {
-  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
-}
 /* View popover — the "▾ view" trigger, its badge and drop panel. */
 /* Muted amethyst-grey rather than bright gold — the wizard echo of the quiet
    grey terminals count, so the deviation number stays subtle in this skin too. */
@@ -15609,10 +15602,6 @@ body.wizard #tab-config .cfg-inline code {
 /* Live section filter: void-tinted field, gold focus, violet count + note,
    gold clear-×. Scoped to #tab-config so the Groups / Costs filter bars are
    untouched. */
-body.wizard #tab-config .filter-bar input:where(:not(.ui-input)) {
-  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
-}
-body.wizard #tab-config .filter-bar input:where(:not(.ui-input)):focus { border-color: #a97bd6; }
 body.wizard #tab-config .filter-bar .filter-count { color: #b39ddb; }
 body.wizard #tab-config .filter-bar button.clear-filter { color: #b39ddb; }
 body.wizard #tab-config .filter-bar button.clear-filter:hover { color: #f3e6c0; }
@@ -15646,7 +15635,6 @@ body.wizard #tab-config .cfg-more .cfg-hint { background: #140f28; border-color:
 body.wizard #tab-config .cfg-field input[type=checkbox].cfg-switch { background: rgba(122, 93, 176, 0.45); }
 body.wizard #tab-config .cfg-field input[type=checkbox].cfg-switch::after { background: #e7d9f5; }
 body.wizard #tab-config .cfg-field input[type=checkbox].cfg-switch:checked { background: #7a5db0; }
-body.wizard #tab-config .cfg-row-ctl textarea.cfg-json { background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0; }
 /* The base theme draws a deliberate two-tier prominence on "Advanced …"
    disclosures: a section-level `.cfg-advanced` summary is blue+uppercase (like
    an h3 head), while a field-nested `.cfg-field details.cfg-advanced` summary is
@@ -15674,18 +15662,10 @@ body.wizard #tab-config .cfg-terminal-attach-timings > strong { color: #d9b45a; 
    the .ra-form-grid setup inputs get the same violet-void skin so the
    remote-access panel reads as one unit in wizard mode. Stays #tab-config-scoped
    (no widening of a body.wizard rule to fix plain mode). */
-body.wizard #tab-config .cfg-field input[type=text],
-body.wizard #tab-config .cfg-field input[type=number],
-body.wizard #tab-config .cfg-field input[type=password],
-body.wizard #tab-config .cfg-field select,
 body.wizard #tab-config .ra-form-grid input,
 body.wizard #tab-config .cfg-advanced textarea {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
-body.wizard #tab-config .cfg-field input[type=text]:focus,
-body.wizard #tab-config .cfg-field input[type=number]:focus,
-body.wizard #tab-config .cfg-field input[type=password]:focus,
-body.wizard #tab-config .cfg-field select:focus,
 body.wizard #tab-config .ra-form-grid input:focus,
 body.wizard #tab-config .cfg-advanced textarea:focus { border-color: #a97bd6; }
 body.wizard #tab-config .cfg-field select option { color: #1a1330; background: #e7d9f5; }
