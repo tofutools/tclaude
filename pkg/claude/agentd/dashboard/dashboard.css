@@ -5912,8 +5912,8 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 .term-files-spacer { flex: 1; }
 .term-files-muted { color: #7d8590; }
 .term-files-error { margin: 4px 0; }
-.term-files-link { background: none; border: none; color: #58a6ff; cursor: pointer; padding: 0 2px; font: inherit; }
-.term-files-link:hover { text-decoration: underline; }
+.term-files-link:where(:not(.ui-btn)) { background: none; border: none; color: #58a6ff; cursor: pointer; padding: 0 2px; font: inherit; }
+.term-files-link:where(:not(.ui-btn)):hover { text-decoration: underline; }
 .term-files-table { width: 100%; border-collapse: collapse; }
 .term-files-table td { padding: 2px 6px; border-bottom: 1px solid #1c222a; }
 .term-files-acts { text-align: right; white-space: nowrap; }
@@ -8759,17 +8759,13 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
   min-width: 0; padding: 7px 9px;
 }
 .directory-picker-path input:focus { border-color: #58a6ff; outline: none; }
-.directory-picker-path button, .directory-picker-nav button,
-.directory-picker-list button {
+.directory-picker-list button:where(:not(.ui-btn)) {
   background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
   color: #c9d1d9; cursor: pointer; font-family: inherit;
 }
 .directory-picker-entry { display: flex; flex: 0 0 auto; gap: 3px; }
-.directory-picker-path button, .directory-picker-nav button { padding: 6px 11px; }
-.directory-picker-path button:hover:not(:disabled),
-.directory-picker-nav button:hover:not(:disabled),
-.directory-picker-list button:hover:not(:disabled) { background: #292f37; }
-.directory-picker-list button.active:not(:disabled) {
+.directory-picker-list button:where(:not(.ui-btn)):hover:not(:disabled) { background: #292f37; }
+.directory-picker-list button:where(:not(.ui-btn)).active:not(:disabled) {
   background: #1f2937; border-color: #58a6ff; box-shadow: inset 3px 0 #58a6ff;
 }
 .directory-picker-modal button:where(:not(.ui-btn)):disabled { cursor: default; opacity: .45; }
@@ -8784,15 +8780,7 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
   align-items: center; display: flex; flex: 0 0 auto; gap: 8px;
   padding: 7px 9px; text-align: left; min-width: 0; flex-grow: 1;
 }
-.directory-picker-entry-action {
-  align-items: center; display: flex; flex: 0 0 34px; justify-content: center;
-  padding: 0; width: 34px;
-}
-.directory-picker-entry-action.danger { color: #ffa198; }
-.directory-picker-entry-action.danger:hover:not(:disabled) {
-  background: rgba(248,81,73,.12); border-color: #f85149;
-}
-.directory-picker-new { color: #79c0ff !important; border-color: #388bfd !important; }
+.ui-btn.directory-picker-entry-action { flex: 0 0 34px; justify-content: center; padding: 0; width: 34px; }
 .directory-picker-empty { margin: auto; }
 .directory-picker-error { min-height: 18px; }
 .directory-picker-modal .modal-buttons { border-top: 1px solid #2a3340; padding-top: 10px; }
@@ -19434,16 +19422,12 @@ body.wizard .gp-start-form button:where(:not(.ui-btn)).primary { background: #3a
 .gq-tag { font-size: 10.5px; border: 1px solid #30363d; border-radius: 4px; padding: 0 5px; color: #8b949e; }
 .gq-reuse, .gq-add, .gq-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .gq-spacer { flex: 1; }
-.gq-chip, .gq-btn, .gq-link { font: inherit; font-size: 12px; cursor: pointer; }
-.gq-chip, .gq-btn { border: 1px solid #30363d; border-radius: 6px; padding: 3px 10px; background: #21262d; color: #e6edf3; }
-.gq-chip:hover, .gq-btn:not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
-.gq-btn.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.gq-chip, .gq-link { font: inherit; font-size: 12px; cursor: pointer; }
+.gq-chip { border: 1px solid #30363d; border-radius: 6px; padding: 3px 10px; background: #21262d; color: #e6edf3; }
+.gq-chip:hover { background: var(--ui-bg-hover); }
 /* Area primaries keep their own colour on hover and brighten it a step (the
    one hover style); the neutral area hovers above skip them. */
-:is(.mail-decision, .message-action, .human-notification-drawer-actions, .gp-start-form) button:is(.primary, .companion-primary):hover:not(:disabled),
-.gq-btn.primary:hover:not(:disabled) { filter: brightness(1.2); }
-.gq-btn:disabled { opacity: .55; cursor: default; }
-.gq-btn.primary:disabled { opacity: 1; background: #21262d; border-color: #30363d; color: #8b949e; }
+:is(.mail-decision, .message-action, .human-notification-drawer-actions, .gp-start-form) button:is(.primary, .companion-primary):hover:not(:disabled) { filter: brightness(1.2); }
 .gq-link { background: transparent; border: 0; padding: 0; color: #58a6ff; }
 .gq-editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 420px); }
 .gq-main { padding: 12px 16px; border-right: 1px solid #21262d; min-width: 0; }
@@ -19558,9 +19542,7 @@ body.wizard .gq-flow-rails path.head { fill: rgba(212, 175, 55, .7); }
 body.wizard .gq-start, body.wizard .gq-editor { background: #140f28; border-color: rgba(122, 93, 176, 0.4); }
 body.wizard .gq-starter, body.wizard .gq-step { background: #181226; border-color: rgba(122, 93, 176, 0.35); }
 body.wizard .gq-starter:hover, body.wizard .gq-starter:focus-visible { border-color: #d4af37; box-shadow: 0 0 0 3px rgba(212, 175, 55, .14); }
-body.wizard .gq-chip, body.wizard .gq-btn, body.wizard .gq-who-select:where(:not(.ui-select)), body.wizard .gq-fallback-select:where(:not(.ui-select)), body.wizard .gq-then-link select:where(:not(.ui-select)), body.wizard .gq-fallback select:where(:not(.ui-select)) { background: #241b3d; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
-body.wizard .gq-btn.primary { background: #3a2f16; border-color: #d4af37; color: #f3e6c0; }
-body.wizard .gq-btn.primary:disabled { background: #1f1833; border-color: rgba(122, 93, 176, 0.4); color: #9a8bb5; }
+body.wizard .gq-chip, body.wizard .gq-who-select:where(:not(.ui-select)), body.wizard .gq-fallback-select:where(:not(.ui-select)), body.wizard .gq-then-link select:where(:not(.ui-select)), body.wizard .gq-fallback select:where(:not(.ui-select)) { background: #241b3d; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
 body.wizard .gq-ask-in, body.wizard .gq-step-text, body.wizard .gq-param input, body.wizard .gq-answers-in input { background: #1a1430; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
 body.wizard .gq-fallback { background: #1a1430; border-color: rgba(122, 93, 176, 0.35); }
 body.wizard .gq-link:where(:not(.ui-btn)) { color: #d4af37; }

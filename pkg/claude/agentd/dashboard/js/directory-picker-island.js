@@ -244,15 +244,15 @@ export function DirectoryPickerApp({ state, actions }) {
         aria-activedescendant=${activeDirectory ? optionID(activeDirectory) : undefined}
         aria-controls="directory-picker-folders"
         autocomplete="off" spellcheck="false" data-select-on-focus />
-      <button type="submit" disabled=${busy}>${busy ? 'Loading…' : 'Go'}</button>
+      <${Button} size="sm" type="submit" disabled=${busy}>${busy ? 'Loading…' : 'Go'}<//>
     </form>
     <div class="directory-picker-nav">
-      <button type="button" disabled=${busy || !view?.parent}
-        onClick=${() => void browse(view?.parent, true)}>↑ Parent</button>
-      <button type="button" disabled=${busy || !view?.home || view?.home === view?.path}
-        onClick=${() => void browse(view?.home, true)}>⌂ Home</button>
-      <button type="button" class="directory-picker-new" disabled=${busy || !view?.path}
-        onClick=${() => setOperation({ kind: 'create' })}>＋ New folder</button>
+      <${Button} size="sm" disabled=${busy || !view?.parent}
+        onClick=${() => void browse(view?.parent, true)}>↑ Parent<//>
+      <${Button} size="sm" disabled=${busy || !view?.home || view?.home === view?.path}
+        onClick=${() => void browse(view?.home, true)}>⌂ Home<//>
+      <${Button} size="sm" class="directory-picker-new" disabled=${busy || !view?.path}
+        onClick=${() => setOperation({ kind: 'create' })}>＋ New folder<//>
       <span class="directory-picker-count" role="status" aria-live="polite">${view ? count : ''}</span>
     </div>
     ${typedOtherPath && html`<div class="directory-picker-hint ui-hint">Press Enter to open the typed path.</div>`}
@@ -262,7 +262,7 @@ export function DirectoryPickerApp({ state, actions }) {
         const active = selecting && index === selectedIndex;
         return html`<div
         key=${directory.path} role=${selecting ? 'presentation' : 'listitem'} class="directory-picker-entry"
-      ><button id=${selecting ? optionID(directory) : undefined}
+      ><button data-ui-exempt id=${selecting ? optionID(directory) : undefined}
           type="button" title=${directory.path} disabled=${busy}
           ref=${active ? activeEntryRef : undefined}
           class=${`directory-picker-open${active ? ' active' : ''}`}
@@ -271,12 +271,12 @@ export function DirectoryPickerApp({ state, actions }) {
           tabIndex=${selecting ? -1 : undefined}
           onClick=${() => void browse(directory.path, true)}
         ><span aria-hidden="true">📁</span><span>${directory.name}</span></button>
-        <button type="button" class="directory-picker-entry-action" disabled=${busy}
+        <${Button} size="sm" variant="ghost" class="directory-picker-entry-action" disabled=${busy}
           aria-label=${`Rename ${directory.name}`} title=${`Rename ${directory.name}`}
-          onClick=${() => setOperation({ kind: 'rename', directory })}>✎</button>
-        <button type="button" class="directory-picker-entry-action danger" disabled=${busy}
+          onClick=${() => setOperation({ kind: 'rename', directory })}>✎<//>
+        <${Button} size="sm" variant="ghost danger" class="directory-picker-entry-action" disabled=${busy}
           aria-label=${`Delete ${directory.name}`} title=${`Delete ${directory.name}`}
-          onClick=${() => setOperation({ kind: 'delete', directory })}>🗑</button>
+          onClick=${() => setOperation({ kind: 'delete', directory })}>🗑<//>
       </div>`;
       })}
       ${view && !visibleDirectories.length && html`<p class="directory-picker-empty ui-empty">
