@@ -444,10 +444,14 @@ func shareAuthoredOpenMRReviews(ctx context.Context, base, token string, items [
 		case ok:
 			obs.Reviewers = glReviewers(base, node.ApprovedBy.Nodes, node.Reviewers.Nodes)
 		case !errors.Is(err, errGLUnknownField):
-			// Read and missing (opened between the two reads), or not read:
-			// the decision alone, so a list with change requests is not
-			// replaced by one without.
-			obs.Reviewers, obs.ReviewersFetched = nil, false
+			// Read and missing (opened between the two reads), or not read.
+			// Over a cached reviewer list, the decision alone, so a list with
+			// change requests is not replaced by one without. With none known
+			// yet (a fresh daemon, a new merge request), the list query's
+			// approvals, rather than a row that has lost them.
+			if cached, known := loadPRReviews(items[i].URL); known && cached.ReviewersKnown {
+				obs.Reviewers, obs.ReviewersFetched = nil, false
+			}
 		}
 		savePRReviewObservation(items[i].URL, obs, now)
 	}

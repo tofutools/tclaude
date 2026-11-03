@@ -126,3 +126,36 @@ func TestOpenMRs_AFailingRecentReadWaitsAsLongAsAGoodOne(t *testing.T) {
 	require.NotNil(t, view)
 	assert.Zero(t, view.RecentWindowDays, "no list read yet, so no Closed filter")
 }
+
+// TestOpenMRs_AFailedReviewerReadKeepsTheApprovals: on a fresh daemon, with
+// no reviewer list cached yet, a failed reviewer read leaves the row with the
+// approvals the list query gave, rather than with none.
+func TestOpenMRs_AFailedReviewerReadKeepsTheApprovals(t *testing.T) {
+	reviewers := badGateway
+	sideReadWorld(t, func() glAPIResult { return reviewers() }, okResult(emptyRecent))
+	_, err := pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err)
+
+	row := func() *prReviewSummary {
+		view := authoredOpenMRsSnapshot(loadCfg(t), nil)
+		require.NotNil(t, view)
+		require.Len(t, view.Items, 1)
+		require.NotNil(t, view.Items[0].Reviews)
+		return view.Items[0].Reviews
+	}
+	got := row()
+	assert.Equal(t, 1, got.Approved, "ann's approval from the list query")
+	assert.True(t, got.ReviewersKnown)
+
+	// Once a reviewer list is known, a failed read keeps that list.
+	reviewers = okResult(`{"data":{"currentUser":{"authoredMergeRequests":{"nodes":[{
+		"webUrl":"` + testMRBase + `/acme/sub/app/-/merge_requests/7","approvedBy":{"nodes":[{"username":"ann","bot":false}]},
+		"reviewers":{"nodes":[{"username":"martin","bot":false,"mergeRequestInteraction":{"reviewState":"REQUESTED_CHANGES"}}]}}]}}}}`)
+	_, err = pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, row().ChangesRequested)
+	reviewers = badGateway
+	_, err = pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, row().ChangesRequested, "the change request survives a failed read")
+}
