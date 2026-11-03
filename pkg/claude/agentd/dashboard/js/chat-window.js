@@ -98,6 +98,7 @@ export function ChatWindow({
   const pane = { key: instance.id, id: instance.id, label: name, seed: { agent: agentId, harness: agent?.harness || '' } };
   const actions = { widgetFor: () => widgetRef.current, activatePane: () => setFocusToken((n) => n + 1) };
   const refocus = () => setFocusToken((n) => n + 1);
+  const toCollab = agent && onTerminals && !away ? () => onTerminals(instance, agent) : null;
   const title = html`${strip}
     <div class="companion-controls">
       ${elevated && html`<button data-ui-exempt type="button" class="companion-state-sudo" aria-label=${`${name} has elevated access`}
@@ -115,7 +116,7 @@ export function ChatWindow({
         onClick=${() => voice.toggle(agent)}>${voiceOn ? '🔊' : '🔈'}</button>`}
       ${agent?.online && onCompose && html`<button data-ui-exempt type="button" class="companion-compose" aria-label=${`Message ${name}`} title=${withShortcut('Send a queued message', 'compose')} onClick=${() => onCompose(agent, refocus)}>✉</button>`}
       <${AgentCog} agent=${agent} parked=${away} roster=${stewardRoster} canShutDown=${closeShutsDown} showRoster=${showRoster}
-        onCollab=${agent && onTerminals && !away ? () => onTerminals(instance, agent) : null}
+        onCollab=${toCollab} maximized=${overlay.placement.snap === 'max'} onMaximize=${() => overlay.toggleMaximize()}
         onFloat=${onFloat && (tabCount > 1 || away) ? () => onFloat(agent) : null} onDetach=${onSeparateWindow ? () => onSeparateWindow(agent, overlay.windowRef.current?.getBoundingClientRect?.()) : null} onMorph=${agent && openMorph ? () => openMorph(agent) : null}
         openPermissions=${openPermissions} openSudo=${openSudo} openHandover=${openStewardHandover} agents=${agents} showAgent=${showAgent}
         fetchImpl=${fetchImpl} notify=${notify} onDown=${stewardDown} askShutDownRef=${askShutDown} rosterRef=${rosterRef} />
@@ -126,7 +127,7 @@ export function ChatWindow({
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} mounted=${open || (warm && !!agent?.online)}
     className=${`companion-window chat-window${open ? '' : ' companion-window-warm'}`} frameClass="companion-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Chat with ${name}`} title=${title}
-    controls=${{ look, closeLabel: `Close ${name}`, closeTitle: close.title, onClose: close.onClose, onMinimize }}>
+    controls=${{ look, closeLabel: `Close ${name}`, closeTitle: close.title, onClose: close.onClose, onMinimize, onCollab: snapshot.value?.collab_enabled === true ? toCollab : null }}>
     <div class=${`companion-body${approvals.length + decisions.length + actionMessages.length ? ' has-cards' : ''}`} id=${instance.id} data-chat-agent=${agentId}>
       ${approvals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${decisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}

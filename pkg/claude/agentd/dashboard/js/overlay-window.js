@@ -499,6 +499,11 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     dragWindow(event);
   }
 
+  function onTitleDoubleClick(event) {
+    if (event.target.closest?.('button, input, select, a, [role="tab"], [role="tablist"] *')) return;
+    toggleMaximize();
+  }
+
   function dragWindow(event) {
     if (event.button !== 0 || !windowRef.current) return;
     event.preventDefault();
@@ -720,7 +725,7 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   const edges = cell ? splitEdges(layout.edges[id]) : freeEdges(placement.snap);
   const unitLevel = levelOf(cell ? SPLIT_UNIT : id);
   const splitFront = cell && overlayStack.value.findLast((other) => layout.rects[other]) === id;
-  return { placement: shown, floating, targets, edges, level: unitLevel + (splitFront ? 1 : 0), linesLevel: unitLevel + 2, splitLines, onLinePointerDown, detachLine, win, guide, windowRef, openFrom, onTitlePointerDown, onResizePointerDown, onWindowClick, releaseFocus, toggleMaximize, shrinkTo, dragWindow, cancelGesture: () => gesture.current?.() };
+  return { placement: shown, floating, targets, edges, level: unitLevel + (splitFront ? 1 : 0), linesLevel: unitLevel + 2, splitLines, onLinePointerDown, detachLine, win, guide, windowRef, openFrom, onTitlePointerDown, onTitleDoubleClick, onResizePointerDown, onWindowClick, releaseFocus, toggleMaximize, shrinkTo, dragWindow, cancelGesture: () => gesture.current?.() };
 }
 
 // SnapTargets are the drop targets of a window being dragged, drawn over every
@@ -787,9 +792,11 @@ function SplitLines({ overlay }) {
 // OverlayWindow draws what useOverlayWindow (the window prop) runs. id names it
 // for stacking. mounted keeps a hidden window in the page, for content that must
 // stay alive while minimized. lead and title are the title bar's content,
-// and controls, { look, closeLabel, closeTitle, onMinimize, onClose }, adds the
-// native buttons, which the classic look leaves to the content. A window with
-// nowhere to minimize to leaves out onMinimize.
+// and controls, { look, closeLabel, closeTitle, onMinimize, onCollab, onClose },
+// adds the title bar's buttons, which the classic look leaves to the content. A
+// window with nowhere to minimize to leaves out onMinimize, and one that cannot
+// go to the Collab tab now leaves out onCollab. A double click on the bar's
+// empty space maximizes or restores, whatever the look.
 export function OverlayWindow({ id, window: overlay, open = true, mounted = open, className, frameClass, titlebarClass, label, lead = null, title, controls = null, onTitleWheel = null, children }) {
   const { placement, guide } = overlay;
   const front = frontOverlayWindow.value === id ? ' overlay-window-front' : '';
@@ -806,7 +813,7 @@ export function OverlayWindow({ id, window: overlay, open = true, mounted = open
       style=${`left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px;${level}`}
       role="dialog" tabindex="-1" aria-label=${label} aria-modal="false" aria-hidden=${open ? undefined : 'true'}
       onClick=${overlay.onWindowClick} onPointerDownCapture=${raise}>
-      <header class=${titlebarClass} onPointerDown=${overlay.onTitlePointerDown} onWheel=${onTitleWheel}>
+      <header class=${titlebarClass} onPointerDown=${overlay.onTitlePointerDown} onDblClick=${overlay.onTitleDoubleClick} onWheel=${onTitleWheel}>
         ${look === 'macos' ? windowControls : lead}
         ${title}
         ${look !== 'macos' && windowControls}
