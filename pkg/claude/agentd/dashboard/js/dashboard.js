@@ -51,8 +51,9 @@ import {
   openPermEditModal, openSudoEditModal, openSpawnPermEditor, openContextFeaturesEditor, pickAgent,
 } from './message-access-dialog-controller.js';
 import {
-  bindTemplatesUI, bindGroupImportModal, openTemplatesManageModal, summonTemplateScribe,
+  bindTemplatesUI, bindGroupImportModal, openTemplatesManageModal,
 } from './modal-templates.js';
+import { summonTemplateScribe } from './template-scribe.js';
 import { bindProfilesUI, openProfileEditor } from './modal-profiles.js';
 import { getDashDefaultProfile, loadProfiles } from './profiles.js';
 import { bindSandboxProfilesUI, loadSandboxProfiles, summonSandboxScribe } from './sandbox-profiles.js';

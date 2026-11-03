@@ -2530,12 +2530,14 @@ export function TemplateEditor({
       }
     }
   };
+  // The editor stays until the scribe's window has opened: the operator may
+  // still decline its grant, and then keeps the editor as it was.
   const handoff = async () => {
     if (saving || (dirty && !(await confirmDiscard()))) return;
-    state.closeTemplateDialog();
-    await actions.editTemplateWithAgent(
+    const result = await actions.editTemplateWithAgent(
       editing ? descriptor.seed.name : draft.name.trim(),
     );
+    if (result?.opened) state.closeTemplateDialog();
   };
   return h(
     Dialog,

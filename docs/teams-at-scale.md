@@ -50,7 +50,9 @@ Template writes need `templates.manage` and `instantiate` needs
 reinforce and rebrief it. You can
 grant `templates.manage` to a trusted "scribe" agent and author templates
 conversationally — describe the team you want, let the scribe drive the JSON
-round-trip. The scribe's launch profile is configurable via `scribe.profile`
+round-trip. In the dashboard, *Edit with agent* in the templates manager (or
+in a template's editor) does this: after you confirm the grant, the scribe
+opens in its regular overlay chat window. The scribe's launch profile is configurable via `scribe.profile`
 in `~/.tclaude/data/config.json`.
 
 !!! note "Wizard vocabulary"

@@ -4951,25 +4951,32 @@ test('sandbox tmpfs validation compares sandbox paths the way the daemon cleans 
     'the host path a remapped row reads from is not a sandbox position a tmpfs can collide with');
 });
 
-test('scribe browser handoffs dismiss the manager so the terminal tab is visible', async (t) => {
+test('a scribe that opened its window dismisses the manager, whose dialog would cover it', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { createManagementActions }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'),
     harness.importDashboardModule('js/management-actions.js'),
   ]);
   const state = createManagementState();
+  const summoned = [];
   let result = { focus_mode: 'browser', focus_ws: '/api/open-window-ws/scribe' };
-  const actions = createManagementActions({ state, summonTemplateScribe: async () => result, summonSandboxScribe: async () => result });
+  const actions = createManagementActions({ state, summonTemplateScribe: async (request) => { summoned.push(request); return { agentId: 'agt_circle', opened: 'chat' }; }, summonSandboxScribe: async () => result });
   state.openTemplateManager();
   await actions.editTemplatesWithAgent();
-  assert.equal(state.templateManager.value, false);
+  await actions.editTemplateWithAgent('release-crew');
+  assert.deepEqual(summoned, [{ scope: 'library' }, { scope: 'template', name: 'release-crew' }]);
+  assert.equal(state.templateManager.value, false, 'the chat window is visible, not under the manager');
   state.openManager('sandbox');
   await actions.configureSandboxWithAgent({ name: 'project' });
   assert.equal(state.manager.value, '');
   result = undefined;
+  state.openManager('sandbox');
+  await actions.configureSandboxWithAgent({ name: 'project' });
+  assert.equal(state.manager.value, 'sandbox', 'failed handoff keeps the manager available');
+  const declined = createManagementActions({ state, summonTemplateScribe: async () => null });
   state.openTemplateManager();
-  await actions.editTemplatesWithAgent();
-  assert.equal(state.templateManager.value, true, 'failed handoff keeps the manager available');
+  await declined.editTemplatesWithAgent();
+  assert.equal(state.templateManager.value, true, 'a declined grant keeps the manager');
 });
 
 test('sandbox evaluation targets follow the daemon catalog including new harnesses', async (t) => {
