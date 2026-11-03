@@ -335,3 +335,30 @@ test('the Groups full editor opens in an overlay window over the tab, on the ver
   assert.deepEqual(takeProcessDraft(), { id: 'night-shift', name: 'Night shift', view });
   env.stop();
 });
+
+test('the dock\'s Edit opens an overlay over the tab the operator is on, but the Processes tab\'s own editor there', async (t) => {
+  fakeDaemon(t);
+  const env = await mountShell(t);
+  const { harness, processTabs, instances } = env;
+  const { openProcessDraft, takeProcessDraft } = await harness.importDashboardModule('js/process-draft-handoff.js');
+  instances.overlayHostUp.value = true;
+  t.after(() => { instances.overlayHostUp.value = false; });
+  const groups = harness.document.querySelector('nav [data-tab="groups"]');
+  const processesNav = harness.document.querySelector('nav [data-tab="processes"]');
+
+  // From Groups (or any other tab) the editor opens over it.
+  harness.fireEvent(groups, 'click');
+  let where;
+  await harness.act(async () => { where = await openProcessDraft({ id: 'triage', name: 'Triage' }); await wait(10); });
+  assert.equal(where, 'overlay');
+  assert.deepEqual(processTabs().map((tab) => tab.template), ['triage']);
+  assert.ok(groups.classList.contains('active'), 'the operator stays where they are');
+
+  // On the Processes tab it opens in that tab's editor, not floated out of it.
+  harness.fireEvent(processesNav, 'click');
+  await harness.act(async () => { where = await openProcessDraft({ id: 'review', name: 'Code review' }); await wait(); });
+  assert.equal(where, 'processes');
+  assert.deepEqual(takeProcessDraft(), { id: 'review', name: 'Code review' });
+  assert.deepEqual(processTabs().map((tab) => tab.template), ['triage'], 'no overlay opens for it');
+  env.stop();
+});
