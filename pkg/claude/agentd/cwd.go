@@ -1,10 +1,13 @@
 package agentd
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // expandTilde rewrites a leading "~" or "~/" in path to the current
@@ -42,6 +45,18 @@ func expandTilde(path string) string {
 // subprocess that failed silently; the caller then waited out the 30s
 // conv-id poll and got a confusing gateway-timeout. Validating up front
 // turns that into an immediate, actionable 400.
+// spawnRequestCwd is a group spawn's launch directory before resolution: the
+// request's own, else the group's default_cwd, else the directory the CLI ran
+// in. Blank means the daemon's own cwd. The spawn handler and the spawn
+// queue's head check share it, so the queue probes the same disk the
+// spawner's capacity gate will.
+func spawnRequestCwd(cwd, callerCwd string, g *db.AgentGroup) string {
+	if cwd == "" {
+		cwd = cmp.Or(g.DefaultCwd, callerCwd)
+	}
+	return cwd
+}
+
 func resolveSpawnCwd(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

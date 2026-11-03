@@ -2625,6 +2625,12 @@ func ReconcileSpawnQueueForTest() { reconcileSpawnQueue() }
 // SetCapacityResourcesForTest replaces the free RAM/disk probe: ramMB of free
 // RAM (negative: reading unavailable) and diskMB free on every directory.
 func SetCapacityResourcesForTest(ramMB, diskMB int64) func() {
+	return SetCapacityDiskForTest(ramMB, func(string) int64 { return diskMB })
+}
+
+// SetCapacityDiskForTest is SetCapacityResourcesForTest with the free disk
+// chosen per probed directory.
+func SetCapacityDiskForTest(ramMB int64, diskMB func(dir string) int64) func() {
 	prev := capacityProbe
 	capacityProbe = func(dirs []string) capacityResources {
 		out := capacityResources{RAMError: "RAM: unavailable in test"}
@@ -2634,7 +2640,7 @@ func SetCapacityResourcesForTest(ramMB, diskMB int64) func() {
 		}
 		for _, d := range dirs {
 			out.Disks = append(out.Disks, hostmetrics.Disk{Path: hostmetrics.Path{Kind: "capacity", Path: d},
-				TotalBytes: 1 << 40, AvailableBytes: uint64(diskMB) << 20})
+				TotalBytes: 1 << 40, AvailableBytes: uint64(diskMB(d)) << 20})
 		}
 		return out
 	}
