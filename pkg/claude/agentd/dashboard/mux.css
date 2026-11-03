@@ -625,7 +625,6 @@ body.wizard .mux-pane-xterm {
 .page-sandbox-chip { flex: none; cursor: help; }
 .page-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; background: #fff; }
 .page-frame { flex: 1 1 auto; width: 100%; height: 100%; border: 0; background: #fff; }
-.page-frame-empty { margin: 16px; color: var(--ui-muted-text); }
 .page-unreachable {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
   padding: 24px; text-align: center; background: rgba(13, 17, 23, 0.94); color: var(--ui-text);

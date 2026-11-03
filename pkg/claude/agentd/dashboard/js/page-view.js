@@ -100,7 +100,7 @@ const baseName = (path) => String(path || '').split('/').filter(Boolean).pop() |
 // a sandbox without allow-same-origin, allow-popups, allow-top-navigation* or
 // allow-downloads; no permissions; no referrer; credentialless.
 export function PageFrame({ src, label, reloadKey }) {
-  if (!src) return html`<div class="page-frame-empty">This page has no address on this dashboard.</div>`;
+  if (!src) return html`<div class="ui-empty-block">This page has no address on this dashboard.</div>`;
   return html`<iframe key=${reloadKey} class="page-frame" src=${src} title=${`Live page: ${label}`}
     sandbox=${PAGE_FRAME_SANDBOX} allow="" referrerpolicy="no-referrer" credentialless=${true} loading="eager"></iframe>`;
 }
