@@ -11,6 +11,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { markQuickStart, scribeDraftAsked, scribeDraftName, scribeDraftRequest } from './groups-quickstart.js';
 import { handOffProcessDraft } from './process-draft-handoff.js';
 import { dashPrefs } from './prefs.js';
@@ -97,8 +98,8 @@ export async function scribeStartWarning(api, scribes, templateId) {
 export function DraftStartWarning({ warning, busy = false, openDisabled = false, onOpen, onStartAnyway }) {
   return html`<span class="gq-confirm" role="alert" data-start-draft-warning>
     This draft isn't reviewed: open it, or start anyway? <span class="gq-dim">${warning.reason}</span>
-    <button type="button" class="gq-btn" data-start-draft-open disabled=${busy || openDisabled} onClick=${onOpen}>open it</button>
-    <button type="button" class="gq-link" data-start-draft-anyway disabled=${busy} onClick=${onStartAnyway}>start anyway</button>
+    <${Button} size="sm" data-start-draft-open disabled=${busy || openDisabled} onClick=${onOpen}>open it<//>
+    <${Button} size="sm" variant="link" class="gq-link" data-start-draft-anyway disabled=${busy} onClick=${onStartAnyway}>start anyway<//>
   </span>`;
 }
 
@@ -313,14 +314,14 @@ export function ScribeDraft({ group, draft, api, wizard = false, notify, onRevie
     <form class="gq-draft-reply" onSubmit=${send}>
       <input type="text" aria-label="Answer the scribe" data-scribe-reply maxlength=${PROCESS_SCRIBE_PROMPT_MAX} value=${reply}
         placeholder="Answer the scribe, or ask for a change" onInput=${(event) => setReply(event.currentTarget.value)} />
-      <button type="submit" class="gq-btn" data-scribe-send disabled=${!reply.trim() || !!busy}>${busy === 'send' ? 'sending…' : 'Send'}</button>
+      <${Button} size="sm" type="submit" data-scribe-send disabled=${!reply.trim() || !!busy}>${busy === 'send' ? 'sending…' : 'Send'}<//>
     </form>
     <div class="gq-foot">
-      <button type="button" class="gq-btn primary" data-scribe-review disabled=${!finished || !!busy} title=${finished ? 'Open the saved draft in the step list' : 'The scribe has not finished a draft yet'}
-        onClick=${openReview}>Review steps</button>
-      <button type="button" class="gq-btn" data-scribe-graph onClick=${graph} title="Continue with this scribe beside the graph editor">⤢ open in graph editor</button>
-      <button type="button" class="gq-link" data-scribe-stop disabled=${!!busy} onClick=${stop} title="Stop the scribe; the draft stays in the group, and what it saved opens for review">${busy === 'stop' ? 'stopping…' : 'stop scribe'}</button>
-      <button type="button" class="gq-link" data-scribe-hide disabled=${!!busy} onClick=${onClose} title="Hide this panel and leave the scribe working; ▶ on the process brings it back">hide</button>
+      <${Button} size="sm" variant="primary" data-scribe-review disabled=${!finished || !!busy} title=${finished ? 'Open the saved draft in the step list' : 'The scribe has not finished a draft yet'}
+        onClick=${openReview}>Review steps<//>
+      <${Button} size="sm" data-scribe-graph onClick=${graph} title="Continue with this scribe beside the graph editor">⤢ open in graph editor<//>
+      <${Button} size="sm" variant="link" class="gq-link" data-scribe-stop disabled=${!!busy} onClick=${stop} title="Stop the scribe; the draft stays in the group, and what it saved opens for review">${busy === 'stop' ? 'stopping…' : 'stop scribe'}<//>
+      <${Button} size="sm" variant="link" class="gq-link" data-scribe-hide disabled=${!!busy} onClick=${onClose} title="Hide this panel and leave the scribe working; ▶ on the process brings it back">hide<//>
     </div>
     ${(failure || error) && html`<div class="gq-error" role="alert">${failure || error}</div>`}
   </section>`;
