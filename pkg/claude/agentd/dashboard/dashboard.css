@@ -17627,9 +17627,9 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-cb-views button.on { background: #1f2a37; color: #58a6ff; }
 .fa-cb-kind.fa-cb-k-skill { color: #b39ddb; border-color: #7a5db0; }
 .fa-cb-kind.fa-cb-k-config { color: #58a6ff; border-color: #1f4f8f; }
-.fa-cb-t-ok { background: #12301d; color: #3fb950; border-color: #238636; }
-.fa-cb-t-unk { background: #3a2a0b; color: #e3b341; border-color: #9e6a03; }
-.fa-cb-t-me { color: #8b949e; }
+.fa-cb-trust.fa-cb-t-ok { background: #12301d; color: #3fb950; border-color: #238636; }
+.fa-cb-trust.fa-cb-t-unk { background: #3a2a0b; color: #e3b341; border-color: #9e6a03; }
+.fa-cb-trust.fa-cb-t-me { color: #8b949e; }
 .fa-cb-ok { color: #3fb950; }
 .fa-cb-list-wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 38%); border: 1px solid #30363d; border-radius: 6px; min-height: 360px; }
 .fa-cb-list { min-width: 0; border-right: 1px solid #30363d; overflow: auto; max-height: 70vh; }
