@@ -128,6 +128,8 @@ func (e *pageEnv) assertLiveReadBack(t *testing.T, a pageAgent, p pageOut, name 
 		assert.Empty(t, b.Path, "the path the page's script reports is dropped too")
 		assert.Equal(t, "Make the pay button blue", b.Note, "the operator's own note still arrives")
 		assert.Len(t, b.Marks, 2, "and so do the marks")
+		assert.Equal(t, [2]int{40, 180}, b.Marks[0].Points[0], "points are where the operator drew them, not shifted by the page's scroll")
+		assert.Zero(t, b.Viewport.W, "the viewport the page's script reports is dropped")
 	}
 }
 
@@ -282,7 +284,7 @@ func TestPageStaticConstructedRootStillShowsTheStartupDir(t *testing.T) {
 
 func TestPageStaticForAnUnconfinedAgentIsReadBack(t *testing.T) {
 	for name, launch := range map[string]func(e *pageEnv, a pageAgent){
-		"off": func(e *pageEnv, a pageAgent) { e.sandboxAgent(t, a, "off", nil) },
+		"off": func(e *pageEnv, a pageAgent) { e.sandboxAgent(t, a, "off", nil, claudeSandbox("off", false)) },
 		"harness sandbox off": func(e *pageEnv, a pageAgent) {
 			e.sandboxAgent(t, a, "harness-builtin", siteProfile(a.cwd), claudeSandbox("off", false))
 		},
@@ -301,6 +303,16 @@ func TestPageStaticForAnUnconfinedAgentIsReadBack(t *testing.T) {
 		})
 	}
 
+	// A launch tclaude ran with no sandbox that Claude Code still confines (a
+	// managed policy keeps its sandbox on) is not unconfined.
+	e0 := newPageEnv(t)
+	a0 := e0.agent(t, "fsmanaged", true)
+	site0 := staticSite(t, a0.cwd)
+	e0.sandboxAgent(t, a0, "off", nil, claudeSandbox("on", false))
+	p0, rec0 := e0.show(t, a0, site0, "site", "")
+	require.Equal(t, http.StatusCreated, rec0.Code, rec0.Body.String())
+	e0.assertReadBack(t, a0, p0, "site", false)
+
 	// An unverified "off" verdict is not proof the harness's wall is down.
 	e := newPageEnv(t)
 	a := e.agent(t, "fsunverified", true)
@@ -316,7 +328,7 @@ func TestPageStaticFollowsTheAgentsNextGeneration(t *testing.T) {
 	e := newPageEnv(t)
 	a := e.agent(t, "fsgen", true)
 	site := staticSite(t, a.cwd)
-	e.sandboxAgent(t, a, "off", nil)
+	e.sandboxAgent(t, a, "off", nil, claudeSandbox("off", false))
 	p, rec := e.show(t, a, site, "site", "")
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	code, _ := e.frame(t, p.Origin, "/")
@@ -346,4 +358,23 @@ func TestPageStaticFollowsTheAgentsNextGeneration(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, code)
 	rec = e.call(t, a, http.MethodPost, "/v1/pages/site/snapshot", nil)
 	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+}
+
+func TestPageStaticFollowsARelaunchOfTheSameConversation(t *testing.T) {
+	e := newPageEnv(t)
+	a := e.agent(t, "fsrestore", true)
+	site := staticSite(t, a.cwd)
+	// Shown during a temporary sandbox unlock.
+	e.sandboxAgent(t, a, "off", nil, claudeSandbox("off", false))
+	p, rec := e.show(t, a, site, "site", "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	code, _ := e.frame(t, p.Origin, "/")
+	require.Equal(t, http.StatusOK, code)
+	e.stubSnapshot(t)
+	e.assertReadBack(t, a, p, "site", true)
+
+	// The sandbox is restored: the same conversation resumes confined by its
+	// harness. The page is not read back any more, at once.
+	e.sandboxAgent(t, a, "harness-builtin", siteProfile(a.cwd), claudeSandbox("on", false))
+	e.assertReadBack(t, a, p, "site", false)
 }

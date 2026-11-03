@@ -152,6 +152,30 @@ func pageFSHarnessWallOff(row *db.SessionRow) bool {
 	return err == nil && row.HarnessBuiltinMode == off
 }
 
+// pageFSClaudeVerdictOff says a launch is not one Claude Code still
+// confines: a managed policy can keep its sandbox on even when tclaude
+// launches it with none, and then only the launch-time verdict tells.
+func pageFSClaudeVerdictOff(row *db.SessionRow) bool {
+	h, ok := harness.Get(row.Harness)
+	if ok && h.Name != harness.DefaultName {
+		return true
+	}
+	return row.OSSandboxState == harness.ClaudeSandboxOff && !row.OSSandboxUnverified
+}
+
+// sameAs says two views serve and read back alike.
+func (v *pageFSView) sameAs(o *pageFSView) bool {
+	if v.class != o.class || v.constructed != o.constructed || len(v.entries) != len(o.entries) || len(v.always) != len(o.always) {
+		return false
+	}
+	for i := range v.entries {
+		if v.entries[i].hidden != o.entries[i].hidden || strings.Join(v.entries[i].paths, "\x00") != strings.Join(o.entries[i].paths, "\x00") {
+			return false
+		}
+	}
+	return strings.Join(v.always, "\x00") == strings.Join(o.always, "\x00")
+}
+
 // pageFSViewFor builds the view of the session behind convID, whose startup
 // directory is worktree (in each spelling).
 func pageFSViewFor(convID string, worktree []string) *pageFSView {
@@ -175,7 +199,7 @@ func pageFSViewFor(convID string, worktree []string) *pageFSView {
 		return v
 	}
 	switch {
-	case implementation.OmitsOSConfinement():
+	case implementation.OmitsOSConfinement() && pageFSClaudeVerdictOff(row):
 		v.class = pageFSUnconfined
 		return v
 	case implementation == sandboxpolicy.ImplementationTclaudeLayer && runtime.GOOS == "linux":
@@ -292,9 +316,14 @@ func (r *pageFSViewer) refreshLocked(force bool) (reload func(), err error) {
 	}
 	if force || time.Since(r.checked) >= pageFSViewRecheck {
 		r.checked = time.Now()
-		if cur, err := db.CurrentConvForAgent(r.agentID); err == nil && cur != "" && cur != r.conv {
-			r.conv = cur
-			r.view = pageFSViewFor(cur, r.worktree)
+		// The launch is re-read even for the same conversation: a sandbox
+		// unlock, restore or assign resumes it under another posture.
+		cur, err := db.CurrentConvForAgent(r.agentID)
+		if err != nil || cur == "" {
+			cur = r.conv
+		}
+		if next := pageFSViewFor(cur, r.worktree); cur != r.conv || !next.sameAs(r.view) {
+			r.conv, r.view = cur, next
 			reload = r.changedLocked()
 		}
 	}

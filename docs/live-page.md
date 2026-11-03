@@ -181,8 +181,10 @@ not the daemon's own.
     opened, for example because the agent is not running, the page serves
     nothing (503) rather than the host's files.
   - *No OS sandbox* (`off`, `resource-only`, or a harness whose own sandbox is
-    recorded off): the agent reads what the daemon reads, so the page is served
-    from the host.
+    recorded off; for Claude Code, its launch-time verdict must say off, since
+    a managed policy can keep its sandbox on): the agent reads what the daemon
+    reads, so the page is served from the host. The launch is re-read, so a
+    sandbox restored on the same conversation stops the read-back at once.
   - *Anything else* (a harness's own sandbox, macOS Seatbelt, or a launch with
     nothing recorded): the page is served from the host, leaving out by path
     what the recorded profile hides, with the same 404 as a missing file. The
@@ -300,7 +302,8 @@ tclaude agent page dom <name> <selector> [--text|--html|--styles]
 - **Static pages are read back when they are served exactly as the agent sees
   them:** under tclaude's sandbox on Linux, or with no OS sandbox. Otherwise
   `page snapshot` and `page dom` refuse the page, and its marks arrive without
-  the page's own data: no text under them, no path, no scroll. The operator's
+  the page's own data: no text under them, no path, scroll or viewport, and
+  points relative to the frame. The operator's
   marks and note still arrive. After the agent comes back in a new sandbox,
   `page dom` and the text under marks wait until the page has loaded again.
   Serve the page from your own dev server to use them otherwise.

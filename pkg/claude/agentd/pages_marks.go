@@ -650,14 +650,20 @@ func latestPageView(id string) (view pageViewReport, batch *pageMarkBatch) {
 	return pageViewReport{}, nil
 }
 
-// pageMarksStripPage drops what a batch carries from the page itself (its
-// text under marks, and the path and scroll its script reports) for a page
-// that is not read back. The marks, the note and the frame's size are the
-// operator's.
+// pageMarksStripPage drops what a batch carries from the page itself for a
+// page that is not read back: the text under marks, and the path, scroll and
+// viewport its script reports. Mark points are kept in page coordinates
+// (the drawing plus the reported scroll), so they are moved back to where the
+// operator drew them in the frame. The marks and the note are the operator's.
 func pageMarksStripPage(req *pageMarksRequest) {
 	for i := range req.Marks {
 		req.Marks[i].Anchors = []pageAnchor{}
+		for j := range req.Marks[i].Points {
+			req.Marks[i].Points[j][0] -= req.Scroll.X
+			req.Marks[i].Points[j][1] -= req.Scroll.Y
+		}
 	}
 	req.Path = ""
 	req.Scroll = pageXY{}
+	req.Viewport = pageWH{}
 }
