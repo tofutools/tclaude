@@ -5,6 +5,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { VOICE_ACTIONS } from './voice-config.js';
 import { forgetOnDevice, installLocalSpeech, localSpeechState, onDeviceChosen, speechServiceName } from './voice-local.js';
 
@@ -66,9 +67,9 @@ export function LocalSpeechRow({ win = globalThis.window }) {
   }[state];
   return html`<div class="cfg-voice-local">
     <span class="cfg-inline" data-voice-local=${state}>${status} ${usingLine(state, win)}</span>
-    ${state === 'downloadable' && html`<button type="button" class="cfg-inline" onClick=${download}>Download on-device speech</button>`}
+    ${state === 'downloadable' && html`<${Button} size="sm" class="cfg-inline" onClick=${download}>Download on-device speech<//>`}
     ${lost && html`<span class="cfg-hint" style="padding-left:0">On-device speech was here and is gone, so the wake listener stays stopped. Download it again if you can, or
-      <button type="button" class="cfg-inline" onClick=${() => { forgetOnDevice(win); setChosen(false); }}>use ${speechServiceName(win)}</button></span>`}
+      <${Button} size="sm" class="cfg-inline" onClick=${() => { forgetOnDevice(win); setChosen(false); }}>use ${speechServiceName(win)}<//></span>`}
     ${error && html`<span class="cfg-hint" role="alert" style="padding-left:0">${error}</span>`}
   </div>`;
 }

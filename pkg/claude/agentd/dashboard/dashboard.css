@@ -9710,12 +9710,6 @@ label.cfg-label { cursor: pointer; }
   flex-wrap: wrap; font-size: 12px; color: #c9d1d9;
 }
 .cfg-row-ctl:empty { display: none; }
-.cfg-row-ctl button.cfg-inline {
-  border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px;
-  padding: 4px 10px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9;
-}
-.cfg-row-ctl button.cfg-inline:not(:disabled):hover { background: var(--ui-bg-hover); }
-.cfg-row-ctl button.cfg-inline:disabled { opacity: 0.5; cursor: default; }
 .cfg-row-wide > .cfg-row-ctl { justify-content: flex-start; }
 .cfg-tool-list { width: 100%; border-collapse: collapse; font-size: 13px; }
 .cfg-tool-list th { text-align: left; font-weight: 600; color: #8b949e; }
@@ -9905,14 +9899,8 @@ label.cfg-label { cursor: pointer; }
 .cfg-list-row { display: flex; gap: 6px; align-items: center; }
 .cfg-list-row input[type=text] { flex: 1; min-width: 80px; }
 .cfg-list-row .cfg-arrow { color: #7d8590; flex: 0 0 auto; }
-.cfg-row-del, .cfg-list-add {
-  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
-  border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 11px;
-  padding: 3px 9px; flex: 0 0 auto;
-}
-.cfg-row-del:hover { border-color: #f85149; color: #f85149; }
+.cfg-row-del, .cfg-list-add { flex: 0 0 auto; }
 .cfg-list-add { align-self: flex-start; }
-.cfg-list-add:hover { border-color: #58a6ff; }
 .cfg-advanced { margin: 0 0 14px; border: 1px solid #30363d; border-radius: 8px; background: #0f141a; }
 .cfg-advanced > summary {
   cursor: pointer; font-size: 11px; color: #58a6ff; padding: 10px 14px;
@@ -9975,24 +9963,8 @@ label.cfg-label { cursor: pointer; }
 .ra-device-exp { color: #7d8590; font-size: 11px; flex: 1; }
 .ra-inline-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
 .ra-inline-form input { flex: 1 1 160px; min-width: 0; }
-/* JOH-364: the remote-access action buttons (Add host name(s) / Add device /
-   Generate material) had no rule — white UA chrome in BOTH skins (this Config
-   panel stays plain-dark in wizard). Mirrors .cfg-footer button. The .ra-link
-   text buttons live outside .ra-inline-form, so they keep their link styling. */
-.ra-inline-form button {
-  border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px;
-  padding: 6px 16px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9;
-}
-.ra-inline-form button:not(:disabled):hover { background: var(--ui-bg-hover); }
-.ra-inline-form button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-.ra-inline-form button.primary:not(:disabled):hover { background: #388bfd; }
 .ra-form-grid { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 10px; }
 .ra-form-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #9aa3b2; }
-.ra-link {
-  background: none; border: 0; color: #58a6ff; cursor: pointer; padding: 0;
-  font-size: 12px; text-decoration: underline;
-}
-.ra-link:hover { color: #79c0ff; }
 .cfg-errors {
   border: 1px solid #f85149; background: #2d1416; border-radius: 6px;
   color: #ffa198; font-size: 12px; padding: 8px 12px; margin: 0 0 14px;
@@ -16910,14 +16882,13 @@ body.wizard #tab-config .ra-form-grid input:focus,
 body.wizard #tab-config .cfg-advanced textarea:focus { border-color: #a97bd6; }
 body.wizard #tab-config .cfg-field select option { color: #1a1330; background: #e7d9f5; }
 
-/* List add / delete chips get the tarnished-gold secondary skin. The delete
-   chip keeps its red hover — a destructive action's safety signal, left
-   intact like the semantic call-outs above. */
-body.wizard #tab-config .cfg-row-del,
+/* The list add chip gets the tarnished-gold secondary skin, brightening its
+   background on hover. The delete chip stays the standard quiet danger, its
+   red hover a destructive action's safety signal. */
 body.wizard #tab-config .cfg-list-add {
   background: #241b3d; border-color: #d9b45a; color: #f3e6c0;
 }
-body.wizard #tab-config .cfg-list-add:hover { border-color: #f3e6c0; }
+body.wizard #tab-config .cfg-list-add:hover:not(:disabled) { background: #33275a; color: #f3e6c0; }
 
 /* Remote-access cert chrome (neutral bits only): device rows, chips, the
    inline link + form labels. The .ra-msg success/error banner is semantic and

@@ -14,8 +14,8 @@ function ruleFor(selector) {
   return css.slice(at, css.indexOf('}', at));
 }
 
-test('the Config row buttons and the import Reveal button set their own chrome', () => {
-  for (const selector of ['.cfg-row-ctl button.cfg-inline', '.import-confirm-reveal']) {
+test('the import Reveal button sets its own chrome', () => {
+  for (const selector of ['.import-confirm-reveal']) {
     const rule = ruleFor(selector);
     assert.match(rule, /background:/, selector);
     assert.match(rule, /border:/, selector);

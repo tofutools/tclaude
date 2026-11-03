@@ -463,7 +463,7 @@
           <span class="cfg-hint" style="padding-left:0">The host names / IPs a device may dial without a certificate-name mismatch (the server cert's SANs).</span>
           <div class="ra-inline-form">
             <input type="text" id="ra-addhosts-input" placeholder="myhost.tailnet.ts.net, example.com" aria-label="Additional host names" autocomplete="off" spellcheck="false" />
-            <button type="button" id="ra-addhosts-btn">Add host name(s)</button>
+            <button type="button" id="ra-addhosts-btn" class="ui-btn">Add host name(s)</button>
           </div>
           <span class="cfg-hint" style="padding-left:0">Adds SANs to the <strong>server</strong> cert (keeps the existing CA), so a public URL / new name verifies — <em>installed devices keep working</em>, no reinstall. Restart agentd to serve the updated cert.</span>
         </div>
@@ -476,9 +476,9 @@
           <div class="ra-inline-form">
             <input type="text" id="ra-addclient-name" placeholder="device name (e.g. phone)" aria-label="New device name" autocomplete="off" spellcheck="false" />
             <input type="password" id="ra-addclient-pw" placeholder=".p12 password" aria-label="New device .p12 password" autocomplete="new-password" />
-            <button type="button" id="ra-addclient-btn">Add device</button>
+            <button type="button" id="ra-addclient-btn" class="ui-btn">Add device</button>
           </div>
-          <span class="cfg-hint" style="padding-left:0">Issues a new <code>.p12</code> from the existing CA, then download it to install on the device. <button type="button" id="ra-ca-btn" class="ra-link">Download CA cert</button></span>
+          <span class="cfg-hint" style="padding-left:0">Issues a new <code>.p12</code> from the existing CA, then download it to install on the device. <button type="button" id="ra-ca-btn" class="ui-btn ui-btn-link ui-sm ra-link">Download CA cert</button></span>
         </div>
       </div>
 
@@ -495,7 +495,7 @@
           </div>
           <label class="cfg-inline"><input type="checkbox" id="ra-setup-enable" checked /> enable in config.json (restart agentd to start the listener)</label>
           <label class="cfg-inline"><input type="checkbox" id="ra-setup-regenerate" /> regenerate even though material exists (rotates the CA — invalidates installed devices)</label>
-          <div class="ra-inline-form"><button type="button" id="ra-setup-btn" class="primary">Generate material</button></div>
+          <div class="ra-inline-form"><button type="button" id="ra-setup-btn" class="ui-btn ui-btn-primary">Generate material</button></div>
         </div>
       </details>
     </div>

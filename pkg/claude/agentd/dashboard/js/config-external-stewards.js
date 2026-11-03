@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { writeClipboard } from './insecure-origin.js';
 import { shellConfirm } from './shell-state.js';
 
@@ -38,8 +39,8 @@ function IssuedCredential({ issued, onDone, copy }) {
     <strong>Copy the credential for ${issued.name} now. It can't be shown again.</strong>
     <code class="cfg-steward-secret" data-capture-mask>${issued.credential}</code>
     <div class="cfg-steward-row-actions">
-      <button type="button" class="cfg-list-add" onClick=${copyIt}>${copied ? 'Copied' : 'Copy'}</button>
-      <button type="button" class="cfg-list-add" onClick=${onDone}>Done</button>
+      <${Button} size="sm" class="cfg-list-add" onClick=${copyIt}>${copied ? 'Copied' : 'Copy'}<//>
+      <${Button} size="sm" class="cfg-list-add" onClick=${onDone}>Done<//>
     </div>
   </div>`;
 }
@@ -68,9 +69,9 @@ function WorkerPin({ steward, choices, busy, onSave, onClose }) {
     <label>Sandbox profile <select aria-label="Sandbox profile for its workers" onChange=${event => setSandboxProfile(event.currentTarget.value)}>
       <option value="">Choose</option>${options(choices.sandbox_profiles || [], [sandboxProfile])}</select></label>
     <div class="cfg-steward-row-actions">
-      <button type="submit" class="cfg-list-add" disabled=${busy || !ready}>Save</button>
-      ${steward.spawn && html`<button type="button" class="cfg-list-add" disabled=${busy} onClick=${() => onSave({ off: true })}>Turn off</button>`}
-      <button type="button" class="cfg-list-add" onClick=${onClose}>Cancel</button>
+      <${Button} type="submit" size="sm" class="cfg-list-add" disabled=${busy || !ready}>Save<//>
+      ${steward.spawn && html`<${Button} size="sm" class="cfg-list-add" disabled=${busy} onClick=${() => onSave({ off: true })}>Turn off<//>`}
+      <${Button} size="sm" class="cfg-list-add" onClick=${onClose}>Cancel<//>
     </div>
   </form>`;
 }
@@ -91,15 +92,15 @@ function StewardRow({ steward, act, busy, renewable, choices, onPin }) {
       : 'None'}</td>
     <td>
       ${workerSummary(steward)}
-      ${!steward.retired && !editing && html` <button type="button" class="cfg-list-add" disabled=${busy} onClick=${() => setEditing(true)}>Choose</button>`}
+      ${!steward.retired && !editing && html` <${Button} size="sm" class="cfg-list-add" disabled=${busy} onClick=${() => setEditing(true)}>Choose<//>`}
       ${editing && html`<${WorkerPin} steward=${steward} choices=${choices} busy=${busy} onClose=${() => setEditing(false)}
         onSave=${async (pin) => { if (await onPin(steward.name, pin)) setEditing(false); }} />`}
     </td>
     <td class="cfg-steward-row-actions">${!steward.retired && html`
-      <button type="button" class="cfg-list-add" disabled=${busy || !renewable} title="Make a new credential. The old ones keep working until they expire."
-        onClick=${() => act(steward.name, 'renew')}>Renew</button>
-      <button type="button" class="cfg-list-add" disabled=${busy || !live} title="End all of its credentials on the next request"
-        onClick=${() => act(steward.name, 'revoke')}>Revoke</button>`}
+      <${Button} size="sm" class="cfg-list-add" disabled=${busy || !renewable} title="Make a new credential. The old ones keep working until they expire."
+        onClick=${() => act(steward.name, 'renew')}>Renew<//>
+      <${Button} size="sm" class="cfg-list-add" disabled=${busy || !live} title="End all of its credentials on the next request"
+        onClick=${() => act(steward.name, 'revoke')}>Revoke<//>`}
     </td>
   </tr>`;
 }
@@ -183,7 +184,7 @@ export function ExternalStewardManager({ enabled, fetchImpl = globalThis.fetch, 
           <input type="number" aria-label="Days until the credential expires" placeholder="30" min="1" max="365"
             value=${days} onInput=${event => setDays(event.currentTarget.value)} />
           <span>days</span>
-          <button type="submit" class="cfg-list-add" disabled=${busy || !!issued}>Add</button>
+          <${Button} type="submit" size="sm" class="cfg-list-add" disabled=${busy || !!issued}>Add<//>
         </form>`
       : html`<div class="cfg-row-summary">Turn this on and save to add one. You can still revoke credentials while it's off.</div>`}
   </div>`;

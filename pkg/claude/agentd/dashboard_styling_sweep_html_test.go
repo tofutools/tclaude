@@ -62,9 +62,8 @@ func TestDashboardCSS_StylingSweep(t *testing.T) {
 	must(".plugin-head > button.primary,", "the catalog +install button is themed (direct child only)")
 	must("#sudo-list td > button:where(:not(.ui-btn)) {", "the sudo-grants revoke button is themed (raw skin fenced off the standard button)")
 
-	// Group 6 — B4/B5/B6 remote-access controls (both skins for buttons; plain +
-	// the wizard twin for the fields).
-	must(".ra-inline-form button {", "the remote-access action buttons are themed")
+	// Group 6 — B5/B6 remote-access fields (plain + the wizard twin). The
+	// action buttons are standard ui-btns, held by jstest/ui-controls.
 	must(".cfg-field input[type=password],", "password fields join the cfg-field input rule")
 	must(".cfg-field select, .ra-form-grid input {", "the .ra-form-grid setup inputs join the cfg-field input rule")
 	must("body.wizard #tab-config .cfg-field input[type=password],", "the wizard twin also covers password fields")
