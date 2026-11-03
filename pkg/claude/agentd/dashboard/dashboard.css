@@ -9421,12 +9421,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   display: flex; gap: 7px; align-items: baseline; margin-top: 3px;
   padding-top: 8px; border-top: 1px solid #30363d;
 }
-.cleanup-related button {
-  flex: 0 0 auto; background: #21262d; border: 1px solid #30363d;
-  border-radius: 4px; padding: 4px 8px; color: #c9d1d9;
-  font: inherit; cursor: pointer;
-}
-.cleanup-related button:hover { color: #58a6ff; background: var(--ui-bg-hover); }
+.cleanup-related .ui-btn { flex: 0 0 auto; }
 .cleanup-tier {
   display: flex; flex-direction: column; gap: 4px;
   padding: 6px 8px; margin-bottom: 2px;
@@ -12903,12 +12898,6 @@ body.wizard #window-modal .window-dir-note-regular { display: none; }
 body.wizard #window-modal .window-dir-label-wizard,
 body.wizard #window-modal .window-dir-note-wizard { display: inline; }
 
-/* Toolbar: select-all / none buttons take the tarnished-gold secondary skin,
-   the filter field goes dark-violet, the count line reads parchment. */
-body.wizard #window-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #window-modal .cleanup-toolbar button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 
 /* Group + role quick-select chip rows: arcane chips, gilded when ticked. */
 body.wizard #window-modal .window-role-chip {
@@ -12978,13 +12967,6 @@ body.wizard #window-modal #window-submit:disabled { opacity: 0.6; }
    are likewise left their honest warning hues (a signal, not chrome). */
 body.wizard #cleanup-modal .cleanup-hint.danger { color: #f0a868; }
 
-/* Toolbar: select-all / none take the tarnished-gold secondary skin; the
-   inactivity (number) + filter (search) fields go dark-violet; the count
-   reads parchment. */
-body.wizard #cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 
 /* Category-filter row (agents mode only): parchment toggles, violet label
    + per-category counts. */
@@ -13010,9 +12992,6 @@ body.wizard #cleanup-modal .cleanup-row .title { color: #f3e6c0; }
 body.wizard #cleanup-modal .cleanup-row .id { color: #b39ddb; }
 
 body.wizard #cleanup-modal .cleanup-related { border-top-color: rgba(122, 93, 176, 0.5); }
-body.wizard #cleanup-modal .cleanup-related button {
-  background: #241b3d; border-color: #d9b45a; color: #f3e6c0;
-}
 
 /* Footer: Cancel gets the tarnished-gold secondary treatment; the submit
    becomes a gilded lever (Summon / Banish's sibling). Its label is JS-set
@@ -13050,10 +13029,6 @@ body.wizard #cleanup-modal #cleanup-submit:disabled { opacity: 0.6; }
    The initial submit stays ember-red because retirement revokes membership
    and boons; the result-phase Done action loses .danger and becomes gilded. */
 
-body.wizard #retire-preview-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #retire-preview-modal .cleanup-toolbar button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 body.wizard #retire-preview-modal .cleanup-toolbar input[type=search]:focus {
   outline: none; border-color: #a97bd6;
 }
@@ -13100,10 +13075,6 @@ body.wizard #retire-preview-modal #retire-preview-submit:disabled { opacity: 0.6
    removes .danger, the same button settles into the ordinary gilded style. */
 
 body.wizard #delete-retired-modal .cleanup-hint.danger { color: #f0a868; }
-body.wizard #delete-retired-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #delete-retired-modal .cleanup-toolbar button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 body.wizard #delete-retired-modal .cleanup-toolbar input[type=number]:focus,
 body.wizard #delete-retired-modal .cleanup-toolbar input[type=search]:focus {
   outline: none; border-color: #a97bd6;
@@ -18161,10 +18132,7 @@ body.wizard .usage-history-note {
 .groups-subnav button:hover, .groups-subnav button.active { color: var(--text, #e6edf3); border-bottom-color: var(--accent, #58a6ff); }
 .route-map-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; }
 .route-map-toolbar label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted, #8b949e); font-size: 12px; }
-.route-map-toolbar select, .route-map-mode button { border: 1px solid var(--border, #30363d); background: var(--panel, #161b22); color: var(--text, #e6edf3); border-radius: 5px; padding: 5px 8px; }
-.route-map-mode { display: inline-flex; gap: 3px; }
-.route-map-mode button { cursor: pointer; font-size: 12px; }
-.route-map-mode button.active { color: var(--text, #e6edf3); border-color: var(--accent, #58a6ff); box-shadow: inset 0 -2px var(--accent, #58a6ff); }
+.route-map-toolbar select { border: 1px solid var(--border, #30363d); background: var(--panel, #161b22); color: var(--text, #e6edf3); border-radius: 5px; padding: 5px 8px; }
 .route-map-count { color: var(--muted, #8b949e); font-size: 12px; }
 .route-map-disclosure { margin: 0 0 10px; padding: 8px 10px; border: 1px solid #8b6b2e; border-radius: 5px; color: #e3b341; background: rgba(187, 128, 9, .10); font-size: 12px; }
 .route-map-content { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 330px); gap: 12px; align-items: start; }
@@ -18228,7 +18196,7 @@ body.wizard .usage-history-note {
   .route-map-toolbar label, .route-map-toolbar select { width: 100%; }
   .route-map-toolbar select { box-sizing: border-box; }
   .route-map-mode { width: 100%; }
-  .route-map-mode button { flex: 1; }
+  .route-map-mode .ui-btn { flex: 1; }
   .route-map-graph-frame { min-height: 250px; }
 }
 

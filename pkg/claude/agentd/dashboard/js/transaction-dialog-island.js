@@ -274,8 +274,8 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
       </label>
     </div>
     <div class="cleanup-toolbar">
-      <button type="button" id="window-select-all" disabled=${busy || locked} onClick=${() => updateAll(true)}>select all</button>
-      <button type="button" id="window-select-none" disabled=${busy || locked} onClick=${() => updateAll(false)}>select none</button>
+      <${Button} size="sm" id="window-select-all" disabled=${busy || locked} onClick=${() => updateAll(true)}>select all<//>
+      <${Button} size="sm" id="window-select-none" disabled=${busy || locked} onClick=${() => updateAll(false)}>select none<//>
       <input
         type="search" id="window-search" placeholder="filter title / id…"
         aria-label="Filter agents" value=${query} disabled=${busy || locked}
@@ -290,7 +290,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
         const members = bucketCandidates('groups', key, NO_WINDOW_GROUP);
         const on = members.filter((candidate) => selected.has(candidate.conv_id)).length;
         const stateClass = on === 0 ? '' : on === members.length ? ' on' : ' partial';
-        return html`<button
+        return html`<button data-ui-exempt
           type="button" key=${key} class=${`window-role-chip${stateClass}`}
           data-group-chip=${key} disabled=${busy || locked}
           onClick=${() => updateBucket('groups', key, NO_WINDOW_GROUP)}
@@ -303,7 +303,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
         const members = bucketCandidates('roles', key, NO_WINDOW_ROLE);
         const on = members.filter((candidate) => selected.has(candidate.conv_id)).length;
         const stateClass = on === 0 ? '' : on === members.length ? ' on' : ' partial';
-        return html`<button
+        return html`<button data-ui-exempt
           type="button" key=${key} class=${`window-role-chip${stateClass}`}
           data-role=${key} disabled=${busy || locked}
           onClick=${() => updateBucket('roles', key, NO_WINDOW_ROLE)}
@@ -593,8 +593,8 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
   >
     <p class=${`cleanup-hint ui-hint${effectiveTier === 'delete' ? ' danger' : ''}`} id="cleanup-hint">${hint}</p>
     <div class="cleanup-toolbar" id="cleanup-toolbar">
-      <button type="button" id="cleanup-select-all" disabled=${controlsDisabled} onClick=${selectAll}>select all</button>
-      <button type="button" id="cleanup-select-none" disabled=${controlsDisabled} onClick=${selectNone}>select none</button>
+      <${Button} size="sm" id="cleanup-select-all" disabled=${controlsDisabled} onClick=${selectAll}>select all<//>
+      <${Button} size="sm" id="cleanup-select-none" disabled=${controlsDisabled} onClick=${selectNone}>select none<//>
       <span title="Tick every visible row whose last activity is at least this many hours ago. 0 selects all.">
         inactive ≥ <input
           type="number" id="cleanup-age" min="0" step="1" value=${age}
@@ -693,13 +693,12 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
           disabled=${controlsDisabled || effectiveTier !== 'delete'}
           onChange=${(event) => setDeleteWorktrees(event.currentTarget.checked)}
         /> Delete associated git worktrees <span class="opt-note">— removes the worktree directory; the branch and its commits are kept. The main repo and worktrees shared with another agent are always skipped.</span></label>
-        <div class="cleanup-related"><button
-          type="button" id="cleanup-worktrees-all" disabled=${controlsDisabled}
+        <div class="cleanup-related"><${Button} size="sm" id="cleanup-worktrees-all" disabled=${controlsDisabled}
           onClick=${() => actions.handoffCleanupWorktrees({ group: '' })}
         ><${Words}
           plain="🧹 Review worktrees across all groups…"
           wizard="🍂 Prune stray branches across all parties…"
-        /></button><span class="opt-note"><${Words}
+        /><//><span class="opt-note"><${Words}
           plain="— opens a safe preview of stale worktrees in every group repo"
           wizard="— opens a safe preview of withered branches in every party grove"
         /></span></div>
@@ -1103,8 +1102,8 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
     <p class="cleanup-hint ui-hint" id="retire-preview-hint">${hint}</p>
     ${result ? html`<${BulkRetireResult} descriptor=${descriptor} response=${result} />` : html`
       <div class="cleanup-toolbar">
-        <button type="button" id="retire-preview-select-all" disabled=${busy || locked} onClick=${() => updateVisible(true)}>select all</button>
-        <button type="button" id="retire-preview-select-none" disabled=${busy || locked} onClick=${() => updateVisible(false)}>select none</button>
+        <${Button} size="sm" id="retire-preview-select-all" disabled=${busy || locked} onClick=${() => updateVisible(true)}>select all<//>
+        <${Button} size="sm" id="retire-preview-select-none" disabled=${busy || locked} onClick=${() => updateVisible(false)}>select none<//>
         <input
           type="search"
           id="retire-preview-search"
@@ -1331,8 +1330,8 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
     <p class=${`cleanup-hint ui-hint${result ? '' : ' danger'}`} id="delete-retired-hint">${hint}</p>
     ${result ? html`<${DeleteRetiredResult} response=${result} />` : html`
       <div class="cleanup-toolbar">
-        <button type="button" id="delete-retired-select-all" disabled=${busy} onClick=${() => updateVisible(true)}>select all</button>
-        <button type="button" id="delete-retired-select-none" disabled=${busy} onClick=${() => updateVisible(false)}>select none</button>
+        <${Button} size="sm" id="delete-retired-select-all" disabled=${busy} onClick=${() => updateVisible(true)}>select all<//>
+        <${Button} size="sm" id="delete-retired-select-none" disabled=${busy} onClick=${() => updateVisible(false)}>select none<//>
         <span title="Hide retired agents younger than this — only those retired at least this many days ago stay in the list (and so can be deleted). 0 shows them all.">
           retired ≥ <input
             type="number"
@@ -1813,12 +1812,11 @@ function DeleteAgentDialog({ descriptor, actions, confirmDiscard }) {
         }}
       />
       ${probeError && !retrying ? html`<div class="transaction-probe-retry">
-        <button
+        <${Button} size="sm"
           id="delete-agent-wt-retry"
-          type="button"
           disabled=${probing || busy}
           onClick=${retryProbe}
-        >Retry worktree check</button>
+        >Retry worktree check<//>
       </div>` : null}
     </${TransactionDialogFrame}>
   `;
