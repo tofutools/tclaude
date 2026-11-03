@@ -131,8 +131,9 @@ jobs:
       # it varies by runner OS, and one Linux run is full PR coverage. And
       # macOS runners are concurrency-capped, so the small process and sandbox
       # shards run inside one rest-all job there instead of three slots.
-      # release.yml keeps the full split on both OSes on every merge, which is
-      # where a darwin-only break the classifier did not foresee surfaces.
+      # release.yml runs the same macOS agentd + rest-all jobs on every merge,
+      # whatever the change, which is where a darwin-only break the
+      # classifier did not foresee surfaces.
       matrix: ${{ fromJSON(needs.changes.outputs.test_matrix) }}
     steps:
       - name: Checkout code

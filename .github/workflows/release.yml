@@ -49,12 +49,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        # Same shard split as PR CI, via the shared test-suite action — one
-        # partition definition for both flows. Unlike PR CI there is no
-        # macOS-jstest exclusion: this post-merge run is where that cell's
-        # cross-OS coverage lives.
+        # Linux takes the full shard split; macOS takes the same two jobs PR
+        # CI gives it (see ci.yml's test job), via the shared test-suite
+        # action. Hosted macOS runners are concurrency-capped, and every merge
+        # runs this workflow, so each macOS slot here is one PR CI waits for.
+        #
+        # - No macOS jstest: the shard runs browser-targeted dashboard JS under
+        #   Node + the vendored LinkeDOM runtime, so nothing in it varies by
+        #   runner OS, and it was the longest macOS job (~18 minutes).
+        # - rest-all is rest + process + sandbox in one job: the same Go
+        #   packages, one slot instead of three.
+        # - agentd stays its own job: at ~10 minutes it would double rest-all's
+        #   runtime and make macOS the release's slowest path.
+        os: [ubuntu-latest]
         shard: [agentd, jstest, process, sandbox, rest]
+        include:
+          - os: macos-latest
+            shard: agentd
+          - os: macos-latest
+            shard: rest-all
     steps:
       - name: Checkout code
         uses: actions/checkout@v7

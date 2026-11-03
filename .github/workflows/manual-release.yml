@@ -49,10 +49,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
-        # Same shard split as PR CI and release.yml, via the shared
-        # test-suite action — one partition definition everywhere.
+        # Same split as release.yml, via the shared test-suite action: Linux
+        # takes every shard, macOS takes agentd + rest-all and no jstest (see
+        # release.yml's test job for why).
+        os: [ubuntu-latest, ubuntu-24.04-arm]
         shard: [agentd, jstest, process, sandbox, rest]
+        include:
+          - os: macos-latest
+            shard: agentd
+          - os: macos-latest
+            shard: rest-all
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
