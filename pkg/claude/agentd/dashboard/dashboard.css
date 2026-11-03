@@ -18895,7 +18895,7 @@ nav [data-tab="map"].node-chip { display: none; }
 .node-pop { transition: opacity .2s ease; }
 .node-pop.closing { opacity: 0; }
 .node-pop-head { display: flex; align-items: center; color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 6px 8px 4px; }
-.node-pop-link { margin-left: auto; background: none; border: 0; padding: 0; color: #58a6ff; font-size: 11px; text-transform: none; letter-spacing: 0; cursor: pointer; }
+.node-pop-link { margin-left: auto; text-transform: none; letter-spacing: 0; }
 .node-pop-filter { display: block; margin: 2px 2px 6px; }
 .node-pop-filter input { box-sizing: border-box; width: 100%; padding: 5px 8px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #e6edf3; font-size: 12px; }
 .node-pop-filter input:focus { outline: none; border-color: #1f6feb; }
@@ -18911,7 +18911,7 @@ nav [data-tab="map"].node-chip { display: none; }
 .node-pop-row.offline .node-pop-dot { background: #6e7681; }
 .node-pop-swatch { width: 10px; height: 10px; border-radius: 3px; background: var(--nc); flex: none; }
 .node-pop-name { background: none; border: 0; padding: 0; color: inherit; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.node-pop-only { background: none; border: 0; padding: 0; color: #58a6ff; font-size: 11px; cursor: pointer; visibility: hidden; }
+.node-pop-only { visibility: hidden; }
 .node-pop-row:hover .node-pop-only { visibility: visible; }
 .node-pop-meta { margin-left: auto; color: #7d8590; font-size: 11px; white-space: nowrap; }
 .node-pop-sep { border: 0; border-top: 1px solid #21262d; margin: 4px 2px; }
@@ -19005,9 +19005,8 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
 .fleet-map-hubstate i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .fleet-map-hubstate.online i { background: #3fb950; }
 .fleet-zoom { display: inline-flex; align-items: center; gap: 3px; padding: 2px 4px; border: 1px solid #30363d; border-radius: 6px; background: #161b22; }
-.fleet-zoom button { min-width: 24px; height: 22px; padding: 0 5px; border: 1px solid #30363d; border-radius: 4px; background: #0d1117; color: #c9d1d9; font: 13px system-ui, sans-serif; cursor: pointer; }
-.fleet-zoom button:disabled { opacity: .45; cursor: default; }
-.fleet-zoom .fleet-zoom-level { min-width: 46px; border-color: transparent; background: transparent; color: #8b949e; font-size: 12px; font-variant-numeric: tabular-nums; }
+.fleet-zoom .ui-btn.ui-sm { min-width: 24px; height: 22px; padding: 0 5px; }
+.fleet-zoom .ui-btn.fleet-zoom-level { min-width: 46px; font-variant-numeric: tabular-nums; }
 .fleet-map-hint { margin-left: auto; color: #6e7681; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fleet-map-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; cursor: grab; }
 .fleet-map-stage.panning { cursor: grabbing; user-select: none; }
@@ -19068,9 +19067,6 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
 .fleet-card-ask-note { margin-top: 4px; color: #c9d1d9; font-style: italic; overflow-wrap: anywhere; }
 .fleet-card-ask-form { display: flex; gap: 6px; padding: 0 12px 10px; }
 .fleet-card-ask-form input { flex: 1; min-width: 0; background: #0d1117; border: 1px solid #30363d; border-radius: 5px; color: #c9d1d9; padding: 3px 8px; font: 12px system-ui, sans-serif; }
-.fleet-card-ask-form button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 5px; padding: 3px 10px; font: 12px system-ui, sans-serif; cursor: pointer; }
-.fleet-card-ask-form button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-.fleet-card-foot button:disabled, .fleet-card-ask-form button:disabled { opacity: .55; cursor: default; }
 .fleet-card-asked { align-self: center; font-size: 11px; white-space: nowrap; }
 .fleet-card.untrusted .fleet-card-foot { flex-wrap: wrap; align-items: center; }
 .fleet-card.untrusted .fleet-card-foot button { white-space: nowrap; }
@@ -19118,10 +19114,6 @@ a.fleet-card-cfg { display: inline-flex; align-items: center; justify-content: c
 .fleet-card-notice { padding: 0 12px 8px; font-size: 12px; color: #d29922; }
 .fleet-card-notice.silenced { color: #8b949e; }
 .fleet-card-alerts { padding-top: 0; }
-.fleet-card-seg { display: inline-flex; border: 1px solid #30363d; border-radius: 5px; overflow: hidden; }
-.fleet-card-seg button { border: 0; background: none; color: #8b949e; padding: 1px 8px; font: 11.5px system-ui, sans-serif; cursor: pointer; }
-.fleet-card-seg button + button { border-left: 1px solid #30363d; }
-.fleet-card-seg button.on { background: rgba(31, 111, 235, .2); color: #f0f6fc; cursor: default; }
 .fleet-card-kind.part-time { color: #a5d6ff; border-color: rgba(31, 111, 235, .4); }
 .fleet-card.part-time.stale { opacity: .65; }
 .fleet-card-presence.asleep i { background: none; border: 1.5px solid currentColor; width: 6px; height: 6px; }
@@ -19131,8 +19123,6 @@ a.fleet-card-cfg { display: inline-flex; align-items: center; justify-content: c
 .fleet-legend i.untrusted { border-top: 2px dotted #484f58; }
 .fleet-untrusted-toggle { display: inline-flex; align-items: center; gap: 5px; color: #c9d1d9; cursor: pointer; }
 .fleet-untrusted-toggle input { margin: 0; }
-.fleet-card-foot button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 5px; padding: 3px 10px; font: 12px system-ui, sans-serif; cursor: pointer; }
-.fleet-card-foot button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
 /* The wizard skin's longer tab names fill the bar at ~1280 px. While the node
    row is shown, trim only the tabs' side padding there so the row fits without
    wrapping a tab label (the bar's height never changes). */
@@ -19171,14 +19161,6 @@ html.remote-node body::before {
 .rnp-row { padding: 5px 10px; overflow-wrap: anywhere; }
 .rnp-k { color: #7d8590; margin-right: 4px; }
 .rnp-foot { padding: 6px 10px 2px; border-top: 1px solid #21262d; }
-.rnp-foot button {
-  font: inherit; font-size: 11px; color: #58a6ff; background: transparent; border: 1px solid #30363d; border-radius: 4px; padding: 1px 8px; cursor: pointer;
-}
-.rnp-foot button:hover { background: var(--ui-bg-hover); }
-.rnp-ask {
-  background: none; border: 0; padding: 0 2px; color: #58a6ff; font: inherit; font-size: 11px; cursor: pointer;
-}
-.rnp-ask:hover { text-decoration: underline; }
 /* Peer access requests (js/peer-access.js). */
 #peer-access-modal > :not(h3):not(.modal-buttons) { font-size: 13px; font-weight: normal; }
 .peer-access-opt { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
@@ -19509,8 +19491,6 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-script-out { max-height: 240px; overflow: auto; white-space: pre-wrap; font-size: 11px; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 6px; margin: 4px 0; }
 /* Node self-update (js/node-update.js): the map card's version row. */
 .fleet-update { color: #d29922; }
-.fleet-link { border: 0; background: none; padding: 0; color: #58a6ff; cursor: pointer; font: inherit; font-size: 12px; }
-.fleet-link:hover { text-decoration: underline; }
 #fleet-node-update-job { margin: 8px 0; }
 /* Fleet → Run scripts (js/fleet-admin-run.js). */
 .fa-run-settings { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 12px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }

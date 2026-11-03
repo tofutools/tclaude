@@ -173,7 +173,7 @@ export function MovePanel({ drop, plan, actions, peerActions, timers = globalThi
     }
   };
 
-  const moves = html`<button type="button" class="fa-link" data-move-drop="moves" onClick=${() => { onClose(); openPage(push ? 'moves' : 'offers'); }}>⚙ Fleet config → ${push ? 'Moves' : 'Offers'}</button>`;
+  const moves = html`<${Button} size="sm" variant="link" class="fa-link" data-move-drop="moves" onClick=${() => { onClose(); openPage(push ? 'moves' : 'offers'); }}>⚙ Fleet config → ${push ? 'Moves' : 'Offers'}<//>`;
   const status = !progress ? null
     : progress.phase === 'checking' ? html`<div class="muted" role="status">⏳ Checking whether ${there} takes ${agent.name} in directly…</div>`
     : progress.phase === 'landed' ? html`<div role="status" data-move-drop-state="landed">✅ ${agent.name} landed in group ${target.group} on ${there}${progress.agent ? html` as <code>${progress.agent}</code>` : ''}${progress.cwd ? html`, starting in <code>${progress.cwd}</code>` : ''}. The original on ${source.name} is being retired; ${push ? html`follow that in ${moves}` : `${source.name}'s ⚙ Fleet config → Moves shows when it is done`}.</div>`

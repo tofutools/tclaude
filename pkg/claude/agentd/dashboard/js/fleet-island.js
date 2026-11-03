@@ -3,6 +3,7 @@ import { openUsageRulesManager } from './modal-usage-rules.js';
 import { FleetUsageChip, peerManagesUsage } from './usage-profile-chip.js';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { NodeUpdateDialog } from './node-update.js';
 import { RequestAccessDialog, USAGE_PERM } from './peer-access.js';
 import { PeerActionHost } from './peer-action.js';
@@ -158,7 +159,7 @@ function NodeDropdown({ state, fleet, pageNode, fused, onPick }) {
     else if (event.key === 'ArrowUp') { event.preventDefault(); setHl((i) => Math.max(0, i - 1)); }
     else if (event.key === 'Enter' && list[hl]) { event.preventDefault(); pick(list[hl]); }
   };
-  const row = (node, i) => html`<button type="button" key=${node.id} role="option" aria-selected=${i === hl ? 'true' : 'false'}
+  const row = (node, i) => html`<button data-ui-exempt type="button" key=${node.id} role="option" aria-selected=${i === hl ? 'true' : 'false'}
     class=${`node-pop-row${node.online || node.local ? '' : ' offline'}${i === hl ? ' hl' : ''}${!fused && node.id === pageNode ? ' sel' : ''}`}
     style=${`--nc:${node.color}`} disabled=${!!closedNode(node, pageNode)} title=${closedNode(node, pageNode) || undefined}
     onMouseEnter=${() => setHl(i)} onClick=${() => pick(node)}>
@@ -167,7 +168,7 @@ function NodeDropdown({ state, fleet, pageNode, fused, onPick }) {
   </button>`;
   const self = list[0]?.local ? list[0] : null;
   return html`<span class="node-pick" ref=${rootRef}>
-    <button type="button" class=${`node-chip node-pick-btn${fused ? (isTicked(fused, shown.id) ? ' ticked' : '') : ' active'}${shown.local || shown.online ? '' : ' offline'}`} style=${`--nc:${shown.color}`}
+    <button data-ui-exempt type="button" class=${`node-chip node-pick-btn${fused ? (isTicked(fused, shown.id) ? ' ticked' : '') : ' active'}${shown.local || shown.online ? '' : ' offline'}`} style=${`--nc:${shown.color}`}
       aria-haspopup="listbox" aria-expanded=${open ? 'true' : 'false'} aria-label=${`Node: ${shown.name}. Choose a node`} title=${`${shown.name}: pick a node to show`}
       onClick=${() => setOpen(!open)}>
       ${shown.local && html`<span class="node-chip-home" aria-hidden="true">⌂</span>`}<span class="node-chip-name">${shown.name}</span><span class="node-pick-caret" aria-hidden="true">▾</span><span class="node-chip-dot"></span>
@@ -211,20 +212,20 @@ function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
     else if (!fused) { onFuse('all'); setOpen(true); } else setOpen(!open);
   };
   return html`<span class="node-pick" ref=${rootRef}>
-    <button type="button" class=${`node-chip node-fuse${fused ? ' active' : ''}`} aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
+    <button data-ui-exempt type="button" class=${`node-chip node-fuse${fused ? ' active' : ''}`} aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
       aria-label=${fused ? `Fused view of ${ticked.length} of ${nodes.length} nodes. Change the nodes` : 'Show several nodes together'}
       title=${fused ? `Groups and Terminals show ${ticked.length} of ${nodes.length} nodes` : alone ? NO_PEERS : 'Show several nodes together in Groups and Terminals'} onClick=${onButton}>
       <span class="node-fuse-stack" aria-hidden="true">${nodes.slice(0, 4).map((n) => html`<b key=${n.id} class=${isTicked(fused || 'all', n.id) ? '' : 'off'} style=${`--c:${n.color}`}></b>`)}</span>
       <span class="node-chip-name">${fused ? `${ticked.length}/${nodes.length}` : 'nodes'}</span><span class="node-pick-caret" aria-hidden="true">▾</span>
     </button>
     ${open && html`<div class=${`node-pop ui-popover node-fuse-pop${closing ? ' closing' : ''}`} role="dialog" aria-label="Fuse nodes" style=${popStyle}>
-      <div class="node-pop-head"><span>Fuse nodes</span>${!alone && fused !== 'all' && html`<button type="button" class="node-pop-link" data-fuse="all" onClick=${() => onFuse('all')}>all</button>`}</div>
+      <div class="node-pop-head"><span>Fuse nodes</span>${!alone && fused !== 'all' && html`<${Button} size="sm" variant="link" class="node-pop-link" data-fuse="all" onClick=${() => onFuse('all')}>all<//>`}</div>
       ${list !== nodes && html`<label class="node-pop-filter"><input type="text" value=${query} placeholder="type to filter" aria-label="Filter nodes" onInput=${(e) => setQuery(e.currentTarget.value)} /></label>`}
       ${list.map((node) => html`<div key=${node.id} class=${`node-pop-row${node.online || node.local ? '' : ' offline'}`} style=${`--nc:${node.color}`}>
         <input type="checkbox" checked=${isTicked(fused || 'all', node.id)} disabled=${alone} aria-label=${`Include ${node.name}`} data-fuse-node=${node.id} onChange=${() => toggle(node.id)} />
         <span class="node-pop-swatch" aria-hidden="true"></span>
-        <button type="button" class="node-pop-name" disabled=${!!closedNode(node, pageNode)} title=${closedNode(node, pageNode) || `Show ${node.name} alone`} onClick=${() => { setOpen(false); onPick(node.id); }}>${node.local ? '⌂ ' : ''}${node.name}</button>
-        <button type="button" class="node-pop-only" tabindex="-1" disabled=${!!closedNode(node, pageNode)} title=${closedNode(node, pageNode) || undefined} onClick=${() => { setOpen(false); onPick(node.id); }}>only</button>
+        <button data-ui-exempt type="button" class="node-pop-name" disabled=${!!closedNode(node, pageNode)} title=${closedNode(node, pageNode) || `Show ${node.name} alone`} onClick=${() => { setOpen(false); onPick(node.id); }}>${node.local ? '⌂ ' : ''}${node.name}</button>
+        <${Button} size="sm" variant="link" class="node-pop-only" tabindex="-1" disabled=${!!closedNode(node, pageNode)} title=${closedNode(node, pageNode) || undefined} onClick=${() => { setOpen(false); onPick(node.id); }}>only<//>
         <span class="node-pop-meta">${node.local ? '' : html`<span class="node-pop-dot" aria-hidden="true"></span>`}${nodeMeta(node)}</span>
       </div>`)}
       ${alone ? html`<div class="node-pop-foot">${NO_PEERS}</div>` : html`<div class="node-pop-foot"><b>Groups</b>, <b>Terminals</b> and <b>Messages</b> show the ticked nodes together, as this node's page. Other tabs show this node: <b>⌂ ${fleet.self.name}</b>.</div>`}
@@ -262,7 +263,7 @@ function FleetChip({ state, node, off, remote, navigate }) {
       : `Fleet: hub connected · every linked node (${target === 'map' ? 'the map' : 'Fleet config'})`;
   // The separator comes with the chip, so a row without it ends cleanly.
   return html`<span class="node-chips-sep" aria-hidden="true"></span>
-  <button type="button" class=${`node-chip fleet-entry${active ? ' active' : ''}${connected ? ' connected' : ' offline'}`} data-fleet-entry data-fleet-target=${target}
+  <button data-ui-exempt type="button" class=${`node-chip fleet-entry${active ? ' active' : ''}${connected ? ' connected' : ' offline'}`} data-fleet-entry data-fleet-target=${target}
     aria-current=${active ? 'page' : undefined} aria-label=${`Fleet${hint ? ': set up' : ''}`} title=${title}
     onClick=${() => { if (!active) navigate(target); }}>
     <${MapGlyph} /><span class="node-chip-name">Fleet</span>${hint && html`<span class="node-chip-hint">set up</span>`}
@@ -281,14 +282,14 @@ function IdleChips({ state, node, off, remote, onPick, navigate }) {
   const homeOff = off && !remote && !current.topLevel;
   const isCurrent = !remote && !current.topLevel;
   return html`<span class=${`node-chips${off ? ' hub-off' : ' has-map'}`} role="group" aria-label="Nodes" title=${off || undefined}>
-    <button type="button" class=${`node-chip local${isCurrent ? ' active' : ''}`} style=${`--nc:${self.color}`} disabled=${homeOff}
+    <button data-ui-exempt type="button" class=${`node-chip local${isCurrent ? ' active' : ''}`} style=${`--nc:${self.color}`} disabled=${homeOff}
       aria-current=${isCurrent ? 'page' : undefined} aria-label=${`${self.name} (this node)${homeOff ? `. ${off}` : ''}`}
       title=${homeOff ? off : `${self.name}: this node · Alt+1`} onClick=${() => onPick(self.id)}>
       <span class="node-chip-home" aria-hidden="true">⌂</span><span class="node-chip-name">${self.name}</span>
     </button>
     <span class="node-chips-sep" aria-hidden="true"></span>
     ${current.mapFleet && !off ? html`<${FusedDropdown} state=${state} fleet=${current.mapFleet} fused=${null} pageNode=${remote || self.id} onPick=${onPick} onFuse=${() => {}} />`
-    : html`<button type="button" class="node-chip node-fuse" disabled aria-label=${`Show several nodes together. ${off || NO_PEERS}`} title=${off || NO_PEERS}>
+    : html`<button data-ui-exempt type="button" class="node-chip node-fuse" disabled aria-label=${`Show several nodes together. ${off || NO_PEERS}`} title=${off || NO_PEERS}>
       <span class="node-chip-name">nodes</span><span class="node-pick-caret" aria-hidden="true">▾</span>
     </button>`}
     <${FleetChip} state=${state} node=${node} off=${off} remote=${remote} navigate=${navigate} />
@@ -324,12 +325,12 @@ export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNo
   const buttons = selectorKind(fleet) === 'buttons';
   return html`<span class="node-chips has-fleet" role="group" aria-label="Nodes">
     ${buttons ? html`
-    <button type="button" class=${cls(self)} style=${`--nc:${self.color}`}
+    <button data-ui-exempt type="button" class=${cls(self)} style=${`--nc:${self.color}`}
       aria-current=${isCurrent(self.id) ? 'page' : undefined} aria-label=${`${self.name} (this node)`}
       title=${`${self.name}: this node · Alt+1`} onClick=${() => onPick(self.id)}>
       <span class="node-chip-home" aria-hidden="true">⌂</span><span class="node-chip-name">${self.name}</span><span class="node-chip-dot"></span>
     </button>
-    ${fleet.peers.map((peer, i) => html`<button key=${peer.id} type="button" class=${cls(peer)} style=${`--nc:${peer.color}`} disabled=${!!closedNode(peer, pageNode)}
+    ${fleet.peers.map((peer, i) => html`<button data-ui-exempt key=${peer.id} type="button" class=${cls(peer)} style=${`--nc:${peer.color}`} disabled=${!!closedNode(peer, pageNode)}
       aria-current=${isCurrent(peer.id) ? 'page' : undefined} aria-label=${`${peer.name}, ${presenceLabel(peer)}, ${peer.level} peer`}
       title=${closedNode(peer, pageNode) || `${peer.name}: ${presenceLabel(peer)} · ${peer.level} peer · open its dashboard${i < 8 ? ` · Alt+${i + 2}` : ''}`} onClick=${() => onPick(peer.id)}>
       <span class="node-chip-name">${peer.name}</span><span class="node-chip-dot"></span>
@@ -419,7 +420,7 @@ export function TopLevelBar({ state, navigate = defaultNavigate }) {
   const n = fleet.peers.length + 1;
   const hub = fleet.hub.state;
   const asks = remoteNodeID() ? 0 : current.strangers.filter((s) => s.request).length;
-  const seg = (tab, on, label) => html`<button type="button" class=${`fleet-seg-btn${on ? ' on' : ''}`} aria-current=${on ? 'page' : undefined} onClick=${() => { if (!on) navigate(tab); }}>${label}</button>`;
+  const seg = (tab, on, label) => html`<button data-ui-exempt type="button" class=${`fleet-seg-btn${on ? ' on' : ''}`} aria-current=${on ? 'page' : undefined} onClick=${() => { if (!on) navigate(tab); }}>${label}</button>`;
   return html`<span class="fleet-toplevel-bar">
     <span class="fleet-seg" role="group" aria-label="Fleet views">${seg('map', current.mapActive, html`<${MapGlyph} /> Map`)}${seg('fleet-admin', current.adminActive, '⚙ Fleet config')}</span>
     <span class="fleet-toplevel-note">${n} node${n === 1 ? '' : 's'} · hub ${hub}${asks > 0 && html` · <span class="fleet-map-asking">🤝 ${asks} asking to be trusted</span>`}</span>
@@ -445,7 +446,7 @@ function CardRows({ card, node, onUpdate }) {
     <dt>Agents</dt><dd>${card.onlineAgents ?? '?'} of ${card.sharedAgents} online · ${card.sharedGroups} group${card.sharedGroups === 1 ? '' : 's'}${node.local ? '' : html` <span class="muted">shared</span>`}</dd>
     <dt>Attention</dt><dd>${card.waiting ? html`<span class="fleet-attn">❓ ${card.waiting} waiting for input</span>` : html`<span class="muted">none</span>`}</dd>
     <dt>Resources</dt><dd>${r ? html`${r.cpu != null && html`<${Meter} label="cpu" value=${r.cpu} />`}${r.mem != null && html`<${Meter} label="mem" value=${r.mem} />`}${r.disk != null && html`<${Meter} label="disk" value=${r.disk} />`}` : html`<span class="muted">not shared</span>`}</dd>
-    ${card.version && html`<dt>tclaude</dt><dd>${card.version}${card.health && html` <span class=${`fleet-card-health ${card.health}`}>${card.health === 'current' ? '✓ current' : card.health}</span>`}${card.updateAvailable ? html` <span class="fleet-update" title=${`tclaude ${card.latestVersion} is available`}>↑ ${card.latestVersion}</span>` : ''}${onUpdate && html` <button type="button" class="fleet-link" data-fleet="node-update" onClick=${onUpdate}>${card.updateAvailable ? 'update…' : 'manage…'}</button>`}</dd>`}
+    ${card.version && html`<dt>tclaude</dt><dd>${card.version}${card.health && html` <span class=${`fleet-card-health ${card.health}`}>${card.health === 'current' ? '✓ current' : card.health}</span>`}${card.updateAvailable ? html` <span class="fleet-update" title=${`tclaude ${card.latestVersion} is available`}>↑ ${card.latestVersion}</span>` : ''}${onUpdate && html` <${Button} size="sm" variant="link" class="fleet-link" data-fleet="node-update" onClick=${onUpdate}>${card.updateAvailable ? 'update…' : 'manage…'}<//>`}</dd>`}
     ${!card.version && card.health && html`<dt>Health</dt><dd class=${`fleet-card-health ${card.health}`}>${card.health === 'current' ? '✓ current' : card.health}</dd>`}
     ${card.omitted.length > 0 && html`<dt>Not shared</dt><dd class="muted" title=${card.omitted.join(', ')}>${card.omitted.length} feature${card.omitted.length === 1 ? '' : 's'}</dd>`}
   </dl>`;
@@ -478,7 +479,7 @@ function OfflineNoticeRow({ notice, now, onSilence }) {
   if (notice.silenced) return html`<div class="fleet-card-notice silenced" title="Notices resume if it disconnects again after reconnecting">🔕 Offline notices silenced until it reconnects</div>`;
   const next = notice.nextAt != null ? `next notice in ${fmtAge(Math.max(0, notice.nextAt - now))}` : '';
   const sent = notice.notices > 0 ? `${notice.notices} notice${notice.notices === 1 ? '' : 's'} sent` : 'no notice sent yet';
-  return html`<div class="fleet-card-notice" title="Offline notices go to Messages after 5 min, 30 min, 4 h, then daily">🔔 ${sent}${next && ` · ${next}`}${onSilence && html` <button type="button" class="fleet-link" data-fleet="silence-offline" onClick=${onSilence}>silence</button>`}</div>`;
+  return html`<div class="fleet-card-notice" title="Offline notices go to Messages after 5 min, 30 min, 4 h, then daily">🔔 ${sent}${next && ` · ${next}`}${onSilence && html` <${Button} size="sm" variant="link" class="fleet-link" data-fleet="silence-offline" onClick=${onSilence}>silence<//>`}</div>`;
 }
 
 // OfflineAlertsRow switches a peer's offline/back notices: "notify" escalates
@@ -486,11 +487,11 @@ function OfflineNoticeRow({ notice, now, onSilence }) {
 function OfflineAlertsRow({ node, onOfflineAlerts }) {
   const seg = (on, label, title) => {
     const active = node.partTime !== on;
-    return html`<button type="button" class=${active ? 'on' : ''} aria-pressed=${active ? 'true' : 'false'} title=${title}
-      data-fleet=${on ? 'offline-alerts-notify' : 'offline-alerts-part-time'} onClick=${() => { if (!active) onOfflineAlerts(on); }}>${label}</button>`;
+    return html`<${Button} size="sm" pressed=${active} title=${title}
+      data-fleet=${on ? 'offline-alerts-notify' : 'offline-alerts-part-time'} onClick=${() => { if (!active) onOfflineAlerts(on); }}>${label}<//>`;
   };
   return html`<dl class="fleet-card-body fleet-card-alerts">
-    <dt>Offline alerts</dt><dd><span class="fleet-card-seg" role="group" aria-label=${`Offline alerts for ${node.name}`}>${seg(true, '🔔 notify', 'Messages after 5 min, 30 min, 4 h offline, then daily, and when it is back')}${seg(false, '💤 part-time', 'Often off on purpose: no offline or back-online messages')}</span></dd>
+    <dt>Offline alerts</dt><dd><span class="ui-seg fleet-card-seg" role="group" aria-label=${`Offline alerts for ${node.name}`}>${seg(true, '🔔 notify', 'Messages after 5 min, 30 min, 4 h offline, then daily, and when it is back')}${seg(false, '💤 part-time', 'Often off on purpose: no offline or back-online messages')}</span></dd>
   </dl>`;
 }
 
@@ -509,7 +510,7 @@ function NodeCard({ node, card, selfName, focused, onOpen, onUpdate, onSilence, 
     ${!node.local && onOfflineAlerts && html`<${OfflineAlertsRow} node=${node} onOfflineAlerts=${onOfflineAlerts} />`}
     ${!node.local && !node.partTime && node.offlineNotice && !node.online && html`<${OfflineNoticeRow} notice=${node.offlineNotice} now=${now ?? Date.now()} onSilence=${onSilence} />`}
     ${node.keyTransition && html`<div class=${`fleet-card-key ${node.keyTransition.state}`} title="See Fleet config → Peers">${node.keyTransition.state === 'conflict' ? '⚠ competing new signing keys: needs recovery (Fleet config → Peers)' : '🔑 new signing key pending: not yet accepted'}</div>`}
-    ${onOpen && html`<div class="fleet-card-foot"><button type="button" class=${shown ? 'primary' : ''} onClick=${onOpen}>${shown ? 'Back to its dashboard' : 'Open dashboard'}</button></div>`}
+    ${onOpen && html`<div class="fleet-card-foot"><${Button} size="sm" variant=${shown ? "primary" : undefined} onClick=${onOpen}>${shown ? 'Back to its dashboard' : 'Open dashboard'}<//></div>`}
   </article>`;
 }
 
@@ -548,7 +549,7 @@ function LinkBadge({ link, at, open, onToggle, onConfigure }) {
   };
   const tag = (level) => html`<span class=${`fleet-link-tag ${level || 'unknown'}`}>${level || 'unknown'}</span>`;
   return html`<span class=${`fleet-edge-link${open ? ' open' : ''}`} style=${`left:${at.x}px;top:${at.y}px`}>
-    <button type="button" class=${`fleet-edge-label${link.asymmetric ? ' asymmetric' : ''}`} aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
+    <button data-ui-exempt type="button" class=${`fleet-edge-label${link.asymmetric ? ' asymmetric' : ''}`} aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
       aria-label=${`Trust between ${link.in.from} and ${link.in.to}`} onClick=${onToggle}>
       <span class=${`fleet-link-row ${link.out.level || 'unknown'}`} title=${`${link.out.from} → ${link.out.to}: ${link.out.short}`}><span class="fleet-link-dir">→</span>${link.out.level === 'unrestricted' ? '⚠ ' : ''}${terse(link.out.short)}</span>
       <span class=${`fleet-link-row ${link.in.level}`} title=${`${link.in.from} → ${link.in.to}: ${link.in.short}`}><span class="fleet-link-dir">←</span>${link.in.level === 'unrestricted' ? '⚠ ' : ''}${terse(link.in.short)}</span>
@@ -583,14 +584,14 @@ function TrustAsk({ row, now, onAsk, onDismiss }) {
     ${open && html`<div class="fleet-card-ask-form">
       <input type="text" data-fleet="ask-note" maxlength=${TRUST_NOTE_MAX} placeholder="optional note, e.g. who you are" value=${note} autocomplete="off" spellcheck="false"
         onInput=${(e) => setNote(e.currentTarget.value)} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); run(() => onAsk(note))(); } else if (e.key === 'Escape') setOpen(false); }} />
-      <button type="button" class="primary" data-fleet="ask-send" disabled=${busy} onClick=${run(() => onAsk(note))}>${busy ? 'Sending…' : 'Send'}</button>
-      <button type="button" disabled=${busy} onClick=${() => setOpen(false)}>Cancel</button>
+      <${Button} size="sm" variant="primary" data-fleet="ask-send" disabled=${busy} onClick=${run(() => onAsk(note))}>${busy ? 'Sending…' : 'Send'}<//>
+      <${Button} size="sm" disabled=${busy} onClick=${() => setOpen(false)}>Cancel<//>
     </div>`}
     ${!open && html`<div class="fleet-card-foot">
-      <button type="button" class="primary" data-fleet="trust" title="Compare its fingerprint with its operator, then pick a trust level" onClick=${() => row.onTrust()}>Trust…</button>
+      <${Button} size="sm" variant="primary" data-fleet="trust" title="Compare its fingerprint with its operator, then pick a trust level" onClick=${() => row.onTrust()}>Trust…<//>
       ${req
-        ? html`<button type="button" data-fleet="dismiss" title="Forget this request; the instance stays visible on the hub" disabled=${busy} onClick=${run(onDismiss)}>Dismiss</button>`
-        : html`<button type="button" data-fleet="ask" title="Ask its operator to trust this node; they still compare fingerprints" disabled=${asked != null && asked < ASK_COOLDOWN_MS} onClick=${() => setOpen(true)}>Ask to be trusted…</button>`}
+        ? html`<${Button} size="sm" data-fleet="dismiss" title="Forget this request; the instance stays visible on the hub" disabled=${busy} onClick=${run(onDismiss)}>Dismiss<//>`
+        : html`<${Button} size="sm" data-fleet="ask" title="Ask its operator to trust this node; they still compare fingerprints" disabled=${asked != null && asked < ASK_COOLDOWN_MS} onClick=${() => setOpen(true)}>Ask to be trusted…<//>`}
       ${asked != null && html`<span class="muted fleet-card-asked">asked ${fmtAge(asked)} ago</span>`}
     </div>`}`;
 }
@@ -922,10 +923,10 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
       <label class="fleet-map-check" title="Show the hub between the nodes; hidden, links run node to node"><input type="checkbox" data-fleet="show-hub" checked=${showHub} onChange=${(e) => state.setShowHub(e.currentTarget.checked)} /> Show hub</label>
       ${!showHub && html`<span class=${`fleet-map-hubstate ${hubState === 'connected' ? 'online' : ''}`}><i aria-hidden="true"></i>hub ${hubState}</span>`}
       <span class="fleet-zoom" role="group" aria-label="Zoom">
-        <button type="button" aria-label="Zoom out" disabled=${zoom.view.s <= ZOOM_MIN} onClick=${() => zoom.zoomBy(1 / ZOOM_STEP)}>−</button>
-        <button type="button" class="fleet-zoom-level" title="Reset to 100%" onClick=${zoom.reset}>${pct}%</button>
-        <button type="button" aria-label="Zoom in" disabled=${zoom.view.s >= ZOOM_MAX} onClick=${() => zoom.zoomBy(ZOOM_STEP)}>+</button>
-        <button type="button" aria-label="Fit to screen" title="Fit to screen" onClick=${() => zoom.fit()}>⤢</button>
+        <${Button} size="sm" aria-label="Zoom out" disabled=${zoom.view.s <= ZOOM_MIN} onClick=${() => zoom.zoomBy(1 / ZOOM_STEP)}>−<//>
+        <${Button} size="sm" variant="ghost" class="fleet-zoom-level" title="Reset to 100%" onClick=${zoom.reset}>${pct}%<//>
+        <${Button} size="sm" aria-label="Zoom in" disabled=${zoom.view.s >= ZOOM_MAX} onClick=${() => zoom.zoomBy(ZOOM_STEP)}>+<//>
+        <${Button} size="sm" aria-label="Fit to screen" title="Fit to screen" onClick=${() => zoom.fit()}>⤢<//>
       </span>
       <span class="fleet-map-hint">scroll or pinch to zoom · drag the background to pan</span>
       <${FleetUsageChip} className="fleet-map-usage"/>
@@ -1019,7 +1020,7 @@ export function RemoteMarker({ state, remote = remoteNodeID(), snapshot = dashbo
   return html`<span class="remote-node-marker" ref=${rootRef} style=${`--nc:${color}`}>
     <span class="remote-node-at" aria-hidden="true">@</span>
     <span class="remote-node-title" title=${`Peer view of ${name} (${remote})`}>${name}</span>
-    <button type="button" class=${`remote-node-pill ${hv.state}`} aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
+    <button data-ui-exempt type="button" class=${`remote-node-pill ${hv.state}`} aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
       onClick=${() => setOpen(!open)} title="What this peer shares with you">
       peer view${hv.label ? html` <span class="remote-node-health">· ${hv.label}</span>` : ''}
     </button>
@@ -1028,11 +1029,11 @@ export function RemoteMarker({ state, remote = remoteNodeID(), snapshot = dashbo
       ${level && html`<div class="rnp-row"><span class="rnp-k">You trust it</span> ${level === 'unrestricted' ? '⚠ unrestricted' : 'restricted'} · <span class="rnp-k">It trusts you</span> ${pv?.level || 'not reported'}</div>`}
       <div class="rnp-row">${hv.state === 'live' ? 'Live: the peer answers through this node.' : `The peer is ${hv.label}. The data on screen is what it last shared.`}</div>
       ${pv && pv.included.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Shared</span> ${pv.included.join(', ')}</div>`}
-      ${pv && pv.omitted.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Hidden from you</span> ${pv.omitted.map((o, i) => html`${i ? ', ' : ''}<span title=${o.requires ? `needs ${o.requires}` : ''}>${o.feature}</span>${requestable(o) ? html` <button type="button" class="rnp-ask" data-perm=${o.requires} title=${`Ask ${name}'s operator for ${o.requires}`} onClick=${() => { setAsking(o.requires); setOpen(false); }}>request…</button>` : ''}`)}</div>`}
+      ${pv && pv.omitted.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Hidden from you</span> ${pv.omitted.map((o, i) => html`${i ? ', ' : ''}<span title=${o.requires ? `needs ${o.requires}` : ''}>${o.feature}</span>${requestable(o) ? html` <${Button} size="sm" variant="link" class="rnp-ask" data-perm=${o.requires} title=${`Ask ${name}'s operator for ${o.requires}`} onClick=${() => { setAsking(o.requires); setOpen(false); }}>request…<//>` : ''}`)}</div>`}
       ${!pv && html`<div class="rnp-row muted">What the peer shares shows once it answers.</div>`}
-      ${peerManagesUsage(snapshot.value) && html`<div class="rnp-row"><span class="rnp-k">Usage rules</span> <button type="button" class="rnp-ask" id="rnp-usage-rules" title=${`${name} lets you manage its usage limits and budgets (usage-rules.manage)`} onClick=${() => { setOpen(false); openUsageRulesManager({ node: remote, nodeLabel: name }); }}>manage its usage rules…</button></div>`}
-      <div class="rnp-row"><span class="rnp-k">Usage</span> <button type="button" class="rnp-ask" id="rnp-ask-usage" title=${`Ask ${name}'s operator to pay for your agents' model calls through its model gateway`} onClick=${() => { setAsking(USAGE_PERM); setOpen(false); }}>ask for usage…</button></div>
-      <div class="rnp-foot"><button type="button" onClick=${() => switchNode('')}>⌂ Back to ${fleet?.self.name || 'this node'}</button></div>
+      ${peerManagesUsage(snapshot.value) && html`<div class="rnp-row"><span class="rnp-k">Usage rules</span> <${Button} size="sm" variant="link" class="rnp-ask" id="rnp-usage-rules" title=${`${name} lets you manage its usage limits and budgets (usage-rules.manage)`} onClick=${() => { setOpen(false); openUsageRulesManager({ node: remote, nodeLabel: name }); }}>manage its usage rules…<//></div>`}
+      <div class="rnp-row"><span class="rnp-k">Usage</span> <${Button} size="sm" variant="link" class="rnp-ask" id="rnp-ask-usage" title=${`Ask ${name}'s operator to pay for your agents' model calls through its model gateway`} onClick=${() => { setAsking(USAGE_PERM); setOpen(false); }}>ask for usage…<//></div>
+      <div class="rnp-foot"><${Button} size="sm" onClick=${() => switchNode('')}>⌂ Back to ${fleet?.self.name || 'this node'}<//></div>
     </div>`}
     ${asking && html`<${RequestAccessDialog} node=${name} perm=${asking} groups=${(snapshot.value?.groups || []).filter((g) => g?.id && g.name)} onClose=${() => setAsking('')} />`}
   </span>`;
