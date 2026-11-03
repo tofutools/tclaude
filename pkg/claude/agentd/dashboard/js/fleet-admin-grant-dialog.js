@@ -129,7 +129,7 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
           ${visible.length === 0 && html`<div class="empty">No permission matches.</div>`}
           ${[...visible].sort((a, b) => GRANT_CATEGORIES.indexOf(slugCategory(a.slug)) - GRANT_CATEGORIES.indexOf(slugCategory(b.slug))).map((s) => {
             const c = slugCategory(s.slug);
-            const head = c !== lastCat ? html`<div class="fa-gd-cat" key=${`c|${c}`}>${c}</div>` : null;
+            const head = c !== lastCat ? html`<div class="ui-eyebrow fa-gd-cat" key=${`c|${c}`}>${c}</div>` : null;
             lastCat = c;
             const held = heldText(rows || [], s.slug);
             const on = picked.includes(s.slug);

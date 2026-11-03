@@ -130,7 +130,7 @@ function QuotaCard({ item, wizard, onOpen }) {
     data-series=${item.key} onClick=${onOpen}>
     <div class="usage-ov-card-head"
       title=${`${usageProviderLabel(series.provider)} ${usageWindowScopeLabel(series, wizard)} — open the full forecast`}>
-      <div><span class="usage-provider">${usageProviderLabel(series.provider)}</span>
+      <div><span class="ui-eyebrow usage-provider">${usageProviderLabel(series.provider)}</span>
         <strong class="usage-ov-window">${usageWindowScopeLabel(series, wizard)}</strong></div>
       <span class="usage-ov-pct">${latest ? `${latest.pct.toFixed(0)}%` : '—'}</span>
     </div>
@@ -142,7 +142,7 @@ function QuotaCard({ item, wizard, onOpen }) {
 
 function Kpi({ label, value, meta, tone = '', onOpen, href }) {
   return html`<a class=${`usage-ov-card ui-card ui-inset usage-ov-kpi${tone ? ` ${tone}` : ''}`} href=${href} onClick=${onOpen}>
-    <span class="usage-provider">${label}</span>
+    <span class="ui-eyebrow usage-provider">${label}</span>
     <span class="usage-ov-value">${value}</span>
     <span class="usage-ov-meta">${meta}</span>
   </a>`;

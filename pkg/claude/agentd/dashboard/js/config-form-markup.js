@@ -238,7 +238,7 @@ function ExternalStewardGroup({ loads }) {
 
 function Group({ title, lede, children }) {
   return html`<div class="cfg-section">
-    <h3>${title}</h3>
+    <h3 class="ui-eyebrow ui-eyebrow-section">${title}</h3>
     ${lede && html`<p class="cfg-group-lede">${lede}</p>`}
     ${children}
   </div>`;
@@ -555,7 +555,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
               <option value="pre_attach">Resize before attach</option>
             </${ConfigSelect}>
             <div class="cfg-terminal-attach-timings">
-              <strong>Timing overrides</strong>
+              <strong class="ui-eyebrow ui-eyebrow-section">Timing overrides</strong>
               <label><span>Before initial resize</span><${ConfigInput} type="number" id="cfg-terminal-attach-initial-delay" min="0" max="10000" placeholder="0" aria-label="Initial terminal resize delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
               <label><span>Post-attach repair wait</span><${ConfigInput} type="number" id="cfg-terminal-attach-repair-delay" min="0" max="10000" placeholder="250" aria-label="Post-attach terminal repair delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
               <label><span>Resize-to-attach wait</span><${ConfigInput} type="number" id="cfg-terminal-attach-pre-delay" min="0" max="10000" placeholder="250" aria-label="Resize before attach delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>

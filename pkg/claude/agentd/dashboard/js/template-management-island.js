@@ -2640,7 +2640,7 @@ export function TemplateEditor({
             </div>
           </div>`
         : null}
-      <div class="template-agents-head">
+      <div class="ui-eyebrow template-agents-head">
         <span><${Words} plain="Agents" wizard="Heroes" /></span
         ><${Button}
           id="template-editor-add-agent"
@@ -2669,7 +2669,7 @@ export function TemplateEditor({
       </div>
       <${Concepts} />
       <div
-        class="template-agents-head"
+        class="ui-eyebrow template-agents-head"
         title="Ordered briefing messages delivered after the whole roster has spawned."
       >
         <span><${Words} plain="Work pattern" wizard="Rite of command" /></span
@@ -2762,7 +2762,7 @@ export function TemplateEditor({
           </div>`;
         })}
       </div>
-      <div class="template-agents-head">
+      <div class="ui-eyebrow template-agents-head">
         <span><${Words} plain="Process" wizard="Quest plan" /></span
         ><${Button}
           id="template-editor-add-phase"
@@ -2849,7 +2849,7 @@ export function TemplateEditor({
             </div>`,
         )}
       </div>
-      <div class="template-agents-head">
+      <div class="ui-eyebrow template-agents-head">
         <span><${Words} plain="Rhythms" wizard="Drumbeats" /></span
         ><${Button}
           id="template-editor-add-rhythm"

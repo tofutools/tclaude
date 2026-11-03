@@ -180,7 +180,7 @@ function BothIcon() {
 function RunKindMenu({ state, wizard, counts }) {
   const filter = state.processFilter?.value;
   return html`<div class="groups-run-menu" role="group" aria-label=${wizard ? 'Show rites' : 'Show processes'}>
-    <div class="groups-run-menu-head">${wizard ? 'Show rites' : 'Show processes'}</div>
+    <div class="ui-eyebrow groups-run-menu-head">${wizard ? 'Show rites' : 'Show processes'}</div>
     ${RUN_KINDS.map((kind) => {
       const checked = runFilterHas(filter, kind);
       return html`<label key=${kind} class=${`groups-run-kind groups-run-kind-${kind}${checked ? ' checked' : ''}`}>

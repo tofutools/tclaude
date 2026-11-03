@@ -188,7 +188,7 @@ export function GroupsControls({ state, actions }) {
         `)}
         <div class="view-menu-sep" role="separator"></div>
         <div
-          class="view-menu-heading"
+          class="ui-eyebrow view-menu-heading"
           title="Show or hide individual columns in the member tables. The Name and controls columns always stay. Hiding the ID column moves its agent-id / conv-id hover onto the Name."
         >Columns</div>
         <div id="filter-groups-cols" class="view-cols">

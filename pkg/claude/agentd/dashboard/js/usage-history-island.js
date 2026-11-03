@@ -118,7 +118,7 @@ function UsageSeriesCard({
   const reset = latest?.resets_at ? formatUsageResetCountdown(latest.resets_at, now, wizard) : '';
   return html`<article class="usage-series-card ui-card ui-inset" data-series-key=${usageSeriesKeyOf(series)}>
     <div class="usage-card-header">
-      <div><span class="usage-provider">${usageProviderLabel(series.provider)}</span>
+      <div><span class="ui-eyebrow usage-provider">${usageProviderLabel(series.provider)}</span>
         <h3>${windowLabel}</h3></div>
       <div class="usage-current">${canShowUnits && html`<span class="ui-seg usage-unit-toggle" role="group" aria-label="Copilot usage units">
         <${Button} size="sm" pressed=${span.unit !== "units"} onClick=${() => onSetUnit('percent')}>%<//>

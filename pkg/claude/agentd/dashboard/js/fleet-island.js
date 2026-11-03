@@ -219,7 +219,7 @@ function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
       <span class="node-chip-name">${fused ? `${ticked.length}/${nodes.length}` : 'nodes'}</span><span class="node-pick-caret" aria-hidden="true">▾</span>
     </button>
     ${open && html`<div class=${`node-pop ui-popover node-fuse-pop${closing ? ' closing' : ''}`} role="dialog" aria-label="Fuse nodes" style=${popStyle}>
-      <div class="node-pop-head"><span>Fuse nodes</span>${!alone && fused !== 'all' && html`<${Button} size="sm" variant="link" class="node-pop-link" data-fuse="all" onClick=${() => onFuse('all')}>all<//>`}</div>
+      <div class="ui-eyebrow node-pop-head"><span>Fuse nodes</span>${!alone && fused !== 'all' && html`<${Button} size="sm" variant="link" class="node-pop-link" data-fuse="all" onClick=${() => onFuse('all')}>all<//>`}</div>
       ${list !== nodes && html`<label class="node-pop-filter"><input type="text" value=${query} placeholder="type to filter" aria-label="Filter nodes" onInput=${(e) => setQuery(e.currentTarget.value)} /></label>`}
       ${list.map((node) => html`<div key=${node.id} class=${`node-pop-row${node.online || node.local ? '' : ' offline'}`} style=${`--nc:${node.color}`}>
         <input type="checkbox" checked=${isTicked(fused || 'all', node.id)} disabled=${alone} aria-label=${`Include ${node.name}`} data-fuse-node=${node.id} onChange=${() => toggle(node.id)} />
@@ -941,7 +941,7 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
     <div class="fleet-map-local"><${NodeCard} node=${fleet.self} card=${card(fleet.self)} focused=${current.focused === fleet.self.id} shown=${!remote} onOpen=${open(fleet.self)} onUpdate=${() => setUpdating(fleet.self)} onConfigure=${configure} /></div>
     <div class="fleet-map-hub">${showHub && html`<${HubCard} hub=${fleet.hub} now=${t} admin=${remote ? null : hubAdmin} onConfigure=${configure} />`}</div>
     <div class=${`fleet-map-peers${fleet.peers.length > 4 || strangers.length > 2 ? ' wide' : ''}`}>${fleet.peers.length === 0 && !strangers.length && html`<div class="fleet-map-alone">${remote ? NO_PEERS : current.showUntrusted ? NO_STRANGERS : MAP_NO_PEERS}</div>`}${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} selfName=${fleet.self.name} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} onSilence=${silence(peer)} onOfflineAlerts=${offlineAlerts(peer)} onConfigure=${configure} now=${t} />`)}${strangers.length > 0 && html`<div class="fleet-map-strangers" role="group" aria-label="untrusted instances on the hub">
-      <h4>On the hub, not trusted <span class="muted">${strangers.length}</span>${asking > 0 && html` <span class="fleet-map-asking">· ${asking} asking to be trusted</span>`}</h4>
+      <h4 class="ui-eyebrow">On the hub, not trusted <span class="muted">${strangers.length}</span>${asking > 0 && html` <span class="fleet-map-asking">· ${asking} asking to be trusted</span>`}</h4>
       <div class="fleet-map-strangers-cards">${strangers.map((row) => html`<${StrangerCard} key=${row.id} row=${row} now=${t} onTrust=${trust(row)} onAsk=${ask(row)} onDismiss=${dismiss(row)} />`)}</div>
     </div>`}</div>
     </div>

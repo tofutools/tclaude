@@ -53,13 +53,15 @@ func TestDashboardHTML_MemberColumnsShowHideWired(t *testing.T) {
 
 	// groups-island.js: the menu section + generated checkbox container.
 	must(`id="filter-groups-cols"`, "the Columns checkbox container is present")
-	must(`class="view-menu-heading"`, "the Columns section has a heading")
+	must(`class="ui-eyebrow view-menu-heading"`, "the Columns section has a standard eyebrow heading")
 	must(`class="view-menu-sep"`, "a divider separates row toggles from column toggles")
 
 	// dashboard.css: the section is styled in both the default and wizard
 	// themes (the operator asked wizard mode not be left unstyled).
 	must(".view-menu .view-cols", "the column toggles have a layout rule")
 	must(".view-menu .view-menu-heading", "the Columns heading is styled")
-	must("body.wizard .view-menu .view-menu-heading", "wizard mode themes the Columns heading")
+	if !strings.Contains(dashboardAssetFile(t, "ui.css"), "body.wizard :where(.ui-eyebrow)") {
+		t.Error("wizard mode themes the Columns heading (through the shared eyebrow)")
+	}
 	must("body.wizard .view-menu .view-menu-sep", "wizard mode themes the section divider")
 }
