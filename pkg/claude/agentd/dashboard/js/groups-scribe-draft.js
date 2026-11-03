@@ -295,6 +295,6 @@ export function ScribeDraft({ group, draft, api, scribes = [], wizard = false, n
       <${Button} size="sm" variant="link" class="gq-link" data-scribe-stop disabled=${!!busy} onClick=${stop} title="Stop the scribe; the draft stays in the group, and what it saved opens for review">${busy === 'stop' ? 'stopping…' : 'stop scribe'}<//>
       <${Button} size="sm" variant="link" class="gq-link" data-scribe-hide disabled=${!!busy} onClick=${onClose} title="Hide this panel and leave the scribe working; ▶ on the process brings it back">hide<//>
     </div>
-    ${(failure || error) && html`<div class="gq-error" role="alert">${failure || error}</div>`}
+    ${(failure || error) && html`<div class="gq-error ui-error" role="alert">${failure || error}</div>`}
   </section>`;
 }

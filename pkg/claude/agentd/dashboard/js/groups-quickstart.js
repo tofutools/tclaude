@@ -762,10 +762,10 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
         <${Button} size="sm" variant="link" class="gq-link" onClick=${onClose}>cancel<//>
       </div>
       ${blockedWhy && html`<div class="gq-why" data-start-blocked>▶ ${blockedWhy}</div>`}
-      <p class="gq-hint">${saved
+      <p class="gq-hint ui-hint">${saved
     ? `Start now saves any changes as a new version, then starts it in ${group.name}. Nothing runs before Start.`
     : `Start now runs the steps once in ${group.name} without adding them to its processes or the library; Save to ${group.name} keeps them for one-click reruns. Nothing runs before Start.`}</p>
-      ${error && html`<div class="gq-error" role="alert">${error}</div>`}
+      ${error && html`<div class="gq-error ui-error" role="alert">${error}</div>`}
     </div>
   </section>`;
 }

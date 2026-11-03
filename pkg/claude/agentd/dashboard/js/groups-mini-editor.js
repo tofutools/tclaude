@@ -355,12 +355,12 @@ export function MiniGraphEditor({
       })} />`}
     <div class="gm-foot">
       <span class="gq-dim">Saving makes a new version; runs already going keep theirs.</span>
-      ${errors.length > 0 && html`<span class="gq-error" role="alert" data-mini-problems=${errors.length}>${errors.length} problem${errors.length === 1 ? '' : 's'}: ${errors[0].message}</span>`}
+      ${errors.length > 0 && html`<span class="gq-error ui-error" role="alert" data-mini-problems=${errors.length}>${errors.length} problem${errors.length === 1 ? '' : 's'}: ${errors[0].message}</span>`}
       <span class="gq-spacer"></span>
       ${!process.listed && html`<label class="gq-dim"><input type="checkbox" data-mini-publish checked=${publish}
         onChange=${(event) => setPublish(event.currentTarget.checked)} /> also publish to the library</label>`}
     </div>
-    ${error && html`<div class="gq-error" role="alert">${error}</div>`}
+    ${error && html`<div class="gq-error ui-error" role="alert">${error}</div>`}
   </section>`;
 }
 

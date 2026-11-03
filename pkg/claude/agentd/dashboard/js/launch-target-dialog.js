@@ -556,7 +556,7 @@ export function LaunchTargetDialog({
   return html`<${Dialog} id="launch-target" onClose=${onClose} initialFocusRef=${okRef} onSubmitEnter=${enter} title=${title}>
     <${Tabs} variant="seg" class="lt-modes" label="What to do" value=${mode} onSelect=${switchMode}
       items=${MODES.map((m) => { const st = modeState(m.key, ctx); return { key: m.key, label: m.label, disabled: !st.ok || (locked && m.key !== mode), title: st.ok ? m.hint : st.why, attrs: { 'data-lt-mode': m.key } }; })} />
-    <div class="muted lt-mode-hint" data-lt-hint="">${MODES.find((m) => m.key === mode)?.hint}</div>
+    <div class="lt-mode-hint ui-hint" data-lt-hint="">${MODES.find((m) => m.key === mode)?.hint}</div>
     ${fromDrop && html`<div class="muted lt-drop-note">↓ Opened by dragging ${agent.name} onto ${initialTarget?.group}@${initialTarget?.name}: node and group are pre-filled; pick another mode above to teleport or clone it instead.</div>`}
     <div class="lt-body">
       <div class="lt-fields">

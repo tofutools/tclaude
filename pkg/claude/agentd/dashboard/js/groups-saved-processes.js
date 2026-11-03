@@ -162,7 +162,7 @@ function StartStrip({ group, process, api, source, wizard, notify, editing = '',
     </span>
     <span class="gq-spacer"></span>
     <${Button} size="sm" variant="link" class="gq-link" aria-label="Close" onClick=${onClose}>✕<//>
-    ${error && html`<div class="gq-error" role="alert">${error}</div>`}
+    ${error && html`<div class="gq-error ui-error" role="alert">${error}</div>`}
   </form>`;
 }
 
