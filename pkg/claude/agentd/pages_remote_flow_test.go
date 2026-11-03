@@ -210,16 +210,27 @@ func TestPageRemoteViewerFramesItsPageOverPlainHTTPWithoutFetchMetadata(t *testi
 		assert.Equal(t, http.StatusForbidden, res.StatusCode, "%s: a loopback name gets fetch metadata, so the rule holds", host)
 	}
 
-	// The frame's load counts for the read-back: the marks keep the page's data.
-	res = remoteGet(t, e.srv, http.MethodGet, "brain:8123", prefix+"/public/ok.html", nil, nil)
-	require.Equal(t, http.StatusOK, res.StatusCode)
+	// Only a navigation counts as the frame loading its document, for the
+	// read-back: the page's own fetch of an HTML file (Origin: null, or no-cors
+	// without Upgrade-Insecure-Requests) does not.
 	m := sampleMarks()
 	m["path"] = prefix + "/public/ok.html"
-	rec = e.dashJSON(t, http.MethodPost, "/api/pages/"+p.ID+"/marks", m)
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	got := e.marks(t, a, "site", "")
-	require.NotEmpty(t, got.Batches)
-	assert.Equal(t, "/public/ok.html", got.Batches[len(got.Batches)-1].Path)
+	sendMarks := func() string {
+		rec := e.dashJSON(t, http.MethodPost, "/api/pages/"+p.ID+"/marks", m)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		got := e.marks(t, a, "site", "")
+		require.NotEmpty(t, got.Batches)
+		return got.Batches[len(got.Batches)-1].Path
+	}
+	for _, fetch := range []map[string]string{{"Origin": "null"}, {"Accept": "text/html"}, {"Origin": "null", "Upgrade-Insecure-Requests": "1"}} {
+		res = remoteGet(t, e.srv, http.MethodGet, "brain:8123", prefix+"/public/ok.html", fetch, nil)
+		require.Equal(t, http.StatusOK, res.StatusCode)
+	}
+	assert.Empty(t, sendMarks(), "no navigation yet: the marks carry none of the page's data")
+	res = remoteGet(t, e.srv, http.MethodGet, "brain:8123", prefix+"/public/ok.html",
+		map[string]string{"Upgrade-Insecure-Requests": "1"}, nil)
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	assert.Equal(t, "/public/ok.html", sendMarks(), "the frame's navigation counts")
 }
 
 func TestPageRemoteViewerPageCannotReachAnotherPage(t *testing.T) {

@@ -339,15 +339,22 @@ func serveStagePage(w http.ResponseWriter, r *http.Request, page *stagePage, sit
 		snapshot = true
 	}
 	dest := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Dest")))
-	noMetadata := !snapshot && dest == "" && stageInsecureContext(site)
+	// No metadata, from a browser at a site that gets none: never over TLS to
+	// this listener, where the browser always sends it.
+	noMetadata := !snapshot && dest == "" && r.TLS == nil && stageInsecureContext(site)
 	if !snapshot && !noMetadata && !stageFetchDestAllowed(dest) && !stageWebSocketHandshake(r) {
 		http.Error(w, "stage pages load only inside a live-page frame", http.StatusForbidden)
 		return
 	}
 	// What the static source counts as the operator's frame loading a
 	// document (for a page's read-back, pages_fsview.go): one that says so,
-	// or, with no fetch metadata to say, any.
-	if dest == "iframe" || noMetadata {
+	// or, with no fetch metadata to say, a navigation. Browsers send
+	// Upgrade-Insecure-Requests only on a navigation, and a page's script
+	// cannot add it: not to a no-cors request (it is not a safelisted
+	// header), and a cors request carries Origin: null. So the page's own
+	// fetch of an HTML file never counts as its frame having reloaded.
+	navigation := r.Header.Get("Origin") == "" && strings.TrimSpace(r.Header.Get("Upgrade-Insecure-Requests")) == "1"
+	if dest == "iframe" || (noMetadata && navigation) {
 		r = r.WithContext(context.WithValue(r.Context(), stageFrameLoadKey{}, true))
 	}
 
@@ -487,8 +494,10 @@ func stageLoopbackPort(r *http.Request) (int, bool) {
 //   - Admission is still by the page's unguessable remote token, and any
 //     Origin but null or none is refused.
 //
-// A loopback name, or an https origin (which the browser sends metadata to
-// whether TLS ends here or at a proxy), keeps the frames-only rule.
+// A loopback name keeps the frames-only rule, as does a request that came
+// over TLS to this listener (serveStagePage). An https origin whose TLS ends
+// at a proxy cannot be told from plain http here, but the browser sends it
+// metadata, so the rule is applied to it in practice.
 func stageInsecureContext(site stageSite) bool {
 	if site.prefix == "" {
 		return false
