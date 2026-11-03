@@ -574,13 +574,19 @@ test('hiding the tab ends it', async (t) => {
 });
 
 test('long silence ends it', async (t) => {
-  const s = await continuous(t, { voice: { continuous_idle_seconds: 0.4 } });
+  // A 2 s countdown leaves the still-running check over 1.5 s of clock (300
+  // ms of real time) of room, and the end is awaited rather than slept for:
+  // a 0.4 s countdown checked 140 ms before and 160 ms after it fired, which
+  // load on the fast clock overran in both directions.
+  const s = await continuous(t, { voice: { continuous_idle_seconds: 2 } });
   await s.mic();
   await says(s, 'one send now');
   await reopened(s);
-  assert.ok(s.$('.companion-continuous'));
-  await s.harness.act(() => wait(300));
-  assert.ok(!s.$('.companion-continuous'));
+  assert.ok(s.$('.companion-continuous'), 'a short pause keeps it running');
+  for (let waited = 0; s.$('.companion-continuous') && waited < 10000; waited += 100) {
+    await s.harness.act(() => wait(100));
+  }
+  assert.ok(!s.$('.companion-continuous'), 'the silence countdown ended it');
   assert.match(s.notices.at(-1), /long silence/);
 });
 
