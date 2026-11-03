@@ -24,6 +24,8 @@ import {
 } from './process-editor-window.js';
 import { TO_WINDOW_LABEL } from './overlay-tab-moves.js';
 import { withShortcut } from './keybindings.js';
+import { liveHelpers, sendToHelper } from './get-help.js';
+import { dashboardState } from './snapshot-store.js';
 
 const html = htm.bind(h);
 
@@ -103,7 +105,10 @@ export function processEditorConfig({ mount, readable = false, state, actions, c
     onOpenTemplates: () => (isProcessSolo() || !processDocked(mount) ? false : actions?.activateSubtab?.('templates')),
     onOpenTemplate: actions?.openReferencedTemplate,
     templateRefs: () => state.view.value.templates, onScribe: actions?.summonScribe,
-    scribeDock: actions?.openScribe ? { scribes: () => state.view.value.scribes, openTerminal: actions.openScribe } : null,
+    onAskAgent: actions?.askAgent,
+    onMessageHelper: (helper, message) => sendToHelper(helper, message),
+    // An editor's helper counts while the snapshot lists it running.
+    helperLive: (helper) => liveHelpers(dashboardState.snapshot.value).some((agent) => agent.id === helper.id),
     describeActor: actions?.describeActor, onOpenActor: actions?.openActor,
   };
 }

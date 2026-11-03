@@ -47,9 +47,13 @@ export function AgentPicker({ helpers, slugs = [], onPick, onClose }) {
 // askConfirmation(missing, helper) }; brief may be async. before() runs first
 // and may refuse, as a page's save-before-handoff guard does. onHelper hears
 // the agent a pick brought in, so the page's actions reach it. actions are the
-// page's own: [{ key, label, title, disabled, run }].
+// page's own: [{ key, label, title, disabled, run }]. A page with its own
+// pipeline (the process editor's preview and save guard) passes onNew() and
+// onAsk(helper) instead of help, and they run in place of the shared summon
+// and ask. labelNode is what the button shows, label its accessible name.
 export function GetHelpMenu({
-  help, actions = [], before = null, onHelper = null, label = 'Get help', title = 'Bring an agent in to help with this page',
+  help = null, slugs = null, actions = [], before = null, onHelper = null, onNew = null, onAsk = null, labelNode = null, disabled = false,
+  label = 'Get help', title = 'Bring an agent in to help with this page',
   snapshot = dashboardState.snapshot, notify = shellToast, fetchImpl = globalThis.fetch, confirm = undefined, class: extra = '',
 }) {
   const [open, setOpen] = useState(false);
@@ -72,21 +76,22 @@ export function GetHelpMenu({
     }
   };
   const brief = async () => (typeof help.brief === 'function' ? help.brief() : help.brief);
-  const newHelper = () => run(async () => summonHelper({
+  const newHelper = () => run(async () => (onNew ? onNew() : summonHelper({
     name: help.name, slugs: help.slugs, scope: help.scope, exclusive: help.exclusive, taskRef: help.taskRef,
     confirmation: typeof help.confirmation === 'function' ? help.confirmation() : help.confirmation,
     brief: await brief(), fetchImpl, ...(confirm ? { confirm } : {}),
-  }));
+  })));
   const ask = (helper) => {
     setPicking(false);
+    if (onAsk) return run(async () => onAsk(helper));
     return run(async () => askExistingAgent({
       helper, slugs: help.slugs, subject: help.subject || 'Help wanted', brief: await brief(),
       confirmation: (missing) => help.askConfirmation?.(missing, helper), fetchImpl, ...(confirm ? { confirm } : {}),
     }));
   };
   return html`<div ref=${rootRef} class=${`get-help${extra ? ` ${extra}` : ''}`}>
-    <${Button} class="get-help-toggle" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'} title=${title} disabled=${busy}
-      onClick=${() => setOpen((value) => !value)}>${busy ? 'Starting…' : `${label} ▾`}<//>
+    <${Button} class="get-help-toggle" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'} title=${title} aria-label=${label} disabled=${busy || disabled}
+      onClick=${() => setOpen((value) => !value)}>${busy ? 'Starting…' : html`${labelNode || label} ▾`}<//>
     ${open && html`<${Menu} class="get-help-menu" aria-label=${label}>
       <${MenuItem} data-get-help="new" title="Start an agent scoped to this page's work, and open its chat window" onClick=${newHelper}>New helper<//>
       <${MenuItem} data-get-help="ask" title="Brief an agent that is already running, and open its chat window" onClick=${() => { setOpen(false); setPicking(true); }}>Ask an existing agent…<//>
@@ -94,6 +99,6 @@ export function GetHelpMenu({
       ${actions.map((action) => html`<${MenuItem} key=${action.key} data-get-help=${action.key} title=${action.title || ''} disabled=${action.disabled}
         onClick=${() => { setOpen(false); void action.run(); }}>${action.label}<//>`)}
     <//>`}
-    ${picking && html`<${AgentPicker} helpers=${liveHelpers(snapshot.value)} slugs=${help.slugs} onPick=${ask} onClose=${() => setPicking(false)} />`}
+    ${picking && html`<${AgentPicker} helpers=${liveHelpers(snapshot.value)} slugs=${help?.slugs || slugs || []} onPick=${ask} onClose=${() => setPicking(false)} />`}
   </div>`;
 }

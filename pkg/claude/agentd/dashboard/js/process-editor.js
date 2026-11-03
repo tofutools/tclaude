@@ -63,7 +63,6 @@ import {
   PROCESS_SCRIBE_CHAT_SUBJECT, processScribeChatMessage, processScribeContextPreview,
   processScribeEditorContext, processScribeHandoff, processScribePrompt,
 } from './process-scribe.js';
-import { dashPrefs } from './prefs.js';
 import {
   createProcessSnippet, deleteProcessSnippet, loadProcessSnippets, renameProcessSnippet,
 } from './process-snippet-library.js';
@@ -118,14 +117,12 @@ function externalInteractionPending(editor) {
   return !!(editor.externalDecisionPending || editor.externalReloadPending || editor.diffReview);
 }
 
-const SCRIBE_DOCK_MODE_PREF = 'tclaude.dash.processEditor.scribeMode';
-
-function readScribeDockMode() {
-  try {
-    return dashPrefs.getItem(SCRIBE_DOCK_MODE_PREF) === 'terminal' ? 'terminal' : 'chat';
-  } catch {
-    return 'chat';
-  }
+// helpPrompt is a context action's default ask; the operator edits it in the
+// preview before it goes.
+function helpPrompt(kind) {
+  if (kind === 'explain') return 'Explain what the selected node does, what feeds it and where its outcomes lead. Do not change anything.';
+  if (kind === 'draft') return 'Draft a process that ';
+  return processScribePrompt(kind);
 }
 
 function externalBusyReason(editor) {
@@ -289,7 +286,9 @@ export class ProcessTemplateEditor {
     this.paletteHidden = false;
     // Docked scribe (E4): open state is per editor; the chat/terminal mode is
     // a remembered per-browser preference.
-    this.scribeDock = { open: false, mode: readScribeDockMode() };
+    // The agent last brought in from Get help in this editor: its context
+    // actions reach it. { id, convId, label }, or null.
+    this.helper = null;
     this.customSnippets = [];
     this.snippetLibrary = { loading: true, error: '', generation: 0, pendingID: '', creating: false };
     this.snippetLoadSeq = 0;
@@ -401,7 +400,7 @@ export class ProcessTemplateEditor {
       scope: this.scopeSnapshot(),
       status: { ...this.statusState },
       paletteHidden: this.paletteHidden,
-      scribeDock: { ...this.scribeDock, available: !!this.options.scribeDock },
+      helper: this.helper,
       // Stored templates the palette offers as ▣ references (never this one:
       // a template cannot run itself).
       templateRefs: (this.options.templateRefs?.() || [])
@@ -1404,84 +1403,62 @@ export class ProcessTemplateEditor {
     }
   }
 
-  // ---- docked scribe (chat + terminal) -------------------------------------
+  // ---- Get help (a helper in a regular chat window) -------------------------
 
-  toggleScribeDock(open = !this.scribeDock.open) {
-    if (this.destroyed || !this.options.scribeDock) return false;
-    const changed = this.scribeDock.open !== !!open;
-    this.scribeDock = { ...this.scribeDock, open: !!open, starting: !!open && !!this.scribeDock.starting };
-    this.updateChrome?.();
-    // The dock is a column beside the canvas: opening it narrows the view
-    // and would clip the right-hand nodes. Refit once the column has laid
-    // out (never during a pointer gesture).
-    if (changed && typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        if (this.destroyed || this.graph?.interactionSnapshot?.()?.active) return;
-        this.graph?.fit?.();
-      }));
-    }
-    return true;
-  }
-
-  setScribeDockMode(mode) {
-    if (this.destroyed || (mode !== 'chat' && mode !== 'terminal')) return false;
-    this.scribeDock = { ...this.scribeDock, mode };
-    try { dashPrefs.setItem(SCRIBE_DOCK_MODE_PREF, mode); } catch { /* preference only */ }
-    this.updateChrome?.();
-    return true;
-  }
-
-  // scribeDockContext is what the context chips and actions offer right now.
-  scribeDockContext() {
+  // helpContext is what the Get help menu's context actions can work on now.
+  helpContext() {
     const items = selectionItems(this.selection);
     const nodes = items.filter((item) => item.type === 'node');
-    const errors = (this.validation?.mapped?.entries || []).filter((entry) => entry.severity === 'error').length;
     return {
       selection: items.length,
       singleNode: nodes.length === 1 && items.length === 1 ? (this.model.node(nodes[0].id)?.name || nodes[0].id) : '',
-      errors,
       hasIssue: !!this.validation?.currentIssue?.(),
       saved: !!(this.model.template.id || '').trim(),
     };
   }
 
-  // sendToScribe mails the docked scribe: plain chat, or a context action
-  // carrying the same bounded editor context a summon brief uses. The scribe
-  // answers by saving a new version, reviewed on the canvas; local edits are
-  // never handed over, so a dirty draft stays put and conflicts surface in
-  // the review instead of being overwritten.
-  async sendToScribe(scribe, { kind = 'chat', prompt = '' } = {}) {
-    if (this.destroyed) return { error: 'The editor is closed.' };
-    if (!scribe?.convId) return { error: 'No live scribe for this template.' };
-    let context = null;
-    try {
-      if (kind !== 'chat') {
-        const id = (this.model.template.id || '').trim();
-        if (!id) throw new Error('Save this template once first: a scribe works on a stored template.');
-        const handoff = processScribeHandoff({
-          kind: 'template', id, currentRef: this.model.currentRef || '', sourceHash: this.model.sourceHash || '',
-        });
-        context = processScribeEditorContext({
-          kind: kind === 'explain' ? 'selection' : kind, handoff,
-          ...scribeContextInput(this.model, this.selection, kind === 'diagnostic' ? this.validation?.currentIssue?.() || null : null),
-        });
-      }
-      const body = processScribeChatMessage({
-        prompt: prompt || (kind === 'explain'
-          ? 'Explain what the selected node does, what feeds it and where its outcomes lead. Do not change anything.'
-          : processScribePrompt(kind === 'chat' ? 'template' : kind)),
-        context,
-      });
-      const response = await fetch('/api/operator-message', {
-        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: scribe.convId, subject: PROCESS_SCRIBE_CHAT_SUBJECT, body }),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
-      return { ok: true };
-    } catch (error) {
-      return { error: error?.message || String(error) };
+  // setHelper records the agent Get help brought in, from a summon's or an
+  // ask's result.
+  setHelper(result) {
+    const id = result?.agentId || result?.agent_id || result?.conv_id || '';
+    if (this.destroyed || !id) return;
+    this.helper = { id, convId: result.convId || result.conv_id || '', label: result.name || id };
+    this.updateChrome?.();
+  }
+
+  // askHelper is a context action: Ask about selection, Explain this node, Fix
+  // this issue, Draft from description. The editor's helper, while it runs,
+  // gets the bounded editor context as a message in its chat window; without
+  // one a new helper starts with it. Local edits are never handed over: the
+  // helper answers by saving a version, reviewed on the canvas.
+  async askHelper(kind, { prompt: initialPrompt = '' } = {}) {
+    if (this.destroyed) return false;
+    const helper = this.helper && this.options.helperLive?.(this.helper) !== false ? this.helper : null;
+    const summonKind = kind === 'explain' ? 'selection' : kind === 'draft' ? 'template' : kind;
+    if (!helper) return this.requestScribe(summonKind, { prompt: initialPrompt || helpPrompt(kind) });
+    const id = (this.model.template.id || '').trim();
+    if (!id) {
+      this.status('Save this template once first: a helper works on a stored template.', true);
+      return false;
     }
+    let context;
+    try {
+      const handoff = processScribeHandoff({ kind: 'template', id, currentRef: this.model.currentRef || '', sourceHash: this.model.sourceHash || '' });
+      context = processScribeEditorContext({
+        kind: summonKind, handoff,
+        ...scribeContextInput(this.model, this.selection, kind === 'diagnostic' ? this.validation?.currentIssue?.() || null : null),
+      });
+    } catch (error) {
+      this.status(error.message, true);
+      return false;
+    }
+    const prompt = await this.scribePreviewModal({
+      kind: summonKind, prompt: initialPrompt || helpPrompt(kind), context: processScribeContextPreview(context), truncated: !!context.truncation,
+    });
+    if (prompt == null || this.destroyed) return false;
+    const sent = await this.options.onMessageHelper?.(helper, { subject: PROCESS_SCRIBE_CHAT_SUBJECT, body: processScribeChatMessage({ prompt, context }) });
+    if (sent) this.status(`Sent to ${helper.label}; its answer arrives as a new version to review on the canvas.`);
+    return !!sent;
   }
 
   status(message, isError = false) {
@@ -2594,8 +2571,12 @@ export class ProcessTemplateEditor {
 
   // `prompt` prefills the request preview (the operator still edits and
   // confirms it); without one the preview offers the kind's default ask.
-  async requestScribe(kind = 'template', { prompt: initialPrompt = '' } = {}) {
-    if (this.destroyed || !this.options.onScribe || this.savePending || externalInteractionPending(this)) return false;
+  // to is a running agent to ask instead of starting a helper (Get help › Ask
+  // an existing agent…): the same save guard, preview and freshness check, and
+  // the brief goes to it as a message.
+  async requestScribe(kind = 'template', { prompt: initialPrompt = '', to = null } = {}) {
+    const deliver = to ? this.options.onAskAgent : this.options.onScribe;
+    if (this.destroyed || !deliver || this.savePending || externalInteractionPending(this)) return false;
     const originalBlank = this.blank;
     if (this.dirty) {
       const choice = await this.choiceModal({
@@ -2724,16 +2705,12 @@ export class ProcessTemplateEditor {
       return false;
     }
     if (!freshnessGuard()) return false;
-    // With a dock the scribe starts in the background (tmux only) and the dock
-    // is where it shows up; without one its terminal is its surface.
-    const background = !!this.options.scribeDock;
-    const summoned = !!(await this.options.onScribe(anchor, { context, prompt, freshnessGuard, background }));
-    if (summoned && background && !this.destroyed) {
-      // Until the snapshot lists the new scribe the dock shows it starting.
-      this.scribeDock = { ...this.scribeDock, starting: true };
-      this.toggleScribeDock?.(true);
-    }
-    return summoned;
+    // The helper starts in the background and opens in its chat window.
+    const result = to
+      ? await this.options.onAskAgent(to, anchor, { context, prompt, freshnessGuard })
+      : await this.options.onScribe(anchor, { context, prompt, freshnessGuard });
+    if (result) this.setHelper?.(result);
+    return !!result;
   }
 
   async saveRequest(requestSeq) {
