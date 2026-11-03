@@ -361,16 +361,29 @@ export function createProcessesActions({
   // lacks after the same confirmation.
   async function askAgent(helper, anchor, handoffOptions = {}) {
     try {
-      const { freshnessGuard: _guard, ...briefOptions } = handoffOptions;
+      const { freshnessGuard, ...briefOptions } = handoffOptions;
       const handoff = processScribeHandoff(anchor);
       const target = processScribeScopeLabel(handoff.scope);
+      // As for a new scribe, the editor must not have moved on while the
+      // operator read the grant: a stale answer grants and sends nothing.
+      let stale = false;
+      const fresh = () => {
+        try { stale = typeof freshnessGuard === 'function' && freshnessGuard() !== true; } catch { stale = true; }
+        return !stale;
+      };
       const result = await askExistingAgent({
-        helper, slugs: PROCESS_SCRIBE_SLUGS, subject: 'Process help', brief: processScribeBrief(handoff, briefOptions), fetchImpl, confirm,
+        helper, slugs: PROCESS_SCRIBE_SLUGS, subject: 'Process help', brief: processScribeBrief(handoff, briefOptions), fetchImpl,
+        confirm: async (options) => (await confirm(options)) && fresh(),
         confirmation: (missing) => ({
-          title: 'Grant process-scribe access?', body: `${helper.label}: ${processScribeGrantBody(target, '')}`,
+          title: 'Grant process-scribe access?',
+          body: `${helper.label} is granted ${missing.join(' and ')}, to help with ${target}. This is a standing grant on that agent, for every process template (not only this one), and it keeps its other permissions; revoke it in Access when it is done. It never instantiates or runs a process.`,
           meta: missing.join(', '), okLabel: 'Grant & ask',
         }),
       });
+      if (stale) {
+        state.setNotice('Cancelled because the editor context changed during approval; nothing was granted or sent. Review the current context and try again.');
+        return null;
+      }
       if (!result) {
         state.setNotice('Cancelled; no permissions changed and nothing was sent.');
         return null;

@@ -339,7 +339,8 @@ process template. The draft is saved to the group (pinned, not listed in the lib
 and the group body shows the scribe's live reply, where you can answer it.
 When it finishes, *Review steps* opens the draft in the step list. *Stop
 scribe* stops it, keeps the draft and opens what it saved so far, and *open in
-graph editor* continues with the scribe beside the canvas. A reload or a tab
+graph editor* opens the draft in the graph editor, where *Get help* reaches
+the scribe. A reload or a tab
 change brings the panel back while the scribe is running; *hide* leaves the
 scribe working, and *✎ Scribe* in the process's ▶ strip reopens the panel. The
 scribe cannot start a run, and nothing runs until you press *Start now*. *Start

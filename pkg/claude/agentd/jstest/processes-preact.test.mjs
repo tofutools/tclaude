@@ -1486,3 +1486,38 @@ test('process scribe browser fallback opens a revealed terminal pane with live i
   assert.equal(opened[0].seed.hideConv, agentId);
   assert.deepEqual(opened[0].options, { reveal: true });
 });
+
+test('asking an existing agent for process help names the standing grant and refuses a stale editor', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const opened = await withCompanion(t, harness);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const anchor = { kind: 'template', id: 'release-flow', currentRef: `release-flow@sha256:${'a'.repeat(64)}`, sourceHash: 'b'.repeat(64), isNew: false };
+  const helper = { id: 'agt_b', convId: 'conv-b', label: 'builder', effective: ['process.templates.read'] };
+  const requests = []; const prompts = [];
+  let fresh = true;
+  const actions = createProcessesActions({
+    state, notify() {}, confirm: async (options) => { prompts.push(options); return true; },
+    fetchImpl: async (path, options) => { requests.push({ path, body: JSON.parse(options.body) }); return reply({}); },
+  });
+  const guard = () => fresh;
+
+  fresh = true;
+  const pending = actions.askAgent(helper, anchor, { prompt: 'Tidy the release flow.', freshnessGuard: guard });
+  assert.ok(await pending);
+  assert.match(prompts[0].body, /builder is granted process\.templates\.manage.*standing grant.*every process template.*keeps its other permissions/s);
+  assert.deepEqual(requests.map((request) => request.path), ['/api/permissions', '/api/operator-message']);
+  assert.deepEqual(requests[0].body.overrides, { 'process.templates.manage': 'grant' }, 'only the missing slug');
+  assert.deepEqual(opened.at(-1), { agentId: 'agt_b', starting: false });
+
+  requests.length = 0;
+  const stale = createProcessesActions({
+    state, notify() {}, confirm: async () => { fresh = false; return true; },
+    fetchImpl: async (path) => { requests.push(path); return reply({}); },
+  });
+  assert.equal(await stale.askAgent(helper, anchor, { prompt: 'Tidy.', freshnessGuard: guard }), null);
+  assert.deepEqual(requests, [], 'an editor that moved on during the grant prompt grants and sends nothing');
+  assert.match(state.notice.value, /context changed during approval; nothing was granted or sent/);
+});

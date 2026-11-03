@@ -319,7 +319,7 @@ export function ScribeDraft({ group, draft, api, wizard = false, notify, onRevie
     <div class="gq-foot">
       <${Button} size="sm" variant="primary" data-scribe-review disabled=${!finished || !!busy} title=${finished ? 'Open the saved draft in the step list' : 'The scribe has not finished a draft yet'}
         onClick=${openReview}>Review steps<//>
-      <${Button} size="sm" data-scribe-graph onClick=${graph} title="Continue with this scribe beside the graph editor">⤢ open in graph editor<//>
+      <${Button} size="sm" data-scribe-graph onClick=${graph} title="Open the draft in the graph editor">⤢ open in graph editor<//>
       <${Button} size="sm" variant="link" class="gq-link" data-scribe-stop disabled=${!!busy} onClick=${stop} title="Stop the scribe; the draft stays in the group, and what it saved opens for review">${busy === 'stop' ? 'stopping…' : 'stop scribe'}<//>
       <${Button} size="sm" variant="link" class="gq-link" data-scribe-hide disabled=${!!busy} onClick=${onClose} title="Hide this panel and leave the scribe working; ▶ on the process brings it back">hide<//>
     </div>

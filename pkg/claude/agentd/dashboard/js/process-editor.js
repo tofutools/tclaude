@@ -284,8 +284,6 @@ export class ProcessTemplateEditor {
     this.scopeMinimaps = [];
     this.scopePortsOpen = false;
     this.paletteHidden = false;
-    // Docked scribe (E4): open state is per editor; the chat/terminal mode is
-    // a remembered per-browser preference.
     // The agent last brought in from Get help in this editor: its context
     // actions reach it. { id, convId, label }, or null.
     this.helper = null;
