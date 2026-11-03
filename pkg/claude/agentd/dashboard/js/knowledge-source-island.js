@@ -135,7 +135,7 @@ export function KnowledgeSourceRow({ snapshot, fetchImpl = globalThis.fetch }) {
       onClick=${() => act('remove')}>Remove<//>`}
     ${!ready && view.state !== 'fetching' && !/no commit/.test(view.detail || '') && html`<${Button} size="sm" class="cfg-inline" disabled=${busy}
       onClick=${() => act('once')}>Download now<//>`}
-    ${error && html`<span class="knowledge-source-error" role="alert">${error}</span>`}
+    ${error && html`<span class="knowledge-source-error ui-error" role="alert">${error}</span>`}
   </div>`;
 }
 

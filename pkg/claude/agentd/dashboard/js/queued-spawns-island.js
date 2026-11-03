@@ -44,7 +44,7 @@ export function QueuedSpawnsChip({ snapshot }) {
       onClick=${(event) => { if (event.target.closest('.queued-spawn-row')) setOpen(false); }}>
       <div class="queued-spawns-popover-head">
         <span><span class="theme-copy-regular">Queued agents</span><span class="theme-copy-wizard">Dormant summonings</span></span>
-        <span class="queued-spawns-popover-hint">click = review/edit · ▶ = spawn now</span>
+        <span class="queued-spawns-popover-hint ui-hint">click = review/edit · ▶ = spawn now</span>
       </div>
       ${rows.map((entry) => html`<${QueuedSpawnRow} key=${entry.id} entry=${entry} />`)}
     </div>`}

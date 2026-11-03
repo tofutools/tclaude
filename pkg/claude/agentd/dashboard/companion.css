@@ -496,7 +496,7 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
 .knowledge-source-actions .companion-primary { margin: 0; }
 .knowledge-source-note { color: var(--cmp-muted); }
 .knowledge-source-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.knowledge-source-error { color: var(--cmp-red); overflow-wrap: anywhere; }
+.knowledge-source-error { overflow-wrap: anywhere; }
 
 .companion-decision {
   flex: none; margin: 8px 8px 0; padding: 8px 10px; border-radius: 8px;

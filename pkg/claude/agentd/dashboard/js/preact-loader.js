@@ -362,7 +362,7 @@ const knowledgeSourceDescriptor = createIslandDescriptor({
   name: 'knowledge-source',
   label: 'Source download',
   hosts: { host: '#knowledge-source-root' },
-  failureClass: 'knowledge-source-error',
+  failureClass: 'knowledge-source-error ui-error',
   load: async ({ hosts: { host }, dependencies }) => {
     const islandModule = import('./knowledge-source-island.js');
     const snapshotStoreModule = import('./snapshot-store.js');
@@ -640,7 +640,7 @@ const messageAccessDialogsDescriptor = createIslandDescriptor({
   hosts: {
     dialogHost: '#message-access-dialog-root',
   },
-  failureClass: 'message-access-dialog-error',
+  failureClass: 'message-access-dialog-error ui-error-box',
   load: async ({ hosts, dependencies }) => {
     const islandModule = import('./message-access-dialog-island.js');
     const stateModule = import('./message-access-dialog-state.js');
@@ -936,7 +936,7 @@ export async function mountDoctorFeature(dependencies = {}) {
   if (!host) return null;
   const badgeHosts = [...document.querySelectorAll('#doctor-badge-root, #doctor-subtab-badge-root')];
   return mountFeatureIsland({
-    name: 'doctor', label: 'Doctor', hosts: [host], failureClass: 'doctor-error',
+    name: 'doctor', label: 'Doctor', hosts: [host], failureClass: 'doctor-error ui-error-box',
     load: async () => {
       const islandModule = import('./doctor-island.js');
       const stateModule = import('./doctor-state.js');

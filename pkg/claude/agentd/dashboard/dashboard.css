@@ -2741,11 +2741,11 @@ body.slop .human-notification-drawer-download:hover { background: rgba(255, 215,
    floats over the next row rather than growing this one. */
 .inline-editor-hint {
   position: absolute; left: 0; top: 100%; margin-top: 3px; z-index: 5;
-  white-space: nowrap; font-size: 11px; font-weight: 400; color: #7d8590;
+  white-space: nowrap; font-weight: 400;
   background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
   padding: 2px 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); pointer-events: none;
 }
-.inline-editor-hint.warn { color: #f0883e; }
+.inline-editor-hint.ui-hint.warn { color: #f0883e; }
 .title { color: #d4d4d4; }
 .slug { font-family: ui-monospace, monospace; font-size: 12px; }
 .muted { color: #7d8590; }
@@ -3510,7 +3510,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    the two-line Started/Label cells. */
 .profile-table td { vertical-align: middle; }
 .profile-id { font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.profile-error { font-size: 11px; max-width: 280px; overflow-wrap: anywhere; }
+.profile-error { max-width: 280px; overflow-wrap: anywhere; }
 /* Flex lives on an inner div, never on the <td>: a flex <td> stops being a
    table cell, so its bottom border is drawn at its own height, not the row's. */
 .profile-links { display: flex; flex-wrap: wrap; gap: 4px 10px; }
@@ -6062,7 +6062,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
   display: flex; justify-content: space-between; gap: 8px; margin: 2px 4px 6px;
   color: #e3b341; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
 }
-.queued-spawns-popover-hint { color: #7d8590; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.queued-spawns-popover-hint { font-weight: 400; text-transform: none; letter-spacing: 0; }
 .queued-spawn-row {
   display: flex; align-items: center; gap: 8px; padding: 6px;
   border: 1px solid transparent; border-radius: 4px; cursor: pointer;
@@ -18422,7 +18422,7 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .doctor-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
 .doctor-head h2 { margin: 0 0 4px; font-size: 17px; color: #e6edf3; }
 .doctor-lede { margin: 0; color: #7d8590; font-size: 12px; }
-.doctor-error { margin: 8px 0; padding: 8px 10px; border: 1px solid #f85149; border-radius: 5px; color: #f85149; }
+.doctor-error { margin: 8px 0; padding: 8px 10px; }
 .doctor-list { border: 1px solid #2a3340; border-radius: 6px; background: #0f1419; }
 .doctor-row { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; padding: 10px 12px; border-top: 1px solid #21262d; }
 .doctor-row:first-child { border-top: 0; }

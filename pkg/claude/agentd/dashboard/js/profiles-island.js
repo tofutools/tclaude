@@ -77,7 +77,7 @@ function CaptureRow({ capture, actions, deleting, now }) {
       <div class="muted profile-id">${capture.id}</div>
     </td>
     <td>${capture.label || html`<span class="muted">—</span>`}<div class="muted">${capture.source} · ${capture.seconds}s${capture.trace_seconds ? ` + ${capture.trace_seconds}s trace` : ''}</div></td>
-    <td>${statusPill(capture, now)}${capture.error ? html`<div class="muted profile-error">${capture.error}</div>` : null}</td>
+    <td>${statusPill(capture, now)}${capture.error ? html`<div class="profile-error ui-hint">${capture.error}</div>` : null}</td>
     <td title="agentd's own CPU over the window, as top shows it (100% = one core)">${headline?.cpu_available ? fmtPct(headline.self_cpu_percent) : '—'}</td>
     <td title="CPU of child processes (tmux, git, …) that exited during the window — top shows these under their own names, not agentd">${headline?.cpu_available ? fmtPct(headline.child_cpu_percent) : '—'}</td>
     <td title="Instrumented subprocess starts (tmux) per second — see summary for the per-command breakdown">${headline ? fmtRate(headline.subprocesses_per_sec) : '—'}</td>
