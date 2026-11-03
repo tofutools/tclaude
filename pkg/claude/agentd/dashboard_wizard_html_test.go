@@ -215,7 +215,6 @@ func TestDashboardHTML_WizardSpawnModal(t *testing.T) {
 	must(`content: "🔮 Summoning…"`, "the in-progress button reads Summoning in wizard mode")
 
 	// The whole dialog is re-skinned arcane.
-	must("body.wizard #agent-spawn-modal .cron-create-modal", "the spawn dialog surface is re-skinned")
 
 	// The Task field is a type="url" input (Linear/GitHub/ticket link) — the only
 	// url input in a .cron-create-row. The wizard field re-skin must cover it too
@@ -242,9 +241,7 @@ func TestDashboardHTML_WizardLinksDialogs(t *testing.T) {
 	must("wizard=${edit ? 'Rebind an arcane channel' : 'Weave an arcane channel'}", "the create/edit dialog keeps wizard vocabulary")
 	must("words('Remove this link?', 'Sever this arcane channel?')", "the destructive confirmation keeps wizard-mode vocabulary")
 	must(`<strong>+ new link</strong>`, "the plain empty state keeps its emphasized action label")
-	must("body.wizard #links-manage-modal .manage-modal", "the links browser surface is re-skinned")
 	must("body.wizard #links-manage-modal #links-list th", "the links table is re-skinned")
-	must("body.wizard #link-modal .cron-create-modal", "the link editor surface is re-skinned")
 	must("body.wizard #link-modal .cron-create-row select", "the link fields are re-skinned")
 	must("body.wizard #link-modal #link-modal-submit", "the link submit action is gilded")
 	must(`regular="+ link" wizard="+ weave channel"`, "the native per-party add-link action carries both voices")
@@ -477,7 +474,6 @@ func TestDashboardHTML_WizardProfileEditor(t *testing.T) {
 	}
 
 	// The whole dialog is re-skinned arcane, scoped to the profile editor modal.
-	must("body.wizard #profile-editor-modal .cron-create-modal", "the profile editor surface is re-skinned")
 
 	// The submit button becomes a "📜 Inscribe!" lever (Summon's twin) — the
 	// ::before glyph + the modal-scoped submit re-skin.
@@ -517,8 +513,6 @@ func TestDashboardHTML_WizardEnvironmentEditors(t *testing.T) {
 		"untyped summon environment inputs receive the wizard field skin")
 	must(`id="profile-editor-environment-row"`, "the pattern environment editor ships")
 	must(`id="group-settings-environment-row"`, "the party environment editor ships")
-	must("body.wizard #group-settings-modal .cron-create-modal",
-		"the consolidated party editor receives an id-scoped wizard surface")
 	must("wizard=${`Enchant party: ${descriptor.group}`}",
 		"the consolidated party editor carries a wizard title")
 	must(`id="group-settings-submit"`, "the party editor submit lever has a stable styling hook")
@@ -542,7 +536,6 @@ func TestDashboardHTML_WizardHumanReplyModal(t *testing.T) {
 	}
 
 	// The whole dialog surface is re-skinned arcane, scoped to the modal.
-	must("body.wizard #human-reply-modal .cron-create-modal", "the reply dialog surface is re-skinned")
 	// The static title swaps via the pure-CSS span pair (the same idiom as
 	// the Form-a-party title), so both the honest and the arcane copy ship.
 	must(`<span class="human-reply-title-regular">Reply to agent</span>`, "the regular title ships")
@@ -619,7 +612,6 @@ func TestDashboardHTML_WizardProfilesManage(t *testing.T) {
 	}
 
 	// The overlay surface + the gilded "+ new profile" action, both scoped.
-	must("body.wizard #profiles-manage-modal .manage-modal", "the profiles overlay surface is re-skinned")
 	must("body.wizard #profiles-manage-modal #profile-create-open.ui-btn-primary", "the + new profile button gets the gilded-arcane treatment")
 	must("body.wizard #profiles-manage-modal .template-card", "the profile cards are re-skinned")
 	must("body.wizard :is(#profile-import-modal, #sandbox-profile-import-modal) .profile-transfer-preview-button", "the profile import Preview action has a scoped wizard skin")
@@ -712,11 +704,8 @@ func TestDashboardHTML_WizardSandboxProfiles(t *testing.T) {
 	must("Edit ward: ${seed.name}", "the editor title reads 'Edit ward: <name>' when editing in wizard mode")
 
 	// The dialog surfaces are re-skinned arcane, each scoped to its own id.
-	must("body.wizard #sandbox-profiles-manage-modal .manage-modal", "the ward overlay surface is re-skinned")
 	must("body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.ui-btn-primary", "the + new ward button gets the gilded-arcane treatment")
-	must("body.wizard #sandbox-profile-editor-modal .cron-create-modal", "the ward editor surface is re-skinned")
 	must(`content: "🛡 Inscribe ward!"`, "the ward editor submit reads 'Inscribe ward!' in wizard mode")
-	must("body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal", "the ward export/import surfaces are re-skinned")
 }
 
 // TestDashboardCSS_WizardSandboxProfilesScoped guards that the wizard sandbox
@@ -746,7 +735,6 @@ func TestDashboardHTML_WizardPermEditor(t *testing.T) {
 	}
 
 	// The editor surface is re-skinned arcane, scoped to the perm-edit modal.
-	must("body.wizard #perm-edit-modal .perm-edit-modal", "the permissions editor surface is re-skinned")
 
 	// The active Grant/Deny tri-state fills are the safety signal and must stay
 	// their base green/red. The tri-state is a standard .ui-seg, themed through
@@ -1088,7 +1076,6 @@ func TestDashboardHTML_WizardGroupCreateDialog(t *testing.T) {
 
 	// The dialog surface is re-skinned, scoped to #group-create-modal so the
 	// sibling .cron-create-modal dialogs keep the default chrome.
-	must("body.wizard #group-create-modal .cron-create-modal", "the group-create dialog surface is re-skinned")
 	// The submit's static "Create" text is hidden and swapped for a ::before
 	// glyph lever, with a themed in-flight (disabled) copy.
 	must("body.wizard #group-create-modal #group-create-submit {", "the submit button becomes a gilded lever")
@@ -1561,7 +1548,6 @@ func TestDashboardHTML_WizardWindowModal(t *testing.T) {
 	must("body.wizard #window-title .window-title-wizard { display: inline; }", "wizard shows the heroes title")
 
 	// The whole dialog surface is re-skinned arcane, scoped to #window-modal.
-	must("body.wizard #window-modal .cleanup-modal h3", "the dialog title is re-skinned")
 	must("body.wizard #window-modal .window-direction", "the focus/unfocus direction picker is re-skinned")
 	must("body.wizard #window-modal .window-role-chip", "the group/role quick-select chips are re-skinned")
 	must("body.wizard #window-modal .cleanup-list", "the candidate list is re-skinned")
@@ -1590,9 +1576,6 @@ func TestDashboardHTML_WizardWindowModal(t *testing.T) {
 // unscoped `body.wizard .cleanup-modal { … }` would repaint all of them —
 // exactly the leak the sibling spawn/retire/edit-member scope guards catch.
 func TestDashboardCSS_WizardWindowModalScoped(t *testing.T) {
-	if !strings.Contains(dashboardAssets, "body.wizard #window-modal .cleanup-modal") {
-		t.Error("wizard window re-skin missing its #window-modal scope prefix")
-	}
 	if strings.Contains(dashboardAssets, "body.wizard .cleanup-modal {") {
 		t.Error("wizard window re-skin is unscoped — will repaint worktree-cleanup/retire-preview/delete-agent dialogs too")
 	}
@@ -1614,7 +1597,6 @@ func TestDashboardHTML_WizardCleanupModal(t *testing.T) {
 	}
 
 	// The whole dialog surface is re-skinned arcane, scoped to #cleanup-modal.
-	must("body.wizard #cleanup-modal .cleanup-modal h3", "the dialog title is re-skinned")
 	// The cleanup-modal-unique controls: the category-filter row, the tier
 	// selector panel, and the sticky per-category list sub-header.
 	must("body.wizard #cleanup-modal .cleanup-cats", "the category-filter row is re-skinned")
@@ -1633,9 +1615,6 @@ func TestDashboardHTML_WizardCleanupModal(t *testing.T) {
 // delete-retired dialogs, so an unscoped `body.wizard .cleanup-modal { … }`
 // would repaint all of them.
 func TestDashboardCSS_WizardCleanupModalScoped(t *testing.T) {
-	if !strings.Contains(dashboardAssets, "body.wizard #cleanup-modal .cleanup-modal") {
-		t.Error("wizard cleanup re-skin missing its #cleanup-modal scope prefix")
-	}
 	if strings.Contains(dashboardAssets, "body.wizard .cleanup-modal {") {
 		t.Error("wizard cleanup re-skin is unscoped — will repaint worktree-cleanup/retire-preview/delete-retired dialogs too")
 	}
@@ -1655,7 +1634,6 @@ func TestDashboardHTML_WizardDeleteRetiredModal(t *testing.T) {
 		}
 	}
 
-	must("body.wizard #delete-retired-modal .cleanup-modal h3", "the dialog title is re-skinned")
 	must("body.wizard #delete-retired-modal .cleanup-hint.danger", "the irreversible warning keeps an ember caution color")
 	must("body.wizard #delete-retired-modal .cleanup-toolbar button", "selection controls get arcane chrome")
 	must("body.wizard #delete-retired-modal .cleanup-toolbar input[type=number]", "the age filter is re-skinned")
@@ -1679,7 +1657,6 @@ func TestDashboardHTML_WizardDeleteGroupModal(t *testing.T) {
 		}
 	}
 
-	must("body.wizard #delete-group-modal .cleanup-modal h3", "the dialog title is re-skinned")
 	must("body.wizard #delete-group-modal .cleanup-list {", "the preview list is re-skinned")
 	must("body.wizard #delete-group-modal .cleanup-row .title", "preview row titles are parchment")
 	must("body.wizard #delete-group-modal .delete-agent-wt", "the retire-default checkbox row is re-skinned")
@@ -1715,7 +1692,6 @@ func TestDashboardHTML_WizardTemplatesManage(t *testing.T) {
 
 	// The overlay surface + the gilded "+ chalk a new circle" primary +
 	// the circle cards, all scoped to the overlay.
-	must("body.wizard #templates-manage-modal .manage-modal", "the templates overlay surface is re-skinned")
 	must("body.wizard #templates-manage-modal #template-create-open.ui-btn-primary", "the + new template button gets the gilded-arcane treatment")
 	must("body.wizard #templates-manage-modal .template-card", "the template cards are re-skinned")
 	must(`<${Words} plain="+ new template" wizard="+ chalk a new circle"/>`, "the create button ships both voices")
@@ -1749,7 +1725,6 @@ func TestDashboardHTML_WizardTemplateEditor(t *testing.T) {
 		}
 	}
 
-	must("body.wizard #template-editor-modal .cron-create-modal", "the editor surface is re-skinned")
 	// The Preact title always emits both vocab variants for live skin changes.
 	must(`plain="New group template" wizard="Chalk a new summoning circle"`, "the create title swaps in wizard mode")
 	must("`Redraw the circle: ${descriptor.seed.name}`", "the edit title swaps in wizard mode")
@@ -1775,7 +1750,6 @@ func TestDashboardHTML_WizardTemplateDeploy(t *testing.T) {
 		}
 	}
 
-	must("body.wizard #template-deploy-modal .cron-create-modal", "the summon dialog surface is re-skinned")
 	must(`<${Words} plain="Deploy a task force" wizard="🧙 Summon a hero party"/>`, "the title ships both voices")
 	must(`content: "🧙 Summon the hero party!"`, "the submit lever reads Summon in wizard mode")
 	must(`content: "🧙 Summoning…"`, "the busy submit reads Summoning in wizard mode")
@@ -1802,7 +1776,6 @@ func TestDashboardHTML_WizardTemplateFromGroup(t *testing.T) {
 		}
 	}
 
-	must("body.wizard #template-from-group-modal .cron-create-modal", "the trace dialog surface is re-skinned")
 	must(`<${Words} plain="Save a group as a template" wizard="🕯 Trace the party's circle"/>`, "the title ships both voices")
 	must(`content: "🕯 Trace it!"`, "the submit lever reads Trace it in wizard mode")
 	must(`content: "🕯 Tracing…"`, "the busy submit reads Tracing in wizard mode")
@@ -1823,19 +1796,16 @@ func TestDashboardHTML_WizardGroupDialogs(t *testing.T) {
 
 	// Import: surface + honest-text gilded submit (disabled ≠ busy here, so
 	// no ::before copy swap — same reasoning as the reply dialog's Send).
-	must("body.wizard #group-import-modal .cron-create-modal", "the import dialog surface is re-skinned")
 	must(`plain=${kind === 'agent' ? 'Import an agent' : kind === 'group' ? 'Import a group' : 'Import an agent or a group'}`, "the import title follows the file kind")
 	must(`wizard="⤒ Unseal an archive"`, "the import title ships both voices")
 	must("body.wizard #group-import-modal #group-import-submit", "the Import button gets the gilded chrome (label kept honest)")
 
 	// Startup context. Wizard mode names it "party lore", not "standing
 	// orders" — the latter is a separate feature with its own cog entry.
-	must("body.wizard #group-context-modal .cron-create-modal", "the context dialog surface is re-skinned")
 	must(`<${Words} plain="Group startup context" wizard="📜 The party's lore"/>`, "the context title ships both voices")
 	must(`content: "📜 Inscribe it!"`, "the context submit lever reads Inscribe it in wizard mode")
 
 	// Group creation. Clone is one prefilled state of this same surface.
-	must("body.wizard #group-create-modal .cron-create-modal", "the shared group dialog surface is re-skinned")
 	must("const regularTitle = 'Create group'", "every preset uses the common regular title")
 	must("const wizardTitle = '⚔ Form a party'", "every preset uses the common wizard title")
 	must(`content: "⚔ Form the party!"`, "the common submit lever reads Form the party in wizard mode")
@@ -1856,8 +1826,6 @@ func TestDashboardHTML_WizardActionDialogs(t *testing.T) {
 	}
 
 	const actionDialogs = "body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target)"
-	must(actionDialogs+" .cron-create-modal", "all three action-dialog surfaces get scoped wizard chrome")
-	must(actionDialogs+" .cron-create-modal h3", "all three action-dialog titles get the fantasy type treatment")
 	must(actionDialogs+" :is(.cron-create-row, .lt-row) :is(input[type=text], input:not([type]), select, textarea)", "the action-dialog fields and dropdowns get the violet-void skin")
 	must(actionDialogs+" .modal-buttons button:is(.primary, .ui-btn-primary)", "the primary action buttons get the gilded lever treatment")
 	must("body.wizard #reincarnate-agent-modal .reincarnate-mode", "the reincarnate mode selector gets wizard panel chrome")
@@ -2000,14 +1968,11 @@ func TestDashboardHTML_WizardTemplateNativeControlSweep(t *testing.T) {
 	must("body.wizard #template-editor-modal .role-inspect-slug {", "the role-inspect permission slugs get the gilt-on-violet coat")
 
 	// Template import dialog (was entirely unskinned despite carrying wizard words).
-	must("body.wizard #template-import-modal .cron-create-modal", "the template-import surface is re-skinned")
 	must("body.wizard #template-import-modal .cron-create-row input[type=checkbox] { accent-color: #a97bd6; }", "the overwrite checkbox gets the arcane accent")
 	must("body.wizard #template-import-modal #template-import-submit", "the Import button gets the gilded chrome (label kept honest)")
 
 	// Roles library overlay + role editor (two whole modals, never themed).
-	must("body.wizard #roles-manage-modal .manage-modal", "the roles-library overlay surface is re-skinned")
 	must("body.wizard #roles-manage-modal #role-create-open.ui-btn-primary", "the + new class primary gets the gilded-arcane chrome")
-	must("body.wizard #role-editor-modal .cron-create-modal", "the role-editor surface is re-skinned")
 	must("body.wizard #role-editor-modal button:where(:not(.ui-btn)):not(#role-editor-submit)", "the shared permission editor entry gets the secondary wizard chrome")
 	must("body.wizard #role-editor-modal #role-editor-submit", "the Save-role button gets the gilded lever chrome")
 }

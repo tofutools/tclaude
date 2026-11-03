@@ -80,3 +80,41 @@ test('no stylesheet hand-paints a new dialog box', () => {
   assert.deepEqual([...baseline].filter((c) => !found.has(c)).sort(), [],
     'these are migrated: remove them from jstest/ui-dialog-baseline.json');
 });
+
+// Dialog headings take the skin's title face from `:where(.ui-dialog) h3`
+// (ui.css). The wizard skin used to copy its gilded serif onto each dialog's
+// h3 by id; a new copy fails here. The process editors render outside
+// .ui-dialog, and so does the config diff dialog (its own panel), so their
+// rules stay.
+const TITLE_EXEMPT = new Set([
+  'body.wizard .process-editor-modal .modal h3',
+  'body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .config-diff-modal h3',
+]);
+
+export function handRolledTitles(css) {
+  const source = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const found = new Set();
+  for (const [, selector, body] of source.matchAll(/([^{};]*)\{([^{}]*)\}/g)) {
+    if (!/font-family\s*:[^;]*Papyrus/i.test(body)) continue;
+    for (const part of selector.split(/,(?![^()]*\))/)) {
+      const tokens = part.trim().split(/\s*[\s>+~]\s*/);
+      if (tokens.at(-1) !== 'h3') continue;
+      if (!tokens.slice(0, -1).some((t) => /\.[\w-]*(?:modal|dialog)\b/.test(t))) continue;
+      const key = part.trim().replace(/\s+/g, ' ');
+      if (!TITLE_EXEMPT.has(key)) found.add(key);
+    }
+  }
+  return found;
+}
+
+test('dialog titles take the skin title face from ui.css, not per-dialog copies', () => {
+  assert.deepEqual([...handRolledTitles("body.wizard #x .cron-create-modal h3, .y { font-family: Papyrus, serif; }")], ['body.wizard #x .cron-create-modal h3']);
+  const ui = readFileSync(new URL('ui.css', DASHBOARD), 'utf8');
+  assert.match(ui, /:where\(\.ui-dialog\) h3 \{[^}]*font-family: var\(--ui-dialog-title-font\)/);
+  assert.match(ui, /body\.wizard \{[^}]*--ui-dialog-title-font: Papyrus/);
+  const found = [];
+  for (const file of readdirSync(DASHBOARD).filter((f) => f.endsWith('.css') && f !== 'ui.css')) {
+    for (const sel of handRolledTitles(readFileSync(new URL(file, DASHBOARD), 'utf8'))) found.push(`${file}: ${sel}`);
+  }
+  assert.deepEqual(found, [], 'dialog headings get the wizard face from the --ui-dialog-title-* tokens');
+});
