@@ -134,7 +134,7 @@ export function ProcessGraphRow({ counts, wizard = false, groupName = '', onOpen
       const body = html`<${FlowGlyph} />${n > 1 ? html`<span class="gpi-count">${n}</span>` : null}`;
       const className = `gpi-graph gpi-state-${spec.state}`;
       if (!onOpen) return html`<span key=${spec.data} class=${className} data-group-processes=${spec.data} role="img" title=${label} aria-label=${label}>${body}</span>`;
-      return html`<button key=${spec.data} type="button" class=${className} data-group-processes=${spec.data}
+      return html`<button data-ui-exempt key=${spec.data} type="button" class=${className} data-group-processes=${spec.data}
         title=${`${label} — show ${groupName}'s processes`} aria-label=${label}
         onClick=${(event) => { event.preventDefault(); event.stopPropagation(); onOpen(spec.filter); }}
       >${body}</button>`;

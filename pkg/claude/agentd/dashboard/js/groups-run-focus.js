@@ -12,6 +12,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import {
   ProcessMiniGraph, ProcessNodeGlyph, ProcessPauseControl, ProcessPausedChip, ProcessScopeChip, ProcessStateChip,
   ProcessStepStrip,
@@ -175,8 +176,8 @@ function DecisionForm({ decision, node, onDecide, wizard }) {
       onInput=${(event) => setNote(event.currentTarget.value)}></textarea>
     <div class="grf-verdicts">${verdicts.map((verdict) => {
       const { label, cls } = verdictPresentation(verdict);
-      return html`<button key=${verdict} type="button" class=${cls} data-run-verdict=${verdict} disabled=${!!busy || !!decided}
-        onClick=${() => decide(verdict)}>${busy === verdict ? '…' : label}</button>`;
+      return html`<${Button} size="sm" variant=${cls === 'primary' ? 'success' : undefined} key=${verdict} data-run-verdict=${verdict} disabled=${!!busy || !!decided}
+        onClick=${() => decide(verdict)}>${busy === verdict ? '…' : label}<//>`;
     })}</div>
     ${!verdicts.length && html`<div class="grf-muted">This gate offers no verdicts.</div>`}
     ${decided && html`<div class="grf-muted" role="status">${wizard ? 'Your word is sealed:' : 'Recorded:'} ${verdictPresentation(decided).label}</div>`}
@@ -230,7 +231,7 @@ function RunListItem({ run, entry, selected, onSelect, nameOf, wizard }) {
   const terminal = state === 'done' || state === 'failed';
   const duration = formatRunDuration(run.startedAt, terminal && run.updatedAt ? Date.parse(run.updatedAt) : Date.now());
   const agentScope = run.scope?.kind === 'agent' ? nameOf(run.scope.agentId) || run.scope.agentId : '';
-  return html`<li><button type="button" class=${`grf-run${selected ? ' selected' : ''}`} data-run-list-item=${run.runId}
+  return html`<li><button data-ui-exempt type="button" class=${`grf-run${selected ? ' selected' : ''}`} data-run-list-item=${run.runId}
       aria-current=${selected ? 'true' : undefined} onClick=${() => onSelect(run.runId)}>
     <span class="grf-run-name">${runName(run)}${agentScope && html` <${ProcessScopeChip} scope=${{ kind: 'agent', name: agentScope }} wizard=${wizard} />`}</span>
     <span class="grf-run-meta"><span class=${`pk-dot-inline pk-state-${state}`} aria-hidden="true">●</span> ${runNeedsYou(run, entry) ? (wizard ? 'awaits you' : 'needs you') : stateLabel(state).toLowerCase()}${duration && ` · ${duration}`} <${ProcessStepStrip} run=${run} /></span>
@@ -315,7 +316,7 @@ function ReassignForm({ run, node, members, onAssign, wizard }) {
         onChange=${(event) => setTarget(event.currentTarget.value)}>
         ${candidates.map((member) => html`<option key=${member.agent_id} value=${member.agent_id}>${memberName(member)}</option>`)}
       </select>
-      <button type="button" class="mux-btn" disabled=${busy || !chosen} onClick=${() => void submit()}>↻ reassign</button>`
+      <${Button} size="sm" disabled=${busy || !chosen} onClick=${() => void submit()}>↻ reassign<//>`
     : html`<div class="grf-muted">Nobody else in the group can take it.</div>`}
     ${error && html`<div class="grf-error" role="alert">${error}</div>`}
   </div>`;
@@ -444,7 +445,7 @@ export function GroupsRunFocus({
       onSelect=${onSelectRun} nameOf=${nameOf} wizard=${wizard} />
     <section class="grf-canvas" aria-label=${run ? `${runName(run)} ${wizard ? 'rite' : 'run'}` : 'run'}>
       <div class="grf-crumbs">
-        <button type="button" class="grf-back" ref=${backRef} data-run-focus-close onClick=${onClose}
+        <button data-ui-exempt type="button" class="grf-back" ref=${backRef} data-run-focus-close onClick=${onClose}
           title=${wizard ? 'Back to every rite' : 'Back to every run (Esc)'}>← ${wizard ? 'all rites' : 'all runs'}</button>
         <span>${group.name} › <b>${run ? runName(run) : runId}</b>${template && html` · ${wizard ? 'grimoire' : 'template'} <code>${template}</code>`}</span>
         ${run && runNeedsYou(run, entry) && html`<span class="pk-chip pk-state-waiting">👤 ${wizard ? 'awaits your word' : 'waiting on you'}</span>`}

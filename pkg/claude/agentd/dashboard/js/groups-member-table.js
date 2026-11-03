@@ -99,7 +99,7 @@ function AgentStatusDot({ member }) {
   const className = errored
     ? 'status-dot status-dot-error'
     : online ? 'status-dot status-dot-online' : 'status-dot status-dot-offline';
-  return html`<button
+  return html`<button data-ui-exempt
     type="button" class=${className} data-act="dot-toggle" ...${memberAttrs(member)}
     data-online=${online ? '1' : '0'} title=${title} aria-label=${title}
   >${online ? '●' : '○'}</button>`;
@@ -520,7 +520,7 @@ export function SandboxBadge({ member, showDetails = false }) {
     data-act=${actionable ? 'sandbox-restart' : null}
     data-action=${actionable ? action : null}
     ...${actionable ? memberAttrs(member) : {}}
-    aria-label=${title} title=${title}>${badge.danger ? '⚠' : '🔒'}</span>${showDetails ? html`<button
+    aria-label=${title} title=${title}>${badge.danger ? '⚠' : '🔒'}</span>${showDetails ? html`<button data-ui-exempt
     type="button" class="sandbox-details-chevron" data-act="sandbox-details"
     data-details=${sandboxRecordedDetails(member)} ...${memberAttrs(member)}
     title="Recorded sandbox details" aria-label="Recorded sandbox details">›</button>` : null}</span>`;
@@ -1069,7 +1069,7 @@ function HumanNotificationAttention({ member, snapshot }) {
     openMemberNotification(member, message, event.currentTarget,
       event.currentTarget.closest('.rowname')?.querySelector('.rowname-text'));
   };
-  return html`<button type="button" class="human-notification-attention"
+  return html`<button data-ui-exempt type="button" class="human-notification-attention"
     ...${memberAttrs(member)}
     data-sender=${humanNotificationSenderQuery(member)}
     aria-label=${title} aria-describedby=${previewID}
@@ -1134,7 +1134,7 @@ function SubscriptionBadge({ member }) {
   if (sub.held) return html`<span class="presence-badge subscription-badge" style=${who.color ? `--nc:${who.color}` : undefined} title=${title} data-subscription="held">${text}</span>`;
   // A lost token is actionable: its owner sends it again, anyone else may
   // switch the agent to the node's own login (subscription-relaunch.js).
-  return html`<button type="button" class="presence-badge subscription-badge lost" style=${who.color ? `--nc:${who.color}` : undefined} title=${`${title} Click to ${who.local ? 'send it again' : 'switch it to the node\'s own login'}.`}
+  return html`<button data-ui-exempt type="button" class="presence-badge subscription-badge lost" style=${who.color ? `--nc:${who.color}` : undefined} title=${`${title} Click to ${who.local ? 'send it again' : 'switch it to the node\'s own login'}.`}
     data-subscription="lost" data-act="claude-subscription" ...${menuMemberAttrs(member, 'agent')} data-online=${member.online ? '1' : '0'}>${text}</button>`;
 }
 
@@ -1173,14 +1173,14 @@ function AwayRow({ member, view, columns, group }) {
       case 'id': return html`<td class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</td>`;
       case 'title': return html`<td class="name-cell"><div class="rowname"><span class="rowname-text rowname-fixed">${member.title || '(unnamed)'}</span>
         <span class="presence-badge presence-away" style=${view.at.color ? `--nc:${view.at.color}` : undefined} title=${view.title} data-presence="away">${view.label}</span>
-        <button type="button" class="fa-link away-goto" data-away-goto=${member.agent_id || ''}
+        <${Button} size="sm" variant="link" class="away-goto" data-away-goto=${member.agent_id || ''}
           title=${visiting ? `Scroll to ${member.title || 'it'} on ${view.at.name}` : `Open ${view.at.name}'s dashboard`}
           onClick=${(event) => { event.preventDefault(); event.stopPropagation(); showVisitingRow(member, view.at); }}
-        >${visiting ? '↓ show' : view.at.local ? 'open on this node ↗' : `open on ${view.at.name} ↗`}</button>
-        ${TELEPORT_ROUTES ? html`<button type="button" class="away-recall" data-act="send-elsewhere" data-mode="home" data-presence="away"
+        >${visiting ? '↓ show' : view.at.local ? 'open on this node ↗' : `open on ${view.at.name} ↗`}<//>
+        ${TELEPORT_ROUTES ? html`<${Button} size="sm" variant="success" class="away-recall" data-act="send-elsewhere" data-mode="home" data-presence="away"
           data-agent=${member.agent_id} data-conv=${member.conv_id} data-label=${member.title || member.conv_id} data-group=${group?.name || ''}
           data-home-node=${view.home.id} data-home-name=${view.home.name}
-          title=${`Recall ${member.title || 'it'} straight home from ${view.at.name}`}>⌂ recall home…</button>` : null}</div></td>`;
+          title=${`Recall ${member.title || 'it'} straight home from ${view.at.name}`}>⌂ recall home…<//>` : null}</div></td>`;
       default: return html`<td></td>`;
     }
   };
@@ -1345,7 +1345,7 @@ function QueuedMemberRow({ entry, columns }) {
   const cell = (column) => {
     switch (column.key) {
       case 'ctl': return html`<td><div class="agent-ctl">
-        <button type="button" class="status-dot queued-play" data-act="queued-spawn-launch" data-group=${entry.group}
+        <button data-ui-exempt type="button" class="status-dot queued-play" data-act="queued-spawn-launch" data-group=${entry.group}
           title=${`queued — click to spawn ${label} now (opens the dialog and launches it; worktree, fetch and spawn checks run now)`}
           aria-label=${`Spawn ${label} now`} onClick=${act(launchQueuedSpawn)}>▶</button>
         <div class="row-actions">

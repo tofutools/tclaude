@@ -3445,11 +3445,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .gfm-target { color: #e6edf3; }
 .gfm-tag { font-size: 10px; color: #e3b341; border: 1px solid #5a4a1a; border-radius: 3px; padding: 0 4px; }
 .gfm-how, .gfm-can { color: #7d8590; font-size: 11px; overflow-wrap: anywhere; }
-.gfm-open {
-  flex: none; background: transparent; color: #58a6ff; border: 1px solid #30363d; border-radius: 4px;
-  font: inherit; font-size: 11px; padding: 1px 6px; cursor: pointer;
-}
-.gfm-open:hover { border-color: #58a6ff; }
+.gfm-open { flex: none; }
 .gfm-foot { padding: 6px 10px 2px; color: #6e7681; font-size: 11px; border-top: 1px solid #21262d; }
 /* Cross-node group links (tcl-2ksi0k): the link dialog's This node | Peer
    node switch, its auto-vs-request note, and the links table's per-side
@@ -18596,7 +18592,7 @@ body.wizard .drop-landing { --dl: 188, 140, 255; }
   .drop-landing-transit { animation: none; }
 }
 @keyframes drop-landed-fade { 0% { opacity: 1; } 100% { opacity: 0; } }
-tr.away-placeholder .away-recall { font-style: normal; margin-left: 8px; font-size: 11px; padding: 0 6px; border: 1px solid #3fb950; border-radius: 4px; background: transparent; color: #3fb950; cursor: pointer; }
+tr.away-placeholder .away-recall { font-style: normal; margin-left: 8px; }
 /* ⚙ menu section label ("send elsewhere", tcl-o9d5d9). */
 /* Launch-target dialog (launch-target-dialog.js): a mode segment, the fields
    on the left and what carries over on the right. */
@@ -19665,9 +19661,6 @@ button.gpi-graph:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px
 .grf-decide { display: flex; flex-direction: column; gap: 8px; width: 100%; margin-top: 6px; }
 .grf-decide textarea { width: 100%; box-sizing: border-box; resize: vertical; background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; font: inherit; font-size: 12px; padding: 6px 8px; }
 .grf-verdicts { display: flex; gap: 8px; flex-wrap: wrap; }
-.grf-verdicts button { background: #21262d; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font: inherit; font-size: 12px; padding: 4px 12px; cursor: pointer; }
-.grf-verdicts button.primary { background: #238636; border-color: #2ea043; color: #fff; }
-.grf-verdicts button:disabled { opacity: 0.6; cursor: progress; }
 .grf-history { list-style: none; margin: 0; padding: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #8b949e; }
 .grf-history time { color: #6e7681; }
 body.wizard .grf { border-color: rgba(122, 93, 176, 0.4); background: #120d24; }

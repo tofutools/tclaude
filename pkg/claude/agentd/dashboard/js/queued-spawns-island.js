@@ -32,7 +32,7 @@ export function QueuedSpawnsChip({ snapshot }) {
   }, [rows.length]);
   if (!rows.length) return null;
   return html`<span class="queued-spawns-chip-wrap" ref=${root}>
-    <button type="button" id="queued-spawns-open" class=${`queued-spawns-chip${open ? ' open' : ''}`}
+    <button data-ui-exempt type="button" id="queued-spawns-open" class=${`queued-spawns-chip${open ? ' open' : ''}`}
       aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
       title="Queued agents — prepared spawns that have not started yet"
       onClick=${toggle}>
