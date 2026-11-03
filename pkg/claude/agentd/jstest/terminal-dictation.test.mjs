@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
+import { installFastClock } from './fast-clock.mjs';
+
+// The silence countdown, the recognizer reopen and the idle stop run on
+// second-scale timers; run them, and this file's waits, on a 5x clock (see
+// fast-clock.mjs). Several tests check that a countdown has not fired yet with
+// a 200 ms margin, which 5x keeps at 40 ms of real time even on a loaded runner.
+installFastClock(0.2);
 
 function fakeRecognition() {
   const made = [];
