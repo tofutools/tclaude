@@ -17361,7 +17361,7 @@ tr.away-placeholder .away-recall { font-style: normal; margin-left: 8px; }
 /* Launch-target dialog (launch-target-dialog.js): a mode segment, the fields
    on the left and what carries over on the right. */
 #launch-target { min-width: min(760px, 94vw); }
-.ui-tabs.lt-modes { display: flex; margin: 6px 0 10px; }
+.ui-tabs.ui-tabs-seg.lt-modes { display: flex; margin: 6px 0 10px; }
 .lt-modes > .ui-tab { flex: 1; }
 .lt-mode-hint { margin: -4px 0 8px; font-size: 12px; }
 .lt-drop-note { margin-bottom: 8px; font-size: 12px; }
@@ -18420,7 +18420,7 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
 
 /* ─── Usage limits & budgets (usage-rules.js) ─────────────────────── */
 .cron-create-modal.usage-rules-modal { min-width: 0; width: min(880px, calc(100vw - 32px)); }
-.ui-tabs.usage-rules-tabs { margin: 0 0 8px; }
+.ui-tabs.ui-tabs-seg.usage-rules-tabs { align-self: flex-start; margin: 0 0 8px; }
 .usage-rules-tab { display: flex; flex-direction: column; gap: 8px; }
 .usage-rules-tab h4 { margin: 10px 0 2px; font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: .06em; }
 .usage-presets { display: flex; flex-wrap: wrap; gap: 6px; }
