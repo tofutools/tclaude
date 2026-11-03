@@ -5,6 +5,11 @@
 // while a modified click (Ctrl/Cmd/Shift/middle) falls through to the href
 // so the view opens in a new browser tab.
 //
+// variant="seg" draws the joined bar for a mode switch inside a dialog or
+// panel (the default is the section sub-nav's pill bar). kind="radio" keeps
+// the same look and keyboard but speaks radiogroup / radio / aria-checked,
+// for a form choice rather than a view switch.
+//
 // items: [{ key, label, href?, title?, disabled?, class?, attrs? }]; attrs
 // spreads onto the tab (data-* hooks, aria-controls). onSelect(key, event)
 // runs on a plain activation (event is the click; a keyboard pick passes
@@ -22,7 +27,8 @@ function join(...parts) {
   return parts.filter(Boolean).join(' ');
 }
 
-export function Tabs({ items, value, onSelect, label, class: extra, className, domRef, ...rest }) {
+export function Tabs({ items, value, onSelect, label, variant, kind = 'tab', class: extra, className, domRef, ...rest }) {
+  const radio = kind === 'radio';
   const pick = (event, item) => {
     if (item.disabled) return;
     if (item.href && event.type === 'click' && isModifiedClick(event)) return;
@@ -36,7 +42,7 @@ export function Tabs({ items, value, onSelect, label, class: extra, className, d
     }
     // Modified keys (Alt+Left is browser Back) belong to the browser.
     if (event.altKey || event.ctrlKey || event.metaKey) return;
-    const tabs = [...event.currentTarget.parentElement.querySelectorAll('[role="tab"]:not(:disabled):not([aria-disabled="true"])')];
+    const tabs = [...event.currentTarget.parentElement.querySelectorAll('[data-tab-key]:not(:disabled):not([aria-disabled="true"])')];
     const at = tabs.indexOf(event.currentTarget);
     let next = -1;
     if (event.key in MOVES) next = (at + MOVES[event.key] + tabs.length) % tabs.length;
@@ -51,16 +57,16 @@ export function Tabs({ items, value, onSelect, label, class: extra, className, d
   // Roving tabindex: the selected tab is the one Tab stop; with none selected,
   // the first enabled tab is.
   const stop = items.some((item) => item.key === value) ? value : items.find((item) => !item.disabled)?.key;
-  return html`<div role="tablist" aria-label=${label} ...${rest} ref=${domRef} class=${join('ui-tabs', extra, className)}>
+  return html`<div role=${radio ? 'radiogroup' : 'tablist'} aria-label=${label} ...${rest} ref=${domRef} class=${join('ui-tabs', variant === 'seg' && 'ui-tabs-seg', extra, className)}>
     ${items.map((item) => {
       const selected = item.key === value;
       const props = {
         ...item.attrs,
         key: item.key,
-        role: 'tab',
+        role: radio ? 'radio' : 'tab',
         class: join('ui-tab', item.class, selected && 'active'),
         title: item.title,
-        'aria-selected': selected ? 'true' : 'false',
+        [radio ? 'aria-checked' : 'aria-selected']: selected ? 'true' : 'false',
         tabindex: item.key === stop ? '0' : '-1',
         'data-tab-key': item.key,
         onClick: (event) => pick(event, item),

@@ -9,6 +9,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { MovePanel, dropPlan, moveProgress, MOVE_POLL_MS, openFleetPage } from './fleet-move-drop.js';
 import { shellToast } from './shell-state.js';
@@ -554,10 +555,8 @@ export function LaunchTargetDialog({
   const enter = () => { const b = okRef.current; if (b && !b.disabled) b.click(); };
   return html`<${Overlay} id="launch-target" labelledby="launch-target-title" onClose=${onClose} initialFocusRef=${okRef} onSubmitEnter=${enter}>
     <h3 id="launch-target-title">${title}</h3>
-    <div class="lt-modes" role="tablist" aria-label="What to do">
-      ${MODES.map((m) => { const st = modeState(m.key, ctx); return html`<button data-ui-exempt key=${m.key} type="button" role="tab" aria-selected=${m.key === mode ? 'true' : 'false'}
-        class=${`lt-mode${m.key === mode ? ' sel' : ''}`} disabled=${!st.ok || (locked && m.key !== mode)} title=${st.ok ? m.hint : st.why} data-lt-mode=${m.key} onClick=${() => switchMode(m.key)}>${m.label}</button>`; })}
-    </div>
+    <${Tabs} variant="seg" class="lt-modes" label="What to do" value=${mode} onSelect=${switchMode}
+      items=${MODES.map((m) => { const st = modeState(m.key, ctx); return { key: m.key, label: m.label, disabled: !st.ok || (locked && m.key !== mode), title: st.ok ? m.hint : st.why, attrs: { 'data-lt-mode': m.key } }; })} />
     <div class="muted lt-mode-hint" data-lt-hint="">${MODES.find((m) => m.key === mode)?.hint}</div>
     ${fromDrop && html`<div class="muted lt-drop-note">↓ Opened by dragging ${agent.name} onto ${initialTarget?.group}@${initialTarget?.name}: node and group are pre-filled; pick another mode above to teleport or clone it instead.</div>`}
     <div class="lt-body">

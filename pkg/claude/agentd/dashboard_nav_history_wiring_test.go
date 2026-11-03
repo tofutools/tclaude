@@ -71,7 +71,7 @@ func TestDashboardNavLinks_Wired(t *testing.T) {
 		"key: subtab, label: labels[subtab], href: `/access/${subtab}`",
 		"key, label: LABELS[key], href: entryHref(key)",
 		"? html`<a ...${props} href=${item.href}",
-		"role: 'tab',",
+		"role: radio ? 'radio' : 'tab',",
 		`data-subtab="logs" href="/diagnostics/logs" role="tab"`,
 		// The shared SPA-link guard: a modified/middle click is left to the
 		// browser (native new tab); a plain left-click / synthetic element.click()

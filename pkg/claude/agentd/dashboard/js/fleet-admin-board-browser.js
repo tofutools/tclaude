@@ -2,6 +2,7 @@ import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select, SortTh } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { ImportDialog, PublishDialog, canPost, postedBy } from './fleet-admin-board-items.js';
 import { dashPrefs } from './prefs.js';
@@ -430,8 +431,10 @@ export function ContentBrowser({ boards, view, actions, confirm, toast, onOpenBo
         </div>`
       : html`<div class="fa-cb-list-wrap">
           <div class="fa-cb-list">
-            <div class="fa-cb-tabs" role="tablist">${[{ id: '', label: 'All' }, ...KINDS].map((k) => html`<button type="button" data-ui-exempt role="tab" key=${k.id || 'all'} data-kind-tab=${k.id || 'all'} aria-selected=${f.kind === k.id ? 'true' : 'false'} class=${f.kind === k.id ? 'on' : ''}
-              onClick=${() => setQuery(withToken(query, 'kind', k.id || f.kind))}>${k.label} <span class="muted">${k.id ? rows.filter((r) => r.kind === k.id).length : rows.length}</span></button>`)}</div>
+            <${Tabs} class="fa-cb-tabs" label="Item kinds" value=${f.kind || 'all'}
+              onSelect=${(id) => setQuery(withToken(query, 'kind', id === 'all' ? f.kind : id))}
+              items=${[{ id: '', label: 'All' }, ...KINDS].map((k) => ({ key: k.id || 'all', attrs: { 'data-kind-tab': k.id || 'all' },
+                label: html`${k.label} <span class="muted">${k.id ? rows.filter((r) => r.kind === k.id).length : rows.length}</span>` }))} />
             <table class="fa-table ui-compact" id="fleet-cb-table" tabindex="0" onKeyDown=${(e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); move(e.key === 'ArrowDown' ? 1 : -1); } }}>
               <thead><tr>${SORT_COLS.map((c) => {
                 return html`<${SortTh} key=${c.col} active=${sort?.col === c.col} dir=${sort?.dir} data-sort-col=${c.col} sortLabel=${c.label}

@@ -29,6 +29,7 @@ import { dashPrefs } from './prefs.js';
 import { dashboardState } from './snapshot-store.js';
 import { shortcutText } from './keybindings.js';
 import { Button } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
 
 const html = htm.bind(h);
 
@@ -280,11 +281,9 @@ export function ScribeDock({ controller, view }) {
         <button data-ui-exempt type="button" class="psd-close" aria-label="Close scribe panel" title="Close the scribe panel"
           onClick=${() => controller.toggleScribeDock(false)}>✕</button>
       </div>
-      <div class="psd-modes" role="tablist" aria-label="Scribe mode">
-        ${[['chat', '💬 Chat'], ['terminal', '⌨ Terminal']].map(([mode, label]) => html`<button key=${mode} type="button" data-ui-exempt role="tab"
-          class=${`psd-mode${dock.mode === mode ? ' is-active' : ''}`} aria-selected=${dock.mode === mode ? 'true' : 'false'}
-          data-scribe-mode=${mode} onClick=${() => controller.setScribeDockMode(mode)}>${label}</button>`)}
-      </div>
+      <${Tabs} variant="seg" class="psd-modes" label="Scribe mode" value=${dock.mode}
+        onSelect=${(mode) => controller.setScribeDockMode(mode)}
+        items=${[['chat', '💬 Chat'], ['terminal', '⌨ Terminal']].map(([mode, label]) => ({ key: mode, label, attrs: { 'data-scribe-mode': mode } }))} />
       ${scribe && html`<div class="psd-scope">scope: ${scribe.scopeLabel}</div>`}
     </div>
 

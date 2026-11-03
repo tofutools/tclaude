@@ -2,6 +2,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { usageRulesApi, usageRulesApiFor } from './usage-rules-actions.js';
 import { FleetLimitEditor, FleetTab } from './usage-fleet.js';
@@ -531,9 +532,8 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api: api
     onClose=${onClose} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
     <h3 id="usage-rules-title">Usage limits & budgets${node ? html` <span class="usage-rules-node">on ${nodeLabel}</span>` : null}</h3>
     ${node ? html`<p class="modal-hint ui-hint usage-rules-node-hint">You manage ${nodeLabel}'s usage rules through the <code>usage-rules.manage</code> grant it gave you; changes apply on that node.</p>` : null}
-    <div class="fa-subtabs usage-rules-tabs" role="tablist">${tabs.map((t) => html`<button data-ui-exempt type="button" role="tab" key=${t.id}
-      class=${`fa-subtab${tab === t.id ? ' on' : ''}`} aria-selected=${tab === t.id ? 'true' : 'false'} data-usage-rules-tab=${t.id}
-      onClick=${() => void switchTab(t.id)}>${t.label}</button>`)}</div>
+    <${Tabs} variant="seg" class="usage-rules-tabs" label="Usage rule kinds" value=${tab} onSelect=${(id) => void switchTab(id)}
+      items=${tabs.map((t) => ({ key: t.id, label: t.label, attrs: { 'data-usage-rules-tab': t.id } }))} />
     ${body}
     ${editing ? null : html`<div class="modal-buttons">
       ${overview?.evaluated_at ? html`<span class="muted usage-rules-evaluated">readings from ${new Date(overview.evaluated_at).toLocaleTimeString()}</span>` : null}
