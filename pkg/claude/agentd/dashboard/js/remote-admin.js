@@ -173,9 +173,9 @@ export function RemoteAdminPanel({ activeTab = dashboardState.activeTab }) {
         </div>
         <div class="ra-inline-form">
           <input type="text" id="ra-addclient-name" placeholder="device name (e.g. phone)" aria-label="New device name" autocomplete="off" spellcheck="false"
-            value=${device.name} onInput=${(e) => setDevice({ ...device, name: e.currentTarget.value })} />
+            value=${device.name} onInput=${(e) => { const value = e.currentTarget.value; setDevice((d) => ({ ...d, name: value })); }} />
           <input type="password" id="ra-addclient-pw" placeholder=".p12 password" aria-label="New device .p12 password" autocomplete="new-password"
-            value=${device.pw} onInput=${(e) => setDevice({ ...device, pw: e.currentTarget.value })} />
+            value=${device.pw} onInput=${(e) => { const value = e.currentTarget.value; setDevice((d) => ({ ...d, pw: value })); }} />
           <${Button} id="ra-addclient-btn" onClick=${addClient}>Add device<//>
         </div>
         <span class="cfg-hint" style="padding-left:0">Issues a new <code>.p12</code> from the existing CA, then download it to install on the device.${' '}

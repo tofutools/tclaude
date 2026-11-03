@@ -72,3 +72,36 @@ test('the remote-access panel posts host names and shows the server error', asyn
   assert.equal(container.querySelector('#ra-addhosts-input').value, '');
   await unmount();
 });
+
+test('first-time setup validates in order, posts the form and clears only the passwords', async (t) => {
+  const harness = await createPreactHarness(t);
+  const calls = stubFetch(t, { material_exists: false, sans: [], clients: [] });
+  const { RemoteAdminPanel } = await harness.importDashboardModule('js/remote-admin.js');
+  const { container, unmount } = await harness.mount(harness.html`<${RemoteAdminPanel} activeTab=${harness.signals.signal('config')} />`);
+  await harness.act(() => wait());
+  const q = (sel) => container.querySelector(sel);
+  const submit = async () => harness.act(async () => { harness.fireEvent(q('#ra-setup-btn'), 'click'); await wait(); await wait(); });
+  const banner = () => q('#ra-admin-msg')?.textContent;
+
+  await submit();
+  assert.equal(banner(), 'A bind address is required (e.g. 0.0.0.0:8443).');
+  await harness.input(q('#ra-setup-bind'), ' 0.0.0.0:8443 ');
+  await submit();
+  assert.equal(banner(), 'A login passphrase is required.');
+  await harness.input(q('#ra-setup-pass'), 'secret');
+  await submit();
+  assert.equal(banner(), 'A device .p12 password is required.');
+  assert.equal(calls.length, 1, 'nothing posts until the form is complete');
+
+  await harness.input(q('#ra-setup-p12pw'), 'p12');
+  await harness.input(q('#ra-setup-client'), ' phone ');
+  await submit();
+  assert.deepEqual(calls[1], { url: '/api/remote-access/setup', method: 'POST', body: {
+    bind: '0.0.0.0:8443', hosts: '', passphrase: 'secret', p12_password: 'p12', client_name: 'phone', enable: true, regenerate: false,
+  } });
+  assert.equal(q('#ra-setup-pass').value, '');
+  assert.equal(q('#ra-setup-p12pw').value, '');
+  assert.equal(q('#ra-setup-bind').value, ' 0.0.0.0:8443 ', 'the rest of the form stays for a retry');
+  assert.equal(banner(), undefined);
+  await unmount();
+});
