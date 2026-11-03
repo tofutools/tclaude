@@ -279,7 +279,7 @@ func dispatch(sessionID, title, body string) {
 	if n.DeliverToOS() {
 		var err error
 		if n != nil && len(n.NotificationCommand) > 0 {
-			err = runCustomCommand(n.NotificationCommand, sessionID, title, body)
+			err = runNotificationCommand(n.NotificationCommand, sessionID, title, body)
 		} else {
 			err = platformSend(sessionID, title, body)
 		}
@@ -490,6 +490,11 @@ func truncate(s string, maxLen int) string {
 	}
 	return string(runes[:maxLen-1]) + "…"
 }
+
+// runNotificationCommand is the OS channel's custom-command runner. Delivery
+// tests swap it to observe routing without spawning a process, whose
+// start-up can outlast the 5s deadline on a saturated CI runner.
+var runNotificationCommand = runCustomCommand
 
 // runCustomCommand executes a custom notification command, passing notification
 // data as JSON on stdin. The JSON structure is always:
