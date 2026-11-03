@@ -7,6 +7,7 @@
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import htm from 'htm';
+import { onPeerPage } from './node-api.js';
 
 const html = htm.bind(h);
 
@@ -50,6 +51,9 @@ export function LockChip({ kind, id, name, locked, api = null, source = null, on
       setBusy(false);
     }
   };
+  // A peer's dashboard viewed from here cannot reach this node's lock
+  // (POST /api/resource-locks is own-node only), so it shows no chip.
+  if (onPeerPage()) return null;
   // A chip that is also the toggle: a .ui-tag pill, warn-coloured while locked.
   return html`<button data-ui-exempt type="button" class=${`gr-lock ui-tag${locked ? ' ui-tag-warn' : ''}`} data-resource-lock=${`${kind}:${id}`}
     aria-pressed=${locked ? 'true' : 'false'} disabled=${busy} title=${lockTitle(locked, name)} onClick=${toggle}>${lockLabel(locked)}</button>`;

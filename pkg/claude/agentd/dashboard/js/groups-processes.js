@@ -620,9 +620,9 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Heroes' : 'Agents'} count=${fused.count}
         actions=${fused.actions} closedActions=${fused.closedActions}>${fused.agents}<//>
       <${FusedSection} group=${group.name} section="processes" label="Resources"
-        count=${runs.length + planned.length + memberRuns.length}
+        count=${savedProcesses.length + (entry?.boards || []).length + (entry?.pages || []).length}
         actions=${html`${quick === 'pick' && html`<${Button} size="sm" class="gp-start" onClick=${() => setQuick(null)}>close<//>`}<${AddResource}
-          group=${group} boards=${entry?.boards || []} api=${api} source=${source} wizard=${wizard} notify=${notify || defaultNotify}
+          group=${group} api=${api} source=${source} wizard=${wizard} notify=${notify || defaultNotify}
           onAddProcess=${() => { setStarting(false); setQuick('pick'); }} />`}
         closedActions=${controls(true)}
         auto=${shown} force=${!!starting || !!quick} attrs=${{ 'data-fused-processes': group.name }}>

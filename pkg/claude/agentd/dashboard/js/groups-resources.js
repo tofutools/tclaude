@@ -55,7 +55,7 @@ export function GroupResources({ group, boards = [], pages = [], api, source, no
 
 // AddResource is the section's one ＋▾: a process (the Get started panel) or
 // a board linked to the group.
-export function AddResource({ group, boards = [], api, source, wizard = false, notify = defaultNotify, onAddProcess }) {
+export function AddResource({ group, api, source, wizard = false, notify = defaultNotify, onAddProcess }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -68,7 +68,9 @@ export function AddResource({ group, boards = [], api, source, wizard = false, n
     setOpen(false);
     const title = `${group.name} board`;
     try {
-      const board = await api.createGroupBoard(group.name, title, freeBoardId(title, boards.map((b) => b.id)));
+      // Board ids are node-wide, so the free one is chosen among them all.
+      const taken = await api.boardIds();
+      const board = await api.createGroupBoard(group.name, title, freeBoardId(title, taken));
       notify(`Created ${board.title || title} in ${group.name}`);
       void source?.refresh?.();
       openBoardPane(board.id, board.title || title);

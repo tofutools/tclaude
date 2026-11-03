@@ -572,12 +572,18 @@ test('Both\'s Resources section lists the group\'s boards and pages with lock ch
   const infra = context.groups.find((g) => g.group === 'infra-crew');
   infra.pages = [{ id: 'pg1', name: 'landing', title: 'Landing page', owner: 'agt_infra_lead', kind: 'port', agentsLocked: true }];
   const calls = [];
-  const api = { setResourceLock: async (...args) => { calls.push(args); return {}; } };
+  const created = [];
+  const api = {
+    setResourceLock: async (...args) => { calls.push(args); return {}; },
+    boardIds: async () => ['frontend-squad-board'],
+    createGroupBoard: async (...args) => { created.push(args); return { id: args[2], title: args[1] }; },
+  };
   const { harness, details, source } = await mountFocus(t, { fused: true, api, sourceOptions: { context } });
   const section = (el) => el.querySelector('[data-fused-section="processes"]');
 
   const feSection = section(details('frontend-squad'));
   assert.equal(feSection.querySelector('.gf-label').textContent, 'Resources');
+  assert.equal(feSection.querySelector('.gf-count').textContent, '2', 'the line counts the resources: a process and a board');
   assert.ok(feSection.querySelector('[data-resource-add="frontend-squad"]'), 'one ＋▾ add');
   const feRes = feSection.querySelector('[data-group-resources="frontend-squad"]');
   assert.ok(feRes.querySelector('[data-resource-kind="boards"]'));
@@ -600,4 +606,12 @@ test('Both\'s Resources section lists the group\'s boards and pages with lock ch
   await settle(harness);
   assert.deepEqual(calls, [['page', 'pg1', false]], 'the chip unlocks a locked page');
   assert.ok(source.refreshes > before, 'and reloads the context');
+
+  // ＋▾ › Board picks an id free among every board, not only the group's.
+  await harness.act(() => harness.fireEvent(feSection.querySelector('[data-resource-add="frontend-squad"]'), 'click'));
+  await harness.act(() => harness.fireEvent(feSection.querySelector('[data-resource-add-board]'), 'click'));
+  await settle(harness);
+  assert.equal(created.length, 1);
+  assert.equal(created[0][0], 'frontend-squad');
+  assert.notEqual(created[0][2], 'frontend-squad-board', 'a taken id elsewhere on the node is not reused');
 });

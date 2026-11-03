@@ -331,11 +331,23 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, id, locked }),
       }, fetchImpl);
     },
-    // createGroupBoard creates a board and links it to a group.
+    // boardIds lists every board's id: board ids are node-wide.
+    async boardIds() {
+      const body = await processRequest('/api/boards', {}, fetchImpl);
+      return (Array.isArray(body.boards) ? body.boards : []).map((board) => String(board?.id || '')).filter(Boolean);
+    },
+    // createGroupBoard creates a board and links it to a group. A board the
+    // link fails for is deleted again rather than left behind unlinked.
     async createGroupBoard(group, title, id) {
       const json = { 'Content-Type': 'application/json' };
       const board = await processRequest('/api/boards', { method: 'POST', headers: json, body: JSON.stringify({ title, id: id || undefined }) }, fetchImpl);
-      await processRequest(`/api/boards/${encodeURIComponent(board.id)}/group`, { method: 'POST', headers: json, body: JSON.stringify({ group }) }, fetchImpl);
+      const path = `/api/boards/${encodeURIComponent(board.id)}`;
+      try {
+        await processRequest(`${path}/group`, { method: 'POST', headers: json, body: JSON.stringify({ group }) }, fetchImpl);
+      } catch (cause) {
+        await processRequest(path, { method: 'DELETE' }, fetchImpl).catch(() => {});
+        throw cause;
+      }
       return board;
     },
     // deleteTemplate removes a template with its history, pins and listing.

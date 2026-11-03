@@ -2763,6 +2763,8 @@ export class ProcessTemplateEditor {
     this.loadedView = {
       ...savedView, currentRef: body.ref || '', sourceHash: body.sourceHash || '',
       semanticHash: body.semanticHash || '', diagnostics: body.diagnostics || [],
+      // A save leaves the operator's lock as it was.
+      agentsLocked: !!this.loadedView?.agentsLocked,
     };
     // Sync the validation controller with the save verdict: a failed
     // debounced round deliberately keeps prior diagnostics, so without this
