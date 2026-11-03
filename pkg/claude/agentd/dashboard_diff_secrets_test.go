@@ -118,6 +118,31 @@ func TestDiffSecretsCoverConfigShapes(t *testing.T) {
 	}
 }
 
+// The Git & forges form edits agent.git_proxy, and its save dialog shows the
+// diff. Its three file paths are masked, failing closed: they name where a key
+// or token lives, which is not itself a secret but is masked by the same rule.
+// The rest must stay readable, so the operator can check what they change. A
+// new git_proxy field fails here until it is placed on one side.
+func TestDiffSecretsMaskExactlyTheGitProxyPaths(t *testing.T) {
+	masked := diffSecretPattern(t)
+	want := map[string]bool{
+		"allowed_remotes":   false,
+		"protected_refs":    false,
+		"allow_force_push":  false,
+		"ssh_key":           true,
+		"github_token_file": true,
+		"gitlab_hosts":      false,
+		"gitlab_token_file": true,
+	}
+	got := map[string]bool{}
+	walkDiffKeys(reflect.TypeFor[config.Config](), "config", map[reflect.Type]bool{}, func(path, key string, _ bool) {
+		if strings.HasPrefix(path, "config.agent.git_proxy.") && strings.Count(path, ".") == 3 {
+			got[key] = masked.MatchString(key)
+		}
+	})
+	assert.Equal(t, want, got)
+}
+
 // The walk has to notice a secret added to a shape, or the test above proves nothing.
 func TestDiffSecretsWalkFlagsANewField(t *testing.T) {
 	type nested struct {

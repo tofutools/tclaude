@@ -4552,6 +4552,7 @@ func Validate(c *Config) []string {
 		}
 	}
 	errs = append(errs, validateCapacity(c.Capacity)...)
+	errs = append(errs, validateGitProxy(c)...)
 	if h := c.Host; h != nil {
 		for _, entry := range []struct {
 			name  string
