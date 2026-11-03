@@ -3533,6 +3533,9 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .profile-actions { white-space: nowrap; }
 .profile-actions .ui-btn + .ui-btn { margin-left: 4px; }
 .profile-done { background: #161b22; color: #9da7b3; border-color: #2a3340; }
+/* The form wraps the fields inside the dialog box (so Enter submits), and
+   keeps the box's column rhythm for them. */
+#profile-modal-form { display: flex; flex-direction: column; gap: 10px; }
 #profile-modal .cron-create-row input[type=number] { flex: 0 0 7em; }
 #profile-modal p.muted { font-size: 12px; margin: 0 0 10px; max-width: 520px; }
 /* Logs tab — the read-only viewer over ~/.tclaude/output.log (JSON lines).
