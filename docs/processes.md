@@ -339,12 +339,13 @@ process template. The draft is saved to the group (pinned, not listed in the lib
 and the group body shows the scribe's live reply, where you can answer it.
 When it finishes, *Review steps* opens the draft in the step list. *Stop
 scribe* stops it, keeps the draft and opens what it saved so far, and *open in
-graph editor* continues with the scribe beside the canvas. A reload or a tab
+graph editor* opens the draft in the graph editor, where *Get help* reaches
+the scribe. A reload or a tab
 change brings the panel back while the scribe is running; *hide* leaves the
 scribe working, and *✎ Scribe* in the process's ▶ strip reopens the panel. The
 scribe cannot start a run, and nothing runs until you press *Start now*. *Start
 now* runs the version on screen: if a newer one was saved after you opened it,
-say by asking the scribe for more through the graph editor's dock, nothing
+say by asking the scribe for more through the graph editor's *Get help*, nothing
 starts, and you choose between reviewing the newer version and starting the one
 you reviewed. *Start* in a process's ▶ strip, like the group's start form, runs the current
 version, and asks first only while a scribe is at work on it: when its scribe is mid-turn, or when
@@ -389,13 +390,15 @@ editor has the node inspector, live validation, undo/redo, snippets and
 versioned saves; see [Dashboard › Processes](dashboard-automations.md#processes). Three
 things there are specific to processes:
 
-- **Co-design with a scribe.** *Edit with agent* docks the template's scribe
-  beside the canvas: chat with it there (while it works, what it has written
-  so far and a one-line note per tool call stream in, read from its own
-  transcript, on every harness but OpenCode; its final reply replaces them
-  when the turn ends) or switch the dock to its terminal. The dock's context
-  actions send it the selection, a node to explain, the focused validation
-  issue, or a description to draft from. When the scribe saves a version, *Review on
+- **Co-design with a scribe.** The editor toolbar's *Get help ▾* brings an
+  agent in: *New helper* starts the template's scribe (or reopens the one
+  already scoped to it) after you confirm its grant, and *Ask an existing
+  agent…* briefs one already running, granting only the process-template
+  permissions it lacks, again after you confirm. Either opens in its regular
+  overlay chat window (a terminal tab without the companion). The menu's
+  context actions send that agent the selection, a node to explain, the
+  focused validation issue, or a description to draft from, as a message you
+  preview first; with no helper running yet, they start one with that ask. When the scribe saves a version, *Review on
   canvas* paints it over your draft (added, changed, removed) and you accept
   or reject each change; your own unsaved edits are never overwritten, and
   conflicting edits are flagged rather than merged silently. The scribe can

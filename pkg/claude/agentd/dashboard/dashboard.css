@@ -16299,88 +16299,6 @@ body.wizard .pni-add { border-color: #4a3d6b; }
 body.wizard .process-diff-review { background: #160f2c; border-top-color: #7c5cff; }
 body.wizard .pdr-current { background: #181226; border-color: #4a3d6b; }
 
-/* Docked process scribe (E4): chat or terminal, beside the canvas. */
-.process-scribe-dock {
-  width: 320px; flex: none; min-height: 0; display: flex; flex-direction: column; gap: 10px;
-  padding: 12px; border-left: 1px solid #21262d; background: #10151c; box-sizing: border-box; overflow-y: auto;
-}
-.psd-head { display: flex; flex-direction: column; gap: 6px; }
-.psd-title-row { display: flex; align-items: center; gap: 6px; }
-.psd-title-row .spacer { flex: 1; }
-.psd-title { color: #e6edf3; font-size: 13px; overflow-wrap: anywhere; }
-.psd-state.is-live { color: #56d364; border-color: #238636; }
-.psd-state.is-stopped { color: #8b949e; }
-.psd-close { background: transparent; border: 1px solid transparent; border-radius: 4px; color: #8b949e; font: inherit; cursor: pointer; }
-.psd-close:hover, .psd-close:focus-visible { border-color: #30363d; color: #e6edf3; }
-.psd-modes { align-self: flex-start; }
-.psd-scope { color: #8b949e; font-size: 11.5px; overflow-wrap: anywhere; }
-.psd-summon, .psd-terminal, .psd-proposal {
-  display: flex; flex-direction: column; gap: 8px; align-items: flex-start;
-  padding: 10px; border: 1px dashed #30363d; border-radius: 8px; color: #c9d1d9; font-size: 12.5px;
-}
-.psd-summon p, .psd-terminal p { margin: 0; }
-.psd-proposal { border-style: solid; border-color: #1f6feb; background: #0d1a2d; }
-.psd-context { display: flex; flex-direction: column; gap: 6px; }
-.psd-chips, .psd-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.psd-chip.is-empty { color: #6e7681; }
-.psd-chip.is-error { color: #ff7b72; border-color: #da3633; }
-.psd-log {
-  flex: 1; min-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
-  border: 1px solid #21262d; border-radius: 8px; padding: 8px; background: #0b0f14;
-}
-body.wizard .psd-log { border-color: #4a3d6b; background: #120d1f; }
-.psd-empty { margin: 0; color: #8b949e; font-size: 12.5px; }
-.psd-msg { display: flex; flex-direction: column; gap: 2px; max-width: 92%; }
-.psd-msg.is-human { align-self: flex-end; }
-.psd-msg-who { font-size: 10.5px; color: #6e7681; }
-.psd-msg.is-human .psd-msg-who { text-align: right; }
-.psd-msg-body {
-  white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; line-height: 1.45;
-  padding: 6px 9px; border-radius: 10px; border: 1px solid #30363d; background: #161b22; color: #e6edf3;
-}
-.psd-msg.is-human .psd-msg-body { background: #1f3a5f; border-color: #1f6feb; }
-.psd-msg.is-live { gap: 4px; }
-.psd-msg.is-live .psd-msg-body { border-style: dashed; color: #c9d1d9; }
-.psd-live-tool, .psd-live-more {
-  margin: 0; font-size: 11.5px; color: #8b949e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-.psd-live-tool::before { content: "▸ "; color: #58a6ff; }
-.psd-live-more { font-family: inherit; font-style: italic; }
-.psd-working { margin: 0; color: #8b949e; font-size: 12px; display: flex; align-items: center; gap: 6px; }
-.psd-dot { width: 7px; height: 7px; border-radius: 50%; background: #58a6ff; animation: psd-pulse 1.2s ease-in-out infinite; }
-@keyframes psd-pulse { 50% { opacity: .25; } }
-@media (prefers-reduced-motion: reduce) { .psd-dot { animation: none; } }
-.psd-error, .psd-notice.is-error { color: #ff7b72; font-size: 12px; margin: 0; }
-.psd-notice { color: #8b949e; font-size: 12px; }
-.psd-compose { display: flex; flex-direction: column; gap: 6px; }
-.psd-input {
-  width: 100%; box-sizing: border-box; resize: vertical; font: inherit; font-size: 12.5px;
-  background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 6px 8px;
-}
-.psd-input:focus-visible { outline: 2px solid #58a6ff; outline-offset: -1px; }
-.psd-compose-row { display: flex; align-items: center; gap: 6px; }
-.psd-compose-row .spacer { flex: 1; }
-body.wizard .process-scribe-dock { background: #140f28; border-left-color: #4a3d6b; }
-body.wizard .psd-msg-body { background: #181226; border-color: #4a3d6b; }
-body.wizard .psd-msg.is-human .psd-msg-body { background: #2a1f4f; border-color: #7c5cff; }
-@media (max-width: 900px) { .process-scribe-dock { width: 280px; } }
-/* A remembered width never squeezes the canvas: the same 60% share the
-   drag clamps to also holds at render time and when the window shrinks. */
-.process-scribe-dock { max-width: 60%; min-width: min(260px, 60%); }
-/* The dock's resize separator: a full-height 6px track on its canvas edge,
-   a thin line that turns blue on hover, focus or drag. */
-.psd-resize {
-  flex: none; width: 6px; margin-right: -6px; position: relative; z-index: 1; cursor: col-resize;
-  touch-action: none; user-select: none; background: transparent;
-}
-.psd-resize:hover, .psd-resize:focus-visible, .psd-resize.is-dragging {
-  background: linear-gradient(to right, transparent 2px, #1f6feb 2px, #1f6feb 4px, transparent 4px);
-  outline: none;
-}
-body.wizard .psd-resize:hover, body.wizard .psd-resize:focus-visible, body.wizard .psd-resize.is-dragging {
-  background: linear-gradient(to right, transparent 2px, #7c5cff 2px, #7c5cff 4px, transparent 4px);
-}
 .process-node-detail { display: flex; flex-direction: column; gap: 10px; }
 .process-node-detail-head {
   display: flex;
@@ -18057,6 +17975,10 @@ body.wizard .gq-step:hover .gq-decides { color: #d4af37; }
 .gq-draft-msg.is-human { color: #8b949e; }
 .gq-draft-msg.is-live { color: #8b949e; }
 .gq-draft-tool, .gq-draft-working { margin: 0; font-size: 11.5px; color: #8b949e; }
+/* The working dot, formerly the process scribe dock's; Draft steps keeps it. */
+.psd-dot { width: 7px; height: 7px; border-radius: 50%; background: #58a6ff; animation: psd-pulse 1.2s ease-in-out infinite; }
+@keyframes psd-pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .psd-dot { animation: none; } }
 .gq-draft-ready { margin: 8px 0; font-size: 12.5px; color: #7ee787; }
 .gq-draft-reply { display: flex; gap: 6px; margin: 8px 0; }
 .gq-draft-reply input { flex: 1; min-width: 0; font: inherit; font-size: 12px; border: 1px solid #30363d; border-radius: 6px; padding: 4px 8px; background: #161b22; color: #e6edf3; }
@@ -18648,7 +18570,7 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 /* Get help (js/get-help-menu.js): a toolbar button whose menu drops below it,
    and the picker of running agents to ask. */
 .get-help { position: relative; display: inline-flex; }
-.get-help-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: var(--z-popover); min-width: 220px; }
+.get-help-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: var(--z-popover); min-width: 220px; width: max-content; white-space: nowrap; }
 .get-help-agents { list-style: none; margin: 8px 0 0; padding: 0; max-height: min(50vh, 420px); overflow: auto; }
 .get-help-agents li + li { margin-top: 4px; }
 .get-help-agent { width: 100%; justify-content: flex-start; gap: 8px; }

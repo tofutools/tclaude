@@ -353,7 +353,6 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"process-node-inspector.js": read("js/process-node-inspector.js"),
 		"process-node-fields.js":    read("js/process-node-fields.js"),
 		"process-params-dialog.js":  read("js/process-params-dialog.js"),
-		"process-scribe-dock.js":    read("js/process-scribe-dock.js"),
 		"process-diff-review.js":    read("js/process-diff-review.js"),
 	}
 	for name, source := range graphConsumers {
@@ -476,7 +475,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"name === 'templates' && (requestBusy(lifecycle) || headObservationPending)",
 		"'/v1/process/template-heads'",
 		"export function processActorPresentation(",
-		"`/api/open-window/${encodeURIComponent(agentId)}`",
+		"openHelperWindow(agentId, ",
 		"mintAttemptID = randomUUID",
 	)
 

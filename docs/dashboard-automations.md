@@ -56,7 +56,8 @@ The list has rename, describe, versions, delete, import and export, and **Edit w
 agent** hands a template to a scribe agent. The editor has these node types: Task,
 Decision, Parallel, Wait, Subprocess, Start and End. Other highlights:
 
-- **Edit with agent** docks the scribe beside the canvas, as 💬 chat or ⌨ terminal.
+- **Get help ▾** brings in the template's scribe, or an agent already running, in its
+  regular overlay chat window, and sends it the selection, a node or an issue to look at.
   A version the scribe saves is reviewed on the canvas, change by change: A accept,
   R reject, J and K to walk.
 - **Subprocess nodes (▣):** double-click to drill in, and Esc or Alt ↑ to leave. ⇪

@@ -10,6 +10,7 @@ import { randomUUID } from './insecure-origin.js';
 import { focusOverlayWindow, openOverlayWindow, overlayHostUp } from './overlay-instances.js';
 import { floatProcessEditor, floatingProcessTab, returnLiveEditor, revealProcessTab, stripProcesses, takeFloatingEditor } from './process-editor-place.js';
 import { editorToWindow, processEditorAway } from './process-editor-window.js';
+import { askExistingAgent, openHelperWindow, summonHelper } from './get-help.js';
 
 export function processActorPresentation(snapshot, actor) {
   const ref = String(actor || '');
@@ -307,7 +308,7 @@ export function createProcessesActions({
   }
   async function summonScribe(anchor = { kind: 'library' }, handoffOptions = {}) {
     try {
-      const { freshnessGuard, background = false, ...briefOptions } = handoffOptions;
+      const { freshnessGuard, ...briefOptions } = handoffOptions;
       const handoff = processScribeHandoff(anchor);
       const task = processScribeTaskRef(handoff, dashboardOrigin);
       const scribes = processScribeSessions(dashboardState.snapshot.value);
@@ -339,25 +340,12 @@ export function createProcessesActions({
         state.setNotice('Process scribe cancelled because the editor context changed during approval. Review the current context and try again.');
         return null;
       }
-      const response = await fetchImpl('/api/scribe', {
-        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: PROCESS_SCRIBE_NAME, slugs: PROCESS_SCRIBE_SLUGS,
-          exclusive: true, scope: handoff.scope, brief: processScribeBrief(handoff, briefOptions),
-          task_ref_url: task.url, task_ref_label: task.label,
-          // A docked editor's scribe starts in the background like a regular
-          // spawn: the dock is its surface, and its terminal opens only on
-          // demand. Without a dock (the library) its terminal is its surface.
-          background: background === true,
-        }),
+      // It starts in the background and opens in a regular chat window.
+      const result = await summonHelper({
+        name: PROCESS_SCRIBE_NAME, slugs: PROCESS_SCRIBE_SLUGS, exclusive: true, scope: handoff.scope,
+        brief: processScribeBrief(handoff, briefOptions), taskRef: task, confirmed: true, fetchImpl,
       });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
-      const name = result.name || PROCESS_SCRIBE_NAME;
-      if (result.focus_mode === 'browser' && result.focus_ws) {
-        const { openTerminalPane } = await import('./terminals-tab.js');
-        openTerminalPane({ ws: result.focus_ws, label: name, hideConv: result.conv_id || null, agent: result.agent_id || result.conv_id || null });
-      }
+      const name = result.name;
       state.setNotice(`${result.reused ? 'Reopened' : 'Summoned'} process scribe ${name}.`);
       notify(`${result.reused ? 'reopened' : 'summoned'} process scribe ${name}`);
       return result;
@@ -368,43 +356,57 @@ export function createProcessesActions({
       return null;
     }
   }
+  // askAgent is Get help › Ask an existing agent… for the editor: the agent
+  // gets the same brief a new scribe would, and the process-scribe grants it
+  // lacks after the same confirmation.
+  async function askAgent(helper, anchor, handoffOptions = {}) {
+    try {
+      const { freshnessGuard, ...briefOptions } = handoffOptions;
+      const handoff = processScribeHandoff(anchor);
+      const target = processScribeScopeLabel(handoff.scope);
+      // As for a new scribe, the editor must not have moved on while the
+      // operator read the grant: a stale answer grants and sends nothing.
+      let stale = false;
+      const fresh = () => {
+        try { stale = typeof freshnessGuard === 'function' && freshnessGuard() !== true; } catch { stale = true; }
+        return !stale;
+      };
+      const result = await askExistingAgent({
+        helper, slugs: PROCESS_SCRIBE_SLUGS, subject: 'Process help', brief: processScribeBrief(handoff, briefOptions), fetchImpl,
+        confirm: async (options) => (await confirm(options)) && fresh(),
+        confirmation: (missing) => ({
+          title: 'Grant process-scribe access?',
+          body: `${helper.label} is granted ${missing.join(' and ')}, to help with ${target}. This is a standing grant on that agent, for every process template (not only this one), and it keeps its other permissions; revoke it in Access when it is done. It never instantiates or runs a process.`,
+          meta: missing.join(', '), okLabel: 'Grant & ask',
+        }),
+      });
+      if (stale) {
+        state.setNotice('Cancelled because the editor context changed during approval; nothing was granted or sent. Review the current context and try again.');
+        return null;
+      }
+      if (!result) {
+        state.setNotice('Cancelled; no permissions changed and nothing was sent.');
+        return null;
+      }
+      state.setNotice(`Asked ${result.name} to help with ${target}.`);
+      return result;
+    } catch (error) {
+      const message = error?.message || String(error);
+      state.setNotice(`Could not ask ${helper?.label || 'the agent'}: ${message}`);
+      notify(`Could not ask ${helper?.label || 'the agent'}: ${message}`, true);
+      return null;
+    }
+  }
   function describeActor(actor) {
     return processActorPresentation(dashboardState.snapshot.value, actor);
   }
+  // openAgent shows an agent in its regular chat window, or a terminal tab
+  // without the companion.
   async function openAgent(agentId, label) {
     if (!agentId) return false;
-    // The floating companion hosts the agent's native terminal over the
-    // editor, so the operator keeps the canvas in view while talking to it.
-    let inCompanion = false;
-    try {
-      const { openInCompanion } = await import('./companion-facade.js');
-      inCompanion = openInCompanion(agentId);
-    } catch { /* the window endpoint below still opens it */ }
-    if (inCompanion) {
-      state.setNotice(`Opened ${label} in the companion window.`);
-      return true;
-    }
-    try {
-      // With web terminals as the default (dashboard.default_terminal = "web"),
-      // skip the native window, as an agent row's open window does.
-      const web = dashboardState.snapshot.value?.default_terminal === 'web';
-      const response = await fetchImpl(`/api/open-window/${encodeURIComponent(agentId)}`, {
-        method: 'POST', credentials: 'same-origin',
-        ...(web ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ web: true }) } : {}),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
-      if (result.mode === 'browser' && result.ws) {
-        const { openTerminalPane } = await import('./terminals-tab.js');
-        // The key makes this the same tab an agent row's web window opens.
-        openTerminalPane({ ws: result.ws, label, key: `window:${agentId}`, hideConv: agentId, agent: agentId });
-      }
-      state.setNotice(`Opened ${label}.`);
-      return true;
-    } catch (error) {
-      state.setNotice(`Could not open ${label}: ${error.message}. Refresh Processes and summon a new scribe if this session is stale.`);
-      return false;
-    }
+    const opened = await openHelperWindow(agentId, label);
+    state.setNotice(opened === 'chat' ? `Opened ${label} in its chat window.` : `Opened ${label}.`);
+    return !!opened;
   }
   async function openActor(actor) {
     const presentation = describeActor(actor);
@@ -708,7 +710,7 @@ export function createProcessesActions({
   function refreshActive() { return load('templates'); }
   return Object.freeze({
     load, observeTemplateHeads, activateSubtab, openEditor, openReferencedTemplate, canLeaveEditor, applyLocation, announceLocation, correctLocation,
-    summonScribe, describeActor, openActor,
+    summonScribe, askAgent, describeActor, openActor,
     openScribe, stopScribe, retireScribe,
     openRename, closeRename, submitRename, renameTemplate, describeTemplate, deleteTemplate,
     openCreate, closeCreate, submitCreate,

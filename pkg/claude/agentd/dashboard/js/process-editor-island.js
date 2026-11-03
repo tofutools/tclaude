@@ -10,7 +10,8 @@ import { LOOP_DEFAULT_ROUNDS } from './process-loops.js';
 import { Dialog } from './ui-dialog.js';
 import { PROCESS_SCRIBE_PROMPT_MAX } from './process-scribe.js';
 import { NodeInspector } from './process-node-inspector.js';
-import { ScribeDock } from './process-scribe-dock.js';
+import { GetHelpMenu } from './get-help-menu.js';
+import { PROCESS_SCRIBE_SLUGS } from './process-scribe.js';
 import { DiffReviewBar } from './process-diff-review.js';
 import { ScopeBar, ScopeMinimap, ScopeOutline, ScopePorts } from './process-scope-ui.js';
 import { ParamsDialog } from './process-params-dialog.js';
@@ -138,6 +139,25 @@ function EditableTitle({ controller, view }) {
   />`;
 }
 
+// EditorGetHelp is the toolbar's Get help ▾: a helper scoped to this template,
+// or an agent already running, opened in a regular chat window, and the
+// context actions that send the bounded editor context to it.
+function EditorGetHelp({ controller, view, disabled }) {
+  const context = controller.helpContext();
+  const helper = view.helper;
+  const to = helper ? ` to ${helper.label}` : '';
+  const actions = [
+    { key: 'selection', label: 'Ask about selection', disabled: !context.selection || !context.saved, title: `Send the selected nodes and edges${to}`, run: () => controller.askHelper('selection') },
+    { key: 'explain', label: 'Explain this node', disabled: !context.singleNode || !context.saved, title: `Ask${to || ' a helper'} to explain the selected node`, run: () => controller.askHelper('explain') },
+    { key: 'diagnostic', label: 'Fix this issue', disabled: !context.hasIssue || !context.saved, title: `Send the focused validation issue${to}`, run: () => controller.askHelper('diagnostic') },
+    { key: 'draft', label: 'Draft from description', disabled: !context.saved, title: `Describe a process for${to || ' a helper'} to draft`, run: () => controller.askHelper('draft') },
+  ];
+  return html`<${GetHelpMenu} class="process-get-help" slugs=${PROCESS_SCRIBE_SLUGS} disabled=${disabled} actions=${actions}
+    label="Get help" title=${helper ? `Get help: ${helper.label} is helping with this template` : 'Bring an agent in to help with this template'}
+    labelNode=${html`<span class="process-scribe-plain">Get help</span><span class="process-scribe-wizard">Consult a scribe</span>`}
+    onNew=${() => controller.requestScribe('template')} onAsk=${(agent) => controller.requestScribe('template', { to: agent })} />`;
+}
+
 function Header({ controller, view }) {
   const { model, pending } = view;
   const externalPending = pending.externalDecision || pending.externalReload;
@@ -168,12 +188,7 @@ function Header({ controller, view }) {
     </span>
     <${Button} class="process-action" disabled=${externalPending} title="Toggle the node palette" onClick=${() => controller.togglePalette()}>⬒ palette<//>
     <${Button} class="process-action" title=${withShortcut('Process commands', 'process-commands')} aria-label=${withShortcut('Open process commands', 'process-commands')} onClick=${() => controller.openCommands()}>${shortcutText('process-commands')} commands<//>
-    <${Button} class=${`process-action process-scribe-action${view.scribeDock?.open ? ' is-active' : ''}`}
-      disabled=${!view.scribeDock?.available && (externalPending || pending.save)} aria-pressed=${view.scribeDock?.available ? String(!!view.scribeDock.open) : undefined}
-      title=${view.scribeDock?.available ? 'Co-design this template with its scoped process scribe (chat or terminal)' : 'Open an agent scoped to this exact process template'}
-      onClick=${() => (view.scribeDock?.available ? controller.toggleScribeDock() : controller.requestScribe('template'))}>
-      <span class="process-scribe-plain">Edit with agent</span><span class="process-scribe-wizard">Consult a process scribe</span>
-    <//>
+    <${EditorGetHelp} controller=${controller} view=${view} disabled=${externalPending || pending.save} />
     <${WorkflowExportButton} id=${model.id} disabled=${externalPending || model.dirty || !model.semanticHash}
       title=${model.dirty || !model.semanticHash ? 'Save first: a workflow file carries the saved version' : ''} />
     <${Button} variant="primary" class="process-action" disabled=${pending.save || externalPending || (!model.dirty && !view.blank)} title=${withShortcut('Save a new version', 'process-save')} onClick=${() => controller.save()}>${pending.save ? 'Saving…' : 'Save'}<//>
@@ -547,7 +562,6 @@ export function ProcessEditorApp({ controller }) {
       </div>
       <${NodeInspector} controller=${controller} view=${view} />
       <${ScopePorts} controller=${controller} view=${view} />
-      <${ScribeDock} controller=${controller} view=${view} />
     </div>
     <${DiffReviewBar} controller=${controller} view=${view} />
     <${Inspector} controller=${controller} view=${view} />

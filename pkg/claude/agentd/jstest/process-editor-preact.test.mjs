@@ -1074,7 +1074,7 @@ test('external review summaries render bounded identity and truncation details t
 
 test('production scribe modal owns focus, inertness, and every close path inside the editor island', async (t) => {
   const { harness, host, editor } = await openBlank(t);
-  const invoker = host.querySelector('.process-scribe-action');
+  const invoker = host.querySelector('.process-editor .get-help-toggle');
   const editorRoot = host.querySelector('.process-editor');
   const open = async (overrides = {}) => {
     invoker.focus();
@@ -1185,7 +1185,7 @@ test('scribe preview backdrop cancels without sending and restores editor intera
   editor.model.currentRef = `scribe-preview@sha256:${'a'.repeat(64)}`;
   editor.model.markSaved({ sourceHash: 'b'.repeat(64) });
   editor.blank = false;
-  const invoker = host.querySelector('.process-scribe-action');
+  const invoker = host.querySelector('.process-editor .get-help-toggle');
   const editorRoot = host.querySelector('.process-editor');
   let sends = 0;
   editor.options.onScribe = async () => {
@@ -1217,9 +1217,57 @@ test('scribe preview backdrop cancels without sending and restores editor intera
   editor.destroy();
 });
 
+test('Get help brings in a scoped helper, and a context action reaches it as a message', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  editor.model.template.id = 'help-flow';
+  editor.model.currentRef = `help-flow@sha256:${'a'.repeat(64)}`;
+  editor.model.markSaved({ sourceHash: 'b'.repeat(64) });
+  editor.blank = false;
+  const summons = []; const messages = [];
+  let live = true;
+  editor.options.onScribe = async (anchor, handoff) => {
+    summons.push({ anchor, prompt: handoff.prompt });
+    return { agentId: 'agt_help', convId: 'conv-help', name: 'process-scribe-1' };
+  };
+  editor.options.helperLive = () => live;
+  editor.options.onMessageHelper = async (helper, message) => { messages.push({ helper, message }); return true; };
+  const menu = () => harness.act(async () => { harness.fireEvent(host.querySelector('.process-editor .get-help-toggle'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  const pick = (key) => harness.act(async () => { harness.fireEvent(host.querySelector(`.get-help-menu [data-get-help="${key}"]`), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  const send = () => harness.act(async () => { harness.fireEvent(host.querySelector('.process-scribe-preview-overlay button.ui-btn-primary'), 'click'); await new Promise((r) => setTimeout(r, 10)); });
+
+  await menu();
+  assert.deepEqual([...host.querySelectorAll('.get-help-menu [data-get-help]')].map((item) => item.textContent),
+    ['New helper', 'Ask an existing agent…', 'Ask about selection', 'Explain this node', 'Fix this issue', 'Draft from description']);
+  await pick('new');
+  assert.ok(host.querySelector('.process-scribe-preview-overlay'), 'a new helper is briefed through the preview first');
+  await send();
+  assert.equal(summons.length, 1);
+  assert.equal(summons[0].anchor.id, 'help-flow');
+  assert.deepEqual(editor.helper, { id: 'agt_help', convId: 'conv-help', label: 'process-scribe-1' });
+
+  await menu();
+  await pick('draft');
+  assert.match(host.querySelector('.process-scribe-preview-overlay textarea').value, /^Draft a process that /);
+  await send();
+  assert.equal(summons.length, 1, 'a running helper is messaged, not summoned again');
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].helper.id, 'agt_help');
+  assert.match(messages[0].message.body, /^Draft a process that\b.*BEGIN BOUNDED EDITOR CONTEXT/s);
+
+  // Once that helper stops, the same action starts a new one with the ask.
+  live = false;
+  await menu();
+  await pick('draft');
+  await send();
+  assert.equal(summons.length, 2);
+  assert.match(summons[1].prompt, /^Draft a process that/);
+  assert.equal(messages.length, 1);
+  editor.destroy();
+});
+
 test('forced scribe modal disposal removes its listener, inert boundary, and focus ownership', async (t) => {
   const { harness, host, editor } = await openBlank(t);
-  const invoker = host.querySelector('.process-scribe-action');
+  const invoker = host.querySelector('.process-editor .get-help-toggle');
   const editorRoot = host.querySelector('.process-editor');
   const keydownListeners = new Set();
   const addEventListener = harness.document.addEventListener;
@@ -1261,7 +1309,7 @@ test('stacked scribe preview alone owns Tab and Escape, then returns focus to th
   const { harness, host, editor } = await openBlank(t);
   const { ManagementOverlay } = await harness.importDashboardModule('js/management-overlay.js');
   const { useRef, useState } = harness.hooks;
-  const editorInvoker = host.querySelector('.process-scribe-action');
+  const editorInvoker = host.querySelector('.process-editor .get-help-toggle');
   let lowerCloses = 0;
 
   function LowerOverlay() {
