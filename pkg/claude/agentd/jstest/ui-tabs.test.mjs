@@ -108,6 +108,18 @@ test('Tabs renders an accessible tablist with a roving tab stop', async (t) => {
   assert.equal(tabs[2].disabled, true);
 });
 
+test('Tabs: a keyboard pick reaches a click-only handler without the key event', async (t) => {
+  const { harness, Tabs, host } = await setup(t);
+  const events = [];
+  const items = [{ key: 'a', label: 'A', href: '/a' }, { key: 'b', label: 'B', href: '/b' }];
+  await harness.mount(harness.html`<${Tabs} value="a" items=${items} onSelect=${(key, event) => events.push([key, event?.type])} />`, host);
+  const [a, b] = host.querySelectorAll('[role="tab"]');
+  await harness.act(() => harness.fireEvent(b, 'keydown', { key: ' ' }));
+  await harness.act(() => harness.fireEvent(a, 'keydown', { key: 'ArrowRight' }));
+  await harness.act(() => harness.fireEvent(b, 'click', { button: 0 }));
+  assert.deepEqual(events, [['b', undefined], ['b', undefined], ['b', 'click']]);
+});
+
 test('Tabs: plain clicks select in place, modified clicks and disabled tabs do not', async (t) => {
   const { harness, Tabs, host } = await setup(t);
   const picked = [];
@@ -118,6 +130,8 @@ test('Tabs: plain clicks select in place, modified clicks and disabled tabs do n
   await harness.act(() => harness.fireEvent(b, 'click', { button: 0, ctrlKey: true }));
   await harness.act(() => harness.fireEvent(b, 'keydown', { key: ' ' }));
   assert.deepEqual(picked, ['b', 'b'], 'click and Space pick; a modified click is left to the browser');
+  await harness.act(() => harness.fireEvent(b, 'keydown', { key: 'ArrowLeft', altKey: true }));
+  assert.deepEqual(picked, ['b', 'b'], 'Alt+Arrow (browser Back/Forward) is left alone');
 });
 
 test('Tabs: arrow keys move focus and selection, wrapping and skipping disabled tabs', async (t) => {

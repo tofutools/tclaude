@@ -17461,7 +17461,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-hub.off { color: #7d8590; }
 .fa-link { border: 0; background: none; padding: 0; color: #58a6ff; cursor: pointer; font: inherit; font-size: 12px; }
 /* Narrow windows wrap whole tabs onto a second row, never their labels. */
-.fa-subnav { margin: 12px 0 8px; }
+.ui-tabs.fa-subnav { margin: 12px 0 8px; }
 .fa-subtabs { display: flex; flex-wrap: wrap; gap: 2px; margin: 12px 0 8px; border-bottom: 1px solid #30363d; }
 .fa-subtabs > .fa-subtab { border: 0; border-bottom: 2px solid transparent; background: none; color: #8b949e; padding: 6px 10px; font: inherit; cursor: pointer; white-space: nowrap; }
 .fa-subtabs > .fa-subtab.on { color: #f0f6fc; border-bottom-color: #1f6feb; }

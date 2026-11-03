@@ -7,7 +7,8 @@
 //
 // items: [{ key, label, href?, title?, disabled?, class?, attrs? }]; attrs
 // spreads onto the tab (data-* hooks, aria-controls). onSelect(key, event)
-// runs on a plain activation; value is the selected key.
+// runs on a plain activation (event is the click; a keyboard pick passes
+// none); value is the selected key.
 
 import { h } from 'preact';
 import htm from 'htm';
@@ -26,14 +27,16 @@ export function Tabs({ items, value, onSelect, label, class: extra, className, d
     if (item.disabled) return;
     if (item.href && event.type === 'click' && isModifiedClick(event)) return;
     event.preventDefault();
-    onSelect?.(item.key, event);
+    onSelect?.(item.key, event.type === 'click' ? event : undefined);
   };
   const keyDown = (event, item) => {
     if (event.key === ' ' || event.key === 'Spacebar' || (event.key === 'Enter' && !item.href)) {
       pick(event, item);
       return;
     }
-    const tabs = [...event.currentTarget.parentElement.querySelectorAll('[role="tab"]:not(:disabled)')];
+    // Modified keys (Alt+Left is browser Back) belong to the browser.
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const tabs = [...event.currentTarget.parentElement.querySelectorAll('[role="tab"]:not(:disabled):not([aria-disabled="true"])')];
     const at = tabs.indexOf(event.currentTarget);
     let next = -1;
     if (event.key in MOVES) next = (at + MOVES[event.key] + tabs.length) % tabs.length;
@@ -43,7 +46,7 @@ export function Tabs({ items, value, onSelect, label, class: extra, className, d
     event.preventDefault();
     tabs[next].focus();
     const target = items.find((candidate) => candidate.key === tabs[next].dataset.tabKey);
-    if (target && target.key !== value) onSelect?.(target.key, event);
+    if (target && !target.disabled && target.key !== value) onSelect?.(target.key);
   };
   // Roving tabindex: the selected tab is the one Tab stop; with none selected,
   // the first enabled tab is.
