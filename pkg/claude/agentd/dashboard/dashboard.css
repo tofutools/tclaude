@@ -17432,12 +17432,7 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
 .dock-actions-profile #dashboard-default-profile { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* The in-dock "Hide ›" collapse affordance (req 2) — a quiet text button so
    it reads as a deliberate control, not chrome. */
-.dock-collapse {
-  background: none; border: 1px solid transparent; border-radius: 4px;
-  color: #7d8590; cursor: pointer;
-  font-size: 11px; font-weight: 500; line-height: 1; padding: 3px 8px;
-}
-.dock-collapse:hover { color: #58a6ff; border-color: #2a3340; background: #21262d; }
+.dock-collapse { font-weight: 500; }
 .dock-body { flex: 1 1 auto; overflow-y: auto; padding: 8px; }
 
 .dock-section { margin-bottom: 12px; }
@@ -17468,11 +17463,8 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
 .dock-section[open] > .dock-section-head .dock-section-chevron { transform: rotate(90deg); }
 .dock-section-icon { font-size: 12px; }
 .dock-section-count { color: #6e7681; font-weight: 400; font-size: 11px; margin-left: 2px; }
-.dock-section-manage {
-  background: none; border: 1px solid transparent; color: #7d8590;
-  cursor: pointer; border-radius: 4px; font-size: 13px; line-height: 1; padding: 2px 6px;
-}
-.dock-section-manage:hover { color: #58a6ff; border-color: #2a3340; background: #21262d; }
+/* The dock's icon tools keep their glyph size over the small button's text size. */
+.ui-btn.ui-sm.dock-section-manage { font-size: 13px; line-height: 1; }
 
 .dock-empty { padding: 2px 6px 4px; }
 
@@ -17601,14 +17593,9 @@ body.wizard #agent-dock .dock-search-input:focus { border-color: #7c5cc4; }
    spans carry .tc-count — the base .tc-count rule is scoped to the template
    cards, so re-skin it for the dock here. */
 #agent-dock .tc-count { color: #6e7681; font-size: 10px; }
-.dock-card-manage {
-  flex: 0 0 auto;
-  background: none; border: 1px solid transparent; color: #7d8590;
-  cursor: pointer; border-radius: 4px; font-size: 12px; line-height: 1; padding: 3px 5px;
-  opacity: 0; transition: opacity .1s ease;
-}
+.dock-card-manage { flex: 0 0 auto; opacity: 0; transition: opacity .1s ease; }
+.ui-btn.ui-sm.dock-card-manage { font-size: 12px; line-height: 1; }
 .dock-card:hover .dock-card-manage, .dock-card-manage:focus-visible { opacity: 1; }
-.dock-card-manage:hover { color: #58a6ff; border-color: #2a3340; background: #21262d; }
 
 /* The card's ⚙ opens a small actions menu (Edit / Clone) rather than jumping
    straight to the editor. Cog + menu are wrapped in a position:relative
@@ -17632,19 +17619,7 @@ body.wizard #agent-dock .dock-search-input:focus { border-color: #7c5cc4; }
 /* Flip above the cog when a downward drop would run off the viewport bottom —
    dock.js measures the menu and sets .opens-up (a card near the dock's foot). */
 .dock-card-menu.opens-up { top: auto; bottom: 100%; margin: 0 0 4px; }
-/* Menu items get an explicit dark skin — a bare <button> renders browser-white
-   (the documented dashboard gotcha), which would glare in the dock. */
-.dock-card-menu-item {
-  width: 100%; text-align: left;
-  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
-  color: #c9d1d9; cursor: pointer; font-family: inherit; font-size: 12px;
-  padding: 4px 9px;
-}
-.dock-card-menu-item:hover { color: #d4d4d4; border-color: #58a6ff; background: #1a2029; }
-/* Delete is destructive — tinted red per the dashboard's danger convention
-   (#f85149 / #ff7b72), so it reads apart from the benign Edit / Clone rows. */
-.dock-card-menu-item.danger { color: #f0a3a0; }
-.dock-card-menu-item.danger:hover { color: #ff7b72; border-color: #f85149; background: #2b1516; }
+.dock-card-menu-item { width: 100%; text-align: left; }
 
 /* Wizard skin (JOH-388 req 4) — the palette becomes a shelf in The Wizard's
    Tower: a deep arcane-purple re-skin (backgrounds, borders AND accents, not
@@ -17661,7 +17636,7 @@ body.wizard #agent-dock .dock-inner {
 }
 body.wizard #agent-dock .dock-head { border-bottom-color: #3a2f57; }
 body.wizard #agent-dock .dock-collapse { color: #b39ddb; }
-body.wizard #agent-dock .dock-collapse:hover { color: #d7c9ff; border-color: #4a3d6b; background: #241a3a; }
+body.wizard #agent-dock .dock-collapse:hover { color: #d7c9ff; background: #241a3a; }
 body.wizard #agent-dock .dock-section-head { background: #171021; }
 body.wizard #agent-dock .dock-section-head:hover .dock-section-title { color: #e6dcff; }
 body.wizard #agent-dock .dock-section-title { color: #c9b8f0; text-shadow: 0 0 6px rgba(139, 109, 214, 0.4); }
@@ -17682,29 +17657,13 @@ body.wizard #agent-dock .dock-card-details:focus-visible { outline-color: #b39dd
 body.wizard #agent-dock .tc-count { color: #b39ddb; }
 body.wizard #agent-dock .dock-toggle { background: #17131f; border-color: #4a3d6b; }
 body.wizard #agent-dock .dock-toggle:hover { border-color: #7c5cc4; color: #d7c9ff; }
-body.wizard #agent-dock .dock-section-manage,
-body.wizard #agent-dock .dock-card-manage { color: #9a86c9; }
-body.wizard #agent-dock .dock-section-manage:hover,
-body.wizard #agent-dock .dock-card-manage:hover { color: #d7c9ff; border-color: #4a3d6b; background: #241a3a; }
-/* The card ⚙'s Edit / Clone menu, arcane-skinned like the rest of the dock's
-   grimoire chrome — kept scoped under #agent-dock (the anti-pin invariant).
-   Clone reads "Mirror" here (dock.js wizWord), echoing the templates manager. */
+/* The card ⚙'s menu panel, arcane-skinned like the rest of the dock's grimoire
+   chrome and scoped under #agent-dock (the anti-pin invariant); its rows are
+   standard menu rows. Clone reads "Mirror" here (dock.js wizWord). */
 body.wizard #agent-dock .dock-card-menu {
   background: linear-gradient(180deg, #191225 0%, #140e1e 100%);
   border-color: #4a3d6b;
   box-shadow: 0 8px 28px rgba(20, 14, 30, 0.9);
-}
-body.wizard #agent-dock .dock-card-menu-item {
-  background: #241a3a; border-color: #3a2f57; color: #d7c9ff;
-}
-body.wizard #agent-dock .dock-card-menu-item:hover {
-  border-color: #7c5cc4; background: #2d2148; color: #efe6ff;
-}
-/* Dispel (Delete) — a cursed-ember tint so the destructive rite still reads red
-   through the grimoire's violet chrome. */
-body.wizard #agent-dock .dock-card-menu-item.danger { color: #e6a3ad; }
-body.wizard #agent-dock .dock-card-menu-item.danger:hover {
-  color: #ffb3b0; border-color: #b0466a; background: #3a1b2c;
 }
 /* (The top-bar #dock-toggle-top wizard "on" accent was removed with the button
    itself — JOH-390 item 7. The one sanctioned body.wizard exception outside
@@ -18451,8 +18410,6 @@ body.wizard .process-scope-ports { background: #140f28; border-left-color: #4a3d
 .process-inspector-kind { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .process-inspector-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #79c0ff; font-size: 12px; }
 .process-inspector-hint { color: #8b949e; font-size: 12px; }
-.process-action-danger { color: #f85149; }
-.process-action-danger:hover { border-color: #f85149; }
 
 /* ─── Process template delete (row button + drag-to-bin) ──────────────
    The row's 🗑 delete button is icon-only, so it overrides the text-shaped
@@ -21257,9 +21214,6 @@ body.wizard .pwf-import-dialog { background: #211832; border-color: #6d5695; col
 /* Dock › Processes: the process template library (tcl-rzik1e). It reuses the
    dock card skin; the card body opens a preview popover beside the dock. */
 .dock-process-tools { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; }
-.dock-process-toggle { display: inline-flex; border: 1px solid #2a3340; border-radius: 10px; overflow: hidden; }
-.dock-process-toggle button { font: inherit; font-size: 10.5px; background: none; border: 0; color: #7d8590; padding: 1px 8px; cursor: pointer; }
-.dock-process-toggle button.on { background: #1f2a37; color: #d4d4d4; }
 .dock-process-tools .dpp-spacer { flex: 1; }
 .dock-processes .pwf-inline-error { display: block; font-size: 11px; margin-top: 4px; }
 .dock-process-open { cursor: pointer; text-align: left; }
@@ -21279,7 +21233,8 @@ body.wizard .pwf-import-dialog { background: #211832; border-color: #6d5695; col
 .dpp-desc { margin: 4px 0 8px; color: #8b949e; font-size: 11.5px; }
 .dpp-graph { overflow-x: auto; margin: 4px 0 8px; }
 .dpp-acts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.dpp-acts select { font: inherit; font-size: 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; padding: 3px 6px; }
+.dpp-acts select:where(:not(.ui-select)) { font: inherit; font-size: 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; padding: 3px 6px; }
+/* Start in… is the preview's main action, so its picker keeps the primary fill. */
 .dpp-acts .dpp-start { background: #1f6feb; border-color: #1f6feb; color: #fff; }
 .dpp-pins { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 0 0 8px; font-size: 11px; color: #6e7681; }
 .dpp-unpin { background: none; border: 0; padding: 0 0 0 4px; color: inherit; cursor: pointer; font: inherit; }
@@ -21287,7 +21242,6 @@ body.wizard .pwf-import-dialog { background: #211832; border-color: #6d5695; col
 body.wizard .dock-process-preview { background: #211832; border-color: #6d5695; color: #f3e6c0; }
 body.wizard .dpp-acts .dpp-start { background: #6e40c9; border-color: #8957e5; }
 body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e566; }
-body.wizard .dock-process-toggle button.on { background: #2d2145; }
 /* Auto-close terminal tabs: event rows × terminal-kind columns of checkboxes. */
 .cfg-close-tabs { border-collapse: collapse; font-size: 12px; }
 .cfg-close-tabs th, .cfg-close-tabs td { padding: 4px 10px; text-align: center; }

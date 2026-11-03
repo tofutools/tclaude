@@ -630,7 +630,7 @@
   <!-- Edge toggle — a chevron tab on the dock's left edge, pinned to the
        viewport so it stays reachable in both states. Its glyph is CSS-rotated
        per open state; dock.js keeps its title/aria in sync. -->
-  <button id="dock-toggle" class="dock-toggle" type="button" aria-controls="agent-dock" aria-expanded="true" title="Collapse the palette">
+  <button data-ui-exempt id="dock-toggle" class="dock-toggle" type="button" aria-controls="agent-dock" aria-expanded="true" title="Collapse the palette">
     <span class="dock-toggle-chevron" aria-hidden="true">›</span>
   </button>
   <div class="dock-inner">
@@ -647,7 +647,7 @@
     <div class="dock-head">
       <div class="dock-head-main">
         <span id="dock-actions-primary" class="dock-actions"></span>
-        <button id="dock-collapse" class="dock-collapse" type="button" aria-controls="agent-dock" title="Hide the palette" aria-label="Hide the palette"><span class="tpl-word-regular">Hide ›</span><span class="tpl-word-wizard">Furl ›</span></button>
+        <button id="dock-collapse" class="ui-btn ui-btn-ghost ui-sm dock-collapse" type="button" aria-controls="agent-dock" title="Hide the palette" aria-label="Hide the palette"><span class="tpl-word-regular">Hide ›</span><span class="tpl-word-wizard">Furl ›</span></button>
       </div>
       <div id="dock-actions-profile" class="dock-actions-profile"></div>
     </div>

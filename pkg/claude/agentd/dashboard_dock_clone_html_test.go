@@ -65,9 +65,7 @@ func TestDashboardHTML_DockCardCloneMenu(t *testing.T) {
 	must("removeRole(rl.name).then(() => refresh())", "role delete reuses removeRole + refreshes the dock")
 	must("onDeleteItem: (t) => deleteTemplate(t.name).then((removed) => {", "template delete reuses deleteTemplate (which self-refreshes)")
 	// The Delete item is styled destructive (red), distinct from Edit / Clone.
-	must("class=${`dock-card-menu-item${danger ? ' danger' : ''}`}", "the Delete menu item is marked destructive")
-	must(".dock-card-menu-item.danger {", "the destructive Delete item has a red skin")
-	must("body.wizard #agent-dock .dock-card-menu-item.danger", "the Delete item's destructive skin re-skins in wizard mode")
+	must("class=${`ui-menu-item dock-card-menu-item${danger ? ' ui-btn-danger danger' : ''}`}", "the Delete menu item is a standard destructive menu row")
 
 	// Keyed Preact card and Groups menus survive snapshot publishes, so neither
 	// participates in the narrow transient-editor refresh guard.
@@ -94,10 +92,11 @@ func TestDashboardHTML_DockCardCloneMenu(t *testing.T) {
 	// The menu chrome re-skins in wizard mode, kept SCOPED under #agent-dock (the
 	// anti-pin invariant — no unscoped body.wizard widening from this feature).
 	must("body.wizard #agent-dock .dock-card-menu {", "the card menu has a wizard skin scoped under #agent-dock")
-	must("body.wizard #agent-dock .dock-card-menu-item", "the menu items have a wizard skin")
-	// Menu items get an explicit dark skin so a bare <button> doesn't render
-	// browser-white (the documented dashboard gotcha).
-	must(".dock-card-menu-item {", "the menu items carry an explicit (non-white) dark skin")
+	// The rows are standard menu rows, themed through the wizard tokens in ui.css.
+	must("class=${`ui-menu-item dock-card-menu-item", "the menu rows are standard ui-menu-items")
+	// The standard ui-menu-item skin keeps the rows from rendering browser-white
+	// (the documented dashboard gotcha); the dock only lays them out full width.
+	must(".dock-card-menu-item { width: 100%; text-align: left; }", "the menu rows fill the menu width")
 	// The dialog itself gets a per-#id wizard skin like every other modal — an
 	// unstyled one would fall back to plain dark + a white submit button.
 	must("body.wizard #clone-modal .cron-create-modal {", "the clone dialog has a per-#id wizard chrome")
