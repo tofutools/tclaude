@@ -601,9 +601,8 @@ func triggerOwnerConv(rule *db.TriggerRule) (string, error) {
 	if conv == "" {
 		return "", errors.New("owning agent has no current conversation")
 	}
-	req, _ := http.NewRequest(http.MethodPost, "http://trigger.invalid", nil)
 	if rule.ScopeKind == db.TriggerScopeGlobal {
-		allowed, _, authErr := permissionAllowsAction(req, conv, PermTriggersManage, ActionContext{})
+		allowed, authErr := durableOwnerAllows("trigger", conv, PermTriggersManage, ActionContext{})
 		if authErr != nil {
 			return "", authErr
 		}
@@ -619,13 +618,10 @@ func triggerOwnerConv(rule *db.TriggerRule) (string, error) {
 	if g == nil || g.IsArchived() {
 		return "", errors.New("trigger group is unavailable")
 	}
-	ctx := ActionContext{Group: g.Name, structuralGroup: g.Name}
-	allowed, _, authErr := permissionAllowsAction(req, conv, PermGroupsTriggersManage, ctx)
+	allowed, authErr := durableOwnerAllows("trigger", conv, PermGroupsTriggersManage,
+		ActionContext{Group: g.Name, structuralGroup: g.Name})
 	if authErr != nil {
 		return "", authErr
-	}
-	if !allowed && resolvePermissionVerdictForRequest(req, conv, PermGroupsTriggersManage).Resolution != permDeny {
-		allowed, _ = structuralPermissionMatch(conv, PermGroupsTriggersManage, ctx)
 	}
 	if !allowed {
 		return "", fmt.Errorf("owner lacks %s for group %s", PermGroupsTriggersManage, g.Name)
@@ -788,12 +784,8 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 	}
 	isOwner := profile.IsOwner != nil && *profile.IsOwner
 	if ownerConv != "" && isOwner {
-		req, _ := http.NewRequest(http.MethodPost, "http://trigger.invalid", nil)
-		ctx := ActionContext{Group: g.Name, structuralGroup: g.Name}
-		allowed, _, _ := permissionAllowsAction(req, ownerConv, PermGroupsOwnersManage, ctx)
-		if !allowed && resolvePermissionVerdictForRequest(req, ownerConv, PermGroupsOwnersManage).Resolution != permDeny {
-			allowed, _ = structuralPermissionMatch(ownerConv, PermGroupsOwnersManage, ctx)
-		}
+		allowed, _ := durableOwnerAllows("trigger", ownerConv, PermGroupsOwnersManage,
+			ActionContext{Group: g.Name, structuralGroup: g.Name})
 		if !allowed {
 			return nil, "permission_denied", "spawn profile confers group ownership but owner lacks " + PermGroupsOwnersManage
 		}

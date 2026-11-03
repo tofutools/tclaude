@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -259,14 +258,10 @@ func cronSpawnOwnerConv(j *db.AgentCronJob) (string, error) {
 	if g == nil || g.IsArchived() {
 		return "", errors.New("cron target group is unavailable")
 	}
-	req, _ := http.NewRequest(http.MethodPost, "http://cron.invalid", nil)
-	ctx := ActionContext{Group: g.Name, structuralGroup: g.Name}
-	allowed, _, authErr := permissionAllowsAction(req, conv, PermGroupsMessagesSchedule, ctx)
+	allowed, authErr := durableOwnerAllows("cron", conv, PermGroupsMessagesSchedule,
+		ActionContext{Group: g.Name, structuralGroup: g.Name})
 	if authErr != nil {
 		return "", authErr
-	}
-	if !allowed && resolvePermissionVerdictForRequest(req, conv, PermGroupsMessagesSchedule).Resolution != permDeny {
-		allowed, _ = structuralPermissionMatch(conv, PermGroupsMessagesSchedule, ctx)
 	}
 	if !allowed {
 		return "", fmt.Errorf("owner lacks %s for group %s", PermGroupsMessagesSchedule, g.Name)
