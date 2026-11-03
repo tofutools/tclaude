@@ -225,8 +225,10 @@ with no restart. Open MRs and merge request badges follow within 30 seconds.
 - Save checks the block: an allow-list entry that is a URL or has an empty
   segment, a blank protected branch, and a GitLab base that is not an https
   origin are named, row by row, before anything is written. Values typed into
-  `config.json` by hand are not refused on load: the daemon still drops a bad
-  entry with a log warning.
+  `config.json` by hand are not refused on load: the daemon ignores a bad
+  entry, with a log warning where it drops one. Until such a value is
+  corrected, though, the Config tab cannot save any section, because a save
+  checks the whole file.
 
 ## Daemon & network
 
