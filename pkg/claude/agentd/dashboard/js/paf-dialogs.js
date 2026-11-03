@@ -53,7 +53,7 @@ function RedactPanel({ actions, source, filename, onDone }) {
     } catch (e) { setError(message(e)); } finally { setBusy(''); }
   };
   return html`<div class="paf-redact ui-card ui-inset" id="paf-redact">
-    <div class="paf-sec">Redact before sharing</div>
+    <div class="ui-eyebrow paf-sec">Redact before sharing</div>
     <${Check} id="paf-redact-mask" checked=${opts.mask_flagged} onChange=${set('mask_flagged')}>Mask suspected credentials</${Check}>
     <${Check} id="paf-redact-paths" checked=${opts.paths_to_placeholders} onChange=${set('paths_to_placeholders')}>Replace home, working dir and user name with placeholders</${Check}>
     <${Check} id="paf-redact-stub" checked=${opts.stub_tool_results} onChange=${set('stub_tool_results')}>Stub tool results older than the last 3 turns</${Check}>

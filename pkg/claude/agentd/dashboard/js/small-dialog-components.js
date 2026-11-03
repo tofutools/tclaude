@@ -123,7 +123,7 @@ function ExportHistory({ jobs, actions, conv, refreshHistory }) {
   return html`
     <div id="export-agent-history" class="export-history">
       <div class="export-history-head">
-        <span class="export-history-title">Previous exports</span>
+        <span class="ui-eyebrow export-history-title">Previous exports</span>
         <${Button} size="sm" variant="ghost danger"
           id="export-agent-clear"
           class="export-history-clear"
@@ -411,7 +411,7 @@ export function TerminalChooserDialog({ descriptor, actions, confirmDiscard }) {
     pick(choice.act);
   };
   const section = (name, plain, wizard) => html`
-    <div class="term-choice-section" role="presentation"><${Words} plain=${plain} wizard=${wizard} /></div>
+    <div class="ui-eyebrow term-choice-section" role="presentation"><${Words} plain=${plain} wizard=${wizard} /></div>
     ${TERMINAL_CHOICES.map((choice, index) => choice.section === name && html`<${TerminalChoice} key=${choice.act} choice=${choice} index=${index} onPick=${pick} autofocus=${index === 0} />`)}
   `;
   return html`

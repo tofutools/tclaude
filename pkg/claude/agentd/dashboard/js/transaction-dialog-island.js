@@ -627,7 +627,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
         const rows = visibleCandidates.filter((candidate) => candidate.category === category);
         if (!rows.length || (!multiCategory && category !== 'agent')) return null;
         return html`<div class="cleanup-category" key=${category}>
-          ${multiCategory ? html`<div class="cleanup-cat-head">${CLEANUP_CATEGORY_LABEL[category]} <span>(${rows.length})</span></div>` : null}
+          ${multiCategory ? html`<div class="ui-eyebrow cleanup-cat-head">${CLEANUP_CATEGORY_LABEL[category]} <span>(${rows.length})</span></div>` : null}
           ${rows.map((candidate) => {
             const enabled = rowEnabled(candidate);
             return html`<div class=${`cleanup-row${enabled ? '' : ' disabled'}`} key=${candidate.conv_id}>

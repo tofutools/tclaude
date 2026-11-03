@@ -95,7 +95,7 @@ export function FleetTab({ api, busy, reloadKey = 0, onEdit, onToggle, onManageN
       </div>`;
     })}</div>` : html`<div class="ui-empty-block">No fleet limits yet.</div>`}
 
-    <h4 class="usage-fleet-h">Nodes</h4>
+    <h4 class="ui-eyebrow">Nodes</h4>
     <div class="usage-fleet-nodes-wrap"><table class="usage-fleet-nodes ui-compact">
       <thead><tr><th>Node</th><th class="num">Today</th><th class="num">This week</th><th class="num">This month</th><th>Its limits</th><th>Shares with you</th><th></th></tr></thead>
       <tbody>
@@ -118,7 +118,7 @@ export function FleetTab({ api, busy, reloadKey = 0, onEdit, onToggle, onManageN
     ${(fleet.nodes || []).length ? html`<p class="modal-hint ui-hint">A node shares with you what its operator grants you: <code>usage.read</code> (its totals), <code>usage-rules.manage</code> (its rules, from here), <code>usage-rules.enforce</code> (your fleet limits act on its agents). Ask from its peer view (the <b>peer view</b> pill → request…), or its operator runs <code>${'tclaude federation grant <this node> usage.read'}</code>.</p>`
       : html`<div class="ui-empty-block">No trusted peers. Link nodes under Fleet to build a fleet.</div>`}
 
-    ${(fleet.controls || []).length ? html`<h4 class="usage-fleet-h">Peers' fleet limits in force here</h4>
+    ${(fleet.controls || []).length ? html`<h4 class="ui-eyebrow">Peers' fleet limits in force here</h4>
       <ul class="usage-fleet-controls">${fleet.controls.map((c) => html`<li key=${c.peer + c.rule_key}>
         <b>${c.peer_label}</b>'s "${c.rule_name}" (${c.fleet}) at ${Math.round(c.pct)}%: ${[c.block ? 'blocks spawns' : '', c.stop ? 'stops agents that run' : ''].filter(Boolean).join(' and ')} in the groups its grant covers, until ${new Date(c.until).toLocaleTimeString()} unless renewed. Revoke its <code>usage-rules.enforce</code> grant to end it.</li>`)}</ul>` : null}
     <div class="usage-fleet-foot">
@@ -165,7 +165,7 @@ export function FleetLimitEditor({ limit, fleet, busy, RuleEditor, onSave, onDel
     } catch (cause) { setError(cause.message); }
   };
   return html`<div class="usage-rules-tab usage-editor" id="usage-fleet-limit-editor">
-    <h4>${limit.id ? `Edit fleet limit "${limit.rule.name}"` : 'New fleet limit'}</h4>
+    <h4 class="ui-eyebrow">${limit.id ? `Edit fleet limit "${limit.rule.name}"` : 'New fleet limit'}</h4>
     <div class="usage-rule-fields">
       <label>Covers <${Select} size="sm" aria-label="Fleet limit target" value=${target} disabled=${busy}
         onChange=${(e) => touch(setTarget)(e.currentTarget.value)}>${options.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}<//></label>
