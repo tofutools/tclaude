@@ -1454,8 +1454,11 @@ func TestDashboardHTML_WizardConfigTab(t *testing.T) {
 	must("body.wizard #tab-config .cfg-footer", "the sticky footer is re-skinned")
 	must("body.wizard #tab-config .cfg-footer button.primary", "the Save lever gets the gilded-arcane treatment")
 
-	// The diff-confirm dialog is re-skinned too, scoped to #config-diff-modal.
-	must("body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .config-diff-modal", "the config and sandbox-profile diff-confirm surfaces are re-skinned")
+	// The diff-confirm dialogs are .ui-dialog boxes, so the wizard box and title
+	// come from the --ui-dialog-* tokens (jstest/ui-dialog.test.mjs); their sub
+	// line and diff panel are re-skinned, scoped to the two dialog ids.
+	must("body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .cfg-diff-sub", "the diff-confirm sub line is re-skinned")
+	must("body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .config-diff {", "the diff-confirm panel is re-skinned")
 }
 
 // TestDashboardCSS_WizardConfigTabScoped guards that the config-tab re-skin's
