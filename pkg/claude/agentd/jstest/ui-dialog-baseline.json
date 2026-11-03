@@ -1,6 +1,16 @@
 [
-  "config-diff-modal",
-  "cron-create-modal",
-  "image-preview-dialog",
-  "markdown-preview-dialog"
+  ".config-diff-modal",
+  ".image-preview-dialog",
+  ".markdown-preview-dialog",
+  ".process-param-dialog",
+  ".pwf-import-dialog",
+  "body.slop :is(.markdown-preview-dialog, .image-preview-dialog)",
+  "body.wizard #group-standing-orders-modal .cron-create-modal",
+  "body.wizard #standing-order-modal .cron-create-modal",
+  "body.wizard .git-repositories-modal",
+  "body.wizard .process-editor-modal .modal",
+  "body.wizard .process-param-dialog",
+  "body.wizard .pwf-import-dialog",
+  "body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .config-diff-modal",
+  "body.wizard :is(.markdown-preview-dialog, .image-preview-dialog)"
 ]

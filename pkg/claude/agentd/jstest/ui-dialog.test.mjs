@@ -4,11 +4,13 @@
 // paint their own box: each *-modal class carried the same dark panel, and the
 // wizard skin repeated its violet panel once per dialog id, more than forty
 // times. An area class keeps size, padding and layout; a stylesheet rule whose
-// subject is a *-modal or *-dialog class may not paint a box itself, meaning
-// background, border and box-shadow in one rule.
+// subject is a *-modal or *-dialog class may not paint a box itself, meaning a
+// background and a border in one rule.
 //
-// Existing ones are a ratchet: ui-dialog-baseline.json lists the boxes not yet
-// migrated (previews, popover-like panels and deliberately distinct dialogs).
+// Existing ones are a ratchet: ui-dialog-baseline.json lists, by selector, the
+// boxes not yet migrated (previews and deliberately distinct dialogs such as
+// the standing-order panels). Keying on the selector, not the class, keeps a
+// new per-dialog copy on a shared class such as .cron-create-modal failing.
 // A new one fails, and a migrated one must leave the baseline. Regenerate with
 //   UPDATE_UI_DIALOG_BASELINE=1 node --test jstest/ui-dialog.test.mjs
 
@@ -18,10 +20,11 @@ import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 
 const DASHBOARD = new URL('../dashboard/', import.meta.url);
 const BASELINE = new URL('./ui-dialog-baseline.json', import.meta.url);
-const BOX = [/(?:^|[;\s])background(?:-color)?\s*:/, /(?:^|[;\s])border(?:-color)?\s*:/, /(?:^|[;\s])box-shadow\s*:/];
+const BOX = [/(?:^|[;\s])background(?:-color)?\s*:/, /(?:^|[;\s])border(?:-color)?\s*:/];
 
-// handRolledBoxes lists the *-modal / *-dialog classes a rule paints as a box
-// when they are the rule's subject. A state (`:hover`, `.danger`) is not a box.
+// handRolledBoxes lists the selectors (whitespace-normalised) whose subject is a
+// single *-modal / *-dialog class that the rule paints as a box. A state
+// (`:hover`, `.danger`) is not a box.
 export function handRolledBoxes(css) {
   const source = css.replace(/\/\*[\s\S]*?\*\//g, '');
   const found = new Set();
@@ -32,7 +35,7 @@ export function handRolledBoxes(css) {
       if (/[:[]/.test(subject)) continue;
       const classes = [...subject.matchAll(/\.([\w-]+)/g)].map((m) => m[1]);
       if (classes.length !== 1) continue;
-      if (/^(?:[\w-]+-)?(?:modal|dialog)$/.test(classes[0])) found.add(classes[0]);
+      if (/^(?:[\w-]+-)?(?:modal|dialog)$/.test(classes[0])) found.add(part.trim().replace(/\s+/g, ' '));
     }
   }
   return found;
@@ -42,13 +45,13 @@ test('the scanner finds hand-painted dialog boxes', () => {
   const css = [
     '.a-modal { padding: 18px; width: 640px; }',
     '.b-modal { background: #161b22; border: 1px solid #2a3340; box-shadow: 0 8px 24px #0008; }',
-    'body.wizard #x .c-modal { background: violet; border-color: gold; box-shadow: 0 0 32px violet; }',
+    'body.wizard #x .c-modal, .other { background: violet; border-color: gold; }',
     '.d-modal.danger { background: red; border-color: red; box-shadow: none; }',
     '.e-modal:hover { background: red; border: 0; box-shadow: none; }',
     '/* .f-modal { background: red; border: 0; box-shadow: none; } */',
     '.modal { background: #161b22; border: 1px solid #2a3340; box-shadow: 0 8px 24px #0008; }',
   ].join('\n');
-  assert.deepEqual([...handRolledBoxes(css)].sort(), ['b-modal', 'c-modal', 'modal']);
+  assert.deepEqual([...handRolledBoxes(css)].sort(), ['.b-modal', '.modal', 'body.wizard #x .c-modal']);
 });
 
 test('ui.css defines the standard dialog box and ManagementOverlay applies it', () => {
@@ -57,6 +60,12 @@ test('ui.css defines the standard dialog box and ManagementOverlay applies it', 
   assert.match(css, /body\.wizard \{[^}]*--ui-dialog-bg:/, 'the wizard skin has its own dialog box');
   const overlay = readFileSync(new URL('js/management-overlay.js', DASHBOARD), 'utf8');
   assert.match(overlay, / ui-dialog`/, 'ManagementOverlay renders every dialog as a .ui-dialog');
+  // The dialogs built without ManagementOverlay take the box themselves.
+  for (const [file, needle] of [
+    ['shell-island.js', '<div class="modal ui-dialog" role="dialog"'],
+    ['plugins-island.js', '<div class="cron-create-modal ui-dialog" role="dialog"'],
+    ['profiles-island.js', '<form class="cron-create-modal ui-dialog" role="dialog"'],
+  ]) assert.ok(readFileSync(new URL(`js/${file}`, DASHBOARD), 'utf8').includes(needle), `${file} renders its dialog as a .ui-dialog`);
 });
 
 test('no stylesheet hand-paints a new dialog box', () => {
@@ -67,7 +76,7 @@ test('no stylesheet hand-paints a new dialog box', () => {
   if (process.env.UPDATE_UI_DIALOG_BASELINE) writeFileSync(BASELINE, `${JSON.stringify([...found].sort(), null, 2)}\n`);
   const baseline = new Set(JSON.parse(readFileSync(BASELINE, 'utf8')));
   assert.deepEqual([...found].filter((c) => !baseline.has(c)).sort(), [],
-    'paint dialog boxes with .ui-dialog; keep an area class for size and layout only');
+    'paint dialog boxes with .ui-dialog (skin it through the --ui-dialog-* tokens); keep an area class for size and layout only');
   assert.deepEqual([...baseline].filter((c) => !found.has(c)).sort(), [],
     'these are migrated: remove them from jstest/ui-dialog-baseline.json');
 });
