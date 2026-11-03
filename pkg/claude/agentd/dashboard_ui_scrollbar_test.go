@@ -25,8 +25,8 @@ func TestDashboardScrollbarTokenContrast(t *testing.T) {
 			t.Fatalf("ui.css has no %s scrollbar tokens", skin.name)
 		}
 		tokens := map[string]string{}
-		for _, m := range regexp.MustCompile(`--ui-scroll-(thumb|thumb-hover|thumb-active): (#[0-9a-f]{6});`).FindAllStringSubmatch(rule[1], -1) {
-			tokens[m[1]] = m[2]
+		for _, m := range regexp.MustCompile(`--ui-scroll-(thumb|thumb-hover|thumb-active): (#[0-9a-f]{6}|var\(--[\w-]+\));`).FindAllStringSubmatch(rule[1], -1) {
+			tokens[m[1]] = resolveCSSVar(t, css, m[2])
 		}
 		if len(tokens) != 3 {
 			t.Fatalf("%s skin sets %d scrollbar tokens, want 3", skin.name, len(tokens))
@@ -72,4 +72,19 @@ func cssContrastRatio(t *testing.T, foreground, background string) float64 {
 	}
 	a, b := luminance(foreground), luminance(background)
 	return (math.Max(a, b) + 0.05) / (math.Min(a, b) + 0.05)
+}
+
+// resolveCSSVar returns value itself when it is a colour, or the colour a
+// var(--name) reference is defined as in css (the wizard gold is a token).
+func resolveCSSVar(t *testing.T, css, value string) string {
+	t.Helper()
+	ref := regexp.MustCompile(`^var\((--[\w-]+)\)$`).FindStringSubmatch(value)
+	if ref == nil {
+		return value
+	}
+	def := regexp.MustCompile(regexp.QuoteMeta(ref[1]) + `: (#[0-9a-f]{6});`).FindStringSubmatch(css)
+	if def == nil {
+		t.Fatalf("ui.css does not define %s as a colour", ref[1])
+	}
+	return def[1]
 }

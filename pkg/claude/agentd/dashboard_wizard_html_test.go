@@ -1117,7 +1117,6 @@ func TestDashboardHTML_WizardCronDialog(t *testing.T) {
 	must("body.wizard .cron-open-label-regular", "wizard hides the default label")
 	must("body.wizard .cron-open-label-wizard", "wizard shows the ritual label")
 	must("body.wizard #cron-create-open.ui-btn-primary", "the open button is re-skinned in wizard mode")
-	must("body.wizard #cron-create-open.ui-btn-primary:hover", "the open button has a wizard hover re-skin")
 
 	// The same span pair swaps the Jobs island's "No jobs yet…" hint. The label
 	// spans above already pin both variants; this pins their empty-state context.
@@ -1456,7 +1455,6 @@ func TestDashboardHTML_WizardConfigTab(t *testing.T) {
 
 	// The diff-confirm dialog is re-skinned too, scoped to #config-diff-modal.
 	must("body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .config-diff-modal", "the config and sandbox-profile diff-confirm surfaces are re-skinned")
-	must("body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .modal-buttons button:is(.primary, .ui-btn-primary)", "the diff-confirm Save levers are re-skinned")
 }
 
 // TestDashboardCSS_WizardConfigTabScoped guards that the config-tab re-skin's
@@ -1594,7 +1592,6 @@ func TestDashboardHTML_WizardCleanupModal(t *testing.T) {
 	// The submit becomes a gilded lever; the delete tier keeps a danger-ember
 	// variant so the irreversible action still signals danger.
 	must("body.wizard #cleanup-modal #cleanup-submit {", "the submit button gets the gilded lever chrome")
-	must("body.wizard #cleanup-modal #cleanup-submit:is(.danger, .ui-btn-danger) {", "the delete-tier submit keeps a danger-ember lever")
 }
 
 // TestDashboardCSS_WizardCleanupModalScoped guards that the wizard bulk-cleanup
@@ -1628,7 +1625,6 @@ func TestDashboardHTML_WizardDeleteRetiredModal(t *testing.T) {
 	must("body.wizard #delete-retired-modal .cleanup-row label .cleanup-badge:not(.online)", "wizard badge chrome leaves online and result status colors semantic")
 	must("font-size: 12px; color: var(--ui-body-text); margin: 12px 0 0;", "the worktree option row takes its text colour from --ui-body-text, so every skin colours it")
 	must("body.wizard #delete-retired-modal #delete-retired-submit {", "the result-phase Done button gets gilded chrome")
-	must("body.wizard #delete-retired-modal #delete-retired-submit:is(.danger, .ui-btn-danger) {", "the selection-phase delete action stays destructive")
 }
 
 // TestDashboardHTML_WizardDeleteGroupModal pins the wizard re-skin of the
@@ -1653,7 +1649,6 @@ func TestDashboardHTML_WizardDeleteGroupModal(t *testing.T) {
 	must(`content: "🪄 Disband!"`, "the submit button reads Disband in wizard mode")
 	must(`content: "Disbanding…"`, "the busy submit button reads Disbanding in wizard mode")
 	must("body.wizard #delete-group-modal #delete-group-submit {", "the submit gets the retire-modal-style gilded lever")
-	must("body.wizard #delete-group-modal #delete-group-submit:active", "the submit uses the retire-modal pressed lever state")
 }
 
 // TestDashboardHTML_WizardTemplatesManage pins the wizard re-skin of the
@@ -2225,10 +2220,16 @@ func TestDashboardHTML_WizardStandardButtons(t *testing.T) {
 	for _, want := range []string{
 		"--ui-bg: #241b3d;",
 		"--ui-bg-hover: #3a2a63;",
-		"--ui-btn-line: #d9b45a;",
+		"--ui-wizard-gold: #d9b45a;",
+		"--ui-btn-line: var(--ui-wizard-gold);",
 		"--ui-text: #e7d9f5;",
 		"--ui-primary: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);",
 		"body.wizard .ui-btn-primary {",
+		// Every wizard dialog's footer submit is the one shared lever, crimson
+		// when destructive; the per-dialog lever rules are gone.
+		"body.wizard .modal-buttons :is(.ui-btn-primary, .ui-btn-danger:not(.ui-btn-ghost)) {",
+		"body.wizard .modal-buttons .ui-btn-danger:not(.ui-btn-ghost) {",
+		"body.wizard .modal-buttons :is(.ui-btn-primary, .ui-btn-danger:not(.ui-btn-ghost)):active:not(:disabled) {",
 	} {
 		if !strings.Contains(css, want) {
 			t.Errorf("ui.css wizard skin missing %q", want)

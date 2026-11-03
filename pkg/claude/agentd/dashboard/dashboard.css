@@ -3090,7 +3090,7 @@ body.wizard .activity-hover-worker-annotation,
 body.wizard .activity-hover-note { color: #9a86c4; }
 body.wizard .activity-hover-group + .activity-hover-group,
 body.wizard .activity-hover-note { border-color: rgba(122, 93, 176, 0.5); }
-body.wizard .activity-hover-group h3 { color: #d9b45a; }
+body.wizard .activity-hover-group h3 { color: var(--ui-wizard-gold); }
 @media (max-width: 560px) {
   .activity-hover-panel { left: -12px; width: min(360px, calc(100vw - 24px)); }
 }
@@ -8324,13 +8324,6 @@ body.wizard #group-standing-orders-modal .group-standing-orders-heading p,
 body.wizard #group-standing-orders-modal .muted { color: #ad9abb; }
 body.wizard #group-standing-orders-modal .group-standing-orders-close { color: #9d87ad !important; }
 body.wizard #group-standing-orders-modal .group-standing-orders-close:hover { color: #f3e6c0 !important; }
-body.wizard #group-standing-orders-modal .cron-create-modal button:is(.primary, .ui-btn-primary) {
-  background: linear-gradient(180deg, #7650a5, #563477);
-  border-color: #b184d1; color: #fff7dc; box-shadow: 0 0 12px #b26de840;
-}
-body.wizard #group-standing-orders-modal .cron-create-modal button:is(.primary, .ui-btn-primary):hover:not(:disabled) {
-  background: linear-gradient(180deg, #8d65ba, #654087); box-shadow: 0 0 17px #b26de866;
-}
 body.wizard #group-standing-orders-modal .group-standing-orders-first-run {
   border-color: #694f7e; background: linear-gradient(145deg, #17101f, #120e19);
 }
@@ -8402,7 +8395,7 @@ body.wizard #standing-order-modal .standing-order-native-hooks summary {
   color: #f3e6c0; border-bottom-color: rgba(122, 93, 176, 0.35);
 }
 body.wizard #standing-order-modal .modal-meta {
-  background: #100c17; border-left-color: #d9b45a; color: #ad9abb;
+  background: #100c17; border-left-color: var(--ui-wizard-gold); color: #ad9abb;
 }
 body.wizard #standing-order-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.45); }
 body.wizard #standing-order-modal #standing-order-cancel {
@@ -8412,23 +8405,14 @@ body.wizard #standing-order-modal #standing-order-cancel::before {
   content: "Abandon inscription"; font-size: 12px;
 }
 body.wizard #standing-order-modal #standing-order-cancel:hover:not(:disabled) {
-  background: #39294a; border-color: #d9b45a;
+  background: #39294a; border-color: var(--ui-wizard-gold);
 }
-body.wizard #standing-order-modal #standing-order-submit {
-  font-size: 0;
-  background: linear-gradient(180deg, #7650a5, #563477);
-  border: 2px solid #d9b45a; border-radius: 6px; color: #fff7dc;
-  box-shadow: 0 3px 0 #1e1640, 0 0 12px rgba(178, 109, 232, 0.35);
-}
+body.wizard #standing-order-modal #standing-order-submit { font-size: 0; }
 body.wizard #standing-order-modal #standing-order-submit::before {
   content: "✦ Seal decree"; font-size: 13px;
 }
 body.wizard #standing-order-modal.standing-order-editing #standing-order-submit::before {
   content: "✦ Re-seal decree";
-}
-body.wizard #standing-order-modal #standing-order-submit:hover:not(:disabled) {
-  background: linear-gradient(180deg, #8d65ba, #654087);
-  border-color: #f3e6c0; box-shadow: 0 3px 0 #1e1640, 0 0 17px #b26de866;
 }
 body.wizard #standing-order-modal #standing-order-submit:disabled::before { content: "⏳ Inscribing…"; }
 body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:disabled::before {
@@ -8603,7 +8587,7 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
 .directory-picker-modal .modal-buttons { border-top: 1px solid #2a3340; padding-top: 10px; }
 body.wizard .directory-picker-path input,
 body.wizard .directory-picker-list { background: #140f28; border-color: rgba(122, 93, 176, .5); color: #f3e6c0; }
-body.wizard .directory-picker-modal button:where(:not(.ui-btn)):not(.primary) { background: #241b3d; border-color: #d9b45a; color: #f3e6c0; }
+body.wizard .directory-picker-modal button:where(:not(.ui-btn)):not(.primary) { background: #241b3d; border-color: var(--ui-wizard-gold); color: #f3e6c0; }
 body.wizard .directory-picker-list button.active:not(:disabled) {
   background: #35274f; border-color: #f0ca68; box-shadow: inset 3px 0 #f0ca68;
 }
@@ -10147,7 +10131,7 @@ body.hide-collab .cfg-section .cfg-field[data-cfg-key="dashboard.no_snap_assist"
 nav [data-tab="processes"] { display: none; }
 nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #d4d4d4; border-bottom-color: #58a6ff; }
 body.slop nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #ffe88c; border-bottom-color: #ffd700; }
-body.wizard nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #f3e6c0; border-bottom-color: #d9b45a; }
+body.wizard nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #f3e6c0; border-bottom-color: var(--ui-wizard-gold); }
 
 /* Processes tab shell — deliberately neutral and compact so the graph editor
    and live viewer can replace the list panels with their full-canvas mounts. */
@@ -11113,7 +11097,7 @@ body.wizard header {
   );
   background-size: 200% 100%;
   animation: wizard-shimmer 8s linear infinite;
-  border-bottom: 2px solid #d9b45a;
+  border-bottom: 2px solid var(--ui-wizard-gold);
 }
 body.wizard header h1 {
   color: #f3e6c0;
@@ -11125,7 +11109,7 @@ body.wizard header h1 {
 }
 body.wizard header .meta { color: #e7d9f5; opacity: 0.85; }
 body.wizard header button:where(:not(.ui-btn, .ui-menu-item)) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
   border-radius: 4px; padding: 4px 10px;
 }
 body.wizard header button:where(:not(.ui-btn, .ui-menu-item)):hover { background: #3a2a63; }
@@ -11140,17 +11124,17 @@ body.wizard header h1 .slop-icon {
 body.wizard header h1 .slop-icon:hover { background: #3a2a63; }
 body.wizard nav {
   background: #1c1436;
-  border-bottom: 1px solid #d9b45a;
+  border-bottom: 1px solid var(--ui-wizard-gold);
 }
 body.wizard nav [data-tab] { color: #b39ddb; }
 body.wizard nav [data-tab]:hover { color: #f3e6c0; }
 body.wizard nav [data-tab].active {
   color: #f3e6c0;
-  border-bottom-color: #d9b45a;
+  border-bottom-color: var(--ui-wizard-gold);
 }
 body.wizard footer {
   background: #1c1436;
-  border-top: 1px solid #d9b45a;
+  border-top: 1px solid var(--ui-wizard-gold);
 }
 body.wizard footer .meta { color: #e7d9f5; opacity: 0.85; }
 /* The PR disclosure lives above the themed footer but is fixed outside its
@@ -11169,7 +11153,7 @@ body.wizard .open-pr-meta { color: #9a86c4; }
 body.wizard .open-prs-filters button { border-color: #4a3d6b; color: #b39ddb; }
 body.wizard .open-prs-filters button:hover { color: #e7d9f5; background: #3a2a63; }
 body.wizard .open-prs-filters button.active {
-  border-color: #d9b45a; background: #3a2a63; color: #f3e6c0;
+  border-color: var(--ui-wizard-gold); background: #3a2a63; color: #f3e6c0;
 }
 body.wizard .open-pr-title { color: #e7d9f5; }
 body.wizard .open-pr-title:hover { color: #f3d58b; }
@@ -11178,7 +11162,7 @@ body.wizard .open-pr-row.is-draft .open-pr-meta { color: #9a86c4; }
 body.wizard .open-pr-row.is-draft .ci-badge { color: #9a86c4; border-color: #4a3d6b; background: #1d1730; }
 body.wizard .open-pr-draft-label { color: #b39ddb; border-color: #4a3d6b; }
 body.wizard .open-prs-foot { background: #1c1436; }
-body.wizard .open-prs-foot a { color: #d9b45a; }
+body.wizard .open-prs-foot a { color: var(--ui-wizard-gold); }
 body.wizard .open-prs-final-ci { color: #b39ddb; }
 body.wizard .open-prs-final-ci:hover,
 body.wizard .open-prs-final-ci:has(input:focus-visible) { color: #f3e6c0; }
@@ -11208,7 +11192,7 @@ body.wizard .open-prs-confirm-durations input { accent-color: #7a5db0; }
    pop on the violet background (mirrors slop's gold-edge tweak). */
 body.wizard .state-working   { border-color: #a97bd6; }
 body.wizard .state-idle      { border-color: #6ee7b7; }
-body.wizard .state-awaiting  { border-color: #d9b45a; }
+body.wizard .state-awaiting  { border-color: var(--ui-wizard-gold); }
 body.wizard .online          { color: #6ee7b7; text-shadow: 0 0 6px rgba(110, 231, 183, 0.5); }
 
 /* Agent tags in the wizard skin — the chips become enchanted sigils: a
@@ -11216,10 +11200,10 @@ body.wizard .online          { color: #6ee7b7; text-shadow: 0 0 6px rgba(110, 23
    blue. Scoped to .agent-tag so it never widens beyond the chip (the
    styling-sweep anti-pin test forbids an unscoped body.wizard rule). */
 body.wizard .agent-tag {
-  background: #241a40; color: #e7d9f5; border-color: #d9b45a;
+  background: #241a40; color: #e7d9f5; border-color: var(--ui-wizard-gold);
 }
 body.wizard .agent-tag-tf { background: #14233f; color: #8cc7ff; border-color: #4a6ea8; }
-body.wizard .descr-edit:hover .descr-add { color: #e7d9f5; border-color: #d9b45a; }
+body.wizard .descr-edit:hover .descr-add { color: #e7d9f5; border-color: var(--ui-wizard-gold); }
 
 /* ─── Mana meter — the wizard twin of the context-window gauge ─────────
    The context window IS the agent's mana reserve; the vertical gauge shows
@@ -11292,7 +11276,7 @@ body.wizard #power-on-all-btn,
 body.wizard #shutdown-all-btn,
 body.wizard .group-actions button[data-act="power-on-group"],
 body.wizard .group-actions button[data-act="shutdown-group"] {
-  border: 1px solid #d9b45a;
+  border: 1px solid var(--ui-wizard-gold);
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 0.5px;
@@ -11350,7 +11334,7 @@ body.wizard .dnd-trash-glyph-wizard {
 @keyframes wizard-portal-spin { to { transform: rotate(360deg); } }
 body.wizard #dnd-trash {
   background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);
-  border-color: #d9b45a;
+  border-color: var(--ui-wizard-gold);
   color: #e7d9f5;
   box-shadow: 0 0 14px rgba(169, 123, 214, 0.4), 0 6px 20px rgba(0, 0, 0, 0.5);
 }
@@ -11363,7 +11347,7 @@ body.wizard #dnd-trash .dnd-trash-label {
 }
 body.wizard #dnd-trash.dnd-drop-over {
   color: #f3e6c0;
-  border-color: #d9b45a;
+  border-color: var(--ui-wizard-gold);
   border-style: solid;
   background: linear-gradient(180deg, #9c4453 0%, #3a1826 100%);
   box-shadow: 0 0 20px rgba(242, 119, 122, 0.75), 0 6px 20px rgba(0, 0, 0, 0.5);
@@ -11451,11 +11435,11 @@ body.wizard .wizard-pill[data-status="idle"] {
 }
 body.wizard .wizard-pill[data-status="awaiting_permission"],
 body.wizard .wizard-pill[data-status="awaiting_input"] {
-  border-color: #d9b45a;
+  border-color: var(--ui-wizard-gold);
   animation: wizard-await 1s ease-in-out infinite;
 }
 @keyframes wizard-await {
-  0%, 100% { border-color: #d9b45a; box-shadow: inset 0 0 6px rgba(0,0,0,0.5), 0 0 5px rgba(217, 180, 90, 0.4); }
+  0%, 100% { border-color: var(--ui-wizard-gold); box-shadow: inset 0 0 6px rgba(0,0,0,0.5), 0 0 5px rgba(217, 180, 90, 0.4); }
   50%      { border-color: #a97bd6; box-shadow: inset 0 0 6px rgba(0,0,0,0.5), 0 0 10px rgba(169, 123, 214, 0.6); }
 }
 body.wizard .wizard-pill[data-status="error"] {
@@ -11579,7 +11563,7 @@ body.wizard .slop-credits,
 body.wizard .slop-vol-row-fx,
 body.wizard #vegas-leaderboard { display: none; }
 body.wizard .slop-hud-btn {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
   border-radius: 4px; padding: 2px 7px; cursor: pointer;
 }
 body.wizard .slop-hud-btn:hover { background: #3a2a63; }
@@ -11592,7 +11576,7 @@ body.wizard #slop-marquee {
   position: relative;
   overflow: hidden;
   background: linear-gradient(90deg, #1c1436 0%, #3a2a63 50%, #1c1436 100%);
-  border-bottom: 1px solid #d9b45a;
+  border-bottom: 1px solid var(--ui-wizard-gold);
   color: #f3e6c0;
   font-size: 13px;
   height: 22px;
@@ -11613,7 +11597,7 @@ body.wizard #slop-marquee-track {
    the base rule; only the colours + serif change here. */
 body.wizard .spawn-btn {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  border: 1px solid #d9b45a;
+  border: 1px solid var(--ui-wizard-gold);
   color: #f3e6c0;
   box-shadow: 0 0 8px rgba(169, 123, 214, 0.45);
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -11674,7 +11658,7 @@ body.wizard #agent-spawn-modal .muted { color: #b39ddb; }
    exclusion this blanket repainted it as a solid gilded box, which read as an
    unintended chip. Excluding it lets the ghost design survive the wizard skin. */
 body.wizard #agent-spawn-modal button:where(:not(.ui-btn)):not(#agent-spawn-submit):not(.att-remove) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard #agent-spawn-modal button:where(:not(.ui-btn)):not(#agent-spawn-submit):not(.att-remove):hover { background: #3a2a63; }
 body.wizard #agent-spawn-modal .cron-create-sep { border-top-color: rgba(122, 93, 176, 0.4); }
@@ -11689,31 +11673,11 @@ body.wizard #agent-spawn-modal .cron-create-sep { border-top-color: rgba(122, 93
    no extra JS is needed.
    The generic secondary-button rule above can't touch this button: its
    :not(#agent-spawn-submit) excludes it, so the two rules never overlap. */
-body.wizard #agent-spawn-modal #agent-spawn-submit {
-  font-size: 0;
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-  position: relative;
-  transition: transform 0.08s ease;
-}
+body.wizard #agent-spawn-modal #agent-spawn-submit { font-size: 0; letter-spacing: 1px; font-weight: 700; position: relative; transition: transform 0.08s ease; }
 body.wizard #agent-spawn-modal #agent-spawn-submit::before {
   content: "🔮 Summon!";
   font-size: 15px;
   letter-spacing: 1px;
-}
-body.wizard #agent-spawn-modal #agent-spawn-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #agent-spawn-modal #agent-spawn-submit:active {
-  transform: translateY(2px);
-  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
 }
 body.wizard #agent-spawn-modal #agent-spawn-submit:disabled {
   /* Mid-summon: keep the button's own text hidden (font-size: 0 from the base
@@ -11747,33 +11711,14 @@ body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal,
   background: #e7d9f5;
 }
 body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(input[type=checkbox], input[type=radio]) {
-  accent-color: #d9b45a;
+  accent-color: var(--ui-wizard-gold);
 }
 body.wizard #reincarnate-agent-modal .reincarnate-mode { color: #e7d9f5; }
 body.wizard #reincarnate-agent-modal .reincarnate-mode label { color: #e7d9f5; }
 body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .modal-buttons {
   border-top-color: rgba(122, 93, 176, 0.4);
 }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .modal-buttons button:is(.primary, .ui-btn-primary) {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  color: #f3e6c0;
-  font-weight: 700;
-  letter-spacing: 1px;
-  padding: 6px 16px;
-  position: relative;
-  transition: transform 0.08s ease;
-}
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .modal-buttons button:is(.primary, .ui-btn-primary):hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .modal-buttons button:is(.primary, .ui-btn-primary):active {
-  transform: translateY(2px);
-  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
-}
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .modal-buttons button:is(.primary, .ui-btn-primary) { font-weight: 700; letter-spacing: 1px; position: relative; transition: transform 0.08s ease; }
 
 /* ─── Wizard group settings — "Enchant party" ──────────────────────
    The consolidated party editor is a full sibling of Summon and the profile
@@ -11788,33 +11733,15 @@ body.wizard #group-settings-modal .cron-create-row select:where(:not(.ui-select)
   color: #1a1330;
   background: #e7d9f5;
 }
-body.wizard #group-settings-modal input[type=checkbox] { accent-color: #d9b45a; }
+body.wizard #group-settings-modal input[type=checkbox] { accent-color: var(--ui-wizard-gold); }
 body.wizard #group-settings-modal button:where(:not(.ui-btn)):not(#group-settings-submit):not(.cron-create-error-x) {
   background: #241b3d;
-  border: 1px solid #d9b45a;
+  border: 1px solid var(--ui-wizard-gold);
   color: #f3e6c0;
 }
 body.wizard #group-settings-modal button:where(:not(.ui-btn)):not(#group-settings-submit):not(.cron-create-error-x):hover:not(:disabled) { background: #3a2a63; }
 body.wizard #group-settings-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
-body.wizard #group-settings-modal #group-settings-submit {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  color: #f3e6c0;
-  font-weight: 700;
-  letter-spacing: 1px;
-  padding: 6px 16px;
-  transition: transform 0.08s ease;
-}
-body.wizard #group-settings-modal #group-settings-submit:hover:not(:disabled) {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #group-settings-modal #group-settings-submit:active:not(:disabled) {
-  transform: translateY(2px);
-  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
-}
+body.wizard #group-settings-modal #group-settings-submit { font-weight: 700; letter-spacing: 1px; transition: transform 0.08s ease; }
 
 /* ─── Wizard retire modal — "Banish this hero?" ─────────────────
    The arcane counterpart to the Summon dialog above: retiring a hero
@@ -11855,7 +11782,7 @@ body.wizard #retire-modal #retire-ok {
   font-size: 0;
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   color: #f3e6c0;
-  border: 2px solid #d9b45a;
+  border: 2px solid var(--ui-wizard-gold);
   border-radius: 6px;
   padding: 6px 16px;
   box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
@@ -11871,7 +11798,7 @@ body.wizard #retire-modal #retire-ok::before {
 }
 body.wizard #retire-modal #retire-ok:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #d9b45a;
+  border-color: var(--ui-wizard-gold);
   box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
 }
 body.wizard #retire-modal #retire-ok:active {
@@ -11901,7 +11828,7 @@ body.wizard #retire-modal #retire-ok:disabled::after {
 body.wizard #shutdown-modal .modal p { color: #e7d9f5; }
 body.wizard #shutdown-modal #shutdown-soft {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  border: 2px solid #d9b45a;
+  border: 2px solid var(--ui-wizard-gold);
   border-radius: 6px;
   box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
   font-weight: 700;
@@ -11943,7 +11870,7 @@ body.wizard #confirm-modal .modal p { color: #e7d9f5; }
 body.wizard #confirm-modal #confirm-ok {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   color: #f3e6c0;
-  border: 2px solid #d9b45a;
+  border: 2px solid var(--ui-wizard-gold);
   border-radius: 6px;
   padding: 6px 16px;
   box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
@@ -11953,7 +11880,7 @@ body.wizard #confirm-modal #confirm-ok {
 }
 body.wizard #confirm-modal #confirm-ok:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #d9b45a;
+  border-color: var(--ui-wizard-gold);
   color: #f3e6c0;
   box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
 }
@@ -11990,19 +11917,7 @@ body.wizard #confirm-modal #confirm-ok:active {
 .cron-open-label-wizard { display: none; }
 body.wizard .cron-open-label-regular { display: none; }
 body.wizard .cron-open-label-wizard { display: inline; }
-body.wizard #cron-create-open.ui-btn-primary {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  border: 1px solid #d9b45a;
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 0.5px;
-  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
-  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
-}
-body.wizard #cron-create-open.ui-btn-primary:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
-}
+body.wizard #cron-create-open.ui-btn-primary { font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif; letter-spacing: 0.5px; }
 
 /* The dialog surface: midnight-violet void, mystic-purple frame + glow,
    parchment text — the same palette as the Summon / Banish dialogs. The input
@@ -12046,7 +11961,7 @@ body.wizard #cron-create-modal .cron-create-row select:where(:not(.ui-select)) o
    keeps that override winning. The submit is the modal's only .primary, and it
    gets its own gilded-lever rule (below) whose id out-specifies this anyway. */
 body.wizard #cron-create-modal button:where(:not(.ui-btn)):not(.primary) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard #cron-create-modal button:where(:not(.ui-btn)):not(.primary):hover { background: #3a2a63; }
 /* The picked "Every" chip: gilded fill so the active interval still pops out
@@ -12113,19 +12028,7 @@ body.wizard .cron-runs { background: #18122b; border-color: rgba(122, 93, 176, .
    wizard-fx's global cast-FX handler, so no extra JS is needed. The
    #cron-create-submit id out-specifies both the base .modal-buttons
    button.primary rule and the :not(.primary) secondary skin above. */
-body.wizard #cron-create-modal #cron-create-submit {
-  font-size: 0;
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-  position: relative;
-  transition: transform 0.08s ease;
-}
+body.wizard #cron-create-modal #cron-create-submit { font-size: 0; letter-spacing: 1px; font-weight: 700; position: relative; transition: transform 0.08s ease; }
 body.wizard #cron-create-modal #cron-create-submit::before {
   content: "⏳ Bind it!";
   font-size: 14px;
@@ -12137,15 +12040,6 @@ body.wizard #cron-create-modal.cron-editing #cron-create-submit::before {
 body.wizard #cron-create-modal.cron-duplicating #cron-create-submit::before {
   content: "⏳ Bind the copy!";
 }
-body.wizard #cron-create-modal #cron-create-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #cron-create-modal #cron-create-submit:active {
-  transform: translateY(2px);
-  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
-}
-body.wizard #cron-create-modal #cron-create-submit:disabled { opacity: 0.7; }
 body.wizard #cron-create-modal #cron-create-submit:disabled::before { content: "⏳ Binding…"; }
 body.wizard #cron-create-modal.cron-editing #cron-create-submit:disabled::before { content: "⏳ Re-binding…"; }
 body.wizard #cron-create-modal.cron-duplicating #cron-create-submit:disabled::before { content: "⏳ Binding copy…"; }
@@ -12171,17 +12065,7 @@ body.wizard #message-create-modal .cleanup-row .id,
 body.wizard #message-create-modal .cleanup-badge { color: #b39ddb; }
 body.wizard #message-create-modal .cleanup-badge { border-color: #3a2a63; }
 body.wizard #message-create-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
-body.wizard #message-create-modal #message-create-submit {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0; border: 2px solid #d9b45a; border-radius: 6px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 0.5px; font-weight: 700;
-}
-body.wizard #message-create-modal #message-create-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #message-create-modal #message-create-submit:disabled { opacity: 0.6; }
+body.wizard #message-create-modal #message-create-submit { letter-spacing: 0.5px; font-weight: 700; }
 
 /* ─── Wizard operator missive composer ──────────────────────────────
    This is the terminal-pane Ctrl/Cmd+M composer, not the agent-authored
@@ -12199,23 +12083,13 @@ body.wizard .operator-message-overlay .spawn-attachments-list li {
 }
 body.wizard .operator-message-overlay .spawn-attachments-list .att-name { color: #f3e6c0; }
 body.wizard .operator-message-overlay .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
-body.wizard .operator-message-overlay .operator-message-submit {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0; border: 2px solid #d9b45a; border-radius: 6px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 0.5px; font-weight: 700;
-}
-body.wizard .operator-message-overlay .operator-message-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard .operator-message-overlay .operator-message-submit:disabled { opacity: 0.6; }
+body.wizard .operator-message-overlay .operator-message-submit { letter-spacing: 0.5px; font-weight: 700; }
 
 /* ─── Wizard invite-hero picker ──────────────────────────────────
    #add-member-modal shares .add-member-modal with the sudo/cron target
    pickers, so every rule stays under this overlay id. */
 
-body.wizard #add-member-modal .add-member-modal h3 .muted { color: #d9b45a; }
+body.wizard #add-member-modal .add-member-modal h3 .muted { color: var(--ui-wizard-gold); }
 body.wizard #add-member-modal .add-member-list {
   background: #120c24; border-color: rgba(122, 93, 176, 0.5);
 }
@@ -12224,7 +12098,7 @@ body.wizard #add-member-modal .add-member-row.highlighted { background: #3a2a63;
 body.wizard #add-member-modal .add-member-row .rowname { color: #f3e6c0; }
 body.wizard #add-member-modal .add-member-row .id,
 body.wizard #add-member-modal .add-member-row .offline { color: #b39ddb; }
-body.wizard #add-member-modal .add-member-row .role { color: #d9b45a; }
+body.wizard #add-member-modal .add-member-row .role { color: var(--ui-wizard-gold); }
 body.wizard #add-member-modal .add-member-foot kbd {
   background: #241b3d; border-color: #7a5db0; color: #f3e6c0;
 }
@@ -12236,7 +12110,7 @@ body.wizard #add-member-modal .add-member-foot kbd {
    wizard span coloring makes its live row copy nearly black on #0d1117. */
 
 body.wizard #cron-pick-target-modal .add-member-modal h3 .muted,
-body.wizard #cron-pick-target-modal .add-member-modal h3 .theme-copy-wizard { color: #d9b45a; }
+body.wizard #cron-pick-target-modal .add-member-modal h3 .theme-copy-wizard { color: var(--ui-wizard-gold); }
 body.wizard #cron-pick-target-modal .add-member-list {
   background: #120c24; border-color: rgba(122, 93, 176, 0.5);
 }
@@ -12245,7 +12119,7 @@ body.wizard #cron-pick-target-modal .add-member-row.highlighted { background: #3
 body.wizard #cron-pick-target-modal .add-member-row .rowname { color: #f3e6c0; }
 body.wizard #cron-pick-target-modal .add-member-row .id,
 body.wizard #cron-pick-target-modal .add-member-row .offline { color: #b39ddb; }
-body.wizard #cron-pick-target-modal .add-member-row .role { color: #d9b45a; }
+body.wizard #cron-pick-target-modal .add-member-row .role { color: var(--ui-wizard-gold); }
 body.wizard #cron-pick-target-modal .add-member-row .online { color: #5ee58a; }
 body.wizard #cron-pick-target-modal .add-member-foot kbd {
   background: #241b3d; border-color: #7a5db0; color: #f3e6c0;
@@ -12264,19 +12138,7 @@ body.wizard #cron-pick-target-modal .add-member-foot kbd {
 .group-create-label-wizard { display: none; }
 body.wizard .group-create-label-regular { display: none; }
 body.wizard .group-create-label-wizard { display: inline; }
-body.wizard #group-create-open.ui-btn-primary {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  border: 1px solid #d9b45a;
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 0.5px;
-  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
-  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
-}
-body.wizard #group-create-open.ui-btn-primary:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
-}
+body.wizard #group-create-open.ui-btn-primary { font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif; letter-spacing: 0.5px; }
 
 /* ─── Wizard "⚔ Form a party" DIALOG — the modal the button above opens ──
    The "⚔ Form a party" button was re-skinned above, but the dialog it opens
@@ -12312,7 +12174,7 @@ body.wizard #group-create-modal .cron-create-label { color: #b39ddb; }
    the #group-create-modal id already out-specifies the base .dir-browse-btn
    rule, so the Browse… button re-themes too. */
 body.wizard #group-create-modal button:where(:not(.ui-btn)):not(.primary) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard #group-create-modal button:where(:not(.ui-btn)):not(.primary):hover { background: #3a2a63; }
 body.wizard #group-create-modal .group-create-workspace {
@@ -12329,33 +12191,12 @@ body.wizard #group-create-modal .modal-buttons { border-top-color: rgba(122, 93,
    sparks via wizard-fx's global cast-FX handler, so no extra JS is needed. The
    #group-create-submit id out-specifies the base .modal-buttons button.primary
    rule and the :not(.primary) secondary skin above. */
-body.wizard #group-create-modal #group-create-submit {
-  font-size: 0;
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-  position: relative;
-  transition: transform 0.08s ease;
-}
+body.wizard #group-create-modal #group-create-submit { font-size: 0; letter-spacing: 1px; font-weight: 700; position: relative; transition: transform 0.08s ease; }
 body.wizard #group-create-modal #group-create-submit::before {
   content: "⚔ Form the party!";
   font-size: 14px;
   letter-spacing: 1px;
 }
-body.wizard #group-create-modal #group-create-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #group-create-modal #group-create-submit:active {
-  transform: translateY(2px);
-  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
-}
-body.wizard #group-create-modal #group-create-submit:disabled { opacity: 0.7; }
 body.wizard #group-create-modal #group-create-submit:disabled::before { content: "⚔ Gathering the party…"; }
 
 /* Party-profile picker (JOH-356). The roster readback reuses .template-preview
@@ -12375,7 +12216,7 @@ body.wizard #group-create-modal .template-preview {
   background: #140f28; border-color: rgba(122, 93, 176, 0.4);
 }
 body.wizard #group-create-modal .template-preview .tp-name { color: #f3e6c0; }
-body.wizard #group-create-modal .template-preview .tp-owner { color: #d9b45a; }
+body.wizard #group-create-modal .template-preview .tp-owner { color: var(--ui-wizard-gold); }
 body.wizard #group-create-modal .template-preview .tp-badges .tc-count { color: #b39ddb; }
 body.wizard #group-create-modal .group-create-origin-options,
 body.wizard #group-create-modal .group-clone-preview {
@@ -12416,28 +12257,8 @@ body.wizard #human-reply-modal .modal-buttons { border-top-color: rgba(122, 93, 
    keeps its real text (see the block comment) with a 🕊 glyph prefix. The
    #human-reply-modal id out-specifies the base .modal-buttons button.primary
    rule and the :not(.primary) secondary skin above. */
-body.wizard #human-reply-modal #human-reply-submit {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-  position: relative;
-  transition: transform 0.08s ease;
-}
+body.wizard #human-reply-modal #human-reply-submit { letter-spacing: 1px; font-weight: 700; position: relative; transition: transform 0.08s ease; }
 body.wizard #human-reply-modal #human-reply-submit::before { content: "🕊 "; }
-body.wizard #human-reply-modal #human-reply-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #human-reply-modal #human-reply-submit:active {
-  transform: translateY(2px);
-  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
-}
-body.wizard #human-reply-modal #human-reply-submit:disabled { opacity: 0.6; }
 
 /* ─── Wizard command palette — "📖 The Spellbook" ────────────────────
    The Ctrl/⌘-K launcher (palette.js) re-skinned arcane, the sibling of the
@@ -12460,7 +12281,7 @@ body.wizard #command-palette-modal .palette-title {
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   font-size: 16px; letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-  border-bottom: 1px solid #d9b45a;
+  border-bottom: 1px solid var(--ui-wizard-gold);
 }
 
 /* The box surface: midnight-violet void, mystic-purple frame + glow. */
@@ -12500,7 +12321,7 @@ body.wizard #command-palette-modal .palette-foot {
   color: #b39ddb;
 }
 body.wizard #command-palette-modal .palette-foot kbd {
-  background: #241b3d; border-color: #d9b45a; color: #f3e6c0;
+  background: #241b3d; border-color: var(--ui-wizard-gold); color: #f3e6c0;
 }
 
 /* The header 🔍 launcher becomes a 📖 spellbook in wizard mode — the same
@@ -12509,7 +12330,7 @@ body.wizard #command-palette-modal .palette-foot kbd {
    we re-state the arcane chrome here. */
 body.wizard #command-palette-btn {
   font-size: 0;
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard #command-palette-btn::before {
   content: "📖"; font-size: 11px;
@@ -12533,7 +12354,7 @@ body.wizard .win-label-regular { display: none; }
 body.wizard .win-label-wizard { display: inline; }
 
 body.wizard #window-all-btn {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard #window-all-btn:hover { background: #3a2a63; }
 
@@ -12567,12 +12388,12 @@ body.wizard #window-modal .window-dir-note-wizard { display: inline; }
 body.wizard #window-modal .window-role-chip {
   background: #241b3d; border: 1px solid #3a2a63; color: #e7d9f5;
 }
-body.wizard #window-modal .window-role-chip:hover { border-color: #d9b45a; }
+body.wizard #window-modal .window-role-chip:hover { border-color: var(--ui-wizard-gold); }
 body.wizard #window-modal .window-role-chip.on {
-  background: #3a2a63; border-color: #d9b45a; color: #f3e6c0;
+  background: #3a2a63; border-color: var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard #window-modal .window-role-chip.partial {
-  border-color: #d9b45a; color: #f3e6c0;
+  border-color: var(--ui-wizard-gold); color: #f3e6c0;
 }
 
 /* The candidate list: a deeper violet-void well with a mystic-purple frame;
@@ -12592,19 +12413,7 @@ body.wizard #window-modal .cleanup-badge { border-color: #3a2a63; color: #b39ddb
    CSS only gilds the chrome; the copy swap lives in the JS. The .cleanup-error
    line is deliberately left its base red (a status signal, not chrome). */
 body.wizard #window-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
-body.wizard #window-modal #window-submit {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  box-shadow: 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 0.5px;
-  font-weight: 700;
-}
-body.wizard #window-modal #window-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #window-modal #window-submit:disabled { opacity: 0.6; }
+body.wizard #window-modal #window-submit { letter-spacing: 0.5px; font-weight: 700; }
 
 /* ─── Wizard bulk cleanup — "🧹 Clean up agents and conversations" ────
    The global filter-bar cog's "🧹 clean up" item (and the group cog's
@@ -12662,28 +12471,7 @@ body.wizard #cleanup-modal .cleanup-related { border-top-color: rgba(122, 93, 17
    tier flags the submit .danger — kept as a crimson-ember lever so the
    irreversible action still signals danger inside the arcane frame. */
 body.wizard #cleanup-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
-body.wizard #cleanup-modal #cleanup-submit {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  box-shadow: 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 0.5px;
-  font-weight: 700;
-}
-body.wizard #cleanup-modal #cleanup-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #cleanup-modal #cleanup-submit:is(.danger, .ui-btn-danger) {
-  background: linear-gradient(180deg, #6e1f2a 0%, #3a1018 100%);
-  border-color: #f0883e;
-  box-shadow: 0 0 10px rgba(240, 136, 62, 0.5);
-}
-body.wizard #cleanup-modal #cleanup-submit:is(.danger, .ui-btn-danger):hover {
-  background: linear-gradient(180deg, #8a2836 0%, #4a141f 100%);
-  box-shadow: 0 0 16px rgba(240, 136, 62, 0.8);
-}
-body.wizard #cleanup-modal #cleanup-submit:disabled { opacity: 0.6; }
+body.wizard #cleanup-modal #cleanup-submit { letter-spacing: 0.5px; font-weight: 700; }
 
 /* ─── Wizard bulk-retire preview — "Banish heroes" ────────────
    The group, Unbound, and all-parties retirement previews share this one
@@ -12709,26 +12497,7 @@ body.wizard #retire-preview-modal .cleanup-row label .cleanup-badge {
 body.wizard #retire-preview-modal .modal-buttons {
   border-top-color: rgba(122, 93, 176, 0.4);
 }
-body.wizard #retire-preview-modal #retire-preview-submit {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0; border: 2px solid #d9b45a; border-radius: 6px;
-  box-shadow: 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 0.5px; font-weight: 700;
-}
-body.wizard #retire-preview-modal #retire-preview-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #retire-preview-modal #retire-preview-submit:is(.danger, .ui-btn-danger) {
-  background: linear-gradient(180deg, #6e1f2a 0%, #3a1018 100%);
-  border-color: #f0883e;
-  box-shadow: 0 0 10px rgba(240, 136, 62, 0.5);
-}
-body.wizard #retire-preview-modal #retire-preview-submit:is(.danger, .ui-btn-danger):hover {
-  background: linear-gradient(180deg, #8a2836 0%, #4a141f 100%);
-  box-shadow: 0 0 16px rgba(240, 136, 62, 0.8);
-}
-body.wizard #retire-preview-modal #retire-preview-submit:disabled { opacity: 0.6; }
+body.wizard #retire-preview-modal #retire-preview-submit { letter-spacing: 0.5px; font-weight: 700; }
 
 /* ─── Wizard delete-retired preview — "Dispel banished heroes" ───
    This overlay shares .cleanup-modal with the bulk cleanup, retire-preview,
@@ -12759,26 +12528,7 @@ body.wizard #delete-retired-modal .cleanup-row label .cleanup-badge:not(.online)
 body.wizard #delete-retired-modal .modal-buttons {
   border-top-color: rgba(122, 93, 176, 0.4);
 }
-body.wizard #delete-retired-modal #delete-retired-submit {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0; border: 2px solid #d9b45a; border-radius: 6px;
-  box-shadow: 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 0.5px; font-weight: 700;
-}
-body.wizard #delete-retired-modal #delete-retired-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #delete-retired-modal #delete-retired-submit:is(.danger, .ui-btn-danger) {
-  background: linear-gradient(180deg, #6e1f2a 0%, #3a1018 100%);
-  border-color: #f0883e;
-  box-shadow: 0 0 10px rgba(240, 136, 62, 0.5);
-}
-body.wizard #delete-retired-modal #delete-retired-submit:is(.danger, .ui-btn-danger):hover {
-  background: linear-gradient(180deg, #8a2836 0%, #4a141f 100%);
-  box-shadow: 0 0 16px rgba(240, 136, 62, 0.8);
-}
-body.wizard #delete-retired-modal #delete-retired-submit:disabled { opacity: 0.6; }
+body.wizard #delete-retired-modal #delete-retired-submit { letter-spacing: 0.5px; font-weight: 700; }
 
 /* ─── Wizard worktree cleanup — "Prune worktrees" ───────────────────
    This overlay shares .cleanup-modal with several lifecycle dialogs. Keep the
@@ -12795,7 +12545,7 @@ body.wizard #worktree-cleanup-modal .cleanup-row { border-bottom-color: #241b3d;
 body.wizard #worktree-cleanup-modal .cleanup-row .branch { color: #e7d9f5; }
 body.wizard #worktree-cleanup-modal .cleanup-badge { border-color: #3a2a63; }
 body.wizard #worktree-cleanup-modal .cleanup-badge.merged { color: #7ee2a8; }
-body.wizard #worktree-cleanup-modal :is(.cleanup-badge.upstream-gone, .cleanup-badge.stale, .cleanup-dangling-note) { color: #d9b45a; }
+body.wizard #worktree-cleanup-modal :is(.cleanup-badge.upstream-gone, .cleanup-badge.stale, .cleanup-dangling-note) { color: var(--ui-wizard-gold); }
 body.wizard #worktree-cleanup-modal .delete-agent-wt code {
   background: #241b3d; border: 1px solid #3a2a63; color: #f3e6c0;
 }
@@ -12838,37 +12588,13 @@ body.wizard #delete-group-modal .cleanup-badge {
   color: #b39ddb;
 }
 body.wizard #delete-group-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
-body.wizard #delete-group-modal #delete-group-submit {
-  font-size: 0;
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-  position: relative;
-  transition: transform 0.08s ease;
-}
+body.wizard #delete-group-modal #delete-group-submit { font-size: 0; letter-spacing: 1px; font-weight: 700; position: relative; transition: transform 0.08s ease; }
 body.wizard #delete-group-modal #delete-group-submit::before {
   content: "🪄 Disband!";
   font-size: 14px;
   letter-spacing: 1px;
 }
-body.wizard #delete-group-modal #delete-group-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #d9b45a;
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #delete-group-modal #delete-group-submit:active {
-  transform: translateY(2px);
-  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
-}
-body.wizard #delete-group-modal #delete-group-submit:disabled {
-  font-size: 0;
-  opacity: 0.7;
-}
+body.wizard #delete-group-modal #delete-group-submit:disabled { font-size: 0; }
 body.wizard #delete-group-modal #delete-group-submit:disabled::before { content: none; }
 body.wizard #delete-group-modal #delete-group-submit:disabled::after {
   content: "Disbanding…";
@@ -12912,7 +12638,7 @@ body.wizard #term-modal .modal p strong { color: #f3e6c0; }
 body.wizard #term-modal #term-current {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   color: #f3e6c0;
-  border: 2px solid #d9b45a;
+  border: 2px solid var(--ui-wizard-gold);
   border-radius: 6px;
   padding: 6px 16px;
   box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
@@ -12922,7 +12648,7 @@ body.wizard #term-modal #term-current {
 }
 body.wizard #term-modal #term-current:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #d9b45a;
+  border-color: var(--ui-wizard-gold);
   color: #f3e6c0;
   box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
 }
@@ -12971,13 +12697,13 @@ body.wizard #term-modal #term-current:active {
 body.wizard #term-chooser-modal .term-chooser-meta,
 body.wizard #term-chooser-modal .term-choice-section,
 body.wizard #term-chooser-modal .term-choice-desc { color: #ad9abb; }
-body.wizard #term-chooser-modal .term-chooser-meta code { color: #d9b45a; }
+body.wizard #term-chooser-modal .term-chooser-meta code { color: var(--ui-wizard-gold); }
 body.wizard #term-chooser-modal .term-choice {
   background: #1e1629; border-color: #59466b; color: #e7d9f5;
 }
 body.wizard #term-chooser-modal .term-choice:hover,
 body.wizard #term-chooser-modal .term-choice:focus-visible {
-  border-color: #d9b45a; background: #2e2240; box-shadow: 0 0 10px rgba(217, 180, 90, 0.2);
+  border-color: var(--ui-wizard-gold); background: #2e2240; box-shadow: 0 0 10px rgba(217, 180, 90, 0.2);
 }
 body.wizard #term-chooser-modal .term-choice-tag,
 body.wizard #term-chooser-modal .term-choice-key,
@@ -13011,7 +12737,7 @@ body.wizard #profile-editor-modal .cron-create-row select:where(:not(.ui-select)
    not specificity, is what protects the Inscribe button. The
    #profile-editor-modal id already out-specifies the base button rules. */
 body.wizard #profile-editor-modal button:where(:not(.ui-btn)):not(#profile-editor-submit) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard #profile-editor-modal button:where(:not(.ui-btn)):not(#profile-editor-submit):hover { background: #3a2a63; }
 
@@ -13025,37 +12751,14 @@ body.wizard #profile-editor-modal button:where(:not(.ui-btn)):not(#profile-edito
    secondary-button rule above can't touch this button: its
    :not(#profile-editor-submit) excludes it. #profile-editor-modal keeps it
    out-specifying the base .primary rule. */
-body.wizard #profile-editor-modal #profile-editor-submit {
-  font-size: 0;
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-  position: relative;
-  transition: transform 0.08s ease;
-}
+body.wizard #profile-editor-modal #profile-editor-submit { font-size: 0; letter-spacing: 1px; font-weight: 700; position: relative; transition: transform 0.08s ease; }
 body.wizard #profile-editor-modal #profile-editor-submit::before {
   content: "📜 Inscribe!";
   font-size: 14px;
   letter-spacing: 1px;
 }
-body.wizard #profile-editor-modal #profile-editor-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #profile-editor-modal #profile-editor-submit:active {
-  transform: translateY(2px);
-  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
-}
-body.wizard #profile-editor-modal #profile-editor-submit:disabled {
-  /* Restore the font so the honest "Save profile" label shows during save. */
-  font-size: 13px;
-  opacity: 0.7;
-}
+body.wizard #profile-editor-modal #profile-editor-submit:disabled { /* Restore the font so the honest "Save profile" label shows during save. */
+  font-size: 13px; }
 body.wizard #profile-editor-modal #profile-editor-submit:disabled::before { content: none; }
 
 /* ─── Wizard export modal — "📜 Scribe a chronicle" ─────────────────
@@ -13095,7 +12798,7 @@ body.wizard #export-agent-modal .cron-create-row select:where(:not(.ui-select)) 
    spinner itself spins tarnished-gold on a violet track (from arcane blue). */
 body.wizard #export-agent-modal .export-spinner {
   border-color: rgba(122, 93, 176, 0.4);
-  border-top-color: #d9b45a;
+  border-top-color: var(--ui-wizard-gold);
 }
 /* The "Previous exports" history panel — parchment separators, violet text,
    violet-tinted cards. The per-status chips keep their semantic ready/failed/
@@ -13117,28 +12820,7 @@ body.wizard #export-agent-modal .modal-buttons { border-top-color: rgba(122, 93,
    copy in the arcane voice. Both ids out-specify the base .primary rule; the
    click already sprays cast sparks via wizard-fx's global cast-FX handler. */
 body.wizard #export-agent-modal #export-agent-submit,
-body.wizard #export-agent-modal #export-agent-download {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-  position: relative;
-  transition: transform 0.08s ease;
-}
-body.wizard #export-agent-modal #export-agent-submit:hover,
-body.wizard #export-agent-modal #export-agent-download:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #export-agent-modal #export-agent-submit:active,
-body.wizard #export-agent-modal #export-agent-download:active {
-  transform: translateY(2px);
-  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
-}
+body.wizard #export-agent-modal #export-agent-download { letter-spacing: 1px; font-weight: 700; position: relative; transition: transform 0.08s ease; }
 /* Scribe (submit) glyph swap: hide the raw text, paint the arcane label. */
 body.wizard #export-agent-modal #export-agent-submit { font-size: 0; }
 body.wizard #export-agent-modal #export-agent-submit::before {
@@ -13146,7 +12828,6 @@ body.wizard #export-agent-modal #export-agent-submit::before {
   font-size: 14px;
   letter-spacing: 1px;
 }
-body.wizard #export-agent-modal #export-agent-submit:disabled { opacity: 0.7; }
 body.wizard #export-agent-modal #export-agent-submit:disabled::before { content: "📜 Scribing…"; }
 
 /* ─── Wizard PAF export dialogs ─────────────────────────────────────
@@ -13163,24 +12844,12 @@ body.wizard :is(#paf-export-modal, #group-export-modal) .paf-check input { accen
 /* Findings stay amber-on-dark so a warning still reads as one, just warmed
    toward the gold trim. */
 body.wizard :is(#paf-export-modal, #group-export-modal) .paf-findings {
-  background: #2a1d10; border-color: #d9b45a;
+  background: #2a1d10; border-color: var(--ui-wizard-gold);
 }
 body.wizard :is(#paf-export-modal, #group-export-modal) .paf-findings-head { color: #f0c860; }
 body.wizard :is(#paf-export-modal, #group-export-modal) .paf-ok { color: #7ee2a8; }
 body.wizard :is(#paf-export-modal, #group-export-modal) .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
-body.wizard :is(#paf-export-modal, #group-export-modal) button:is(.primary, .ui-btn-primary) {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  box-shadow: 0 3px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  font-weight: 700;
-}
-body.wizard :is(#paf-export-modal, #group-export-modal) button:is(.primary, .ui-btn-primary):hover:not(:disabled) {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 3px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard :is(#paf-export-modal, #group-export-modal) .ui-btn-primary:disabled { box-shadow: none; }
+body.wizard :is(#paf-export-modal, #group-export-modal) button:is(.primary, .ui-btn-primary) { font-weight: 700; }
 
 /* ─── Wizard edit-agent modal — "Enchant this hero" ─────────────
    The third of the arcane dialog re-skins (Summon a hero / Banish a
@@ -13218,7 +12887,7 @@ body.wizard #edit-member-modal .modal .field textarea {
   background: #140f28; border-color: rgba(122, 93, 176, 0.6); color: #e7d9f5;
 }
 body.wizard #edit-member-modal .modal .field input:focus,
-body.wizard #edit-member-modal .modal .field textarea:focus { border-color: #d9b45a; }
+body.wizard #edit-member-modal .modal .field textarea:focus { border-color: var(--ui-wizard-gold); }
 body.wizard #edit-member-modal .modal .field input::placeholder,
 body.wizard #edit-member-modal .modal .field textarea::placeholder { color: #7a6ba0; }
 body.wizard #edit-member-modal .cron-create-error { color: #f0b7a6; }
@@ -13239,7 +12908,7 @@ body.wizard #edit-member-modal #edit-member-save {
   font-size: 0;
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   color: #f3e6c0;
-  border: 2px solid #d9b45a;
+  border: 2px solid var(--ui-wizard-gold);
   border-radius: 6px;
   padding: 6px 16px;
   box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
@@ -13255,7 +12924,7 @@ body.wizard #edit-member-modal #edit-member-save::before {
 }
 body.wizard #edit-member-modal #edit-member-save:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  border-color: #d9b45a;
+  border-color: var(--ui-wizard-gold);
   box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
 }
 body.wizard #edit-member-modal #edit-member-save:active {
@@ -13276,16 +12945,16 @@ body.wizard #task-link-modal .field label { color: #b39ddb; }
 body.wizard #task-link-modal .field input {
   background: #140f28; border-color: rgba(122, 93, 176, 0.6); color: #e7d9f5;
 }
-body.wizard #task-link-modal .field input:focus { border-color: #d9b45a; }
+body.wizard #task-link-modal .field input:focus { border-color: var(--ui-wizard-gold); }
 body.wizard #task-link-modal .field input::placeholder { color: #7a6ba0; }
 body.wizard #task-link-modal .cron-create-error { color: #f0b7a6; }
 body.wizard #task-link-modal #task-link-cancel {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard #task-link-modal #task-link-cancel:hover { background: #3a2a63; }
 body.wizard #task-link-modal #task-link-save {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0; border: 2px solid #d9b45a; border-radius: 6px;
+  color: #f3e6c0; border: 2px solid var(--ui-wizard-gold); border-radius: 6px;
   padding: 6px 16px; box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
   letter-spacing: 1px; font-weight: 700; transition: transform 0.08s ease;
 }
@@ -13367,19 +13036,7 @@ body.wizard #profiles-manage-modal .filter-bar button.clear-filter:hover { color
 
 /* "+ new profile" — the small gilded-arcane action, the same treatment the
    filter bar's "⚔ Form a party" primary gets. */
-body.wizard #profiles-manage-modal #profile-create-open.ui-btn-primary {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  border: 1px solid #d9b45a;
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 0.5px;
-  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
-  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
-}
-body.wizard #profiles-manage-modal #profile-create-open.ui-btn-primary:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
-}
+body.wizard #profiles-manage-modal #profile-create-open.ui-btn-primary { font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif; letter-spacing: 0.5px; }
 
 /* Recipe cards: violet-framed void, gilt name, violet summary + arcane
    edit/delete actions. */
@@ -13397,25 +13054,13 @@ body.wizard #links-manage-modal .manage-intro { color: #b39ddb; }
 body.wizard #links-manage-modal .filter-bar .filter-count,
 body.wizard #links-manage-modal .filter-bar button.clear-filter { color: #b39ddb; }
 body.wizard #links-manage-modal .filter-bar button.clear-filter:hover { color: #f3e6c0; }
-body.wizard #links-manage-modal #link-new-open.ui-btn-primary {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  border: 1px solid #d9b45a;
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 0.5px;
-  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
-  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
-}
-body.wizard #links-manage-modal #link-new-open.ui-btn-primary:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
-}
+body.wizard #links-manage-modal #link-new-open.ui-btn-primary { font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif; letter-spacing: 0.5px; }
 body.wizard #links-manage-modal #links-list th,
 body.wizard #links-manage-modal #links-list td { border-bottom-color: rgba(122, 93, 176, 0.35); }
 body.wizard #links-manage-modal #links-list th { color: #b39ddb; }
 body.wizard #links-manage-modal #links-list th.sortable:hover,
 body.wizard #links-manage-modal #links-list th.sort-active,
-body.wizard #links-manage-modal #links-list th.sort-active .sort-arrow { color: #d9b45a; }
+body.wizard #links-manage-modal #links-list th.sort-active .sort-arrow { color: var(--ui-wizard-gold); }
 body.wizard #links-manage-modal #links-list tr:hover { background: #241b3d; }
 body.wizard #links-manage-modal #links-list .rowname { color: #f3e6c0; }
 body.wizard #links-manage-modal #links-list .id,
@@ -13446,23 +13091,10 @@ body.wizard #link-modal .cron-create-enabled { color: #e7d9f5; }
 body.wizard #link-modal .cron-create-row select:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
 body.wizard #link-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 body.wizard #link-modal button:where(:not(.ui-btn)):not(#link-modal-submit) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard #link-modal button:where(:not(.ui-btn)):not(#link-modal-submit):hover { background: #3a2a63; }
-body.wizard #link-modal #link-modal-submit {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 0.5px;
-  font-weight: 700;
-}
-body.wizard #link-modal #link-modal-submit:hover:not(:disabled) {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #link-modal #link-modal-submit:disabled { opacity: 0.7; }
+body.wizard #link-modal #link-modal-submit { letter-spacing: 0.5px; font-weight: 700; }
 
 /* ─── Wizard template vocabulary — "summoning circles" ───────────────
    In 🧙 mode a group template is a SUMMONING CIRCLE: you chalk a new one,
@@ -13491,22 +13123,10 @@ body.wizard #templates-manage-modal .filter-bar button.clear-filter:hover { colo
 /* "⤓ trace a party": tarnished-gold secondary. "+ chalk a new circle":
    the gilded-arcane primary — the profiles overlay's "+ new loadout" twin. */
 body.wizard #templates-manage-modal #template-from-group-open {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard #templates-manage-modal #template-from-group-open:hover { background: #3a2a63; }
-body.wizard #templates-manage-modal #template-create-open.ui-btn-primary {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  border: 1px solid #d9b45a;
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 0.5px;
-  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
-  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
-}
-body.wizard #templates-manage-modal #template-create-open.ui-btn-primary:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
-}
+body.wizard #templates-manage-modal #template-create-open.ui-btn-primary { font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif; letter-spacing: 0.5px; }
 
 /* Circle cards: violet-framed void, gilt name, violet meta; the roster
    chips go violet with a gold owner-star. The 🕯 cast action wears a
@@ -13517,7 +13137,7 @@ body.wizard #templates-manage-modal .template-card .tc-count { color: #b39ddb; }
 body.wizard #templates-manage-modal .template-card .tc-agent {
   background: #1b1338; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5;
 }
-body.wizard #templates-manage-modal .template-card .tc-agent .tc-owner { color: #d9b45a; }
+body.wizard #templates-manage-modal .template-card .tc-agent .tc-owner { color: var(--ui-wizard-gold); }
 /* Deployed-forces strip in wizard voice (JOH-245): summoned hero parties. */
 body.wizard #templates-manage-modal .template-card .tc-forces { border-top-color: rgba(122, 93, 176, 0.4); }
 body.wizard #templates-manage-modal .template-card .tc-forces-label { color: #b39ddb; }
@@ -13559,10 +13179,10 @@ body.wizard #template-editor-modal .template-agent-roleref span { color: #b39ddb
    variants read muted-parchment (missing = gilt-warning); the legacy notice
    keeps its amber warning voice but on the violet-panel background so it sits
    inside the editor rather than on a stray slate card. */
-body.wizard #template-editor-modal .ta-profile-summary-missing { color: #d9b45a; }
+body.wizard #template-editor-modal .ta-profile-summary-missing { color: var(--ui-wizard-gold); }
 body.wizard #template-editor-modal .ta-profile-summary-default { color: #9d86c9; }
 body.wizard #template-editor-modal .ta-legacy-note {
-  background: #241b3d; border-color: #d9b45a; color: #f0d9a0;
+  background: #241b3d; border-color: var(--ui-wizard-gold); color: #f0d9a0;
 }
 /* Role-inspect panel (JOH-351, deferred to this sweep): the "what does this
    role carry?" preview under the role dropdown. Keep its structure; recolor
@@ -13572,7 +13192,7 @@ body.wizard #template-editor-modal .ta-legacy-note {
 body.wizard #template-editor-modal .role-inspect {
   background: #140f28; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5;
 }
-body.wizard #template-editor-modal .role-inspect-missing { color: #d9b45a; }
+body.wizard #template-editor-modal .role-inspect-missing { color: var(--ui-wizard-gold); }
 body.wizard #template-editor-modal .role-inspect-descr { color: #c9b6e6; }
 body.wizard #template-editor-modal .role-inspect-muted { color: #9d86c9; }
 body.wizard #template-editor-modal .role-inspect-slug {
@@ -13591,33 +13211,12 @@ body.wizard #template-editor-modal .modal-buttons { border-top-color: rgba(122, 
    button's "Save template" text hides (font-size: 0) behind the ::before
    glyph; the brief in-flight disabled state paints "🕯 Sealing…" so the
    busy copy stays in the arcane voice. */
-body.wizard #template-editor-modal #template-editor-submit {
-  font-size: 0;
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-  position: relative;
-  transition: transform 0.08s ease;
-}
+body.wizard #template-editor-modal #template-editor-submit { font-size: 0; letter-spacing: 1px; font-weight: 700; position: relative; transition: transform 0.08s ease; }
 body.wizard #template-editor-modal #template-editor-submit::before {
   content: "🕯 Seal the circle!";
   font-size: 14px;
   letter-spacing: 1px;
 }
-body.wizard #template-editor-modal #template-editor-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #template-editor-modal #template-editor-submit:active {
-  transform: translateY(2px);
-  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
-}
-body.wizard #template-editor-modal #template-editor-submit:disabled { opacity: 0.7; }
 body.wizard #template-editor-modal #template-editor-submit:disabled::before { content: "🕯 Sealing…"; }
 /* Concepts explainer (JOH-352): swap the plain body out for the flavored one
    and recolor the panel arcane. The plain/wizard body swap is theme-global (not
@@ -13629,7 +13228,7 @@ body.wizard .tpl-concepts-wizard { display: block; }
 body.wizard #template-editor-modal .tpl-concepts {
   background: #1b1338; border-color: rgba(122, 93, 176, 0.4);
 }
-body.wizard #template-editor-modal .tpl-concepts > summary { color: #d9b45a; }
+body.wizard #template-editor-modal .tpl-concepts > summary { color: var(--ui-wizard-gold); }
 body.wizard #template-editor-modal .tpl-concepts > summary:hover { color: #f3e6c0; }
 body.wizard #template-editor-modal .tpl-concepts-body b { color: #f3e6c0; }
 body.wizard #template-editor-modal .tpl-concepts-table th,
@@ -13653,44 +13252,23 @@ body.wizard #template-deploy-modal .template-preview {
   background: #140f28; border-color: rgba(122, 93, 176, 0.4);
 }
 body.wizard #template-deploy-modal .template-preview .tp-name { color: #f3e6c0; }
-body.wizard #template-deploy-modal .template-preview .tp-owner { color: #d9b45a; }
+body.wizard #template-deploy-modal .template-preview .tp-owner { color: var(--ui-wizard-gold); }
 body.wizard #template-deploy-modal .template-preview .tp-default-tag { color: #9d86c9; }
 body.wizard #template-deploy-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 /* Deploy = 🧙 Summon the hero party! — the gilded lever. The in-flight
    state (JS swaps the text to "Deploying…" and disables) stays hidden
    behind font-size: 0 and reads "🧙 Summoning…" instead. */
-body.wizard #template-deploy-modal #template-deploy-submit {
-  font-size: 0;
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-  position: relative;
-  transition: transform 0.08s ease;
-}
+body.wizard #template-deploy-modal #template-deploy-submit { font-size: 0; letter-spacing: 1px; font-weight: 700; position: relative; transition: transform 0.08s ease; }
 body.wizard #template-deploy-modal #template-deploy-submit::before {
   content: "🧙 Summon the hero party!";
   font-size: 14px;
   letter-spacing: 1px;
 }
-body.wizard #template-deploy-modal #template-deploy-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #template-deploy-modal #template-deploy-submit:active {
-  transform: translateY(2px);
-  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
-}
-body.wizard #template-deploy-modal #template-deploy-submit:disabled { opacity: 0.7; }
 body.wizard #template-deploy-modal #template-deploy-submit:disabled::before { content: "🧙 Summoning…"; }
 /* Drop-mode chooser + notes re-skinned to the parchment palette (JOH-377),
    scoped under #template-deploy-modal so this feature never widens body.wizard. */
 body.wizard #template-deploy-modal .deploy-mode {
-  background: #241b3d; border-color: #d9b45a;
+  background: #241b3d; border-color: var(--ui-wizard-gold);
 }
 body.wizard #template-deploy-modal .deploy-mode label { color: #f3e6c0; }
 body.wizard #template-deploy-modal #template-deploy-group.locked {
@@ -13708,33 +13286,12 @@ body.wizard #template-from-group-modal .cron-create-row select:where(:not(.ui-se
 body.wizard #template-from-group-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 /* Save as template = 🕯 Trace it! — gilded lever; the brief disabled
    in-flight beat reads "🕯 Tracing…". */
-body.wizard #template-from-group-modal #template-from-group-submit {
-  font-size: 0;
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-  position: relative;
-  transition: transform 0.08s ease;
-}
+body.wizard #template-from-group-modal #template-from-group-submit { font-size: 0; letter-spacing: 1px; font-weight: 700; position: relative; transition: transform 0.08s ease; }
 body.wizard #template-from-group-modal #template-from-group-submit::before {
   content: "🕯 Trace it!";
   font-size: 14px;
   letter-spacing: 1px;
 }
-body.wizard #template-from-group-modal #template-from-group-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #template-from-group-modal #template-from-group-submit:active {
-  transform: translateY(2px);
-  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
-}
-body.wizard #template-from-group-modal #template-from-group-submit:disabled { opacity: 0.7; }
 body.wizard #template-from-group-modal #template-from-group-submit:disabled::before { content: "🕯 Tracing…"; }
 /* Update-in-place mode (.tfg-updating, set while the typed name already
    belongs to a circle): the lever reads Re-trace. The extra class
@@ -13751,33 +13308,12 @@ body.wizard #template-duplicate-modal .cron-create-label { color: #b39ddb; }
 body.wizard #template-duplicate-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 /* Duplicate template = 🪞 Mirror it! — gilded lever; the disabled
    in-flight beat reads "🪞 Mirroring…". */
-body.wizard #template-duplicate-modal #template-duplicate-submit {
-  font-size: 0;
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-  position: relative;
-  transition: transform 0.08s ease;
-}
+body.wizard #template-duplicate-modal #template-duplicate-submit { font-size: 0; letter-spacing: 1px; font-weight: 700; position: relative; transition: transform 0.08s ease; }
 body.wizard #template-duplicate-modal #template-duplicate-submit::before {
   content: "🪞 Mirror it!";
   font-size: 14px;
   letter-spacing: 1px;
 }
-body.wizard #template-duplicate-modal #template-duplicate-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #template-duplicate-modal #template-duplicate-submit:active {
-  transform: translateY(2px);
-  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
-}
-body.wizard #template-duplicate-modal #template-duplicate-submit:disabled { opacity: 0.7; }
 body.wizard #template-duplicate-modal #template-duplicate-submit:disabled::before { content: "🪞 Mirroring…"; }
 
 /* ─── Wizard clone dialog — the dock card ⚙ → Clone for profiles + roles ──
@@ -13790,26 +13326,7 @@ body.wizard #template-duplicate-modal #template-duplicate-submit:disabled::befor
 
 body.wizard #clone-modal .cron-create-label { color: #b39ddb; }
 body.wizard #clone-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
-body.wizard #clone-modal #clone-modal-submit {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-  transition: transform 0.08s ease;
-}
-body.wizard #clone-modal #clone-modal-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #clone-modal #clone-modal-submit:active {
-  transform: translateY(2px);
-  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
-}
-body.wizard #clone-modal #clone-modal-submit:disabled { opacity: 0.7; }
+body.wizard #clone-modal #clone-modal-submit { letter-spacing: 1px; font-weight: 700; transition: transform 0.08s ease; }
 
 /* ─── Wizard preset-parties dialog — "⭐ Preset parties" (JOH-353) ─────
    The bundled-starters modal, the one obvious path to copy a ready-made
@@ -13844,7 +13361,7 @@ body.wizard #group-import-modal .cron-create-row input:focus { border-color: #a9
    chrome — re-skin it too or it keeps the plain dark-GitHub look inside
    the violet field. */
 body.wizard #group-import-modal .cron-create-row input[type=file]::file-selector-button {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard #group-import-modal .cron-create-row input[type=file]::file-selector-button:hover { background: #3a2a63; }
 /* The dry-run preview: violet void; the semantic ✓/⚠/✗ verdict colours
@@ -13855,27 +13372,13 @@ body.wizard #group-import-modal .group-import-preview {
 body.wizard #group-import-modal .group-import-preview .gi-head { color: #f3e6c0; }
 body.wizard #group-import-modal .group-import-preview .gi-sep { border-top-color: rgba(122, 93, 176, 0.4); }
 body.wizard #group-import-modal button:where(:not(.ui-btn)):not(#group-import-submit) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard #group-import-modal button:where(:not(.ui-btn)):not(#group-import-submit):hover { background: #3a2a63; }
 body.wizard #group-import-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 /* The gilded lever chrome, honest label kept; dim while the preview
    hasn't cleared it (or mid-import). */
-body.wizard #group-import-modal #group-import-submit {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-}
-body.wizard #group-import-modal #group-import-submit:hover:not(:disabled) {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #group-import-modal #group-import-submit:disabled { opacity: 0.55; }
+body.wizard #group-import-modal #group-import-submit { letter-spacing: 1px; font-weight: 700; }
 
 /* ─── Wizard template-import dialog — "📜 Read a scroll into a circle" ───
    The templates-family import dialog (JOH-349 sweep): a .cron-create-modal
@@ -13895,26 +13398,12 @@ body.wizard #template-import-modal .cron-create-row input {
 body.wizard #template-import-modal .cron-create-row input:focus { border-color: #a97bd6; }
 /* The file picker's Choose-file chip is a pseudo-element with its own chrome. */
 body.wizard #template-import-modal .cron-create-row input[type=file]::file-selector-button {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard #template-import-modal .cron-create-row input[type=file]::file-selector-button:hover { background: #3a2a63; }
 body.wizard #template-import-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 /* The gilded lever chrome, honest "Import" label kept. */
-body.wizard #template-import-modal #template-import-submit {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-}
-body.wizard #template-import-modal #template-import-submit:hover:not(:disabled) {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #template-import-modal #template-import-submit:disabled { opacity: 0.55; }
+body.wizard #template-import-modal #template-import-submit { letter-spacing: 1px; font-weight: 700; }
 
 body.wizard :is(#profile-export-modal, #profile-import-modal) .modal-meta,
 body.wizard :is(#profile-export-modal, #profile-import-modal) .cron-create-label {
@@ -13941,19 +13430,7 @@ body.wizard #sandbox-profiles-manage-modal .filter-bar .filter-count { color: #b
 /* "+ new ward" — the gilded-arcane primary action. The .tool buttons
    (export / import / 🤖 configure) keep their base skin, matching the
    spawn-profile manage overlay. */
-body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.ui-btn-primary {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  border: 1px solid #d9b45a;
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 0.5px;
-  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
-  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
-}
-body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.ui-btn-primary:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
-}
+body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.ui-btn-primary { font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif; letter-spacing: 0.5px; }
 body.wizard #sandbox-profiles-manage-modal .template-card .tc-name { color: #f3e6c0; }
 body.wizard #sandbox-profiles-manage-modal .template-card .sbx-cap-val { color: #d8c9f0; }
 
@@ -13965,7 +13442,7 @@ body.wizard #sandbox-profile-editor-modal .sbx-network-value-readonly { color: #
 /* Secondary + inline buttons (Cancel / 🤖 configure). :not(#…-submit) excludes
    the Inscribe lever below so the two rules match disjoint elements. */
 body.wizard #sandbox-profile-editor-modal button:where(:not(.ui-btn)):not(#sandbox-profile-editor-submit) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard #sandbox-profile-editor-modal button:where(:not(.ui-btn)):not(#sandbox-profile-editor-submit):hover { background: #3a2a63; }
 /* The wizard theme repaints every editor button in one gold-on-plum chrome,
@@ -14037,29 +13514,13 @@ body.wizard #sandbox-profile-editor-modal .sbx-segmented-control > button.sbx-se
    editor's 📜 Inscribe!. The button's own text is hidden (font-size: 0) and
    replaced by a ::before glyph; the disabled state (setEditorSaving locks it
    during the save) restores a font-size so the honest label shows through. */
-body.wizard #sandbox-profile-editor-modal #sandbox-profile-editor-submit {
-  font-size: 0;
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-  position: relative;
-  transition: transform 0.08s ease;
-}
+body.wizard #sandbox-profile-editor-modal #sandbox-profile-editor-submit { font-size: 0; letter-spacing: 1px; font-weight: 700; position: relative; transition: transform 0.08s ease; }
 body.wizard #sandbox-profile-editor-modal #sandbox-profile-editor-submit::before {
   content: "🛡 Inscribe ward!";
   font-size: 14px;
   letter-spacing: 1px;
 }
-body.wizard #sandbox-profile-editor-modal #sandbox-profile-editor-submit:not(:disabled):hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #sandbox-profile-editor-modal #sandbox-profile-editor-submit:disabled { font-size: 14px; opacity: 0.55; }
+body.wizard #sandbox-profile-editor-modal #sandbox-profile-editor-submit:disabled { font-size: 14px; }
 body.wizard #sandbox-profile-editor-modal #sandbox-profile-editor-submit:disabled::before { content: none; }
 
 /* Export / import (inscribe / read wards), mirror of the profile transfer
@@ -14081,9 +13542,6 @@ body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) in
   color: #f3e6c0;
 }
 body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) input:focus { border-color: #a97bd6; }
-body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .modal-buttons button:is(.primary, .ui-btn-primary) {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-}
 
 /* ─── Wizard role library overlay — "Class library" ────────────────────
    The roles-manage overlay (JOH-349 sweep): a .manage-overlay / .manage-modal
@@ -14099,19 +13557,7 @@ body.wizard #roles-manage-modal .filter-bar button.clear-filter { color: #b39ddb
 body.wizard #roles-manage-modal .filter-bar button.clear-filter:hover { color: #f3e6c0; }
 /* "+ new class": the gilded-arcane primary — the profiles/templates overlay's
    "+ new" twin. */
-body.wizard #roles-manage-modal #role-create-open.ui-btn-primary {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  border: 1px solid #d9b45a;
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 0.5px;
-  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
-  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
-}
-body.wizard #roles-manage-modal #role-create-open.ui-btn-primary:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
-}
+body.wizard #roles-manage-modal #role-create-open.ui-btn-primary { font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif; letter-spacing: 0.5px; }
 /* Class cards: violet-framed void, gilt name, violet meta + descr. */
 body.wizard #roles-manage-modal .template-card .tc-name { color: #f3e6c0; }
 body.wizard #roles-manage-modal .template-card .tc-sub { color: #b39ddb; }
@@ -14130,21 +13576,7 @@ body.wizard #role-editor-modal .cron-create-label { color: #b39ddb; }
 body.wizard #role-editor-modal .cron-create-row select:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
 body.wizard #role-editor-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 /* Save role = the gilded conjuring lever, honest "Save role" label kept. */
-body.wizard #role-editor-modal #role-editor-submit {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-}
-body.wizard #role-editor-modal #role-editor-submit:hover:not(:disabled) {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #role-editor-modal #role-editor-submit:disabled { opacity: 0.7; }
+body.wizard #role-editor-modal #role-editor-submit { letter-spacing: 1px; font-weight: 700; }
 
 /* ─── Wizard party-lore dialog — "📜 The party's lore" ─────────────────
    The group startup-context editor: the shared guidance every hero
@@ -14157,33 +13589,12 @@ body.wizard #group-context-modal .cron-create-label { color: #b39ddb; }
 body.wizard #group-context-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 /* Save = 📜 Inscribe it! — gilded lever; the brief disabled in-flight beat
    reads "📜 Inscribing…". */
-body.wizard #group-context-modal #group-context-submit {
-  font-size: 0;
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-  position: relative;
-  transition: transform 0.08s ease;
-}
+body.wizard #group-context-modal #group-context-submit { font-size: 0; letter-spacing: 1px; font-weight: 700; position: relative; transition: transform 0.08s ease; }
 body.wizard #group-context-modal #group-context-submit::before {
   content: "📜 Inscribe it!";
   font-size: 14px;
   letter-spacing: 1px;
 }
-body.wizard #group-context-modal #group-context-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #group-context-modal #group-context-submit:active {
-  transform: translateY(2px);
-  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
-}
-body.wizard #group-context-modal #group-context-submit:disabled { opacity: 0.7; }
 body.wizard #group-context-modal #group-context-submit:disabled::before { content: "📜 Inscribing…"; }
 
 /* ─── Wizard permissions editor — binding a hero's powers ────────
@@ -14215,7 +13626,7 @@ body.wizard #context-features-modal .perm-edit-banner strong { color: #f3e6c0; }
 body.wizard #perm-edit-modal .perm-edit-owner-note code { color: #f0c674; }
 /* Toolbar: violet-tinted filter + arcane "all default" button. */
 body.wizard #perm-edit-modal .perm-edit-toolbar button:where(:not(.ui-btn)) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard #perm-edit-modal .perm-edit-toolbar button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 body.wizard #perm-edit-modal .perm-edit-toolbar .perm-edit-filter button { background: none; border: none; }
@@ -14245,22 +13656,6 @@ body.wizard #context-features-modal .perm-tristate .ui-btn.active[data-state=def
 /* Footer: gilded Save lever + tarnished-gold Cancel, mirroring the dialogs. */
 body.wizard #perm-edit-modal .modal-buttons,
 body.wizard #context-features-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
-body.wizard #perm-edit-modal .modal-buttons button:is(.primary, .ui-btn-primary),
-body.wizard #context-features-modal .modal-buttons button:is(.primary, .ui-btn-primary) {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  border: 1px solid #d9b45a; color: #f3e6c0;
-  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
-  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
-}
-body.wizard #perm-edit-modal .modal-buttons button:is(.primary, .ui-btn-primary):hover,
-body.wizard #context-features-modal .modal-buttons button:is(.primary, .ui-btn-primary):hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
-}
-body.wizard #perm-edit-modal .modal-buttons button:is(.primary, .ui-btn-primary):disabled,
-body.wizard #context-features-modal .modal-buttons button:is(.primary, .ui-btn-primary):disabled {
-  background: #3a2a63; border-color: rgba(122, 93, 176, 0.5); color: #b39ddb; opacity: 0.6;
-}
 
 /* ─── Wizard permission-editor copy — "📕 The Grimoire" ─────────────
    #694 gave this editor its arcane chrome (surface, banner, list, tri-state,
@@ -14451,7 +13846,7 @@ body.wizard #activity-performance .debug-stat strong {
 body.wizard #activity-performance .debug-spark { border-bottom-color: rgba(122, 93, 176, 0.45); }
 body.wizard #activity-performance .debug-spark-area { fill: rgba(217, 180, 90, 0.12); }
 body.wizard #activity-performance .debug-spark-line {
-  stroke: #d9b45a;
+  stroke: var(--ui-wizard-gold);
   filter: drop-shadow(0 0 2px rgba(217, 180, 90, 0.45));
 }
 body.wizard #activity-performance .debug-phasebar {
@@ -14460,7 +13855,7 @@ body.wizard #activity-performance .debug-phasebar {
 body.wizard #activity-performance .debug-legend { color: #e7d9f5; }
 body.wizard #activity-performance .debug-legend-chip { box-shadow: 0 0 0 1px rgba(243, 230, 192, 0.2); }
 body.wizard #activity-performance .debug-table th {
-  color: #d9b45a;
+  color: var(--ui-wizard-gold);
   border-bottom-color: rgba(217, 180, 90, 0.45);
 }
 body.wizard #activity-performance .debug-table td {
@@ -14657,7 +14052,7 @@ body.wizard #trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([ty
   background: #140f28; border-color: rgba(122, 93, 176, .65); color: #f3e6c0;
 }
 body.wizard #trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea):focus {
-  border-color: #d9b45a; box-shadow: 0 0 0 1px rgba(217, 180, 90, .2), 0 0 8px rgba(169, 123, 214, .25);
+  border-color: var(--ui-wizard-gold); box-shadow: 0 0 0 1px rgba(217, 180, 90, .2), 0 0 8px rgba(169, 123, 214, .25);
 }
 body.wizard #trigger-modal .trigger-modal select option { color: #1a1330; background: #e7d9f5; }
 body.wizard #trigger-modal .trigger-scope-option input[type=radio] { accent-color: #a97bd6; }
@@ -14667,17 +14062,12 @@ body.wizard #trigger-modal .trigger-step-head,
 body.wizard #trigger-modal .trigger-action-editor-head { background: #241b3d; border-color: rgba(122, 93, 176, .55); }
 body.wizard #trigger-modal .trigger-step-body { border-color: rgba(122, 93, 176, .55); }
 body.wizard #trigger-modal .trigger-placeholder-chips button {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard #trigger-modal .trigger-placeholder-chips button:hover {
   background: #3a2a63;
 }
 body.wizard #trigger-modal .trigger-placeholder-chips button { color: #f0d066; }
-body.wizard #trigger-modal .modal-buttons button:is(.primary, .ui-btn-primary) {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  border: 2px solid #d9b45a; color: #f3e6c0;
-  box-shadow: 0 3px 0 #1e1640, 0 0 8px rgba(169, 123, 214, .5);
-}
 body.wizard .trigger-row:hover, body.wizard .trigger-row.selected { background: #211934; }
 body.wizard .trigger-inspector-row > td { background: #140f28; }
 body.wizard :is(.trigger-verdicts, .trigger-firings, .group-triggers-section) {
@@ -14687,7 +14077,7 @@ body.wizard :is(.trigger-dwell-state, #trigger-modal .trigger-harness-capabiliti
   background: #18122b; border-color: rgba(122, 93, 176, .55);
 }
 body.wizard .group-triggers-section > summary { color: #f3e6c0; }
-body.wizard .group-triggers-section > summary > a { color: #d9b45a; }
+body.wizard .group-triggers-section > summary > a { color: var(--ui-wizard-gold); }
 body.wizard .access-intro,
 body.wizard .access-sub-intro { color: #b39ddb; }
 body.wizard .access-intro strong { color: #f3e6c0; }
@@ -14733,7 +14123,7 @@ body.wizard .group-actions .cog-btn .cog-glyph {
 body.wizard .filter-bar-cog .cog-btn,
 body.wizard .row-actions .cog-btn,
 body.wizard .group-actions .cog-btn {
-  color: #d9b45a;
+  color: var(--ui-wizard-gold);
   border-color: #7a5db0;
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
 }
@@ -14746,7 +14136,7 @@ body.wizard .filter-bar-cog .cog-btn {
    gold edge, a flare of candle-glow, and the gear whirls fast. */
 body.wizard .filter-bar-cog .cog-btn:focus-visible, body.wizard .row-actions .cog-btn:focus-visible, body.wizard .group-actions .cog-btn:focus-visible {
   color: #f3e6c0;
-  border-color: #d9b45a;
+  border-color: var(--ui-wizard-gold);
   text-shadow: 0 0 10px rgba(217, 180, 90, 0.9);
 }
 body.wizard .filter-bar-cog .cog-btn:hover,
@@ -14778,12 +14168,12 @@ body.wizard .group-actions .cog-btn:focus-visible .cog-glyph {
    an icon's strokes). Pure chrome — the button, its data-act and its
    retire flow are untouched; only the look changes. */
 body.wizard .row-actions .icon-btn.warn {
-  color: #d9b45a;
+  color: var(--ui-wizard-gold);
   border-color: #7a5db0;
 }
 body.wizard .row-actions .icon-btn.warn:focus-visible {
   color: #f3d98a;
-  border-color: #d9b45a;
+  border-color: var(--ui-wizard-gold);
 }
 body.wizard .row-actions .icon-btn.warn:hover { color: #f3d98a; background: rgba(210, 153, 34, 0.15); }
 body.wizard .row-actions .icon-btn.warn:hover .trash-ico,
@@ -14816,7 +14206,7 @@ body.wizard .audit-spawn-popover-close { color: #b39ddb; text-shadow: none; }
 body.wizard .audit-spawn-popover-close:hover,
 body.wizard .audit-spawn-popover-close:focus { color: #f3e6c0; }
 body.wizard .audit-spawn-popover-note { color: #f0c674; }
-body.wizard .audit-spawn-popover h4 { color: #d9b45a; }
+body.wizard .audit-spawn-popover h4 { color: var(--ui-wizard-gold); }
 body.wizard .audit-spawn-popover pre {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
@@ -14874,7 +14264,7 @@ body.wizard .mail-gutter.dragging { background: #a97bd6; }
    emerald ember; unread counts become gilded runes. */
 body.wizard .mailbox-section,
 body.wizard .mailbox-section-toggle {
-  color: #d9b45a;
+  color: var(--ui-wizard-gold);
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 0.6px;
   text-shadow: 0 0 6px rgba(217, 180, 90, 0.25);
@@ -14884,7 +14274,7 @@ body.wizard .mailbox { border: 1px solid #33284d; color: #d8cef0; }
 body.wizard .mailbox:hover { background: #241b3d; border-color: #7a5db0; }
 body.wizard .mailbox.active {
   background: linear-gradient(180deg, #2c2150 0%, #1c1436 100%);
-  border-color: #d9b45a;
+  border-color: var(--ui-wizard-gold);
   box-shadow: inset 0 0 8px rgba(169, 123, 214, 0.3);
 }
 body.wizard .mailbox.has-unread .mailbox-name { color: #f3e6c0; }
@@ -14927,7 +14317,7 @@ body.wizard .mail-row:hover {
 }
 body.wizard .mail-row.active {
   background: linear-gradient(180deg, #2c2150 0%, #1c1436 100%);
-  border-color: #d9b45a; box-shadow: inset 0 0 10px rgba(169, 123, 214, 0.25);
+  border-color: var(--ui-wizard-gold); box-shadow: inset 0 0 10px rgba(169, 123, 214, 0.25);
 }
 body.wizard .mail-row-party { color: #e7d9f5; }
 body.wizard .mail-row-subject { color: #cbbfe8; }
@@ -14939,7 +14329,7 @@ body.wizard .mail-row-time,
 body.wizard .mail-row-group { color: #9a86c4; }
 body.wizard .mail-row-arrow { color: #9a86c4; }
 body.wizard .mail-dir.in { color: #6ee7b7; }
-body.wizard .mail-dir.out { color: #d9b45a; }
+body.wizard .mail-dir.out { color: var(--ui-wizard-gold); }
 body.wizard .mail-row-del { color: #9a86c4; }
 body.wizard .mail-row-del:hover { color: #f2777a; }
 
@@ -14950,9 +14340,9 @@ body.wizard .mail-row-del:hover { color: #f2777a; }
 body.wizard .mail-row.unread { border-left-color: #c0392b; }
 body.wizard .mail-row-dot { color: #c0392b; text-shadow: 0 0 6px rgba(192, 57, 43, 0.85); }
 
-body.wizard .mail-row-wrap[data-kind="decree"] .mail-row.unread { border-left-color: #d9b45a; }
+body.wizard .mail-row-wrap[data-kind="decree"] .mail-row.unread { border-left-color: var(--ui-wizard-gold); }
 body.wizard .mail-row-wrap[data-kind="decree"] .mail-row-dot { color: #e6c46a; text-shadow: 0 0 7px rgba(230, 196, 106, 0.9); }
-body.wizard .mail-row-wrap[data-kind="decree"] .mail-row-subject::before { content: "♛ " / ""; color: #d9b45a; }
+body.wizard .mail-row-wrap[data-kind="decree"] .mail-row-subject::before { content: "♛ " / ""; color: var(--ui-wizard-gold); }
 
 body.wizard .mail-row-wrap[data-kind="proclamation"] .mail-row.unread { border-left-color: #c99a3e; }
 body.wizard .mail-row-wrap[data-kind="proclamation"] .mail-row-dot { color: #e0a93f; text-shadow: 0 0 7px rgba(224, 169, 63, 0.85); }
@@ -14972,7 +14362,7 @@ body.wizard .mail-pager-pos,
 body.wizard .mail-pager-size { color: #b39ddb; }
 body.wizard .mail-progress-label { color: #d8cef0; }
 body.wizard .mail-progress { background: #241b3d; }
-body.wizard .mail-progress-fill { background: linear-gradient(90deg, #7a5db0, #d9b45a); }
+body.wizard .mail-progress-fill { background: linear-gradient(90deg, #7a5db0, var(--ui-wizard-gold)); }
 
 /* ─── The Unfurled Scroll (reader) ──────────────────────────────────
    The empty reader (no data-kind) sits on the arcane void; once a message
@@ -15018,7 +14408,7 @@ body.wizard .mail-reader[data-kind="reply"] {
    the rest of the wizard chrome, but gilded + haloed so it reads as regal. */
 body.wizard .mail-reader[data-kind="decree"] {
   color: #e7d9f5;
-  border: 1px solid #d9b45a; border-radius: 4px;
+  border: 1px solid var(--ui-wizard-gold); border-radius: 4px;
   padding: 24px 28px;
   background:
     radial-gradient(ellipse at 50% -12%, rgba(217, 180, 90, 0.16), transparent 55%),
@@ -15117,7 +14507,7 @@ body.wizard .mail-reader[data-kind="reply"] .mail-reader-head::after {
   background: radial-gradient(circle at 35% 30%, #a97bd6, #5a3f8a 60%, #3a2760);
 }
 body.wizard .mail-reader[data-kind="decree"] .mail-reader-head::after {
-  content: "♛" / ""; color: #f3e6c0; border: 1px solid #d9b45a;
+  content: "♛" / ""; color: #f3e6c0; border: 1px solid var(--ui-wizard-gold);
   background: radial-gradient(circle at 35% 30%, #8f6fca, #4a2f7a 60%, #2e1b52);
   box-shadow: 0 0 10px rgba(217, 180, 90, 0.5), inset 0 -2px 4px rgba(0, 0, 0, 0.35);
 }
@@ -15182,12 +14572,12 @@ body.wizard #tab-config .cfg-advanced {
   border-color: rgba(122, 93, 176, 0.4);
 }
 body.wizard #tab-config .cfg-section > h3 {
-  color: #d9b45a;
+  color: var(--ui-wizard-gold);
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.4);
 }
 /* Settings-app chrome: the rail, panel heads, row text and switches. */
 body.wizard #tab-config .cfg-rail-link:hover { background: #1c1436; }
-body.wizard #tab-config .cfg-rail-link[aria-current="page"] { background: #241b3d; color: #f3e6c0; box-shadow: inset 2px 0 #d9b45a; }
+body.wizard #tab-config .cfg-rail-link[aria-current="page"] { background: #241b3d; color: #f3e6c0; box-shadow: inset 2px 0 var(--ui-wizard-gold); }
 body.wizard #tab-config .cfg-panel-head h2 { color: #f3e6c0; }
 body.wizard #tab-config .cfg-panel-head p,
 body.wizard #tab-config .cfg-row-summary,
@@ -15196,7 +14586,7 @@ body.wizard #tab-config .cfg-save-summary { color: #b39ddb; }
 body.wizard #tab-config .cfg-field.cfg-row .cfg-label,
 body.wizard #tab-config .cfg-save-summary strong { color: #f3e6c0; }
 body.wizard #tab-config .cfg-section .cfg-field.cfg-row { border-top-color: rgba(122, 93, 176, 0.25); }
-body.wizard #tab-config .cfg-more > summary { color: #d9b45a; }
+body.wizard #tab-config .cfg-more > summary { color: var(--ui-wizard-gold); }
 body.wizard #tab-config .cfg-more .cfg-hint { background: #140f28; border-color: rgba(122, 93, 176, 0.4); }
 body.wizard #tab-config .cfg-field input[type=checkbox].cfg-switch { background: rgba(122, 93, 176, 0.45); }
 body.wizard #tab-config .cfg-field input[type=checkbox].cfg-switch::after { background: #e7d9f5; }
@@ -15208,7 +14598,7 @@ body.wizard #tab-config .cfg-field input[type=checkbox].cfg-switch:checked { bac
    here (heading-like), field-nested → violet down with the hints below (muted).
    So the sudo / remote-setup toggles read gold and the raw-transition-rules
    toggle reads violet BY DESIGN, matching their base-theme prominence. */
-body.wizard #tab-config .cfg-advanced > summary { color: #d9b45a; }
+body.wizard #tab-config .cfg-advanced > summary { color: var(--ui-wizard-gold); }
 
 /* Field labels + body text go parchment; hints and the field-nested advanced
    summary (the muted tier — see the two-tier note above) go violet. */
@@ -15218,7 +14608,7 @@ body.wizard #tab-config .cfg-terminal-attach-field { border-top-color: rgba(122,
 body.wizard #tab-config .cfg-terminal-attach-timings {
   background: #140f28; border-left-color: #a97bd6;
 }
-body.wizard #tab-config .cfg-terminal-attach-timings > strong { color: #d9b45a; }
+body.wizard #tab-config .cfg-terminal-attach-timings > strong { color: var(--ui-wizard-gold); }
 
 /* Inputs / selects / textareas: void field, mystic-purple frame, parchment
    text, gold-violet on focus — the same legible-dark treatment the dialogs
@@ -15250,7 +14640,7 @@ body.wizard #tab-config .ra-device {
   background: #140f28; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5;
 }
 body.wizard #tab-config .ra-form-grid label { color: #b39ddb; }
-body.wizard #tab-config .ra-link { color: #d9b45a; }
+body.wizard #tab-config .ra-link { color: var(--ui-wizard-gold); }
 body.wizard #tab-config .ra-link:hover { color: #f3e6c0; }
 
 /* Sticky footer: blend into the violet void, violet status text, arcane
@@ -15261,12 +14651,12 @@ body.wizard #tab-config .cfg-footer {
   background: #140f28; border-top-color: rgba(122, 93, 176, 0.4);
 }
 body.wizard #tab-config .cfg-footer button:not(.primary) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard #tab-config .cfg-footer button:not(.primary):not(:disabled):hover { background: #3a2a63; }
 body.wizard #tab-config .cfg-footer button.primary {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  border: 1px solid #d9b45a; color: #f3e6c0;
+  border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
   box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
 }
@@ -15298,16 +14688,6 @@ body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .cfg-diff-sub {
 body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .config-diff {
   background: #140f28; border-color: rgba(122, 93, 176, 0.4);
 }
-body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .modal-buttons button:is(.primary, .ui-btn-primary) {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  border: 1px solid #d9b45a; color: #f3e6c0;
-  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
-  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
-}
-body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .modal-buttons button:is(.primary, .ui-btn-primary):hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
-}
 
 /* ═══ Wizard Costs tab — "The Treasury Ledger" ═══════════════════════
    The wizard re-skin leaves most data tables their readable dark default,
@@ -15335,7 +14715,7 @@ body.wizard .cost-chart.ui-card {
 /* Gridlines + axis ticks go arcane: faint violet rules, gilded $ labels. */
 body.wizard .cost-gridline { background: rgba(122, 93, 176, 0.22); }
 body.wizard .cost-ytick {
-  color: #d9b45a; text-shadow: 0 0 5px rgba(217, 180, 90, 0.35);
+  color: var(--ui-wizard-gold); text-shadow: 0 0 5px rgba(217, 180, 90, 0.35);
 }
 body.wizard .cost-day { color: #9a86c4; }
 /* Recorded-spend bars → columns of tarnished gold. The repeating overlay
@@ -15345,7 +14725,7 @@ body.wizard .cost-bar {
   background:
     repeating-linear-gradient(180deg,
       rgba(255, 246, 214, 0.28) 0 1px, transparent 1px 6px),
-    linear-gradient(180deg, #f0d066 0%, #d9b45a 46%, #b8912f 100%);
+    linear-gradient(180deg, #f0d066 0%, var(--ui-wizard-gold) 46%, #b8912f 100%);
   box-shadow:
     0 0 6px rgba(217, 180, 90, 0.45),
     inset 0 1px 0 rgba(255, 246, 214, 0.6);
@@ -15380,7 +14760,7 @@ body.wizard .cost-col.projected[data-tip]:hover .cost-bar {
 /* Hover tooltip → a small arcane slab (violet gradient, gilded edge). */
 body.wizard .cost-col[data-tip]:hover::after {
   background: linear-gradient(180deg, #241b3d, #1a1233);
-  border-color: #d9b45a; color: #f3e6c0;
+  border-color: var(--ui-wizard-gold); color: #f3e6c0;
   box-shadow: 0 0 10px rgba(169, 123, 214, 0.4);
 }
 /* Stacked per-harness segments → a hoard of assorted coin. Each harness
@@ -15389,7 +14769,7 @@ body.wizard .cost-col[data-tip]:hover::after {
    ingot; the minted-sheen glow + coin-ridge separator match the single
    .cost-bar's gilding. The base filter:brightness hover and 0.55 weekend
    dim already carry over (they don't touch background), so no override. */
-body.wizard .cost-seg-h0 { --cost-seg-color: #d9b45a; background: linear-gradient(180deg, #f0d066 0%, #d9b45a 46%, #b8912f 100%); }
+body.wizard .cost-seg-h0 { --cost-seg-color: var(--ui-wizard-gold); background: linear-gradient(180deg, #f0d066 0%, var(--ui-wizard-gold) 46%, #b8912f 100%); }
 body.wizard .cost-seg-h1 { --cost-seg-color: #cf8341; background: linear-gradient(180deg, #e8a56a 0%, #cf8341 46%, #9c5a24 100%); }
 body.wizard .cost-seg-h2 { --cost-seg-color: #aeb6c2; background: linear-gradient(180deg, #d7dbe2 0%, #aeb6c2 46%, #7f8896 100%); }
 body.wizard .cost-seg-h3 { --cost-seg-color: #a97bd6; background: linear-gradient(180deg, #cf9bd6 0%, #a97bd6 46%, #7a5db0 100%); }
@@ -15404,7 +14784,7 @@ body.wizard .cost-seg:not(:last-child) { box-shadow: inset 0 -1px 0 rgba(20, 15,
    swatch shares), its rule gilded. */
 body.wizard .cost-tip {
   background: linear-gradient(180deg, #241b3d, #1a1233);
-  border-color: #d9b45a; color: #f3e6c0;
+  border-color: var(--ui-wizard-gold); color: #f3e6c0;
   box-shadow: 0 0 10px rgba(169, 123, 214, 0.4);
 }
 body.wizard .cost-tip-day { color: #f3e6c0; }
@@ -15440,14 +14820,14 @@ body.wizard #costs-month-nav { border-left-color: #4a3a6b; }
    specific colour tokens change so the figures read as treasury gold and
    the blue sort-header highlight doesn't clash. */
 body.wizard .cost-amt { color: #f0d066; }
-body.wizard .cost-head { color: #d9b45a; }
+body.wizard .cost-head { color: var(--ui-wizard-gold); }
 body.wizard .cost-cont { color: #8f7bbf; }
 body.wizard #costs-table tr.cost-chain td:first-child { box-shadow: inset 2px 0 0 #7a5db0; }
 body.wizard #costs-table tr.cost-chain-hl td { background: rgba(122, 93, 176, 0.14); }
 body.wizard #costs-table .cost-total-row td { border-top-color: #4a3a6b; }
 body.wizard #costs-table th.sortable:hover,
 body.wizard #costs-table th.sort-active,
-body.wizard #costs-table th.sort-active .sort-arrow { color: #d9b45a; }
+body.wizard #costs-table th.sort-active .sort-arrow { color: var(--ui-wizard-gold); }
 body.wizard .cost-ignored { border-color: #4a3a6b; }
 
 /* ─── Per-model spend strip: a treasury split between the summoned ─────
@@ -15462,7 +14842,7 @@ body.wizard .costs-model-cell b { color: #f0d066; }
 body.wizard .costs-model-cell b.cost-model-whatif { color: #b39ddb; }
 body.wizard .costs-model-cell span.muted { color: #8f7bbf; }
 body.wizard .costs-model-bar { background: #2c2150; }
-body.wizard .costs-model-bar i { background: linear-gradient(90deg, #d9b45a, #f0d066); }
+body.wizard .costs-model-bar i { background: linear-gradient(90deg, var(--ui-wizard-gold), #f0d066); }
 
 /* ─── WHAT-IF banner → an arcane divination warning ───────────────────
    The hypothetical pay-per-token estimate for a subscription reads as a
@@ -15470,7 +14850,7 @@ body.wizard .costs-model-bar i { background: linear-gradient(90deg, #d9b45a, #f0
    "estimate, not a real charge." */
 body.wizard .cost-whatif-banner {
   background: rgba(122, 93, 176, 0.14);
-  border-color: #d9b45a; color: #e7d9f5;
+  border-color: var(--ui-wizard-gold); color: #e7d9f5;
 }
 body.wizard .cost-whatif-banner code { color: #f0d066; }
 /* The per-row marker back to that banner gilds with the rest of the table's
@@ -16957,9 +16337,6 @@ body.wizard .process-scribe-context-preview { color: #f3e6c0; background: #18122
 body.wizard .process-scribe-prompt:focus { border-color: #d4af37; }
 body.wizard .process-scribe-context-end { color: #a99bc0; background: #211832; border-color: #6d5695; }
 body.wizard .process-scribe-context-end.is-truncated { color: #f3d58b; }
-body.wizard .process-editor-modal .modal-buttons button:is(.primary, .ui-btn-primary) {
-  background: #6d4aa2; border-color: #d4af37;
-}
 body.wizard .process-param-dialog { background: #211832; border-color: #6d5695; color: #f3e6c0; }
 body.wizard .process-unnamed { color: #a99bc0; }
 body.wizard .process-editor-title,
@@ -17336,7 +16713,7 @@ body.wizard #spawn-harness-policy-modal .spawn-harness-matrix-wrap {
   border-color: rgba(122, 93, 176, 0.55);
 }
 body.wizard #spawn-harness-policy-modal .spawn-harness-matrix th {
-  background: #1c1436; color: #d9b45a;
+  background: #1c1436; color: var(--ui-wizard-gold);
   border-bottom-color: rgba(122, 93, 176, 0.45);
 }
 body.wizard #spawn-harness-policy-modal .spawn-harness-matrix td {
@@ -17361,16 +16738,7 @@ body.wizard #spawn-harness-policy-modal .spawn-harness-same {
 body.wizard #spawn-harness-policy-modal .muted { color: #b39ddb; }
 body.wizard #spawn-harness-policy-modal .danger-text { color: #ef9a9a; }
 body.wizard #spawn-harness-policy-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
-body.wizard #spawn-harness-policy-modal .modal-buttons button:is(.primary, .ui-btn-primary) {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  border: 2px solid #d9b45a;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: .5px; font-weight: 700;
-}
-body.wizard #spawn-harness-policy-modal .modal-buttons button:is(.primary, .ui-btn-primary):hover:not(:disabled) {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
+body.wizard #spawn-harness-policy-modal .modal-buttons button:is(.primary, .ui-btn-primary) { letter-spacing: .5px; font-weight: 700; }
 .danger-text { color: var(--danger, #c33); }
 
 /* ═══ Wizard Usage tab — "🔮 The Mana Reserves" ═══════════════════════
@@ -17428,7 +16796,7 @@ body.wizard .usage-current span { color: #9a86c4; }
 body.wizard .usage-control-label { color: #b39ddb; }
 body.wizard .usage-control-divider { background: rgba(122, 93, 176, 0.5); }
 body.wizard .usage-card-controls .ui-btn[aria-pressed="true"] {
-  background: #3a2a63; border-color: #d9b45a; color: #f3e6c0;
+  background: #3a2a63; border-color: var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard .usage-card-controls .ui-btn[aria-pressed="true"]:hover:not(:disabled) { background: #3a2a63; color: #f3e6c0; }
 /* Gridlines + axis ticks go arcane: faint violet rules, gilded % labels. */
@@ -17471,7 +16839,7 @@ body.wizard .usage-forecast-hit-target:focus { stroke: rgb(169 123 214 / 22%); }
    `none`) straight across the data. Same trap for the scheduled-reset and
    now markers below. */
 body.wizard .usage-reset-mark line:not(.usage-marker-hit-target),
-body.wizard .usage-scheduled-reset line:not(.usage-marker-hit-target) { stroke: #d9b45a; }
+body.wizard .usage-scheduled-reset line:not(.usage-marker-hit-target) { stroke: var(--ui-wizard-gold); }
 body.wizard .usage-reset-mark circle {
   fill: #f0d066; filter: drop-shadow(0 0 4px rgba(240, 208, 102, 0.6));
 }
@@ -17484,7 +16852,7 @@ body.wizard .usage-chart-tooltip rect {
   fill: #241b3d; stroke: #a97bd6;
 }
 body.wizard .usage-chart-tooltip.observed rect { stroke: #4dd0e1; }
-body.wizard .usage-chart-tooltip.reset rect { stroke: #d9b45a; }
+body.wizard .usage-chart-tooltip.reset rect { stroke: var(--ui-wizard-gold); }
 body.wizard .usage-chart-tooltip.now rect { stroke: #8f7bb5; }
 body.wizard .usage-chart-tooltip text { fill: #e7d9f5; }
 body.wizard .usage-chart-tooltip .usage-tooltip-title { fill: #f3e6c0; }
@@ -17493,7 +16861,7 @@ body.wizard .usage-chart-empty { color: #8f7bb5; }
 body.wizard .usage-chart-legend { color: #b39ddb; }
 body.wizard .usage-legend-swatch.observed { border-color: #4dd0e1; }
 body.wizard .usage-legend-swatch.forecast { border-color: #a97bd6; }
-body.wizard .usage-legend-swatch.reset { border-color: #d9b45a; }
+body.wizard .usage-legend-swatch.reset { border-color: var(--ui-wizard-gold); }
 body.wizard .usage-legend-swatch.now { border-color: #8f7bb5; }
 /* The prophecy footer keeps its honest traffic-light urgency — a drained
    reserve is still bad news — just re-skinned into the arcane palette. */
@@ -17631,7 +16999,6 @@ body.wizard .git-repos-options, body.wizard .git-repos-toolbar input { backgroun
 body.wizard .git-repos-list { border-color: #483758; }
 body.wizard .git-repo-entry + .git-repo-entry, body.wizard .git-repos-footer { border-color: #443353; }
 body.wizard .git-repositories-modal input[type=checkbox] { accent-color: #a97bd6; }
-body.wizard .git-repositories-modal button:is(.primary, .ui-btn-primary) { background: #76539c; border-color: #a97bd6; }
 body.wizard .git-repo-name small,
 body.wizard .git-repo-groups,
 body.wizard .git-repos-options small,
@@ -18120,7 +17487,7 @@ tr.away-placeholder .away-recall { font-style: normal; margin-left: 8px; }
 @media (max-width: 720px) { .lt-body { flex-direction: column; } .lt-carries { width: 100%; box-sizing: border-box; } }
 body.wizard #launch-target :is(.lt-modes, .lt-nodes, .lt-carries) { border-color: rgba(122, 93, 176, 0.5); }
 body.wizard #launch-target .lt-mode { background: #140f28; border-right-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
-body.wizard #launch-target .lt-mode.sel { background: #3a2a63; color: #f3e6c0; box-shadow: inset 0 -2px 0 #d9b45a; }
+body.wizard #launch-target .lt-mode.sel { background: #3a2a63; color: #f3e6c0; box-shadow: inset 0 -2px 0 var(--ui-wizard-gold); }
 body.wizard #launch-target .lt-mode:disabled { color: #6b5a8a; }
 body.wizard #launch-target .lt-node { color: #e7d9f5; border-bottom-color: rgba(122, 93, 176, 0.3); }
 body.wizard #launch-target .lt-node.sel { background: #3a2a63; }
@@ -18455,7 +17822,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-cb-list .fa-table:focus-visible { outline: 1px solid #1f6feb; outline-offset: -1px; }
 .fa-cb-tabs { display: flex; gap: 2px; padding: 0 6px; border-bottom: 1px solid #30363d; }
 .fa-cb-tabs button { border: 0; border-bottom: 2px solid transparent; background: none; color: #8b949e; padding: 6px 10px; font: inherit; font-size: 13px; cursor: pointer; }
-.fa-cb-tabs button.on { color: #f0f6fc; border-bottom-color: #d9b45a; }
+.fa-cb-tabs button.on { color: #f0f6fc; border-bottom-color: var(--ui-wizard-gold); }
 .fa-cb-pane { min-width: 0; padding: 10px 12px; overflow: auto; max-height: 70vh; }
 .fa-cb-title { font-size: 15px; color: #f0f6fc; }
 .fa-cb-banner { margin: 8px 0; padding: 7px 10px; background: #161b22; border: 1px solid #30363d; border-left: 3px solid #e3b341; border-radius: 4px; font-size: 12px; }
@@ -19156,7 +18523,7 @@ td.process-cell { white-space: nowrap; }
 .spend-limit-banner.over-limit { border-color: #4d1d1d; border-left-color: #f85149; color: #f85149; }
 body.wizard .spend-limit-banner {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border-color: rgba(122, 93, 176, 0.5); border-left-color: #d9b45a; color: #f3e6c0;
+  border-color: rgba(122, 93, 176, 0.5); border-left-color: var(--ui-wizard-gold); color: #f3e6c0;
 }
 body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: #ffb3ad; }
 .spend-limit-banner { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
@@ -19283,10 +18650,6 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
 
 body.wizard #saved-prompts-manage-modal :is(.modal-hint, .cron-create-label) { color: #b39ddb; }
 body.wizard #saved-prompts-manage-modal .cron-create-row select:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
-body.wizard #saved-prompts-manage-modal#saved-prompts-manage-modal button:is(.primary, .ui-btn-primary) {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0; border: 2px solid #d9b45a;
-}
 body.wizard #saved-prompts-manage-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 /* Workflow sharing (.pwf): the import review. */
 .pwf-import-entry { display: inline-flex; align-items: center; gap: 8px; }

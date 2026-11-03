@@ -459,16 +459,16 @@ body.wizard .mux-tab {
 body.wizard .mux-tab:hover { color: #f3e6c0; border-color: #7a5db0; }
 body.wizard .mux-tab.active {
   background: linear-gradient(180deg, #34234f 0%, #24183c 100%);
-  color: #f3e6c0; border-color: #d9b45a;
+  color: #f3e6c0; border-color: var(--ui-wizard-gold);
   box-shadow: 0 -2px 8px rgba(169, 123, 214, 0.28);
 }
 body.wizard .mux-tab.drop-before::before,
 body.wizard .mux-tab.drop-after::after {
-  background: #d9b45a; box-shadow: 0 0 8px rgba(217, 180, 90, 0.78);
+  background: var(--ui-wizard-gold); box-shadow: 0 0 8px rgba(217, 180, 90, 0.78);
 }
 body.wizard .mux-tab.drop-group {
-  background: #34234f; border-color: #d9b45a;
-  box-shadow: inset 0 0 0 1px #d9b45a, 0 0 8px rgba(217, 180, 90, 0.55);
+  background: #34234f; border-color: var(--ui-wizard-gold);
+  box-shadow: inset 0 0 0 1px var(--ui-wizard-gold), 0 0 8px rgba(217, 180, 90, 0.55);
 }
 body.wizard .mux-tab-close:hover { color: #f0a868; }
 /* Group accents keep their hue in the portal frame but are mixed against the
@@ -487,13 +487,13 @@ body.wizard .mux-group-pill:hover {
 }
 body.wizard .mux-group-rename { background: #171024; color: #f3e6c0; }
 body.wizard .mux-strip-gap.armed {
-  background: #d9b45a; box-shadow: 0 0 8px rgba(217, 180, 90, 0.78);
+  background: var(--ui-wizard-gold); box-shadow: 0 0 8px rgba(217, 180, 90, 0.78);
 }
 /* The trailing end-zone keeps its left-edge insertion bar in wizard chrome too,
    rather than flooding the grown margin with the gap's fill colour. */
 body.wizard .mux-strip-gap.grow.armed { background: none; box-shadow: none; }
 body.wizard .mux-strip-gap.grow.armed::before {
-  background: #d9b45a; box-shadow: 0 0 7px rgba(217, 180, 90, 0.78);
+  background: var(--ui-wizard-gold); box-shadow: 0 0 7px rgba(217, 180, 90, 0.78);
 }
 body.wizard .mux-tab-menu {
   border-color: #7a5db0;
@@ -511,7 +511,7 @@ body.wizard .mux-pane-title {
   text-shadow: 0 0 7px rgba(169, 123, 214, 0.45);
 }
 body.wizard .mux-tabs.drag-out-armed,
-body.wizard .mux-pane-header.drag-out-armed { outline-color: #d9b45a; }
+body.wizard .mux-pane-header.drag-out-armed { outline-color: var(--ui-wizard-gold); }
 body.wizard .mux-drag-out-hint {
   color: #f0a868; background: #171024; border-bottom-color: #4a3a6b;
 }
