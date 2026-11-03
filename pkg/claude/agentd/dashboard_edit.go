@@ -1055,6 +1055,7 @@ func dashboardDeleteGroup(w http.ResponseWriter, group *db.AgentGroup) {
 		http.Error(w, "delete group: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	closeGroupPages(group.ID)
 	if warning := reconcileStandingOrderHookHarnesses(hookHarnesses); warning != "" {
 		w.Header().Set("X-Tclaude-Hook-Warning", warning)
 		slog.Warn("dashboard group delete: standing-order hook reconciliation failed",

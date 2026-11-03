@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -193,6 +194,10 @@ func pageAdoptTarget(w http.ResponseWriter, r *http.Request, agentID string, req
 	if ref == "" {
 		return nil, true
 	}
+	if peerActionFromRequest(r) != nil {
+		writeError(w, http.StatusForbidden, "local_only", "a group's page is reachable only by local members of its group")
+		return nil, false
+	}
 	groupName, pageName, ok := strings.Cut(ref, "/")
 	if !ok || !pageNamePattern.MatchString(pageName) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "--adopt takes <group>/<name>")
@@ -221,7 +226,9 @@ func adoptGroupPageLocked(w http.ResponseWriter, reg *livePageRegistry, g *db.Ag
 	gp := reg.byOwner[groupPageOwner(g.ID)][name]
 	switch {
 	case gp == nil:
-		return nil, func() { writeError(w, http.StatusNotFound, "not_found", "no page "+g.Name+"/"+name+" is shared with you") }
+		return nil, func() {
+			writeError(w, http.StatusNotFound, "not_found", "no page "+g.Name+"/"+name+" is shared with you")
+		}
 	case gp.agentsLocked:
 		return nil, func() { writeResourceLocked(w, "page "+g.Name+"/"+name) }
 	case mine != nil:
@@ -234,4 +241,12 @@ func adoptGroupPageLocked(w http.ResponseWriter, reg *livePageRegistry, g *db.Ag
 		}
 	}
 	return gp, nil
+}
+
+// closeGroupPages closes the pages a group owns, when it is archived or
+// deleted: no member can reach them any more.
+func closeGroupPages(groupID int64) {
+	if n := livePages.closeOwner(groupPageOwner(groupID)); n > 0 {
+		slog.Info("closed a removed group's pages", "group_id", groupID, "pages", n)
+	}
 }

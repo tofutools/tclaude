@@ -712,8 +712,10 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 			// the old origin's code holds can reach the new source.
 			p.id, p.shownAt = existing.id, existing.shownAt
 			if adopt != nil {
-				// A takeover keeps what the operator drew on the page.
+				// A takeover keeps what the operator drew on the page, and
+				// nothing else.
 				reg.detachLocked(existing)
+				forgetPageCollabExceptMarks(existing.id)
 			} else {
 				reg.removeLocked(existing)
 			}

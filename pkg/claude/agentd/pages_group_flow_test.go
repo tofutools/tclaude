@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 // tcl-20ihu3: the operator creates a page in a group's Collab space. The
@@ -62,6 +63,10 @@ func TestPageOperatorCreatedInAGroupIsTheGroupsUntilAMemberTakesItOver(t *testin
 	rec = e.call(t, member, http.MethodGet, "/v1/pages", nil)
 	assert.Contains(t, rec.Body.String(), `"group_owned":true`)
 
+	// A member live-patches the scratch page; the takeover must not carry it.
+	rec = e.call(t, other, http.MethodPost, "/v1/pages/sketch/patches?owner=crew", map[string]any{"kind": "css", "css": "body { color: red }"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
 	port := ":" + strconv.Itoa(devServer(t, "built"))
 	adopt := func(a pageAgent, body map[string]any) *http.Response {
 		t.Helper()
@@ -99,4 +104,20 @@ func TestPageOperatorCreatedInAGroupIsTheGroupsUntilAMemberTakesItOver(t *testin
 	assert.Contains(t, rec.Body.String(), "Make the pay button blue")
 	assert.Equal(t, http.StatusOK, e.call(t, other, http.MethodGet, "/v1/pages/sketch/marks?owner="+member.id, nil).Code)
 	assert.Equal(t, http.StatusNotFound, e.call(t, other, http.MethodGet, "/v1/pages/sketch/marks?owner=crew", nil).Code, "the group no longer owns it")
+	rec = e.call(t, member, http.MethodGet, "/v1/pages/sketch/patches", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "color: red", "the scratch page's live patches do not follow it to the adopter's source")
+}
+
+// A group's own pages close when it is archived: no member can reach them.
+func TestPageGroupOwnedClosesWithItsGroup(t *testing.T) {
+	e := newPageEnv(t)
+	e.f.HaveGroup("crew")
+	p := e.createGroupPage(t, "crew", "sketch")
+	req := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/groups/crew/archive", nil))
+	rec := testharness.Serve(e.f.Mux, req)
+	require.Less(t, rec.Code, 300, rec.Body.String())
+	for _, sp := range e.snapshotPages(t) {
+		assert.NotEqual(t, p.ID, sp.ID, "the archived group's page is closed")
+	}
 }

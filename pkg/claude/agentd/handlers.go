@@ -3981,6 +3981,7 @@ func handleGroupDelete(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		writeError(w, http.StatusConflict, "constraint", err.Error())
 		return
 	}
+	closeGroupPages(g.ID)
 	if warning := reconcileStandingOrderHookHarnesses(hookHarnesses); warning != "" {
 		w.Header().Set("X-Tclaude-Hook-Warning", warning)
 		slog.Warn("group delete: standing-order hook reconciliation failed",
