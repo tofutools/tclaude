@@ -5512,10 +5512,8 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 }
 .manage-overlay.show { display: flex; }
 .manage-modal {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 18px 22px; min-width: 620px; max-width: min(880px, calc(100vw - 32px));
   width: calc(100% - 32px); max-height: 86vh; overflow-y: auto;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
   display: flex; flex-direction: column; gap: 10px;
 }
 .manage-modal h3 { margin: 0; font-size: 15px; color: #d4d4d4; }
@@ -5848,9 +5846,7 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
    out-of-band system layer sit higher. */
 #confirm-modal { z-index: var(--z-confirm); }
 .modal {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 20px 24px; max-width: 480px; width: calc(100% - 32px);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
 }
 .modal h3 { margin: 0 0 8px; font-size: 16px; color: #d4d4d4; }
 /* Body text in a dialog; the standard hint and error text (ui.css) keep their
@@ -6301,9 +6297,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
 .groups-dnd-hints strong { color: #c9d1d9; font-weight: 600; margin-right: 4px; }
 .groups-dnd-hints em { color: #c9d1d9; font-style: normal; }
 .add-member-modal {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 16px 18px; max-width: 560px; width: calc(100% - 32px);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
   display: flex; flex-direction: column; max-height: 70vh;
 }
 .add-member-modal h3 { margin: 0 0 8px; font-size: 14px; color: #d4d4d4; }
@@ -6477,11 +6471,9 @@ body.wizard .filter-bar .view-btn.ui-btn[aria-expanded="true"] { color: #f3e6c0;
    its banner deliberately contrasts with the orange sudo variant below: these
    overrides are PERMANENT. */
 .perm-edit-modal {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 18px 22px; min-width: 560px; max-width: 680px;
   width: calc(100% - 32px);
-  display: flex; flex-direction: column; gap: 10px;
-  color: #c9d1d9; max-height: 88vh;
+  display: flex; flex-direction: column; gap: 10px; max-height: 88vh;
 }
 .perm-edit-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
 .perm-edit-banner {
@@ -6789,7 +6781,6 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
    radio, schedule presets, subject, body, enabled), so we widen
    slightly and let the body textarea grow. */
 .cron-create-modal {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 18px 22px;
   min-width: 520px;
   /* Default ~640px on desktop — min(640, viewport-gutter), the same used
@@ -6799,8 +6790,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
      so this change is visually neutral for them. */
   width: min(640px, calc(100vw - 32px));
   max-width: min(1100px, calc(100vw - 32px));
-  display: flex; flex-direction: column; gap: 10px;
-  color: #c9d1d9; max-height: 86vh; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 10px; max-height: 86vh; overflow-y: auto;
   /* Width of the label column shared by every .cron-create-row. Lives here
      (not inline on the rule) so a field-aligned checkbox can indent to the
      exact input column without the magic number drifting out of sync. */
@@ -8819,8 +8809,6 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
   z-index: calc(var(--z-dialog) + 100);
 }
 .directory-picker-modal {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0,0,0,.5); color: #c9d1d9;
   display: flex; flex-direction: column; gap: 10px;
   padding: 18px 22px; width: min(700px, calc(100vw - 32px));
   max-height: min(720px, calc(100vh - 32px));
@@ -8871,10 +8859,6 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
 .directory-picker-empty { margin: auto; }
 .directory-picker-error { min-height: 18px; }
 .directory-picker-modal .modal-buttons { border-top: 1px solid #2a3340; padding-top: 10px; }
-body.wizard .directory-picker-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border-color: #7a5db0; box-shadow: 0 0 32px rgba(122, 93, 176, .35); color: #e7d9f5;
-}
 body.wizard .directory-picker-modal h3 { color: #f3e6c0; font-family: Papyrus, Luminari, 'Palatino Linotype', Palatino, serif; }
 body.wizard .directory-picker-path input,
 body.wizard .directory-picker-list { background: #140f28; border-color: rgba(122, 93, 176, .5); color: #f3e6c0; }
@@ -8888,8 +8872,6 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
    DOM order puts the later action dialog above it while toasts stay visible. */
 .directory-picker-action-overlay { z-index: calc(var(--z-dialog) + 100); }
 .directory-picker-action-modal {
-  background: #161b22; border: 1px solid #484f58; border-radius: 6px;
-  box-shadow: 0 12px 36px rgba(0,0,0,.7); color: #c9d1d9;
   display: flex; flex-direction: column; gap: 10px;
   padding: 18px 20px; width: min(460px, calc(100vw - 32px));
 }
@@ -8913,10 +8895,6 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
   padding: 9px 10px;
 }
 .directory-picker-action-modal .modal-buttons { border-top: 1px solid #2a3340; padding-top: 10px; }
-body.wizard .directory-picker-action-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border-color: #7a5db0; box-shadow: 0 0 32px rgba(122, 93, 176, .35); color: #e7d9f5;
-}
 body.wizard .directory-picker-action-modal.danger { border-color: #f0883e; }
 body.wizard .directory-picker-action-modal h3 {
   color: #f3e6c0; font-family: Papyrus, Luminari, 'Palatino Linotype', Palatino, serif;
@@ -9345,11 +9323,9 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
    cron-create-modal outer shape and the add-member list look for the
    editable candidate rows. */
 .cleanup-modal {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 18px 22px; min-width: 540px; max-width: 660px;
   width: calc(100% - 32px);
-  display: flex; flex-direction: column; gap: 10px;
-  color: #c9d1d9; max-height: 86vh;
+  display: flex; flex-direction: column; gap: 10px; max-height: 86vh;
 }
 .cleanup-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
 .cleanup-hint { margin: 0; }
@@ -12065,12 +12041,7 @@ body.wizard .spawn-group-word-wizard { display: inline; }
    parchment text — the same palette as the header / music card. Like the
    rest of the wizard re-skin we recolor the chrome; the input fields stay a
    legible dark (violet-tinted) so the form is still readable. */
-body.wizard #agent-spawn-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #agent-spawn-modal .cron-create-modal h3 {
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 uses. */
@@ -12178,12 +12149,7 @@ body.wizard #agent-spawn-modal #agent-spawn-submit:disabled::before { content: "
    but share the same violet-void, gold-frame, and parchment-control treatment
    as the other wizard forms. Keep this scoped to the three action-dialog
    overlays: .cron-create-modal is also used by several unrelated dialogs. */
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .cron-create-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -12250,12 +12216,7 @@ body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal,
    editor: its fields determine the sanctum, lore, loadout, ward, runes, and
    policies inherited by future heroes. Keep the skin id-scoped because the
    same overlay primitive is shared by ordinary action dialogs. */
-body.wizard #group-settings-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #group-settings-modal .cron-create-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -12324,12 +12285,7 @@ body.wizard #retire-title .retire-title-wizard { display: inline; }
 /* The dialog surface: midnight-violet void, mystic-purple frame + glow,
    parchment text — the same palette as the spawn dialog / header / music
    card. Chrome is recolored; the copy stays honest and legible. */
-body.wizard #retire-modal .modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #retire-modal .modal h3 {
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 / spawn title use. */
@@ -12408,12 +12364,7 @@ body.wizard #retire-modal #retire-ok:disabled::after {
    A reversible stop uses the established Slumber/Awaken vocabulary. Keep the
    rules scoped to this transaction overlay: shutdown shares the generic
    .modal surface with unrelated destructive dialogs. */
-body.wizard #shutdown-modal .modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #shutdown-modal .modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -12461,12 +12412,7 @@ body.wizard #shutdown-modal #shutdown-force:hover {
    #confirm-modal for the same reason the retire rules are scoped
    (TestDashboardCSS_WizardRetireModalScoped): an unscoped body.wizard
    .modal would repaint every sibling dialog. */
-body.wizard #confirm-modal .modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #confirm-modal .modal h3 {
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 / spawn / retire titles use. */
@@ -12552,12 +12498,7 @@ body.wizard #cron-create-open.ui-btn-primary:hover {
 /* The dialog surface: midnight-violet void, mystic-purple frame + glow,
    parchment text — the same palette as the Summon / Banish dialogs. The input
    fields stay a legible dark (violet-tinted) so the form is still readable. */
-body.wizard #cron-create-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 /* Title: hide the JS-set text (font-size:0) and paint the arcane copy via
    ::before — "⏳ Bind a recurring ritual" in create mode, "⏳ Re-bind the
    ritual" in edit mode (the .cron-editing class the open JS toggles). The
@@ -12724,12 +12665,7 @@ body.wizard #cron-create-modal.cron-duplicating #cron-create-submit:disabled::be
    is deliberately scoped to #message-create-modal. The group-scoped form also
    borrows cleanup list/toolbar primitives; those receive the same violet-void
    treatment as the window and bulk-cleanup dialogs. */
-body.wizard #message-create-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #message-create-modal .cron-create-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -12782,12 +12718,7 @@ body.wizard #message-create-modal #message-create-submit:disabled { opacity: 0.6
 /* ─── Wizard operator missive composer ──────────────────────────────
    This is the terminal-pane Ctrl/Cmd+M composer, not the agent-authored
    message action above. Keep its arcane skin scoped to its owned overlay. */
-body.wizard .operator-message-overlay .operator-message-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard .operator-message-overlay .operator-message-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -12826,12 +12757,7 @@ body.wizard .operator-message-overlay .operator-message-submit:disabled { opacit
 /* ─── Wizard invite-hero picker ──────────────────────────────────
    #add-member-modal shares .add-member-modal with the sudo/cron target
    pickers, so every rule stays under this overlay id. */
-body.wizard #add-member-modal .add-member-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #add-member-modal .add-member-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -12865,12 +12791,7 @@ body.wizard #add-member-modal .add-member-foot kbd {
    sudo launches. Give that separately-keyed overlay the same readable wizard
    palette as the invite-hero picker; without the id-scoped rules, broad
    wizard span coloring makes its live row copy nearly black on #0d1117. */
-body.wizard #cron-pick-target-modal .add-member-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #cron-pick-target-modal .add-member-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -12956,12 +12877,7 @@ body.wizard #group-create-title .group-create-title-wizard { display: inline; }
 /* The dialog surface: midnight-violet void, mystic-purple frame + glow,
    parchment text — the same palette as the Summon / Bind dialogs. The input
    fields stay a legible violet-tinted dark so the form is still readable. */
-body.wizard #group-create-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #group-create-modal .cron-create-modal h3 {
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 / Summon title use. */
@@ -13103,12 +13019,6 @@ body.wizard #group-create-modal .group-clone-preview .gcp-val.muted { color: #8a
 body.wizard #human-reply-title .human-reply-title-regular { display: none; }
 body.wizard #human-reply-title .human-reply-title-wizard { display: inline; }
 
-body.wizard #human-reply-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
 body.wizard #human-reply-modal .cron-create-modal h3 {
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 / Summon title use. */
@@ -13270,12 +13180,7 @@ body.wizard #window-title .window-title-wizard { display: inline; }
 /* The dialog surface: midnight-violet void, mystic-purple frame + glow,
    parchment text — the same palette as the Summon / Banish dialogs. Chrome is
    recolored; the data stays legible. */
-body.wizard #window-modal .cleanup-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #window-modal .cleanup-modal h3 {
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 / spawn title use. */
@@ -13377,12 +13282,7 @@ body.wizard #window-modal #window-submit:disabled { opacity: 0.6; }
 
 /* The dialog surface: midnight-violet void, mystic-purple frame + glow,
    parchment text — the Summon / Banish palette, same as #window-modal. */
-body.wizard #cleanup-modal .cleanup-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #cleanup-modal .cleanup-modal h3 {
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 / spawn title use. */
@@ -13483,12 +13383,7 @@ body.wizard #cleanup-modal #cleanup-submit:disabled { opacity: 0.6; }
    #retire-preview-modal so the sibling cleanup dialogs remain independent.
    The initial submit stays ember-red because retirement revokes membership
    and boons; the result-phase Done action loses .danger and becomes gilded. */
-body.wizard #retire-preview-modal .cleanup-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #retire-preview-modal .cleanup-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -13555,12 +13450,7 @@ body.wizard #retire-preview-modal #retire-preview-submit:disabled { opacity: 0.6
    list, and footer scoped to #delete-retired-modal. The initial delete lever
    stays ember-red because the action is irreversible; after the result phase
    removes .danger, the same button settles into the ordinary gilded style. */
-body.wizard #delete-retired-modal .cleanup-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #delete-retired-modal .cleanup-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -13632,12 +13522,7 @@ body.wizard #delete-retired-modal #delete-retired-submit:disabled { opacity: 0.6
    This overlay shares .cleanup-modal with several lifecycle dialogs. Keep the
    violet surface, list, controls, and destructive lever strictly scoped to
    #worktree-cleanup-modal so those siblings retain their own skins. */
-body.wizard #worktree-cleanup-modal .cleanup-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #worktree-cleanup-modal .cleanup-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -13707,12 +13592,6 @@ body.wizard #worktree-cleanup-modal #worktree-cleanup-submit:disabled { opacity:
 .delete-group-copy-wizard { display: none; }
 body.wizard #delete-group-modal .delete-group-copy-regular { display: none; }
 body.wizard #delete-group-modal .delete-group-copy-wizard { display: inline; }
-body.wizard #delete-group-modal .cleanup-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
 body.wizard #delete-group-modal .cleanup-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -13803,12 +13682,7 @@ body.wizard #term-title .term-title-wizard { display: inline; }
 /* The dialog surface: midnight-violet void, mystic-purple frame + glow,
    parchment text — the same palette as the Summon / Banish dialogs. Chrome is
    recolored; the dir-picker copy stays honest and legible. */
-body.wizard #term-modal .modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #term-modal .modal h3 {
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 / spawn title use. */
@@ -13889,12 +13763,7 @@ body.wizard #term-modal #term-current:active {
 
 /* 🧙 Scrying portals — the same violet-void surface and gilded focus the
    #term-modal picker above uses; scoped so sibling .modal dialogs keep theirs. */
-body.wizard #term-chooser-modal .modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #term-chooser-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -13931,12 +13800,7 @@ body.wizard #term-chooser-modal .term-chooser-hint kbd { border-color: #59466b; 
    per-theme copy swap ("New loadout" / "Edit loadout: X") lives in
    modal-profiles.js's wizWord(), not here; this block only lends it the arcane
    serif. */
-body.wizard #profile-editor-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #profile-editor-modal .cron-create-modal h3 {
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 / spawn title use. */
@@ -14028,12 +13892,7 @@ body.wizard #profile-editor-modal #profile-editor-submit:disabled::before { cont
    profile-editor modals, so every rule is scoped to #export-agent-modal — an
    unscoped body.wizard rule on that class would repaint them all (guarded by
    TestDashboardCSS_WizardExportModalScoped). */
-body.wizard #export-agent-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 /* Title: hide the static "Export conversation" text (font-size:0, keeping it
    in the a11y tree as the dialog's aria-labelledby name) and paint the arcane
    copy via ::before, which inherits the serif/gold/glow set on the h3. */
@@ -14149,12 +14008,7 @@ body.wizard #export-agent-modal #export-agent-submit:disabled::before { content:
    share the arcane chrome of the other wizard forms. Scoped by #id: both are
    .cron-create-modal dialogs, and the .paf-* panels also appear in the
    snapshots dialog, which keeps its plain skin. */
-body.wizard :is(#paf-export-modal, #group-export-modal) .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard :is(#paf-export-modal, #group-export-modal) h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -14224,12 +14078,7 @@ body.wizard #edit-member-modal .em-btn-wizard { display: inline; }
 
 /* The dialog surface: midnight-violet void, mystic-purple frame + glow,
    parchment text — the same palette as the spawn / retire dialogs. */
-body.wizard #edit-member-modal .modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #edit-member-modal .modal h3 {
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 / spawn / retire titles use. */
@@ -14303,12 +14152,7 @@ body.wizard #edit-member-modal #edit-member-save:disabled::before { content: non
 /* ─── Wizard task-link modal — "Bind a quest link" ────────────────
    Mirrors the Enchant-hero dialog while keeping this two-field editor
    compact: violet void, parchment copy, gold focus, and a gilded bind lever. */
-body.wizard #task-link-modal .modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #task-link-modal .modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -14403,12 +14247,7 @@ body.wizard .roles-word-wizard { display: inline; }
    overlays (Templates… / Links…), which share .manage-overlay/.manage-modal,
    keep the default chrome. The title now swaps its copy to "Loadouts"
    too (the .profiles-word span pair above), on top of this arcane re-skin. */
-body.wizard #profiles-manage-modal .manage-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
-  color: #e7d9f5;
-}
+
 body.wizard #profiles-manage-modal .manage-modal h3 {
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 / dialog titles use. */
@@ -14464,12 +14303,7 @@ body.wizard #profiles-manage-modal .template-card .tc-actions button:where(:not(
    and cron-form shells with several unrelated dialogs. Keep their arcane
    chrome scoped to the two overlay ids so a wizard-theme sweep cannot repaint
    a sibling surface by accident. */
-body.wizard #links-manage-modal .manage-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
-  color: #e7d9f5;
-}
+
 body.wizard #links-manage-modal .manage-modal h3,
 body.wizard #link-modal .cron-create-modal h3 {
   color: #f3e6c0;
@@ -14526,12 +14360,6 @@ body.wizard .group-links-section > button:hover {
   color: #f3e6c0;
 }
 
-body.wizard #link-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
 body.wizard #link-modal .modal-meta {
   background: #241b3d; border-color: rgba(122, 93, 176, 0.5); color: #b39ddb;
 }
@@ -14581,12 +14409,7 @@ body.wizard .tpl-word-wizard { display: inline; }
    Scoped to #templates-manage-modal — it's a .manage-modal shared with
    the Profiles… / Links… overlays, so an unscoped rule would repaint
    those too (guarded by TestDashboardCSS_WizardTemplatesManageScoped). */
-body.wizard #templates-manage-modal .manage-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #templates-manage-modal .manage-modal h3 {
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 / sibling dialogs use. */
@@ -14667,12 +14490,7 @@ body.wizard #templates-manage-modal .template-card .tc-actions button:where(:not
    (shared-needle guard: TestDashboardCSS_WizardTemplateDialogsScoped).
    NOTE: the profile editor's inner div also carries the
    .template-editor-modal CLASS — ids only in these selectors. */
-body.wizard #template-editor-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #template-editor-modal .cron-create-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -14830,12 +14648,7 @@ body.wizard #template-editor-modal .tpl-concepts-table td { color: #e7d9f5; }
    just gather the party), and the preview shows the heroes the
    summoning will call forth. Violet-and-gilt skin, scoped to
    #template-deploy-modal. */
-body.wizard #template-deploy-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #template-deploy-modal .cron-create-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -14916,12 +14729,7 @@ body.wizard #template-deploy-modal #template-deploy-group.locked {
 /* ─── Wizard trace dialog — "🕯 Trace the party's circle" ────────────
    Save-a-group-as-a-template: copy a live party's shape into a fresh
    circle. Scoped to #template-from-group-modal. */
-body.wizard #template-from-group-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #template-from-group-modal .cron-create-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -14992,12 +14800,7 @@ body.wizard #template-from-group-modal.tfg-updating #template-from-group-submit:
    Duplicate-a-template: chalk an identical twin of a circle under a new
    name (JOH-365). Scoped to #template-duplicate-modal — the same
    positive-per-#id scoping the trace dialog above follows. */
-body.wizard #template-duplicate-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #template-duplicate-modal .cron-create-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -15061,12 +14864,7 @@ body.wizard #template-duplicate-modal #template-duplicate-submit:disabled::befor
    dialog above, scoped per-#id like every other modal's wizard skin (an
    unstyled dialog would fall back to the plain dark + a browser-white submit).
    The submit keeps its JS text (no font-size:0 / ::before swap) — just gilded. */
-body.wizard #clone-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #clone-modal .cron-create-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -15118,12 +14916,7 @@ body.wizard #clone-modal #clone-modal-submit:disabled { opacity: 0.7; }
    violet meta, and starter rows framed like slim summoning circles. The
    copy button keeps its honest tpl-word text (copy-not-cast is the whole
    point), so it gets the tarnished-gold secondary treatment, not a lever. */
-body.wizard #starters-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #starters-modal .cron-create-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -15156,12 +14949,7 @@ body.wizard #starters-modal .modal-buttons { border-top-color: rgba(122, 93, 176
    "Importing…"): it sits disabled until the dry-run preview is clean, so
    a themed "…ing" ::before would misread idle-disabled as in-flight
    (same reasoning as the reply dialog's Send). */
-body.wizard #group-import-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #group-import-modal .cron-create-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -15226,12 +15014,7 @@ body.wizard #group-import-modal #group-import-submit:disabled { opacity: 0.55; }
    in wizard mode it read wizard vocab on plain dark chrome. Mirrors the
    group-import block — file picker + text + paste textarea + the overwrite
    checkbox — scoped to #template-import-modal. */
-body.wizard #template-import-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #template-import-modal .cron-create-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -15283,12 +15066,6 @@ body.wizard #template-import-modal #template-import-submit:hover:not(:disabled) 
 }
 body.wizard #template-import-modal #template-import-submit:disabled { opacity: 0.55; }
 
-body.wizard :is(#profile-export-modal, #profile-import-modal) .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
 body.wizard :is(#profile-export-modal, #profile-import-modal) .cron-create-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -15333,12 +15110,7 @@ body.wizard :is(#profile-import-modal, #sandbox-profile-import-modal) .profile-t
    modal surfaces on sibling dialogs keep the default chrome. */
 
 /* Manage overlay (the ward picker), mirror of #profiles-manage-modal. */
-body.wizard #sandbox-profiles-manage-modal .manage-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
-  color: #e7d9f5;
-}
+
 body.wizard #sandbox-profiles-manage-modal .manage-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -15379,12 +15151,7 @@ body.wizard #sandbox-profiles-manage-modal .template-card .tc-actions button:whe
 body.wizard #sandbox-profiles-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 
 /* Editor (inscribe a ward), mirror of #profile-editor-modal. */
-body.wizard #sandbox-profile-editor-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #sandbox-profile-editor-modal .cron-create-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -15512,12 +15279,7 @@ body.wizard #sandbox-profile-editor-modal #sandbox-profile-editor-submit:disable
 
 /* Export / import (inscribe / read wards), mirror of the profile transfer
    dialogs. */
-body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -15564,12 +15326,7 @@ body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .m
    dark chrome. Mirrors the templates-manage block, scoped to
    #roles-manage-modal; role cards are .template-card.role-card so they inherit
    the card chrome, with .tc-sub (the role's descr line) folded in. */
-body.wizard #roles-manage-modal .manage-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #roles-manage-modal .manage-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -15619,12 +15376,7 @@ body.wizard #roles-manage-modal .template-card .tc-actions button:where(:not(.ui
    id-only discipline the profile editor follows. All of Name / Descr /
    model-codex are text inputs; Harness /
    Model / Effort / Sandbox / Permission-mode / Spawn-profile are selects. */
-body.wizard #role-editor-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #role-editor-modal .cron-create-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -15676,12 +15428,7 @@ body.wizard #role-editor-modal #role-editor-submit:disabled { opacity: 0.7; }
    so it stays distinct from the separate standing-orders feature, and to
    match the "Party lore" label the circle editor already uses. Scoped to
    #group-context-modal. */
-body.wizard #group-context-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #group-context-modal .cron-create-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -15751,13 +15498,7 @@ body.wizard #group-context-modal #group-context-submit:disabled::before { conten
    folded into one :is() — the wizard-theme tests assert the literal
    `body.wizard #perm-edit-modal …` selector, and keeping every rule explicitly
    id-scoped is exactly what TestDashboardCSS_WizardPermEditorScoped guards. */
-body.wizard #perm-edit-modal .perm-edit-modal,
-body.wizard #context-features-modal .perm-edit-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
-  color: #e7d9f5;
-}
+
 body.wizard #perm-edit-modal .perm-edit-modal h3,
 body.wizard #context-features-modal .perm-edit-modal h3 {
   color: #f3e6c0;
@@ -16255,11 +15996,7 @@ body.wizard .jobs-subtab.active {
 /* Trigger automation surfaces have their own component structure, so they
    need the same explicit arcane field and panel treatment as the older cron
    editor instead of falling back to browser-native controls. */
-body.wizard #trigger-modal .trigger-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border-color: #7a5db0; color: #e7d9f5;
-  box-shadow: 0 0 32px rgba(122, 93, 176, .35);
-}
+
 body.wizard #trigger-modal .trigger-modal-heading h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -19063,12 +18800,7 @@ body.wizard .process-node-readonly-badge { color: #d4af37; border-color: #d4af37
 
 /* Wizard cross-realm ward book. Keep the skin scoped to this overlay: it uses
    the generic cron modal shell shared by unrelated operational dialogs. */
-body.wizard #spawn-harness-policy-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
-  color: #e7d9f5;
-}
+
 body.wizard #spawn-harness-policy-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -21091,12 +20823,7 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
    The manager renders inside #agent-spawn-modal (no portal), whose blanket
    wizard button rule carries two ids. The doubled id ties it and wins by
    coming later in this file (keeps Save prompt primary). */
-body.wizard #saved-prompts-manage-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
+
 body.wizard #saved-prompts-manage-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;

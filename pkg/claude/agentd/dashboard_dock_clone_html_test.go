@@ -99,7 +99,6 @@ func TestDashboardHTML_DockCardCloneMenu(t *testing.T) {
 	must(".dock-card-menu-item { width: 100%; text-align: left; }", "the menu rows fill the menu width")
 	// The dialog itself gets a per-#id wizard skin like every other modal — an
 	// unstyled one would fall back to plain dark + a white submit button.
-	must("body.wizard #clone-modal .cron-create-modal {", "the clone dialog has a per-#id wizard chrome")
 	must("body.wizard #clone-modal #clone-modal-submit {", "the clone dialog's submit is gilded in wizard mode")
 	// Keep the ⚙ visible while its menu is open even after the pointer leaves.
 	must(".dock-card:has(.dock-card-menu.open) .dock-card-manage", "the ⚙ stays visible while its menu is open")

@@ -67,10 +67,9 @@ func TestDashboardHTMLSpawnHarnessPolicyUI(t *testing.T) {
 		`flex: 1 1 auto; min-height: 0; overflow: auto;`:                   "matrix owns scrolling",
 		`contain: layout paint; will-change: scroll-position;`:             "isolated compositor scrolling",
 		`function capDialogToContent()`:                                    "content-derived resize ceiling",
-		`modal.style.maxWidth =`:                                          "horizontal resize ceiling",
-		`modal.style.maxHeight =`:                                         "vertical resize ceiling",
+		`modal.style.maxWidth =`:                                           "horizontal resize ceiling",
+		`modal.style.maxHeight =`:                                          "vertical resize ceiling",
 		`.spawn-harness-matrix col.spawn-harness-target { width: 220px; }`: "equal target-column sizing",
-		`body.wizard #spawn-harness-policy-modal .cron-create-modal {`:     "wizard dialog skin",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard missing %q (%s)", needle, why)

@@ -253,7 +253,7 @@ export function PluginsModal({ state, actions }) {
   if (!draft) return null;
   return html`<div ref=${dialogRef} class="modal-overlay show" id="plugin-modal"
     onClick=${(event) => { if (event.target === event.currentTarget) close(); }}>
-    <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="plugin-modal-title">
+    <div class="cron-create-modal ui-dialog" role="dialog" aria-modal="true" aria-labelledby="plugin-modal-title">
       <h3 id="plugin-modal-title">${draft.mode === 'edit' ? 'Edit plugin' : 'New plugin'}</h3>
       <label class="cron-create-row"><span class="cron-create-label">Name</span>
         <input ref=${nameRef} id="plugin-modal-name" type="text" placeholder="e.g. excalidraw-mcp" autocomplete="off" spellcheck=${false}
