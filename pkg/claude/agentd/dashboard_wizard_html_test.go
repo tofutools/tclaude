@@ -1468,14 +1468,11 @@ func TestDashboardHTML_WizardConfigTab(t *testing.T) {
 // CONFIG-SPECIFIC chrome stays scoped to #tab-config (or #config-diff-modal), so
 // a config-only treatment can't leak onto sibling tabs.
 //
-// Note: the shared `.filter-bar` field itself now DOES carry a general
-// `body.wizard .filter-bar input { … }` rule on purpose — the "some wizard
-// elements lack styling" pass themes every tab's filter bar (Parties, Labours,
-// Plugins, Sudo, Audit, Logs). That general rule is the intended fallback; the
-// config tab's own #tab-config-scoped filter rule still wins by specificity
-// where it needs to. So this test no longer forbids the general filter rule
-// (TestDashboardHTML_WizardTheme asserts it positively) — it only guards the
-// config chrome that is NOT a shared filter bar.
+// Note: the shared `.filter-bar` fields take the general wizard field paint
+// in ui.css on purpose, on every tab's filter bar (Parties, Labours, Plugins,
+// Sudo, Audit, Logs, Config); TestDashboardHTML_WizardTheme asserts it
+// positively. This test only guards the config chrome that is NOT a shared
+// filter bar.
 func TestDashboardCSS_WizardConfigTabScoped(t *testing.T) {
 	// The confirm button's re-skin must not leak to sibling .primary buttons —
 	// .cfg-footer is config-only chrome, so its wizard rule stays #tab-config-scoped.
