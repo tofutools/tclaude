@@ -662,6 +662,7 @@ func serveBoardSnapshot(w http.ResponseWriter, r *http.Request, id string) {
 
 func registerDashboardBoardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/boards", handleDashboardBoardList)
+	mux.HandleFunc("POST /api/pages", handleDashboardPageCreate)
 	mux.HandleFunc("DELETE /api/pages/{id}", handleDashboardPageClose)
 	mux.HandleFunc("GET /api/pages/{id}/live", handleDashboardPageLive)
 	mux.HandleFunc("POST /api/pages/{id}/marks", handleDashboardPageMarks)

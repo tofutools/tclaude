@@ -181,6 +181,7 @@ type pageShowParams struct {
 	Name    string `long:"name" optional:"true" help:"The page's name; showing again with the same name updates it in place (default: from the target)"`
 	Group   string `long:"group" optional:"true" help:"Share the page in this group of yours (default: your only group, if you are in exactly one)"`
 	Private bool   `long:"private" help:"Share the page with no one: only you can act on it"`
+	Adopt   string `long:"adopt" optional:"true" help:"Take over <group>/<name>, a page the operator created in your group: it becomes yours, showing this target, keeping its name, group and the marks drawn on it"`
 	JSON    bool   `long:"json" help:"Output JSON"`
 }
 
@@ -208,7 +209,17 @@ type pageWire struct {
 	RemoteBase string `json:"remote_base,omitempty"`
 	Owner      string `json:"owner,omitempty"`
 	Group      string `json:"group,omitempty"`
+	GroupOwned bool   `json:"group_owned,omitempty"`
 	ShareNote  string `json:"share_note,omitempty"`
+}
+
+// pageRef is how a page another agent (or its group) shares is addressed:
+// <owner>/<name>, or <group>/<name> for a page the group owns.
+func pageRef(pg pageWire) string {
+	if pg.GroupOwned {
+		return pg.Group + "/" + pg.Name
+	}
+	return pg.Owner + "/" + pg.Name
 }
 
 // pageAPIPath is the daemon path for a page reference: <name> for one of
@@ -244,7 +255,7 @@ func pageTargetForDaemon(target string) string {
 }
 
 func runPageShow(p *pageShowParams, target string, stdout, stderr io.Writer) int {
-	body := map[string]any{"target": pageTargetForDaemon(target), "title": p.Title, "name": p.Name, "group": p.Group, "private": p.Private}
+	body := map[string]any{"target": pageTargetForDaemon(target), "title": p.Title, "name": p.Name, "group": p.Group, "private": p.Private, "adopt": p.Adopt}
 	var resp pageWire
 	if err := DaemonRequest(http.MethodPost, "/v1/pages", body, &resp, DaemonOpts{Timeout: 30 * time.Second}); err != nil {
 		return boardErr(stderr, err)
@@ -254,6 +265,8 @@ func runPageShow(p *pageShowParams, target string, stdout, stderr io.Writer) int
 	}
 	verb := "Updated"
 	switch {
+	case p.Adopt != "":
+		verb = "Took over"
 	case resp.Created:
 		verb = "Showing"
 	case resp.NewOrigin:
@@ -321,7 +334,7 @@ func runPageLs(p *pageLsParams, stdout, stderr io.Writer) int {
 			pg.UpdatedAt.Local().Format("2006-01-02 15:04"), dashIfEmpty(pg.Group), pg.Origin)
 	}
 	for _, pg := range resp.Shared {
-		fmt.Fprintf(tw, "%s/%s\t%s\t%s\t%s\t%s\t%s\t%s\n", pg.Owner, pg.Name, pg.Title, pg.Target, pg.State,
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", pageRef(pg), pg.Title, pg.Target, pg.State,
 			pg.UpdatedAt.Local().Format("2006-01-02 15:04"), pg.Group, pg.Origin)
 	}
 	_ = tw.Flush()

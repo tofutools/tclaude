@@ -75,6 +75,19 @@ shares with you as `<owner>/<name>`, as `page ls` lists it:
 tclaude agent page marks agt_1234…/app
 ```
 
+The operator can also create a page in your group from the dashboard. The
+group owns it, and `page ls` lists it as `<group>/<name>`. It serves a blank
+sheet the operator draws on to show what to build. Read its marks, then take
+it over with your own source:
+
+```bash
+tclaude agent page marks crew/sketch
+tclaude agent show :5173 --adopt crew/sketch
+```
+
+The page becomes yours, still shared in the group, and keeps its name and
+the marks drawn on it.
+
 When the operator closes the tab, you
 get an inbox message `[page <name>] closed`. Retiring closes all your pages.
 Pages end when the daemon restarts: run `show` again to bring one back (it gets

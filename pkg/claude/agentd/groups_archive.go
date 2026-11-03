@@ -30,6 +30,7 @@ func handleGroupArchive(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	closeGroupPages(g.ID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"group":  g.Name,
 		"action": "archived",

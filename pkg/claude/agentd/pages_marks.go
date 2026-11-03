@@ -179,6 +179,18 @@ func forgetPageMarks(id string) {
 }
 
 // forgetPageCollab drops a closed page's marks; its views end with its origin.
+// forgetPageCollabExceptMarks keeps only a page's mark batches: a takeover
+// (pages_group.go) hands the adopter what the operator drew, never the live
+// patches someone else made on the scratch page, nor the old view's report.
+// patchSeq stays, so a reader's --since still works.
+func forgetPageCollabExceptMarks(id string) {
+	pageCollab.mu.Lock()
+	if s := pageCollab.byID[id]; s != nil {
+		s.patches, s.patchBytes, s.view = nil, 0, nil
+	}
+	pageCollab.mu.Unlock()
+}
+
 func forgetPageCollab(id string) {
 	pageCollab.mu.Lock()
 	delete(pageCollab.byID, id)

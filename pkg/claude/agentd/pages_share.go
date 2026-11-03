@@ -139,6 +139,22 @@ func sharedPage(caller, owner, name string) (*livePage, *db.AgentGroup, error) {
 	return p, g, nil
 }
 
+// groupOwnedPage finds a page the group named groupName owns, for a caller
+// that is a current member of that group.
+func groupOwnedPage(caller, groupName, name string) (*livePage, *db.AgentGroup, error) {
+	g := groupForCaller(caller, groupName)
+	if g == nil {
+		return nil, nil, errPageNotShared
+	}
+	livePages.mu.Lock()
+	p := livePages.byOwner[groupPageOwner(g.ID)][name]
+	livePages.mu.Unlock()
+	if p == nil {
+		return nil, nil, errPageNotShared
+	}
+	return p, g, nil
+}
+
 // pagesSharedWith lists the pages other agents showed that caller may reach.
 func pagesSharedWith(caller string) []*livePage {
 	groups, err := pageActiveGroups(caller)
@@ -154,7 +170,7 @@ func pagesSharedWith(caller string) []*livePage {
 		livePages.mu.Lock()
 		owner, groupID := p.owner, p.groupID
 		livePages.mu.Unlock()
-		if owner != caller && in[groupID] && pageGroupOf(owner, groupID) != nil {
+		if owner != caller && in[groupID] && pageOwnerInGroup(owner, groupID) {
 			out = append(out, p)
 		}
 	}
@@ -204,6 +220,10 @@ func pageForAs(w http.ResponseWriter, r *http.Request, perm string) (p *livePage
 	}
 	var err error
 	p, g, err = sharedPage(agentID, owner, name)
+	if err != nil && !isGroupPageOwner(owner) {
+		// <group>/<name>: a page the group itself owns (pages_group.go).
+		p, g, err = groupOwnedPage(agentID, owner, name)
+	}
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "no page "+owner+"/"+name+" is shared with you")
 		return nil, nil, "", false
