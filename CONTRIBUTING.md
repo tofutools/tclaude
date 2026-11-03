@@ -245,6 +245,14 @@ milliseconds. For example, a queued-writer test should wait until the writer is
 actually contending on the lock through an explicit hook or channel barrier,
 then assert state before releasing it.
 
+Never rely on a single fixed sleep. When a test checks a timeout, a delay or
+any other async behaviour, poll until the condition holds, up to a time
+limit, and fail with a clear message when the limit is hit: `waitForCondition`
+in the jstest suites, `require.Eventually` / `assert.Eventually` (or the local
+equivalent) in Go. An empirically tuned sleep or a widened margin is not a
+fix. A fixed wait is acceptable only to show that something does *not* happen
+within a window, and even then prefer driving a fake or injected clock.
+
 Use the narrowest timing mechanism that matches the boundary:
 
 1. Prefer causal handshakes or observable state when ordering is the contract.

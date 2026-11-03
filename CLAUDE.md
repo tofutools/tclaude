@@ -105,6 +105,11 @@ may contain symlinks on macOS. Preserve explicit aliases in symlink-behavior
 tests. Run focused tests via `scripts/test.sh`, which supplies a symlinked
 `TMPDIR` on Linux too. See `CONTRIBUTING.md` for path-testing guidance.
 
+Never rely on a single fixed sleep in a test: poll until the condition holds,
+up to a time limit, and fail with a clear message (prefer a fake or injected
+clock). Widening a margin is not a flake fix. See "Deterministic timing in
+tests" in `CONTRIBUTING.md`.
+
 Unit tests live next to the code they cover. Flow tests live under
 `pkg/claude/agentd/*_flow_test.go` and run under plain `go test ./...`.
 
