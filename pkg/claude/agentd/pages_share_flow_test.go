@@ -185,3 +185,74 @@ func TestPageSharedStaticReadBackFollowsTheShower(t *testing.T) {
 		assert.Contains(t, rec.Body.String(), "cannot be read back")
 	}
 }
+
+// The review's cases: patches that can carry script need manage on another
+// agent's page; an archived group, or a member leaving, ends the sharing; a
+// granted member's close tells nobody wrong; ?owner=self is one's own page;
+// a re-show into another audience drops the marks; a denied member's ls
+// leaves the page out.
+func TestPageSharedReviewCases(t *testing.T) {
+	e := newPageEnv(t)
+	pageShareDefaults(t, agentd.PermSelfPage, agentd.PermGroupsPagesRead, agentd.PermGroupsPagesPatch)
+	shower := e.agent(t, "shower5", true)
+	member := e.agent(t, "member5", true)
+	e.f.HaveGroup("crew5")
+	e.f.HaveMember("crew5", shower.conv)
+	e.f.HaveMember("crew5", member.conv)
+	p, rec := e.show(t, shower, ":"+strconv.Itoa(devServer(t, "x")), "app", "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	dom := func(op string, extra map[string]any) map[string]any {
+		b := map[string]any{"kind": "dom", "selector": "h1", "op": op, "value": "<img src=x onerror=alert(1)>"}
+		for k, v := range extra {
+			b[k] = v
+		}
+		return b
+	}
+	assert.Equal(t, http.StatusOK, e.shared(t, member, shower, http.MethodPost, "/patches", dom("set-text", nil)))
+	assert.Equal(t, http.StatusOK, e.shared(t, member, shower, http.MethodPost, "/patches", dom("remove", nil)))
+	assert.Equal(t, http.StatusForbidden, e.shared(t, member, shower, http.MethodPost, "/patches", dom("insert-html", nil)), "HTML can carry script")
+	assert.Equal(t, http.StatusForbidden, e.shared(t, member, shower, http.MethodPost, "/patches", dom("set-attr", map[string]any{"name": "onclick"})), "so can an attribute")
+	rec = e.call(t, shower, http.MethodPost, "/v1/pages/app/patches?owner="+shower.id, dom("insert-html", nil))
+	assert.Equal(t, http.StatusOK, rec.Code, "the shower patches its own page as before, ?owner=self included: %s", rec.Body.String())
+
+	// A re-show into another audience drops the operator's earlier marks.
+	rec = e.dashJSON(t, http.MethodPost, "/api/pages/"+p.ID+"/marks", sampleMarks())
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NotEmpty(t, e.marks(t, shower, "app", "").Batches)
+	_, rec = e.show(t, shower, ":"+strconv.Itoa(devServer(t, "y")), "app", "")
+	require.Less(t, rec.Code, 300)
+	assert.NotEmpty(t, e.marks(t, shower, "app", "").Batches, "the same group: kept")
+	rec = e.call(t, shower, http.MethodPost, "/v1/pages", map[string]any{"target": ":" + strconv.Itoa(devServer(t, "z")), "name": "app", "private": true})
+	require.Less(t, rec.Code, 300, rec.Body.String())
+	assert.Empty(t, e.marks(t, shower, "app", "").Batches, "another audience: dropped")
+	_, rec = e.show(t, shower, ":"+strconv.Itoa(devServer(t, "x")), "app", "")
+	require.Less(t, rec.Code, 300)
+
+	// A denied member's ls leaves the page out.
+	require.NoError(t, db.SetAgentPermissionOverride(member.conv, agentd.PermGroupsPagesRead, db.PermEffectDeny, "test"))
+	rec = e.call(t, member, http.MethodGet, "/v1/pages", nil)
+	assert.NotContains(t, rec.Body.String(), `"app"`)
+	_, err := db.RevokeAgentPermission(member.conv, agentd.PermGroupsPagesRead)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, e.shared(t, member, shower, http.MethodGet, "/marks", nil))
+
+	// A granted member closes it; the shower's list no longer has it.
+	require.NoError(t, db.GrantAgentPermissionWithScope(member.conv, agentd.PermGroupsPagesManage, `{"group":["crew5"]}`, "test"))
+	assert.Equal(t, http.StatusNoContent, e.shared(t, member, shower, http.MethodDelete, "", nil))
+	assert.Empty(t, e.ls(t, shower))
+
+	// Archiving the group, or the member leaving, ends the sharing.
+	_, rec = e.show(t, shower, ":"+strconv.Itoa(devServer(t, "x")), "app", "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	require.Equal(t, http.StatusOK, e.shared(t, member, shower, http.MethodGet, "/marks", nil))
+	g, err2 := db.GetAgentGroupByName("crew5")
+	err = err2
+	require.NoError(t, err)
+	require.NoError(t, db.RemoveAgentGroupMember(g.ID, member.conv))
+	assert.Equal(t, http.StatusNotFound, e.shared(t, member, shower, http.MethodGet, "/marks", nil), "the member left")
+	e.f.HaveMember("crew5", member.conv)
+	require.Equal(t, http.StatusOK, e.shared(t, member, shower, http.MethodGet, "/marks", nil))
+	require.NoError(t, db.ArchiveAgentGroup("crew5"))
+	assert.Equal(t, http.StatusNotFound, e.shared(t, member, shower, http.MethodGet, "/marks", nil), "the group is archived")
+}

@@ -83,21 +83,30 @@ tclaude agent page css agt_1234…/app 'button { color: red }'
 - **What a member may do** is set by three group-scoped permissions:
   - `groups.pages.read`: marks (with what the operator typed in them),
     `snapshot`, `page dom` reads and the live-patch journal. Default-granted.
-  - `groups.pages.patch`: add or drop live patches (`css`, `dom --set-*`).
-    Default-granted.
-  - `groups.pages.manage`: `page eval` and `page close`. Not a default, and
-    not implied by owning the group: eval runs code in the operator's view of
-    the page and returns what it reads, so by default only the shower evals or
-    closes its page.
+  - `groups.pages.patch`: add or drop live patches: `css`, `dom --set-text`
+    and `dom --remove`. Default-granted.
+  - `groups.pages.manage`: `page eval`, `page close`, and the patches that
+    can carry script, `dom --set-attr` (an `onclick`) and `dom --insert-html`
+    (an `onerror`). Not a default, and not implied by owning the group: eval
+    runs code in the operator's view of the page and returns what it reads,
+    so by default only the shower does these. `groups.admin`, which covers
+    every `groups.*` slug, does include it. A member's close tells the shower
+    in its inbox.
 
   A deny override, or a grant scoped to other groups, takes a member's access
-  away. The shower always keeps its own.
+  away, and the page drops out of that member's `page ls`. The shower always
+  keeps its own.
 - **Anything the operator types into a shared page is readable by every
   member of its group**, not only the shower. `show` and the page's 🔒 chip
   in the dashboard say so.
 - **Never across groups.** Both agents must be members of the page's group at
-  the time of each request: when either leaves, the sharing ends at once. To a
-  caller outside the group, a shared page answers as if it did not exist.
+  the time of each request: when either leaves, or the group is archived, the
+  sharing ends at once. To a caller outside the group, a shared page answers
+  as if it did not exist.
+- **Re-showing into another audience drops the marks.** When a re-show
+  changes the page's group (to another, to none with `--private`, or from
+  none), the marks the operator sent before are dropped, so what they typed
+  for one audience does not reach another.
 - **Never to peers.** Only local agents act on a page; a peer or federated
   request never reaches one, and the dashboard snapshot sent to a peer has no
   pages.

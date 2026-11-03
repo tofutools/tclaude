@@ -227,11 +227,11 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug: PermGroupsPagesPatch, ScopeDims: []ScopeDim{ScopeDimGroup},
-		Description: "Add or reset live patches (CSS and DOM, never script) on a live page another member of the page's group showed. Default-granted, like groups.pages.read.",
+		Description: "Add or reset live patches on a live page another member of the page's group showed: CSS, set-text and remove. A set-attr or insert-html patch can carry script (an onclick, an onerror), so on another agent's page it needs groups.pages.manage. Default-granted, like groups.pages.read.",
 	},
 	{
 		Slug: PermGroupsPagesManage, ScopeDims: []ScopeDim{ScopeDimGroup},
-		Description: "Run a script (page eval) in, or close, a live page another member of the page's group showed. Eval runs code in the operator's view of the page and returns what it reads, so it is not default-granted and not owner-implied: by default only the page's shower evals or closes it.",
+		Description: "Run a script (page eval) in, add a set-attr or insert-html patch to, or close, a live page another member of the page's group showed. Eval runs code in the operator's view of the page and returns what it reads, so it is not default-granted and not owner-implied: by default only the page's shower does these. groups.admin covers it.",
 	},
 	{
 		Slug: PermAgentProcess, GroupSibling: PermGroupsMembersProcess,

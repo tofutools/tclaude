@@ -51,7 +51,7 @@ func pageShareGroup(agentID, named string, private bool) (groupID int64, note st
 	if private {
 		return 0, "private: only you can act on it", nil
 	}
-	groups, err := db.ListGroupsForAgent(agentID)
+	groups, err := pageActiveGroups(agentID)
 	if err != nil {
 		return 0, "", err
 	}
@@ -73,13 +73,29 @@ func pageShareGroup(agentID, named string, private bool) (groupID int64, note st
 	}
 }
 
+// pageActiveGroups are the groups agentID is a direct member of, leaving out
+// archived ones: an archived group shares nothing.
+func pageActiveGroups(agentID string) ([]*db.AgentGroup, error) {
+	groups, err := db.ListGroupsForAgent(agentID)
+	if err != nil {
+		return nil, err
+	}
+	out := groups[:0]
+	for _, g := range groups {
+		if g.ArchivedAt.IsZero() {
+			out = append(out, g)
+		}
+	}
+	return out, nil
+}
+
 // pageGroupOf is the group agentID is a member of now with id groupID, or
 // nil.
 func pageGroupOf(agentID string, groupID int64) *db.AgentGroup {
 	if agentID == "" || groupID == 0 {
 		return nil
 	}
-	groups, err := db.ListGroupsForAgent(agentID)
+	groups, err := pageActiveGroups(agentID)
 	if err != nil {
 		return nil
 	}
@@ -125,7 +141,7 @@ func sharedPage(caller, owner, name string) (*livePage, *db.AgentGroup, error) {
 
 // pagesSharedWith lists the pages other agents showed that caller may reach.
 func pagesSharedWith(caller string) []*livePage {
-	groups, err := db.ListGroupsForAgent(caller)
+	groups, err := pageActiveGroups(caller)
 	if err != nil || len(groups) == 0 {
 		return nil
 	}
@@ -151,14 +167,22 @@ func pagesSharedWith(caller string) []*livePage {
 // the one gate every page action passes, owner or not, so a check on the
 // page itself (an operator's lock on a group resource) belongs here.
 func pageFor(w http.ResponseWriter, r *http.Request, perm string) (*livePage, bool) {
+	p, _, _, ok := pageForAs(w, r, perm)
+	return p, ok
+}
+
+// pageForAs is pageFor, saying also whether the page is another agent's,
+// shared with the caller through its group (g: that group), and the
+// caller's agent id.
+func pageForAs(w http.ResponseWriter, r *http.Request, perm string) (p *livePage, g *db.AgentGroup, caller string, ok bool) {
 	_, agentID, ok := pageCaller(w, r)
 	if !ok {
-		return nil, false
+		return nil, nil, "", false
 	}
 	name := r.PathValue("name")
 	if !pageNamePattern.MatchString(name) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid page name")
-		return nil, false
+		return nil, nil, "", false
 	}
 	owner := strings.TrimSpace(r.URL.Query().Get("owner"))
 	if owner == "" || owner == agentID {
@@ -167,22 +191,23 @@ func pageFor(w http.ResponseWriter, r *http.Request, perm string) (*livePage, bo
 		livePages.mu.Unlock()
 		if p == nil {
 			writeError(w, http.StatusNotFound, "not_found", "you have no page named "+name)
-			return nil, false
+			return nil, nil, "", false
 		}
-		return p, true
+		return p, nil, agentID, true
 	}
 	if peerActionFromRequest(r) != nil {
 		writeError(w, http.StatusForbidden, "local_only", "a shared live page is reachable only by local members of its group")
-		return nil, false
+		return nil, nil, "", false
 	}
-	p, g, err := sharedPage(agentID, owner, name)
+	var err error
+	p, g, err = sharedPage(agentID, owner, name)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "no page "+owner+"/"+name+" is shared with you")
-		return nil, false
+		return nil, nil, "", false
 	}
 	if _, ok := requirePermission(w, r, perm, ActionContext{Group: g.Name}); !ok {
-		return nil, false
+		return nil, nil, "", false
 	}
 	setAuditTargetLabel(r, "page "+owner+"/"+name)
-	return p, true
+	return p, g, agentID, true
 }

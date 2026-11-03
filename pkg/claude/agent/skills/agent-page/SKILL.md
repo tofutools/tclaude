@@ -66,8 +66,9 @@ tclaude agent page close landing
 A bare name is one of your pages. A page is shared in your group when you are
 in exactly one, or in the group you name with `show --group <name>`; `--private`
 shares it with no one. Other members of that group can then read its marks
-(and what the operator typed), snapshot it, read its DOM and live-patch it,
-but by default not eval in it or close it. You reach a page another member
+(and what the operator typed), snapshot it, read its DOM and live-patch it
+with CSS, `--set-text` and `--remove`, but by default not eval in it, close
+it, or add `--set-attr` and `--insert-html` patches, which can carry script. You reach a page another member
 shares with you as `<owner>/<name>`, as `page ls` lists it:
 
 ```bash

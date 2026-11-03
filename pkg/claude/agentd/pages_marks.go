@@ -167,6 +167,17 @@ func pageCollabLocked(id string) *pageCollabState {
 	return s
 }
 
+// forgetPageMarks drops a page's mark batches, keeping its sequence, so a
+// reader's --since still works: for a page re-shown to another audience
+// (pages_share.go), what the operator typed before is not shown to it.
+func forgetPageMarks(id string) {
+	pageCollab.mu.Lock()
+	if s := pageCollab.byID[id]; s != nil {
+		s.batches = nil
+	}
+	pageCollab.mu.Unlock()
+}
+
 // forgetPageCollab drops a closed page's marks; its views end with its origin.
 func forgetPageCollab(id string) {
 	pageCollab.mu.Lock()

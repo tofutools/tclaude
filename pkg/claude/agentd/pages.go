@@ -35,6 +35,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -432,7 +433,7 @@ func (p *livePage) view() pageView {
 	return pageView{
 		ID: p.id, Name: p.name, Title: p.title, Owner: p.owner, Target: p.target, Kind: p.kind,
 		Worktree: p.worktree, State: p.state, Origin: origin, URL: u, Rev: p.rev,
-		ShownAt: p.shownAt, Updated: p.updated, GroupID: p.groupID, Group: pageGroupName(p.groupID),
+		ShownAt: p.shownAt, Updated: p.updated, GroupID: p.groupID,
 	}
 }
 
@@ -644,6 +645,9 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A page re-shown into another group (or out of one) changes who reads
+	// what the operator typed into it: the marks sent before are dropped.
+	regrouped := existing != nil && existing.groupID != groupID
 	reg.rev++
 	resp := pageShowResponse{}
 	var p *livePage
@@ -681,7 +685,11 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 	p.state, p.rev, p.updated = pageStateOpen, reg.rev, now
 	resp.pageView = p.agentView()
 	reg.mu.Unlock()
+	resp.Group = pageGroupName(resp.GroupID)
 	resp.ShareNote = shareNote
+	if regrouped {
+		forgetPageMarks(p.id)
+	}
 
 	resp.Rules = pageRules(t.kind, resp.Group)
 	setAuditTargetLabel(r, "page "+name)
@@ -718,13 +726,28 @@ func (r *pageReloadRelay) fire() {
 // GET /v1/pages — the caller's own pages, and those other members of its
 // groups showed and share with it (shared; never their remote base).
 func handlePageList(w http.ResponseWriter, r *http.Request) {
-	_, agentID, ok := pageCaller(w, r)
+	convID, agentID, ok := pageCaller(w, r)
 	if !ok {
 		return
 	}
 	shared := []pageView{}
 	if peerActionFromRequest(r) == nil {
-		shared = pageViews(pagesSharedWith(agentID), func(p *livePage) pageView {
+		var readable []*livePage
+		allowed := map[int64]bool{}
+		for _, p := range pagesSharedWith(agentID) {
+			livePages.mu.Lock()
+			id := p.groupID
+			livePages.mu.Unlock()
+			ok, seen := allowed[id]
+			if !seen {
+				ok, _, _ = permissionAllowsAction(r, convID, PermGroupsPagesRead, ActionContext{Group: pageGroupName(id)})
+				allowed[id] = ok
+			}
+			if ok {
+				readable = append(readable, p)
+			}
+		}
+		shared = pageViews(readable, func(p *livePage) pageView {
 			v := p.agentView()
 			v.RemoteBase = ""
 			return v
@@ -738,10 +761,20 @@ func handlePageList(w http.ResponseWriter, r *http.Request) {
 
 func pageViews(pages []*livePage, view func(*livePage) pageView) []pageView {
 	livePages.mu.Lock()
-	defer livePages.mu.Unlock()
 	out := make([]pageView, 0, len(pages))
 	for _, p := range pages {
 		out = append(out, view(p))
+	}
+	livePages.mu.Unlock()
+	// Group names are read after the registry lock, once per group.
+	names := map[int64]string{}
+	for i := range out {
+		if id := out[i].GroupID; id != 0 {
+			if _, ok := names[id]; !ok {
+				names[id] = pageGroupName(id)
+			}
+			out[i].Group = names[id]
+		}
 	}
 	return out
 }
@@ -749,7 +782,7 @@ func pageViews(pages []*livePage, view func(*livePage) pageView) []pageView {
 // DELETE /v1/pages/{name}[?owner=<agent>] — close one of the caller's own
 // pages, or one shared with it (groups.pages.manage).
 func handlePageClose(w http.ResponseWriter, r *http.Request) {
-	p, ok := pageFor(w, r, PermGroupsPagesManage)
+	p, group, caller, ok := pageForAs(w, r, PermGroupsPagesManage)
 	if !ok {
 		return
 	}
@@ -757,8 +790,23 @@ func handlePageClose(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "the page is already closed")
 		return
 	}
-	if r.URL.Query().Get("owner") == "" {
+	if group == nil {
 		setAuditTargetLabel(r, "page "+p.name)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// Another member closed it: its shower is told, as when the operator
+	// closes a tab. The body names only the page and the closer's id.
+	if to := humanActionLiveConv(p.owner); to != "" {
+		from, _ := db.CurrentConvForAgent(caller)
+		body := fmt.Sprintf("Agent %s, a member of group %s, closed your live page %q. Show it again with `tclaude agent show <target> --name %s` if it is still needed.",
+			caller, group.Name, p.name, p.name)
+		if _, _, err := queueRegularAgentMessage(&db.AgentMessage{
+			FromConv: from, ToConv: to, Subject: "[page " + p.name + "] closed", Body: body,
+			ToRecipients: []string{to},
+		}); err != nil {
+			slog.Warn("pages: tell the shower its page was closed", "page", p.name, "err", err)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

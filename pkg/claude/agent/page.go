@@ -465,7 +465,11 @@ func pageMarkWhere(m pageMarkWire) string {
 
 func runPageSnapshot(p *pageSnapshotParams, name string, stdout, stderr io.Writer) int {
 	if strings.TrimSpace(p.Out) == "" {
-		p.Out = name + ".png"
+		base := name
+		if _, n, ok := strings.Cut(name, "/"); ok {
+			base = n
+		}
+		p.Out = base + ".png"
 	}
 	var resp struct {
 		PNG      string `json:"png"`
