@@ -85,10 +85,8 @@ func TestDashboardBulkRetireScopeExpansion(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		"body.wizard #retire-preview-modal .cleanup-toolbar input[type=search] {",
 		"body.wizard #retire-preview-modal .cleanup-list {",
 		"body.wizard #retire-preview-modal .cleanup-row label .cleanup-badge {",
-		"body.wizard #retire-preview-modal .delete-agent-wt input[type=checkbox] {",
 		"body.wizard #retire-preview-modal #retire-preview-submit {",
 		"body.wizard #retire-preview-modal #retire-preview-submit:is(.danger, .ui-btn-danger) {",
 	} {

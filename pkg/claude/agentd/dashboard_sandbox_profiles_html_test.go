@@ -172,9 +172,6 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 			t.Errorf("dashboard missing filtered-network disclosure %q", disclosure)
 		}
 	}
-	if !strings.Contains(dashboardAssets, `body.wizard #sandbox-profile-editor-modal .sbx-section input:not([type])`) {
-		t.Error("wizard structured sandbox inputs lost the arcane skin")
-	}
 
 	// TCL-791 removed break-glass. Nothing on any dashboard surface may still
 	// name it: not an editor field, not an acknowledgement checkbox, not a

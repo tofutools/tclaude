@@ -121,3 +121,85 @@ test('dialog titles take the skin title face from ui.css, not per-dialog copies'
   }
   assert.deepEqual(found, [], 'dialog headings get the wizard face from the --ui-dialog-title-* tokens');
 });
+
+// Raw fields inside a wizard dialog take the shared wizard field paint from
+// ui.css (`body.wizard .ui-dialog :is(input…, select, textarea)`), and checkboxes
+// and radios take the wizard accent from the global zero-specificity rule at
+// the top of dashboard.css. The wizard skin used to repeat both once per
+// dialog id; a rule that only repeats them fails here. A dialog that wants a
+// different field look still writes its own rule with its own values.
+const SHARED_FIELD_DECLS = new Set([
+  'background: #140f28',
+  'border-color: rgba(122, 93, 176, 0.5)',
+  'color: #f3e6c0',
+  'border-color: #a97bd6',
+  'accent-color: #a97bd6',
+]);
+// Kept on purpose: #launch-target is not a dialog; the profile import and
+// export dialogs paint every input, file pickers and checkboxes included,
+// which the shared rule leaves alone; and three accents override a base
+// stylesheet tint on that control, which the zero-specificity rule cannot.
+// The spawn-harness focus edge must out-rank that dialog's own id-scoped
+// field paint.
+const FIELD_COPY_EXEMPT = new Set([
+  'body.wizard #spawn-harness-policy-modal .spawn-harness-cell select:focus',
+  'body.wizard #spawn-harness-policy-modal .spawn-harness-cell textarea:focus',
+  'body.wizard :is(#paf-export-modal, #group-export-modal) .paf-check input',
+  'body.wizard #trigger-modal .trigger-scope-option input[type=radio]',
+  'body.wizard .git-repositories-modal input[type=checkbox]',
+  'body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(.cron-create-row, .lt-row) :is(input[type=text], input:not([type]), select, textarea)',
+  'body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(.cron-create-row, .lt-row) :is(input[type=text], input:not([type]), select, textarea):focus',
+  'body.wizard #group-import-modal .cron-create-row input',
+  'body.wizard #group-import-modal .cron-create-row input:focus',
+  'body.wizard #template-import-modal .cron-create-row input',
+  'body.wizard #template-import-modal .cron-create-row input:focus',
+  'body.wizard :is(#profile-export-modal, #profile-import-modal) input',
+  'body.wizard :is(#profile-export-modal, #profile-import-modal) input:focus',
+  'body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) input',
+  'body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) input:focus',
+]);
+
+// splitTop splits on `sep` outside any parentheses.
+function splitTop(text, sep) {
+  const out = [];
+  let depth = 0, start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '(') depth++;
+    else if (c === ')') depth--;
+    else if (depth === 0 && sep.test(c)) { out.push(text.slice(start, i)); start = i + 1; }
+  }
+  out.push(text.slice(start));
+  return out.map((t) => t.trim()).filter(Boolean);
+}
+
+export function copiedFieldPaints(css) {
+  const source = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const found = new Set();
+  for (const [, selector, body] of source.matchAll(/([^{};]*)\{([^{}]*)\}/g)) {
+    const decls = body.split(';').map((d) => d.trim().replace(/\s+/g, ' ')).filter(Boolean);
+    if (!decls.length || !decls.every((d) => SHARED_FIELD_DECLS.has(d))) continue;
+    for (const part of splitTop(selector.replace(/\s+/g, ' '), /,/)) {
+      const key = part;
+      if (!key.startsWith('body.wizard ')) continue;
+      const tokens = splitTop(key, /\s/);
+      if (!tokens.slice(1, -1).some((t) => /[.#][\w-]*(?:modal|dialog)\b/.test(t))) continue;
+      if (!/(?:^|[(,\s])(?:input|select|textarea)\b|\.add-member-search/.test(tokens.at(-1))) continue;
+      if (!FIELD_COPY_EXEMPT.has(key)) found.add(key);
+    }
+  }
+  return found;
+}
+
+test('wizard dialog fields take the shared paint, not per-dialog copies', () => {
+  assert.deepEqual([...copiedFieldPaints('body.wizard #x-modal .row input[type=text], .y { background: #140f28; color: #f3e6c0; }')], ['body.wizard #x-modal .row input[type=text]']);
+  assert.deepEqual([...copiedFieldPaints('body.wizard #x-modal :is(input[type=checkbox], input[type=radio]) { accent-color: #a97bd6; }')], ['body.wizard #x-modal :is(input[type=checkbox], input[type=radio])']);
+  assert.deepEqual([...copiedFieldPaints('body.wizard #x-modal input { background: #241b3d; }')], []);
+  const ui = readFileSync(new URL('ui.css', DASHBOARD), 'utf8');
+  assert.match(ui, /body\.wizard \.ui-dialog :is\(input:not\(\[type\]\), input\[type=text\][^{]*\{\s*background: #140f28/);
+  const found = [];
+  for (const file of readdirSync(DASHBOARD).filter((f) => f.endsWith('.css') && f !== 'ui.css')) {
+    for (const sel of copiedFieldPaints(readFileSync(new URL(file, DASHBOARD), 'utf8'))) found.push(`${file}: ${sel}`);
+  }
+  assert.deepEqual(found, [], 'wizard dialog fields get their paint from ui.css');
+});

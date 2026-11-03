@@ -41,7 +41,6 @@ func TestDashboardAssets_RoleLibraryWired(t *testing.T) {
 		`id="profile-editor-role-refs"`,
 		`role_refs: [...new Set((draft.roleRefs || [])`,
 		`.cron-create-row input:not([type])`,
-		`body.wizard #role-editor-modal .cron-create-row input:not([type])`,
 		`<${Button} id="profile-editor-perms"`,
 		`.cron-create-row > .ui-btn:is(#profile-editor-perms, #profile-editor-context-features, #role-editor-perms)`,
 		// dashboard.css — the pure-CSS wizard vocabulary swap ("roles" → "classes").
