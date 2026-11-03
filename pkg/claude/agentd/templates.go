@@ -1216,80 +1216,26 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 			Notes:         append([]string(nil), notes...),
 		}, f
 	}
-	modelProxy, _, proxyNote, proxyFail := resolveStringLaunchField("model_proxy", "", h.Name, tiers, func(p *db.SpawnProfile) string { return p.ModelProxy }, validateLaunchModelProxy(h))
-	if proxyFail != nil {
-		return failed(proxyFail)
-	}
-	if proxyNote != "" {
-		notes = append(notes, proxyNote)
-	}
-	model, modelSource, note, fail := resolveStringLaunchField(modelField, a.Model, h.Name, tiers,
-		func(p *db.SpawnProfile) string { return p.Model }, h.Models.ValidateModel)
-	if fail != nil {
+	// The string/int launch value fields ride the same table as the direct
+	// spawn and the executeSpawn safety net (launch_value_fields.go). A
+	// template agent can only state model, effort, sandbox and approval; the
+	// rest come from the tiers alone.
+	launchValues := launchValueResolution{Values: launchValueFields{
+		Model: a.Model, Effort: a.Effort, Sandbox: a.Sandbox, Approval: a.Approval,
+	}}
+	if fail := resolveLaunchValueFields(h, tiers, &launchValues, launchValueOptions{}); fail != nil {
+		notes = append(notes, launchValues.Notes()...)
 		return failed(fail)
 	}
-	if note != "" {
-		notes = append(notes, note)
-	}
-	effort, effortSource, note, fail := resolveStringLaunchField(effortField, a.Effort, h.Name, tiers,
-		func(p *db.SpawnProfile) string { return p.Effort }, h.Models.ValidateEffort)
-	if fail != nil {
-		return failed(fail)
-	}
-	if note != "" {
-		notes = append(notes, note)
-	}
-	sandbox, sandboxSource, note, fail := resolveStringLaunchField("sandbox", a.Sandbox, h.Name, tiers,
-		func(p *db.SpawnProfile) string { return p.Sandbox }, func(raw string) (string, error) { return harness.ValidateHarnessBuiltinMode(h, raw) })
-	if fail != nil {
-		return failed(fail)
-	}
-	if note != "" {
-		notes = append(notes, note)
-	}
-	approval, approvalSource, note, fail := resolveStringLaunchField("approval", a.Approval, h.Name, tiers,
-		func(p *db.SpawnProfile) string { return p.Approval }, func(raw string) (string, error) { return harness.ValidateApprovalPolicy(h, raw) })
-	if fail != nil {
-		return failed(fail)
-	}
-	if note != "" {
-		notes = append(notes, note)
-	}
-	toolGovernance, _, note, fail := resolveStringLaunchField("tools", "", h.Name, tiers,
-		func(p *db.SpawnProfile) string { return p.ToolGovernance },
-		func(raw string) (string, error) { return harness.ValidateToolGovernance(h, raw) })
-	if fail != nil {
-		return failed(fail)
-	}
-	if note != "" {
-		notes = append(notes, note)
-	}
-	askTimeout, _, note, fail := resolveStringLaunchField("ask_user_question_timeout", "", h.Name, tiers,
-		func(p *db.SpawnProfile) string { return p.AskUserQuestionTimeout }, func(raw string) (string, error) { return harness.ResolveAskTimeoutMode(h, raw) })
-	if fail != nil {
-		return failed(fail)
-	}
-	if note != "" {
-		notes = append(notes, note)
-	}
-	autoCompactWindow, _, note, fail := resolveStringLaunchField("auto_compact_window", "", h.Name, tiers,
-		func(p *db.SpawnProfile) string { return p.AutoCompactWindow },
-		func(raw string) (string, error) { return harness.ResolveAutoCompactWindow(h, raw) })
-	if fail != nil {
-		return failed(fail)
-	}
-	if note != "" {
-		notes = append(notes, note)
-	}
-	contextWindowMax, contextWindowMaxSource, note, fail := resolveIntLaunchField(contextWindowMaxField, 0, h.Name, tiers,
-		func(p *db.SpawnProfile) int64 { return p.ContextWindowMax },
-		func(raw int64) (int64, error) { return harness.ResolveCopilotContextWindow(h, raw) })
-	if fail != nil {
-		return failed(fail)
-	}
-	if note != "" {
-		notes = append(notes, note)
-	}
+	notes = append(notes, launchValues.Notes()...)
+	resolvedValues := launchValues.Values
+	modelProxy, model, effort := resolvedValues.ModelProxy, resolvedValues.Model, resolvedValues.Effort
+	sandbox, approval, toolGovernance := resolvedValues.Sandbox, resolvedValues.Approval, resolvedValues.Tools
+	askTimeout, autoCompactWindow := resolvedValues.AskUserQuestionTimeout, resolvedValues.AutoCompactWindow
+	contextWindowMax := resolvedValues.ContextWindowMax
+	modelSource, effortSource := launchValues.Source[launchValueModel], launchValues.Source[launchValueEffort]
+	sandboxSource, approvalSource := launchValues.Source[launchValueSandbox], launchValues.Source[launchValueApproval]
+	contextWindowMaxSource := launchValues.Source[launchValueContextWindowMax]
 	// The sandbox IMPLEMENTATION rides the same tier stack. Only the harness gate
 	// runs here; the host-capability gate belongs to the launch, which the deploy
 	// reaches by handing this value to the spawn boundary as an explicit request.
