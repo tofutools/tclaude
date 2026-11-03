@@ -47,11 +47,13 @@ rules.
   old origin and mints a new one. Page code that read the static files keeps
   them in memory, and it must not keep an origin that now reaches the agent's
   dev server.
-- **Own pages only.** Every command resolves the page by name among the
-  caller's own pages, so an agent cannot list, update or close another agent's
-  page, and only the agent's current conversation can act (not a predecessor
-  still running after a reincarnation). The permission is `self.page`, default-granted with the other `self.*`
-  slugs.
+- **Own pages, and pages shared in a group.** A bare name resolves among the
+  caller's own pages. Another agent's page is reachable only when it is shared
+  in a group both agents are in ([Sharing a page with the
+  group](#sharing-a-page-with-the-group)), as `<owner>/<name>`. Only the
+  agent's current conversation can act (not a predecessor still running after
+  a reincarnation). The permission is `self.page`, default-granted with the
+  other `self.*` slugs.
 - **Lifecycle.** A page belongs to the agent ID, so it survives a
   reincarnation. Retiring or deleting the agent closes its pages. When the operator closes a
   page in the dashboard, the agent gets an inbox message `[page <name>] closed`.
@@ -60,7 +62,57 @@ rules.
 - **Limits.** An agent may have 8 pages open, and the daemon 64.
 
 The dashboard snapshot lists the open pages (`live_pages`), each with a revision
-that changes whenever the page is shown or updated. The Page tab uses it.
+that changes whenever the page is shown or updated, and the group it is shared
+in (`group_id`, `group`). The Page tab uses it.
+
+### Sharing a page with the group
+
+A page is shared in one agent group: the shower's only group, or the one it
+names with `--group <name>` when it is in several. A shower in several groups
+that names none, or one that shows with `--private`, shares it with no one.
+`show` prints which (`shared: in group …`), and `page ls` lists the pages
+other members share with you as `<owner>/<name>`:
+
+```bash
+tclaude agent show :5173 --name app --group web   # shared in group web
+tclaude agent page ls                             # agt_1234…/app   web
+tclaude agent page marks agt_1234…/app
+tclaude agent page css agt_1234…/app 'button { color: red }'
+```
+
+- **What a member may do** is set by three group-scoped permissions:
+  - `groups.pages.read`: marks (with what the operator typed in them),
+    `snapshot`, `page dom` reads and the live-patch journal. Default-granted.
+  - `groups.pages.patch`: add or drop live patches: `css`, `dom --set-text`
+    and `dom --remove`. Default-granted.
+  - `groups.pages.manage`: `page eval`, `page close`, and the patches that
+    can carry script, `dom --set-attr` (an `onclick`) and `dom --insert-html`
+    (an `onerror`). Not a default, and not implied by owning the group: eval
+    runs code in the operator's view of the page and returns what it reads,
+    so by default only the shower does these. `groups.admin`, which covers
+    every `groups.*` slug, does include it. A member's close tells the shower
+    in its inbox.
+
+  A deny override, or a grant scoped to other groups, takes a member's access
+  away, and the page drops out of that member's `page ls`. The shower always
+  keeps its own.
+- **Anything the operator types into a shared page is readable by every
+  member of its group**, not only the shower. `show` and the page's 🔒 chip
+  in the dashboard say so.
+- **Never across groups.** Both agents must be members of the page's group at
+  the time of each request: when either leaves, or the group is archived, the
+  sharing ends at once. To a caller outside the group, a shared page answers
+  as if it did not exist.
+- **Re-showing into another audience drops the marks.** When a re-show
+  changes the page's group (to another, to none with `--private`, or from
+  none), the marks the operator sent before are dropped, so what they typed
+  for one audience does not reach another.
+- **Never to peers.** Only local agents act on a page; a peer or federated
+  request never reaches one, and the dashboard snapshot sent to a peer has no
+  pages.
+- **Read-back is the shower's.** A static page is read back to a member only
+  when it would be to the shower: when the shower's view of its files is exact
+  (see [Page sources](#page-sources)).
 
 ## In the dashboard
 

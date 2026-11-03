@@ -94,7 +94,7 @@ type pageSnapshotResponse struct {
 // POST /v1/pages/{name}/snapshot — {seq?, no_marks?}: the page as a PNG with
 // the latest (or the given) batch of marks.
 func handlePageSnapshot(w http.ResponseWriter, r *http.Request) {
-	p, ok := ownPage(w, r)
+	p, ok := pageFor(w, r, PermGroupsPagesRead)
 	if !ok {
 		return
 	}

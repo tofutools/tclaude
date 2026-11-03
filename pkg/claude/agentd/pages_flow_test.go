@@ -38,6 +38,7 @@ type pageOut struct {
 	Created   bool     `json:"created"`
 	NewOrigin bool     `json:"new_origin"`
 	Rules     []string `json:"rules"`
+	Group     string   `json:"group"`
 	// AgentOrigin is what the agent was shown (token masked); Origin and URL
 	// are filled from the dashboard snapshot, the only holder of the token.
 	AgentOrigin string `json:"-"`

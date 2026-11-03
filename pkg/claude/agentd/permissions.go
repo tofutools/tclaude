@@ -222,6 +222,18 @@ var permissionRegistry = []PermSlug{
 		Description: "Show the operator a live page of own port or worktree files, and list or close own pages (tclaude agent show / agent page). Acts only on pages this agent showed. Default-granted, mirroring the self-lifecycle slugs.",
 	},
 	{
+		Slug: PermGroupsPagesRead, ScopeDims: []ScopeDim{ScopeDimGroup},
+		Description: "Read a live page another member of the page's group showed: its marks (and what the operator typed in them), snapshot, DOM and live-patch journal. Both agents must be current members of that group; never across groups, to peers or over federation, and a static page only when its shower's view is exact. Default-granted, so sharing within a group is what membership implies; a deny override, or a page shown with --private, stops it.",
+	},
+	{
+		Slug: PermGroupsPagesPatch, ScopeDims: []ScopeDim{ScopeDimGroup},
+		Description: "Add or reset live patches on a live page another member of the page's group showed: CSS, set-text and remove. A set-attr or insert-html patch can carry script (an onclick, an onerror), so on another agent's page it needs groups.pages.manage. Default-granted, like groups.pages.read.",
+	},
+	{
+		Slug: PermGroupsPagesManage, ScopeDims: []ScopeDim{ScopeDimGroup},
+		Description: "Run a script (page eval) in, add a set-attr or insert-html patch to, or close, a live page another member of the page's group showed. Eval runs code in the operator's view of the page and returns what it reads, so it is not default-granted and not owner-implied: by default only the page's shower does these. groups.admin covers it.",
+	},
+	{
 		Slug: PermAgentProcess, GroupSibling: PermGroupsMembersProcess,
 		Description: "Start a process run scoped to ANOTHER agent globally (tclaude process run start --agent <agent>). Group-scoped authority uses groups.members.process.",
 	},

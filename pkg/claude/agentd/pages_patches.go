@@ -304,7 +304,7 @@ func pagePatchAppend(id string, p pagePatch) (pagePatch, error) {
 // {kind:"dom",selector,op,name?,value?} — add a live patch and apply it in
 // every open view.
 func handlePagePatch(w http.ResponseWriter, r *http.Request) {
-	p, ok := ownPage(w, r)
+	p, group, _, ok := pageForAs(w, r, PermGroupsPagesPatch)
 	if !ok {
 		return
 	}
@@ -318,6 +318,14 @@ func handlePagePatch(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
+	}
+	// An attribute (onclick, a javascript: URL) or inserted HTML (an
+	// onerror) can carry script, so on another agent's page those are
+	// eval's to grant, not patch's: CSS, set-text and remove stay patches.
+	if group != nil && patch.Kind == "dom" && (patch.Op == "set-attr" || patch.Op == "insert-html") {
+		if _, ok := requirePermission(w, r, PermGroupsPagesManage, ActionContext{Group: group.Name}); !ok {
+			return
+		}
 	}
 	livePages.mu.Lock()
 	kind, stage := p.kind, p.stage
@@ -375,7 +383,7 @@ func pagePatchAppendError(w http.ResponseWriter, err error) {
 
 // GET /v1/pages/{name}/patches — the page's journal.
 func handlePagePatches(w http.ResponseWriter, r *http.Request) {
-	p, ok := ownPage(w, r)
+	p, ok := pageFor(w, r, PermGroupsPagesRead)
 	if !ok {
 		return
 	}
@@ -395,7 +403,7 @@ func handlePagePatches(w http.ResponseWriter, r *http.Request) {
 // DELETE /v1/pages/{name}/patches[?n=N] — drop every patch, or patch N. Open
 // views reload without them.
 func handlePagePatchesReset(w http.ResponseWriter, r *http.Request) {
-	p, ok := ownPage(w, r)
+	p, ok := pageFor(w, r, PermGroupsPagesPatch)
 	if !ok {
 		return
 	}
@@ -453,7 +461,7 @@ func checkPageEvalResult(r *pageEvalResult) bool {
 // POST /v1/pages/{name}/eval {js} — run a script once in one open view and
 // return its result as JSON. It is journaled, not replayed.
 func handlePageEval(w http.ResponseWriter, r *http.Request) {
-	p, ok := ownPage(w, r)
+	p, ok := pageFor(w, r, PermGroupsPagesManage)
 	if !ok {
 		return
 	}

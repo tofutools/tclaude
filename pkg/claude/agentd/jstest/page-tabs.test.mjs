@@ -123,6 +123,9 @@ test('the page model keeps the token in the frame src and nowhere else', async (
   }
   assert.match(model.pageSandboxRules(remote)[0], /\/p\/‹token›\//, 'the chip names the path, its token masked');
   assert.doesNotMatch(model.pageSandboxRules(remote).join(' '), new RegExp(TOKEN));
+  assert.match(model.pageSandboxRules({ ...remote, group: 'tclaude' }).join(' '), /Shared in group tclaude: .*every member/,
+    'a shared page says who can read what the operator types');
+  assert.match(model.pageSandboxRules(remote).join(' '), /The agent that showed this page can read/);
   assert.equal(model.PAGE_FRAME_SANDBOX, 'allow-scripts allow-forms allow-modals');
 
   const first = model.pageShowEvents(null, [PAGE]);
