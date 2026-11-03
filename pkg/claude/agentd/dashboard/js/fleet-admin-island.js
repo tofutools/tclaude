@@ -159,7 +159,7 @@ function Identity({ self, actions, confirm, toast, copy, reload, onUpdate, onSet
     .then(() => { toast('Reconnecting to the hub…', false); reload(); })
     .catch((error) => toast(`Reconnect failed: ${errText(error)}`, true));
   const hubClass = self.hubState === 'connected' ? 'ok' : self.enabled ? 'warn' : 'off';
-  return html`<div class="fa-identity">
+  return html`<div class="fa-identity ui-card ui-inset">
     <span><span class="fa-k">This node</span> <b>${self.name}</b></span>
     <span><span class="fa-k">Instance</span> <code>${self.id}</code></span>
     <span><span class="fa-k">Fingerprint</span> <${Fingerprint} value=${self.fingerprint} copy=${copy} toast=${toast} /></span>

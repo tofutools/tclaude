@@ -136,7 +136,7 @@ export function MovesPage({ view, agents = [], actions, confirm, toast, now = Da
 
   const list = Array.isArray(moves) ? [...moves].sort((a, b) => String(b.expires_at || '').localeCompare(String(a.expires_at || ''))) : [];
   return html`<div class="fa-moves">
-    <div class="fa-run-settings" id="fleet-teleport">
+    <div class="fa-run-settings ui-card ui-inset" id="fleet-teleport">
       <span class="fa-k">Teleports</span>
       ${teleport?.error ? html`<span class="fa-danger">${teleport.error}</span>`
         : frozen == null ? html`<span class="muted">loading…</span>`

@@ -166,7 +166,7 @@ export function fusedUsageRows(nodes, selfUsage, entries) {
 export function FusedUsageSummary({ nodes, selfUsage, entries, fmt }) {
   const { rows, total } = fusedUsageRows(nodes, selfUsage, entries);
   const label = (n) => `${n.local ? '⌂ ' : ''}${n.name}`;
-  return html`<section class="fused-usage" aria-label="Usage on the fused nodes">
+  return html`<section class="fused-usage ui-card" aria-label="Usage on the fused nodes">
     <table class="fused-usage-table">
       <thead><tr><th>Node</th><th class="n">Today</th><th class="n">Month to date</th><th class="n">Peak quota</th></tr></thead>
       <tbody>

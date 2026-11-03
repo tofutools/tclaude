@@ -26,7 +26,8 @@ const MIGRATED = new Set([
   'group-force-block', 'sandbox-import-profile', 'profile-transfer-row', 'paf-redact',
   'paf-box', 'snap-panel', 'mail-sidebar', 'mail-list', 'mail-reader', 'mail-attachment',
   'cost-accumulated', 'cost-chart', 'usage-ov-chart', 'usage-rule-editor', 'usage-hub-limit',
-  'doctor-island', 'doctor-opt',
+  'doctor-island', 'doctor-opt', 'fused-usage', 'lt-carries', 'fa-identity', 'fa-gd-plan', 'fleet-setup',
+  'fs-aside', 'fa-run-settings', 'fa-run-pane', 'fa-cb-opt',
 ]);
 
 // handRolledCards lists the selectors (whitespace-normalised) whose subject is
@@ -81,7 +82,7 @@ test('no stylesheet hand-paints a new card', () => {
 });
 
 test('migrated card classes keep .ui-card in their markup', () => {
-  const classes = [...MIGRATED, 'template-card', 'plugin-card', 'usage-rule-card', 'debug-card', 'usage-series-card', 'usage-ov-card'];
+  const classes = [...MIGRATED, 'template-card', 'plugin-card', 'usage-rule-card', 'debug-card', 'usage-series-card', 'usage-ov-card', 'fa-cb-card'];
   const JS = new URL('js/', DASHBOARD);
   const bare = [];
   for (const file of readdirSync(JS).filter((f) => f.endsWith('.js'))) {

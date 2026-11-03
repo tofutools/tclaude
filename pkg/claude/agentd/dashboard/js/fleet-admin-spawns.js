@@ -257,7 +257,7 @@ export function SpawnRequestsPage({ view, pools, actions, confirm, toast, now = 
   const list = Array.isArray(rows) ? rows.filter((r) => all || r.status === 'pending' || r.status === 'launching') : [];
   const hidden = Array.isArray(rows) ? rows.length - list.length : 0;
   return html`<div class="fa-spawns">
-    <div class="fa-run-settings">
+    <div class="fa-run-settings ui-card ui-inset">
       <span class="fa-k">Incoming</span>
       <span class="muted">${Array.isArray(rows) ? `${rows.filter((r) => r.status === 'pending').length} pending` : ''}</span>
       <label class="muted"><input type="checkbox" checked=${all} onChange=${(e) => setAll(e.currentTarget.checked)} /> show decided${hidden && !all ? ` (${hidden})` : ''}</label>
