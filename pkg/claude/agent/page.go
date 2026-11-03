@@ -177,9 +177,11 @@ func pageCmd() *cobra.Command {
 }
 
 type pageShowParams struct {
-	Title string `long:"title" optional:"true" help:"The tab's title (default: the name)"`
-	Name  string `long:"name" optional:"true" help:"The page's name; showing again with the same name updates it in place (default: from the target)"`
-	JSON  bool   `long:"json" help:"Output JSON"`
+	Title   string `long:"title" optional:"true" help:"The tab's title (default: the name)"`
+	Name    string `long:"name" optional:"true" help:"The page's name; showing again with the same name updates it in place (default: from the target)"`
+	Group   string `long:"group" optional:"true" help:"Share the page in this group of yours (default: your only group, if you are in exactly one)"`
+	Private bool   `long:"private" help:"Share the page with no one: only you can act on it"`
+	JSON    bool   `long:"json" help:"Output JSON"`
 }
 
 type pageLsParams struct {
@@ -204,6 +206,28 @@ type pageWire struct {
 	// RemoteBase is the --base a dev server needs for a dashboard on
 	// another machine.
 	RemoteBase string `json:"remote_base,omitempty"`
+	Owner      string `json:"owner,omitempty"`
+	Group      string `json:"group,omitempty"`
+	ShareNote  string `json:"share_note,omitempty"`
+}
+
+// pageAPIPath is the daemon path for a page reference: <name> for one of
+// your own pages, <owner>/<name> for one another member of its group showed
+// and shares with you.
+func pageAPIPath(ref, suffix string, q url.Values) string {
+	name := ref
+	if owner, n, ok := strings.Cut(ref, "/"); ok {
+		name = n
+		if q == nil {
+			q = url.Values{}
+		}
+		q.Set("owner", owner)
+	}
+	path := "/v1/pages/" + url.PathEscape(name) + suffix
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return path
 }
 
 // pageTargetForDaemon makes a file target absolute against the caller's
@@ -220,7 +244,7 @@ func pageTargetForDaemon(target string) string {
 }
 
 func runPageShow(p *pageShowParams, target string, stdout, stderr io.Writer) int {
-	body := map[string]any{"target": pageTargetForDaemon(target), "title": p.Title, "name": p.Name}
+	body := map[string]any{"target": pageTargetForDaemon(target), "title": p.Title, "name": p.Name, "group": p.Group, "private": p.Private}
 	var resp pageWire
 	if err := DaemonRequest(http.MethodPost, "/v1/pages", body, &resp, DaemonOpts{Timeout: 30 * time.Second}); err != nil {
 		return boardErr(stderr, err)
@@ -251,6 +275,12 @@ func runPageShow(p *pageShowParams, target string, stdout, stderr io.Writer) int
 	} else {
 		fmt.Fprintln(stdout, "  origin:   (the dashboard is not listening; the page opens when it is)")
 	}
+	if resp.Group != "" {
+		fmt.Fprintf(stdout, "  shared:   in group %s: its members can read what the operator types, snapshot, read and live-patch it\n"+
+			"            (as %s/%s); show with --private to keep it to yourself\n", resp.Group, resp.Owner, resp.Name)
+	} else if resp.ShareNote != "" {
+		fmt.Fprintf(stdout, "  shared:   %s\n", resp.ShareNote)
+	}
 	if base := resp.RemoteBase; base != "" {
 		port, _, _ := strings.Cut(strings.TrimPrefix(resp.Target, ":"), "/")
 		if strings.Contains(resp.Target, base) {
@@ -271,7 +301,8 @@ func runPageShow(p *pageShowParams, target string, stdout, stderr io.Writer) int
 
 func runPageLs(p *pageLsParams, stdout, stderr io.Writer) int {
 	var resp struct {
-		Pages []pageWire `json:"pages"`
+		Pages  []pageWire `json:"pages"`
+		Shared []pageWire `json:"shared"`
 	}
 	if err := DaemonRequest(http.MethodGet, "/v1/pages", nil, &resp, DaemonOpts{}); err != nil {
 		return boardErr(stderr, err)
@@ -279,22 +310,29 @@ func runPageLs(p *pageLsParams, stdout, stderr io.Writer) int {
 	if p.JSON {
 		return writeBoardJSON(stdout, resp)
 	}
-	if len(resp.Pages) == 0 {
+	if len(resp.Pages) == 0 && len(resp.Shared) == 0 {
 		fmt.Fprintln(stdout, "No live pages.")
 		return rcOK
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tTITLE\tSOURCE\tSTATE\tUPDATED\tORIGIN")
+	fmt.Fprintln(tw, "NAME\tTITLE\tSOURCE\tSTATE\tUPDATED\tSHARED IN\tORIGIN")
 	for _, pg := range resp.Pages {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", pg.Name, pg.Title, pg.Target, pg.State,
-			pg.UpdatedAt.Local().Format("2006-01-02 15:04"), pg.Origin)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", pg.Name, pg.Title, pg.Target, pg.State,
+			pg.UpdatedAt.Local().Format("2006-01-02 15:04"), dashIfEmpty(pg.Group), pg.Origin)
+	}
+	for _, pg := range resp.Shared {
+		fmt.Fprintf(tw, "%s/%s\t%s\t%s\t%s\t%s\t%s\t%s\n", pg.Owner, pg.Name, pg.Title, pg.Target, pg.State,
+			pg.UpdatedAt.Local().Format("2006-01-02 15:04"), pg.Group, pg.Origin)
 	}
 	_ = tw.Flush()
+	if len(resp.Shared) > 0 {
+		fmt.Fprintln(stdout, "Pages named <owner>/<name> are shared with you by another member of their group; use that name.")
+	}
 	return rcOK
 }
 
 func runPageClose(name string, stdout, stderr io.Writer) int {
-	if err := DaemonRequest(http.MethodDelete, "/v1/pages/"+url.PathEscape(name), nil, nil, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodDelete, pageAPIPath(name, "", nil), nil, nil, DaemonOpts{}); err != nil {
 		return boardErr(stderr, err)
 	}
 	fmt.Fprintf(stdout, "Closed page %q.\n", name)
@@ -370,10 +408,7 @@ func runPageMarks(p *pageMarksParams, name string, stdout, stderr io.Writer) int
 	if p.Since > 0 {
 		q.Set("since", fmt.Sprint(p.Since))
 	}
-	path := "/v1/pages/" + url.PathEscape(name) + "/marks"
-	if len(q) > 0 {
-		path += "?" + q.Encode()
-	}
+	path := pageAPIPath(name, "/marks", q)
 	if err := DaemonRequest(http.MethodGet, path, nil, &resp, DaemonOpts{}); err != nil {
 		return boardErr(stderr, err)
 	}
@@ -442,7 +477,7 @@ func runPageSnapshot(p *pageSnapshotParams, name string, stdout, stderr io.Write
 		MarksSeq int64  `json:"marks_seq,omitempty"`
 	}
 	body := map[string]any{"seq": p.Seq, "no_marks": p.NoMarks}
-	if err := DaemonRequest(http.MethodPost, "/v1/pages/"+url.PathEscape(name)+"/snapshot", body, &resp, DaemonOpts{Timeout: 60 * time.Second}); err != nil {
+	if err := DaemonRequest(http.MethodPost, pageAPIPath(name, "/snapshot", nil), body, &resp, DaemonOpts{Timeout: 60 * time.Second}); err != nil {
 		return boardErr(stderr, err)
 	}
 	png, err := base64.StdEncoding.DecodeString(resp.PNG)
@@ -523,7 +558,7 @@ func runPageDOM(p *pageDOMParams, name, selector string, stdout, stderr io.Write
 		Error     string `json:"error,omitempty"`
 	}
 	body := map[string]any{"selector": selector, "mode": mode}
-	if err := DaemonRequest(http.MethodPost, "/v1/pages/"+url.PathEscape(name)+"/dom", body, &resp, DaemonOpts{Timeout: 20 * time.Second}); err != nil {
+	if err := DaemonRequest(http.MethodPost, pageAPIPath(name, "/dom", nil), body, &resp, DaemonOpts{Timeout: 20 * time.Second}); err != nil {
 		return boardErr(stderr, err)
 	}
 	if p.JSON {
@@ -569,7 +604,7 @@ func runPagePatch(p *pagePatchParams, name string, body map[string]any, stdout, 
 		Results  []pagePatchResultWire `json:"results,omitempty"`
 		Withheld bool                  `json:"withheld,omitempty"`
 	}
-	if err := DaemonRequest(http.MethodPost, "/v1/pages/"+url.PathEscape(name)+"/patches", body, &resp, DaemonOpts{Timeout: 20 * time.Second}); err != nil {
+	if err := DaemonRequest(http.MethodPost, pageAPIPath(name, "/patches", nil), body, &resp, DaemonOpts{Timeout: 20 * time.Second}); err != nil {
 		return boardErr(stderr, err)
 	}
 	if p.JSON {
@@ -629,7 +664,7 @@ func runPageEval(p *pagePatchParams, name, js string, stdin io.Reader, stdout, s
 		JSON  json.RawMessage `json:"json"`
 		Error string          `json:"error,omitempty"`
 	}
-	if err := DaemonRequest(http.MethodPost, "/v1/pages/"+url.PathEscape(name)+"/eval", map[string]any{"js": js}, &resp, DaemonOpts{Timeout: 20 * time.Second}); err != nil {
+	if err := DaemonRequest(http.MethodPost, pageAPIPath(name, "/eval", nil), map[string]any{"js": js}, &resp, DaemonOpts{Timeout: 20 * time.Second}); err != nil {
 		return boardErr(stderr, err)
 	}
 	if p.JSON {
@@ -666,15 +701,16 @@ func runPagePatches(p *pagePatchesParams, args []string, stdout, stderr io.Write
 		return rcInvalidArg
 	}
 	if p.Reset {
-		path := "/v1/pages/" + url.PathEscape(name) + "/patches"
+		q := url.Values{}
 		if len(args) == 2 {
 			n := strings.TrimPrefix(args[1], "#")
 			if _, err := strconv.ParseInt(n, 10, 64); err != nil {
 				fmt.Fprintln(stderr, "error: N is a patch number")
 				return rcInvalidArg
 			}
-			path += "?n=" + n
+			q.Set("n", n)
 		}
+		path := pageAPIPath(name, "/patches", q)
 		var resp struct {
 			Page    string  `json:"page"`
 			Dropped []int64 `json:"dropped"`
@@ -699,7 +735,7 @@ func runPagePatches(p *pagePatchesParams, args []string, stdout, stderr io.Write
 		Views   int             `json:"views"`
 		Patches []pagePatchWire `json:"patches"`
 	}
-	if err := DaemonRequest(http.MethodGet, "/v1/pages/"+url.PathEscape(name)+"/patches", nil, &resp, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodGet, pageAPIPath(name, "/patches", nil), nil, &resp, DaemonOpts{}); err != nil {
 		return boardErr(stderr, err)
 	}
 	if p.JSON {
@@ -742,6 +778,14 @@ func pagePatchSummary(p pagePatchWire) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if r := []rune(s); len(r) > 80 {
 		s = string(r[:79]) + "…"
+	}
+	return s
+}
+
+// dashIfEmpty is s, or "-" for an empty table cell.
+func dashIfEmpty(s string) string {
+	if s == "" {
+		return "-"
 	}
 	return s
 }

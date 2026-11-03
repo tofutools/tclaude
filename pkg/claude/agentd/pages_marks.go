@@ -606,31 +606,10 @@ func pageReadBackAllowed(kind string, stage *stagePage, live bool) error {
 		"(or it changed since the page last loaded). Serve it from a dev server on your own port to use snapshot and dom")
 }
 
-// ownPage finds one of the caller's pages by name.
-func ownPage(w http.ResponseWriter, r *http.Request) (*livePage, bool) {
-	_, agentID, ok := pageCaller(w, r)
-	if !ok {
-		return nil, false
-	}
-	name := r.PathValue("name")
-	if !pageNamePattern.MatchString(name) {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid page name")
-		return nil, false
-	}
-	livePages.mu.Lock()
-	p := livePages.byOwner[agentID][name]
-	livePages.mu.Unlock()
-	if p == nil {
-		writeError(w, http.StatusNotFound, "not_found", "you have no page named "+name)
-		return nil, false
-	}
-	return p, true
-}
-
 // GET /v1/pages/{name}/marks?since=<seq> — the batches the operator sent
 // after seq (all that are kept, without since).
 func handlePageMarks(w http.ResponseWriter, r *http.Request) {
-	p, ok := ownPage(w, r)
+	p, ok := pageFor(w, r, PermGroupsPagesRead)
 	if !ok {
 		return
 	}
@@ -665,7 +644,7 @@ type pageDOMRequest struct {
 
 // POST /v1/pages/{name}/dom — a read-only DOM read through an open view.
 func handlePageDOM(w http.ResponseWriter, r *http.Request) {
-	p, ok := ownPage(w, r)
+	p, ok := pageFor(w, r, PermGroupsPagesRead)
 	if !ok {
 		return
 	}

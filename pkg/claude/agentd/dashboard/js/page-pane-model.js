@@ -108,7 +108,9 @@ export function pageSandboxRules(page) {
     `Sandboxed frame on ${pageWhereShown(page)}`,
     'No dashboard cookies, storage or API reach it; it can fetch only its own origin.',
     'It cannot open pop-ups or windows, navigate the dashboard, or download files.',
-    'The agent that showed this page can read what you type in it.',
+    page?.group
+      ? `Shared in group ${page.group}: the agent that showed it and every member of that group can read what you type in it.`
+      : 'The agent that showed this page can read what you type in it.',
   ];
   if (page?.kind === 'static') lines.push('Files are served read-only; a saved file reloads the page.');
   else lines.push('Served from the agent’s dev server; its hot reload passes through.');

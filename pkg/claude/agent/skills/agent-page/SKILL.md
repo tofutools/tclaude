@@ -63,7 +63,18 @@ tclaude agent page ls
 tclaude agent page close landing
 ```
 
-You can act only on pages you showed. When the operator closes the tab, you
+A bare name is one of your pages. A page is shared in your group when you are
+in exactly one, or in the group you name with `show --group <name>`; `--private`
+shares it with no one. Other members of that group can then read its marks
+(and what the operator typed), snapshot it, read its DOM and live-patch it,
+but by default not eval in it or close it. You reach a page another member
+shares with you as `<owner>/<name>`, as `page ls` lists it:
+
+```bash
+tclaude agent page marks agt_1234…/app
+```
+
+When the operator closes the tab, you
 get an inbox message `[page <name>] closed`. Retiring closes all your pages.
 Pages end when the daemon restarts: run `show` again to bring one back (it gets
 a new origin).
@@ -130,7 +141,8 @@ tclaude agent page patches landing --reset     # drop them all (or --reset 3)
   dashboard cookies, storage or API reach it. It can fetch only its own origin.
 - Cookies, IndexedDB and service workers do not work in the frame. An app
   behind a login needs a development bypass or a fixture user.
-- Anything the operator types into the page can be read by you.
+- Anything the operator types into the page can be read by you, and, when the
+  page is shared in a group, by every member of that group.
 - **The page's token is its only key.** It goes only to the operator's
   dashboard: what you are shown has it masked (`f-<token>.ui.localhost`). You
   act on your pages by name.

@@ -91,6 +91,9 @@ type livePage struct {
 	shownAt  time.Time
 	updated  time.Time
 	stage    *stagePage
+	// groupID is the agent group the page is shared in, 0 for none
+	// (pages_share.go). Guarded by livePages.mu.
+	groupID int64
 }
 
 type livePageRegistry struct {
@@ -367,6 +370,10 @@ type pageShowRequest struct {
 	Target string `json:"target"`
 	Title  string `json:"title"`
 	Name   string `json:"name"`
+	// Group names the group to share the page in; "" is the shower's only
+	// group. Private shares it with no one.
+	Group   string `json:"group,omitempty"`
+	Private bool   `json:"private,omitempty"`
 }
 
 // pageView is a page as the dashboard sees it (its origin carries the token)
@@ -388,6 +395,12 @@ type pageView struct {
 	// RemoteBase is, for a dev server page, the --base it needs to be
 	// served to a dashboard on another machine (remote_stage.go).
 	RemoteBase string `json:"remote_base,omitempty"`
+	// GroupID and Group are the agent group the page is shared in, and its
+	// current name (pages_share.go).
+	GroupID int64  `json:"group_id,omitempty"`
+	Group   string `json:"group,omitempty"`
+	// ShareNote says, in show's answer, why a page is not shared.
+	ShareNote string `json:"share_note,omitempty"`
 }
 
 type pageShowResponse struct {
@@ -419,7 +432,7 @@ func (p *livePage) view() pageView {
 	return pageView{
 		ID: p.id, Name: p.name, Title: p.title, Owner: p.owner, Target: p.target, Kind: p.kind,
 		Worktree: p.worktree, State: p.state, Origin: origin, URL: u, Rev: p.rev,
-		ShownAt: p.shownAt, Updated: p.updated,
+		ShownAt: p.shownAt, Updated: p.updated, GroupID: p.groupID, Group: pageGroupName(p.groupID),
 	}
 }
 
@@ -441,11 +454,16 @@ func (p *livePage) agentView() pageView {
 
 // pageRules are printed with every show, so the agent knows what its page can
 // and cannot do and what the operator's typing exposes.
-func pageRules(kind string) []string {
+func pageRules(kind, group string) []string {
+	typed := "Anything the operator types into the page can be read by you, the agent that showed it."
+	if group != "" {
+		typed = "The page is shared in group " + group + ": anything the operator types into it can be read by you and by every member of that group, " +
+			"who can also snapshot it, read its DOM and live-patch it (show with --private to keep it to yourself)."
+	}
 	rules := []string{
 		"The page runs in a sandboxed frame on its own origin: no dashboard cookies, storage or API reach it, and it can fetch only its own origin.",
 		"Cookies, IndexedDB and service workers do not work in the frame; an app behind a login needs a dev bypass or a fixture user.",
-		"Anything the operator types into the page can be read by you, the agent that showed it.",
+		typed,
 		"The page's token is its only key and goes only to the operator's dashboard; you act on the page by name.",
 		"Pages end when the daemon restarts; show again to bring one back.",
 		"Show again with the same --name to update this page in place; `tclaude agent page close <name>` closes it.",
@@ -587,6 +605,11 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "a page name is 1-48 characters of a-z, 0-9, - and _, starting with a letter or digit")
 		return
 	}
+	groupID, shareNote, err := pageShareGroup(agentID, req.Group, req.Private)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_group", err.Error())
+		return
+	}
 	title := strings.TrimSpace(req.Title)
 	if len(title) > pageMaxTitleBytes || !utf8.ValidString(title) || strings.ContainsFunc(title, unicode.IsControl) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("the title must be printable and at most %d bytes", pageMaxTitleBytes))
@@ -654,12 +677,13 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 		title = name
 	}
 	p.title, p.target, p.kind, p.port, p.worktree = title, t.declared, t.kind, t.port, worktree
-	p.path = start
+	p.path, p.groupID = start, groupID
 	p.state, p.rev, p.updated = pageStateOpen, reg.rev, now
 	resp.pageView = p.agentView()
 	reg.mu.Unlock()
+	resp.ShareNote = shareNote
 
-	resp.Rules = pageRules(t.kind)
+	resp.Rules = pageRules(t.kind, resp.Group)
 	setAuditTargetLabel(r, "page "+name)
 	status := http.StatusOK
 	if resp.Created {
@@ -691,13 +715,25 @@ func (r *pageReloadRelay) fire() {
 	}
 }
 
-// GET /v1/pages — the caller's own pages.
+// GET /v1/pages — the caller's own pages, and those other members of its
+// groups showed and share with it (shared; never their remote base).
 func handlePageList(w http.ResponseWriter, r *http.Request) {
 	_, agentID, ok := pageCaller(w, r)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"pages": pageViews(livePages.list(agentID), (*livePage).agentView)})
+	shared := []pageView{}
+	if peerActionFromRequest(r) == nil {
+		shared = pageViews(pagesSharedWith(agentID), func(p *livePage) pageView {
+			v := p.agentView()
+			v.RemoteBase = ""
+			return v
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"pages":  pageViews(livePages.list(agentID), (*livePage).agentView),
+		"shared": shared,
+	})
 }
 
 func pageViews(pages []*livePage, view func(*livePage) pageView) []pageView {
@@ -710,22 +746,20 @@ func pageViews(pages []*livePage, view func(*livePage) pageView) []pageView {
 	return out
 }
 
-// DELETE /v1/pages/{name} — close one of the caller's own pages.
+// DELETE /v1/pages/{name}[?owner=<agent>] — close one of the caller's own
+// pages, or one shared with it (groups.pages.manage).
 func handlePageClose(w http.ResponseWriter, r *http.Request) {
-	_, agentID, ok := pageCaller(w, r)
+	p, ok := pageFor(w, r, PermGroupsPagesManage)
 	if !ok {
 		return
 	}
-	name := r.PathValue("name")
-	if !pageNamePattern.MatchString(name) {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid page name")
+	if _, ok := livePages.closeByName(p.owner, p.name); !ok {
+		writeError(w, http.StatusNotFound, "not_found", "the page is already closed")
 		return
 	}
-	if _, ok := livePages.closeByName(agentID, name); !ok {
-		writeError(w, http.StatusNotFound, "not_found", "you have no page named "+name)
-		return
+	if r.URL.Query().Get("owner") == "" {
+		setAuditTargetLabel(r, "page "+p.name)
 	}
-	setAuditTargetLabel(r, "page "+name)
 	w.WriteHeader(http.StatusNoContent)
 }
 
