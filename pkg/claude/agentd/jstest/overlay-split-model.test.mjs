@@ -528,3 +528,123 @@ test('targets: windows drawn elsewhere than the tree lays them out get their mar
   assert.ok(right.x + right.w <= 672, `the right marker (${right.x}) lies on a as drawn`);
   assert.equal(gaps[0].rect.x + gaps[0].rect.w / 2, Math.round((672 + 1600) / 2), 'the box is centred in the space a leaves');
 });
+
+// The room's edge strips: what a drag shows at the room's edge, what lights
+// under the pointer and what a drop there makes all come from edgeTargets, so
+// they cannot drift apart once the room is split.
+async function edgeModels(t) {
+  const harness = await createPreactHarness(t);
+  const split = await harness.importDashboardModule('js/overlay-split-model.js');
+  const windows = await harness.importDashboardModule('js/overlay-window-model.js');
+  return { ...split, ...windows };
+}
+
+const EDGE_VIEWPORT = { width: 1600, height: 900 };
+const EDGE_TOP = 40;
+
+function edgeRoom(m) {
+  const max = m.zoneRect('max', EDGE_VIEWPORT, EDGE_TOP);
+  return { x: 0, y: EDGE_TOP, w: EDGE_VIEWPORT.width, h: max.h };
+}
+
+const within = (rect, cell) => rect.x >= cell.x && rect.y >= cell.y && rect.x + rect.w <= cell.x + cell.w && rect.y + rect.h <= cell.y + cell.h;
+const meets = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+// Every piece drawn is the piece hit at any point of it, and its drop puts the
+// window into the cell under that piece.
+function assertEdgesAgree(m, tree, here, area, label) {
+  const zones = m.snapZoneRects(EDGE_VIEWPORT, EDGE_TOP);
+  const edges = m.edgeTargets(tree, area, 'z', { here, alive: here, zones });
+  assert.ok(edges.length > 0, `${label}: some strip`);
+  const layout = tree && m.splitLayout(m.keepingWindows(tree, here), area);
+  for (const piece of edges) {
+    for (const [dx, dy] of [[0.5, 0.5], [0.1, 0.1], [0.9, 0.9]]) {
+      const point = { x: piece.rect.x + piece.rect.w * dx, y: piece.rect.y + piece.rect.h * dy };
+      const hit = m.dragHit(point, { gaps: [], markers: [], edges }, area);
+      assert.equal(hit?.edge?.key, piece.key, `${label}: ${piece.key} hit at ${JSON.stringify(point)}`);
+    }
+    if (!layout) {
+      assert.equal(piece.tree, undefined, `${label}: a blank room's strip snaps to its zone`);
+      continue;
+    }
+    const cell = piece.window ? layout.rects[piece.window] : layout.gaps.find((gap) => meets(gap.rect, piece.rect))?.rect;
+    assert.ok(cell && within(piece.rect, cell), `${label}: ${piece.key} lies in one cell`);
+    const after = m.splitLayout(m.keepingWindows(m.normalized(piece.tree), new Set([...here, 'z'])), area);
+    const preview = after.rects.z;
+    assert.ok(preview && within(preview, cell) && meets(preview, piece.rect), `${label}: ${piece.key} previews and drops into its cell, beside the strip`);
+  }
+  return edges;
+}
+
+test('edge strips: unsplit, they are the room\'s own, hit where drawn', async (t) => {
+  const m = await edgeModels(t);
+  const area = edgeRoom(m);
+  const zones = m.snapZoneRects(EDGE_VIEWPORT, EDGE_TOP);
+  const edges = assertEdgesAgree(m, null, new Set(), area, 'unsplit');
+  assert.deepEqual(edges.map(({ rect }) => rect), zones.flatMap(({ rects }) => rects));
+  for (const { zone, rects } of zones) {
+    for (const rect of rects) {
+      const centre = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
+      assert.equal(m.snapZone(centre, EDGE_VIEWPORT, EDGE_TOP), zone, 'and they agree with snapZone');
+    }
+  }
+  assert.equal(m.dragHit({ x: 5, y: 10 }, { edges }, area).edge.zone, 'top-left', 'above the room, over the nav bar, counts where it enters it');
+  assert.equal(m.dragHit({ x: 800, y: 899 }, { edges }, area).edge.zone, 'bottom', 'and over the footer');
+});
+
+test('edge strips: split left and right, each strip is cut at the windows it crosses', async (t) => {
+  const m = await edgeModels(t);
+  const area = edgeRoom(m);
+  const tree = pair('x', 'a', 'b');
+  const here = new Set(['a', 'b']);
+  const edges = assertEdgesAgree(m, tree, here, area, 'left|right');
+  const half = area.w / 2;
+  for (const piece of edges.filter(({ zone }) => zone === 'bottom')) {
+    assert.ok(piece.rect.x + piece.rect.w <= half || piece.rect.x >= half, `the bottom strip stops at the split line: ${JSON.stringify(piece.rect)}`);
+  }
+  assert.deepEqual([...new Set(edges.filter(({ zone }) => zone === 'left').map(({ window }) => window))], ['a'], 'the left strip splits only a');
+  const lit = edges.filter(({ key }) => key === m.dragHit({ x: 400, y: area.y + area.h - 2 }, { edges }, area).edge.key);
+  assert.ok(lit.every(({ window }) => window === 'a'), 'the bottom under a lights only over a');
+});
+
+test('edge strips: three windows, the right strip is cut where its two windows meet', async (t) => {
+  const m = await edgeModels(t);
+  const area = edgeRoom(m);
+  const tree = { axis: 'x', at: 0.5, a: { id: 'a' }, b: pair('y', 'b', 'c') };
+  const here = new Set(['a', 'b', 'c']);
+  const edges = assertEdgesAgree(m, tree, here, area, '1+2');
+  const right = edges.filter(({ zone }) => zone === 'right');
+  assert.deepEqual([...new Set(right.map(({ window }) => window))].sort(), ['b', 'c']);
+  const line = m.splitLayout(tree, area).rects.c.y;
+  for (const piece of right) assert.ok(piece.rect.y + piece.rect.h <= line || piece.rect.y >= line, 'no piece crosses b and c’s line');
+});
+
+test('edge strips: an empty cell has strips of its own', async (t) => {
+  const m = await edgeModels(t);
+  const area = edgeRoom(m);
+  const tree = { axis: 'x', at: 0.5, a: { id: 'a' }, b: { gap: true } };
+  const edges = assertEdgesAgree(m, tree, new Set(['a']), area, 'a beside a gap');
+  assert.ok(edges.some(({ window }) => !window), 'the gap’s side has strips of its own');
+});
+
+test('edge strips: none over the cell the drag tore its window out of, or a cell held for one away', async (t) => {
+  const m = await edgeModels(t);
+  const area = edgeRoom(m);
+  const zones = m.snapZoneRects(EDGE_VIEWPORT, EDGE_TOP);
+  const tree = { axis: 'x', at: 0.5, a: { id: 'a' }, b: { gap: true } };
+  const here = new Set(['a']);
+  const vacated = m.splitLayout(tree, area).gaps[0].rect;
+  const torn = m.edgeTargets(tree, area, 'z', { here, alive: here, vacated, zones });
+  assert.ok(torn.length && torn.every(({ rect }) => !meets(rect, vacated)), 'the cell just left floats');
+  const held = m.edgeTargets(pair('x', 'a', 'b'), area, 'z', { here, alive: new Set(['a', 'b']), zones });
+  assert.ok(held.every(({ window }) => window === 'a'), 'b is away: its cell waits for it');
+});
+
+test('a box or a marker wins over the room\'s edge under it', async (t) => {
+  const m = await edgeModels(t);
+  const area = edgeRoom(m);
+  const edges = [{ key: 'left', zone: 'left', rect: { x: 0, y: 100, w: 100, h: 200 } }];
+  const markers = [{ window: 'a', zone: 'top', rect: { x: 50, y: 150, w: 56, h: 28 } }];
+  assert.deepEqual(m.dragHit({ x: 60, y: 160 }, { markers, edges }, area), { target: { window: 'a', zone: 'top' } });
+  assert.equal(m.dragHit({ x: 20, y: 250 }, { markers, edges }, area).edge.key, 'left');
+});

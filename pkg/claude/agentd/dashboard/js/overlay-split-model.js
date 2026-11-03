@@ -543,6 +543,84 @@ export function targetAt(pointer, { gaps = [], markers = [] } = {}) {
   return marker ? { window: marker.window, zone: marker.zone } : null;
 }
 
+// The parts of rect outside cut, as up to four rectangles.
+function without(rect, cut) {
+  const [left, top] = [Math.max(rect.x, cut.x), Math.max(rect.y, cut.y)];
+  const [right, bottom] = [Math.min(rect.x + rect.w, cut.x + cut.w), Math.min(rect.y + rect.h, cut.y + cut.h)];
+  if (left >= right || top >= bottom) return [rect];
+  return [
+    { x: rect.x, y: rect.y, w: rect.w, h: top - rect.y },
+    { x: rect.x, y: bottom, w: rect.w, h: rect.y + rect.h - bottom },
+    { x: rect.x, y: top, w: left - rect.x, h: bottom - top },
+    { x: right, y: top, w: rect.x + rect.w - right, h: bottom - top },
+  ].filter(({ w, h }) => w > 0 && h > 0);
+}
+
+const overlap = (a, b) => {
+  const x = Math.max(a.x, b.x);
+  const y = Math.max(a.y, b.y);
+  const w = Math.min(a.x + a.w, b.x + b.w) - x;
+  const h = Math.min(a.y + a.h, b.y + b.h) - y;
+  return w > 0 && h > 0 ? { x, y, w, h } : null;
+};
+
+// edgeTargets is the room's edge strips (zones, as snapZoneRects gives them) as
+// a drag of id shows them, hits them and drops on them, so the three never
+// disagree: [{ key, zone, rect, tree?, window? }], the pieces of one key doing
+// the same drop and lighting together. Over a split shown in area, each strip
+// is cut at the cells it crosses, and each piece carries the tree its drop
+// makes: the room's zone of an empty cell (withinGap) or of a window (withWindow).
+// No piece lies over a cell held for a window that is away, the cell this drag
+// tore the window out of (vacated), or where its drop would not fit, so a drop
+// there floats. With no split shown, the strips are the room's own, and a drop
+// snaps to their zone. It reads nothing but its arguments.
+export function edgeTargets(tree, area, id, { here = new Set(), alive = new Set(), vacated = null, zones }) {
+  const plain = () => zones.flatMap(({ zone, rects }) => rects.map((rect) => ({ key: zone, zone, rect })));
+  const live = tree && keepingWindows(tree, here);
+  if (!live || !fits(live, area)) return plain();
+  const { rects, gaps } = splitLayout(live, area);
+  const after = new Set([...here, id]);
+  const fitsAfter = (made) => {
+    const next = keepingWindows(normalized(made), after);
+    return !!next && fits(next, area) && !!splitLayout(next, area).rects[id];
+  };
+  const cells = [
+    ...gaps.filter((cell) => !(cell.held && cell.held !== id && alive.has(cell.held))).map((gap) => ({ gap, rect: gap.rect, name: `gap:${gap.path.join('.')}` })),
+    ...leavesOf(live).filter((other) => other !== id).map((window) => ({ window, rect: rects[window], name: `window:${window}` })),
+  ];
+  const out = [];
+  for (const { zone, rects: strips } of zones) {
+    for (const cell of cells) {
+      const pieces = strips.map((strip) => overlap(strip, cell.rect)).filter(Boolean)
+        .flatMap((piece) => (vacated ? without(piece, vacated) : [piece]));
+      if (!pieces.length) continue;
+      const made = cell.gap ? withinGap(tree, cell.gap, centreOf(pieces[0]), id, zone, area) : withWindow(tree, cell.window, zone, id);
+      if (!fitsAfter(made)) continue;
+      for (const rect of pieces) out.push({ key: `${zone}:${cell.name}`, zone, rect, tree: made, window: cell.window });
+    }
+  }
+  return out;
+}
+
+// edgeAt is the edge piece of edgeTargets under pointer, or null. A pointer
+// past the room, over the nav bar or the footer, counts where it enters it.
+export function edgeAt(pointer, edges, area) {
+  const at = { x: Math.max(area.x, Math.min(area.x + area.w - 1, pointer.x)), y: Math.max(area.y, Math.min(area.y + area.h - 1, pointer.y)) };
+  return edges.find(({ rect }) => inside(at, rect)) || null;
+}
+
+// dragHit is what a drag over targets ({ gaps, markers, edges }) has under its
+// pointer: { target } for a box or a marker (targetAt), which come first as they
+// sit over everything else, the room's edge included, or { edge } for a piece
+// of the room's edge strips (edgeAt). Otherwise null. The drag lights it and
+// drops on it.
+export function dragHit(pointer, targets, area) {
+  const target = targetAt(pointer, targets);
+  if (target) return { target };
+  const edge = edgeAt(pointer, targets.edges || [], area);
+  return edge ? { edge } : null;
+}
+
 // detachSpot is where a line's detach button sits: its middle, or on a quad, the
 // middle of the arm before the crossing, which is the crossing's own.
 export function detachSpot(line, crossing = null) {
