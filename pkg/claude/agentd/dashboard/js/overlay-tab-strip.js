@@ -20,6 +20,7 @@ import {
 import { aimFromCollab, collabDrag, holdForMenu, startTabDrag, stripTargetAt, tabDropTarget, tabGhost } from './overlay-tab-drag.js';
 import { groupsOf, windowHolding } from './overlay-tab-model.js';
 import { TO_COLLAB_LABEL, TO_WINDOW_LABEL, tabMoves } from './overlay-tab-moves.js';
+import { Glyph, STANDARD_GLYPHS } from './overlay-window-controls.js';
 
 const html = htm.bind(h);
 
@@ -253,9 +254,9 @@ export function OverlayTabStrip({ window, overlay, win, viewOf, tabClose = null 
         ...${menu}>${lead}<span>${label}</span></button>
       <span class="companion-tab-buttons">
         <button data-ui-exempt type="button" class="companion-tab-minimize" aria-label=${`Minimize ${label} to dock`} title="Minimize to dock (it keeps running)"
-          onClick=${() => minimizeOverlayTab(tab.id)}>–</button>
+          onClick=${() => minimizeOverlayTab(tab.id)}><${Glyph} path=${STANDARD_GLYPHS.minimize} /></button>
         ${tabClose && html`<button data-ui-exempt type="button" class="companion-tab-close" aria-label=${`Detach ${label} to background`} title=${tabClose.title(tab)}
-          onClick=${() => tabClose.onClose(tab.id)}>×</button>`}
+          onClick=${() => tabClose.onClose(tab.id)}><${Glyph} path=${STANDARD_GLYPHS.close} /></button>`}
       </span>
     </div>`;
   };

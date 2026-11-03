@@ -157,9 +157,10 @@ body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: c
 }
 .companion-tab:not(.selected):is(:hover, :focus-within) .companion-tab-buttons { display: flex; }
 .companion-tab-minimize, .companion-tab-close {
-  background: none; border: 0; color: var(--cmp-muted); cursor: pointer; padding: 2px 5px; border-radius: 4px;
-  font: inherit; font-size: 13px; line-height: 1;
+  display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0;
+  background: none; border: 0; color: var(--cmp-muted); cursor: pointer; border-radius: 4px; line-height: 1;
 }
+.companion-tab-minimize svg, .companion-tab-close svg { display: block; width: 9px; height: 9px; fill: none; stroke: currentColor; stroke-width: 1.5; }
 .companion-tab-minimize:hover, .companion-tab-close:hover, .companion-tab-minimize:focus-visible, .companion-tab-close:focus-visible { color: var(--cmp-text); background: #21262d; }
 .companion-tab-close:hover { color: var(--cmp-red); }
 .companion-add, .companion-controls button:where(:not(.ui-btn, .ui-menu-item)) {
