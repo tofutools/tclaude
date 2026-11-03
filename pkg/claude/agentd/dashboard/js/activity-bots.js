@@ -7,7 +7,7 @@ export function ActivityBot({ bot }) {
   return html`<span class=${bot.className} title=${bot.title} aria-label=${bot.title}>
     <span class=${bot.faceClassName}>${bot.face}</span>
     ${bot.tag ? html`<span class="actbot-tag">${bot.tag}</span>` : null}
-    ${bot.count > 1 ? html`<span class="actbot-count">${bot.count}</span>` : null}
+    ${bot.count > 1 ? html`<span class="actbot-count ui-badge ui-badge-corner ui-badge-accent">${bot.count}</span>` : null}
   </span>`;
 }
 

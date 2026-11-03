@@ -150,8 +150,8 @@ function DoctorApp({ state, actions, notify }) {
 function DoctorBadge({ state }) {
   const { decision, blocking } = state.counts.value;
   return html`<span class="doctor-badges">
-    <span class="tab-badge doctor-ask" hidden=${decision === 0} title="Decisions waiting for you">${decision}</span>
-    <span class="tab-badge" hidden=${blocking === 0} title="Blocking problems">${blocking}</span>
+    <span class="tab-badge ui-badge ui-badge-accent" hidden=${decision === 0} title="Decisions waiting for you">${decision}</span>
+    <span class="tab-badge ui-badge ui-badge-danger" hidden=${blocking === 0} title="Blocking problems">${blocking}</span>
   </span>`;
 }
 

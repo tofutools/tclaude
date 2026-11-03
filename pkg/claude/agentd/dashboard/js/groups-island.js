@@ -169,7 +169,7 @@ export function GroupsControls({ state, actions }) {
         onClick=${() => { state.viewOpen.value = !state.viewOpen.value; }}
       >
         ▾ view
-        <span id="filter-groups-view-badge" class="view-badge" hidden=${badge === 0}>${badge || ''}</span>
+        <span id="filter-groups-view-badge" class="view-badge ui-badge" hidden=${badge === 0}>${badge || ''}</span>
       <//>
       <div
         ref=${menuRef}

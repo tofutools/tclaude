@@ -285,7 +285,7 @@ function Status({ feedback }) {
 function MessagesBadge({ state }) {
   const view = messagesBadgeView(state.snapshot.value);
   return html`
-    <span id="messages-badge" class=${`tab-badge${view.blink ? ' blink' : ''}`} hidden=${view.hidden}>${view.text}</span>
+    <span id="messages-badge" class=${`tab-badge ui-badge ui-badge-danger${view.blink ? ' blink' : ''}`} hidden=${view.hidden}>${view.text}</span>
   `;
 }
 
@@ -555,12 +555,12 @@ function OpenPRs({ state }) {
         aria-expanded=${open ? 'true' : 'false'} aria-controls="open-prs-popover"
         onClick=${() => setPinned((value) => !value)}>
         <span class="open-prs-dot" aria-hidden="true"></span>
-        <span>Open PRs</span><span class="open-prs-count">${view.total}</span>
+        <span>Open PRs</span><span class=${`open-prs-count ui-badge${view.attention > 0 ? ' ui-badge-accent' : ''}`}>${view.total}</span>
         <span class="open-prs-chevron" aria-hidden="true">⌃</span>
       </button>
       ${open ? html`
         <div id="open-prs-popover" class="open-prs-popover" role="dialog" aria-label=${heading}>
-          <div class="open-prs-head"><strong>${heading}</strong><span class="open-prs-count">${panel.total}</span>${panelAge ? html`<span class="open-prs-age">updated ${panelAge}</span>` : null}</div>
+          <div class="open-prs-head"><strong>${heading}</strong><span class=${`open-prs-count ui-badge${view.attention > 0 ? ' ui-badge-accent' : ''}`}>${panel.total}</span>${panelAge ? html`<span class="open-prs-age">updated ${panelAge}</span>` : null}</div>
           <${PeopleTabs} active=${personEntry ? personEntry.login : ''} mine=${view.total} people=${people}
             onSelect=${setPerson} onAdd=${addPerson} onRemove=${removePerson} />
           ${panelWarning ? html`<p class="open-prs-stale" role="status">${panelWarning}</p>` : null}

@@ -37,7 +37,7 @@ export function QueuedSpawnsChip({ snapshot }) {
       title="Queued agents — prepared spawns that have not started yet"
       onClick=${toggle}>
       ⏸ <span class="theme-copy-regular">queued</span><span class="theme-copy-wizard">dormant</span>
-      <span class="queued-spawns-count">${rows.length}</span>
+      <span class="queued-spawns-count ui-badge ui-badge-warn">${rows.length}</span>
     </button>
     ${open && html`<div class="queued-spawns-popover" role="dialog" aria-label="Queued agents"
       style=${anchor ? { top: `${anchor.top}px`, right: `${anchor.right}px` } : undefined}

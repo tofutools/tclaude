@@ -1894,7 +1894,7 @@ function TerminalBadge({ state }) {
   const title = background
     ? `${count} open, ${background} running in the background without a terminal`
     : `${count} open`;
-  return html`<span id="terminals-badge" class="tab-badge count" title=${title}
+  return html`<span id="terminals-badge" class="tab-badge ui-badge" title=${title}
     hidden=${count === 0 && background === 0}>${count}${background ? ` +${background}` : ''}</span>`;
 }
 

@@ -159,11 +159,6 @@ footer {
 }
 .open-prs-trigger:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
 .open-prs-dot { width: 7px; height: 7px; border-radius: 50%; background: #d29922; }
-.open-prs-count {
-  min-width: 18px; padding: 1px 5px; border-radius: 9px; background: #21262d;
-  color: #8b949e; font-size: 10px; font-weight: 700; text-align: center;
-}
-.open-prs.has-attention .open-prs-count { background: #1f6feb; color: #fff; }
 .open-prs-chevron { color: #6e7681; font-size: 10px; }
 /* Zero open PRs. The indicator is permanent by default, so at rest it must
    read as "nothing waiting" rather than as another live counter: the amber
@@ -407,19 +402,12 @@ nav [data-tab]:hover { color: #d4d4d4; }
 /* An overlay tab resting on the Collab entry: it lands there, and the view switches. */
 nav [data-tab].overlay-drop { color: #d4d4d4; background: #1f6feb2e; box-shadow: inset 0 0 0 1px #58a6ff; border-radius: 4px 4px 0 0; }
 /* Messages tab — unread badge on the nav button + message cards. */
-.tab-badge {
-  display: inline-block; margin-left: 6px; min-width: 16px; padding: 0 5px;
-  font-size: 11px; line-height: 16px; text-align: center;
-  background: #f85149; color: #fff; border-radius: 8px; font-weight: 600;
-}
+/* Nav tab counts are .ui-badge (ui.css): red for unread Messages, neutral for
+   live counts (Terminals, Jobs), amber for Plugins, blue for Doctor asks. */
+.tab-badge { margin-left: 6px; }
 /* renderMessagesBadge() sets the `hidden` attribute at 0 unread; the global
    `[hidden] { display: none !important }` rule at the top hides the badge then
    (the `display: inline-block` above would otherwise leak a bright-red `0`). */
-/* The Terminals badge reuses .tab-badge, but its number is just a live count of
-   open panes — informational, not an unread (Messages, red) or a needs-attention
-   (Plugins, amber, see .warn below). .count tones it to a quiet neutral chip so
-   opening a web terminal doesn't read as an alert demanding action. */
-.tab-badge.count { background: #21262d; color: #8b949e; font-weight: 500; }
 /* A pending human-approval request blinks the Messages badge: a blocked agent
    is waiting on the operator, more urgent than an unread notification. Reuses
    the disconnect-blink keyframe (opacity pulse); dropped under reduced-motion. */
@@ -790,10 +778,7 @@ button.tool:where(:hover) { background: var(--ui-bg-hover); }
   flex: 0 0 auto; color: #7d8590; font-size: 11px;
   font-family: ui-monospace, monospace;
 }
-.mailbox-unread {
-  flex: 0 0 auto; background: #1f6feb; color: #fff; border-radius: 9px;
-  font-size: 10px; line-height: 1; padding: 3px 6px; font-weight: 600;
-}
+.mailbox-unread { flex: 0 0 auto; }
 .mail-dot.online { color: #3fb950; font-size: 9px; }
 .mail-dot.offline { color: #484f58; font-size: 9px; }
 
@@ -1972,7 +1957,6 @@ body.companion-annotating :is(.overlay-split-line, .overlay-split-cross, .overla
 .overlay-dock .overlay-dock-item.ui-sm:has(+ .overlay-dock-remove) { padding-right: 3px; }
 .overlay-dock .overlay-dock-remove.ui-sm { padding: 0 8px 0 3px; color: var(--cmp-muted); font-size: 13px; }
 .overlay-dock .overlay-dock-remove.ui-sm:hover:not(:disabled) { color: var(--cmp-text); }
-.overlay-dock-count { padding: 0 5px; border-radius: 7px; background: #30363d; font-size: 10px; }
 /* The dock's menus: ☰'s actions on every window, and the pills that did not fit.
    They open upwards from their button, fixed and outside the footer, on the
    popover layer (ui.css): inside, the footer's overflow would clip them. */
@@ -2009,7 +1993,7 @@ body.companion-annotating :is(.overlay-split-line, .overlay-split-cross, .overla
 .overlay-expose-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .overlay-expose-glyph { flex: none; font-size: 15px; }
 .overlay-expose-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
-.overlay-expose-count { flex: none; padding: 0 7px; border-radius: 8px; background: #30363d; font-size: 11px; }
+.overlay-expose-count { flex: none; }
 .overlay-expose-kind { color: var(--cmp-muted, #8b949e); font-size: 12px; }
 .overlay-expose-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
 .overlay-expose-tab { max-width: 100%; padding: 1px 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--cmp-line, #30363d); border-radius: 6px; color: var(--cmp-muted, #8b949e); font-size: 11px; }
@@ -3049,14 +3033,7 @@ body.wizard .ga-wizard { display: inline-flex; }
   font-size: 0.62em; line-height: 1; pointer-events: none;
   filter: drop-shadow(0 0 1px #000);
 }
-.actbot-count {
-  position: absolute; bottom: -3px; right: -5px;
-  /* Absolute (not em) so the badge survives .actbot-sprite, whose box is
-     sized in px — an em size there would inherit the sprite's font-size. */
-  font-size: 9px; line-height: 1.1; min-width: 1em; padding: 0 2px;
-  border-radius: 6px; background: #1f6feb; color: #fff;
-  box-shadow: 0 0 0 1px #0d1117;
-}
+.actbot-count { bottom: -3px; right: -5px; }
 
 /* Per-variant motion. working DANCES, idle just BREATHES (near-still),
    asking head-TILTS under a bobbing ❓, error SHAKES, crashed lies
@@ -3188,10 +3165,6 @@ body.wizard header .activity-hover-trigger:hover { background: transparent; }
 .activity-hover-state + .activity-hover-state { margin-top: 7px; }
 .activity-hover-state-heading { display: flex; align-items: baseline; gap: 7px; }
 .activity-hover-state-label { color: #c9d1d9; font-weight: 600; }
-.activity-hover-state-count {
-  min-width: 1.4em; padding: 0 4px; border-radius: 8px;
-  background: #30363d; color: #8b949e; font-size: 10px; text-align: center;
-}
 .activity-hover-workers {
   margin: 2px 0 0 13px; padding: 0; color: #8b949e; list-style: none;
 }
@@ -3237,7 +3210,6 @@ body.wizard .activity-hover-group + .activity-hover-group,
 body.wizard .activity-hover-note { border-color: rgba(122, 93, 176, 0.5); }
 body.wizard .activity-hover-group h3 { color: #d9b45a; }
 body.wizard .activity-hover-worker-name { color: #f3e6c0; }
-body.wizard .activity-hover-state-count { background: #3a2a63; color: #b39ddb; }
 @media (max-width: 560px) {
   .activity-hover-panel { left: -12px; width: min(360px, calc(100vw - 24px)); }
 }
@@ -6283,10 +6255,6 @@ body.wizard .group-pending-title-wizard { display: inline; }
   padding: 4px 10px; cursor: pointer; white-space: nowrap;
 }
 .queued-spawns-chip:hover, .queued-spawns-chip.open { border-color: #e3b341; color: #f2cc60; }
-.queued-spawns-count {
-  background: #9e6a03; color: #0d1117; border-radius: 9px;
-  padding: 0 6px; font-size: 11px; line-height: 16px;
-}
 .queued-spawns-popover {
   position: fixed; z-index: var(--z-popover);
   width: min(380px, calc(100vw - 32px)); max-height: 60vh; overflow-y: auto;
@@ -6479,13 +6447,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
 body.wizard .filter-bar .view-btn.ui-btn { color: #b39ddb; }
 body.wizard .filter-bar .view-btn.ui-btn:hover:not(:disabled) { color: #f3e6c0; background: #3a2a63; }
 body.wizard .filter-bar .view-btn.ui-btn[aria-expanded="true"] { color: #f3e6c0; background: #3a2a63; border-color: #a97bd6; }
-/* Subtle grey count — matches the Terminals tab's .tab-badge.count so a
-   deviation-from-default reads as a quiet informational number, not an alert. */
-.filter-bar .view-badge {
-  display: inline-block; margin-left: 5px; padding: 0 5px;
-  border-radius: 7px; background: #21262d; color: #8b949e;
-  font-size: 10px; font-weight: 500; line-height: 13px; vertical-align: middle;
-}
+.filter-bar .view-badge { margin-left: 5px; }
 .view-menu {
   display: none; position: absolute; top: 100%; left: 0; z-index: var(--z-popover);
   margin-top: 4px; min-width: 180px; flex-direction: column; gap: 2px;
@@ -11379,9 +11341,6 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 }
 
 /* === Plugins tab ====================================================== */
-/* The nav badge reuses .tab-badge (red, from Messages); .warn re-tints
-   it amber — "needs attention", not "new thing to read". */
-.tab-badge.warn { background: #9e6a03; }
 .plugin-card {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 10px 14px; margin-bottom: 10px;
@@ -16040,7 +15999,6 @@ body.wizard .filter-bar label.filter-toggle select:where(:not(.ui-select)) {
 /* View popover — the "▾ view" trigger, its badge and drop panel. */
 /* Muted amethyst-grey rather than bright gold — the wizard echo of the quiet
    grey terminals count, so the deviation number stays subtle in this skin too. */
-body.wizard .filter-bar .view-badge { background: #2a2140; color: #9a86c4; }
 body.wizard .view-menu {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
   border-color: rgba(122, 93, 176, 0.5);
@@ -20434,8 +20392,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .groups-focus-flow circle { fill: #58a6ff; }
 .groups-focus-people { width: 20px; height: 16px; overflow: visible; fill: #58a6ff; }
 .groups-focus-people .back { opacity: 0.7; }
-.groups-focus-count { position: absolute; bottom: -6px; right: -6px; z-index: 1; min-width: 1.4em; padding: 0 3px; border-radius: 7px; background: #30363d; color: #fff; font-size: 9px; font-weight: 700; line-height: 1.2; text-align: center; box-shadow: 0 0 0 1.5px #0d1117; }
-.groups-focus-option.active .groups-focus-count { background: #1f6feb; color: #fff; }
+.groups-focus-count { bottom: -6px; right: -6px; z-index: 1; }
 .groups-run-menu {
   position: absolute; top: calc(100% + 7px); left: -2px; z-index: var(--z-popover);
   display: flex; flex-direction: column; gap: 2px; min-width: 170px; padding: 6px;
@@ -20480,8 +20437,6 @@ body.wizard .groups-focus-option { color: #b39ddb; }
 body.wizard .groups-focus-runs,
 body.wizard .groups-focus-switch > .groups-focus-option { border-left-color: rgba(122, 93, 176, 0.5); }
 body.wizard .groups-focus-option.active { background: #241b3d; color: #f3e6c0; box-shadow: inset 0 -2px 0 #d4af37; }
-body.wizard .groups-focus-count { background: #2c2248; color: #e7d9f5; box-shadow: 0 0 0 1.5px #0f0a1f; }
-body.wizard .groups-focus-option.active .groups-focus-count { background: #a97bd6; color: #14102a; }
 body.wizard .groups-focus-flow polyline { stroke: color-mix(in srgb, #a97bd6 55%, transparent); }
 body.wizard .groups-focus-flow circle { fill: #a97bd6; }
 body.wizard .groups-focus-people { fill: #a97bd6; }
@@ -21319,7 +21274,6 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .doctor-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; grid-column: 1 / -1; }
 .doctor-acts button.tool.doctor-primary { background: #238636; border-color: #2ea043; color: #fff; }
 .doctor-acts button.tool:disabled { opacity: .6; cursor: default; }
-.tab-badge.doctor-ask { background: #1f6feb; }
 @media (max-width: 720px) {
   .doctor-island { grid-template-columns: minmax(0, 1fr); }
   .doctor-side { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid #2a3340; border-radius: 6px 6px 0 0; }

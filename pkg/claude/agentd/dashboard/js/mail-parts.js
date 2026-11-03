@@ -166,7 +166,7 @@ export function FolderRow({
     <span class="mailbox-name">${label}</span>
     ${tags}
     ${total !== null && html`<span class="mailbox-count" title=${totalTitle}>${total}</span>`}
-    ${unread ? html`<span class="mailbox-unread">${unread > 99 ? '99+' : unread}</span>` : null}
+    ${unread ? html`<span class="mailbox-unread ui-badge ui-badge-accent">${unread > 99 ? '99+' : unread}</span>` : null}
   </button></div>`;
 }
 
@@ -186,7 +186,7 @@ export function SectionToggle({ expanded, label, unread = 0, onToggle, className
     title=${expanded ? 'Collapse the agent list' : 'Expand the agent list'}
     onClick=${onToggle}><span class="mailbox-section-caret">${expanded ? '▾' : '▸'}</span>
     ${label}
-    ${unread > 0 && html` <span class="mailbox-unread">${unread > 99 ? '99+' : unread}</span>`}</button>`;
+    ${unread > 0 && html` <span class="mailbox-unread ui-badge ui-badge-accent">${unread > 99 ? '99+' : unread}</span>`}</button>`;
 }
 
 // MessageHead names a row's parties: sender → recipient in an aggregate
