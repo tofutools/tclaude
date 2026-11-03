@@ -117,7 +117,7 @@ const openMenu = (what, trigger, { x, y }) => { tabMenu.value = { ...what, trigg
 export function OverlayTabMore({ tab, label }) {
   const open = tabMenu.value?.tabId === tab.id;
   return html`<button data-ui-exempt type="button" class="overlay-tab-more" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
-    title="Move this tab to Collab, its own tab or a separate window; group or minimize it" aria-label=${`More for ${label}`}
+    title="Move, group or minimize this tab" aria-label=${`More for ${label}`}
     onClick=${(event) => openFromKeys({ tabId: tab.id, label }, event.currentTarget)}><${Glyph} path=${STANDARD_GLYPHS.more} /></button>`;
 }
 
