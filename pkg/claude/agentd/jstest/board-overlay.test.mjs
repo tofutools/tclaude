@@ -923,9 +923,9 @@ scenario('the tools and the title belong to the active tab', async ({ harness, o
   assert.equal(tabButton(overlayHost, 'Release plan').getAttribute('aria-selected'), 'true');
 });
 
-scenario('a tab × minimizes only that tab, and it comes back to its window', async ({ harness, overlayHost, overlayState, windows }) => {
+scenario('a tab – minimizes only that tab, and it comes back to its window', async ({ harness, overlayHost, overlayState, windows }) => {
   await twoInOne(harness, overlayState, windows);
-  await harness.act(async () => { overlayHost.querySelector('[aria-label="Minimize Release plan"]').click(); await wait(); await wait(); });
+  await harness.act(async () => { overlayHost.querySelector('[aria-label="Minimize Release plan to dock"]').click(); await wait(); await wait(); });
   assert.deepEqual(tabsByWindow(overlayHost), [['Team map']]);
   assert.equal(overlayHost.querySelector('.overlay-dock-item').textContent.trim(), '✎ Release plan');
   assert.equal(overlayState.boardOverlays.value.length, 2, 'it keeps its one place');
@@ -978,6 +978,13 @@ scenario('a tab × still sends that tab to the dock', async ({ harness, overlayH
   await harness.act(async () => { windows.minimizeOverlayTab('board:map'); await wait(); await wait(); });
   assert.deepEqual(tabsByWindow(overlayHost), [['Release plan']]);
   assert.equal(overlayHost.querySelectorAll('.overlay-dock-pill').length, 1);
+});
+
+scenario('a tab × takes only that tab off, with no pill on the dock', async ({ harness, overlayHost, overlayState, windows }) => {
+  await twoInOne(harness, overlayState, windows);
+  await harness.act(async () => { overlayHost.querySelector('[aria-label="Detach Release plan to background"]').click(); await wait(); await wait(); });
+  assert.deepEqual(tabsByWindow(overlayHost), [['Team map']]);
+  assert.equal(overlayHost.querySelector('.overlay-dock-item'), null, 'nothing waits on the dock');
 });
 
 scenario('a deleted board leaves the window it shared', async ({ harness, overlayHost, overlayState, windows }) => {

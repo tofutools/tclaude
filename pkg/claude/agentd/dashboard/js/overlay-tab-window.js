@@ -15,7 +15,7 @@ import { ProcessOverlayWindow, processStartPlacement } from './process-overlay.j
 import { ChatWindow } from './chat-window.js';
 import { CHAT_WINDOW_KIND } from './chat-window-model.js';
 import { defaultPlacement } from './companion-model.js';
-import { askOverlayClose, closeEveryTab, useDropPoint } from './overlay-instances.js';
+import { askOverlayClose, closeWindowTabs, useDropPoint } from './overlay-instances.js';
 import { tabJoin } from './overlay-tab-drag.js';
 import { activeTabOf } from './overlay-tab-model.js';
 import { tabMoves } from './overlay-tab-moves.js';
@@ -75,16 +75,24 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = n
     ...(window.place === home?.place && { spotted: home.spotted, onPlaced: home.onPlaced }),
     join: window.tabs.length === 1 ? tabJoin(win, tab.id, window.id) : null,
   });
-  const asking = window.tabs.find((candidate) => kinds[candidate.kind]?.asksToClose?.(candidate));
+  const asksToClose = (candidate) => !!kinds[candidate.kind]?.asksToClose?.(candidate);
+  // The window's ✕ and a tab's × are one close: the tabs leave and keep running
+  // in the background, and a running Steward asks first, as ⏻ does.
+  const closeTabs = (picks) => {
+    const asking = window.tabs.filter(picks).find(asksToClose);
+    closeWindowTabs(window.id, picks, { asking: asking?.id, closeOf: (candidate) => tabMoves(candidate).close });
+    if (asking) askOverlayClose(asking.id);
+  };
   const close = {
-    title: closeTitle(window, !!asking),
-    onClose: () => {
-      closeEveryTab(window.id, { asking: asking?.id, closeOf: (candidate) => tabMoves(candidate).close });
-      if (asking) askOverlayClose(asking.id);
-    },
+    title: closeTitle(window, window.tabs.some(asksToClose)),
+    onClose: () => closeTabs(() => true),
+  };
+  const tabClose = {
+    title: (candidate) => (asksToClose(candidate) ? 'Detach: shut it down, after asking' : 'Detach to background: it leaves the window and dock and keeps running'),
+    onClose: (id) => closeTabs((candidate) => candidate.id === id),
   };
   const viewOf = tabViewOf(kinds);
-  const strip = html`<${OverlayTabStrip} window=${window} overlay=${overlay} win=${win} viewOf=${viewOf} />${add?.(window)}`;
+  const strip = html`<${OverlayTabStrip} window=${window} overlay=${overlay} win=${win} viewOf=${viewOf} tabClose=${tabClose} />${add?.(window)}`;
   const Body = kinds[tab.kind]?.Body || TAB_BODIES[tab.kind];
   const minimize = home?.shrinks?.(window, overlay);
   const fallback = (retry) => {

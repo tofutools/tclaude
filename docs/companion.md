@@ -96,9 +96,10 @@ blocking it, and comes back when you reload the tab.
   It is the same terminal, and it moves, snaps, splits, minimizes and closes on its
   own. Drag its tab onto another window to join them again. Open windows come back
   after a reload. The agent keeps running when its window closes.
-- **Each agent is a tab**. **＋** summons the Steward or adds another live agent, and
-  **×** on a tab sends it to the dock. The agent keeps running. **×** on its dock pill
-  removes it for good.
+- **Each agent is a tab**. **＋** summons the Steward or adds another live agent.
+  **–** on a tab sends it to the dock, and **×** on a tab detaches it to the background,
+  as the window's × does for every tab. Either way the agent keeps running. **×** on its
+  dock pill removes it for good.
 - **Scribes and Stewards** get a tab by themselves. One you remove stays removed until
   you bring it back with **＋**.
 
@@ -144,8 +145,12 @@ GNOME-style buttons on Linux. **Config > Appearance > Window controls** picks a
 look by hand. **Classic** keeps a plain minimize button and has no maximize or
 close.
 
-The small × on a tab, next to the name, sends that tab to the dock and leaves it
-running, on a Steward's tab too. The Steward's pill brings it back.
+Each tab has the window's two verbs, in the same order: **–** (Minimize to dock) sends
+that tab to the dock and leaves it running, on a Steward's tab too, and the Steward's pill
+brings it back. **×** (Detach to background) is the window's × for that one tab: it
+leaves the window and the dock and keeps running. On a running Steward's tab it asks
+first, then shuts down, as the window's × does. The tab showing always has both
+buttons; the others show them under the pointer or keyboard focus.
 
 Dragging a maximized window by its title bar also restores it.
 
@@ -224,14 +229,14 @@ overlay window.
 
 ![The footer at 1000 pixels wide: the version text on the left; on the right a +3 button whose list is open above it, one minimized chat, ☰, the Steward's pill and Open PRs](assets/companion-footer-dock.png)
 
-A tab's × minimizes that tab to the dock and stops nothing, and so does `Minimize tab` on its
+A tab's – minimizes that tab to the dock and stops nothing, and so does `Minimize tab` on its
 menu, beside `Minimize other tabs` and `Minimize all tabs`. These never ask, even for a Steward,
 because nothing stops. Its pill brings it back to the
 window it left, or to a new window where that one stood.
 The window's – keeps its tabs together on one pill, showing the active tab and a count.
 
 The window's close button is different: it closes the window, and its tabs leave the
-dock too, as the × on a pill takes them. Nothing stops. Agents and shells keep running
+dock too, as the × on a pill takes them. A tab's × does the same for that tab alone. Nothing stops. Agents and shells keep running
 in the background, and a reload does not bring the window back. Open them again from
 wherever you opened them: the Groups tab, the palette, the Terminals or Collab tab.
 A floating process editor with unsaved edits asks first, and stays if you keep them.

@@ -1,7 +1,10 @@
 // overlay-tab-strip.js -- a window's tabs, in its title bar. Even a window of one
 // tab shows it, so there is one layout. That tab drags the window, as a browser's
-// only tab does, and a window of several drags by the bar around them. A tab's ×
-// minimizes that tab to the dock and stops nothing. Tabs group and take a
+// only tab does, and a window of several drags by the bar around them. A tab has
+// the window's two verbs, in the title bar's order: − minimizes it to the dock,
+// and × detaches it, as the window's ✕ does for every tab: it leaves the window
+// and the dock and keeps running in the background (tabClose). Neither stops
+// anything, but a running Steward asks first. Tabs group and take a
 // right-click menu as a Terminals strip's do, and a menu rests under a held finger.
 
 import { h } from 'preact';
@@ -178,7 +181,7 @@ function GroupStack({ window, group, overlay, win, renderTab }) {
   </div>`;
 }
 
-export function OverlayTabStrip({ window, overlay, win, viewOf }) {
+export function OverlayTabStrip({ window, overlay, win, viewOf, tabClose = null }) {
   const target = tabDropTarget.value?.windowId === window.id ? tabDropTarget.value : null;
   const stripRef = useRef(null);
   // A strip too full for its bar still shows the tab that is showing.
@@ -248,8 +251,12 @@ export function OverlayTabStrip({ window, overlay, win, viewOf }) {
       <button data-ui-exempt type="button" role="tab" aria-selected=${selected ? 'true' : 'false'} aria-haspopup="menu" title=${title}
         onPointerDown=${(event) => onPointerDown(event, tab)} onClick=${(event) => (selected ? overlay.releaseFocus(event) : activateOverlayTab(tab.id))}
         ...${menu}>${lead}<span>${label}</span></button>
-      <button data-ui-exempt type="button" class="companion-tab-close" aria-label=${`Minimize ${label}`} title="Minimize this tab (it keeps running)"
-        onClick=${() => minimizeOverlayTab(tab.id)}>×</button>
+      <span class="companion-tab-buttons">
+        <button data-ui-exempt type="button" class="companion-tab-minimize" aria-label=${`Minimize ${label} to dock`} title="Minimize to dock (it keeps running)"
+          onClick=${() => minimizeOverlayTab(tab.id)}>–</button>
+        ${tabClose && html`<button data-ui-exempt type="button" class="companion-tab-close" aria-label=${`Detach ${label} to background`} title=${tabClose.title(tab)}
+          onClick=${() => tabClose.onClose(tab.id)}>×</button>`}
+      </span>
     </div>`;
   };
   const groups = new Map((window.groups || []).map((group) => [group.id, group]));
