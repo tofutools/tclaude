@@ -30,14 +30,16 @@ spec.loader.exec_module(cc)
 
 MODES = ("docs", "ui", "code", "full")
 LINUX = cc.LINUX
+MACOS = cc.MACOS
 LINUX_ENTRIES = [{"os": LINUX, "shard": s} for s in cc.LINUX_SHARDS]
+MAC_ENTRIES = [{"os": MACOS, "shard": s} for s in cc.MACOS_SHARDS]
 
 def never(pkg):
     raise AssertionError(f"affected({pkg}) must not be consulted here")
 
 
-def classify(paths, affected=lambda pkg: False):
-    return cc.classify(paths, affected)
+def classify(paths, affected=lambda pkg: False, macos=False):
+    return cc.classify(paths, affected, macos=macos)
 
 
 class PathPredicates(unittest.TestCase):
@@ -135,26 +137,32 @@ class PathPredicates(unittest.TestCase):
             self.assertFalse(cc.is_sandbox(p), p)
 
 class Decisions(unittest.TestCase):
-    def check_shape(self, mode, run, matrix):
+    def check_shape(self, mode, run, matrix, macos=False):
         self.assertIn(mode, MODES)
         self.assertEqual(set(run), set(cc.JOBS))
         self.assertTrue(all(isinstance(v, bool) for v in run.values()))
         self.assertTrue(matrix, "the test matrix must never be empty")
         for entry in matrix:
             self.assertEqual(set(entry), {"os", "shard"})
-            # PR CI runs no macOS jobs (CONTRIBUTING.md, "macOS CI").
-            self.assertEqual(entry["os"], LINUX)
+        # Without the opt-in, PR CI runs no macOS jobs (CONTRIBUTING.md,
+        # "macOS CI"); with it, macOS runs exactly when the tests do.
+        has_mac = any(e["os"] == MACOS for e in matrix)
+        self.assertEqual(has_mac, macos and run["test"], (mode, matrix))
+        self.assertEqual(run["sandbox-v2-seatbelt-smoke"], has_mac, (mode, run))
+        if has_mac:
+            self.assertEqual(matrix[-len(MAC_ENTRIES):], MAC_ENTRIES)
 
-    def decide(self, paths, affected=lambda pkg: False):
-        mode, run, matrix, reasons = classify(paths, affected)
-        self.check_shape(mode, run, matrix)
+    def decide(self, paths, affected=lambda pkg: False, macos=False):
+        mode, run, matrix, reasons = classify(paths, affected, macos)
+        self.check_shape(mode, run, matrix, macos)
         self.assertTrue(reasons)
         return mode, run, matrix
 
     def assert_full(self, paths):
         mode, run, matrix = self.decide(paths, affected=never)
         self.assertEqual(mode, "full", paths)
-        self.assertTrue(all(run.values()), paths)
+        # Everything but the macOS opt-in job, which needs the opt-in.
+        self.assertTrue(all(v for j, v in run.items() if j not in cc.OPT_IN_JOBS), paths)
         self.assertEqual(matrix, LINUX_ENTRIES)
 
     def test_empty_diff_runs_everything(self):
@@ -255,6 +263,39 @@ class Decisions(unittest.TestCase):
             self.assertTrue(run["filtered-proxy-smoke"] and run["proxy-posture-e2e"], p)
             self.assertEqual(matrix, LINUX_ENTRIES)
 
+    def test_macos_opt_in_adds_macos_wherever_tests_run(self):
+        cases = (
+            (["docs/x.md"], "docs", None),
+            (["pkg/claude/agentd/dashboard/board.css"], "ui",
+             [{"os": LINUX, "shard": s} for s in cc.UI_SHARDS]),
+            (["pkg/claude/agentd/handlers.go"], "code", LINUX_ENTRIES),
+            (["go.mod"], "full", LINUX_ENTRIES),
+        )
+        for paths, want_mode, linux in cases:
+            mode, run, matrix = self.decide(paths, affected=lambda p: True, macos=True)
+            self.assertEqual(mode, want_mode, paths)
+            if linux is None:
+                self.assertFalse(run["test"] or run["sandbox-v2-seatbelt-smoke"], paths)
+                continue
+            self.assertEqual(matrix, linux + MAC_ENTRIES, paths)
+            self.assertTrue(run["sandbox-v2-seatbelt-smoke"], paths)
+            # The opt-in only adds macOS; every Linux verdict is unchanged.
+            _, base_run, base_matrix = self.decide(paths, affected=lambda p: True)
+            self.assertEqual(base_matrix, linux, paths)
+            self.assertEqual({j: v for j, v in run.items() if j != "sandbox-v2-seatbelt-smoke"},
+                             {j: v for j, v in base_run.items() if j != "sandbox-v2-seatbelt-smoke"})
+            self.assertFalse(base_run["sandbox-v2-seatbelt-smoke"], paths)
+
+    def test_macos_opt_in_sources(self):
+        self.assertTrue(cc.macos_opt_in(["ci:macos"], []))
+        self.assertTrue(cc.macos_opt_in(["bug", "ci:macos"], []))
+        self.assertTrue(cc.macos_opt_in([], ["true"]))
+        self.assertTrue(cc.macos_opt_in([], [" TRUE "]))
+        self.assertTrue(cc.macos_opt_in(["ci:macos"], ["true"]))
+        self.assertFalse(cc.macos_opt_in([], []))
+        self.assertFalse(cc.macos_opt_in(["ci:mac", "macos", "CI:MACOS"], []))
+        self.assertFalse(cc.macos_opt_in([], ["false", "yes", ""]))
+
     def test_harness_smokes_follow_affected(self):
         for reached in itertools.chain.from_iterable(
                 itertools.combinations(cc.HARNESS_SMOKES.values(), n) for n in range(4)):
@@ -312,11 +353,12 @@ class Monotonic(unittest.TestCase):
                         or ("pkg/claude/harness/pifixture/pi.go" in paths and "pifixture" in pkg))
             return affected
 
-        for _ in range(3000):
+        for i in range(3000):
             small = rng.sample(POOL, rng.randint(1, 4))
             big = small + rng.sample(POOL, rng.randint(1, 4))
-            m1, r1, x1, _ = classify(small, affected_for(small))
-            m2, r2, x2, _ = classify(big, affected_for(big))
+            macos = bool(i % 2)
+            m1, r1, x1, _ = classify(small, affected_for(small), macos)
+            m2, r2, x2, _ = classify(big, affected_for(big), macos)
             self.assertGreaterEqual(RANK[m2], RANK[m1], (small, big))
             self.assertLessEqual(jobs_run(r1, x1), jobs_run(r2, x2), (small, big))
 
@@ -427,6 +469,55 @@ class GitPlumbing(unittest.TestCase):
         self.assertEqual(out["mode"], "code")
         self.assertEqual(out["matrix"], LINUX_ENTRIES)
 
+    def commit_message(self, msg):
+        self.git("commit", "--quiet", "--allow-empty", "-m", msg)
+
+    def assert_macos(self, out, want):
+        has_mac = any(e["os"] == MACOS for e in out["matrix"])
+        self.assertEqual(has_mac, want, out["matrix"])
+        self.assertEqual(out["run_sandbox_v2_seatbelt_smoke"], "true" if want else "false")
+
+    def test_macos_off_by_default(self):
+        self.write("pkg/claude/agentd/plain.go", "package agentd // edited\n")
+        self.commit("edit")
+        head = self.rev()
+        self.assert_macos(self.outputs(self.base, no_go=True), False)
+        self.assert_macos(self.outputs(self.base, "--pr-head", head, "--labels", "bug,docs",
+                                       no_go=True), False)
+
+    def test_macos_label_opts_in(self):
+        self.write("pkg/claude/agentd/plain.go", "package agentd // edited\n")
+        self.commit("edit")
+        for labels in ("ci:macos", "bug,ci:macos", "bug\nci:macos\n"):
+            out = self.outputs(self.base, "--labels", labels, "--pr-head", self.rev(), no_go=True)
+            self.assert_macos(out, True)
+
+    def test_macos_trailer_on_head_commit_opts_in(self):
+        self.write("pkg/claude/agentd/plain.go", "package agentd // edited\n")
+        self.commit_message("edit\n\nCI-macOS: true\nCo-Authored-By: A <a@example.invalid>")
+        self.assert_macos(self.outputs(self.base, "--pr-head", self.rev(), no_go=True), True)
+        # The trailer is read from --pr-head only, never from <head> itself.
+        self.assert_macos(self.outputs(self.base, no_go=True), False)
+
+    def test_macos_trailer_on_earlier_commit_is_ignored(self):
+        self.write("pkg/claude/agentd/plain.go", "package agentd // edited\n")
+        self.commit_message("edit\n\nCI-macOS: true")
+        self.write("pkg/claude/agentd/plain.go", "package agentd // edited again\n")
+        self.commit_message("follow-up without the trailer")
+        self.assert_macos(self.outputs(self.base, "--pr-head", self.rev(), no_go=True), False)
+
+    def test_macos_trailer_must_be_a_trailer(self):
+        self.write("pkg/claude/agentd/plain.go", "package agentd // edited\n")
+        self.commit_message("edit\n\nMentions CI-macOS: true in prose, then more prose.")
+        self.assert_macos(self.outputs(self.base, "--pr-head", self.rev(), no_go=True), False)
+        self.commit_message("edit\n\nCI-macOS: false")
+        self.assert_macos(self.outputs(self.base, "--pr-head", self.rev(), no_go=True), False)
+
+    def test_missing_pr_head_fails(self):
+        res = self.run_script(self.base, "--pr-head", "0" * 40)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("mode=", res.stdout)
+
     def test_missing_base_fails(self):
         for args in (("missing-base",), (self.base, "missing-head"), ()):
             res = self.run_script(*args)
@@ -477,12 +568,29 @@ class WorkflowConsistency(unittest.TestCase):
         self.assertIn("diff-base: HEAD^1", block)
 
     def test_shards_exist_in_test_suite_action(self):
-        for shard in set(cc.LINUX_SHARDS) | set(cc.UI_SHARDS):
+        for shard in set(cc.LINUX_SHARDS) | set(cc.UI_SHARDS) | set(cc.MACOS_SHARDS):
             self.assertRegex(self.action, rf"\n\s+{re.escape(shard)}\)", shard)
 
-    def test_pr_ci_runs_no_macos(self):
-        self.assertNotRegex(self.ci, r"(?m)^\s*runs-on:.*mac", "a macOS runner in ci.yml")
-        self.assertNotIn("seatbelt-smoke", self.ci)
+    def test_macos_only_behind_the_opt_in(self):
+        # The one literal macOS runner is the opt-in-gated Seatbelt smoke; the
+        # test job's macOS entries come only from the classifier's matrix.
+        self.assertEqual(len(re.findall(r"(?m)^\s*runs-on:.*mac", self.ci)), 1)
+        self.assertRegex(self.job_block("sandbox-v2-seatbelt-smoke"),
+                         r"\n    runs-on: macos-latest\n")
+        self.assertIn("    runs-on: ${{ matrix.os }}\n", self.job_block("test"))
+
+    def test_gate_exempts_only_the_opt_in_jobs(self):
+        m = re.search(r"opt_in = \{(.*)\}", self.job_block("ci-complete"))
+        self.assertIsNotNone(m)
+        names = {n.strip().strip('"') for n in m.group(1).split(",")}
+        self.assertEqual(names, set(cc.OPT_IN_JOBS))
+
+    def test_classifier_gets_the_opt_in_inputs(self):
+        block = self.job_block("changes")
+        self.assertIn("HEAD_SHA: ${{ github.event.pull_request.head.sha }}", block)
+        self.assertIn('--labels "$labels" --pr-head "$HEAD_SHA"', block)
+        self.assertIn("pull-requests: read", block)
+        self.assertIn(cc.MACOS_LABEL, block)
 
 
 class TreeConsistency(unittest.TestCase):
