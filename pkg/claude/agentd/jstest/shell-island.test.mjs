@@ -801,10 +801,14 @@ test('footer open MRs lists GitLab merge requests next to open PRs', async (t) =
   assert.equal(trigger.getAttribute('aria-expanded'), 'true');
   const rows = [...mounted.container.querySelectorAll('.open-pr-row')];
   assert.equal(rows.length, 2);
-  assert.match(rows[0].textContent, /acme\/app · !7 · 2 approvals · builder/);
+  assert.match(rows[0].textContent, /acme\/app · !7 · builder/);
+  assert.doesNotMatch(rows[0].textContent, /approval/, 'the review pill carries the approvals, not the meta line');
   assert.match(rows[1].textContent, /!8 · conflict · no active agent/);
   assert.equal(rows[0].querySelector('.ci-count').textContent, 'pipeline', 'one head pipeline, not a check count');
-  assert.equal(mounted.container.querySelector('.rv-hover, .pr-review-badge'), null, 'the GitHub review pill is not shown');
+  const pill = rows[0].querySelector('.rv-badge');
+  assert.ok(pill?.classList.contains('rv-approved'), 'a merge request has the same review pill as a pull request');
+  assert.equal(pill.textContent.trim(), '2');
+  assert.match(pill.getAttribute('aria-label'), /Reviews for !7 .*Opens the merge request on GitLab/);
   const link = getByRole(mounted.container, 'link', { name: /Open all on gitlab\.example\.test:8929/ });
   assert.equal(link.getAttribute('href'), 'https://gitlab.example.test:8929/dashboard/merge_requests?state=opened&author_username=jdoe');
   assert.match(mounted.container.querySelector('.open-prs-stale').textContent, /other\.example\.test: GitLab applied a rate limit/);
@@ -860,7 +864,8 @@ test('footer open MRs shows mine and all, and a tab per project for everyone\'s'
     /Everyone's merge requests on gitlab\.example\.test:8929 are from an earlier read: GitLab applied a rate limit/);
   const rows = [...mounted.container.querySelectorAll('.open-pr-row')];
   assert.equal(rows.length, 2);
-  assert.match(rows[0].textContent, /!249 · by martin · 1 approval · builder/);
+  assert.match(rows[0].textContent, /!249 · by martin · builder/);
+  assert.equal(rows[0].querySelector('.rv-badge').textContent.trim(), '1', 'a project tab row has the review pill too');
   assert.match(rows[1].textContent, /!250 · by agent-bot · conflict · no active agent/);
   const link = getByRole(mounted.container, 'link', { name: /Open in GitLab/ });
   assert.equal(link.getAttribute('href'), `${base}/contoso/player/-/merge_requests`);

@@ -319,9 +319,8 @@ function ignoredUntilLabel(ignored) {
 // ignored row says until when instead, and offers only its way back.
 //
 // kind 'mr' is a GitLab merge request in the Open MRs list: numbered !N, its
-// CI pill one head pipeline, and its approvals, change requests and conflicts
-// written into the meta line (the review pill and the details card are
-// GitHub's).
+// CI pill one head pipeline, its reviews in the same pill a pull request has,
+// and a conflict written into the meta line (the details card is GitHub's).
 function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = null, onRestore = null, kind = 'pr' }) {
   const mr = kind === 'mr';
   const terminal = pr.state === 'merged' || pr.state === 'closed';
@@ -330,7 +329,6 @@ function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = nu
   const dot = terminal ? pr.state : (draft ? 'draft' : (pr?.checks?.state || 'unknown'));
   const ref = `${mr ? '!' : '#'}${pr.number}`;
   const titleText = pr.title || `${mr ? 'Merge request' : 'Pull request'} ${ref}`;
-  const approvals = mr ? Math.max(0, Number(pr.reviews?.approved || 0)) : 0;
   const prState = terminal ? pr.state : (draft ? 'draft' : 'open');
   return html`
     <li class=${`open-pr-row${draft ? ' is-draft' : ''}${ignored ? ' is-ignored' : ''}`}>
@@ -343,9 +341,6 @@ function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = nu
         <span class="open-pr-meta">
           <span>${pr.repository}</span><span> · ${ref}</span>
           ${mr && pr.author ? html`<span> · by ${pr.author}</span>` : null}
-          ${mr && approvals > 0 ? html`<span> · ${approvals} approval${approvals === 1 ? '' : 's'}</span>` : null}
-          ${mr && pr.reviews?.decision === 'review_required' ? html`<span> · approvals required</span>` : null}
-          ${mr && Number(pr.reviews?.changes_requested || 0) > 0 ? html`<span> · changes requested</span>` : null}
           ${mr && pr.conflicts ? html`<span> · conflict</span>` : null}
           ${ignored ? html`<span> · ${ignoredUntilLabel(ignored)}</span>` : null}
           ${!ignored && terminal ? html`<span> · ${pr.state}${pr.closed_at ? ` ${new Date(pr.closed_at).toLocaleDateString()}` : ''}</span>` : null}
@@ -360,7 +355,7 @@ function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = nu
             aria-label=${`Bring back pull request #${pr.number}`} onClick=${() => onRestore?.(pr)}>Restore</button>` : html`
           <${PRChecksBadge} url=${pr.url} prNumber=${pr.number}
             summary=${terminal && !showFinalCI ? null : pr.checks} countText=${mr ? 'pipeline' : ''} />
-          ${terminal || draft || mr ? null : html`<${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} />`}
+          ${terminal || draft ? null : html`<${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} />`}
           ${onIgnore && !terminal ? html`<button type="button" class="open-pr-ignore"
             aria-label=${`Ignore pull request #${pr.number}…`} title="Ignore…"
             onClick=${() => onIgnore(pr)}>⊘</button>` : null}

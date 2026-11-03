@@ -267,7 +267,11 @@ Subscription quota is not on the row; see
 - **Review pill**: a person icon on open, non-draft PRs. Green with a count is
   approved, red with a count is changes requested, amber means a review is
   required, grey means none yet. Only human reviews count. Hover for each
-  reviewer's latest review.
+  reviewer's latest review. A GitLab merge request gets the same pill: its
+  approvals, its reviewers' change requests, and amber while the project's
+  approval rules want more approvals. GitLab records no time on an approval,
+  so its rows show no age. An instance older than reviewer states (GitLab
+  added them after approvals) shows approvals only.
 
 PR and CI data comes from `git` and `gh`, or the GitLab API for a merge
 request, cached for 90 seconds.
@@ -320,14 +324,16 @@ and **Open in GitLab** opens the project's own list.
   none; or the merge request conflicts with its target; or changes were
   requested. A pipeline still running with nothing failed does not count. Drafts are grey and stay out of **Needs attention** unless you tick
   **Include drafts**, which is the same setting as in Open PRs.
-- **Rows** read `!7` for merge request 7, and note approvals, requested changes
-  and conflicts. The CI pill shows the head pipeline's state. Hover it for the
-  pipeline's jobs.
+- **Rows** read `!7` for merge request 7, and note conflicts. The CI pill
+  shows the head pipeline's state; hover it for the pipeline's jobs. The
+  [review pill](#pr-ci-and-review-pills) follows it. A project tab's row shows
+  approvals, and a reviewer's change requests too when the merge request is
+  yours or an agent's.
 - **Open all on _host_** (on **Mine**) opens that instance's list of your
   merge requests. An instance that could not be read says why, above the list.
 
 agentd asks each instance once every 30 seconds. Your own list is a single
-GraphQL query. Everyone's list starts with GitLab's REST merge request list,
+GraphQL query, and its reviewers' states a second one. Everyone's list starts with GitLab's REST merge request list,
 which names the projects and covers the 500 most recently updated open merge
 requests. Up to 20 projects per instance are then read through GraphQL, five
 per query: those your agents work in first, then the ones with the most open

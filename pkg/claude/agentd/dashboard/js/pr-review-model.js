@@ -1,7 +1,9 @@
 // Pure helpers for the PR review pill (see pr-review-badge.js) and the Open
 // PRs footer filters. The snapshot's `reviews` object comes from prreviews.go:
 // GitHub's reviewDecision plus counts over each reviewer's latest opinionated
-// review (human reviewers only; bots are listed but never counted).
+// review (human reviewers only; bots are listed but never counted). A GitLab
+// merge request fills the same shape (prreviews_gitlab.go): its approvals and
+// reviewers' change requests, with the decision from its merge status.
 
 // prReviewState collapses a summary into what the pill shows:
 //   changes  — someone requested changes (blocks the merge)
@@ -39,12 +41,16 @@ export function prReviewLabel(reviews) {
   }
 }
 
-export function prReviewDecisionText(decision) {
+// prReviewDecisionText names the forge's own verdict. GitLab's comes from the
+// merge request's detailed merge status: its approval rules still want
+// approvals, or a reviewer's change request blocks it.
+export function prReviewDecisionText(decision, gitlab = false) {
+  const forge = gitlab ? 'GitLab' : 'GitHub';
   switch (decision) {
-    case 'approved': return 'GitHub: approved';
-    case 'changes_requested': return 'GitHub: changes requested';
-    case 'review_required': return 'GitHub: review required';
-    default: return 'no required reviews';
+    case 'approved': return `${forge}: approved`;
+    case 'changes_requested': return `${forge}: changes requested`;
+    case 'review_required': return gitlab ? 'GitLab: approvals required' : 'GitHub: review required';
+    default: return gitlab ? 'no required approvals' : 'no required reviews';
   }
 }
 
