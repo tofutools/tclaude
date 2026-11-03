@@ -1924,16 +1924,6 @@ CREATE INDEX idx_process_agent_dispatches_agent
 CREATE INDEX idx_process_agent_dispatches_open
 	ON process_agent_dispatches(state) WHERE state IN ('pending', 'needs_performer', 'delivered', 'reported');
 
-CREATE TABLE agent_turn_replies (
-	id         INTEGER PRIMARY KEY AUTOINCREMENT,
-	agent_id   TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
-	conv_id    TEXT NOT NULL,
-	body       TEXT NOT NULL,
-	created_at INTEGER NOT NULL
-) STRICT;
-
-CREATE INDEX idx_agent_turn_replies_agent ON agent_turn_replies(agent_id, id);
-
 CREATE TABLE process_template_listing (
 	template_id TEXT PRIMARY KEY CHECK(length(CAST(template_id AS BLOB)) <= 256),
 	listed      INTEGER NOT NULL CHECK(listed IN (0, 1)),
