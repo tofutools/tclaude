@@ -57,7 +57,35 @@ const (
 	authoredOpenMRTimeout = 20 * time.Second
 	// authoredOpenMRDefaultRetry is the wait after a 429 that named none.
 	authoredOpenMRDefaultRetry = time.Minute
+	// authoredRecentMREvery is how many polls apart the recently closed list
+	// is read: every 150s at the 30s poll. A merged merge request is
+	// history, so it has no need of the open list's pace.
+	authoredRecentMREvery = 5
+	// authoredRecentMRLimit is the page asked for per state and instance.
+	authoredRecentMRLimit = 50
 )
+
+// recentMRWindowDays is the recently closed list's lookback. Merge requests
+// share the pull requests' dashboard.recent_pr_window_days; this one line
+// is where they would get their own.
+func recentMRWindowDays(cfg *config.Config) int { return cfg.RecentPRWindowDays() }
+
+// authoredRecentMRQuery reads the user's merge requests merged or closed
+// since $after, one alias per state, because authoredMergeRequests takes a
+// single state. Only the first page of each, most recently updated first; a
+// merge request's last update is its merge or close, or later.
+const authoredRecentMRQuery = `query($first: Int!, $after: Time!) {
+  currentUser {
+    merged: authoredMergeRequests(state: merged, updatedAfter: $after, sort: UPDATED_DESC, first: $first) {
+      count
+      nodes { iid title webUrl updatedAt mergedAt headPipeline { status } }
+    }
+    closed: authoredMergeRequests(state: closed, updatedAfter: $after, sort: UPDATED_DESC, first: $first) {
+      count
+      nodes { iid title webUrl updatedAt closedAt headPipeline { status } }
+    }
+  }
+}`
 
 // authoredOpenMRQuery is the one query the poller sends. It is a constant;
 // the only value it takes travels as a variable.
@@ -129,6 +157,18 @@ var authoredOpenMRState struct {
 	// everyone is each instance's last successful project-wide answer, kept
 	// the same way.
 	everyone map[string]authoredOpenMREveryone
+	// recent is each instance's last recently closed list, read every
+	// authoredRecentMREvery polls and kept the same way; polls counts them.
+	recent map[string]authoredRecentMRs
+	polls  int
+}
+
+// authoredRecentMRs is one instance's recently closed list and the window it
+// was read with.
+type authoredRecentMRs struct {
+	items      []dashboardAuthoredOpenPR
+	windowDays int
+	truncated  bool
 }
 
 type authoredOpenMRAnswer struct {
@@ -271,6 +311,8 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 	authoredOpenMRState.RLock()
 	good := map[string]authoredOpenMRAnswer{}
 	everyone := map[string]authoredOpenMREveryone{}
+	recent := map[string]authoredRecentMRs{}
+	polls := 0
 	if authoredOpenMRState.key == key && authoredOpenMRState.tokenDigest == digest {
 		for base, answer := range authoredOpenMRState.good {
 			good[base] = answer
@@ -278,8 +320,13 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 		for base, answer := range authoredOpenMRState.everyone {
 			everyone[base] = answer
 		}
+		for base, answer := range authoredOpenMRState.recent {
+			recent[base] = answer
+		}
+		polls = authoredOpenMRState.polls
 	}
 	authoredOpenMRState.RUnlock()
+	windowDays := recentMRWindowDays(cfg)
 
 	authoredOpenMRAgentProjects.Lock()
 	agentProjects := authoredOpenMRAgentProjects.set
@@ -311,6 +358,28 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 			} else {
 				everyone[base] = all
 			}
+			// The recently closed list, every authoredRecentMREvery polls, or
+			// at once when the window changed under it. A failure keeps the
+			// last list; the next due poll asks again.
+			last, have := recent[base]
+			switch {
+			case windowDays <= 0:
+				delete(recent, base)
+			case !have || last.windowDays != windowDays || polls%authoredRecentMREvery == 0:
+				got, retry, err := fetchRecentMRs(ctx, base, token, windowDays, time.Now())
+				switch {
+				case errors.Is(err, errGLUnknownField):
+					// An instance too old for the query has no list, so no
+					// Closed filter, rather than an empty one.
+					delete(recent, base)
+				case err != nil:
+					wait = max(wait, retry)
+					slog.Debug("open-mrs: GitLab recently closed read failed; keeping the last list",
+						"host", inst.Host, "error", err, "module", "agentd")
+				default:
+					recent[base] = got
+				}
+			}
 		}
 		instances = append(instances, inst)
 	}
@@ -320,6 +389,8 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 	authoredOpenMRState.tokenDigest = digest
 	authoredOpenMRState.good = good
 	authoredOpenMRState.everyone = everyone
+	authoredOpenMRState.recent = recent
+	authoredOpenMRState.polls = polls + 1
 	authoredOpenMRState.instances = instances
 	if answered > 0 {
 		authoredOpenMRState.updatedAt = time.Now()
@@ -377,6 +448,8 @@ func resetAuthoredOpenMRs(key string) {
 	authoredOpenMRState.tokenDigest = ""
 	authoredOpenMRState.good = nil
 	authoredOpenMRState.everyone = nil
+	authoredOpenMRState.recent = nil
+	authoredOpenMRState.polls = 0
 	authoredOpenMRState.instances = nil
 	authoredOpenMRState.updatedAt = time.Time{}
 	authoredOpenMRState.Unlock()
@@ -410,6 +483,9 @@ type glOpenMRNode struct {
 	Author struct {
 		Username string `json:"username"`
 	} `json:"author"`
+	// MergedAt and ClosedAt are asked for by the recently closed query only.
+	MergedAt string `json:"mergedAt"`
+	ClosedAt string `json:"closedAt"`
 }
 
 // fetchAuthoredOpenMRs runs the query against one instance.
@@ -709,6 +785,77 @@ func fetchOpenMRProjects(ctx context.Context, base, token string, projects []str
 	return out, 0, nil
 }
 
+// fetchRecentMRs reads one instance's recently closed list: the user's merge
+// requests merged or closed within windowDays, newest first. Each row keeps
+// its head pipeline's last status, read here and never polled again. An
+// instance whose GraphQL lacks a field the query names is not asked again.
+func fetchRecentMRs(ctx context.Context, base, token string, windowDays int, now time.Time) (authoredRecentMRs, time.Duration, error) {
+	if glRecentMRsKnownMissing(base) {
+		return authoredRecentMRs{}, 0, errGLUnknownField
+	}
+	ctx, cancel := context.WithTimeout(ctx, authoredOpenMRTimeout)
+	defer cancel()
+	type page struct {
+		Count int            `json:"count"`
+		Nodes []glOpenMRNode `json:"nodes"`
+	}
+	var data struct {
+		CurrentUser *struct {
+			Merged page `json:"merged"`
+			Closed page `json:"closed"`
+		} `json:"currentUser"`
+	}
+	after := now.Add(-time.Duration(windowDays) * 24 * time.Hour).UTC().Format(time.RFC3339)
+	err := glGraphQL(ctx, base, token, authoredRecentMRQuery,
+		map[string]any{"first": authoredRecentMRLimit, "after": after}, &data)
+	if errors.Is(err, errGLUnknownField) {
+		glRecentMRsMissing.Store(strings.ToLower(base), true)
+	}
+	if err != nil {
+		return authoredRecentMRs{}, 0, err
+	}
+	if data.CurrentUser == nil {
+		return authoredRecentMRs{}, 0, errors.New("GitLab did not resolve the token to a user")
+	}
+	fetchedAt := now.UTC().Format(time.RFC3339)
+	out := authoredRecentMRs{windowDays: windowDays, items: []dashboardAuthoredOpenPR{}}
+	for _, list := range []struct {
+		state string
+		page  page
+	}{{"merged", data.CurrentUser.Merged}, {"closed", data.CurrentUser.Closed}} {
+		for _, node := range list.page.Nodes {
+			item, ok := authoredOpenMRItem(base, node, fetchedAt)
+			if !ok {
+				continue
+			}
+			at := node.MergedAt
+			if list.state == "closed" {
+				at = node.ClosedAt
+			}
+			when, err := time.Parse(time.RFC3339, strings.TrimSpace(at))
+			if err != nil {
+				continue // no instant to place it in the window by
+			}
+			// History: no review pill, and nothing for the review cache.
+			item.Reviews, item.reviewObs, item.Draft, item.Conflicts = nil, nil, false, false
+			item.State, item.ClosedAt = list.state, when.UTC().Format(time.RFC3339)
+			out.items = append(out.items, item)
+		}
+		out.truncated = out.truncated || list.page.Count > len(list.page.Nodes)
+	}
+	sort.SliceStable(out.items, func(i, j int) bool { return out.items[i].ClosedAt > out.items[j].ClosedAt })
+	return out, 0, nil
+}
+
+// glRecentMRsMissing holds the instance bases (lower-cased) whose GraphQL
+// refused the recently closed query over a field or argument it lacks.
+var glRecentMRsMissing sync.Map
+
+func glRecentMRsKnownMissing(base string) bool {
+	_, missing := glRecentMRsMissing.Load(strings.ToLower(base))
+	return missing
+}
+
 // glPipelineChecks renders a head pipeline as one pipeline-level check. No
 // pipeline is no checks (nil): the footer treats that as needing attention,
 // as it does a PR without CI. A skipped pipeline ran nothing, so it reads the
@@ -806,6 +953,19 @@ func authoredOpenMRsFromState(cfg *config.Config, agents []dashboardAgent) *dash
 		view.Truncated = view.Truncated || answer.truncated
 	}
 	sortAuthoredOpenPRs(view.Items)
+	// The recently closed list, in the narrower of the configured window and
+	// the one it was read with, as for pull requests (applyRecentPRWindow):
+	// a list read under a 3-day window cannot answer for 14.
+	if windowDays := recentMRWindowDays(cfg); windowDays > 0 && len(authoredOpenMRState.recent) > 0 {
+		for _, answer := range authoredOpenMRState.recent {
+			windowDays = min(windowDays, answer.windowDays)
+			view.Recent = append(view.Recent, answer.items...)
+			view.RecentTruncated = view.RecentTruncated || answer.truncated
+		}
+		sort.SliceStable(view.Recent, func(i, j int) bool { return view.Recent[i].ClosedAt > view.Recent[j].ClosedAt })
+		view.RecentWindowDays = windowDays
+		view.Recent = filterRecentAuthoredPRs(view.Recent, windowDays, time.Now())
+	}
 	view.dashboardAuthoredOpenPRs = associateAuthoredOpenPRs(view.dashboardAuthoredOpenPRs, agents)
 	view.Projects, view.EveryoneTotal, view.EveryoneTruncated = openMRProjectsSnapshot(authoredOpenMRState.everyone, agents)
 	return &view

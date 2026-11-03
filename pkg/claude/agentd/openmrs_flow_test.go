@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,6 +35,8 @@ func TestOpenMRs_SnapshotCarriesTheTokenUsersMergeRequests(t *testing.T) {
 		switch {
 		case !req.GraphQL && req.Path == "merge_requests":
 			return glCanned{Status: http.StatusOK, Body: glEveryoneDiscovery}, true
+		case req.GraphQL && strings.Contains(string(req.Body), "mergedAt"):
+			return glCanned{Status: http.StatusOK, Body: glRecentMRsAnswer}, true
 		case req.GraphQL && strings.Contains(string(req.Body), "mergeRequestInteraction"):
 			return glCanned{Status: http.StatusOK, Body: glOpenMRReviewersAnswer}, true
 		case req.GraphQL && strings.Contains(string(req.Body), "authoredMergeRequests"):
@@ -52,7 +55,7 @@ func TestOpenMRs_SnapshotCarriesTheTokenUsersMergeRequests(t *testing.T) {
 	require.NoError(t, err)
 
 	calls := gl.requests()
-	require.Len(t, calls, 4, "mine, its reviewers, discovery, and one query for the project")
+	require.Len(t, calls, 5, "mine, its reviewers, discovery, one query for the project, and the recently closed")
 	for _, call := range calls {
 		assert.Equal(t, glTestBase, call.Base, "the self-hosted instance, port included")
 	}
@@ -64,7 +67,8 @@ func TestOpenMRs_SnapshotCarriesTheTokenUsersMergeRequests(t *testing.T) {
 	assert.Equal(t, "merge_requests", calls[2].Path)
 	assert.Equal(t, "all", calls[2].Query.Get("scope"))
 	assert.Contains(t, string(calls[3].Body), `"p0":"contoso/sub/player"`)
-	assert.Equal(t, []string{glTestToken, glTestToken, glTestToken, glTestToken}, gl.tokens)
+	assert.Contains(t, string(calls[4].Body), "mergedAt")
+	assert.Equal(t, []string{glTestToken, glTestToken, glTestToken, glTestToken, glTestToken}, gl.tokens)
 
 	snap = snapshotJSON(t, agentd.BuildDashboardHandlerForTest(), "/api/snapshot")
 	mrs, ok := snap["authored_open_mrs"].(map[string]any)
@@ -87,6 +91,12 @@ func TestOpenMRs_SnapshotCarriesTheTokenUsersMergeRequests(t *testing.T) {
 	assert.Equal(t, true, draft["draft"])
 	assert.Equal(t, true, draft["conflicts"])
 	assert.Equal(t, "pending", draft["checks"].(map[string]any)["state"])
+	assert.EqualValues(t, 3, mrs["recent_window_days"], "the pull requests' window, by default")
+	recent, ok := mrs["recent"].([]any)
+	require.True(t, ok)
+	require.Len(t, recent, 1)
+	assert.Equal(t, "merged", recent[0].(map[string]any)["state"])
+	assert.EqualValues(t, 5, recent[0].(map[string]any)["number"])
 
 	instances, ok := mrs["instances"].([]any)
 	require.True(t, ok)
@@ -111,6 +121,14 @@ func TestOpenMRs_SnapshotCarriesTheTokenUsersMergeRequests(t *testing.T) {
 	assert.EqualValues(t, 1, mine["reviews"].(map[string]any)["changes_requested"],
 		"a project tab shows the reviews already read for the user's own merge request")
 }
+
+// glRecentMRsAnswer is the recently closed read: one merge request merged an
+// hour before the test runs (the window is days, so a fixed date would age out).
+var glRecentMRsAnswer = `{"data":{"currentUser":{
+"merged":{"count":1,"nodes":[{"iid":"5","title":"Landed","webUrl":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/5",
+ "updatedAt":"` + time.Now().Add(-time.Hour).UTC().Format(time.RFC3339) + `","mergedAt":"` + time.Now().Add(-time.Hour).UTC().Format(time.RFC3339) + `",
+ "headPipeline":{"status":"SUCCESS"}}]},
+"closed":{"count":0,"nodes":[]}}}}`
 
 const glOpenMRReviewersAnswer = `{"data":{"currentUser":{"authoredMergeRequests":{"nodes":[
 {"webUrl":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/7",

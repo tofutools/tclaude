@@ -92,8 +92,8 @@ type glGraphQLError struct {
 	} `json:"extensions"`
 }
 
-// errGLUnknownField says the instance refused a query over a field its
-// GraphQL schema does not have: an instance older than the field.
+// errGLUnknownField says the instance refused a query over a field or an
+// argument its GraphQL schema does not have: an instance older than it.
 var errGLUnknownField = errors.New("this GitLab instance does not know a field the query asked for")
 
 // glReviewStatesMissing holds the instance bases (lower-cased) that answered
@@ -110,11 +110,13 @@ func markGLReviewStatesMissing(base string) {
 }
 
 // glUnknownFieldError reports whether a GraphQL answer refused the query over
-// a field the schema lacks, which is how an older instance answers the
-// reviewer read.
+// a field or an argument the schema lacks, which is how an older instance
+// answers a read written for a newer one.
 func glUnknownFieldError(errs []glGraphQLError) bool {
 	for _, e := range errs {
-		if e.Extensions.Code == "undefinedField" || strings.Contains(e.Message, "doesn't exist on type") {
+		switch {
+		case e.Extensions.Code == "undefinedField", e.Extensions.Code == "argumentNotAccepted",
+			strings.Contains(e.Message, "doesn't exist on type"), strings.Contains(e.Message, "doesn't accept argument"):
 			return true
 		}
 	}
