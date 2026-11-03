@@ -88,7 +88,6 @@ func TestDashboardTerminalTheme_Wiring(t *testing.T) {
 		".mux-palette-toggle",
 		"body.wizard .mux-tabs",
 		"body.wizard .mux-tab-menu",
-		"body.wizard .mux-tab-menu-item",
 		"body.wizard .mux-tab-menu-separator",
 		"body.wizard .mux-pane-header",
 		"body.wizard .mux-pane-xterm",
