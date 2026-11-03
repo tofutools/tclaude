@@ -295,7 +295,7 @@ function ExportStatus({ job }) {
   if (job.status === 'failed') {
     return html`<${Fragment}>
       <span class="ej-status failed">✗ failed</span>
-      ${job.error && html`<div class="ej-error" title=${job.error}>${job.error}</div>`}
+      ${job.error && html`<div class="ej-error ui-hint" title=${job.error}>${job.error}</div>`}
     </${Fragment}>`;
   }
   return html`<${ExportStepper} status=${job.status} />`;

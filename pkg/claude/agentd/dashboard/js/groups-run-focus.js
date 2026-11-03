@@ -181,7 +181,7 @@ function DecisionForm({ decision, node, onDecide, wizard }) {
     })}</div>
     ${!verdicts.length && html`<div class="grf-muted">This gate offers no verdicts.</div>`}
     ${decided && html`<div class="grf-muted" role="status">${wizard ? 'Your word is sealed:' : 'Recorded:'} ${verdictPresentation(decided).label}</div>`}
-    ${error && html`<div class="grf-error" role="alert">${error}</div>`}
+    ${error && html`<div class="grf-error ui-error" role="alert">${error}</div>`}
   </div>`;
 }
 
@@ -318,7 +318,7 @@ function ReassignForm({ run, node, members, onAssign, wizard }) {
       <//>
       <${Button} size="sm" disabled=${busy || !chosen} onClick=${() => void submit()}>↻ reassign<//>`
     : html`<div class="grf-muted">Nobody else in the group can take it.</div>`}
-    ${error && html`<div class="grf-error" role="alert">${error}</div>`}
+    ${error && html`<div class="grf-error ui-error" role="alert">${error}</div>`}
   </div>`;
 }
 
@@ -451,8 +451,8 @@ export function GroupsRunFocus({
         ${run && runNeedsYou(run, entry) && html`<span class="pk-chip ui-tag pk-state-waiting">👤 ${wizard ? 'awaits your word' : 'waiting on you'}</span>`}
         ${run && html`<${ProcessPausedChip} run=${run} />`}
         ${run && html`<span class="grf-run-actions"><${ProcessPauseControl} run=${run} actions=${runActions} /></span>`}
-        ${detail.error && html`<span class="grf-error" role="status">${detail.error}</span>`}
-        ${dropError && html`<span class="grf-error" role="alert">${dropError}</span>`}
+        ${detail.error && html`<span class="grf-error ui-error" role="status">${detail.error}</span>`}
+        ${dropError && html`<span class="grf-error ui-error" role="alert">${dropError}</span>`}
       </div>
       ${run
     ? html`<div class=${`grf-graph${dropTarget ? ' grf-drop-armed' : ''}`} ref=${graphRef} data-drop-target=${dropTarget}

@@ -928,7 +928,7 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
         <${Button} size="sm" aria-label="Zoom in" disabled=${zoom.view.s >= ZOOM_MAX} onClick=${() => zoom.zoomBy(ZOOM_STEP)}>+<//>
         <${Button} size="sm" aria-label="Fit to screen" title="Fit to screen" onClick=${() => zoom.fit()}>⤢<//>
       </span>
-      <span class="fleet-map-hint">scroll or pinch to zoom · drag the background to pan</span>
+      <span class="fleet-map-hint ui-hint">scroll or pinch to zoom · drag the background to pan</span>
       <${FleetUsageChip} className="fleet-map-usage"/>
     </div>
     <div class="fleet-map-stage" ref=${stageRef}>
