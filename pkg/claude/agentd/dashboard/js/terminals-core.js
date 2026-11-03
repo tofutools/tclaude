@@ -15,6 +15,7 @@ import { attachTerminalInteractions } from './terminal-interactions.js';
 import { restartWatcher as sharedRestartWatcher } from './instance-watch.js';
 import { terminalThemeFor } from './terminal-theme.js';
 import { boardPaneKey, isBoardId } from './board-model.js';
+import { isProcessTemplateId, processPaneKey } from './process-pane-model.js';
 
 // A newly-created browser terminal can briefly lose an attach race with the
 // client it is replacing (pop-out / reattach), or arrive while a freshly
@@ -181,9 +182,15 @@ export const TERMINAL_EXIT = Object.freeze({
 // collides with another pane.
 export function normalizeSeed(seed) {
   if (seed?.board !== undefined) {
-    if (!isBoardId(seed.board)) return null;
+    if (!isBoardId(seed.board) || seed.process !== undefined) return null;
     const { ws: _ws, ...rest } = seed;
     return { ...rest, key: boardPaneKey(seed.board) };
+  }
+  // A process seed (seed.process) is the same: a template id and nothing to dial.
+  if (seed?.process !== undefined) {
+    if (!isProcessTemplateId(seed.process)) return null;
+    const { ws: _ws, ...rest } = seed;
+    return { ...rest, key: processPaneKey(seed.process) };
   }
   return (seed && typeof seed.ws === 'string' && seed.ws.startsWith('/')) ? seed : null;
 }

@@ -11,8 +11,10 @@ export function createTerminalShellState() {
   const panes = signal([]);
   const activeKey = signal(null);
   const revealRequest = signal(0);
-  // Bumped to open the strip's board menu: a bare /boards names no board.
+  // Bumped to open the strip's ＋ menu: a bare /boards or /collab/processes
+  // names no tab.
   const boardMenuRequest = signal(0);
+  const boardMenuSection = signal('');
   // Group descriptors and pane→group membership are two signals because they
   // change independently: renaming or collapsing a stack touches no pane, and
   // moving a tab between stacks touches no descriptor.
@@ -34,11 +36,13 @@ export function createTerminalShellState() {
   // location degrades to the bare tab rather than inventing a second id space.
   //
   // A board tab keeps its own route, /boards/<board-id>: the location names the
-  // boards tab, which the router shows in this section.
+  // boards tab, which the router shows in this section. A process tab likewise
+  // has /collab/processes/<template-id>.
   const navLocation = computed(() => {
     const loc = { tab: 'terminals' };
     const active = panes.value.find((pane) => pane.key === activeKey.value);
     if (active?.seed?.board) return { tab: 'boards', selection: active.seed.board };
+    if (active?.seed?.process) return { tab: 'collab-processes', selection: active.seed.process };
     const agent = active?.seed?.agent;
     if (agent) loc.selection = String(agent);
     return loc;
@@ -122,7 +126,10 @@ export function createTerminalShellState() {
     revealRequest.value += 1;
   }
 
-  function requestBoardMenu() {
+  // section names the menu's half to show, 'boards' or 'processes'; none keeps
+  // the one last shown.
+  function requestBoardMenu(section = '') {
+    boardMenuSection.value = section;
     boardMenuRequest.value += 1;
   }
 
@@ -578,6 +585,7 @@ export function createTerminalShellState() {
     setPaneLabel,
     requestReveal,
     boardMenuRequest,
+    boardMenuSection,
     requestBoardMenu,
     dispose,
   });

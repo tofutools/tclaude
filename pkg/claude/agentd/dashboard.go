@@ -401,6 +401,8 @@ var dashboardAppTabs = map[string]bool{
 	"groups": true, "automations": true, "jobs": true, "processes": true, "plugins": true, "access": true,
 	"messages": true, "usage": true, "costs": true, "diagnostics": true, "config": true,
 	"map": true, "fleet": true, "fleet-admin": true, "boards": true,
+	// A process template's Collab tab, /collab/processes/<template-id>.
+	"collab": true,
 	// Retired tabs the client heals to their Diagnostics subtab (/audit →
 	// /diagnostics/audit, /logs → /diagnostics/logs, /debug →
 	// /diagnostics/performance), and Diagnostics' former name (/activity/<subtab>

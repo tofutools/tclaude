@@ -39,7 +39,7 @@ import {
 // path has its own handler) — see KNOWN_TABS in nav-history-core.js for the full
 // set ordering.
 const ROUTABLE_TABS = new Set([
-  'groups', 'terminals', 'boards', 'jobs', 'processes', 'plugins', 'access',
+  'groups', 'terminals', 'boards', 'collab-processes', 'jobs', 'processes', 'plugins', 'access',
   'messages', 'usage', 'diagnostics', 'config', 'map', 'fleet-admin',
 ]);
 
@@ -72,6 +72,10 @@ function tabAvailable(tab) {
   if (tab === 'processes') return !document.body.classList.contains('hide-processes');
   // Boards has no nav anchor: a board is a tab of the Terminals section.
   if (tab === 'boards') return !document.body.classList.contains('hide-collab');
+  // Nor has a process template's Collab tab, which needs Processes too.
+  if (tab === 'collab-processes') {
+    return !document.body.classList.contains('hide-collab') && !document.body.classList.contains('hide-processes');
+  }
   const btn = $$('nav [data-tab]').find(b => b.dataset.tab === tab);
   return !!(btn && btn.offsetParent !== null);
 }
@@ -285,8 +289,9 @@ function activate(loc, { traversal = false } = {}) {
       setFleetAdminPage(loc.subtab || '');
       if (loc.subtab === 'grants') setFleetGrantTarget(loc.selection || '');
     }
-    // /boards routes show in the Terminals section, as a tab of its strip.
-    const navTab = loc.tab === 'boards' ? 'terminals' : loc.tab;
+    // /boards and /collab/processes routes show in the Terminals section, as a
+    // tab of its strip.
+    const navTab = loc.tab === 'boards' || loc.tab === 'collab-processes' ? 'terminals' : loc.tab;
     const navBtn = $$('nav [data-tab]').find(b => b.dataset.tab === navTab);
     // A plain Messages click jumps to waiting operator work; a location that
     // names a folder must land there instead.
@@ -300,7 +305,7 @@ function activate(loc, { traversal = false } = {}) {
       // than a click, and the island answers only to CORRECT the URL when the
       // agent can no longer be attached.
       requestTerminalsLocation(loc);
-    } else if (loc.tab === 'boards') {
+    } else if (loc.tab === 'boards' || loc.tab === 'collab-processes') {
       // Always sent, bare /boards included: the terminal shell opens the
       // board's tab, or offers the board list.
       requestBoardsLocation(loc);
