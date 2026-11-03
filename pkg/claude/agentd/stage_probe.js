@@ -43,6 +43,9 @@
   var MAX_PATH = 300;
   var MAX_ITEMS = 10;
   var MAX_VALUE = 16 * 1024;
+  // The parent refuses a message over 64 KiB of JSON; a DOM result stays
+  // under this, or says it is too large.
+  var MAX_RESULT_JSON = 60 * 1024;
   var MAX_SELECTOR = 500;
   var STYLE_PROPS = [
     'display', 'position', 'top', 'right', 'bottom', 'left', 'width', 'height', 'box-sizing',
@@ -62,7 +65,7 @@
   }
 
   function clip(s, n) {
-    s = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+    s = String(s == null ? '' : s).replace(/[\s\u0000-\u001f\u007f-\u009f]+/g, ' ').trim();
     return s.length > n ? s.slice(0, n - 1) + '…' : s;
   }
 
@@ -199,7 +202,21 @@
       if (value.length > MAX_VALUE) value = value.slice(0, MAX_VALUE - 1) + '…';
       items.push({ path: elementPath(el), rect: rectOf(el), value: value });
     }
-    return { count: list.length, items: items };
+    var out = { count: list.length, items: items };
+    // Drop items from the end until the answer fits; say so if none does.
+    while (items.length && JSON.stringify(out).length > MAX_RESULT_JSON) items.pop();
+    if (!items.length && list.length) {
+      var first = list[0];
+      var cut = { path: elementPath(first), rect: rectOf(first), value: '' };
+      out.items = [cut];
+      var room = MAX_RESULT_JSON - JSON.stringify(out).length - 64;
+      var whole = mode === 'html' ? first.outerHTML || '' : first.innerText || first.textContent || '';
+      // Escaping can double a character's JSON length; halve the room.
+      cut.value = whole.slice(0, Math.max(0, Math.floor(room / 2))) + '…';
+      if (JSON.stringify(out).length > MAX_RESULT_JSON) return { count: list.length, items: [], error: 'the result is too large; use a narrower selector' };
+    }
+    if (items.length < Math.min(list.length, MAX_ITEMS)) out.truncated = true;
+    return out;
   }
 
   window.addEventListener('message', function (event) {

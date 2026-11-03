@@ -173,3 +173,72 @@ test('a pen stroke and a text mark become pen and text marks', async (t) => {
   assert.deepEqual(draw.elementToMark(text), { kind: 'text', color: '#1e1e1e', points: [[3, 8]], text: 'here' });
   assert.deepEqual(draw.PAGE_DRAW_TOOLS.map((tool) => tool.kind), ['pen', 'arrow', 'box', 'text']);
 });
+
+test('page text with control characters is cleaned, not refused, and long strokes are thinned', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/page-probe-model.js');
+  const draw = await harness.importDashboardModule('js/page-draw.js');
+  const frame = {};
+  const got = m.acceptProbeMessage({ source: frame, data: { type: 'tclaude-probe', v: 1, nonce: NONCE, kind: 'result', id: 'r1',
+    elements: [{ path: 'pre.log', text: 'a\u0007b\u0085c\u001bd', hits: 1 }] } }, frame, NONCE);
+  assert.equal(got.elements[0].text, 'a b c d', 'one odd element must not fail the operator\'s whole Send');
+  const dom = m.acceptProbeMessage({ source: frame, data: { type: 'tclaude-probe', v: 1, nonce: NONCE, kind: 'result', id: 'r2', count: 40, truncated: true,
+    items: [{ path: 'div', rect: { x: 0, y: 0, w: 1, h: 1 }, value: 'line\nline' }] } }, frame, NONCE);
+  assert.equal(dom.truncated, true);
+  assert.equal(dom.items[0].value, 'line\nline', 'a DOM value keeps its lines');
+
+  const long = Array.from({ length: 5000 }, (_, i) => [i, i % 7]);
+  const thin = draw.thinPoints(long);
+  assert.equal(thin.length, draw.PAGE_MARK_POINTS_MAX);
+  assert.deepEqual(thin[0], long[0]);
+  assert.deepEqual(thin.at(-1), long.at(-1));
+  assert.equal(draw.thinPoints(long.slice(0, 10)).length, 10);
+});
+
+test('a text mark is committed once, Escape commits nothing, and Send keeps marks drawn meanwhile', async (t) => {
+  const harness = await createPreactHarness(t);
+  const draw = await harness.importDashboardModule('js/page-draw.js');
+  const m = await harness.importDashboardModule('js/board-model.js');
+  const added = [];
+  const view = await harness.mount(harness.html`<${draw.PageDrawLayer} active=${true} tool="text" color="#e03131" marks=${[]}
+    onMark=${(el) => added.push(el)} scroll=${{ x: 0, y: 0 }} />`);
+  const svg = view.container.querySelector('svg.page-draw-svg');
+  const open = () => harness.act(() => harness.fireEvent(svg, 'onpointerdown' in svg ? 'pointerdown' : JSX_CASE.pointerdown,
+    { button: 0, pointerId: 1, clientX: 10, clientY: 10 }));
+  await open();
+  let input = view.container.querySelector('input.page-draw-text');
+  input.value = 'here\ttoo';
+  // Enter ends it; the blur of the stale handler (as Chrome fires on removal) must not end it again.
+  // Both before a render: the blur handler still holds the open spot.
+  await harness.act(() => {
+    harness.fireEvent(input, 'keydown', { key: 'Enter' });
+    harness.fireEvent(input, 'blur');
+  });
+  assert.equal(added.length, 1);
+  assert.equal(added[0].text, 'here too', 'control characters become spaces');
+
+  await open();
+  input = view.container.querySelector('input.page-draw-text');
+  input.value = 'never mind';
+  await harness.act(() => {
+    harness.fireEvent(input, 'keydown', { key: 'Escape' });
+    harness.fireEvent(input, 'blur');
+  });
+  assert.equal(added.length, 1, 'Escape commits nothing');
+  await view.unmount();
+
+  // drop removes exactly what was sent.
+  let api = null;
+  function Host() {
+    api = draw.usePageMarks({ scroll: null, elementsAt: () => Promise.reject(new Error('no probe')) });
+    return null;
+  }
+  await harness.mount(harness.html`<${Host} />`);
+  const a = m.newElement('rectangle', { x: 1, y: 1, width: 5, height: 5 });
+  const b = m.newElement('rectangle', { x: 9, y: 9, width: 5, height: 5 });
+  await harness.act(() => api.add(a));
+  const sent = api.marks;
+  await harness.act(() => api.add(b));
+  await harness.act(() => api.drop(sent));
+  assert.deepEqual(api.marks.map((x) => x.el.id), [b.id]);
+});

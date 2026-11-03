@@ -123,7 +123,9 @@ type pageDOMItem struct {
 type pageDOMResult struct {
 	Count int           `json:"count"`
 	Items []pageDOMItem `json:"items"`
-	Error string        `json:"error,omitempty"`
+	// Truncated says the page left matches out to keep its answer small.
+	Truncated bool   `json:"truncated,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 // pageViewConn is one open live socket of a page: out queues messages to
@@ -291,18 +293,25 @@ func handleDashboardPageMarks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := r.PathValue("id")
+	// The page is looked up and its state made under both locks (in the
+	// registry's order), so a page closing meanwhile cannot leave state behind.
 	livePages.mu.Lock()
 	p := livePages.byID[id]
-	var owner, name string
-	if p != nil {
-		owner, name = p.owner, p.name
-	}
-	livePages.mu.Unlock()
 	if p == nil {
+		livePages.mu.Unlock()
 		writeError(w, http.StatusNotFound, "not_found", "no such page")
 		return
 	}
+	owner, name := p.owner, p.name
+	if p.kind == pageKindStatic {
+		// The anchors are the page's text, which for a static source may come
+		// from files the agent's sandbox hides (see pageReadBackAllowed).
+		for i := range req.Marks {
+			req.Marks[i].Anchors = []pageAnchor{}
+		}
+	}
 	pageCollab.mu.Lock()
+	livePages.mu.Unlock()
 	s := pageCollabLocked(id)
 	s.seq++
 	batch := pageMarkBatch{
@@ -355,18 +364,24 @@ func pageMarksMessage(name string, b pageMarkBatch) (subject, body string) {
 		fmt.Fprintf(&sb, "\nNote: %s\n", b.Note)
 	}
 	fmt.Fprintf(&sb, "\nRead the marks and the elements under them with `tclaude agent page marks %s --since %d`; "+
-		"`tclaude agent page snapshot %s -o page.png` renders the page with them, and `tclaude agent page dom %s <selector>` reads the DOM.\n",
+		"`tclaude agent page snapshot %s` renders the page with them, and `tclaude agent page dom %s <selector>` reads the DOM.\n",
 		name, b.Seq-1, name, name)
 	return "[page " + name + "] marks", sb.String()
 }
 
 // ---- views, over the live socket ----
 
-// registerPageView adds an open live socket to its page's views.
+// registerPageView adds an open live socket to its page's views. A page that
+// closed meanwhile gets no state; its socket ends with its origin.
 func registerPageView(id string) (*pageViewConn, func()) {
 	c := &pageViewConn{out: make(chan []byte, pageViewQueueSize), pending: map[string]chan pageDOMResult{}}
+	livePages.mu.Lock()
+	open := livePages.byID[id] != nil
 	pageCollab.mu.Lock()
-	pageCollabLocked(id).views[c] = struct{}{}
+	livePages.mu.Unlock()
+	if open {
+		pageCollabLocked(id).views[c] = struct{}{}
+	}
 	pageCollab.mu.Unlock()
 	return c, func() {
 		pageCollab.mu.Lock()
@@ -482,6 +497,19 @@ func pageDOMRead(ctx context.Context, id, selector, mode string) (pageDOMResult,
 
 // ---- agent routes ----
 
+// pageReadBackAllowed says whether the agent may read a page back (its
+// rendering or its DOM). A static source is served through the daemon's view
+// of the file system, which can include files the agent's sandbox hides
+// (docs/live-page.md, known limits), so its pages are not read back until
+// the stage serves them through the sandbox's view.
+func pageReadBackAllowed(kind string) error {
+	if kind == pageKindStatic {
+		return errors.New("this page is static files, which the stage serves through the daemon's view of the file system, " +
+			"not your sandbox's; reading it back is not available yet. Serve it from a dev server on your own port to use snapshot and dom")
+	}
+	return nil
+}
+
 // ownPage finds one of the caller's pages by name.
 func ownPage(w http.ResponseWriter, r *http.Request) (*livePage, bool) {
 	_, agentID, ok := pageCaller(w, r)
@@ -561,6 +589,13 @@ func handlePageDOM(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Mode != "text" && req.Mode != "html" && req.Mode != "styles" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "mode is text, html or styles")
+		return
+	}
+	livePages.mu.Lock()
+	kind := p.kind
+	livePages.mu.Unlock()
+	if err := pageReadBackAllowed(kind); err != nil {
+		writeError(w, http.StatusConflict, "static_source", err.Error())
 		return
 	}
 	res, err := pageDOMRead(r.Context(), p.id, req.Selector, req.Mode)

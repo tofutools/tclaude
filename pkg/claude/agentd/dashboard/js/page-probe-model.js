@@ -54,6 +54,12 @@ export function probeDom(nonce, id, selector, mode) {
   });
 }
 
+// Control characters (C0, DEL, C1) in page text become spaces: the daemon
+// refuses them in a single-line field, and one odd element under a mark must
+// not fail a whole Send.
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g;
+export const cleanText = (s) => s.replace(CONTROL, ' ');
+
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const str = (v, max) => (typeof v === 'string' && v.length <= max ? v : null);
 const int = (v, min = -1e7, max = 1e7) => (typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? Math.round(v) : null);
@@ -78,7 +84,7 @@ function checkScroll(d) {
   }
   const path = d.path === undefined ? '' : str(d.path, PROBE_LIMITS.pagePath);
   if (path === null) return null;
-  out.path = path;
+  out.path = cleanText(path);
   return out;
 }
 
@@ -91,7 +97,7 @@ function checkElements(list) {
     const text = str(e.text, PROBE_LIMITS.text);
     const hits = int(e.hits, 0, PROBE_LIMITS.points);
     if (path === null || text === null || hits === null) return null;
-    out.push({ path, text, hits });
+    out.push({ path: cleanText(path), text: cleanText(text), hits });
   }
   return out;
 }
@@ -109,7 +115,7 @@ function checkItems(list) {
       if (rect[key] === null) return null;
     }
     if (path === null || value === null) return null;
-    out.push({ path, rect, value });
+    out.push({ path: cleanText(path), rect, value });
   }
   return out;
 }
@@ -125,10 +131,11 @@ function checkResult(d) {
   const items = checkItems(d.items);
   if (count === null || !items) return null;
   const out = { kind: 'result', id, count, items };
+  if (d.truncated === true) out.truncated = true;
   if (d.error !== undefined) {
     const error = str(d.error, PROBE_LIMITS.text);
     if (error === null) return null;
-    out.error = error;
+    out.error = cleanText(error);
   }
   return out;
 }

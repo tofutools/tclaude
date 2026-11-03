@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -283,4 +285,35 @@ func TestPageSnapshotRendersAtTheOperatorsViewWithTheMarks(t *testing.T) {
 	rec = e.call(t, a, http.MethodPost, "/v1/pages/shot/snapshot", nil)
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	assert.Contains(t, rec.Body.String(), "chrome broke")
+}
+
+func TestPageStaticSourcesAreNotReadBack(t *testing.T) {
+	e := newPageEnv(t)
+	a := e.agent(t, "static", true)
+	site := filepath.Join(a.cwd, "site")
+	require.NoError(t, os.MkdirAll(site, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(site, "index.html"), []byte("<html><head></head><body>hi</body></html>"), 0o644))
+	p, rec := e.show(t, a, site, "site", "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	t.Cleanup(agentd.SetPageSnapshotRenderForTest(func(agentd.PageSnapshotJobForTest) ([]byte, error) {
+		t.Fatal("a static page is never rendered for the agent")
+		return nil, nil
+	}))
+
+	// A static source is served through the daemon's view of the file
+	// system, not the agent sandbox's, so nothing of it is read back.
+	rec = e.call(t, a, http.MethodPost, "/v1/pages/site/snapshot", nil)
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "static")
+	rec = e.call(t, a, http.MethodPost, "/v1/pages/site/dom", map[string]any{"selector": "body"})
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+
+	rec = e.dashJSON(t, http.MethodPost, "/api/pages/"+p.ID+"/marks", sampleMarks())
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	got := e.marks(t, a, "site", "")
+	require.Len(t, got.Batches, 1)
+	require.Len(t, got.Batches[0].Marks, 2, "the marks themselves arrive")
+	for _, m := range got.Batches[0].Marks {
+		assert.Empty(t, m.Anchors, "but not the page text under them")
+	}
 }

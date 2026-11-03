@@ -127,7 +127,9 @@ has no other origin to send. So the 128-bit token in the page's host name is
 what decides who reaches the page. The token goes only to the local dashboard
 (its snapshot). It never goes to a linked instance's view, even an unrestricted
 one, and not to any agent, including the one that showed the page. That agent
-sees its page's origin with the token masked and acts on it by name. An agent
+sees its page's origin with the token masked and acts on it by name. This keeps
+the token from being handed out; it does not make it unlearnable. The page's
+own code can read its host name and write it into what the agent reads back. An agent
 holding the token could fetch its page itself, and so read files through the
 daemon's view of the file system (see the known limits below). Keeping the
 token from it also keeps it out of the agent's transcript, and out of a clone's.
@@ -261,11 +263,21 @@ tclaude agent page dom <name> <selector> [--text|--html|--styles]
   `google-chrome`, `chromium` or `chromium-browser` on `PATH`, the macOS app
   bundles, or `TCLAUDE_CHROME`. tclaude never downloads a browser; without one,
   the command says so. Chrome runs on a throwaway profile with its background
-  networking off. The page's snapshot token goes only on the page's own document
-  requests (intercepted in Chrome), never as a header for every request.
+  networking off, and the daemon drives it over a pipe, not a debugging port.
+  A snapshot renders the page's own origin and nothing else: every other request
+  (a redirect, a navigation, a frame, an image) is refused inside Chrome, and a
+  page that tries to leave its origin gets an error instead of a picture. The
+  page's snapshot token goes only on the page's own document requests. A page
+  the operator allowed to load other hosts is not rendered for the agent.
+  One snapshot runs at a time per agent.
 - **`page dom`** reads up to 10 elements matching a selector in the operator's
   open view of the page: their text, outer HTML or computed styles. It is
   read-only, and needs the page open in the dashboard (it is read through that
-  view's frame). Otherwise it says no view is open.
+  view's frame). Otherwise it says no view is open. A large answer keeps the
+  first elements that fit and says it was cut.
+- **Static pages are not read back yet.** A static source is served through the
+  daemon's view of the file system (see the known limits), so `page snapshot` and
+  `page dom` refuse static pages, and their marks arrive without the page text
+  under them. Serve the page from your own dev server to use them.
 
 There are no MCP tools for live pages; the CLI is the agent's surface.

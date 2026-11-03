@@ -106,7 +106,10 @@ export function usePageLive(id, origin, { win = globalThis.window, WebSocketCtor
             const answer = (body) => sendJSON({ type: 'dom-result', req, ...body });
             if (!onDomRef.current) { answer({ error: 'this view has no probe' }); break; }
             Promise.resolve(onDomRef.current(String(message.selector || ''), String(message.mode || 'text')))
-              .then((result) => answer({ count: result.count, items: result.items, ...(result.error ? { error: result.error } : {}) }))
+              .then((result) => answer({
+                count: result.count, items: result.items,
+                ...(result.truncated ? { truncated: true } : {}), ...(result.error ? { error: result.error } : {}),
+              }))
               .catch((cause) => answer({ error: String(cause?.message || cause).slice(0, 200) }));
             break;
           }
@@ -179,9 +182,12 @@ export function PageView({ pageId, snapshot, tools = null, onOpenSender = null, 
   const send = async () => {
     setSending(true);
     try {
-      const told = await sendPageMarks(page.id, marksPayload(marks.marks, note, probe.scroll), { fetchImpl });
-      marks.clear();
-      setNote('');
+      const sentMarks = marks.marks;
+      const sentNote = note;
+      const told = await sendPageMarks(page.id, marksPayload(sentMarks, sentNote, probe.scroll), { fetchImpl });
+      // Only what was sent goes: marks drawn or a note typed meanwhile stay.
+      marks.drop(sentMarks);
+      setNote((current) => (current === sentNote ? '' : current));
       notify?.(told.told_agent === false ? `Saved; ${sender.name} is not running, so it was not told` : `Sent to ${sender.name}`, told.told_agent === false);
     } catch (cause) {
       notify?.(`Could not send the marks: ${cause?.message || cause}`, true);

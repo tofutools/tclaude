@@ -16,7 +16,7 @@ import { Button } from './ui-components.js';
 import { BOARD_COLORS, BOARD_TOOLS, newElement, normalizeBox, simplifyStroke } from './board-model.js';
 import { BoardElement } from './board-island.js';
 import {
-  acceptProbeMessage, newProbeNonce, newProbeRequestId, probeDom, probeElementsAt, probeHello, samplePoints,
+  acceptProbeMessage, cleanText, newProbeNonce, newProbeRequestId, probeDom, probeElementsAt, probeHello, samplePoints,
 } from './page-probe-model.js';
 
 const html = htm.bind(h);
@@ -24,6 +24,17 @@ const html = htm.bind(h);
 const PROBE_TIMEOUT_MS = 3000;
 export const PAGE_NOTE_MAX = 4000;
 export const PAGE_MARKS_MAX = 100;
+// The daemon takes at most 2000 points a mark; a long stroke is thinned to this.
+export const PAGE_MARK_POINTS_MAX = 1000;
+
+// thinPoints keeps at most max points, evenly, always the first and last.
+export function thinPoints(points, max = PAGE_MARK_POINTS_MAX) {
+  if (points.length <= max) return points;
+  const out = [];
+  const step = (points.length - 1) / (max - 1);
+  for (let i = 0; i < max; i++) out.push(points[Math.round(i * step)]);
+  return out;
+}
 
 // The board tools a page mark can be made with, under the mark's kind.
 const MARK_TOOLS = Object.freeze([['freedraw', 'pen'], ['arrow', 'arrow'], ['rectangle', 'box'], ['text', 'text']]);
@@ -158,7 +169,11 @@ export function PageDrawLayer({ active, tool, color, marks, onMark, scroll }) {
   const draftRef = useRef(null);
   const [draft, setDraftState] = useState(null);
   const setDraft = (value) => { draftRef.current = value; setDraftState(value); };
-  const [typing, setTyping] = useState(null); // {x, y} in page coordinates
+  // The text mark being typed, at {x, y} in page coordinates. The ref ends it
+  // once: Enter or Escape unmounts the input, whose blur would end it again.
+  const typingRef = useRef(null);
+  const [typing, setTypingState] = useState(null);
+  const setTyping = (value) => { typingRef.current = value; setTypingState(value); };
   const sx = scroll?.x || 0;
   const sy = scroll?.y || 0;
   const at = (event) => {
@@ -200,12 +215,12 @@ export function PageDrawLayer({ active, tool, color, marks, onMark, scroll }) {
     const tiny = el.type === 'rectangle' ? el.width < 4 && el.height < 4
       : el.points.length < 2 || el.points.every(([px, py]) => Math.hypot(px, py) < 4);
     if (tiny) return;
-    onMark(el.type === 'freedraw' ? { ...el, points: simplifyStroke(el.points) } : el);
+    onMark(el.type === 'freedraw' ? { ...el, points: thinPoints(simplifyStroke(el.points)) } : el);
   };
   const finishText = (text) => {
-    const spot = typing;
+    const spot = typingRef.current;
     setTyping(null);
-    const value = String(text || '').trim();
+    const value = cleanText(String(text || '')).trim();
     if (!spot || !value) return;
     onMark(newElement('text', { x: spot.x, y: spot.y, text: value.slice(0, 500), fontSize: 20, strokeColor: color }));
   };
@@ -266,5 +281,10 @@ export function usePageMarks(probe) {
     add,
     undo: () => setMarks((list) => list.slice(0, -1)),
     clear: () => setMarks([]),
+    // drop removes the marks that were sent, keeping any drawn meanwhile.
+    drop: (sent) => {
+      const ids = new Set(sent.map((m) => m.el.id));
+      setMarks((list) => list.filter((m) => !ids.has(m.el.id)));
+    },
   };
 }

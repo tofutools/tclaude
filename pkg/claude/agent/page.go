@@ -263,7 +263,7 @@ type pageMarksParams struct {
 }
 
 type pageSnapshotParams struct {
-	Out     string `short:"o" long:"out" help:"The PNG file to write"`
+	Out     string `short:"o" long:"out" optional:"true" help:"The PNG file to write (default: <name>.png in the current directory)"`
 	Seq     int64  `long:"seq" optional:"true" help:"Draw this batch of marks (default: the latest)"`
 	NoMarks bool   `long:"no-marks" help:"Render the page without marks"`
 	JSON    bool   `long:"json" help:"Output JSON (without the image)"`
@@ -370,8 +370,7 @@ func pageMarkWhere(m pageMarkWire) string {
 
 func runPageSnapshot(p *pageSnapshotParams, name string, stdout, stderr io.Writer) int {
 	if strings.TrimSpace(p.Out) == "" {
-		fmt.Fprintln(stderr, "error: -o <file.png> is required")
-		return rcInvalidArg
+		p.Out = name + ".png"
 	}
 	var resp struct {
 		PNG      string `json:"png"`
@@ -426,7 +425,8 @@ func runPageDOM(p *pageDOMParams, name, selector string, stdout, stderr io.Write
 			Rect  struct{ X, Y, W, H int } `json:"rect"`
 			Value string                   `json:"value"`
 		} `json:"items"`
-		Error string `json:"error,omitempty"`
+		Truncated bool   `json:"truncated,omitempty"`
+		Error     string `json:"error,omitempty"`
 	}
 	body := map[string]any{"selector": selector, "mode": mode}
 	if err := DaemonRequest(http.MethodPost, "/v1/pages/"+url.PathEscape(name)+"/dom", body, &resp, DaemonOpts{Timeout: 20 * time.Second}); err != nil {
@@ -447,8 +447,8 @@ func runPageDOM(p *pageDOMParams, name, selector string, stdout, stderr io.Write
 	if resp.Count != 1 {
 		fmt.Fprint(stdout, "es")
 	}
-	if resp.Count > len(resp.Items) {
-		fmt.Fprintf(stdout, " (the first %d shown)", len(resp.Items))
+	if resp.Count > len(resp.Items) || resp.Truncated {
+		fmt.Fprintf(stdout, " (the first %d shown; narrow the selector for more)", len(resp.Items))
 	}
 	fmt.Fprintln(stdout, ".")
 	for _, it := range resp.Items {
