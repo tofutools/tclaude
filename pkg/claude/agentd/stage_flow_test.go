@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"net/textproto"
 	"strings"
 	"sync"
 	"testing"
@@ -365,4 +367,53 @@ func TestStageUpstreamDownIs502WithCSP(t *testing.T) {
 	assert.Equal(t, http.StatusBadGateway, res.StatusCode)
 	assertStageCSP(t, res)
 	assert.NotContains(t, readBody(t, res), "connection refused", "upstream errors are not echoed")
+}
+
+func TestStageInformationalResponsesCannotDropTheCSP(t *testing.T) {
+	e := newStageEnv(t)
+	e.fake.h = func(w http.ResponseWriter, r *http.Request) {
+		tr := httptrace.ContextClientTrace(r.Context())
+		if assert.NotNil(t, tr, "ReverseProxy installs the 1xx trace") {
+			_ = tr.Got1xxResponse(http.StatusEarlyHints, textproto.MIMEHeader{
+				"Set-Cookie": {"early=1"},
+				"Link":       {"</x.css>; rel=preload"},
+			})
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, "<html><head></head></html>")
+	}
+	res := e.do(t, http.MethodGet, e.host(), "/", nil)
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	assertStageCSP(t, res)
+	assert.Equal(t, "nosniff", res.Header.Get("X-Content-Type-Options"))
+	assert.Empty(t, res.Header.Values("Set-Cookie"))
+	assert.Contains(t, readBody(t, res), stageProbeMarker)
+}
+
+func TestStageVariesOnOriginAlways(t *testing.T) {
+	e := newStageEnv(t)
+	e.fake.h = func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Vary", "Accept")
+		_, _ = io.WriteString(w, "x")
+	}
+	res := e.do(t, http.MethodGet, e.host(), "/a.js", map[string]string{"Sec-Fetch-Dest": "script"})
+	assert.ElementsMatch(t, []string{"Accept", "Origin"}, res.Header.Values("Vary"))
+	assert.Empty(t, res.Header.Get("Access-Control-Allow-Origin"))
+}
+
+func TestStageProbeStaysBehindMetaCharsetAndOutOfRanges(t *testing.T) {
+	e := newStageEnv(t)
+	e.fake.h = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		if r.URL.Path == "/part" {
+			w.Header().Set("Content-Range", "bytes 0-9/100")
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = io.WriteString(w, "<head>0123")
+			return
+		}
+		_, _ = io.WriteString(w, "<!doctype html><html><head><title>t</title><meta charset=\"windows-1252\"><style></style></head></html>")
+	}
+	body := readBody(t, e.do(t, http.MethodGet, e.host(), "/", nil))
+	assert.Contains(t, body, "<meta charset=\"windows-1252\">"+stageProbeMarker, body)
+	assert.Equal(t, "<head>0123", readBody(t, e.do(t, http.MethodGet, e.host(), "/part", nil)))
 }

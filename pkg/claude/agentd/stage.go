@@ -40,6 +40,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"mime"
 	"net"
 	"net/http"
@@ -253,18 +254,17 @@ func (stageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.Set("Content-Security-Policy", stageCSP(page.token, port, page.otherHostsAllowed()))
-	// A sandboxed frame has an opaque origin, so its own subresource fetches
-	// and module scripts are CORS requests carrying Origin: null. Answer those
-	// for null only, never with credentials (there are none to send).
-	if r.Header.Get("Origin") == "null" {
-		h.Set("Access-Control-Allow-Origin", "null")
-		h.Set("Access-Control-Expose-Headers", "*")
-		h.Add("Vary", "Origin")
-		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
-			stageAnswerPreflight(w, r)
-			return
-		}
+	// The page's own headers are built once and stamped on the final
+	// response in ModifyResponse, after the upstream's are filtered. They are
+	// not pre-set on w: ReverseProxy clears w's header map after relaying a
+	// 1xx, which would silently drop a pre-set CSP.
+	fixed := stagePageHeaders(page, port, r.Header.Get("Origin") == "null")
+	if r.Header.Get("Origin") == "null" && r.Method == http.MethodOptions &&
+		r.Header.Get("Access-Control-Request-Method") != "" {
+		maps.Copy(h, fixed)
+		h.Set("Vary", "Origin")
+		stageAnswerPreflight(w, r)
+		return
 	}
 
 	up := page.transport()
@@ -273,17 +273,62 @@ func (stageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proxy := &httputil.ReverseProxy{
-		Rewrite:        stageRewrite,
-		Transport:      up,
-		ModifyResponse: stageModifyResponse,
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+		Rewrite:   stageRewrite,
+		Transport: up,
+		ModifyResponse: func(res *http.Response) error {
+			if err := stageModifyResponse(res); err != nil {
+				return err
+			}
+			maps.Copy(res.Header, fixed)
+			res.Header.Add("Vary", "Origin")
+			return nil
+		},
+		ErrorHandler: func(ew http.ResponseWriter, r *http.Request, err error) {
 			slog.Debug("stage: upstream error", "page", page.name, "path", r.URL.Path, "err", err)
-			w.Header().Set("Content-Security-Policy", stageRefusalCSP)
-			http.Error(w, "nothing is answering for this page", http.StatusBadGateway)
+			eh := ew.Header()
+			clear(eh)
+			eh.Set("X-Content-Type-Options", "nosniff")
+			eh.Set("Referrer-Policy", "no-referrer")
+			eh.Set("Content-Security-Policy", stageRefusalCSP)
+			http.Error(ew, "nothing is answering for this page", http.StatusBadGateway)
 		},
 	}
-	proxy.ServeHTTP(w, r)
+	clear(h)
+	proxy.ServeHTTP(stageNo1xxWriter{w}, r)
 }
+
+// stagePageHeaders are the headers the stage owns on a page response. A
+// sandboxed frame has an opaque origin, so its own subresource fetches and
+// module scripts are CORS requests carrying Origin: null: those are answered
+// for null only, never with credentials (there are none to send). Vary:
+// Origin goes on every response, so a no-cors load cached without CORS
+// headers is not reused for a later CORS load of the same URL.
+func stagePageHeaders(page *stagePage, port int, nullOrigin bool) http.Header {
+	h := http.Header{}
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("Content-Security-Policy", stageCSP(page.token, port, page.otherHostsAllowed()))
+	if nullOrigin {
+		h.Set("Access-Control-Allow-Origin", "null")
+		h.Set("Access-Control-Expose-Headers", "*")
+	}
+	return h
+}
+
+// stageNo1xxWriter drops informational responses (103 Early Hints and the
+// like) from the upstream. ReverseProxy relays them straight to the client,
+// bypassing ModifyResponse, so their headers would reach the browser
+// unfiltered. 101 Switching Protocols is a final response and passes.
+type stageNo1xxWriter struct{ http.ResponseWriter }
+
+func (w stageNo1xxWriter) WriteHeader(code int) {
+	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
+		return
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w stageNo1xxWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // stageLoopbackPort admits only connections that arrived on a loopback
 // listener and returns that listener's port. Page origins are loopback names;
@@ -492,7 +537,8 @@ func stageInjectable(res *http.Response) bool {
 		return false
 	}
 	if res.StatusCode < 200 || res.StatusCode == http.StatusNoContent ||
-		res.StatusCode == http.StatusNotModified || res.StatusCode == http.StatusSwitchingProtocols {
+		res.StatusCode == http.StatusNotModified || res.StatusCode == http.StatusSwitchingProtocols ||
+		res.StatusCode == http.StatusPartialContent {
 		return false
 	}
 	mt, _, err := mime.ParseMediaType(res.Header.Get("Content-Type"))
@@ -533,7 +579,13 @@ func (s *stageInjector) prime() {
 	for len(buf) < stageInjectScanLimit {
 		n, err := s.src.Read(chunk)
 		buf = append(buf, chunk[:n]...)
-		if at = stageHeadInsertAt(buf); at >= 0 {
+		if at < 0 {
+			at = stageHeadInsertAt(buf)
+		}
+		// Once <head> is found, keep reading only until the charset prescan
+		// window is buffered, so a <meta charset> there can be kept ahead of
+		// the probe.
+		if at >= 0 && len(buf) >= stageCharsetPrescan {
 			break
 		}
 		if err != nil {
@@ -547,8 +599,41 @@ func (s *stageInjector) prime() {
 	if at < 0 {
 		at = stageFallbackInsertAt(buf)
 	}
+	at = stageAfterMetaCharset(buf, at)
 	s.out = io.MultiReader(bytes.NewReader(buf[:at]), bytes.NewReader(stageProbeTag),
 		bytes.NewReader(buf[at:]), s.src)
+}
+
+// stageCharsetPrescan is how far into a document browsers look for a
+// <meta charset> (the HTML encoding-sniffing prescan).
+const stageCharsetPrescan = 1024
+
+// stageAfterMetaCharset moves the insertion point past a <meta> that
+// declares the charset, when one starts at or after at and inside the
+// prescan window. Inserting the probe in front of it could push it out of
+// the window and change how the page is decoded.
+func stageAfterMetaCharset(buf []byte, at int) int {
+	lower := bytes.ToLower(buf)
+	from := at
+	for from < len(lower) && from < stageCharsetPrescan {
+		i := bytes.Index(lower[from:], []byte("<meta"))
+		if i < 0 {
+			return at
+		}
+		i += from
+		if i >= stageCharsetPrescan {
+			return at
+		}
+		end := bytes.IndexByte(lower[i:], '>')
+		if end < 0 {
+			return at
+		}
+		if bytes.Contains(lower[i:i+end], []byte("charset")) {
+			return i + end + 1
+		}
+		from = i + end + 1
+	}
+	return at
 }
 
 func (s *stageInjector) Close() error { return s.src.Close() }
