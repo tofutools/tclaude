@@ -304,7 +304,7 @@ function SandboxOutcomeBucket({
   bucket, open, helpOpen, setHelpOpen, helpPrefix, targetLabel,
 }) {
   return html`<details class=${`sbx-rule-bucket sbx-rule-bucket-${bucket.key}`} open=${open}>
-    <summary><span>${bucket.label}</span><span class="sbx-rule-count">${bucket.rules.length}</span></summary>
+    <summary><span>${bucket.label}</span><span class="sbx-rule-count ui-badge">${bucket.rules.length}</span></summary>
     ${/* Before the rules, not after: the note says what the list below it IS,
           and a disclaimer under a list has already been read past. */ ''}
     ${bucket.note && html`<div class="sbx-bucket-note">${bucket.note}</div>`}
