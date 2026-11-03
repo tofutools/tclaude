@@ -3559,7 +3559,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 }
 .audit-spawn-popover pre {
   margin: 0; padding: 8px; max-height: 220px; overflow: auto;
-  background: #161b22; border: 1px solid #21262d; border-radius: 4px;
+  background: #0d1117; border: 1px solid #21262d; border-radius: 4px;
   color: #d4d4d4; font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
@@ -5248,7 +5248,7 @@ details[data-group-key][open] > summary .group-usage-profile {
   white-space: nowrap;
 }
 .notify-pop-master:hover,
-.notify-pop-row:hover { background: #161b22; }
+.notify-pop-row:hover { background: #21262d; }
 .notify-pop-master input,
 .notify-pop-row input { cursor: pointer; margin: 0; }
 .notify-pop-sep { height: 1px; background: #2a3340; margin: 4px 2px; }
@@ -6240,7 +6240,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
   display: flex; align-items: center; gap: 8px; padding: 6px;
   border: 1px solid transparent; border-radius: 4px; cursor: pointer;
 }
-.queued-spawn-row:hover { background: #161b22; border-color: #30363d; }
+.queued-spawn-row:hover { background: #21262d; border-color: #30363d; }
 .queued-spawn-play {
   flex: none; width: 24px; height: 24px; padding: 0; border-radius: 50%;
   background: #238636; border: 1px solid #2ea043; color: #fff;

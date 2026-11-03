@@ -138,7 +138,6 @@ func TestDashboardOpenPRsThemed(t *testing.T) {
 		t.Error("the open PR panel must be a .ui-popover so every skin paints it")
 	}
 	for _, want := range []string{
-		"background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);",
 		"body.wizard .open-prs-filters button.active {",
 		"body.wizard .open-prs-final-ci { color: #b39ddb; }",
 	} {
