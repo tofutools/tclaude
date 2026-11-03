@@ -17,7 +17,9 @@ const json = { 'Content-Type': 'application/json' };
 
 async function post(fetchImpl, path, body) {
   const response = await fetchImpl(path, { method: 'POST', credentials: 'same-origin', headers: json, body: JSON.stringify(body) });
-  const result = await response.json().catch(() => ({}));
+  const text = await response.text().catch(() => '');
+  let result = {};
+  try { result = text ? JSON.parse(text) : {}; } catch { result = { message: text.trim() }; }
   if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
   return result;
 }
@@ -37,13 +39,14 @@ export async function openHelperWindow(agentId, label = '', { starting = false }
 // summonHelper starts a new helper, or reuses the live one scoped exactly the
 // same, after the operator confirms the grant, and opens it. It answers
 // { agentId, name, reused, opened }, or null when the operator declined.
-// confirmation is the shell confirm's { title, body, meta, okLabel }; a
-// caller that already asked passes none.
+// confirmation is the shell confirm's { title, body, meta, okLabel }; with
+// none, a generic one names the slugs. Only a caller that already asked the
+// operator itself says confirmed, so a missing field never skips the prompt.
 export async function summonHelper({
-  name, slugs, scope = null, exclusive = false, brief, taskRef = null, confirmation = null,
+  name, slugs, scope = null, exclusive = false, brief, taskRef = null, confirmation = null, confirmed = false,
   confirm = shellConfirm, fetchImpl = globalThis.fetch,
 }) {
-  if (confirmation && !(await confirm(confirmation))) return null;
+  if (!confirmed && !(await confirm(confirmation || helperConfirmation(name, slugs)))) return null;
   const result = await post(fetchImpl, '/api/scribe', {
     name, slugs, brief, exclusive,
     ...(scope ? { scope } : {}),
@@ -81,6 +84,16 @@ export function missingSlugs(helper, slugs) {
   return (slugs || []).filter((slug) => !held.has(slug));
 }
 
+// helperConfirmation is the confirm a new helper gets when its page names none.
+export function helperConfirmation(name, slugs = []) {
+  return {
+    title: 'Start a helper?',
+    body: `This starts a new ${name} agent granted ${slugs.join(', ') || 'no extra permissions'}, and opens its chat window.`,
+    meta: slugs.join(', '),
+    okLabel: 'Grant & start',
+  };
+}
+
 // grantConfirmation is the confirm a page that names none gets: what is granted,
 // to whom, and that it lasts.
 export function grantConfirmation(helper, missing) {
@@ -111,7 +124,13 @@ export async function askExistingAgent({
       overrides: Object.fromEntries(missing.map((slug) => [slug, 'grant'])),
     });
   }
-  await post(fetchImpl, '/api/operator-message', { to: helper.convId || helper.id, subject, body: brief });
+  try {
+    await post(fetchImpl, '/api/operator-message', { to: helper.convId || helper.id, subject, body: brief });
+  } catch (error) {
+    // The grant stands: say so, rather than leave it unmentioned.
+    if (missing.length) throw new Error(`${error?.message || error} (${missing.join(', ')} ${missing.length === 1 ? 'was' : 'were'} granted to ${helper.label} anyway; revoke in Access if unwanted)`);
+    throw error;
+  }
   const opened = await openHelperWindow(helper.id, helper.label);
   return { agentId: helper.id, name: helper.label, granted: missing, opened };
 }

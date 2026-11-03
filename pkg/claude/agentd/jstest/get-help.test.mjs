@@ -14,7 +14,7 @@ function fakeDaemon({ scribe = { agent_id: 'agt_help1', conv_id: 'conv-help1', n
   const fetchImpl = async (url, init = {}) => {
     calls.push({ path: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null });
     const body = String(url) === '/api/scribe' ? scribe : {};
-    return { ok: true, status: 200, json: async () => body };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
   };
   return { calls, fetchImpl };
 }
@@ -65,6 +65,24 @@ test('a reused helper opens as it is, not as starting', async (t) => {
   const result = await help.summonHelper({ ...HELP, confirm: confirmWith(true), fetchImpl });
   assert.equal(result.reused, true);
   assert.deepEqual(opened, [{ agentId: 'agt_help1', starting: false }]);
+});
+
+test('a page that names no confirmation still gets one; only an explicit confirmed skips it', async (t) => {
+  const { help, asked, confirmWith } = await setup(t);
+  const { calls, fetchImpl } = fakeDaemon();
+  const { confirmation: _none, ...bare } = HELP;
+  assert.equal(await help.summonHelper({ ...bare, confirm: confirmWith(false), fetchImpl }), null);
+  assert.equal(asked.at(-1).title, 'Start a helper?');
+  assert.deepEqual(calls, []);
+  await help.summonHelper({ ...bare, confirmed: true, confirm: confirmWith(false), fetchImpl });
+  assert.equal(calls.length, 1);
+});
+
+test('a server refusal in plain text reaches the operator as written', async (t) => {
+  const { help, confirmWith } = await setup(t);
+  const fetchImpl = async () => ({ ok: false, status: 409, statusText: 'Conflict', text: async () => 'an external Steward takes no grants here\n' });
+  const helper = { id: 'agt_s', label: 'steward', effective: [] };
+  await assert.rejects(help.askExistingAgent({ helper, slugs: ['process.templates.read'], brief: 'x', confirm: confirmWith(true), fetchImpl }), /an external Steward takes no grants here/);
 });
 
 test('a cancelled confirmation starts and grants nothing', async (t) => {
