@@ -285,7 +285,7 @@ export function ScribeDraft({ group, draft, api, scribes = [], wizard = false, n
     ? 'The scribe is waiting for you in its chat window.'
     : html`<span class="psd-dot" aria-hidden="true"></span>scribe is working… follow it in its chat window`}</p>`}
     ${ready && html`<p class="gq-draft-ready" data-scribe-ready>${finished
-    ? `Draft saved: ${draftSteps(ready)} ${draftSteps(ready) === 1 ? 'step' : 'steps'}. Nothing runs until you press Start.`
+    ? `Draft saved: ${draftSteps(ready)} ${draftSteps(ready) === 1 ? 'step' : 'steps'}. Its last word is in its chat window. Nothing runs until you press Start.`
     : `${draftSteps(ready)} ${draftSteps(ready) === 1 ? 'step' : 'steps'} saved so far. Stop the scribe to review them now.`}</p>`}
     <div class="gq-foot">
       <${Button} size="sm" variant="primary" data-scribe-review disabled=${!finished || !!busy} title=${finished ? 'Open the saved draft in the step list' : 'The scribe has not finished a draft yet'}

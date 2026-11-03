@@ -329,12 +329,11 @@ export function processScribeBrief(handoff, { context = null, prompt = '' } = {}
   return brief;
 }
 
-// Docked scribe chat (E4). A chat turn is operator mail to the scribe that
-// already holds the brief, so it carries only the human's words plus, for the
-// context actions, the same bounded, untrusted editor context the summon
-// brief uses. The scribe answers by CAS-saving a new template version, which
-// the editor reviews on the canvas; its prose reply comes back through
-// GET /api/scribe/{agent}/chat.
+// A message to a scribe is operator mail to an agent that already holds the
+// brief, so it carries only the human's words plus, for the context actions,
+// the same bounded, untrusted editor context the summon brief uses. The scribe
+// answers by CAS-saving a new template version, which the editor reviews on
+// the canvas; its prose reply is in its regular chat window.
 export const PROCESS_SCRIBE_CHAT_SUBJECT = 'process editor';
 
 export function processScribeChatMessage({ prompt = '', context = null } = {}) {

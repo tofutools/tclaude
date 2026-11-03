@@ -329,7 +329,7 @@ with no processes shows *Get started* in its body; afterwards (or once you
 dismiss it) it folds to *No processes yet · Get started ▸*. From it, pick a starter (filled from the group's roles and
 members), reuse a library template, or begin a blank step list. Or describe
 the flow in plain words and press *Draft steps*: a process scribe drafts the
-steps in the background, with no terminal, for the group's members and roles.
+steps in the background for the group's members and roles.
 This uses a model run, so it only ever starts from that click, after you
 approve the scribe's access: the same grant as any process scribe
 (`process.templates.read` and `process.templates.manage`, every other
