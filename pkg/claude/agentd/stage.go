@@ -82,8 +82,9 @@ type stagePage struct {
 	// off by default; nothing an agent sends can set it.
 	allowOtherHosts bool
 
-	mu       sync.RWMutex
-	upstream http.RoundTripper
+	mu         sync.RWMutex
+	upstream   http.RoundTripper
+	reloadSubs map[chan struct{}]struct{}
 }
 
 func (p *stagePage) transport() http.RoundTripper {
@@ -92,10 +93,15 @@ func (p *stagePage) transport() http.RoundTripper {
 	return p.upstream
 }
 
+// setUpstream swaps the page's source in place, releasing the old one.
 func (p *stagePage) setUpstream(up http.RoundTripper) {
 	p.mu.Lock()
+	old := p.upstream
 	p.upstream = up
 	p.mu.Unlock()
+	if old != nil && old != up {
+		closeStageUpstream(old)
+	}
 }
 
 func (p *stagePage) otherHostsAllowed() bool {
@@ -141,8 +147,12 @@ func (s *stageRegistry) open(owner, name string, up http.RoundTripper) *stagePag
 // reused: a page shown again gets a fresh one.
 func (s *stageRegistry) close(token string) {
 	s.mu.Lock()
+	p := s.byToken[token]
 	delete(s.byToken, token)
 	s.mu.Unlock()
+	if p != nil {
+		p.setUpstream(nil)
+	}
 }
 
 func (s *stageRegistry) lookup(token string) *stagePage {
@@ -253,6 +263,16 @@ func (stageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A frame's requests carry Origin: null (opaque origin) or none (no-cors
+	// loads and navigations). Any other origin is some other site holding
+	// the page token, and is refused before the dev server can treat it as a
+	// same-origin request (the upstream sees Origin rewritten to localhost).
+	if o := r.Header.Get("Origin"); o != "" && o != "null" &&
+		o != "http://"+net.JoinHostPort(stageHost(page.token), strconv.Itoa(port)) {
+		http.Error(w, "stage pages answer only their own frame", http.StatusForbidden)
+		return
+	}
+
 	// The page's own headers are built once and stamped on the final
 	// response in ModifyResponse, after the upstream's are filtered. They are
 	// not pre-set on w: ReverseProxy clears w's header map after relaying a
@@ -289,7 +309,11 @@ func (stageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			eh.Set("X-Content-Type-Options", "nosniff")
 			eh.Set("Referrer-Policy", "no-referrer")
 			eh.Set("Content-Security-Policy", stageRefusalCSP)
-			http.Error(ew, "nothing is answering for this page", http.StatusBadGateway)
+			msg := stageSourceMessage(err)
+			if msg == "" {
+				msg = "nothing is answering for this page"
+			}
+			http.Error(ew, msg, http.StatusBadGateway)
 		},
 	}
 	clear(h)

@@ -60,6 +60,7 @@ func startPopupServer(bindHost string, port int) (*http.Server, string, error) {
 	}
 	listeners := []net.Listener{ln}
 	addr := ln.Addr().(*net.TCPAddr)
+	registerStageDaemonPort(addr.Port)
 	if !addr.IP.IsUnspecified() && !addr.IP.IsLoopback() {
 		loopbackAddr := net.JoinHostPort(defaultDashboardBind, strconv.Itoa(addr.Port))
 		loopback, loopbackErr := net.Listen("tcp", loopbackAddr)
