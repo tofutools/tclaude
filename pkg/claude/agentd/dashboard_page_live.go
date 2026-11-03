@@ -21,13 +21,20 @@ import (
 // Each connection starts by asking the page's source for its start path once,
 // and says whether anything answered: the view shows an unreachable state with
 // Retry, which reconnects and so asks again. Only the outcome is sent.
+//
+// The view talks back on the same socket (tcl-2dwbad): {"type":"view",...}
+// reports its viewport and scroll, which `page snapshot` renders at, and
+// {"type":"dom-result",...} answers a {"type":"dom",...} read the daemon sent
+// for `page dom` (pages_marks.go). Both carry page content and are checked
+// there.
 
 const pageLiveMaxSubscribers = 256
 
 var pageLiveCount atomic.Int64
 
 // GET /api/pages/{id}/live — messages are first {"type":"reachable"} or
-// {"type":"unreachable"}, then {"type":"reload"}, and, last, {"type":"gone"}.
+// {"type":"unreachable"}, then {"type":"reload"} and {"type":"dom"}, and, last,
+// {"type":"gone"}.
 func handleDashboardPageLive(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -58,17 +65,24 @@ func handleDashboardPageLive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = ws.Close() }()
-	ws.SetReadLimit(512)
+	ws.SetReadLimit(pageLiveReadLimit)
+	view, unregister := registerPageView(id)
+	defer unregister()
 
-	// Nothing is expected from the browser but pongs; reading notices it left.
+	// The browser sends pongs, view reports and DOM answers; reading also
+	// notices it left.
 	left := make(chan struct{})
 	go func() {
 		defer close(left)
 		_ = ws.SetReadDeadline(time.Now().Add(boardLiveReadWait))
 		ws.SetPongHandler(func(string) error { return ws.SetReadDeadline(time.Now().Add(boardLiveReadWait)) })
 		for {
-			if _, _, err := ws.ReadMessage(); err != nil {
+			kind, data, err := ws.ReadMessage()
+			if err != nil {
 				return
+			}
+			if kind == websocket.TextMessage {
+				pageViewMessage(id, view, data)
 			}
 		}
 	}()
@@ -95,6 +109,11 @@ func handleDashboardPageLive(w http.ResponseWriter, r *http.Request) {
 			}
 		case <-reload:
 			if !send("reload") {
+				return
+			}
+		case msg := <-view.out:
+			_ = ws.SetWriteDeadline(time.Now().Add(boardLiveWriteWait))
+			if ws.WriteMessage(websocket.TextMessage, msg) != nil {
 				return
 			}
 		}

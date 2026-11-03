@@ -234,6 +234,10 @@ var auditRoutes = []auditRoute{
 	// the operator closing one from the dashboard (/api/pages/{id}).
 	{method: http.MethodPost, segs: []string{"pages"}, verb: "page.show"},
 	{method: http.MethodDelete, segs: []string{"pages", "{id}"}, verb: "page.close"},
+	// The operator sending marks on a page to its agent (/api/pages/{id}/marks).
+	{method: http.MethodPost, segs: []string{"pages", "{id}", "marks"}, verb: "page.marks"},
+	// An agent's page snapshot starts a browser on the host (/v1/pages/{name}/snapshot).
+	{method: http.MethodPost, segs: []string{"pages", "{id}", "snapshot"}, verb: "page.snapshot"},
 	{method: http.MethodPatch, segs: []string{"groups", "{name}"}, verb: "group.update"},
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "rename"}, verb: "group.rename", describe: describeNewName},
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "clone"}, verb: "group.clone"},

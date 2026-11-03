@@ -631,6 +631,16 @@ body.wizard .mux-pane-xterm {
 }
 .page-unreachable p { margin: 0; }
 .page-view-closed .page-head-title { font-weight: 400; color: var(--ui-muted-text); }
+/* Drawing on top (page-draw.js, tcl-2dwbad): the layer is the dashboard's,
+   over the frame; it takes the pointer only in Draw mode. */
+.page-mode { display: inline-flex; gap: 2px; }
+.page-draw { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.page-draw-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.page-draw.on { pointer-events: auto; cursor: crosshair; }
+.page-draw.on .page-draw-svg { touch-action: none; }
+.page-draw-text { position: absolute; min-width: 16ch; }
+.page-draw-bar { padding: 4px 8px; border-bottom: 1px solid var(--board-line); background: var(--board-bar); }
+.page-draw-note { flex: 1 1 18ch; min-width: 12ch; max-width: 48ch; margin-left: 6px; }
 body.wizard .page-head { background: #1d1530; border-bottom-color: #4a3a6e; }
 body.wizard .page-head-glyph { color: var(--ui-wizard-gold); }
 /* A process pane (process-pane.js): a slim bar of where the editor can go, and

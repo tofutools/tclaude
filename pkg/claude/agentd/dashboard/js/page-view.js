@@ -28,6 +28,7 @@ import { detachSeedWindow, openWebWindowPane } from './terminals-tab.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { shellToast } from './shell-state.js';
 import { dashboardState } from './snapshot-store.js';
+import { PageDrawBar, PageDrawLayer, marksPayload, sendPageMarks, usePageMarks, usePageProbe } from './page-draw.js';
 
 const html = htm.bind(h);
 
@@ -37,10 +38,40 @@ const LIVE_RETRY_MAX_MS = 30000;
 // usePageLive holds the page's live socket (GET /api/pages/{id}/live): whether
 // its source answers, and a token that changes when the frame should reload.
 // retry asks again and reloads.
-export function usePageLive(id, origin, { win = globalThis.window, WebSocketCtor = globalThis.WebSocket } = {}) {
+//
+// The same socket carries the daemon's DOM reads for `tclaude agent page dom`
+// ({"type":"dom",req,selector,mode}, answered by onDom with
+// {"type":"dom-result",req,...}) and this view's viewport and scroll
+// ({"type":"view",...}, from report), which `page snapshot` renders at.
+const VIEW_REPORT_MS = 500;
+export function usePageLive(id, origin, { win = globalThis.window, WebSocketCtor = globalThis.WebSocket, onDom = null } = {}) {
   const [reach, setReach] = useState('checking');
   const [reloads, setReloads] = useState(0);
   const [attempt, setAttempt] = useState(0);
+  const socketRef = useRef(null);
+  const onDomRef = useRef(onDom);
+  onDomRef.current = onDom;
+  const lastView = useRef({ json: '', at: 0, timer: null });
+  const sendJSON = (message) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== 1) return false;
+    try { socket.send(JSON.stringify(message)); return true; } catch { return false; }
+  };
+  const flushView = () => {
+    const v = lastView.current;
+    v.timer = null;
+    if (v.json && sendJSON(JSON.parse(v.json))) v.at = Date.now();
+  };
+  // report queues this view's viewport and scroll, at most every half second.
+  const report = (view) => {
+    const v = lastView.current;
+    const json = JSON.stringify({ type: 'view', vw: view.vw, vh: view.vh, x: view.x, y: view.y, path: view.path || '' });
+    if (json === v.json) return;
+    v.json = json;
+    if (v.timer) return;
+    v.timer = setTimeout(flushView, Math.max(0, VIEW_REPORT_MS - (Date.now() - v.at)));
+  };
+  useEffect(() => () => clearTimeout(lastView.current.timer), []);
   useEffect(() => {
     if (!isPageId(id) || !origin || !WebSocketCtor || !win?.location || globalThis.__tclaudeRemoteNode) return undefined;
     let disposed = false;
@@ -57,6 +88,8 @@ export function usePageLive(id, origin, { win = globalThis.window, WebSocketCtor
       } catch {
         return;
       }
+      socketRef.current = socket;
+      socket.onopen = () => { if (lastView.current.json) flushView(); };
       socket.onmessage = (event) => {
         let message = null;
         try { message = JSON.parse(event.data); } catch { return; }
@@ -67,11 +100,25 @@ export function usePageLive(id, origin, { win = globalThis.window, WebSocketCtor
           case 'reload': setReach('reachable'); setReloads((n) => n + 1); break;
           // The origin closed; the snapshot says what comes next.
           case 'gone': gone = true; break;
+          case 'dom': {
+            const req = typeof message.req === 'string' ? message.req : '';
+            if (!req) break;
+            const answer = (body) => sendJSON({ type: 'dom-result', req, ...body });
+            if (!onDomRef.current) { answer({ error: 'this view has no probe' }); break; }
+            Promise.resolve(onDomRef.current(String(message.selector || ''), String(message.mode || 'text')))
+              .then((result) => answer({
+                count: result.count, items: result.items,
+                ...(result.truncated ? { truncated: true } : {}), ...(result.error ? { error: result.error } : {}),
+              }))
+              .catch((cause) => answer({ error: String(cause?.message || cause).slice(0, 200) }));
+            break;
+          }
           default: break;
         }
       };
       socket.onclose = () => {
         socket = null;
+        socketRef.current = null;
         if (disposed || gone) return;
         timer = setTimeout(connect, delay);
         delay = Math.min(delay * 2, LIVE_RETRY_MAX_MS);
@@ -91,7 +138,7 @@ export function usePageLive(id, origin, { win = globalThis.window, WebSocketCtor
     setAttempt((n) => n + 1);
     setReloads((n) => n + 1);
   };
-  return { reach, reloads, retry };
+  return { reach, reloads, retry, report };
 }
 
 const baseName = (path) => String(path || '').split('/').filter(Boolean).pop() || String(path || '');
@@ -99,9 +146,9 @@ const baseName = (path) => String(path || '').split('/').filter(Boolean).pop() |
 // PageFrame is the sandboxed frame itself. Its attributes are the boundary:
 // a sandbox without allow-same-origin, allow-popups, allow-top-navigation* or
 // allow-downloads; no permissions; no referrer; credentialless.
-export function PageFrame({ src, label, reloadKey }) {
+export function PageFrame({ src, label, reloadKey, frameRef = null, onLoad = null }) {
   if (!src) return html`<div class="ui-empty-block">This page has no address on this dashboard.</div>`;
-  return html`<iframe key=${reloadKey} class="page-frame" src=${src} title=${`Live page: ${label}`}
+  return html`<iframe key=${reloadKey} ref=${frameRef} onLoad=${onLoad} class="page-frame" src=${src} title=${`Live page: ${label}`}
     sandbox=${PAGE_FRAME_SANDBOX} allow="" referrerpolicy="no-referrer" credentialless=${true} loading="eager"></iframe>`;
 }
 
@@ -111,9 +158,18 @@ export function PageFrame({ src, label, reloadKey }) {
 export function PageView({ pageId, snapshot, tools = null, onOpenSender = null, fetchImpl, notify, win = globalThis.window, WebSocketCtor }) {
   const value = snapshot?.value;
   const page = findLivePage(value, pageId);
-  const live = usePageLive(pageId, page?.origin || '', { win, ...(WebSocketCtor && { WebSocketCtor }) });
+  const frameRef = useRef(null);
+  const probe = usePageProbe(frameRef, { win });
+  const live = usePageLive(pageId, page?.origin || '', { win, ...(WebSocketCtor && { WebSocketCtor }), onDom: probe.dom });
   const [manual, setManual] = useState(0);
   const [closing, setClosing] = useState(false);
+  const [drawing, setDrawing] = useState(false);
+  const [tool, setTool] = useState('freedraw');
+  const [color, setColor] = useState('#e03131');
+  const [note, setNote] = useState('');
+  const [sending, setSending] = useState(false);
+  const marks = usePageMarks(probe);
+  useEffect(() => { if (probe.scroll) live.report(probe.scroll); }, [probe.scroll]);
   if (!page) {
     return html`<div class="page-view page-view-closed" data-page=${pageId}>
       <div class="page-head"><span class="page-head-title">${value ? 'This page has closed.' : 'Loading the page…'}</span><span class="spacer"></span>${tools}</div>
@@ -123,6 +179,21 @@ export function PageView({ pageId, snapshot, tools = null, onOpenSender = null, 
   const sender = pageSender(value, page);
   const rules = pageSandboxRules(page);
   const src = pageFrameSrc(page);
+  const send = async () => {
+    setSending(true);
+    try {
+      const sentMarks = marks.marks;
+      const sentNote = note;
+      const told = await sendPageMarks(page.id, marksPayload(sentMarks, sentNote, probe.scroll), { fetchImpl });
+      // Only what was sent goes: marks drawn or a note typed meanwhile stay.
+      marks.drop(sentMarks);
+      setNote((current) => (current === sentNote ? '' : current));
+      notify?.(told.told_agent === false ? `Saved; ${sender.name} is not running, so it was not told` : `Sent to ${sender.name}`, told.told_agent === false);
+    } catch (cause) {
+      notify?.(`Could not send the marks: ${cause?.message || cause}`, true);
+    }
+    setSending(false);
+  };
   const close = async () => {
     setClosing(true);
     if (!(await closeLivePage(page.id, { fetchImpl, notify }))) setClosing(false);
@@ -138,13 +209,20 @@ export function PageView({ pageId, snapshot, tools = null, onOpenSender = null, 
       ${page.worktree ? html`<span class="page-head-worktree" title=${`Worktree: ${page.worktree}`}>${baseName(page.worktree)}</span>` : null}
       <span class="ui-tag page-sandbox-chip" tabIndex="0" role="note" title=${rules.join('\n')} aria-label=${`Sandboxed. ${rules.join(' ')}`}>🔒 sandboxed</span>
       <span class="spacer"></span>
+      <span class="page-mode" role="group" aria-label="Mode">
+        <${Button} size="sm" class="mux-btn" pressed=${!drawing} title="Use the page" onClick=${() => setDrawing(false)}>Interact<//>
+        <${Button} size="sm" class="mux-btn" pressed=${drawing} title="Draw on top of the page to show the agent what to change" onClick=${() => setDrawing(true)}>Draw${marks.marks.length ? ` (${marks.marks.length})` : ''}<//>
+      </span>
       <${Button} size="sm" class="mux-btn" title="Reload the page" onClick=${() => setManual((n) => n + 1)}>Reload<//>
       ${tools}
       <${Button} size="sm" variant="danger" class="mux-btn" busy=${closing} disabled=${closing}
         title="Close this page: it ends, and the agent that showed it is told" onClick=${() => void close()}>Close<//>
     </div>
+    ${drawing ? html`<${PageDrawBar} tool=${tool} setTool=${setTool} color=${color} setColor=${setColor} marks=${marks.marks}
+      onUndo=${marks.undo} onClear=${marks.clear} note=${note} setNote=${setNote} onSend=${() => void send()} sending=${sending} agentName=${sender.name} />` : null}
     <div class="page-body">
-      <${PageFrame} src=${src} label=${label} reloadKey=${`${live.reloads}:${manual}:${src}`} />
+      <${PageFrame} src=${src} label=${label} reloadKey=${`${live.reloads}:${manual}:${src}`} frameRef=${frameRef} onLoad=${probe.onLoad} />
+      ${src ? html`<${PageDrawLayer} active=${drawing} tool=${tool} color=${color} marks=${marks.marks} onMark=${marks.add} scroll=${probe.scroll} />` : null}
       ${live.reach === 'unreachable' ? html`<div class="page-unreachable" role="alert">
         <p><b>Nothing is answering for this page.</b> The agent's dev server or files may be gone.</p>
         <p class="ui-hint"><code>${page.target}</code></p>

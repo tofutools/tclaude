@@ -128,6 +128,7 @@ func (r *livePageRegistry) removeLocked(p *livePage) {
 	}
 	delete(r.byID, p.id)
 	stagePages.close(p.stage.token)
+	forgetPageCollab(p.id)
 }
 
 func (r *livePageRegistry) list(owner string) []*livePage {
