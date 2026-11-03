@@ -8,7 +8,7 @@ import sys
 LIMIT = 10 * 1024**3
 HEADROOM = 512 * 1024**2
 MAX_SNAPSHOT = 1024**3
-SAVERS = 4  # two OSes times agentd/sandbox in the release matrix
+SAVERS = 3  # release.yml: Linux agentd + sandbox shards, macOS agentd
 
 
 def api(path, *args):

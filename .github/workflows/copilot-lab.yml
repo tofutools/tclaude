@@ -20,7 +20,8 @@
 #     compatibility evidence the suite exists to produce.
 #   - Automatically on any PR that touches the fixture package, the Copilot
 #     harness itself, or this workflow — the changes that can invalidate the
-#     evidence from our side.
+#     evidence from our side. PRs run the Linux arm only; the macOS arm runs
+#     on demand (PRs run no macOS jobs, see "macOS CI" in CONTRIBUTING.md).
 #
 # Credential-free, like the smoke job: COPILOT_PROVIDER_BASE_URL activates
 # BYOK mode, which the CLI documents as not requiring GitHub authentication,
@@ -70,40 +71,40 @@ jobs:
   #     argument for the arm existing.
   lab:
     name: Copilot CLI lab (${{ matrix.platform }})
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.platform == 'macos' && 'macos-latest' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: linux
-            runner: ubuntu-latest
-            # Everything: the compatibility fixtures and the sandbox ones.
-            run_filter: TestCopilot
-            # Below any healthy run; catches "the gate variable was renamed and
-            # the whole suite silently skipped", which is the failure mode a
-            # green-because-nothing-ran job actually has. See the gate step.
-            # Observed on a real run: 74 matched, ~4 legitimately skip.
-            min_passes: 60
-            # Table rows, counted separately because a parent whose subtests
-            # ALL skipped still prints `--- PASS: Parent` — so the floor above
-            # is blind to exactly the scenarios permission_contract.json cites.
-            # Observed on the same run: 136 across both steps.
-            min_subtest_passes: 100
-          - platform: macos
-            runner: macos-latest
-            # The Seatbelt half of TCL-977's evidence, plus TCL-978's platform
-            # and assert-off scenarios, plus the two scenarios that are
-            # macOS-only BY NATURE: they need a runner whose $TMPDIR is spelled
-            # /var/folders/… while the kernel's directory is
-            # /private/var/folders/…, which is the entire defect behind
-            # TCL-987. On Linux they have no alternate spelling to supply and
-            # skip themselves, so this arm is the only place they are evidence.
-            run_filter: TestCopilotNativeSandbox|TestCopilotSandboxBaseline|TestCopilotDefaultCachePlacement|TestCopilotPackageCacheIsExecutable|TestCopilotInnerSandbox|TestCopilotLegacyConfig|TestCopilotStartupDialsOnlyContractedHosts|TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling|TestCopilotPermissionPathGrants|TestCopilotDirTrust
-            min_passes: 15
-            # Deliberately slack: no macOS run has been measured since the
-            # split, so this is sized to catch a wholesale skip and nothing
-            # finer. Tighten it from the first green run's numbers.
-            min_subtest_passes: 10
+        # PRs run no macOS jobs: hosted macOS runners are concurrency-capped
+        # (see "macOS CI" in CONTRIBUTING.md), so the macOS arm runs only when
+        # this workflow is run by hand. A plain list rather than `include`
+        # entries, because an `include` entry always adds its job and so
+        # cannot be dropped per event.
+        platform: ${{ fromJSON(github.event_name == 'pull_request' && '["linux"]' || '["linux", "macos"]') }}
+    env:
+      # Linux: everything, the compatibility fixtures and the sandbox ones.
+      #
+      # macOS: the Seatbelt half of TCL-977's evidence, plus TCL-978's
+      # platform and assert-off scenarios, plus the two scenarios that are
+      # macOS-only BY NATURE: they need a runner whose $TMPDIR is spelled
+      # /var/folders/… while the kernel's directory is /private/var/folders/…,
+      # which is the entire defect behind TCL-987. On Linux they have no
+      # alternate spelling to supply and skip themselves, so this arm is the
+      # only place they are evidence.
+      RUN_FILTER: ${{ matrix.platform == 'macos' && 'TestCopilotNativeSandbox|TestCopilotSandboxBaseline|TestCopilotDefaultCachePlacement|TestCopilotPackageCacheIsExecutable|TestCopilotInnerSandbox|TestCopilotLegacyConfig|TestCopilotStartupDialsOnlyContractedHosts|TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling|TestCopilotPermissionPathGrants|TestCopilotDirTrust' || 'TestCopilot' }}
+      # Below any healthy run; catches "the gate variable was renamed and the
+      # whole suite silently skipped", which is the failure mode a
+      # green-because-nothing-ran job actually has. See the gate step.
+      # Linux observed on a real run: 74 matched, ~4 legitimately skip. macOS
+      # is deliberately slack: no macOS run has been measured since the
+      # split, so it is sized to catch a wholesale skip and nothing finer.
+      # Tighten it from the first green run's numbers.
+      MIN_PASSES: ${{ matrix.platform == 'macos' && 15 || 60 }}
+      # Table rows, counted separately because a parent whose subtests ALL
+      # skipped still prints `--- PASS: Parent`, so the floor above is blind
+      # to exactly the scenarios permission_contract.json cites. Linux
+      # observed on the same run: 136 across both steps.
+      MIN_SUBTEST_PASSES: ${{ matrix.platform == 'macos' && 10 || 100 }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -190,7 +191,7 @@ jobs:
         run: |
           set -o pipefail
           go test ./pkg/claude/harness/copilotfixture/... \
-            -run '${{ matrix.run_filter }}' -v -count=1 -parallel 8 -timeout 1500s 2>&1 \
+            -run '${{ env.RUN_FILTER }}' -v -count=1 -parallel 8 -timeout 1500s 2>&1 \
             | tee "$RUNNER_TEMP/copilot-lab.log"
 
       # A skipped test still exits 0, and the suite is gated on TWO env vars —
@@ -222,20 +223,20 @@ jobs:
           {
             echo "### Copilot lab (${{ matrix.platform }})"
             echo
-            echo "Scenario passes: **$passes** (floor: ${{ matrix.min_passes }})"
-            echo "Table-row passes: **$subtests** (floor: ${{ matrix.min_subtest_passes }})"
+            echo "Scenario passes: **$passes** (floor: ${{ env.MIN_PASSES }})"
+            echo "Table-row passes: **$subtests** (floor: ${{ env.MIN_SUBTEST_PASSES }})"
             echo
             echo "Skipped:"
             echo '```'
             grep -E '^[[:space:]]*--- SKIP: ' "$log" || echo "(none)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          if (( passes < ${{ matrix.min_passes }} )); then
-            echo "::error::Only $passes lab scenarios passed, below the floor of ${{ matrix.min_passes }}. The suite gate (TCLAUDE_COPILOT_FIXTURE_SMOKE / TCLAUDE_COPILOT_FIXTURE_LAB) has almost certainly gone soft, or the run filter no longer matches."
+          if (( passes < ${{ env.MIN_PASSES }} )); then
+            echo "::error::Only $passes lab scenarios passed, below the floor of ${{ env.MIN_PASSES }}. The suite gate (TCLAUDE_COPILOT_FIXTURE_SMOKE / TCLAUDE_COPILOT_FIXTURE_LAB) has almost certainly gone soft, or the run filter no longer matches."
             exit 1
           fi
-          if (( subtests < ${{ matrix.min_subtest_passes }} )); then
-            echo "::error::Only $subtests lab table rows passed, below the floor of ${{ matrix.min_subtest_passes }}. A parent test whose rows all skip still reports PASS, so this is the gate that sees it — the permission matrix rows cited by permission_contract.json are the likely casualty."
+          if (( subtests < ${{ env.MIN_SUBTEST_PASSES }} )); then
+            echo "::error::Only $subtests lab table rows passed, below the floor of ${{ env.MIN_SUBTEST_PASSES }}. A parent test whose rows all skip still reports PASS, so this is the gate that sees it — the permission matrix rows cited by permission_contract.json are the likely casualty."
             exit 1
           fi
           # The contract guard is named explicitly because it is the one test

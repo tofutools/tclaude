@@ -31,11 +31,6 @@ jobs:
       contents: read
     uses: ./.github/workflows/reusable-sandbox-v2-smoke.yml
 
-  sandbox-v2-seatbelt-smoke:
-    permissions:
-      contents: read
-    uses: ./.github/workflows/reusable-sandbox-v2-seatbelt-smoke.yml
-
   # golangci-lint is platform-independent, so run it once on a single runner
   # rather than across the test matrix. Lint, tests, version, builds, and the
   # two sandbox smokes all run in parallel; publishing waits for every one of
@@ -50,15 +45,9 @@ jobs:
       fail-fast: false
       matrix:
         # Same split as release.yml, via the shared test-suite action: Linux
-        # takes every shard, macOS takes agentd + rest-all and no jstest (see
-        # release.yml's test job for why).
+        # takes every shard; macOS runs in the single `macos` job below.
         os: [ubuntu-latest, ubuntu-24.04-arm]
         shard: [agentd, jstest, process, sandbox, rest]
-        include:
-          - os: macos-latest
-            shard: agentd
-          - os: macos-latest
-            shard: rest-all
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -118,9 +107,6 @@ jobs:
           - os: ubuntu-24.04-arm
             goos: linux
             goarch: arm64
-          - os: macos-latest
-            goos: darwin
-            goarch: arm64
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -164,6 +150,72 @@ jobs:
           name: dist-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
 
+  # Every macOS check in one job, as in release.yml (see its `macos` job for
+  # why): the darwin build, the agentd and rest-all shards, and the Sandbox v2
+  # Seatbelt smoke, in sequence. Restoring per-shard macOS jobs: see
+  # "macOS CI" in CONTRIBUTING.md.
+  macos:
+    name: macOS (build, test, Seatbelt smoke)
+    permissions:
+      contents: read
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build with GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: latest
+          args: build --single-target --snapshot --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Same assertion as the Linux build job.
+      - name: Verify both binaries were built
+        shell: bash
+        run: |
+          set -euo pipefail
+          for binary in tclaude tclaude-agentd; do
+            count=$(find dist -type f -name "$binary" -perm -u+x | wc -l)
+            if [ "$count" -eq 0 ]; then
+              echo "::error::goreleaser produced no $binary binary in dist/"
+              exit 1
+            fi
+            echo "$binary: $count binary(s)"
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-darwin-arm64
+          path: dist/*
+
+      - name: Test suite (agentd)
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/test-suite
+        with:
+          shard: agentd
+
+      - name: Test suite (rest-all)
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/test-suite
+        with:
+          shard: rest-all
+
+      - name: Sandbox v2 Seatbelt smoke
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/seatbelt-smoke
+
   # Publishing gate: only runs once tests, lint, builds, and both real sandbox
   # smokes have all succeeded. This is where the side effects happen — pushing
   # the release tag and creating the GitHub release — so neither can occur
@@ -172,7 +224,7 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     needs:
-      [test, lint, version, build, sandbox-v2-smoke, sandbox-v2-seatbelt-smoke,
+      [test, macos, lint, version, build, sandbox-v2-smoke,
        filtered-proxy-smoke, proxy-posture-e2e]
     steps:
       - name: Checkout code
