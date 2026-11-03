@@ -55,8 +55,6 @@ func TestDashboardAssets_ForceBlockWired(t *testing.T) {
 		".force-member-idle",
 		".force-member-dead",
 		".force-stalling {",
-		".force-rebrief-btn, .force-standdown-btn {",
-		".force-standdown-btn:hover",
 	} {
 		if !strings.Contains(css, needle) {
 			t.Errorf("dashboard.css missing %q — force-block styling broken", needle)

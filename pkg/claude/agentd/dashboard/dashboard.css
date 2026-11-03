@@ -505,8 +505,8 @@ body.wizard .access-banner {
   box-shadow: 0 0 24px rgba(169, 123, 214, 0.35);
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.4);
 }
-body.wizard .access-banner-review { background: #a97bd6; color: #14102a; }
-body.wizard .access-banner-review:hover { background: #c39ee8; }
+body.wizard .ui-btn.access-banner-review { background: #a97bd6; border-color: #a97bd6; color: #14102a; }
+body.wizard .ui-btn.access-banner-review:hover:not(:disabled) { background: #c39ee8; color: #14102a; }
 body.wizard .access-k, body.wizard .access-countdown { color: #b39ddb; }
 body.wizard .access-v { color: #e7d9f5; }
 body.wizard .access-body { background: #14102a; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5; }
@@ -4511,7 +4511,7 @@ tr:hover .row-actions { opacity: 1; }
    a delete is the quiet .ui-btn-ghost.ui-btn-danger, so a red frame doesn't
    repeat down every row. A reversible demotion (retire, disable, pause) is a
    plain button that warms amber only under the cursor. */
-.row-actions .ui-btn.warn:hover:not(:disabled) { color: var(--ui-warn-text); background: rgba(210, 153, 34, 0.15); }
+.row-actions .ui-btn.warn:hover:not(:disabled), .group-actions .ui-btn.warn:hover:not(:disabled) { color: var(--ui-warn-text); background: rgba(210, 153, 34, 0.15); }
 /* The status dot + the focus/hide/⚙ cluster share the row's first
    cell (.agent-ctl) so the controls sit together — no empty gap from
    the dot living in its own column. */
@@ -5031,11 +5031,7 @@ body.show-group-description .group-descr { display: inline; }
 .spawn-queue-remote { font-size: 10px; color: #d2a8ff; border: 1px solid #6e40c9; border-radius: 8px; padding: 0 5px; }
 .spawn-queue-actions { display: flex; justify-content: flex-end; }
 .spawn-queue-cancel { font-size: 12px; padding: 2px 9px; }
-.group-process-advance {
-  font-size: 11px; margin-left: 4px; padding: 1px 8px; border-radius: 4px;
-  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9; cursor: pointer;
-}
-.group-process-advance:hover { background: #2d333b; }
+.ui-btn.group-process-advance { margin-left: 4px; }
 /* Force block (JOH-247) — the deployed-task-force glance in a group's expanded
    body: mission (quest), phase + transition history, a per-role live-status
    rollup, a stalling hint, and the re-brief control. Rendered only for a group
@@ -5077,24 +5073,16 @@ body.show-group-description .group-descr { display: inline; }
   border: 1px solid #5a3a1d; border-radius: 4px; background: #2b1d0e;
 }
 .force-controls { display: flex; gap: 6px; }
-.force-rebrief-btn, .force-standdown-btn {
-  font-size: 11px; padding: 2px 10px; border-radius: 4px;
-  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9; cursor: pointer;
-}
-.force-rebrief-btn:hover { background: #2d333b; }
-/* Stand-down is the destructive wind-down control, so its hover warms to a
-   caution border rather than the re-brief blue. */
-.force-standdown-btn:hover { background: #2d333b; }
 /* The mission label span-swaps regular → wizard, the same "always emit, CSS
    picks" trick the spawn button + activity bots use. */
 .force-mission-label-wizard { display: none; }
 body.wizard .force-mission-label-regular { display: none; }
 body.wizard .force-mission-label-wizard { display: inline; }
-/* The 🎯 task-force info toggle in the group action row. Inherits the
-   .group-actions button skin; .folded warms it to a blue accent so a hidden
+/* The 🎯 task-force info toggle in the group action row: a small pressed
+   button; .folded warms it to a blue accent so a hidden
    card is legible at a glance (the label already reads "show info"). Its label
    span-swaps regular → wizard the same way the mission label above does. */
-.force-fold-btn.folded {
+.ui-btn.force-fold-btn.folded {
   color: #58a6ff; border-color: #1f3a5f; background: #10243d;
 }
 .force-fold-label-wizard { display: none; }
@@ -5408,7 +5396,7 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 /* The inline profile picker — a <select> swapped in for a group or toolbar
    chip while choosing a spawn or sandbox profile.
    Same compact monospace look as the chip inputs above. */
-.group-default-profile-select, .toolbar-profile-select { margin-left: 8px; }
+.ui-select.group-default-profile-select, .ui-select.toolbar-profile-select, .group-default-profile-select, .toolbar-profile-select { margin-left: 8px; }
 .group-default-profile-select:where(:not(.ui-select)), .toolbar-profile-select:where(:not(.ui-select)) {
   background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
   color: #d4d4d4; padding: 1px 6px; font: inherit;
