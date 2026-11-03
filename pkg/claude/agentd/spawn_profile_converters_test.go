@@ -58,6 +58,7 @@ func TestProfileToJSONCopiesEveryField(t *testing.T) {
 	p := &db.SpawnProfile{}
 	v := reflect.ValueOf(p).Elem()
 	typ := v.Type()
+	plainBools := 0
 	for i := range typ.NumField() {
 		name := typ.Field(i).Name
 		field := v.Field(i)
@@ -67,7 +68,9 @@ func TestProfileToJSONCopiesEveryField(t *testing.T) {
 		case int64:
 			field.SetInt(int64(1000 + i))
 		case bool:
-			field.SetBool(true)
+			// Alternate so no two plain bools agree (Disabled vs OperatorOnly).
+			plainBools++
+			field.SetBool(plainBools%2 == 1)
 		case *bool:
 			b := i%2 == 0
 			field.Set(reflect.ValueOf(&b))
@@ -168,38 +171,61 @@ func spawnProfileLiteralKeys(t *testing.T, file, fn string) map[string]bool {
 // TestBuildProfileFromJSONRoundTripsClaudeProfile sends a Claude profile that
 // sets every field a Claude profile can hold without registry rows (role and
 // prompt refs need stored roles/prompts) through wire → db → wire, and
-// requires it back unchanged.
+// requires it back unchanged. Every toggle gets its own pointer, and the ones
+// buildProfileFromJSON passes through must arrive as that same pointer, so a
+// swapped pair of toggles fails even when their values agree.
 func TestBuildProfileFromJSONRoundTripsClaudeProfile(t *testing.T) {
-	on, off := true, false
+	toggle := func(b bool) *bool { return &b }
 	in := spawnProfileJSON{
 		Name:                       "claude-full",
 		Aliases:                    []string{"claude-alias"},
-		Disabled:                   &on,
+		Disabled:                   toggle(true),
 		DisabledReason:             "paused for the test",
 		OperatorOnly:               true,
 		Harness:                    "claude",
 		Model:                      "opus",
+		ModelProxy:                 "off",
 		Effort:                     "high",
+		Sandbox:                    "on",
+		SandboxImplementation:      "tclaude-layer",
+		Approval:                   "plan",
 		AskUserQuestionTimeout:     "5m",
 		AutoCompactWindow:          "450000",
-		RemoteControl:              &on,
-		AutoMemory:                 &off,
-		PeerMessaging:              &on,
+		TrustDir:                   toggle(true),
+		RemoteControl:              toggle(true),
+		AutoMemory:                 toggle(false),
+		PeerMessaging:              toggle(true),
+		SSHWorkaround:              toggle(false),
 		AgentName:                  "worker",
 		Role:                       "dev",
 		Descr:                      "a full claude profile",
 		InitialMessage:             "hello",
 		StartupContext:             "read the docs first",
 		Environment:                []sandboxpolicy.EnvironmentEntry{{Name: "FOO", Value: "bar"}},
-		SyncWorktree:               &on,
-		FetchLatestWorktree:        &off,
-		AutoFocus:                  &on,
-		IncludeGroupDefaultContext: &off,
-		IsOwner:                    &on,
+		SyncWorktree:               toggle(true),
+		FetchLatestWorktree:        toggle(false),
+		AutoFocus:                  toggle(true),
+		IncludeGroupDefaultContext: toggle(false),
+		IsOwner:                    toggle(true),
 		PermissionOverrides:        map[string]db.PermissionOverride{"human.notify": {Effect: db.PermEffectGrant}},
+		ContextFeatures:            map[string]string{"cron": "off"},
 	}
 	p, fail := buildProfileFromJSON(in)
 	require.Nil(t, fail, "%+v", fail)
+
+	// Disabled is converted to a plain bool and SSHWorkaround is normalized
+	// into a fresh pointer; every other toggle is passed through.
+	reallocated := map[string]bool{"Disabled": true, "SSHWorkaround": true}
+	iv, pv := reflect.ValueOf(in), reflect.ValueOf(*p)
+	for i := range pv.NumField() {
+		name := pv.Type().Field(i).Name
+		src := iv.FieldByName(name)
+		if reallocated[name] || pv.Field(i).Kind() != reflect.Pointer || !src.IsValid() || src.IsNil() {
+			continue
+		}
+		assert.True(t, src.Pointer() == pv.Field(i).Pointer(), "buildProfileFromJSON does not carry %s", name)
+	}
+
 	got := profileToJSON(p)
 	want := in
 	want.RoleRefs, want.PromptRefs = []string{}, []string{}
