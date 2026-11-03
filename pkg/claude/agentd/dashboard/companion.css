@@ -258,11 +258,6 @@ body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: c
   color: var(--cmp-text); padding: 5px 8px; font: inherit; font-size: 12px;
 }
 .companion-draft:focus { outline: none; border-color: var(--cmp-blue); }
-.companion-input button[type="submit"] {
-  padding: 5px 10px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
-  color: var(--cmp-text); font: inherit; font-size: 12px; cursor: pointer;
-}
-.companion-input button[type="submit"]:disabled { opacity: .5; cursor: default; }
 
 .companion-resize-frame .window-resize-zone.se::after {
   content: ''; position: absolute; right: 6px; bottom: 6px; width: 7px; height: 7px;
@@ -444,10 +439,6 @@ body:not(.solo) .mux-pane .companion-input { right: 120px; }
 /* Silence send (tcl-jk3kal): it sends without a deliberate act, so it counts out loud. */
 .companion-silence { color: var(--cmp-amber-text); }
 .companion-continuous { color: var(--cmp-amber-text); font-weight: 600; }
-.companion-input button.companion-silence-cancel {
-  padding: 3px 8px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d;
-  color: var(--cmp-text); font: inherit; font-size: 11px; cursor: pointer;
-}
 /* The wake listener's indicator: on whenever it can hear the room. */
 .voice-wake {
   position: fixed; left: 200px; top: 12px; z-index: var(--z-chrome); display: flex; align-items: center; gap: 8px; max-width: min(calc(100vw - 216px), 520px); padding: 5px 8px;
@@ -457,10 +448,6 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
 @media (max-width: 720px) { .voice-wake { left: 16px; top: 52px; max-width: calc(100vw - 32px); } }
 .voice-wake.listening { border-color: var(--cmp-amber); }
 .voice-wake.failed, .voice-wake.blocked { border-color: var(--cmp-red); }
-.voice-wake button {
-  padding: 2px 8px; border-radius: 6px; border: 1px solid var(--cmp-line); background: #21262d; color: var(--cmp-text); font: inherit; cursor: pointer;
-}
-.voice-wake button:hover { background: var(--ui-bg-hover); }
 .companion-pane-notice {
   position: absolute; top: 42px; right: 8px; max-width: 60%; padding: 5px 8px; border: 1px solid var(--cmp-red); border-radius: 6px;
   background: var(--cmp-bar); color: var(--cmp-text); font: inherit; font-size: 12px; text-align: left; cursor: pointer;

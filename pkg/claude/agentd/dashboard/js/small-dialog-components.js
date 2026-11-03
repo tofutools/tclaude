@@ -126,13 +126,12 @@ function ExportHistory({ jobs, actions, conv, refreshHistory }) {
     <div id="export-agent-history" class="export-history">
       <div class="export-history-head">
         <span class="export-history-title">Previous exports</span>
-        <button
+        <${Button} size="sm" variant="ghost danger"
           id="export-agent-clear"
-          type="button"
           class="export-history-clear"
           title="Delete every saved export for this agent"
           onClick=${() => mutate(() => actions.clearExports(conv))}
-        >Clear all</button>
+        >Clear all<//>
       </div>
       <div id="export-agent-history-list" class="export-history-list">
         ${jobs.map((job) => {
@@ -146,8 +145,8 @@ function ExportHistory({ jobs, actions, conv, refreshHistory }) {
                 <div class="ehi-sub">${when}${size}</div>
               </div>
               <span class=${`ehi-status ${job.status || ''}`}>${job.status || ''}</span>
-              ${job.ready && html`<button data-export-act="download" title="Download this export" aria-label="Download this export" onClick=${() => actions.downloadExport(job.id)}>⤓</button>`}
-              <button class="ehi-del" data-export-act="delete" title="Delete this export" aria-label="Delete this export" onClick=${() => mutate(() => actions.deleteExport(job.id))}>🗑</button>
+              ${job.ready && html`<${Button} size="sm" variant="ghost" icon=${true} data-export-act="download" title="Download this export" aria-label="Download this export" onClick=${() => actions.downloadExport(job.id)}>⤓<//>`}
+              <${Button} size="sm" variant="ghost danger" icon=${true} class="ehi-del" data-export-act="delete" title="Delete this export" aria-label="Delete this export" onClick=${() => mutate(() => actions.deleteExport(job.id))}>🗑<//>
             </div>
           `;
         })}
@@ -395,7 +394,7 @@ const TERMINAL_CHOICES = Object.freeze([
 
 function TerminalChoice({ choice, index, onPick, autofocus }) {
   return html`
-    <button type="button" class="term-choice" id=${`term-pick-${choice.act}`} data-term-pick=${choice.act} autofocus=${autofocus}
+    <button data-ui-exempt type="button" class="term-choice" id=${`term-pick-${choice.act}`} data-term-pick=${choice.act} autofocus=${autofocus}
       onClick=${() => onPick(choice.act)}>
       <span class="term-choice-icon" aria-hidden="true"><${Words} plain=${choice.icon} wizard=${choice.wizardIcon} /></span>
       <span class="term-choice-body">

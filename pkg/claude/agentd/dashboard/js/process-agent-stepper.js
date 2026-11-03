@@ -13,6 +13,7 @@
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import {
   ProcessNodeGlyph, ProcessPauseControl, ProcessPausedChip, ProcessScopeChip, ProcessStateChip, programBounds, runIconView, runName, runSteps,
 } from './process-kit.js';
@@ -204,18 +205,18 @@ export function ProcessAgentStepper({ run, agentId, bounds = null, actions = {},
         <${ProcessScopeChip} scope=${namedScope(run.scope, agentId, bounds?.name)} />
         <${ProcessStateChip} state=${view.state} label=${String(run.status || view.state)} />
         <${ProcessPausedChip} run=${run} />
-        ${onClose ? html`<button type="button" class="pk-run-popover-close" title="Close" aria-label="Close" onClick=${onClose}>×</button>` : null}
+        ${onClose ? html`<button data-ui-exempt type="button" class="pk-run-popover-close" title="Close" aria-label="Close" onClick=${onClose}>×</button>` : null}
       </div>
       <${BoundsStrip} bounds=${bounds} />
       <div class="pk-stepper-list" role="list">${rows.map((row) => html`<${StepRow} key=${row.id} row=${row} />`)}</div>
       <div class="pk-run-popover-actions">
         <${ProcessPauseControl} run=${run} actions=${actions} />
-        <button type="button" class="mux-btn" disabled=${!onGraph} onClick=${() => onGraph?.()}>⧉ graph view</button>
+        <${Button} size="sm" disabled=${!onGraph} onClick=${() => onGraph?.()}>⧉ graph view<//>
         ${groups.length > 1 ? html`<select class="pk-stepper-group" aria-label="Group to promote the run to"
           value=${group} onChange=${(event) => setTarget(event.currentTarget.value)}>
           ${groups.map((entry) => html`<option key=${entry.id} value=${entry.name}>${entry.name}</option>`)}</select>` : null}
-        <button type="button" class="mux-btn" disabled=${busy || !actions.promote || !groups.length}
-          title=${promoteTitle} onClick=${() => void promote()}>⇪ promote to group run</button>
+        <${Button} size="sm" disabled=${busy || !actions.promote || !groups.length}
+          title=${promoteTitle} onClick=${() => void promote()}>⇪ promote to group run<//>
         ${error ? html`<span class="pk-run-popover-error" role="alert">${error}</span>` : null}
       </div>
     </div>

@@ -85,11 +85,11 @@ export function ProcessOverlayWindow({ instance, overlay, strip, close, snapshot
   }, [open, fetchImpl, win]);
   const label = instance.label || instance.template;
   const title = html`${strip}
-    <button type="button" class="board-overlay-action" title="Move this editor back to the Processes tab, unsaved edits and all"
+    <button data-ui-exempt type="button" class="board-overlay-action" title="Move this editor back to the Processes tab, unsaved edits and all"
       onClick=${() => void dockProcessEditor(instance.template)}>${TO_PROCESSES_LABEL}</button>
-    <button type="button" class="board-overlay-action" title="Move this editor to a browser window of its own, unsaved edits and all"
+    <button data-ui-exempt type="button" class="board-overlay-action" title="Move this editor to a browser window of its own, unsaved edits and all"
       onClick=${() => floatingProcessEditor(instance.template) && moveToWindow(instance, { rect: overlay.windowRef.current?.getBoundingClientRect?.(), win, notify })}>${TO_WINDOW_LABEL}</button>
-    ${look === 'classic' && html`<button type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${label}`}
+    ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${label}`}
       onClick=${close.onClose}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="board-overlay process-overlay" frameClass="board-overlay-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Process ${label}`} title=${title}

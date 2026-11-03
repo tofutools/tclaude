@@ -6,6 +6,7 @@
 import { h } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { AnnotateOverlay, composeAnnotation, drawInk } from './companion-annotate.js';
 import { COMPANION_MESSAGE_MAX, companionMessageFits, composeCompanionMessage, markDictated } from './companion-model.js';
 import { createDictation, phraseLeadRest, saysStop, sendPhraseRest } from './companion-voice.js';
@@ -480,10 +481,10 @@ export function FloatingTools({
         <input type="checkbox" checked=${withContext} onChange=${(event) => onContext(event.currentTarget.checked)} /> view
         ${contextNote && html`<span class="companion-context-off" title=${contextNote}>capture off</span>`}
       </label>`}
-      <button type="button" class=${`companion-tool companion-mic${listening ? ' on' : ''}${continuing ? ' steady' : ''}`} aria-pressed=${listening ? 'true' : 'false'}
+      <button data-ui-exempt type="button" class=${`companion-tool companion-mic${listening ? ' on' : ''}${continuing ? ' steady' : ''}`} aria-pressed=${listening ? 'true' : 'false'}
         aria-label=${micLabel} disabled=${!!block}
         title=${block?.why || micTitle} onClick=${toggle}>${listening ? '⏺' : '🎤'}</button>
-      ${onAnnotate && html`<button type="button" class="companion-tool companion-annotate" aria-label=${annotateLabel}
+      ${onAnnotate && html`<button data-ui-exempt type="button" class="companion-tool companion-annotate" aria-label=${annotateLabel}
         title=${withShortcut('Draw on the page and send the marked-up view', 'annotate')} onClick=${onAnnotate}>✎</button>`}
       ${children}
   </div>`;
@@ -516,10 +517,10 @@ export function DraftField({
       placeholder=${listening ? 'Listening…' : ''} onFocus=${onFocus} onBlur=${onBlur} onKeyDown=${onKeyDown}
       aria-label=${label} value=${draft} onInput=${(event) => { if (listeningRef.current) abort(); onEdit(event.currentTarget.value); }} />
     ${continuing ? html`<span class="companion-send-hint companion-continuous" role="status">⏺ ${silenceLeft ? `Sending in ${silenceLeft}s` : 'Continuous mode'}${stopPhrase ? ` · say “${stopPhrase}” to stop` : ''} · ${route}</span>
-      <button type="button" class="companion-silence-cancel" title="Stop continuous mode and keep the draft (Esc)" onClick=${cancelSilence}>Stop</button>`
+      <${Button} size="sm" class="companion-silence-cancel" title="Stop continuous mode and keep the draft (Esc)" onClick=${cancelSilence}>Stop<//>`
       : silenceLeft ? html`<span class="companion-send-hint companion-silence" role="status">Sending in ${silenceLeft}s</span>
-      <button type="button" class="companion-silence-cancel" title="Stop the mic and keep the draft (Esc)" onClick=${cancelSilence}>Cancel</button>`
+      <${Button} size="sm" class="companion-silence-cancel" title="Stop the mic and keep the draft (Esc)" onClick=${cancelSilence}>Cancel<//>`
       : listening && html`<span class="companion-send-hint">${sendPhrase ? `say “${sendPhrase}” to send · ` : ''}${route}</span>`}
-    <button type="submit" title=${submitTitle} disabled=${sending || !draft.trim()}>${submitLabel}</button>
+    <${Button} size="sm" variant="primary" type="submit" title=${submitTitle} disabled=${sending || !draft.trim()}>${submitLabel}<//>
   </form>`;
 }

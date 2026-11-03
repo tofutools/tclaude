@@ -71,7 +71,7 @@ export function HelpDisclosure({
      has a caveat" cue the colour gives a sighted one. */
   const name = warn ? `Show ${label} warning` : `Show ${label} help`;
   return html`<${Fragment}>
-    <button ref=${triggerRef} type="button" class=${`spawn-field-help-trigger${warn ? ' warn' : ''}`}
+    <button data-ui-exempt ref=${triggerRef} type="button" class=${`spawn-field-help-trigger${warn ? ' warn' : ''}`}
       aria-label=${name}
       data-capture-text="none" aria-controls=${descriptionID} aria-expanded=${open ? 'true' : 'false'} title=${name}
       onClick=${() => setOpen(open ? '' : id)}

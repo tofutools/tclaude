@@ -76,7 +76,7 @@ export function PaletteLauncher({ state, snapshot, documentRef = document }) {
   }, [documentRef, state, terminalShortcutEnabled]);
 
   return html`
-    <button id="command-palette-btn" type="button"
+    <button data-ui-exempt id="command-palette-btn" type="button"
       aria-label=${withShortcut('Open the command palette', 'palette')} aria-haspopup="dialog"
       title="Command palette — a keyboard launcher (${shortcutText('palette')}) to search and run dashboard actions: hide / focus all (or a group's, or one agent's) windows, jump to a tab, spawn an agent. Type to filter, ↑/↓ to pick, Enter to run."
       onClick=${state.show}>🔍</button>

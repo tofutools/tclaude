@@ -1,6 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { registerGitRepositoriesController } from './git-repositories-controller.js';
 import { gitRepoRequests, matchingGitRepos, readGitConcurrency, rememberGitConcurrency } from './git-repositories-actions.js';
@@ -87,9 +88,9 @@ export function GitRepositoriesDialog({ current, state, actions }) {
     <div class="git-repos-toolbar">
       <input ref=${filterRef} type="search" aria-label="Filter repositories or groups" placeholder="Filter repositories / groups…"
         value=${query} onInput=${(e) => setQuery(e.currentTarget.value)} />
-      <button type="button" disabled=${locked || !selectable.length} onClick=${() => {
+      <${Button} size="sm" disabled=${locked || !selectable.length} onClick=${() => {
         setSelected((before) => { const next = new Set(before); selectable.forEach((r) => allShown ? next.delete(r.path) : next.add(r.path)); return next; });
-      }}><${Words} plain=${`${allShown ? 'Deselect' : 'Select'} ${query.trim() ? 'shown' : 'all'}`} /></button>
+      }}><${Words} plain=${`${allShown ? 'Deselect' : 'Select'} ${query.trim() ? 'shown' : 'all'}`} /><//>
     </div>
     <div class="git-repos-list" tabIndex="0" aria-label="Repositories" aria-busy=${loading}>
       ${visible.map((repo) => {
@@ -115,11 +116,11 @@ export function GitRepositoriesDialog({ current, state, actions }) {
     ${error ? html`<p class="git-repos-error ui-error" role="alert">${error}</p>` : null}
     <div class="git-repos-footer">
       <span role="status" aria-live="polite">${busy || done ? `${completed.length} / ${selected.size} completed · ${completed.filter((o) => o.status === 'updated').length} updated · ${completed.filter((o) => o.status === 'skipped').length} skipped · ${completed.filter((o) => o.status === 'failed').length} failed` : `${selected.size} of ${repos.length} selected`}</span>
-      <div>${!done ? html`<button type="button" disabled=${loading || busy} onClick=${() => setGeneration((n) => n + 1)}><${Words} plain="Rescan" wizard="Seek again" /></button>` : null}
-        <button type="button" disabled=${busy} onClick=${state.close}><${Words} plain=${done ? 'Done' : 'Cancel'} /></button>
-        ${!done ? html`<button type="button" class=${`primary${discard ? ' danger' : ''}`} disabled=${locked || !selected.size} onClick=${submit} aria-keyshortcuts="Control+Enter Meta+Enter" title=${withShortcut('Submit selected repositories', 'dialog-submit')}>
+      <div>${!done ? html`<${Button} size="sm" disabled=${loading || busy} onClick=${() => setGeneration((n) => n + 1)}><${Words} plain="Rescan" wizard="Seek again" /><//>` : null}
+        <${Button} size="sm" disabled=${busy} onClick=${state.close}><${Words} plain=${done ? 'Done' : 'Cancel'} /><//>
+        ${!done ? html`<${Button} size="sm" variant=${discard ? 'danger' : 'primary'} class="git-repos-submit" disabled=${locked || !selected.size} onClick=${submit} aria-keyshortcuts="Control+Enter Meta+Enter" title=${withShortcut('Submit selected repositories', 'dialog-submit')}>
           <${Words} plain=${busy ? `${verb === 'Sync' ? 'Syncing' : 'Pulling'}…` : `${verb} ${selected.size} ${selected.size === 1 ? 'repository' : 'repositories'}`}
-            wizard=${busy ? 'Channeling…' : `${wizardVerb} ${selected.size} ${selected.size === 1 ? 'repository' : 'repositories'}`} /></button>` : null}</div>
+            wizard=${busy ? 'Channeling…' : `${wizardVerb} ${selected.size} ${selected.size === 1 ? 'repository' : 'repositories'}`} /><//>` : null}</div>
     </div>
   </${Overlay}>`;
 }

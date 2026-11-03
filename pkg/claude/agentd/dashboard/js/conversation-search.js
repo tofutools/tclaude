@@ -102,7 +102,7 @@ export function ConversationSearchPanel({ wizard = false, onClose, search = sear
         placeholder=${wizard ? 'Search the scrolls for exact words' : 'Search conversation content for exact text'}
         onInput=${(event) => setQuery(event.currentTarget.value)}
         onKeyDown=${(event) => { if (event.key === 'Escape') onClose?.(); }} />
-      <button id="conversation-search-close" type="button" class="clear-filter" aria-label="Close conversation search" onClick=${() => onClose?.()}>×</button>
+      <button data-ui-exempt id="conversation-search-close" type="button" class="clear-filter" aria-label="Close conversation search" onClick=${() => onClose?.()}>×</button>
     </div>
     <div id="conversation-search-status" class="muted" role="status">${
       outcome.phase === 'searching' ? 'Searching…'

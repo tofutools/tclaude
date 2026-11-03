@@ -9331,7 +9331,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 #worktree-cleanup-modal .cleanup-row label { flex-wrap: wrap; row-gap: 3px; }
 #worktree-cleanup-modal .cleanup-row .path { flex: 1 1 14em; }
 #worktree-cleanup-modal .cleanup-row .cleanup-dangling-note { flex: 1 1 100%; margin: 2px 0 0 25px; color: #d29922; }
-#worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)) { white-space: nowrap; }
+#worktree-cleanup-modal .cleanup-toolbar button { white-space: nowrap; }
 .cleanup-toolbar button:where(:not(.ui-btn)).active,
 .cleanup-toolbar button:where(:not(.ui-btn))[aria-pressed="true"] { border-color: #1f6feb; color: #58a6ff; }
 .cleanup-prune-row { background: rgba(210, 153, 34, 0.035); }
@@ -9350,7 +9350,6 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 /* worktree-cleanup: the category mass-toggle chip row. Each chip flips a
    whole category's ticks at once; .active marks one where all rows are on. */
 .cleanup-categories { flex-wrap: wrap; }
-.cleanup-categories button.active { border-color: #1f6feb; color: #58a6ff; }
 .cleanup-row .branch { color: #8b949e; font-size: 11px; flex: 0 0 auto; }
 .cleanup-row .path {
   color: var(--ui-muted-text); font-size: 11px; flex: 1 1 auto; overflow: hidden;
@@ -11179,25 +11178,15 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
   padding: 8px 10px; margin: 8px 0;
 }
 .plugin-step-edit-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-/* JOH-364: three action buttons that sit OUTSIDE a .row-actions wrapper, so no
-   rule reached them — white UA chrome in BOTH skins. (#plugin-modal and the
-   sudo/permissions table deliberately stay plain-dark in wizard, so no wizard
-   twin is needed.) All keep the old row-chip look:
-     • plugin step-editor "remove"   → .plugin-step-edit-head button
-     • catalog "+ install"           → .plugin-head > button.primary
-       (a DIRECT child; the installed-card .row-actions cluster is already fine)
-     • sudo-grants table "revoke"    → #sudo-list td > button  */
-.plugin-step-edit-head button,
-.plugin-head > button.primary,
+/* JOH-364: the sudo-grants table "revoke" button sits OUTSIDE a .row-actions
+   wrapper, so no rule reached it — white UA chrome in BOTH skins. The table
+   deliberately stays plain-dark in wizard, so no wizard twin is needed. */
 #sudo-list td > button:where(:not(.ui-btn)) {
   background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
   color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
   font-family: inherit;
 }
-.plugin-step-edit-head button:hover,
-.plugin-head > button.primary:hover,
 #sudo-list td > button:where(:not(.ui-btn)):hover { color: #d4d4d4; background: var(--ui-bg-hover); }
-.plugin-step-edit-head button.danger:hover,
 #sudo-list td > button.danger:where(:not(.ui-btn)):hover { color: #f85149; background: rgba(248, 81, 73, 0.15); }
 #plugin-modal .cron-create-modal { max-width: 720px; }
 #plugin-modal-steps { max-height: 50vh; overflow-y: auto; }
@@ -11292,11 +11281,6 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
   margin-bottom: 6px;
 }
 .export-history-title { font-size: 12px; color: var(--ui-muted-text); text-transform: uppercase; letter-spacing: 0.04em; }
-.export-history-clear {
-  font-size: 11px; padding: 2px 8px; background: transparent;
-  border: 1px solid #30363d; color: #8b949e; border-radius: 5px; cursor: pointer;
-}
-.export-history-clear:hover { color: #f85149; border-color: #f85149; }
 .export-history-list { display: flex; flex-direction: column; gap: 4px; max-height: 30vh; overflow-y: auto; }
 .export-history-item {
   display: flex; align-items: center; gap: 8px;
@@ -11311,12 +11295,7 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 .export-history-item .ehi-status.failed { color: #f85149; }
 .export-history-item .ehi-status.running,
 .export-history-item .ehi-status.requested { color: #d29922; }
-.export-history-item button {
-  flex: 0 0 auto; font-size: 12px; padding: 2px 7px;
-  background: transparent; border: 1px solid #30363d; color: #c9d1d9; border-radius: 5px; cursor: pointer;
-}
-.export-history-item button:hover { background: var(--ui-bg-hover); }
-.export-history-item button.ehi-del:hover { color: #f85149; background: rgba(248, 81, 73, 0.15); }
+.export-history-item .ui-btn { flex: 0 0 auto; }
 
 /* ═══ Wizard theme (body.wizard) ═════════════════════════════════════
    The 🧙 "it's wizard time" re-skin — activated by ?wizard=1 on the URL

@@ -341,19 +341,19 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
         plain=${regularHint} wizard=${wizardHint}
       /></p>
       <div class="cleanup-toolbar">
-        <button type="button" id="worktree-cleanup-select-all" disabled=${busy || locked}
+        <${Button} size="sm" id="worktree-cleanup-select-all" disabled=${busy || locked}
           onClick=${() => {
             replaceChoices(visible, true);
             replacePruneChoices(visiblePruneRepos, true);
-          }}>select all</button>
-        <button type="button" id="worktree-cleanup-select-none" disabled=${busy || locked}
+          }}>select all<//>
+        <${Button} size="sm" id="worktree-cleanup-select-none" disabled=${busy || locked}
           onClick=${() => {
             replaceChoices(visible, false);
             replacePruneChoices(visiblePruneRepos, false);
-          }}>select none</button>
-        <button type="button" id="worktree-cleanup-rescan" disabled=${busy || locked}
+          }}>select none<//>
+        <${Button} size="sm" id="worktree-cleanup-rescan" disabled=${busy || locked}
           title="Re-scan the repo for worktrees right now (live state can shift as agents come and go)"
-          onClick=${() => void load(true)}>${busyAction === 'rescan' ? 'scanning…' : '⟳ rescan'}</button>
+          onClick=${() => void load(true)}>${busyAction === 'rescan' ? 'scanning…' : '⟳ rescan'}<//>
         <input type="search" id="worktree-cleanup-search" placeholder="filter path / branch / repo…"
           aria-label="Filter worktrees" value=${query} disabled=${busy || locked}
           onInput=${(event) => setQuery(event.currentTarget.value)} />
@@ -363,9 +363,9 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
         </span>
       </div>
       <div class="cleanup-toolbar cleanup-dangling-filter">
-        <button type="button" aria-pressed=${danglingOnly} class=${danglingOnly ? 'active' : ''}
+        <${Button} size="sm" pressed=${danglingOnly}
           disabled=${busy || locked} onClick=${() => setDanglingOnly(!danglingOnly)}>
-          Potentially dangling (${candidates.filter((candidate) => candidate.potentially_dangling).length})</button>
+          Potentially dangling (${candidates.filter((candidate) => candidate.potentially_dangling).length})<//>
         <span>Filter only; selection stays unchanged. No live agent + merged or inactive ≥30 days.</span>
       </div>
       <div class="cleanup-toolbar cleanup-categories" id="worktree-cleanup-categories">
@@ -373,28 +373,27 @@ export function WorktreeCleanupDialog({ current, state, actions }) {
           const rows = categoryWorktrees(candidates, definition.key);
           if (!rows.length) return null;
           const on = rows.filter((candidate) => candidate.checked).length;
-          return html`<button
-            type="button" key=${definition.key} data-cat=${definition.key}
-            class=${on === rows.length ? 'active' : ''}
+          return html`<${Button} size="sm" key=${definition.key} data-cat=${definition.key}
+            pressed=${on === rows.length}
             disabled=${busy || locked}
             title=${`Toggle all ${rows.length} ${definition.label} worktrees`}
             onClick=${() => toggleBucket(rows)}
-          ><${Words} plain=${definition.label} wizard=${definition.wizardLabel} /> ${on}/${rows.length}</button>`;
+          ><${Words} plain=${definition.label} wizard=${definition.wizardLabel} /> ${on}/${rows.length}<//>`;
         })}
         ${(() => {
           const rows = dirtyWorktrees(candidates);
           if (!rows.length) return null;
           const on = rows.filter((candidate) => candidate.checked).length;
-          return html`<button type="button" data-dirty="1"
-            class=${on === rows.length ? 'active' : ''} disabled=${busy || locked}
+          return html`<${Button} size="sm" data-dirty="1"
+            pressed=${on === rows.length} disabled=${busy || locked}
             title=${`Toggle all ${rows.length} worktrees with uncommitted changes`}
-            onClick=${() => toggleBucket(rows)}>uncommitted ${on}/${rows.length}</button>`;
+            onClick=${() => toggleBucket(rows)}>uncommitted ${on}/${rows.length}<//>`;
         })()}
-        ${staleRecords ? html`<button type="button" data-cat="stale"
-          class=${selectedStaleRecords === staleRecords ? 'active' : ''} disabled=${busy || locked}
+        ${staleRecords ? html`<${Button} size="sm" data-cat="stale"
+          pressed=${selectedStaleRecords === staleRecords} disabled=${busy || locked}
           title="Toggle bookkeeping-only stale Git records"
           onClick=${() => replacePruneChoices(prunableRepos, selectedStaleRecords !== staleRecords)}>
-          stale records ${selectedStaleRecords}/${staleRecords}</button>` : null}
+          stale records ${selectedStaleRecords}/${staleRecords}<//>` : null}
       </div>
       <div class="cleanup-list" id="worktree-cleanup-list">
         ${busyAction === 'scan' && candidates.length === 0 && prunableRepos.length === 0

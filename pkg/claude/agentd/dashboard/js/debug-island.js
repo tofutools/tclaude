@@ -98,7 +98,7 @@ function PhaseRows({ phases, expanded, toggle, depth = 0, parentPath = '', paren
     const row = html`<tr key=${path} data-key=${`phase-${path}`} data-depth=${depth} class=${depth ? 'debug-phase-child' : ''}>
       <td style=${{ paddingLeft: `${8 + depth * 20}px` }}>
         ${hasChildren
-          ? html`<button type="button" class="debug-phase-toggle" aria-expanded=${open}
+          ? html`<button data-ui-exempt type="button" class="debug-phase-toggle" aria-expanded=${open}
               aria-label=${`${open ? 'Collapse' : 'Expand'} ${phase.name} phase breakdown`}
               onClick=${() => toggle(path)}>${open ? '▾' : '▸'}</button>`
           : html`<span class="debug-phase-toggle-placeholder" aria-hidden="true"></span>`}
