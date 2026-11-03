@@ -1004,3 +1004,42 @@ func TestGLProxy_JobDownloadRefusesAnExpiredOrOversizedArchive(t *testing.T) {
 		assert.Empty(t, gl.streamed())
 	})
 }
+
+// TestGLProxy_ConfigChangesApplyToTheNextCall: agent.git_proxy is read afresh
+// by every proxy call, which is why the dashboard's Git & forges form needs no
+// agentd restart. A moved instance, a rotated token file and a narrowed
+// allow-list each take effect on the very next call.
+func TestGLProxy_ConfigChangesApplyToTheNextCall(t *testing.T) {
+	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
+	gl.def = glCanned{Status: 200, Body: "[" + glCannedMR + "]"}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/gitlab/mr/list", map[string]any{"limit": 5})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	first := gl.only(t)
+	assert.Equal(t, glTestBase, first.Base)
+
+	const moved = "https://gitlab.contoso.test:9443"
+	rotated := filepath.Join(t.TempDir(), "gitlab-token")
+	require.NoError(t, os.WriteFile(rotated, []byte("glpat-rotated\n"), 0o600))
+	writeGitProxyConfig(t, []string{"gitlab.contoso.test"}, func(c *gitProxyConfigPatch) {
+		c.GitLabHosts = map[string]string{"gitlab.contoso.test": moved}
+		c.GitLabTokenFile = rotated
+	})
+	res = gitProxyPost(t, f, "/v1/gitlab/mr/list", map[string]any{"limit": 5})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	calls := gl.requests()
+	require.Len(t, calls, 2)
+	assert.Equal(t, moved, calls[1].Base, "the instance's new base, without a restart")
+	gl.mu.Lock()
+	assert.Equal(t, []string{glTestToken, "glpat-rotated"}, gl.tokens, "the rewritten token file, without a restart")
+	gl.mu.Unlock()
+
+	writeGitProxyConfig(t, []string{"github.com/acme"}, func(c *gitProxyConfigPatch) {
+		c.GitLabHosts = map[string]string{"gitlab.contoso.test": moved}
+		c.GitLabTokenFile = rotated
+	})
+	res = gitProxyPost(t, f, "/v1/gitlab/mr/list", map[string]any{"limit": 5})
+	assert.NotEqual(t, http.StatusOK, res.Code, "a project taken off the allow-list is refused at once")
+	assert.Len(t, gl.requests(), 2, "and the refusal spends no token")
+}
