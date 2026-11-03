@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Decide which PR CI jobs a change needs. Every doubt resolves to running more.
 
-Usage: classify-changes.py <base> [<head>]
+Usage: classify-changes.py <base> [<head>] [--labels L1,L2] [--pr-head SHA]
 
 Prints `key=value` lines for $GITHUB_OUTPUT (and the reasons to stderr):
 
@@ -23,14 +23,21 @@ Modes:
         full; the proxy smokes and the harness CLI smokes run only when their
         rules below match.
   full  CI itself, the module graph, an unknown path, an empty diff, or any
-        error. Everything runs.
+        error. Everything runs (macOS too, with the opt-in below).
 
-PR CI runs on Linux only. Hosted macOS runners are concurrency-capped, and
-starved macOS jobs blocked PRs, so darwin is measured by release.yml on every
-merge to main instead (macOS agentd + rest-all tests, the Seatbelt smoke and
-the darwin build). release.yml also runs every job regardless of the diff, so
-a wrong skip here, or a darwin-only break, delays a failure to the merge; it
-never ships one.
+PR CI runs on Linux only unless the PR opts into macOS. Hosted macOS runners
+are concurrency-capped, and starved macOS jobs blocked PRs, so darwin is
+measured by release.yml on every merge to main instead (macOS agentd +
+rest-all tests, the Seatbelt smoke and the darwin build). release.yml also
+runs every job regardless of the diff, so a wrong skip here, or a darwin-only
+break, delays a failure to the merge; it never ships one.
+
+macOS opt-in: the PR carries the `ci:macos` label (--labels), or the PR's head
+commit (--pr-head) has a `CI-macOS: true` trailer. Either one adds the macOS
+agentd + rest-all test shards and the Seatbelt smoke wherever the test job
+runs (ui, code and full; a docs-only change runs no tests), and `expected`
+then requires them. A trailer on any other commit of the PR counts for
+nothing: the opt-in is per head commit.
 """
 import json
 import re
@@ -95,13 +102,26 @@ HARNESS_SMOKES = {
 }
 
 LINUX = "ubuntu-latest"
+MACOS = "macos-latest"
 LINUX_SHARDS = ("agentd", "jstest", "process", "sandbox", "rest")
 UI_SHARDS = ("agentd", "jstest", "rest")
+# An opted-in PR's macOS jobs: the same pair release.yml's macOS job runs.
+# macOS folds process/sandbox/rest into one rest-all job and skips jstest (see
+# the comments on the test job in ci.yml).
+MACOS_SHARDS = ("agentd", "rest-all")
+
+# Jobs that run only on the macOS opt-in, even in a full run. ci-complete's
+# "a full run may not skip any job" check exempts exactly these.
+OPT_IN_JOBS = ("sandbox-v2-seatbelt-smoke",)
+
+MACOS_LABEL = "ci:macos"
+MACOS_TRAILER = "CI-macOS"
 
 # Every ci.yml job ci-complete must account for, besides the always-on ones
 # (changes, docs, learn-commands). `test` is one entry: its matrix shrinks
 # instead of being skipped.
-JOBS = ("lint", "sandbox-v2-smoke", "test", "copilot-smoke", "gemini-smoke", "pi-smoke", "filtered-proxy-smoke",
+JOBS = ("lint", "sandbox-v2-smoke", "sandbox-v2-seatbelt-smoke", "test",
+        "copilot-smoke", "gemini-smoke", "pi-smoke", "filtered-proxy-smoke",
         "proxy-posture-e2e")
 
 
@@ -154,8 +174,29 @@ def basename(path):
     return path.rsplit("/", 1)[-1]
 
 
-def classify(paths, affected):
-    """Pure decision over the changed paths.
+def classify(paths, affected, macos=False):
+    """classify_paths, plus the macOS jobs when the PR opted in (macos)."""
+    mode, run, matrix, reasons = classify_paths(paths, affected)
+    run["sandbox-v2-seatbelt-smoke"] = bool(macos and run["test"])
+    if run["sandbox-v2-seatbelt-smoke"]:
+        matrix = matrix + [{"os": MACOS, "shard": s} for s in MACOS_SHARDS]
+        reasons.append("macOS: opted in; the macOS test shards and the Seatbelt smoke run")
+    elif macos:
+        reasons.append("macOS: opted in, but no test job runs for this change")
+    else:
+        reasons.append(f"macOS: not opted in (no {MACOS_LABEL} label or "
+                       f"{MACOS_TRAILER}: true trailer on the head commit)")
+    return mode, run, matrix, reasons
+
+
+def macos_opt_in(labels, trailer_values):
+    """True when the PR has the label or the head commit says CI-macOS: true."""
+    return (MACOS_LABEL in labels
+            or any(v.strip().lower() == "true" for v in trailer_values))
+
+
+def classify_paths(paths, affected):
+    """Pure decision over the changed paths, macOS aside.
 
     affected(pkg) -> bool: does the change reach pkg's test closure; must
         return True when it cannot tell.
@@ -234,18 +275,43 @@ def make_affected(base, head):
     return affected
 
 
-def main(argv):
-    if len(argv) not in (2, 3):
+def head_trailers(sha):
+    """The CI-macOS trailer values of one commit's message."""
+    out = git("log", "-1", f"--format=%(trailers:key={MACOS_TRAILER},valueonly,separator=%x00)",
+              f"{sha}^{{commit}}").stdout.decode()
+    return [v for v in out.strip("\n").split("\0") if v.strip()]
+
+
+def parse_args(argv):
+    positional, labels, pr_head = [], [], None
+    args = iter(argv[1:])
+    for arg in args:
+        if arg in ("--labels", "--pr-head"):
+            value = next(args, None)
+            if value is None:
+                sys.exit(__doc__)
+            if arg == "--labels":
+                labels += [x.strip() for x in value.replace("\n", ",").split(",") if x.strip()]
+            else:
+                pr_head = value
+        else:
+            positional.append(arg)
+    if len(positional) not in (1, 2):
         sys.exit(__doc__)
-    base = argv[1]
-    head = argv[2] if len(argv) > 2 else "HEAD"
+    return positional[0], positional[1] if len(positional) > 1 else "HEAD", labels, pr_head
+
+
+def main(argv):
+    base, head, labels, pr_head = parse_args(argv)
     try:
         # Resolve both ends first: a missing base must fail, not look empty.
         git("rev-parse", "--verify", f"{base}^{{commit}}")
         git("rev-parse", "--verify", f"{head}^{{commit}}")
         head = git("rev-parse", head).stdout.decode().strip()
         paths = changed_paths(base, head)
-        mode, run, matrix, reasons = classify(paths, make_affected(base, head))
+        trailers = head_trailers(pr_head) if pr_head else []
+        mode, run, matrix, reasons = classify(paths, make_affected(base, head),
+                                              macos=macos_opt_in(labels, trailers))
     except subprocess.CalledProcessError as err:
         sys.stderr.write(f"classify-changes: {err} {err.stderr!r}\n")
         sys.exit(1)

@@ -75,7 +75,7 @@ so a job the change cannot need never claims a runner:
 - **full**: `.github/`, `scripts/ci/`, `scripts/test.sh`, `go.mod`, `go.sum`,
   `mise.toml`, an unknown path or an empty diff — everything runs.
 
-PR CI runs on Linux only; see [macOS CI](#macos-ci). `CI complete` checks every
+PR CI runs on Linux only unless the PR opts into macOS; see [macOS CI](#macos-ci). `CI complete` checks every
 job against that verdict, and release.yml runs every job, including the macOS
 one, on every merge to main.
 
@@ -87,11 +87,10 @@ hosted even after multiple attempts" (in the jobs API: `conclusion: cancelled`,
 `runner_id: 0`, no steps), and that failed `CI complete` and Release without
 anything having been tested. So:
 
-- **PRs run no macOS jobs.** That covers ci.yml and the classifier, and the
-  macOS parts of `copilot-lab.yml`, `group-route-feasibility.yml` and
-  `macos-pf-probe.yml`, which run on macOS only when started by hand
-  (`workflow_dispatch`). Lint's `GOOS=darwin` vet still catches darwin compile
-  breaks on PRs.
+- **PRs run no macOS jobs unless they opt in** (below). The macOS parts of
+  `copilot-lab.yml`, `group-route-feasibility.yml` and `macos-pf-probe.yml`
+  run on macOS only when started by hand (`workflow_dispatch`). Lint's
+  `GOOS=darwin` vet still catches darwin compile breaks on every PR.
 - **Every merge to main runs one macOS job**: `macos` in `release.yml` (and
   in `manual-release.yml`). It runs the darwin goreleaser build, the `agentd`
   and `rest-all` test shards, and the Sandbox v2 Seatbelt smoke
@@ -100,35 +99,49 @@ anything having been tested. So:
   does not vary by OS. A darwin-only break therefore shows up as a red Release
   after the merge, and blocks publishing until it is fixed on main.
 
-#### Bringing macOS back to PRs
+#### Opting a PR into macOS
 
-1. Find the commit that removed it:
-   `git log --oneline -S MACOS_SHARDS -- scripts/ci/classify-changes.py`
-   (the newest hit). Revert it, or restore `scripts/ci/classify-changes.py` and
-   `scripts/ci/test_classify_changes.py` from its parent
-   (`git show <sha>^:scripts/ci/classify-changes.py`). That brings back the
-   `MACOS` / `MACOS_SHARDS` (`agentd`, `rest-all`) matrix entries, the
-   platform-file rules that decide when a `code` change needs macOS, the macOS
-   entries in the `full` matrix, and `sandbox-v2-seatbelt-smoke` in `JOBS`.
-2. In `ci.yml`, add a `sandbox-v2-seatbelt-smoke` job back:
-   `needs: changes`,
-   `if: needs.changes.outputs.run_sandbox_v2_seatbelt_smoke == 'true'`, a
-   macOS `runs-on`, checkout, then `uses: ./.github/actions/seatbelt-smoke`.
-   Also add the `run_sandbox_v2_seatbelt_smoke` output to the `changes` job,
-   and add the job to `ci-complete`'s `needs`. The `WorkflowConsistency` tests
-   in `test_classify_changes.py` fail until the classifier's `JOBS` and the
-   ci.yml wiring agree. Delete `test_pr_ci_runs_no_macos` there, and the
-   Linux-only assertion in `Decisions.check_shape` (a restore from the parent
-   drops both).
-3. `CI complete` itself needs no edit. It compares each job with the
-   classifier's `expected` verdict, so once `JOBS` lists the Seatbelt smoke
-   again, the gate requires it to succeed when the classifier asks for it and
-   to be skipped otherwise. The macOS test shards are entries in the `test`
-   matrix, which the gate already treats as one job.
-4. In the other workflows, remove `if: github.event_name != 'pull_request'`
-   from `group-route-feasibility.yml`'s `darwin` job, restore the
-   `pull_request` paths in `macos-pf-probe.yml`, and make `copilot-lab.yml`'s
-   `platform` list include `macos` for every event.
+A PR gets the macOS jobs (the `agentd` and `rest-all` test shards and the
+Sandbox v2 Seatbelt smoke) when either of these holds:
+
+- **Per commit:** the PR's head commit has the trailer `CI-macOS: true` in the
+  last paragraph of its message, next to `Co-Authored-By:`. The opt-in lasts
+  for that commit only: the next push without the trailer runs Linux only, and
+  a trailer on any other commit of the PR counts for nothing. To opt in
+  without changing code, push an empty commit:
+  `git commit --allow-empty -m "ci: run macOS" -m "CI-macOS: true"`.
+- **Per PR:** the PR has the `ci:macos` label. Adding a label starts no CI run,
+  so after adding it, push, or rerun the PR's CI run in full
+  (`gh run rerun <run-id>`, not `--failed`). The `Changes` job reads the labels
+  when it runs, so a rerun picks up the change, and removing the label works
+  the same way.
+
+`CI complete` then requires the macOS jobs to pass, exactly as it requires the
+Linux ones. A starved macOS job blocks the PR again, so opt in only when the
+coverage is worth it. Do opt in before merging changes that mostly matter on
+darwin and that Linux CI cannot exercise: `_darwin.go` / `_unix.go` files or
+`//go:build darwin` code, cgo, Seatbelt profiles and the macOS sandbox
+launcher, macOS paths (`/var/folders` vs `/private/var/folders`, `~/Library`),
+and the `scripts/seatbelt-smoke` driver. Everything else gets darwin coverage
+on main after the merge. Fork PRs can use the trailer too (a label needs
+triage rights). That is fine on hosted runners, but not once self-hosted
+runners are attached; see below.
+
+#### Running macOS on every PR again
+
+To make macOS the default rather than an opt-in, have the classifier treat
+every PR as opted in (`macos=True` in its `main`), or bring back the
+platform-file rules that decided per change which PRs needed macOS. Find them
+with `git log --oneline -S needs_macos -- scripts/ci/classify-changes.py`; the
+newest hit removed them, and its parent has them together with their tests.
+The macOS jobs and their gate wiring already exist, so no ci.yml change is
+needed. `CI complete` compares each job with the classifier's `expected`
+verdict, and its full-run check exempts only `OPT_IN_JOBS`; empty that tuple
+(and the matching `opt_in` set in ci.yml, which a test pins to it) if the
+Seatbelt smoke becomes unconditional. In the other workflows, remove
+`if: github.event_name != 'pull_request'` from `group-route-feasibility.yml`'s
+`darwin` job, restore the `pull_request` paths in `macos-pf-probe.yml`, and
+make `copilot-lab.yml`'s `platform` list include `macos` for every event.
 
 #### Restoring the per-shard macOS split on main
 
@@ -153,8 +166,10 @@ save a build cache (the `agentd` and `sandbox` shards on each OS).
   matrix.
 - **Security.** This repository is public. A fork's pull request can run
   arbitrary code on any runner it reaches, so never let fork PRs reach
-  self-hosted runners. Gate macOS PR jobs on
-  `github.event.pull_request.head.repo.full_name == github.repository`.
+  self-hosted runners. The `CI-macOS: true` trailer is fork-controlled, so
+  once macOS jobs run on self-hosted runners, gate them on
+  `github.event.pull_request.head.repo.full_name == github.repository` as
+  well as on the opt-in.
   Require approval for outside contributors' workflow runs. Put the runners in
   a runner group restricted to this repository.
 - **Ephemeral runners.** Prefer ephemeral runners (`config.sh --ephemeral`,
