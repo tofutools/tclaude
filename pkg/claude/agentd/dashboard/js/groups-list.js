@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, MenuItem } from './ui-components.js';
+import { Button, MenuItem, SortTh } from './ui-components.js';
 import { UsageProfileChip } from './usage-profile-chip.js';
 import {
   applySort, tableSortState, RETIRED_COLS, RETIRED_ACCESSORS,
@@ -249,14 +249,14 @@ function SortHead({ table, columns, lead = null }) {
       ? html`<${ThemeText} regular=${column.label} wizard=${column.wizardLabel} />`
       : (column.label || '');
     if (!column.col) return html`<th key=${column.key || column.label || 'blank'}>${lead && column.key === 'ctl' ? lead : label}</th>`;
-    const selected = active?.col === column.col;
-    return html`<th
+    return html`<${SortTh}
       key=${column.key || column.col}
-      class=${selected ? 'sortable sort-active' : 'sortable'}
+      active=${active?.col === column.col}
+      dir=${active?.dir}
       data-sort-table=${table}
       data-sort-col=${column.col}
-      title=${`Sort by ${isWizardActive() && column.wizardLabel ? column.wizardLabel : column.label}`}
-    >${label}<span class="sort-arrow">${selected ? (active.dir === 'asc' ? '▲' : '▼') : '▾'}</span></th>`;
+      sortLabel=${isWizardActive() && column.wizardLabel ? column.wizardLabel : column.label}
+    >${label}<//>`;
   })}</tr></thead>`;
 }
 

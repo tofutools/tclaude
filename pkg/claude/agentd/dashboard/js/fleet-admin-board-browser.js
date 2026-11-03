@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Select } from './ui-components.js';
+import { Button, Select, SortTh } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { ImportDialog, PublishDialog, canPost, postedBy } from './fleet-admin-board-items.js';
 import { dashPrefs } from './prefs.js';
@@ -434,9 +434,8 @@ export function ContentBrowser({ boards, view, actions, confirm, toast, onOpenBo
               onClick=${() => setQuery(withToken(query, 'kind', k.id || f.kind))}>${k.label} <span class="muted">${k.id ? rows.filter((r) => r.kind === k.id).length : rows.length}</span></button>`)}</div>
             <table class="fa-table" id="fleet-cb-table" tabindex="0" onKeyDown=${(e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); move(e.key === 'ArrowDown' ? 1 : -1); } }}>
               <thead><tr>${SORT_COLS.map((c) => {
-                const on = sort?.col === c.col;
-                return html`<th key=${c.col} class=${on ? 'sortable sort-active' : 'sortable'} data-sort-col=${c.col} title=${`Sort by ${c.label}`}
-                  aria-sort=${on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'} onClick=${() => setSort((cur) => nextSort(cur, c.col))}>${c.label}<span class="sort-arrow">${on ? (sort.dir === 'asc' ? '▲' : '▼') : '▾'}</span></th>`;
+                return html`<${SortTh} key=${c.col} active=${sort?.col === c.col} dir=${sort?.dir} data-sort-col=${c.col} sortLabel=${c.label}
+                  onSort=${() => setSort((cur) => nextSort(cur, c.col))}>${c.label}<//>`;
               })}</tr></thead>
               <tbody>${shown.map((r) => html`<tr key=${r.key} data-row=${r.key} class=${r.key === selected ? 'on' : ''} onClick=${() => setSelected(r.key)}>
                 <td>${r.name || 'Invalid item'}</td><td>${r.invalid ? html`<span class="fa-danger">invalid</span>` : html`<${KindChip} kind=${r.kind} />`}</td>

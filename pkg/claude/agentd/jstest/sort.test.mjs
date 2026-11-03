@@ -9,7 +9,7 @@
 //
 // Scope: the per-table column specs + value accessors added when the virtual
 // "non-real" groups (Retired / Conversations / Pending) gained sortable,
-// agent-id-leading headers like real groups. applySort / sortHead / cycleSort
+// agent-id-leading headers like real groups. applySort / cycleSort
 // themselves are the pre-existing generic machinery (already exercised by the
 // members/cron/sudo/links/replaced tables) — what's new and worth locking in
 // is that THESE tables expose the right sortable columns, sort the id column on
@@ -19,7 +19,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  cycleSort, sortHead, applySort, loadSortState, tableSortState,
+  cycleSort, applySort, loadSortState, tableSortState,
   persistTableSort,
   MEMBER_COLS, MEMBER_ACCESSORS,
   RETIRED_COLS, RETIRED_ACCESSORS,
@@ -109,31 +109,6 @@ test("applySort('retired', …) orders on the agent_id the id column shows", () 
   assert.deepEqual(applySort('retired', rows, RETIRED_ACCESSORS).map(r => r.title), ['c', 'a', 'b']);
 });
 
-test("sortHead('retired', …) tags headers with the table key the click handler routes on", () => {
-  loadSortState();
-  const html = sortHead('retired', RETIRED_COLS);
-  assert.match(html, /data-sort-table="retired"/);
-  assert.match(html, /data-sort-col="id"/);
-  assert.match(html, /data-sort-col="reason"/);
-  // The dot/action columns render as plain, non-clickable headers.
-  assert.match(html, /<th><\/th>/);
-});
-
-test("member headers carry wizard-mode labels for class, quest and lore", () => {
-  const regular = sortHead('members', MEMBER_COLS);
-  assert.match(regular, /class="theme-copy-regular">Role<\/span><span class="theme-copy-wizard">Class<\/span>/);
-  assert.match(regular, /class="theme-copy-regular">Task link<\/span><span class="theme-copy-wizard">Quest<\/span>/);
-  assert.match(regular, /class="theme-copy-regular">Description<\/span><span class="theme-copy-wizard">Lore<\/span>/);
-  assert.match(regular, /data-sort-col="role" title="Sort by Role"/);
-  assert.match(regular, /data-sort-col="task" title="Sort by Task link"/);
-  assert.match(regular, /data-sort-col="descr" title="Sort by Description"/);
-
-  const wizard = sortHead('members', MEMBER_COLS, true);
-  assert.match(wizard, /data-sort-col="role" title="Sort by Class"/);
-  assert.match(wizard, /data-sort-col="task" title="Sort by Quest"/);
-  assert.match(wizard, /data-sort-col="descr" title="Sort by Lore"/);
-});
-
 test("member Age sorts by instant across precision and zone differences", () => {
   loadSortState();
   const rows = [
@@ -216,4 +191,11 @@ test("applySort('pending', …) blank cells sort last regardless of direction", 
   cycleSort('pending', 'group'); // descending — blank STILL last.
   assert.deepEqual(applySort('pending', rows, PENDING_ACCESSORS).map(r => r.label), ['p1', 'p3', 'p2']);
   loadSortState();
+});
+
+test('member headers carry wizard-mode labels for class, quest and lore', () => {
+  const wizard = Object.fromEntries(MEMBER_COLS.filter((c) => c.wizardLabel).map((c) => [c.col, [c.label, c.wizardLabel]]));
+  assert.deepEqual(wizard.role, ['Role', 'Class']);
+  assert.deepEqual(wizard.task, ['Task link', 'Quest']);
+  assert.deepEqual(wizard.descr, ['Description', 'Lore']);
 });

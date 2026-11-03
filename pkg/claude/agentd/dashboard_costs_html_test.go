@@ -158,10 +158,10 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	// activity/desc (which reproduces the server's recency order), wired on
 	// a delegated click — the same affordance as the Audit tab.
 	must("function SortHeader", "sortable Preact header component present")
-	must("th.cost-sort", "header click target class rendered + bound")
+	must("<${SortTh}", "headers render through the shared SortTh")
 	must("function sortCostAgents", "client-side column sort implemented")
-	must("state.cycleSort(key)", "header sort action wired")
-	must("#costs-table th.cost-sort { cursor: pointer", "sortable headers styled clickable")
+	must("state.cycleSort(column.sort)", "header sort action wired")
+	must("table th.sortable { cursor: pointer", "sortable headers styled clickable")
 
 	// Breakdown filter: harness checkboxes plus a client-side text narrowing of
 	// the table (matches name / id / harness / model), with the matched/all

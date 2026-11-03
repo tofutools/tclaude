@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { ACCESS_SUBTABS, SUDO_COLUMNS, fmtRemaining } from './access-model.js';
 import { idTooltip, relTime, shortAgentId } from './helpers.js';
-import { Button, Input } from './ui-components.js';
+import { Button, Input, SortTh } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -85,20 +85,11 @@ function SlugsView({ state, current }) {
 }
 
 function SudoHeader({ state, current }) {
-  const activate = (event, key) => {
-    if (!key) return;
-    if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') return;
-    event.preventDefault();
-    state.cycleSudoSort(key);
-  };
   return html`<thead><tr>${SUDO_COLUMNS.map((column) => {
-    const active = column.key && current.sudoSort?.key === column.key;
-    return html`<th class=${column.key ? `sortable${active ? ' sort-active' : ''}` : undefined}
-      tabIndex=${column.key ? '0' : undefined} aria-sort=${active ? (current.sudoSort.dir === 'asc' ? 'ascending' : 'descending') : column.key ? 'none' : undefined}
-      title=${column.key ? `Sort by ${column.label}` : undefined}
-      onClick=${(event) => activate(event, column.key)} onKeyDown=${(event) => activate(event, column.key)}>
-      ${column.label}${column.key && html`<span class="sort-arrow">${active ? (current.sudoSort.dir === 'asc' ? '▲' : '▼') : '▾'}</span>`}
-    </th>`;
+    if (!column.key) return html`<th>${column.label}</th>`;
+    const active = current.sudoSort?.key === column.key;
+    return html`<${SortTh} active=${active} dir=${current.sudoSort?.dir} sortLabel=${column.label}
+      onSort=${() => state.cycleSudoSort(column.key)}>${column.label}<//>`;
   })}</tr></thead>`;
 }
 

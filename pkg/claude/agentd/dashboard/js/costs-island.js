@@ -13,7 +13,7 @@ import { idTooltip, isModifiedClick, shortAgentId } from './helpers.js';
 import { fromPath } from './nav-history-core.js';
 import { shellToast } from './shell-state.js';
 import { watchPopover } from './hover-popover.js';
-import { Button, Input } from './ui-components.js';
+import { Button, Input, SortTh } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -329,18 +329,8 @@ function CostFilters({ state, current }) {
 }
 
 function SortHeader({ state, current }) {
-  const activate = (event, key) => {
-    if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') return;
-    event.preventDefault();
-    state.cycleSort(key);
-  };
-  return html`<thead><tr>${COST_COLUMNS.map((column) => {
-    const active = current.sort.key === column.sort;
-    return html`<th class=${`cost-sort${active ? ' active' : ''}`} tabIndex="0"
-      aria-sort=${active ? (current.sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
-      title=${`Sort by ${column.label}`} onClick=${(event) => activate(event, column.sort)}
-      onKeyDown=${(event) => activate(event, column.sort)}>${column.label}${active ? (current.sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}</th>`;
-  })}<th class="cost-ignore-col" aria-label="Ignore"></th></tr></thead>`;
+  return html`<thead><tr>${COST_COLUMNS.map((column) => html`<${SortTh} active=${current.sort.key === column.sort}
+    dir=${current.sort.dir} sortLabel=${column.label} onSort=${() => state.cycleSort(column.sort)}>${column.label}<//>`)}<th class="cost-ignore-col" aria-label="Ignore"></th></tr></thead>`;
 }
 
 // useCostIgnore runs the Ignore / Restore requests: one at a time per

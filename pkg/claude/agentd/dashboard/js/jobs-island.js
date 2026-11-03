@@ -19,7 +19,7 @@ import { dashboardState } from './snapshot-store.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { LockReason } from './lock-reason.js';
 import { Pager } from './pager.js';
-import { Button, Input } from './ui-components.js';
+import { Button, Input, SortTh } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -325,22 +325,10 @@ function ExportRow({ job, actions }) {
 }
 
 function SortHead({ active, onSort }) {
-  const activate = (event, col) => {
-    if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') return;
-    event.preventDefault();
-    onSort(col);
-  };
-  return html`<thead><tr>${JOBS_COLS.map((column) => {
-    if (!column.col) return html`<th>${column.label || ''}</th>`;
-    const selected = active?.col === column.col;
-    const arrow = selected ? (active.dir === 'asc' ? '▲' : '▼') : '▾';
-    return html`<th class=${selected ? 'sortable sort-active' : 'sortable'}
-      tabIndex="0" aria-sort=${selected ? (active.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
-      title=${`Sort by ${column.label}`} onClick=${(event) => activate(event, column.col)}
-      onKeyDown=${(event) => activate(event, column.col)}>
-      ${column.label}<span class="sort-arrow">${arrow}</span>
-    </th>`;
-  })}</tr></thead>`;
+  return html`<thead><tr>${JOBS_COLS.map((column) => (column.col
+    ? html`<${SortTh} active=${active?.col === column.col} dir=${active?.dir} sortLabel=${column.label}
+        onSort=${() => onSort(column.col)}>${column.label}<//>`
+    : html`<th>${column.label || ''}</th>`))}</tr></thead>`;
 }
 
 function JobsPager({ state, paging, refresh, disabled = false }) {
