@@ -22,7 +22,6 @@ var bareAPIFetchBaseline = map[string]int{
 	"mail-island.js":        1,
 	"mail.js":               7,
 	"management-actions.js": 9,
-	"modal-templates.js":    1,
 	"palette.js":            1,
 	"agent-jump.js":         1,
 	"pr-checks-hover.js":    1,
