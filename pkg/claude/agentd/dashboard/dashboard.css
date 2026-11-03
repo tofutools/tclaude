@@ -8429,6 +8429,7 @@ body.wizard #agent-spawn-role-add { background: #140f28; color: #f3e6c0; }
   font-size: 19px !important; line-height: 1; box-shadow: none !important;
 }
 .group-standing-orders-close:hover { color: #c9d1d9 !important; }
+.group-standing-orders-close:disabled { opacity: 0.45; cursor: not-allowed; }
 .group-standing-orders-summary {
   display: flex; align-items: center; gap: 18px;
   padding: 9px 11px; margin-bottom: 14px;
