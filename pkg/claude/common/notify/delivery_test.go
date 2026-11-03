@@ -1,8 +1,6 @@
 package notify
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,30 +16,40 @@ import (
 //
 // The OS channel is observed through notification_command: it is the one
 // OS path that is deterministic across platforms, and dispatch treats it
-// exactly like the platform notifier it replaces. The command touches a
-// marker file, so "did the OS channel fire?" is a file-existence check.
-func setupDelivery(t *testing.T, delivery string) (marker string) {
+// exactly like the platform notifier it replaces. The command runner is
+// swapped for a recorder, so "did the OS channel fire?" does not depend on
+// how fast the runner can start a process.
+func setupDelivery(t *testing.T, delivery string) (osFired *[][]string) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)
 
-	marker = filepath.Join(home, "os-channel-fired")
+	command := []string{"notify-os-channel", "--from-test"}
 	require.NoError(t, config.Save(&config.Config{
 		Notifications: &config.NotificationConfig{
 			Enabled:             true,
 			Delivery:            delivery,
-			NotificationCommand: []string{"sh", "-c", "touch " + marker},
+			NotificationCommand: command,
 		},
 	}))
-	return marker
+	fired := &[][]string{}
+	old := runNotificationCommand
+	runNotificationCommand = func(cmd []string, _, _, _ string) error {
+		*fired = append(*fired, cmd)
+		return nil
+	}
+	t.Cleanup(func() { runNotificationCommand = old })
+	return fired
 }
 
-func osChannelFired(t *testing.T, marker string) bool {
+func osChannelFired(t *testing.T, fired *[][]string) bool {
 	t.Helper()
-	_, err := os.Stat(marker)
-	return err == nil
+	for _, cmd := range *fired {
+		require.Equal(t, []string{"notify-os-channel", "--from-test"}, cmd, "the OS channel runs the configured command")
+	}
+	return len(*fired) > 0
 }
 
 func queuedTitles(t *testing.T) []string {

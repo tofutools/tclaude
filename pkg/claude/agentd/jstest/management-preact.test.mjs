@@ -3197,10 +3197,10 @@ test('closed socket template clears incompatible authored list rows', async (t) 
     unix_sockets: { mode: 'list', allow: [{ path: '/tmp/old.sock' }] },
   }, options: {} });
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 100)));
-  const template = [...host.querySelectorAll('.sbx-access-template-add')]
+  const agentdOnly = () => [...host.querySelectorAll('.sbx-access-template-add')]
     .find((button) => button.textContent.includes('agentd only'));
-  assert.ok(template);
+  await waitForCondition(harness, agentdOnly, 'the editor should render the agentd-only socket template');
+  const template = agentdOnly();
   template.click();
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelectorAll('.sbx-socket-row').length, 0);
