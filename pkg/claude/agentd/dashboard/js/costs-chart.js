@@ -84,7 +84,7 @@ export function mountImperativeCostChart(host, chart) {
     return () => host.replaceChildren();
   }
 
-  const shell = element('div', 'cost-chart');
+  const shell = element('div', 'cost-chart ui-card ui-inset');
   const axis = element('div', 'cost-yaxis');
   const yArea = element('div', 'cost-yarea');
   const ticks = [

@@ -610,7 +610,6 @@ body.mail-col-resizing, body.mail-col-resizing * { user-select: none; }
    scrolling pane; the reader is the plain third column. */
 .mail-col { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
 .mail-sidebar, .mail-list, .mail-reader {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   overflow-y: auto;
 }
 .mail-sidebar, .mail-list { flex: 1 1 auto; min-height: 0; }
@@ -923,7 +922,7 @@ button.tool:where(:hover) { background: var(--ui-bg-hover); }
    (`notify-human --subject … --attach …`, where the file IS the message).
    Muted and italic so it reads as the reader speaking, not as agent text. */
 .notification-bodiless { color: #7d8590; font-style: italic; }
-.mail-attachment { margin-top: 14px; padding: 10px 12px; border: 1px solid #30363d; border-radius: 6px; display: flex; align-items: center; flex-wrap: wrap; gap: 9px; background: #0d1117; }
+.mail-attachment { margin-top: 14px; padding: 10px 12px; display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
 .mail-attachment-label { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .mail-attachment a { color: #58a6ff; font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
 .mail-attachment a:hover { text-decoration: underline; }
@@ -3579,7 +3578,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    text stays in the regular ink/muted tokens so identity never rides
    on color alone. */
 .debug-card {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 8px;
   padding: 12px 14px; margin-bottom: 14px;
 }
 .debug-card-head {
@@ -3967,8 +3965,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   justify-content: center; margin-top: 12px; font-style: normal;
 }
 .usage-series-card {
-  min-width: 0; padding: 14px; background: #0d1117;
-  border: 1px solid #2a3340; border-radius: 7px;
+  min-width: 0; padding: 14px;
 }
 .usage-card-header {
   display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
@@ -4148,7 +4145,7 @@ details.cost-filter-menu[open] > summary::before { content: none; }
 .cost-chart-heading strong { color: #c9d1d9; font-size: 12px; }
 .cost-chart-heading span { color: #8b949e; font-size: 11px; }
 .cost-daily-heading { margin-top: 12px; }
-.cost-accumulated { position: relative; padding: 10px 12px 5px; background: #0d1117; border: 1px solid #2a3340; border-radius: 6px; }
+.cost-accumulated { position: relative; padding: 10px 12px 5px; }
 .cost-accumulated.empty { min-height: 100px; display: grid; place-items: center; color: #8b949e; }
 .cost-accumulated-svg { display: block; width: 100%; height: 190px; }
 .cost-accumulated-svg:focus { outline: 1px solid #58a6ff; outline-offset: 2px; }
@@ -4225,7 +4222,6 @@ details.cost-filter-menu[open] > summary::before { content: none; }
 .cost-chart {
   display: flex; align-items: stretch;
   height: 180px; padding: 12px 12px 4px;
-  background: #0d1117; border: 1px solid #2a3340; border-radius: 6px;
   margin-bottom: 16px;
 }
 /* Y axis: tick labels positioned at the same bottom-percentages as
@@ -10242,7 +10238,6 @@ body.hide-usage-costs #costs-root { display: none; }
 }
 .usage-ov-card {
   display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 14px;
-  background: #0d1117; border: 1px solid #2a3340; border-radius: 7px;
   color: inherit; text-decoration: none;
 }
 .usage-ov-card:hover { border-color: #58a6ff; }
@@ -10272,7 +10267,7 @@ body.hide-usage-costs #costs-root { display: none; }
 .usage-ov-heading a { color: #58a6ff; font-size: 12px; letter-spacing: 0; text-transform: none; text-decoration: none; }
 .usage-ov-heading a:hover { text-decoration: underline; }
 .usage-ov-spend { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); gap: 12px; align-items: start; }
-.usage-ov-chart { height: 170px; padding: 10px; border: 1px solid #2a3340; border-radius: 7px; background: #0d1117; }
+.usage-ov-chart { height: 170px; padding: 10px; }
 .usage-ov-chart svg { width: 100%; height: 100%; display: block; }
 /* Overview hover: the plot is the hit area (any x picks its day slot), the
    hovered slot gets a faint column, the other days recede, and a dot marks
@@ -10357,8 +10352,7 @@ body.wizard .usage-subtab.active {
   background: #3a2a63; color: #f3e6c0;
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
 }
-body.wizard .usage-ov-card { background: #140f28; border-color: #3a2a63; }
-body.wizard .usage-ov-chart, body.wizard .usage-ov-agents { background: #140f28; border-color: #3a2a63; }
+body.wizard .usage-ov-agents { background: #140f28; border-color: #3a2a63; }
 
 /* Plugins-tab auto-hide. body.hide-plugins is set by refresh.js when the
    server's plugins_tab_visible is false — no plugins installed, no broken
@@ -19869,7 +19863,7 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
 .usage-rule-reached { color: #f0883e; font-weight: 600; }
 .usage-rule-paused { color: #8b949e; font-style: italic; }
 .usage-editor h4 { text-transform: none; letter-spacing: 0; font-size: 14px; color: #e6edf3; }
-.usage-rule-editor { display: flex; flex-direction: column; gap: 8px; border: 1px solid #2a3340; border-radius: 6px; padding: 8px 10px; background: #0d1117; }
+.usage-rule-editor { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; }
 .usage-rule-fields { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 12px; }
 .usage-rule-fields label { display: flex; align-items: center; gap: 5px; }
 .usage-rule-fields input[type=number] { width: 7em; }
@@ -19946,7 +19940,7 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
 /* Usage tab: the limits strip under the overview. */
 .ui-btn.usage-limits-manage { letter-spacing: 0; text-transform: none; }
 .usage-hub-limit-list { display: flex; flex-direction: column; gap: 6px; }
-.usage-hub-limit { display: grid; grid-template-columns: minmax(0, 1fr) 200px minmax(140px, auto); gap: 12px; align-items: center; padding: 7px 10px; border: 1px solid #2a3340; border-radius: 7px; background: #0d1117; font-size: 13px; }
+.usage-hub-limit { display: grid; grid-template-columns: minmax(0, 1fr) 200px minmax(140px, auto); gap: 12px; align-items: center; padding: 7px 10px; font-size: 13px; }
 .usage-hub-limit .usage-rule-bar { width: 100%; }
 .usage-hub-limit-figure { font-variant-numeric: tabular-nums; color: #c9d1d9; text-align: right; }
 .usage-hub-limits-empty { display: flex; align-items: center; gap: 10px; }
@@ -20084,7 +20078,7 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 
 /* Diagnostics › Doctor (js/doctor-island.js): a category sidebar beside the checks. */
 #activity-doctor { max-width: 1180px; }
-.doctor-island { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 0; min-height: 420px; border: 1px solid #2a3340; border-radius: 6px; background: #161b22; }
+.doctor-island { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 0; min-height: 420px; }
 .doctor-side { display: flex; flex-direction: column; padding: 8px 0; border-right: 1px solid #2a3340; background: #11161d; border-radius: 6px 0 0 6px; }
 .doctor-side button { display: flex; justify-content: space-between; gap: 8px; padding: 7px 14px; border: 0; border-left: 2px solid transparent; border-radius: 0; background: transparent; color: #8b949e; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
 .doctor-side button:hover { color: #d4d4d4; }
@@ -20107,7 +20101,7 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .doctor-fix code { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: #c9d1d9; overflow-wrap: anywhere; }
 .doctor-copy { border: 0; background: transparent; color: #58a6ff; font-size: 11px; cursor: pointer; }
 .doctor-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
-.doctor-opt { padding: 8px 10px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
+.doctor-opt { padding: 8px 10px; }
 .doctor-opt.rec { border-color: #2ea043; }
 .doctor-opt-title { color: #e6edf3; font-weight: 600; font-size: 13px; }
 .doctor-opt-detail { margin-top: 3px; color: #8b949e; font-size: 11px; }

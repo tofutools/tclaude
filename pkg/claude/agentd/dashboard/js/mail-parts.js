@@ -106,7 +106,7 @@ export function MessageAttachments({ message, label = 'Agent file', downloadTitl
   const attachments = messageAttachments(message);
   if (!attachments.length) return null;
   return html`<${Fragment}>${attachments.map((attachment, index) => html`
-    <div class="mail-attachment" key=${attachment.url || attachment.id || index}>
+    <div class="mail-attachment ui-card ui-inset" key=${attachment.url || attachment.id || index}>
       <${ImageAttachmentPreview} messageID=${message.id} attachment=${attachment} siblings=${attachments} surface="messages" />
       <${VideoAttachmentPreview} messageID=${message.id} attachment=${attachment} siblings=${attachments} surface="messages" />
       <span class="mail-attachment-label">${label}</span>

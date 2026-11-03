@@ -113,8 +113,8 @@ export function CostsAccumulatedChart({ chart }) {
     return () => observer.disconnect();
   }, []);
   const points = chart?.points || [];
-  if (!points.length) return html`<div ref=${host} id="costs-accumulated-chart" class="cost-accumulated empty">No days in span.</div>`;
-  if (!(chart.scaleMax > 0)) return html`<div ref=${host} id="costs-accumulated-chart" class="cost-accumulated empty">No cost recorded for the selected providers and models.</div>`;
+  if (!points.length) return html`<div ref=${host} id="costs-accumulated-chart" class="cost-accumulated ui-card ui-inset empty">No days in span.</div>`;
+  if (!(chart.scaleMax > 0)) return html`<div ref=${host} id="costs-accumulated-chart" class="cost-accumulated ui-card ui-inset empty">No cost recorded for the selected providers and models.</div>`;
   const x = (index) => PAD.left + (points.length === 1 ? 0 : index / (points.length - 1)) * (width - PAD.left - PAD.right);
   const y = (value) => PAD.top + (1 - value / chart.scaleMax) * (H - PAD.top - PAD.bottom);
   const line = (items) => items.map((point) => `${x(point.index)},${y(point.cost)}`).join(' ');
@@ -188,7 +188,7 @@ export function CostsAccumulatedChart({ chart }) {
   const accessibleSummary = lastPoint.projected
     ? `Accumulated cost. Recorded through ${lastRecorded.day}: ${fmtExactUSD(lastRecorded.cost)}. Projected through ${lastPoint.day}: ${fmtExactUSD(lastPoint.cost)}. Focus and use Left and Right Arrow keys to inspect daily values.`
     : `Accumulated cost recorded through ${lastPoint.day}: ${fmtExactUSD(lastPoint.cost)}. Focus and use Left and Right Arrow keys to inspect daily values.`;
-  return html`<div ref=${host} id="costs-accumulated-chart" class="cost-accumulated">
+  return html`<div ref=${host} id="costs-accumulated-chart" class="cost-accumulated ui-card ui-inset">
     <div class="cost-chart-heading"><strong>Accumulated cost</strong><span><i class="cost-line-key recorded"></i> recorded <i class="cost-line-key projected"></i> projection</span></div>
     <svg class="cost-accumulated-svg" viewBox=${`0 0 ${width} ${H}`} role="img" tabIndex="0"
       aria-label=${accessibleSummary} onfocus=${() => inspectPoint(describePoint(lastRecorded), true)}
