@@ -108,7 +108,7 @@ function LimitsTab({ overview, busy, onEdit, onToggle }) {
   const limits = overview.limits || [];
   const statusFor = (limit) => (overview.limit_statuses || []).find((s) => s.limit_id === limit.id);
   return html`<div class="usage-rules-tab">
-    <p class="modal-hint">Limits cap an aggregate — the whole instance or one group — with one shared counter. Every agent in scope is affected when a step fires.</p>
+    <p class="modal-hint ui-hint">Limits cap an aggregate — the whole instance or one group — with one shared counter. Every agent in scope is affected when a step fires.</p>
     <${PresetButtons} presets=${LIMIT_PRESETS} disabled=${busy} blankLabel="＋ Blank limit"
       onPick=${(preset) => onEdit({ id: 0, scope: 'global', group: '', enabled: true, rule: preset ? preset.rule : blankRule('global') })}/>
     ${limits.length ? html`<div class="usage-rule-cards">${limits.map((limit) => html`<div key=${limit.id} class=${`usage-rule-card${limit.enabled ? '' : ' disabled'}`} data-limit-id=${limit.id}>
@@ -129,7 +129,7 @@ function LimitsTab({ overview, busy, onEdit, onToggle }) {
 function ProfilesTab({ overview, busy, onEdit }) {
   const profiles = overview.profiles || [];
   return html`<div class="usage-rules-tab">
-    <p class="modal-hint">A usage profile is a set of budgets applied to each agent separately. Assign profiles globally, per group, per spawn profile or per agent; the nearest layer wins.</p>
+    <p class="modal-hint ui-hint">A usage profile is a set of budgets applied to each agent separately. Assign profiles globally, per group, per spawn profile or per agent; the nearest layer wins.</p>
     <${PresetButtons} presets=${PROFILE_PRESETS} disabled=${busy} blankLabel="＋ Blank profile"
       onPick=${(preset) => onEdit({ id: 0, name: '', descr: '', rules: [preset ? preset.rule : blankRule('agent')] })}/>
     ${profiles.length ? html`<div class="usage-rule-cards">${profiles.map((profile) => {
@@ -199,7 +199,7 @@ function AssignmentsTab({ overview, busy, onAssign }) {
   const agentRows = [...new Set((overview.assignments || []).filter((a) => a.scope === 'agent').map((a) => a.scope_id))];
   const pickable = (overview.agents || []).filter((a) => !agentRows.includes(a.id));
   return html`<div class="usage-rules-tab">
-    <p class="modal-hint">An agent uses the profiles of its nearest non-empty layer: agent › its groups (combined) › global default. A spawn profile's usage profiles are added to each agent it spawns, on top of its group or global ones; an agent's own assignment replaces them. A group deployed from a template starts with the template's usage profiles as its group layer.</p>
+    <p class="modal-hint ui-hint">An agent uses the profiles of its nearest non-empty layer: agent › its groups (combined) › global default. A spawn profile's usage profiles are added to each agent it spawns, on top of its group or global ones; an agent's own assignment replaces them. A group deployed from a template starts with the template's usage profiles as its group layer.</p>
     <h4>Global default</h4>
     ${row('global', '', 'All agents')}
     <h4>Groups</h4>
@@ -242,7 +242,7 @@ function AgentsTab({ overview, busy, onAdjust, onAssign, focus = '', onClearFocu
     onAdjust(entry.agentID, { rule_key: status.rule_key, extra_budget: value });
   };
   return html`<div class="usage-rules-tab">
-    <p class="modal-hint">Each agent's budgets from its usage profiles. Snoozed or exempt agents keep counting but nothing fires; extra budget raises one rule for one agent.
+    <p class="modal-hint ui-hint">Each agent's budgets from its usage profiles. Snoozed or exempt agents keep counting but nothing fires; extra budget raises one rule for one agent.
       ${focus ? html` <button type="button" class="tool" onClick=${onClearFocus}>show all agents</button>` : null}</p>
     ${rows.length ? rows.map((entry) => {
       const snoozed = snoozeActive(entry.override);
@@ -530,7 +530,7 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api: api
   return html`<${Overlay} id="usage-rules-modal" labelledby="usage-rules-title" dialogClass="cron-create-modal usage-rules-modal"
     onClose=${onClose} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
     <h3 id="usage-rules-title">Usage limits & budgets${node ? html` <span class="usage-rules-node">on ${nodeLabel}</span>` : null}</h3>
-    ${node ? html`<p class="modal-hint usage-rules-node-hint">You manage ${nodeLabel}'s usage rules through the <code>usage-rules.manage</code> grant it gave you; changes apply on that node.</p>` : null}
+    ${node ? html`<p class="modal-hint ui-hint usage-rules-node-hint">You manage ${nodeLabel}'s usage rules through the <code>usage-rules.manage</code> grant it gave you; changes apply on that node.</p>` : null}
     <div class="fa-subtabs usage-rules-tabs" role="tablist">${tabs.map((t) => html`<button type="button" role="tab" key=${t.id}
       class=${`fa-subtab${tab === t.id ? ' on' : ''}`} aria-selected=${tab === t.id ? 'true' : 'false'} data-usage-rules-tab=${t.id}
       onClick=${() => void switchTab(t.id)}>${t.label}</button>`)}</div>

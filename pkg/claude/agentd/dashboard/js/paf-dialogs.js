@@ -16,7 +16,7 @@ function message(error) { return error?.message || String(error); }
 
 function Check({ id, checked, disabled, onChange, children, hint }) {
   return html`<label class="paf-check"><input id=${id} type="checkbox" checked=${checked} disabled=${disabled}
-    onChange=${(event) => onChange(event.currentTarget.checked)} /><span>${children}${hint && html`<span class="paf-hint">${hint}</span>`}</span></label>`;
+    onChange=${(event) => onChange(event.currentTarget.checked)} /><span>${children}${hint && html`<span class="paf-hint ui-hint">${hint}</span>`}</span></label>`;
 }
 
 // FindingsPanel shows a credential scan. Counts, kinds and locations only.
@@ -57,7 +57,7 @@ function RedactPanel({ actions, source, filename, onDone }) {
     <${Check} id="paf-redact-stub" checked=${opts.stub_tool_results} onChange=${set('stub_tool_results')}>Stub tool results older than the last 3 turns</${Check}>
     <${Check} id="paf-redact-reasoning" checked=${opts.drop_reasoning} onChange=${set('drop_reasoning')}>Drop reasoning</${Check}>
     <${Check} id="paf-redact-media" checked=${opts.drop_media} onChange=${set('drop_media')}>Drop images and documents</${Check}>
-    <div class="paf-hint">Redacting always drops the native history; the conversation travels in neutral form.</div>
+    <div class="paf-hint ui-hint">Redacting always drops the native history; the conversation travels in neutral form.</div>
     ${report && html`<div class="paf-report" id="paf-redact-report">
       ${redactionText(report).map((line) => html`<div key=${line}>✓ ${line}</div>`)}
       ${(report.findings || []).length
@@ -174,9 +174,9 @@ export function GroupExportDialog({ descriptor, state, actions, confirmDiscard }
     <h3 id="group-export-title">Export group ${descriptor.group}</h3>
     <div class="modal-meta">Members, roles, permissions, messages and every conversation, in one file.</div>
     <label class="paf-check"><input type="radio" name="group-export-format" id="group-export-paf" checked=${format === 'paf'} onChange=${() => pick('paf')} />
-      <span>.paf<span class="paf-hint">Group PAF: every member with its own harness's history; other tools can read it.</span></span></label>
+      <span>.paf<span class="paf-hint ui-hint">Group PAF: every member with its own harness's history; other tools can read it.</span></span></label>
     <label class="paf-check"><input type="radio" name="group-export-format" id="group-export-zip" checked=${format === 'zip'} onChange=${() => pick('zip')} />
-      <span>.zip (legacy)<span class="paf-hint">For importing into an older tclaude. Conversations on harnesses other than Claude Code export without history.</span></span></label>
+      <span>.zip (legacy)<span class="paf-hint ui-hint">For importing into an older tclaude. Conversations on harnesses other than Claude Code export without history.</span></span></label>
     ${format === 'paf' && processesOn() && html`<${Check} id="group-export-workflows" checked=${workflows} disabled=${busy} onChange=${(value) => { setWorkflows(value); setFindings(null); setAck(false); }}
       hint="Its saved processes. An older tclaude cannot import a file that carries workflows.">Carry its workflows</${Check}>`}
     ${findings && html`<${FindingsPanel} findings=${findings} />
@@ -198,7 +198,7 @@ function LandingPosture({ posture }) {
   if (posture.refused) return html`<div class="gi-warn">⚠ ${posture.refused}</div>`;
   const profiles = posture.sandbox_profiles?.length ? ` · ${posture.sandbox_profiles.join(', ')}` : '';
   return html`<span title=${posture.resolved_by || ''}>${posture.sandbox_implementation}${profiles}</span>
-    ${posture.opencode_state && html`<div class="paf-hint">OpenCode state: ${posture.opencode_state}</div>`}`;
+    ${posture.opencode_state && html`<div class="paf-hint ui-hint">OpenCode state: ${posture.opencode_state}</div>`}`;
 }
 
 // LandingSelects picks a landing harness and model. A new harness clears the
@@ -226,8 +226,8 @@ function HistoryLanding({ landing }) {
   const to = [landing.harness, landing.model].filter(Boolean).join(' · ');
   return html`<div class="paf-box" id="paf-history-landing">
     <div><b>History:</b> <span class=${`paf-rung ${badge.cls}`} title=${badge.title}>${badge.text}</span> ${from}${to && to !== from ? ` → ${to}` : ''}</div>
-    ${landing.losses && html`<div class="paf-hint">${lossSummary(landing.losses)}</div>`}
-    ${landing.rung !== 'native' && html`<div class="paf-hint">The full transcript stays readable with <code>tclaude paf render</code>.</div>`}
+    ${landing.losses && html`<div class="paf-hint ui-hint">${lossSummary(landing.losses)}</div>`}
+    ${landing.rung !== 'native' && html`<div class="paf-hint ui-hint">The full transcript stays readable with <code>tclaude paf render</code>.</div>`}
   </div>`;
 }
 
@@ -256,7 +256,7 @@ export function ImportConfirmList({ confirm, overrides, setOverrides, reveal }) 
   };
   return html`<div class="paf-preview paf-box" id="import-confirm">
     <b>Elevated items in this file</b>
-    <div class="paf-hint">${canKeep ? 'Untick what this import should not keep. Anything unticked is dropped.' : 'Only a human on this node can keep these, so all of them are dropped.'}</div>
+    <div class="paf-hint ui-hint">${canKeep ? 'Untick what this import should not keep. Anything unticked is dropped.' : 'Only a human on this node can keep these, so all of them are dropped.'}</div>
     ${confirmGroups(confirm.items).map((group) => html`<div key=${group.heading} class="import-confirm-group">
       <div class="gi-head">${group.heading}</div>
       ${group.items.map((item) => html`<div key=${item.id} class="import-confirm-item" data-item=${item.id}>
@@ -391,7 +391,7 @@ export function MemberLandings({ landings, landing, setLanding, confirmCut, setC
           <td><${LandingSelects} idPrefix=${`group-import-member-${row.conv_id}`} harness=${choice.harness} model=${choice.model}
             onChange=${(patch) => setMember(key, patch)} sameLabel="(as above)" /></td>
           <td><span class=${`paf-rung ${badge.cls}`} title=${badge.title}>${badge.text}</span>
-            ${row.losses && html`<div class="paf-hint">${lossSummary(row.losses)}</div>`}
+            ${row.losses && html`<div class="paf-hint ui-hint">${lossSummary(row.losses)}</div>`}
             ${(row.warnings || []).map((warning) => html`<div key=${warning} class="gi-warn">⚠ ${warning}</div>`)}</td>
           <td><${LandingPosture} posture=${row.posture} /></td>
         </tr>`;

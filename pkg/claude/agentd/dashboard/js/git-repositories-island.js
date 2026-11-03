@@ -68,7 +68,7 @@ export function GitRepositoriesDialog({ current, state, actions }) {
       <h3 id="git-repositories-title"><${Words} plain=${`${verb} repositories`} wizard=${sync ? '✧ Harmonize repositories' : '↓ Summon latest code'} /></h3>
       <p role="status"><${Words} plain=${loading ? 'Discovering repositories…' : `${repos.length} repositories discovered in group homes and two levels of subdirectories.`}
         wizard=${loading ? 'Seeking repositories…' : `${repos.length} repositories discovered in party homes and two levels of subdirectories.`} /></p>
-      <p class="git-repos-hint"><${Words} plain="Scope: " />${current.group || html`<${Words} plain="All groups" wizard="All parties" />`} · <${Words} plain="Canonical absolute paths; shared directories appear once." /></p>
+      <p class="git-repos-hint ui-hint"><${Words} plain="Scope: " />${current.group || html`<${Words} plain="All groups" wizard="All parties" />`} · <${Words} plain="Canonical absolute paths; shared directories appear once." /></p>
     </div>
     <div class="git-repos-options">
       <label><input type="checkbox" checked=${switchDefault} disabled=${locked} onChange=${(e) => setSwitchDefault(e.currentTarget.checked)} />
@@ -83,7 +83,7 @@ export function GitRepositoriesDialog({ current, state, actions }) {
         </select>
       </label>
     </div>
-    <p class="git-repos-hint"><${Words} plain=${sync ? 'Fetch remote updates, prune stale remote references, then pull. Does not push.' : 'Fetch and pull the latest code. Does not push.'} /></p>
+    <p class="git-repos-hint ui-hint"><${Words} plain=${sync ? 'Fetch remote updates, prune stale remote references, then pull. Does not push.' : 'Fetch and pull the latest code. Does not push.'} /></p>
     <div class="git-repos-toolbar">
       <input ref=${filterRef} type="search" aria-label="Filter repositories or groups" placeholder="Filter repositories / groups…"
         value=${query} onInput=${(e) => setQuery(e.currentTarget.value)} />
@@ -111,8 +111,8 @@ export function GitRepositoriesDialog({ current, state, actions }) {
     </div>
     ${issues.length ? html`<details class="git-repos-issues"><summary><${Words} plain=${`${issues.length} group discovery notes`} wizard=${`${issues.length} party discovery notes`} /></summary>
       <ul>${issues.map((issue) => html`<li key=${issue.group}>${issue.group}: ${issue.detail}</li>`)}</ul></details>` : null}
-    <p class="git-repos-hint"><${Words} plain="Fast-forward only. Dirty checkouts are skipped unless discard is selected; diverged or blocked branches are reported individually." /></p>
-    ${error ? html`<p class="git-repos-error" role="alert">${error}</p>` : null}
+    <p class="git-repos-hint ui-hint"><${Words} plain="Fast-forward only. Dirty checkouts are skipped unless discard is selected; diverged or blocked branches are reported individually." /></p>
+    ${error ? html`<p class="git-repos-error ui-error" role="alert">${error}</p>` : null}
     <div class="git-repos-footer">
       <span role="status" aria-live="polite">${busy || done ? `${completed.length} / ${selected.size} completed · ${completed.filter((o) => o.status === 'updated').length} updated · ${completed.filter((o) => o.status === 'skipped').length} skipped · ${completed.filter((o) => o.status === 'failed').length} failed` : `${selected.size} of ${repos.length} selected`}</span>
       <div>${!done ? html`<button type="button" disabled=${loading || busy} onClick=${() => setGeneration((n) => n + 1)}><${Words} plain="Rescan" wizard="Seek again" /></button>` : null}

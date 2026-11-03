@@ -119,7 +119,7 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
       onClose=${onClose} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
       initialFocusRef=${nameRef} registerClose=${registerClose}>
       <h3 id="saved-prompts-title">Saved prompts</h3>
-      <p class="modal-hint">Reusable text shared across all groups. Add prompts to a spawn, profile or group so their text opens the agent's task brief, or insert one into a message and edit before sending.</p>
+      <p class="modal-hint ui-hint">Reusable text shared across all groups. Add prompts to a spawn, profile or group so their text opens the agent's task brief, or insert one into a message and edit before sending.</p>
       <div class="filter-bar saved-prompts-transfer">
         <span class="spacer"></span>
         <${Button} id="saved-prompts-export" disabled=${busy || !prompts.length}
@@ -258,7 +258,7 @@ export function SavedPromptChips({
       ${library ? null : html`<button type="button" class="tool saved-prompt-chip-manage" disabled=${disabled}
         title="Create, edit, clone, import or export saved prompts" onClick=${() => setManaging(true)}>Manage…</button>`}
     </div>
-    ${hint ? html`<div class="spawn-field-hint">${hint}</div>` : null}
+    ${hint ? html`<div class="spawn-field-hint ui-hint">${hint}</div>` : null}
     ${shown && html`<div class=${`agent-spawn-role-inspect${shown.missing ? ' missing' : ''}`}>
       ${shown.missing ? '⚠ This prompt is no longer in the library.' : shown.unknown ? lockedReason : html`<div class="saved-prompt-inspect-body">${shown.body}</div>`}
     </div>`}

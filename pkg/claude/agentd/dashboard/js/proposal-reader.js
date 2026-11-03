@@ -59,7 +59,7 @@ function ShareBack({ view, draft, setDraft }) {
       <input type="checkbox" class="proposal-shareback-tick" data-group=${group.name} checked=${draft.shareBack.includes(group.name)}
         onChange=${(event) => toggle(group.name, event.currentTarget.checked)} />
       <span class="grow">${group.name} · ${(group.members || []).length} members</span></label>`)}
-    <div class="proposal-hint">They see the name, description and member count; no member list, mail or presence.</div>
+    <div class="proposal-hint ui-hint">They see the name, description and member count; no member list, mail or presence.</div>
   </details>`;
 }
 
@@ -106,7 +106,7 @@ export function ProposalReader({ request, controller }) {
       <div class="proposal-items">${items.map((item) => html`<${ProposalItemRow} key=${item.id}
         item=${item} peer=${peer} draft=${draft} setDraft=${setDraft} open=${open} />`)}</div>
       ${open && html`<${ShareBack} view=${view} draft=${draft} setDraft=${setDraft} />`}
-      ${open && html`<div class="proposal-hint">Each side applies only its own items. Accepting changes nothing else: no broader messaging and no further links.</div>`}
+      ${open && html`<div class="proposal-hint ui-hint">Each side applies only its own items. Accepting changes nothing else: no broader messaging and no further links.</div>`}
     </div>
     <div class="mail-reader-actions access-reader-actions">
       ${open ? html`<${Fragment}>

@@ -167,7 +167,7 @@ function TriggerInspector({ rule, actions, onEdit }) {
       </section>
       <section>
         <h4>Recent firings</h4>
-        ${error && html`<div class="jobs-error" role="alert">${error}</div>`}
+        ${error && html`<div class="jobs-error ui-error-box" role="alert">${error}</div>`}
         ${loading ? html`<div class="muted">Loading firing history…</div>` : firings.length === 0
           ? html`<div class="muted">No firings recorded.</div>`
           : html`<div class="trigger-firings">${firings.map((firing) => {
@@ -284,7 +284,7 @@ export function TriggerWorkspace({ state, actions }) {
       <span class="spacer"></span>
       <${Button} id="trigger-create-open" variant="primary" onClick=${() => state.openTriggerCreate()}>+ new trigger<//>
     </div>
-    ${error && html`<div class="jobs-error" role="alert">${error}<button onClick=${() => void load()}>retry</button></div>`}
+    ${error && html`<div class="jobs-error ui-error-box" role="alert">${error}<button onClick=${() => void load()}>retry</button></div>`}
     ${loading ? html`<div class="empty">Loading triggers…</div>` : shown.length === 0
       ? html`<div class="empty">${rules.length ? 'No triggers match this filter.' : 'No triggers yet. Create an event rule to automate a bounded response.'}</div>`
       : html`<table class="triggers-table"><thead><tr><th></th><th>Trigger</th><th>When</th><th>Where</th><th>Then</th><th>Last fired</th><th>State</th><th>Enabled</th><th></th></tr></thead>
@@ -500,7 +500,7 @@ function TriggerDialog({ descriptor, state, actions }) {
           </div>`}
         </div>
       </${Step}>
-      ${error && html`<div class="jobs-error" role="alert">${error}</div>`}
+      ${error && html`<div class="jobs-error ui-error-box" role="alert">${error}</div>`}
       <div class="modal-buttons"><${Button} onClick=${state.closeTriggerDialog} disabled=${busy}>Cancel</${Button}>
         <${Button} variant="primary" type="submit" disabled=${busy || !draftValid(draft)}>${busy ? 'Saving…' : editing ? 'Save trigger' : 'Create trigger'}</${Button}></div>
     </form>

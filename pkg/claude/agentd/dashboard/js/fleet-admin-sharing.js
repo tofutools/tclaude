@@ -106,7 +106,7 @@ export function SharingPage({ actions, confirm, toast, now = Date.now(), peerAcc
   const receivedErrors = Object.entries(received?.errors || {});
   const givenRows = given?.shares || [];
   return html`<div class="fa-sharing">
-    ${globalThis.__tclaudeRemoteNode?.id ? '' : html`<p class="fa-sharing-fleet modal-hint">Budgets across nodes — fleet and node-pool spend caps, and what each node shares with you — live in <${Button} size="sm" variant="link" class="fa-link" id="fa-open-fleet-usage" onClick=${() => openUsageRulesManager({ tab: 'fleet' })}>Fleet usage limits…<//></p>`}
+    ${globalThis.__tclaudeRemoteNode?.id ? '' : html`<p class="fa-sharing-fleet modal-hint ui-hint">Budgets across nodes — fleet and node-pool spend caps, and what each node shares with you — live in <${Button} size="sm" variant="link" class="fa-link" id="fa-open-fleet-usage" onClick=${() => openUsageRulesManager({ tab: 'fleet' })}>Fleet usage limits…<//></p>`}
     <h4 class="fa-h">Shared with you <span class="muted">— peers paying for your agents' model calls</span> <${Button} size="sm" variant="link" class="fa-link" onClick=${reload}>refresh<//></h4>
     ${received?.error ? html`<div class="fa-danger">${received.error}</div>` : !received ? html`<div class="empty">Asking peers…</div>`
       : receivedRows.length === 0 ? html`<div class="empty">${received.offline ? 'Federation is off.' : 'No peer shares usage with you. Ask one from its peer view (ask for usage…).'}</div>` : html`

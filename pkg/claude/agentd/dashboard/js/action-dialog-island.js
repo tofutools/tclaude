@@ -357,7 +357,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
       </div>
       ${mode === 'self' ? html`
         <div id="reincarnate-self-fields">
-          <p class="modal-hint"><${Words}
+          <p class="modal-hint ui-hint"><${Words}
             plain="The agent is messaged and reincarnates itself at a clean point. Because it collects its own context, the successor inherits a handoff that reflects the agent's actual working state."
             wizard="The hero receives a missive and reincarnates at a clean point. Because it gathers its own lore, the successor inherits a handoff reflecting the hero's true working state."
           /></p>
@@ -368,11 +368,11 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
         </div>
       ` : mode === 'clear' ? html`
         <div id="reincarnate-clear-fields">
-          <p class="modal-hint">The conversation stays in history. A Steward gets its role brief again; any other agent gets its group and profile startup context and a pointer to its briefing.</p>
+          <p class="modal-hint ui-hint">The conversation stays in history. A Steward gets its role brief again; any other agent gets its group and profile startup context and a pointer to its briefing.</p>
         </div>
       ` : html`
         <div id="reincarnate-force-fields">
-          <p class="modal-hint"><${Words}
+          <p class="modal-hint ui-hint"><${Words}
             plain=${html`Spawns a fresh session that inherits identity (groups, perms, ownership). The original is soft-exited. The successor keeps the agent's name; the replaced session is kept as <code>${'<name>-x'}</code> (see ▾ view → show replaced generations).`}
             wizard=${html`Summons a fresh hero that inherits identity (parties, boons, ownership). The original is dismissed. The successor keeps the hero's name; the replaced vessel is kept as <code>${'<name>-x'}</code>.`}
           /></p>
@@ -542,7 +542,7 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
           onInput=${(event) => setUrl(event.currentTarget.value)}
           onKeyDown=${onFieldKeyDown}
         />
-        <span class="task-link-hint"><${Words}
+        <span class="task-link-hint ui-hint"><${Words}
           plain=${groupAttachment ? "Leave the URL empty to clear this group's attachment." : "Leave the URL empty to clear this agent's task link."}
           wizard=${groupAttachment ? "Leave the portal empty to unbind this party's portal." : "Leave the portal empty to unbind this hero's quest."}
         /></span>
@@ -560,7 +560,7 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
           onInput=${(event) => setTaskLabel(event.currentTarget.value)}
           onKeyDown=${onFieldKeyDown}
         />
-        <span class="task-link-hint"><${Words} plain="Leave blank to derive a short label automatically while keeping the full URL available on hover." wizard="Leave blank and the grimoire will divine a short quest name while preserving the full portal on hover."/></span>
+        <span class="task-link-hint ui-hint"><${Words} plain="Leave blank to derive a short label automatically while keeping the full URL available on hover." wizard="Leave blank and the grimoire will divine a short quest name while preserving the full portal on hover."/></span>
       </div>
       <${ErrorBanner} id="task-link-error" error=${error} onDismiss=${() => setError('')} />
       <div class="modal-buttons">

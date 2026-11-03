@@ -89,7 +89,7 @@ export function TransactionDialogFrame({
       <h3 id=${labelledby}>${title}</h3>
       ${meta ? html`<div class="modal-meta" id=${metaID || undefined}>${meta}</div>` : null}
       ${children}
-      <div class="cleanup-error" id=${errorID || undefined} role=${error ? 'alert' : undefined}>${error}</div>
+      <div class="cleanup-error ui-error" id=${errorID || undefined} role=${error ? 'alert' : undefined}>${error}</div>
       <div class="modal-buttons">
         ${hideCancel ? null : html`<${Button} id=${cancelID || `${baseID}-cancel`} disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>`}
         <span class="spacer"></span>
@@ -254,7 +254,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
     onSubmit=${submit}
     confirmDiscard=${confirmDiscard}
   >
-    <p class="cleanup-hint" id="window-hint"><${Words} plain=${plainHint} wizard=${wizardHint} /></p>
+    <p class="cleanup-hint ui-hint" id="window-hint"><${Words} plain=${plainHint} wizard=${wizardHint} /></p>
     <div class="window-direction" id="window-direction" role="radiogroup" aria-label="Window action">
       <label><input
         type="radio" name="window-direction" value="focus"
@@ -557,7 +557,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
       onSubmit=${close}
       confirmDiscard=${confirmDiscard}
     >
-      <p class="cleanup-hint" id="cleanup-hint">Cleanup complete — ${resultBits.join(' · ') || 'nothing to do'}.</p>
+      <p class="cleanup-hint ui-hint" id="cleanup-hint">Cleanup complete — ${resultBits.join(' · ') || 'nothing to do'}.</p>
       <${CleanupResult} response=${result} />
       ${(result.warnings || []).length ? html`<div class="cleanup-warn" id="cleanup-warn">
         ⚠ ${(result.warnings || []).join('\n⚠ ')}
@@ -591,7 +591,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
     onSubmit=${submit}
     confirmDiscard=${confirmDiscard}
   >
-    <p class=${`cleanup-hint${effectiveTier === 'delete' ? ' danger' : ''}`} id="cleanup-hint">${hint}</p>
+    <p class=${`cleanup-hint ui-hint${effectiveTier === 'delete' ? ' danger' : ''}`} id="cleanup-hint">${hint}</p>
     <div class="cleanup-toolbar" id="cleanup-toolbar">
       <button type="button" id="cleanup-select-all" disabled=${controlsDisabled} onClick=${selectAll}>select all</button>
       <button type="button" id="cleanup-select-none" disabled=${controlsDisabled} onClick=${selectNone}>select none</button>
@@ -815,7 +815,7 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
     onSubmit=${submit}
     confirmDiscard=${confirmDiscard}
   >
-    <p class="cleanup-hint danger" id="delete-group-hint"><${Words}
+    <p class="cleanup-hint ui-hint danger" id="delete-group-hint"><${Words}
       plain=${plainHint} wizard=${wizardHint}
     /></p>
     <div class="cleanup-toolbar">
@@ -1100,7 +1100,7 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
     onSubmit=${submit}
     confirmDiscard=${confirmDiscard}
   >
-    <p class="cleanup-hint" id="retire-preview-hint">${hint}</p>
+    <p class="cleanup-hint ui-hint" id="retire-preview-hint">${hint}</p>
     ${result ? html`<${BulkRetireResult} descriptor=${descriptor} response=${result} />` : html`
       <div class="cleanup-toolbar">
         <button type="button" id="retire-preview-select-all" disabled=${busy || locked} onClick=${() => updateVisible(true)}>select all</button>
@@ -1328,7 +1328,7 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
     onSubmit=${submit}
     confirmDiscard=${confirmDiscard}
   >
-    <p class=${`cleanup-hint${result ? '' : ' danger'}`} id="delete-retired-hint">${hint}</p>
+    <p class=${`cleanup-hint ui-hint${result ? '' : ' danger'}`} id="delete-retired-hint">${hint}</p>
     ${result ? html`<${DeleteRetiredResult} response=${result} />` : html`
       <div class="cleanup-toolbar">
         <button type="button" id="delete-retired-select-all" disabled=${busy} onClick=${() => updateVisible(true)}>select all</button>

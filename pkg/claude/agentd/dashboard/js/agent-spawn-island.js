@@ -1398,7 +1398,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           if (next.name !== draft.name) setDraft(next);
         }}
         placeholder="optional — sets /rename on the new pane" autocomplete="off" spellcheck="false" />
-      <div id="agent-spawn-name-hint" class=${`spawn-field-hint${nameHint.warn ? ' warn' : ''}`}>${nameHint.text}</div>
+      <div id="agent-spawn-name-hint" class=${`spawn-field-hint ui-hint${nameHint.warn ? ' warn' : ''}`}>${nameHint.text}</div>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Initial msg</span>
@@ -1429,7 +1429,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           <button type="button" id="agent-spawn-attach-btn" disabled=${busy} onClick=${() => fileRef.current?.click()}>📎 Attach files…</button>
           <input ref=${fileRef} type="file" id="agent-spawn-attach-input" multiple hidden disabled=${busy}
             onChange=${(event) => { addAttachments(event.currentTarget.files); event.currentTarget.value = ''; }} />
-          <span class="spawn-attachments-hint">…or drag files here / paste (${shortcutText('terminal-paste')})</span>
+          <span class="spawn-attachments-hint ui-hint">…or drag files here / paste (${shortcutText('terminal-paste')})</span>
         </div>
         <${AttachmentList} attachments=${attachments} remove=${removeAttachment} busy=${busy} />
       </div>
@@ -1571,14 +1571,14 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <div class="cron-create-row" id="agent-spawn-auto-compact-window-hint">
         <span class="cron-create-label"></span>
         <div class="cron-create-target">
-          <div class=${`spawn-field-hint${autoCompactWindowHint.warn ? ' warn' : ''}`}>${autoCompactWindowHint.text}</div>
+          <div class=${`spawn-field-hint ui-hint${autoCompactWindowHint.warn ? ' warn' : ''}`}>${autoCompactWindowHint.text}</div>
         </div>
       </div>`}
     ${view.showContextWindowMax && contextWindowMaxHint && html`
       <div class="cron-create-row" id="agent-spawn-context-window-max-hint">
         <span class="cron-create-label"></span>
         <div class="cron-create-target">
-          <div class=${`spawn-field-hint${contextWindowMaxHint.warn ? ' warn' : ''}`}>${contextWindowMaxHint.text}</div>
+          <div class=${`spawn-field-hint ui-hint${contextWindowMaxHint.warn ? ' warn' : ''}`}>${contextWindowMaxHint.text}</div>
         </div>
       </div>`}
     <label class="cron-create-row" id="agent-spawn-model-custom-row" hidden=${selectedModel !== MODEL_CUSTOM_VALUE}
@@ -1609,8 +1609,8 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           <option value="">⌂ Your own account</option>
           ${usageChoices.map((o) => html`<option key=${o.value} value=${o.value} disabled=${!!o.reason}>${o.label} — ${o.reason || o.detail}</option>`)}
         </select>
-        ${usageChoice && !usageChoice.reason && html`<div class="spawn-field-hint info" id="agent-spawn-usage-hint">${shareHint(usageChoice.share)}</div>`}
-        ${usageChoice?.reason && html`<div class="spawn-field-hint warn" id="agent-spawn-usage-hint">${usageChoice.label} cannot pay for this spawn: ${usageChoice.reason}. It will use your own account.</div>`}
+        ${usageChoice && !usageChoice.reason && html`<div class="spawn-field-hint ui-hint info" id="agent-spawn-usage-hint">${shareHint(usageChoice.share)}</div>`}
+        ${usageChoice?.reason && html`<div class="spawn-field-hint ui-hint warn" id="agent-spawn-usage-hint">${usageChoice.label} cannot pay for this spawn: ${usageChoice.reason}. It will use your own account.</div>`}
       </div>
     </div>`}
     ${subscriptionRow && html`<div class="cron-create-row" id="agent-spawn-claude-login-row" data-remote-spawn-free=""
@@ -1626,8 +1626,8 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           <option value="mine" disabled=${!subscription?.set}>Your Claude subscription${subscription?.set ? '' : ' (not set up)'}</option>
         </select>
         ${draft.claudeSubscription && subscription?.set
-          ? html`<div class="spawn-field-hint info" id="agent-spawn-claude-login-hint">Runs on your subscription and is billed to it. ${spawnNodeName} holds the token in memory only: if its tclaude restarts, the agent cannot be restarted, and you spawn a new one.</div>`
-          : !subscription?.set && html`<div class="spawn-field-hint" id="agent-spawn-claude-login-hint">To run it on your own subscription, store a token from <code>claude setup-token</code> under Fleet config → Model gateways → My Claude subscription.</div>`}
+          ? html`<div class="spawn-field-hint ui-hint info" id="agent-spawn-claude-login-hint">Runs on your subscription and is billed to it. ${spawnNodeName} holds the token in memory only: if its tclaude restarts, the agent cannot be restarted, and you spawn a new one.</div>`
+          : !subscription?.set && html`<div class="spawn-field-hint ui-hint" id="agent-spawn-claude-login-hint">To run it on your own subscription, store a token from <code>claude setup-token</code> under Fleet config → Model gateways → My Claude subscription.</div>`}
       </div>
     </div>`}
     <div class="cron-create-row" id="agent-spawn-sandbox-impl-row" hidden=${!view.showSandboxImpl}
@@ -1681,7 +1681,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <div class="cron-create-row" id="agent-spawn-sandbox-impl-cleared-row" role="alert">
         <span class="cron-create-label"></span>
         <div class="cron-create-target">
-          <div class="spawn-field-hint warn">${sandboxImplCleared.text}</div>
+          <div class="spawn-field-hint ui-hint warn">${sandboxImplCleared.text}</div>
         </div>
       </div>`}
     <${HelpField} id="agent-spawn-sandbox-profile" descriptionID="agent-spawn-sandbox-profile-preview" label="Sandbox profile"
@@ -1750,7 +1750,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <span class="cron-create-label"></span>
       <div class="cron-create-target" role="status">
         ${sandboxInfo.map((message) => html`
-          <div class="spawn-field-hint info" key=${message}>ℹ ${message}</div>`)}
+          <div class="spawn-field-hint ui-hint info" key=${message}>ℹ ${message}</div>`)}
       </div>
     </div>
     ${/* Sits between the two selects it is about — the sandbox above and the
@@ -1764,7 +1764,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         <span class="cron-create-label"></span>
         <div class="cron-create-target" role="alert">
           ${autonomyWarnings.map((warning) => html`
-            <div class="spawn-field-hint warn" key=${warning}>${warning}</div>`)}
+            <div class="spawn-field-hint ui-hint warn" key=${warning}>${warning}</div>`)}
         </div>
       </div>`}
     <${HelpField} id="agent-spawn-approval-reviewer" label="Approval reviewer"
@@ -1929,7 +1929,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <div class="cron-create-row" id="agent-spawn-codex-native-registry-warning">
         <span class="cron-create-label"></span>
         <div class="cron-create-target" role="alert">
-          <div class="spawn-field-hint warn">
+          <div class="spawn-field-hint ui-hint warn">
             ⚠ Native Codex permission-profile integration is not ready; this launch will be refused: ${nativeCodexRegistryWarning}.
             <a href=${CODEX_NATIVE_REGISTRY_SETUP_DOC} target="_blank" rel="noopener">Setup and repair</a>
           </div>

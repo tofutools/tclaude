@@ -65,7 +65,7 @@ export function StewardHandoverDialog({ descriptor, actions }) {
     resizeKey="tclaude.dash.modalSize.steward-handover">
     <h3 id="steward-handover-title">Make ${name} the Steward</h3>
     <div class="modal-meta">It keeps its conversation, working directory and groups${preview?.harness ? `, and stays on ${preview.harness}` : ''}.</div>
-    ${!preview && !error && html`<p class="modal-hint">Reading its access…</p>`}
+    ${!preview && !error && html`<p class="modal-hint ui-hint">Reading its access…</p>`}
     ${blocked && html`<p class="steward-handover-line warn" role="alert">${blocked}</p>`}
     ${preview && !blocked && html`
       <${Folded} label="Gains" slugs=${preview.gains} />
@@ -73,8 +73,8 @@ export function StewardHandoverDialog({ descriptor, actions }) {
       ${preview.grants_power?.length > 0 && html`<p class="steward-handover-line warn">It can hand out permissions, which a Steward does not normally hold. Take that off first if you don't want it.</p>`}
       <${Slugs} label="Stays denied:" slugs=${preview.denied} />
       <${Slugs} label="Stays off, as you left it:" slugs=${preview.withheld} />
-      ${(preview.notes || []).map((note) => html`<p key=${note} class="modal-hint">${note}</p>`)}
-      ${!preview.online && html`<p class="modal-hint">It is offline. Its brief waits until you resume it.</p>`}
+      ${(preview.notes || []).map((note) => html`<p key=${note} class="modal-hint ui-hint">${note}</p>`)}
+      ${!preview.online && html`<p class="modal-hint ui-hint">It is offline. Its brief waits until you resume it.</p>`}
       ${previous && html`<fieldset class="steward-handover-then">
         <legend>${previous.name} stops being the Steward</legend>
         ${THEN_CHOICES.map((choice) => html`<label key=${choice.value}>

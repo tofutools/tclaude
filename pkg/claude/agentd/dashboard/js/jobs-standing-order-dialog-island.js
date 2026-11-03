@@ -185,7 +185,7 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
     resizeKey="tclaude.dash.modalSize.standing-order">
     <h3 id="standing-order-title">${editing ? 'Edit standing order' : 'Create standing order'}</h3>
     ${editing && html`<div class="modal-meta">#${descriptor.id} · delivery revision ${draft.revision}</div>`}
-    ${descriptor.order?.disabled_reason && html`<div class="jobs-error standing-order-retirement-warning">
+    ${descriptor.order?.disabled_reason && html`<div class="jobs-error ui-error-box standing-order-retirement-warning">
       This order was disabled automatically: ${descriptor.order.disabled_reason}.
       Leave Enabled off to preserve that retirement state; explicitly enabling it clears the marker.
     </div>`}
@@ -251,7 +251,7 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
           <div class="muted">Select any number of exact harness hooks. They are OR branches:
             the same order fires when any checked hook occurs. Non-baseline Claude/Codex
             callbacks are installed only while an enabled order selects them.</div>
-          ${hookCatalogError && html`<div class="jobs-error">${hookCatalogError}</div>`}
+          ${hookCatalogError && html`<div class="jobs-error ui-error-box">${hookCatalogError}</div>`}
           ${!hookCatalogError && hookCatalog.length === 0 && html`
             <div class="muted">Loading hook catalog…</div>`}
           ${Object.entries(hooksByHarness).map(([harness, hooks]) => html`

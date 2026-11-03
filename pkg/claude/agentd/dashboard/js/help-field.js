@@ -117,7 +117,7 @@ export function HelpField({
         <${HelpDisclosure} id=${id} descriptionID=${descriptionID} label=${label} help=${help}
           open=${open} setOpen=${setOpen} />
       </div>
-      ${caveat && html`<div class="spawn-field-hint warn spawn-field-caveat" id=${`${id}-caveat`}
+      ${caveat && html`<div class="spawn-field-hint ui-hint warn spawn-field-caveat" id=${`${id}-caveat`}
         aria-hidden="true">${caveat}</div>`}
     </div>
   </div>`;

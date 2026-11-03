@@ -59,7 +59,7 @@ function Recorder({ entry, drafts, onUse, onCancel }) {
       aria-label=${`New keys for ${entry.label}. Press them now; Escape cancels.`}>
       ${chord ? html`<${Keys} chord=${chord} />` : 'Press the new keys…'}
     </button>
-    <span class="shortcut-recorder-hint">${chord ? 'Press again to change, or' : 'Escape cancels.'}</span>
+    <span class="shortcut-recorder-hint ui-hint">${chord ? 'Press again to change, or' : 'Escape cancels.'}</span>
     ${chord && html`<button type="button" class="ui-btn ui-btn-primary" disabled=${blocked}
       onClick=${() => onUse(chord)}>Use ${chordText(chord)}</button>`}
     <button type="button" class="ui-btn ui-btn-ghost" onClick=${onCancel}>Cancel</button>

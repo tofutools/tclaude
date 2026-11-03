@@ -527,7 +527,7 @@ function RealGroupSummary({ node, group, activity, membersView, snapshot, action
       title=${`${titleParts.join(' · ')}${group.max_members ? ' — click to edit cap' : ' — click to set a cap'}`}
       message=${(value) => value > 0 ? `${group.name}: member cap → ${value}` : `${group.name}: member cap cleared`}
     >👥 ${count}<//>
-    ${away ? html`<span class="group-away-hint" title=${`${away} member${away === 1 ? ' is' : 's are'} away on another node. ${away === 1 ? 'Its row stays' : 'Their rows stay'} here, dimmed, but ${away === 1 ? 'is' : 'are'} not counted as members.`}>+${away} away</span>` : null}
+    ${away ? html`<span class="group-away-hint ui-hint" title=${`${away} member${away === 1 ? ' is' : 's are'} away on another node. ${away === 1 ? 'Its row stays' : 'Their rows stay'} here, dimmed, but ${away === 1 ? 'is' : 'are'} not counted as members.`}>+${away} away</span>` : null}
     <${GroupProfileChip} group=${group} actions=${actions} kind="profile" />
     <${GroupProfileChip} group=${group} actions=${actions} kind="sandbox" />
     ${!group.fleet_node || group.fleet_node.local ? html`<${GroupUsageProfileChip} group=${group} />` : null}

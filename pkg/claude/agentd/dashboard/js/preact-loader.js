@@ -469,7 +469,7 @@ const jobsDescriptor = createIslandDescriptor({
     hosts: {
       host: '#jobs-root', badgeHost: '#jobs-badge-root', dialogHost: '#jobs-cron-dialog-root',
     },
-    failureClass: 'jobs-error',
+    failureClass: 'jobs-error ui-error-box',
     load: async ({ hosts: { host, badgeHost, dialogHost }, dependencies: actionDependencies }) => {
       // Keep import() behind named promises: the repository's intentionally
       // small module-graph scanner recognizes dynamic imports in expressions,
@@ -572,7 +572,7 @@ export async function mountUsageHistoryFeature(actionDependencies = {}) {
   const host = document.querySelector('#usage-root');
   if (!host) return null;
   return mountFeatureIsland({
-    name: 'usage', label: 'Usage', hosts: [host], failureClass: 'usage-history-error',
+    name: 'usage', label: 'Usage', hosts: [host], failureClass: 'usage-history-error ui-error',
     load: async () => {
       const islandModule = import('./usage-history-island.js');
       const stateModule = import('./usage-history-state.js');
@@ -722,7 +722,7 @@ export function mountToolbarProfilePickerFeature(dependencies = {}) {
 }
 
 const messagesDescriptor = createIslandDescriptor({
-  name: 'messages', label: 'Messages', hosts: { host: '#messages-root' }, failureClass: 'messages-error',
+  name: 'messages', label: 'Messages', hosts: { host: '#messages-root' }, failureClass: 'messages-error ui-error-box',
   load: async ({ hosts: { host } }) => {
     const islandModule = import('./mail-island.js');
     const legacyModule = import('./mail.js');
@@ -1150,7 +1150,7 @@ const directoryPickerDescriptor = createIslandDescriptor({
   label: 'Directory picker',
   hosts: { root: '#directory-picker-root' },
   primaryHost: 'root',
-  failureClass: 'directory-picker-error',
+  failureClass: 'directory-picker-error ui-error',
   load: async ({ hosts, dependencies }) => {
     const islandModule = import('./directory-picker-island.js');
     const stateModule = import('./directory-picker-state.js');
@@ -1177,7 +1177,7 @@ export function mountDirectoryPickerFeature(dependencies = {}) {
 const gitRepositoriesDescriptor = createIslandDescriptor({
   name: 'git-repositories', label: 'Git repositories',
   hosts: { root: '#git-repositories-root' }, primaryHost: 'root',
-  failureClass: 'git-repos-error',
+  failureClass: 'git-repos-error ui-error',
   load: async ({ hosts, dependencies }) => {
     const islandModule = import('./git-repositories-island.js');
     const stateModule = import('./git-repositories-state.js');

@@ -94,7 +94,7 @@ function CronRunInspector({ id, runs, loading, error, onRefresh }) {
     <div class="cron-run-inspector-head"><strong>Recent runs</strong>
       <span class="muted">Recorded scheduler outcomes; worker identity appears when a spawn reached a managed worker.</span>
       <button type="button" onClick=${onRefresh} disabled=${loading}>refresh</button></div>
-    ${error && html`<div class="jobs-error" role="alert">${error}<button type="button" onClick=${onRefresh}>retry</button></div>`}
+    ${error && html`<div class="jobs-error ui-error-box" role="alert">${error}<button type="button" onClick=${onRefresh}>retry</button></div>`}
     ${loading ? html`<div class="muted">Loading run history…</div>` : !error && runs.length === 0
       ? html`<div class="muted">No runs recorded.</div>`
       : html`<div class="cron-runs">${runs.map((run) => html`<div class="cron-run" key=${run.id}>
@@ -478,7 +478,7 @@ export function JobsApp({ state, actions, fleet = fleetState, activeTab = dashbo
     </div>`}
     ${displayKind === 'trigger' ? html`<${TriggerWorkspace} state=${state} actions=${actions} />` : html`<${Fragment}>
     <${AsyncLoadState} label="Automations" request=${current.request}
-      retry=${() => void actions.refresh()} errorClass="jobs-error" />
+      retry=${() => void actions.refresh()} errorClass="jobs-error ui-error-box" />
     <div id="jobs-list" aria-busy=${current.request.phase === 'loading' ? 'true' : 'false'}>
       ${!current.request.hasLoaded
         ? null

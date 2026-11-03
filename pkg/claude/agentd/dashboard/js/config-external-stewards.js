@@ -171,7 +171,7 @@ export function ExternalStewardManager({ enabled, fetchImpl = globalThis.fetch, 
 
   return html`<div class="cfg-steward-manager">
     ${issued && html`<${IssuedCredential} key=${issued.credential} issued=${issued} copy=${copy} onDone=${() => setIssued(null)} />`}
-    ${error && html`<div class="cfg-steward-error" role="alert">${error}</div>`}
+    ${error && html`<div class="cfg-steward-error ui-error" role="alert">${error}</div>`}
     ${stewards.length > 0 && html`<table class="cfg-tool-list">
       <thead><tr><th scope="col">Name</th><th scope="col">Credentials</th><th scope="col">Workers</th><th scope="col">Actions</th></tr></thead>
       <tbody>${stewards.map(steward => html`<${StewardRow} key=${steward.agent_id} steward=${steward} act=${act} onPin=${pin} choices=${choices} busy=${busy} renewable=${enabled && !issued} />`)}</tbody>

@@ -329,7 +329,7 @@ body.dock-open .open-prs.is-open::before {
 .open-prs-add-form button:where(:not(.ui-btn)):disabled { opacity: 0.5; cursor: default; }
 .open-prs-add-form button:where(:not(.ui-btn)):focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .open-prs-stale { margin: 0; padding: 6px 13px; border-bottom: 1px solid #222b35; color: #d29922; font-size: 10.5px; }
-.open-prs-people-error { flex-basis: 100%; margin: 0 0 6px; color: #f85149; font-size: 10.5px; text-align: right; }
+.open-prs-people-error { flex-basis: 100%; margin: 0 0 6px; text-align: right; }
 /* The ignore confirmation covers the popover (its positioned ancestor). */
 .open-prs-confirm-backdrop {
   position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center;
@@ -841,8 +841,7 @@ button.tool:where(:hover) { background: var(--ui-bg-hover); }
    bulk-wipe checkboxes (otherwise a mystery — they only surface a wipe bar at
    the top of the sidebar). */
 .mailbox-section-help {
-  color: #6e7681; font-size: 11px; font-style: italic;
-  padding: 0 8px 5px; line-height: 1.35;
+  padding: 0 8px 5px;
 }
 
 /* "Show more" closes the server-paged agent list: a quiet full-width text
@@ -1015,8 +1014,7 @@ button.tool:where(:hover) { background: var(--ui-bg-hover); }
 .mail-download-menu small { display: block; color: #7d8590; font-size: 11px; }
 .mail-download-sep { border-top: 1px solid #2a3340; margin: 4px 0; }
 .messages-error, .mail-error {
-  margin: 8px; padding: 8px 10px; border-left: 3px solid #f85149;
-  background: rgba(248, 81, 73, .08); color: #f0a3a0;
+  margin: 8px; padding: 8px 10px;
 }
 .messages-error button, .mail-error button { margin-left: 8px; }
 
@@ -1492,8 +1490,6 @@ body.slop .prd-bar i { background: #684500; }
 }
 a.task-link { text-decoration: none; }
 a.task-link:hover { color: #58a6ff; text-decoration: underline; }
-.task-link-hint { color: #7d8590; font-size: 11px; line-height: 1.4; }
-
 /* Wizard Task/Quest treatment: parchment link text, a quill edit glyph, and
    quest vocabulary for the empty-cell action. */
 body.wizard a.task-link { color: #b39ddb; }
@@ -1997,7 +1993,6 @@ body.companion-annotating :is(.overlay-split-line, .overlay-split-cross, .overla
   background: var(--cmp-bar, #161b22); color: var(--cmp-text, #e6edf3); font: inherit; font-size: 13px;
 }
 .overlay-expose-filter:focus { outline: none; border-color: #58a6ff; }
-.overlay-expose-hint { color: var(--cmp-muted, #8b949e); font-size: 12px; }
 .overlay-expose-grid {
   flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 300px)); justify-content: center;
   grid-auto-rows: max-content; align-content: center; gap: 18px; padding: 4px;
@@ -3522,7 +3517,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .proposal-item .grow { flex: 1; min-width: 0; }
 .proposal-members { display: inline-flex; gap: 4px; align-items: center; font-size: 11.5px; color: #8b949e; white-space: nowrap; }
 .proposal-pair select { min-width: 0; }
-.proposal-hint { font-size: 11.5px; color: #8b949e; margin: 6px 0; line-height: 1.4; }
+.proposal-hint { margin: 6px 0; }
 .proposal-preview { border: 1px solid #2a3340; border-radius: 5px; padding: 6px 10px; margin: 8px 0; font-size: 12.5px; }
 .proposal-preview ul, .proposal-summary ul { margin: 4px 0 0; padding-left: 18px; }
 .proposal-summary { border: 1px solid #1f4f8f; background: #0d1a2b; border-radius: 5px; padding: 8px 11px; margin-bottom: 8px; font-size: 12.5px; }
@@ -4095,7 +4090,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-card-footer.usage-forecast.warn strong { color: #d29922; }
 .usage-card-footer.usage-forecast.danger strong { color: #f85149; }
 .usage-reset-count { flex-basis: 100%; text-align: right; }
-.usage-history-error { margin-bottom: 12px; color: #f85149; }
+.usage-history-error { margin-bottom: 12px; }
 @media (max-width: 600px) {
   .usage-series-card { padding: 10px; }
   .usage-control-group { flex-basis: 100%; }
@@ -4983,7 +4978,7 @@ body.show-group-description .group-descr { display: inline; }
 }
 .group-create-attach-repository input { margin: 0; }
 .group-create-clone-hint {
-  margin: 3px 0 0 82px; color: #6e7681; font-size: 10.5px;
+  margin: 3px 0 0 82px;
 }
 .group-descr {
   font-size: 11px; color: #7d8590;
@@ -5318,7 +5313,7 @@ details[data-group-key][open] > summary .group-usage-profile {
 .notify-pop-master input,
 .notify-pop-row input { cursor: pointer; margin: 0; }
 .notify-pop-sep { height: 1px; background: #2a3340; margin: 4px 2px; }
-.notify-pop-hint { padding: 2px 6px; color: #8b949e; font-size: 11px; }
+.notify-pop-hint { padding: 2px 6px; }
 /* When the master is off the per-type rows still notify nothing — dim them
    so the popover reads honestly, but keep them editable (pre-arrange the
    selection, then flip the master on). */
@@ -5429,8 +5424,7 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   font-family: ui-monospace, monospace; font-size: 11px; margin-left: 8px;
 }
 .toolbar-profile-error {
-  align-self: center; color: #f85149; font-family: ui-monospace, monospace;
-  font-size: 11px; margin-left: 5px; max-width: 18em; overflow: hidden;
+  align-self: center; font-family: ui-monospace, monospace; margin-left: 5px; max-width: 18em; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
 .modal-context-textarea {
@@ -5908,7 +5902,10 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   box-shadow: 0 8px 24px rgba(0,0,0,0.5);
 }
 .modal h3 { margin: 0 0 8px; font-size: 16px; color: #d4d4d4; }
-.modal p { margin: 8px 0; color: #c9d1d9; }
+/* Body text in a dialog; the standard hint and error text (ui.css) keep their
+   own colour. */
+.modal p:where(:not(.ui-hint, .ui-error, .ui-error-box)) { margin: 8px 0; color: #c9d1d9; }
+.modal p:is(.ui-hint, .ui-error, .ui-error-box) { margin: 8px 0; }
 /* Preformatted confirm bodies carry daemon-supplied dumps — bulk power-on
    failure lists, recorded sandbox details — whose length and token widths are
    not ours to predict. .modal has no height bound and .modal-overlay centres
@@ -5929,7 +5926,7 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 .modal .confirm-checks { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 4px; }
 .modal .confirm-check { display: flex; gap: 8px; align-items: flex-start; color: #c9d1d9; cursor: pointer; }
 .modal .confirm-check input { margin-top: 3px; }
-.modal .confirm-check-hint { display: block; font-size: 12px; color: #8b949e; }
+.modal .confirm-check-hint { display: block; }
 /* A .spacer in a button row pushes everything after it to the right —
    e.g. the edit-member modal's Permissions… button sits hard-left
    while Cancel / Save stay right. */
@@ -5975,8 +5972,8 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   border: 1px solid #2c4b33; border-radius: 8px; padding: 0 6px;
 }
 .sandbox-impl-tag.warn { color: #e3a008; border-color: #6b4f1d; }
-.sandbox-impl-hint { margin: 8px 0 0; font-size: 11px; color: #7d8590; line-height: 1.45; }
-.sandbox-impl-warn { color: #e3a008; }
+.sandbox-impl-hint { margin: 8px 0 0; }
+.sandbox-impl-hint.sandbox-impl-warn { color: #e3a008; }
 /* .primary is styled per modal family (.cron-create-modal, .perm-edit-modal,
    …) rather than globally, and this dialog renders the plain .modal skin — so
    it carries its own rule instead of inheriting a call-to-action treatment that
@@ -5998,7 +5995,7 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 .term-files-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
 .term-files-spacer { flex: 1; }
 .term-files-muted { color: #7d8590; }
-.term-files-error { color: #f85149; margin: 4px 0; }
+.term-files-error { margin: 4px 0; }
 .term-files-link { background: none; border: none; color: #58a6ff; cursor: pointer; padding: 0 2px; font: inherit; }
 .term-files-link:hover { text-decoration: underline; }
 .term-files-table { width: 100%; border-collapse: collapse; }
@@ -6437,9 +6434,6 @@ body.wizard .group-pending-title-wizard { display: inline; }
 .jobs-error {
   margin: 8px 0;
   padding: 8px 10px;
-  border-left: 3px solid #f85149;
-  background: rgba(248, 81, 73, 0.08);
-  color: #f0a3a0;
 }
 .jobs-error button { margin-left: 8px; }
 :is(.filter-bar, .content-search-bar) button.clear-filter {
@@ -6536,7 +6530,7 @@ body.wizard .filter-bar .view-btn.ui-btn[aria-expanded="true"] { color: #f3e6c0;
   color: #ffa657;
 }
 .sudo-badge:hover { color: #ffd47a; }
-.sudo-grant-error { color: #f85149; font-size: 12px; min-height: 14px; }
+.sudo-grant-error { min-height: 14px; }
 /* Permanent-permission editor — the per-agent tri-state modal. It is taller
    than the other plain dialogs (one row per registry slug, so it scrolls) and
    its banner deliberately contrasts with the orange sudo variant below: these
@@ -6682,7 +6676,6 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   font-size: 12px; color: #c9d1d9; font-family: inherit; cursor: pointer;
 }
 .steward-shutdown-actions button:where(:not(.ui-btn)).danger { background: #8e1f1f; border-color: #da3633; color: #fff; }
-.steward-shutdown-error { color: #f85149; }
 .steward-down-notice {
   display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 12px;
   background: #1e1a10; border-bottom: 1px solid #5c4a1e; color: #f0c674; font-size: 13px;
@@ -6939,7 +6932,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 /* Shared hint paragraph inside dialogs — the styles the group-context /
    group-clone hints used to carry inline; a class so theme re-skins can
    recolor them (an inline style would always win). */
-.modal-hint { margin: 4px 0; font-size: 12px; color: #7d8590; }
+.modal-hint { margin: 4px 0; }
 /* The shared group-creation modal uses this compact source summary for both
    inherited subgroup fields and exact group clones. Clone-only rows update
    live with the member and owner checkboxes. */
@@ -7094,9 +7087,6 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   width: 100%;
 }
 .sbx-network-control-help {
-  color: var(--text-muted);
-  font-size: .75rem;
-  line-height: 1.35;
   margin-top: .4rem;
 }
 .sbx-network-namespace-note {
@@ -7884,7 +7874,6 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .sbx-prelaunch-actions button:where(:not(.ui-btn)):hover { background: #2d333b; }
 .sbx-prelaunch-actions button:where(:not(.ui-btn)):disabled { cursor: default; opacity: .35; }
 .sbx-prelaunch-actions .sbx-prelaunch-remove { color: #f0b0b0; }
-.sbx-prelaunch-error { color: #ff7b72; font-size: .76rem; line-height: 1.35; }
 .sbx-prelaunch-add:disabled { cursor: default; opacity: .45; }
 
 /* Temporary filesystems (TCL-1218). A tmpfs row is a path plus an optional
@@ -7914,7 +7903,6 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   min-width: 7rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.sbx-tmpfs-error { color: #ff7b72; font-size: .76rem; line-height: 1.35; }
 .sbx-tmpfs-add:disabled { cursor: default; opacity: .45; }
 @media (max-width: 700px) {
   .sbx-tmpfs-row { flex-wrap: wrap; }
@@ -8332,7 +8320,6 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
    useful, non-actionable disclosure. A HelpField's ⚠
    caveat takes both classes and needs no styling of its own; it carries a bare
    .spawn-field-caveat marker so tests can tell it from the name hint. */
-.spawn-field-hint { font-size: 11px; color: #7d8590; line-height: 1.4; }
 .spawn-field-hint:empty { display: none; }
 .spawn-field-hint.warn { color: #f0883e; }
 .spawn-field-hint.info { color: #58a6ff; }
@@ -8411,7 +8398,6 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   color: #c9d1d9; padding: 5px 10px; font-size: 12px; cursor: pointer;
 }
 .spawn-attachments-controls button:where(:not(.ui-btn)):hover { background: var(--ui-bg-hover); }
-.spawn-attachments-hint { font-size: 11px; color: #7d8590; }
 .spawn-attachments-list {
   list-style: none; margin: 0; padding: 0; display: flex;
   flex-direction: column; gap: 4px;
@@ -8592,7 +8578,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   border-left: 2px solid #388bfd; background: #0d1117; color: #9ca8b4;
   font-size: 11px; text-align: left;
 }
-.group-standing-orders-first-hint { margin: 12px 0 0; color: #7d8590; font-size: 11px; }
+.group-standing-orders-first-hint { margin: 12px 0 0; }
 .group-standing-orders-first-hint strong { color: #9ca8b4; }
 .group-standing-orders-load-failed {
   display: flex; flex-direction: column; align-items: center; gap: 7px;
@@ -8670,7 +8656,6 @@ body.wizard #group-standing-orders-modal .group-standing-orders-first-run > stro
   color: #f3e6c0; font-family: Georgia, serif; font-size: 15px;
 }
 body.wizard #group-standing-orders-modal .group-standing-orders-first-run > p,
-body.wizard #group-standing-orders-modal .group-standing-orders-first-hint,
 body.wizard #group-standing-orders-modal .group-standing-orders-managed-note { color: #a795b2; }
 body.wizard #group-standing-orders-modal .group-standing-orders-first-hint strong { color: #c9b5d7; }
 body.wizard #group-standing-orders-modal .group-standing-orders-explainer {
@@ -8810,7 +8795,6 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
 }
 .cron-explain:empty { display: none; }
 .cron-explain .cron-explain-desc { color: #c9d1d9; }
-.cron-explain .cron-explain-error { color: #ffa198; }
 .cron-create-enabled {
   display: flex; align-items: center; gap: 6px; font-size: 12px;
   color: #c9d1d9;
@@ -8925,7 +8909,6 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
 .directory-picker-modal button:where(:not(.ui-btn)):disabled { cursor: default; opacity: .45; }
 .directory-picker-nav { display: flex; gap: 8px; align-items: center; }
 .directory-picker-count { color: #7d8590; font-size: 11px; margin-left: auto; }
-.directory-picker-hint { color: #7d8590; font-size: 11px; }
 .directory-picker-list {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
   display: flex; flex-direction: column; gap: 3px; min-height: 190px;
@@ -8945,7 +8928,7 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
 }
 .directory-picker-new { color: #79c0ff !important; border-color: #388bfd !important; }
 .directory-picker-empty { margin: auto; }
-.directory-picker-error { color: #ffa198; min-height: 18px; }
+.directory-picker-error { min-height: 18px; }
 .directory-picker-modal .modal-buttons { border-top: 1px solid #2a3340; padding-top: 10px; }
 body.wizard .directory-picker-modal {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
@@ -9084,7 +9067,6 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .paf-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin: 6px 0; cursor: pointer; }
 .paf-check input { margin-top: 3px; }
 .paf-check > span { display: flex; flex-direction: column; }
-.paf-hint { color: #7d8590; font-size: 11.5px; }
 .paf-sub { margin-left: 22px; }
 .paf-sec { color: #7d8590; text-transform: uppercase; letter-spacing: 0.04em; font-size: 10px; margin: 8px 0 2px; }
 .paf-findings { border: 1px solid #9e6a03; background: #2a210b; border-radius: 5px; padding: 7px 10px; margin: 8px 0; font-size: 12.5px; }
@@ -9429,7 +9411,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   color: #c9d1d9; max-height: 86vh;
 }
 .cleanup-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
-.cleanup-hint { margin: 0; font-size: 11px; color: #7d8590; line-height: 1.4; }
+.cleanup-hint { margin: 0; }
 .cleanup-hint.danger { color: #f0883e; }
 .cleanup-toolbar {
   display: flex; align-items: center; gap: 8px;
@@ -9599,7 +9581,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   padding: 6px 8px; margin-bottom: 2px;
   border: 1px solid #30363d; border-radius: 6px; background: #161b22;
 }
-.cleanup-error { color: #f85149; font-size: 12px; min-height: 14px; }
+.cleanup-error { min-height: 14px; }
 .cleanup-warn { color: #f0883e; font-size: 12px; white-space: pre-line; }
 .cleanup-modal .modal-buttons {
   display: flex; justify-content: flex-end; gap: 8px;
@@ -9826,7 +9808,6 @@ label.cfg-label { cursor: pointer; }
 .shortcut-recorder { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .shortcut-recorder-keys { min-width: 180px; justify-content: center; }
 .shortcut-recorder-keys:focus-visible, .shortcut-recorder-keys:focus { outline: 2px solid #58a6ff; outline-offset: 1px; }
-.shortcut-recorder-hint { color: #8b949e; font-size: 12px; }
 .shortcut-problems { flex-basis: 100%; margin: 4px 0 0; padding: 0; list-style: none; font-size: 12px; }
 .shortcut-problems li { margin: 2px 0; }
 .shortcut-problems .is-blocking { color: #ff7b72; }
@@ -9840,7 +9821,6 @@ label.cfg-label { cursor: pointer; }
 .cfg-steward-pin { display: grid; gap: 6px; margin-top: 6px; }
 .cfg-steward-pin label { display: grid; gap: 2px; }
 .cfg-steward-add input[type="number"] { width: 72px; }
-.cfg-steward-error { color: #f85149; font-size: 12px; }
 .status-dot-external { cursor: default; }
 .cfg-row-ctl .cfg-list { padding-left: 0; }
 .cfg-row-ctl .cfg-notif-types, .cfg-row-ctl .cfg-hint { padding-left: 0; }
@@ -11549,8 +11529,6 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
   margin: 8px 0 2px; font-size: 13px; color: #c9d1d9; cursor: pointer;
 }
 .export-same-group input { margin-top: 2px; flex: 0 0 auto; }
-.export-same-group-hint { color: #7d8590; }
-
 /* --- export "Previous exports" history panel (JOH-265) --- */
 .export-history { margin: 10px 0 4px; border-top: 1px solid #21262d; padding-top: 8px; }
 .export-history-head {
@@ -12169,11 +12147,8 @@ body.wizard #agent-spawn-modal .modal-meta {
 }
 body.wizard #agent-spawn-modal .cron-create-label,
 body.wizard #agent-spawn-modal .spawn-owner-toggle,
-body.wizard #agent-spawn-modal .spawn-perms-indicator,
-body.wizard #agent-spawn-modal .spawn-field-hint,
-body.wizard #agent-spawn-modal .spawn-attachments-hint { color: #b39ddb; }
-/* The wizard hint colour above outranks .spawn-field-hint.warn on specificity,
-   which would repaint a ⚠ caveat as ordinary help. Warnings keep warning. */
+body.wizard #agent-spawn-modal .spawn-perms-indicator { color: #b39ddb; }
+/* Warnings and notes keep their own tone over the skin's muted hint colour. */
 body.wizard #agent-spawn-modal .spawn-field-hint.warn { color: #f0883e; }
 body.wizard #agent-spawn-modal .spawn-field-hint.info { color: #58a6ff; }
 body.wizard #agent-spawn-modal .cron-create-row input[type=text],
@@ -12824,7 +12799,6 @@ body.wizard #message-create-modal .cron-create-modal h3 {
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
 body.wizard #message-create-modal #message-create-desc,
-body.wizard #message-create-modal .cleanup-hint,
 body.wizard #message-create-modal .cron-create-label { color: #b39ddb; }
 body.wizard #message-create-modal .cron-target-modes { color: #e7d9f5; }
 body.wizard #message-create-modal input[type=radio],
@@ -13371,8 +13345,6 @@ body.wizard #window-modal .cleanup-modal h3 {
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
-body.wizard #window-modal .cleanup-hint { color: #b39ddb; }
-
 /* The focus/unfocus direction picker — a violet-tinted panel, parchment
    labels + muted violet notes. The native radios stay legible either way. */
 body.wizard #window-modal .window-direction {
@@ -13480,7 +13452,6 @@ body.wizard #cleanup-modal .cleanup-modal h3 {
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
-body.wizard #cleanup-modal .cleanup-hint { color: #b39ddb; }
 /* The delete-tier hint keeps a caution tone — a warm ember rather than the
    base orange — so its "cannot be undone" warning still reads as danger on
    the violet surface. The .cleanup-warn / .cleanup-error status lines below
@@ -13586,7 +13557,6 @@ body.wizard #retire-preview-modal .cleanup-modal h3 {
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
-body.wizard #retire-preview-modal .cleanup-hint,
 body.wizard #retire-preview-modal .cleanup-toolbar { color: #b39ddb; }
 body.wizard #retire-preview-modal .cleanup-count { color: #e7d9f5; }
 body.wizard #retire-preview-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
@@ -13659,7 +13629,6 @@ body.wizard #delete-retired-modal .cleanup-modal h3 {
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
-body.wizard #delete-retired-modal .cleanup-hint { color: #b39ddb; }
 body.wizard #delete-retired-modal .cleanup-hint.danger { color: #f0a868; }
 body.wizard #delete-retired-modal .cleanup-toolbar { color: #b39ddb; }
 body.wizard #delete-retired-modal .cleanup-count { color: #e7d9f5; }
@@ -13737,7 +13706,6 @@ body.wizard #worktree-cleanup-modal .cleanup-modal h3 {
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
-body.wizard #worktree-cleanup-modal .cleanup-hint,
 body.wizard #worktree-cleanup-modal .cleanup-toolbar { color: #b39ddb; }
 body.wizard #worktree-cleanup-modal .cleanup-count { color: #e7d9f5; }
 body.wizard #worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
@@ -13813,7 +13781,6 @@ body.wizard #delete-group-modal .cleanup-modal h3 {
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
-body.wizard #delete-group-modal .cleanup-hint { color: #b39ddb; }
 body.wizard #delete-group-modal .cleanup-hint.danger { color: #f0a868; }
 body.wizard #delete-group-modal .cleanup-toolbar { color: #b39ddb; }
 body.wizard #delete-group-modal .cleanup-count { color: #e7d9f5; }
@@ -13980,7 +13947,7 @@ body.wizard #term-modal #term-current:active {
   font-size: 11px; color: #8b949e; background: transparent; font-family: inherit;
 }
 .term-choice-key { align-self: center; flex: 0 0 auto; }
-.term-chooser-hint { color: #8b949e; font-size: 11px; margin: 10px 0 0; }
+.term-chooser-hint { margin: 10px 0 0; }
 
 /* 🧙 Scrying portals — the same violet-void surface and gilded focus the
    #term-modal picker above uses; scoped so sibling .modal dialogs keep theirs. */
@@ -13998,8 +13965,7 @@ body.wizard #term-chooser-modal h3 {
 }
 body.wizard #term-chooser-modal .term-chooser-meta,
 body.wizard #term-chooser-modal .term-choice-section,
-body.wizard #term-chooser-modal .term-choice-desc,
-body.wizard #term-chooser-modal .term-chooser-hint { color: #ad9abb; }
+body.wizard #term-chooser-modal .term-choice-desc { color: #ad9abb; }
 body.wizard #term-chooser-modal .term-chooser-meta code { color: #d9b45a; }
 body.wizard #term-chooser-modal .term-choice {
   background: #1e1629; border-color: #59466b; color: #e7d9f5;
@@ -14041,8 +14007,7 @@ body.wizard #profile-editor-modal .cron-create-modal h3 {
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
 body.wizard #profile-editor-modal .cron-create-label,
-body.wizard #profile-editor-modal .spawn-perms-indicator,
-body.wizard #profile-editor-modal .spawn-field-hint { color: #b39ddb; }
+body.wizard #profile-editor-modal .spawn-perms-indicator { color: #b39ddb; }
 body.wizard #profile-editor-modal .cron-create-row input[type=text],
 body.wizard #profile-editor-modal .cron-create-row input:not([type]),
 body.wizard #profile-editor-modal .cron-create-row select:where(:not(.ui-select)),
@@ -14173,7 +14138,6 @@ body.wizard #export-agent-modal .cron-create-row select:where(:not(.ui-select)) 
 }
 /* "Clone into the same group" toggle + its hint. */
 body.wizard #export-agent-modal .export-same-group { color: #e7d9f5; }
-body.wizard #export-agent-modal .export-same-group-hint { color: #b39ddb; }
 /* The working phase: spinner caption + note go parchment/violet, and the
    spinner itself spins tarnished-gold on a violet track (from arcane blue). */
 body.wizard #export-agent-modal .export-status-note { color: #b39ddb; }
@@ -14416,8 +14380,7 @@ body.wizard #task-link-modal .modal h3 {
 body.wizard #task-link-modal .modal-meta {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
-body.wizard #task-link-modal .field label,
-body.wizard #task-link-modal .task-link-hint { color: #b39ddb; }
+body.wizard #task-link-modal .field label { color: #b39ddb; }
 body.wizard #task-link-modal .field input {
   background: #140f28; border-color: rgba(122, 93, 176, 0.6); color: #e7d9f5;
 }
@@ -15786,8 +15749,7 @@ body.wizard #group-context-modal .cron-create-modal h3 {
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
-body.wizard #group-context-modal .cron-create-label,
-body.wizard #group-context-modal .modal-hint { color: #b39ddb; }
+body.wizard #group-context-modal .cron-create-label { color: #b39ddb; }
 body.wizard #group-context-modal .modal-meta {
   background: #140f28;
   border-left-color: #d9b45a;
@@ -16601,7 +16563,6 @@ body.wizard .mailbox-section-toggle {
   text-shadow: 0 0 6px rgba(217, 180, 90, 0.25);
 }
 body.wizard .mailbox-section-toggle:hover { color: #f3e6c0; }
-body.wizard .mailbox-section-help { color: #9a86c4; }
 body.wizard .mailbox { border: 1px solid #33284d; color: #d8cef0; }
 body.wizard .mailbox:hover { background: #241b3d; border-color: #7a5db0; }
 body.wizard .mailbox.active {
@@ -19393,7 +19354,6 @@ body.wizard .usage-card-footer.usage-forecast.danger strong { color: #f0a3bf; }
 body.wizard .usage-history-note {
   background: #1c1436; border-color: rgba(122, 93, 176, 0.4); color: #b39ddb;
 }
-body.wizard .usage-history-error { color: #f0a3bf; }
 /* Groups route map (TCL-956): a read-only authority surface. The graph uses
    the process editor's restrained node/edge vocabulary without exposing
    endpoint, target, credential, or payload data. */
@@ -19483,7 +19443,7 @@ body.wizard .usage-history-error { color: #f0a3bf; }
 .git-repositories-modal > :not(.git-repos-list) { flex-shrink: 0; }
 .git-repos-heading h3 { margin: 0 0 8px; }
 .git-repos-heading p { margin: 4px 0; }
-.git-repos-hint { color: #91a0b3; font-size: 12px; margin: 0; }
+.git-repos-hint { margin: 0; }
 .git-repos-options { background: #101720; border: 1px solid #2d3947; border-radius: 6px; padding: 12px; }
 .git-repos-options label { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
 .git-repos-options label + label { margin-top: 12px; }
@@ -19509,7 +19469,7 @@ body.wizard .usage-history-error { color: #f0a3bf; }
 .git-repo-badge { min-width: 63px; text-align: center; font-size: 10px; padding: 3px 6px; border-radius: 4px; background: #243142; color: #b8c6d7; }
 .git-repo-badge.clean, .git-repo-badge.updated { color: #8bc9aa; background: #20352e; }
 .git-repo-badge.dirty, .git-repo-badge.skipped { color: #e0b785; background: #3b3023; }
-.git-repo-badge.failed, .git-repos-error { color: #f1a2a2; }
+.git-repo-badge.failed { color: #f1a2a2; }
 .git-repo-detail { padding: 0 10px 8px 34px; font-size: 11px; color: #aebccc; overflow-wrap: anywhere; white-space: pre-wrap; }
 .git-repos-issues { font-size: 12px; color: #91a0b3; }
 .git-repos-issues ul { max-height: 80px; overflow: auto; }
@@ -19525,8 +19485,10 @@ body.wizard .git-repositories-modal input[type=checkbox] { accent-color: #a97bd6
 body.wizard .git-repositories-modal button:where(:not(.ui-btn)) { background: #30253f; border-color: #655080; color: #e7d9f5; }
 body.wizard .git-repositories-modal button:is(.primary, .ui-btn-primary) { background: #76539c; border-color: #a97bd6; }
 body.wizard .git-repositories-modal button:where(:not(.ui-btn)).danger { border-color: #c57e89; }
-body.wizard .git-repos-hint, body.wizard .git-repo-name small, body.wizard .git-repo-groups,
-body.wizard .git-repos-options small, body.wizard .git-repos-footer > span { color: #b39ddb; }
+body.wizard .git-repo-name small,
+body.wizard .git-repo-groups,
+body.wizard .git-repos-options small,
+body.wizard .git-repos-footer > span { color: #b39ddb; }
 body.wizard .git-repos-options small.git-repos-warning { color: #e6bd89; }
 @media (max-width: 650px) {
   .git-repositories-modal { padding: 14px; }
@@ -19973,7 +19935,7 @@ tr.presence-row-visiting > td { background: rgba(110, 118, 129, 0.06); }
 tr.away-placeholder > td { opacity: .6; font-style: italic; }
 tr.away-placeholder .away-dot { color: #6e7681; margin-left: 4px; }
 tr.away-placeholder .away-goto { font-style: normal; margin-left: 8px; font-size: 11px; }
-.group-away-hint { margin-left: 4px; font-size: 11px; color: #8b949e; }
+.group-away-hint { margin-left: 4px; }
 @keyframes presence-flash { from { background: rgba(88, 166, 255, 0.35); } to { background: transparent; } }
 tr.presence-flash > td { animation: presence-flash 1.6s ease-out; }
 /* Drop landing (drop-landing.js): where a confirmed drag ended up. A fixed

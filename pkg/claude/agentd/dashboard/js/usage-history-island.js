@@ -224,7 +224,7 @@ export function UsageHistoryApp({ state, actions }) {
         need to wait on the island's repaint. aria-hidden: it is decorative
         chrome, and the nav tab already names the tab for a screen reader. */''}
     <h2 class="usage-wizard-title" aria-hidden="true">🔮 The Mana Reserves</h2>
-    <${AsyncLoadState} label=${w('Usage', 'Reserves')} request=${current.request} retry=${actions.load} errorClass="usage-history-error" />
+    <${AsyncLoadState} label=${w('Usage', 'Reserves')} request=${current.request} retry=${actions.load} errorClass="usage-history-error ui-error" />
     ${current.request.hasLoaded && html`<${Fragment}>
       <${UsageCoverageWarnings} warnings=${current.payload?.coverage_warnings}
         generatedAt=${current.payload?.generated_at} />

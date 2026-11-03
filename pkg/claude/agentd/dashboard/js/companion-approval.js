@@ -114,7 +114,7 @@ function ConfirmedAction({ className = '', openClass = 'steward-shutdown-open', 
       title=${title} onClick=${() => { setError(''); setAsking((value) => (value ? false : 'here')); }}>${glyph}</button>`}
     ${asking && html`<div class="steward-shutdown-confirm" role="alertdialog" aria-label=${label}>
       <p>${question}</p>
-      ${error && html`<p class="steward-shutdown-error" role="alert">${error}</p>`}
+      ${error && html`<p class="steward-shutdown-error ui-error" role="alert">${error}</p>`}
       <div class="steward-shutdown-actions">
         <${Button} size="sm" disabled=${busy} onClick=${() => setAsking(false)}>Cancel<//>
         <${Button} size="sm" variant="danger" disabled=${busy} onClick=${run}>${busy ? busyLabel : confirm}<//>

@@ -206,7 +206,7 @@ function ToolbarProfileControl({ kind, state, actions }) {
     <option value="">${copy.none}</option>
     ${choices.map((choice) => html`<option key=${choice.value} value=${choice.value}>${choice.label}</option>`)}
     ${missing ? html`<option value=${current}>${current} (missing)</option>` : null}
-  <//>${error ? html`<span id=${errorID} class="toolbar-profile-error" role="alert" title=${error}>⚠ ${error}</span>` : null}</${Fragment}>`;
+  <//>${error ? html`<span id=${errorID} class="toolbar-profile-error ui-error" role="alert" title=${error}>⚠ ${error}</span>` : null}</${Fragment}>`;
 }
 
 // ToolbarUsageProfile is the 💰 global default usage profile. While the
