@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -337,28 +338,61 @@ func TestPageStaticForACodexAgentWithNoSandboxIsReadBackUnlessRequirementsApply(
 	for label, verdict := range map[string]struct {
 		state      string
 		unverified bool
-	}{"fscodexoff": {}, "fscodexmanaged": {"on", false}, "fscodexmaybe": {"on", true}} {
-		t.Run(label, func(t *testing.T) {
-			e := newPageEnv(t)
-			a := e.agent(t, label, true)
-			site := staticSite(t, a.cwd)
-			e.sandboxAgent(t, a, "harness-builtin", nil, func(row *db.SessionRow) {
-				row.Harness = "codex"
-				row.HarnessBuiltinMode = "danger-full-access"
-				row.OSSandboxState = verdict.state
-				row.OSSandboxUnverified = verdict.unverified
+	}{"fscodexold": {}, "fscodexoff": {"off", false}, "fscodexmanaged": {"on", false}, "fscodexmaybe": {"on", true}} {
+		// resource-only (like off) launches Codex in danger-full-access too.
+		for _, implementation := range []string{"harness-builtin", "resource-only"} {
+			t.Run(label+"/"+implementation, func(t *testing.T) {
+				e := newPageEnv(t)
+				a := e.agent(t, label+strings.ReplaceAll(implementation, "-", ""), true)
+				site := staticSite(t, a.cwd)
+				e.sandboxAgent(t, a, implementation, nil, func(row *db.SessionRow) {
+					row.Harness = "codex"
+					row.HarnessBuiltinMode = "danger-full-access"
+					row.OSSandboxState = verdict.state
+					row.OSSandboxUnverified = verdict.unverified
+				})
+				p, rec := e.show(t, a, site, "site", "")
+				require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+				code, _ := e.frame(t, p.Origin, "/")
+				require.Equal(t, http.StatusOK, code, "the operator sees the page either way")
+				unconfined := verdict.state != "on"
+				if unconfined {
+					e.stubSnapshot(t)
+				}
+				e.assertReadBack(t, a, p, "site", unconfined)
 			})
-			p, rec := e.show(t, a, site, "site", "")
-			require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-			code, _ := e.frame(t, p.Origin, "/")
-			require.Equal(t, http.StatusOK, code, "the operator sees the page either way")
-			unconfined := verdict.state == ""
-			if unconfined {
-				e.stubSnapshot(t)
-			}
-			e.assertReadBack(t, a, p, "site", unconfined)
-		})
+		}
 	}
+}
+
+// A resume reuses the session row: its "off" replaces the previous launch's
+// "on", so the page is read back again.
+func TestPageStaticForACodexAgentFollowsItsLatestRequirementsVerdict(t *testing.T) {
+	t.Cleanup(agentd.SetPageFSViewRecheckForTest(0))
+	e := newPageEnv(t)
+	a := e.agent(t, "fscodexresume", true)
+	site := staticSite(t, a.cwd)
+	codex := func(state string) func(*db.SessionRow) {
+		return func(row *db.SessionRow) {
+			row.Harness = "codex"
+			row.HarnessBuiltinMode = "danger-full-access"
+			row.OSSandboxState = state
+			row.OSSandboxUnverified = false
+		}
+	}
+	e.sandboxAgent(t, a, "harness-builtin", nil, codex("on"))
+	p, rec := e.show(t, a, site, "site", "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	e.assertReadBack(t, a, p, "site", false)
+
+	e.sandboxAgent(t, a, "harness-builtin", nil, codex("off"))
+	row, err := db.FindSessionByConvID(a.conv)
+	require.NoError(t, err)
+	require.Equal(t, "off", row.OSSandboxState, "the upsert keeps a recorded verdict")
+	code, _ := e.frame(t, p.Origin, "/")
+	require.Equal(t, http.StatusOK, code)
+	e.stubSnapshot(t)
+	e.assertReadBack(t, a, p, "site", true)
 }
 
 func TestPageStaticFollowsTheAgentsNextGeneration(t *testing.T) {

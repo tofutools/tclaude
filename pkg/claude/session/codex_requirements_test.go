@@ -14,8 +14,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-// A danger-full-access Codex launch keeps no verdict only when Codex reports
-// no managed requirements. Requirements that leave danger-full-access out
+// A danger-full-access Codex launch records "off" only when Codex reports no
+// managed requirements. Requirements that leave danger-full-access out
 // record a verified "on"; any other requirement, or a failed read, an
 // unverified one. Other launches never run Codex.
 func TestVerifyCodexSandboxOff(t *testing.T) {
@@ -35,13 +35,18 @@ func TestVerifyCodexSandboxOff(t *testing.T) {
 	}))
 	builtin := sandboxpolicy.ImplementationHarnessBuiltin
 	verify := func(h *harness.Harness, impl sandboxpolicy.Implementation, mode string) harness.LaunchOSSandbox {
-		return VerifyCodexSandboxOff(h, impl, mode, "/work", nil, harness.LaunchOSSandbox{})
+		v, checked := VerifyCodexSandboxOff(h, impl, mode, "/work", nil)
+		if !checked {
+			assert.Equal(t, harness.LaunchOSSandbox{}, v)
+		}
+		return v
 	}
 
+	none := harness.LaunchOSSandbox{State: "off", Source: "Codex reports no managed requirements"}
 	reply = json.RawMessage(`{"requirements":null}`)
-	assert.Equal(t, harness.LaunchOSSandbox{}, verify(codex, builtin, off), "no managed requirements: the mode stands")
+	assert.Equal(t, none, verify(codex, builtin, off), "no managed requirements: off, and recorded, so a resume overwrites an earlier on")
 	reply = json.RawMessage(`{}`)
-	assert.Equal(t, harness.LaunchOSSandbox{}, verify(codex, builtin, off), "an older server that omits the field")
+	assert.Equal(t, none, verify(codex, builtin, off), "an older server that omits the field")
 
 	reply = json.RawMessage(`{"requirements":{"allowedSandboxModes":["read-only","workspace-write"]}}`)
 	assert.Equal(t, harness.LaunchOSSandbox{State: "on",
@@ -61,6 +66,13 @@ func TestVerifyCodexSandboxOff(t *testing.T) {
 	reply, replyErr = nil, errors.New("no codex")
 	assert.Equal(t, harness.LaunchOSSandbox{State: "on", Unverified: true,
 		Source: "Codex managed requirements could not be read: no codex"}, verify(codex, builtin, off))
+
+	calls = 0
+	for _, impl := range []sandboxpolicy.Implementation{sandboxpolicy.ImplementationOff, sandboxpolicy.ImplementationResourceOnly} {
+		_, checked := VerifyCodexSandboxOff(codex, impl, off, "/work", nil)
+		assert.True(t, checked, "%s launches Codex in danger-full-access too", impl)
+	}
+	assert.Equal(t, 2, calls)
 
 	calls = 0
 	verify(codex, builtin, "workspace-write")

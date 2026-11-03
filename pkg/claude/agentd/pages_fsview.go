@@ -152,16 +152,19 @@ func pageFSHarnessWallOff(row *db.SessionRow) bool {
 	// (Codex managed requirements keep its sandbox on, or may:
 	// session.VerifyCodexSandboxOff).
 	off, err := harness.SandboxOffMode(h)
-	return err == nil && row.HarnessBuiltinMode == off && row.OSSandboxState == "" && !row.OSSandboxUnverified
+	return err == nil && row.HarnessBuiltinMode == off && row.OSSandboxState != "on" && !row.OSSandboxUnverified
 }
 
-// pageFSClaudeVerdictOff says a launch is not one Claude Code still
-// confines: a managed policy can keep its sandbox on even when tclaude
-// launches it with none, and then only the launch-time verdict tells.
+// pageFSClaudeVerdictOff says a launch with no wall is not one its harness
+// still confines: a managed policy can keep Claude Code's or Codex's sandbox
+// on even when tclaude launches it with none, and then only the launch-time
+// verdict tells.
 func pageFSClaudeVerdictOff(row *db.SessionRow) bool {
 	h, ok := harness.Get(row.Harness)
 	if ok && h.Name != harness.DefaultName {
-		return true
+		// Codex launched with no wall still runs danger-full-access, which
+		// its managed requirements can overrule (session.VerifyCodexSandboxOff).
+		return row.OSSandboxState != "on" && !row.OSSandboxUnverified
 	}
 	return row.OSSandboxState == harness.ClaudeSandboxOff && !row.OSSandboxUnverified
 }

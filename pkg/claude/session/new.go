@@ -2055,8 +2055,10 @@ func runNew(params *NewParams) error {
 		if launchSandbox != nil {
 			requirementsEnvironment = sandboxpolicy.EnvironmentForLaunch(launchSandbox)
 		}
-		launchOSSandbox = VerifyCodexSandboxOff(h, sandboxImplementation,
-			harnessBuiltinMode, cwd, requirementsEnvironment, launchOSSandbox)
+		if verdict, checked := VerifyCodexSandboxOff(h, sandboxImplementation,
+			harnessBuiltinMode, cwd, requirementsEnvironment); checked {
+			launchOSSandbox = verdict
+		}
 	}
 
 	launchCreated := time.Now()

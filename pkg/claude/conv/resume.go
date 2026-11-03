@@ -314,6 +314,15 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 	// fresh launch, so it has the same tmux ~16KB argv cliff and the same
 	// ps-visible-credentials exposure the spawn path already fixed.
 	launchStarted := time.Now()
+	// A no-sandbox Codex launch's managed requirements (codex_requirements.go),
+	// read before the pane starts, with the environment it launches with.
+	var codexEnvironment []sandboxpolicy.EnvironmentEntry
+	if launchEffectiveSandbox != nil {
+		codexEnvironment = sandboxpolicy.EnvironmentForLaunch(launchEffectiveSandbox)
+	}
+	codexImplementation, _ := resumeSandboxImplementation(rc.ConvID)
+	codexVerdict, codexChecked := session.VerifyCodexSandboxOff(h, codexImplementation,
+		resumeHarnessBuiltinMode(rc.ConvID), rc.ProjectPath, codexEnvironment)
 	if err := session.LaunchResumedTmuxSession(sessionID, tmuxSession, rc.ProjectPath, launchCmd, h.Name,
 		session.CodexProfileMarkerArgs(profilePath)...); err != nil {
 		fmt.Fprintf(stderr, "Failed to create tmux session: %v\n", err)
@@ -338,8 +347,9 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 	if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
 		launchOSSandbox = resumeTclaudeLayerLaunchOSSandbox(rc.ConvID)
 	}
-	launchOSSandbox = session.VerifyCodexSandboxOff(h, resumeImplementation, resumeMode,
-		rc.ProjectPath, nil, launchOSSandbox)
+	if codexChecked {
+		launchOSSandbox = codexVerdict
+	}
 	state := &session.SessionState{
 		ID:                       sessionID,
 		TmuxSession:              tmuxSession,

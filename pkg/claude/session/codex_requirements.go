@@ -24,8 +24,9 @@ import (
 // Any other requirement may force the fallback too (a filesystem deny_read
 // does, and is not on the wire), as may one tclaude failed to read, so those
 // launches record an unverified "on". A launch is taken as unconfined only
-// when Codex reports no managed requirements at all; its verdict then stays
-// unrecorded, as for any Codex launch, and its mode states its posture.
+// when Codex reports no managed requirements at all, and records "off". Every
+// such launch records a verdict, so a resume, which reuses its session row,
+// never keeps the previous launch's.
 //
 // The verdict is for the record (the dashboard's badge, a live page's
 // read-back), not for access enforcement, which is planned from the mode.
@@ -52,28 +53,32 @@ func SetCodexRequirementsProbeForTest(read func(cwd string, environment []sandbo
 // source, which is persisted and shown.
 const maxCodexRequirementsDetail = 200
 
-// VerifyCodexSandboxOff checks a harness-builtin Codex launch that asks for no
-// sandbox against Codex's managed requirements, and records an "on" verdict
-// when they keep Codex's sandbox on, or may. Any other launch is returned
-// unchanged, without running Codex.
+// VerifyCodexSandboxOff checks a Codex launch that asks for no sandbox
+// (danger-full-access, under its own sandbox or none: off, resource-only)
+// against Codex's managed requirements. checked says it was such a launch;
+// the verdict is then "on" when they keep Codex's sandbox on, or may, and
+// "off" otherwise, and replaces the launch's recorded one. Any other launch
+// is not checked, and Codex is not run.
 func VerifyCodexSandboxOff(
 	h *harness.Harness,
 	implementation sandboxpolicy.Implementation,
 	mode, cwd string,
 	environment []sandboxpolicy.EnvironmentEntry,
-	verdict harness.LaunchOSSandbox,
-) harness.LaunchOSSandbox {
-	if h == nil || h.Name != harness.CodexName || implementation != sandboxpolicy.ImplementationHarnessBuiltin {
-		return verdict
+) (verdict harness.LaunchOSSandbox, checked bool) {
+	if h == nil || h.Name != harness.CodexName ||
+		(implementation != sandboxpolicy.ImplementationHarnessBuiltin && !implementation.OmitsOSConfinement()) {
+		return harness.LaunchOSSandbox{}, false
 	}
 	if off, err := harness.SandboxOffMode(h); err != nil || mode != off {
-		return verdict
+		return harness.LaunchOSSandbox{}, false
 	}
 	note, applies, certain := codexRequirementsVerdict(cwd, environment)
 	if !applies {
-		return verdict
+		// Recorded, not left empty: a resume reuses its session row, and an
+		// empty verdict would keep the previous launch's "on".
+		return harness.LaunchOSSandbox{State: "off", Source: "Codex reports no managed requirements"}, true
 	}
-	return harness.LaunchOSSandbox{State: "on", Source: note, Unverified: !certain}
+	return harness.LaunchOSSandbox{State: "on", Source: note, Unverified: !certain}, true
 }
 
 // codexRequirementsVerdict says whether Codex's managed requirements keep its

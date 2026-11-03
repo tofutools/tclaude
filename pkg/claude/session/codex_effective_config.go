@@ -52,6 +52,11 @@ const codexEffectiveConfigWaitDelay = 2 * time.Second
 // test.
 var codexEffectiveConfigTimeout = 45 * time.Second
 
+// codexRequirementsTimeout bounds the managed-requirements read, which only
+// shapes the launch's record (codex_requirements.go) and runs on resume paths
+// where the pane is already up. A timeout records an unverified "on".
+var codexRequirementsTimeout = 10 * time.Second
+
 // setCodexEffectiveConfigTimeoutForTest shrinks the probe deadline for the
 // duration of one test. It exists so the constraint above is enforced by the
 // helper rather than only described in a comment.
@@ -227,14 +232,13 @@ func readCodexAppServerJSON(
 	params any,
 	overrides ...string,
 ) (json.RawMessage, error) {
-	label, what := "codex_effective_config", "effective-config"
+	label, what, timeout := "codex_effective_config", "effective-config", codexEffectiveConfigTimeout
 	if method != "config/read" {
-		label, what = "codex_requirements", "requirements"
+		label, what, timeout = "codex_requirements", "requirements", codexRequirementsTimeout
 	}
 	timing := config.StartupTiming(label)
 	defer timing("return_after_cleanup")
-	ctx, cancel := context.WithTimeout(
-		context.Background(), codexEffectiveConfigTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	// exec.Command resolves the binary against the PARENT process PATH at
@@ -383,7 +387,7 @@ func readCodexAppServerJSON(
 		_ = finish(true)
 		return nil, fmt.Errorf(
 			"the Codex app-server %s read did not answer within %s%s",
-			what, codexEffectiveConfigTimeout, diagnostics.suffix())
+			what, timeout, diagnostics.suffix())
 	}
 	if err := scanner.Err(); err != nil {
 		_ = finish(true)
