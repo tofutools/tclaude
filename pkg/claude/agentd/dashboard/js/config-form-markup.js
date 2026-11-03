@@ -240,7 +240,7 @@ function ExternalStewardGroup({ loads }) {
       <${Toggle} id="cfg-steward-external-enabled" />
     </${Setting}>
     ${info?.tools?.length > 0 && html`<${Setting} title="What it can do" wide summary="These are all the tools it gets.">
-      <table class="cfg-tool-list">
+      <table class="cfg-tool-list ui-compact">
         <thead><tr><th scope="col">Tool</th><th scope="col">What it does</th><th scope="col">Who decides</th></tr></thead>
         <tbody>${info.tools.map(tool => html`<tr key=${tool.name}>
           <td><code>${tool.name}</code></td>
