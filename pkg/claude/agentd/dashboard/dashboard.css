@@ -4306,7 +4306,7 @@ details.cost-filter-menu[open] > summary::before { content: none; }
 .cost-ignored > summary span { color: #8b949e; }
 .cost-ignored p { margin: 6px 0; font-size: 12px; }
 .cost-ignored table { width: 100%; border-collapse: collapse; }
-.cost-ignored td { padding: 3px 6px; white-space: nowrap; width: 1%; }
+.cost-ignored td { white-space: nowrap; width: 1%; }
 .cost-ignored td:first-child { width: auto; max-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .cost-ignored .rowname { color: #8b949e; text-decoration: line-through; }
 .empty { color: #7d8590; font-style: italic; padding: 24px; text-align: center; }
@@ -8838,7 +8838,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .tpl-concepts-wizard { display: none; }
 .tpl-concepts-table { width: 100%; border-collapse: collapse; font-size: 11px; }
 .tpl-concepts-table th, .tpl-concepts-table td {
-  border: 1px solid #2a3340; padding: 4px 7px; text-align: left; vertical-align: top;
+  border: 1px solid #2a3340;
 }
 .tpl-concepts-table thead th { color: #7d8590; font-weight: 600; background: #161b22; }
 .tpl-concepts-table tbody th { color: #58a6ff; font-weight: 600; white-space: nowrap; }
@@ -10096,8 +10096,6 @@ body.wizard #tab-processes .process-scribe-wizard { display: inline; }
 .process-scribe-task { color: #79c0ff; font-size: 12px; }
 .process-notice { color: #8b949e; font-size: 12px; }
 .process-list table { width: 100%; border-collapse: collapse; }
-.process-list th, .process-list td { padding: 9px 10px; border-bottom: 1px solid #21262d; text-align: left; vertical-align: top; }
-.process-list th { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 /* Keep the action cell a real table-cell: `display: flex` on a <td> drops it
    out of the row's height sync, so on a taller (multi-line) row its bottom
    border lands above the neighbouring cells' and the row rule looks broken
@@ -13938,7 +13936,6 @@ body.wizard #activity-performance .empty { color: #8f7bbf; }
 .group-triggers-section > summary { display: flex; align-items: center; gap: 8px; padding: 6px 9px; cursor: pointer; font-size: 11px; }
 .group-triggers-section > summary > a { margin-left: auto; color: #58a6ff; }
 .group-triggers-section table { margin: 0; width: 100%; font-size: 10px; }
-.group-triggers-section th, .group-triggers-section td { padding: 4px 9px; }
 .group-triggers-section td:first-child .trigger-scope { margin-left: 6px; }
 .group-triggers-section > .muted { display: block; padding: 5px 9px; }
 
@@ -16783,8 +16780,7 @@ body.wizard .usage-history-note {
 .route-map-empty-graph { margin: 0; padding: 16px; color: var(--muted, #8b949e); font-size: 12px; }
 .route-map-table-wrap { overflow: auto; border: 1px solid var(--border, #30363d); border-radius: 7px; background: var(--panel, #0d1117); }
 .route-map-table { width: 100%; min-width: 740px; border-collapse: collapse; font-size: 12px; }
-.route-map-table th { padding: 8px 9px; text-align: left; color: var(--muted, #8b949e); border-bottom: 1px solid var(--border, #30363d); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
-.route-map-table td { padding: 8px 9px; vertical-align: top; border-bottom: 1px solid var(--border, #21262d); color: var(--text, #e6edf3); }
+.route-map-table td { color: var(--text, #e6edf3); }
 .route-map-table tbody tr { cursor: pointer; }
 .route-map-table tbody tr:hover, .route-map-table tbody tr.is-selected { background: rgba(88, 166, 255, .09); }
 .route-map-table td:first-child { display: flex; flex-direction: column; gap: 3px; }
@@ -18465,7 +18461,7 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
 .usage-rules-node { font-size: 12px; font-weight: normal; color: #8b949e; margin-left: 6px; }
 .usage-fleet-h { margin: 14px 0 6px; font-size: 13px; color: #e6edf3; }
 .usage-fleet-members, .usage-fleet-nodes { width: 100%; border-collapse: collapse; font-size: 12px; }
-.usage-fleet-members td, .usage-fleet-nodes td, .usage-fleet-nodes th { padding: 3px 6px; border-bottom: 1px solid #1c2128; text-align: left; vertical-align: middle; }
+.usage-fleet-members td, .usage-fleet-nodes :is(th, td) { vertical-align: middle; }
 .usage-fleet-nodes th { color: #8b949e; font-weight: normal; }
 .usage-fleet-members td.num, .usage-fleet-nodes .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .usage-fleet-members tr.muted td { color: #6e7681; }
@@ -18574,12 +18570,9 @@ body.wizard .dpp-acts .dpp-start { background: #6e40c9; border-color: #8957e5; }
 body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e566; }
 /* Auto-close terminal tabs: event rows × terminal-kind columns of checkboxes. */
 .cfg-close-tabs { border-collapse: collapse; font-size: 12px; }
-.cfg-close-tabs th, .cfg-close-tabs td { padding: 4px 10px; text-align: center; }
+.cfg-close-tabs :is(th, td) { text-align: center; }
 .cfg-close-tabs thead th { color: #7d8590; font-weight: 500; }
 .cfg-close-tabs tbody th { text-align: left; font-weight: 500; white-space: nowrap; }
-@media (max-width: 600px) {
-  .cfg-close-tabs th, .cfg-close-tabs td { padding: 4px 5px; }
-}
 
 /* lock-reason.js: a control another node withholds keeps its place, disabled,
    with a 🔒 whose hover or focus names the missing grant; the node chip is a

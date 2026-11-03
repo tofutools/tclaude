@@ -2372,7 +2372,7 @@ function Concepts() {
           group disables them (a later resume re-enables them).
         </li>
       </ul>
-      <table class="tpl-concepts-table">
+      <table class="tpl-concepts-table ui-compact">
         <thead>
           <tr>
             <th></th>
@@ -2438,7 +2438,7 @@ function Concepts() {
           the ranks stills them (a later resume wakes them again).
         </li>
       </ul>
-      <table class="tpl-concepts-table">
+      <table class="tpl-concepts-table ui-compact">
         <thead>
           <tr>
             <th></th>
