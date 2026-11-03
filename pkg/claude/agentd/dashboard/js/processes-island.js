@@ -15,8 +15,8 @@ import { NodeSection, fusedPeers, openOnNode, peerRequestMutation, usePeerSectio
 import { shellConfirm, shellToast } from './shell-state.js';
 import { overlayHostUp } from './overlay-instances.js';
 import {
-  editorDirty, floatHandoff, floatingProcessEditor, floatingProcessTab, paletteEditor, processEditorMount, processShortcutLive,
-  registerProcessEditorHost, returningEditor, showProcessEditorError, takeReturningEditor, trackTouchedEditor,
+  editorDirty, floatHandoff, floatingProcessEditor, floatingProcessTab, paletteEditor, processDocked, processEditorMount, processShortcutLive,
+  registerProcessEditorHost, returningEditor, showProcessEditorError, stripProcesses, takeReturningEditor, trackTouchedEditor,
 } from './process-editor-place.js';
 import {
   TO_DASHBOARD_LABEL, announceSolo, editorBack, heldForWindow, installProcessWindows, isProcessSolo, openerFloats, openerTakesBack,
@@ -100,7 +100,7 @@ export function processEditorConfig({ mount, readable = false, state, actions, c
     readableOpen: readable, confirmDiscard,
     isShortcutActive: () => processShortcutLive(mount, () => state.view.value.active),
     // Ctrl/Cmd+O leaves for the template list, which only the docked editor has.
-    onOpenTemplates: () => (isProcessSolo() || mount.closest?.('.process-overlay') ? false : actions?.activateSubtab?.('templates')),
+    onOpenTemplates: () => (isProcessSolo() || !processDocked(mount) ? false : actions?.activateSubtab?.('templates')),
     onOpenTemplate: actions?.openReferencedTemplate,
     templateRefs: () => state.view.value.templates, onScribe: actions?.summonScribe,
     scribeDock: actions?.openScribe ? { scribes: () => state.view.value.scribes, openTerminal: actions.openScribe } : null,
@@ -298,6 +298,7 @@ export function mountProcessesIsland({ host, state, actions, confirmDiscard, reg
       void actions.openEditor(id, false, name, { live });
       document.querySelector('nav [data-tab="processes"]')?.click();
     },
+    release: (id) => actions.releaseEditor?.(id) || null,
     canLeave,
     confirmDiscard,
   }));
@@ -328,7 +329,7 @@ export function mountProcessesIsland({ host, state, actions, confirmDiscard, reg
       // It answers once an editor here has taken the draft up, so the window
       // keeps it until then, and takes none for a template already open here.
       open: async (id, name, handoff, { overlay }) => {
-        if (floatingProcessTab(id) || state.canvas.value?.id === id) return false;
+        if (floatingProcessTab(id) || stripProcesses.peek().includes(id) || state.canvas.value?.id === id) return false;
         if (overlay && overlayHostUp.peek()) return floatHandoff(id, name, handoff);
         if (!(await canLeave())) return false;
         return new Promise((resolve) => {

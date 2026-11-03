@@ -27,6 +27,7 @@
 // so the next hard refresh lands somewhere they never were. See classifyChange.
 
 import { boardPaneKey, isBoardId } from './board-model.js';
+import { isProcessTemplateId, processPaneKey } from './process-pane-model.js';
 
 const RESTORE_EVENT = 'tclaude:restore-location';
 const NAVIGATED_EVENT = 'tclaude:navigated';
@@ -76,12 +77,19 @@ function knownAgent(snapshotValue, agent) {
 // openWebWindowPane the "focus this agent" row action uses, which is what makes
 // a deep link land on exactly the pane a click would have produced.
 //
-// Board tabs live in the same strip under their own route (/boards/<id>), so a
-// location here is either kind. selectionOf keeps the two id spaces apart.
+// Board and process tabs live in the same strip under their own routes
+// (/boards/<id>, /collab/processes/<id>), so a location here is any of the
+// three kinds. selectionOf keeps the id spaces apart.
 function selectionOf(location) {
   const selection = location?.selection ? String(location.selection) : '';
-  return selection && location.tab === 'boards' ? boardPaneKey(selection) : selection;
+  if (selection && location.tab === 'boards') return boardPaneKey(selection);
+  if (selection && location.tab === COLLAB_PROCESSES) return processPaneKey(selection);
+  return selection;
 }
+
+// A process tab's route, /collab/processes/<template-id> (tcl-tnbtwp).
+const COLLAB_PROCESSES = 'collab-processes';
+const STRIP_TABS = new Set(['terminals', 'boards', COLLAB_PROCESSES]);
 
 // `isTabActive()` reports whether the Terminals section is the one on screen.
 // A pane change while the operator is looking at another tab is never their
@@ -90,6 +98,7 @@ export function bindTerminalNavRouting({
   state,
   openAgentPane,
   openBoardPane = () => null,
+  openProcessPane = () => null,
   snapshot = null,
   documentRef = globalThis.document,
   isTabActive = () => !!documentRef?.getElementById('tab-terminals')?.classList?.contains('active'),
@@ -136,6 +145,14 @@ export function bindTerminalNavRouting({
       if (state.panes.value.some((pane) => pane.key === key)) return state.activatePane(key);
       return !!(await openBoardPane(loc.selection));
     }
+    if (loc.tab === COLLAB_PROCESSES) {
+      if (!loc.selection) { state.requestBoardMenu('processes'); return false; }
+      if (!isProcessTemplateId(loc.selection)) return false;
+      const key = processPaneKey(loc.selection);
+      if (state.panes.value.some((pane) => pane.key === key)) return state.activatePane(key);
+      const opened = await openProcessPane(loc.selection);
+      return !!opened && !opened.floating;
+    }
     const agent = loc?.selection ? String(loc.selection) : '';
     // A bare /terminals is honoured by any open pane; there is no single
     // terminal it names, so whatever is active stays active.
@@ -156,7 +173,7 @@ export function bindTerminalNavRouting({
 
   const onRestore = (event) => {
     const loc = event?.detail?.location;
-    if (loc?.tab !== 'terminals' && loc?.tab !== 'boards') return;
+    if (!STRIP_TABS.has(loc?.tab)) return;
     restoring += 1;
     restoreGeneration += 1;
     const generation = restoreGeneration;

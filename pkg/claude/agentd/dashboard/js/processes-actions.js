@@ -8,7 +8,7 @@ import {
 } from './process-scribe.js';
 import { randomUUID } from './insecure-origin.js';
 import { focusOverlayWindow, openOverlayWindow, overlayHostUp } from './overlay-instances.js';
-import { floatProcessEditor, floatingProcessTab, returnLiveEditor, takeFloatingEditor } from './process-editor-place.js';
+import { floatProcessEditor, floatingProcessTab, returnLiveEditor, revealProcessTab, takeFloatingEditor } from './process-editor-place.js';
 import { editorToWindow, processEditorAway } from './process-editor-window.js';
 
 export function processActorPresentation(snapshot, actor) {
@@ -164,6 +164,11 @@ export function createProcessesActions({
     if (elsewhere) {
       elsewhere.focus?.();
       state.setNotice(`${called} is open in a separate window.`);
+      return false;
+    }
+    // One open as a Collab tab comes forward there.
+    if (!blank && !live && !handoff && revealProcessTab(id)) {
+      state.setNotice(`${called} is open in a Collab tab.`);
       return false;
     }
     let floating = !blank && !live && !handoff ? floatingProcessTab(id) : null;
@@ -653,6 +658,20 @@ export function createProcessesActions({
     void load('templates', { quiet: true });
     return true;
   }
+  // releaseEditor lets the open editor of template id go, as it is, to a place
+  // that takes it (a Collab tab), and answers it: { mount, editor, label }.
+  function releaseEditor(id) {
+    const editor = state.currentEditor();
+    const spec = state.canvas.value;
+    if (!editor || !spec?.id || spec.blank || spec.id !== id) return null;
+    const label = editor.model?.template?.name || spec.name || spec.id;
+    const shown = state.view.value.active;
+    state.setEditor(null); state.setCanvas(null);
+    state.setNotice(`${label} is open in a Collab tab.`);
+    if (shown) announceLocation();
+    void load('templates', { quiet: true });
+    return { mount: editor.mount, editor, label };
+  }
   // editorToSeparateWindow moves the open editor's draft to a browser window of
   // its own. Should that window close before it takes the draft up, the editor
   // comes back here as it was.
@@ -686,6 +705,6 @@ export function createProcessesActions({
     openScribe, stopScribe, retireScribe,
     openRename, closeRename, submitRename, renameTemplate, describeTemplate, deleteTemplate,
     openCreate, closeCreate, submitCreate,
-    closeCanvas, floatEditor, editorToSeparateWindow, refreshActive,
+    closeCanvas, floatEditor, releaseEditor, editorToSeparateWindow, refreshActive,
   });
 }
