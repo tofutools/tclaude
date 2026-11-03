@@ -6,10 +6,11 @@ tclaude does not build the page. It renders what the agent serves, in a
 sandboxed frame.
 
 !!! note "In progress"
-    So far the daemon's stage listener, its page sources and the agent commands
-    exist: an agent can show, update, list and close pages, and the dashboard
-    snapshot carries them. The dashboard's Page tab, drawing and live patches come
-    in later releases.
+    So far the daemon's stage listener, its page sources, the agent commands and
+    the dashboard's Page tab exist: an agent can show, update, list and close
+    pages, the operator uses them live in the Collab view and draws on top of
+    them, and the agent reads the marks, renders snapshots and reads the DOM.
+    Live patches come in a later release.
 
 ## Showing a page
 
@@ -62,6 +63,63 @@ rules.
 The dashboard snapshot lists the open pages (`live_pages`), each with a revision
 that changes whenever the page is shown or updated. The Page tab uses it.
 
+## In the dashboard
+
+![A live page in a Collab tab: the header names the agent, the target and the worktree, with the sandboxed chip, Reload, Open in overlay, Pop out and Close](assets/live-page-tab.png)
+
+A page an agent shows opens as a **Page** tab (◧) in the Collab strip, behind
+the tab you are on, so it never takes your focus. The tab has a dot until you
+look at it, and a toast says `<agent> showed <title> · Open`. A page shown
+again with the same name gets the dot again, and its open views reload. Pages
+that were already open when the dashboard loaded open quietly, with no toast.
+
+The header above the page says who showed it (a link to that agent's
+terminal), its target and worktree, and carries a **🔒 sandboxed** chip. Hover
+the chip for the page's origin and its rules, including that the agent that
+showed the page can read what you type in it. Then:
+
+- **Reload** loads the page again. Saved files under a static target and a
+  re-show reload it on their own.
+- **Open in overlay** floats it in an overlay window, and **Pop out** moves it
+  to a browser window of its own. Like a board, a page tab can be reordered,
+  grouped, dragged off the strip or onto an overlay window. A separate window
+  is the dashboard's own page with the same frame in it: the page's origin
+  never loads as a top-level page.
+- **Close**, or the tab's ×, closes the page for good. The agent is told in
+  its inbox. Moving a page between places does not close it.
+
+### Drawing on top
+
+![A live page in Draw mode: the boards' pen, arrow, box and text tools, the colours, undo, Clear, a note and Send to agent above the page, with a box and an arrow drawn over its form](assets/live-page-draw.png)
+
+**Interact** / **Draw** in the header switches what the pointer does. In Draw
+mode a layer over the page takes the boards' pen, arrow, box and text tools and
+colours (red first), with undo and **Clear**. The layer is the dashboard's, not
+the page's: the page cannot see or change the marks. Switch back to Interact to
+scroll or click; the marks stay where they were drawn on the page, because they
+are kept in page coordinates.
+
+When a mark ends, the page's probe names the elements under it: a short CSS path
+(`section#pay-area > button.pay`) and a text snippet. Type an optional note and
+press **Send to agent**. The marks, the note, the page's path, viewport and
+scroll go to the agent: its inbox gets `[page <name>] marks` with your note and
+how to read them. A note with no marks is a plain `[page <name>] note`. Nothing
+reaches the agent until you press Send. The batches are kept in memory with the
+page (the last 50) and end with it.
+
+The element paths and snippets come from the page, so they are treated as the
+page's content: checked, shown only as text, and kept out of the inbox message.
+
+When nothing answers for the page (the dev server stopped, say), the view says
+so and offers **Retry**. A page the agent closes leaves the dashboard. With
+Collab off, the Page tabs go away.
+
+The frame is `<iframe sandbox="allow-scripts allow-forms allow-modals" allow=""
+referrerpolicy="no-referrer" credentialless>`: no same-origin, pop-ups,
+downloads or top-level navigation, and no browser permissions. Titles and
+targets the agent wrote are shown as text. The page's URL, which carries its
+token, goes only into the frame.
+
 ### The page token is the key
 
 The stage admits a frame's `Origin: null` requests, because a sandboxed frame
@@ -69,10 +127,13 @@ has no other origin to send. So the 128-bit token in the page's host name is
 what decides who reaches the page. The token goes only to the local dashboard
 (its snapshot). It never goes to a linked instance's view, even an unrestricted
 one, and not to any agent, including the one that showed the page. That agent
-sees its page's origin with the token masked and acts on it by name. An agent
-holding the token could fetch its page itself, and so read files through the
-daemon's view of the file system (see the known limits below). Keeping the
-token from it also keeps it out of the agent's transcript, and out of a clone's.
+sees its page's origin with the token masked and acts on it by name. This keeps
+the token from being handed out; it does not make it unlearnable. The page's
+own code can read its host name and write it into what the agent reads back. An agent
+holding the token could fetch its page itself, but what a static page serves
+it is never read back unless the stage serves exactly what the agent's own
+sandbox shows (see Page sources), so it gains nothing it could not read. Keeping the token from it also keeps it out of the agent's
+transcript, and out of a clone's.
 
 ## Page sources
 
@@ -109,7 +170,30 @@ not the daemon's own.
   inside the worktree. Names that start with a dot (`.git`, `.env`) are refused,
   and only common web file types are served. A directory serves its
   `index.html`. A single-file page serves only that file. The target itself may
-  not be a hidden path. The daemon watches the
+  not be a hidden path.
+
+  How the files are reached depends on the agent's sandbox:
+
+  - *tclaude's sandbox on Linux:* the page is served through the agent's own
+    view of the file system (its mount namespace, through `/proc/<pid>/root`).
+    What the sandbox hides, overlays or binds applies exactly as it does for
+    the agent, even after the agent renames a directory. If that view cannot be
+    opened, for example because the agent is not running, the page serves
+    nothing (503) rather than the host's files.
+  - *No OS sandbox* (`off`, `resource-only`, or a harness whose own sandbox is
+    recorded off; for Claude Code, its launch-time verdict must say off, since
+    a managed policy can keep its sandbox on): the agent reads what the daemon
+    reads, so the page is served from the host. The launch is re-read, so a
+    sandbox restored on the same conversation stops the read-back at once.
+  - *Anything else* (a harness's own sandbox, macOS Seatbelt, or a launch with
+    nothing recorded): the page is served from the host, leaving out by path
+    what the recorded profile hides, with the same 404 as a missing file. The
+    stage cannot see the harness's own rules, or match Seatbelt's exactly, so
+    nothing of such a page is read back to the agent (see below).
+
+  tclaude's protected directories are never served. The view is re-read when the
+  agent reincarnates or comes back in a new sandbox, and the open views reload.
+  The daemon watches the
   source and asks open views to reload when a file is saved. It finds saves by
   walking the source a few times a second with the same no-follow rules, not with
   inotify, so a symbolic link cannot point the watcher outside the worktree.
@@ -155,9 +239,15 @@ never runs with the dashboard's origin, cookies or API.
   stage answers those, preflights included, with `Access-Control-Allow-Origin: null`
   and never with credentials. It drops any CORS headers the page's server sends.
 - **The probe.** The stage inserts a small script into each HTML document it
-  serves. Later releases use it for marks and live patches. It is as untrusted as
-  the page and holds no secret. HTML that is compressed with anything but gzip
-  cannot be inspected, so it is refused.
+  serves (`stage_probe.js`). It reports the frame's scroll, names the elements
+  under a mark and answers read-only DOM reads, all over `postMessage` with the
+  dashboard view. It is as untrusted as the page and holds no secret: the page's
+  own scripts can read and forge what it sends. So the view reads only messages
+  from its own frame's window, carrying the nonce it minted for the frame's
+  current load, within size caps (64 KiB a message, 50 elements, 200-character
+  snippets) and the schema, and shows them only as text. The daemon checks the
+  same again. HTML that is compressed with anything but gzip cannot be
+  inspected, so it is refused.
 
 What a page cannot use in the frame: cookies, `localStorage` (until the probe
 provides a stand-in), IndexedDB and service workers. An app behind a login needs
@@ -172,9 +262,50 @@ Known limits of the boundary:
 - The frame may open `alert`, `confirm` and `prompt` dialogs (`allow-modals`). A
   dialog comes from the page, not from tclaude. Never type the operator token
   into one.
-- A static source is read through the daemon's view of the file system, not
-  the agent sandbox's. A file inside the worktree that the agent's sandbox
-  profile hides with a deny rule can still be served. This is to be fixed before
-  pages can be read back by the agent.
+- Under a harness's own sandbox, a static page may show the operator a file
+  only the harness's rules hide (a `denyRead` in Claude Code's `settings.json`,
+  say). It is not read back to the agent, but the page's own script runs with
+  it. Put deny rules in a sandbox profile, or use tclaude's sandbox.
 - Browsers resolve `*.localhost` to loopback themselves. A browser that hands
   these names to the system resolver instead trusts that resolver for them.
+
+## Marks, snapshots and DOM reads for the agent
+
+```bash
+tclaude agent page marks <name> [--since N]       # the batches the operator sent
+tclaude agent page snapshot <name> -o page.png    # the page as a PNG, with the marks
+tclaude agent page dom <name> <selector> [--text|--html|--styles]
+```
+
+- **`page marks`** prints each batch: the note, the path, viewport and scroll,
+  and each mark's kind, points in page pixels and the elements under it.
+  `--json` gives the same as data. The inbox message names the batch to read
+  from.
+- **`page snapshot`** renders the page in a headless Chrome on the host, at the
+  operator's last viewport and scroll, with the latest batch of marks drawn on
+  top (`--seq N` for another, `--no-marks` for none). Chrome is the host's own:
+  `google-chrome`, `chromium` or `chromium-browser` on `PATH`, the macOS app
+  bundles, or `TCLAUDE_CHROME`. tclaude never downloads a browser; without one,
+  the command says so. Chrome runs on a throwaway profile with its background
+  networking off, and the daemon drives it over a pipe, not a debugging port.
+  A snapshot renders the page's own origin and nothing else: every other request
+  (a redirect, a navigation, a frame, an image) is refused inside Chrome, and a
+  page that tries to leave its origin gets an error instead of a picture. The
+  page's snapshot token goes only on the page's own document requests. A page
+  the operator allowed to load other hosts is not rendered for the agent.
+  One snapshot runs at a time per agent.
+- **`page dom`** reads up to 10 elements matching a selector in the operator's
+  open view of the page: their text, outer HTML or computed styles. It is
+  read-only, and needs the page open in the dashboard (it is read through that
+  view's frame). Otherwise it says no view is open. A large answer keeps the
+  first elements that fit and says it was cut.
+- **Static pages are read back when they are served exactly as the agent sees
+  them:** under tclaude's sandbox on Linux, or with no OS sandbox. Otherwise
+  `page snapshot` and `page dom` refuse the page, and its marks arrive without
+  the page's own data: no text under them, no path, scroll or viewport, and
+  points relative to the frame. The operator's
+  marks and note still arrive. After the agent comes back in a new sandbox,
+  `page dom` and the text under marks wait until the page has loaded again.
+  Serve the page from your own dev server to use them otherwise.
+
+There are no MCP tools for live pages; the CLI is the agent's surface.

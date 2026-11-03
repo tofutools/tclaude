@@ -25,7 +25,7 @@ function editorFixture(overrides = {}) {
   for (const method of [
     'addNodeType', 'editSelection', 'duplicateSelection', 'deleteSelection', 'selectAll',
     'clearSelection', 'fitGraph', 'centerSelection', 'zoomGraph', 'resetZoom',
-    'validateNow', 'focusIssue', 'requestScribe', 'save',
+    'validateNow', 'focusIssue', 'askHelper', 'requestScribe', 'save',
   ]) editor[method] ||= (...args) => calls.push([method, ...args]);
   return { editor, calls };
 }
@@ -82,8 +82,8 @@ test('commands delegate to the editor and process navigation handlers', () => {
   ]) commands.find((command) => command.id === id).run();
   assert.deepEqual(calls, [
     ['addNodeType', 'wait'], ['editSelection'], ['duplicateSelection'], ['deleteSelection'],
-    ['validateNow'], ['focusIssue', 1], ['requestScribe', 'selection'],
-    ['requestScribe', 'diagnostic'], ['requestScribe', 'template'], ['save'],
+    ['validateNow'], ['focusIssue', 1], ['askHelper', 'selection'],
+    ['askHelper', 'diagnostic'], ['requestScribe', 'template'], ['save'],
   ]);
   assert.deepEqual(navigation, ['templates']);
 });

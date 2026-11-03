@@ -48,6 +48,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"golang.org/x/net/http/httpguts"
 )
 
 //go:embed stage_probe.js
@@ -85,6 +87,9 @@ type stagePage struct {
 	mu         sync.RWMutex
 	upstream   http.RoundTripper
 	reloadSubs map[chan struct{}]struct{}
+	// done is closed when the page's origin closes, ending its live views.
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 func (p *stagePage) transport() http.RoundTripper {
@@ -136,6 +141,7 @@ func (s *stageRegistry) open(owner, name string, up http.RoundTripper) *stagePag
 		owner:         owner,
 		name:          name,
 		upstream:      up,
+		done:          make(chan struct{}),
 	}
 	s.mu.Lock()
 	s.byToken[p.token] = p
@@ -152,6 +158,7 @@ func (s *stageRegistry) close(token string) {
 	s.mu.Unlock()
 	if p != nil {
 		p.setUpstream(nil)
+		p.closeOnce.Do(func() { close(p.done) })
 	}
 }
 
@@ -258,7 +265,7 @@ func (stageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		snapshot = true
 	}
-	if !snapshot && !stageFetchDestAllowed(r.Header.Get("Sec-Fetch-Dest")) {
+	if !snapshot && !stageFetchDestAllowed(r.Header.Get("Sec-Fetch-Dest")) && !stageWebSocketHandshake(r) {
 		http.Error(w, "stage pages load only inside a live-page frame", http.StatusForbidden)
 		return
 	}
@@ -388,6 +395,21 @@ func stageFetchDestAllowed(dest string) bool {
 	}
 }
 
+// stageWebSocketHandshake reports whether r is a browser's WebSocket opening
+// handshake that carries no Sec-Fetch-Dest. Chrome sends no fetch metadata on a
+// handshake, so a dev server's HMR socket would otherwise be refused. A
+// handshake never renders a document, and no navigation sends Upgrade, so the
+// frames-only rule for documents still holds; the Origin check below applies
+// as for every request.
+func stageWebSocketHandshake(r *http.Request) bool {
+	if r.Method != http.MethodGet || strings.TrimSpace(r.Header.Get("Sec-Fetch-Dest")) != "" {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket") &&
+		httpguts.HeaderValuesContainsToken(r.Header["Connection"], "upgrade") &&
+		r.Header.Get("Sec-WebSocket-Key") != ""
+}
+
 func stageAnswerPreflight(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	if m := r.Header.Get("Access-Control-Request-Method"); stageTokenChars(m) {
@@ -460,13 +482,14 @@ func stageCSP(token string, port int, allowOtherHosts bool) string {
 
 // stageDashboardOrigins are the dashboard origins allowed to frame a page:
 // the loopback forms of the dashboard's own port. The stage is served on the
-// dashboard listener, so that is the port the request arrived on.
+// dashboard listener, so that is the port the request arrived on. CSP has no
+// IPv6-literal host-source (Chrome rejects "http://[::1]:port" with a console
+// error), so a dashboard opened on [::1] cannot frame pages.
 func stageDashboardOrigins(port int) []string {
 	p := strconv.Itoa(port)
 	return []string{
 		"http://127.0.0.1:" + p,
 		"http://localhost:" + p,
-		"http://[::1]:" + p,
 	}
 }
 

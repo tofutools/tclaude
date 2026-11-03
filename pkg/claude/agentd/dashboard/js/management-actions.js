@@ -946,14 +946,17 @@ export function createManagementActions(deps) {
     await refresh();
     return result;
   }
+  // A circle scribe opens in its chat window (or a terminal tab). Both sit
+  // below the manager's dialog layer, so the manager steps aside once one
+  // has opened; a declined or failed summon keeps it.
   async function editTemplatesWithAgent() {
     const result = await summonTemplateScribe({ scope: 'library' });
-    if (result?.focus_mode === 'browser' && result.focus_ws) state.closeTemplateManager();
+    if (result?.opened) state.closeTemplateManager();
     return result;
   }
   async function editTemplateWithAgent(name) {
     const result = await summonTemplateScribe({ scope: 'template', name });
-    if (result?.focus_mode === 'browser' && result.focus_ws) state.closeTemplateManager();
+    if (result?.opened) state.closeTemplateManager();
     return result;
   }
 
@@ -1217,7 +1220,9 @@ export function createManagementActions(deps) {
       options.onCreate || null,
       { editExisting, cloneSourceName: options.cloneSourceName || '' },
     );
-    if (result?.focus_mode === 'browser' && result.focus_ws) state.closeManager();
+    // Its chat window sits below the manager's dialog layer: the manager
+    // steps aside once it opened, and stays on a declined or failed summon.
+    if (result?.opened) state.closeManager();
     return result;
   }
   function inspectDirectories(filesystem) {

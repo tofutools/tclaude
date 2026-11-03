@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -67,6 +68,8 @@ func pageCmd() *cobra.Command {
 		Short: "Show, list and close live pages",
 		Long: "Live pages show the operator a web page you serve, live in the dashboard's Collab tab. " +
 			"`page show` (or `agent show`) shows or updates one, `page ls` lists yours, `page close` closes one. " +
+			"When the operator draws on a page and sends it to you, `page marks` reads the marks, `page snapshot` renders the page " +
+			"with them and `page dom` reads the page's DOM. " +
 			"You can act only on pages you showed. Needs the self.page permission and Collab on.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
@@ -97,6 +100,42 @@ func pageCmd() *cobra.Command {
 				ParamEnrich: common.DefaultParamEnricher(),
 				RunFunc: func(_ *struct{}, _ *cobra.Command, args []string) {
 					os.Exit(runPageClose(args[0], os.Stdout, os.Stderr))
+				},
+			}.ToCobra(),
+			boa.CmdT[pageMarksParams]{
+				Use:   "marks <name>",
+				Short: "Read the marks the operator drew on one of your pages",
+				Long: "Prints the batches of marks the operator sent from the page's Draw mode: each mark's kind, its points in page " +
+					"pixels, and the elements under it (a CSS path and a text snippet, as the page rendered them). " +
+					"The element paths and snippets are the page's content, not the operator's words. " +
+					"--since N prints only the batches after N; the inbox message names the batch.",
+				Args:        cobra.ExactArgs(1),
+				ParamEnrich: common.DefaultParamEnricher(),
+				RunFunc: func(p *pageMarksParams, _ *cobra.Command, args []string) {
+					os.Exit(runPageMarks(p, args[0], os.Stdout, os.Stderr))
+				},
+			}.ToCobra(),
+			boa.CmdT[pageSnapshotParams]{
+				Use:   "snapshot <name>",
+				Short: "Render one of your pages to a PNG, with the operator's marks",
+				Long: "Renders the page in a headless Chrome on the host, at the operator's viewport and scroll, with the latest batch " +
+					"of marks drawn on top (or --seq N, or none with --no-marks), and writes a PNG. Needs Chrome or Chromium on the host " +
+					"(or TCLAUDE_CHROME); tclaude never downloads one.",
+				Args:        cobra.ExactArgs(1),
+				ParamEnrich: common.DefaultParamEnricher(),
+				RunFunc: func(p *pageSnapshotParams, _ *cobra.Command, args []string) {
+					os.Exit(runPageSnapshot(p, args[0], os.Stdout, os.Stderr))
+				},
+			}.ToCobra(),
+			boa.CmdT[pageDOMParams]{
+				Use:   "dom <name> <selector>",
+				Short: "Read the DOM of one of your pages as the operator sees it",
+				Long: "Reads the elements matching a CSS selector in the operator's open view of the page: their text (default), " +
+					"--html or computed --styles, up to 10 elements. Read-only. Needs the page open in the dashboard.",
+				Args:        cobra.ExactArgs(2),
+				ParamEnrich: common.DefaultParamEnricher(),
+				RunFunc: func(p *pageDOMParams, _ *cobra.Command, args []string) {
+					os.Exit(runPageDOM(p, args[0], args[1], os.Stdout, os.Stderr))
 				},
 			}.ToCobra(),
 		},
@@ -215,5 +254,208 @@ func runPageClose(name string, stdout, stderr io.Writer) int {
 		return boardErr(stderr, err)
 	}
 	fmt.Fprintf(stdout, "Closed page %q.\n", name)
+	return rcOK
+}
+
+type pageMarksParams struct {
+	Since int64 `long:"since" optional:"true" help:"Only the batches after this one"`
+	JSON  bool  `long:"json" help:"Output JSON"`
+}
+
+type pageSnapshotParams struct {
+	Out     string `short:"o" long:"out" optional:"true" help:"The PNG file to write (default: <name>.png in the current directory)"`
+	Seq     int64  `long:"seq" optional:"true" help:"Draw this batch of marks (default: the latest)"`
+	NoMarks bool   `long:"no-marks" help:"Render the page without marks"`
+	JSON    bool   `long:"json" help:"Output JSON (without the image)"`
+}
+
+type pageDOMParams struct {
+	HTML   bool `long:"html" help:"Read the elements' outer HTML"`
+	Styles bool `long:"styles" help:"Read the elements' computed styles"`
+	Text   bool `long:"text" help:"Read the elements' text (the default)"`
+	JSON   bool `long:"json" help:"Output JSON"`
+}
+
+type pageAnchorWire struct {
+	Path string `json:"path"`
+	Text string `json:"text"`
+	Hits int    `json:"hits"`
+}
+
+type pageMarkWire struct {
+	Kind    string           `json:"kind"`
+	Color   string           `json:"color,omitempty"`
+	Points  [][2]int         `json:"points"`
+	Text    string           `json:"text,omitempty"`
+	Anchors []pageAnchorWire `json:"anchors"`
+}
+
+type pageBatchWire struct {
+	Seq      int64              `json:"seq"`
+	At       time.Time          `json:"at"`
+	Note     string             `json:"note,omitempty"`
+	Path     string             `json:"path,omitempty"`
+	Viewport struct{ W, H int } `json:"viewport"`
+	Scroll   struct{ X, Y int } `json:"scroll"`
+	Marks    []pageMarkWire     `json:"marks"`
+}
+
+func runPageMarks(p *pageMarksParams, name string, stdout, stderr io.Writer) int {
+	var resp struct {
+		Page    string          `json:"page"`
+		LastSeq int64           `json:"last_seq"`
+		Batches []pageBatchWire `json:"batches"`
+	}
+	q := url.Values{}
+	if p.Since > 0 {
+		q.Set("since", fmt.Sprint(p.Since))
+	}
+	path := "/v1/pages/" + url.PathEscape(name) + "/marks"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	if err := DaemonRequest(http.MethodGet, path, nil, &resp, DaemonOpts{}); err != nil {
+		return boardErr(stderr, err)
+	}
+	if p.JSON {
+		return writeBoardJSON(stdout, resp)
+	}
+	if len(resp.Batches) == 0 {
+		fmt.Fprintf(stdout, "No marks on page %q", name)
+		if p.Since > 0 {
+			fmt.Fprintf(stdout, " after batch %d", p.Since)
+		}
+		fmt.Fprintln(stdout, ".")
+		return rcOK
+	}
+	for _, b := range resp.Batches {
+		fmt.Fprintf(stdout, "Batch %d  %s  path %s  viewport %dx%d  scroll %d,%d\n", b.Seq, b.At.Local().Format("2006-01-02 15:04:05"),
+			b.Path, b.Viewport.W, b.Viewport.H, b.Scroll.X, b.Scroll.Y)
+		if b.Note != "" {
+			fmt.Fprintf(stdout, "  note (operator): %s\n", b.Note)
+		}
+		for i, m := range b.Marks {
+			fmt.Fprintf(stdout, "  %d. %s %s", i+1, m.Kind, pageMarkWhere(m))
+			if m.Text != "" {
+				fmt.Fprintf(stdout, " %q", m.Text)
+			}
+			fmt.Fprintln(stdout)
+			for _, a := range m.Anchors {
+				fmt.Fprintf(stdout, "       %s", a.Path)
+				if a.Text != "" {
+					fmt.Fprintf(stdout, "  %q", a.Text)
+				}
+				fmt.Fprintln(stdout)
+			}
+		}
+	}
+	return rcOK
+}
+
+// pageMarkWhere says where a mark is, in page pixels.
+func pageMarkWhere(m pageMarkWire) string {
+	if len(m.Points) == 0 {
+		return ""
+	}
+	if m.Kind == "box" && len(m.Points) == 2 {
+		a, b := m.Points[0], m.Points[1]
+		return fmt.Sprintf("at %d,%d to %d,%d", a[0], a[1], b[0], b[1])
+	}
+	a, b := m.Points[0], m.Points[len(m.Points)-1]
+	if len(m.Points) == 1 {
+		return fmt.Sprintf("at %d,%d", a[0], a[1])
+	}
+	return fmt.Sprintf("from %d,%d to %d,%d (%d points)", a[0], a[1], b[0], b[1], len(m.Points))
+}
+
+func runPageSnapshot(p *pageSnapshotParams, name string, stdout, stderr io.Writer) int {
+	if strings.TrimSpace(p.Out) == "" {
+		p.Out = name + ".png"
+	}
+	var resp struct {
+		PNG      string `json:"png"`
+		Width    int    `json:"width"`
+		Height   int    `json:"height"`
+		ScrollX  int    `json:"scroll_x"`
+		ScrollY  int    `json:"scroll_y"`
+		Path     string `json:"path"`
+		MarksSeq int64  `json:"marks_seq,omitempty"`
+	}
+	body := map[string]any{"seq": p.Seq, "no_marks": p.NoMarks}
+	if err := DaemonRequest(http.MethodPost, "/v1/pages/"+url.PathEscape(name)+"/snapshot", body, &resp, DaemonOpts{Timeout: 60 * time.Second}); err != nil {
+		return boardErr(stderr, err)
+	}
+	png, err := base64.StdEncoding.DecodeString(resp.PNG)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: the daemon sent an unreadable image: %v\n", err)
+		return rcIOFailure
+	}
+	if err := os.WriteFile(p.Out, png, 0o600); err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return rcIOFailure
+	}
+	resp.PNG = ""
+	if p.JSON {
+		return writeBoardJSON(stdout, map[string]any{"file": p.Out, "width": resp.Width, "height": resp.Height,
+			"scroll_x": resp.ScrollX, "scroll_y": resp.ScrollY, "path": resp.Path, "marks_seq": resp.MarksSeq})
+	}
+	marks := "no marks"
+	if resp.MarksSeq > 0 {
+		marks = fmt.Sprintf("marks of batch %d", resp.MarksSeq)
+	}
+	fmt.Fprintf(stdout, "Wrote %s: %s at %dx%d, scrolled to %d,%d, %s.\n", p.Out, resp.Path, resp.Width, resp.Height, resp.ScrollX, resp.ScrollY, marks)
+	return rcOK
+}
+
+func runPageDOM(p *pageDOMParams, name, selector string, stdout, stderr io.Writer) int {
+	mode := "text"
+	switch {
+	case p.HTML && p.Styles, (p.HTML || p.Styles) && p.Text:
+		fmt.Fprintln(stderr, "error: choose one of --text, --html and --styles")
+		return rcInvalidArg
+	case p.HTML:
+		mode = "html"
+	case p.Styles:
+		mode = "styles"
+	}
+	var resp struct {
+		Count int `json:"count"`
+		Items []struct {
+			Path  string                   `json:"path"`
+			Rect  struct{ X, Y, W, H int } `json:"rect"`
+			Value string                   `json:"value"`
+		} `json:"items"`
+		Truncated bool   `json:"truncated,omitempty"`
+		Error     string `json:"error,omitempty"`
+	}
+	body := map[string]any{"selector": selector, "mode": mode}
+	if err := DaemonRequest(http.MethodPost, "/v1/pages/"+url.PathEscape(name)+"/dom", body, &resp, DaemonOpts{Timeout: 20 * time.Second}); err != nil {
+		return boardErr(stderr, err)
+	}
+	if p.JSON {
+		return writeBoardJSON(stdout, resp)
+	}
+	if resp.Error != "" {
+		fmt.Fprintf(stderr, "error: the page: %s\n", resp.Error)
+		return rcIOFailure
+	}
+	if resp.Count == 0 {
+		fmt.Fprintf(stdout, "Nothing matches %s.\n", selector)
+		return rcOK
+	}
+	fmt.Fprintf(stdout, "%d match", resp.Count)
+	if resp.Count != 1 {
+		fmt.Fprint(stdout, "es")
+	}
+	if resp.Count > len(resp.Items) || resp.Truncated {
+		fmt.Fprintf(stdout, " (the first %d shown; narrow the selector for more)", len(resp.Items))
+	}
+	fmt.Fprintln(stdout, ".")
+	for _, it := range resp.Items {
+		fmt.Fprintf(stdout, "\n%s  at %d,%d size %dx%d\n", it.Path, it.Rect.X, it.Rect.Y, it.Rect.W, it.Rect.H)
+		for _, line := range strings.Split(strings.TrimRight(it.Value, "\n"), "\n") {
+			fmt.Fprintf(stdout, "  %s\n", line)
+		}
+	}
 	return rcOK
 }

@@ -30,49 +30,14 @@ spec.loader.exec_module(cc)
 
 MODES = ("docs", "ui", "code", "full")
 LINUX = cc.LINUX
-MACOS = cc.MACOS
-MAC_ENTRIES = [{"os": MACOS, "shard": s} for s in cc.MACOS_SHARDS]
 LINUX_ENTRIES = [{"os": LINUX, "shard": s} for s in cc.LINUX_SHARDS]
-
-# A small fake tree: plain Go, platform Go, a platform package, and files
-# whose platform-ness is only visible in their content.
-SOURCES = {
-    "pkg/claude/agentd/handlers.go": "package agentd\n",
-    "pkg/claude/agentd/tray_darwin.go": "package agentd\n",
-    "pkg/claude/agentd/tagged.go": "//go:build darwin\n\npackage agentd\n",
-    "pkg/claude/agentd/oldtag.go": "// +build linux\n\npackage agentd\n",
-    "pkg/claude/agentd/integration.go": "//go:build integration\n\npackage agentd\n",
-    "pkg/claude/agentd/cgo.go": 'package agentd\n\nimport "C"\n',
-    "pkg/claude/agentd/cgo_group.go": 'package agentd\n\nimport (\n\t"C"\n)\n',
-    "pkg/claude/agentd/cgotag.go": "//go:build cgo\n\npackage agentd\n",
-    "pkg/claude/agentd/notunix.go": "//go:build !unix\n\npackage agentd\n",
-    "pkg/claude/agentd/dashboard_tagged_test.go": "//go:build linux\n\npackage agentd\n",
-    "pkg/hostmetrics/read.go": "package hostmetrics\n",
-    "pkg/claude/setup/setup.go": 'package setup\n\nfunc f() bool { return runtime.GOOS == "darwin" }\n',
-    "pkg/claude/setup/other.go": "package setup\n",
-    "pkg/hostmetrics/read_darwin.go": "package hostmetrics\n",
-    "pkg/claude/common/db/db.go": "package db\n",
-    "pkg/claude/harness/harness.go": "package harness\n",
-    "pkg/claude/harness/opencode_sandbox_darwin_test.go": "package harness\n",
-    "pkg/claude/harness/pifixture/pi.go": "package pifixture\n",
-    "pkg/claude/agentd/jstest/node_test.go": "package jstest\n",
-    "pkg/claude/agentd/jstest/suite_memory_other_test.go":
-        "//go:build !linux && !darwin\n\npackage jstest\n",
-    "pkg/claude/agentd/dashboard/assets.go": "package dashboard\n",
-}
-GO_FILES = [p for p in SOURCES if p.endswith(".go")]
-
-
-def read(path):
-    return SOURCES.get(path, "package x\n" if path.endswith(".go") else "")
-
 
 def never(pkg):
     raise AssertionError(f"affected({pkg}) must not be consulted here")
 
 
-def classify(paths, affected=lambda pkg: False, reader=read):
-    return cc.classify(paths, reader, GO_FILES, affected)
+def classify(paths, affected=lambda pkg: False):
+    return cc.classify(paths, affected)
 
 
 class PathPredicates(unittest.TestCase):
@@ -125,21 +90,19 @@ class PathPredicates(unittest.TestCase):
     def test_is_ui_go_test(self):
         for p in ("pkg/claude/agentd/dashboard_wizard_html_test.go",
                   "pkg/claude/agentd/dashboard_sandbox_profiles_html_test.go",
-                  "pkg/claude/agentd/dashboard_capture_flow_test.go"):
-            self.assertTrue(cc.is_ui_go_test(p, read), p)
+                  "pkg/claude/agentd/dashboard_capture_flow_test.go",
+                  # PR CI is Linux-only, so a platform suffix changes nothing.
+                  "pkg/claude/agentd/dashboard_x_darwin_test.go",
+                  "pkg/claude/agentd/dashboard_x_linux_test.go"):
+            self.assertTrue(cc.is_ui_go_test(p), p)
         for p in ("pkg/claude/agentd/dashboard.go",
                   "pkg/claude/agentd/dashboard_config.go",
-                  "pkg/claude/agentd/dashboard_x_darwin_test.go",
-                  "pkg/claude/agentd/dashboard_x_linux_test.go",
-                  "pkg/claude/agentd/dashboard_tagged_test.go",
                   "pkg/claude/agentd/sub/dashboard_x_test.go",
                   "pkg/claude/agentd/handlers_test.go",
                   "pkg/claude/agentd/dashboard/assets_test.go",
                   "pkg/claude/session/dashboard_x_test.go",
                   "pkg/claude/agentd/dashboard_x_test.go.orig"):
-            self.assertFalse(cc.is_ui_go_test(p, read), p)
-        self.assertFalse(cc.is_ui_go_test("pkg/claude/agentd/dashboard_gone_test.go",
-                                          lambda p: None))
+            self.assertFalse(cc.is_ui_go_test(p), p)
 
     def test_is_sandbox(self):
         for p in ("pkg/claude/session/launch.go", "pkg/claude/proxy/x.go",
@@ -171,64 +134,6 @@ class PathPredicates(unittest.TestCase):
                   "pkg/claude/proxyish/a.go"):
             self.assertFalse(cc.is_sandbox(p), p)
 
-    def test_os_suffix(self):
-        for p in ("a_darwin.go", "a_linux.go", "a_windows.go", "a_unix.go",
-                  "a_freebsd.go", "a_darwin_test.go", "a_unix_test.go",
-                  "a_amd64.go", "a_arm64_test.go", "a_darwin_arm64.go",
-                  "a_linux_amd64_test.go", "dir/x_ios.go", "x_wasip1.go"):
-            self.assertTrue(cc.has_os_suffix(p), p)
-        for p in ("linux.go", "darwin_test.go", "a_test.go", "a.go", "a_darwinx.go",
-                  "a_darwin.txt", "a_other_test.go", "a_mac.go"):
-            self.assertFalse(cc.has_os_suffix(p), p)
-
-    def test_go_source_is_platform(self):
-        for text in ("//go:build darwin\n", "//go:build linux || darwin\n",
-                     "//go:build !linux\n", "//go:build unix && !aix\n",
-                     "//go:build !windows\n", "//go:build cgo\n",
-                     "// +build linux\n", "package x\n\nimport \"C\"\n",
-                     "package x\n\nimport (\n\t\"C\"\n\t\"os\"\n)\n",
-                     "// doc\n//go:build integration && darwin\n",
-                     'package x\n\nimport (\n\t"os"\n\t"C"\n)\n'):
-            self.assertTrue(cc.go_source_is_platform(text), text)
-        for text in ("package x\n", "//go:build integration\n", "//go:build ignore\n",
-                     "// go:build darwin\n", "// mentions darwin in prose\n",
-                     "//go:build linuxish\n", 'var s = "import \\"C\\""\n'):
-            self.assertFalse(cc.go_source_is_platform(text), text)
-
-    def test_is_platform_file(self):
-        for p in ("pkg/claude/agentd/tray_darwin.go", "pkg/claude/agentd/tagged.go",
-                  "pkg/claude/agentd/oldtag.go", "pkg/claude/agentd/cgo.go",
-                  "pkg/claude/agentd/cgo_group.go", "pkg/claude/agentd/cgotag.go",
-                  "pkg/claude/agentd/notunix.go", "pkg/x/native.c", "pkg/x/native.m",
-                  "pkg/x/native.h", "pkg/x/asm.s",
-                  "pkg/claude/harness/copilotfixture/testdata/1.0.77/sandbox_baseline_darwin.json",
-                  "pkg/x/profile.sb", "pkg/x/macos_notes.txt", "pkg/x/Seatbelt.tmpl"):
-            self.assertTrue(cc.is_platform_file(p, read), p)
-        for p in ("pkg/claude/agentd/handlers.go", "pkg/claude/agentd/integration.go",
-                  "pkg/x/a.js", "pkg/x/data.json", "pkg/x/README.md"):
-            self.assertFalse(cc.is_platform_file(p, read), p)
-        # Run-time OS branches count for the changed file itself...
-        self.assertTrue(cc.is_platform_file("pkg/claude/setup/setup.go", read))
-        self.assertTrue(cc.is_platform_file(
-            "pkg/x/a.go", lambda p: "x := runtime.GOARCH\n"))
-        self.assertFalse(cc.is_platform_file(
-            "pkg/x/a.go", lambda p: "// runtimeXGOOS goosey\n"))
-        # ...but do not make the whole package a platform package.
-        self.assertFalse(cc.is_platform_file("pkg/claude/setup/setup.go", read,
-                                             runtime_os=False))
-        # Unreadable Go source is a doubt, and doubts run macOS.
-        self.assertTrue(cc.is_platform_file("pkg/x/gone.go", lambda p: None))
-        self.assertFalse(cc.is_platform_file("pkg/x/gone.txt", lambda p: None))
-
-    def test_platform_dirs(self):
-        dirs = cc.platform_dirs(GO_FILES, read)
-        self.assertIn("pkg/hostmetrics", dirs)
-        for d in cc.PER_FILE_ONLY_DIRS:
-            self.assertNotIn(d, dirs)
-        self.assertNotIn("pkg/claude/common/db", dirs)
-        self.assertNotIn("pkg/claude/setup", dirs)
-
-
 class Decisions(unittest.TestCase):
     def check_shape(self, mode, run, matrix):
         self.assertIn(mode, MODES)
@@ -237,9 +142,11 @@ class Decisions(unittest.TestCase):
         self.assertTrue(matrix, "the test matrix must never be empty")
         for entry in matrix:
             self.assertEqual(set(entry), {"os", "shard"})
+            # PR CI runs no macOS jobs (CONTRIBUTING.md, "macOS CI").
+            self.assertEqual(entry["os"], LINUX)
 
-    def decide(self, paths, affected=lambda pkg: False, reader=read):
-        mode, run, matrix, reasons = classify(paths, affected, reader)
+    def decide(self, paths, affected=lambda pkg: False):
+        mode, run, matrix, reasons = classify(paths, affected)
         self.check_shape(mode, run, matrix)
         self.assertTrue(reasons)
         return mode, run, matrix
@@ -248,7 +155,7 @@ class Decisions(unittest.TestCase):
         mode, run, matrix = self.decide(paths, affected=never)
         self.assertEqual(mode, "full", paths)
         self.assertTrue(all(run.values()), paths)
-        self.assertEqual(matrix, LINUX_ENTRIES + MAC_ENTRIES)
+        self.assertEqual(matrix, LINUX_ENTRIES)
 
     def test_empty_diff_runs_everything(self):
         self.assert_full([])
@@ -288,7 +195,6 @@ class Decisions(unittest.TestCase):
             self.assertEqual(mode, "ui", paths)
             self.assertEqual({j for j, v in run.items() if v}, {"test"})
             self.assertEqual(matrix, [{"os": LINUX, "shard": s} for s in ("agentd", "jstest", "rest")])
-            self.assertFalse(any(e["os"] == MACOS for e in matrix))
 
     def test_ui_with_dashboard_go_tests_adds_lint(self):
         paths = ["pkg/claude/agentd/dashboard/ui.css",
@@ -297,7 +203,6 @@ class Decisions(unittest.TestCase):
         mode, run, matrix = self.decide(paths, affected=never)
         self.assertEqual(mode, "ui")
         self.assertEqual({j for j, v in run.items() if v}, {"test", "lint"})
-        self.assertFalse(any(e["os"] == MACOS for e in matrix))
         # The Go test alone is ui as well.
         mode, run, _ = self.decide(paths[1:2], affected=never)
         self.assertEqual((mode, run["lint"]), ("ui", True))
@@ -307,69 +212,39 @@ class Decisions(unittest.TestCase):
                    "pkg/claude/agentd/jstest/node_test.go",
                    "pkg/claude/agentd/handlers.go", "main.go",
                    "pkg/claude/agentd/dashboard.go",
-                   "pkg/claude/agentd/dashboard_tagged_test.go",
-                   "pkg/claude/agentd/dashboard_x_darwin_test.go",
                    "pkg/claude/agent/skills/review/SKILL.md",
                    "docs/paf/schema/v0.1/common.schema.json"):
             mode, run, matrix = self.decide(["pkg/claude/agentd/dashboard/board.css", go])
             self.assertEqual(mode, "code", go)
             self.assertTrue(run["lint"] and run["test"] and run["sandbox-v2-smoke"])
-            self.assertEqual(matrix[:len(LINUX_ENTRIES)], LINUX_ENTRIES)
+            self.assertEqual(matrix, LINUX_ENTRIES)
 
-    def test_plain_code_skips_macos_and_proxy_smokes(self):
+    def test_plain_code_skips_proxy_smokes(self):
         mode, run, matrix = self.decide(["pkg/claude/agentd/handlers.go", "docs/x.md"])
         self.assertEqual(mode, "code")
         self.assertEqual(matrix, LINUX_ENTRIES)
-        self.assertFalse(run["sandbox-v2-seatbelt-smoke"])
         self.assertFalse(run["filtered-proxy-smoke"])
         self.assertFalse(run["proxy-posture-e2e"])
         self.assertTrue(run["lint"] and run["test"] and run["sandbox-v2-smoke"])
 
-    def assert_macos(self, path, want=True):
-        mode, run, matrix = self.decide(["pkg/claude/agentd/handlers.go", path])
-        self.assertEqual(mode, "code")
-        has_mac = any(e["os"] == MACOS for e in matrix)
-        self.assertEqual(has_mac, want, path)
-        self.assertEqual(run["sandbox-v2-seatbelt-smoke"], want, path)
-        if want:
-            self.assertEqual(matrix, LINUX_ENTRIES + MAC_ENTRIES)
-
-    def test_platform_files_run_macos(self):
-        for p in ("pkg/claude/agentd/tray_darwin.go", "pkg/claude/agentd/x_linux.go",
-                  "pkg/claude/agentd/x_unix_test.go", "pkg/claude/agentd/x_windows.go",
-                  "pkg/claude/agentd/x_darwin_arm64.go", "pkg/claude/agentd/x_amd64.go",
-                  "pkg/claude/agentd/tagged.go", "pkg/claude/agentd/oldtag.go",
-                  "pkg/claude/agentd/cgo.go", "pkg/claude/agentd/cgotag.go",
-                  "pkg/claude/agentd/notunix.go",
-                  "pkg/claude/agentd/jstest/suite_memory_other_test.go",
+    def test_platform_code_runs_on_linux_only(self):
+        # These used to add the macOS jobs; release.yml now measures darwin.
+        for p in ("pkg/claude/agentd/tray_darwin.go", "pkg/claude/agentd/x_unix_test.go",
+                  "pkg/claude/agentd/x_darwin_arm64.go", "pkg/x/native.m",
+                  "pkg/x/profile.sb", "docs/embed_darwin.go",
                   "pkg/claude/harness/opencode_sandbox_darwin_test.go",
-                  "pkg/x/native.m", "pkg/x/profile.sb",
                   "pkg/claude/harness/copilotfixture/testdata/1.0.77/sandbox_baseline_darwin.json"):
-            self.assert_macos(p)
-
-    def test_runtime_os_branch_runs_macos_for_that_file_only(self):
-        self.assert_macos("pkg/claude/setup/setup.go")
-        self.assert_macos("pkg/claude/setup/other.go", want=False)
+            mode, run, matrix = self.decide(["pkg/claude/agentd/handlers.go", p])
+            self.assertEqual(mode, "code", p)
+            self.assertEqual(matrix, LINUX_ENTRIES, p)
 
     def test_go_under_docs_is_code(self):
-        for p in ("docs/embed.go", "docs/embed_test.go"):
+        for p in ("docs/embed.go", "docs/embed_test.go", "docs/embed_darwin.go"):
             mode, run, _ = self.decide([p, "docs/x.md"])
             self.assertEqual(mode, "code", p)
             self.assertTrue(run["lint"] and run["test"], p)
-        self.assert_macos("docs/embed_darwin.go")
 
-    def test_platform_package_runs_macos_for_any_file(self):
-        self.assert_macos("pkg/hostmetrics/read.go")
-        self.assert_macos("pkg/hostmetrics/testdata/sample.txt")
-        self.assert_macos("pkg/hostmetrics/new_file.go")
-
-    def test_per_file_only_packages(self):
-        for p in ("pkg/claude/agentd/handlers.go", "pkg/claude/agentd/integration.go",
-                  "pkg/claude/agentd/jstest/node_test.go",
-                  "pkg/claude/harness/pifixture/pi.go", "pkg/claude/common/db/db.go"):
-            self.assert_macos(p, want=False)
-
-    def test_sandbox_paths_run_macos_and_proxy_smokes(self):
+    def test_sandbox_paths_run_proxy_smokes(self):
         for p in ("pkg/claude/session/launch.go", "pkg/claude/harness/harness.go",
                   "pkg/claude/agentd/opencode_runtime.go", "scripts/lib/smoke/common.sh",
                   "scripts/filtered-proxy-smoke/flows/10-floor-policy.sh",
@@ -378,8 +253,7 @@ class Decisions(unittest.TestCase):
             mode, run, matrix = self.decide([p])
             self.assertEqual(mode, "code", p)
             self.assertTrue(run["filtered-proxy-smoke"] and run["proxy-posture-e2e"], p)
-            self.assertTrue(run["sandbox-v2-seatbelt-smoke"], p)
-            self.assertEqual(matrix, LINUX_ENTRIES + MAC_ENTRIES)
+            self.assertEqual(matrix, LINUX_ENTRIES)
 
     def test_harness_smokes_follow_affected(self):
         for reached in itertools.chain.from_iterable(
@@ -466,8 +340,6 @@ class GitPlumbing(unittest.TestCase):
         self.write("main.go", "package main\n")
         self.write("pkg/claude/agentd/plain.go", "package agentd\n")
         self.write("pkg/claude/agentd/tagged.go", "//go:build darwin\n\npackage agentd\n")
-        self.write("pkg/hostmetrics/read.go", "package hostmetrics\n")
-        self.write("pkg/hostmetrics/read_darwin.go", "package hostmetrics\n")
         self.commit("base")
         self.base = self.rev()
 
@@ -546,48 +418,14 @@ class GitPlumbing(unittest.TestCase):
         self.assertEqual(out["mode"], "code")
         for job in cc.HARNESS_SMOKES:
             self.assertEqual(out[f"run_{job.replace('-', '_')}"], "true")
-        self.assertFalse(any(e["os"] == MACOS for e in out["matrix"]))
 
-    def test_deleted_build_tagged_file_is_read_from_base(self):
-        self.git("rm", "--quiet", "pkg/claude/agentd/tagged.go")
-        self.commit("delete")
+    def test_platform_edits_stay_on_linux(self):
+        self.write("pkg/claude/agentd/tagged.go", "package agentd\n")
+        self.write("pkg/claude/agentd/plain.go", "//go:build linux\n\npackage agentd\n")
+        self.commit("move a build constraint")
         out = self.outputs(self.base, no_go=True)
         self.assertEqual(out["mode"], "code")
-        self.assertTrue(any(e["os"] == MACOS for e in out["matrix"]))
-
-    def test_removed_build_constraint_is_platform(self):
-        self.write("pkg/claude/agentd/tagged.go", "package agentd\n")
-        self.commit("drop the constraint")
-        out = self.outputs(self.base, no_go=True)
-        self.assertTrue(any(e["os"] == MACOS for e in out["matrix"]))
-
-    def test_added_build_constraint_is_platform(self):
-        self.write("pkg/claude/agentd/plain.go", "//go:build linux\n\npackage agentd\n")
-        self.commit("add a constraint")
-        out = self.outputs(self.base, no_go=True)
-        self.assertTrue(any(e["os"] == MACOS for e in out["matrix"]))
-
-    def test_plain_agentd_edit_skips_macos(self):
-        self.write("pkg/claude/agentd/plain.go", "package agentd // edited\n")
-        self.commit("edit")
-        out = self.outputs(self.base, no_go=True)
-        self.assertFalse(any(e["os"] == MACOS for e in out["matrix"]))
-
-    def test_platform_package_from_head_tree(self):
-        self.write("pkg/hostmetrics/read.go", "package hostmetrics // edited\n")
-        self.commit("edit")
-        out = self.outputs(self.base, no_go=True)
-        self.assertTrue(any(e["os"] == MACOS for e in out["matrix"]))
-
-    def test_new_platform_package_counts(self):
-        self.write("pkg/newplat/a.go", "package newplat\n")
-        self.write("pkg/newplat/a_darwin.go", "package newplat\n")
-        self.commit("new")
-        base = self.rev()
-        self.write("pkg/newplat/a.go", "package newplat // edited\n")
-        self.commit("edit")
-        out = self.outputs(base, no_go=True)
-        self.assertTrue(any(e["os"] == MACOS for e in out["matrix"]))
+        self.assertEqual(out["matrix"], LINUX_ENTRIES)
 
     def test_missing_base_fails(self):
         for args in (("missing-base",), (self.base, "missing-head"), ()):
@@ -639,16 +477,18 @@ class WorkflowConsistency(unittest.TestCase):
         self.assertIn("diff-base: HEAD^1", block)
 
     def test_shards_exist_in_test_suite_action(self):
-        for shard in set(cc.LINUX_SHARDS) | set(cc.UI_SHARDS) | set(cc.MACOS_SHARDS):
+        for shard in set(cc.LINUX_SHARDS) | set(cc.UI_SHARDS):
             self.assertRegex(self.action, rf"\n\s+{re.escape(shard)}\)", shard)
+
+    def test_pr_ci_runs_no_macos(self):
+        self.assertNotRegex(self.ci, r"(?m)^\s*runs-on:.*mac", "a macOS runner in ci.yml")
+        self.assertNotIn("seatbelt-smoke", self.ci)
 
 
 class TreeConsistency(unittest.TestCase):
     """The path rules name real places in this repository."""
 
     def test_named_dirs_exist(self):
-        for d in cc.PER_FILE_ONLY_DIRS:
-            self.assertTrue((ROOT / d).is_dir(), d)
         for prefix in cc.SANDBOX_PREFIXES + cc.UI_PREFIXES:
             self.assertTrue((ROOT / prefix).is_dir(), prefix)
         for pkg in cc.HARNESS_SMOKES.values():

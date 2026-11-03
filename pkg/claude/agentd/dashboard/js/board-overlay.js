@@ -15,6 +15,8 @@ import { onBoardDeleted } from './board-manage.js';
 import { BOARD_WINDOW_KIND, returnBoardToTab, setBoardOverlayLabel } from './board-overlay-state.js';
 import { PROCESS_WINDOW_KIND } from './process-editor-place.js';
 import { validProcessTab } from './process-overlay.js';
+import { PAGE_WINDOW_KIND } from './page-pane-model.js';
+import { validPageTab } from './page-view.js';
 import { boardPaneSeed, isBoardId } from './board-model.js';
 import { OVERLAY_FOOTER_ROOM, clampPlacement, parsePlacement } from './overlay-window-model.js';
 import { isAgentId } from './companion-model.js';
@@ -69,7 +71,7 @@ registerTabMoves(BOARD_WINDOW_KIND, (tab) => ({
   },
 }));
 
-export function BoardOverlayWindow({ instance, overlay, strip, close, snapshot, fetchImpl, notify, win }) {
+export function BoardOverlayWindow({ instance, overlay, strip, more = null, close, snapshot, fetchImpl, notify, win }) {
   const board = { id: instance.board, label: instance.label };
   const open = !instance.minimized;
   const look = windowControlsLook(snapshot.value?.window_controls);
@@ -88,8 +90,9 @@ export function BoardOverlayWindow({ instance, overlay, strip, close, snapshot, 
     overlay.windowRef.current?.querySelector?.('.board-editor')?.dispatchEvent(new win.WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY, ctrlKey, metaKey }));
   }
   const title = html`${strip}
+    ${look !== 'classic' ? more : html`
     <${Button} size="sm" class="board-overlay-action" title="Move this board to a tab of the Collab view" onClick=${toCollab}>${TO_COLLAB_LABEL}<//>
-    <${Button} size="sm" class="board-overlay-action" title="Move this board to a browser window of its own" onClick=${toSeparateWindow}>${TO_WINDOW_LABEL}<//>
+    <${Button} size="sm" class="board-overlay-action" title="Move this board to a browser window of its own" onClick=${toSeparateWindow}>${TO_WINDOW_LABEL}<//>`}
     ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title="Minimize" aria-label=${`Minimize ${board.label}`}
       onClick=${() => minimizeOverlayWindow(instance.id)}>–</button>`}
     ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${board.label}`}
@@ -119,6 +122,7 @@ function FooterOverlayDock({ snapshot, win }) {
 function validWindow(window) {
   if (window.kind === BOARD_WINDOW_KIND) return isBoardId(window.board);
   if (window.kind === PROCESS_WINDOW_KIND) return validProcessTab(window);
+  if (window.kind === PAGE_WINDOW_KIND) return validPageTab(window);
   if (window.kind === TERMINAL_WINDOW_KIND) return validTerminalWindow(window);
   if (window.kind === START_WINDOW_KIND || window.kind === DECIDE_WINDOW_KIND) return true;
   return window.kind === CHAT_WINDOW_KIND && isAgentId(window.agent);

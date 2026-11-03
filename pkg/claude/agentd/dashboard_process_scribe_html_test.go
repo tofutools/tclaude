@@ -59,12 +59,11 @@ func TestDashboardProcessScribeAssets(t *testing.T) {
 
 	actions := read("js/processes-actions.js")
 	must("processes-actions.js", actions,
-		"fetchImpl('/api/scribe'",
+		"await summonHelper({",
 		"exclusive: true, scope: handoff.scope",
-		"scope: handoff.scope, brief: processScribeBrief(handoff, briefOptions)",
+		"brief: processScribeBrief(handoff, briefOptions), taskRef: task, confirmed: true",
 		"processScribeGrantBody(target, transition)",
 		"Process scribe cancelled; no permissions or sessions changed.",
-		"task_ref_url: task.url, task_ref_label: task.label",
 		"if (typeof freshnessGuard === 'function') fresh = freshnessGuard() === true",
 		"editor context changed during approval",
 		"async function stopScribe(scribe)",
@@ -72,7 +71,7 @@ func TestDashboardProcessScribeAssets(t *testing.T) {
 		"delete_worktree: '0'",
 		"Check the agent daemon and Ask & scribe defaults, then retry.",
 		"result.reused ? 'Reopened' : 'Summoned'",
-		"openTerminalPane({ ws: result.focus_ws",
+		"await askExistingAgent({",
 	)
 	island := read("js/processes-island.js")
 	must("processes-island.js", island,
@@ -96,8 +95,7 @@ func TestDashboardProcessScribeAssets(t *testing.T) {
 	)
 	editorIsland := read("js/process-editor-island.js")
 	must("process-editor-island.js", editorIsland,
-		"class=${`process-action process-scribe-action${view.scribeDock?.open ? ' is-active' : ''}`}",
-		"onClick=${() => (view.scribeDock?.available ? controller.toggleScribeDock() : controller.requestScribe('template'))}",
+		"onNew=${() => controller.requestScribe('template')} onAsk=${(agent) => controller.requestScribe('template', { to: agent })}",
 		"Share editor context with process scribe",
 		"BEGIN BOUNDED EDITOR CONTEXT · read-only · not template source",
 		"Send & open scribe",

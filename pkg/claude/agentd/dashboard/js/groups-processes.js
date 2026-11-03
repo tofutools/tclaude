@@ -553,7 +553,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     if (restoring) setQuick({ mode: 'scribe', key: Date.now(), draft: restoring });
   }, [restoring?.templateId]);
   const quickStart = editing && quick.mode === 'scribe'
-    ? html`<${ScribeDraft} key=${quick.key} group=${group} draft=${quick.draft} api=${api} wizard=${wizard} notify=${notify || defaultNotify}
+    ? html`<${ScribeDraft} key=${quick.key} group=${group} draft=${quick.draft} api=${api} scribes=${scribes} wizard=${wizard} notify=${notify || defaultNotify}
         onReview=${(view) => reviewDraft(quick, view)} onClose=${() => closeDraft(quick)} />`
     : editing && quick.mode === 'graph'
     ? html`<${MiniGraphEditor} key=${quick.key} group=${group} roster=${people} groupInfo=${entry} process=${quick.process}

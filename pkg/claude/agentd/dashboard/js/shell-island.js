@@ -930,7 +930,9 @@ function Disconnect({ state }) {
 
 function Toast({ feedback }) {
   const current = feedback.toast.value;
-  return html`<div class=${`toast${current.error ? ' error' : ''}${current.visible ? ' show' : ''}`} id="toast">${current.message}</div>`;
+  const action = current.action;
+  return html`<div class=${`toast${current.error ? ' error' : ''}${current.visible ? ' show' : ''}${action ? ' has-action' : ''}`} id="toast">${current.message}${action ? html`<span class="toast-sep" aria-hidden="true"> · </span><${Button} size="sm" variant="link" class="toast-action"
+    onClick=${() => { feedback.dismissToast?.(current.id); action.run(); }}>${action.label}<//>` : null}</div>`;
 }
 
 function Confirm({ feedback }) {

@@ -747,7 +747,10 @@ Renames go through `edit` (change the JSON `name`; stable-ID assignments
 follow). `import` is transactional, with assignment application opt-in.
 `draft --token --file` is the scribe seam: a dashboard-summoned drafting agent
 holding only `sandbox-profiles.draft` can propose a validated profile for human
-preview but can never save, assign, or launch. Payload reads (`show`) and all
+preview but can never save, assign, or launch. In the dashboard, *configure
+with agent* asks you to confirm that grant, then opens the scribe in its
+regular overlay chat window; the draft it returns opens in the editor for
+review. Payload reads (`show`) and all
 writes require `sandbox-profiles.manage` — human-only by default, and
 deliberately not implied by `profiles.manage`; reading the global and group
 *assignments* does not.

@@ -24,6 +24,8 @@ import {
 } from './process-editor-window.js';
 import { TO_WINDOW_LABEL } from './overlay-tab-moves.js';
 import { withShortcut } from './keybindings.js';
+import { liveHelpers, sendToHelper } from './get-help.js';
+import { dashboardState } from './snapshot-store.js';
 
 const html = htm.bind(h);
 
@@ -103,7 +105,10 @@ export function processEditorConfig({ mount, readable = false, state, actions, c
     onOpenTemplates: () => (isProcessSolo() || !processDocked(mount) ? false : actions?.activateSubtab?.('templates')),
     onOpenTemplate: actions?.openReferencedTemplate,
     templateRefs: () => state.view.value.templates, onScribe: actions?.summonScribe,
-    scribeDock: actions?.openScribe ? { scribes: () => state.view.value.scribes, openTerminal: actions.openScribe } : null,
+    onAskAgent: actions?.askAgent,
+    onMessageHelper: (helper, message) => sendToHelper(helper, message),
+    // An editor's helper counts while the snapshot lists it running.
+    helperLive: (helper) => liveHelpers(dashboardState.snapshot.value).some((agent) => agent.id === helper.id),
     describeActor: actions?.describeActor, onOpenActor: actions?.openActor,
   };
 }
@@ -293,7 +298,7 @@ export function mountProcessesIsland({ host, state, actions, confirmDiscard, reg
   // An overlay window's process tab opens and docks its editor through here.
   const canLeave = () => (actions.canLeaveEditor ? actions.canLeaveEditor() : true);
   registerCleanup(registerProcessEditorHost({
-    open: (mount, id, name, handoff = null) => loadTemplateEditor(mount, { id, name, handoff, config: processEditorConfig({ mount, state, actions, confirmDiscard }) }),
+    open: (mount, id, name, handoff = null, { view = null, readable = false } = {}) => loadTemplateEditor(mount, { id, name, handoff, view, config: processEditorConfig({ mount, readable, state, actions, confirmDiscard }) }),
     dock: (id, live, name) => {
       void actions.openEditor(id, false, name, { live });
       document.querySelector('nav [data-tab="processes"]')?.click();

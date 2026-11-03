@@ -236,10 +236,11 @@ scenario('a floating board moves to a separate window, and stays if pop-ups are 
   globalThis.open = () => (blocked ? null : { location: { replace: (url) => urls.push(url) } });
   t.after(() => { globalThis.open = previous; });
   await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
-  await click(button(overlayHost, 'Open in separate window'));
+  assertAbsent(overlayHost.querySelector('.board-overlay-action'), 'the title bar has no words beside its − ⇄ ×');
+  await fromMore(harness, overlayHost, 'Open in separate window');
   assert.equal(windows.overlayWindows.value.length, 1);
   blocked = false;
-  await click(button(overlayHost, 'Open in separate window'));
+  await fromMore(harness, overlayHost, 'Open in separate window');
   assert.equal(windows.overlayWindows.value.length, 0);
   assert.equal(seedOf(urls[0]).board, 'plan');
   assert.equal(seedOf(urls[0]).floats, true);
@@ -305,7 +306,7 @@ scenario('a board moves from its tab into the overlay and back', async ({ harnes
   await harness.act(async () => { harness.fireEvent(harness.document.querySelector('nav [data-tab="groups"]'), 'click'); await wait(); });
   assert.ok(overlayHost.querySelector('.board-overlay'));
 
-  await click(button(overlayHost, 'Open in the Collab tab'));
+  await fromMore(harness, overlayHost, 'Open in the Collab tab');
   assertAbsent(overlayHost.querySelector('.board-overlay'));
   assert.equal(overlayState.boardOverlays.value.length, 0);
   assert.deepEqual(tabLabels(host), ['Release plan']);
@@ -761,6 +762,11 @@ const chooseItem = (harness, label) => harness.act(async () => {
   await wait();
   await wait();
 });
+// The title bar's ⋯ opens the window's tab menu, moves and all (tcl-aukxip).
+const fromMore = async (harness, overlayHost, label) => {
+  await harness.act(async () => { overlayHost.querySelector('.overlay-tab-more').click(); await wait(); });
+  await chooseItem(harness, label);
+};
 
 scenario('a tab\'s menu groups it, and says Minimize where Terminals says Close', async ({ harness, overlayHost, overlayState, windows }) => {
   await twoInOne(harness, overlayState, windows);

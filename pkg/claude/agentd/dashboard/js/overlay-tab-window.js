@@ -12,6 +12,8 @@ import { WINDOW_GLYPHS } from './overlay-dock.js';
 import { BOARD_WINDOW_KIND, boardOverlays } from './board-overlay-state.js';
 import { PROCESS_WINDOW_KIND } from './process-editor-place.js';
 import { ProcessOverlayWindow, processStartPlacement } from './process-overlay.js';
+import { PAGE_WINDOW_KIND } from './page-pane-model.js';
+import { PageOverlayWindow, pageStartPlacement } from './page-view.js';
 import { ChatWindow } from './chat-window.js';
 import { CHAT_WINDOW_KIND } from './chat-window-model.js';
 import { defaultPlacement } from './companion-model.js';
@@ -19,7 +21,7 @@ import { askOverlayClose, closeWindowTabs, useDropPoint } from './overlay-instan
 import { tabJoin } from './overlay-tab-drag.js';
 import { activeTabOf } from './overlay-tab-model.js';
 import { tabMoves } from './overlay-tab-moves.js';
-import { OverlayTabStrip } from './overlay-tab-strip.js';
+import { OverlayTabMore, OverlayTabStrip } from './overlay-tab-strip.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { OverlayWindow, useOverlayWindow } from './overlay-window.js';
 import { TerminalWindow } from './terminal-window.js';
@@ -32,6 +34,7 @@ const TAB_BODIES = Object.freeze({
   [TERMINAL_WINDOW_KIND]: TerminalWindow,
   [BOARD_WINDOW_KIND]: BoardOverlayWindow,
   [PROCESS_WINDOW_KIND]: ProcessOverlayWindow,
+  [PAGE_WINDOW_KIND]: PageOverlayWindow,
 });
 
 // TabBoundary holds what a tab's kind threw, so the dashboard around it lives on.
@@ -58,6 +61,8 @@ export const plainView = ({ kind, label }) => ({ label: label || 'Terminal', lea
 export const tabViewOf = (kinds) => (tab) => (kinds[tab.kind]?.view || plainView)(tab);
 
 const closeTitle = (window, stewardInside) => {
+  // A live page closed here ends, and its agent is told (page-view.js).
+  if (window.tabs.every((tab) => tab.kind === PAGE_WINDOW_KIND)) return window.tabs.length > 1 ? 'Close: the pages close, and the agents that showed them are told' : 'Close: the page closes, and the agent that showed it is told';
   if (stewardInside) return window.tabs.length > 1 ? 'Close: other tabs leave and keep running, and the Steward shuts down, after asking' : 'Close: shut it down, after asking';
   return window.tabs.length > 1 ? 'Close: every tab leaves and keeps running in the background' : 'Close: it leaves and keeps running in the background';
 };
@@ -66,7 +71,7 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = n
   const tab = activeTabOf(window);
   const start = tab.kind === BOARD_WINDOW_KIND
     ? boardStartPlacement(prefs, boardOverlays.value.findIndex((board) => board.id === tab.id))
-    : tab.kind === PROCESS_WINDOW_KIND ? processStartPlacement : defaultPlacement;
+    : tab.kind === PROCESS_WINDOW_KIND ? processStartPlacement : tab.kind === PAGE_WINDOW_KIND ? pageStartPlacement : defaultPlacement;
   useDropPoint(tab, { win, prefs, prefKey: window.place, start });
   const focusRef = useRef(null);
   const overlay = useOverlayWindow({
@@ -88,11 +93,15 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = n
     onClose: () => closeTabs(() => true),
   };
   const tabClose = {
-    title: (candidate) => (asksToClose(candidate) ? 'Detach: shut it down, after asking' : 'Detach to background: it leaves the window and dock and keeps running'),
+    title: (candidate) => (asksToClose(candidate) ? 'Detach: shut it down, after asking'
+      : candidate.kind === PAGE_WINDOW_KIND ? 'Close this page: the agent that showed it is told'
+        : 'Detach to background: it leaves the window and dock and keeps running'),
     onClose: (id) => closeTabs((candidate) => candidate.id === id),
   };
   const viewOf = tabViewOf(kinds);
   const strip = html`<${OverlayTabStrip} window=${window} overlay=${overlay} win=${win} viewOf=${viewOf} tabClose=${tabClose} />${add?.(window)}`;
+  // The ⋯ a body puts beside its − ⇄ ×: the active tab's menu, moves and all.
+  const more = html`<${OverlayTabMore} tab=${tab} label=${viewOf(tab).label} />`;
   const Body = kinds[tab.kind]?.Body || TAB_BODIES[tab.kind];
   const minimize = home?.shrinks?.(window, overlay);
   const fallback = (retry) => {
@@ -105,6 +114,6 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = n
     <//>`;
   };
   return html`<${TabBoundary} key=${tab.id} fallback=${fallback}>
-    <${Body} instance=${tab} overlay=${overlay} focusRef=${focusRef} strip=${strip} close=${close} minimize=${minimize} tabCount=${window.tabs.length} ...${kinds[tab.kind]} />
+    <${Body} instance=${tab} overlay=${overlay} focusRef=${focusRef} strip=${strip} more=${more} close=${close} minimize=${minimize} tabCount=${window.tabs.length} ...${kinds[tab.kind]} />
   <//>`;
 }

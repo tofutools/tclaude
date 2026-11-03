@@ -34,11 +34,8 @@ func TestDashboardHTML_ScribeButtons(t *testing.T) {
           id="scribe-editor-open"
           hidden=`, "editor scribe button is a plain (non-submit) standard Button")
 
-	// JS wiring: the summon POSTs to the generic daemon endpoint with the base
-	// name (the daemon adds a unique suffix) and the minimal grant bundle.
-	must(`fetch('/api/scribe'`, "the summon POSTs to the generic /api/scribe endpoint")
-	must(`const SCRIBE_NAME = 'circle-scribe';`, "the stable scribe-kind base name")
-	must(`const SCRIBE_SLUGS = ['templates.manage'];`, "the minimal template-scribe grant bundle")
+	// The summon itself (name, grant bundle, confirmation, chat window) is
+	// exercised by jstest/template-scribe.test.mjs.
 
 	// The editor entry point consults the dirty flag before handing off — an
 	// open dirty editor would stomp the scribe's full-replace edits on save.

@@ -133,6 +133,9 @@ test('template manager and editor retain native markup, wizard variants, nested 
   state.openTemplateManager();
   let saved = null;
   let profileManagerOpened = false;
+  let discard = false;
+  let scribeResult = null;
+  const scribeAsked = [];
   const actions = {
     openTemplateEditor(seed = null, options = {}) {
       state.openTemplateDialog({ kind: 'template-editor', seed, options });
@@ -153,7 +156,7 @@ test('template manager and editor retain native markup, wizard variants, nested 
     async saveTemplate(value) {
       saved = value;
     },
-    editTemplateWithAgent() {},
+    editTemplateWithAgent(name) { scribeAsked.push(name); return scribeResult; },
   };
   const cleanups = [];
   const host = harness.document.createElement('div');
@@ -163,7 +166,7 @@ test('template manager and editor retain native markup, wizard variants, nested 
     state,
     actions,
     confirm: async () => true,
-    confirmDiscard: async () => false,
+    confirmDiscard: async () => discard,
     openProfilePermissions() {},
     registerCleanup(fn) {
       cleanups.push(fn);
@@ -271,6 +274,18 @@ test('template manager and editor retain native markup, wizard variants, nested 
   await harness.act(() => Promise.resolve());
   assert.equal(saved.payload.name, 'force-2');
   assert.equal(saved.payload.agents.length, 2);
+  // Edit with agent keeps the editor until the scribe's window opened: a
+  // declined grant leaves it as it was.
+  discard = true;
+  const settle = async () => { for (let i = 0; i < 3; i++) await harness.act(() => Promise.resolve()); };
+  host.querySelector('#scribe-editor-open').click();
+  await settle();
+  assert.deepEqual(scribeAsked, ['force'], 'the stored circle the scribe edits');
+  assert.ok(host.querySelector('#template-editor-modal'), 'a declined summon keeps the editor');
+  scribeResult = { agentId: 'agt_circle', opened: 'chat' };
+  host.querySelector('#scribe-editor-open').click();
+  await settle();
+  assertAbsent(host.querySelector('#template-editor-modal'), 'the editor steps aside once the chat window opened');
   cleanups.reverse().forEach((fn) => fn());
 });
 

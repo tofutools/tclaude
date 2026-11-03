@@ -60,6 +60,9 @@ async function mount(t, { api = fakeApi(), context = EMPTY_CONTEXT, confirm = un
   const source = { context: harness.signals.signal(context), status: harness.signals.signal('ready'), error: harness.signals.signal(''), refreshes: 0 };
   source.refresh = () => { source.refreshes++; return Promise.resolve(); };
   const notes = [];
+  const { registerCompanionController } = await harness.importDashboardModule('js/companion-facade.js');
+  const opened = [];
+  t.after(registerCompanionController({ open: (agentId, options) => { opened.push({ agentId, ...options }); return true; } }));
   const snapshot = { processes_enabled: true, groups: GROUPS };
   const mounted = await harness.mount(harness.html`<${interactions.GroupsInteractionProvider}>
     <${mod.GroupsProcessesFocus} groups=${GROUPS} allGroups=${[...GROUPS, ...extraGroups]} source=${source} filter="running" api=${api} confirm=${confirm}
@@ -78,7 +81,7 @@ async function mount(t, { api = fakeApi(), context = EMPTY_CONTEXT, confirm = un
     await settle();
   };
   await settle();
-  return { harness, root, api, source, notes, handoff, click, setValue, settle };
+  return { harness, root, api, source, notes, handoff, opened, click, setValue, settle };
 }
 
 const steps = (root) => [...root.querySelectorAll('[data-step]')];
@@ -97,7 +100,7 @@ test('an empty group offers Get started: starters, the library, a blank list and
 });
 
 const SCRIBE = { agent_id: `agt_${'a'.repeat(32)}`, conv_id: 'conv-scribe', name: 'process-scribe-k3' };
-const [T0, T1, T2] = ['2026-11-01T06:00:00Z', '2026-11-01T06:01:00Z', '2026-11-01T06:02:00Z'];
+const T1 = '2026-11-01T06:01:00Z';
 const SAVED_DRAFT = {
   sourceHash: 'b'.repeat(64),
   authoredAt: T1,
@@ -110,7 +113,7 @@ const SAVED_DRAFT = {
   layout: {},
 };
 
-function scribeApi({ chat, stored = null, summonError = null, sendError = null } = {}) {
+function scribeApi({ stored = null, summonError = null, sendError = null } = {}) {
   const api = fakeApi();
   Object.assign(api.calls, { summon: [], send: [], stop: [] });
   api.createTemplate = async (view, options) => {
@@ -122,7 +125,6 @@ function scribeApi({ chat, stored = null, summonError = null, sendError = null }
   api.stopAgent = async (id) => { api.calls.stop.push(id); return { action: 'soft_stopped' }; };
   api.calls.remove = [];
   api.deleteTemplate = async (id) => { api.calls.remove.push(id); return { deleted: id }; };
-  api.scribeChat = async () => chat();
   api.getTemplate = async (id) => { api.calls.get.push(id); return stored?.() || { sourceHash: 'a'.repeat(64), template: { id, nodes: {} }, edges: [] }; };
   api.getTemplateHead = api.getTemplate;
   return api;
@@ -144,7 +146,7 @@ async function describe(view, text = 'Build it,\n then review   and ship') {
 
 test('Draft steps needs the operator: a declined grant stores and starts nothing', async (t) => {
   const asked = [];
-  const api = scribeApi({ chat: () => ({ messages: [] }) });
+  const api = scribeApi();
   const view = await mount(t, { api, confirm: async (request) => { asked.push(request); return false; } });
   assert.equal(api.calls.summon.length, 0, 'nothing starts by itself');
   await describe(view);
@@ -153,11 +155,12 @@ test('Draft steps needs the operator: a declined grant stores and starts nothing
   assert.match(asked[0].body, /Every other registered capability is explicitly denied/);
   assert.equal(api.calls.create.length, 0, 'no template before the grant');
   assert.equal(api.calls.summon.length, 0);
+  assert.deepEqual(view.opened, []);
   assert.ok(view.root.querySelector('[data-quickstart]'), 'Get started stays');
 });
 
-test('an approved draft runs a background scribe here, with the same grant as any process scribe', async (t) => {
-  const api = scribeApi({ chat: () => ({ messages: [{ id: 'h1', role: 'human', body: 'long request' }], live: { items: [{ kind: 'tool', text: 'Editing x.yaml' }, { kind: 'text', text: 'Drafting the steps' }] } }) });
+test('an approved draft runs a background scribe in its chat window, with the same grant as any process scribe', async (t) => {
+  const api = scribeApi();
   withOrigin(t);
   const view = await mount(t, { api, confirm: async () => true });
   await describe(view);
@@ -173,29 +176,29 @@ test('an approved draft runs a background scribe here, with the same grant as an
   assert.match(sent.body, /agent group "webshop"/);
   assert.match(sent.body, /- review-bot \(role: reviewer\)/);
   assert.match(sent.body, /do not start it/);
+  assert.deepEqual(view.opened, [{ agentId: SCRIBE.agent_id, starting: true }], 'the conversation is the scribe\'s regular chat window');
   const panel = view.root.querySelector('[data-scribe-draft="tmpl_1"]');
   assert.ok(panel, 'the draft stays in the group body');
   assert.equal(view.handoff.takeProcessDraft(), null, 'nothing leaves for the graph editor');
   assert.match(panel.querySelector('[data-scribe-request]').textContent, /Build it/);
-  assert.doesNotMatch(panel.textContent, /long request/, 'the request shows in the operator\'s words');
-  assert.match(panel.querySelector('[data-scribe-live="text"]').textContent, /Drafting the steps/);
+  assert.equal(panel.querySelector('[data-scribe-status]').dataset.scribeStatus, 'working');
+  assert.equal(panel.querySelector('[data-scribe-reply]'), null, 'no reply box: the chat window is where it is answered');
   assert.equal(panel.querySelector('[data-scribe-review]').disabled, true, 'nothing to review yet');
+  await view.click(panel.querySelector('[data-scribe-chat]'));
+  assert.deepEqual(view.opened.at(-1), { agentId: SCRIBE.agent_id, starting: false }, 'the panel brings the chat window back');
   assert.equal(api.calls.start.length, 0);
 });
 
-test('a finished draft waits for the operator, with the scribe\'s last word readable, and nothing runs', async (t) => {
-  const api = scribeApi({
-    chat: () => ({ messages: [{ id: 'h1', role: 'human', body: 'go', at: T0 }, { id: 's1', role: 'scribe', body: 'Saved it. Is QA right?', at: T2 }] }),
-    stored: () => SAVED_DRAFT,
-  });
+test('a finished draft waits for the operator in the step list, and nothing runs', async (t) => {
+  const api = scribeApi({ stored: () => SAVED_DRAFT });
   withOrigin(t);
-  const view = await mount(t, { api, confirm: async () => true });
+  const view = await mount(t, { api, confirm: async () => true, extraGroups: [scribeGroup({ status: 'idle' })] });
   await describe(view);
   await view.settle();
   const panel = view.root.querySelector('[data-scribe-draft]');
-  assert.ok(panel, 'it does not open over the closing message');
-  assert.match(panel.textContent, /Is QA right\?/);
+  assert.ok(panel, 'it does not open over the scribe');
   assert.match(panel.querySelector('[data-scribe-ready]').textContent, /Draft saved: 1 step\./);
+  assert.equal(panel.querySelector('[data-scribe-status]'), null);
   await view.click(panel.querySelector('[data-scribe-review]'));
   await view.settle();
   assert.ok(view.root.querySelector('[data-step-editor="webshop"]'), 'the draft opens for review');
@@ -204,12 +207,9 @@ test('a finished draft waits for the operator, with the scribe\'s last word read
 });
 
 test('a draft saved mid-turn cannot be reviewed until the scribe is stopped', async (t) => {
-  const api = scribeApi({
-    chat: () => ({ messages: [{ id: 'h1', role: 'human', body: 'go', at: T0 }], live: { items: [{ kind: 'text', text: 'still at it' }] } }),
-    stored: () => SAVED_DRAFT,
-  });
+  const api = scribeApi({ stored: () => SAVED_DRAFT });
   withOrigin(t);
-  const view = await mount(t, { api, confirm: async () => true });
+  const view = await mount(t, { api, confirm: async () => true, extraGroups: [scribeGroup({ status: 'working' })] });
   await describe(view);
   const panel = view.root.querySelector('[data-scribe-draft]');
   assert.match(panel.querySelector('[data-scribe-ready]').textContent, /1 step saved so far/);
@@ -220,24 +220,28 @@ test('a draft saved mid-turn cannot be reviewed until the scribe is stopped', as
   assert.ok(view.root.querySelector('[data-step-editor="webshop"]'), 'what it saved opens once it is stopped');
 });
 
-test('a reply from before the last save is not the end of the turn', async (t) => {
+test('a draft is finished only once saved and idle', async (t) => {
   const harness = await createPreactHarness(t);
   const { scribeFinished } = await harness.importDashboardModule('js/groups-scribe-draft.js');
-  const ready = { authoredAt: T1 };
-  const human = { role: 'human', at: T0 };
-  const welcome = { role: 'scribe', at: T0 };
-  const closing = { role: 'scribe', at: T2 };
-  assert.equal(scribeFinished({ messages: [human, welcome], ready }), false, 'a welcome turn ended, then the work began');
-  assert.equal(scribeFinished({ messages: [human, closing], ready }), true);
-  assert.equal(scribeFinished({ messages: [human, closing], ready, live: { items: [] } }), false, 'a turn is open');
-  assert.equal(scribeFinished({ messages: [human, closing, human], ready }), false, 'the operator asked for more');
-  assert.equal(scribeFinished({ messages: [human, closing], ready: null }), false, 'nothing saved');
-  assert.equal(scribeFinished({ messages: [human, closing], ready: {} }), false, 'an unknown save time is not finished');
+  assert.equal(scribeFinished({ ready: SAVED_DRAFT, status: 'idle' }), true);
+  assert.equal(scribeFinished({ ready: SAVED_DRAFT, status: 'working' }), false, 'a turn is open');
+  assert.equal(scribeFinished({ ready: SAVED_DRAFT, status: '' }), false, 'an unknown or stopped scribe is not finished');
+  assert.equal(scribeFinished({ ready: null, status: 'idle' }), false, 'nothing saved');
+});
+
+test('an idle scribe with nothing saved is waiting for the operator', async (t) => {
+  const api = scribeApi();
+  withOrigin(t);
+  const view = await mount(t, { api, confirm: async () => true, extraGroups: [scribeGroup({ status: 'idle' })] });
+  await describe(view);
+  const status = view.root.querySelector('[data-scribe-status]');
+  assert.equal(status.dataset.scribeStatus, 'waiting');
+  assert.match(status.textContent, /waiting for you in its chat window/);
 });
 
 test('a failed start still leaves the group when the draft cannot be deleted', async (t) => {
   withOrigin(t);
-  const api = scribeApi({ chat: () => ({ messages: [] }), sendError: 'mail refused' });
+  const api = scribeApi({ sendError: 'mail refused' });
   api.deleteTemplate = async () => { throw new Error('store busy'); };
   const view = await mount(t, { api, confirm: async () => true });
   await describe(view);
@@ -245,28 +249,23 @@ test('a failed start still leaves the group when the draft cannot be deleted', a
 });
 
 test('a failed start takes the empty draft out of the group', async (t) => {
-  const api = scribeApi({ chat: () => ({ messages: [] }), sendError: 'mail refused' });
+  const api = scribeApi({ sendError: 'mail refused' });
   withOrigin(t);
   const view = await mount(t, { api, confirm: async () => true });
   await describe(view);
   assert.deepEqual(api.calls.stop, [SCRIBE.agent_id], 'a scribe with no request does not stay up');
   assert.deepEqual(api.calls.remove, ['tmpl_1'], 'the empty draft is deleted, not left unlisted');
   assert.deepEqual(api.calls.unpin, []);
+  assert.deepEqual(view.opened, [], 'no chat window for a scribe that was stopped');
   assert.ok(view.notes.some((note) => note.error && /mail refused/.test(note.message)));
   assert.equal(view.root.querySelector('[data-scribe-draft]'), null);
 });
 
-test('stopping the scribe keeps the draft, and the operator can answer it', async (t) => {
-  const api = scribeApi({ chat: () => ({ messages: [{ id: 'h1', role: 'human', body: 'go' }, { id: 's1', role: 'scribe', body: 'Which reviewer?' }] }) });
+test('stopping the scribe keeps the draft in the group', async (t) => {
+  const api = scribeApi();
   withOrigin(t);
   const view = await mount(t, { api, confirm: async () => true });
   await describe(view);
-  const panel = view.root.querySelector('[data-scribe-draft]');
-  assert.match(panel.textContent, /Which reviewer\?/);
-  await view.setValue(panel.querySelector('[data-scribe-reply]'), 'the QA agent');
-  await view.harness.act(() => view.harness.fireEvent(panel.querySelector('.gq-draft-reply'), 'submit'));
-  await view.settle();
-  assert.equal(api.calls.send.at(-1).body, 'the QA agent');
   await view.click(view.root.querySelector('[data-scribe-stop]'));
   assert.deepEqual(api.calls.stop, [SCRIBE.agent_id]);
   assert.equal(api.calls.unpin.length, 0, 'the draft stays in the group');
@@ -1056,17 +1055,13 @@ function scribeGroup({ online = true, label = 'draft: tmpl_1', status = 'idle', 
   }] };
 }
 
-const REQUEST_BODY = 'Build it, then review\n\nThis process is for the agent group "webshop". Draft its steps.';
 
-test('after a reload the draft panel comes back from the snapshot, with the words and the saved draft', async (t) => {
-  const api = scribeApi({ stored: () => SAVED_DRAFT, chat: () => ({ messages: [
-    { id: 'm1', role: 'human', body: REQUEST_BODY, at: T0 },
-    { id: 'm2', role: 'scribe', body: 'Saved it.', at: T2 },
-  ] }) });
-  const { root, click } = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup()] });
+test('after a reload the draft panel comes back from the snapshot, with the saved draft', async (t) => {
+  const api = scribeApi({ stored: () => SAVED_DRAFT });
+  const { root, click, opened } = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup()] });
   const panel = root.querySelector('[data-scribe-draft="tmpl_1"]');
   assert.ok(panel, 'the panel is back with no click');
-  assert.equal(panel.querySelector('[data-scribe-request]').textContent, 'Build it, then review');
+  assert.deepEqual(opened, [], 'a reload does not open chat windows by itself');
   assert.match(panel.querySelector('[data-scribe-ready]').textContent, /Draft saved: 1 step/);
   assert.equal(panel.querySelector('[data-scribe-review]').disabled, false);
   assert.equal(api.calls.summon.length, 0, 'it re-attaches to the running scribe and starts nothing');
@@ -1075,7 +1070,7 @@ test('after a reload the draft panel comes back from the snapshot, with the word
 });
 
 test('a re-attached panel does not take the empty draft for saved work', async (t) => {
-  const api = scribeApi({ chat: () => ({ messages: [{ id: 'm1', role: 'human', body: REQUEST_BODY, at: T0 }] }) });
+  const api = scribeApi();
   const { root } = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup()] });
   assert.equal(root.querySelector('[data-scribe-ready]'), null);
   assert.ok(root.querySelector('[data-scribe-review]').disabled);
@@ -1085,14 +1080,13 @@ test('a re-attached panel sees saved work that has no performer steps', async (t
   const graphOnly = { ...SAVED_DRAFT, template: { ...SAVED_DRAFT.template, nodes: {
     start: { type: 'start' }, nested: { type: 'subprocess' }, done: { type: 'end', result: 'success' },
   } } };
-  const api = scribeApi({ stored: () => graphOnly, chat: () => ({ messages: [{ id: 'm1', role: 'human', body: REQUEST_BODY, at: T0 }] }) });
+  const api = scribeApi({ stored: () => graphOnly });
   const { root } = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup()] });
   assert.ok(root.querySelector('[data-scribe-ready]'));
 });
 
 test('hiding the panel leaves the scribe working and the panel gone', async (t) => {
-  const chat = () => ({ messages: [{ id: 'm1', role: 'human', body: REQUEST_BODY, at: T0 }] });
-  const api = scribeApi({ chat });
+  const api = scribeApi();
   const { root, click, settle } = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup()] });
   await click(root.querySelector('[data-scribe-hide]'));
   await settle();
@@ -1104,15 +1098,14 @@ test('hiding the panel leaves the scribe working and the panel gone', async (t) 
 });
 
 test('a draft left before the reload does not come back by itself', async (t) => {
-  const chat = () => ({ messages: [] });
-  const { root } = await mount(t, { api: scribeApi({ chat }), context: DRAFT_CONTEXT, extraGroups: [scribeGroup()],
+  const { root } = await mount(t, { api: scribeApi(), context: DRAFT_CONTEXT, extraGroups: [scribeGroup()],
     prefs: { 'tclaude.dash.groupsProcesses.leftScribeDrafts': '["tmpl_1"]' } });
   assert.equal(root.querySelector('[data-scribe-draft]'), null);
 });
 
 for (const [name, group] of [['a stopped scribe', scribeGroup({ online: false })], ['a scribe from the graph editor', scribeGroup({ label: 'process: tmpl_1' })]]) {
   test(`${name} does not re-attach`, async (t) => {
-    const { root, click } = await mount(t, { api: scribeApi({ chat: () => ({ messages: [] }) }), context: DRAFT_CONTEXT, extraGroups: [group] });
+    const { root, click } = await mount(t, { api: scribeApi(), context: DRAFT_CONTEXT, extraGroups: [group] });
     assert.equal(root.querySelector('[data-scribe-draft]'), null);
     await click(root.querySelector('[data-saved-run="tmpl_1"]'));
     assert.equal(root.querySelector('[data-saved-scribe]'), null);
@@ -1195,7 +1188,7 @@ const DRAFT_REF = `tmpl_1@sha256:${'2'.repeat(64)}`;
 const REVIEWED_DRAFTS = 'tclaude.dash.groupsProcesses.reviewedScribeDrafts';
 
 function stripStart(t, { actor = `agent:${SCRIBE.agent_id}`, reviewed = '[]', online = true, status = 'idle', scope = 'tmpl_1' } = {}) {
-  const api = scribeApi({ chat: () => ({ messages: [] }), stored: () => ({ ...SAVED_DRAFT, currentRef: DRAFT_REF, actor }) });
+  const api = scribeApi({ stored: () => ({ ...SAVED_DRAFT, currentRef: DRAFT_REF, actor }) });
   return mount(t, {
     api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup({ label: '', online, status, scope })], prefs: { [REVIEWED_DRAFTS]: reviewed },
   }).then(async (view) => {
@@ -1223,7 +1216,7 @@ for (const [name, options] of [
 // The group body's start form asks the same question.
 async function formStart(t, options = {}) {
   const { actor = `agent:${SCRIBE.agent_id}`, online = true, moved = 0, opener = '[data-process-start]' } = options;
-  const api = scribeApi({ chat: () => ({ messages: [] }), stored: () => ({ ...SAVED_DRAFT, currentRef: DRAFT_REF, actor }) });
+  const api = scribeApi({ stored: () => ({ ...SAVED_DRAFT, currentRef: DRAFT_REF, actor }) });
   api.listTemplates = async () => [{ id: 'tmpl_1', name: 'Ship it' }];
   let refusals = moved;
   const startRun = api.startGroupRun;
@@ -1324,7 +1317,7 @@ test('the ▶ strip asks about another agent\'s save while the process\'s scribe
 });
 
 test('the ▶ strip asks when it cannot read the current version', async (t) => {
-  const api = scribeApi({ chat: () => ({ messages: [] }), stored: () => SAVED_DRAFT });
+  const api = scribeApi({ stored: () => SAVED_DRAFT });
   api.getTemplateHead = async () => { throw new Error('no head'); };
   const { root, click, harness, settle } = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup({ label: '' })] });
   await click(root.querySelector('[data-saved-run="tmpl_1"]'));

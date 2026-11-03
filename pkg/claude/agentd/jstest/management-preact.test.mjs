@@ -403,8 +403,10 @@ test('profile editor shows the unsandboxed-autonomy warning and clears it on a s
     confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); },
   });
   await harness.act(() => Promise.resolve());
-  // The probe is debounced; let the timer fire and the state settle.
-  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
+  // The probe is debounced (200ms); wait for the rendered warning rather than
+  // a fixed sleep, which raced the debounce on a slow macOS runner.
+  await waitForCondition(harness, () => host.querySelector('#profile-editor-autonomy-warning'),
+    'off + auto renders the warning row');
 
   const warning = host.querySelector('#profile-editor-autonomy-warning');
   assert.ok(warning, 'off + auto renders the warning row');
@@ -418,7 +420,8 @@ test('profile editor shows the unsandboxed-autonomy warning and clears it on a s
   // Picking a confining sandbox (`on` is a catalog option) clears it.
   choose(host.querySelector('#profile-editor-sandbox'), 'on');
   await harness.act(() => harness.fireEvent(host.querySelector('#profile-editor-sandbox'), 'change'));
-  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
+  await waitForCondition(harness, () => probes.some((p) => p.sandbox === 'on')
+    && !host.querySelector('#profile-editor-autonomy-warning'), 'a safe sandbox clears the warning');
   assertAbsent(host.querySelector('#profile-editor-autonomy-warning'), 'a safe sandbox clears the warning');
 
   cleanups.reverse().forEach((fn) => fn());
@@ -849,24 +852,32 @@ test('sandbox clone suggestions stay within the UTF-8 server limit across collis
   assert.notEqual(second, first);
 });
 
-test('sandbox scribe return reopens clone drafts in explicit create mode', async (t) => {
+test('the sandbox scribe opens in its chat window, and its draft reopens clones in explicit create mode', async (t) => {
   const harness = await createPreactHarness(t);
   await harness.replaceDashboardModule('js/refresh.js', 'export function toast() {}');
-  await harness.replaceDashboardModule('js/terminals-tab.js', 'export function openTerminalPane() {}');
-  const [{ registerManagementController }, { summonSandboxScribe }, { createManagementState }, { mountManagementIsland }] = await Promise.all([
+  const [{ registerManagementController }, { summonSandboxScribe }, { createManagementState }, { mountManagementIsland }, { registerCompanionController }] = await Promise.all([
     harness.importDashboardModule('js/management-controller.js'),
     harness.importDashboardModule('js/sandbox-profiles.js'),
     harness.importDashboardModule('js/management-state.js'),
     harness.importDashboardModule('js/management-island.js'),
+    harness.importDashboardModule('js/companion-facade.js'),
   ]);
+  const windows = [];
+  t.after(registerCompanionController({ open: (agentId, options) => { windows.push({ agentId, ...options }); return true; } }));
   let opened = null;
+  let deliveries = 0;
   const unregister = registerManagementController({
-    openSandboxProfileEditor(seed, options) { opened = { seed, options }; },
+    openSandboxProfileEditor(seed, options) { opened = { seed, options }; deliveries += 1; },
   });
   t.after(unregister);
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (path) => {
-    if (path === '/api/scribe') return { ok: true, json: async () => ({ name: 'sandbox-scribe' }) };
+  const summons = [];
+  globalThis.fetch = async (path, init) => {
+    if (path === '/api/scribe') {
+      summons.push(JSON.parse(init.body));
+      const body = { agent_id: 'agt_sandbox', conv_id: 'conv-sandbox', name: 'sandbox-scribe-1' };
+      return { ok: true, status: 200, text: async () => JSON.stringify(body) };
+    }
     if (String(path).startsWith('/api/sandbox-profile-drafts/')) {
       return { ok: true, json: async () => ({ profile: { name: 'restricted-copy', filesystem: [] } }) };
     }
@@ -874,14 +885,32 @@ test('sandbox scribe return reopens clone drafts in explicit create mode', async
   };
   t.after(() => { globalThis.fetch = originalFetch; });
 
-  await summonSandboxScribe(
+  const asked = [];
+  assert.equal(await summonSandboxScribe({ name: 'x', filesystem: [] }, '', null, {}, { confirm: async (request) => { asked.push(request); return false; } }), null);
+  assert.deepEqual(summons, [], 'a declined grant starts nothing');
+  assert.equal(asked[0].title, 'Grant sandbox-scribe access?');
+  assert.match(asked[0].body, /sandbox-profiles\.draft/);
+  const result = await summonSandboxScribe(
     { name: 'restricted-copy', filesystem: [] },
     '',
     null,
     { editExisting: false, cloneSourceName: 'restricted' },
+    { confirm: async () => true },
   );
-  await harness.act(() => Promise.resolve());
+  assert.equal(result.opened, 'chat');
+  assert.deepEqual(windows, [{ agentId: 'agt_sandbox', starting: true }], 'a regular chat window');
+  assert.deepEqual(summons[0].slugs, ['sandbox-profiles.draft']);
+  assert.equal(summons[0].background, true);
+  for (let i = 0; i < 3; i++) await harness.act(() => Promise.resolve());
+  assert.ok(opened, 'the draft it hands back still reaches the review queue');
   assert.equal(opened.seed.name, 'restricted-copy');
+  // Once that review's editor is gone, the next scribe's draft opens too,
+  // rather than waiting in the queue for good.
+  await summonSandboxScribe({ name: 'restricted-copy', filesystem: [] }, '', null, { editExisting: false, cloneSourceName: 'restricted' }, { confirm: async () => true });
+  for (let i = 0; i < 20 && deliveries < 2; i++) await harness.act(() => new Promise((resolve) => setTimeout(resolve, 100)));
+  assert.equal(deliveries, 2, 'the review queue is released when the editor closes');
+  // Its own watch ends on the next tick, with no editor and nothing waiting.
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 700)));
   assert.equal(opened.options.targetName, '');
   assert.equal(opened.options.editExisting, false, 'the returned named draft remains a create');
   assert.equal(opened.options.cloneSourceName, 'restricted', 'the returned editor remains labeled as a clone');
@@ -1376,7 +1405,7 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
   ]);
   const state = createManagementState(); state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [{ name: 'base' }, { name: 'dev' }]); state.openDialog({ kind: 'sandbox-editor', seed: { name: 'dev', filesystem: [], environment: [], includes: [], agent_directories: [], network_access: 'internet' }, options: {} });
-  let saved = null; let scribe = null; const actions = { saveSandbox(value) { saved = value; }, configureSandboxWithAgent(value, options) { scribe = { value, options }; }, async inspectDirectories() { return { missing: ['/cache'], creatable: ['/cache'] }; }, async createDirectories() { return { created: ['/cache'] }; } };
+  let saved = null; let scribe = null; const actions = { saveSandbox(value) { saved = value; }, configureSandboxWithAgent(value, options) { scribe = { value, options }; return scribe.value.filesystem?.[0]?.path === '/raw' ? { opened: 'chat' } : null; }, async inspectDirectories() { return { missing: ['/cache'], creatable: ['/cache'] }; }, async createDirectories() { return { created: ['/cache'] }; } };
   const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   mountManagementIsland({ host, state, actions, confirmDiscard: async () => false, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } }); await harness.act(() => Promise.resolve());
   assert.match(host.querySelector('#sandbox-profile-editor-modal .cron-create-row input').placeholder, /shared-build-caches/);
@@ -1396,7 +1425,7 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   assert.match(host.querySelector('[role="alert"]').textContent, /JSON|position|property/i); assert.equal(saved, null);
   host.querySelector('#sandbox-profile-editor-scribe').click(); await harness.act(() => Promise.resolve()); assert.equal(scribe, null); assert.ok(host.querySelector('#sandbox-profile-editor-modal'), 'invalid raw JSON blocks scribe handoff');
   raw.value = '[{"path":"/raw","access":"read"}]'; raw.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve()); host.querySelector('#sandbox-profile-editor-scribe').click(); await harness.act(() => Promise.resolve());
-  assert.equal(scribe.value.filesystem[0].path, '/raw'); assert.equal(scribe.value.network.baseline, 'deny'); assert.equal(scribe.value.network_access, ''); assert.equal(scribe.options.targetName, 'dev'); assertAbsent(host.querySelector('#sandbox-profile-editor-modal'), 'scribe handoff closes the editor so its returned draft can be delivered');
+  assert.equal(scribe.value.filesystem[0].path, '/raw'); assert.equal(scribe.value.network.baseline, 'deny'); assert.equal(scribe.value.network_access, ''); assert.equal(scribe.options.targetName, 'dev'); assertAbsent(host.querySelector('#sandbox-profile-editor-modal'), 'once the scribe window opened, the editor closes so its returned draft can be delivered');
   cleanups.reverse().forEach((fn) => fn());
 });
 
@@ -4951,25 +4980,32 @@ test('sandbox tmpfs validation compares sandbox paths the way the daemon cleans 
     'the host path a remapped row reads from is not a sandbox position a tmpfs can collide with');
 });
 
-test('scribe browser handoffs dismiss the manager so the terminal tab is visible', async (t) => {
+test('a scribe that opened its window dismisses the manager, whose dialog would cover it', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { createManagementActions }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'),
     harness.importDashboardModule('js/management-actions.js'),
   ]);
   const state = createManagementState();
-  let result = { focus_mode: 'browser', focus_ws: '/api/open-window-ws/scribe' };
-  const actions = createManagementActions({ state, summonTemplateScribe: async () => result, summonSandboxScribe: async () => result });
+  const summoned = [];
+  let result = { agentId: 'agt_sandbox', opened: 'chat' };
+  const actions = createManagementActions({ state, summonTemplateScribe: async (request) => { summoned.push(request); return { agentId: 'agt_circle', opened: 'chat' }; }, summonSandboxScribe: async () => result });
   state.openTemplateManager();
   await actions.editTemplatesWithAgent();
-  assert.equal(state.templateManager.value, false);
+  await actions.editTemplateWithAgent('release-crew');
+  assert.deepEqual(summoned, [{ scope: 'library' }, { scope: 'template', name: 'release-crew' }]);
+  assert.equal(state.templateManager.value, false, 'the chat window is visible, not under the manager');
   state.openManager('sandbox');
   await actions.configureSandboxWithAgent({ name: 'project' });
   assert.equal(state.manager.value, '');
   result = undefined;
+  state.openManager('sandbox');
+  await actions.configureSandboxWithAgent({ name: 'project' });
+  assert.equal(state.manager.value, 'sandbox', 'failed handoff keeps the manager available');
+  const declined = createManagementActions({ state, summonTemplateScribe: async () => null });
   state.openTemplateManager();
-  await actions.editTemplatesWithAgent();
-  assert.equal(state.templateManager.value, true, 'failed handoff keeps the manager available');
+  await declined.editTemplatesWithAgent();
+  assert.equal(state.templateManager.value, true, 'a declined grant keeps the manager');
 });
 
 test('sandbox evaluation targets follow the daemon catalog including new harnesses', async (t) => {

@@ -2530,12 +2530,16 @@ export function TemplateEditor({
       }
     }
   };
+  // The editor stays until the scribe's window has opened: the operator may
+  // still decline its grant, and then keeps the editor as it was.
   const handoff = async () => {
     if (saving || (dirty && !(await confirmDiscard()))) return;
-    state.closeTemplateDialog();
-    await actions.editTemplateWithAgent(
+    const handedOff = state.templateDialog.value;
+    const result = await actions.editTemplateWithAgent(
       editing ? descriptor.seed.name : draft.name.trim(),
     );
+    // Only this editor: another one opened meanwhile keeps its draft.
+    if (result?.opened && state.templateDialog.value === handedOff) state.closeTemplateDialog();
   };
   return h(
     Dialog,

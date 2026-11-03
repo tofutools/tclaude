@@ -5,6 +5,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"strconv"
+	"sync"
+	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // BuildPopupHandlerForTest returns the production dashboard-listener handler:
@@ -93,7 +99,7 @@ func NewStageAgentPortForTest(agentID string, port int) (http.RoundTripper, erro
 // UseStaticSource points the page at a static directory or file and wires
 // its watcher to the page's reload signal.
 func (p *StagePageForTest) UseStaticSource(worktree, target string) error {
-	s, err := newStageStatic(worktree, target, p.page.notifyReload)
+	s, err := newStageStatic(worktree, target, p.page.notifyReload, nil)
 	if err != nil {
 		return err
 	}
@@ -112,4 +118,113 @@ func CloseAllLivePagesForTest() {
 	for _, p := range livePages.list("") {
 		livePages.closeByID(p.id)
 	}
+}
+
+// OpenLivePageForTest registers a live page directly, as a show would, with
+// the given upstream: the dashboard's snapshot lists it and its origin serves
+// it. It answers the page id. For fixtures (docs screenshots) that need a page
+// without an agent process or a dev server.
+func OpenLivePageForTest(owner, name, title, target, kind, worktree, start string, up http.RoundTripper) string {
+	now := time.Now().UTC()
+	reg := livePages
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	reg.rev++
+	p := &livePage{
+		id: newPageID(), owner: owner, name: name, title: title, target: target, kind: kind, worktree: worktree,
+		path: start, state: pageStateOpen, rev: reg.rev, shownAt: now, updated: now,
+		stage: stagePages.open(owner, name, up),
+	}
+	if reg.byOwner[owner] == nil {
+		reg.byOwner[owner] = map[string]*livePage{}
+	}
+	reg.byOwner[owner][name] = p
+	reg.byID[p.id] = p
+	return p.id
+}
+
+// PageSnapshotJobForTest is what a page snapshot asked its renderer for.
+type PageSnapshotJobForTest struct {
+	URL, Origin, Token string
+	Width, Height      int
+	ScrollX, ScrollY   int
+	Overlay            string
+}
+
+// SetPageSnapshotRenderForTest stands in for headless Chrome: render gets
+// each job and answers the PNG bytes. It also answers the page's snapshot
+// token, so a test can check the job carries it.
+func SetPageSnapshotRenderForTest(render func(PageSnapshotJobForTest) ([]byte, error)) func() {
+	prev := pageSnapshotRender
+	pageSnapshotRender = func(_ context.Context, j pageSnapshotJob) ([]byte, error) {
+		return render(PageSnapshotJobForTest{URL: j.URL, Origin: j.Origin, Token: j.Token, Width: j.Width, Height: j.Height,
+			ScrollX: j.ScrollX, ScrollY: j.ScrollY, Overlay: j.OverlaySV})
+	}
+	return func() { pageSnapshotRender = prev }
+}
+
+// PageSnapshotTokenForTest is a page's snapshot token, by page id.
+func PageSnapshotTokenForTest(id string) string {
+	livePages.mu.Lock()
+	defer livePages.mu.Unlock()
+	if p := livePages.byID[id]; p != nil {
+		return p.stage.snapshotToken
+	}
+	return ""
+}
+
+// FakeSandboxRootForTest stands in for an agent's mount namespace: a host
+// path P is what the sandbox shows at Dir+P. Bump NS to model a relaunch
+// into another sandbox; set Dead to model the sandbox exiting; set Err to
+// model a sandbox that cannot be opened.
+type FakeSandboxRootForTest struct {
+	mu   sync.Mutex
+	Dir  string
+	ns   int
+	dead bool
+	err  error
+}
+
+// Relaunch models the agent coming back in another sandbox.
+func (f *FakeSandboxRootForTest) Relaunch() { f.mu.Lock(); f.ns++; f.dead = false; f.mu.Unlock() }
+
+// Fail makes opening the sandbox fail (nil restores it).
+func (f *FakeSandboxRootForTest) Fail(err error) { f.mu.Lock(); f.err = err; f.dead = err != nil; f.mu.Unlock() }
+
+type fakeSandboxRoot struct {
+	f  *FakeSandboxRootForTest
+	ns int
+}
+
+func (r *fakeSandboxRoot) Alive() bool {
+	r.f.mu.Lock()
+	defer r.f.mu.Unlock()
+	return !r.f.dead && r.f.ns == r.ns
+}
+func (r *fakeSandboxRoot) NS() string { return "mnt:" + strconv.Itoa(r.ns) }
+func (r *fakeSandboxRoot) OpenDir(abs string) (int, error) {
+	return unix.Open(filepath.Join(r.f.Dir, abs), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+}
+func (r *fakeSandboxRoot) Close() {}
+
+// SetPageSandboxRootForTest makes every agent's sandbox the fake.
+func SetPageSandboxRootForTest(f *FakeSandboxRootForTest) (restore func()) {
+	prev := pageFSOpenSandboxRoot
+	pageFSOpenSandboxRoot = func(string) (pageFSRoot, error) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if f.err != nil {
+			return nil, f.err
+		}
+		return &fakeSandboxRoot{f: f, ns: f.ns}, nil
+	}
+	return func() { pageFSOpenSandboxRoot = prev }
+}
+
+// SetPageFSViewRecheckForTest shortens how often a page rechecks its agent's
+// generation.
+func SetPageFSViewRecheckForTest(d time.Duration) (restore func()) {
+	prev := pageFSViewRecheck
+	pageFSViewRecheck = d
+	return func() { pageFSViewRecheck = prev }
 }

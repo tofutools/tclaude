@@ -8,7 +8,7 @@ import sys
 LIMIT = 10 * 1024**3
 HEADROOM = 512 * 1024**2
 MAX_SNAPSHOT = 1024**3
-SAVERS = 4  # two OSes times agentd/sandbox in the release matrix
+SAVERS = 3  # release.yml: Linux agentd + sandbox shards, macOS agentd
 
 
 def api(path, *args):
@@ -21,7 +21,7 @@ def caches(repo):
 
 
 def can_save(entries, size):
-    # Account conservatively for all four parallel savers before any pruning.
+    # Account conservatively for every parallel saver before any pruning.
     return size <= MAX_SNAPSHOT and sum(e["size_in_bytes"] for e in entries) + SAVERS * MAX_SNAPSHOT <= LIMIT - HEADROOM
 
 

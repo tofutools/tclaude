@@ -23,7 +23,7 @@ import {
 import {
   LOOP_DEFAULT_ROUNDS, LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopSummary, normalizeRounds,
 } from './process-loops.js';
-import { handOffProcessDraft } from './process-draft-handoff.js';
+import { openProcessDraft } from './process-draft-handoff.js';
 import { PROCESS_SCRIBE_PROMPT_MAX } from './process-scribe.js';
 import { dashPrefs } from './prefs.js';
 import { Button, Select } from './ui-components.js';
@@ -52,7 +52,7 @@ export async function openInGraphEditor(api, view, name) {
   const id = String(body?.id || '');
   if (!id) throw new Error('the template was not created');
   markQuickStart();
-  handOffProcessDraft({ id, name: named.template.name, view: createdEditView(named, id, body) });
+  await openProcessDraft({ id, name: named.template.name, view: createdEditView(named, id, body) });
   return id;
 }
 
@@ -89,11 +89,6 @@ export function scribeDraftRequest(text, groupName, roster = []) {
     listed += 1;
   }
   return listed < members.length ? `${body}\n…and ${members.length - listed} more` : body;
-}
-
-// scribeDraftAsked reads the operator's own words back out of that request.
-export function scribeDraftAsked(body) {
-  return String(body || '').split(DRAFT_GROUP_CONTEXT)[0].trim();
 }
 
 // QUICKSTART_PREF remembers that the operator is past the first run: 'used'
@@ -675,7 +670,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
       const id = await ensureSaved({});
       markQuickStart();
       const body = created.current.body;
-      handOffProcessDraft(body ? { id, name: name.trim(), view: createdEditView(view, id, body) } : { id, name: name.trim() });
+      await openProcessDraft(body ? { id, name: name.trim(), view: createdEditView(view, id, body) } : { id, name: name.trim() });
       onClose();
     } catch (cause) {
       setError(cause.message);

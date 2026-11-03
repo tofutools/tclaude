@@ -128,6 +128,7 @@ func (r *livePageRegistry) removeLocked(p *livePage) {
 	}
 	delete(r.byID, p.id)
 	stagePages.close(p.stage.token)
+	forgetPageCollab(p.id)
 }
 
 func (r *livePageRegistry) list(owner string) []*livePage {
@@ -539,7 +540,9 @@ func pageSource(ctx context.Context, convID, agentID string, t pageTarget, onCha
 			}
 			start = "/" + path.Base(filepath.ToSlash(abs))
 		}
-		src, err := newStageStatic(root, abs, onChange)
+		viewer := newPageFSViewer(agentID, convID, root)
+		viewer.onChange = onChange
+		src, err := newStageStatic(root, abs, onChange, viewer)
 		if err != nil {
 			return nil, "", "", err
 		}

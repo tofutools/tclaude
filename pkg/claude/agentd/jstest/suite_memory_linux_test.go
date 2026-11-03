@@ -41,9 +41,12 @@ func guardSuiteMemory(root int, limitKB int64) (stop func() []string) {
 				if rss <= limitKB {
 					continue
 				}
+				// Named before the kill: a killed child's cmdline reads empty
+				// once it is a zombie, and not at all once reaped.
+				suite := suiteOf(pid)
 				if syscall.Kill(pid, syscall.SIGKILL) == nil {
 					mu.Lock()
-					killed = append(killed, fmt.Sprintf("%s (%d MB resident)", suiteOf(pid), rss/1024))
+					killed = append(killed, fmt.Sprintf("%s (%d MB resident)", suite, rss/1024))
 					mu.Unlock()
 				}
 			}
@@ -110,7 +113,11 @@ func suiteOf(pid int) string {
 	if err != nil {
 		return fmt.Sprintf("pid %d", pid)
 	}
-	args := strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")
+	trimmed := strings.TrimRight(string(data), "\x00")
+	if trimmed == "" {
+		return fmt.Sprintf("pid %d", pid)
+	}
+	args := strings.Split(trimmed, "\x00")
 	return filepath.Base(args[len(args)-1])
 }
 
