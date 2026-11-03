@@ -1830,9 +1830,9 @@ header.overlay-look-windows { padding-right: 0; }
 /* Standard, the default: plain symbols, borderless with the house hover. */
 .overlay-look-standard .overlay-window-controls { gap: 2px; margin-left: 4px; }
 .overlay-look-standard .overlay-window-controls button {
-  width: 26px; height: 26px; border-radius: 6px; background: none; color: var(--cmp-muted);
-  font: inherit; font-size: 15px; line-height: 1;
+  width: 26px; height: 26px; padding: 0; border-radius: 6px; background: none; color: var(--cmp-muted); line-height: 1;
 }
+.overlay-look-standard .overlay-window-controls svg { width: 10px; height: 10px; stroke-width: 1.4; }
 .overlay-look-standard .overlay-window-controls button:hover { background: #21262d; color: var(--cmp-text); }
 .overlay-look-standard .overlay-window-controls .overlay-wc-close:hover { color: var(--cmp-red); }
 .overlay-look-standard .overlay-window-controls button:focus-visible { outline: 2px solid var(--cmp-blue); outline-offset: -2px; }
@@ -11033,6 +11033,22 @@ body.wizard header button:where(:not(.ui-btn, .ui-menu-item)) {
   border-radius: 4px; padding: 4px 10px;
 }
 body.wizard header button:where(:not(.ui-btn, .ui-menu-item)):hover { background: #3a2a63; }
+/* An overlay window's title bar is a header too, so its icon buttons take the
+   gilded box above. They keep it, centred: the page-level padding would leave
+   a fixed-size box a few pixels of content and push the glyph off its middle. */
+body.wizard .board-overlay-titlebar :is(.overlay-window-controls button, .companion-tab-minimize, .companion-tab-close, .companion-add, .board-overlay-close) {
+  display: inline-grid; place-items: center; padding: 0; line-height: 1;
+}
+/* The standard look's own plain fill would undo the gilding, and its group's
+   bar colour would show as a dark strip on the wizard's gradient. */
+body.wizard .board-overlay-titlebar.overlay-look-standard .overlay-window-controls { background: transparent; gap: 4px; }
+body.wizard .board-overlay-titlebar.overlay-look-standard .overlay-window-controls button { background: #241b3d; color: #f3e6c0; }
+body.wizard .board-overlay-titlebar.overlay-look-standard .overlay-window-controls button:hover { background: #3a2a63; }
+body.wizard .board-overlay-titlebar.overlay-look-standard .overlay-window-controls .overlay-wc-close:hover { color: var(--cmp-red); }
+body.wizard .board-overlay-titlebar .companion-controls > .companion-cog > .companion-cog-button,
+body.wizard .board-overlay-titlebar .companion-controls > button:where(:not(.ui-btn, .ui-menu-item)) {
+  display: inline-grid; place-items: center; padding-block: 0; padding-inline: 4px; line-height: 1;
+}
 /* The product-mark button keeps its compact icon geometry; the broad themed
    header-button rule above is for the full-size action controls beside it. */
 body.wizard header h1 .slop-icon {

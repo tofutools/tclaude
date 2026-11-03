@@ -303,7 +303,7 @@ test('a tab – sends that agent to the dock, still running', async (t) => {
   await harness.act(() => controller().open(A));
   await harness.act(() => controller().open(B));
   const tabMinimize = [...view.container.querySelectorAll('.companion-tab')].find((tab) => tab.textContent.includes('bravo')).querySelector('.companion-tab-minimize');
-  assert.equal(tabMinimize.textContent, '–');
+  assert.ok(tabMinimize.querySelector('svg path'), 'a drawn glyph, centred in its box');
   await harness.act(() => tabMinimize.click());
   assert.deepEqual(overlays.minimizedOverlayTabs.peek().map(({ tab }) => tab.id), [`chat:${B}`]);
   assert.deepEqual(overlays.overlayWindows.peek().map((window) => window.tabs.map((tab) => tab.id)), [[`chat:${A}`]]);
@@ -1861,7 +1861,8 @@ test('the standard look is − ⇄ × on the far right, and ⇄ opens the window
   assert.ok(bar.classList.contains('overlay-look-standard'));
   const group = bar.querySelector('.overlay-window-controls');
   assert.equal(bar.lastElementChild, group, 'on the far right');
-  assert.deepEqual([...group.querySelectorAll('button')].map((button) => button.textContent), ['−', '⇄', '×']);
+  assert.deepEqual([...group.querySelectorAll('button')].map((button) => button.className), ['overlay-wc-minimize', 'overlay-wc-collab', 'overlay-wc-close'], '− ⇄ ×');
+  assert.ok([...group.querySelectorAll('button')].every((button) => button.querySelector('svg path')), 'each glyph drawn in its box');
   assert.deepEqual(buttonNames(group), ['Minimize (Ctrl .)', 'Open in the Collab tab', 'Close alpha']);
   for (const button of group.querySelectorAll('button')) assert.ok(button.title, `${button.className} has a tooltip`);
   await harness.act(async () => { group.querySelector('.overlay-wc-collab').click(); await new Promise((r) => setTimeout(r, 80)); });
