@@ -214,7 +214,7 @@ function ProcessCard({
   // The body is not a <button>: the dock's drag gesture stands down on
   // buttons, and the whole card should drag.
   const toggle = () => onOpen(open ? null : { row, anchor: ref.current });
-  return html`<div ref=${ref} class=${`dock-card dock-process-card${open ? ' is-open' : ''}`} draggable="true"
+  return html`<div ref=${ref} class=${`dock-card ui-card dock-process-card${open ? ' is-open' : ''}`} draggable="true"
       data-dock-kind="processes" data-dock-name=${row.id} data-dock-label=${name}
       title=${wizWord('Click to preview · drag onto a group to pin it there', 'Click to scry · drag onto a party to bind it')}>
     <span class="dock-grip" aria-hidden="true">⠿</span>

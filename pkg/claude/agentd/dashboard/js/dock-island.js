@@ -283,7 +283,7 @@ function DockCard({
   return html`
     <div
       ref=${cardRef}
-      class=${`dock-card${hasDetails ? ' dock-card-has-details' : ''}`}
+      class=${`dock-card ui-card${hasDetails ? ' dock-card-has-details' : ''}`}
       draggable=${draggable}
       data-key=${name}
       data-dock-kind=${section.key}

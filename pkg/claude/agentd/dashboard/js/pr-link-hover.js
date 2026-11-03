@@ -203,7 +203,7 @@ function PRDetailsPanel({ prURL, prNumber, title, prState, state, panelID, headi
   const kind = mr ? 'Merge request' : 'Pull request';
   const ref = prNumber ? `${mr ? '!' : '#'}${prNumber}` : '';
   return html`
-    <div ref=${panelRef} class="ci-panel prd-panel" style=${style}
+    <div ref=${panelRef} class="ci-panel prd-panel ui-popover" style=${style}
       id=${panelID} role="dialog" aria-labelledby=${headingID}>
       ${repo ? html`
         <div class="prd-repo">
