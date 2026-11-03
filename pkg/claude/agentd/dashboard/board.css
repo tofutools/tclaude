@@ -37,7 +37,6 @@ body.slop, body.vegas {
   border: 1px solid var(--board-line); background: var(--board-bg); color: var(--board-text); font: inherit;
 }
 .board-muted { color: var(--board-muted); }
-.board-error { color: #f85149; }
 .board-section { margin-bottom: 6px; }
 .board-section-name {
   display: flex; justify-content: space-between; margin: 6px 4px 2px; font-size: 11px; font-weight: 600;

@@ -225,7 +225,7 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
         authorize <code>${profile || '(default profile)'}</code>
       </label>`)}
     </div>`}
-    ${error && html`<span class="gp-start-error" role="alert">${error}</span>`}
+    ${error && html`<span class="gp-start-error ui-error" role="alert">${error}</span>`}
   </form>`;
 }
 
@@ -864,7 +864,7 @@ export function GroupsProcessesFocus({
   if (fused) {
     return html`<div class="gp-focus gf-focus" data-groups-fused ref=${fusedFrame}>
       ${source.error.value && status === 'ready' && html`<div class="gp-toolbar"><span class="gp-stale" role="status">Showing the last update: ${source.error.value}</span></div>`}
-      ${status === 'error' && html`<div class="gp-toolbar"><span class="gp-stale gp-error" role="alert">Could not load process runs: ${source.error.value}</span></div>`}
+      ${status === 'error' && html`<div class="gp-toolbar"><span class="gp-stale gp-error ui-error" role="alert">Could not load process runs: ${source.error.value}</span></div>`}
       ${status === 'ready'
         ? html`<${ProcessesPerspective.Provider} value=${perspective}><div class="gp-tree">${children}</div><//>`
         : html`<div class="gp-tree">${children}</div>`}
@@ -875,7 +875,7 @@ export function GroupsProcessesFocus({
   return html`<div class="gp-focus" data-groups-processes>
     ${source.error.value && status === 'ready' && html`<div class="gp-toolbar"><span class="gp-stale" role="status">Showing the last update: ${source.error.value}</span></div>`}
     ${status === 'idle' && html`<div class="gp-empty" role="status">Loading process runs…</div>`}
-    ${status === 'error' && html`<div class="gp-empty gp-error" role="alert">Could not load process runs: ${source.error.value}</div>`}
+    ${status === 'error' && html`<div class="gp-empty gp-error ui-error" role="alert">Could not load process runs: ${source.error.value}</div>`}
     ${status === 'unavailable' && html`<${GroupsProcessesPlaceholder} wizard=${wizard} />`}
     ${status === 'ready' && html`<${ProcessesPerspective.Provider} value=${perspective}><div class="gp-tree">${children}</div><//>`}
     ${status === 'ready' && context?.truncated && html`<div class="gp-card-note">Some runs are not shown: the run context was truncated.</div>`}

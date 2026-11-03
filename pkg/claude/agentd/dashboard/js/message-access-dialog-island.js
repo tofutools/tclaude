@@ -681,7 +681,7 @@ function ScopeDimEditor({ dim, values, options, onChange, declared = true, onDra
           aria-label=${`Add the typed ${dim} value`} title="Add the typed value"
           onMouseDown=${holdFocus} onClick=${commitDraft}>+<//>
       </span>
-      ${values.length ? null : html`<div class="perm-scope-hint">empty — unconstrained on this dimension</div>`}
+      ${values.length ? null : html`<div class="perm-scope-hint ui-hint">empty — unconstrained on this dimension</div>`}
     </div>
   </div>`;
 }
@@ -698,7 +698,7 @@ function ScopeDrawer({ row, scope, snapshot, onChange, effective, onDraft }) {
   };
   return html`<div class="perm-scope-drawer" data-slug=${row.slug}>
     <div class="perm-scope-drawer-head">
-      <span class="perm-scope-drawer-hint">Dimensions <b>AND</b> together; values within one dimension <b>OR</b>.
+      <span class="perm-scope-drawer-hint ui-hint">Dimensions <b>AND</b> together; values within one dimension <b>OR</b>.
         A dimension left empty is unconstrained, and a grant with no dimensions at all applies everywhere.</span>
       ${effective ? html`<span class=${`perm-row-eff ${effective.granted ? 'granted' : 'denied'}`}>${effective.text}</span>` : null}
     </div>
@@ -769,11 +769,11 @@ function SudoLimits({ duration, setDuration, uses, setUses, usesBad, uncounted, 
         pressed=${preset === duration} class=${preset === duration ? 'active' : ''} onClick=${() => setDuration(preset)}>${preset}<//>`)}</div>
       <input id="sudo-duration" type="text" value=${duration} aria-label="Custom duration" placeholder="custom" autocomplete="off" spellcheck="false"
         onInput=${(event) => setDuration(event.currentTarget.value)} />
-      <span class=${`sudo-limits-hint${over || (duration.trim() && !seconds) ? ' bad' : ''}`} id="sudo-duration-hint">${hint}</span></div>
+      <span class=${`sudo-limits-hint ui-hint${over || (duration.trim() && !seconds) ? ' bad' : ''}`} id="sudo-duration-hint">${hint}</span></div>
     <div class="sudo-limits-row"><label class="sudo-limits-label" for="sudo-uses">Max uses</label>
       <input id="sudo-uses" type="text" inputmode="numeric" value=${uses} placeholder="∞" autocomplete="off" aria-label="Maximum uses per permission"
         onInput=${(event) => setUses(event.currentTarget.value)} />
-      <span class=${`sudo-limits-hint${usesBad ? ' bad' : ''}`} id="sudo-uses-hint">${usesBad ? 'Use a whole number from 1 to 1000.'
+      <span class=${`sudo-limits-hint ui-hint${usesBad ? ' bad' : ''}`} id="sudo-uses-hint">${usesBad ? 'Use a whole number from 1 to 1000.'
     : `Per permission. Ends at whichever comes first, this or the time.${uncounted ? ` ${uncounted} picked ${uncounted === 1 ? 'takes' : 'take'} no limit: see the row.` : ''}`}</span></div>
     <div class="sudo-limits-row"><span class="sudo-limits-label">Reason</span>
       <input id="sudo-reason" type="text" value=${reason} placeholder="optional, kept on the audit row" autocomplete="off" spellcheck="false"
