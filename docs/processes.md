@@ -336,8 +336,11 @@ approve the scribe's access: the same grant as any process scribe
 permission denied; see *Co-design with a scribe* below). The grant is not
 limited to this draft: the scribe is asked to work on it, and it can save any
 process template. The draft is saved to the group (pinned, not listed in the library),
-and the group body shows the scribe's live reply, where you can answer it.
-When it finishes, *Review steps* opens the draft in the step list. *Stop
+and the scribe opens in its regular overlay chat window (a terminal tab
+without the companion), with your words as the first message: answer it or
+ask for changes there. The group body says whether it is working or waiting
+for you, and *💬 chat window* brings the window back. When it has saved a
+draft and is idle, *Review steps* opens the draft in the step list. *Stop
 scribe* stops it, keeps the draft and opens what it saved so far, and *open in
 graph editor* opens the draft in the graph editor, where *Get help* reaches
 the scribe. A reload or a tab

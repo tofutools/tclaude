@@ -350,34 +350,3 @@ export function processScribeChatMessage({ prompt = '', context = null } = {}) {
   if (utf8Bytes(body) > 16000) throw new Error('the message with its editor context exceeds the safe message limit');
   return body;
 }
-
-// processScribeChatLive normalizes the live tail of an open scribe turn from
-// GET /api/scribe/{agent}/chat: null when no turn is open, else what the
-// scribe has said ('text') and done ('tool') so far, and why nothing can be
-// shown when its harness's transcript cannot be read. Untrusted display text.
-export function processScribeChatLive(payload) {
-  const live = payload?.live;
-  if (!live || typeof live !== 'object') return null;
-  const items = (Array.isArray(live.items) ? live.items : []).flatMap((item) => {
-    const kind = item?.kind === 'tool' ? 'tool' : item?.kind === 'text' ? 'text' : '';
-    const text = String(item?.text ?? '');
-    return kind && text ? [Object.freeze({ kind, text })] : [];
-  });
-  return Object.freeze({
-    items: Object.freeze(items),
-    truncated: live.truncated === true,
-    unavailable: typeof live.unavailable === 'string' ? live.unavailable : '',
-  });
-}
-
-// processScribeChatTranscript normalizes GET /api/scribe/{agent}/chat. Bodies
-// are untrusted display text; the UI renders them as text only.
-export function processScribeChatTranscript(payload) {
-  const messages = Array.isArray(payload?.messages) ? payload.messages : [];
-  return messages.flatMap((message) => {
-    const role = message?.role === 'scribe' ? 'scribe' : message?.role === 'human' ? 'human' : '';
-    const id = typeof message?.id === 'string' ? message.id : '';
-    if (!role || !id) return [];
-    return [Object.freeze({ id, role, body: String(message.body ?? ''), at: String(message.at || '') })];
-  });
-}
