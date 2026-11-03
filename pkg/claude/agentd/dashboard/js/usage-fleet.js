@@ -27,7 +27,7 @@ function GrantChips({ node }) {
 }
 
 function MemberRows({ status }) {
-  return html`<table class="usage-fleet-members">
+  return html`<table class="usage-fleet-members ui-compact">
     <tbody>${(status.members || []).map((m) => html`<tr key=${m.node} class=${m.counted ? '' : 'muted'} data-fleet-member=${m.node}>
       <td>${m.label}</td>
       <td>${MEMBER_STATES[m.state] || m.state}</td>
@@ -96,7 +96,7 @@ export function FleetTab({ api, busy, reloadKey = 0, onEdit, onToggle, onManageN
     })}</div>` : html`<div class="ui-empty-block">No fleet limits yet.</div>`}
 
     <h4 class="usage-fleet-h">Nodes</h4>
-    <div class="usage-fleet-nodes-wrap"><table class="usage-fleet-nodes">
+    <div class="usage-fleet-nodes-wrap"><table class="usage-fleet-nodes ui-compact">
       <thead><tr><th>Node</th><th class="num">Today</th><th class="num">This week</th><th class="num">This month</th><th>Its limits</th><th>Shares with you</th><th></th></tr></thead>
       <tbody>
         ${selfTotals ? html`<tr class="usage-fleet-self"><td>this node</td>

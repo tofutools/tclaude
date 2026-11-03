@@ -632,7 +632,7 @@ function GroupTriggersSection({ group, triggers }) {
   return html`<details class="group-triggers-section">
     <summary><strong>Triggers</strong><span class="muted">${rows.length} installed here</span>
       <a href="/automations/triggers" onClick=${(event) => event.stopPropagation()}>edit in Automations →</a></summary>
-    <table><thead><tr><th>Name</th><th>When</th><th>State</th><th>Enabled</th></tr></thead><tbody>
+    <table class="ui-compact"><thead><tr><th>Name</th><th>When</th><th>State</th><th>Enabled</th></tr></thead><tbody>
       ${visible.map((rule) => html`<tr key=${rule.id}>
         <td><span class="rowname">${rule.name}</span>${rule.scope === 'global' && html`<span class="trigger-scope global">global</span>`}</td>
         <td><code>${rule.source}</code><span class="muted">${rule.author_is_agent === true ? ' · agent PRs' : ''}</span></td>

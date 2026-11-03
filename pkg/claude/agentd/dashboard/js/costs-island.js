@@ -364,7 +364,7 @@ function ServedCosts({ current }) {
   return html`<details class="cost-ignored cost-served" id="costs-served" open>
     <summary><strong>Served to peers</strong><span>${fmtUSD(current.payload.served_total_usd || 0)} through your model gateways in this span</span></summary>
     <p class="muted">Peers' agents billed these model calls to your gateways (usage sharing). The gateway charges each one from the token counts the provider reports; one still running, or never answered, counts its worst case${unpriced ? `. ${unpriced} request${unpriced === 1 ? '' : 's'} had no price and count${unpriced === 1 ? 's' : ''} nothing here` : ''}. They are not in your agents' totals above.</p>
-    <table><tbody>
+    <table class="ui-compact"><tbody>
       ${served.map((row) => html`<tr key=${`${row.peer}/${row.gateway}`} data-key=${`cost-served-${row.peer}-${row.gateway}`}>
         <td><span class="rowname">${row.peer_name || row.peer}</span> <span class="muted">· ${row.gateway}</span></td>
         <td><span class="cost-amt">${fmtUSD(row.cost_usd)}</span></td>
@@ -383,7 +383,7 @@ function IgnoredCosts({ current, ignore }) {
   return html`<details class="cost-ignored" id="costs-ignored">
     <summary><strong>Ignored</strong><span>${ignored.length} agent${ignored.length === 1 ? '' : 's'} · ${fmtUSD(excluded)} excluded from this span's totals</span></summary>
     <p class="muted">Ignored agents' spend is left out of every cost total — this view, the header and Overview figures, spend alerts and <code>tclaude costs</code>. Their recorded history is kept, so Restore brings it back exactly. An agent billed to a peer's model gateway is ignored on its own: that peer pays, and counts it.</p>
-    <table><tbody>
+    <table class="ui-compact"><tbody>
       ${ignored.map((row) => html`<tr key=${row.conv_id} data-key=${`cost-ignored-${row.conv_id}`}>
         <td title=${row.title || '(unknown)'}><span class="rowname">${row.title || '(unknown)'}</span> <span class="id" title=${idTooltip(row.agent_id, row.conv_id)}>${shortAgentId(row.agent_id, row.conv_id)}</span></td>
         <td><span class="cost-amt" title="Spend in this span that restoring would add back">${fmtUSD(row.cost_usd)}</span></td>
