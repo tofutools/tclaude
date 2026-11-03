@@ -31,7 +31,8 @@ export function cellDensities(css) {
       const steps = part.split(/\s*[\s>+~]\s*/);
       const subject = steps.at(-1);
       if (!/^(?:th|td)\b/.test(subject) && !/^:is\((?:th|td)/.test(subject)) continue;
-      if (steps.slice(0, -1).some((step) => /[.#]/.test(step)) && !/\.ui-compact\b/.test(part)) found.add(part);
+      if (part === 'table.ui-compact :is(th, td)') continue;
+      if (steps.slice(0, -1).some((step) => /[.#]/.test(step))) found.add(part);
     }
   }
   return found;
@@ -44,9 +45,10 @@ test('the scanner finds per-table cell densities', () => {
     '.a-table td { padding: 3px 6px; }',
     '.b-table th, .c { border-bottom: 1px solid #333; }',
     '.d-table td { vertical-align: middle; }',
+    '.f-table.ui-compact td { padding: 1px; }',
     'body.wizard .e-table td { border-bottom-color: violet; }',
   ].join('\n');
-  assert.deepEqual([...cellDensities(css)].sort(), ['.a-table td', '.b-table th']);
+  assert.deepEqual([...cellDensities(css)].sort(), ['.a-table td', '.b-table th', '.f-table.ui-compact td']);
 });
 
 test('no new per-table cell density', () => {
