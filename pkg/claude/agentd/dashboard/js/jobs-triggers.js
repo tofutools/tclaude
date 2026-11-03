@@ -1,7 +1,7 @@
 import { Fragment, h } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Input } from './ui-components.js';
+import { Button, Input, Select } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { relTime, shortAgentId } from './helpers.js';
 import { SpawnActionFields, TemplatePlaceholderChips } from './spawn-action-fields.js';
@@ -357,9 +357,9 @@ function ActionEditor({ action, index, update, remove, profileOptions, stateSour
   };
   return html`<div class="trigger-action-editor">
     <div class="trigger-action-editor-head"><strong>${index + 1} · ${action.type === 'spawn' ? '⚡ Spawn agent' : '✉ Message'}</strong>
-      <select value=${action.type} onChange=${(event) => update(emptyAction(event.currentTarget.value, stateSource))}>
+      <${Select} size="sm" value=${action.type} onChange=${(event) => update(emptyAction(event.currentTarget.value, stateSource))}>
         <option value="spawn">spawn agent</option><option value="message">message</option>
-      </select><${Button} size="sm" variant="ghost danger" onClick=${remove}>×<//></div>
+      <//><${Button} size="sm" variant="ghost danger" onClick=${remove}>×<//></div>
     ${action.type === 'spawn' ? html`<${Fragment}>
       <${SpawnActionFields} fieldPrefix=${`trigger-action-${index}`} placeholderTokens=${placeholders}
         profileOptions=${profileOptions}
@@ -379,12 +379,12 @@ function ActionEditor({ action, index, update, remove, profileOptions, stateSour
         onInput=${(event) => update({ ...action, spawn: { ...action.spawn, max_live_workers: Number(event.currentTarget.value) } })} /></label>
       </div>
     </${Fragment}>` : html`<div class="trigger-action-fields">
-      <label>Target<select value=${action.message?.target || (stateSource ? 'agent' : 'pr.author_agent')}
+      <label>Target<${Select} size="sm" value=${action.message?.target || (stateSource ? 'agent' : 'pr.author_agent')}
         onChange=${(event) => update({ ...action, message: { ...action.message, target: event.currentTarget.value } })}>
         ${stateSource
           ? html`<option value="agent">selected fact agent</option>`
           : html`<option value="pr.author_agent">PR author agent</option>`}
-        <option value="group">event group</option></select></label>
+        <option value="group">event group</option><//></label>
       <label>Subject template<input value=${action.message?.subject_template || ''}
         onInput=${(event) => update({ ...action, message: { ...action.message, subject_template: event.currentTarget.value } })} /></label>
       <label class="trigger-template-field">Body template<textarea rows="4" required value=${action.message?.body_template || ''}
@@ -462,15 +462,15 @@ function TriggerDialog({ descriptor, state, actions }) {
           ? `${source.summary} for ${secondsLabel(draft.for_seconds)} · then debounce ${secondsLabel(draft.debounce_seconds)} · cooldown ${secondsLabel(draft.cooldown_seconds)}`
           : `${source.summary} · ${draft.author_is_agent === true ? 'by an agent' : draft.author_is_agent === false ? 'by a human' : 'any author'} · ${draft.draft_filter === 'exclude' ? 'not a draft' : draft.draft_filter === 'only' ? 'draft only' : 'drafts included'} · debounce ${secondsLabel(draft.debounce_seconds)}`}>
         <div class="trigger-fields">
-          <label>Source<select value=${draft.source} onChange=${(event) => changeSource(event.currentTarget.value)}>
+          <label>Source<${Select} size="sm" value=${draft.source} onChange=${(event) => changeSource(event.currentTarget.value)}>
             ${TRIGGER_SOURCES.map((entry) => html`<option key=${entry.value} value=${entry.value}>${entry.label} · ${entry.value}</option>`)}
-          </select></label>
+          <//></label>
           ${stateSource ? html`<label>Sustained for (seconds)<input type="number" min="1" required value=${draft.for_seconds}
             onInput=${(event) => setDraft({ ...draft, for_seconds: Number(event.currentTarget.value) })} /></label>` : html`<${Fragment}>
-            <label>Author<select value=${String(draft.author_is_agent)} onChange=${(event) => setDraft({ ...draft, author_is_agent: event.currentTarget.value === 'null' ? null : event.currentTarget.value === 'true' })}>
-              <option value="true">agent only</option><option value="false">human only</option><option value="null">any author</option></select></label>
-            <label>Draft PRs<select value=${draft.draft_filter} onChange=${(event) => setDraft({ ...draft, draft_filter: event.currentTarget.value })}>
-              <option value="exclude">exclude</option><option value="include">include</option><option value="only">only drafts</option></select></label>
+            <label>Author<${Select} size="sm" value=${String(draft.author_is_agent)} onChange=${(event) => setDraft({ ...draft, author_is_agent: event.currentTarget.value === 'null' ? null : event.currentTarget.value === 'true' })}>
+              <option value="true">agent only</option><option value="false">human only</option><option value="null">any author</option><//></label>
+            <label>Draft PRs<${Select} size="sm" value=${draft.draft_filter} onChange=${(event) => setDraft({ ...draft, draft_filter: event.currentTarget.value })}>
+              <option value="exclude">exclude</option><option value="include">include</option><option value="only">only drafts</option><//></label>
             <label>Debounce (seconds)<input type="number" min="0" value=${draft.debounce_seconds} onInput=${(event) => setDraft({ ...draft, debounce_seconds: Number(event.currentTarget.value) })} /></label>
           </${Fragment}>`}
           ${stateSource && html`<label>Debounce after dwell (seconds)<input type="number" min="0" value=${draft.debounce_seconds}
@@ -485,8 +485,8 @@ function TriggerDialog({ descriptor, state, actions }) {
         <div class="trigger-fields trigger-scope-fields">
           <label class="trigger-scope-option"><input type="radio" name="trigger-scope" checked=${draft.scope === 'global'} onChange=${() => setDraft({ ...draft, scope: 'global', group: '' })} /> global</label>
           <label class="trigger-scope-option"><input type="radio" name="trigger-scope" checked=${draft.scope === 'group'} onChange=${() => setDraft({ ...draft, scope: 'group' })} /> group</label>
-          ${draft.scope === 'group' && html`<label class="trigger-scope-group">Group<select required value=${draft.group} onChange=${(event) => setDraft({ ...draft, group: event.currentTarget.value })}>
-            <option value="">pick a group…</option>${groups.map((group) => html`<option key=${group} value=${group}>${group}</option>`)}</select></label>`}
+          ${draft.scope === 'group' && html`<label class="trigger-scope-group">Group<${Select} size="sm" required value=${draft.group} onChange=${(event) => setDraft({ ...draft, group: event.currentTarget.value })}>
+            <option value="">pick a group…</option>${groups.map((group) => html`<option key=${group} value=${group}>${group}</option>`)}<//></label>`}
         </div>
       </${Step}>
       <${Step} name="THEN" expanded=${step === 'then'} onToggle=${() => setStep(step === 'then' ? '' : 'then')}
