@@ -9,7 +9,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 
 const wait = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-async function setup(t, { nowPlaying = {} } = {}) {
+async function setup(t, { nowPlaying = {}, gestureless = false } = {}) {
   const harness = await createPreactHarness(t);
   globalThis.__vegasTest = { active: true, sound: true };
   t.after(() => { delete globalThis.__vegasTest; });
@@ -30,7 +30,12 @@ async function setup(t, { nowPlaying = {} } = {}) {
       muted: { get: () => muted, set: (v) => { muted = !!v; el.dispatchEvent(new harness.window.Event('volumechange')); } },
     });
     el.volume = 1;
-    el.play = () => { paused = false; el.dispatchEvent(new harness.window.Event('play')); return Promise.resolve(); };
+    // A gestureless load: the browser refuses autoplay with sound, but
+    // allows it muted.
+    el.play = () => {
+      if (gestureless && !muted) return Promise.reject(new Error('NotAllowedError'));
+      paused = false; el.dispatchEvent(new harness.window.Event('play')); return Promise.resolve();
+    };
     el.pause = () => { paused = true; el.dispatchEvent(new harness.window.Event('pause')); };
     el.load = () => {};
     audios.push(el);
@@ -107,4 +112,14 @@ test('a dead stream shows the error card, and leaving the mode clears the HUD', 
   await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:vegas')));
   assert.equal(host.innerHTML, '', 'no player once the Vegas features are off');
   vegas.setMusicVolume(30); // no player: a no-op that must not throw
+});
+
+test('a gestureless load plays muted and unmutes on the first interaction', async (t) => {
+  const { harness, host, audios } = await setup(t, { gestureless: true });
+  assert.equal(audios[0].muted, true, 'muted autoplay connects the stream');
+  assert.equal(audios[0].paused, false);
+  assert.equal(host.querySelector('.vegas-play').getAttribute('aria-label'), 'Play', 'not audible yet, so the button invites the click');
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.Event('pointerdown')));
+  assert.equal(audios[0].muted, false, 'the first gesture brings the sound up');
+  assert.equal(host.querySelector('.vegas-play').getAttribute('aria-label'), 'Pause');
 });

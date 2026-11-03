@@ -417,31 +417,37 @@ function formatElapsed(sec) {
 // stream live, and unmute on the very first interaction anywhere on the
 // page. The result: music is audible the instant the user touches the
 // page, whatever they click, with no buffering gap.
-function playWithSound(audio) {
-  audio.muted = false;
-  const p = audio.play();
+function playWithSound(el) {
+  el.muted = false;
+  const p = el.play();
   if (p && typeof p.catch === 'function') {
-    p.catch(() => armMutedUntilGesture(audio));
+    // A rejection can also come from releasing the element mid-buffer (a
+    // fast channel switch aborts its play()); only the live element arms.
+    p.catch(() => { if (audio === el) armMutedUntilGesture(el); });
   }
 }
 
-function armMutedUntilGesture(audio) {
-  audio.muted = true;
+function armMutedUntilGesture(el) {
+  if (cancelUnmuteArm) cancelUnmuteArm();
+  el.muted = true;
   // Muted autoplay is allowed without a gesture; this connects the
   // stream so unmuting later is instant.
-  audio.play().catch(() => {});
+  el.play().catch(() => {});
   const unmute = () => {
-    cancelUnmuteArm();
-    audio.muted = false;
+    cancel();
+    el.muted = false;
     // Re-issue play() inside the gesture in case the muted attempt was
     // itself suspended.
-    audio.play().catch(() => {});
+    el.play().catch(() => {});
   };
-  cancelUnmuteArm = () => {
+  // Each arm cancels only itself, so a stale arm can never take down the
+  // live element's.
+  const cancel = () => {
     document.removeEventListener('pointerdown', unmute, true);
     document.removeEventListener('keydown', unmute, true);
-    cancelUnmuteArm = null;
+    if (cancelUnmuteArm === cancel) cancelUnmuteArm = null;
   };
+  cancelUnmuteArm = cancel;
   document.addEventListener('pointerdown', unmute, true);
   document.addEventListener('keydown', unmute, true);
 }

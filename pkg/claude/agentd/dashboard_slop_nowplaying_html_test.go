@@ -48,7 +48,7 @@ func TestDashboardHTML_NowPlaying(t *testing.T) {
 	// The render path: a YouTube-search link opened in a new tab. rel
 	// noopener guards the opened tab; target _blank keeps the dashboard.
 	must("search_url", "vegas.js links the title to the prebuilt search URL")
-	must(`rel="noopener"`, "the song link opens safely in a new tab")
+	must(`class="vegas-title" href=${url} target="_blank" rel="noopener"`, "the song link opens safely in a new tab")
 
 	// Lifecycle: the poll starts with the player and is torn down when
 	// music stops, so it never runs on the plain dashboard.
