@@ -11044,6 +11044,7 @@ body.wizard .board-overlay-titlebar :is(.overlay-window-controls button, .compan
 body.wizard .board-overlay-titlebar.overlay-look-standard .overlay-window-controls { background: transparent; gap: 4px; }
 body.wizard .board-overlay-titlebar.overlay-look-standard .overlay-window-controls button { background: #241b3d; color: #f3e6c0; }
 body.wizard .board-overlay-titlebar.overlay-look-standard .overlay-window-controls button:hover { background: #3a2a63; }
+body.wizard .board-overlay-titlebar.overlay-look-standard .overlay-window-controls .overlay-wc-close:hover { color: var(--cmp-red); }
 body.wizard .board-overlay-titlebar .companion-controls > .companion-cog > .companion-cog-button,
 body.wizard .board-overlay-titlebar .companion-controls > button:where(:not(.ui-btn, .ui-menu-item)) {
   display: inline-grid; place-items: center; padding-block: 0; padding-inline: 4px; line-height: 1;
