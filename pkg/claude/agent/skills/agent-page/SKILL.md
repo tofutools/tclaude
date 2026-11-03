@@ -114,8 +114,9 @@ tclaude agent page patches landing --reset     # drop them all (or --reset 3)
   replayed. It needs the page open.
 - **Patches never write your files.** When the operator approves, port the
   change into source and reset the patches.
-- A dom patch changes the elements present when it runs; an app that renders
-  them again can undo it. Prefer css for those.
+- A dom patch changes the elements present when it runs. A client-rendered app
+  can miss its replay after a reload, or render the elements again and undo
+  it. Prefer css for those.
 - On a static page that is not read back, a patch reports only how many views
   it went to, and `eval` is refused.
 

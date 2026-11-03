@@ -263,6 +263,12 @@
     send(out);
   }
 
+  // utf8Length is a string's length in UTF-8 bytes, the unit the daemon caps.
+  function utf8Length(s) {
+    if (typeof TextEncoder === 'function') return new TextEncoder().encode(s).length;
+    return unescape(encodeURIComponent(s)).length;
+  }
+
   function evalResult(id, value) {
     var json;
     try {
@@ -272,8 +278,9 @@
       return;
     }
     if (json === undefined) json = 'null';
-    if (json.length > MAX_EVAL_JSON) {
-      send({ kind: 'result', id: id, error: 'the result is ' + json.length + ' characters of JSON; the most is ' + MAX_EVAL_JSON });
+    var bytes = utf8Length(json);
+    if (bytes > MAX_EVAL_JSON) {
+      send({ kind: 'result', id: id, error: 'the result is ' + bytes + ' bytes of JSON; the most is ' + MAX_EVAL_JSON });
       return;
     }
     send({ kind: 'result', id: id, json: json });

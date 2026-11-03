@@ -46,8 +46,12 @@ const (
 	pagePatchAttrNameMax = 100
 	pageEvalJSMax        = 32 << 10
 	pageEvalResultMax    = 16 << 10
-	pagePatchMaxBody     = 128 << 10
-	pagePatchTimeout     = 10 * time.Second
+	// The journal lists the last evals, their scripts clipped; they never
+	// count toward the patch caps.
+	pageEvalsKept    = 20
+	pageEvalJSKept   = 2000
+	pagePatchMaxBody = 128 << 10
+	pagePatchTimeout = 10 * time.Second
 )
 
 var pagePatchAttrName = regexp.MustCompile(`^[A-Za-z_:][-A-Za-z0-9_:.]*$`)
@@ -69,8 +73,13 @@ type pagePatch struct {
 	JS       string `json:"js,omitempty"`
 }
 
+// size is what a patch counts toward the journal's byte cap: an eval, kept
+// only for the listing, counts nothing.
 func (p pagePatch) size() int {
-	return len(p.CSS) + len(p.Selector) + len(p.Name) + len(p.Value) + len(p.JS)
+	if !p.Replay {
+		return 0
+	}
+	return len(p.CSS) + len(p.Selector) + len(p.Name) + len(p.Value)
 }
 
 // pagePatchRequest is the body of POST /v1/pages/{name}/patches.
@@ -269,7 +278,17 @@ func pagePatchAppend(id string, p pagePatch) (pagePatch, error) {
 		return pagePatch{}, errPagePatchClosed
 	}
 	s := pageCollabLocked(id)
-	if len(s.patches) >= pagePatchesMax {
+	if !p.Replay {
+		pagePatchKeepEvalLocked(s, &p)
+		return p, nil
+	}
+	replayed := 0
+	for _, pt := range s.patches {
+		if pt.Replay {
+			replayed++
+		}
+	}
+	if replayed >= pagePatchesMax {
 		return pagePatch{}, fmt.Errorf("the page has %d live patches, the most it keeps; drop some with `page patches --reset`", pagePatchesMax)
 	}
 	if s.patchBytes+p.size() > pagePatchesMaxBytes {
@@ -320,6 +339,32 @@ func handlePagePatch(w http.ResponseWriter, r *http.Request) {
 	}
 	results := pagePatchBroadcast(r.Context(), p.id)
 	writeJSON(w, http.StatusOK, map[string]any{"page": p.name, "patch": patch.N, "views": len(results), "results": results})
+}
+
+// pagePatchKeepEvalLocked numbers an eval and lists it, its script clipped,
+// dropping the oldest eval past pageEvalsKept. Caller holds pageCollab.mu.
+func pagePatchKeepEvalLocked(s *pageCollabState, p *pagePatch) {
+	if r := []rune(p.JS); len(r) > pageEvalJSKept {
+		p.JS = string(r[:pageEvalJSKept-1]) + "…"
+	}
+	evals := 0
+	for _, pt := range s.patches {
+		if !pt.Replay {
+			evals++
+		}
+	}
+	if evals >= pageEvalsKept {
+		for i, pt := range s.patches {
+			if !pt.Replay {
+				s.patches = append(s.patches[:i], s.patches[i+1:]...)
+				break
+			}
+		}
+	}
+	s.patchSeq++
+	p.N = s.patchSeq
+	p.At = time.Now().UTC()
+	s.patches = append(s.patches, *p)
 }
 
 func pagePatchAppendError(w http.ResponseWriter, err error) {

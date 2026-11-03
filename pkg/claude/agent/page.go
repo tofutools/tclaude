@@ -141,6 +141,8 @@ func pageCmd() *cobra.Command {
 				ParamEnrich: common.DefaultParamEnricher(),
 				RunFunc: func(p *pageDOMParams, cmd *cobra.Command, args []string) {
 					p.setText = cmd.Flags().Changed("set-text")
+					p.setAttr = cmd.Flags().Changed("set-attr")
+					p.insertHTML = cmd.Flags().Changed("insert-html")
 					os.Exit(runPageDOM(p, args[0], args[1], os.Stdout, os.Stderr))
 				},
 			}.ToCobra(),
@@ -169,10 +171,10 @@ func pageCmd() *cobra.Command {
 				},
 			}.ToCobra(),
 			boa.CmdT[pagePatchesParams]{
-				Use:   "patches <name> [#N]",
+				Use:   "patches <name> [N]",
 				Short: "List the live patches of one of your pages, or drop them",
 				Long: "Prints the page's journal of live patches: each css and dom patch, replayed after every reload, and each eval, " +
-					"which ran once. --reset drops every patch, or only #N; open views reload without them.",
+					"which ran once (the last 20 are listed). --reset drops every patch, or only patch N (`--reset 3`); open views reload without them.",
 				Args:        cobra.RangeArgs(1, 2),
 				ParamEnrich: common.DefaultParamEnricher(),
 				RunFunc: func(p *pagePatchesParams, _ *cobra.Command, args []string) {
@@ -320,6 +322,8 @@ type pageDOMParams struct {
 	InsertHTML string `long:"insert-html" optional:"true" help:"Live patch: insert HTML at the end of each element"`
 	JSON       bool   `long:"json" help:"Output JSON"`
 	setText    bool   // --set-text was given (it may set empty text)
+	setAttr    bool   // --set-attr was given
+	insertHTML bool   // --insert-html was given
 }
 
 type pagePatchParams struct {
@@ -327,7 +331,7 @@ type pagePatchParams struct {
 }
 
 type pagePatchesParams struct {
-	Reset bool `long:"reset" help:"Drop every live patch, or only #N"`
+	Reset bool `long:"reset" help:"Drop every live patch, or only patch N"`
 	JSON  bool `long:"json" help:"Output JSON"`
 }
 
@@ -467,13 +471,13 @@ func runPageDOM(p *pageDOMParams, name, selector string, stdout, stderr io.Write
 	if p.setText {
 		ops = append(ops, "set-text")
 	}
-	if p.SetAttr != "" {
+	if p.setAttr || p.SetAttr != "" {
 		ops = append(ops, "set-attr")
 	}
 	if p.Remove {
 		ops = append(ops, "remove")
 	}
-	if p.InsertHTML != "" {
+	if p.insertHTML || p.InsertHTML != "" {
 		ops = append(ops, "insert-html")
 	}
 	if len(ops) > 1 || (len(ops) == 1 && (p.HTML || p.Styles || p.Text)) {
@@ -628,7 +632,10 @@ func runPageEval(p *pagePatchParams, name, js string, stdin io.Reader, stdout, s
 		return boardErr(stderr, err)
 	}
 	if p.JSON {
-		return writeBoardJSON(stdout, resp)
+		if rc := writeBoardJSON(stdout, resp); rc != rcOK || resp.Error == "" {
+			return rc
+		}
+		return rcIOFailure
 	}
 	if resp.Error != "" {
 		fmt.Fprintf(stderr, "error: the page (eval #%d): %s\n", resp.Patch, resp.Error)
@@ -662,7 +669,7 @@ func runPagePatches(p *pagePatchesParams, args []string, stdout, stderr io.Write
 		if len(args) == 2 {
 			n := strings.TrimPrefix(args[1], "#")
 			if _, err := strconv.ParseInt(n, 10, 64); err != nil {
-				fmt.Fprintln(stderr, "error: #N is a patch number")
+				fmt.Fprintln(stderr, "error: N is a patch number")
 				return rcInvalidArg
 			}
 			path += "?n=" + n

@@ -326,7 +326,7 @@ tclaude agent page css <name> 'button.pay { background: #1971c2 }' ...
 tclaude agent page dom <name> <selector> --set-text T | --set-attr NAME=VALUE | --remove | --insert-html H
 tclaude agent page eval <name> '<js>'              # once, in one open view; prints JSON
 tclaude agent page patches <name>                  # the journal
-tclaude agent page patches <name> --reset [#N]     # drop all, or only #N
+tclaude agent page patches <name> --reset [N]      # drop all, or only patch N
 ```
 
 - **`page css`** and the **`page dom`** patch flags each add a patch, numbered,
@@ -335,11 +335,14 @@ tclaude agent page patches <name> --reset [#N]     # drop all, or only #N
   replays it after every load, a full HMR reload included. A css patch is a
   `<style>` after everything else in the document. A dom patch changes every
   element matching the selector once the document has parsed. An app that
-  renders those elements again later can undo it; use css for those.
+  renders its elements later (most client-rendered apps) misses the replay
+  after a reload, and one that renders them again undoes it; use css for
+  those.
   `page snapshot` renders the page with the patches too.
 - **`page eval`** runs a script once, in the open view `page dom` reads from,
   and prints its value as JSON (a promise is awaited; at most 16 KiB). It is
-  listed in the journal as not replayed. With no view open it is refused,
+  listed in the journal as not replayed (the last 20, scripts clipped; they
+  do not count toward the patch limits). With no view open it is refused,
   where a css or dom patch is kept and reported as not open.
 - Patches never write files. Port what the operator approves into source,
   then `--reset`. Open views reload without the dropped patches.

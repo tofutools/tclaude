@@ -118,6 +118,8 @@ test('an eval runs once and answers JSON, awaiting a promise', async () => {
   assert.match(f.sent.at(-1).error, /no JSON form/);
   f.send(fromParent({ kind: 'eval', id: 'e5', js: '"x".repeat(20000)' }));
   assert.match(f.sent.at(-1).error, /the most is 16384/);
+  f.send(fromParent({ kind: 'eval', id: 'e5b', js: '"é".repeat(9000)' }));
+  assert.match(f.sent.at(-1).error, /bytes of JSON/, 'the cap counts UTF-8 bytes, as the daemon does');
   f.send(fromParent({ kind: 'eval', id: 'e6', js: 'undefined' }));
   assert.equal(f.sent.at(-1).json, 'null');
   f.send(fromParent({ kind: 'eval', id: 'e7', js: 'window.__ran = (window.__ran || 0) + 1' }), {});
