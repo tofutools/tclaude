@@ -5516,7 +5516,7 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   width: calc(100% - 32px); max-height: 86vh; overflow-y: auto;
   display: flex; flex-direction: column; gap: 10px;
 }
-.manage-modal h3 { margin: 0; font-size: 15px; color: #d4d4d4; }
+.manage-modal h3 { margin: 0; font-size: 15px; }
 .manage-modal .manage-intro { margin: 0; font-size: 12px; color: #7d8590; line-height: 1.45; }
 /* The relocated filter bars sit flush inside the panel rather than spanning
    a full page width. */
@@ -5848,7 +5848,7 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 .modal {
   padding: 20px 24px; max-width: 480px; width: calc(100% - 32px);
 }
-.modal h3 { margin: 0 0 8px; font-size: 16px; color: #d4d4d4; }
+.modal h3 { margin: 0 0 8px; font-size: 16px; }
 /* Body text in a dialog; the standard hint and error text (ui.css) keep their
    own colour. */
 .modal p:where(:not(.ui-hint, .ui-error, .ui-error-box)) { margin: 8px 0; color: #c9d1d9; }
@@ -6300,7 +6300,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
   padding: 16px 18px; max-width: 560px; width: calc(100% - 32px);
   display: flex; flex-direction: column; max-height: 70vh;
 }
-.add-member-modal h3 { margin: 0 0 8px; font-size: 14px; color: #d4d4d4; }
+.add-member-modal h3 { margin: 0 0 8px; font-size: 14px; }
 .add-member-modal h3 .muted { font-weight: normal; }
 .add-member-modal .add-member-search {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
@@ -6475,7 +6475,7 @@ body.wizard .filter-bar .view-btn.ui-btn[aria-expanded="true"] { color: #f3e6c0;
   width: calc(100% - 32px);
   display: flex; flex-direction: column; gap: 10px; max-height: 88vh;
 }
-.perm-edit-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
+.perm-edit-modal h3 { margin: 0; font-size: 14px; }
 .perm-edit-banner {
   font-size: 11px; line-height: 1.5; color: #d2a8ff;
   background: #1d1b2e; border: 1px solid #3a2d5c;
@@ -6854,7 +6854,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   align-self: stretch; min-height: 0; max-height: none; resize: none;
 }
 .operator-message-modal .modal-buttons { flex: 0 0 auto; }
-.cron-create-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
+.cron-create-modal h3 { margin: 0; font-size: 14px; }
 .cron-create-modal .modal-meta {
   font-size: 11px; color: #7d8590;
   padding: 4px 8px; background: #0d1117;
@@ -8813,7 +8813,7 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
   padding: 18px 22px; width: min(700px, calc(100vw - 32px));
   max-height: min(720px, calc(100vh - 32px));
 }
-.directory-picker-modal h3 { color: #d4d4d4; margin: 0; font-size: 16px; }
+.directory-picker-modal h3 { margin: 0; font-size: 16px; }
 .directory-picker-path { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; }
 .directory-picker-path label { color: #7d8590; font-size: 12px; }
 .directory-picker-path input {
@@ -8859,7 +8859,6 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
 .directory-picker-empty { margin: auto; }
 .directory-picker-error { min-height: 18px; }
 .directory-picker-modal .modal-buttons { border-top: 1px solid #2a3340; padding-top: 10px; }
-body.wizard .directory-picker-modal h3 { color: #f3e6c0; font-family: Papyrus, Luminari, 'Palatino Linotype', Palatino, serif; }
 body.wizard .directory-picker-path input,
 body.wizard .directory-picker-list { background: #140f28; border-color: rgba(122, 93, 176, .5); color: #f3e6c0; }
 body.wizard .directory-picker-modal button:where(:not(.ui-btn)):not(.primary) { background: #241b3d; border-color: #d9b45a; color: #f3e6c0; }
@@ -8876,7 +8875,7 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
   padding: 18px 20px; width: min(460px, calc(100vw - 32px));
 }
 .directory-picker-action-modal.danger { border-color: #da3633; }
-.directory-picker-action-modal h3 { color: #d4d4d4; font-size: 16px; margin: 0; }
+.directory-picker-action-modal h3 { font-size: 16px; margin: 0; }
 .directory-picker-action-modal p { color: #8b949e; font-size: 12px; line-height: 1.45; margin: 0; }
 .directory-picker-action-field { display: flex; flex-direction: column; gap: 6px; }
 .directory-picker-action-field input {
@@ -8896,9 +8895,6 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
 }
 .directory-picker-action-modal .modal-buttons { border-top: 1px solid #2a3340; padding-top: 10px; }
 body.wizard .directory-picker-action-modal.danger { border-color: #f0883e; }
-body.wizard .directory-picker-action-modal h3 {
-  color: #f3e6c0; font-family: Papyrus, Luminari, 'Palatino Linotype', Palatino, serif;
-}
 body.wizard .directory-picker-action-field input {
   background: #140f28; border-color: rgba(122, 93, 176, .5); color: #f3e6c0;
 }
@@ -9327,7 +9323,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   width: calc(100% - 32px);
   display: flex; flex-direction: column; gap: 10px; max-height: 86vh;
 }
-.cleanup-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
+.cleanup-modal h3 { margin: 0; font-size: 14px; }
 .cleanup-hint { margin: 0; }
 .cleanup-hint.danger { color: #f0883e; }
 .cleanup-toolbar {
@@ -12014,13 +12010,6 @@ body.wizard .spawn-group-word-wizard { display: inline; }
    rest of the wizard re-skin we recolor the chrome; the input fields stay a
    legible dark (violet-tinted) so the form is still readable. */
 
-body.wizard #agent-spawn-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  /* The same fantasy-serif stack the header h1 uses. */
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #agent-spawn-modal .modal-meta {
   background: #140f28;
   border-left-color: #d9b45a;
@@ -12122,12 +12111,6 @@ body.wizard #agent-spawn-modal #agent-spawn-submit:disabled::before { content: "
    as the other wizard forms. Keep this scoped to the three action-dialog
    overlays: .cron-create-modal is also used by several unrelated dialogs. */
 
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .modal-meta {
   background: #140f28;
   border-left-color: #d9b45a;
@@ -12189,12 +12172,6 @@ body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal,
    policies inherited by future heroes. Keep the skin id-scoped because the
    same overlay primitive is shared by ordinary action dialogs. */
 
-body.wizard #group-settings-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #group-settings-modal :is(.cron-create-label, .spawn-field-hint, .muted) {
   color: #b39ddb;
 }
@@ -12258,13 +12235,6 @@ body.wizard #retire-title .retire-title-wizard { display: inline; }
    parchment text — the same palette as the spawn dialog / header / music
    card. Chrome is recolored; the copy stays honest and legible. */
 
-body.wizard #retire-modal .modal h3 {
-  color: #f3e6c0;
-  /* The same fantasy-serif stack the header h1 / spawn title use. */
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #retire-modal .modal p { color: #e7d9f5; }
 body.wizard #retire-modal .modal .modal-meta {
   background: #140f28;
@@ -12337,12 +12307,6 @@ body.wizard #retire-modal #retire-ok:disabled::after {
    rules scoped to this transaction overlay: shutdown shares the generic
    .modal surface with unrelated destructive dialogs. */
 
-body.wizard #shutdown-modal .modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #shutdown-modal .modal p { color: #e7d9f5; }
 body.wizard #shutdown-modal .modal .modal-meta {
   background: #140f28;
@@ -12385,13 +12349,6 @@ body.wizard #shutdown-modal #shutdown-force:hover {
    (TestDashboardCSS_WizardRetireModalScoped): an unscoped body.wizard
    .modal would repaint every sibling dialog. */
 
-body.wizard #confirm-modal .modal h3 {
-  color: #f3e6c0;
-  /* The same fantasy-serif stack the header h1 / spawn / retire titles use. */
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #confirm-modal .modal p { color: #e7d9f5; }
 body.wizard #confirm-modal .modal .modal-meta {
   background: #140f28;
@@ -12638,12 +12595,6 @@ body.wizard #cron-create-modal.cron-duplicating #cron-create-submit:disabled::be
    borrows cleanup list/toolbar primitives; those receive the same violet-void
    treatment as the window and bulk-cleanup dialogs. */
 
-body.wizard #message-create-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #message-create-modal #message-create-desc,
 body.wizard #message-create-modal .cron-create-label { color: #b39ddb; }
 body.wizard #message-create-modal .cron-target-modes { color: #e7d9f5; }
@@ -12691,12 +12642,6 @@ body.wizard #message-create-modal #message-create-submit:disabled { opacity: 0.6
    This is the terminal-pane Ctrl/Cmd+M composer, not the agent-authored
    message action above. Keep its arcane skin scoped to its owned overlay. */
 
-body.wizard .operator-message-overlay .operator-message-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard .operator-message-overlay :is(.modal-hint, .cron-create-label, .spawn-attachments-hint) { color: #b39ddb; }
 body.wizard .operator-message-overlay .cron-create-target { color: #f3e6c0; }
 body.wizard .operator-message-overlay .cron-create-row :is(input[type=text], textarea, select) {
@@ -12730,12 +12675,6 @@ body.wizard .operator-message-overlay .operator-message-submit:disabled { opacit
    #add-member-modal shares .add-member-modal with the sudo/cron target
    pickers, so every rule stays under this overlay id. */
 
-body.wizard #add-member-modal .add-member-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #add-member-modal .add-member-modal h3 .muted { color: #d9b45a; }
 body.wizard #add-member-modal .add-member-search {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
@@ -12764,12 +12703,6 @@ body.wizard #add-member-modal .add-member-foot kbd {
    palette as the invite-hero picker; without the id-scoped rules, broad
    wizard span coloring makes its live row copy nearly black on #0d1117. */
 
-body.wizard #cron-pick-target-modal .add-member-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #cron-pick-target-modal .add-member-modal h3 .muted,
 body.wizard #cron-pick-target-modal .add-member-modal h3 .theme-copy-wizard { color: #d9b45a; }
 body.wizard #cron-pick-target-modal .add-member-search {
@@ -12850,13 +12783,6 @@ body.wizard #group-create-title .group-create-title-wizard { display: inline; }
    parchment text — the same palette as the Summon / Bind dialogs. The input
    fields stay a legible violet-tinted dark so the form is still readable. */
 
-body.wizard #group-create-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  /* The same fantasy-serif stack the header h1 / Summon title use. */
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #group-create-modal .cron-create-label { color: #b39ddb; }
 /* Max members is a number input and the attachment link is a URL input; theme
    every field so none stays a bright default-dark against the violet surface. */
@@ -12991,13 +12917,6 @@ body.wizard #group-create-modal .group-clone-preview .gcp-val.muted { color: #8a
 body.wizard #human-reply-title .human-reply-title-regular { display: none; }
 body.wizard #human-reply-title .human-reply-title-wizard { display: inline; }
 
-body.wizard #human-reply-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  /* The same fantasy-serif stack the header h1 / Summon title use. */
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #human-reply-modal .cron-create-label { color: #b39ddb; }
 /* Copy stays legible on the violet surface — parchment for the name/desc,
    a dimmer lilac for the secondary "re: …" line. The online/offline status
@@ -13153,13 +13072,6 @@ body.wizard #window-title .window-title-wizard { display: inline; }
    parchment text — the same palette as the Summon / Banish dialogs. Chrome is
    recolored; the data stays legible. */
 
-body.wizard #window-modal .cleanup-modal h3 {
-  color: #f3e6c0;
-  /* The same fantasy-serif stack the header h1 / spawn title use. */
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 /* The focus/unfocus direction picker — a violet-tinted panel, parchment
    labels + muted violet notes. The native radios stay legible either way. */
 body.wizard #window-modal .window-direction {
@@ -13255,13 +13167,6 @@ body.wizard #window-modal #window-submit:disabled { opacity: 0.6; }
 /* The dialog surface: midnight-violet void, mystic-purple frame + glow,
    parchment text — the Summon / Banish palette, same as #window-modal. */
 
-body.wizard #cleanup-modal .cleanup-modal h3 {
-  color: #f3e6c0;
-  /* The same fantasy-serif stack the header h1 / spawn title use. */
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 /* The delete-tier hint keeps a caution tone — a warm ember rather than the
    base orange — so its "cannot be undone" warning still reads as danger on
    the violet surface. The .cleanup-warn / .cleanup-error status lines below
@@ -13356,12 +13261,6 @@ body.wizard #cleanup-modal #cleanup-submit:disabled { opacity: 0.6; }
    The initial submit stays ember-red because retirement revokes membership
    and boons; the result-phase Done action loses .danger and becomes gilded. */
 
-body.wizard #retire-preview-modal .cleanup-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #retire-preview-modal .cleanup-toolbar { color: #b39ddb; }
 body.wizard #retire-preview-modal .cleanup-count { color: #e7d9f5; }
 body.wizard #retire-preview-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
@@ -13423,12 +13322,6 @@ body.wizard #retire-preview-modal #retire-preview-submit:disabled { opacity: 0.6
    stays ember-red because the action is irreversible; after the result phase
    removes .danger, the same button settles into the ordinary gilded style. */
 
-body.wizard #delete-retired-modal .cleanup-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #delete-retired-modal .cleanup-hint.danger { color: #f0a868; }
 body.wizard #delete-retired-modal .cleanup-toolbar { color: #b39ddb; }
 body.wizard #delete-retired-modal .cleanup-count { color: #e7d9f5; }
@@ -13495,12 +13388,6 @@ body.wizard #delete-retired-modal #delete-retired-submit:disabled { opacity: 0.6
    violet surface, list, controls, and destructive lever strictly scoped to
    #worktree-cleanup-modal so those siblings retain their own skins. */
 
-body.wizard #worktree-cleanup-modal .cleanup-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #worktree-cleanup-modal .cleanup-toolbar { color: #b39ddb; }
 body.wizard #worktree-cleanup-modal .cleanup-count { color: #e7d9f5; }
 body.wizard #worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
@@ -13564,12 +13451,6 @@ body.wizard #worktree-cleanup-modal #worktree-cleanup-submit:disabled { opacity:
 .delete-group-copy-wizard { display: none; }
 body.wizard #delete-group-modal .delete-group-copy-regular { display: none; }
 body.wizard #delete-group-modal .delete-group-copy-wizard { display: inline; }
-body.wizard #delete-group-modal .cleanup-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #delete-group-modal .cleanup-hint.danger { color: #f0a868; }
 body.wizard #delete-group-modal .cleanup-toolbar { color: #b39ddb; }
 body.wizard #delete-group-modal .cleanup-count { color: #e7d9f5; }
@@ -13655,13 +13536,6 @@ body.wizard #term-title .term-title-wizard { display: inline; }
    parchment text — the same palette as the Summon / Banish dialogs. Chrome is
    recolored; the dir-picker copy stays honest and legible. */
 
-body.wizard #term-modal .modal h3 {
-  color: #f3e6c0;
-  /* The same fantasy-serif stack the header h1 / spawn title use. */
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #term-modal .modal p { color: #e7d9f5; }
 body.wizard #term-modal .modal p strong { color: #f3e6c0; }
 /* The resolved-path meta line — the violet inset the retire / spawn dialogs
@@ -13736,12 +13610,6 @@ body.wizard #term-modal #term-current:active {
 /* 🧙 Scrying portals — the same violet-void surface and gilded focus the
    #term-modal picker above uses; scoped so sibling .modal dialogs keep theirs. */
 
-body.wizard #term-chooser-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #term-chooser-modal .term-chooser-meta,
 body.wizard #term-chooser-modal .term-choice-section,
 body.wizard #term-chooser-modal .term-choice-desc { color: #ad9abb; }
@@ -13773,13 +13641,6 @@ body.wizard #term-chooser-modal .term-chooser-hint kbd { border-color: #59466b; 
    modal-profiles.js's wizWord(), not here; this block only lends it the arcane
    serif. */
 
-body.wizard #profile-editor-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  /* The same fantasy-serif stack the header h1 / spawn title use. */
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #profile-editor-modal .cron-create-label,
 body.wizard #profile-editor-modal .spawn-perms-indicator { color: #b39ddb; }
 body.wizard #profile-editor-modal .cron-create-row input[type=text],
@@ -13981,12 +13842,6 @@ body.wizard #export-agent-modal #export-agent-submit:disabled::before { content:
    .cron-create-modal dialogs, and the .paf-* panels also appear in the
    snapshots dialog, which keeps its plain skin. */
 
-body.wizard :is(#paf-export-modal, #group-export-modal) h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard :is(#paf-export-modal, #group-export-modal) .modal-meta {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #b39ddb;
 }
@@ -14051,13 +13906,6 @@ body.wizard #edit-member-modal .em-btn-wizard { display: inline; }
 /* The dialog surface: midnight-violet void, mystic-purple frame + glow,
    parchment text — the same palette as the spawn / retire dialogs. */
 
-body.wizard #edit-member-modal .modal h3 {
-  color: #f3e6c0;
-  /* The same fantasy-serif stack the header h1 / spawn / retire titles use. */
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #edit-member-modal .modal .modal-meta {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
@@ -14125,12 +13973,6 @@ body.wizard #edit-member-modal #edit-member-save:disabled::before { content: non
    Mirrors the Enchant-hero dialog while keeping this two-field editor
    compact: violet void, parchment copy, gold focus, and a gilded bind lever. */
 
-body.wizard #task-link-modal .modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #task-link-modal .modal-meta {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
@@ -14220,13 +14062,6 @@ body.wizard .roles-word-wizard { display: inline; }
    keep the default chrome. The title now swaps its copy to "Loadouts"
    too (the .profiles-word span pair above), on top of this arcane re-skin. */
 
-body.wizard #profiles-manage-modal .manage-modal h3 {
-  color: #f3e6c0;
-  /* The same fantasy-serif stack the header h1 / dialog titles use. */
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #profiles-manage-modal .manage-intro { color: #b39ddb; }
 
 /* Filter bar: violet-tinted field, violet count, gold clear-×. */
@@ -14276,13 +14111,6 @@ body.wizard #profiles-manage-modal .template-card .tc-actions button:where(:not(
    chrome scoped to the two overlay ids so a wizard-theme sweep cannot repaint
    a sibling surface by accident. */
 
-body.wizard #links-manage-modal .manage-modal h3,
-body.wizard #link-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #links-manage-modal .manage-intro { color: #b39ddb; }
 body.wizard #links-manage-modal .filter-bar input:where(:not(.ui-input)) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
@@ -14382,13 +14210,6 @@ body.wizard .tpl-word-wizard { display: inline; }
    the Profiles… / Links… overlays, so an unscoped rule would repaint
    those too (guarded by TestDashboardCSS_WizardTemplatesManageScoped). */
 
-body.wizard #templates-manage-modal .manage-modal h3 {
-  color: #f3e6c0;
-  /* The same fantasy-serif stack the header h1 / sibling dialogs use. */
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #templates-manage-modal .manage-intro { color: #b39ddb; }
 body.wizard #templates-manage-modal .filter-bar input:where(:not(.ui-input)) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
@@ -14463,12 +14284,6 @@ body.wizard #templates-manage-modal .template-card .tc-actions button:where(:not
    NOTE: the profile editor's inner div also carries the
    .template-editor-modal CLASS — ids only in these selectors. */
 
-body.wizard #template-editor-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #template-editor-modal .cron-create-label,
 body.wizard #template-editor-modal .template-agents-head { color: #b39ddb; }
 /* Every text/number input + textarea — the top rows AND the per-hero rows
@@ -14621,12 +14436,6 @@ body.wizard #template-editor-modal .tpl-concepts-table td { color: #e7d9f5; }
    summoning will call forth. Violet-and-gilt skin, scoped to
    #template-deploy-modal. */
 
-body.wizard #template-deploy-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #template-deploy-modal .cron-create-label { color: #b39ddb; }
 body.wizard #template-deploy-modal .cron-create-row input[type=text],
 body.wizard #template-deploy-modal .cron-create-row select:where(:not(.ui-select)),
@@ -14702,12 +14511,6 @@ body.wizard #template-deploy-modal #template-deploy-group.locked {
    Save-a-group-as-a-template: copy a live party's shape into a fresh
    circle. Scoped to #template-from-group-modal. */
 
-body.wizard #template-from-group-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #template-from-group-modal .cron-create-label { color: #b39ddb; }
 body.wizard #template-from-group-modal .modal-meta {
   background: #140f28;
@@ -14773,12 +14576,6 @@ body.wizard #template-from-group-modal.tfg-updating #template-from-group-submit:
    name (JOH-365). Scoped to #template-duplicate-modal — the same
    positive-per-#id scoping the trace dialog above follows. */
 
-body.wizard #template-duplicate-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #template-duplicate-modal .cron-create-label { color: #b39ddb; }
 body.wizard #template-duplicate-modal .modal-meta {
   background: #140f28;
@@ -14837,12 +14634,6 @@ body.wizard #template-duplicate-modal #template-duplicate-submit:disabled::befor
    unstyled dialog would fall back to the plain dark + a browser-white submit).
    The submit keeps its JS text (no font-size:0 / ::before swap) — just gilded. */
 
-body.wizard #clone-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #clone-modal .cron-create-label { color: #b39ddb; }
 body.wizard #clone-modal .modal-meta {
   background: #140f28;
@@ -14889,12 +14680,6 @@ body.wizard #clone-modal #clone-modal-submit:disabled { opacity: 0.7; }
    copy button keeps its honest tpl-word text (copy-not-cast is the whole
    point), so it gets the tarnished-gold secondary treatment, not a lever. */
 
-body.wizard #starters-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #starters-modal .modal-meta {
   background: #140f28;
   border-left-color: #d9b45a;
@@ -14922,12 +14707,6 @@ body.wizard #starters-modal .modal-buttons { border-top-color: rgba(122, 93, 176
    a themed "…ing" ::before would misread idle-disabled as in-flight
    (same reasoning as the reply dialog's Send). */
 
-body.wizard #group-import-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #group-import-modal .cron-create-label { color: #b39ddb; }
 body.wizard #group-import-modal .modal-meta {
   background: #140f28;
@@ -14987,12 +14766,6 @@ body.wizard #group-import-modal #group-import-submit:disabled { opacity: 0.55; }
    group-import block — file picker + text + paste textarea + the overwrite
    checkbox — scoped to #template-import-modal. */
 
-body.wizard #template-import-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #template-import-modal .cron-create-label { color: #b39ddb; }
 body.wizard #template-import-modal .modal-meta {
   background: #140f28;
@@ -15038,12 +14811,6 @@ body.wizard #template-import-modal #template-import-submit:hover:not(:disabled) 
 }
 body.wizard #template-import-modal #template-import-submit:disabled { opacity: 0.55; }
 
-body.wizard :is(#profile-export-modal, #profile-import-modal) .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard :is(#profile-export-modal, #profile-import-modal) .modal-meta,
 body.wizard :is(#profile-export-modal, #profile-import-modal) .cron-create-label {
   color: #b39ddb;
@@ -15083,12 +14850,6 @@ body.wizard :is(#profile-import-modal, #sandbox-profile-import-modal) .profile-t
 
 /* Manage overlay (the ward picker), mirror of #profiles-manage-modal. */
 
-body.wizard #sandbox-profiles-manage-modal .manage-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #sandbox-profiles-manage-modal .manage-intro { color: #b39ddb; }
 body.wizard #sandbox-profiles-manage-modal .filter-bar input:where(:not(.ui-input)) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
@@ -15124,12 +14885,6 @@ body.wizard #sandbox-profiles-manage-modal .template-card .tc-actions button:whe
 
 /* Editor (inscribe a ward), mirror of #profile-editor-modal. */
 
-body.wizard #sandbox-profile-editor-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #sandbox-profile-editor-modal .modal-meta,
 body.wizard #sandbox-profile-editor-modal .cron-create-label { color: #b39ddb; }
 body.wizard #sandbox-profile-editor-modal .cron-create-row input[type=text],
@@ -15252,12 +15007,6 @@ body.wizard #sandbox-profile-editor-modal #sandbox-profile-editor-submit:disable
 /* Export / import (inscribe / read wards), mirror of the profile transfer
    dialogs. */
 
-body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .modal-meta,
 body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .cron-create-label {
   color: #b39ddb;
@@ -15299,12 +15048,6 @@ body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .m
    #roles-manage-modal; role cards are .template-card.role-card so they inherit
    the card chrome, with .tc-sub (the role's descr line) folded in. */
 
-body.wizard #roles-manage-modal .manage-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #roles-manage-modal .manage-intro { color: #b39ddb; }
 body.wizard #roles-manage-modal .filter-bar input:where(:not(.ui-input)) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
@@ -15349,12 +15092,6 @@ body.wizard #roles-manage-modal .template-card .tc-actions button:where(:not(.ui
    model-codex are text inputs; Harness /
    Model / Effort / Sandbox / Permission-mode / Spawn-profile are selects. */
 
-body.wizard #role-editor-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #role-editor-modal .cron-create-label { color: #b39ddb; }
 body.wizard #role-editor-modal .cron-create-row input[type=text],
 body.wizard #role-editor-modal .cron-create-row input:not([type]),
@@ -15401,12 +15138,6 @@ body.wizard #role-editor-modal #role-editor-submit:disabled { opacity: 0.7; }
    match the "Party lore" label the circle editor already uses. Scoped to
    #group-context-modal. */
 
-body.wizard #group-context-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #group-context-modal .cron-create-label { color: #b39ddb; }
 body.wizard #group-context-modal .modal-meta {
   background: #140f28;
@@ -15471,13 +15202,6 @@ body.wizard #group-context-modal #group-context-submit:disabled::before { conten
    `body.wizard #perm-edit-modal …` selector, and keeping every rule explicitly
    id-scoped is exactly what TestDashboardCSS_WizardPermEditorScoped guards. */
 
-body.wizard #perm-edit-modal .perm-edit-modal h3,
-body.wizard #context-features-modal .perm-edit-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 /* The PERMANENT banner is already violet — nudge it onto the arcane palette so
    it reads as themed, while staying a distinct bordered call-out (the "these
    persist" warning must still land). */
@@ -15969,11 +15693,6 @@ body.wizard .jobs-subtab.active {
    need the same explicit arcane field and panel treatment as the older cron
    editor instead of falling back to browser-native controls. */
 
-body.wizard #trigger-modal .trigger-modal-heading h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px; text-shadow: 0 0 8px rgba(169, 123, 214, .6), 0 1px 0 #1e1640;
-}
 body.wizard #trigger-modal :is(.trigger-name-field, .trigger-enabled-label, .trigger-fields label, .trigger-action-fields label) {
   color: #b39ddb;
 }
@@ -18770,12 +18489,6 @@ body.wizard .process-node-readonly-badge { color: #d4af37; border-color: #d4af37
 /* Wizard cross-realm ward book. Keep the skin scoped to this overlay: it uses
    the generic cron modal shell shared by unrelated operational dialogs. */
 
-body.wizard #spawn-harness-policy-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #spawn-harness-policy-modal .manage-intro,
 body.wizard #spawn-harness-policy-modal .empty { color: #b39ddb; }
 body.wizard #spawn-harness-policy-modal .spawn-harness-matrix-wrap {
@@ -20793,12 +20506,6 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
    wizard button rule carries two ids. The doubled id ties it and wins by
    coming later in this file (keeps Save prompt primary). */
 
-body.wizard #saved-prompts-manage-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard #saved-prompts-manage-modal :is(.modal-hint, .cron-create-label) { color: #b39ddb; }
 body.wizard #saved-prompts-manage-modal .cron-create-row :is(input:not([type]), input[type=text], textarea, select) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;

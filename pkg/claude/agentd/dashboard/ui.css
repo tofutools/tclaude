@@ -90,6 +90,10 @@
   --ui-dialog-line: #2a3340;
   --ui-dialog-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   --ui-dialog-text: #c9d1d9;
+  --ui-dialog-title: #d4d4d4;
+  --ui-dialog-title-font: inherit;
+  --ui-dialog-title-spacing: normal;
+  --ui-dialog-title-shadow: none;
 }
 body.wizard {
   --ui-bg: #241b3d;
@@ -117,6 +121,10 @@ body.wizard {
   --ui-dialog-line: #7a5db0;
   --ui-dialog-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
   --ui-dialog-text: #e7d9f5;
+  --ui-dialog-title: #f3e6c0;
+  --ui-dialog-title-font: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  --ui-dialog-title-spacing: 1px;
+  --ui-dialog-title-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
 /* The wizard dialogs' house primary: a gilded, glowing gradient. */
 body.wizard .ui-btn-primary { text-shadow: 0 0 6px rgba(169, 123, 214, 0.6); box-shadow: 0 0 10px rgba(122, 93, 176, 0.4); }
@@ -390,4 +398,11 @@ label:has(> input:disabled) { cursor: not-allowed !important; }
 .ui-dialog {
   background: var(--ui-dialog-bg); border: 1px solid var(--ui-dialog-line);
   border-radius: 6px; box-shadow: var(--ui-dialog-shadow); color: var(--ui-dialog-text);
+}
+/* Dialog headings take the skin's title face (the wizard's gilded serif).
+   Zero specificity: an area heading with its own colour or face keeps it;
+   size and margins stay with the area. */
+:where(.ui-dialog) h3 {
+  color: var(--ui-dialog-title); font-family: var(--ui-dialog-title-font);
+  letter-spacing: var(--ui-dialog-title-spacing); text-shadow: var(--ui-dialog-title-shadow);
 }
