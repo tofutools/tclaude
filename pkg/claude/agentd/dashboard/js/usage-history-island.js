@@ -1,6 +1,7 @@
 import { Fragment, h, render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { AsyncLoadState } from './async-load-state.js';
 import { UsageHistoryChart } from './usage-history-chart.js';
 import { isWizardActive } from './slop.js';
@@ -36,18 +37,16 @@ function UsageSpanControls({ scope, span, onSetHours, onSetLookahead, onSetForec
   return html`<div class="usage-card-controls">
     <div class="usage-control-group" role="group" aria-label=${`${wizard ? 'Chronicle' : 'History'} range, ${scope}`}>
       <span class="usage-control-label" aria-hidden="true">${wizard ? 'Chronicle' : 'History'}</span>
-      ${USAGE_HISTORY_SPANS.map((option) => html`<button type="button"
-        class=${`tool${span.hours === option.hours ? ' active' : ''}`}
-        aria-label=${`${wizard ? 'Chronicle' : 'History'} ${option.label}, ${scope}`} aria-pressed=${span.hours === option.hours}
-        onClick=${() => onSetHours(option.hours)}>${option.label}</button>`)}
+      ${USAGE_HISTORY_SPANS.map((option) => html`<${Button} size="sm" pressed=${span.hours === option.hours}
+        aria-label=${`${wizard ? 'Chronicle' : 'History'} ${option.label}, ${scope}`}
+        onClick=${() => onSetHours(option.hours)}>${option.label}<//>`)}
     </div>
     <span class="usage-control-divider" aria-hidden="true"></span>
     <div class="usage-control-group" role="group" aria-label=${`${wizard ? 'Prophecy' : 'Forecast'} lookahead, ${scope}`}>
       <span class="usage-control-label" aria-hidden="true">${wizard ? 'Scry ahead' : 'Look ahead'}</span>
-      ${USAGE_LOOKAHEAD_SPANS.map((option) => html`<button type="button"
-        class=${`tool${span.lookaheadHours === option.hours ? ' active' : ''}`}
-        aria-label=${`${wizard ? 'Scry ahead' : 'Look ahead'} ${option.label}, ${scope}`} aria-pressed=${span.lookaheadHours === option.hours}
-        onClick=${() => onSetLookahead(option.hours)}>${option.label}</button>`)}
+      ${USAGE_LOOKAHEAD_SPANS.map((option) => html`<${Button} size="sm" pressed=${span.lookaheadHours === option.hours}
+        aria-label=${`${wizard ? 'Scry ahead' : 'Look ahead'} ${option.label}, ${scope}`}
+        onClick=${() => onSetLookahead(option.hours)}>${option.label}<//>`)}
     </div>
     <span class="usage-control-divider" aria-hidden="true"></span>
     ${/* Which pace the dashed line is drawn at. It rides with the span controls
@@ -59,12 +58,10 @@ function UsageSpanControls({ scope, span, onSetHours, onSetLookahead, onSetForec
       ${USAGE_FORECAST_ALGOS.map((option) => {
         const label = wizard ? option.wizardLabel : option.label;
         const description = wizard ? option.wizardDescription : option.description;
-        return html`<button type="button"
-          class=${`tool${span.algo === option.id ? ' active' : ''}`}
+        return html`<${Button} size="sm" pressed=${span.algo === option.id}
           title=${`${label}: ${description}`}
           aria-label=${`${wizard ? 'Divination' : 'Prediction'} ${label}, ${description}, ${scope}`}
-          aria-pressed=${span.algo === option.id}
-          onClick=${() => onSetForecastAlgo(option.id)}>${label}</button>`;
+          onClick=${() => onSetForecastAlgo(option.id)}>${label}<//>`;
       })}
     </div>
   </div>`;
@@ -75,10 +72,8 @@ function UsageEmptyRangeControls({ hours, onSetHours, wizard }) {
     <div class="usage-control-group" role="group"
       aria-label=${wizard ? 'OpenCode activity chronicle range' : 'OpenCode activity history range'}>
       <span class="usage-control-label" aria-hidden="true">${wizard ? 'Search chronicle' : 'Search history'}</span>
-      ${USAGE_HISTORY_SPANS.map((option) => html`<button type="button"
-        class=${`tool${hours === option.hours ? ' active' : ''}`}
-        aria-pressed=${hours === option.hours}
-        onClick=${() => onSetHours(option.hours)}>${option.label}</button>`)}
+      ${USAGE_HISTORY_SPANS.map((option) => html`<${Button} size="sm" pressed=${hours === option.hours}
+        onClick=${() => onSetHours(option.hours)}>${option.label}<//>`)}
     </div>
   </div>`;
 }
@@ -125,9 +120,9 @@ function UsageSeriesCard({
     <div class="usage-card-header">
       <div><span class="usage-provider">${usageProviderLabel(series.provider)}</span>
         <h3>${windowLabel}</h3></div>
-      <div class="usage-current">${canShowUnits && html`<span class="usage-unit-toggle" role="group" aria-label="Copilot usage units">
-        <button type="button" class=${span.unit !== 'units' ? 'active' : ''} aria-pressed=${span.unit !== 'units'} onClick=${() => onSetUnit('percent')}>%</button>
-        <button type="button" class=${span.unit === 'units' ? 'active' : ''} aria-pressed=${span.unit === 'units'} onClick=${() => onSetUnit('units')}>AIC</button>
+      <div class="usage-current">${canShowUnits && html`<span class="ui-seg usage-unit-toggle" role="group" aria-label="Copilot usage units">
+        <${Button} size="sm" pressed=${span.unit !== "units"} onClick=${() => onSetUnit('percent')}>%<//>
+        <${Button} size="sm" pressed=${span.unit === "units"} onClick=${() => onSetUnit('units')}>AIC<//>
       </span>`}<strong>${latest ? unitLimit > 0
         ? `${formatUsageUnits(latest.used_units).replace(' AIC', '')} / ${formatUsageUnits(unitLimit)}`
         : `${latest.pct.toFixed(1)}%` : '—'}</strong>

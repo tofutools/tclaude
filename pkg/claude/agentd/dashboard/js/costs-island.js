@@ -76,8 +76,8 @@ function FactorEditor({ state, actions }) {
       : custom ? 'Custom multiplier' : `Uses default · ×${defaultFactor}`;
     return html`<div class="cost-factor-row" key=${key}>
       <label for=${key ? `costs-factor-${key}` : 'costs-factor'}>${label}<small>${hint}</small></label>
-      <span class="cost-factor-reset">${custom && html`<button class="tool" disabled=${!current.loaded}
-        aria-label=${`Use default for ${label}`} onClick=${() => inherit(key)}>Use default</button>`}</span>
+      <span class="cost-factor-reset">${custom && html`<${Button} size="sm" variant="link" disabled=${!current.loaded}
+        aria-label=${`Use default for ${label}`} onClick=${() => inherit(key)}>Use default<//>`}</span>
       <span>×</span><input id=${key ? `costs-factor-${key}` : 'costs-factor'} type="number" min="0.01" max="10" step="0.01"
         aria-label=${key ? `${label} cost display multiplier` : 'Cost display multiplier'} disabled=${!current.loaded}
         placeholder=${key ? defaultFactor : '1'} value=${raw}
@@ -92,9 +92,9 @@ function FactorEditor({ state, actions }) {
       <p>Overrides replace the default. Leave a harness blank to use the default.</p>
       ${row('', 'Default')}${COST_FACTOR_HARNESSES.map(({ key, label }) => row(key, label))}
       <p>Applies to displayed costs across the dashboard, including WHAT-IF estimates. Recorded data stays unchanged.</p>
-      <div class="cost-factor-footer"><button class="tool" disabled=${!current.loaded} onClick=${reset}>Reset all to ×1</button>
+      <div class="cost-factor-footer"><${Button} size="sm" disabled=${!current.loaded} onClick=${reset}>Reset all to ×1<//>
         <span id="costs-factor-status" class=${`muted${current.error ? ' error' : ''}`} role=${current.error ? 'alert' : 'status'}>${current.status}</span>
-        ${!current.loaded && current.error && html`<button class="tool" onClick=${actions.loadFactor}>Retry</button>`}
+        ${!current.loaded && current.error && html`<${Button} size="sm" onClick=${actions.loadFactor}>Retry<//>`}
       </div>
     </div>
   </details>`;
@@ -390,10 +390,10 @@ function IgnoredCosts({ current, ignore }) {
         <td><span class="muted">${harnessLabel(row.harness)}</span></td>
         <td><span class="muted">${costModelLabel(row)}</span></td>
         <td>${row.billed_to ? html`<span class="muted cost-billed-to" title="Its model calls went through this peer's model gateway; that peer pays for them and counts the cost">billed to ${row.billed_to_name || row.billed_to}</span>`
-          : html`<button class="tool cost-restore" data-act="cost-restore" disabled=${ignore.pending.has(row.conv_id)}
+          : html`<${Button} size="sm" class="cost-restore" data-act="cost-restore" disabled=${ignore.pending.has(row.conv_id)}
           title="Count this agent's spend in cost totals again"
           aria-label=${`Restore ${row.title || row.conv_id} to cost totals`}
-          onClick=${() => ignore.run(row.conv_id, row.title, false)}>Restore</button>`}</td>
+          onClick=${() => ignore.run(row.conv_id, row.title, false)}>Restore<//>`}</td>
       </tr>`)}
     </tbody></table>
   </details>`;
@@ -536,7 +536,7 @@ function CostsTable({ state, current, ignore }) {
         value=${current.query} onInput=${(event) => state.setQuery(event.currentTarget.value)}
         onKeyDown=${(event) => { if (event.key === 'Escape') state.setQuery(''); }} />
       <span class="filter-count" id="filter-costs-count">${current.filtered ? `${current.shownConversations} / ${current.totalConversations}` : ''}</span>
-      <button class="clear-filter" id="filter-costs-clear" title="Clear filter" aria-label="Clear cost filter"
+      <button data-ui-exempt class="clear-filter" id="filter-costs-clear" title="Clear filter" aria-label="Clear cost filter"
         onClick=${() => { state.setQuery(''); inputRef.current?.focus(); }}>×</button>
     </div>
     <${ModelRollup} current=${current} />
@@ -573,7 +573,7 @@ function CostsTable({ state, current, ignore }) {
               <td><span class="muted">${harnessLabel(agent.harness)}</span></td>
               <td><span class="muted">${costModelLabel(agent)}</span></td>
               <td><span class="muted">${fmtLastActivity(agent)}</span></td>
-              <td class="cost-ignore-cell">${agent.conv_id && html`<button class="cost-ignore" data-act="cost-ignore"
+              <td class="cost-ignore-cell">${agent.conv_id && html`<button data-ui-exempt class="cost-ignore" data-act="cost-ignore"
                 disabled=${ignore.pending.has(agent.conv_id)}
                 title="Ignore this conversation's spend (all its days) in every cost total — e.g. spend counted twice. Earlier conversations of the same agent (after /clear or a resume) are separate rows. Restore it from the Ignored list."
                 aria-label=${`Ignore ${agent.title || agent.conv_id} in cost totals`}
