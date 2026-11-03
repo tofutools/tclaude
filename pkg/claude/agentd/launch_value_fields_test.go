@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // TestLaunchValueFieldSpecs_Complete pins the table's shape: every field has a
@@ -199,6 +201,134 @@ func TestLaunchValueFieldSpecs_ProfileColumns(t *testing.T) {
 			assert.Equal(t, want[spec.name], spec.profileStr(&p), spec.name)
 		} else {
 			assert.Equal(t, want[spec.name], intColumn[spec.profileNum(&p)], spec.name)
+		}
+	}
+}
+
+// TestLaunchBoolFieldSpecs_ProfileColumns pins which *bool SpawnProfile column
+// feeds each bool field, by pointer identity.
+func TestLaunchBoolFieldSpecs_ProfileColumns(t *testing.T) {
+	var p db.SpawnProfile
+	want := map[string]*bool{}
+	rv := reflect.ValueOf(&p).Elem()
+	for i := 0; i < rv.NumField(); i++ {
+		if rv.Field(i).Type() == reflect.TypeOf((*bool)(nil)) {
+			b := new(bool)
+			rv.Field(i).Set(reflect.ValueOf(b))
+			want[rv.Type().Field(i).Name] = b
+		}
+	}
+	columns := map[string]string{
+		"auto_review": "AutoReview", "trust_dir": "TrustDir", "copilot_api": "CopilotAPI",
+		"codex_app_server": "CodexAppServer", "fast_mode": "FastMode", "ssh_workaround": "SSHWorkaround",
+	}
+	require.Len(t, columns, int(launchBoolFieldCount))
+	names := map[string]bool{}
+	for _, spec := range launchBoolFieldSpecs {
+		require.False(t, names[spec.name], "duplicate %s", spec.name)
+		names[spec.name] = true
+		require.NotNil(t, spec.validate, spec.name)
+		col, ok := columns[spec.name]
+		require.True(t, ok, "unexpected field %s", spec.name)
+		assert.Same(t, want[col], spec.profile(&p), spec.name)
+	}
+}
+
+func TestResolveLaunchBoolFields(t *testing.T) {
+	claude, err := resolveSpawnHarness("claude")
+	require.NoError(t, err)
+	yes, no := true, false
+	group := func(p *db.SpawnProfile) launchProfileTier {
+		return launchProfileTier{profile: p, source: profileSource(p, agent.ProvGroupProfileSource), defaultTier: true}
+	}
+
+	t.Run("unset falls to harness default", func(t *testing.T) {
+		var res launchBoolResolution
+		notes, fail := resolveLaunchBoolFields(claude, nil, &res, launchBoolTrustDir, launchBoolAutoReview)
+		require.Nil(t, fail)
+		assert.Empty(t, notes)
+		assert.False(t, res.Value[launchBoolTrustDir])
+		assert.False(t, res.Set[launchBoolTrustDir])
+		assert.Equal(t, agent.ProvHarnessDefault, res.Source[launchBoolTrustDir])
+	})
+	t.Run("explicit false is a decision and beats a profile true", func(t *testing.T) {
+		var res launchBoolResolution
+		res.Set[launchBoolTrustDir] = true
+		_, fail := resolveLaunchBoolFields(claude, []launchProfileTier{group(&db.SpawnProfile{Name: "g", TrustDir: &yes})},
+			&res, launchBoolTrustDir)
+		require.Nil(t, fail)
+		assert.False(t, res.Value[launchBoolTrustDir])
+		assert.True(t, res.Set[launchBoolTrustDir])
+		assert.Equal(t, agent.ProvExplicit, res.Source[launchBoolTrustDir])
+	})
+	t.Run("profile tier decides when nothing explicit", func(t *testing.T) {
+		var res launchBoolResolution
+		g := &db.SpawnProfile{Name: "g", TrustDir: &yes}
+		_, fail := resolveLaunchBoolFields(claude, []launchProfileTier{group(g)}, &res, launchBoolTrustDir)
+		require.Nil(t, fail)
+		assert.True(t, res.Value[launchBoolTrustDir])
+		assert.True(t, res.Set[launchBoolTrustDir])
+		assert.Equal(t, profileSource(g, agent.ProvGroupProfileSource), res.Source[launchBoolTrustDir])
+	})
+	t.Run("explicit value invalid for harness fails", func(t *testing.T) {
+		var res launchBoolResolution
+		res.Value[launchBoolAutoReview], res.Set[launchBoolAutoReview] = true, true
+		_, fail := resolveLaunchBoolFields(claude, nil, &res, launchBoolAutoReview)
+		require.NotNil(t, fail)
+		assert.Equal(t, "invalid_auto_review", fail.Kind)
+	})
+	t.Run("foreign-harness tiers skipped with notes in caller order; failure keeps prior notes", func(t *testing.T) {
+		codex := &db.SpawnProfile{Name: "cx", Harness: "codex", TrustDir: &no, AutoReview: &yes}
+		var res launchBoolResolution
+		notes, fail := resolveLaunchBoolFields(claude, []launchProfileTier{group(codex)}, &res,
+			launchBoolAutoReview, launchBoolTrustDir)
+		require.Nil(t, fail)
+		require.Len(t, notes, 2)
+		assert.Contains(t, notes[0], "auto_review")
+		assert.Contains(t, notes[1], "trust_dir")
+
+		res = launchBoolResolution{}
+		res.Value[launchBoolCodexAppServer], res.Set[launchBoolCodexAppServer] = true, true
+		notes, fail = resolveLaunchBoolFields(claude, []launchProfileTier{group(codex)}, &res,
+			launchBoolTrustDir, launchBoolCodexAppServer)
+		require.NotNil(t, fail)
+		assert.Equal(t, "invalid_codex_app_server", fail.Kind)
+		require.Len(t, notes, 1)
+		assert.Contains(t, notes[0], "trust_dir")
+	})
+}
+
+// TestLaunchBoolFieldSpecs_Validators pins each bool spec's validator to the
+// harness function it must call: for every registered harness and both
+// values, the spec answers exactly what that function answers.
+func TestLaunchBoolFieldSpecs_Validators(t *testing.T) {
+	want := map[launchBoolField]func(*harness.Harness, bool) (bool, error){
+		launchBoolAutoReview: harness.ResolveAutoReview,
+		launchBoolTrustDir:   harness.ResolveTrustDir,
+		launchBoolCopilotAPI: func(h *harness.Harness, v bool) (bool, error) { return harness.ResolveCopilotAPI(h, &v) },
+		launchBoolCodexAppServer: func(h *harness.Harness, v bool) (bool, error) {
+			return harness.ResolveCodexAppServer(h, &v)
+		},
+		launchBoolFastMode: func(h *harness.Harness, v bool) (bool, error) {
+			_, err := harness.ResolveFastMode(h, &v)
+			return v, err
+		},
+		launchBoolSSHWorkaround: func(h *harness.Harness, v bool) (bool, error) {
+			return harness.ResolveSSHWorkaround(h, &v)
+		},
+	}
+	require.Len(t, want, int(launchBoolFieldCount))
+	for _, name := range []string{"claude", "codex", "opencode", "copilot", "gemini", "pi"} {
+		h, err := resolveSpawnHarness(name)
+		require.NoError(t, err)
+		for f, expected := range want {
+			spec := launchBoolFieldSpecs[f]
+			for _, v := range []bool{true, false} {
+				gotV, gotErr := spec.validate(h)(v)
+				wantV, wantErr := expected(h, v)
+				assert.Equal(t, wantV, gotV, "%s on %s (%v)", spec.name, name, v)
+				assert.Equal(t, fmt.Sprint(wantErr), fmt.Sprint(gotErr), "%s on %s (%v)", spec.name, name, v)
+			}
 		}
 	}
 }

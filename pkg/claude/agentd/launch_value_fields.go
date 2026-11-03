@@ -224,3 +224,118 @@ func resolveLaunchValueField(h *harness.Harness, tiers []launchProfileTier, f la
 	}
 	return *launchValueFieldSpecs[f].str(&res.Values), res.Source[f], nil
 }
+
+// The launch bool fields are the tri-state (unset/true/false) launch settings
+// that all three spawn paths resolve the same way: an explicit value wins,
+// else the first profile tier that sets the field and targets the resolved
+// harness, else the harness default (see resolveBoolLaunchField).
+//
+// launchBoolFieldSpecs is the one place that names each field's profile column
+// and harness validator. Unlike the value fields, the three callers resolve
+// these in different orders, interleaved with bool fields that are not (yet)
+// shared, so resolveLaunchBoolFields takes the caller's order explicitly
+// rather than imposing one: note order and first-failure precedence stay as
+// each caller had them.
+//
+// Not in this table on purpose: auto_memory, peer_messaging, remote_control
+// and include_group_context, which the callers do not resolve alike today
+// (TCL-1107), plus the caller-local auto_focus and is_owner.
+type launchBoolField int
+
+const (
+	launchBoolAutoReview launchBoolField = iota
+	launchBoolTrustDir
+	launchBoolCopilotAPI
+	launchBoolCodexAppServer
+	launchBoolFastMode
+	launchBoolSSHWorkaround
+	launchBoolFieldCount
+)
+
+type launchBoolFieldSpec struct {
+	name     string
+	profile  func(*db.SpawnProfile) *bool
+	validate func(*harness.Harness) func(bool) (bool, error)
+}
+
+var launchBoolFieldSpecs = [launchBoolFieldCount]launchBoolFieldSpec{
+	launchBoolAutoReview: {
+		name:    "auto_review",
+		profile: func(p *db.SpawnProfile) *bool { return p.AutoReview },
+		validate: func(h *harness.Harness) func(bool) (bool, error) {
+			return func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) }
+		},
+	},
+	launchBoolTrustDir: {
+		name:    "trust_dir",
+		profile: func(p *db.SpawnProfile) *bool { return p.TrustDir },
+		validate: func(h *harness.Harness) func(bool) (bool, error) {
+			return func(v bool) (bool, error) { return harness.ResolveTrustDir(h, v) }
+		},
+	},
+	launchBoolCopilotAPI: {
+		name:    "copilot_api",
+		profile: func(p *db.SpawnProfile) *bool { return p.CopilotAPI },
+		validate: func(h *harness.Harness) func(bool) (bool, error) {
+			return func(v bool) (bool, error) { return harness.ResolveCopilotAPI(h, &v) }
+		},
+	},
+	launchBoolCodexAppServer: {
+		name:    "codex_app_server",
+		profile: func(p *db.SpawnProfile) *bool { return p.CodexAppServer },
+		validate: func(h *harness.Harness) func(bool) (bool, error) {
+			return func(v bool) (bool, error) { return harness.ResolveCodexAppServer(h, &v) }
+		},
+	},
+	// ResolveFastMode returns the harness's own spelling; the bool itself is
+	// what the launch carries, so only its error is used.
+	launchBoolFastMode: {
+		name:    "fast_mode",
+		profile: func(p *db.SpawnProfile) *bool { return p.FastMode },
+		validate: func(h *harness.Harness) func(bool) (bool, error) {
+			return func(v bool) (bool, error) {
+				_, err := harness.ResolveFastMode(h, &v)
+				return v, err
+			}
+		},
+	},
+	launchBoolSSHWorkaround: {
+		name:    "ssh_workaround",
+		profile: func(p *db.SpawnProfile) *bool { return p.SSHWorkaround },
+		validate: func(h *harness.Harness) func(bool) (bool, error) {
+			return func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) }
+		},
+	},
+}
+
+// launchBoolResolution carries the launch bool fields in and out. Going in,
+// Value/Set are the explicit request (Set false means "not requested"); coming
+// out they are the resolved value and whether any tier decided it, with the
+// deciding tier's source and any skip note.
+type launchBoolResolution struct {
+	Value  [launchBoolFieldCount]bool
+	Set    [launchBoolFieldCount]bool
+	Source [launchBoolFieldCount]string
+	Note   [launchBoolFieldCount]string
+}
+
+// resolveLaunchBoolFields resolves the named fields in the order given. It
+// returns the non-empty notes of the fields it resolved, in that order; on
+// failure it stops at the failing field and still returns the notes so far.
+func resolveLaunchBoolFields(h *harness.Harness, tiers []launchProfileTier, res *launchBoolResolution,
+	fields ...launchBoolField) ([]string, *spawnFailure) {
+	var notes []string
+	for _, f := range fields {
+		spec := launchBoolFieldSpecs[f]
+		value, set, source, note, fail := resolveBoolLaunchField(spec.name, res.Value[f], res.Set[f], h.Name, tiers,
+			spec.profile, spec.validate(h))
+		if fail != nil {
+			return notes, fail
+		}
+		res.Value[f], res.Set[f], res.Source[f], res.Note[f] = value, set, source, note
+		if strings.TrimSpace(note) != "" {
+			notes = append(notes, note)
+		}
+	}
+	return notes, nil
+}
