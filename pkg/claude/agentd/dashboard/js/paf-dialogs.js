@@ -7,9 +7,10 @@ import { Dialog } from './ui-dialog.js';
 import { dashboardState } from './snapshot-store.js';
 import { WorkflowImportButton } from './process-workflow-share.js';
 import {
-  confirmGroups, downloadBlob, findingsText, lossSummary, modelsFor, provenanceRows, redactionText, rungBadge,
+  confirmGroups, findingsText, lossSummary, modelsFor, provenanceRows, redactionText, rungBadge,
   safeFilename, spawnableHarnesses,
 } from './paf-model.js';
+import { downloadBlob } from './download.js';
 
 const html = htm.bind(h);
 

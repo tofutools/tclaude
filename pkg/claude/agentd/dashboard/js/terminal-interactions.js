@@ -3,6 +3,7 @@
 
 import { downloadRemoteFile as downloadRemoteFileVia } from './remote-files.js';
 import { trackedUpload } from './transfers.js';
+import { downloadURL } from './download.js';
 import {
   isCommandPaletteShortcut,
   requestCommandPalette,
@@ -749,13 +750,7 @@ export function attachTerminalInteractions({
     if (!response?.ok) {
       throw new Error(`download unavailable (${response?.status || 'network error'})`);
     }
-    const anchor = ownerDocument.createElement('a');
-    anchor.href = href;
-    anchor.download = '';
-    anchor.style.display = 'none';
-    ownerDocument.body.append(anchor);
-    anchor.click();
-    anchor.remove();
+    downloadURL(href, { documentRef: ownerDocument });
   }
 
   // downloadRemoteFile fetches a path from the peer through this node's
@@ -1080,4 +1075,3 @@ export function attachTerminalInteractions({
     },
   };
 }
-// dashboard-imperative-boundary: browser-io

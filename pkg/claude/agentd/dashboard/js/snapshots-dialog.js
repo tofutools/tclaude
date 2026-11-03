@@ -7,7 +7,8 @@ import { Dialog } from './ui-dialog.js';
 import { dashboardState } from './snapshot-store.js';
 import { createFleetAdminActions } from './fleet-admin-actions.js';
 import { relTime } from './helpers.js';
-import { downloadBlob, findingsText, modelsFor, redactionText, spawnableHarnesses } from './paf-model.js';
+import { findingsText, modelsFor, redactionText, spawnableHarnesses } from './paf-model.js';
+import { downloadBlob } from './download.js';
 
 const html = htm.bind(h);
 

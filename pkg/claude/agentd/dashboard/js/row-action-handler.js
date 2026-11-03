@@ -49,6 +49,7 @@ import { ownGroupData } from './fleet-merged-model.js';
 import { GROUP_GRANT_ACTS, READ_ONLY_ACTS, isAgentGrantAct } from './peer-view-limits.js';
 import { announceNodeChanged, isPageNode, nodeFetch, nodeSnapshot } from './node-api.js';
 import { writeClipboard } from './insecure-origin.js';
+import { downloadBlob } from './download.js';
 
 export async function handleRowAction(action) {
   // A control on a group in the fused Groups view names it group@node: the
@@ -786,14 +787,7 @@ export async function handleRowAction(action) {
         const disposition = response.headers.get('Content-Disposition') || '';
         const match = disposition.match(/filename="([^"]+)"/i);
         const filename = match?.[1] || `tclaude-agent-debug-${shortId(agent)}.json`;
-        const href = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = href;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        URL.revokeObjectURL(href);
+        downloadBlob(blob, filename);
         toast(`debug info exported for ${label}`);
         return;
       }
@@ -1218,4 +1212,3 @@ export async function handleRowAction(action) {
     toast(`Request failed: ${err && err.message || err}`, true);
   }
 }
-// dashboard-imperative-boundary: browser-io

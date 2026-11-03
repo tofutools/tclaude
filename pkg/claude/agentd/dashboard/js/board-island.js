@@ -1775,7 +1775,7 @@ export function BoardEditor({
         <//>
       </div>
       <${Button} size="sm" class="board-export" title="Download as .excalidraw"
-        onClick=${() => import('./board-export.js').then((m) => m.downloadText(`${boardId}.excalidraw`, toExcalidraw(drawnElements(elements.current))))}>⤓<//>
+        onClick=${() => import('./download.js').then((m) => m.downloadText(`${boardId}.excalidraw`, toExcalidraw(drawnElements(elements.current))))}>⤓<//>
       ${headActions}
     </header>
     <div class="board-toolbar" role="toolbar" aria-label="Board tools">

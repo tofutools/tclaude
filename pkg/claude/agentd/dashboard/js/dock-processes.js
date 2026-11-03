@@ -33,7 +33,7 @@ import { shellConfirm, shellToast } from './shell-state.js';
 import { processTemplateDeleteConfirmation } from './process-template-delete.js';
 import { managementController } from './management-controller.js';
 import { exportWorkflow } from './process-workflow-share.js';
-import { downloadBlob } from './paf-model.js';
+import { downloadJSON } from './download.js';
 import {
   LIBRARY_EVENT, menuPlacement, cloneProcess, exportBundle, dropPin, filterSection, freeName, leafTexts, orderPinned, pinnedNames,
   renameItem, togglePin,
@@ -349,8 +349,7 @@ export function DockProcesses({
   };
   const exportAll = async () => {
     try {
-      const download = (fileName, value) => downloadBlob(new Blob([`${JSON.stringify(value, null, 2)}\n`], { type: 'application/json' }), fileName);
-      if (await exportBundle({ section: 'processes', fetchImpl, confirm, download })) notify?.(`exported every ${wizWord('process', 'rite')}`);
+      if (await exportBundle({ section: 'processes', fetchImpl, confirm, download: downloadJSON })) notify?.(`exported every ${wizWord('process', 'rite')}`);
     } catch (cause) {
       notify?.(`export failed: ${cause.message}`, true);
     }

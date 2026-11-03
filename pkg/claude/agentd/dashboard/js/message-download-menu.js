@@ -14,22 +14,10 @@ import { attachmentSize, messageAttachments, messageExportHref } from './human-a
 import { useDismissablePopover } from './hover-popover.js';
 import { clipboardFailure, writeClipboard } from './insecure-origin.js';
 import { Button } from './ui-components.js';
+import { downloadURL } from './download.js';
 
 const html = htm.bind(h);
 
-// triggerDownload hands an authenticated same-origin URL to the browser's own
-// download path, so a large zip streams to disk instead of through JS memory.
-// The anchor lives only for the click.
-// dashboard-imperative-boundary: browser-io
-export function triggerDownload(href, documentRef = globalThis.document) {
-  const link = documentRef.createElement('a');
-  link.href = href;
-  link.download = '';
-  link.rel = 'noopener';
-  documentRef.body.appendChild(link);
-  link.click();
-  link.remove();
-}
 
 const SHARED_CLIPBOARD = {
   async writeText(text) {
@@ -38,7 +26,7 @@ const SHARED_CLIPBOARD = {
 };
 
 export function MessageDownloadMenu({
-  message, node = '', toast, download = triggerDownload, fetchImpl = globalThis.fetch?.bind(globalThis),
+  message, node = '', toast, download = downloadURL, fetchImpl = globalThis.fetch?.bind(globalThis),
   clipboard = SHARED_CLIPBOARD,
 }) {
   const [open, setOpen] = useState(false);

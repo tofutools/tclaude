@@ -1,4 +1,5 @@
 import { trustBody } from './fleet-admin-model.js';
+import { downloadURL } from './download.js';
 
 // FleetAdminError carries the daemon's stable error code so dialogs can react
 // (e.g. confirmation_required, stale_preview) instead of string-matching.
@@ -186,15 +187,12 @@ const settingRows = (v) => {
     offerContents: (o) => call('GET', `bundle-offers/${encodeURIComponent(o.offer.id)}/contents?peer=${encodeURIComponent(o.peer)}`),
     offerEntry: (o, path, offset = 0, maxBytes = 262144) => call('GET', `bundle-offers/${encodeURIComponent(o.offer.id)}/contents?${new URLSearchParams({ peer: o.peer, path, offset: String(offset), max_bytes: String(maxBytes) })}`),
     // The download is an attachment: preflight for a readable error, then let
-    // the browser stream it to disk through a short-lived anchor, removed in
-    // the same call (the browser-io imperative boundary).
+    // the browser stream it to disk (downloadURL).
     downloadOffer: async (o, doc = globalThis.document) => {
       const href = `/api/federation/bundle-offers/${encodeURIComponent(o.offer.id)}/download?peer=${encodeURIComponent(o.peer)}`;
       const res = await fetchImpl(href, { method: 'HEAD', credentials: 'same-origin', cache: 'no-store' });
       if (!res.ok) throw new FleetAdminError(res.status, { error: `download unavailable (HTTP ${res.status})` });
-      const a = doc.createElement('a');
-      a.href = href; a.download = ''; a.style.display = 'none';
-      doc.body.append(a); a.click(); a.remove();
+      downloadURL(href, { documentRef: doc });
     },
     offerConfig: (body) => call('POST', 'offer-config', body),
     shareAgent: (body) => call('POST', 'share-agent', body),
@@ -277,14 +275,12 @@ const settingRows = (v) => {
     boardItemEntry: (board, item, version, path, offset = 0, maxBytes = 262144) => call('GET', `${boardVersion(board, item, version)}/contents?${new URLSearchParams({ path, offset: String(offset), max_bytes: String(maxBytes) })}`),
     previewBoardItem: (board, item, version, choices) => call('POST', `${boardVersion(board, item, version)}/preview`, choices),
     importBoardItem: (board, item, version, previewToken, choices) => call('POST', `${boardVersion(board, item, version)}/import`, { ...choices, preview_token: previewToken }),
-    // Like downloadOffer: preflight for a readable error, then a short-lived anchor.
+    // Like downloadOffer: preflight for a readable error, then downloadURL.
     downloadBoardItem: async (board, item, version, doc = globalThis.document) => {
       const href = `/api/federation/${boardVersion(board, item, version)}/download`;
       const res = await fetchImpl(href, { method: 'HEAD', credentials: 'same-origin', cache: 'no-store' });
       if (!res.ok) throw new FleetAdminError(res.status, { error: res.status === 409 ? 'fetch this version first' : `download unavailable (HTTP ${res.status})` });
-      const a = doc.createElement('a');
-      a.href = href; a.download = ''; a.style.display = 'none';
-      doc.body.append(a); a.click(); a.remove();
+      downloadURL(href, { documentRef: doc });
     },
     // The native archive (a skill directory as tar.gz; config as bundle.json)
     // of a fetched version. Executable bits are kept only on explicit opt-in.
@@ -292,9 +288,7 @@ const settingRows = (v) => {
       const href = `/api/federation/${boardVersion(board, item, version)}/archive${preserveExecutable ? '?preserve_executable=1' : ''}`;
       const res = await fetchImpl(href, { method: 'HEAD', credentials: 'same-origin', cache: 'no-store' });
       if (!res.ok) throw new FleetAdminError(res.status, { error: res.status === 404 ? 'this node cannot export archives yet' : res.status === 409 ? 'fetch this version first' : `download unavailable (HTTP ${res.status})` });
-      const a = doc.createElement('a');
-      a.href = href; a.download = ''; a.style.display = 'none';
-      doc.body.append(a); a.click(); a.remove();
+      downloadURL(href, { documentRef: doc });
     },
     // Hub moderation (hub.boards.manage): metadata only, never content or keys.
     hubBoards: () => pages('hub/boards', 'boards'),
@@ -302,4 +296,3 @@ const settingRows = (v) => {
     deleteHubBoard: (board) => done(call('DELETE', `hub/boards/${enc(board)}`)),
   });
 }
-// dashboard-imperative-boundary: browser-io
