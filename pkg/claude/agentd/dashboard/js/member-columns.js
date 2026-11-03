@@ -10,7 +10,7 @@
 //
 // MEMBER_COLS (sort.js) is the single source of truth for the column set.
 // This module reads the `hideable` (togglable) and `defaultHidden` (starts
-// off) flags off it, and BOTH the header (sortHead, fed visibleMemberCols())
+// off) flags off it, and BOTH the header (SortHead in groups-list.js, fed visibleMemberCols())
 // and the body (memberRowHTML, which emits only visible keys) filter through
 // the same store — so they can never drift out of alignment. A new column
 // plugs in by adding one MEMBER_COLS entry: it then appears in the table, in

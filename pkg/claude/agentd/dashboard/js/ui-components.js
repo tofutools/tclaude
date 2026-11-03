@@ -117,3 +117,33 @@ export function MenuSep() {
 export function MenuHeading({ children }) {
   return html`<div class="ui-menu-heading" role="presentation">${children}</div>`;
 }
+
+// SortTh: a sortable column header in the house style (sortable /
+// sort-active / sort-arrow in dashboard.css). active marks the sorted column
+// and dir ('asc' | 'desc') its direction; onSort runs on click and on Enter or
+// Space. Without onSort a key press clicks the header, for tables whose
+// clicks are delegated through data-sort-* attributes. sortLabel supplies the
+// default "Sort by …" title.
+export function SortTh({ active = false, dir = 'asc', onSort, sortLabel, title, class: extra, className, domRef, children, ...rest }) {
+  const activate = (event) => {
+    if (event.type === 'keydown') {
+      if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') return;
+      event.preventDefault();
+      if (!onSort) {
+        event.currentTarget.click();
+        return;
+      }
+    }
+    onSort(event);
+  };
+  return html`<th
+    ...${rest}
+    ref=${domRef}
+    class=${join('sortable', active && 'sort-active', extra, className)}
+    tabindex="0"
+    aria-sort=${active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    title=${title ?? (sortLabel ? `Sort by ${sortLabel}` : undefined)}
+    onClick=${onSort ? activate : undefined}
+    onKeyDown=${activate}
+  >${children}<span class="sort-arrow" aria-hidden="true">${active ? (dir === 'asc' ? '▲' : '▼') : '▾'}</span></th>`;
+}

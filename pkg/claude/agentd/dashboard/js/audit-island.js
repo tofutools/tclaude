@@ -7,7 +7,7 @@ import { NodeSelect } from './node-select.js';
 import { Pager } from './pager.js';
 import { actorTitle, AUDIT_COLUMNS, AUDIT_PAGE_SIZES, fmtAuditTime, statusView, targetTitle, verbClass } from './audit-model.js';
 import { useDismissablePopover } from './hover-popover.js';
-import { Input, Select } from './ui-components.js';
+import { Input, Select, SortTh } from './ui-components.js';
 
 const html = htm.bind(h); const REPOLL_MS = 30000;
 
@@ -59,8 +59,10 @@ function SpawnDetails({ entry }) {
   </span>`;
 }
 function Header({ current, state, actions }) {
-  const activate = (event, key) => { if (!key || (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar')) return; event.preventDefault(); state.cycleSort(key); actions.load(); };
-  return html`<thead><tr>${AUDIT_COLUMNS.map((column) => { const active = column.key === current.sort; return html`<th key=${column.label} class=${column.key ? `audit-sort${active ? ' active' : ''}` : undefined} tabIndex=${column.key ? 0 : undefined} aria-sort=${column.key ? active ? current.dir === 'asc' ? 'ascending' : 'descending' : 'none' : undefined} title=${column.key ? `Sort by ${column.label}` : undefined} onClick=${(event) => activate(event, column.key)} onKeyDown=${(event) => activate(event, column.key)}>${column.label}${active ? current.dir === 'asc' ? ' ▲' : ' ▼' : ''}</th>`; })}</tr></thead>`;
+  return html`<thead><tr>${AUDIT_COLUMNS.map((column) => (column.key
+    ? html`<${SortTh} key=${column.label} active=${column.key === current.sort} dir=${current.dir} sortLabel=${column.label}
+        onSort=${() => { state.cycleSort(column.key); actions.load(); }}>${column.label}<//>`
+    : html`<th key=${column.label}>${column.label}</th>`))}</tr></thead>`;
 }
 function Rows({ current, state, actions }) {
   if (current.request.phase === 'loading') return html`<div class="empty">Loading audit log…</div>`;

@@ -1,7 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Input } from './ui-components.js';
+import { Button, Input, SortTh } from './ui-components.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -28,16 +28,9 @@ function ErrorBanner({ error }) {
 function SortHeader({ column, state }) {
   if (!column.col) return html`<th>${column.label || ''}</th>`;
   const current = state.sort.value;
-  const active = current?.col === column.col;
-  const arrow = active ? (current.dir === 'asc' ? '▲' : '▼') : '▾';
-  return html`
-    <th class=${active ? 'sortable sort-active' : 'sortable'}
-      data-sort-table="links" data-sort-col=${column.col}
-      title=${`Sort by ${column.label}`}
-      onClick=${() => state.cycleSort(column.col)}>
-      ${column.label}<span class="sort-arrow">${arrow}</span>
-    </th>
-  `;
+  return html`<${SortTh} active=${current?.col === column.col} dir=${current?.dir} sortLabel=${column.label}
+    data-sort-table="links" data-sort-col=${column.col}
+    onSort=${() => state.cycleSort(column.col)}>${column.label}<//>`;
 }
 
 export function LinksControls({ state, actions }) {

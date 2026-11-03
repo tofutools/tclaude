@@ -36,7 +36,7 @@ func TestDashboardHTML_AuditTabWired(t *testing.T) {
 
 	// Server-side search / sort / pagination wiring.
 	must("page_size", "audit.js sends the page size to the server")
-	must("audit-sort", "sortable column header class")
+	must("<${SortTh}", "sortable column headers through the shared SortTh")
 	must("<${AuditPager}", "the pager footer (pager.js)")
 	must("resetPage()", "a filter/sort change resets to page 1")
 
