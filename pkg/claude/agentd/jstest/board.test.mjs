@@ -7,6 +7,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createPreactHarness } from './preact-harness.mjs';
+import { installFastClock } from './fast-clock.mjs';
+
+// The islands under test debounce and retry on second-scale timers; run
+// them, and this file's waits, on a 10x clock (see fast-clock.mjs).
+installFastClock();
 
 const A = `agt_${'a'.repeat(32)}`;
 
