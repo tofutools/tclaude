@@ -16,19 +16,26 @@ export function createShellState({ setTimer = setTimeout, clearTimer = clearTime
     status.value = { text: String(text || ''), error: !!error };
   }
 
-  function notify(message, error = false) {
+  // action, { label, run }, puts one button in the toast (a live page's
+  // "Open"), which stays up longer so there is time to reach it.
+  function notify(message, error = false, { action = null } = {}) {
     if (toastTimer !== null) clearTimer(toastTimer);
     const next = {
       id: toast.value.id + 1,
       message: String(message || ''),
       error: !!error,
       visible: true,
+      ...(action && typeof action.run === 'function' && { action: { label: String(action.label || 'Open'), run: action.run } }),
     };
     toast.value = next;
     toastTimer = setTimer(() => {
       toastTimer = null;
       if (toast.value.id === next.id) toast.value = { ...toast.value, visible: false };
-    }, 3000);
+    }, next.action ? 8000 : 3000);
+  }
+
+  function dismissToast(id) {
+    if (toast.value.id === id) toast.value = { ...toast.value, visible: false };
   }
 
   // confirm is the shared confirmation modal, and it is BLOCKING when given an
@@ -134,6 +141,7 @@ export function createShellState({ setTimer = setTimeout, clearTimer = clearTime
     confirmation,
     showStatus,
     notify,
+    dismissToast,
     confirm,
     resolveConfirmation,
     dispose,
@@ -146,8 +154,8 @@ export function showShellStatus(text, error) {
   shellState.showStatus(text, error);
 }
 
-export function shellToast(message, error) {
-  shellState.notify(message, error);
+export function shellToast(message, error, options) {
+  shellState.notify(message, error, options);
 }
 
 export function shellConfirm(options) {

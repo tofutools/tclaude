@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"time"
 )
 
 // BuildPopupHandlerForTest returns the production dashboard-listener handler:
@@ -112,4 +113,27 @@ func CloseAllLivePagesForTest() {
 	for _, p := range livePages.list("") {
 		livePages.closeByID(p.id)
 	}
+}
+
+// OpenLivePageForTest registers a live page directly, as a show would, with
+// the given upstream: the dashboard's snapshot lists it and its origin serves
+// it. It answers the page id. For fixtures (docs screenshots) that need a page
+// without an agent process or a dev server.
+func OpenLivePageForTest(owner, name, title, target, kind, worktree, start string, up http.RoundTripper) string {
+	now := time.Now().UTC()
+	reg := livePages
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	reg.rev++
+	p := &livePage{
+		id: newPageID(), owner: owner, name: name, title: title, target: target, kind: kind, worktree: worktree,
+		path: start, state: pageStateOpen, rev: reg.rev, shownAt: now, updated: now,
+		stage: stagePages.open(owner, name, up),
+	}
+	if reg.byOwner[owner] == nil {
+		reg.byOwner[owner] = map[string]*livePage{}
+	}
+	reg.byOwner[owner][name] = p
+	reg.byID[p.id] = p
+	return p.id
 }

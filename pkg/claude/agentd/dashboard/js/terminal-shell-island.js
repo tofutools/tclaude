@@ -64,6 +64,8 @@ import {
 import { ProcessPane } from './process-pane.js';
 import { ProcessMenuList } from './process-collab-menu.js';
 import { isWizardActive } from './slop.js';
+import { PagePane } from './page-view.js';
+import { pagePaneKey, registerPageStrip, revealPageWindow, unseenPages, watchLivePages } from './page-place.js';
 
 const html = htm.bind(h);
 // Read at render time, so the label follows the keyboard layout once it loads.
@@ -97,7 +99,7 @@ export function tabDragStartedOnClose(target) {
 // floats through the companion, which a page without one cannot do.
 function paneFloats(pane, snapshot) {
   if (snapshot?.collab_enabled !== true) return false;
-  return !!pane.seed.board || !!pane.seed.process || overlayablePane(pane) || (companionAvailable() && !!chatAgentOfPane(pane, snapshot));
+  return !!pane.seed.board || !!pane.seed.process || !!pane.seed.page || overlayablePane(pane) || (companionAvailable() && !!chatAgentOfPane(pane, snapshot));
 }
 
 // soloFloats reports whether a separate window offers Open in overlay: the page
@@ -845,6 +847,19 @@ function processTabStatus(pane) {
   return { key: 'process', className: 'process', symbol: '⬡', title: label, ariaLabel: label, agent: null };
 }
 
+// Nor has a live page, which an agent showed.
+function pageTabStatus(pane) {
+  const label = `Page ${paneTitle(pane)}`;
+  return { key: 'page', className: 'page', symbol: '◧', title: label, ariaLabel: label, agent: null };
+}
+
+// PageUnseen marks a page tab shown or shown again since the operator last
+// looked at it.
+function PageUnseen({ pane }) {
+  if (!pane.seed.page || !unseenPages.value.has(pane.seed.page)) return null;
+  return html`<span class="mux-tab-unseen" title="New: shown since you last looked" aria-label="New"></span>`;
+}
+
 function PaneTab({
   pane, active, menuOpen, groupId = null, actions, openMenu, dragging, dropSide,
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onReordered, snapshot = null, scope = null,
@@ -852,7 +867,8 @@ function PaneTab({
 }) {
   const board = !!pane.seed.board;
   const process = !!pane.seed.process;
-  const agentStatus = board ? boardTabStatus(pane) : process ? processTabStatus(pane) : terminalTabStatus(pane, snapshot?.value, remoteSessionAgents.value);
+  const page = !!pane.seed.page;
+  const agentStatus = board ? boardTabStatus(pane) : process ? processTabStatus(pane) : page ? pageTabStatus(pane) : terminalTabStatus(pane, snapshot?.value, remoteSessionAgents.value);
   const unreadMessages = paneUnreadNotifications(pane, snapshot?.value, peerNotifications);
   const notificationLabel = unreadNotificationLabel(pane, unreadMessages.length);
   const ariaLabel = [agentStatus.ariaLabel, notificationLabel].filter(Boolean).join('. ');
@@ -939,6 +955,7 @@ function PaneTab({
         title=${agentStatus.title}
       ><span class="mux-tab-status-symbol">${agentStatus.symbol}</span></span>
       ${gear ? html`<${TabGear} gear=${gear} snapshot=${snapshot} menuKey=${`tab:${pane.key}`} />` : null}
+      <${PageUnseen} pane=${pane} />
       <${TabAttention} pane=${pane} snapshot=${snapshot} messages=${unreadMessages} />
       <${TabApproval} pane=${pane} snapshot=${snapshot} />
       <${NodePill} node=${scope?.node} compact />
@@ -950,7 +967,7 @@ function PaneTab({
         type="button"
         class="mux-tab-close"
         draggable="false"
-        title=${board ? 'Close this board' : process ? 'Close this editor (asks first if it has unsaved edits)' : 'Close this terminal'}
+        title=${board ? 'Close this board' : process ? 'Close this editor (asks first if it has unsaved edits)' : page ? 'Close this page (the agent that showed it is told)' : 'Close this terminal'}
         aria-label=${`Close ${pane.label}`}
         onClick=${(event) => { event.stopPropagation(); void actions.closePane(pane.key); }}
       >×</button>
@@ -1880,7 +1897,21 @@ function TerminalTabs({
       ` : null}
       ${hasPanes || !empty ? html`
         <div ref=${panesRef} class="mux-panes">
-          ${current.panes.map((pane) => (pane.seed.process ? html`
+          ${current.panes.map((pane) => (pane.seed.page ? html`
+            <${PagePane}
+              key=${pane.key}
+              pane=${pane}
+              active=${current.activeKey === pane.key}
+              solo=${solo}
+              manageTitle=${manageTitle}
+              actions=${actions}
+              snapshot=${snapshot}
+              fetchImpl=${fetchFromPage}
+              notify=${shellToast}
+              collab=${snapshot?.value?.collab_enabled === true}
+              scope=${scopeOf(pane)}
+            />
+          ` : pane.seed.process ? html`
             <${ProcessPane}
               key=${pane.key}
               pane=${pane}
@@ -1944,13 +1975,13 @@ export async function receiveSeparateWindow(seed, { actions, snapshot = null, ru
   const overlay = !!seed.overlay && paneFloats({ seed }, snapshot?.value);
   if (!overlay && agentSessionSeed(seed) && reclaimInCompanion(seed.agent)) return true;
   // It went somewhere else while this window was open, and it stays there.
-  if (!overlay && (seed.board ? revealBoardWindow(seed.board) : revealHeldSeed(seed))) return true;
-  if (runtimeLoader && !seed.board) await runtimeLoader();
+  if (!overlay && (seed.board ? revealBoardWindow(seed.board) : seed.page ? revealPageWindow(seed.page) : revealHeldSeed(seed))) return true;
+  if (runtimeLoader && !seed.board && !seed.page && !seed.process) await runtimeLoader();
   return actions.receiveHandoffPane(seed, { overlay });
 }
 
 function TerminalBadge({ state }) {
-  const count = state.view.value.panes.filter((pane) => !pane.seed.board && !pane.seed.process).length;
+  const count = state.view.value.panes.filter((pane) => !pane.seed.board && !pane.seed.process && !pane.seed.page).length;
   const background = visibleBackgroundTerminals(backgroundTerminals.value, state.panes.value).length;
   const title = background
     ? `${count} open, ${background} running in the background without a terminal`
@@ -2000,6 +2031,16 @@ export function mountTerminalShellIsland({
     reveal: (id) => actions.activatePane(processPaneKey(id)),
     close: (id) => actions.closePane(processPaneKey(id), { moving: true }),
   });
+  // Live pages open here from the snapshot (page-place.js), which hears which
+  // pages the strip holds.
+  const unregisterPageStrip = registerPageStrip({
+    has: (id) => state.panes.peek().some((pane) => pane.seed.page === id),
+    ids: () => state.panes.peek().filter((pane) => pane.seed.page).map((pane) => pane.seed.page),
+    isActive: (id) => state.activeKey.peek() === pagePaneKey(id) && dashboardState.activeTab.peek() === 'terminals',
+    activate: (id) => actions.activatePane(pagePaneKey(id)),
+    remove: (ids) => state.removePanes(ids.map(pagePaneKey)),
+  });
+  const stopPageWatch = snapshot ? watchLivePages({ snapshot, notify: shellToast }) : () => {};
   const stopStripProcesses = effect(() => {
     const ids = state.panes.value.filter((pane) => pane.seed.process).map((pane) => pane.seed.process);
     const held = stripProcesses.peek();
@@ -2009,7 +2050,8 @@ export function mountTerminalShellIsland({
   // URLs from opening one; this takes away what was open, or came by handoff.
   const stopCollabGate = snapshot ? snapshot.subscribe((value) => {
     if (!value || value.collab_enabled === true) return;
-    state.removePanes(state.panes.peek().filter((pane) => pane.seed.board).map((pane) => pane.key));
+    // A live page's tab goes too; the page itself stays open (tcl-4r8cz9).
+    state.removePanes(state.panes.peek().filter((pane) => pane.seed.board || pane.seed.page).map((pane) => pane.key));
     // A process editor with unsaved edits goes back to the Processes tab rather
     // than lose them, one at a time so none replaces another there, and never to
     // an overlay window, which goes with Collab. One with nothing unsaved closes.
@@ -2047,6 +2089,8 @@ export function mountTerminalShellIsland({
     stopBackgroundPoll();
     stopCollabGate();
     stopStripProcesses();
+    stopPageWatch();
+    unregisterPageStrip();
     unregisterProcessStrip();
     unbindNavRouting();
     unbindHandoff();

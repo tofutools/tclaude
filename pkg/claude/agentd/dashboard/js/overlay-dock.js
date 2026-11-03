@@ -25,6 +25,7 @@ import { CHAT_WINDOW_KIND, DECIDE_WINDOW_KIND, START_WINDOW_KIND } from './chat-
 import { TERMINAL_WINDOW_KIND } from './terminal-window-model.js';
 import { BOARD_WINDOW_KIND } from './board-overlay-state.js';
 import { PROCESS_WINDOW_KIND } from './process-editor-place.js';
+import { PAGE_WINDOW_KIND } from './page-pane-model.js';
 import { dockEntriesOf } from './overlay-tab-model.js';
 import { tabMoves } from './overlay-tab-moves.js';
 import { overlayBulkActions } from './overlay-window-bulk.js';
@@ -32,7 +33,7 @@ import { withShortcut } from './keybindings.js';
 
 const html = htm.bind(h);
 
-export const WINDOW_GLYPHS = { [BOARD_WINDOW_KIND]: '✎', [TERMINAL_WINDOW_KIND]: '⌨', [PROCESS_WINDOW_KIND]: '⬡' };
+export const WINDOW_GLYPHS = { [BOARD_WINDOW_KIND]: '✎', [TERMINAL_WINDOW_KIND]: '⌨', [PROCESS_WINDOW_KIND]: '⬡', [PAGE_WINDOW_KIND]: '◧' };
 
 // What taking a pill off for good does, by kind. A Steward has none: only its ⚙
 // shuts it down.
@@ -41,6 +42,7 @@ const REMOVE_TITLES = {
   [TERMINAL_WINDOW_KIND]: ['Close', 'Close (the shell keeps running)'],
   [BOARD_WINDOW_KIND]: ['Close', 'Close this board’s window'],
   [PROCESS_WINDOW_KIND]: ['Close', 'Close this editor (asks first if it has unsaved edits)'],
+  [PAGE_WINDOW_KIND]: ['Close', 'Close this page (the agent that showed it is told)'],
 };
 
 // The gap between the dock's buttons; dashboard.css has the same.

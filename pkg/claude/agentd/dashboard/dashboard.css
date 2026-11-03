@@ -6151,6 +6151,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
 .toast.error { border-left-color: #f85149; z-index: calc(var(--z-toast) + 1); }
+.toast .toast-action { vertical-align: baseline; }
 .filter-bar {
   display: flex; align-items: center; gap: 8px;
   margin: 0 0 12px 0;

@@ -157,13 +157,13 @@ export function createStandaloneTerminalsPage({
   let statusPollSelector = null;
 
   function ensureStatusPoll() {
-    const selector = soloSeed?.board ? 'board' : soloSeed?.agent || soloSeed?.hideConv;
+    const selector = soloSeed?.board ? 'board' : soloSeed?.page ? 'page' : soloSeed?.agent || soloSeed?.hideConv;
     if (disposed || authExpired || !selector || statusPollSelector === selector) return;
     stopStatusPolling();
     statusPollSelector = selector;
     stopStatusPoll = startStandaloneStatusPoll({
       selector, snapshot, fetchImpl, documentRef,
-      ...(soloSeed.board ? { path: '/api/snapshot?standalone=1', adopt: (value) => value, pollMs: STANDALONE_ROSTER_POLL_MS } : {}),
+      ...(soloSeed.board || soloSeed.page ? { path: '/api/snapshot?standalone=1', adopt: (value) => value, pollMs: STANDALONE_ROSTER_POLL_MS } : {}),
     });
   }
 
@@ -187,7 +187,7 @@ export function createStandaloneTerminalsPage({
       ...(overlay && { overlay: true }),
     };
     if (seed.hideConv) detachConversations.delete(seed.hideConv);
-    await actions.closePane(pane.key);
+    await actions.closePane(pane.key, { moving: true });
 
     const opener = windowRef.opener;
     const accepted = await requestTerminalReattach({
