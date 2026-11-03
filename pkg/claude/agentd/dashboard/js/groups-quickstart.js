@@ -704,7 +704,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
       ${list.steps.map((step, index) => html`<${StepRow} key=${step.id} fallbackInfo=${fallbackInfo} list=${list} step=${step} index=${index} roster=${roster} roles=${roles} now=${whoRows[index].now}
         problems=${stepProblems.get(step.id) || []} onChange=${change}
         onMove=${(delta) => update(moveStep(list, step.id, delta))} onRemove=${() => update(removeStep(list, step.id))} />`)}
-      ${!list.steps.length && html`<div class="gq-empty">No steps yet. Add the first one.</div>`}
+      ${!list.steps.length && html`<div class="gq-empty ui-empty">No steps yet. Add the first one.</div>`}
       <div class="gq-add">
         <span>+ add step:</span>
         ${[['agent', '🤖 agent'], ['you', '👤 you'], ['command', '⌘ command']].map(([kind, text]) => html`<${Button} size="sm" key=${kind} data-add-step=${kind}

@@ -102,7 +102,7 @@ body.slop, body.vegas {
   color: var(--board-text); font: inherit; font-size: 12px; cursor: pointer;
 }
 .board-invite-menu button:where(:not(.ui-menu-item)):hover, .board-invite-menu button:where(:not(.ui-menu-item)):focus-visible { background: #1f6feb33; outline: none; }
-.board-invite-empty { padding: 8px 10px; color: var(--board-muted); font-size: 12px; max-width: 260px; }
+.board-invite-empty { padding: 8px 10px; max-width: 260px; }
 
 .board-toolbar {
   display: flex; align-items: center; gap: 3px; flex-wrap: wrap; padding: 4px 12px 6px; flex: none;
