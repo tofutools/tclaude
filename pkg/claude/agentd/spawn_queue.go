@@ -1,7 +1,6 @@
 package agentd
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -9,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -404,28 +402,21 @@ func launchSpawnQueueHead(e *db.SpawnQueueEntry) bool {
 	}
 	e.ReservedAgent = reserved
 	req = req.WithContext(context.WithValue(req.Context(), reservedAgentIDContextKey{}, reserved))
-	rec := httptest.NewRecorder()
-	handleGroupSpawn(rec, req, g)
+	res := serveInternalGroupSpawn(req, g)
 	proof, minted := takeSpawnQueueProof(e.ID)
-	if minted && rec.Code >= 300 && !strings.Contains(rec.Body.String(), spawnUnconfirmedKind) {
+	if minted && res.Status >= 300 && !strings.Contains(string(res.Body), spawnUnconfirmedKind) {
 		// Refused before or by the spawn core, nothing will run there: drop the
 		// markers. A launched or possibly-running child keeps them until
 		// executeSpawn's own cleanup.
 		cleanupDirWriteProofMarkers(proof.token, proof.dirs)
 	}
-	if rec.Code >= 200 && rec.Code <= 299 {
-		var out agent.SpawnResponse
-		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if res.OK() {
+		out, _ := res.Response()
 		finishSpawnQueueEntry(e, db.SpawnQueueLaunched, "launched as "+cmp.Or(out.AgentID, reserved), cmp.Or(out.AgentID, reserved))
 		return true
 	}
-	// writeError's shape: the spawnFailure Kind travels as "code".
-	var refusal struct {
-		Error string `json:"error"`
-		Code  string `json:"code"`
-	}
-	_ = json.Unmarshal(rec.Body.Bytes(), &refusal)
-	if refusal.Code == fedCodeNodeBusy || refusal.Code == "node_capacity_unknown" {
+	code, refusal := res.Refusal()
+	if code == fedCodeNodeBusy || code == "node_capacity_unknown" {
 		// Capacity went between the check and the gate: keep its place, but
 		// only while the queue's own check agrees there is no room. A gate
 		// refusal the head check cannot see would otherwise hold the head of
@@ -440,11 +431,11 @@ func launchSpawnQueueHead(e *db.SpawnQueueEntry) bool {
 			return false
 		}
 	}
-	msg := strings.TrimSpace(refusal.Error)
+	msg := strings.TrimSpace(refusal)
 	if msg == "" {
-		msg = "HTTP " + strconv.Itoa(rec.Code)
+		msg = "HTTP " + strconv.Itoa(res.Status)
 	}
-	if refusal.Code == spawnUnconfirmedKind {
+	if code == spawnUnconfirmedKind {
 		// The child may still come up; the pending spawn row now tracks it.
 		finishSpawnQueueEntry(e, db.SpawnQueueLaunched, "launch unconfirmed, tracked as a pending spawn: "+msg, reserved)
 		return true
@@ -484,8 +475,11 @@ func spawnQueueReplayRequest(e *db.SpawnQueueEntry, g *db.AgentGroup) (*http.Req
 	if err != nil {
 		return nil, "cannot read the queued request: " + err.Error()
 	}
-	req := httptest.NewRequest(http.MethodPost, "/v1/groups/"+url.PathEscape(g.Name)+"/spawn", bytes.NewReader([]byte(body)))
-	req.SetPathValue("name", g.Name)
+	req := newInternalSpawnRequest(internalSpawnRequest{
+		Path:  "/v1/groups/" + url.PathEscape(g.Name) + "/spawn",
+		Group: g.Name,
+		Body:  []byte(body),
+	})
 	switch e.RequesterKind {
 	case db.SpawnRequesterAgent:
 		a, err := db.GetAgent(e.RequesterAgent)

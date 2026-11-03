@@ -1,7 +1,6 @@
 package agentd
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -9,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -549,26 +547,23 @@ func (rt *fedRuntime) runJob(parent context.Context, j *db.FederationJob) {
 	}
 	body := agent.SpawnRequest{Profile: policy.Profile, Model: policy.Model, Cwd: checkout.Path, Harness: fedFirst(policy.Harness, q.Harness), InitialMessage: q.Command, NonInteractive: true, RunTimeoutSeconds: q.Timeout}
 	raw, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(raw))
-	req = req.WithContext(context.WithValue(ctx, federationJobContextKey{}, launch))
-	req = req.WithContext(context.WithValue(req.Context(), reservedAgentIDContextKey{}, j.WorkerID))
-	req = req.WithContext(context.WithValue(req.Context(), peerKey{}, &peer{PID: 1, HumanTokenValid: true}))
-	rec := httptest.NewRecorder()
-	handleGroupSpawn(rec, req, g)
-	if rec.Code != 200 {
+	res := serveInternalGroupSpawn(newInternalSpawnRequest(internalSpawnRequest{
+		Ctx:             context.WithValue(ctx, federationJobContextKey{}, launch),
+		Path:            "/",
+		Body:            raw,
+		Actor:           &peer{PID: 1, HumanTokenValid: true},
+		ReservedAgentID: j.WorkerID,
+	}), g)
+	if res.Status != 200 {
 		result.Code = "launch_refused"
-		var failure struct {
-			Code string `json:"code"`
-		}
-		_ = json.Unmarshal(rec.Body.Bytes(), &failure)
-		if failure.Code == "remote_job_unknown" {
+		if code, _ := res.Refusal(); code == "remote_job_unknown" {
 			result.State = "unknown"
 			result.Code = "execution_uncertain"
 		}
-		out.Stderr = rec.Body.String()
+		out.Stderr = string(res.Body)
 		return
 	}
-	if e = json.Unmarshal(rec.Body.Bytes(), &out); e != nil {
+	if e = json.Unmarshal(res.Body, &out); e != nil {
 		result.Code = "result_invalid"
 		return
 	}

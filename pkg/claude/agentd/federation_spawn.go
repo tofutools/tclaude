@@ -577,31 +577,31 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 	var dropped []string
 	// emit relays a recorded error response, adding the requested settings
 	// an approval dropped so the operator learns them on failure too.
-	emit := func(rec *httptest.ResponseRecorder) {
-		for k, v := range rec.Header() {
+	emit := func(res internalSpawnResult) {
+		for k, v := range res.Header {
 			w.Header()[k] = v
 		}
 		if len(dropped) > 0 {
 			var body map[string]any
-			if json.Unmarshal(rec.Body.Bytes(), &body) == nil && body != nil {
+			if json.Unmarshal(res.Body, &body) == nil && body != nil {
 				body["dropped_overrides"] = dropped
 				w.Header().Del("Content-Length")
-				writeJSON(w, rec.Code, body)
+				writeJSON(w, res.Status, body)
 				return
 			}
 		}
-		w.WriteHeader(rec.Code)
-		_, _ = w.Write(rec.Body.Bytes())
+		w.WriteHeader(res.Status)
+		_, _ = w.Write(res.Body)
 	}
 	fail := func(status int, code, msg string) {
 		rec := httptest.NewRecorder()
 		writeError(rec, status, code, msg)
-		emit(rec)
+		emit(recordedSpawnResult(rec))
 	}
 	failErr := func(err error) {
 		rec := httptest.NewRecorder()
 		writeFedErr(rec, err)
-		emit(rec)
+		emit(recordedSpawnResult(rec))
 	}
 	if automatic {
 		if err := checkFedSpawnOverrides(peer.InstanceID, g.ID, req.Overrides); err != nil {
@@ -725,28 +725,22 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 	inner.Method = http.MethodPost
 	inner.Body = io.NopCloser(bytes.NewReader(raw))
 	inner.ContentLength = int64(len(raw))
-	rec := httptest.NewRecorder()
-	handleGroupSpawn(rec, inner, g)
-	if rec.Code != http.StatusOK {
-		var failure struct {
-			Code  string `json:"code"`
-			Error string `json:"error"`
-		}
-		_ = json.Unmarshal(rec.Body.Bytes(), &failure)
+	res := serveInternalGroupSpawn(inner, g)
+	if res.Status != http.StatusOK {
+		_, failure := res.Refusal()
 		current, _ := db.GetFederationSpawnRequest(req.ID)
 		if current != nil && current.Status == db.FedSpawnLaunching && current.ResultAgent == reservedID {
 			if current.LaunchLabel != "" {
-				markFederationSpawnUnconfirmed(reservedID, failure.Error)
+				markFederationSpawnUnconfirmed(reservedID, failure)
 			} else {
-				_, _ = returnFederationSpawnFailure(req, reservedID, failure.Error)
+				_, _ = returnFederationSpawnFailure(req, reservedID, failure)
 			}
 		}
 		reconcileFederationSpawns()
-		emit(rec)
+		emit(res)
 		return
 	}
-	var sr agent.SpawnResponse
-	_ = json.Unmarshal(rec.Body.Bytes(), &sr)
+	sr, _ := res.Response()
 	// HTTP 200 can mean pending startup. Keep durable launching state until
 	// exact reserved identity, membership and pane readiness prove completion.
 	reconcileFederationSpawns()
