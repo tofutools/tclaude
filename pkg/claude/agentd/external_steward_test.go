@@ -167,7 +167,7 @@ func (s sourceRoute) requests() []*http.Request {
 // from the source, so a new requireHuman route is covered the day it is added.
 func TestExternalSteward_RefusedByEveryHumanAndApprovalRoute(t *testing.T) {
 	resetTestDB(t)
-	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Collab: new(true)}, Steward: &config.StewardConfig{ExternalEnabled: true}}))
+	require.NoError(t, config.Save(&config.Config{Steward: &config.StewardConfig{ExternalEnabled: true}}))
 	approval := regexp.MustCompile(`(?i)approv|decision|access-request|answer|confirm`)
 	mux := buildMux()
 	gated, answering := 0, 0

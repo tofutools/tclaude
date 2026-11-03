@@ -20,8 +20,7 @@ import { randomUUID } from './insecure-origin.js';
 
 export const CAPTURE_PRESENCE_MS = 1500;
 export const CAPTURE_HIDDEN_PRESENCE_MS = 10000;
-// A peer's page cannot see whether this node has Collab on, so it asks, and
-// keeps asking rarely in case it is switched on.
+// A peer's page that finds no presence route keeps asking, rarely.
 export const CAPTURE_ABSENT_PRESENCE_MS = 60000;
 export const CAPTURE_NOTICE_MS = 4000;
 const CAPTURE_MAX_SIDE = 2560;

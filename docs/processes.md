@@ -384,10 +384,9 @@ compact inspector with the step list's fields, right-click it for structure
 (insert before or after, branch, run alongside, duplicate, change kind,
 delete), or drag *+* into empty space to add a step. *⤢ full editor* opens the
 same draft (saved first) in the full graph editor, which also edits parallel,
-wait and subprocess nodes. With Collab on it opens in an overlay window over
+wait and subprocess nodes. It opens in an overlay window over
 Groups, so it can sit beside a *Get help* chat; its *Open in the Processes
-tab* and *Open in the Collab tab* still move it there. With Collab off it
-opens in Automations › Processes. *Save new version* writes it against the
+tab* and *Open in the Collab tab* still move it there. *Save new version* writes it against the
 version it was opened at. A process the step list cannot
 show (parallel, wait or subprocess nodes) opens in the graph editor instead.
 
@@ -412,7 +411,7 @@ things there are specific to processes:
   advisory on save (the draft just cannot run yet), so each step it makes
   reaches your canvas as it goes.
 - **In an overlay window or a window of its own.** *Open in overlay*
-  (with Collab on) and *Open in separate window*, beside *← templates*, move
+  and *Open in separate window*, beside *← templates*, move
   the editor over the dashboard or into a browser window of its own, so you
   can edit beside a chat or a board. It moves as it is: unsaved edits, undo
   and redo, and the version a save is checked against go with it, and
@@ -428,7 +427,7 @@ things there are specific to processes:
   the editor you last clicked in. Closing a floating editor, from the dock
   or with its window's close button, asks first when it has unsaved edits. A reload reopens an
   overlay tab on the last saved version.
-- **In a Collab tab.** With Collab on, the **＋** at the right of the Collab
+- **In a Collab tab.** The **＋** at the right of the Collab
   tab strip has a *Processes* half beside *Boards*: every template, under the
   groups it is pinned to (*Not pinned* last), with a box that searches names,
   ids, descriptions and groups. Pick one to open its editor as a Collab tab, or
@@ -440,9 +439,7 @@ things there are specific to processes:
   separate window*; an overlay tab has *Open in the Collab tab*. The editor
   moves as it does between the other places, draft and all, and an editor open
   in the Processes tab moves to the strip when you pick it from the **＋**.
-  Closing a process tab asks first when it has unsaved edits. Turning Collab
-  off sends a process tab's editor with unsaved edits back to the Processes
-  tab. Back to the Processes tab's URL of a template in a Collab tab brings
+  Closing a process tab asks first when it has unsaved edits. Back to the Processes tab's URL of a template in a Collab tab brings
   the editor back there.
 - **Subprocesses.** A ▣ node runs a nested graph (see
   [Subprocess nodes](#what-executes-today)). Double-click it to edit its body

@@ -1,6 +1,6 @@
 // Tests for boards as tabs of the terminal shell (tcl-0ghg18): a board opening
 // beside terminals, its tab coming back after a reload, the /boards routes, a
-// detached board, and features.collab off. The shell is the real mounted
+// detached board. The shell is the real mounted
 // feature; only xterm and the daemon are faked.
 
 import test from 'node:test';
@@ -9,7 +9,7 @@ import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const wait = (ms = 0) => new Promise((r) => setTimeout(r, ms));
-const COLLAB_ON = { collab_enabled: true, agents: [], groups: [] };
+const COLLAB_ON = { agents: [], groups: [] };
 const BOARD_LIST = [{ id: 'plan', title: 'Release plan' }, { id: 'map', title: 'Team map' }];
 
 function installHosts(harness) {
@@ -326,30 +326,6 @@ test('the router keeps the /boards routes and shows them in the Terminals sectio
   const core = await harness.importDashboardModule('js/nav-history-core.js');
   assert.deepEqual(core.fromPath('/boards/plan', ''), { tab: 'boards', selection: 'plan' });
   assert.equal(core.toPath({ tab: 'boards', selection: 'plan' }), '/boards/plan');
-});
-
-test('with features.collab off there is no board menu and no board tab stays', async (t) => {
-  const requests = fakeDaemon(t);
-  const env = await mountShell(t, { collab_enabled: false, agents: [] });
-  const { harness, host, setSnapshot } = env;
-  const cleanup = await start(env);
-  assertAbsent(host.querySelector('.mux-board-add'), 'no board menu');
-  assert.deepEqual(requests.filter((r) => r.includes('/api/boards')), [], 'the daemon is not asked for what it refuses');
-
-  // A handoff can still carry a board seed in: it does not stay.
-  await harness.act(async () => { await env.openBoardPane('map', 'Team map'); await wait(); });
-  assertAbsent(host.querySelector('svg.board-canvas'), 'the editor stays out');
-  await harness.act(async () => { setSnapshot({ collab_enabled: false, agents: [], generated_at: 'x' }); await wait(); });
-  assert.deepEqual(tabLabels(host), []);
-
-  // Turning it on needs no reload; turning it off takes the tabs away again.
-  await harness.act(async () => { setSnapshot(COLLAB_ON); await wait(); });
-  assert.ok(host.querySelector('.mux-board-add'));
-  await harness.act(async () => { await env.openBoardPane('plan', 'Release plan'); await wait(); });
-  assert.deepEqual(tabLabels(host), ['Release plan']);
-  await harness.act(async () => { setSnapshot({ collab_enabled: false }); await wait(); });
-  assert.deepEqual(tabLabels(host), []);
-  cleanup();
 });
 
 test('detaching a board carries it to the solo page, which renders it and sends it back', async (t) => {

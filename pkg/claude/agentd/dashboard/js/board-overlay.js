@@ -99,7 +99,7 @@ export function BoardOverlayWindow({ instance, overlay, strip, more = null, clos
       onClick=${close.onClose}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="board-overlay" frameClass="board-overlay-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Board ${board.label}`} title=${title}
-    controls=${{ look, closeLabel: `Close ${board.label}`, closeTitle: close.title, onClose: close.onClose, onMinimize: () => minimizeOverlayWindow(instance.id), onCollab: snapshot.value?.collab_enabled === true ? toCollab : null }} onTitleWheel=${onTitleWheel}>
+    controls=${{ look, closeLabel: `Close ${board.label}`, closeTitle: close.title, onClose: close.onClose, onMinimize: () => minimizeOverlayWindow(instance.id), onCollab: toCollab }} onTitleWheel=${onTitleWheel}>
     <${BoardEditor} key=${board.id} boardId=${board.id} snapshot=${snapshot} win=${win} fetchImpl=${fetchImpl}
       notify=${notify} onTitle=${(title) => setBoardOverlayLabel(board.id, title)} onOpenAgent=${(agent) => openInCompanion(agent)} />
   <//>`;
@@ -109,14 +109,14 @@ export function BoardOverlayWindow({ instance, overlay, strip, more = null, clos
 // the footer (inFooter), its menus, and Show all windows.
 export function BoardOverlay({ snapshot, win = globalThis.window, inFooter = false }) {
   if (!overlayWindows.value.length && !minimizedOverlayTabs.value.length) return null;
-  return html`<${BoardsGate} snapshot=${snapshot}>
+  return html`<${BoardsGate}>
     ${!inFooter && html`<${OverlayDock} snapshot=${snapshot} />`}<${OverlayDockPopup} snapshot=${snapshot} win=${win} /><${OverlayExpose} win=${win} />
   <//>`;
 }
 
 function FooterOverlayDock({ snapshot, win }) {
   if (!overlayWindows.value.length && !minimizedOverlayTabs.value.length) return null;
-  return html`<${BoardsGate} snapshot=${snapshot}><${FooterDock} snapshot=${snapshot} win=${win} /><//>`;
+  return html`<${BoardsGate}><${FooterDock} snapshot=${snapshot} win=${win} /><//>`;
 }
 
 function validWindow(window) {

@@ -77,7 +77,7 @@ export function ProcessOverlayWindow({ instance, overlay, strip, more = null, cl
       onClick=${close.onClose}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="board-overlay process-overlay" frameClass="board-overlay-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Process ${label}`} title=${title}
-    controls=${{ look, closeLabel: `Close ${label}`, closeTitle: close.title, onClose: close.onClose, onMinimize: () => minimizeOverlayWindow(instance.id), onCollab: snapshot.value?.collab_enabled === true ? toCollab : null }}>
+    controls=${{ look, closeLabel: `Close ${label}`, closeTitle: close.title, onClose: close.onClose, onMinimize: () => minimizeOverlayWindow(instance.id), onCollab: toCollab }}>
     <div class="process-overlay-body">
       ${error && html`<div class="process-placeholder" role="alert">Could not open editor: ${error}</div>`}
       ${!error && !processEditorHost.value && !floatingProcessEditor(instance.template) && html`<div class="process-placeholder">Loading ${label}…</div>`}

@@ -59,6 +59,7 @@ import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { useDismissablePopover } from './hover-popover.js';
 import { matchesShortcut, shortcutText, withShortcut } from './keybindings.js';
 import { Button } from './ui-components.js';
+import { onPeerPage } from './node-api.js';
 
 const html = htm.bind(h);
 
@@ -1270,16 +1271,16 @@ export function CompanionApp({
     <${Peek} agent=${peekTarget} lines=${peek?.lines ?? null} anchor=${peek?.anchor} />`;
 }
 
-// CompanionGate keeps the whole companion out of the page while
-// features.collab is off: no chips, no Ctrl+., and no registered controller,
-// so callers of openInCompanion take their usual path. A peer's page carries a
-// peer snapshot, which never says collab is on, and shows that node's agents,
-// so it gets no window; but the operator is still looking at this node's
-// dashboard, so this node's agents can capture and mark it. The channel's route
-// answers 404 here while this node has Collab off.
+// CompanionGate is the one place the steward opt-out (steward.disabled) takes
+// the companion out of the page: no chips, no Ctrl+., and no registered
+// controller, so callers of openInCompanion take their usual path. A peer's
+// page shows that node's agents, so it gets no window either. Both keep the
+// view channel: the operator is still looking at this node's dashboard, so
+// this node's agents can capture and mark it.
 export function CompanionGate(props) {
-  if (props.snapshot.value?.collab_enabled === true) return html`<${CompanionApp} ...${props} />`;
-  if (!globalThis.__tclaudeRemoteNode?.id) return null;
+  const value = props.snapshot.value;
+  if (!onPeerPage() && !value) return null;
+  if (!onPeerPage() && !value.stewards_disabled) return html`<${CompanionApp} ...${props} />`;
   return html`<${CompanionViewChannel} activeTab=${props.activeTab} notify=${props.notify} fetchImpl=${props.fetchImpl} win=${props.win} />`;
 }
 

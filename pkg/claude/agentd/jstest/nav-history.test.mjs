@@ -273,10 +273,11 @@ test('a /boards deep link shows the Terminals section and asks the shell for the
   assert.deepEqual(restores, [{ tab: 'boards', selection: 'plan' }]);
 });
 
-test('a /boards deep link falls back while features.collab is off', async (t) => {
+test('a /boards deep link falls back on a peer\'s page', async (t) => {
   const harness = await createPreactHarness(t);
   installShell(harness);
-  harness.document.body.classList.add('hide-collab');
+  globalThis.__tclaudeRemoteNode = { id: 'inst_forge7' };
+  t.after(() => { delete globalThis.__tclaudeRemoteNode; });
   const browsing = installBrowsingContext(t, harness, '/boards/plan');
   const { initNavHistory } = await harness.importDashboardModule('js/nav-history.js');
   const restores = [];
@@ -285,7 +286,7 @@ test('a /boards deep link falls back while features.collab is off', async (t) =>
 
   initNavHistory();
 
-  assert.equal(browsing.at(), '/');
+  assert.equal(browsing.at(), '/?node=inst_forge7');
   assert.deepEqual(restores, [], 'no board is asked for');
 });
 

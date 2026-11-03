@@ -216,7 +216,7 @@ redacted.
   **Open session in browser**, **Shell in its directory** and **Shell in
   browser**.
 
-Browser terminals open in the [Collab or Terminals tab](dashboard-terminals.md).
+Browser terminals open in the [Collab tab](dashboard-terminals.md).
 
 ### Badge glossary
 

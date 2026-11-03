@@ -283,7 +283,7 @@ func authenticateExternalSteward(w http.ResponseWriter, r *http.Request, p *peer
 		return false
 	}
 	cfg, err := config.LoadShared()
-	if err != nil || !cfg.CollabEnabled() || !cfg.ExternalStewardsEnabled() {
+	if err != nil || !cfg.ExternalStewardsEnabled() {
 		writeError(w, http.StatusUnauthorized, externalStewardAuthCode, "external stewards are turned off on this instance")
 		return false
 	}

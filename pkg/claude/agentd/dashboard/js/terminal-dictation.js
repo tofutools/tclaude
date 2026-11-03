@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { agentBlockedOnOperator, companionMessageFits, composeCompanionMessage, viewContext } from './companion-model.js';
 import { DraftField, FloatingTools, dictationSendPhrase, micTitle, postOperatorMessage, useAnnotation, useDictation } from './dictation-tools.js';
-import { nodeFetch } from './node-api.js';
+import { nodeFetch, onPeerPage } from './node-api.js';
 import { shellToast } from './shell-state.js';
 import { dashboardState } from './snapshot-store.js';
 import { harnessTakesMailMidTurn, voiceContinuous, voiceMarksDictated, voicePauses, voiceSilenceSeconds } from './voice-config.js';
@@ -32,7 +32,7 @@ const html = htm.bind(h);
 const paneRow = (target, snapshot) => (snapshot?.agents || []).find((agent) => agent.agent_id === target?.agent || agent.conv_id === target?.agent);
 
 export function paneTalksToAgent(pane, target, snapshot) {
-  if (!target || snapshot?.collab_enabled !== true) return false;
+  if (!target || onPeerPage()) return false;
   const row = paneRow(target, snapshot);
   const harness = pane.seed.harness || row?.state?.harness || '';
   if (harness === 'shell') return false;

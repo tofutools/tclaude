@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -20,7 +19,6 @@ import (
 // stored decision reads as a plain notification there too.
 func TestHumanDecision_MailboxCarriesIt(t *testing.T) {
 	f := newFlow(t)
-	enableCollab(t)
 	const sender = "hdec-aaaa-bbbb-cccc-000000000002"
 	f.HaveGroup("design")
 	f.HaveMember("design", sender)
@@ -62,19 +60,12 @@ func TestHumanDecision_MailboxCarriesIt(t *testing.T) {
 	reply := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, "/api/human-messages/reply", map[string]any{"id": created.ID, "choice": 1}))
 	require.Equal(t, http.StatusOK, reply.Code, reply.Body.String())
 	assert.Equal(t, "Tabs", read().Decision)
-
-	cfg, err := config.Load()
-	require.NoError(t, err)
-	cfg.Features.Collab = new(false)
-	require.NoError(t, config.Save(cfg))
-	assert.Empty(t, read().Options, "with Collab off it is a plain notification")
 }
 
 // An agent puts a decision to the operator; the operator picks an option
 // (even after the agent went offline) and the pick comes back as mail.
 func TestHumanDecision_PickComesBackAsMail(t *testing.T) {
 	f := newFlow(t)
-	enableCollab(t)
 	const sender = "hdec-aaaa-bbbb-cccc-000000000001"
 	f.HaveGroup("design")
 	f.HaveMember("design", sender)
@@ -182,7 +173,6 @@ func TestHumanDecision_PickComesBackAsMail(t *testing.T) {
 // be answered; turning it back on brings the buttons back.
 func TestHumanDecision_HiddenWithCollabOff(t *testing.T) {
 	f := newFlow(t)
-	enableCollab(t)
 	const sender = "hdof-aaaa-bbbb-cccc-000000000001"
 	f.HaveGroup("design")
 	f.HaveMember("design", sender)
@@ -214,27 +204,12 @@ func TestHumanDecision_HiddenWithCollabOff(t *testing.T) {
 	require.True(t, riding)
 	require.Equal(t, []string{"a", "b"}, options)
 	require.Equal(t, 2, recommended)
-
-	cfg, err := config.Load()
-	require.NoError(t, err)
-	cfg.Features.Collab = new(false)
-	require.NoError(t, config.Save(cfg))
-	_, options, recommended = optionsInSnapshot()
-	assert.Empty(t, options)
-	assert.Zero(t, recommended)
-	reply := postDashReply(t, mux, map[string]any{"id": id, "choice": 1})
-	require.Equal(t, http.StatusNotFound, reply.Code, reply.Body.String())
-	assert.Contains(t, reply.Body.String(), "collab_disabled")
-	orig, err := db.GetHumanMessage(id)
-	require.NoError(t, err)
-	assert.Empty(t, orig.Decision)
 }
 
 // A pick that cannot be delivered is released whole: the decision can be
 // answered again, and it is unread again if it was unread.
 func TestHumanDecision_FailedDeliveryRestoresUnread(t *testing.T) {
 	f := newFlow(t)
-	enableCollab(t)
 	const sender = "hdfl-aaaa-bbbb-cccc-000000000001"
 	f.HaveGroup("design")
 	f.HaveMember("design", sender)

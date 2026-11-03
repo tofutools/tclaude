@@ -135,20 +135,13 @@ const placed = (id) => !!overlayOf(id) || inSeparateWindow(id) || !!strip?.has(i
 // opens as a strip tab behind the one showing, marked unseen, with a toast that
 // opens it. A page shown again is marked unseen where it is; its frame reloads
 // on its own. Every open page always has a place in this dashboard: one that
-// lost its place without being closed (Collab off and on, a separate window
-// shut, a close that failed, a dashboard load) opens quietly behind the tab
+// lost its place without being closed (a separate window shut, a close that failed, a dashboard load) opens quietly behind the tab
 // showing. A page the snapshot no longer lists leaves every place, a restored
 // overlay tab included. It answers its stop.
 export function watchLivePages({ snapshot, notify = null }) {
   let known = null;
   const stop = snapshot.subscribe((value) => {
     if (!value) return;
-    // With Collab off the tabs go; when it comes back, every page is placed again
-    // as on a load, with no news.
-    if (value.collab_enabled !== true) {
-      known = null;
-      return;
-    }
     const pages = livePagesOf(value);
     const { next, added, reshown } = pageShowEvents(known, pages);
     known = next;

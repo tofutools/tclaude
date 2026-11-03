@@ -34,6 +34,7 @@ import { companionAgents } from './companion-model.js';
 import { useDismissablePopover } from './hover-popover.js';
 import { shortcutText, withShortcut } from './keybindings.js';
 import { Button, Select } from './ui-components.js';
+import { onPeerPage } from './node-api.js';
 
 const html = htm.bind(h);
 
@@ -2000,8 +2001,7 @@ export function BoardList({ fetchImpl, notify, onOpen, onPicking = () => {}, com
   </div>`;
 }
 
-// BoardsGate leaves a board out while features.collab is off, and mounts it
-// fresh when it turns on, so nothing asks the daemon for what it refuses.
-export function BoardsGate({ snapshot, children }) {
-  return snapshot.value?.collab_enabled === true ? children : null;
+// BoardsGate leaves a board out of a peer's page: boards are this node's.
+export function BoardsGate({ children }) {
+  return onPeerPage() ? null : children;
 }

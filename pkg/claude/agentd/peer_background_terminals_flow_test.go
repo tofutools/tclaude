@@ -70,7 +70,6 @@ func TestPeerView_BackgroundTerminalsFollowGrants(t *testing.T) {
 func TestPeerView_BackgroundTerminalsLeaveBoardsOut(t *testing.T) {
 	fh := newFedHarness(t)
 	f := fh.f
-	enableCollab(t)
 	setFedTrustLevel(t, fh, db.FederationTrustUnrestricted)
 	f.World.Tmux.MarkAlive("someone-elses-session")
 	const conv = "pbg-board-conv"

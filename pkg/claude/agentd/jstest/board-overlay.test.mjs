@@ -1,6 +1,6 @@
 // Tests for the board overlay (tcl-h4y60w): a board in its own floating window,
 // moved there from a tab and back; the window's placement; which window is in
-// front; and features.collab off. The feature islands are the real ones; only
+// front. The feature islands are the real ones; only
 // xterm and the daemon are faked.
 
 import test from 'node:test';
@@ -9,7 +9,7 @@ import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const wait = (ms = 0) => new Promise((r) => setTimeout(r, ms));
-const COLLAB_ON = { collab_enabled: true, agents: [], groups: [] };
+const COLLAB_ON = { agents: [], groups: [] };
 const BOARDS = [{ id: 'plan', title: 'Release plan' }, { id: 'map', title: 'Team map' }];
 
 // A scenario with a stand-in for the companion goes without the real one, and so
@@ -125,14 +125,6 @@ scenario('an agent\'s tab moves to its chat, and the operator stays on Terminals
   } finally { stop(); }
 });
 
-scenario('with Collab off an agent\'s tab offers no overlay', { ...AGENT_ON, collab_enabled: false }, { companion: false }, async ({ harness, host, button }) => {
-  const stop = await fakeCompanion(harness, () => true);
-  try {
-    await agentPane(harness);
-    assert.equal(button(host, 'Open in overlay'), undefined);
-  } finally { stop(); }
-});
-
 scenario('with no companion to float it, an agent\'s tab offers no overlay', AGENT_ON, { companion: false }, async ({ harness, host, button }) => {
   await agentPane(harness);
   assert.equal(button(host, 'Open in overlay'), undefined);
@@ -196,18 +188,6 @@ scenario('an agent\'s tab dragged off the strip floats its chat at the drop poin
   } finally { stop(); }
 });
 
-scenario('what cannot float still pops out when dragged', { ...AGENT_ON, collab_enabled: false }, { companion: false }, async ({ t, harness, host }) => {
-  const urls = fakeOpen(t, harness);
-  const stop = await fakeCompanion(harness, () => assert.fail('it cannot float'));
-  try {
-    await agentPane(harness);
-    await dragOut(harness, host, 'builder');
-    assert.equal(urls.length, 1);
-    assert.equal(seedOf(urls[0]).floats, undefined, 'the window does not offer an overlay it cannot get');
-    assert.deepEqual(tabLabels(host), []);
-  } finally { stop(); }
-});
-
 scenario('a tab\'s separate window asks for a real window and may come back to an overlay', async ({ t, harness, host, overlayState, click, button }) => {
   const features = [];
   const urls = [];
@@ -250,12 +230,6 @@ scenario('a separate window sent to the overlay floats there, with no tab', asyn
   assert.ok(await handOff(harness, { board: 'plan', label: 'Release plan', overlay: true }));
   assert.ok(overlayHost.querySelector('.board-overlay'));
   assert.deepEqual(tabLabels(host), []);
-});
-
-scenario('a separate window that can no longer float lands in a tab', { ...COLLAB_ON, collab_enabled: false }, async ({ harness, windows, state }) => {
-  assert.ok(await handOff(harness, { board: 'plan', label: 'Release plan', overlay: true }));
-  assert.deepEqual(windows.overlayWindows.value, []);
-  assert.equal(state.panes.value.length, 1, 'a handoff never loses it');
 });
 
 scenario('Open in the Collab tab leaves a board that has since floated where it is', async ({ harness, overlayState, windows, state }) => {
@@ -537,13 +511,6 @@ scenario('dragging the title bar moves the window and saves its place', async ({
   assert.ok(saved, 'the place is saved');
   assert.notEqual(overlayHost.querySelector('.board-overlay').getAttribute('style'), before);
   assert.equal(overlayHost.querySelector('.board-overlay').style.left, `${saved.x}px`);
-});
-
-scenario('with features.collab off the overlay does not show, and comes back with the flag', { collab_enabled: false }, async ({ harness, overlayHost, overlayState, dashboardState }) => {
-  await harness.act(async () => { overlayState.openBoardOverlay('plan', 'Release plan'); await wait(); });
-  assertAbsent(overlayHost.querySelector('.board-overlay'));
-  await harness.act(async () => { dashboardState.publishLocalEdit(COLLAB_ON); await wait(); });
-  assert.ok(overlayHost.querySelector('.board-overlay'));
 });
 
 const dragTo = (harness, node, from, to) => harness.act(async () => {

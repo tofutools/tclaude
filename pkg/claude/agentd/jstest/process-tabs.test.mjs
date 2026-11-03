@@ -10,7 +10,7 @@ import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const wait = (ms = 0) => new Promise((r) => setTimeout(r, ms));
-const ON = { collab_enabled: true, processes_enabled: true, agents: [], groups: [] };
+const ON = { processes_enabled: true, agents: [], groups: [] };
 const TEMPLATES = [
   { id: 'release-train', name: 'Release train', versionCount: 3, pinnedGroups: ['tclaude'] },
   { id: 'triage', name: 'Triage', versionCount: 1 },
@@ -265,23 +265,13 @@ test('a crafted seed cannot give a process tab a socket or a colliding key', asy
   assert.equal(seed.key, 'process:triage');
 });
 
-test('with Processes off the ＋ menu is boards only; with Collab off a process tab docks back', async (t) => {
+test('with Processes off the ＋ menu is boards only', async (t) => {
   fakeDaemon(t);
   const env = await mountShell(t, { ...ON, processes_enabled: false });
-  const { harness, host, place, processes, setSnapshot } = env;
+  const { harness, host } = env;
   await harness.act(async () => { harness.fireEvent(host.querySelector('.mux-board-add'), 'click'); await wait(); });
   assertAbsent(host.querySelector('.mux-add-sections'), 'no Processes half');
   assertAbsent(host.querySelector('.process-menu-list'));
-
-  await harness.act(async () => { setSnapshot(ON); await place.openProcessTab('triage', 'Triage'); await wait(); });
-  await harness.act(() => wait());
-  const editor = processes.opened[0];
-  editor.model.dirty = true;
-  await harness.act(async () => { setSnapshot({ collab_enabled: false, processes_enabled: true }); await wait(); });
-  assert.deepEqual(tabLabels(host), []);
-  assert.equal(processes.docked.length, 1, 'the editor goes back to the Processes tab');
-  assert.equal(processes.docked[0].live.editor, editor);
-  assert.equal(editor.destroyed, 0);
   env.stop();
 });
 

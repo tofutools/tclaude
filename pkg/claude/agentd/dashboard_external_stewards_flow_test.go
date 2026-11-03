@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -69,23 +68,22 @@ func TestExternalStewardDashboard_ManageFromConfig(t *testing.T) {
 	assert.Zero(t, kept)
 }
 
-func TestExternalStewardDashboard_OffAndCollabOff(t *testing.T) {
+func TestExternalStewardDashboard_OffAndStewardsOptedOut(t *testing.T) {
 	s := newExternalStewardFlow(t, false)
 	rec := s.dashboard(http.MethodPost, "/api/external-stewards", map[string]any{"name": "assistant"})
 	assert.NotEqual(t, http.StatusOK, rec.Code, "the switch is off")
 	assert.NotContains(t, rec.Body.String(), "tcls_")
 
-	cfg, err := config.Load()
-	require.NoError(t, err)
-	cfg.Features.Collab = new(false)
-	require.NoError(t, config.Save(cfg))
-	assert.Equal(t, http.StatusNotFound, s.dashboard(http.MethodGet, "/api/external-stewards", nil).Code)
+	setExternalStewards(t, true)
+	setStewardsDisabled(t, true)
+	rec = s.dashboard(http.MethodPost, "/api/external-stewards", map[string]any{"name": "assistant"})
+	assert.NotEqual(t, http.StatusOK, rec.Code, "the steward opt-out wins over the switch")
+	assert.NotContains(t, rec.Body.String(), "tcls_")
 }
 
 // No credential may leave for another instance or another site's page.
 func TestExternalStewardDashboard_NeverReachesPeersOrOtherOrigins(t *testing.T) {
 	fh := newFedHarness(t)
-	enableCollab(t)
 	setExternalStewards(t, true)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
 	routes := []struct{ method, path string }{

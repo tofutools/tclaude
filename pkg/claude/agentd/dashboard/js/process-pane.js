@@ -45,7 +45,7 @@ export function useFloatingEditor(slot, id, label, enabled = true) {
 
 // ProcessPane is the strip's pane for a process tab: where the editor can go
 // from here, and the editor.
-export function ProcessPane({ pane, active, actions, fetchImpl = globalThis.fetch, collab = true, scope = null }) {
+export function ProcessPane({ pane, active, actions, fetchImpl = globalThis.fetch, scope = null }) {
   const id = pane.seed.process;
   const label = pane.label || id;
   const slot = useRef(null);
@@ -69,7 +69,7 @@ export function ProcessPane({ pane, active, actions, fetchImpl = globalThis.fetc
       <span class="ui-eyebrow">Process</span>
       <span class="mux-process-name" title=${id}>${label}</span>
       <span class="spacer"></span>
-      ${collab ? html`<${Button} size="sm" class="mux-btn" title="Float this editor in a window over the dashboard, unsaved edits and all" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay<//>` : null}
+      <${Button} size="sm" class="mux-btn" title="Float this editor in a window over the dashboard, unsaved edits and all" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay<//>
       <${Button} size="sm" class="mux-btn" title="Move this editor to the Processes tab, unsaved edits and all" onClick=${() => void dockProcessEditor(id, label)}>Open in the Processes tab<//>
       <${Button} size="sm" class="mux-btn" title="Move this editor to a browser window of its own, unsaved edits and all" onClick=${() => void actions.popOutPane(pane.key)}>Open in separate window<//>
     </div>

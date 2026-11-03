@@ -16,21 +16,12 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
 // `tclaude agent show` / `tclaude agent page` — live pages (epic tcl-qo90av):
 // the agent shows the operator a web page it serves, live in the dashboard's
-// Collab tab, in a sandboxed frame on its own origin. Needs self.page and
-// Collab on; the commands are hidden while Collab is off.
-
-// pageCollabHidden hides the page commands while Collab is off. The daemon
-// refuses the routes either way.
-func pageCollabHidden() bool {
-	cfg, err := config.LoadShared()
-	return err != nil || !cfg.CollabEnabled()
-}
+// Collab tab, in a sandboxed frame on its own origin. Needs self.page.
 
 const pageShowLong = "Shows the operator a live web page in the dashboard: a dev server you run, or static files in your worktree. " +
 	"The operator sees it live and interactive in a sandboxed frame on its own origin.\n\n" +
@@ -47,7 +38,7 @@ const pageShowLong = "Shows the operator a live web page in the dashboard: a dev
 	"Pages end when the daemon restarts; run show again to bring one back. " +
 	"Anything the operator types into the page can be read by you. The page's token is its only key: it goes to the operator's dashboard " +
 	"and is masked in what you are shown, so you act on a page by its name. " +
-	"Needs the self.page permission and Collab on."
+	"Needs the self.page permission."
 
 func showCmd() *cobra.Command {
 	cmd := boa.CmdT[pageShowParams]{
@@ -60,7 +51,6 @@ func showCmd() *cobra.Command {
 			os.Exit(runPageShow(p, args[0], os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
-	cmd.Hidden = pageCollabHidden()
 	return cmd
 }
 
@@ -72,7 +62,7 @@ func pageCmd() *cobra.Command {
 			"`page show` (or `agent show`) shows or updates one, `page ls` lists yours, `page close` closes one. " +
 			"When the operator draws on a page and sends it to you, `page marks` reads the marks, `page snapshot` renders the page " +
 			"with them and `page dom` reads the page's DOM. " +
-			"You can act only on pages you showed. Needs the self.page permission and Collab on.",
+			"You can act only on pages you showed. Needs the self.page permission.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			boa.CmdT[pageShowParams]{
@@ -183,7 +173,6 @@ func pageCmd() *cobra.Command {
 			}.ToCobra(),
 		},
 	}.ToCobra()
-	cmd.Hidden = pageCollabHidden()
 	return cmd
 }
 

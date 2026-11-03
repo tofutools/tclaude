@@ -1,6 +1,6 @@
 # Live pages
 
-Live pages are part of [Collab](companion.md#turning-collab-off). They let an agent show
+Live pages are part of [Collab](companion.md). They let an agent show
 the operator any web page it serves, live and interactive inside the dashboard.
 tclaude does not build the page. It renders what the agent serves, in a
 sandboxed frame.
@@ -51,8 +51,7 @@ rules.
   caller's own pages, so an agent cannot list, update or close another agent's
   page, and only the agent's current conversation can act (not a predecessor
   still running after a reincarnation). The permission is `self.page`, default-granted with the other `self.*`
-  slugs. The commands are hidden, and the routes answer 404, while
-  [Collab is off](companion.md#turning-collab-off).
+  slugs.
 - **Lifecycle.** A page belongs to the agent ID, so it survives a
   reincarnation. Retiring or deleting the agent closes its pages. When the operator closes a
   page in the dashboard, the agent gets an inbox message `[page <name>] closed`.
@@ -122,8 +121,7 @@ each reload, until the agent drops them or the page closes. They never change
 files.
 
 When nothing answers for the page (the dev server stopped, say), the view says
-so and offers **Retry**. A page the agent closes leaves the dashboard. With
-Collab off, the Page tabs go away.
+so and offers **Retry**. A page the agent closes leaves the dashboard.
 
 The frame is `<iframe sandbox="allow-scripts allow-forms allow-modals" allow=""
 referrerpolicy="no-referrer" credentialless>`: no same-origin, pop-ups,

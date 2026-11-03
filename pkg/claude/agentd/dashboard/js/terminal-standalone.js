@@ -36,7 +36,7 @@ export function startStandaloneStatusPoll({
   snapshot,
   path = `/api/agents/${encodeURIComponent(selector)}/status`,
   adopt = (value) => ({
-    agents: [value], collab_enabled: value.collab_enabled, voice: value.voice, keybindings: value.keybindings,
+    agents: [value], voice: value.voice, keybindings: value.keybindings,
   }),
   pollMs = null,
   fetchImpl = globalThis.fetch,

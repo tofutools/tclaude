@@ -4,26 +4,27 @@ The **companion** is a floating window that keeps agents' terminals with you on
 every dashboard tab. The **Steward** is a helper agent that lives there: ask it
 what you can do, how things are set up, or to get work started.
 
-## Turning Collab off
+## Opting out of stewards
 
 The companion, the Steward, [boards](boards.md), the fleet brief and decisions
-make up Collab, which is on by default. Turning it on spawns no agent and grants
-no permission: a Steward exists only once you make one. On the first daemon start
-after an upgrade, tclaude stores the setting once: if you had Collab on, it stays
-on; if you had turned it off again (it left Steward settings, a Steward or boards
-behind), it stays off; anyone else gets it on. To turn Collab off,
-uncheck **Collab** under [Config › Appearance](dashboard-config.md#appearance), or
-set `features.collab` to `false` in `config.json`. You don't need to restart
-anything; the next dashboard refresh picks it up.
+are always on. None of this spawns an agent or grants a permission: a Steward
+exists only once you make one.
 
-| With Collab | Off | On |
-|---|---|---|
-| Tab name | Terminals | Collab |
-| Companion and its shortcuts | Absent | Available |
-| Access banner's **Review** | Opens Messages | Opens the [approval panel](#answering-permission-requests) |
-| Boards, Config › Steward | Hidden | Shown |
-| `tclaude agent board`, `fleet`, `guide`, `knowledge` | Refused with `collab_disabled` | Work |
-| `notify-human --option` | Refused with `collab_disabled` | Sends a [decision](#decisions) |
+To opt out of stewards, uncheck **Stewards** at the top of
+[Config › Steward](dashboard-config.md#steward), or set `steward.disabled` to
+`true` in `config.json`. Then:
+
+- No Steward can be summoned or handed the role. Summon and handover answer
+  404 `stewards_disabled`.
+- The companion window, its chips and its shortcuts (Ctrl+. and the rest) are not
+  shown.
+- [External stewards](external-steward.md) are refused, whatever
+  `steward.external_enabled` says.
+
+Boards, live pages, overlay windows, the approval panel, decisions and the
+fleet brief stay on. A Steward already running is not stopped; retire it
+yourself. You don't need to restart anything; the next dashboard refresh picks
+it up.
 
 The companion isn't available in a peer's per-node view or in pop-out windows.
 
@@ -122,7 +123,7 @@ otherwise open a terminal.
 | ✉ | Send a queued message (Ctrl M) |
 | ⚙ | Everything else, listed below. Type to filter it |
 | − | Minimize to the dock (Ctrl .) |
-| ⇄ | Open it in the Collab tab. Where it cannot go there (Collab off, or a window with no Collab place), this is □: maximize, or restore the size it had |
+| ⇄ | Open it in the Collab tab. Where it cannot go there (a window with no Collab place), this is □: maximize, or restore the size it had |
 | × | Close the window. Its tabs leave the overlay and the dock, and keep running in the background: open them again from the Groups tab, the palette or Collab. On a window holding a running Steward the Steward asks first, then shuts down, like **Shut down…** |
 
 Under **⚙**, each shown when it applies:
@@ -242,7 +243,7 @@ The window's – keeps its tabs together on one pill, showing the active tab and
 The window's close button is different: it closes the window, and its tabs leave the
 dock too, as the × on a pill takes them. A tab's × does the same for that tab alone. Nothing stops. Agents and shells keep running
 in the background, and a reload does not bring the window back. Open them again from
-wherever you opened them: the Groups tab, the palette, the Terminals or Collab tab.
+wherever you opened them: the Groups tab, the palette, the Collab tab.
 A floating process editor with unsaved edits asks first, and stays if you keep them.
 A running Steward is the exception: it asks first, then shuts down.
 
@@ -322,7 +323,7 @@ for that agent is reused, wherever it is now. The agent never gets the shell's
 input or output. If the agent has retired, the board was deleted or the PR is no
 longer presented, the button is off and says why.
 
-Action links need [Collab](#turning-collab-off) and only work on the node that holds
+Action links only work on the node that holds
 the message: a peer looking at this node's messages sees no button.
 
 ## Voice and dictation
@@ -411,7 +412,7 @@ With both on, sound in the room can send mail to an agent, and Config warns abou
 that.
 
 The same tools float over agent terminals in the
-[Terminals tab](dashboard-terminals.md#dictation). No reply is read while any mic is
+[Collab tab](dashboard-terminals.md#dictation). No reply is read while any mic is
 open, and starting one mic stops another. It uses your browser's speech recognition,
 and in Chrome the audio is recognized by Google's service.
 
@@ -623,14 +624,14 @@ can't read or write them, and config bundles don't carry them.
 unless an [external steward](external-steward.md#mail) can take the message. Your chosen
 name never falls back that way. An agent can answer a message from the Steward with `tclaude agent reply <id>`,
 whatever its groups and permissions. Writing to it first, with `tclaude agent message
-steward`, needs `message.direct` or a shared group, like any other agent. With Collab
-on, `steward` and your chosen name always mean the Steward, even if another agent has
+steward`, needs `message.direct` or a shared group, like any other agent.
+`steward` and your chosen name always mean the Steward, even if another agent has
 that name.
 
 ## Commands behind this
 
 **`tclaude agent steward`** chooses the Steward from your own terminal. It's for you
-only: the daemon refuses an agent, and the commands need Collab.
+only: the daemon refuses an agent.
 
 ```bash
 tclaude agent steward ls                            # the active Steward and the roster
@@ -659,7 +660,7 @@ tclaude agent guide show --path <path> --circle "<text>" --underline "<text>" \
 tclaude agent guide show --open <agent>
 ```
 
-With Collab on, `fleet.read` also lifts the group scoping on `tclaude agent ls`
+`fleet.read` also lifts the group scoping on `tclaude agent ls`
 and shows group default directories in `tclaude agent groups ls`, so the
 Steward can name any agent or group you have open. It changes only what is
 listed: who it can message is still decided at send, and group environment
@@ -692,7 +693,7 @@ values are masked, in the image and in the text that comes with it. Text selecte
 inside a field is never reported. Hover styles are not reproduced,
 and the cursor is drawn as a marker. An iframe shows as a labelled box. It works
 in Chrome, Edge and Firefox; Safari refuses to read back the render, so the
-command fails there. It needs Collab, like the rest of the Steward.
+command fails there.
 
 #### Form values as text
 

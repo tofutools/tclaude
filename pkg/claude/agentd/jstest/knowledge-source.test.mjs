@@ -10,10 +10,10 @@ const VIEW = {
   download_bytes: 18 << 20, stored_bytes: 28 << 20, detail: 'not downloaded',
 };
 
-async function setup(t, view, { collab = true, reply = VIEW, polled = null } = {}) {
+async function setup(t, view, { reply = VIEW, polled = null } = {}) {
   const harness = await createPreactHarness(t);
-  const { KnowledgeSourceGate } = await harness.importDashboardModule('js/knowledge-source-island.js');
-  const snap = harness.signals.signal({ collab_enabled: collab, knowledge_source: view });
+  const { KnowledgeSourceCard } = await harness.importDashboardModule('js/knowledge-source-island.js');
+  const snap = harness.signals.signal({ knowledge_source: view });
   const posts = [];
   const timers = [];
   const fetchImpl = async (url, init) => {
@@ -23,7 +23,7 @@ async function setup(t, view, { collab = true, reply = VIEW, polled = null } = {
     }
     return { ok: true, json: async () => polled };
   };
-  const mounted = await harness.mount(harness.html`<${KnowledgeSourceGate} snapshot=${snap} fetchImpl=${fetchImpl}
+  const mounted = await harness.mount(harness.html`<${KnowledgeSourceCard} snapshot=${snap} fetchImpl=${fetchImpl}
     setTimer=${(fn) => { timers.push(fn); return timers.length; }} clearTimer=${() => {}} />`);
   return { harness, host: mounted.container, posts, timers, snap };
 }
@@ -60,9 +60,9 @@ test('a dismissed failure stays dismissed, and a No hides it', async (t) => {
   const first = await setup(t, failed);
   await first.harness.act(async () => { first.harness.getByRole(first.host, 'button', { name: 'Dismiss' }).click(); });
   assert.equal(first.host.querySelector('.knowledge-source-card'), null);
-  await first.harness.act(async () => { first.snap.value = { collab_enabled: true, knowledge_source: { ...failed, detail: 'another failure' } }; });
+  await first.harness.act(async () => { first.snap.value = { knowledge_source: { ...failed, detail: 'another failure' } }; });
   assert.ok(first.host.querySelector('.knowledge-source-card'), 'a different failure shows');
-  await first.harness.act(async () => { first.snap.value = { collab_enabled: true, knowledge_source: { ...failed, detail: 'another failure', policy: 'never' } }; });
+  await first.harness.act(async () => { first.snap.value = { knowledge_source: { ...failed, detail: 'another failure', policy: 'never' } }; });
   assert.equal(first.host.querySelector('.knowledge-source-card'), null, 'not after a No');
   assert.equal([...stored.values()][0], 'abc is not on GitHub', 'kept across reloads');
 });
@@ -84,7 +84,3 @@ test('nothing shows once answered', async (t) => {
   assert.equal(host.querySelector('.knowledge-source-card'), null);
 });
 
-test('nothing shows with Collab off', async (t) => {
-  const { host } = await setup(t, VIEW, { collab: false });
-  assert.equal(host.querySelector('.knowledge-source-card'), null);
-});

@@ -127,7 +127,7 @@ export function ChatWindow({
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} mounted=${open || (warm && !!agent?.online)}
     className=${`companion-window chat-window${open ? '' : ' companion-window-warm'}`} frameClass="companion-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Chat with ${name}`} title=${title}
-    controls=${{ look, closeLabel: `Close ${name}`, closeTitle: close.title, onClose: close.onClose, onMinimize, onCollab: snapshot.value?.collab_enabled === true ? toCollab : null }}>
+    controls=${{ look, closeLabel: `Close ${name}`, closeTitle: close.title, onClose: close.onClose, onMinimize, onCollab: toCollab }}>
     <div class=${`companion-body${approvals.length + decisions.length + actionMessages.length ? ' has-cards' : ''}`} id=${instance.id} data-chat-agent=${agentId}>
       ${approvals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${decisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}

@@ -34,15 +34,13 @@ export const SHORTCUT_SCOPES = Object.freeze([
 //   convention, or (editor, board and viewer keys) matched inside their own
 //   widget rather than through matchesShortcut.
 // also: further chords that do the same thing.
-// collab: the feature behind it exists only with Collab on (features.collab),
-//   so the list leaves it out while Collab is off.
 const S = (id, scope, chord, label, extra = {}) => Object.freeze({ id, scope, chord, label, terminal: false, fixed: false, ...extra });
 
 export const SHORTCUTS = Object.freeze([
   S('palette', 'global', 'Mod+KeyK', 'Open the command palette', { terminal: 'setting' }),
-  S('steward', 'global', 'Ctrl+Period', 'Open or minimize the Steward window', { collab: true, terminal: true }),
-  S('annotate', 'global', 'Ctrl+Shift+Period', 'Mark up the page for the agent in the window', { collab: true, terminal: true }),
-  S('expose', 'global', 'Ctrl+Comma', 'Show all windows side by side, to pick one', { collab: true, terminal: true }),
+  S('steward', 'global', 'Ctrl+Period', 'Open or minimize the Steward window', { terminal: true }),
+  S('annotate', 'global', 'Ctrl+Shift+Period', 'Mark up the page for the agent in the window', { terminal: true }),
+  S('expose', 'global', 'Ctrl+Comma', 'Show all windows side by side, to pick one', { terminal: true }),
   S('compose', 'global', 'Ctrl+KeyM', 'Message the agent in the current terminal or window', { terminal: true }),
   S('tab-next', 'global', 'BracketRight', 'Next dashboard tab'),
   S('tab-prev', 'global', 'BracketLeft', 'Previous dashboard tab'),
@@ -59,29 +57,29 @@ export const SHORTCUTS = Object.freeze([
   S('dialog-submit', 'dialog', 'Mod+Enter', 'Submit the dialog or send the message', { fixed: true }),
   S('dialog-queue', 'dialog', 'Mod+Shift+Enter', 'Spawn dialog: add to the queue', { fixed: true }),
 
-  S('process-save', 'process', 'Mod+KeyS', 'Save a new version', { collab: true, fixed: true }),
-  S('process-open', 'process', 'Mod+KeyO', 'Back to the template list', { collab: true, fixed: true }),
-  S('process-commands', 'process', 'Mod+KeyK', 'Process commands', { collab: true, fixed: true }),
-  S('process-undo', 'process', 'Mod+KeyZ', 'Undo', { collab: true, fixed: true }),
-  S('process-redo', 'process', 'Mod+Shift+KeyZ', 'Redo', { collab: true, fixed: true, also: ['Mod+KeyY'] }),
-  S('process-auto-layout', 'process', 'Mod+Shift+KeyL', 'Auto layout', { collab: true, fixed: true }),
-  S('process-leave', 'process', 'Alt+ArrowUp', 'Leave the subprocess', { collab: true, fixed: true }),
-  S('process-diff-accept', 'process', 'KeyA', 'Review changes: accept', { collab: true, fixed: true }),
-  S('process-diff-reject', 'process', 'KeyR', 'Review changes: reject', { collab: true, fixed: true }),
-  S('process-diff-next', 'process', 'KeyJ', 'Review changes: next', { collab: true, fixed: true }),
-  S('process-diff-prev', 'process', 'KeyK', 'Review changes: previous', { collab: true, fixed: true }),
+  S('process-save', 'process', 'Mod+KeyS', 'Save a new version', { fixed: true }),
+  S('process-open', 'process', 'Mod+KeyO', 'Back to the template list', { fixed: true }),
+  S('process-commands', 'process', 'Mod+KeyK', 'Process commands', { fixed: true }),
+  S('process-undo', 'process', 'Mod+KeyZ', 'Undo', { fixed: true }),
+  S('process-redo', 'process', 'Mod+Shift+KeyZ', 'Redo', { fixed: true, also: ['Mod+KeyY'] }),
+  S('process-auto-layout', 'process', 'Mod+Shift+KeyL', 'Auto layout', { fixed: true }),
+  S('process-leave', 'process', 'Alt+ArrowUp', 'Leave the subprocess', { fixed: true }),
+  S('process-diff-accept', 'process', 'KeyA', 'Review changes: accept', { fixed: true }),
+  S('process-diff-reject', 'process', 'KeyR', 'Review changes: reject', { fixed: true }),
+  S('process-diff-next', 'process', 'KeyJ', 'Review changes: next', { fixed: true }),
+  S('process-diff-prev', 'process', 'KeyK', 'Review changes: previous', { fixed: true }),
 
-  S('board-undo', 'board', 'Mod+KeyZ', 'Undo', { collab: true, fixed: true }),
-  S('board-redo', 'board', 'Mod+Shift+KeyZ', 'Redo', { collab: true, fixed: true, also: ['Mod+KeyY'] }),
-  S('board-select-all', 'board', 'Mod+KeyA', 'Select everything', { collab: true, fixed: true }),
-  S('board-copy', 'board', 'Mod+KeyC', 'Copy the selection', { collab: true, fixed: true }),
-  S('board-cut', 'board', 'Mod+KeyX', 'Cut the selection', { collab: true, fixed: true }),
-  S('board-paste', 'board', 'Mod+KeyV', 'Paste', { collab: true, fixed: true }),
-  S('board-duplicate', 'board', 'Mod+KeyD', 'Duplicate the selection', { collab: true, fixed: true }),
-  S('board-zoom-in', 'board', 'Equal', 'Zoom in', { collab: true, fixed: true }),
-  S('board-zoom-out', 'board', 'Minus', 'Zoom out', { collab: true, fixed: true }),
-  S('board-zoom-reset', 'board', 'Shift+Digit0', 'Zoom to 100%', { collab: true, fixed: true }),
-  S('board-fit', 'board', 'Shift+Digit1', 'Fit the board in view', { collab: true, fixed: true }),
+  S('board-undo', 'board', 'Mod+KeyZ', 'Undo', { fixed: true }),
+  S('board-redo', 'board', 'Mod+Shift+KeyZ', 'Redo', { fixed: true, also: ['Mod+KeyY'] }),
+  S('board-select-all', 'board', 'Mod+KeyA', 'Select everything', { fixed: true }),
+  S('board-copy', 'board', 'Mod+KeyC', 'Copy the selection', { fixed: true }),
+  S('board-cut', 'board', 'Mod+KeyX', 'Cut the selection', { fixed: true }),
+  S('board-paste', 'board', 'Mod+KeyV', 'Paste', { fixed: true }),
+  S('board-duplicate', 'board', 'Mod+KeyD', 'Duplicate the selection', { fixed: true }),
+  S('board-zoom-in', 'board', 'Equal', 'Zoom in', { fixed: true }),
+  S('board-zoom-out', 'board', 'Minus', 'Zoom out', { fixed: true }),
+  S('board-zoom-reset', 'board', 'Shift+Digit0', 'Zoom to 100%', { fixed: true }),
+  S('board-fit', 'board', 'Shift+Digit1', 'Fit the board in view', { fixed: true }),
 
   S('viewer-zoom-in', 'viewer', 'Equal', 'Zoom in', { fixed: true }),
   S('viewer-zoom-out', 'viewer', 'Minus', 'Zoom out', { fixed: true }),
@@ -353,7 +351,7 @@ export function shortcutDocsTable(scopes = ['global', 'terminal', 'dialog']) {
   for (const scope of SHORTCUT_SCOPES.filter(item => scopes.includes(item.id))) {
     lines.push(`| **${scope.title}** | | | |`);
     for (const entry of SHORTCUTS.filter(item => item.scope === scope.id)) {
-      lines.push(`| ${entry.label}${entry.collab ? ' (Collab)' : ''} | ${keys(entry.id, 'linux')} | ${keys(entry.id, 'macos')} | ${where[String(entry.terminal)]} |`);
+      lines.push(`| ${entry.label} | ${keys(entry.id, 'linux')} | ${keys(entry.id, 'macos')} | ${where[String(entry.terminal)]} |`);
     }
   }
   return `${lines.join('\n')}\n`;

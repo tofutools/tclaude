@@ -180,7 +180,7 @@ export function createProcessesActions({
       if (held) return openEditor(id, false, called, { navigate, live: held });
     }
     let floating = !blank && !live && !handoff ? floatingProcessTab(id) : null;
-    // With no overlay to show it (Collab off), a floating editor docks here
+    // With no overlay to show it, a floating editor docks here
     // instead, edits and all, and a tab with no editor yet just goes.
     if (floating && !overlayHostUp.peek()) {
       const held = takeFloatingEditor(id);

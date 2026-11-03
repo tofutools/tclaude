@@ -11,7 +11,7 @@ import { hasShownOverlay } from './overlay-stack.js';
 import { loadXtermRuntime } from './xterm-loader.js';
 import { bindTerminalHandoffReceiver } from './terminal-handoff.js';
 import { dragLeftRegion, dragScreenPoint } from './terminal-drag-out.js';
-import { toTabsLabel } from './overlay-tab-moves.js';
+import { TO_COLLAB_LABEL } from './overlay-tab-moves.js';
 import { aimFromCollab, collabDrag, collabDropTarget, tabDropTarget } from './overlay-tab-drag.js';
 import { TabContextMenu, TabGroupRename, useArmedCollapse } from './tab-controls.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
@@ -40,7 +40,7 @@ import { CHAT_WINDOW_KIND } from './chat-window-model.js';
 import { overlayTabs } from './overlay-instances.js';
 import { shellToast } from './shell-state.js';
 import { usePeerNotifications } from './peer-notifications.js';
-import { isPageNode, nodeFetch } from './node-api.js';
+import { isPageNode, nodeFetch, onPeerPage } from './node-api.js';
 import { ViewersBadge } from './remote-viewers.js';
 import { dashboardState } from './snapshot-store.js';
 import { RemoteFilesPanel } from './remote-files-panel.js';
@@ -59,7 +59,7 @@ import { matchesShortcut, shortcutText, withShortcut } from './keybindings.js';
 import { Button } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
 import {
-  dockProcessEditor, editorDirty, floatingProcessEditor, openProcessTab, processPaneKey, registerProcessStrip, returnLiveEditor, stripProcesses, takeFloatingEditor,
+  dockProcessEditor, openProcessTab, processPaneKey, registerProcessStrip, stripProcesses,
 } from './process-editor-place.js';
 import { ProcessPane } from './process-pane.js';
 import { ProcessMenuList } from './process-collab-menu.js';
@@ -98,7 +98,7 @@ export function tabDragStartedOnClose(target) {
 // paneFloats reports whether a Terminals pane offers Open in overlay. An agent
 // floats through the companion, which a page without one cannot do.
 function paneFloats(pane, snapshot) {
-  if (snapshot?.collab_enabled !== true) return false;
+  if (onPeerPage()) return false;
   return !!pane.seed.board || !!pane.seed.process || !!pane.seed.page || overlayablePane(pane) || (companionAvailable() && !!chatAgentOfPane(pane, snapshot));
 }
 
@@ -108,7 +108,7 @@ function soloFloats(pane, win = globalThis.window) {
   return !!pane.seed.floats && !!win?.opener && !win.opener.closed;
 }
 
-// A chat window in the page. With Collab off the saved set is still there.
+// A chat window in the page. Without a companion the saved set is still there.
 const chatWindowShowing = () => companionAvailable() && overlayTabs.peek().some((tab) => tab.kind === CHAT_WINDOW_KIND && !tab.minimized);
 
 function composeTarget(pane, actions) {
@@ -432,7 +432,7 @@ function TerminalPane({
           <span>Arcane palette</span>
         </label>
         ${solo ? html`
-          <${Button} size="sm" class="mux-btn" title="Move this terminal back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${toTabsLabel(processSnapshot?.value?.collab_enabled === true || !!pane.seed.floats)}<//>
+          <${Button} size="sm" class="mux-btn" title="Move this terminal back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${TO_COLLAB_LABEL}<//>
           ${soloFloats(pane) ? html`<${Button} size="sm" class="mux-btn" title="Float this terminal in a window over the dashboard" onClick=${() => void actions.reattachPane(pane.key, { overlay: true })}>Open in overlay<//>` : null}
         ` : html`
           ${paneFloats(pane, processSnapshot?.value) ? html`<${Button} size="sm" class="mux-btn" title="Float this terminal in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay<//>` : null}
@@ -552,7 +552,7 @@ function BoardPane({ pane, active, solo, manageTitle, actions, snapshot, scope =
     fetchImpl=${fetchFromPage} notify=${shellToast} onOpenAgent=${(agent) => openInCompanion(agent)}
     onTitle=${(title) => actions.setPaneLabel(pane.key, title)}
     headActions=${solo
-      ? html`<${Button} size="sm" class="mux-btn" title="Move this board back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${toTabsLabel(true)}<//>
+      ? html`<${Button} size="sm" class="mux-btn" title="Move this board back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${TO_COLLAB_LABEL}<//>
         ${soloFloats(pane) ? html`<${Button} size="sm" class="mux-btn" title="Float this board in a window over the dashboard" onClick=${() => void actions.reattachPane(pane.key, { overlay: true })}>Open in overlay<//>` : null}`
       : html`
         <${Button} size="sm" class="mux-btn" title="Float this board in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay<//>
@@ -561,7 +561,7 @@ function BoardPane({ pane, active, solo, manageTitle, actions, snapshot, scope =
     class=${`mux-pane mux-pane-board${active ? ' active' : ''}${scope?.hidden ? ' scope-hidden' : ''}`}
     id=${pane.id}
     role=${solo ? null : 'tabpanel'}
-  >${solo ? editor : html`<${BoardsGate} snapshot=${snapshot}>${editor}<//>`}</div>`;
+  >${solo ? editor : html`<${BoardsGate}>${editor}<//>`}</div>`;
 }
 
 // BoardMenu is the strip's ＋ button: open a board or, with Processes on, a
@@ -587,7 +587,7 @@ function BoardMenu({ state, snapshot }) {
   // The delete dialog and the file picker are outside the menu, and the menu is
   // waiting for them.
   useDismissablePopover(rootRef, open && !boardDeleteRequest.value && !picking, () => setOpen(false));
-  if (snapshot?.value?.collab_enabled !== true) return null;
+  if (onPeerPage()) return null;
   const processes = snapshot?.value?.processes_enabled === true;
   const shown = processes ? section : 'boards';
   const wizard = isWizardActive();
@@ -710,7 +710,7 @@ function TabAttention({ pane, snapshot, messages: suppliedMessages = null }) {
 // in the quick panel without leaving the terminal. It keeps to this node's panes
 // and to Collab, which the panel belongs to.
 export function paneApprovals(pane, snapshotValue) {
-  if (snapshotValue?.collab_enabled !== true || paneRemoteNode(pane)) return [];
+  if (paneRemoteNode(pane)) return [];
   const selector = pane?.seed?.agent || '';
   if (!selector) return [];
   return pendingApprovals(snapshotValue).filter((request) => [request.agent_id, request.conv_id, request.current_conv_id].includes(selector));
@@ -1892,7 +1892,7 @@ function TerminalTabs({
           ${hasBackground
             ? html`<div>${backgroundRows.length} tclaude ${backgroundRows.length === 1 ? 'session is' : 'sessions are'} still running without a tab open here. Hover the counter at the top right to attach or review them.</div>`
             : html`<div>Open one from an agent's ⚙ <code>terminals &amp; windows…</code> menu and pick a browser option.</div>`}
-          ${snapshot ? html`<${BoardsGate} snapshot=${snapshot}><div>Or open a board${snapshot.value?.processes_enabled === true ? ' or a process' : ''} from the ＋ above.</div><//>` : null}
+          ${snapshot ? html`<${BoardsGate}><div>Or open a board${snapshot.value?.processes_enabled === true ? ' or a process' : ''} from the ＋ above.</div><//>` : null}
         </div>
       ` : null}
       ${hasPanes || !empty ? html`
@@ -1908,7 +1908,6 @@ function TerminalTabs({
               snapshot=${snapshot}
               fetchImpl=${fetchFromPage}
               notify=${shellToast}
-              collab=${snapshot?.value?.collab_enabled === true}
               scope=${scopeOf(pane)}
             />
           ` : pane.seed.process ? html`
@@ -1918,7 +1917,6 @@ function TerminalTabs({
               active=${current.activeKey === pane.key}
               actions=${actions}
               fetchImpl=${fetchFromPage}
-              collab=${snapshot?.value?.collab_enabled === true}
               scope=${scopeOf(pane)}
             />
           ` : pane.seed.board ? html`
@@ -2046,25 +2044,6 @@ export function mountTerminalShellIsland({
     const held = stripProcesses.peek();
     if (ids.length !== held.length || ids.some((id, index) => id !== held[index])) stripProcesses.value = ids;
   });
-  // A board has no tab while features.collab is off. The router keeps /boards
-  // URLs from opening one; this takes away what was open, or came by handoff.
-  const stopCollabGate = snapshot ? snapshot.subscribe((value) => {
-    if (!value || value.collab_enabled === true) return;
-    // A live page's tab goes too; the page itself stays open (tcl-4r8cz9).
-    state.removePanes(state.panes.peek().filter((pane) => pane.seed.board || pane.seed.page).map((pane) => pane.key));
-    // A process editor with unsaved edits goes back to the Processes tab rather
-    // than lose them, one at a time so none replaces another there, and never to
-    // an overlay window, which goes with Collab. One with nothing unsaved closes.
-    void (async () => {
-      for (const pane of state.panes.peek().filter((candidate) => candidate.seed.process)) {
-        const id = pane.seed.process;
-        const live = floatingProcessEditor(id) ? takeFloatingEditor(id) : null;
-        if (!live) void actions.closePane(pane.key, { moving: true });
-        else if (editorDirty(live.editor)) await returnLiveEditor(id, pane.label, live, { overlay: false });
-        else { live.mount.remove(); live.editor?.destroy?.(); }
-      }
-    })();
-  }) : () => {};
   render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory}
     onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind}
     snapshot=${snapshot} scope=${scope} />`, host);
@@ -2087,7 +2066,6 @@ export function mountTerminalShellIsland({
     stopRemoteStatusPoll();
     stopPeerWatch();
     stopBackgroundPoll();
-    stopCollabGate();
     stopStripProcesses();
     stopPageWatch();
     unregisterPageStrip();

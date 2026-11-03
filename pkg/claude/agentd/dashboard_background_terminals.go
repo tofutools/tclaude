@@ -94,10 +94,7 @@ func handleDashboardBackgroundTerminals(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusServiceUnavailable, "tmux", err.Error())
 		return
 	}
-	rows := classifyBackgroundTerminals(sessions)
-	if collabRoutesEnabled() {
-		rows = append(rows, backgroundBoardRows()...)
-	}
+	rows := append(classifyBackgroundTerminals(sessions), backgroundBoardRows()...)
 	writeJSON(w, http.StatusOK, backgroundTerminalsResponse{Terminals: rows})
 }
 

@@ -30,7 +30,6 @@ func setSteward(t *testing.T, reads, writes string) {
 // nothing recognises it. The name compares after trimming.
 func TestSteward_SummonRejectsAnotherName(t *testing.T) {
 	f, _ := processAuthoringFlow(t)
-	enableCollab(t)
 	stubScribeTerminal(t)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	summon := func(name string) int {
@@ -46,7 +45,6 @@ func TestSteward_SummonRejectsAnotherName(t *testing.T) {
 // The operator's own doors take the steward address too.
 func TestSteward_ReachableFromTheDashboard(t *testing.T) {
 	f, _ := processAuthoringFlow(t)
-	enableCollab(t)
 	stubScribeTerminal(t)
 	mux := dashMessageMux(t)
 	operatorSend := func() int {
@@ -83,7 +81,6 @@ func TestSteward_ReachableFromTheDashboard(t *testing.T) {
 // A Steward's access comes from config, whatever the summon asks for.
 func TestSteward_AccessFromConfigAndAddress(t *testing.T) {
 	f, _ := processAuthoringFlow(t)
-	enableCollab(t)
 	stubScribeTerminal(t)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	summon := func() string {
@@ -204,7 +201,6 @@ func TestSteward_AccessFromConfigAndAddress(t *testing.T) {
 // The companion's band reads what a Steward holds beyond Config from the snapshot.
 func TestSteward_SnapshotListsElevatedAccess(t *testing.T) {
 	f, _ := processAuthoringFlow(t)
-	enableCollab(t)
 	stubScribeTerminal(t)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
@@ -247,7 +243,6 @@ func stewardDefaults(t *testing.T, mux http.Handler, overrides map[string]any) *
 // Steward keeps what it has.
 func TestSteward_DefaultPermissions(t *testing.T) {
 	f, _ := processAuthoringFlow(t)
-	enableCollab(t)
 	stubScribeTerminal(t)
 	mux := dashMessageMux(t)
 
@@ -345,7 +340,6 @@ func TestSteward_DefaultPermissions(t *testing.T) {
 // is touched.
 func TestSteward_CaptureDeniedDropsOnlyCaptureGuidance(t *testing.T) {
 	f, _ := processAuthoringFlow(t)
-	enableCollab(t)
 	stubScribeTerminal(t)
 	require.NoError(t, db.SetStewardCarriedPermission(agentd.PermDashboardCapture, db.Deny(), "test"))
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
@@ -365,7 +359,6 @@ func TestSteward_CaptureDeniedDropsOnlyCaptureGuidance(t *testing.T) {
 // it yet, and stays available if the deny is lifted.
 func TestSteward_ReconcileLeavesAStoredDenyAlone(t *testing.T) {
 	f, _ := processAuthoringFlow(t)
-	enableCollab(t)
 	stubScribeTerminal(t)
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
 		"name": "steward", "scope": map[string]any{"kind": "steward"}, "brief": "Help.",
@@ -418,7 +411,6 @@ func TestSteward_DefaultPermissionsMigrate(t *testing.T) {
 // agent's revoke of a Steward's slug.
 func TestSteward_DefaultPermissionsAreTheOperators(t *testing.T) {
 	f, _ := processAuthoringFlow(t)
-	enableCollab(t)
 	const worker = "stwd-aaaa-bbbb-cccc-000000000009"
 	f.HaveGroup("team")
 	f.HaveMember("team", worker)
@@ -489,7 +481,6 @@ func TestSteward_StoredDenyOutlastsInstanceEdits(t *testing.T) {
 // with config.import, cannot carry the steward block.
 func TestSteward_DefaultPermissionsNotReachableByAgents(t *testing.T) {
 	f, _ := processAuthoringFlow(t)
-	enableCollab(t)
 	const worker = "stwd-aaaa-bbbb-cccc-000000000003"
 	f.HaveGroup("team")
 	f.HaveMember("team", worker)
@@ -520,7 +511,6 @@ func TestSteward_DefaultPermissionsNotReachableByAgents(t *testing.T) {
 // the global default applies.
 func TestSteward_ProfileFromConfig(t *testing.T) {
 	f, _ := processAuthoringFlow(t)
-	enableCollab(t)
 	stubScribeTerminal(t)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	summon := func() {
@@ -543,7 +533,6 @@ func TestSteward_ProfileFromConfig(t *testing.T) {
 // an agent gives it no way to write to it.
 func TestSteward_ListsEveryAgentAndGroup(t *testing.T) {
 	f, _ := processAuthoringFlow(t)
-	enableCollab(t)
 	stubScribeTerminal(t)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	setSteward(t, config.StewardReadsFleet, config.StewardWritesNone)
@@ -609,15 +598,6 @@ func TestSteward_ListsEveryAgentAndGroup(t *testing.T) {
 
 	sent := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/messages", map[string]any{"to": worker, "body": "hi"}), steward))
 	assert.Equal(t, http.StatusForbidden, sent.Code, "with writes off, seeing an agent does not reach it")
-
-	// fleet.read is a Collab surface: with Collab off the grant lifts nothing.
-	cfg, err := config.Load()
-	require.NoError(t, err)
-	require.NotNil(t, cfg.Features)
-	cfg.Features.Collab = new(false)
-	require.NoError(t, config.Save(cfg))
-	_, convs = peers(steward, "")
-	assert.NotContains(t, convs, worker)
 }
 
 // stewardCarryFlow is a Steward's lifecycle as the dashboard drives it.
@@ -629,7 +609,6 @@ type stewardCarryFlow struct {
 
 func newStewardCarryFlow(t *testing.T) *stewardCarryFlow {
 	f, _ := processAuthoringFlow(t)
-	enableCollab(t)
 	stubScribeTerminal(t)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	return &stewardCarryFlow{t: t, f: f, dash: dashMessageMux(t)}

@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -235,14 +234,12 @@ func TestStewardHandover_DemotedAgentCannotRejoinByGroupEdit(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, s.post("/api/operator-message", map[string]any{"to": "steward", "body": "x"}).Code)
 }
 
-func TestStewardHandover_HiddenWithCollabOff(t *testing.T) {
+func TestStewardHandover_RefusedWhenStewardsOptedOut(t *testing.T) {
 	s := newStewardHandoverFlow(t)
-	cfg, err := config.Load()
-	require.NoError(t, err)
-	cfg.Features.Collab = new(false)
-	require.NoError(t, config.Save(cfg))
+	setStewardsDisabled(t, true)
 	rec := s.handover(handoverWorker, "roster")
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Contains(t, rec.Body.String(), "stewards_disabled")
 }
 
 func TestStewardHandover_OperatorSummonReplacesAnOfflineSteward(t *testing.T) {

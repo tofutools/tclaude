@@ -1,8 +1,6 @@
 # Collab boards
 
-Boards are part of [Collab](companion.md#turning-collab-off), which is on by default. With
-Collab turned off, boards do not show in the dashboard, and their API and the
-`tclaude agent board` commands answer with a disabled message.
+Boards are part of [Collab](companion.md).
 
 A collab board is a shared drawing board for the operator and agents. The
 operator draws in the dashboard, where a board opens as a tab of the Collab
@@ -268,8 +266,7 @@ Boards with a session list under **Boards** in the
 [Background terminals](dashboard-terminals.md) counter, with the board's title and the agents
 on it. The row hides while the board is open on the page, and **Open** brings it
 up as a tab. **End** removes every session on that board, never the board. Rows are this node's only:
-peers do not list them, and a peer's per-node view leaves them out. With Collab
-off they do not show.
+peers do not list them, and a peer's per-node view leaves them out.
 
 `board snapshot` still needs a dashboard: it returns what an open editor last
 rendered, however old, so an agent working alone should read with `board show`.

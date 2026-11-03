@@ -88,6 +88,7 @@ import { suppressNextMessagesAttention } from './mail-bridge.js';
 import { allRecipientLabel, counterparty, messageKind, msgPreview, senderLabel, wz } from './mail-labels.js';
 import { withPeerAttachments } from './human-attachments.js';
 import { remoteNodeID } from './fleet-model.js';
+import { onPeerPage } from './node-api.js';
 import { humanReadShared } from './peer-view-limits.js';
 import {
   createMailState, HUMAN_MAILBOX_ID as HUMAN_ID,
@@ -1854,9 +1855,9 @@ function initMail() {
   const controller = new AbortController();
   const { signal } = controller;
   const disposeResize = initMailResize();
-  // With Collab on the quick panel answers it in place; otherwise Messages.
+  // The quick panel answers it in place; a peer's page has none, so Messages.
   $('#access-banner-review')?.addEventListener('click', (event) => {
-    if (document.body.classList.contains('hide-collab')) void focusAccessRequest();
+    if (onPeerPage()) void focusAccessRequest();
     else openAccessPanel({ launcher: event.currentTarget });
   }, { signal });
   document.addEventListener('tclaude:wizard', paintMail, { signal });

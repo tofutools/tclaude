@@ -41,7 +41,6 @@ func newExternalStewardFlow(t *testing.T, enabled bool) *externalStewardFlow {
 	// Every credential shares one proof-rate bucket per wall-clock second, so
 	// this suite's fast tests would otherwise spend each other's budget.
 	t.Cleanup(agentd.ResetBrokerLimiterForTest())
-	enableCollab(t)
 	setExternalStewards(t, enabled)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	// The capture gate tests rely on no dashboard having been heard from.
@@ -119,17 +118,15 @@ func TestExternalSteward_OffByDefault(t *testing.T) {
 	assert.Equal(t, http.StatusOK, code, body)
 }
 
-// With Collab off the routes are absent, as for the Steward, and a credential
-// is refused.
-func TestExternalSteward_NeedsCollab(t *testing.T) {
+// With the steward opt-out none can be made and a credential already issued
+// is refused, whatever steward.external_enabled says.
+func TestExternalSteward_RefusedWhenStewardsOptedOut(t *testing.T) {
 	s := newExternalStewardFlow(t, true)
 	issued := s.create("assistant")
-	cfg, err := config.Load()
-	require.NoError(t, err)
-	cfg.Features.Collab = new(false)
-	require.NoError(t, config.Save(cfg))
-	code, _ := s.humanPost("/v1/external-stewards", map[string]any{"name": "other"})
-	assert.Equal(t, http.StatusNotFound, code)
+	setStewardsDisabled(t, true)
+	code, body := s.humanPost("/v1/external-stewards", map[string]any{"name": "other"})
+	assert.NotEqual(t, http.StatusOK, code, body)
+	assert.NotContains(t, body, "tcls_")
 	code, _ = s.call(issued.Credential, http.MethodGet, "/v1/fleet", nil)
 	assert.Equal(t, http.StatusUnauthorized, code)
 }

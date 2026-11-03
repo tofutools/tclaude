@@ -5,7 +5,6 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { dashboardState } from './snapshot-store.js';
 import {
   KEYBINDINGS_LIST, SHORTCUTS, SHORTCUT_SCOPES, chordFromEvent, chordParts, chordText, isRebindable, rebindProblems,
   setShortcutRecording, shortcut, shortcutChords, shortcutDefault, shortcutPlatform,
@@ -75,7 +74,7 @@ function Recorder({ entry, drafts, onUse, onCancel }) {
 // browser's platform is marked) and whether it fires inside a web terminal.
 // Rebindable shortcuts take new keys and reset to their default; the drafts
 // are saved with the rest of the form.
-export function KeyboardShortcutList({ Setting, drafts = [], onChange = () => {}, collab = dashboardState.snapshot.value?.collab_enabled === true }) {
+export function KeyboardShortcutList({ Setting, drafts = [], onChange = () => {} }) {
   const [recording, setRecording] = useState(null);
   const here = shortcutPlatform() === 'macos' ? 'macos' : 'pc';
   const draft = draftMap(drafts);
@@ -90,8 +89,7 @@ export function KeyboardShortcutList({ Setting, drafts = [], onChange = () => {}
       <button type="button" class="ui-btn" onClick=${() => { setRecording(null); onChange([]); }}>Reset all to defaults</button>
     </div>`}
     ${SHORTCUT_SCOPES.map(scope => {
-      // Collab-only features have no shortcuts while Collab is off.
-      const rows = SHORTCUTS.filter(entry => entry.scope === scope.id && (collab || !entry.collab));
+      const rows = SHORTCUTS.filter(entry => entry.scope === scope.id);
       if (!rows.length) return null;
       // Only dashboard-wide keys can collide with a terminal's own.
       const terminalColumn = scope.id === 'global' || scope.id === 'terminal';

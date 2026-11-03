@@ -27,7 +27,6 @@ type captureFlow struct {
 func newCaptureFlow(t *testing.T) *captureFlow {
 	t.Helper()
 	f, _ := processAuthoringFlow(t)
-	enableCollab(t)
 	agentd.ResetDashboardCaptureForTest()
 	t.Cleanup(agentd.ResetDashboardCaptureForTest)
 	return &captureFlow{t: t, f: f, dash: dashMessageMux(t)}

@@ -1012,7 +1012,7 @@ func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 		"js/config-form-markup.js": {
 			`id="cfg-feature-processes"`, `features.processes`,
 			`id="cfg-processes-refuse-unsigned"`, `processes.refuse_unsigned_imports`,
-			`id="cfg-feature-collab"`, `features.collab`,
+			`id="cfg-steward-enabled"`, `steward.disabled`,
 			`id="cfg-feature-triggers"`, `features.triggers`,
 			`id="cfg-feature-groups-route-map"`, `features.groups_route_map`,
 			`id="cfg-feature-group-attachments"`, `features.group_attachments`,
@@ -1024,7 +1024,7 @@ func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 		"js/config-form-adapter.js": {
 			"#cfg-feature-processes", "feats.processes = true",
 			"#cfg-processes-refuse-unsigned", "processes.refuse_unsigned_imports = true",
-			"#cfg-feature-collab", "feats.collab = $('#cfg-feature-collab').checked",
+			"#cfg-steward-enabled", "steward.disabled = true",
 			"#cfg-feature-triggers", "feats.triggers = true",
 			"#cfg-feature-groups-route-map", "feats.groups_route_map = true",
 			"#cfg-feature-group-attachments", "feats.group_attachments = groupAttachments",

@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -207,16 +206,6 @@ type FeaturesConfig struct {
 	// are landing in bounded slices.
 	Triggers bool `json:"triggers,omitempty"`
 
-	// Collab enables the collaboration surfaces: the floating companion
-	// window with the Steward, shared boards, the fleet brief, operator
-	// decisions and dashboard guidance. It defaults on; an explicit false
-	// turns them off and gates their dashboard chrome, daemon routes and CLI
-	// commands. A *bool so absent (on) is distinguishable from an explicit
-	// false that an upgrade must keep. The daemon stores it on its first start
-	// after the upgrade (agentd resolveCollabDefault), as older builds deleted
-	// the key instead of storing false.
-	Collab *bool `json:"collab,omitempty"`
-
 	// GroupAttachments selects how the in-development persistent http(s)
 	// attachment control appears on group titles. It defaults off while the
 	// interaction design is being refined. Disabling it hides the dashboard
@@ -267,30 +256,6 @@ const ProcessesDisabledMessage = "process commands are disabled; set features.pr
 // TriggersDisabledMessage is the stable response returned by daemon trigger
 // routes while the experimental feature is disabled.
 const TriggersDisabledMessage = "trigger commands are disabled; set features.triggers=true in tclaude config to use this experimental surface"
-
-// CollabDisabledMessage is the stable response returned by daemon collab
-// routes (boards, fleet brief, dashboard guidance, the companion) while the
-// operator has turned Collab off.
-const CollabDisabledMessage = "Collab is turned off; set features.collab=true in tclaude config to use this command"
-
-// collabUnsetOff makes an unset features.collab read as off in this process.
-// The daemon sets it when it could not store the upgrade default, so a run that
-// can't tell whether the operator had turned Collab off fails closed.
-var collabUnsetOff atomic.Bool
-
-// SetCollabUnsetOff sets whether an unset features.collab reads as off in this
-// process; see collabUnsetOff.
-func SetCollabUnsetOff(off bool) { collabUnsetOff.Store(off) }
-
-// CollabEnabled reports whether Collab is on: it is unless features.collab is
-// explicitly false, or unset in a daemon that could not store its default.
-// Nil-safe.
-func (c *Config) CollabEnabled() bool {
-	if c == nil || c.Features == nil || c.Features.Collab == nil {
-		return !collabUnsetOff.Load()
-	}
-	return *c.Features.Collab
-}
 
 // ProcessesConfig is operator policy for processes.
 type ProcessesConfig struct {
@@ -1411,6 +1376,11 @@ type StewardConfig struct {
 	// StewardSource constants. It is consent to a download, which is why it
 	// lives here, where only the operator can set it.
 	SourceDownload string `json:"source_download,omitempty"`
+	// Disabled opts this instance out of stewards: no companion Steward can be
+	// summoned or handed the role, its window is not shown, and external
+	// stewards are refused whatever ExternalEnabled says. Every other Collab
+	// surface stays on. Off by default.
+	Disabled bool `json:"disabled,omitempty"`
 	// ExternalEnabled lets an assistant outside tclaude act as a steward with
 	// a credential the operator made. Off by default: while off, none can be
 	// made and every one presented is refused.
@@ -1511,9 +1481,16 @@ func (c *Config) StewardWrites() string {
 	return StewardWritesMessaging
 }
 
-// ExternalStewardsEnabled reports the external steward switch. Nil-safe.
+// StewardsEnabled reports whether this instance has stewards at all: true
+// unless the operator opted out with steward.disabled. Nil-safe.
+func (c *Config) StewardsEnabled() bool {
+	return c == nil || c.Steward == nil || !c.Steward.Disabled
+}
+
+// ExternalStewardsEnabled reports the external steward switch, which the
+// steward opt-out overrides. Nil-safe.
 func (c *Config) ExternalStewardsEnabled() bool {
-	return c != nil && c.Steward != nil && c.Steward.ExternalEnabled
+	return c.StewardsEnabled() && c != nil && c.Steward != nil && c.Steward.ExternalEnabled
 }
 
 // ExternalStewardMaxChildren returns the cap on one external steward's running
@@ -4322,50 +4299,6 @@ func MigratePermissionNames() error {
 	}
 	Normalize(&cfg)
 	return saveLocked(&cfg)
-}
-
-// StoreCollabDefault stores features.collab when config.json lacks it, with
-// the value decide returns, and reports the value stored or found. decide runs
-// only when the key is absent. Only that key is written: a normalized Save
-// would also add defaults, such as the notifications block, that tclaude setup
-// reads as the operator's own choice. A missing file gets one holding only the
-// key; an unreadable or malformed one is left alone and its error returned.
-func StoreCollabDefault(decide func() (bool, error)) (bool, error) {
-	saveMu.Lock()
-	defer saveMu.Unlock()
-	target := ConfigPath()
-	root := map[string]json.RawMessage{}
-	if data, err := os.ReadFile(target); err == nil {
-		if err := json.Unmarshal(data, &root); err != nil {
-			return false, err
-		}
-	} else if !os.IsNotExist(err) {
-		return false, err
-	}
-	features := map[string]json.RawMessage{}
-	if raw, ok := root["features"]; ok && string(raw) != "null" {
-		if err := json.Unmarshal(raw, &features); err != nil {
-			return false, err
-		}
-	}
-	if raw, ok := features["collab"]; ok && string(raw) != "null" {
-		var on bool
-		err := json.Unmarshal(raw, &on)
-		return on, err
-	}
-	on, err := decide()
-	if err != nil {
-		return false, err
-	}
-	features["collab"] = json.RawMessage(strconv.FormatBool(on))
-	if root["features"], err = json.Marshal(features); err != nil {
-		return false, err
-	}
-	data, err := json.MarshalIndent(root, "", "  ")
-	if err != nil {
-		return false, err
-	}
-	return on, writeConfigLocked(target, data)
 }
 
 // saveMu serializes config-file writes within this process. Save's

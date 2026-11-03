@@ -7,8 +7,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 // The peer-view allowlist refuses these routes first. This is the line behind it,
@@ -16,10 +14,6 @@ import (
 func TestDashboardExternalStewardRoute_RefusesPeerAuthority(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
-	cfg, err := config.Load()
-	require.NoError(t, err)
-	cfg.Features = &config.FeaturesConfig{Collab: new(true)}
-	require.NoError(t, config.Save(cfg))
 
 	reached := false
 	route := dashboardExternalStewardRoute(func(http.ResponseWriter, *http.Request) { reached = true })

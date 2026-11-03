@@ -139,11 +139,7 @@ export function KnowledgeSourceRow({ snapshot, fetchImpl = globalThis.fetch }) {
   </div>`;
 }
 
-export function KnowledgeSourceGate(props) {
-  return props.snapshot.value?.collab_enabled === true ? html`<${KnowledgeSourceCard} ...${props} />` : null;
-}
-
 export function mountKnowledgeSourceIsland({ host, registerCleanup, ...props }) {
-  render(html`<${KnowledgeSourceGate} ...${props} />`, host);
+  render(html`<${KnowledgeSourceCard} ...${props} />`, host);
   registerCleanup(() => render(null, host));
 }

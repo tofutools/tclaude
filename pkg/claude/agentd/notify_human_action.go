@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -133,10 +132,6 @@ func humanActionDir(convID string) string {
 func checkNotifyHumanAction(w http.ResponseWriter, callerConv, action string, decision bool) bool {
 	if action == "" {
 		return true
-	}
-	if !collabRoutesEnabled() {
-		writeError(w, http.StatusNotFound, collabDisabledCode, config.CollabDisabledMessage)
-		return false
 	}
 	if callerConv == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "an action names the agent's own things; actions are for agents")
@@ -315,10 +310,6 @@ func handleDashboardHumanMessageAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
-		return
-	}
-	if !collabRoutesEnabled() {
-		writeError(w, http.StatusNotFound, collabDisabledCode, config.CollabDisabledMessage)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4*1024)

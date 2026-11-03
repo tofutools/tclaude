@@ -21,7 +21,7 @@ import (
 // calls never retry: the response holds the credential, so the daemon keeps no
 // copy to replay, and a retry would mint another one.
 
-const externalStewardNeeds = "Only the human operator can run this; agents are refused. Needs Collab and steward.external_enabled in the config."
+const externalStewardNeeds = "Only the human operator can run this; agents are refused. Needs steward.external_enabled in the config, and stewards not turned off with steward.disabled."
 
 func stewardExternalCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
