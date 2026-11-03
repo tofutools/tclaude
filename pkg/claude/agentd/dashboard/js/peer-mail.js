@@ -110,7 +110,7 @@ export function PeerMailDialog({ initial = {}, onClose, toast, actions = default
       .finally(() => setBusy(false));
   };
   return html`<${Dialog} id="peer-mail-modal" title="Message a peer" onClose=${onClose} blocked=${busy} initialFocusRef=${bodyRef}
-    footer=${html`<${DialogClose}>Close<//>
+    footer=${html`<${DialogClose} disabled=${busy}>Close<//>
       <${Button} variant="primary" id="peer-mail-send" disabled=${busy || !ready} onClick=${send}>${busy ? 'Sending…' : 'Send'}</${Button}>`}
     after=${html`<h4 class="peer-mail-h">Outbox <${Button} size="sm" variant="link" class="fa-link" onClick=${() => setTick((n) => n + 1)}>refresh<//></h4>
     ${outbox?.error ? html`<div class="fa-danger">${outbox.error}</div>` : !outbox ? html`<div class="muted">Loading…</div>` : outbox.length === 0 ? html`<div class="muted">Nothing sent yet.</div>` : html`

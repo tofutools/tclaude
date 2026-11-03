@@ -127,7 +127,7 @@ export function RequestAccessDialog({ node, perm, groups = [], gateway = '', onC
   const group = groups.find((g) => String(g.id) === String(groupID));
   return html`<${Dialog} id="peer-access-modal" title=${usage ? html`Ask ${node} for usage` : html`Request <code>${perm}</code> from ${node}`}
     onClose=${onClose} blocked=${busy}
-    footer=${html`<${DialogClose}>${request ? 'Close' : 'Cancel'}<//>
+    footer=${html`<${DialogClose} disabled=${busy}>${request ? 'Close' : 'Cancel'}<//>
       ${!request && html`<${Button} variant="primary" id="peer-access-submit" disabled=${busy || (scope === 'scoped' && !groupID) || maxUSD === null} onClick=${send}>Send request</${Button}>`}`}
     after=${html`<div class="muted fa-cli-note">CLI: <code>tclaude federation access request --node … --permission ${perm}${scope !== 'node' ? ' [--group-id …]' : ''}${usage ? ' --max-usd … [--http-proxy …]' : ''}</code></div>`}>
     ${request ? html`<div id="peer-access-status" class=${request.status === 'approved' ? '' : request.status === 'pending' ? 'muted' : 'fa-danger'}>
