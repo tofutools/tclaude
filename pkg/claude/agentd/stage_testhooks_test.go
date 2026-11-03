@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 )
@@ -58,11 +60,23 @@ func (t HandlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return res, nil
 }
 
-// SetStageRootPIDForTest swaps how an agent's process-tree root is resolved.
-func SetStageRootPIDForTest(fn func(agentID string) (int, error)) func() {
-	prev := stageRootPID
-	stageRootPID = fn
-	return func() { stageRootPID = prev }
+// SetStageAgentForTest swaps how an agent's process tree is resolved: its
+// root pid and whether its launch has a private network namespace.
+func SetStageAgentForTest(fn func(agentID string) (root int, privateNet bool, err error)) func() {
+	prev := stageResolveAgent
+	stageResolveAgent = func(agentID string) (stageAgentProc, error) {
+		root, private, err := fn(agentID)
+		return stageAgentProc{root: root, privateNet: private}, err
+	}
+	return func() { stageResolveAgent = prev }
+}
+
+// SetStageNetnsForTest swaps the sandbox-entry lookup and the in-namespace
+// dial.
+func SetStageNetnsForTest(entry func(root int) int, dial func(ctx context.Context, pid, port int) (net.Conn, error)) func() {
+	prevEntry, prevDial := stageForeignNetns, stageNetnsDial
+	stageForeignNetns, stageNetnsDial = entry, dial
+	return func() { stageForeignNetns, stageNetnsDial = prevEntry, prevDial }
 }
 
 // RegisterStageDaemonPortForTest marks a port as the daemon's own.

@@ -21,16 +21,17 @@ not the daemon's own.
   Storybook, anything). The dev server must listen on `127.0.0.1`. A server
   bound only to `::1` (some `localhost` setups) is not found, so start it with
   `--host 127.0.0.1` or the equivalent.
-  - *Sandboxed agent with a private network namespace (Linux):* the stage
-    connects inside the agent's own namespace. Its loopback belongs to the
-    sandbox alone, so whatever listens there is the agent's. The connection is
-    made through util-linux `nsenter`, the same way the sandbox supervisor
-    enters the namespace.
-  - *Host-network agent:* the listener on `127.0.0.1:<port>` must belong to the
+  - *Sandboxed agent with a private network namespace (Linux):* the launch
+    record says so, and the stage then connects only inside the agent's own
+    namespace, never on the host. That loopback serves the agent's launch alone:
+    the agent's processes plus the sandbox's own network helpers. The
+    connection is made through util-linux `nsenter`, the same way the sandbox
+    supervisor enters the namespace.
+  - *Host-network agent:* every listener on `127.0.0.1:<port>` must belong to the
     agent's process tree (its pane, or the OpenCode server it runs under). The
     stage proves this from the kernel's socket tables (`/proc` on Linux, `lsof`
     on macOS) before every new connection. A port another program holds is
-    refused.
+    refused, even when the agent shares it through `SO_REUSEPORT`.
   - *macOS:* Seatbelt gives no private network namespace, so a sandboxed agent's
     port is checked like a host-network agent's. An agent whose profile closes
     network access cannot listen on loopback at all, so it cannot serve a page
@@ -45,7 +46,10 @@ not the daemon's own.
   inside the worktree. Names that start with a dot (`.git`, `.env`) are refused,
   and only common web file types are served. A directory serves its
   `index.html`. A single-file page serves only that file. The daemon watches the
-  source and asks open views to reload when a file is saved.
+  source and asks open views to reload when a file is saved. At most 16 static
+  pages are watched at a time, each up to 500 directories, so watching cannot
+  exhaust the operator's inotify limits. A page beyond either limit is still
+  served, but it does not reload on save.
 
 ## The stage: how a page is kept away from the dashboard
 

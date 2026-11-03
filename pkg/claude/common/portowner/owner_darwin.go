@@ -70,6 +70,80 @@ func ProcessOwnsLoopbackPort(rootPID, port int) bool {
 	return false
 }
 
+// ProcessOwnsAllLoopbackListeners is the strict form: every pid lsof reports
+// listening on 127.0.0.1:port must be rootPID or a descendant of it.
+func ProcessOwnsAllLoopbackListeners(rootPID, port int) bool {
+	if rootPID <= 1 || port <= 0 || port > 65535 {
+		return false
+	}
+	owners, ok := loopbackListenerPIDs(port)
+	if !ok || len(owners) == 0 {
+		return false
+	}
+	parents, ok := processParents()
+	if !ok {
+		return false
+	}
+	for owner := range owners {
+		if !descendsFrom(owner, rootPID, parents) {
+			return false
+		}
+	}
+	return true
+}
+
+func loopbackListenerPIDs(port int) (map[int]struct{}, bool) {
+	out, err := exec.Command("lsof", "-nP",
+		"-iTCP@127.0.0.1:"+strconv.Itoa(port), "-sTCP:LISTEN", "-Fp").Output()
+	if err != nil {
+		return nil, false
+	}
+	owners := map[int]struct{}{}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if !strings.HasPrefix(line, "p") {
+			continue
+		}
+		if pid, err := strconv.Atoi(strings.TrimPrefix(line, "p")); err == nil {
+			owners[pid] = struct{}{}
+		}
+	}
+	return owners, true
+}
+
+func processParents() (map[int]int, bool) {
+	processes, err := exec.Command("ps", "-ax", "-o", "pid=,ppid=").Output()
+	if err != nil {
+		return nil, false
+	}
+	parents := map[int]int{}
+	for line := range strings.SplitSeq(string(processes), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		pid, pidErr := strconv.Atoi(fields[0])
+		ppid, ppidErr := strconv.Atoi(fields[1])
+		if pidErr == nil && ppidErr == nil {
+			parents[pid] = ppid
+		}
+	}
+	return parents, true
+}
+
+func descendsFrom(pid, rootPID int, parents map[int]int) bool {
+	for depth := 0; pid > 1 && depth < 256; depth++ {
+		if pid == rootPID {
+			return true
+		}
+		parent, found := parents[pid]
+		if !found || parent == pid {
+			return false
+		}
+		pid = parent
+	}
+	return false
+}
+
 // HasLoopbackListener reports whether ANY process is listening on
 // 127.0.0.1:port, so a caller can tell "never came up" from "someone else won
 // the port" without touching the socket. It says nothing about whose it is.

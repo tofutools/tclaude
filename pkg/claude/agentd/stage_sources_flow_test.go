@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -17,13 +18,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/netnsdial"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 // stageRootIs makes the agent's process tree start at pid.
 func stageRootIs(t *testing.T, pid int) {
 	t.Helper()
-	t.Cleanup(agentd.SetStageRootPIDForTest(func(string) (int, error) { return pid, nil }))
+	t.Cleanup(agentd.SetStageAgentForTest(func(string) (int, bool, error) { return pid, false, nil }))
 }
 
 // strangerPID is a live process outside the test's own tree.
@@ -127,8 +129,8 @@ func TestStageAgentPortRefusesTheDaemonsPorts(t *testing.T) {
 
 func TestStageAgentPortRootUnknown(t *testing.T) {
 	e := newStageEnv(t)
-	t.Cleanup(agentd.SetStageRootPIDForTest(func(string) (int, error) {
-		return 0, errors.New("internal detail")
+	t.Cleanup(agentd.SetStageAgentForTest(func(string) (int, bool, error) {
+		return 0, false, errors.New("internal detail")
 	}))
 	useAgentPort(t, e, 5173)
 	res := e.do(t, http.MethodGet, e.host(), "/", nil)
@@ -187,6 +189,83 @@ func TestStageAgentPortProxiesWebsocketUpgrade(t *testing.T) {
 	_, msg, err := conn.ReadMessage()
 	require.NoError(t, err)
 	assert.Equal(t, "echo:hi", string(msg))
+}
+
+func TestStageAgentPortPrivateNetworkDialsInsideTheNamespaceOnly(t *testing.T) {
+	e := newStageEnv(t)
+	dev := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "from-netns")
+	}))
+	t.Cleanup(dev.Close)
+	// The host listener is owned by the "agent" (this process), but its
+	// launch has a private network namespace: the host path must not be used.
+	t.Cleanup(agentd.SetStageAgentForTest(func(string) (int, bool, error) { return os.Getpid(), true, nil }))
+	entry := 4242
+	var dialled []int
+	refuse := false
+	t.Cleanup(agentd.SetStageNetnsForTest(
+		func(int) int { return entry },
+		func(_ context.Context, pid, port int) (net.Conn, error) {
+			dialled = append(dialled, pid, port)
+			if refuse {
+				return nil, netnsdial.ErrRefused
+			}
+			return net.Dial("tcp", dev.Listener.Addr().String())
+		}))
+	useAgentPort(t, e, 5173)
+
+	res := e.do(t, http.MethodGet, e.host(), "/", nil)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	assert.Equal(t, "from-netns", readBody(t, res))
+	assert.Equal(t, []int{4242, 5173}, dialled)
+
+	refuse = true
+	e.page.SetUpstream(nil)
+	useAgentPort(t, e, 5173)
+	res = e.do(t, http.MethodGet, e.host(), "/", nil)
+	assert.Equal(t, http.StatusBadGateway, res.StatusCode)
+	assert.Contains(t, readBody(t, res), "nothing is listening on :5173 in the agent's sandbox")
+
+	entry = 0
+	e.page.SetUpstream(nil)
+	useAgentPort(t, e, 5173)
+	res = e.do(t, http.MethodGet, e.host(), "/", nil)
+	assert.Equal(t, http.StatusBadGateway, res.StatusCode)
+	assert.Contains(t, readBody(t, res), "sandbox network is not running")
+}
+
+func TestStageClosingAPageEndsItsWebsockets(t *testing.T) {
+	e := newStageEnv(t)
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	dev := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = c.Close() }()
+		for {
+			if _, _, err := c.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(dev.Close)
+	stageRootIs(t, os.Getpid())
+	useAgentPort(t, e, listenerPort(t, dev))
+	dialer := websocket.Dialer{
+		NetDial:          func(string, string) (net.Conn, error) { return net.Dial("tcp", e.srv.Listener.Addr().String()) },
+		HandshakeTimeout: 5 * time.Second,
+	}
+	conn, _, err := dialer.Dial("ws://"+e.host()+"/hmr", http.Header{"Sec-Fetch-Dest": {"websocket"}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	agentd.CloseStagePageForTest(e.page.Token)
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+	_, _, err = conn.ReadMessage()
+	require.Error(t, err)
+	var ne net.Error
+	assert.False(t, errors.As(err, &ne) && ne.Timeout(), "the socket was closed, not left open: %v", err)
 }
 
 // --- static ---

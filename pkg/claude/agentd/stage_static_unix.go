@@ -45,7 +45,12 @@ var stageStaticTypes = map[string]string{
 
 const (
 	stageStaticMaxFile   = 64 << 20
-	stageStaticMaxWatch  = 2000
+	// Each watched page costs one inotify instance (the per-user default
+	// limit is 128, shared with editors and dev servers) and a watch per
+	// directory, so both are capped. A page past either cap is still served;
+	// it just does not reload on save.
+	stageStaticMaxWatch    = 500
+	stageStaticMaxWatchers = 16
 	stageStaticDebounce  = 150 * time.Millisecond
 	stageStaticIndexName = "index.html"
 )
@@ -239,9 +244,25 @@ func (s *stageStatic) RoundTrip(req *http.Request) (*http.Response, error) {
 // watch watches the source (recursively for a directory, skipping dot and
 // node_modules directories and never following a symlink) and calls
 // onChange, debounced, on any change.
+var stageStaticWatchers struct {
+	sync.Mutex
+	n int
+}
+
 func (s *stageStatic) watch(onChange func()) {
+	stageStaticWatchers.Lock()
+	if stageStaticWatchers.n >= stageStaticMaxWatchers {
+		stageStaticWatchers.Unlock()
+		slog.Warn("stage: too many watched static pages; this one will not reload on save")
+		return
+	}
+	stageStaticWatchers.n++
+	stageStaticWatchers.Unlock()
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
+		stageStaticWatchers.Lock()
+		stageStaticWatchers.n--
+		stageStaticWatchers.Unlock()
 		slog.Warn("stage: static watch unavailable", "err", err)
 		return
 	}
@@ -327,6 +348,9 @@ func (s *stageStatic) Close() error {
 		close(s.stop)
 		if s.watcher != nil {
 			_ = s.watcher.Close()
+			stageStaticWatchers.Lock()
+			stageStaticWatchers.n--
+			stageStaticWatchers.Unlock()
 		}
 	})
 	return nil
