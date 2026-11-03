@@ -145,6 +145,7 @@ body.slop {
   --ui-text: #f0dcc0;
   --ui-text-strong: #ffe88c;
   --ui-muted: #c0a080;
+  --ui-muted-text: #c0a080;
   --ui-focus: #ffd700;
   --ui-pressed-bg: rgba(255, 215, 0, 0.18);
   --ui-field-bg: #1a0505;
