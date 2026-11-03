@@ -7964,7 +7964,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   color: #7d8590; font-family: inherit; font-size: 12px;
   padding: 4px 10px; cursor: pointer;
 }
-.sbx-add-row:hover { background: #1c2330; color: #c9d1d9; }
+.sbx-add-row:where(:not(.ui-btn)):hover { background: #1c2330; color: #c9d1d9; }
 .sbx-effective-environment-toggle {
   background: transparent; border: 1px solid #30363d; border-radius: 4px;
   color: #8b949e; font-family: inherit; font-size: 12px; padding: 4px 9px;
