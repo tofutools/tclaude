@@ -403,8 +403,10 @@ test('profile editor shows the unsandboxed-autonomy warning and clears it on a s
     confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); },
   });
   await harness.act(() => Promise.resolve());
-  // The probe is debounced; let the timer fire and the state settle.
-  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
+  // The probe is debounced (200ms); wait for the rendered warning rather than
+  // a fixed sleep, which raced the debounce on a slow macOS runner.
+  await waitForCondition(harness, () => host.querySelector('#profile-editor-autonomy-warning'),
+    'off + auto renders the warning row');
 
   const warning = host.querySelector('#profile-editor-autonomy-warning');
   assert.ok(warning, 'off + auto renders the warning row');
@@ -418,7 +420,8 @@ test('profile editor shows the unsandboxed-autonomy warning and clears it on a s
   // Picking a confining sandbox (`on` is a catalog option) clears it.
   choose(host.querySelector('#profile-editor-sandbox'), 'on');
   await harness.act(() => harness.fireEvent(host.querySelector('#profile-editor-sandbox'), 'change'));
-  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
+  await waitForCondition(harness, () => probes.some((p) => p.sandbox === 'on')
+    && !host.querySelector('#profile-editor-autonomy-warning'), 'a safe sandbox clears the warning');
   assertAbsent(host.querySelector('#profile-editor-autonomy-warning'), 'a safe sandbox clears the warning');
 
   cleanups.reverse().forEach((fn) => fn());
