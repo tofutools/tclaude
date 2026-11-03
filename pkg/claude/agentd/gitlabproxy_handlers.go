@@ -161,6 +161,8 @@ type glMR struct {
 	WebURL              string      `json:"web_url"`
 	CreatedAt           string      `json:"created_at"`
 	UpdatedAt           string      `json:"updated_at"`
+	MergedAt            string      `json:"merged_at"`
+	ClosedAt            string      `json:"closed_at"`
 	SHA                 string      `json:"sha"`
 	MergeCommitSHA      string      `json:"merge_commit_sha"`
 	SquashCommitSHA     string      `json:"squash_commit_sha"`

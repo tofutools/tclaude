@@ -342,7 +342,7 @@ func shareAuthoredOpenMRReviews(ctx context.Context, base, token string, items [
 	readCtx, cancel := context.WithTimeout(ctx, authoredOpenMRTimeout)
 	reviewers, err := fetchAuthoredMRReviewers(readCtx, base, token)
 	cancel()
-	if err != nil && !errors.Is(err, errGLNoReviewStates) {
+	if err != nil && !errors.Is(err, errGLUnknownField) {
 		slog.Debug("open-mrs: GitLab reviewer read failed; keeping cached reviewers",
 			"host", gitlabBaseHost(base), "error", err, "module", "agentd")
 	}
@@ -354,7 +354,7 @@ func shareAuthoredOpenMRReviews(ctx context.Context, base, token string, items [
 		switch node, ok := reviewers[prStateKey(items[i].URL)]; {
 		case ok:
 			obs.Reviewers = glReviewers(base, node.ApprovedBy.Nodes, node.Reviewers.Nodes)
-		case !errors.Is(err, errGLNoReviewStates):
+		case !errors.Is(err, errGLUnknownField):
 			// Read and missing (opened between the two reads), or not read:
 			// the decision alone, so a list with change requests is not
 			// replaced by one without.

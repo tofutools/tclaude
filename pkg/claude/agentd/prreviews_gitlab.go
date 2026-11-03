@@ -92,8 +92,9 @@ type glGraphQLError struct {
 	} `json:"extensions"`
 }
 
-// errGLNoReviewStates says the instance does not know the reviewer fields.
-var errGLNoReviewStates = errors.New("this GitLab instance has no reviewer states")
+// errGLUnknownField says the instance refused a query over a field its
+// GraphQL schema does not have: an instance older than the field.
+var errGLUnknownField = errors.New("this GitLab instance does not know a field the query asked for")
 
 // glReviewStatesMissing holds the instance bases (lower-cased) that answered
 // the reviewer read with an unknown-field error.
@@ -193,7 +194,7 @@ func glReviewObservation(base string, node glMRReviewNode) prReviewObservation {
 }
 
 // glGraphQL posts one query and decodes its data. It reports an unknown-field
-// refusal as errGLNoReviewStates and every other failure as an error.
+// refusal as errGLUnknownField and every other failure as an error.
 func glGraphQL(ctx context.Context, base, token, query string, variables map[string]any, data any) error {
 	res, err := glDo(ctx, base, token, glAPIRequest{
 		Method:  http.MethodPost,
@@ -217,7 +218,7 @@ func glGraphQL(ctx context.Context, base, token, query string, variables map[str
 		return err
 	}
 	if glUnknownFieldError(doc.Errors) {
-		return errGLNoReviewStates
+		return errGLUnknownField
 	}
 	if len(doc.Errors) > 0 {
 		return errors.New(truncateAuthoredPRTitle(doc.Errors[0].Message))
@@ -235,14 +236,14 @@ func gitlabMRReviews(ctx context.Context, base, token string, ref gitlabMRRef) *
 		} `json:"project"`
 	}
 	vars := map[string]any{"project": ref.project, "iid": strconv.Itoa(ref.number)}
-	err := errGLNoReviewStates
+	err := errGLUnknownField
 	if !glReviewStatesKnownMissing(base) {
 		err = glGraphQL(ctx, base, token, glMRReviewsQuery, vars, &data)
-		if errors.Is(err, errGLNoReviewStates) {
+		if errors.Is(err, errGLUnknownField) {
 			markGLReviewStatesMissing(base)
 		}
 	}
-	if errors.Is(err, errGLNoReviewStates) {
+	if errors.Is(err, errGLUnknownField) {
 		err = glGraphQL(ctx, base, token, glMRApprovalsQuery, vars, &data)
 	}
 	if err != nil || data.Project == nil || data.Project.MergeRequest == nil {
@@ -253,11 +254,11 @@ func gitlabMRReviews(ctx context.Context, base, token string, ref gitlabMRRef) *
 }
 
 // fetchAuthoredMRReviewers runs the Open MRs list's reviewer read, keyed by
-// prStateKey. errGLNoReviewStates means the instance cannot answer it, and is
-// remembered.
+// prStateKey. errGLUnknownField means the instance has no reviewer states, and
+// is remembered.
 func fetchAuthoredMRReviewers(ctx context.Context, base, token string) (map[string]glMRReviewNode, error) {
 	if glReviewStatesKnownMissing(base) {
-		return nil, errGLNoReviewStates
+		return nil, errGLUnknownField
 	}
 	var data struct {
 		CurrentUser *struct {
@@ -267,7 +268,7 @@ func fetchAuthoredMRReviewers(ctx context.Context, base, token string) (map[stri
 		} `json:"currentUser"`
 	}
 	err := glGraphQL(ctx, base, token, glAuthoredMRReviewersQuery, map[string]any{"first": authoredOpenMRLimit}, &data)
-	if errors.Is(err, errGLNoReviewStates) {
+	if errors.Is(err, errGLUnknownField) {
 		markGLReviewStatesMissing(base)
 	}
 	if err != nil {

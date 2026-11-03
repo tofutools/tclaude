@@ -158,21 +158,8 @@ const gitlabPresentedPRTimeout = 20 * time.Second
 // configured: the token and the instance both come from that policy, and
 // without it there is no credential to spend.
 func gitlabPresentedPRInfo(rawURL string) (presentedPRInfo, bool) {
-	ref, ok := gitlabMRRefFromURL(rawURL)
+	ref, base, token, ok := gitlabMRCredential(rawURL)
 	if !ok {
-		return presentedPRInfo{}, false
-	}
-	cfg, err := config.Load()
-	if err != nil || !cfg.GitProxyEnabled() {
-		return presentedPRInfo{}, false
-	}
-	policy := cfg.ResolvedGitProxy()
-	base, err := gitlabMRPolicyBase(ref, policy)
-	if err != nil {
-		return presentedPRInfo{}, false
-	}
-	token, fault := gitlabToken(policy)
-	if fault != nil {
 		return presentedPRInfo{}, false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), gitlabPresentedPRTimeout)
@@ -207,21 +194,8 @@ func gitlabOpenMRReviews(ctx context.Context, base, token string, ref gitlabMRRe
 // pipeline's jobs as a check list, plus the merge request's state so a merged
 // one stops being polled.
 func gitlabPRChecks(rawURL string) (prChecksInfo, bool) {
-	ref, ok := gitlabMRRefFromURL(rawURL)
+	ref, base, token, ok := gitlabMRCredential(rawURL)
 	if !ok {
-		return prChecksInfo{}, false
-	}
-	cfg, err := config.Load()
-	if err != nil || !cfg.GitProxyEnabled() {
-		return prChecksInfo{}, false
-	}
-	policy := cfg.ResolvedGitProxy()
-	base, err := gitlabMRPolicyBase(ref, policy)
-	if err != nil {
-		return prChecksInfo{}, false
-	}
-	token, fault := gitlabToken(policy)
-	if fault != nil {
 		return prChecksInfo{}, false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), gitlabPresentedPRTimeout)
