@@ -601,3 +601,24 @@ func TestAuthoredOpenMRsSnapshot_HidesListsReadWithAnotherToken(t *testing.T) {
 	require.NoError(t, os.Remove(tokenFile))
 	assert.Nil(t, authoredOpenMRsSnapshot(loadCfg(t), nil), "an unreadable token shows nothing")
 }
+
+// TestStampOpenMRReviews_AProjectTabTakesAnAgentsBadgeReviews: a project
+// tab's row costs no read; it takes the reviews already in hand, from the
+// user's own list or, as here, from an agent's Branch column badge.
+func TestStampOpenMRReviews_AProjectTabTakesAnAgentsBadgeReviews(t *testing.T) {
+	setupTestDB(t)
+	url := testMRBase + "/acme/sub/app/-/merge_requests/9"
+	own := &prReviewSummary{Approved: 1, ReviewersKnown: true}
+	view := &dashboardAuthoredOpenMRs{Projects: []dashboardOpenMRProject{{
+		Project: "acme/sub/app",
+		Items: []dashboardAuthoredOpenPR{
+			{Number: 9, URL: url, Reviews: own},
+			{Number: 10, URL: testMRBase + "/acme/sub/app/-/merge_requests/10", Reviews: own},
+		},
+	}}}
+	badge := &prReviewSummary{Approved: 1, ChangesRequested: 1, ReviewersKnown: true}
+	agents := []dashboardAgent{{repoLinksView: repoLinksView{BranchPRURL: url + "/diffs", BranchReviews: badge}}}
+	stampOpenMRReviews(view, agents)
+	assert.Same(t, badge, view.Projects[0].Items[0].Reviews, "the agent's badge, matched by the merge request, not the URL's spelling")
+	assert.Same(t, own, view.Projects[0].Items[1].Reviews, "a row with nothing in hand keeps its list query's approvals")
+}
