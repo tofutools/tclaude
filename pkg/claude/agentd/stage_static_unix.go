@@ -349,8 +349,7 @@ func (s *stageStatic) RoundTrip(req *http.Request) (*http.Response, error) {
 		_ = unix.Close(fd)
 		return stageStaticNotFound(req), nil
 	}
-	if s.guard != nil && strings.HasPrefix(ctype, "text/html") &&
-		strings.EqualFold(strings.TrimSpace(req.Header.Get("Sec-Fetch-Dest")), "iframe") {
+	if s.guard != nil && strings.HasPrefix(ctype, "text/html") && stageFrameLoad(req) {
 		// The operator's frame loaded a document: what it shows now came
 		// from this view.
 		s.guard.served(gen)

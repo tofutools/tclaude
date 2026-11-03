@@ -175,6 +175,72 @@ func TestPageRemoteViewerFramesItsPageByPathOverPlainHTTP(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, res.StatusCode)
 }
 
+// A browser sends no fetch metadata (Sec-Fetch-*) to an origin that is not
+// potentially trustworthy: the regular listener over plain http at a name
+// that is not loopback (http://brain:8123). The page's frame still loads, and
+// a static page is still read back once it has; the page's CSP sandbox, not
+// the frames-only rule, is what keeps even a top-level load at an opaque
+// origin there.
+func TestPageRemoteViewerFramesItsPageOverPlainHTTPWithoutFetchMetadata(t *testing.T) {
+	e := newPageEnv(t)
+	a := e.agent(t, "remotensf", true)
+	site := staticSite(t, a.cwd)
+	e.sandboxAgent(t, a, "off", nil, claudeSandbox("off", false))
+	p, rec := e.show(t, a, site, "site", "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	path := e.remoteURL(t, p.ID)
+	prefix := strings.TrimSuffix(path, "/")
+
+	for _, host := range []string{"brain:8123", "192.168.1.20:8123", remoteHost} {
+		res := remoteGet(t, e.srv, http.MethodGet, host, path, nil, nil)
+		require.Equal(t, http.StatusOK, res.StatusCode, host)
+		body := readAll(t, res)
+		assert.Contains(t, body, "home", host)
+		csp := res.Header.Get("Content-Security-Policy")
+		assertPagePolicy(t, csp, host, prefix)
+		assert.Contains(t, csp, "sandbox allow-scripts allow-forms allow-modals", "without allow-same-origin: opaque even top level")
+		assert.Empty(t, res.Header.Values("Set-Cookie"))
+	}
+	res := remoteGet(t, e.srv, http.MethodGet, "brain:8123", path, map[string]string{"Origin": "http://brain:8123"}, nil)
+	assert.Equal(t, http.StatusForbidden, res.StatusCode, "the dashboard's own origin is still refused")
+	res = remoteGet(t, e.srv, http.MethodGet, "brain:8123", path, map[string]string{"Sec-Fetch-Dest": "document"}, nil)
+	assert.Equal(t, http.StatusForbidden, res.StatusCode, "a browser that does say it is a top-level visit is refused")
+	for _, host := range []string{"127.0.0.1:8123", "localhost:8123"} {
+		res = remoteGet(t, e.srv, http.MethodGet, host, path, nil, nil)
+		assert.Equal(t, http.StatusForbidden, res.StatusCode, "%s: a loopback name gets fetch metadata, so the rule holds", host)
+	}
+
+	// Only a navigation counts as the frame loading its document, for the
+	// read-back: the page's own fetch of an HTML file (Origin: null, or no-cors
+	// without Upgrade-Insecure-Requests) does not.
+	m := sampleMarks()
+	m["path"] = prefix + "/public/ok.html"
+	sendMarks := func() string {
+		rec := e.dashJSON(t, http.MethodPost, "/api/pages/"+p.ID+"/marks", m)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		got := e.marks(t, a, "site", "")
+		require.NotEmpty(t, got.Batches)
+		return got.Batches[len(got.Batches)-1].Path
+	}
+	// The page's script can send the header on a cors request: its preflight
+	// is answered (pages need their own headers), but the request carries
+	// Origin: null, which never counts.
+	res = remoteGet(t, e.srv, http.MethodOptions, "brain:8123", prefix+"/public/ok.html", map[string]string{
+		"Origin": "null", "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "upgrade-insecure-requests",
+	}, nil)
+	require.Less(t, res.StatusCode, 300, "the preflight is answered")
+	assert.Equal(t, "upgrade-insecure-requests", res.Header.Get("Access-Control-Allow-Headers"))
+	for _, fetch := range []map[string]string{{"Origin": "null"}, {"Accept": "text/html"}, {"Origin": "null", "Upgrade-Insecure-Requests": "1"}} {
+		res = remoteGet(t, e.srv, http.MethodGet, "brain:8123", prefix+"/public/ok.html", fetch, nil)
+		require.Equal(t, http.StatusOK, res.StatusCode)
+	}
+	assert.Empty(t, sendMarks(), "no navigation yet: the marks carry none of the page's data")
+	res = remoteGet(t, e.srv, http.MethodGet, "brain:8123", prefix+"/public/ok.html",
+		map[string]string{"Upgrade-Insecure-Requests": "1"}, nil)
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	assert.Equal(t, "/public/ok.html", sendMarks(), "the frame's navigation counts")
+}
+
 func TestPageRemoteViewerPageCannotReachAnotherPage(t *testing.T) {
 	e := newPageEnv(t)
 	a := e.agent(t, "remoteab", true)

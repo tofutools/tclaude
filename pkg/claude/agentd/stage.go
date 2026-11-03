@@ -17,7 +17,8 @@ package agentd
 //     closed page's token is forgotten; showing again mints a new one.
 //   - Documents are served only to Sec-Fetch-Dest: iframe (a top-level visit to
 //     the stage origin is refused), plus the daemon's own snapshot client,
-//     which presents a separate per-page snapshot token.
+//     which presents a separate per-page snapshot token. A remote page on
+//     plain http gets no fetch metadata to check (stageInsecureContext).
 //   - Cookie, Authorization and Proxy-* are always stripped going in, and
 //     Set-Cookie coming out. Host-only cookies are not port-scoped, so this is a
 //     rule, not an optimisation.
@@ -32,6 +33,7 @@ package agentd
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	_ "embed"
@@ -336,9 +338,28 @@ func serveStagePage(w http.ResponseWriter, r *http.Request, page *stagePage, sit
 		}
 		snapshot = true
 	}
-	if !snapshot && !stageFetchDestAllowed(r.Header.Get("Sec-Fetch-Dest")) && !stageWebSocketHandshake(r) {
+	dest := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Dest")))
+	// No metadata, from a browser at a site that gets none: never over TLS to
+	// this listener, where the browser always sends it.
+	noMetadata := !snapshot && dest == "" && r.TLS == nil && stageInsecureContext(site)
+	if !snapshot && !noMetadata && !stageFetchDestAllowed(dest) && !stageWebSocketHandshake(r) {
 		http.Error(w, "stage pages load only inside a live-page frame", http.StatusForbidden)
 		return
+	}
+	// What the static source counts as the operator's frame loading a
+	// document (for a page's read-back, pages_fsview.go): one that says so,
+	// or, with no fetch metadata to say, a navigation: no Origin, and
+	// Upgrade-Insecure-Requests, which browsers send only on a navigation.
+	// A page's script can set that header, but only on a cors request (it is
+	// not safelisted, so a no-cors request cannot carry it), and every cors
+	// request from the page carries Origin: null, as its origin is opaque.
+	// The guard rests on that Origin, not on the preflight: the stage
+	// answers a null-origin preflight for any header (stageAnswerPreflight),
+	// as a page's own cors requests need. So the page's own fetch of an HTML
+	// file never counts as its frame having reloaded.
+	navigation := r.Header.Get("Origin") == "" && strings.TrimSpace(r.Header.Get("Upgrade-Insecure-Requests")) == "1"
+	if dest == "iframe" || (noMetadata && navigation) {
+		r = r.WithContext(context.WithValue(r.Context(), stageFrameLoadKey{}, true))
 	}
 
 	// A frame's requests carry Origin: null (opaque origin) or none (no-cors
@@ -461,10 +482,57 @@ func stageLoopbackPort(r *http.Request) (int, bool) {
 	return tcp.Port, true
 }
 
+// stageInsecureContext says a request to the site may come from a browser
+// that sends no fetch metadata (Sec-Fetch-*): browsers send it only to a
+// potentially trustworthy origin, so not to a remote page reached over plain
+// http by a name that is not loopback (http://brain:8123). The frames-only
+// rule (Sec-Fetch-Dest) cannot be applied there, and does not need to be:
+//
+//   - The page's CSP carries the sandbox directive, so even a document loaded
+//     top level runs at an opaque origin, exactly as in its frame: it can
+//     reach neither the dashboard's storage nor, by Origin: null and the
+//     SameSite=Strict session cookie, its API.
+//   - frame-ancestors keeps any other site from framing or embedding it.
+//   - Cookie and Authorization are stripped going in, Set-Cookie coming out,
+//     so a top-level visit carries no session into the page.
+//   - Admission is still by the page's unguessable remote token, and any
+//     Origin but null or none is refused.
+//
+// A loopback name keeps the frames-only rule, as does a request that came
+// over TLS to this listener (serveStagePage). An https origin whose TLS ends
+// at a proxy cannot be told from plain http here, but the browser sends it
+// metadata, so the rule is applied to it in practice.
+func stageInsecureContext(site stageSite) bool {
+	if site.prefix == "" {
+		return false
+	}
+	host := site.host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(host, ".")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip == nil || !ip.IsLoopback()
+}
+
+// stageFrameLoadKey marks, in a request's context, a request the operator's
+// frame may have made for its document (serveStagePage).
+type stageFrameLoadKey struct{}
+
+// stageFrameLoad reports stageFrameLoadKey.
+func stageFrameLoad(r *http.Request) bool {
+	v, _ := r.Context().Value(stageFrameLoadKey{}).(bool)
+	return v
+}
+
 // stageFetchDestAllowed decides from Sec-Fetch-Dest whether a browser request
 // may be served. Documents load only into an iframe: a top-level visit or a
 // frame/embed/object load is refused, and a request without the header is not
-// a modern browser request (the daemon's snapshot client uses its own token).
+// a modern browser request in a secure context (the daemon's snapshot client
+// uses its own token; a remote page on plain http: stageInsecureContext).
 // Subresource destinations (script, style, image, fetch/XHR as "empty",
 // websocket, worker, ...) are served: they run in, or are read by, the page.
 func stageFetchDestAllowed(dest string) bool {
