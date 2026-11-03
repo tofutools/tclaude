@@ -232,7 +232,27 @@ test('pages already open when the dashboard loads open quietly, and Collab off t
   assert.ok(pageTab(host), 'a page with no place opens');
   assert.equal(pageTab(host).querySelector('.mux-tab-unseen'), null, 'no news: no dot');
   assert.notEqual(shellState.toast.peek().action?.label, 'Open', 'and no toast');
-  await env.setSnapshot({ ...snap([]), collab_enabled: false });
-  assert.equal(pageTab(host), null);
+  await env.setSnapshot({ ...snap([PAGE]), collab_enabled: false });
+  assert.equal(pageTab(host), null, 'Collab off takes the tab away');
+  await env.setSnapshot(snap([PAGE]));
+  assert.ok(pageTab(host), 'and Collab on gives the open page its place back');
+  env.stop();
+});
+
+test('a close that fails gives the page its tab back, and a restored overlay tab of a closed page goes', async (t) => {
+  const requests = [];
+  const env = await mountShell(t, snap([]), requests);
+  const { harness, host, instances } = env;
+  const failing = async (url, init = {}) => { requests.push(`${init.method || 'GET'} ${String(url)}`); return { ok: false, status: 500, json: async () => ({}) }; };
+  await env.setSnapshot(snap([PAGE]));
+  await harness.act(async () => { await env.place.closeLivePage(PAGE.id, { fetchImpl: failing }); await wait(); });
+  assert.ok(requests.includes(`DELETE /api/pages/${PAGE.id}`));
+  env.state.removePanes([`page:${PAGE.id}`]);
+  await env.setSnapshot(snap([{ ...PAGE }]));
+  assert.ok(pageTab(host), 'the page is still open, so it has a tab again');
+
+  await harness.act(async () => { env.place.openPageOverlay('pg_00112233445566cc', 'gone page'); await wait(); });
+  await env.setSnapshot(snap([PAGE]));
+  assert.deepEqual(instances.overlayTabs.peek().filter((tab) => tab.kind === 'page').map((tab) => tab.page), [], 'a page the snapshot does not list leaves its overlay tab');
   env.stop();
 });

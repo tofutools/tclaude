@@ -2035,6 +2035,7 @@ export function mountTerminalShellIsland({
   // pages the strip holds.
   const unregisterPageStrip = registerPageStrip({
     has: (id) => state.panes.peek().some((pane) => pane.seed.page === id),
+    ids: () => state.panes.peek().filter((pane) => pane.seed.page).map((pane) => pane.seed.page),
     isActive: (id) => state.activeKey.peek() === pagePaneKey(id) && dashboardState.activeTab.peek() === 'terminals',
     activate: (id) => actions.activatePane(pagePaneKey(id)),
     remove: (ids) => state.removePanes(ids.map(pagePaneKey)),

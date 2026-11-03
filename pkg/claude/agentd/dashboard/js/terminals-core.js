@@ -196,9 +196,14 @@ export function normalizeSeed(seed) {
   // A live page's seed (seed.page) names the page and nothing else: its URL
   // comes from the snapshot, never from a seed.
   if (seed?.page !== undefined) {
+    // Only these fields: a seed can come from a crafted /terminals?solo=1 link.
     if (!isPageId(seed.page)) return null;
-    const { ws: _ws, url: _url, origin: _origin, ...rest } = seed;
-    return { ...rest, key: pagePaneKey(seed.page) };
+    const { label, floats, overlay, initialRetry, wizard, terminalAttach } = seed;
+    return {
+      page: seed.page, key: pagePaneKey(seed.page), label: typeof label === 'string' ? label : '',
+      ...(floats && { floats: true }), ...(overlay && { overlay: true }), ...(initialRetry !== undefined && { initialRetry }),
+      ...(wizard !== undefined && { wizard }), ...(terminalAttach !== undefined && { terminalAttach }),
+    };
   }
   return (seed && typeof seed.ws === 'string' && seed.ws.startsWith('/')) ? seed : null;
 }

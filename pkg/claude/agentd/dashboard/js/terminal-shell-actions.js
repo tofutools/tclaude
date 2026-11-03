@@ -91,7 +91,7 @@ export function createTerminalShellActions({
       // The same terminal may have been reopened in the dashboard while its
       // pop-out was alive. Replace that widget after the pop-out's detach has
       // landed so reattach never acknowledges a stale/disconnected instance.
-      await closePane(key, { skipDetach: true, moving: true });
+      await closePane(key, { skipDetach: true, moving: !!seed.page });
     }
     if (overlay && await floatPane({ key, label: seed.label, seed })) return true;
     return openPane(seed);
@@ -266,8 +266,9 @@ export function createTerminalShellActions({
       wizard: documentRef.body.classList.contains('wizard'),
       terminalAttach: terminalAttachConfig(),
     };
-    await closePane(key, { moving: true });
+    // Held there before the tab goes, so the page watcher never sees it placeless.
     if (pane.seed.page) notePageWindow(pane.seed.page, target);
+    await closePane(key, { moving: true });
     try { target.location.replace(`/terminals?solo=1${encodeTerminalOpenHash(seed)}`); }
     catch (_) { /* target closed while detach was landing */ }
     return true;
@@ -297,8 +298,8 @@ export function createTerminalShellActions({
     }
     if (pane.seed.process) return floatProcessTab(pane.seed.process, pane.label, at);
     if (pane.seed.page) {
-      await closePane(key, { moving: true });
       openPageOverlay(pane.seed.page, pane.label, at);
+      await closePane(key, { moving: true });
       return pageWindowId(pane.seed.page);
     }
     if (overlayablePane(pane)) {

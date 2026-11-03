@@ -26,6 +26,8 @@ import { closeOverlayTab, minimizeOverlayWindow } from './overlay-instances.js';
 import { POPUP_BLOCKED, TO_COLLAB_LABEL, registerTabMoves } from './overlay-tab-moves.js';
 import { detachSeedWindow, openWebWindowPane } from './terminals-tab.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
+import { shellToast } from './shell-state.js';
+import { dashboardState } from './snapshot-store.js';
 
 const html = htm.bind(h);
 
@@ -158,9 +160,11 @@ export function PagePane({ pane, active, solo = false, manageTitle = false, acti
   const id = pane.seed.page;
   const page = findLivePage(snapshot?.value, id);
   const label = page ? pageLabel(page) : '';
+  // Seen when it is the tab showing and the Collab view is the one on screen.
+  const onScreen = active && (solo || dashboardState.activeTab.value === 'terminals');
   useEffect(() => {
-    if (active) markPageSeen(id);
-  }, [active, id]);
+    if (onScreen) markPageSeen(id);
+  }, [onScreen, id]);
   useEffect(() => {
     if (label && label !== pane.label) actions.setPaneLabel?.(pane.key, label);
   }, [label, pane.label]);
@@ -191,7 +195,7 @@ registerTabMoves(PAGE_WINDOW_KIND, (tab) => ({
       closeOverlayTab(tab.id);
     } else notify?.(POPUP_BLOCKED, true);
   },
-  close: () => void closeLivePage(tab.page),
+  close: () => void closeLivePage(tab.page, { notify: shellToast }),
 }));
 
 // An overlay tab names its page.

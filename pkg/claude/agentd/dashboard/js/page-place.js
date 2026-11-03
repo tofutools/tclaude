@@ -99,8 +99,14 @@ export function setPageOverlayLabel(id, label) {
 
 // closeLivePage closes a page for good: the daemon ends its origin and tells
 // the agent that showed it. The views go when the snapshot no longer lists it.
+// While a close is on its way, and until the snapshot drops the page, it is
+// closing: the watcher does not give it a place again. A close that fails
+// leaves it to the watcher, which opens it again quietly.
+const closing = new Set();
+
 export async function closeLivePage(id, { fetchImpl = (...args) => globalThis.fetch(...args), notify = null } = {}) {
   if (!isPageId(id)) return false;
+  closing.add(id);
   try {
     const response = await fetchImpl(`/api/pages/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin' });
     if (response?.ok || response?.status === 404) {
@@ -111,6 +117,7 @@ export async function closeLivePage(id, { fetchImpl = (...args) => globalThis.fe
   } catch (cause) {
     notify?.(`Could not close the page: ${cause?.message || cause}`, true);
   }
+  closing.delete(id);
   return false;
 }
 
@@ -126,26 +133,35 @@ const placed = (id) => !!overlayOf(id) || inSeparateWindow(id) || !!strip?.has(i
 
 // watchLivePages follows the snapshot's pages. A page shown for the first time
 // opens as a strip tab behind the one showing, marked unseen, with a toast that
-// opens it. A page shown again is marked unseen where it is, and opens behind
-// the tab showing if it had no place; its frame reloads on its own. A page the
-// snapshot no longer lists leaves every place. Pages open when the dashboard
-// loads open quietly where they have no place. It answers its stop.
+// opens it. A page shown again is marked unseen where it is; its frame reloads
+// on its own. Every open page always has a place in this dashboard: one that
+// lost its place without being closed (Collab off and on, a separate window
+// shut, a close that failed, a dashboard load) opens quietly behind the tab
+// showing. A page the snapshot no longer lists leaves every place, a restored
+// overlay tab included. It answers its stop.
 export function watchLivePages({ snapshot, notify = null }) {
   let known = null;
   const stop = snapshot.subscribe((value) => {
-    // A snapshot with Collab off carries no pages: that is not every page closing.
-    if (!value || value.collab_enabled !== true) return;
+    if (!value) return;
+    // With Collab off the tabs go; when it comes back, every page is placed again
+    // as on a load, with no news.
+    if (value.collab_enabled !== true) {
+      known = null;
+      return;
+    }
     const pages = livePagesOf(value);
-    const { next, added, reshown, gone, initial } = pageShowEvents(known, pages);
+    const { next, added, reshown } = pageShowEvents(known, pages);
     known = next;
-    for (const id of gone) forgetPage(id);
-    for (const page of initial) {
-      if (!placed(page.id)) void openPagePane(page.id, pageLabel(page), { activate: false });
+    const live = new Set(pages.map((page) => page.id));
+    const held = [...pageOverlays.peek().map((tab) => tab.page), ...(strip?.ids?.() || [])];
+    for (const id of new Set(held)) if (!live.has(id)) forgetPage(id);
+    for (const id of [...closing]) if (!live.has(id)) closing.delete(id);
+    for (const page of pages) {
+      const label = pageLabel(page);
+      if (!placed(page.id) && !closing.has(page.id)) void openPagePane(page.id, label, { activate: false });
+      else setPageOverlayLabel(page.id, label);
     }
     for (const page of [...added, ...reshown]) {
-      const label = pageLabel(page);
-      if (!placed(page.id)) void openPagePane(page.id, label, { activate: false });
-      else setPageOverlayLabel(page.id, label);
       if (!strip?.isActive?.(page.id)) markPageUnseen(page.id);
     }
     for (const page of added) {
