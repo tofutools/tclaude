@@ -55,8 +55,6 @@ func TestDashboardAssets_ForceBlockWired(t *testing.T) {
 		".force-member-idle",
 		".force-member-dead",
 		".force-stalling {",
-		".force-rebrief-btn, .force-standdown-btn {",
-		".force-standdown-btn:hover",
 	} {
 		if !strings.Contains(css, needle) {
 			t.Errorf("dashboard.css missing %q — force-block styling broken", needle)
@@ -85,7 +83,7 @@ func TestDashboardAssets_ForceFoldWired(t *testing.T) {
 		"if (!isForce(group) || dashPrefs.getItem(`tclaude.dash.forcefold.${group.name}`) === '1') return null;",
 		"actions.toggleForceFold(group)",
 		"const toggle = fold && isForce(group);",
-		"toggle ? html`<button class=${`force-fold-btn${folded ? ' folded' : ''}`}",
+		"toggle ? html`<${Button} size=\"sm\" pressed=${folded} class=${`force-fold-btn${folded ? ' folded' : ''}`}",
 		// groups-actions.js — the native toggle handler flips the same pref.
 		"toggleForceFold(group)",
 	} {

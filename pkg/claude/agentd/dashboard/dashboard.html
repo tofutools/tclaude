@@ -189,7 +189,7 @@
        so the controls stay usable while the page is scrolled sideways. -->
   <div class="bar-inner header-inner">
   <h1>
-    <button class="slop-icon" type="button" title="Change dashboard mode" aria-label="Change dashboard mode">
+    <button data-ui-exempt class="slop-icon" type="button" title="Change dashboard mode" aria-label="Change dashboard mode">
       <img src="/static/tclaude-icon.svg" alt="">
       <span class="theme-mode-badge" aria-hidden="true"></span>
     </button>
@@ -232,13 +232,13 @@
        volume controls, which must stay reachable when shown. -->
   <span class="slop-hud" id="slop-hud">
     <span class="shell-contents-root" id="shell-credits-root"></span>
-    <button class="slop-hud-btn" id="slop-sound-btn" type="button" aria-pressed="true" title="Slop sound (music + FX): on — click to mute">🔊</button>
+    <button data-ui-exempt class="slop-hud-btn" id="slop-sound-btn" type="button" aria-pressed="true" title="Slop sound (music + FX): on — click to mute">🔊</button>
     <!-- The mixer — persistent music/FX volume sliders in a popover,
          anchored next to the master mute so all sound control lives in
          one spot. slop-volume.js owns it; values persist to
          ~/.tclaude/data/config.json via /api/slop/volumes. -->
     <span class="slop-volume-wrap">
-      <button class="slop-hud-btn" id="slop-volume-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="slop-volume-pop" title="Volume — music &amp; FX sliders (saved to tclaude config)">🎚️</button>
+      <button data-ui-exempt class="slop-hud-btn" id="slop-volume-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="slop-volume-pop" title="Volume — music &amp; FX sliders (saved to tclaude config)">🎚️</button>
       <div id="slop-volume-pop" role="group" aria-label="Slop volume sliders">
         <label class="slop-vol-row" title="Music volume — the Vegas lounge radio">
           <span class="slop-vol-ico">🎵</span>
@@ -269,14 +269,14 @@
        how the sibling Power On / Shutdown chips swap to "✨ Awaken all" /
        "🌙 Slumber all". The aria-label names both voices so speech input
        matches either theme's visible label (WCAG Label-in-Name). -->
-  <button id="window-all-btn" data-act="window-modal-all" aria-label="Reveal or veil heroes — focus or unfocus agent terminal windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of every running agent on the dashboard. Window-only: the agents keep running either way."><span class="win-label-regular">🪟 windows…</span><span class="win-label-wizard">👁 heroes…</span></button>
+  <button id="window-all-btn" class="ui-btn ui-sm" type="button" data-act="window-modal-all" aria-label="Reveal or veil heroes — focus or unfocus agent terminal windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of every running agent on the dashboard. Window-only: the agents keep running either way."><span class="win-label-regular">🪟 windows…</span><span class="win-label-wizard">👁 heroes…</span></button>
   <!-- Power on / shutdown re-flavour to "✨ Awaken all" / "🌙 Slumber all" in
        🧙 mode via the .pwr-label-regular/.pwr-label-wizard span pair (CSS picks
        which shows — see the wizard power-controls rules in dashboard.css). The
        aria-label names both voices so speech input matches either theme's
        visible label (WCAG Label-in-Name), as the group buttons do. -->
-  <button id="power-on-all-btn" data-act="power-on-all" aria-label="Awaken all — power on all offline agents on the dashboard" title="Power on — resume every offline agent on the dashboard. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular">🟢 power on all</span><span class="pwr-label-wizard">✨ Awaken all</span></button>
-  <button id="shutdown-all-btn" data-act="shutdown-all" aria-label="Slumber all — shutdown all running agents on the dashboard" title="Shutdown — stop every running agent on the dashboard. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular">🛑 shutdown all</span><span class="pwr-label-wizard">🌙 Slumber all</span></button>
+  <button id="power-on-all-btn" class="ui-btn ui-sm ui-btn-success" type="button" data-act="power-on-all" aria-label="Awaken all — power on all offline agents on the dashboard" title="Power on — resume every offline agent on the dashboard. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular">🟢 power on all</span><span class="pwr-label-wizard">✨ Awaken all</span></button>
+  <button id="shutdown-all-btn" class="ui-btn ui-sm ui-btn-danger" type="button" data-act="shutdown-all" aria-label="Slumber all — shutdown all running agents on the dashboard" title="Shutdown — stop every running agent on the dashboard. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular">🛑 shutdown all</span><span class="pwr-label-wizard">🌙 Slumber all</span></button>
   </div>
 </header>
 <!-- Slop-mode marquee — populated and ticked by slop-fx.js; hidden via
@@ -318,7 +318,7 @@
        body.wizard, or the regular-mode opt-in (body.vegas) is set (see
        dashboard.css); vegas.js owns the player inside it. The label swaps to
        "🍺 The Tavern" in wizard mode (CSS body.wizard). -->
-  <button data-tab="vegas"><span class="tab-label-vegas">🎰 Vegas</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🍺</span> <span class="tab-title">The Tavern</span></span></button>
+  <button data-ui-exempt data-tab="vegas"><span class="tab-label-vegas">🎰 Vegas</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🍺</span> <span class="tab-title">The Tavern</span></span></button>
   <!-- Fleet node row (js/fleet-island.js): this node and its trusted
        federation peers, right-aligned in the tab bar so it costs no height.
        Empty when federation is off or has no trusted peers; the map anchor
@@ -710,7 +710,7 @@
 <div class="access-banner" id="access-banner" role="alert" aria-live="assertive" aria-hidden="true">
   <span class="access-banner-sigil" aria-hidden="true">🔐</span>
   <span class="access-banner-text" id="access-banner-text">An agent is requesting access</span>
-  <button class="access-banner-review" id="access-banner-review" type="button">Review</button>
+  <button class="ui-btn ui-sm access-banner-review" id="access-banner-review" type="button">Review</button>
 </div>
 <div id="shell-confirm-root"></div>
 <!-- Preact-owned combined member editor. Its local draft remains mounted

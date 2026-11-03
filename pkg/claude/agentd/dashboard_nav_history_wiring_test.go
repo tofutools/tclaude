@@ -65,7 +65,7 @@ func TestDashboardNavLinks_Wired(t *testing.T) {
 		`<a data-tab="diagnostics" href="/diagnostics"`,
 		`<a data-tab="config" href="/config"`,
 		// Vegas is NOT URL-routed, so it stays a <button> (no href to hover).
-		`<button data-tab="vegas">`,
+		`<button data-ui-exempt data-tab="vegas">`,
 		// Subtabs are anchors too, carrying their nested path (/access/sudo,
 		// /automations/processes) while keeping tablist ARIA.
 		`data-subtab=${subtab} href=${` + "`/access/${subtab}`" + `} role="tab"`,

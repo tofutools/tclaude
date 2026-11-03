@@ -1,5 +1,5 @@
 {
-  "dashboard.html": 12,
+  "dashboard.html": 4,
   "js/action-dialog-island.js": 12,
   "js/activity-hover.js": 1,
   "js/activity-node.js": 1,
@@ -26,11 +26,9 @@
   "js/groups-focus.js": 1,
   "js/groups-fused-links.js": 1,
   "js/groups-island.js": 2,
-  "js/groups-list.js": 14,
   "js/groups-member-table.js": 7,
   "js/groups-mini-editor.js": 1,
   "js/groups-process-indicators.js": 1,
-  "js/groups-processes.js": 4,
   "js/groups-route-map.js": 10,
   "js/groups-run-focus.js": 5,
   "js/groups-scribe-draft.js": 7,
