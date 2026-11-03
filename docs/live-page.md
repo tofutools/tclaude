@@ -183,6 +183,22 @@ so the browser supplies its own scheme and host.
     dashboard cookie is `SameSite=Strict` and not sent from the frame. The
     frame's `Origin: null`, or a no-cors load with neither `Origin` nor
     `Referer`, fails the dashboard's Origin check either way.
+- **Plain http works, by a name that is not loopback** (`http://brain:8123`).
+  A browser sends no fetch metadata (`Sec-Fetch-*`) to such an origin, and
+  ignores the frame's `credentialless` there, so the frames-only rule below
+  cannot be checked. On that path a request with no `Sec-Fetch-Dest` is served,
+  and isolation does not depend on the rule:
+  - The page's CSP carries `sandbox` without `allow-same-origin`, so a
+    document loaded even top level runs at an opaque origin, exactly as in its
+    frame. It can reach neither the dashboard's storage nor its API.
+  - The stage strips `Cookie` going in and `Set-Cookie` coming out, so the
+    dashboard's session cookie, sent with the frame's own load where
+    `credentialless` is ignored, never reaches the page's source.
+  - `frame-ancestors` still keeps other sites from framing it, and any
+    `Origin` but `null` or none is refused.
+
+  A browser that does send metadata (an https origin, whether TLS ends here or
+  at a proxy, or a loopback name) keeps the frames-only rule.
 - **A dev server needs `--base`:** it writes absolute paths. `tclaude agent
   show` prints the step for a port target. Start the dev server with
   `--base /p/<remote token>/` (Vite: `vite --base /p/<remote token>/`), then
@@ -288,7 +304,8 @@ never runs with the dashboard's origin, cookies or API.
 - **Frames only.** Documents are served only to requests a browser marks
   `Sec-Fetch-Dest: iframe`. A top-level visit to the page origin is refused, and so
   is a request with no `Sec-Fetch-Dest`. The daemon's own snapshot renderer is the
-  one exception: it presents a second, per-page snapshot token.
+  one exception: it presents a second, per-page snapshot token. (A remote page
+  over plain http is the other: see "Viewing pages from another machine".)
 - **No credentials cross.** `Cookie`, `Authorization`, every `Proxy-*` header,
   forwarding headers and `Referer` are stripped from requests. `Set-Cookie` is
   stripped from responses.
