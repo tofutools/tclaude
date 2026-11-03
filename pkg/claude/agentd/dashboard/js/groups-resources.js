@@ -8,7 +8,8 @@
 // (POST /api/resource-locks). Only the operator's dashboard can.
 
 import { h } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
+import { useDismissablePopover } from './hover-popover.js';
 import htm from 'htm';
 import { openBoardPane } from './board-overlay-state.js';
 import { freeBoardId } from './board-manage.js';
@@ -58,12 +59,9 @@ export function GroupResources({ group, boards = [], pages = [], api, source, no
 export function AddResource({ group, api, source, wizard = false, notify = defaultNotify, onAddProcess }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = (event) => { if (!ref.current?.contains(event.target)) setOpen(false); };
-    document.addEventListener('pointerdown', close);
-    return () => document.removeEventListener('pointerdown', close);
-  }, [open]);
+  // The shared popover rule: a press outside, or Escape, closes the menu (a
+  // click menu, so moving the pointer away does not).
+  useDismissablePopover(ref, open, (why) => { if (why !== 'away') setOpen(false); });
   const addBoard = async () => {
     setOpen(false);
     const title = `${group.name} board`;
@@ -78,7 +76,7 @@ export function AddResource({ group, api, source, wizard = false, notify = defau
       notify(`Could not create the board: ${cause.message}`, true);
     }
   };
-  return html`<span class="gr-add" ref=${ref} onKeyDown=${(event) => { if (event.key === 'Escape') setOpen(false); }}>
+  return html`<span class="gr-add" ref=${ref}>
     <${Button} size="sm" variant="link" class="gq-link" data-resource-add=${group.name} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
       title=${`Add a resource to ${group.name}`} onClick=${() => setOpen(!open)}>＋▾<//>
     ${open && html`<${Menu} size="sm" class="gr-add-menu">
