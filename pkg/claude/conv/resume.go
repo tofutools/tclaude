@@ -338,6 +338,8 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 	if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
 		launchOSSandbox = resumeTclaudeLayerLaunchOSSandbox(rc.ConvID)
 	}
+	launchOSSandbox = session.VerifyCodexSandboxOff(h, resumeImplementation, resumeMode,
+		rc.ProjectPath, nil, launchOSSandbox)
 	state := &session.SessionState{
 		ID:                       sessionID,
 		TmuxSession:              tmuxSession,

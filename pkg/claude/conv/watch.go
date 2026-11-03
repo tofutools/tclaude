@@ -3503,6 +3503,8 @@ func createSessionForConv(conv *SessionEntry) error {
 	if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
 		launchOSSandbox = resumeTclaudeLayerLaunchOSSandbox(conv.SessionID)
 	}
+	launchOSSandbox = session.VerifyCodexSandboxOff(h, resumeImplementation, resumeMode,
+		cwd, nil, launchOSSandbox)
 	state := &session.SessionState{
 		ID:                       sessionID,
 		TmuxSession:              tmuxSession,

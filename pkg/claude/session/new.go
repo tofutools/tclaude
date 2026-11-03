@@ -2046,6 +2046,19 @@ func runNew(params *NewParams) error {
 		darwinRouteRegistered = true
 	}
 
+	// A Codex launch that asks for no sandbox may still run in one: managed
+	// requirements can overrule the request (codex_requirements.go). Checked
+	// here, after access enforcement was planned from the mode, because the
+	// verdict it records is for the record only.
+	if !outerLayer {
+		var requirementsEnvironment []sandboxpolicy.EnvironmentEntry
+		if launchSandbox != nil {
+			requirementsEnvironment = sandboxpolicy.EnvironmentForLaunch(launchSandbox)
+		}
+		launchOSSandbox = VerifyCodexSandboxOff(h, sandboxImplementation,
+			harnessBuiltinMode, cwd, requirementsEnvironment, launchOSSandbox)
+	}
+
 	launchCreated := time.Now()
 	state := &SessionState{
 		ID:                       sessionID,

@@ -148,8 +148,11 @@ func pageFSHarnessWallOff(row *db.SessionRow) bool {
 		// launch-time verdict does.
 		return row.OSSandboxState == harness.ClaudeSandboxOff && !row.OSSandboxUnverified
 	}
+	// The off mode is the launch request; a recorded verdict can overrule it
+	// (Codex managed requirements keep its sandbox on, or may:
+	// session.VerifyCodexSandboxOff).
 	off, err := harness.SandboxOffMode(h)
-	return err == nil && row.HarnessBuiltinMode == off
+	return err == nil && row.HarnessBuiltinMode == off && row.OSSandboxState == "" && !row.OSSandboxUnverified
 }
 
 // pageFSClaudeVerdictOff says a launch is not one Claude Code still
