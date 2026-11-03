@@ -177,3 +177,45 @@ func TestResourceLockRefusesAgentPageChanges(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Equal(t, http.StatusOK, e.call(t, shower, http.MethodPost, "/v1/pages/app/patches", css).Code)
 }
+
+// The group context lists a group's boards and pages, with their locks, to
+// the operator only: they feed the dashboard's Resources section.
+func TestGroupContextListsResourcesToTheOperatorOnly(t *testing.T) {
+	f, _ := processAuthoringFlow(t)
+	f.HaveGroup("webshop")
+	const conv = "resources-member"
+	f.HaveConvWithTitle(conv, "member")
+	f.HaveMember("webshop", conv)
+	dash := agentd.BuildDashboardHandlerForTest()
+	require.Equal(t, http.StatusCreated, testharness.Serve(dash, boardDashReq(t, http.MethodPost, "/api/boards", map[string]any{"id": "sprint", "title": "Sprint"})).Code)
+	require.Equal(t, http.StatusOK, testharness.Serve(dash, boardDashReq(t, http.MethodPost, "/api/boards/sprint/group", map[string]any{"group": "webshop"})).Code)
+	require.Equal(t, http.StatusOK, setResourceLock(t, "board", "sprint", true).Code)
+
+	rec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/context", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var view struct {
+		Groups []struct {
+			Group  string `json:"group"`
+			Boards []struct {
+				ID           string `json:"id"`
+				AgentsLocked bool   `json:"agentsLocked"`
+			} `json:"boards"`
+		} `json:"groups"`
+	}
+	testharness.DecodeJSON(t, rec, &view)
+	var found bool
+	for _, g := range view.Groups {
+		if g.Group == "webshop" {
+			require.Len(t, g.Boards, 1)
+			assert.Equal(t, "sprint", g.Boards[0].ID)
+			assert.True(t, g.Boards[0].AgentsLocked)
+			found = true
+		}
+	}
+	assert.True(t, found, "the operator sees the group's board: %s", rec.Body.String())
+
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermProcessRunsRead, "test"))
+	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/process/context", nil), conv))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), `"boards"`, "an agent's context lists no resources")
+}

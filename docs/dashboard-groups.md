@@ -435,10 +435,10 @@ This section applies with `features.processes` on; see
 [Config › Experimental](dashboard-config.md#experimental). The view switch
 changes what each group shows, and each choice has its own address.
 
-- **Both** (`/groups`, the default) shows **Agents** and **Processes** sections
+- **Both** (`/groups`, the default) shows **Agents** and **Resources** sections
   together. Hover an agent to draw dashed lines to the steps it performs, and
-  hover a step to see its performers. A group with nothing running shows
-  **Processes** as a single line.
+  hover a step to see its performers. A group with nothing running and nothing
+  attached shows **Resources** as a single line.
 - **Agents** (`/groups/agents`) shows the roster, with run counts on each group
   and an optional **Process** column.
 - **Processes** (`/groups/processes`) shows each group's runs as live graph
@@ -447,7 +447,27 @@ changes what each group shows, and each choice has its own address.
   `/groups/runs/<group>/<run-id>`, so Back closes it.
 
 To start a run, use the **Agent process** or **Group process** button on the
-group's Processes section. Hover the view switch to choose which runs show:
+group's Resources section.
+
+### Resources
+
+**Resources** lists everything attached to the group, grouped by kind:
+- **Processes:** its saved processes and runs.
+- **Boards:** the collab boards linked to the group.
+- **Pages:** the live pages its members showed into it.
+
+A kind with nothing in it is hidden. **＋▾** adds a process or a new board
+linked to the group.
+
+Each resource has a lock chip. Click it to switch between two states:
+- **✎ agents can edit** (the default): agents edit the resource under their
+  usual permissions.
+- **🔒 agents: read-only:** members still use the resource, but no agent can
+  change it, whatever it is granted.
+
+Only you can toggle the lock. The same chip is on the resource's own header
+too: the process editor, the board and the page. See
+[Permissions › The operator's lock on a resource](permissions-and-audit.md#the-operators-lock-on-a-resource). Hover the view switch to choose which runs show:
 **Running**, **Planned** and **Done**. See
 [Processes](processes.md#in-the-dashboard).
 

@@ -18485,3 +18485,14 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .get-help-agents li + li { margin-top: 4px; }
 .get-help-agent { width: 100%; justify-content: flex-start; gap: 8px; }
 .get-help-agent .get-help-agent-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+
+/* Resources section (groups-resources.js, tcl-dwzsq0): boards and pages under
+   the group's processes, each with the operator's agent lock chip. */
+.gr-resources { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+.gr-kind { display: flex; flex-direction: column; gap: 2px; }
+.gr-kind-label { margin: 2px 0; }
+.gr-row { display: flex; align-items: center; gap: 8px; min-height: 24px; font-size: 13px; }
+.gr-spacer { flex: 1; }
+.gr-lock { cursor: pointer; white-space: nowrap; background: none; }
+.gr-add { position: relative; display: inline-flex; }
+.gr-add-menu { position: absolute; right: 0; top: 100%; z-index: var(--z-popover); min-width: 120px; }

@@ -2,6 +2,7 @@ import { Fragment, h, render } from 'preact';
 import { signal } from '@preact/signals';
 import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { LockChip } from './resource-lock.js';
 import { Button, Select } from './ui-components.js';
 import { PALETTE_PRIMITIVES, PALETTE_SNIPPETS } from './process-edit-model.js';
 import { selectionItems } from './process-selection.js';
@@ -168,6 +169,8 @@ function Header({ controller, view }) {
     <span class="process-hash process-editor-version" title=${model.semanticHash || 'This template has never been saved'}>
       ${model.semanticHash ? `v ${shortHash(model.semanticHash)}` : 'unsaved'}
     </span>
+    ${model.id && model.semanticHash && html`<${LockChip} kind="process" id=${model.id} name=${model.name || model.id} locked=${!!view.agentsLocked}
+      onChanged=${(locked) => controller.setAgentsLocked(locked)} />`}
     <span class="process-editor-dirty" hidden=${!model.dirty}>● modified</span>
     <span class=${`process-editor-status${view.status.error ? ' is-error' : ''}`} role="status">${view.status.message}</span>
     <span class="spacer"></span>
