@@ -696,7 +696,7 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
           actions=${html`<${CreateSubgroupButton} group=${group} />`}>
         ${node.children.length
           ? html`<div class="group-subgroups">${node.children.map((child) => html`<${GroupNode} key=${child.key} node=${child} snapshot=${snapshot} actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`)}</div>`
-          : html`<div class="muted gf-empty">${wizard ? '(no sub-parties yet)' : '(no subgroups yet)'}</div>`}
+          : html`<div class="gf-empty ui-empty">${wizard ? '(no sub-parties yet)' : '(no subgroups yet)'}</div>`}
       <//>
       ${fused ? html`<${GroupProcessBody} group=${group} fused=${fused} />` : html`
         ${processes ? null : pending}

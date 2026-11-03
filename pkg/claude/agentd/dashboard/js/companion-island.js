@@ -190,7 +190,7 @@ function AddMenu({ agents, tabs, steward, stewardsOn = true, stewardLabel, retur
     <div class="companion-menu-list">
       ${candidates.length ? candidates.map((agent) => html`<button key=${agent.agentId} type="button" role="menuitem" class="ui-menu-item" onClick=${() => onPin(agent.agentId)}>
         <${agent.scribe ? Avatar : StatusDot} agent=${agent} status=${companionStatus(agent)} /> ${agent.name}</button>`)
-        : html`<div class="companion-menu-empty">${filter ? 'No live agent matches.' : 'No other live agents.'}</div>`}
+        : html`<div class="companion-menu-empty ui-empty">${filter ? 'No live agent matches.' : 'No other live agents.'}</div>`}
     </div>
   </div>`;
 }

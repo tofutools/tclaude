@@ -1949,7 +1949,7 @@ function TerminalTabs({
         </div>
       ` : null}
       ${hasPanes && !shownPanes.length ? html`
-        <div class="mux-scope-empty">None of your open terminals is on the ticked nodes. Tick more nodes in <b>nodes ▾</b> to see them.</div>
+        <div class="mux-scope-empty ui-empty">None of your open terminals is on the ticked nodes. Tick more nodes in <b>nodes ▾</b> to see them.</div>
       ` : null}
       ${empty && !hasPanes ? html`
         <div id="mux-empty">

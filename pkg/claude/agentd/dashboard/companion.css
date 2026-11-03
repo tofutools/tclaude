@@ -214,7 +214,7 @@ body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: c
   padding: 5px 8px; font: inherit; font-size: 12px;
 }
 .companion-menu-list { max-height: 240px; overflow-y: auto; }
-.companion-menu-empty { color: var(--cmp-muted); font-size: 12px; padding: 6px 8px; }
+.companion-menu-empty { padding: 6px 8px; }
 
 .companion-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .companion-term-host { flex: 1; min-height: 0; padding: 6px; overflow: hidden; }

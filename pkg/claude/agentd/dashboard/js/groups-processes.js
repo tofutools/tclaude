@@ -576,7 +576,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         onImport=${pickPwf}
         onReuse=${(templateId) => { setQuick(null); setStarting({ templateId }); }}
         onDismiss=${() => { markQuickStart('dismissed'); setQuick(null); setDismissed(true); }} />`
-      : fresh && folded && !starting && html`<div class="gp-empty gq-folded" data-quickstart-folded=${group.name}>
+      : fresh && folded && !starting && html`<div class="gp-empty gq-folded ui-empty" data-quickstart-folded=${group.name}>
         ${wizard ? 'No rites yet' : 'No processes yet'} · <${Button} size="sm" variant="link" class="gq-link" data-quickstart-expand onClick=${() => setQuick('pick')}>Get started ▸<//></div>`;
   const startScope = (scope) => { setQuick(null); setStarting({ scope }); };
   const controls = (inline) => html`<${RunControls} group=${group} runs=${liveGroupRuns(context, entry, members)}
@@ -605,7 +605,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     ${runs.map((run) => html`<${RunCard} key=${run.runId} run=${run} entry=${entry} nameOf=${nameOf} wizard=${wizard} onOpen=${open} />`)}
     <${MemberRuns} entries=${memberRuns} label=${wizard ? 'Hero rites' : 'Member runs'} onOpen=${open} />
     ${planned.length > 0 && html`<div class="gp-planned-list">${planned.map((item) => html`<${PlannedRow} key=${item.id} item=${item} wizard=${wizard} />`)}</div>`}
-    ${!runs.length && !planned.length && !memberRuns.length && !fresh && html`<div class="gp-empty">${!label
+    ${!runs.length && !planned.length && !memberRuns.length && !fresh && html`<div class="gp-empty ui-empty">${!label
       ? (wizard ? 'No rites in this party yet.' : 'No processes in this group yet.')
       : `No ${label} ${wizard ? 'rites' : 'processes'}.`}</div>`}`;
   if (fused) {
@@ -719,7 +719,7 @@ function UnsharedRuns({ group, wizard, fused }) {
   const text = group.fleet_node?.local
     ? (wizard ? 'The rites of this realm show on its own page.' : "This node's process runs show on its own page.")
     : (wizard ? `The rites of ${node} are not shared across realms.` : `Process runs on ${node} are not shared across nodes.`);
-  const note = html`<div class="gp-empty gp-unshared" data-process-unshared=${group.name}>${text}</div>`;
+  const note = html`<div class="gp-empty gp-unshared ui-empty" data-process-unshared=${group.name}>${text}</div>`;
   if (!fused) return html`<div class="gp-group" data-process-group=${group.name}>${note}</div>`;
   return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Heroes' : 'Agents'} count=${fused.count}
       actions=${fused.actions} closedActions=${fused.closedActions}>${fused.agents}<//>
@@ -754,7 +754,7 @@ export function UngroupedProcessBody({ group }) {
   return html`<div class="gp-group" data-process-group=${group.key || group.name}>
     <${MemberRuns} entries=${entries} label=${wizard ? 'Hero rites' : 'Agent runs'}
       onOpen=${(runId) => perspective.onFocusRun({ group: group.key || group.name, runId })} />
-    ${!entries.length && html`<div class="gp-empty">${runFilterHas(filter, 'running')
+    ${!entries.length && html`<div class="gp-empty ui-empty">${runFilterHas(filter, 'running')
       ? (wizard ? 'No unbound hero walks a rite.' : 'No ungrouped agent runs a process.')
       : `No ${label} ${wizard ? 'rites' : 'processes'} outside groups.`}</div>`}
   </div>`;
@@ -874,7 +874,7 @@ export function GroupsProcessesFocus({
   }
   return html`<div class="gp-focus" data-groups-processes>
     ${source.error.value && status === 'ready' && html`<div class="gp-toolbar"><span class="gp-stale" role="status">Showing the last update: ${source.error.value}</span></div>`}
-    ${status === 'idle' && html`<div class="gp-empty" role="status">Loading process runs…</div>`}
+    ${status === 'idle' && html`<div class="gp-empty ui-empty" role="status">Loading process runs…</div>`}
     ${status === 'error' && html`<div class="gp-empty gp-error ui-error" role="alert">Could not load process runs: ${source.error.value}</div>`}
     ${status === 'unavailable' && html`<${GroupsProcessesPlaceholder} wizard=${wizard} />`}
     ${status === 'ready' && html`<${ProcessesPerspective.Provider} value=${perspective}><div class="gp-tree">${children}</div><//>`}

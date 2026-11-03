@@ -1766,7 +1766,7 @@ export function BoardEditor({
           <${Button} size="sm" class="board-invite" aria-expanded=${invite ? 'true' : 'false'} onClick=${() => setInvite((v) => !v)}>＋ Invite agent<//>
           ${invite && html`<div class="board-invite-menu" role="menu">
             ${candidates.length ? candidates.slice(0, 30).map((a) => html`<button key=${a.agentId} type="button" role="menuitem" class="ui-menu-item" onClick=${() => addParticipant(a.agentId)}>${a.steward ? '✦ ' : ''}${a.name}</button>`)
-              : html`<div class="board-invite-empty">No other live agents. Summon the Steward from the companion (${shortcutText('steward')}).</div>`}
+              : html`<div class="board-invite-empty ui-empty">No other live agents. Summon the Steward from the companion (${shortcutText('steward')}).</div>`}
           </div>`}
         </span>
         <${Select} size="sm" class="board-group" aria-label="The board's group" title="A group's members are on its board without invitations"
