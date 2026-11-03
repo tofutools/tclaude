@@ -56,7 +56,7 @@ function CronTargetPicker({ value, onChange, snapshot, onPick, groupOnly = false
       <input id="cron-create-target" type="text" value=${value.target}
         placeholder="agt_ id / title / conv-id / 8+-char prefix" autocomplete="off" spellcheck=${false}
         onInput=${(event) => onChange({ ...value, target: event.currentTarget.value })} />
-      <button type="button" id="cron-create-target-pick" title="Pick from the agent / hero list" onClick=${onPick}>🔍</button>
+      <${Button} id="cron-create-target-pick" title="Pick from the agent / hero list" onClick=${onPick}>🔍<//>
     </div>`}
     ${value.mode === 'solo' && scope && html`<div class="cron-target-input-row" id="cron-create-target-scoped">
       <select id="cron-create-scoped-member" value=${value.target}
@@ -135,7 +135,7 @@ function CronExplanation({ result, loading, onRetry }) {
   if (loading) return html`<div class="muted">Explaining…</div>`;
   if (!result) return null;
   if (result.error) return html`<span class="cron-explain-error ui-error">explain failed: ${result.error}
-    <button type="button" onClick=${onRetry}>retry</button></span>`;
+    <${Button} size="sm" onClick=${onRetry}>retry<//></span>`;
   if (!result.valid) return html`<span class="cron-explain-error ui-error">${result.message || 'invalid expression'}</span>`;
   const fires = (result.next || []).map((value) => new Date(value).toLocaleString()).join(' · ');
   return html`<${Fragment}>
@@ -275,8 +275,8 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
         <input id="cron-create-owner" type="text" value=${draft.owner}
           placeholder="blank = you (the operator) · or a sender: title / conv-id / 8+-char prefix" autocomplete="off" spellcheck=${false}
           onInput=${(event) => update({ owner: event.currentTarget.value })} />
-        <button type="button" id="cron-create-owner-pick" title="Pick from the agent / hero list"
-          onClick=${() => setPicker({ field: 'owner', title: 'Pick owner' })}>🔍</button>
+        <${Button} id="cron-create-owner-pick" title="Pick from the agent / hero list"
+          onClick=${() => setPicker({ field: 'owner', title: 'Pick owner' })}>🔍<//>
       </div></div></label>
       <label class="cron-create-row"><span class="cron-create-label">Target</span>
         <${CronTargetPicker} value=${draft.target} snapshot=${snapshot}
@@ -305,7 +305,7 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
         </div>
         ${draft.scheduleMode === 'interval' ? html`<div class="cron-schedule-interval" id="cron-create-schedule-interval">
           <div class="cron-schedule-chips" id="cron-create-chips">${INTERVAL_PRESETS.map((value) => html`
-            <button type="button" data-chip=${value} class=${draft.interval.trim() === value ? 'selected' : ''}
+            <button data-ui-exempt type="button" data-chip=${value} class=${draft.interval.trim() === value ? 'selected' : ''}
               onClick=${() => update({ interval: value })}>${value === '24h' ? 'daily' : value}</button>`)}</div>
           <input id="cron-create-interval" type="text" value=${draft.interval}
             placeholder="custom (30s min, e.g. 10m, 2h, 1h30m)" autocomplete="off" spellcheck=${false}
