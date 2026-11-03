@@ -86,8 +86,11 @@ test('migrated card classes keep .ui-card in their markup', () => {
   const bare = [];
   for (const file of readdirSync(JS).filter((f) => f.endsWith('.js'))) {
     const source = readFileSync(new URL(file, JS), 'utf8');
-    for (const m of source.matchAll(/class=(?:"([^"]*)"|\$\{`([^`]*)`\})/g)) {
-      const value = m[1] ?? m[2];
+    // class="…", class=${`…`} (one level of nested `…` allowed), and the
+    // imperative element('div', '…') helper.
+    const attrs = /class=(?:"([^"]*)"|\$\{`((?:[^`]|`[^`]*`)*?)`\})|element\('[\w-]+', '([^']*)'/g;
+    for (const m of source.matchAll(attrs)) {
+      const value = m[1] ?? m[2] ?? m[3];
       const tokens = value.split(/[\s${}'?:]+/);
       for (const cls of classes) if (tokens.includes(cls) && !tokens.includes('ui-card')) bare.push(`${file}: ${value}`);
     }

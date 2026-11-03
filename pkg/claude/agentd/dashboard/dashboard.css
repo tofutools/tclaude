@@ -15916,7 +15916,7 @@ body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .modal-buttons 
 
 /* The chart panel: the violet void framed in gold, with a soft mystic
    glow spilling from the top edge (mirrors the mail panes' gradients). */
-body.wizard .cost-chart {
+body.wizard .cost-chart.ui-card {
   background:
     radial-gradient(120% 90% at 50% 0%, rgba(122, 93, 176, 0.16), transparent 68%),
     linear-gradient(180deg, #1a1233 0%, #140f28 100%);
@@ -18051,7 +18051,7 @@ body.wizard .usage-wizard-title {
 }
 /* Each graph is a scrying pool: the violet void inside a gilded frame, with
    the same mystic glow spilling from the top edge as the Costs panel. */
-body.wizard .usage-series-card {
+body.wizard .usage-series-card.ui-card {
   background:
     radial-gradient(120% 90% at 50% 0%, rgba(122, 93, 176, 0.16), transparent 68%),
     linear-gradient(180deg, #1a1233 0%, #140f28 100%);

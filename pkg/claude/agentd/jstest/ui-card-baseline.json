@@ -26,7 +26,6 @@
   "body.wizard #template-deploy-modal .deploy-mode",
   "body.wizard .activity-hover-panel",
   "body.wizard .ci-panel",
-  "body.wizard .cost-chart",
   "body.wizard .gm-card",
   "body.wizard .gp-card",
   "body.wizard .mail-list",
@@ -34,6 +33,5 @@
   "body.wizard .mail-sidebar",
   "body.wizard .process-issues-panel",
   "body.wizard .process-palette-card",
-  "body.wizard .usage-series-card",
   "body.wizard .vegas-card"
 ]
