@@ -30,6 +30,8 @@ func glDetailsWorld(t *testing.T, graphql string) (http.Handler, *glRecorder) {
 	saveGitLabPresentedPRPolicy(t, "gitlab.contoso.test/contoso")
 	gl := newGLRecorder()
 	t.Cleanup(agentd.SetGitLabTransportForTestJSON(gl.do))
+	agentd.ResetGitLabReviewStatesForTest()
+	t.Cleanup(agentd.ResetGitLabReviewStatesForTest)
 	gl.route = func(req agentd.GitLabRequestForTest) (glCanned, bool) {
 		switch {
 		case req.GraphQL:

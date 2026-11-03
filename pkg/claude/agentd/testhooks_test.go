@@ -2651,8 +2651,13 @@ func PollAuthoredOpenMRsForTest() (time.Duration, error) {
 func ResetAuthoredOpenMRsForTest() { resetAuthoredOpenMRs("") }
 
 // ResetGitLabReviewStatesForTest forgets which GitLab instances lack reviewer
-// states, so one test's old instance does not carry into the next.
-func ResetGitLabReviewStatesForTest() { glReviewStatesMissing.Clear() }
+// states, the recently closed query's fields or the diffstat, so one test's
+// old instance does not carry into the next.
+func ResetGitLabReviewStatesForTest() {
+	glReviewStatesMissing.Clear()
+	glRecentMRsMissing.Clear()
+	glDiffStatsMissing.Clear()
+}
 
 // SetCreatedPRRecorderForTest swaps how `pr create` and `mr create` record a
 // created pull or merge request for the dashboard, so a test can make that

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
@@ -66,8 +67,14 @@ func gitlabPRDetails(rawURL string) (prDetails, bool) {
 			} `json:"mergeRequest"`
 		} `json:"project"`
 	}
-	err := glGraphQL(ctx, base, token, glMRDiffStatsQuery,
-		map[string]any{"project": ref.project, "iid": strconv.Itoa(ref.number)}, &data)
+	err := errGLUnknownField
+	if !glDiffStatsKnownMissing(base) {
+		err = glGraphQL(ctx, base, token, glMRDiffStatsQuery,
+			map[string]any{"project": ref.project, "iid": strconv.Itoa(ref.number)}, &data)
+		if errors.Is(err, errGLUnknownField) {
+			glDiffStatsMissing.Store(strings.ToLower(strings.TrimRight(base, "/")), true)
+		}
+	}
 	switch {
 	case err == nil && data.Project != nil && data.Project.MergeRequest != nil &&
 		data.Project.MergeRequest.DiffStatsSummary != nil:
@@ -87,6 +94,17 @@ func gitlabPRDetails(rawURL string) (prDetails, bool) {
 		details.NoDiffstat = true
 	}
 	return details, true
+}
+
+// glDiffStatsMissing holds the instance bases (lower-cased) whose GraphQL
+// refused the diffstat read over a field it lacks. Like the other two such
+// memories, it lasts until agentd restarts, so an upgraded instance gets its
+// diffstat back after a restart; until then no card spends the read.
+var glDiffStatsMissing sync.Map
+
+func glDiffStatsKnownMissing(base string) bool {
+	_, missing := glDiffStatsMissing.Load(strings.ToLower(strings.TrimRight(base, "/")))
+	return missing
 }
 
 // gitlabMRCredential resolves what a dashboard read of a merge request needs:

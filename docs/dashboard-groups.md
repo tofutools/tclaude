@@ -275,7 +275,10 @@ Subscription quota is not on the row; see
   approvals, its reviewers' change requests, and amber while the project's
   approval rules want more approvals. GitLab records no time on an approval,
   so its rows show no age. An instance older than reviewer states (GitLab
-  added them after approvals) shows approvals only.
+  added them after approvals) shows approvals only. agentd notes, per
+  instance, which newer fields an instance lacks (reviewer states, the
+  details card's diffstat, the recently closed query) and stops asking for
+  them until it restarts. After upgrading GitLab, restart agentd to get them.
 
 PR and CI data comes from `git` and `gh`, or the GitLab API for a merge
 request, cached for 90 seconds.
