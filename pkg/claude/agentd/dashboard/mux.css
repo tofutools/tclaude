@@ -375,7 +375,6 @@ body.hide-costs .mux-cost-toggle { display: none; }
   padding: 7px 10px; border-bottom: 1px solid #30363d; font-weight: 600;
 }
 .transfer-title { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.transfer-cancel { padding: 2px 8px; font-size: 11px; }
 .transfer-min {
   border: none; background: none; color: #8b949e; cursor: pointer;
   font-size: 12px; padding: 0 3px; line-height: 1;

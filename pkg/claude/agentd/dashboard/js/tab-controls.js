@@ -93,8 +93,8 @@ export function TabContextMenu({ menu, items, closeMenu, focusAfterAction, focus
     if (refocus) focusAfterAction();
   };
 
-  const item = (label, action, { className = 'ui-menu-item mux-tab-menu-item', refocus = true } = {}) => html`
-    <button type="button" role="menuitem" tabIndex="-1" class=${className} onClick=${() => run(action, { refocus })}>${label}</button>
+  const item = (label, action, { className = 'mux-tab-menu-item', refocus = true } = {}) => html`
+    <button type="button" role="menuitem" tabIndex="-1" class=${`ui-menu-item ${className}`} onClick=${() => run(action, { refocus })}>${label}</button>
   `;
   const separator = html`<div class="mux-tab-menu-separator" role="separator"></div>`;
 

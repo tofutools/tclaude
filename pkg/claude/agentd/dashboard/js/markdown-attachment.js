@@ -163,7 +163,7 @@ export function MarkdownAttachment({ messageID, attachment, siblings, surface = 
   if (!renderable) return null;
 
   return html`<${Fragment}>
-    <button type="button" class="human-attachment-markdown-trigger"
+    <button data-ui-exempt type="button" class="human-attachment-markdown-trigger"
       disabled=${loadState !== 'ready'}
       onClick=${() => setViewMode('rendered')} aria-label=${`View ${filename} in the document viewer`}>
       <span class="human-attachment-markdown-icon" aria-hidden="true">⤢</span>
@@ -189,20 +189,20 @@ export function MarkdownAttachment({ messageID, attachment, siblings, surface = 
           </div>
           <div class="markdown-preview-header-actions">
             <div class="markdown-preview-modes" role="group" aria-label="Document view mode">
-              <button type="button" class="markdown-preview-mode"
+              <button data-ui-exempt type="button" class="markdown-preview-mode"
                 aria-pressed=${viewMode === 'rendered'}
                 onClick=${() => setViewMode('rendered')}>Rendered</button>
-              <button type="button" class="markdown-preview-mode"
+              <button data-ui-exempt type="button" class="markdown-preview-mode"
                 aria-pressed=${viewMode === 'source'}
                 onClick=${() => setViewMode('source')}>Source</button>
             </div>
-            ${textZoom !== 1 && html`<button type="button" class="markdown-preview-zoom-reset"
+            ${textZoom !== 1 && html`<button data-ui-exempt type="button" class="markdown-preview-zoom-reset"
               onClick=${() => zoomText(() => 1)} aria-label=${`Text size ${Math.round(textZoom * 100)}%; reset to 100%`}
               title="Reset text size (0)">${Math.round(textZoom * 100)}%</button>`}
             <a class="markdown-preview-download" href=${href} download=${filename}
               title="Download this agent-published file">Download</a>
             <${ViewerDisplayButtons} ...${view} />
-            <button ref=${closeRef} type="button" class="markdown-preview-close"
+            <button data-ui-exempt ref=${closeRef} type="button" class="markdown-preview-close"
               onClick=${close} aria-label="Close the document viewer" title="Close (Esc)">×</button>
           </div>
         </header>

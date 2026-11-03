@@ -87,7 +87,7 @@ export function SnapAssist({ win, viewOf }) {
       const tab = activeTabOf(window);
       const { label, lead } = viewOf(tab);
       const more = window.tabs.length - 1;
-      return html`<button type="button" key=${window.id} class="snap-assist-card" role="option" aria-selected="false"
+      return html`<button data-ui-exempt type="button" key=${window.id} class="snap-assist-card" role="option" aria-selected="false"
         title=${`Put ${label} here`} onClick=${() => pick(window)}>
         <span class="snap-assist-kind" aria-hidden="true">${lead}</span>
         <span class="snap-assist-title">${label}</span>

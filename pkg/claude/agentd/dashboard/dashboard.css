@@ -2445,14 +2445,7 @@ body.slop .attachment-preview-position { color: #c9a86b; }
   overflow: hidden; color: #8b949e; font-size: 11px;
   text-overflow: ellipsis; white-space: nowrap;
 }
-.markdown-remote-image-load, .markdown-remote-image-notice-load {
-  flex: 0 0 auto; padding: 4px 9px; border: 1px solid #1f6feb; border-radius: 4px;
-  background: #21262d; color: #58a6ff; cursor: pointer; font: inherit; font-size: 11px;
-}
-.markdown-remote-image-load:hover, .markdown-remote-image-load:focus-visible,
-.markdown-remote-image-notice-load:hover, .markdown-remote-image-notice-load:focus-visible {
-  background: rgba(31, 111, 235, .14);
-}
+.ui-btn:is(.markdown-remote-image-load, .markdown-remote-image-notice-load) { flex: 0 0 auto; }
 .markdown-remote-image-loaded { max-width: 100%; height: auto; border-radius: 5px; }
 .markdown-remote-image-notice {
   display: flex; align-items: center; gap: 10px; margin: 0 0 13px;
@@ -2667,13 +2660,6 @@ body.wizard :is(.markdown-remote-image-icon, .markdown-remote-image-text > span,
   .markdown-remote-image-notice-text) { color: #9a86c9; }
 body.wizard .markdown-remote-image-text strong { color: #d8cff0; }
 body.wizard .markdown-remote-image-notice { border-color: #4d3d72; background: rgba(36, 26, 58, .55); }
-body.wizard :is(.markdown-remote-image-load, .markdown-remote-image-notice-load) {
-  border-color: #7c5cc4; background: #1d1730; color: #b39ddb;
-}
-body.wizard :is(.markdown-remote-image-load, .markdown-remote-image-notice-load):hover,
-body.wizard :is(.markdown-remote-image-load, .markdown-remote-image-notice-load):focus-visible {
-  background: rgba(124, 92, 196, .18); color: #e6dcff;
-}
 body.wizard :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer:focus-visible {
   outline-color: #b39ddb;
 }
@@ -2718,13 +2704,6 @@ body.slop :is(.markdown-remote-image-icon, .markdown-remote-image-text > span,
   .markdown-remote-image-notice-text) { color: #c9a86b; }
 body.slop .markdown-remote-image-text strong { color: #f0dcc0; }
 body.slop .markdown-remote-image-notice { border-color: #8b0000; background: rgba(74, 10, 10, .5); }
-body.slop :is(.markdown-remote-image-load, .markdown-remote-image-notice-load) {
-  border-color: #ffd700; background: #2a0a0a; color: #ffd700;
-}
-body.slop :is(.markdown-remote-image-load, .markdown-remote-image-notice-load):hover,
-body.slop :is(.markdown-remote-image-load, .markdown-remote-image-notice-load):focus-visible {
-  background: rgba(255, 215, 0, .14); color: #ffe88c;
-}
 body.slop :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer:focus-visible {
   outline-color: #ffd700;
 }
