@@ -18644,3 +18644,12 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 
 /* Small icon buttons (row remove ×) sit centred beside taller fields. */
 .sbx-row > .ui-btn-icon, .sbx-environment-row > .ui-btn-icon { align-self: center; }
+
+/* Get help (js/get-help-menu.js): a toolbar button whose menu drops below it,
+   and the picker of running agents to ask. */
+.get-help { position: relative; display: inline-flex; }
+.get-help-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: var(--z-popover); min-width: 220px; }
+.get-help-agents { list-style: none; margin: 8px 0 0; padding: 0; max-height: min(50vh, 420px); overflow: auto; }
+.get-help-agents li + li { margin-top: 4px; }
+.get-help-agent { width: 100%; justify-content: flex-start; gap: 8px; }
+.get-help-agent .get-help-agent-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
