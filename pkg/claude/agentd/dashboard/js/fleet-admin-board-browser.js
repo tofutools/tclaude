@@ -4,6 +4,7 @@ import htm from 'htm';
 import { Button, Select, SortTh } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { ImportDialog, PublishDialog, canPost, postedBy } from './fleet-admin-board-items.js';
 import { dashPrefs } from './prefs.js';
 import { applySortState, persistTableSort, persistedTableSort, timestampSortValue } from './sort.js';
@@ -300,8 +301,7 @@ export function SkillInstallDialog({ row, actions, confirm, onClose, onDone }) {
       .then(() => onDone(`Downloading ${row.name}`)).catch((e) => setError(errText(e))).finally(() => setBusy(false));
   };
   const scripts = (preview?.files || []).filter((f) => f.security);
-  return html`<${Overlay} id="fleet-cb-install" labelledby="fleet-cb-install-title" onClose=${onClose}>
-    <h3 id="fleet-cb-install-title">Install ${row.name} <span class="muted">v ${short(row.version)}</span></h3>
+  return html`<${Dialog} id="fleet-cb-install" onClose=${onClose} title=${html`Install ${row.name} <span class="muted">v ${short(row.version)}</span>`}>
     <div class="muted">From ${row.board.name}, posted by ${row.by} <${TrustBadge} trust=${row.trust} /></div>
     <div class="fa-cb-steps">${['Target', 'Preview', 'Install'].map((s, i) => html`<span key=${s} class=${i < step ? 'done' : i === step ? 'on' : ''}>${i + 1} · ${s}</span>`)}</div>
     ${TARGETS.map((t) => html`<label key=${t.id} class=${`fa-cb-opt ui-card ui-inset${opts.target === t.id ? ' on' : ''}`} data-target=${t.id}>
@@ -335,18 +335,17 @@ export function SkillInstallDialog({ row, actions, confirm, onClose, onDone }) {
         : html`<${Button} id="fleet-cb-preview-btn" disabled=${busy || !targetReady} onClick=${() => run(opts)}>${busy ? 'Previewing…' : preview && !stale ? 'Preview again' : 'Preview'}</${Button}>
           <${Button} variant="primary" id="fleet-cb-install-btn" disabled=${blocked} title=${stale ? 'Preview first' : ''} onClick=${install}>Install…</${Button}>`}
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // UploadDialog picks the board to post to; posting itself is the board
 // detail view's Post config… dialog, unchanged.
 function UploadPicker({ boards, onPick, onClose }) {
-  return html`<${Overlay} id="fleet-cb-upload" labelledby="fleet-cb-upload-title" onClose=${onClose}>
-    <h3 id="fleet-cb-upload-title">Upload to which board?</h3>
+  return html`<${Dialog} id="fleet-cb-upload" onClose=${onClose} title="Upload to which board?">
     <div class="muted">Skills and config you post are signed by this node and readable by every member of the board.</div>
     <div class="fa-cb-pick">${boards.map((b) => html`<${Button} size="sm" key=${b.id} data-upload-board=${b.id} onClick=${() => onPick(b)}>${b.name}<//>`)}</div>
     <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${onClose}>Cancel</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function Facets({ rows, query, setQuery, boards }) {

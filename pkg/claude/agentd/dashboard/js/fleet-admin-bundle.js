@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 
 const html = htm.bind(h);
 
@@ -82,8 +82,7 @@ export function BundleInspectDialog({ offer, label, actions, toast, onImport, on
   };
   const list = Array.isArray(entries) ? entries : [];
   const shown = useMemo(() => (open && open.kind !== 'binary' ? entryText(open.kind, open.raw, !open.truncated) : ''), [open]);
-  return html`<${Overlay} id="fleet-bundle-inspect" labelledby="fleet-bundle-inspect-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="fleet-bundle-inspect-title">${title || `Inspect ${peer}'s ${offer.offer?.type || 'bundle'} offer`}</h3>
+  return html`<${Dialog} id="fleet-bundle-inspect" onClose=${onClose} blocked=${busy} title=${title || `Inspect ${peer}'s ${offer.offer?.type || 'bundle'} offer`}>
     <div class="muted">${offer.offer?.summary || ''} · ${size(offer.offer?.bytes)} · ${note || 'fetched and verified on this node; nothing is imported until you apply it.'}</div>
     ${entries?.error ? html`<div class="fa-danger" role="alert">${entries.error}</div>`
       : entries == null ? html`<div class="muted">Fetching and verifying…</div>`
@@ -108,5 +107,5 @@ export function BundleInspectDialog({ offer, label, actions, toast, onImport, on
       <${Button} variant="primary" id="fleet-bundle-import" onClick=${onImport}>Import…</${Button}>
       <${Button} onClick=${onClose}>Close</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }

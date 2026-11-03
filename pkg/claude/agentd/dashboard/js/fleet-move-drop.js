@@ -8,7 +8,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { setFleetAdminPage, setFleetGrantTarget } from './fleet-admin-page.js';
 import { markInTransit } from './drop-landing.js';
 
@@ -72,10 +72,9 @@ function errText(e) { return e?.message || String(e); }
 export function MoveDropDialog(props) {
   const okRef = useRef(null);
   const { drop: { agent, target }, onClose } = props;
-  return html`<${Overlay} id="fleetview-move-drop" labelledby="fleetview-move-drop-title" onClose=${onClose} initialFocusRef=${okRef}>
-    <h3 id="fleetview-move-drop-title">Move ${agent.name} to ${target.group} on ${target.name}?</h3>
+  return html`<${Dialog} id="fleetview-move-drop" onClose=${onClose} initialFocusRef=${okRef} title=${html`Move ${agent.name} to ${target.group} on ${target.name}?`}>
     <${MovePanel} ...${props} okRef=${okRef} />
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // MovePanel is the body of a move: the confirm, the flagged-history choice,

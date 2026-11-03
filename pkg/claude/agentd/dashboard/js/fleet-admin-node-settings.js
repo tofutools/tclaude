@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { HealthPolicySection } from './fleet-admin-health.js';
 import { IdentityRotationSection } from './fleet-admin-identity.js';
 
@@ -116,8 +116,7 @@ export function NodeSettingsDialog({ self, peers = [], actions, confirm, toast, 
     }).catch((e) => setError(errText(e)));
   };
 
-  return html`<${Overlay} id="fleet-node-settings" labelledby="fleet-node-settings-title" onClose=${onClose}>
-    <h3 id="fleet-node-settings-title">Node settings</h3>
+  return html`<${Dialog} id="fleet-node-settings" onClose=${onClose} title="Node settings">
     <h4 class="fa-ns-h">Hub connection</h4>
     <label class="fa-ns-row"><span class="fa-k">hub URL</span><input id="fleet-hub-url" value=${form.hubURL} placeholder="wss://hub.example:8470" autocomplete="off" spellcheck="false" onInput=${set('hubURL')} /></label>
     <label class="fa-ns-row"><span class="fa-k">name</span><input id="fleet-hub-name" value=${form.name} placeholder="user@hostname (default)" autocomplete="off" onInput=${set('name')} /></label>
@@ -137,5 +136,5 @@ export function NodeSettingsDialog({ self, peers = [], actions, confirm, toast, 
     <${HealthPolicySection} peers=${peers} actions=${actions} confirm=${confirm} toast=${toast} />
     <${IdentityRotationSection} actions=${actions} confirm=${confirm} toast=${toast} />
     <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${onClose}>Close</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }

@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { sentLanding } from './fleet-admin-landing.js';
 
 const html = htm.bind(h);
@@ -71,8 +71,7 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
         else setError(moveErrorText(e, peerLabel));
       });
   };
-  return html`<${Overlay} id="fleet-move-agent" labelledby="fleet-move-agent-title" onClose=${onClose}>
-    <h3 id="fleet-move-agent-title">Move an agent to a peer</h3>
+  return html`<${Dialog} id="fleet-move-agent" onClose=${onClose} title="Move an agent to a peer">
     ${!agents.length || !peers.length ? html`<div class="muted">${!agents.length ? 'This node has no agent to move.' : 'Trust a peer first.'}</div>` : html`
     <label class="fa-of-row"><span class="fa-k">agent</span><${Select} size="sm" id="fleet-move-agent-agent" value=${form.agent} onChange=${set('agent')}>
       ${agents.map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}<//></label>
@@ -92,7 +91,7 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
     <div class="modal-buttons"><span class="spacer"></span>
       ${agents.length && peers.length ? html`<${Button} variant="primary" id="fleet-move-agent-send" disabled=${!!findings && !allow} onClick=${send}>Move…</${Button}>` : ''}
       <${Button} onClick=${onClose}>Close</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // MovesPage lists durable agent moves and teleports in both directions and

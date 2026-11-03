@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 
 const html = htm.bind(h);
 
@@ -147,8 +147,7 @@ export function GatewayDialog({ setup, actions, confirm, onClose, onDone }) {
       .catch((x) => setError(errText(x)));
   };
   const custom = form.provider === 'custom';
-  return html`<${Overlay} id="fleet-model-gateway" labelledby="fleet-model-gateway-title" onClose=${onClose}>
-    <h3 id="fleet-model-gateway-title">${create ? 'Add a model gateway' : `Edit model gateway ${setup.name}`}</h3>
+  return html`<${Dialog} id="fleet-model-gateway" onClose=${onClose} title=${create ? 'Add a model gateway' : `Edit model gateway ${setup.name}`}>
     <div class="muted">Lets workers on your other nodes use this node's provider API key without the key leaving this node. It needs an API key from the provider console; a Claude or ChatGPT subscription login cannot be shared.</div>
     <label class="fa-jb-row"><span class="fa-k">name</span><input id="fleet-mg-name" value=${form.name} disabled=${!create} placeholder="e.g. anthropic" autocomplete="off" spellcheck="false" onInput=${set('name')} /></label>
     <label class="fa-jb-row"><span class="fa-k">provider</span><${Select} size="sm" id="fleet-mg-provider" value=${form.provider} onChange=${setProvider}>
@@ -193,5 +192,5 @@ export function GatewayDialog({ setup, actions, confirm, onClose, onDone }) {
     <div class="modal-buttons"><span class="spacer"></span>
       <${Button} variant="primary" id="fleet-mg-save" onClick=${save}>${create ? 'Add…' : 'Save…'}</${Button}>
       <${Button} onClick=${onClose}>Close</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }

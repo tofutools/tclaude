@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { shortID } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
@@ -100,8 +100,7 @@ function RunJobDialog({ peers, pools, actions, confirm, onClose, onDone }) {
       onDone(`${results.length - failed.length} job${results.length - failed.length === 1 ? '' : 's'} sent${failed.length ? `; ${failed.length} refused (${failed.map((x) => `${label(x.peer)}: ${x.error || x.status}`).join('; ')})` : ''}${undelivered.length ? `; ${undelivered.length} not delivered yet — Retry resends the same request` : ''}`, failed.length > 0);
     }).catch((e) => setError(errText(e)));
   };
-  return html`<${Overlay} id="fleet-run-job" labelledby="fleet-run-job-title" onClose=${onClose}>
-    <h3 id="fleet-run-job-title">Run a job in a peer's repository</h3>
+  return html`<${Dialog} id="fleet-run-job" onClose=${onClose} title="Run a job in a peer's repository">
     <label class="fa-jb-row"><span class="fa-k">where</span><${Select} size="sm" id="fleet-job-target" value=${form.target} onChange=${set('target')}>
       <option value="pick">nodes I pick</option><option value="auto">automatic: any trusted node</option>
       ${pools.map((p) => html`<option key=${p} value=${`group:${p}`}>automatic: a node of pool ${p}</option>`)}<//></label>
@@ -121,7 +120,7 @@ function RunJobDialog({ peers, pools, actions, confirm, onClose, onDone }) {
     <div class="modal-buttons"><span class="spacer"></span>
       <${Button} variant="primary" id="fleet-job-send" onClick=${submit}>Send…</${Button}>
       <${Button} onClick=${onClose}>Close</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // appendOutput adds live chunks to the per-stream text, keeping the newest
@@ -229,8 +228,7 @@ function OutputDialog({ job, label, actions, timers, active, onClose }) {
   }, [out]);
   const onScroll = (e) => { const el = e.currentTarget; atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8; };
   const shown = live ? out : logs;
-  return html`<${Overlay} id="fleet-job-logs" labelledby="fleet-job-logs-title" onClose=${onClose}>
-    <h3 id="fleet-job-logs-title">Job ${job.id} ${job.incoming ? 'from' : 'on'} ${label(job.peer)}</h3>
+  return html`<${Dialog} id="fleet-job-logs" onClose=${onClose} title=${html`Job ${job.id} ${job.incoming ? 'from' : 'on'} ${label(job.peer)}`}>
     <div class="muted">${job.repo}@${job.ref}${job.commit ? ` (${job.commit.slice(0, 12)})` : ''} · ${live ? html`<span class="fa-jb-live">● live</span>${!visible || !active ? ' (paused while hidden)' : ''}` : `${job.terminal ? job.state : 'finished'}${job.exit != null ? ` · exit ${job.exit}` : ''}${job.code ? ` · ${job.code}` : ''}`}</div>
     ${live && (out.trimmed || out.skipped) && html`<div class="muted">${out.skipped ? 'Some earlier output was skipped by the node. ' : ''}${out.trimmed ? 'Only the most recent output is kept here; the full output is in the logs once the job ends.' : ''}</div>`}
     ${live && note && html`<div class="muted" id="fleet-job-wait">${note}</div>`}
@@ -240,7 +238,7 @@ function OutputDialog({ job, label, actions, timers, active, onClose }) {
       ${shown.stderr ? html`<div class="fa-k">stderr</div><pre class="fa-run-out err">${shown.stderr}</pre>` : ''}`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation job status ${job.id}</code>${live ? html`; live output: <code>job run … --follow</code>` : ''}</div>
     <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${onClose}>Close</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function RepoDialog({ repo, groups, actions, confirm, onClose, onDone }) {
@@ -264,8 +262,7 @@ function RepoDialog({ repo, groups, actions, confirm, onClose, onDone }) {
     }).then((r) => { if (r) onDone(`Repository ${body.name} saved`); })
       .catch((e) => setError(errText(e)));
   };
-  return html`<${Overlay} id="fleet-repo" labelledby="fleet-repo-title" onClose=${onClose}>
-    <h3 id="fleet-repo-title">${repo ? `${repo.enabled ? 'Edit' : 'Re-enable'} repository ${repo.name}` : 'Allow a repository for remote jobs'}</h3>
+  return html`<${Dialog} id="fleet-repo" onClose=${onClose} title=${repo ? `${repo.enabled ? 'Edit' : 'Re-enable'} repository ${repo.name}` : 'Allow a repository for remote jobs'}>
     <label class="fa-jb-row"><span class="fa-k">alias</span><input id="fleet-repo-name" value=${form.name} disabled=${!!repo} placeholder="name peers use (--repo)" autocomplete="off" spellcheck="false" onInput=${set('name')} /></label>
     <label class="fa-jb-row"><span class="fa-k">URL</span><input id="fleet-repo-url" value=${form.url} placeholder="git remote, e.g. git@github.com:org/repo.git" autocomplete="off" spellcheck="false" onInput=${set('url')} /></label>
     <label class="fa-jb-row"><span class="fa-k">clone</span><input id="fleet-repo-clone" value=${form.clone} placeholder="/abs/path of the local clone on this node" autocomplete="off" spellcheck="false" onInput=${set('clone')} /></label>
@@ -276,7 +273,7 @@ function RepoDialog({ repo, groups, actions, confirm, onClose, onDone }) {
     <div class="modal-buttons"><span class="spacer"></span>
       <${Button} variant="primary" id="fleet-repo-save" onClick=${save}>${repo ? 'Save…' : 'Allow…'}</${Button}>
       <${Button} onClick=${onClose}>Close</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // JobsPage lists remote jobs (sent by this node and received from peers) with
