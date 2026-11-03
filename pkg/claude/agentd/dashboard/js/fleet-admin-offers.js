@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { shortID } from './fleet-admin-model.js';
 import { BundleInspectDialog } from './fleet-admin-bundle.js';
 import { ImportConfirmList } from './paf-dialogs.js';
@@ -248,8 +249,7 @@ function SendConfigDialog({ peers, actions, confirm, onClose, onDone }) {
     }).then((r) => { if (r) onDone(`Offered config to ${label}`); })
       .catch((e) => { if (e?.code === 'flagged_credentials') { setFlags(e.body?.flags || []); setError('Some items look like credentials. Leave those sections out, or send them anyway.'); } else setError(errText(e)); });
   };
-  return html`<${Overlay} id="fleet-offer-config" labelledby="fleet-offer-config-title" onClose=${onClose}>
-    <h3 id="fleet-offer-config-title">Offer my config to a peer</h3>
+  return html`<${Dialog} id="fleet-offer-config" onClose=${onClose} title="Offer my config to a peer">
     <label class="fa-of-row"><span class="fa-k">peer</span><${Select} size="sm" id="fleet-offer-config-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
       ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//></label>
     <div class="fa-cli-note">Sections (none ticked = all):</div>
@@ -261,7 +261,7 @@ function SendConfigDialog({ peers, actions, confirm, onClose, onDone }) {
     <div class="modal-buttons"><span class="spacer"></span>
       <${Button} variant="primary" id="fleet-offer-config-send" disabled=${!!flags && !allow} onClick=${send}>Send…</${Button}>
       <${Button} onClick=${onClose}>Close</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function ShareAgentDialog({ peers, agents, actions, confirm, onClose, onDone }) {
@@ -285,8 +285,7 @@ function ShareAgentDialog({ peers, agents, actions, confirm, onClose, onDone }) 
     }).then((r) => { if (r) onDone(`Offered ${agentLabel} to ${peerLabel}${sentLanding(r, peerLabel)}`); })
       .catch((e) => { if (e?.code === 'flagged_credentials') { setFindings(e.body?.findings || []); setError('The history looks like it contains credentials. Share without history, or send it anyway.'); } else setError(errText(e)); });
   };
-  return html`<${Overlay} id="fleet-share-agent" labelledby="fleet-share-agent-title" onClose=${onClose}>
-    <h3 id="fleet-share-agent-title">Offer an agent to a peer</h3>
+  return html`<${Dialog} id="fleet-share-agent" onClose=${onClose} title="Offer an agent to a peer">
     <label class="fa-of-row"><span class="fa-k">agent</span><${Select} size="sm" id="fleet-share-agent-agent" value=${form.agent} onChange=${set('agent')}>
       ${agents.map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}<//></label>
     <label class="fa-of-row"><span class="fa-k">peer</span><${Select} size="sm" id="fleet-share-agent-peer" value=${form.peer} onChange=${set('peer')}>
@@ -302,7 +301,7 @@ function ShareAgentDialog({ peers, agents, actions, confirm, onClose, onDone }) 
     <div class="modal-buttons"><span class="spacer"></span>
       <${Button} variant="primary" id="fleet-share-agent-send" disabled=${!!findings && !allow} onClick=${send}>Send…</${Button}>
       <${Button} onClick=${onClose}>Close</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function OfferProfileDialog({ peers, profiles, actions, confirm, onClose, onDone }) {
@@ -326,8 +325,7 @@ function OfferProfileDialog({ peers, profiles, actions, confirm, onClose, onDone
       else onDone(`Offered profile ${profile} to ${label}`);
     }).catch((e) => setError(e?.status === 409 ? `${errText(e)} — apply the profile to ${label} first (Profiles & pools).` : errText(e)));
   };
-  return html`<${Overlay} id="fleet-offer-profile" labelledby="fleet-offer-profile-title" onClose=${onClose}>
-    <h3 id="fleet-offer-profile-title">Offer a profile's config to a peer</h3>
+  return html`<${Dialog} id="fleet-offer-profile" onClose=${onClose} title="Offer a profile's config to a peer">
     <label class="fa-of-row"><span class="fa-k">profile</span><${Select} size="sm" id="fleet-offer-profile-name" value=${profile} onChange=${(e) => setProfile(e.currentTarget.value)}>
       ${profiles.map((p) => html`<option key=${p} value=${p}>${p}</option>`)}<//></label>
     <label class="fa-of-row"><span class="fa-k">peer</span><${Select} size="sm" id="fleet-offer-profile-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
@@ -337,7 +335,7 @@ function OfferProfileDialog({ peers, profiles, actions, confirm, onClose, onDone
     <div class="modal-buttons"><span class="spacer"></span>
       <${Button} variant="primary" id="fleet-offer-profile-send" onClick=${send}>Send…</${Button}>
       <${Button} onClick=${onClose}>Close</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // OffersPage lists bundle offers (config and agents) peers sent this node and

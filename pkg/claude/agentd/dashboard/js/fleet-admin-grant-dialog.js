@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { GRANT_CATEGORIES, GRANT_LIFETIMES, LAUNCH_FIELDS, PEER_SLUGS, REQUESTER_PAYS, extraPolicy, grantConsequence, grantExpiryText, grantRows, planGrants, slugCategory, slugInfo } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
@@ -115,8 +115,7 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
   };
 
   let lastCat = '';
-  return html`<${Overlay} id="fleet-grant-dialog" labelledby="fleet-grant-dialog-title" dialogClass="cron-create-modal fa-grant-dialog" onClose=${onClose} blocked=${busy}>
-    <h3 id="fleet-grant-dialog-title">Add grants</h3>
+  return html`<${Dialog} id="fleet-grant-dialog" dialogClass="cron-create-modal fa-grant-dialog" onClose=${onClose} blocked=${busy} title="Add grants">
     <div class="fa-gd">
       <div class="fa-gd-pick">
         <input id="fleet-grant-search" type="text" placeholder="Search permissions: name or what it allows…" value=${q} autocomplete="off" spellcheck="false" onInput=${(e) => setQ(e.currentTarget.value)} />
@@ -184,5 +183,5 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
       </div>
     </div>
     <div class="muted fa-cli-note">CLI: <code>tclaude federation grant PEER SLUG [--scope …] [--max-live N] [--profile …] [--harness …] [--model …] [--cwd …] [--allow-profile …] [--requester-pays …] [--job-approval …] [--for 7d]</code> · <code>tclaude federation extend PEER SLUG --for 7d</code></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }

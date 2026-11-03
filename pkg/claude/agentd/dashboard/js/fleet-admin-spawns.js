@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { remoteLaunchFields } from './agent-spawn-remote.js';
 
 const html = htm.bind(h);
@@ -135,8 +135,7 @@ function ApproveDialog({ req, actions, confirm, toast, onClose, onDone }) {
     }).then((r) => { if (r) { toast(`Started ${r.label || r.agent_id} in ${r.group}${droppedNote(r.dropped_overrides)}`, false); onDone(); } })
       .catch((e) => toast(`Approve failed: ${errText(e)}${droppedNote(e?.body?.dropped_overrides)}`, true));
   };
-  return html`<${Overlay} id="fleet-spawn-approve" labelledby="fleet-spawn-approve-title" onClose=${onClose}>
-    <h3 id="fleet-spawn-approve-title">Approve spawn request #${req.id}</h3>
+  return html`<${Dialog} id="fleet-spawn-approve" onClose=${onClose} title=${html`Approve spawn request #${req.id}`}>
     <div class="fa-spawn-brief">${req.brief}</div>
     <div class="muted">From ${req.from} into group ${req.group}${req.role ? `, role ${req.role}` : ''}. Leave a field empty to keep what was requested or the group's default.</div>
     ${requested.length > 0 && html`<div id="fleet-spawn-requested">Requested launch settings:
@@ -149,7 +148,7 @@ function ApproveDialog({ req, actions, confirm, toast, onClose, onDone }) {
       <${Button} variant="primary" id="fleet-spawn-approve-go" onClick=${go}>Approve…</${Button}>
     </div>
     <div class="muted fa-cli-note">CLI: <code>tclaude federation requests approve ${req.id} [--name …] [--profile …] [--cwd …] [--harness …] [--model …] [--effort …]</code></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // DenyDialog declines a request with an optional reason sent back.
@@ -161,8 +160,7 @@ function DenyDialog({ req, actions, confirm, toast, onClose, onDone }) {
     okLabel: 'Deny', busyLabel: 'Denying…',
     action: () => actions.denySpawn(req.id, reason.trim()),
   }).then((x) => { if (x) { toast(`Denied #${req.id}`, false); onDone(); } }).catch((e) => toast(`Deny failed: ${errText(e)}`, true));
-  return html`<${Overlay} id="fleet-spawn-deny" labelledby="fleet-spawn-deny-title" onClose=${onClose}>
-    <h3 id="fleet-spawn-deny-title">Deny spawn request #${req.id}</h3>
+  return html`<${Dialog} id="fleet-spawn-deny" onClose=${onClose} title=${html`Deny spawn request #${req.id}`}>
     <div class="fa-spawn-brief">${req.brief}</div>
     <label class="fa-spawn-opt fa-spawn-top">Reason <textarea id="fleet-spawn-deny-reason" rows="2" maxlength="300" value=${reason} onInput=${(e) => setReason(e.currentTarget.value)} placeholder="optional, sent to the requester"></textarea></label>
     <div class="modal-buttons"><span class="spacer"></span>
@@ -170,7 +168,7 @@ function DenyDialog({ req, actions, confirm, toast, onClose, onDone }) {
       <${Button} class="fa-danger" id="fleet-spawn-deny-go" onClick=${go}>Deny…</${Button}>
     </div>
     <div class="muted fa-cli-note">CLI: <code>tclaude federation requests deny ${req.id} [--reason …]</code></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // SendDialog asks a peer (or automatic placement) for a worker in one of its
@@ -201,8 +199,7 @@ function SendDialog({ view, pools, actions, confirm, toast, onClose, onDone }) {
       if (r.placement || refused) setResult(r); else onDone();
     }).catch((e) => { toast(`Spawn request failed: ${errText(e)}`, true); if (e?.body?.placement) setResult({ error: errText(e), placement: e.body.placement }); });
   };
-  return html`<${Overlay} id="fleet-spawn-send" labelledby="fleet-spawn-send-title" onClose=${onClose}>
-    <h3 id="fleet-spawn-send-title">Request a worker on a peer</h3>
+  return html`<${Dialog} id="fleet-spawn-send" onClose=${onClose} title="Request a worker on a peer">
     <label class="fa-spawn-opt">Node
       <${Select} size="sm" id="fleet-spawn-target" value=${target} onChange=${(e) => setTarget(e.currentTarget.value)}>
         ${peers.map((p) => html`<option key=${p.id} value=${`peer:${p.id}`}>${p.label}</option>`)}
@@ -226,7 +223,7 @@ function SendDialog({ view, pools, actions, confirm, toast, onClose, onDone }) {
       <${Button} variant="primary" id="fleet-spawn-send-go" disabled=${!f.brief.trim() || (!auto && !f.group.trim())} onClick=${go}>Send…</${Button}>
     </div>
     <div class="muted fa-cli-note">CLI: <code>tclaude federation spawn-request ${'<group>@<peer>'} --brief …</code> or <code>--node ${'auto|group:<pool>'}</code></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // SpawnRequestsPage lists the spawn requests peers sent to this node's

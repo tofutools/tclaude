@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { PEER_SLUGS, REQUESTER_PAYS, UNRESTRICTED_CONSEQUENCE, slugInfo } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
@@ -89,8 +89,7 @@ export function ProfileEditor({ profile = null, pools = [], groups = [], actions
     }).then((r) => { if (r) onDone(profile ? `Saved ${profile.name} (revision ${r.revision ?? profile.revision + 1})` : `Created profile ${name.trim()}`); })
       .catch((e) => setError(e?.status === 409 && e?.code === 'stale_profile' ? 'Someone changed this profile meanwhile: close and reopen it to edit the current revision.' : errText(e)));
   };
-  return html`<${Overlay} id="fleet-profile-editor" labelledby="fleet-profile-editor-title" onClose=${onClose}>
-    <h3 id="fleet-profile-editor-title">${profile ? `Edit profile ${profile.name}` : 'New node profile'}${profile ? html` <span class="muted">rev ${profile.revision}</span>` : ''}</h3>
+  return html`<${Dialog} id="fleet-profile-editor" onClose=${onClose} title=${html`${profile ? `Edit profile ${profile.name}` : 'New node profile'}${profile ? html` <span class="muted">rev ${profile.revision}</span>` : ''}`}>
     ${!profile && html`<label class="fa-pe-row"><span class="fa-k">name</span><input id="fleet-profile-name" value=${name} autocomplete="off" spellcheck="false" onInput=${(e) => setName(e.currentTarget.value)} /></label>`}
     <label class="fa-pe-row"><span class="fa-k">trust</span><${Select} size="sm" id="fleet-profile-level" value=${level} onChange=${(e) => setLevel(e.currentTarget.value)}>
       <option value="restricted">restricted: only its grants</option><option value="unrestricted">unrestricted</option><//></label>
@@ -129,5 +128,5 @@ export function ProfileEditor({ profile = null, pools = [], groups = [], actions
       <${Button} onClick=${onClose}>Cancel</${Button}>
       <${Button} variant="primary" id="fleet-profile-save" onClick=${save}>${profile ? 'Save…' : 'Create…'}</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
