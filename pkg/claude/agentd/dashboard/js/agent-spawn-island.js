@@ -6,7 +6,7 @@ import { dashboardState } from './snapshot-store.js';
 import { Fragment, h, render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Select } from './ui-components.js';
+import { Button, OptionalSelect, Select } from './ui-components.js';
 import { TransferTray } from './transfer-card.js';
 import { LockReason } from './lock-reason.js';
 import { isPageNode } from './node-api.js';
@@ -1506,12 +1506,8 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     <label class="cron-create-row" id="agent-spawn-fast-mode-row" hidden=${!view.showFastMode}
       title="Codex fast mode uses a higher-cost, lower-latency service tier. Harness default leaves ~/.codex/config.toml in charge.">
       <span class="cron-create-label">Fast mode</span>
-      <${Select} id="agent-spawn-fast-mode" value=${draft.fastMode} disabled=${busy}
-        onChange=${(event) => update('fastMode', event.currentTarget.value)}>
-        <option value="">Harness default (config.toml)</option>
-        <option value="1">On</option>
-        <option value="0">Off</option>
-      <//>
+      <${OptionalSelect} id="agent-spawn-fast-mode" value=${draft.fastMode} disabled=${busy}
+        onChange=${(value) => update('fastMode', value)} unset="Harness default (config.toml)" on="On" off="Off"/>
     </label>
     <div class="spawn-inline-fields">
       <label class="cron-create-row" id="agent-spawn-model-claude-row" hidden=${!view.hasModelList}

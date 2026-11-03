@@ -357,6 +357,15 @@ function component cannot take `ref`. `Button` defaults to `type="button"`. The
 classes stay for innerHTML and `createElement` code, where `uiButtonClass()`
 builds a button's class list.
 
+An optional setting, one that is either left unset (inherit a profile, the
+group or the harness default) or set, uses `OptionalSelect`. With no
+`options` it is inherit / on / off on the values `''` / `'1'` / `'0'`
+(`triValue` and `readTri` in `management-model.js` convert those to and from a
+nullable boolean). `unset`, `on` and `off` relabel it, `options` makes it
+inherit / value, and `unsetValue` keeps a wire value such as `'inherit'`.
+`onChange` gets the value, not the event. `jstest/ui-optional-select.test.mjs`
+fails when a file hand-writes those options again.
+
 `jstest/ui-controls.test.mjs` fails when a file gains a `<button>` or `<select>`
 without a `ui-*` class. Mark a deliberate one-off, such as an overlay window
 control, with `data-ui-exempt`. Older markup is held by a per-file baseline;

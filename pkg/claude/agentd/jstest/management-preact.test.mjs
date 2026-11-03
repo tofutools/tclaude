@@ -640,6 +640,45 @@ test('management island renders keyed profile list and explicit editor state', a
   cleanups.reverse().forEach((fn) => fn()); assert.equal(host.childElementCount, 0);
 });
 
+// The optional (inherit / on / off) rows are OptionalSelects: an unchanged
+// value, an explicit clear back to inherit, and a new value all round-trip
+// through save and reopen.
+test('profile editor optional settings round-trip unchanged, cleared and set values', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  const open = (seed) => state.openDialog({ kind: 'profile-editor', seed, options: {}, catalog, sandboxImpl });
+  open({ name: 'tri', harness: 'claude', trust_dir: false, remote_control: true, is_owner: true });
+  const saves = []; const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  mountManagementIsland({ host, state, actions: { async saveProfile(value) { saves.push(value); } }, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
+  await harness.act(() => Promise.resolve());
+  const select = (id) => host.querySelector(`#profile-editor-${id}`);
+  assert.ok(select('trust-dir').hasAttribute('data-optional-select'));
+  assert.deepEqual([...select('auto-memory').options].map((option) => [option.value, option.textContent]),
+    [['', 'Default (off — recommended)'], ['1', 'on'], ['0', 'off']]);
+  assert.deepEqual(['trust-dir', 'remote-control', 'auto-memory', 'owner'].map((id) => selectedValue(select(id))), ['0', '1', '', '1']);
+  const tri = (payload) => ['trust_dir', 'remote_control', 'auto_memory', 'is_owner'].map((key) => (key in payload ? payload[key] : 'absent'));
+
+  await harness.act(() => harness.fireEvent(host.querySelector('#profile-editor-submit'), 'click'));
+  assert.deepEqual(tri(saves[0].payload), [false, true, 'absent', true], 'unchanged values save as they were, unset stays absent');
+
+  for (const [id, value] of [['trust-dir', ''], ['auto-memory', '1'], ['owner', '0']]) {
+    choose(select(id), value);
+    await harness.act(() => harness.fireEvent(select(id), 'change'));
+  }
+  await harness.act(() => harness.fireEvent(host.querySelector('#profile-editor-submit'), 'click'));
+  assert.deepEqual(tri(saves[1].payload), ['absent', true, true, false], 'an explicit clear drops the key; a set value saves');
+
+  state.closeDialog();
+  await harness.act(() => Promise.resolve());
+  open({ name: 'tri', harness: 'claude', ...saves[1].payload });
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(['trust-dir', 'remote-control', 'auto-memory', 'owner'].map((id) => selectedValue(select(id))), ['', '1', '1', '0'], 'the saved values reopen');
+  cleanups.reverse().forEach((fn) => fn());
+});
+
 test('profile editor saves with Ctrl/Cmd+Enter', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
@@ -3868,7 +3907,7 @@ test('profile auto memory round-trips as a tri-state and is gated on the harness
 
   // The tri-state labels name the real default so the operator isn't misled
   // into reading "Default" as "leave Claude Code alone".
-  assert.match(model.AUTO_MEMORY_TRI_OPTIONS[0][1], /off/i);
+  assert.match(model.AUTO_MEMORY_TRI_OPTIONS.unset, /off/i);
 });
 
 test('Codex fast mode profile preserves inherit, on, and off', async (t) => {
