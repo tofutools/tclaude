@@ -259,7 +259,7 @@ function PolicyStatus({ policies }) {
   if (!policies?.length) return null;
   return html`<div id="snapshot-policies">
     <div class="paf-sec">Resilience policies</div>
-    <table class="paf-member-table"><thead><tr><th>Target</th><th>Every</th><th>To</th><th>Agent</th><th>Last good</th><th>Status</th><th>Next due</th></tr></thead><tbody>
+    <table class="paf-member-table ui-compact"><thead><tr><th>Target</th><th>Every</th><th>To</th><th>Agent</th><th>Last good</th><th>Status</th><th>Next due</th></tr></thead><tbody>
       ${policies.flatMap((p) => (p.agents?.length ? p.agents : [null]).map((a, i) => html`<tr key=${`${p.id}:${a?.agent || i}`} data-policy=${p.id}>
         <td>${i === 0 ? p.target : ''}</td><td>${i === 0 ? everyText(p.every_seconds) : ''}</td><td>${i === 0 ? (p.peer_label || p.dest?.peer || '') : ''}</td>
         <td>${a?.agent || html`<span class="paf-hint ui-hint">no agent yet</span>`}</td>
@@ -317,7 +317,7 @@ export function SnapshotsDialog({ descriptor, state, actions, confirm, confirmDi
     ${p?.kind === 'create' && html`<${CreatePanel} actions=${actions} preset=${descriptor.agent} onDone=${done} onError=${fail} />`}
     ${list === null ? html`<div class="empty">Loading…</div>`
       : list.length === 0 ? html`<div class="empty" id="snapshots-empty">No snapshots yet. Take one here, from an agent's ⚙ menu, or with <code>tclaude agent snapshot create</code>.</div>`
-      : html`<table class="paf-member-table" id="snapshots-list"><thead><tr><th>Name</th><th>Agent</th><th>Harness</th><th>Taken</th><th>Size</th><th>Expires</th><th></th></tr></thead><tbody>
+      : html`<table class="paf-member-table ui-compact" id="snapshots-list"><thead><tr><th>Name</th><th>Agent</th><th>Harness</th><th>Taken</th><th>Size</th><th>Expires</th><th></th></tr></thead><tbody>
         ${list.map((snap) => html`<tr key=${snap.name} data-snapshot=${snap.name} class=${p?.snap?.name === snap.name ? 'active' : ''}>
           <td><div class="snap-trunc" title=${snap.name}><b>${snap.name}</b></div>${snap.note && html`<div class="paf-hint ui-hint snap-trunc" title=${snap.note}>${snap.note}</div>`}</td>
           <td><div class="snap-trunc" title=${snap.agent_name}>${snap.agent_name}</div></td>

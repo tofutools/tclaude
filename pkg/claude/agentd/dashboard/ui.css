@@ -254,6 +254,11 @@ body.slop {
 .ui-seg > .ui-btn[aria-pressed="true"]:hover:not(:disabled) { background: var(--ui-pressed-bg); border-color: transparent; color: var(--ui-text-strong); }
 .ui-seg > .ui-btn:focus-visible { position: relative; }
 
+/* Compact tables: the dense density for tables inside dialogs, panels and
+   dense views (fleet admin, logs, debug, queues); the global table rule in
+   dashboard.css is the roomy default. */
+table.ui-compact :is(th, td) { padding: 4px 8px; }
+
 /* Tabs (js/ui-tabs.js): a section's sub-navigation is one framed bar of pill
    tabs under the top nav (operator pick C: pills for section sub-nav, the
    joined bar for a mode inside a dialog, underline only for the top nav).

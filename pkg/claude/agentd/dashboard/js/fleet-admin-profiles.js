@@ -162,7 +162,7 @@ export function ProfilesPage({ view, pools, groups = [], actions, confirm, toast
     ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
     <h4>Node pools <span class="muted">${pools.length}</span></h4>
     <div class="muted">A pool's grants apply to every member node — peer grants for a pool are edited on the Peer grants page.</div>
-    ${pools.length > 0 && html`<table class="fa-table" id="fleet-pools">
+    ${pools.length > 0 && html`<table class="fa-table ui-compact" id="fleet-pools">
       <thead><tr><th>Pool</th><th>Members</th><th>Add member</th><th></th></tr></thead>
       <tbody>${pools.map((pool) => {
         const ids = (pool.members || []).map((m) => m.instance_id);
@@ -185,7 +185,7 @@ export function ProfilesPage({ view, pools, groups = [], actions, confirm, toast
     <h4>Node profiles <span class="muted">${summaries ? summaries.length : ''}</span></h4>
     <div class="muted">A profile bundles a trust level, pools, peer grants and worker defaults for a peer. <${Button} size="sm" variant="link" id="fleet-profile-new" class="fa-link" onClick=${() => setEditing({ profile: null })}>New profile…<//> CLI: <code>tclaude federation profile</code>.</div>
     ${summaries && summaries.length === 0 && html`<div class="empty">No profiles yet.</div>`}
-    ${summaries && summaries.length > 0 && html`<table class="fa-table" id="fleet-profiles">
+    ${summaries && summaries.length > 0 && html`<table class="fa-table ui-compact" id="fleet-profiles">
       <thead><tr><th>Profile</th><th>Level</th><th>Pools</th><th>Grants</th><th>Labels</th><th></th></tr></thead>
       <tbody>${summaries.map((p) => html`<tr key=${p.id} data-profile=${p.name}>
         <td><b>${p.name}</b> <span class="muted">rev ${p.revision}</span>${p.id === defaultID ? html` <span class="fa-badge">default</span>` : ''}</td>

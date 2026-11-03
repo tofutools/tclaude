@@ -72,7 +72,7 @@ export function RemoteFilesPanel({ terminal, viewer, peer = 'the peer', fetchImp
     : listing?.error ? html`<div class="term-files-error ui-error" role="alert" id="term-files-error">${listing.error}</div>`
     : !listing ? html`<div class="term-files-muted">Loading…</div>`
     : !entries.length ? html`<div class="term-files-muted" id="term-files-empty">Nothing to show in this directory.</div>`
-    : html`<table class="term-files-table" id="term-files-list"><tbody>
+    : html`<table class="term-files-table ui-compact" id="term-files-list"><tbody>
         ${dirs.map((e) => html`<tr key=${e.path} data-path=${e.path}><td><${Button} size="sm" variant="link" class="term-files-link" data-files="open" onClick=${() => open(e.path)}>📁 ${baseName(e.path)}/<//></td><td></td><td></td></tr>`)}
         ${files.map((e) => html`<tr key=${e.path} data-path=${e.path}><td>${baseName(e.path)}</td><td class="term-files-muted">${fileSize(e.size)}</td>
           <td class="term-files-acts">${e.size <= PREVIEW_MAX_BYTES && html`<${Button} size="sm" variant="link" class="term-files-link" data-files="preview" onClick=${() => show(e)}>preview<//>`}

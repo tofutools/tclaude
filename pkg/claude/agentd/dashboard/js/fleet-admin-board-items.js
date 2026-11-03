@@ -222,7 +222,7 @@ export function ImportDialog({ board, item, version, by, actions, confirm, onClo
       <label class="fa-of-check"><input id="fleet-board-skill-executable" type="checkbox" checked=${opts.preserve_executable} onChange=${(e)=>change({preserve_executable:e.currentTarget.checked})} /> Preserve executable bits: the listed scripts and executables can be run by agents. I have inspected them. Otherwise executable bits are stripped; an interpreter can still run scripts.</label>
       <div class="fa-cli-note">Files (inspect security-relevant content before importing):</div>
       ${(preview.files || []).map((file)=>html`<details key=${file.path} data-skill-file=${file.path}><summary><code>${file.path}</code> · ${file.bytes} bytes ${file.security && html`<span class="fa-badge fa-sensitive">security-relevant</span>`} ${file.executable ? '· executable' : ''}</summary>${file.binary && html`<div class="fa-warn">Binary file: use the verified download to inspect its bytes.</div>`}${file.text !== undefined && html`<pre>${file.text}</pre>`}</details>`)}`}
-    ${changes.length > 0 && html`<table class="fa-table" id="fleet-board-import-changes"><thead><tr><th></th><th>Item</th><th>Change</th><th></th></tr></thead>
+    ${changes.length > 0 && html`<table class="fa-table ui-compact" id="fleet-board-import-changes"><thead><tr><th></th><th>Item</th><th>Change</th><th></th></tr></thead>
       <tbody>${changes.map((c) => html`<tr key=${c.item} data-item=${c.item}>
         <td><input type="checkbox" aria-label=${`include ${c.item}`} checked=${!opts.skip.includes(c.item)} disabled=${preview?.kind === 'skill' || c.action === 'unchanged'}
           onChange=${(e) => change({ skip: e.currentTarget.checked ? opts.skip.filter((x) => x !== c.item) : [...opts.skip, c.item] })} /></td>
@@ -262,7 +262,7 @@ function VersionsDialog({ board, item, name, actions, confirm, toast, onOpen, on
   const list = Array.isArray(versions) ? versions : [];
   return html`<${Overlay} id="fleet-board-versions" labelledby="fleet-board-versions-title" onClose=${onClose}>
     <h3 id="fleet-board-versions-title">Versions of ${item.name}</h3>
-    ${versions?.error ? html`<div class="fa-danger">${versions.error}</div>` : !versions ? html`<div class="muted">Loading…</div>` : html`<table class="fa-table" id="fleet-board-version-list">
+    ${versions?.error ? html`<div class="fa-danger">${versions.error}</div>` : !versions ? html`<div class="muted">Loading…</div>` : html`<table class="fa-table ui-compact" id="fleet-board-version-list">
       <thead><tr><th>Version</th><th>Posted by</th><th>Size</th><th></th></tr></thead>
       <tbody>${list.map((v) => html`<tr key=${v.version} data-version=${v.version}>
         <td><code title=${v.version}>${short(v.version)}</code>${v.version === item.pinned_version ? html` <span class="fa-badge">kept</span>` : ''}${v.version === item.latest_version ? html` <span class="muted">latest</span>` : ''}</td>
@@ -305,7 +305,7 @@ export function BoardItems({ board, boards = [], name, actions, confirm, toast, 
   return html`<div class="fa-board-items" id="fleet-board-items">
     <div class="fa-row"><b>Shared config</b><span class="spacer"></span>
       ${poster && html`<${Button} size="sm" id="fleet-board-post" onClick=${() => setDialog({ kind: 'publish' })}>Post config…<//>`}</div>
-    ${items?.error ? html`<div class="fa-danger">${items.error}</div>` : !items ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted" id="fleet-board-items-empty">Nothing posted yet.</div>` : html`<table class="fa-table" id="fleet-board-item-list">
+    ${items?.error ? html`<div class="fa-danger">${items.error}</div>` : !items ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted" id="fleet-board-items-empty">Nothing posted yet.</div>` : html`<table class="fa-table ui-compact" id="fleet-board-item-list">
       <thead><tr><th>Item</th><th>Posted by</th><th>Size</th><th></th></tr></thead>
       <tbody>${list.map((it) => it.invalid ? html`<tr key=${`${it.id}/${it.version}`} data-item-id=${it.id} class="fa-invalid">
           <td>${it.name || 'Invalid item'}</td><td colspan="2" class="fa-danger">${it.error || 'could not be verified'}</td><td class="fa-acts muted">not importable</td></tr>`

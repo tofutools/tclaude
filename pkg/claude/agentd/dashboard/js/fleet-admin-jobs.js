@@ -352,7 +352,7 @@ export function JobsPage({ view, pools, groups, actions, confirm, toast, timers,
     </div>
     ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
     ${jobs == null ? (error ? '' : html`<div class="empty">Loading…</div>`) : !list.length ? html`<div class="empty">No remote jobs.</div>` : html`
-    <table class="fa-table" id="fleet-jobs">
+    <table class="fa-table ui-compact" id="fleet-jobs">
       <thead><tr><th></th><th>Peer</th><th>Repo</th><th>Group</th><th>Command</th><th>Created</th><th>State</th><th></th></tr></thead>
       <tbody>${list.map((j) => html`<tr key=${j.id} data-job=${j.id}>
         <td title=${j.incoming ? 'received: runs on this node' : 'sent: runs on the peer'}>${j.incoming ? '⇠' : '⇢'}</td>
@@ -376,7 +376,7 @@ export function JobsPage({ view, pools, groups, actions, confirm, toast, timers,
     <div class="fa-grant-form"><${Button} size="sm" id="fleet-repo-add" onClick=${() => setDialog({ kind: 'repo' })}>Allow a repository…<//>
       <span class="muted">CLI: <code>tclaude federation repos ls</code></span></div>
     ${repos?.error ? html`<div class="fa-danger">${repos.error}</div>` : repos == null ? '' : !repoRows.length ? html`<div class="empty">No repositories allowed: peers cannot run jobs here.</div>` : html`
-    <table class="fa-table" id="fleet-repos">
+    <table class="fa-table ui-compact" id="fleet-repos">
       <thead><tr><th>Alias</th><th>Clone</th><th>URL</th><th>Groups</th><th>Rev</th><th></th></tr></thead>
       <tbody>${repoRows.map((r) => html`<tr key=${r.name} data-repo=${r.name} class=${r.enabled ? '' : 'muted'}>
         <td>${r.name}</td><td class="fa-wrap"><code>${r.definition?.clone || ''}</code></td><td class="fa-wrap"><code>${r.definition?.url || ''}</code></td>

@@ -34,7 +34,7 @@ function payTag(r) {
 // the CLI's placement readout.
 function PlacementList({ placement }) {
   if (!placement?.candidates?.length) return null;
-  return html`<table class="fa-table" id="fleet-spawn-placement"><tbody>${placement.candidates.map((c) => html`<tr key=${c.instance}>
+  return html`<table class="fa-table ui-compact" id="fleet-spawn-placement"><tbody>${placement.candidates.map((c) => html`<tr key=${c.instance}>
     <td>${c.peer || c.instance}</td><td>${c.group || ''}</td>
     <td class=${c.instance === placement.selected ? '' : c.eligible ? 'muted' : 'fa-danger'}>${c.instance === placement.selected ? 'selected' : c.eligible ? 'eligible' : 'skipped'}${c.reason ? ` — ${c.reason}` : ''}${c.attempt ? ` (${c.attempt})` : ''}</td>
   </tr>`)}</tbody></table>`;
@@ -267,7 +267,7 @@ export function SpawnRequestsPage({ view, pools, actions, confirm, toast, now = 
     </div>
     ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
     ${!rows && !error ? html`<div class="empty">Loading…</div>` : list.length === 0 && !error ? html`<div class="empty">No ${all ? '' : 'open '}spawn requests from peers.</div>` : html`
-    <table class="fa-table" id="fleet-spawn-requests">
+    <table class="fa-table ui-compact" id="fleet-spawn-requests">
       <thead><tr><th>#</th><th>From</th><th>Group</th><th>Worker</th><th>Brief</th><th>State</th><th>Expires</th><th></th></tr></thead>
       <tbody>${list.map((r) => html`<tr key=${r.id} data-spawn=${r.id}>
         <td>${r.id}</td>
@@ -285,7 +285,7 @@ export function SpawnRequestsPage({ view, pools, actions, confirm, toast, now = 
     </table>`}
     <h4 class="fa-h">Outbox <span class="muted">— delivery of spawn requests and operator mail this node sent; decisions arrive in Messages</span></h4>
     ${outbox?.error ? html`<div class="fa-danger">${outbox.error}</div>` : !outbox ? html`<div class="empty">Loading…</div>` : outbox.length === 0 ? html`<div class="empty">Nothing sent yet.</div>` : html`
-    <table class="fa-table" id="fleet-outbox">
+    <table class="fa-table ui-compact" id="fleet-outbox">
       <thead><tr><th>To</th><th>From</th><th>Subject</th><th>State</th><th>Attempts</th><th>Updated</th></tr></thead>
       <tbody>${outbox.map((o) => html`<tr key=${o.envelope_id} data-envelope=${o.envelope_id}>
         <td>${o.to}</td><td>${o.from}</td><td title=${o.preview || ''}>${o.subject || o.preview}</td>

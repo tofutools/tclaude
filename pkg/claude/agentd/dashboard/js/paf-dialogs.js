@@ -379,7 +379,7 @@ export function MemberLandings({ landings, landing, setLanding, confirmCut, setC
     <div class="cron-create-row"><span class="cron-create-label">All members</span>
       <${LandingSelects} idPrefix="group-import-all" harness=${landing.harness} model=${landing.model}
         onChange=${(patch) => setLanding({ ...landing, ...patch })} sameLabel="keep own harness" /></div>
-    <table class="paf-member-table"><thead><tr><th>Member</th><th>From</th><th>Land on</th><th>History</th><th>Sandbox</th></tr></thead><tbody>
+    <table class="paf-member-table ui-compact"><thead><tr><th>Member</th><th>From</th><th>Land on</th><th>History</th><th>Sandbox</th></tr></thead><tbody>
       ${landings.map((row) => {
         // Keyed by conv id: always unique, and safe in a member=value binding.
         const key = row.conv_id;

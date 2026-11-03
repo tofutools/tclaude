@@ -137,7 +137,7 @@ export function SpawnQueueBlock({ snapshot }) {
   // A div: the dashboard's <section>s are its tabs, hidden unless active.
   return html`<div class=${`spawn-queue-block${rows.length ? '' : ' idle'}`} id="spawn-queue-block" role="region" aria-label="Spawn queue">
     <${CapacityLine} queue=${queue} />
-    ${rows.length ? html`<table class="spawn-queue-table"><thead><tr>
+    ${rows.length ? html`<table class="spawn-queue-table ui-compact"><thead><tr>
       <th>#</th><th>Name</th><th>Group</th><th>Requested by</th><th>Waiting</th><th></th>
     </tr></thead><tbody>${rows.map((entry) => html`<${SpawnQueueRow} key=${entry.id} entry=${entry} />`)}</tbody></table>` : null}
   </div>`;
