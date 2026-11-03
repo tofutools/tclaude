@@ -2,6 +2,7 @@ import { COST_FACTOR_HARNESSES } from './cost-factors.js';
 import { createContext, h } from 'preact';
 import { useContext, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { browserNotifyPermission, notificationsUnsupportedNote, requestBrowserNotifyPermission } from './browser-notify.js';
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS } from './terminal-close-tabs.js';
 import { configLocation, configPanel, setConfigPanel } from './config-panel.js';
@@ -58,10 +59,10 @@ function BrowserNotifyPermissionButton() {
   }
   if (state === 'granted') return html`<span class="cfg-inline">✓ browser permission granted</span>`;
   const denied = state === 'denied';
-  return html`<button type="button" class="cfg-inline" disabled=${denied}
+  return html`<${Button} size="sm" class="cfg-inline" disabled=${denied}
     onClick=${async () => { setState(await requestBrowserNotifyPermission()); }}>
     ${denied ? 'Browser permission blocked — allow it in site settings' : 'Grant browser permission'}
-  </button>`;
+  <//>`;
 }
 
 function appendAndFocus(event, id, values, value, onChange) {
@@ -80,10 +81,10 @@ function StringList({ id, values = [], datalist, placeholder, onChange }) {
       <${ConfigInput} type="text" value=${value} placeholder=${placeholder || ''} aria-label=${placeholder || undefined}
         list=${datalist || undefined} autocomplete="off" spellcheck=${false}
         onInput=${event => update(index, event.currentTarget.value)} />
-      <${ConfigButton} type="button" class="cfg-row-del" title="Remove"
+      <${ConfigButton} type="button" class="ui-btn ui-sm ui-btn-ghost ui-btn-danger cfg-row-del" title="Remove"
         onClick=${() => onChange(id, values.filter((_, i) => i !== index))}>×</${ConfigButton}>
     </div>`)}
-    <${ConfigButton} type="button" class="cfg-list-add"
+    <${ConfigButton} type="button" class="ui-btn ui-sm cfg-list-add"
       onClick=${event => appendAndFocus(event, id, values, '', onChange)}>+ add</${ConfigButton}>
   </div>`;
 }
@@ -100,10 +101,10 @@ function TransitionList({ values = [], onChange }) {
       <${ConfigInput} type="text" value=${item.to || ''} placeholder="to state" aria-label="to state"
         data-role="to" list="cfg-state-list" autocomplete="off" spellcheck=${false}
         onInput=${event => update(index, 'to', event.currentTarget.value)} />
-      <${ConfigButton} type="button" class="cfg-row-del" title="Remove"
+      <${ConfigButton} type="button" class="ui-btn ui-sm ui-btn-ghost ui-btn-danger cfg-row-del" title="Remove"
         onClick=${() => onChange(id, values.filter((_, i) => i !== index))}>×</${ConfigButton}>
     </div>`)}
-    <${ConfigButton} type="button" class="cfg-list-add"
+    <${ConfigButton} type="button" class="ui-btn ui-sm cfg-list-add"
       onClick=${event => appendAndFocus(event, id, values, { from: '', to: '' }, onChange)}>+ add transition</${ConfigButton}>
   </div>`;
 }
@@ -120,10 +121,10 @@ function ThresholdList({ values = [], onChange }) {
       <${ConfigInput} type="number" min="1" value=${item.min_tokens ?? ''} placeholder="min used tokens before compaction"
         aria-label="min used tokens before compaction" data-role="min" autocomplete="off" style="min-width:170px"
         onInput=${event => update(index, 'min_tokens', event.currentTarget.value)} />
-      <${ConfigButton} type="button" class="cfg-row-del" title="Remove"
+      <${ConfigButton} type="button" class="ui-btn ui-sm ui-btn-ghost ui-btn-danger cfg-row-del" title="Remove"
         onClick=${() => onChange(id, values.filter((_, i) => i !== index))}>×</${ConfigButton}>
     </div>`)}
-    <${ConfigButton} type="button" class="cfg-list-add"
+    <${ConfigButton} type="button" class="ui-btn ui-sm cfg-list-add"
       onClick=${event => appendAndFocus(event, id, values, { window_size: '', min_tokens: '' }, onChange)}>+ add floor</${ConfigButton}>
   </div>`;
 }
@@ -791,7 +792,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <${Setting} title="Limits & budgets"
           summary="Spend caps, quota guards and per-agent usage profiles live in their own manager."
           more=${html`Global and group limits (for example "$500 a month, alert at 50%, wrap everyone up at 100%"), usage profiles that budget each agent, and per-agent extensions. The former daily/monthly spend limits were converted into global limits there.`}>
-          <button type="button" class="tool" id="cfg-open-usage-rules" onClick=${() => openUsageRulesManager()}>Open usage limits & budgets…</button>
+          <${Button} size="sm" id="cfg-open-usage-rules" onClick=${() => openUsageRulesManager()}>Open usage limits & budgets…<//>
         </${Setting}>
       </${Group}>
       <${Group} title="Cost display">
