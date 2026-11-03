@@ -96,7 +96,9 @@ Permissions, both scopable to a `remote` dimension:
 ### Operator configuration
 
 The `agent.git_proxy` block lives in `~/.tclaude/data/config.json` (private
-daemon state; migrated automatically from the legacy `~/.tclaude/config.json`):
+daemon state; migrated automatically from the legacy `~/.tclaude/config.json`).
+Edit it there or in the dashboard's
+[Config › Git & forges](dashboard-config.md#git--forges):
 
 - `allowed_remotes` — the operator-global allow-list of `host/owner[/repo]`
   patterns, matched segment-wise (`*` matches one segment, and a shorter

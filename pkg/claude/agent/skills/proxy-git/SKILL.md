@@ -51,7 +51,8 @@ whether each one is on the operator's allow-list (with the reason when it is
 not), and which branches you may not push to.
 
 If a remote is refused, that output is what you quote to your human — it names
-exactly what they need to add to `agent.git_proxy.allowed_remotes`.
+exactly what they need to add to `agent.git_proxy.allowed_remotes`, in the
+dashboard's Config › Git & forges or in `config.json`.
 
 ## The commands
 
