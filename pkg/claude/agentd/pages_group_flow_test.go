@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -28,7 +29,11 @@ func (e *pageEnv) createGroupPage(t *testing.T, group, name string) pageOut {
 
 func TestPageOperatorCreatedInAGroupIsTheGroupsUntilAMemberTakesItOver(t *testing.T) {
 	e := newPageEnv(t)
-	pageShareDefaults(t, agentd.PermSelfPage, agentd.PermGroupsPagesRead, agentd.PermGroupsPagesPatch)
+	// Processes on, for the group context the Resources section reads.
+	require.NoError(t, config.Save(&config.Config{
+		Agent:    &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfPage, agentd.PermGroupsPagesRead, agentd.PermGroupsPagesPatch}},
+		Features: &config.FeaturesConfig{Processes: true},
+	}))
 	member := e.agent(t, "gp-member", true)
 	other := e.agent(t, "gp-other", true)
 	outsider := e.agent(t, "gp-outsider", true)
@@ -40,8 +45,12 @@ func TestPageOperatorCreatedInAGroupIsTheGroupsUntilAMemberTakesItOver(t *testin
 
 	p := e.createGroupPage(t, "crew", "sketch")
 	assert.Equal(t, "scratch", p.Kind)
+	// The group's Resources list it, as the group's own.
+	rec := testharness.Serve(e.f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/process/context", nil)))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"name":"sketch","title":"Sketch","owner":"","kind":"scratch","groupOwned":true`)
 	assert.Empty(t, p.Owner, "no agent owns it")
-	rec := e.dashJSON(t, http.MethodPost, "/api/pages", map[string]any{"group": "crew", "name": "sketch"})
+	rec = e.dashJSON(t, http.MethodPost, "/api/pages", map[string]any{"group": "crew", "name": "sketch"})
 	assert.Equal(t, http.StatusConflict, rec.Code, "one name per group")
 	rec = e.dashJSON(t, http.MethodPost, "/api/pages", map[string]any{"group": "nope", "name": "x"})
 	assert.Equal(t, http.StatusNotFound, rec.Code)

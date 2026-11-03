@@ -23,6 +23,7 @@ export { LockChip };
 const html = htm.bind(h);
 
 function pageMeta(page, nameOf) {
+  if (page.groupOwned) return 'blank · no member has taken it over';
   return `${nameOf(page.owner) || page.owner} · ${page.kind === 'static' ? 'static' : 'live'}`;
 }
 
@@ -56,7 +57,14 @@ export function GroupResources({ group, boards = [], pages = [], api, source, no
 
 // AddResource is the section's one ＋▾: a process (the Get started panel) or
 // a board linked to the group.
-export function AddResource({ group, api, source, wizard = false, notify = defaultNotify, onAddProcess }) {
+// freePageName is the first of sketch, sketch-2, … the group has no page by.
+export function freePageName(pages = []) {
+  const taken = new Set(pages.map((page) => page.name));
+  if (!taken.has('sketch')) return 'sketch';
+  for (let n = 2; ; n++) if (!taken.has(`sketch-${n}`)) return `sketch-${n}`;
+}
+
+export function AddResource({ group, pages = [], api, source, wizard = false, notify = defaultNotify, onAddProcess }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   // The shared popover rule: a press outside, or Escape, closes the menu (a
@@ -76,12 +84,24 @@ export function AddResource({ group, api, source, wizard = false, notify = defau
       notify(`Could not create the board: ${cause.message}`, true);
     }
   };
+  const addPage = async () => {
+    setOpen(false);
+    try {
+      const page = await api.createGroupPage(group.name, freePageName(pages));
+      notify(`Created a blank page in ${group.name}: draw on it, then a member takes it over`);
+      void source?.refresh?.();
+      openPagePane(page.id, page.title || page.name);
+    } catch (cause) {
+      notify(`Could not create the page: ${cause.message}`, true);
+    }
+  };
   return html`<span class="gr-add" ref=${ref}>
     <${Button} size="sm" variant="link" class="gq-link" data-resource-add=${group.name} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
       title=${`Add a resource to ${group.name}`} onClick=${() => setOpen(!open)}>＋▾<//>
     ${open && html`<${Menu} size="sm" class="gr-add-menu">
       <${MenuItem} data-resource-add-process onClick=${() => { setOpen(false); onAddProcess(); }}>${wizard ? 'Rite' : 'Process'}<//>
       <${MenuItem} data-resource-add-board onClick=${addBoard}>Board<//>
+      <${MenuItem} data-resource-add-page onClick=${addPage} title="A blank page you draw on; a member takes it over with its own source">Page<//>
     <//>`}
   </span>`;
 }

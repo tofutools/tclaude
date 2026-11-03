@@ -456,8 +456,10 @@ group's Resources section.
 - **Boards:** the collab boards linked to the group.
 - **Pages:** the live pages its members showed into it.
 
-A kind with nothing in it is hidden. **＋▾** adds a process or a new board
-linked to the group.
+A kind with nothing in it is hidden. **＋▾** adds a process, a new board linked
+to the group, or a blank page. Draw on the blank page to show what to build,
+and a member takes it over with its own source (see
+[Live page › A page the operator creates in a group](live-page.md#a-page-the-operator-creates-in-a-group)).
 
 Each resource has a lock chip. Click it to switch between two states:
 - **✎ agents can edit** (the default): agents edit the resource under their
