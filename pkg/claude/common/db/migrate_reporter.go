@@ -18,6 +18,8 @@ type migrationStep struct {
 // writing its migrateV{n-1}toV{n} func and appending {n, migrateV{n-1}toV{n}}
 // here (keep it sorted, contiguous, and in lockstep with currentVersion). The
 // migrate() loop and TestMigrationStepsAreContiguous enforce that shape.
+// Fixture tests that seed an old schema reach the head with
+// applyMigrationsAfter, so they need no edit when a step is added.
 var migrationSteps = []migrationStep{
 	{2, migrateV1toV2},
 	{3, migrateV2toV3},
