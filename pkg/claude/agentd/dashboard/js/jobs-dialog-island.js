@@ -1,7 +1,7 @@
 import { Fragment, h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -59,22 +59,22 @@ function CronTargetPicker({ value, onChange, snapshot, onPick, groupOnly = false
       <${Button} id="cron-create-target-pick" title="Pick from the agent / hero list" onClick=${onPick}>🔍<//>
     </div>`}
     ${value.mode === 'solo' && scope && html`<div class="cron-target-input-row" id="cron-create-target-scoped">
-      <select id="cron-create-scoped-member" value=${value.target}
+      <${Select} id="cron-create-scoped-member" value=${value.target}
         onChange=${(event) => onChange({ ...value, target: event.currentTarget.value })}>
         ${memberOptions.length
           ? html`<${Fragment}><option value="">${wizWord('(pick a member)', '(pick a hero)')}</option>${memberOptions.map((member) => html`
               <option key=${member.key} value=${member.key}>${member.title || member.conv_id}${member.online ? '' : ' (offline)'}</option>`)}</${Fragment}>`
           : html`<option value="">${wizWord('(no members in this group)', '(no heroes in this party)')}</option>`}
-      </select>
+      <//>
     </div>`}
     ${value.mode === 'group' && html`<div class="cron-target-input-row" id="cron-create-target-group">
-      <select id="cron-create-group" value=${value.groupName} disabled=${!!scope}
+      <${Select} id="cron-create-group" value=${value.groupName} disabled=${!!scope}
         onChange=${(event) => onChange({ ...value, groupName: event.currentTarget.value })}>
         ${groupOptions.length
           ? html`<${Fragment}><option value="">${wizWord('(pick a group)', '(pick a party)')}</option>${groupOptions.map((name) => html`
               <option key=${name} value=${name}>${name}${groups.includes(name) ? '' : ' (missing)'}</option>`)}</${Fragment}>`
           : html`<option value="">${wizWord('(no groups — create one first)', '(no parties — form one first)')}</option>`}
-      </select>
+      <//>
     </div>`}
   </div>`;
 }
@@ -284,11 +284,11 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
           onChange=${(target) => update({ target })}
           onPick=${() => setPicker({ field: 'target', title: 'Pick target' })}/></label>
       <label class="cron-create-row"><span class="cron-create-label">Action</span>
-        <select id="cron-create-action-kind" value=${draft.actionKind}
+        <${Select} id="cron-create-action-kind" value=${draft.actionKind}
           onChange=${(event) => setActionKind(event.currentTarget.value)}>
           <option value="message">message</option>
           ${triggersEnabled && html`<option value="spawn">spawn agent</option>`}
-        </select>
+        <//>
       </label>
       ${draft.target.mode === 'group' && draft.actionKind === 'message' && html`<label class="cron-create-row" id="cron-create-role-row"><span class="cron-create-label"
         title="For a group / party target only: deliver only to members / heroes whose role / class matches. Blank or 'all' means the whole target.">
@@ -344,12 +344,12 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
             workerDeadlineSeconds: spawn.workerDeadlineSeconds,
           } })} />
         <div class="trigger-action-fields cron-spawn-concurrency">
-          <label>Concurrency policy<select id="cron-create-spawn-concurrency" value=${draft.spawn.concurrencyPolicy}
+          <label>Concurrency policy<${Select} id="cron-create-spawn-concurrency" value=${draft.spawn.concurrencyPolicy}
             onChange=${(event) => update({ spawn: { ...draft.spawn, concurrencyPolicy: event.currentTarget.value } })}>
             <option value="Forbid">Forbid — skip while a worker is live</option>
             <option value="Replace">Replace — stop the live worker first</option>
             <option value="Allow">Allow — run workers concurrently</option>
-          </select></label>
+          <//></label>
           ${draft.spawn.concurrencyPolicy === 'Allow' && html`<label>Max live workers<input
             id="cron-create-spawn-max-live" type="number" min="1" value=${draft.spawn.maxLiveWorkers}
             onInput=${(event) => update({ spawn: { ...draft.spawn, maxLiveWorkers: Number(event.currentTarget.value) } })} /></label>`}

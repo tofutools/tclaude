@@ -53,7 +53,7 @@ func TestDashboardTriggersAssets(t *testing.T) {
 		".trigger-inspector-grid", ".trigger-editor-step", ".trigger-permission-warning", ".trigger-firing-context",
 		".trigger-dwell-states", ".trigger-fact-result.unknown", ".trigger-harness-capabilities",
 		".group-triggers-section", "grid-template-columns: 1fr",
-		"#trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea)",
+		"#trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select:where(:not(.ui-select)), textarea)",
 		"body.wizard #trigger-modal .trigger-modal",
 		"body.wizard :is(.trigger-verdicts, .trigger-firings, .group-triggers-section)",
 		".trigger-scope-option input[type=radio]", ".trigger-scope-fields > .trigger-scope-group",

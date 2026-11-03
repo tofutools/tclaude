@@ -8361,17 +8361,17 @@ body.wizard #standing-order-modal :is(.cron-create-label, .muted) { color: #ad9a
 body.wizard #standing-order-modal .standing-order-choice strong,
 body.wizard #standing-order-modal .cron-target-modes { color: #e7d9f5; }
 body.wizard #standing-order-modal :is(
-  input[type=text], input[type=number], select, textarea
+  input[type=text], input[type=number], select:where(:not(.ui-select)), textarea
 ) {
   background: #100c17; border-color: rgba(122, 93, 176, 0.58); color: #f3e6c0;
 }
 body.wizard #standing-order-modal :is(
-  input[type=text], input[type=number], select, textarea
+  input[type=text], input[type=number], select:where(:not(.ui-select)), textarea
 ):focus {
   border-color: #a97bd6; box-shadow: 0 0 0 1px rgba(169, 123, 214, 0.35);
   outline: none;
 }
-body.wizard #standing-order-modal select option { color: #1a1330; background: #e7d9f5; }
+body.wizard #standing-order-modal select:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
 body.wizard #standing-order-modal :is(.standing-order-options, .standing-order-native-hooks details) {
   background: #100c17; border-color: rgba(122, 93, 176, 0.5);
 }
@@ -13915,15 +13915,15 @@ body.wizard #activity-performance .empty { color: #8f7bbf; }
 .trigger-fields label, .trigger-action-fields label { display: flex; flex-direction: column; gap: 4px; color: #8b949e; font-size: 11px; }
 .trigger-fields :is(input:not([type=checkbox]):not([type=radio]), select), .trigger-action-fields :is(input, select, textarea), .trigger-name-field input { width: 100%; }
 .trigger-dwell-timing-note { margin-top: 8px; color: #8b949e; font-size: 10px; }
-#trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea) {
+#trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select:where(:not(.ui-select)), textarea) {
   box-sizing: border-box; padding: 5px 7px;
   background: #0d1117; border: 1px solid #30363d; border-radius: 4px;
   color: #c9d1d9; font: inherit; color-scheme: dark;
 }
-#trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea):focus {
+#trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select:where(:not(.ui-select)), textarea):focus {
   outline: none; border-color: #58a6ff; box-shadow: 0 0 0 1px rgba(88, 166, 255, .18);
 }
-#trigger-modal .trigger-modal select option { color: #c9d1d9; background: #0d1117; }
+#trigger-modal .trigger-modal select:where(:not(.ui-select)) option { color: #c9d1d9; background: #0d1117; }
 .trigger-scope-fields { display: flex; align-items: center; gap: 14px; }
 .trigger-scope-fields > .trigger-scope-option {
   flex: 0 0 auto; flex-direction: row; align-items: center; gap: 6px;
@@ -13984,13 +13984,13 @@ body.wizard #activity-performance .empty { color: #8f7bbf; }
 body.wizard #trigger-modal :is(.trigger-name-field, .trigger-enabled-label, .trigger-fields label, .trigger-action-fields label) {
   color: #b39ddb;
 }
-body.wizard #trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea) {
+body.wizard #trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select:where(:not(.ui-select)), textarea) {
   background: #140f28; border-color: rgba(122, 93, 176, .65); color: #f3e6c0;
 }
-body.wizard #trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea):focus {
+body.wizard #trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select:where(:not(.ui-select)), textarea):focus {
   border-color: var(--ui-wizard-gold); box-shadow: 0 0 0 1px rgba(217, 180, 90, .2), 0 0 8px rgba(169, 123, 214, .25);
 }
-body.wizard #trigger-modal .trigger-modal select option { color: #1a1330; background: #e7d9f5; }
+body.wizard #trigger-modal .trigger-modal select:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
 body.wizard #trigger-modal .trigger-scope-option input[type=radio] { accent-color: #a97bd6; }
 body.wizard #trigger-modal .trigger-editor-step,
 body.wizard #trigger-modal .trigger-action-editor { background: #18122b; border-color: rgba(122, 93, 176, .55); }

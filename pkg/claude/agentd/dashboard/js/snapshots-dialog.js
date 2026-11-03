@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { dashboardState } from './snapshot-store.js';
 import { createFleetAdminActions } from './fleet-admin-actions.js';
@@ -64,8 +64,8 @@ function CreatePanel({ actions, preset, onDone, onError }) {
   };
   return html`<div class="snap-panel ui-card ui-inset" id="snapshot-create">
     <div class="paf-sec">Take a snapshot</div>
-    <${Field} label="Agent"><select id="snapshot-create-agent" value=${agent} onChange=${(e) => setAgent(e.currentTarget.value)}>
-      ${agents.map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}</select></${Field}>
+    <${Field} label="Agent"><${Select} id="snapshot-create-agent" value=${agent} onChange=${(e) => setAgent(e.currentTarget.value)}>
+      ${agents.map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}<//></${Field}>
     <${Field} label="Name"><input id="snapshot-create-name" value=${name} placeholder="default: <agent>-<UTC time>" onInput=${(e) => setName(e.currentTarget.value)} /></${Field}>
     <${Field} label="Note"><input id="snapshot-create-note" value=${note} maxlength="1000" placeholder="optional, e.g. known good before the refactor" onInput=${(e) => setNote(e.currentTarget.value)} /></${Field}>
     <${Field} label="Expires"><input id="snapshot-create-expires" value=${expires} placeholder="e.g. 30d, 72h or never (default: library retention)" onInput=${(e) => setExpires(e.currentTarget.value)} /></${Field}>
@@ -99,17 +99,17 @@ function SpawnPanel({ actions, snap, onDone, onError }) {
   return html`<div class="snap-panel ui-card ui-inset" id="snapshot-spawn">
     <div class="paf-sec">Spawn from ${snap.name}</div>
     <div class="paf-hint ui-hint">Each agent is a new identity that continues from the snapshot's conversation; ${snap.agent_name || 'the original'} is untouched.</div>
-    <${Field} label="Group"><select id="snapshot-spawn-group" value=${group} onChange=${(e) => setGroup(e.currentTarget.value)}>
-      <option value="">(pick a group)</option>${groups.map((g) => html`<option key=${g} value=${g}>${g}</option>`)}</select></${Field}>
+    <${Field} label="Group"><${Select} id="snapshot-spawn-group" value=${group} onChange=${(e) => setGroup(e.currentTarget.value)}>
+      <option value="">(pick a group)</option>${groups.map((g) => html`<option key=${g} value=${g}>${g}</option>`)}<//></${Field}>
     <${Field} label="Count"><input id="snapshot-spawn-count" type="number" min="1" max="20" value=${count} onInput=${(e) => setCount(e.currentTarget.value)} /></${Field}>
     <${Field} label="Name"><input id="snapshot-spawn-name" value=${name} placeholder=${`default: ${snap.agent_name || 'the agent'}${Number(count) > 1 ? '-1, -2, …' : ''}`} onInput=${(e) => setName(e.currentTarget.value)} /></${Field}>
     <${Field} label="Working dir"><input id="snapshot-spawn-cwd" value=${cwd} placeholder="default: the recorded working directory" onInput=${(e) => setCwd(e.currentTarget.value)} /></${Field}>
     <div class="cron-create-row"><span class="cron-create-label">Land on</span><span class="paf-landing-selects">
-      <select id="snapshot-spawn-harness" value=${harness} onChange=${(e) => { setHarness(e.currentTarget.value); setModel(''); }}>
+      <${Select} id="snapshot-spawn-harness" value=${harness} onChange=${(e) => { setHarness(e.currentTarget.value); setModel(''); }}>
         <option value="">${snap.harness || 'own harness'} (as captured)</option>
-        ${spawnableHarnesses(snapshot).map((x) => html`<option key=${x.name} value=${x.name}>${x.display_name || x.name}</option>`)}</select>
-      <select id="snapshot-spawn-model" value=${model} onChange=${(e) => setModel(e.currentTarget.value)}>
-        <option value="">(model: default)</option>${modelsFor(snapshot, harness).map((m) => html`<option key=${m} value=${m}>${m}</option>`)}</select>
+        ${spawnableHarnesses(snapshot).map((x) => html`<option key=${x.name} value=${x.name}>${x.display_name || x.name}</option>`)}<//>
+      <${Select} id="snapshot-spawn-model" value=${model} onChange=${(e) => setModel(e.currentTarget.value)}>
+        <option value="">(model: default)</option>${modelsFor(snapshot, harness).map((m) => html`<option key=${m} value=${m}>${m}</option>`)}<//>
     </span></div>
     <label class="paf-check"><input type="checkbox" id="snapshot-spawn-confirm-loss" checked=${confirmCut} onChange=${(e) => setConfirmCut(e.currentTarget.checked)} />
       <span>Allow cutting the conversation<span class="paf-hint ui-hint">A model with a smaller context window may keep only the start, the agent's summary and the newest turns; 25% or more needs this. The full history is saved beside each agent.</span></span></label>
@@ -185,15 +185,15 @@ function SharePanel({ actions, snap, onDone, onError, fleet }) {
   return html`<div class="snap-panel ui-card ui-inset" id="snapshot-share">
     <div class="paf-sec">Share ${snap.name} on a Board</div>
     ${boards && !boards.length ? html`<div class="paf-hint ui-hint">This node is on no Board. Join or create one in ⚙ Fleet config → Boards.</div>` : html`
-    <${Field} label="Board"><select id="snapshot-share-board" value=${board} disabled=${!!busy} onChange=${(e) => { changed(); setBoard(e.currentTarget.value); }}>
-      ${(boards || []).map((b) => html`<option key=${b.id} value=${b.id}>${b.name || b.id}</option>`)}</select></${Field}>
+    <${Field} label="Board"><${Select} id="snapshot-share-board" value=${board} disabled=${!!busy} onChange=${(e) => { changed(); setBoard(e.currentTarget.value); }}>
+      ${(boards || []).map((b) => html`<option key=${b.id} value=${b.id}>${b.name || b.id}</option>`)}<//></${Field}>
     <div class="cron-create-row"><span class="cron-create-label">Recipients</span><span class="snap-recipients" id="snapshot-share-to">
       ${members.length === 0 ? html`<span class="paf-hint ui-hint">no other members</span>` : members.map((m) => html`<label key=${m.instance} class="paf-check">
         <input type="checkbox" data-instance=${m.instance} checked=${to.includes(m.instance)} disabled=${!!busy} onChange=${(e) => toggle(m.instance, e.currentTarget.checked)} />
         <span>${m.label || m.name || m.instance}</span></label>`)}
       <span class="paf-hint ui-hint">Only these members can open it; every member sees that it exists. This node is always a recipient.</span></span></div>
-    <${Field} label="Expires"><select id="snapshot-share-expires" value=${expires} disabled=${!!busy} onChange=${(e) => { setExpires(e.currentTarget.value); changed(); }}>
-      ${SHARE_TTLS.map((d) => html`<option key=${d} value=${d}>in ${d.replace('d', d === '1d' ? ' day' : ' days')}</option>`)}</select></${Field}>
+    <${Field} label="Expires"><${Select} id="snapshot-share-expires" value=${expires} disabled=${!!busy} onChange=${(e) => { setExpires(e.currentTarget.value); changed(); }}>
+      ${SHARE_TTLS.map((d) => html`<option key=${d} value=${d}>in ${d.replace('d', d === '1d' ? ' day' : ' days')}</option>`)}<//></${Field}>
     ${review?.flagged && html`<div class="paf-findings" id="snapshot-share-flagged">⚠ This snapshot has suspected credentials, so it cannot go on a board as it is.
       <div class="paf-row-buttons"><${Button} id="snapshot-share-redact" disabled=${!!busy} onClick=${redactThenReview}>${busy === 'redact' ? 'Redacting…' : 'Redact a copy and review'}<//></div></div>`}
     ${s && html`<div class="paf-box ui-card ui-inset" id="snapshot-share-review">
