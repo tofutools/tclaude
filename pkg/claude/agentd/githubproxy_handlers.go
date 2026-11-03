@@ -200,27 +200,42 @@ func handleGHProxyPRCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Persist the same pr.opened edge the explicit `present-pr` path uses.
-	// GitHub has already committed the PR, so a local persistence failure is
-	// reported as a warning and the successful create response is preserved.
+	// GitHub has already committed the PR, so a local persistence failure
+	// keeps the successful create response and is reported beside it.
 	// The write itself atomically queues the durable trigger observation.
+	var recordFailure error
 	if agentID, lookupErr := db.AgentIDForConv(g.convID); lookupErr != nil {
 		slog.Warn("github proxy: resolve PR author for trigger", "conv", g.convID, "error", lookupErr)
+		recordFailure = lookupErr
 	} else if agentID != "" {
 		state := "open"
 		if body.Draft {
 			state = "draft"
 		}
-		if _, persistErr := db.UpsertValidatedAgentPRDetails(agentID, created.HTMLURL,
+		if _, persistErr := recordCreatedPR(agentID, created.HTMLURL,
 			strings.TrimSpace(body.Title), state, head, body.Draft, g.repoRoot); persistErr != nil {
 			slog.Warn("github proxy: persist created PR for trigger reconciliation",
 				"conv", g.convID, "pr", created.HTMLURL, "error", persistErr)
+			recordFailure = persistErr
 		}
 	}
 	// The URL alone, as text rather than JSON. That is what this verb has
 	// always printed, it is what an agent pastes into a report, and it is the
 	// one output in this file a human reads more often than a machine does.
-	g.respond(w, r, "pr.create", ProxyResult{Stdout: created.HTMLURL + "\n"}, nil)
+	out := ProxyResult{Stdout: created.HTMLURL + "\n"}
+	if recordFailure != nil {
+		// The pull request exists, so this is still a success; only the
+		// dashboard's record of it failed, and the agent can repair that.
+		out.Stderr = fmt.Sprintf("the pull request was created, but the dashboard could not record it (%v); "+
+			"run `tclaude agent present-pr %s` to show it there\n", recordFailure, created.HTMLURL)
+	}
+	g.respond(w, r, "pr.create", out, nil)
 }
+
+// recordCreatedPR records a pull or merge request a proxy just created, for
+// the dashboard and the triggers; a variable so a test can make the record
+// fail.
+var recordCreatedPR = db.UpsertValidatedAgentPRDetails
 
 // defaultBranch reads the repository's default branch.
 func (g *ghProxySession) defaultBranch(ctx context.Context) (string, *ProxyResult, error) {
@@ -550,6 +565,7 @@ func handleGHProxyPRReady(w http.ResponseWriter, r *http.Request) {
 		g.respondOrFail(w, r, "pr.ready", failure, err)
 		return
 	}
+	recordReadyState(g.convID, pr.URL, prStateFromGH(pr.State, false))
 	g.respond(w, r, "pr.ready", ProxyResult{Stdout: pr.URL + "\n"}, nil)
 }
 

@@ -618,7 +618,7 @@ func TestGLProxy_MRCreateSaysWhenTheDashboardCouldNotRecordIt(t *testing.T) {
 	f, _, gl := glWorld(t, []string{"gitlab.contoso.test"})
 	gl.def = glCanned{Status: 201, Body: glCannedMR}
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitLabWrite, "test"))
-	t.Cleanup(agentd.SetGitLabCreatedMRRecorderForTest(func(string, string, string, string, string, bool, string) (db.AgentPR, error) {
+	t.Cleanup(agentd.SetCreatedPRRecorderForTest(func(string, string, string, string, string, bool, string) (db.AgentPR, error) {
 		return db.AgentPR{}, errors.New("database is locked")
 	}))
 	const url = "https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/7"

@@ -2650,10 +2650,11 @@ func PollAuthoredOpenMRsForTest() (time.Duration, error) {
 // ResetAuthoredOpenMRsForTest forgets the Open MRs poller's last result.
 func ResetAuthoredOpenMRsForTest() { resetAuthoredOpenMRs("") }
 
-// SetGitLabCreatedMRRecorderForTest swaps how `mr create` records a created
-// merge request for the dashboard, so a test can make that record fail.
-func SetGitLabCreatedMRRecorderForTest(fn func(agentID, prURL, summary, state, branch string, draft bool, repoRoot string) (db.AgentPR, error)) func() {
-	prev := glRecordCreatedMR
-	glRecordCreatedMR = fn
-	return func() { glRecordCreatedMR = prev }
+// SetCreatedPRRecorderForTest swaps how `pr create` and `mr create` record a
+// created pull or merge request for the dashboard, so a test can make that
+// record fail.
+func SetCreatedPRRecorderForTest(fn func(agentID, prURL, summary, state, branch string, draft bool, repoRoot string) (db.AgentPR, error)) func() {
+	prev := recordCreatedPR
+	recordCreatedPR = fn
+	return func() { recordCreatedPR = prev }
 }

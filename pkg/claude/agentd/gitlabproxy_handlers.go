@@ -415,7 +415,7 @@ func handleGLProxyMRCreate(w http.ResponseWriter, r *http.Request) {
 		if created.Draft || body.Draft {
 			state = "draft"
 		}
-		if _, persistErr := glRecordCreatedMR(agentID, created.WebURL,
+		if _, persistErr := recordCreatedPR(agentID, created.WebURL,
 			glStripDraftPrefix(created.Title), state, head, state == "draft", g.repoRoot); persistErr != nil {
 			slog.Warn("gitlab proxy: persist created MR for trigger reconciliation",
 				"conv", g.convID, "mr", created.WebURL, "error", persistErr)
@@ -431,10 +431,6 @@ func handleGLProxyMRCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	g.respond(w, r, "mr.create", out, nil)
 }
-
-// glRecordCreatedMR records a created merge request for the dashboard and the
-// triggers; a variable so a test can make the record fail.
-var glRecordCreatedMR = db.UpsertValidatedAgentPRDetails
 
 // handleGLProxyMRList serves POST /v1/gitlab/mr/list.
 func handleGLProxyMRList(w http.ResponseWriter, r *http.Request) {
@@ -794,28 +790,31 @@ func handleGLProxyMRReady(w http.ResponseWriter, r *http.Request) {
 		g.respondOrFail(w, r, "mr.ready", failure, err)
 		return
 	}
-	g.recordReadyState(mr.WebURL, updated)
+	state := "open"
+	var live glMR
+	if json.Unmarshal(updated, &live) == nil {
+		if s := prStateFromGitLab(live.State, live.Draft); s != "" {
+			state = s
+		}
+	}
+	recordReadyState(g.convID, mr.WebURL, state)
 	g.respond(w, r, "mr.ready", ProxyResult{Stdout: mr.WebURL + "\n"}, nil)
 }
 
-// recordReadyState writes the merge request's state as GitLab now reports it
-// onto the caller's dashboard row, so the row stops reading draft at once
-// rather than at the next refresh. Quietly: leaving draft is not a lifecycle
-// edge a trigger listens for. A failure here costs only that wait.
-func (g *glProxySession) recordReadyState(mrURL string, updated []byte) {
-	state := "open"
-	var mr glMR
-	if json.Unmarshal(updated, &mr) == nil {
-		if live := prStateFromGitLab(mr.State, mr.Draft); live != "" {
-			state = live
-		}
+// recordReadyState writes a pull or merge request's state as the forge now
+// reports it onto the caller's dashboard row, so the row stops reading draft
+// at once rather than at the next refresh. Quietly: leaving draft is not a
+// lifecycle edge a trigger listens for. A failure here costs only that wait.
+func recordReadyState(convID, prURL, state string) {
+	if state == "" {
+		state = "open"
 	}
-	agentID, err := db.AgentIDForConv(g.convID)
+	agentID, err := db.AgentIDForConv(convID)
 	if err != nil || agentID == "" {
 		return
 	}
-	if _, err := db.UpdateAgentPRStateQuiet(agentID, mrURL, state); err != nil {
-		slog.Warn("gitlab proxy: record a ready merge request's state", "conv", g.convID, "mr", mrURL, "error", err)
+	if _, err := db.UpdateAgentPRStateQuiet(agentID, prURL, state); err != nil {
+		slog.Warn("forge proxy: record a ready request's state", "conv", convID, "pr", prURL, "error", err)
 	}
 }
 
