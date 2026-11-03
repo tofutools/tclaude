@@ -165,7 +165,7 @@ function GroupStack({ window, group, overlay, win, renderTab }) {
     aria-label=${`${group.name}, ${members.length} tab${members.length === 1 ? '' : 's'}`} data-tab-group=${group.id}>
     ${isRenaming ? html`<${TabGroupRename} group=${group} label=${`Rename tab group ${group.name}`} onCancel=${stopRename}
       onCommit=${(id, value) => { stopRename(); changeOverlayGroup(window.id, id, { name: sanitizeGroupName(value, group.name) }); }} />` : html`
-      <button type="button" class="mux-group-pill" aria-expanded=${group.collapsed ? 'false' : 'true'} aria-haspopup="menu"
+      <button data-ui-exempt type="button" class="mux-group-pill" aria-expanded=${group.collapsed ? 'false' : 'true'} aria-haspopup="menu"
         aria-label=${`${group.name}, ${members.length} tab${members.length === 1 ? '' : 's'}`}
         title=${`Drag to move the whole ${group.name} group · click to ${group.collapsed ? 'expand' : 'collapse'} · double-click or F2 to rename · right-click or press and hold for more`}
         onPointerDown=${onPointerDown} onClick=${onClick} onDblClick=${(event) => { event.preventDefault(); event.stopPropagation(); startRename(); }}
@@ -245,10 +245,10 @@ export function OverlayTabStrip({ window, overlay, win, viewOf }) {
     const selected = tab.id === window.active;
     const menu = menuHandlers({ tabId: tab.id, label });
     return html`<div key=${tab.id} class=${`companion-tab${selected ? ' selected' : ''}${landsBefore === tab.id ? ' drop-before' : ''}`} data-tab-id=${tab.id}>
-      <button type="button" role="tab" aria-selected=${selected ? 'true' : 'false'} aria-haspopup="menu" title=${title}
+      <button data-ui-exempt type="button" role="tab" aria-selected=${selected ? 'true' : 'false'} aria-haspopup="menu" title=${title}
         onPointerDown=${(event) => onPointerDown(event, tab)} onClick=${(event) => (selected ? overlay.releaseFocus(event) : activateOverlayTab(tab.id))}
         ...${menu}>${lead}<span>${label}</span></button>
-      <button type="button" class="companion-tab-close" aria-label=${`Minimize ${label}`} title="Minimize this tab (it keeps running)"
+      <button data-ui-exempt type="button" class="companion-tab-close" aria-label=${`Minimize ${label}`} title="Minimize this tab (it keeps running)"
         onClick=${() => minimizeOverlayTab(tab.id)}>×</button>
     </div>`;
   };

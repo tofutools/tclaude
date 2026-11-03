@@ -16,6 +16,7 @@
 
 import { h } from 'preact';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -55,7 +56,7 @@ export function RemoteImage({ src, alt, title, loaded, failed, onLoad, onError }
         ? `Could not be loaded from ${host || 'an external site'}`
         : `External image${host ? ` from ${host}` : ''} · not loaded`}</span>
     </span>
-    <button type="button" class="markdown-remote-image-load"
+    <${Button} size="sm" class="markdown-remote-image-load"
       title=${src}
       aria-label=${`${retry ? 'Retry loading' : 'Load'} the external image "${description}"${host ? ` from ${host}` : ''}`}
       onClick=${(event) => {
@@ -66,7 +67,7 @@ export function RemoteImage({ src, alt, title, loaded, failed, onLoad, onError }
         event.preventDefault();
         event.stopPropagation();
         onLoad?.(src);
-      }}>${retry ? 'Try again' : 'Load image'}</button>
+      }}>${retry ? 'Try again' : 'Load image'}<//>
   </span>`;
 }
 
@@ -80,8 +81,8 @@ export function RemoteImageNotice({ count, onLoadAll }) {
     <span class="markdown-remote-image-notice-text">
       This document shows ${count} images hosted elsewhere. None are fetched unless you ask.
     </span>
-    <button type="button" class="markdown-remote-image-notice-load" onClick=${onLoadAll}>
+    <${Button} size="sm" class="markdown-remote-image-notice-load" onClick=${onLoadAll}>
       Load all ${count}
-    </button>
+    <//>
   </div>`;
 }

@@ -1082,7 +1082,7 @@ function PaneContextMenu({
         item('Rename group…', () => onRenameGroup(menu.id), { refocus: false }),
         item('Ungroup tabs', () => actions.dissolveGroup(menu.id)),
         separator,
-        item('Close tabs in group', () => actions.closeGroupPanes(menu.id), { className: 'ui-menu-item ui-btn-danger mux-tab-menu-item danger' }),
+        item('Close tabs in group', () => actions.closeGroupPanes(menu.id), { className: 'ui-btn-danger mux-tab-menu-item danger' }),
       ] : [
         item('New group from this tab', () => {
           const group = actions.createGroup({ keys: [menu.key] });
@@ -1096,10 +1096,10 @@ function PaneContextMenu({
         ...(menu.floats ? [item('Open in overlay', () => actions.openPaneInOverlay(menu.key))] : []),
         item('Open in separate window', () => actions.popOutPane(menu.key, { floats: menu.floats })),
         separator,
-        ...(menu.board ? [item('Delete board…', () => askDeleteBoard({ id: menu.boardId, title: menu.label }), { className: 'ui-menu-item ui-btn-danger mux-tab-menu-item danger', refocus: false })] : []),
+        ...(menu.board ? [item('Delete board…', () => askDeleteBoard({ id: menu.boardId, title: menu.label }), { className: 'ui-btn-danger mux-tab-menu-item danger', refocus: false })] : []),
         item('Close tab', () => actions.closePane(menu.key)),
         item('Close other tabs', () => actions.closeOtherPanes(menu.key)),
-        item('Close all tabs', () => actions.closeAllPanes(), { className: 'ui-menu-item ui-btn-danger mux-tab-menu-item danger' }),
+        item('Close all tabs', () => actions.closeAllPanes(), { className: 'ui-btn-danger mux-tab-menu-item danger' }),
       ];
     }} />`;
 }

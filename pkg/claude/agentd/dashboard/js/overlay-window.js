@@ -770,7 +770,7 @@ function SplitLines({ overlay }) {
       onPointerDown=${(event) => overlay.onLinePointerDown(event, [line.axis], line.path, line.area)}></div>`)}
     ${crossings.map((crossing) => html`<div key=${crossing.path.join()} class="overlay-split-cross" aria-hidden="true" style=${`left:${crossing.x}px;top:${crossing.y}px;z-index:${above}`}
       onPointerDown=${(event) => overlay.onLinePointerDown(event, ['x', 'y'], crossing.path, crossing.area)}></div>`)}
-    ${spots.map(({ line, spot }, index) => html`<button type="button" key=${`detach:${line.path.join()}:${line.axis}`} class=${`overlay-split-detach${near === index ? ' near' : ''}`}
+    ${spots.map(({ line, spot }, index) => html`<button data-ui-exempt type="button" key=${`detach:${line.path.join()}:${line.axis}`} class=${`overlay-split-detach${near === index ? ' near' : ''}`}
       title="Detach: each side then resizes on its own" aria-label="Unlock this split line" style=${`left:${spot.x}px;top:${spot.y}px;z-index:${above}`}
       onClick=${() => overlay.detachLine(line)}>⇱</button>`)}`;
 }

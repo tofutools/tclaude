@@ -124,6 +124,6 @@ export function ViewersBadge({ agentId: selector, session = '', rows = remoteVie
   const s = viewerSummary(viewersOf(rows, agentId, session), label);
   if (!s) return null;
   const onClick = (e) => { e.preventDefault(); e.stopPropagation(); open(agentId || session); };
-  return html`<button type="button" class=${`remote-viewers-badge${s.typing ? ' typing' : ''}${className ? ` ${className}` : ''}`}
+  return html`<button data-ui-exempt type="button" class=${`remote-viewers-badge${s.typing ? ' typing' : ''}${className ? ` ${className}` : ''}`}
     data-viewers=${agentId || session} title=${s.title} aria-label=${s.title} onClick=${onClick}>${s.typing ? '⌨' : '👁'}${compact ? '' : ` ${s.text}`}</button>`;
 }
