@@ -43,8 +43,8 @@ you are changing.
 
 PR CI runs Linux only by default. When a change mostly matters on macOS
 (darwin-only files, Seatbelt or sandbox code), opt the PR into macOS CI with
-a `CI-macOS: true` trailer on the head commit; see "macOS CI" in
-`CONTRIBUTING.md`.
+a `CI-macOS: true` trailer on the head commit, in the same final paragraph as
+any other trailers; see "macOS CI" in `CONTRIBUTING.md`.
 
 Platform target: Linux and macOS. WSL is treated as Linux for practical use.
 Native Windows is not a supported development target; do not design new

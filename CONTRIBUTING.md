@@ -107,14 +107,19 @@ Sandbox v2 Seatbelt smoke) when either of these holds:
 - **Per commit:** the PR's head commit has the trailer `CI-macOS: true` in the
   last paragraph of its message, next to `Co-Authored-By:`. The opt-in lasts
   for that commit only: the next push without the trailer runs Linux only, and
-  a trailer on any other commit of the PR counts for nothing. To opt in
+  a trailer on any other commit of the PR counts for nothing. Git only parses
+  the last paragraph for trailers, and each `-m` starts a new paragraph, so
+  put `CI-macOS: true` in the same `-m` (or heredoc paragraph) as the other
+  trailers: `-m "CI-macOS: true" -m "Co-Authored-By: ..."` silently opts
+  out. Check with `git log -1 --format='%(trailers:key=CI-macOS)'`. To opt in
   without changing code, push an empty commit:
   `git commit --allow-empty -m "ci: run macOS" -m "CI-macOS: true"`.
-- **Per PR:** the PR has the `ci:macos` label. Adding a label starts no CI run,
-  so after adding it, push, or rerun the PR's CI run in full
-  (`gh run rerun <run-id>`, not `--failed`). The `Changes` job reads the labels
-  when it runs, so a rerun picks up the change, and removing the label works
-  the same way.
+- **Per PR:** the PR has the `ci:macos` label (create it once with
+  `gh label create ci:macos` if the repository lacks it). Adding a label
+  starts no CI run, so after adding it, push, or rerun the PR's CI run in
+  full (`gh run rerun <run-id>`, not `--failed`). The `Changes` job reads the
+  labels when it runs, so a rerun picks up the change, and removing the label
+  works the same way.
 
 `CI complete` then requires the macOS jobs to pass, exactly as it requires the
 Linux ones. A starved macOS job blocks the PR again, so opt in only when the
