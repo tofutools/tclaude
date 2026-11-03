@@ -826,6 +826,13 @@ any of these changes, open connections close and the consumer's lease ends:
 A route the peer cannot consume is refused with the same answer as one that
 does not exist.
 
+## Live pages
+
+A page an agent shows is for the dashboards of the daemon it runs on. A linked
+instance's view, restricted or not, never gets a page's address or token. To
+watch a page from another machine, open that daemon's own dashboard there: see
+[Live pages](live-page.md#viewing-pages-from-another-machine).
+
 ## Remote terminals
 
 Use the stable `agt_…@peer` address from `federation sessions`:

@@ -201,7 +201,8 @@ export function PageView({ pageId, snapshot, tools = null, onOpenSender = null, 
   const [manual, setManual] = useState(0);
   const [without, setWithout] = useState(false);
   const probe = usePageProbe(frameRef, { win, onReload: () => setManual((n) => n + 1) });
-  const live = usePageLive(pageId, page?.origin || '', {
+  // A remote viewer's page has no origin of its own; its address keys the socket.
+  const live = usePageLive(pageId, page?.origin || pageFrameSrc(page), {
     win, ...(WebSocketCtor && { WebSocketCtor }), onDom: probe.dom, onPatches: probe.syncPatches, onEval: probe.eval,
   });
   useEffect(() => probe.setWithout(without), [without]);

@@ -294,7 +294,11 @@ func pageStartPathOK(p string) bool {
 			return false
 		}
 	}
-	return true
+	// No dot segments, spelled any way: a browser resolves them before it
+	// asks, so /p/<token>/../../api would leave the page's path.
+	pathPart, _, _ := strings.Cut(p, "?")
+	decoded, err := url.PathUnescape(pathPart)
+	return err == nil && !stageHasDotSegment(decoded)
 }
 
 // pageRoots are the directories a static target may live in: the agent's
@@ -381,6 +385,9 @@ type pageView struct {
 	Rev      int64     `json:"rev"`
 	ShownAt  time.Time `json:"shown_at"`
 	Updated  time.Time `json:"updated_at"`
+	// RemoteBase is, for a dev server page, the --base it needs to be
+	// served to a dashboard on another machine (remote_stage.go).
+	RemoteBase string `json:"remote_base,omitempty"`
 }
 
 type pageShowResponse struct {
@@ -426,6 +433,9 @@ func (p *livePage) agentView() pageView {
 		v.Origin = "http://" + net.JoinHostPort(pageMaskedHost, u.Port())
 	}
 	v.URL = ""
+	if p.kind == pageKindPort && p.stage != nil {
+		v.RemoteBase = remoteStagePrefix + p.stage.remoteToken + "/"
+	}
 	return v
 }
 
@@ -631,6 +641,7 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 			resp.NewOrigin = true
 		}
 		p.stage = stagePages.open(agentID, name, up)
+		p.stage.static.Store(t.kind == pageKindStatic)
 		relay.set(p.stage)
 		if reg.byOwner[agentID] == nil {
 			reg.byOwner[agentID] = map[string]*livePage{}
@@ -725,6 +736,20 @@ func handlePageClose(w http.ResponseWriter, r *http.Request) {
 // the field).
 func livePagesSnapshot() []pageView {
 	return pageViews(livePages.list(""), (*livePage).view)
+}
+
+// livePagesSnapshotFor is livePagesSnapshot for the dashboard asking: a
+// remote dashboard (remote access) gets each page's remote stage address on
+// its own host, never the loopback origin and its token.
+func livePagesSnapshotFor(r *http.Request) []pageView {
+	if !dashboardViewerIsRemote(r) {
+		return livePagesSnapshot()
+	}
+	return pageViews(livePages.list(""), func(p *livePage) pageView {
+		v := p.view()
+		v.Origin, v.URL = "", remotePageURL(p, r.Host)
+		return v
+	})
 }
 
 // DELETE /api/pages/{id} — the operator closed a page's tab. The page closes

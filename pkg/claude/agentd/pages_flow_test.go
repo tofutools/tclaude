@@ -153,6 +153,7 @@ func (e *pageEnv) dash(t *testing.T, method, path string) *httptest.ResponseReco
 	t.Helper()
 	r := testharness.JSONRequest(t, method, path, nil)
 	r.Header.Set("Origin", e.srv.URL)
+	r.Host = strings.TrimPrefix(e.srv.URL, "http://") // the local dashboard, on loopback
 	return testharness.Serve(agentd.BuildDashboardHandlerForTest(), r)
 }
 
