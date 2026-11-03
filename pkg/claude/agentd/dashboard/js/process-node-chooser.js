@@ -8,7 +8,7 @@
 import { buildProcessNodeTypeCommands } from './process-command-registry.js';
 import { rankCommands } from './palette-score.js';
 import { isWizardActive } from './slop.js';
-import { watchPopover } from './hover-popover.js';
+import { watchPopover } from './popover-watch.js';
 
 let nextChooserID = 1;
 

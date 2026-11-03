@@ -1,5 +1,5 @@
 // A popover or menu that a press outside (or Escape) closes takes that rule
-// from hover-popover.js: watchPopover, or the useDismissablePopover hook. The
+// from popover-watch.js: watchPopover, or the useDismissablePopover hook. The
 // shared rule also waits behind a dialog that was already up, closes for a
 // dialog opened over it, and gives Escape only to the popover opened last.
 // Hand-rolled document listeners skipped all of that and drifted apart.
@@ -16,7 +16,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 const JS = new URL('../dashboard/js/', import.meta.url);
 
 const ALLOWED = {
-  'hover-popover.js': 'the shared rule itself',
+  'popover-watch.js': 'the shared rule itself',
   'board-island.js': 'a press elsewhere ends the board\'s claim on page keys',
   'process-editor-place.js': 'tracks which process editor the operator touched last',
   'overlay-snap-assist.js': 'window snapping (overlay-window area): the press picks or ends a snap',
