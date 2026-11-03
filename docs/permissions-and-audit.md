@@ -232,8 +232,17 @@ patches, eval, close and a re-show, by the shower as well as by members.
 
 Only the operator sets or clears a lock, from the dashboard
 (`POST /api/resource-locks`). No agent route reaches it. A process or board
-lock is stored. A page lock lasts until the page is closed. A resource is
-unlocked by default.
+lock is stored and is removed when its board or template is deleted, so a new
+resource with the same id starts unlocked. A page lock lasts until the page
+is closed. A resource is unlocked by default.
+
+What a lock does not cover:
+- It locks a page's tclaude-side state, not its content: an agent still
+  serves the page from its own dev server or files, and a page still
+  closes when its agent retires.
+- A linked peer's operator reaching this node's process editor through
+  peer view acts as an operator, not as an agent, so the lock does not
+  refuse that. A peer never toggles a lock.
 
 ## Sudo: time-bounded elevation
 

@@ -287,6 +287,15 @@ func handleConfigBundleImport(w http.ResponseWriter, r *http.Request) {
 			// Bind the plan now. Unresolved items remain visible but cannot apply.
 			if len(unresolved) == 0 {
 				action, err := planConfigBundleItem(r, section, item, in.Replace, &preview, &in.Bundle)
+				var locked *resourceLockedError
+				if errors.As(err, &locked) {
+					// A preview shows the change; applying it is refused.
+					if in.Apply {
+						writeResourceLocked(w, locked.what)
+						return
+					}
+					continue
+				}
 				if err != nil {
 					writeError(w, 400, "invalid_item", c.Item+": "+err.Error())
 					return
@@ -645,7 +654,7 @@ func planConfigBundleItem(r *http.Request, section string, item configbundle.Ite
 			return func() error { return errors.New("process template already exists") }, nil
 		}
 		if !callerIsHuman(r) && db.GroupResourceLocked(resourceKindProcess, parsed.Template.ID) {
-			return nil, errors.New("process template " + parsed.Template.ID + " is locked by the operator")
+			return nil, &resourceLockedError{what: "process template " + parsed.Template.ID}
 		}
 		return func() error { _, err := fs.PutTemplateEditorSource(r.Context(), parsed.Template, hash); return err }, nil
 	case "default-permissions":

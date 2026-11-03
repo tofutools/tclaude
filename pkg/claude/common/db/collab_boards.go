@@ -200,7 +200,10 @@ func DeleteCollabBoard(id string) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrCollabBoardNotFound
 	}
-	return nil
+	// A deleted board's lock goes with it: a new board by the same id
+	// starts unlocked.
+	_, err = d.Exec(`DELETE FROM group_resource_locks WHERE kind = ? AND resource_id = ?`, GroupResourceBoard, id)
+	return err
 }
 
 // ListCollabBoardElements returns the board's elements in creation order,

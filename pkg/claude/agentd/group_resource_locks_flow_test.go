@@ -1,14 +1,17 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/configbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -45,11 +48,12 @@ func TestResourceLockRefusesAgentProcessChanges(t *testing.T) {
 	const conv = "lock-process-agent"
 	f.HaveConvWithTitle(conv, "editor")
 	f.HaveMember("webshop", conv)
-	grantEverything(t, conv, agentd.PermProcessTemplatesManage, agentd.PermProcessTemplatesRead)
+	grantEverything(t, conv, agentd.PermProcessTemplatesManage, agentd.PermProcessTemplatesRead, agentd.PermConfigImport)
 	agent := func(method, path string, body any) *httptest.ResponseRecorder {
 		return testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, method, path, body), conv))
 	}
 
+	var err error
 	save := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/ship", map[string]any{"template": shipFeatureTemplate("ship")})
 	require.Equal(t, http.StatusCreated, save.Code, save.Body.String())
 	require.Equal(t, http.StatusOK, processTemplateRequest(t, f, http.MethodPost, "/v1/process/groups/webshop/processes", map[string]any{"templateId": "ship"}).Code)
@@ -64,8 +68,24 @@ func TestResourceLockRefusesAgentProcessChanges(t *testing.T) {
 	requireLocked(t, agent(http.MethodDelete, "/v1/process/templates/ship", nil), "delete")
 	requireLocked(t, agent(http.MethodPost, "/v1/process/templates/ship/listing", map[string]any{"listed": true}), "listing")
 	requireLocked(t, agent(http.MethodDelete, "/v1/process/groups/webshop/processes/ship", nil), "unpin")
-	// Reads stay open, and the group listing says it is locked.
+	// Reads stay open.
 	assert.Equal(t, http.StatusOK, agent(http.MethodGet, "/v1/process/templates/ship", nil).Code)
+
+	// A config bundle over it previews, and refuses to apply.
+	rec = processTemplateRequest(t, f, http.MethodGet, "/v1/config-bundle/export?only=process-templates/ship", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var bundle configbundle.Bundle
+	testharness.DecodeJSON(t, rec, &bundle)
+	item := bundle.Sections["process-templates"][0]
+	var source map[string]string
+	require.NoError(t, json.Unmarshal(item.Value, &source))
+	source["source"] = strings.ReplaceAll(source["source"], "Implement {{issue}}.", "Ship {{issue}}.")
+	item.Value, err = json.Marshal(source)
+	require.NoError(t, err)
+	bundle.Sections["process-templates"][0] = item
+	rec = agent(http.MethodPost, "/v1/config-bundle/import", map[string]any{"bundle": bundle, "replace": true})
+	assert.Equal(t, http.StatusOK, rec.Code, "preview: %s", rec.Body.String())
+	requireLocked(t, agent(http.MethodPost, "/v1/config-bundle/import", map[string]any{"bundle": bundle, "replace": true, "apply": true}), "bundle import")
 
 	// The operator still changes it.
 	rec = processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/ship/listing", map[string]any{"listed": true})
@@ -103,6 +123,14 @@ func TestResourceLockRefusesAgentBoardPatches(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, setResourceLock(t, "board", "arch", false).Code)
 	rec = agent(http.MethodPatch, "/v1/boards/arch", map[string]any{"elements": []any{rect("n2", 1, 2, 0)}})
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	// A deleted board's lock goes with it: a new board by its id is unlocked.
+	require.Equal(t, http.StatusOK, setResourceLock(t, "board", "arch", true).Code)
+	rec = testharness.Serve(dash, boardDashReq(t, http.MethodDelete, "/api/boards/arch", nil))
+	require.Less(t, rec.Code, 300, rec.Body.String())
+	require.Equal(t, http.StatusCreated, agent(http.MethodPost, "/v1/boards", map[string]any{"id": "arch", "title": "Again"}).Code)
+	rec = agent(http.MethodPatch, "/v1/boards/arch", map[string]any{"elements": []any{rect("n3", 1, 3, 0)}})
 	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 

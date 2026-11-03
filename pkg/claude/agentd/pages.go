@@ -677,7 +677,6 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 			// Another kind of source: a fresh origin (and token), so nothing
 			// the old origin's code holds can reach the new source.
 			p.id, p.shownAt = existing.id, existing.shownAt
-			p.agentsLocked = existing.agentsLocked
 			reg.removeLocked(existing)
 			resp.NewOrigin = true
 		}

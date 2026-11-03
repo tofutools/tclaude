@@ -43,6 +43,12 @@ func writeResourceLocked(w http.ResponseWriter, what string) {
 		what+" is locked by the operator: no agent may change it until the operator unlocks it in the dashboard")
 }
 
+// resourceLockedError is a planned change refused by a lock, for a caller
+// that answers with writeResourceLocked later.
+type resourceLockedError struct{ what string }
+
+func (e *resourceLockedError) Error() string { return e.what + " is locked by the operator" }
+
 // callerIsHuman reports whether the request comes from the operator (the
 // dashboard, or a CLI call with no agent behind it).
 func callerIsHuman(r *http.Request) bool {
@@ -101,11 +107,11 @@ func handleDashboardResourceLock(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "process_template_id", err.Error())
 			return
 		}
-		if !processTemplateExists(w, r, id) {
+		if *req.Locked && !processTemplateExists(w, r, id) {
 			return
 		}
 	case resourceKindBoard:
-		if _, err := db.GetCollabBoard(id); err != nil {
+		if _, err := db.GetCollabBoard(id); *req.Locked && err != nil {
 			writeBoardStoreError(w, err)
 			return
 		}
