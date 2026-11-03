@@ -10382,10 +10382,6 @@ body.vegas:not(.slop):not(.wizard) .vegas-hint-regular { display: block; }
 /* The popped-open option list renders with the OS palette; force dark text
    on a light list so options stay legible across browsers. */
 .vegas-channel option { color: #1a1a1a; background: #f3e6c0; }
-/* The <audio> is a controls-less engine — hidden; the .vegas-transport
-   button below is the rendered chrome. (UA stylesheets already hide a
-   controls-less audio element; this is explicit for clarity.) */
-#vegas-player audio { display: none; }
 /* Custom play/pause transport, themed to the casino card. It replaces the
    native <audio controls> bar, which couldn't be themed and — with the
    meaningless live-stream seek bar hidden — rendered as an empty white
