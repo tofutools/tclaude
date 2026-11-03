@@ -71,7 +71,7 @@ function CreatePanel({ actions, preset, onDone, onError }) {
     <${Field} label="Expires"><input id="snapshot-create-expires" value=${expires} placeholder="e.g. 30d, 72h or never (default: library retention)" onInput=${(e) => setExpires(e.currentTarget.value)} /></${Field}>
     <label class="paf-check"><input type="checkbox" id="snapshot-create-history" checked=${history} onChange=${(e) => setHistory(e.currentTarget.checked)} />
       <span>Include the conversation<span class="paf-hint ui-hint">A busy agent is captured up to its last complete turn.</span></span></label>
-    <div class="paf-row-buttons"><button type="button" id="snapshot-create-submit" class="primary" disabled=${busy || !agent} onClick=${create}>${busy ? 'Taking…' : '📸 Take snapshot'}</button></div>
+    <div class="paf-row-buttons"><${Button} variant="primary" id="snapshot-create-submit" disabled=${busy || !agent} onClick=${create}>${busy ? 'Taking…' : '📸 Take snapshot'}<//></div>
   </div>`;
 }
 
@@ -113,7 +113,7 @@ function SpawnPanel({ actions, snap, onDone, onError }) {
     </span></div>
     <label class="paf-check"><input type="checkbox" id="snapshot-spawn-confirm-loss" checked=${confirmCut} onChange=${(e) => setConfirmCut(e.currentTarget.checked)} />
       <span>Allow cutting the conversation<span class="paf-hint ui-hint">A model with a smaller context window may keep only the start, the agent's summary and the newest turns; 25% or more needs this. The full history is saved beside each agent.</span></span></label>
-    <div class="paf-row-buttons"><button type="button" id="snapshot-spawn-submit" class="primary" disabled=${busy || !group} onClick=${spawn}>${busy ? 'Spawning…' : 'Spawn'}</button></div>
+    <div class="paf-row-buttons"><${Button} variant="primary" id="snapshot-spawn-submit" disabled=${busy || !group} onClick=${spawn}>${busy ? 'Spawning…' : 'Spawn'}<//></div>
   </div>`;
 }
 
@@ -195,7 +195,7 @@ function SharePanel({ actions, snap, onDone, onError, fleet }) {
     <${Field} label="Expires"><select id="snapshot-share-expires" value=${expires} disabled=${!!busy} onChange=${(e) => { setExpires(e.currentTarget.value); changed(); }}>
       ${SHARE_TTLS.map((d) => html`<option key=${d} value=${d}>in ${d.replace('d', d === '1d' ? ' day' : ' days')}</option>`)}</select></${Field}>
     ${review?.flagged && html`<div class="paf-findings" id="snapshot-share-flagged">⚠ This snapshot has suspected credentials, so it cannot go on a board as it is.
-      <div class="paf-row-buttons"><button type="button" id="snapshot-share-redact" disabled=${!!busy} onClick=${redactThenReview}>${busy === 'redact' ? 'Redacting…' : 'Redact a copy and review'}</button></div></div>`}
+      <div class="paf-row-buttons"><${Button} id="snapshot-share-redact" disabled=${!!busy} onClick=${redactThenReview}>${busy === 'redact' ? 'Redacting…' : 'Redact a copy and review'}<//></div></div>`}
     ${s && html`<div class="paf-box ui-card ui-inset" id="snapshot-share-review">
       <b>You are about to share${review.sent?.blob ? ' a redacted copy' : ''}</b>
       <div>${bytesText(s.bytes)} · ${s.turns} turn${s.turns === 1 ? '' : 's'}${s.from ? ` · ${new Date(s.from).toLocaleString()} → ${new Date(s.to).toLocaleString()}` : ''}</div>
@@ -206,8 +206,8 @@ function SharePanel({ actions, snap, onDone, onError, fleet }) {
       <${Field} label="Confirm"><input id="snapshot-share-confirm" value=${typed} placeholder="type share" autocomplete="off" onInput=${(e) => setTyped(e.currentTarget.value)} /></${Field}>
     </div>`}
     <div class="paf-row-buttons">
-      <button type="button" id="snapshot-share-review-btn" disabled=${!!busy || !board || !to.length} onClick=${doReview}>${busy === 'review' ? 'Reviewing…' : 'Review'}</button>
-      <button type="button" id="snapshot-share-submit" class="primary" disabled=${!!busy || !s || typed.trim() !== 'share'} onClick=${publish}>${busy === 'share' ? 'Sharing…' : 'Share'}</button>
+      <${Button} id="snapshot-share-review-btn" disabled=${!!busy || !board || !to.length} onClick=${doReview}>${busy === 'review' ? 'Reviewing…' : 'Review'}<//>
+      <${Button} variant="primary" id="snapshot-share-submit" disabled=${!!busy || !s || typed.trim() !== 'share'} onClick=${publish}>${busy === 'share' ? 'Sharing…' : 'Share'}<//>
     </div>`}
   </div>`;
 }
@@ -249,8 +249,8 @@ function PublishPanel({ actions, snap, onDone, onError }) {
         <span>I have reviewed this and consent to sharing it publicly</span></label>
     </div>`}
     <div class="paf-row-buttons">
-      <button type="button" id="snapshot-publish-review-btn" disabled=${!!busy} onClick=${doReview}>${busy === 'review' ? 'Reviewing…' : 'Review'}</button>
-      <button type="button" id="snapshot-publish-submit" class="primary" disabled=${!!busy || !s || !ack} onClick=${publish}>${busy === 'publish' ? 'Publishing…' : '⤓ Download public .paf'}</button>
+      <${Button} id="snapshot-publish-review-btn" disabled=${!!busy} onClick=${doReview}>${busy === 'review' ? 'Reviewing…' : 'Review'}<//>
+      <${Button} variant="primary" id="snapshot-publish-submit" disabled=${!!busy || !s || !ack} onClick=${publish}>${busy === 'publish' ? 'Publishing…' : '⤓ Download public .paf'}<//>
     </div>
   </div>`;
 }
@@ -311,8 +311,8 @@ export function SnapshotsDialog({ descriptor, state, actions, confirm, confirmDi
     <h3 id="snapshots-title">📸 Snapshots</h3>
     <div class="modal-meta">Named, point-in-time copies of agents, kept on this node. A snapshot is a fork point: spawning from it creates new agents and leaves the original untouched.</div>
     <div class="snap-toolbar">
-      <button type="button" id="snapshots-create-open" class="tool" onClick=${() => open('create')}>+ take snapshot…</button>
-      <button type="button" id="snapshots-prune" class="tool" title="Remove expired snapshots now" onClick=${async () => { try { const r = await actions.snapshots.prune(); done(`Pruned ${(r.removed || []).length} expired`); } catch (e) { fail(message(e)); } }}>prune expired</button>
+      <${Button} size="sm" id="snapshots-create-open" onClick=${() => open('create')}>+ take snapshot…<//>
+      <${Button} size="sm" id="snapshots-prune" title="Remove expired snapshots now" onClick=${async () => { try { const r = await actions.snapshots.prune(); done(`Pruned ${(r.removed || []).length} expired`); } catch (e) { fail(message(e)); } }}>prune expired<//>
     </div>
     ${p?.kind === 'create' && html`<${CreatePanel} actions=${actions} preset=${descriptor.agent} onDone=${done} onError=${fail} />`}
     ${list === null ? html`<div class="empty">Loading…</div>`
@@ -327,11 +327,11 @@ export function SnapshotsDialog({ descriptor, state, actions, confirm, confirmDi
           <td>${snap.expires_at ? when(snap.expires_at) : 'never'}</td>
           <td class="snap-acts">
             ${(snap.findings || []).length > 0 && html`<span class="gi-warn" title=${findingsText(snap.findings).join('\n')}>⚠ ${snap.findings.length}</span>`}
-            <button type="button" data-snap="spawn" onClick=${() => open('spawn', snap)}>Spawn…</button>
-            <button type="button" data-snap="export" onClick=${() => exportOne(snap)}>⤓</button>
-            <button type="button" data-snap="share" onClick=${() => open('share', snap)}>Share…</button>
-            <button type="button" data-snap="publish" onClick=${() => open('publish', snap)}>Publish…</button>
-            <button type="button" data-snap="remove" class="fa-danger" onClick=${() => remove(snap)}>✕</button>
+            <${Button} size="sm" data-snap="spawn" onClick=${() => open('spawn', snap)}>Spawn…<//>
+            <${Button} size="sm" data-snap="export" onClick=${() => exportOne(snap)}>⤓<//>
+            <${Button} size="sm" data-snap="share" onClick=${() => open('share', snap)}>Share…<//>
+            <${Button} size="sm" data-snap="publish" onClick=${() => open('publish', snap)}>Publish…<//>
+            <${Button} size="sm" variant="ghost danger" data-snap="remove" onClick=${() => remove(snap)}>✕<//>
           </td>
         </tr>`)}
       </tbody></table>`}

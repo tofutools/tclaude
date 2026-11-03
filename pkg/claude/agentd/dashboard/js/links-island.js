@@ -51,7 +51,7 @@ export function LinksControls({ state, actions }) {
       <span class="theme-copy-regular">${regularCount}</span>
       <span class="theme-copy-wizard">${wizardCount}</span>
     </span>
-    <button class="clear-filter" id="filter-links-clear" title="Clear filter"
+    <button data-ui-exempt class="clear-filter" id="filter-links-clear" title="Clear filter"
       aria-label="Clear link filter" onClick=${() => {
         state.setQuery('');
         inputRef.current?.focus();
@@ -333,9 +333,9 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
         <div class="cron-create-row" id="link-modal-target-row">
           <span class="cron-create-label">To</span>
           <span class="link-target-seg" role="radiogroup" aria-label="Link target">
-            <button type="button" role="radio" aria-checked=${target === 'local'} id="link-modal-target-local"
+            <button data-ui-exempt type="button" role="radio" aria-checked=${target === 'local'} id="link-modal-target-local"
               class=${target === 'local' ? 'on' : ''} disabled=${busy} onClick=${() => setTarget('local')}>This node</button>
-            <button type="button" role="radio" aria-checked=${target === 'peer'} id="link-modal-target-peer"
+            <button data-ui-exempt type="button" role="radio" aria-checked=${target === 'peer'} id="link-modal-target-peer"
               class=${target === 'peer' ? 'on' : ''} disabled=${busy || !connected}
               title=${connected ? 'Link to a group a peer node shares with you' : (targets.reason || 'Not connected to the hub')}
               onClick=${() => setTarget('peer')}>Peer node 🌐</button>
@@ -366,8 +366,8 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
         </label>`}
       ${!edit && targets && (target === 'peer' || !connected) && html`<${PeerOutcome} peer=${peer} group=${peerGroup} connected=${connected} reason=${targets.reason} />`}
       ${remote && peer?.link_capable && typeof actions.openPropose === 'function' && html`<div class="proposal-hint ui-hint">Want to share groups or link several at once?
-        <button type="button" class="fa-link" id="link-modal-propose" disabled=${busy}
-          onClick=${() => actions.openPropose({ peer: peer.peer, replace: true })}>Propose several items…</button></div>`}
+        <${Button} size="sm" variant="link" class="fa-link" id="link-modal-propose" disabled=${busy}
+          onClick=${() => actions.openPropose({ peer: peer.peer, replace: true })}>Propose several items…<//></div>`}
       <label class="cron-create-row">
         <span class="cron-create-label">Mode</span>
         <select id="link-modal-mode" value=${mode} disabled=${busy}
@@ -482,10 +482,10 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
             ${peerGroups.map((group) => html`<option key=${group.id} value=${group.id}>${label}:${group.name}</option>`)}</select>
           <select class="proposal-pair-mode" value=${pair.mode} disabled=${busy} onChange=${(event) => setPair(index, { mode: event.currentTarget.value })}>
             ${LINK_MODES.map((mode) => html`<option key=${mode} value=${mode}>${modeText(mode)}</option>`)}</select>
-          <button type="button" class="fa-link proposal-pair-remove" title="Remove this link" disabled=${busy}
-            onClick=${() => setPairs(pairs.filter((_, at) => at !== index))}>✕</button>
+          <${Button} size="sm" variant="ghost danger" class="proposal-pair-remove" title="Remove this link" disabled=${busy}
+            onClick=${() => setPairs(pairs.filter((_, at) => at !== index))}>✕<//>
         </div>`)}
-        ${peerGroups.length > 0 && groups.length > 0 && html`<button type="button" class="fa-link" id="proposal-add-pair" disabled=${busy} onClick=${addPair}>+ add a link</button>`}
+        ${peerGroups.length > 0 && groups.length > 0 && html`<${Button} size="sm" variant="link" class="fa-link" id="proposal-add-pair" disabled=${busy} onClick=${addPair}>+ add a link<//>`}
         <label class="cron-create-row">
           <span class="cron-create-label">Note</span>
           <textarea id="proposal-note" rows="2" maxlength="4096" value=${note} disabled=${busy}

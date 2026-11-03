@@ -8947,17 +8947,6 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .paf-report { margin: 6px 0; }
 .paf-ok { color: #3fb950; }
 .paf-row-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
-/* The redact panel's button rows (Redact… / Preview redaction / Download
-   redacted) and the snapshot panels' rows sit outside .modal-buttons, so no
-   modal-family button rule reaches them; skin them the same way here. */
-:is(.paf-flagged-actions, .paf-row-buttons) button {
-  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
-  padding: 5px 14px; color: #c9d1d9; font-family: inherit; font-size: 13px; cursor: pointer;
-}
-:is(.paf-flagged-actions, .paf-row-buttons) button:not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
-:is(.paf-flagged-actions, .paf-row-buttons) button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-:is(.paf-flagged-actions, .paf-row-buttons) button:disabled { opacity: 0.6; cursor: default; }
-:is(.paf-flagged-actions, .paf-row-buttons) button.primary:disabled { background: #6e7681; border-color: #6e7681; opacity: 1; }
 .paf-check input { accent-color: #1f6feb; }
 .paf-preview { display: flex; flex-direction: column; gap: 2px; }
 .paf-preview .gi-row { display: flex; gap: 8px; }
@@ -8989,7 +8978,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .snap-toolbar { display: flex; gap: 8px; margin: 6px 0; }
 .snap-panel { padding: 8px 11px; margin: 8px 0; }
 .snap-acts { white-space: nowrap; text-align: right; }
-.snap-acts button { padding: 1px 7px; margin-left: 3px; }
+.snap-acts .ui-btn { margin-left: 3px; }
 #snapshots-list tr.active td { background: #111d2b; }
 .snap-recipients { display: flex; flex-direction: column; gap: 2px; }
 .snap-recipients .paf-check { margin: 2px 0; }
@@ -19537,7 +19526,7 @@ body.wizard .gp-start-form button:where(:not(.ui-btn)).primary { background: #3a
 .gq-btn.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
 /* Area primaries keep their own colour on hover and brighten it a step (the
    one hover style); the neutral area hovers above skip them. */
-:is(.mail-decision, .message-action, .human-notification-drawer-actions, .paf-flagged-actions, .paf-row-buttons, .gp-start-form) button:is(.primary, .companion-primary):hover:not(:disabled),
+:is(.mail-decision, .message-action, .human-notification-drawer-actions, .gp-start-form) button:is(.primary, .companion-primary):hover:not(:disabled),
 .gq-btn.primary:hover:not(:disabled) { filter: brightness(1.2); }
 .gq-btn:disabled { opacity: .55; cursor: default; }
 .gq-btn.primary:disabled { opacity: 1; background: #21262d; border-color: #30363d; color: #8b949e; }
