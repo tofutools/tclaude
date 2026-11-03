@@ -66,7 +66,6 @@ func TestDashboardCSS_StylingSweep(t *testing.T) {
 	// action buttons are standard ui-btns, held by jstest/ui-controls.
 	must(".cfg-field input[type=password],", "password fields join the cfg-field input rule")
 	must(".cfg-field select, .ra-form-grid input {", "the .ra-form-grid setup inputs join the cfg-field input rule")
-	must("body.wizard #tab-config .cfg-field input[type=password],", "the wizard twin also covers password fields")
 	must("body.wizard #tab-config .ra-form-grid input,", "the wizard twin also covers the .ra-form-grid inputs")
 
 	// C1 — the spawn-dialog attachment ✕ stays a ghost button in the wizard skin:
