@@ -101,7 +101,7 @@ export function ProcessMenuList({ fetchImpl, notify, onOpen, wizard = false }) {
         value=${text} onInput=${(event) => setText(event.currentTarget.value)} />
       <${Button} size="sm" variant="primary" type="submit" disabled=${!clean || creating}>${same ? 'Open' : creating ? 'Creating…' : `＋ New ${noun}`}<//>
     </form>
-    ${error && html`<p class="board-error" role="alert">Processes are unavailable: ${error}</p>`}
+    ${error && html`<p class="board-error ui-error" role="alert">Processes are unavailable: ${error}</p>`}
     ${templates === null && !error && html`<p class="board-muted">Loading ${noun}es…</p>`}
     ${templates && !templates.length && html`<p class="board-muted">No ${noun}es yet. A process is a reusable graph of steps that agents and people work through.</p>`}
     ${templates?.length > 0 && !sections.length && html`<p class="board-muted">No ${noun} matches. ＋ New ${noun} makes one with this name.</p>`}

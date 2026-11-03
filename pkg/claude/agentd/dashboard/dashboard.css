@@ -6396,8 +6396,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 #sudo-reason { flex: 1; min-width: 160px; }
 /* A standard .ui-seg; the chosen duration keeps the sudo amber. */
 .sudo-presets.ui-seg .ui-btn.active { --ui-pressed-bg: #9e6a03; --ui-text-strong: #fff; background: #9e6a03; border-color: #d29922; color: #fff; }
-.sudo-limits-hint { font-size: 11px; color: #7d8590; }
-.sudo-limits-hint.bad { color: #f85149; }
+.sudo-limits-hint.ui-hint.bad { color: var(--ui-danger-text); }
 .sudo-picked { margin-right: auto; align-self: center; font-size: 11px; color: #8b949e; }
 /* Shutting a Steward down: the title bar of the companion and of its detached
    window. The confirmation hangs off the button because neither has room. */
@@ -6506,13 +6505,13 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
    effective-source line this row gave up to make space for its chips. */
 .perm-scope-drawer-head { display: flex; align-items: flex-start; gap: 10px; }
 .perm-scope-drawer-head .perm-row-eff { flex: 0 0 auto; padding-top: 1px; }
-.perm-scope-drawer-hint { flex: 1; min-width: 0; font-size: 10px; color: #7d8590; margin-bottom: 3px; }
+.perm-scope-drawer-hint { flex: 1; min-width: 0; margin-bottom: 3px; }
 .perm-scope-drawer-hint b { color: #c9d1d9; }
 .perm-scope-dim { display: flex; align-items: flex-start; gap: 8px; padding: 2px 0; }
 .perm-scope-dim-label { flex: 0 0 118px; font-size: 10px; color: #8b949e; padding-top: 2px; }
 .perm-scope-dim-label code { color: #d2a8ff; }
 .perm-scope-dim-body { flex: 1; min-width: 0; }
-.perm-scope-hint { font-size: 9px; color: #5e7387; margin-top: 3px; }
+.perm-scope-hint { margin-top: 3px; }
 .perm-scope-add, .perm-scope-free {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 3px; color: #c9d1d9;
   font-size: 10px; font-family: inherit; padding: 2px 5px;
@@ -17728,7 +17727,6 @@ body.wizard .groups-processes-placeholder-glyph { color: #d4af37; }
 .gp-member-run { display: inline-flex; align-items: center; gap: 4px; }
 .gp-subtree-total { color: #6e7681; font-size: 11px; }
 details[open]:not(.subgroups-folded) > summary .gp-subtree-total { display: none; }
-.gp-error { color: #ff7b72; }
 .gp-run-glyph { width: 11px; height: 11px; fill: #c9d1d9; vertical-align: -1px; }
 
 /* Groups › Both (js/groups-processes.js FusedSection): each group's Agents
@@ -17809,7 +17807,7 @@ body.wizard .gp-member-count { background: #2c2248; color: #e7d9f5; box-shadow: 
 .gp-start-form select:where(:not(.ui-select)) { font: inherit; font-size: 12px; border: 1px solid #30363d; border-radius: 6px; padding: 3px 10px; background: #21262d; color: #e6edf3; cursor: pointer; }
 .gp-start-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px 18px; padding: 8px 12px; border: 1px solid #2a3340; border-radius: 8px; background: #11161d; }
 .gp-start-note { color: #8b949e; font-size: 12px; }
-.gp-start-error { color: #ff7b72; font-size: 12px; flex-basis: 100%; }
+.gp-start-error { flex-basis: 100%; }
 .gp-start-params, .gp-start-profiles { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; flex-basis: 100%; }
 .gp-start-param { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #c9d1d9; }
 .gp-start-param b { color: #ff7b72; }

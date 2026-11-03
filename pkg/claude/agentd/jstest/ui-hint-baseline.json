@@ -1,6 +1,5 @@
 [
   "board-empty-hint",
-  "board-error",
   "board-hint",
   "companion-cog-hint",
   "companion-send-hint",
@@ -8,8 +7,6 @@
   "ej-error",
   "fleet-map-hint",
   "fs-error",
-  "gp-error",
-  "gp-start-error",
   "gq-error",
   "gq-hint",
   "grf-error",
@@ -23,8 +20,6 @@
   "mux-tab-status-error",
   "node-chip-hint",
   "palette-hint",
-  "perm-scope-drawer-hint",
-  "perm-scope-hint",
   "profile-error",
   "pwf-inline-error",
   "queued-spawns-popover-hint",
@@ -32,7 +27,6 @@
   "sbx-preview-error",
   "state-error",
   "status-dot-error",
-  "sudo-limits-hint",
   "vegas-error",
   "vegas-hint"
 ]

@@ -1980,7 +1980,7 @@ export function BoardList({ fetchImpl, notify, onOpen, onPicking = () => {}, com
         value=${title} onInput=${(event) => setTitle(event.currentTarget.value)} />
       <${Button} size="sm" variant="primary" type="submit" disabled=${!clean}>${same ? 'Open' : 'Create'}<//>
     </form>
-    ${error && html`<p class="board-error" role="alert">Boards are unavailable: ${error}</p>`}
+    ${error && html`<p class="board-error ui-error" role="alert">Boards are unavailable: ${error}</p>`}
     ${boards === null && !error && html`<p class="board-muted">Loading boards…</p>`}
     ${boards && !boards.length && html`<p class="board-muted">No boards yet. A board is a shared canvas: you draw, agents read it and draw back.</p>`}
     ${boards?.length > 0 && !groups.length && html`<p class="board-muted">No board matches. Create makes one with this title.</p>`}
