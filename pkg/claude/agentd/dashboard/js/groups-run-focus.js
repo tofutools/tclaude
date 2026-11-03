@@ -12,6 +12,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button, Select } from './ui-components.js';
 import {
   ProcessMiniGraph, ProcessNodeGlyph, ProcessPauseControl, ProcessPausedChip, ProcessScopeChip, ProcessStateChip,
   ProcessStepStrip,
@@ -175,8 +176,8 @@ function DecisionForm({ decision, node, onDecide, wizard }) {
       onInput=${(event) => setNote(event.currentTarget.value)}></textarea>
     <div class="grf-verdicts">${verdicts.map((verdict) => {
       const { label, cls } = verdictPresentation(verdict);
-      return html`<button key=${verdict} type="button" class=${cls} data-run-verdict=${verdict} disabled=${!!busy || !!decided}
-        onClick=${() => decide(verdict)}>${busy === verdict ? '…' : label}</button>`;
+      return html`<${Button} size="sm" variant=${cls === 'primary' ? 'success' : undefined} key=${verdict} data-run-verdict=${verdict} disabled=${!!busy || !!decided}
+        onClick=${() => decide(verdict)}>${busy === verdict ? '…' : label}<//>`;
     })}</div>
     ${!verdicts.length && html`<div class="grf-muted">This gate offers no verdicts.</div>`}
     ${decided && html`<div class="grf-muted" role="status">${wizard ? 'Your word is sealed:' : 'Recorded:'} ${verdictPresentation(decided).label}</div>`}
@@ -217,7 +218,7 @@ export function RunNodeInspector({ run, node, detail, nameOf, wizard = false, on
     ${decision && html`<${DecisionForm} key=${`${node.id}:${decision.attempt || 0}`} decision=${decision} node=${node} onDecide=${onDecide} wizard=${wizard} />`}
     ${onAssign && html`<${ReassignForm} key=${`${node.id}:${node.dispatch?.nodeId || ''}:${node.dispatch?.attempt || 0}`}
       run=${run} node=${node} members=${members} onAssign=${onAssign} wizard=${wizard} />`}
-    <div class="grf-section">${wizard ? 'CHRONICLE' : 'HISTORY'}</div>
+    <div class="ui-eyebrow grf-section">${wizard ? 'CHRONICLE' : 'HISTORY'}</div>
     ${history.length
     ? html`<ol class="grf-history">${history.map((event) => html`<li key=${event.sequence}><time>${eventTime(event.occurredAt)}</time> ${eventText(event)}</li>`)}</ol>`
     : html`<div class="grf-muted">${view ? 'No events for this node yet.' : 'Loading…'}</div>`}
@@ -230,7 +231,7 @@ function RunListItem({ run, entry, selected, onSelect, nameOf, wizard }) {
   const terminal = state === 'done' || state === 'failed';
   const duration = formatRunDuration(run.startedAt, terminal && run.updatedAt ? Date.parse(run.updatedAt) : Date.now());
   const agentScope = run.scope?.kind === 'agent' ? nameOf(run.scope.agentId) || run.scope.agentId : '';
-  return html`<li><button type="button" class=${`grf-run${selected ? ' selected' : ''}`} data-run-list-item=${run.runId}
+  return html`<li><button data-ui-exempt type="button" class=${`grf-run${selected ? ' selected' : ''}`} data-run-list-item=${run.runId}
       aria-current=${selected ? 'true' : undefined} onClick=${() => onSelect(run.runId)}>
     <span class="grf-run-name">${runName(run)}${agentScope && html` <${ProcessScopeChip} scope=${{ kind: 'agent', name: agentScope }} wizard=${wizard} />`}</span>
     <span class="grf-run-meta"><span class=${`pk-dot-inline pk-state-${state}`} aria-hidden="true">●</span> ${runNeedsYou(run, entry) ? (wizard ? 'awaits you' : 'needs you') : stateLabel(state).toLowerCase()}${duration && ` · ${duration}`} <${ProcessStepStrip} run=${run} /></span>
@@ -243,14 +244,14 @@ function RunList({ group, entry, runs, planned, selectedRunId, onSelect, nameOf,
   const item = (run) => html`<${RunListItem} key=${run.runId} run=${run} entry=${entry} selected=${run.runId === selectedRunId}
     onSelect=${onSelect} nameOf=${nameOf} wizard=${wizard} />`;
   return html`<nav class="grf-runs" aria-label=${`${group.name} ${wizard ? 'rites' : 'runs'}`}>
-    <div class="grf-section">${group.name} · ${wizard ? 'RITES' : 'RUNS'}</div>
+    <div class="ui-eyebrow grf-section">${group.name} · ${wizard ? 'RITES' : 'RUNS'}</div>
     ${live.length ? html`<ul>${live.map(item)}</ul>` : html`<div class="grf-muted">${wizard ? 'No rites unfolding.' : 'Nothing running.'}</div>`}
-    ${planned.length > 0 && html`<div class="grf-section">${wizard ? 'FORETOLD' : 'PLANNED'}</div>
+    ${planned.length > 0 && html`<div class="ui-eyebrow grf-section">${wizard ? 'FORETOLD' : 'PLANNED'}</div>
       <ul>${planned.map((p) => html`<li key=${p.id} class="grf-planned" data-run-planned=${p.id}>
         <span class="grf-run-name">${p.name || p.templateId || p.id}</span>
         <span class="grf-run-meta">◷ ${p.nextAt ? new Date(p.nextAt).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : ''} · ${p.source || 'scheduled'}</span>
       </li>`)}</ul>`}
-    ${recent.length > 0 && html`<div class="grf-section">${wizard ? 'FULFILLED' : 'RECENT'}</div><ul>${recent.map(item)}</ul>`}
+    ${recent.length > 0 && html`<div class="ui-eyebrow grf-section">${wizard ? 'FULFILLED' : 'RECENT'}</div><ul>${recent.map(item)}</ul>`}
   </nav>`;
 }
 
@@ -310,12 +311,12 @@ function ReassignForm({ run, node, members, onAssign, wizard }) {
     }
   };
   return html`<div class="grf-reassign" data-run-reassign=${node.id}>
-    <div class="grf-section">${wizard ? 'REBIND' : 'REASSIGN'}</div>
-    ${candidates.length ? html`<select aria-label=${`New performer for ${node.label}`} value=${chosen}
+    <div class="ui-eyebrow grf-section">${wizard ? 'REBIND' : 'REASSIGN'}</div>
+    ${candidates.length ? html`<${Select} size="sm" aria-label=${`New performer for ${node.label}`} value=${chosen}
         onChange=${(event) => setTarget(event.currentTarget.value)}>
         ${candidates.map((member) => html`<option key=${member.agent_id} value=${member.agent_id}>${memberName(member)}</option>`)}
-      </select>
-      <button type="button" class="mux-btn" disabled=${busy || !chosen} onClick=${() => void submit()}>↻ reassign</button>`
+      <//>
+      <${Button} size="sm" disabled=${busy || !chosen} onClick=${() => void submit()}>↻ reassign<//>`
     : html`<div class="grf-muted">Nobody else in the group can take it.</div>`}
     ${error && html`<div class="grf-error" role="alert">${error}</div>`}
   </div>`;
@@ -444,7 +445,7 @@ export function GroupsRunFocus({
       onSelect=${onSelectRun} nameOf=${nameOf} wizard=${wizard} />
     <section class="grf-canvas" aria-label=${run ? `${runName(run)} ${wizard ? 'rite' : 'run'}` : 'run'}>
       <div class="grf-crumbs">
-        <button type="button" class="grf-back" ref=${backRef} data-run-focus-close onClick=${onClose}
+        <button data-ui-exempt type="button" class="grf-back" ref=${backRef} data-run-focus-close onClick=${onClose}
           title=${wizard ? 'Back to every rite' : 'Back to every run (Esc)'}>← ${wizard ? 'all rites' : 'all runs'}</button>
         <span>${group.name} › <b>${run ? runName(run) : runId}</b>${template && html` · ${wizard ? 'grimoire' : 'template'} <code>${template}</code>`}</span>
         ${run && runNeedsYou(run, entry) && html`<span class="pk-chip pk-state-waiting">👤 ${wizard ? 'awaits your word' : 'waiting on you'}</span>`}

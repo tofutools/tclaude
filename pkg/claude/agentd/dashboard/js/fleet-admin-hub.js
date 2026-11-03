@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { HUB_CONSEQUENCE } from './fleet-admin-run.js';
 import { HubBoards } from './fleet-admin-boards.js';
 import { NodeUpdateDialog } from './node-update.js';
@@ -166,14 +166,13 @@ export function ClaimDialog({ self, actions, confirm, onClose, onDone }) {
     }).then((r) => { if (r) onDone('This node is now a hub admin'); })
       .catch((e) => setError(e?.code === 'claim_used' ? 'That token was already used.' : e?.code === 'claim_expired' ? 'That token has expired. A fresh one is generated on the next hub start while the hub has no admins.' : errText(e)));
   };
-  return html`<${Overlay} id="fleet-hub-claim" labelledby="fleet-hub-claim-title" onClose=${onClose}>
-    <h3 id="fleet-hub-claim-title">Claim hub admin</h3>
+  return html`<${Dialog} id="fleet-hub-claim" onClose=${onClose} title="Claim hub admin">
     <p>The hub writes a one-time admin claim token to a file only the hub user can read. Its startup output shows the file path and how to read it on the hub host. Paste the token here. It works once and expires after 24 hours.</p>
     <label class="fa-pe-row"><span class="fa-k">claim token</span><input id="fleet-hub-claim-token" type="password" value=${token} autocomplete="off" spellcheck="false" onInput=${(e) => setToken(e.currentTarget.value)} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); claim(); } }} /></label>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation hub claim TOKEN</code>. Lost every admin key? Only <code>tclaude-hub admin reset</code> on the hub host recovers it.</div>
     <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${onClose}>Cancel</${Button}><${Button} variant="primary" id="fleet-hub-claim-send" onClick=${claim}>Claim…</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // fingerprintError checks a pasted fingerprint against the one derived from
@@ -238,8 +237,7 @@ function IdentityDialog({ actions, confirm, onClose, onDone }) {
       .catch((e) => setError(errText(e)))
       .finally(() => setBusy(false));
   };
-  return html`<${Overlay} id="fleet-hub-identity" labelledby="fleet-hub-identity-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="fleet-hub-identity-title">Hub identity recovery</h3>
+  return html`<${Dialog} id="fleet-hub-identity" onClose=${onClose} blocked=${busy} title="Hub identity recovery">
     <div class="fa-pe-row" role="radiogroup" aria-label="Action">
       <label><input type="radio" name="fleet-hub-identity-mode" id="fleet-hub-identity-recover" checked=${recover} onClick=${() => setMode('recover')} /> Recover a lost instance onto a new one</label>
       <label><input type="radio" name="fleet-hub-identity-mode" id="fleet-hub-identity-revoke" checked=${!recover} onClick=${() => setMode('revoke')} /> Revoke a rotated instance's old identity</label>
@@ -250,7 +248,7 @@ function IdentityDialog({ actions, confirm, onClose, onDone }) {
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation hub identity recover OLD NEW</code> · <code>tclaude federation hub identity revoke-old INSTANCE</code></div>
     <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${onClose}>Cancel</${Button}><${Button} variant="primary" id="fleet-hub-identity-send" disabled=${busy} onClick=${run}>${recover ? 'Recover…' : 'Revoke…'}</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function AdmitDialog({ peers, actions, confirm, onClose, onDone }) {
@@ -278,14 +276,13 @@ function AdmitDialog({ peers, actions, confirm, onClose, onDone }) {
       action: () => actions.admitToHub(instance, spaces),
     }).then((r) => { if (r) onDone(`${instance} admitted`); }).catch((e) => setError(errText(e)));
   };
-  return html`<${Overlay} id="fleet-hub-admit" labelledby="fleet-hub-admit-title" onClose=${onClose}>
-    <h3 id="fleet-hub-admit-title">Admit an instance</h3>
+  return html`<${Dialog} id="fleet-hub-admit" onClose=${onClose} title="Admit an instance">
     <label class="fa-pe-row"><span class="fa-k">instance</span><input id="fleet-hub-admit-instance" value=${form.instance} placeholder="inst_…" autocomplete="off" spellcheck="false" onInput=${set('instance')} /></label>
     <label class="fa-pe-row"><span class="fa-k">fingerprint</span><input id="fleet-hub-admit-fp" value=${form.fingerprint} placeholder="full fingerprint" autocomplete="off" spellcheck="false" onInput=${set('fingerprint')} /></label>
     <label class="fa-pe-row"><span class="fa-k">spaces</span><input id="fleet-hub-admit-spaces" value=${form.spaces} placeholder="space, …" autocomplete="off" spellcheck="false" onInput=${set('spaces')} /></label>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${onClose}>Cancel</${Button}><${Button} variant="primary" id="fleet-hub-admit-send" onClick=${admit}>Admit…</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function SettingsSection({ settings, actions, confirm, toast, reload }) {
@@ -317,7 +314,7 @@ function SettingsSection({ settings, actions, confirm, toast, reload }) {
     const p = parseSetting(s, edits[s.key]);
     return p.error ? '' : html` <span class="muted" data-setting-typed>= ${settingPrecise(s, p.value)}</span>`;
   };
-  return html`<table class="fa-table" id="fleet-hub-settings">
+  return html`<table class="fa-table ui-compact" id="fleet-hub-settings">
       <thead><tr><th>Setting</th><th>Effective</th><th>Source</th><th>Serve flag / default</th><th>New value</th><th></th></tr></thead>
       <tbody>${settings.map((s) => html`<tr key=${s.key} data-setting=${s.key}>
         <td><code>${s.key}</code>${s.description ? html`<div class="muted">${s.description}</div>` : ''}</td>
@@ -391,7 +388,7 @@ function AuditSection({ actions }) {
   };
   return html`<div id="fleet-hub-audit">
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
-    ${unavailable ? html`<div class="muted">The hub audit is not available on this build of tclaude or the hub.</div>` : entries == null ? html`<div class="muted">Loading…</div>` : !entries.length ? (!error && html`<div class="muted">No audit entries.</div>`) : html`<table class="fa-table">
+    ${unavailable ? html`<div class="muted">The hub audit is not available on this build of tclaude or the hub.</div>` : entries == null ? html`<div class="muted">Loading…</div>` : !entries.length ? (!error && html`<div class="muted">No audit entries.</div>`) : html`<table class="fa-table ui-compact">
       <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Outcome</th><th>Detail</th></tr></thead>
       <tbody>${entries.map((e, i) => html`<tr key=${e.id || i} data-kind=${e.kind || ''}>
         <td class="fa-nowrap">${when(e.at)}</td>
@@ -599,7 +596,7 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
       ${h4('Admissions', html` <${Button} size="sm" variant="link" class="fa-link" id="fleet-hub-admit-open" onClick=${() => setDialog('admit')}>admit…<//> <${Button} size="sm" variant="link" class="fa-link" id="fleet-hub-identity-open" onClick=${() => setDialog('identity')}>identity recovery…<//>`)}
       <div class="fa-grant-form"><label>Remove instances not seen for <input aria-label="Stale admission days" inputmode="numeric" style="width:4em" value=${staleDays} onInput=${(e) => setStaleDays(e.currentTarget.value)} /> days</label>
         <${Button} size="sm" id="fleet-hub-stale-preview" disabled=${staleBusy || !status.connected} onClick=${cleanupStale}>${staleBusy ? 'Preparing…' : 'Preview cleanup…'}<//></div>
-      ${listOr(data.admissions, (rows) => html`<table class="fa-table" id="fleet-hub-admissions">
+      ${listOr(data.admissions, (rows) => html`<table class="fa-table ui-compact" id="fleet-hub-admissions">
         <thead><tr><th>Instance</th><th>Fingerprint</th><th>Spaces</th><th>Seen</th><th></th></tr></thead>
         <tbody>${rows.map((a) => (a.revoked ? html`<tr key=${a.instance} data-instance=${a.instance} data-revoked class="muted">
           <td>${a.name || ''} <code>${a.instance}</code></td>
@@ -628,7 +625,7 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
         <div>${newToken.join_code ? 'Or the bare invite, for a node that reaches the hub at another address' : 'Invite token, shown once'}: <code data-capture-mask>${newToken.token}</code>
         <${Button} size="sm" variant="link" class="fa-link" onClick=${() => copy(newToken.token).then(() => toast('Invite token copied', false)).catch(() => toast('Copy it from the page', true))}>copy<//>
         <${Button} size="sm" variant="link" class="fa-link" onClick=${() => setNewToken(null)}>hide<//></div></div>`}
-      ${listOr(data.invites, (rows) => (!rows.length ? html`<div class="muted">No open invites.</div>` : html`<table class="fa-table" id="fleet-hub-invites">
+      ${listOr(data.invites, (rows) => (!rows.length ? html`<div class="muted">No open invites.</div>` : html`<table class="fa-table ui-compact" id="fleet-hub-invites">
         <thead><tr><th>Token</th><th>Space</th><th>Created</th><th>Expires</th><th>Used</th><th></th></tr></thead>
         <tbody>${rows.map((i) => html`<tr key=${i.token_hash} data-token=${i.token_hash}>
           <td><code>${String(i.token_hash || '').slice(0, 12)}…</code></td><td>${i.space || '—'}</td><td>${when(i.created_at)}</td><td>${when(i.expires_at)}</td>
@@ -636,7 +633,7 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
           <td class="fa-acts">${!i.used && html`<${Button} size="sm" variant="ghost danger" data-hub="revoke-invite" onClick=${() => revokeInvite(i)}>Revoke…<//>`}</td>
         </tr>`)}</tbody></table>`))}
       ${h4('Admins')}
-      ${listOr(data.admins, (rows) => html`<table class="fa-table" id="fleet-hub-admins">
+      ${listOr(data.admins, (rows) => html`<table class="fa-table ui-compact" id="fleet-hub-admins">
         <thead><tr><th>Instance</th><th>Fingerprint</th><th>Capabilities</th><th>Added</th><th></th></tr></thead>
         <tbody>${rows.map((a) => html`<tr key=${a.instance} data-instance=${a.instance}>
           <td>${a.name || ''} <code>${a.instance}</code>${a.instance === self.id ? html` <span class="muted">(this node)</span>` : ''}</td>

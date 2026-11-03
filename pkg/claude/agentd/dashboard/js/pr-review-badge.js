@@ -81,7 +81,7 @@ function PRReviewPanel({ prURL, prNumber, reviews, panelID, headingID, panelRef,
             <${ReviewerRow} key=${reviewer.login} reviewer=${reviewer} prURL=${prURL} now=${now} />
           `)}
         </ul>
-      ` : html`<p class="ci-panel-empty">${reviews.reviewers_known
+      ` : html`<p class="ci-panel-empty ui-empty">${reviews.reviewers_known
         ? 'Nobody has approved or requested changes yet.'
         : `The reviewer list arrives with the next ${mr ? 'GitLab' : 'GitHub'} poll.`}</p>`}
       <p class="ci-panel-note">

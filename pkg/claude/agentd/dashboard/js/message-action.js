@@ -101,7 +101,7 @@ export function ActionCard({ message, notify, fetchImpl = (...args) => globalThi
   const heading = message.subject || 'Action';
   return html`<div class="companion-decision companion-action" role="group" aria-label=${`Action: ${heading}`}>
     <div class="companion-approval-head"><b>${heading}</b>
-      <button type="button" class="companion-action-dismiss" aria-label=${`Dismiss ${heading}`} title="Mark this message read. It stays in Messages." onClick=${dismiss}>×</button></div>
+      <button data-ui-exempt type="button" class="companion-action-dismiss" aria-label=${`Dismiss ${heading}`} title="Mark this message read. It stays in Messages." onClick=${dismiss}>×</button></div>
     ${message.body && message.body !== message.subject && html`<p class="companion-decision-body">${message.body}</p>`}
     <${MessageAction} message=${message} buttonClass="companion-primary" toast=${notify} openers=${openers} fetchImpl=${fetchImpl} onDone=${() => setGone(true)} />
   </div>`;

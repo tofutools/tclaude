@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog, DialogClose } from './ui-dialog.js';
 
 const html = htm.bind(h);
 
@@ -109,8 +109,16 @@ export function PeerMailDialog({ initial = {}, onClose, toast, actions = default
       .catch((e) => setError(errText(e)))
       .finally(() => setBusy(false));
   };
-  return html`<${Overlay} id="peer-mail-modal" labelledby="peer-mail-title" onClose=${onClose} blocked=${busy} initialFocusRef=${bodyRef}>
-    <h3 id="peer-mail-title">Message a peer</h3>
+  return html`<${Dialog} id="peer-mail-modal" title="Message a peer" onClose=${onClose} blocked=${busy} initialFocusRef=${bodyRef}
+    footer=${html`<${DialogClose} disabled=${busy}>Close<//>
+      <${Button} variant="primary" id="peer-mail-send" disabled=${busy || !ready} onClick=${send}>${busy ? 'Sending…' : 'Send'}</${Button}>`}
+    after=${html`<h4 class="peer-mail-h">Outbox <${Button} size="sm" variant="link" class="fa-link" onClick=${() => setTick((n) => n + 1)}>refresh<//></h4>
+    ${outbox?.error ? html`<div class="fa-danger">${outbox.error}</div>` : !outbox ? html`<div class="muted">Loading…</div>` : outbox.length === 0 ? html`<div class="muted">Nothing sent yet.</div>` : html`
+      <table class="fa-table ui-compact" id="peer-mail-outbox"><tbody>${outbox.slice(0, 10).map((o) => html`<tr key=${o.envelope_id}>
+        <td>${o.to}</td><td title=${o.preview || ''}>${o.subject || o.preview}</td>
+        <td class=${o.last_error ? 'fa-danger' : ''} title=${o.last_error || ''}>${o.state}${o.attempts > 1 ? ` · ${o.attempts} tries` : ''}</td>
+        <td class="muted">${o.updated_at ? new Date(o.updated_at).toLocaleString() : ''}</td></tr>`)}</tbody></table>`}
+    <div class="muted fa-cli-note">CLI: <code>tclaude federation notify --peer … | send ${'<to>'}</code>, <code>tclaude federation outbox</code></div>`}>
     <div class="peer-mail-kind" role="radiogroup">
       <label><input type="radio" name="peer-mail-kind" value="operator" checked=${kind === 'operator'} onChange=${() => setKind('operator')} /> its operator</label>
       <label><input type="radio" name="peer-mail-kind" value="agents" checked=${kind === 'agents'} onChange=${() => setKind('agents')} /> agents on it</label>
@@ -126,18 +134,7 @@ export function PeerMailDialog({ initial = {}, onClose, toast, actions = default
       ? 'Lands in that operator\'s Messages, from you as this node\'s operator.'
       : 'Delivered as mail from you, this node\'s operator, if the peer lets you message that agent or group.'} It waits in the outbox while the peer is offline.</div>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
-    <div class="modal-buttons"><span class="spacer"></span>
-      <${Button} onClick=${onClose}>Close</${Button}>
-      <${Button} variant="primary" id="peer-mail-send" disabled=${busy || !ready} onClick=${send}>${busy ? 'Sending…' : 'Send'}</${Button}>
-    </div>
-    <h4 class="peer-mail-h">Outbox <${Button} size="sm" variant="link" class="fa-link" onClick=${() => setTick((n) => n + 1)}>refresh<//></h4>
-    ${outbox?.error ? html`<div class="fa-danger">${outbox.error}</div>` : !outbox ? html`<div class="muted">Loading…</div>` : outbox.length === 0 ? html`<div class="muted">Nothing sent yet.</div>` : html`
-      <table class="fa-table" id="peer-mail-outbox"><tbody>${outbox.slice(0, 10).map((o) => html`<tr key=${o.envelope_id}>
-        <td>${o.to}</td><td title=${o.preview || ''}>${o.subject || o.preview}</td>
-        <td class=${o.last_error ? 'fa-danger' : ''} title=${o.last_error || ''}>${o.state}${o.attempts > 1 ? ` · ${o.attempts} tries` : ''}</td>
-        <td class="muted">${o.updated_at ? new Date(o.updated_at).toLocaleString() : ''}</td></tr>`)}</tbody></table>`}
-    <div class="muted fa-cli-note">CLI: <code>tclaude federation notify --peer … | send ${'<to>'}</code>, <code>tclaude federation outbox</code></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // PeerMailHost mounts the dialog when PEER_MAIL_EVENT fires.

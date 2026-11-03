@@ -13,6 +13,9 @@ func ProcessOwnsLoopbackPort(_, _ int) bool { return false }
 // listener", which is only a diagnostic hint and never a trust decision.
 func HasLoopbackListener(_ int) bool { return false }
 
+// ProcessOwnsAllLoopbackListeners fails closed off Linux and macOS.
+func ProcessOwnsAllLoopbackListeners(_, _ int) bool { return false }
+
 // ProcessInSubtree fails closed for the same reason.
 func ProcessInSubtree(_, _ int) bool { return false }
 

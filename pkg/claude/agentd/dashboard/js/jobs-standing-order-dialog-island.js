@@ -1,11 +1,9 @@
 import { Fragment, h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { Button, Select } from './ui-components.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { agentCandidates, groupMembers, groupsForPicker } from './message-access-dialog-model.js';
 import { nodeSnapshot } from './node-api.js';
 import { idTooltip, shortAgentId } from './helpers.js';
@@ -77,7 +75,7 @@ function StandingOrderTargetPicker({ value, onChange, snapshot }) {
     ${value.mode === 'global' && html`<div class="muted">
       Applies to every active enrolled agent. This is explicit and remains inert until the order is enabled.
     </div>`}
-    ${value.mode === 'solo' && html`<select id="standing-order-target" value=${value.target}
+    ${value.mode === 'solo' && html`<${Select} id="standing-order-target" value=${value.target}
       onChange=${(event) => onChange({ ...value, target: event.currentTarget.value })}>
       <option value="">(pick an agent)</option>
       ${targetOptions.map((agent) => {
@@ -88,13 +86,13 @@ function StandingOrderTargetPicker({ value, onChange, snapshot }) {
           ${agent.online ? '' : ' (offline)'}
         </option>`;
       })}
-    </select>`}
-    ${value.mode === 'group' && html`<select id="standing-order-group" value=${value.groupName}
+    <//>`}
+    ${value.mode === 'group' && html`<${Select} id="standing-order-group" value=${value.groupName}
       disabled=${!!scope}
       onChange=${(event) => onChange({ ...value, groupName: event.currentTarget.value })}>
       <option value="">(pick a group)</option>
       ${groupOptions.map((name) => html`<option key=${name} value=${name}>${name}</option>`)}
-    </select>`}
+    <//>`}
   </div>`;
 }
 
@@ -177,15 +175,13 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
   };
   const cancel = () => actions.closeStandingOrderDialog({ cancelled: true });
 
-  return html`<${Overlay} id="standing-order-modal"
-    overlayClass=${editing ? 'standing-order-editing' : ''}
-    labelledby="standing-order-title" onClose=${cancel}
+  return html`<${Dialog} id="standing-order-modal"
+    overlayClass=${editing ? 'standing-order-editing' : ''} onClose=${cancel}
     onSubmitHotkey=${busy ? null : submit} dirty=${dirty} blocked=${busy}
-    confirmDiscard=${confirmDiscard} registerClose=${registerClose}
-    resizeKey="tclaude.dash.modalSize.standing-order">
-    <h3 id="standing-order-title">${editing ? 'Edit standing order' : 'Create standing order'}</h3>
+    confirmDiscard=${confirmDiscard} guard=${{ requestClose, registerClose }}
+    resizeKey="tclaude.dash.modalSize.standing-order" title=${html`${editing ? 'Edit standing order' : 'Create standing order'}`}>
     ${editing && html`<div class="modal-meta">#${descriptor.id} · delivery revision ${draft.revision}</div>`}
-    ${descriptor.order?.disabled_reason && html`<div class="jobs-error standing-order-retirement-warning">
+    ${descriptor.order?.disabled_reason && html`<div class="jobs-error ui-error-box standing-order-retirement-warning">
       This order was disabled automatically: ${descriptor.order.disabled_reason}.
       Leave Enabled off to preserve that retirement state; explicitly enabling it clears the marker.
     </div>`}
@@ -219,7 +215,7 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
               matchRegex: '',
             })} /> Harness hooks (OR)</label>
         </div>
-        ${draft.triggerMode === 'portable' && html`<select id="standing-order-trigger" value=${draft.triggerEvent}
+        ${draft.triggerMode === 'portable' && html`<${Select} id="standing-order-trigger" value=${draft.triggerEvent}
           onChange=${(event) => update({
             triggerEvent: event.currentTarget.value,
             matchField: '',
@@ -227,7 +223,7 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
           })}>
           ${TRIGGER_EVENTS.map(([value, label]) => html`
             <option key=${value} value=${value}>${label}</option>`)}
-        </select>`}
+        <//>`}
         ${draft.triggerMode === 'portable' && draft.triggerEvent === 'session.start' && html`<div class="cron-target-modes">
           <label><input type="radio" name="standing-order-source-mode" value="any"
             checked=${draft.sourceMode === 'any'} onChange=${() => update({ sourceMode: 'any' })} />
@@ -251,7 +247,7 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
           <div class="muted">Select any number of exact harness hooks. They are OR branches:
             the same order fires when any checked hook occurs. Non-baseline Claude/Codex
             callbacks are installed only while an enabled order selects them.</div>
-          ${hookCatalogError && html`<div class="jobs-error">${hookCatalogError}</div>`}
+          ${hookCatalogError && html`<div class="jobs-error ui-error-box">${hookCatalogError}</div>`}
           ${!hookCatalogError && hookCatalog.length === 0 && html`
             <div class="muted">Loading hook catalog…</div>`}
           ${Object.entries(hooksByHarness).map(([harness, hooks]) => html`
@@ -276,14 +272,14 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
     </div>
     <div class="cron-create-row"><span class="cron-create-label">Condition</span>
       <div class="standing-order-field">
-        <select id="standing-order-match-field" value=${draft.matchField}
+        <${Select} id="standing-order-match-field" value=${draft.matchField}
           onChange=${(event) => update({
             matchField: event.currentTarget.value,
             matchRegex: event.currentTarget.value ? draft.matchRegex : '',
           })}>
           ${(MATCH_FIELDS[draft.triggerMode === 'native' ? 'hook.event' : draft.triggerEvent] || []).map(([value, label]) => html`
             <option key=${value || 'any'} value=${value}>${label}</option>`)}
-        </select>
+        <//>
         ${draft.matchField && html`<input id="standing-order-match-regex" type="text"
           maxlength="1024" value=${draft.matchRegex}
           placeholder="RE2 expression, e.g. (?i)^bash$ or deploy"
@@ -349,7 +345,7 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
       <${Button} variant="primary" id="standing-order-submit" disabled=${busy}
         onClick=${submit}>${busy ? 'Saving…' : editing ? 'Save' : 'Create'}</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 export function JobsStandingOrderDialogRoot({ state, actions, confirmDiscard }) {

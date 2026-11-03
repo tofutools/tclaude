@@ -56,6 +56,7 @@ import { useDismissablePopover } from './hover-popover.js';
 import { PaneDictation } from './terminal-dictation.js';
 import { ShellHere, paneShellAgent } from './terminal-here.js';
 import { matchesShortcut, shortcutText, withShortcut } from './keybindings.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 // Read at render time, so the label follows the keyboard layout once it loads.
@@ -247,7 +248,7 @@ function CopyButton({ className, id, hasSelection, actions, runtimeID }) {
     ? withShortcut('Copy selected terminal text', 'terminal-copy')
     : `Copy terminal text. ${interactionHint()}`;
   return html`
-    <button
+    <button data-ui-exempt
       type="button"
       class=${className}
       id=${id || null}
@@ -258,23 +259,33 @@ function CopyButton({ className, id, hasSelection, actions, runtimeID }) {
   `;
 }
 
-function TerminalDisconnectNotice({ onReconnect }) {
+// TerminalDisconnectNotice covers every settled loss that offers Reconnect,
+// not only a plain 'disconnected': attaching to a just-spawned agent before its
+// tmux session is up exhausts the initial retries and settles on 'session
+// ended', and a remote close settles on 'closed: …'. Each of those leaves the
+// same dead screen, so each gets the same big Reconnect; the reason, when it
+// says more than "disconnected", is shown on the card.
+// The same close code also ends a session that finished normally, so the card
+// can be dismissed to read that final output; it unmounts when Reconnect goes
+// away, so the next settled loss shows it again.
+function TerminalDisconnectNotice({ status, onReconnect }) {
+  const [dismissed, setDismissed] = useState(false);
   // While the dashboard-wide "Disconnected from agentd" curtain is up, this
   // terminal dropped for the same reason (the daemon is gone) and its restart
   // watch reconnects once agentd answers again; a second card on top of the
   // first only repeats it. Reading the signal here, not in TerminalPane, keeps
   // the subscription to panes that are actually disconnected.
-  if (dashboardState.connection.value.status === 'disconnected') return null;
+  if (dismissed || dashboardState.connection.value.status === 'disconnected') return null;
   return html`
     <div class="mux-terminal-disconnect-overlay" role="alert" aria-live="assertive">
       <div class="mux-terminal-disconnect-card">
         <div class="mux-terminal-disconnect-icon" aria-hidden="true">⚠️</div>
         <h2 class="mux-terminal-disconnect-title">Terminal disconnected</h2>
-        <p class="mux-terminal-disconnect-body">This terminal is no longer connected.</p>
-        <button type="button" class="mux-terminal-disconnect-reconnect" aria-label="Reconnect terminal" onClick=${onReconnect}>
+        <p class="mux-terminal-disconnect-body">This terminal is no longer connected${status && status !== 'disconnected' ? html` (${status})` : null}.</p>
+        <${Button} variant="success" class="mux-terminal-disconnect-reconnect" aria-label="Reconnect terminal" onClick=${onReconnect}>
           <span aria-hidden="true">⟳</span> Reconnect
-        </button>
-        <p class="mux-terminal-disconnect-status">Also available in the header above.</p>
+        <//>
+        <p class="mux-terminal-disconnect-status">Also available in the header above. <${Button} variant="link" onClick=${() => setDismissed(true)}>Dismiss<//></p>
       </div>
     </div>
   `;
@@ -294,7 +305,7 @@ export function RemoteSharedNotice({ seed, remote, onTakeOver }) {
     : 'Size limited by another viewer';
   return html`<div class="term-remote-shared" role="status">
     <span>${text}</span>
-    ${others.length && remote.canTakeOver ? html`<button type="button" class="mux-btn" data-term-take-over title=${`Disconnect the other viewers of this session on ${peer} and size it to this window`} onClick=${onTakeOver}>Take over</button>` : null}
+    ${others.length && remote.canTakeOver ? html`<${Button} size="sm" class="mux-btn" data-term-take-over title=${`Disconnect the other viewers of this session on ${peer} and size it to this window`} onClick=${onTakeOver}>Take over<//>` : null}
   </div>`;
 }
 
@@ -390,13 +401,13 @@ function TerminalPane({
         ${!pane.seed.remote && pane.seed.agent ? html`<${ViewersBadge} agentId=${pane.seed.agent} className="term-viewers-badge" />` : null}
         <span class="mux-pane-status" role="status" aria-live="polite" aria-atomic="true">${status}</span>
         <span class="terminal-interaction-hint">${interactionHint()}</span>
-        ${reconnect ? html`<button type="button" class="mux-btn" onClick=${reconnectPane}>Reconnect</button>` : null}
-        ${filesOK ? html`<button type="button" class="mux-btn" data-term-files aria-pressed=${files ? 'true' : 'false'} title="Browse the agent's project files on the peer: preview or download" onClick=${() => setFiles(!files)}>Files</button>` : null}
+        ${reconnect ? html`<${Button} size="sm" class="mux-btn" onClick=${reconnectPane}>Reconnect<//>` : null}
+        ${filesOK ? html`<${Button} size="sm" class="mux-btn" data-term-files aria-pressed=${files ? 'true' : 'false'} title="Browse the agent's project files on the peer: preview or download" onClick=${() => setFiles(!files)}>Files<//>` : null}
         <${CopyButton} className="mux-btn" hasSelection=${hasSelection} actions=${actions} runtimeID=${pane.id} />
         ${liveSteward && !stewardDown ? html`<${StewardShutdown} agent=${{ agentId: pane.seed.agent, name: pane.label || 'the Steward' }}
           fetchImpl=${fetchFromPage} onDown=${() => setStewardDown(true)} />` : null}
         ${composeMessage ? html`
-          <button type="button" class="mux-btn" title=${withShortcut('Send a queued message to this agent', 'compose')} onClick=${composeMessage}>✉ Message</button>
+          <${Button} size="sm" class="mux-btn" title=${withShortcut('Send a queued message to this agent', 'compose')} onClick=${composeMessage}>✉ Message<//>
         ` : null}
         <label
           class="mux-palette-toggle"
@@ -412,11 +423,11 @@ function TerminalPane({
           <span>Arcane palette</span>
         </label>
         ${solo ? html`
-          <button type="button" class="mux-btn" title="Move this terminal back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${toTabsLabel(processSnapshot?.value?.collab_enabled === true || !!pane.seed.floats)}</button>
-          ${soloFloats(pane) ? html`<button type="button" class="mux-btn" title="Float this terminal in a window over the dashboard" onClick=${() => void actions.reattachPane(pane.key, { overlay: true })}>Open in overlay</button>` : null}
+          <${Button} size="sm" class="mux-btn" title="Move this terminal back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${toTabsLabel(processSnapshot?.value?.collab_enabled === true || !!pane.seed.floats)}<//>
+          ${soloFloats(pane) ? html`<${Button} size="sm" class="mux-btn" title="Float this terminal in a window over the dashboard" onClick=${() => void actions.reattachPane(pane.key, { overlay: true })}>Open in overlay<//>` : null}
         ` : html`
-          ${paneFloats(pane, processSnapshot?.value) ? html`<button type="button" class="mux-btn" title="Float this terminal in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay</button>` : null}
-          <button type="button" class="mux-btn" title="Move this terminal to a browser window of its own" onClick=${() => void actions.popOutPane(pane.key, { floats: paneFloats(pane, processSnapshot?.value) })}>Open in separate window</button>
+          ${paneFloats(pane, processSnapshot?.value) ? html`<${Button} size="sm" class="mux-btn" title="Float this terminal in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay<//>` : null}
+          <${Button} size="sm" class="mux-btn" title="Move this terminal to a browser window of its own" onClick=${() => void actions.popOutPane(pane.key, { floats: paneFloats(pane, processSnapshot?.value) })}>Open in separate window<//>
         `}
       </div>
       ${stewardDown ? html`<${StewardDownNotice} pane=${pane} actions=${actions} />` : null}
@@ -452,7 +463,7 @@ function TerminalPane({
         onFontChange=${onFontChange}
         onDisconnect=${(info) => { actions.paneDisconnected?.(pane.key); if (info?.closeTab) void actions.closePane(pane.key, { skipDetach: true }); }}
         onComposeMessage=${composeMessage}
-        disconnectNotice=${status === 'disconnected' && reconnect ? html`<${TerminalDisconnectNotice} onReconnect=${reconnectPane} />` : null}
+        disconnectNotice=${reconnect ? html`<${TerminalDisconnectNotice} status=${status} onReconnect=${reconnectPane} />` : null}
       />
     </div>
   `;
@@ -505,9 +516,9 @@ function StewardDownNotice({ pane, actions }) {
   }
   return html`<div class="steward-down-notice" role="status">
     <span><b>${pane.label || 'The Steward'}</b> is shut down. You can pick its conversation back up.</span>
-    <button type="button" class="mux-btn" disabled=${busy} onClick=${resume}>Resume</button>
-    <button type="button" class="mux-btn" disabled=${busy} onClick=${start}>${busy ? 'Starting…' : 'Start fresh'}</button>
-    ${error ? html`<span class="steward-shutdown-error" role="alert">${error}</span>` : null}
+    <${Button} size="sm" class="mux-btn" disabled=${busy} onClick=${resume}>Resume<//>
+    <${Button} size="sm" class="mux-btn" disabled=${busy} onClick=${start}>${busy ? 'Starting…' : 'Start fresh'}<//>
+    ${error ? html`<span class="steward-shutdown-error ui-error" role="alert">${error}</span>` : null}
   </div>`;
 }
 
@@ -532,11 +543,11 @@ function BoardPane({ pane, active, solo, manageTitle, actions, snapshot, scope =
     fetchImpl=${fetchFromPage} notify=${shellToast} onOpenAgent=${(agent) => openInCompanion(agent)}
     onTitle=${(title) => actions.setPaneLabel(pane.key, title)}
     headActions=${solo
-      ? html`<button type="button" class="mux-btn" title="Move this board back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${toTabsLabel(true)}</button>
-        ${soloFloats(pane) ? html`<button type="button" class="mux-btn" title="Float this board in a window over the dashboard" onClick=${() => void actions.reattachPane(pane.key, { overlay: true })}>Open in overlay</button>` : null}`
+      ? html`<${Button} size="sm" class="mux-btn" title="Move this board back to a tab of the dashboard" onClick=${() => void actions.reattachPane(pane.key)}>${toTabsLabel(true)}<//>
+        ${soloFloats(pane) ? html`<${Button} size="sm" class="mux-btn" title="Float this board in a window over the dashboard" onClick=${() => void actions.reattachPane(pane.key, { overlay: true })}>Open in overlay<//>` : null}`
       : html`
-        <button type="button" class="mux-btn" title="Float this board in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay</button>
-        <button type="button" class="mux-btn" title="Move this board to a browser window of its own" onClick=${() => void actions.popOutPane(pane.key, { floats: true })}>Open in separate window</button>`} />` : null;
+        <${Button} size="sm" class="mux-btn" title="Float this board in a window over the dashboard" onClick=${() => void actions.openPaneInOverlay(pane.key)}>Open in overlay<//>
+        <${Button} size="sm" class="mux-btn" title="Move this board to a browser window of its own" onClick=${() => void actions.popOutPane(pane.key, { floats: true })}>Open in separate window<//>`} />` : null;
   return html`<div
     class=${`mux-pane mux-pane-board${active ? ' active' : ''}${scope?.hidden ? ' scope-hidden' : ''}`}
     id=${pane.id}
@@ -557,7 +568,7 @@ function BoardMenu({ state, snapshot }) {
   useDismissablePopover(rootRef, open && !boardDeleteRequest.value && !picking, () => setOpen(false));
   if (snapshot?.value?.collab_enabled !== true) return null;
   return html`<div ref=${rootRef} class="mux-board-slot">
-    <button type="button" class="mux-board-add" aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
+    <button data-ui-exempt type="button" class="mux-board-add" aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
       title="Open a board in a tab, or create one" aria-label="Open or create a board"
       onClick=${() => setOpen((value) => !value)}>＋</button>
     ${open ? html`<div class="mux-board-menu" role="dialog" aria-label="Boards">
@@ -650,7 +661,7 @@ function TabAttention({ pane, snapshot, messages: suppliedMessages = null }) {
     openPaneNotification(pane, message, event.currentTarget, event.currentTarget.closest('.mux-tab'));
   };
   return html`
-    <button
+    <button data-ui-exempt
       type="button"
       class="mux-tab-attention"
       draggable="false"
@@ -675,7 +686,7 @@ function TabApproval({ pane, snapshot }) {
   const requests = paneApprovals(pane, snapshot?.value);
   if (!requests.length) return null;
   const title = `${pane.label || 'This agent'} is asking for permission. Open the request`;
-  return html`<button type="button" class="mux-tab-attention" draggable="false" title=${title} aria-label=${title}
+  return html`<button data-ui-exempt type="button" class="mux-tab-attention" draggable="false" title=${title} aria-label=${title}
     onClick=${(event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -686,7 +697,7 @@ function TabApproval({ pane, snapshot }) {
 function TerminalCostToggle() {
   const [hidden, setHidden] = useState(terminalCostsHidden);
   useLayoutEffect(() => subscribeTerminalCosts(setHidden), []);
-  return html`<button type="button" class=${`cost-toggle mux-cost-toggle${hidden ? ' off' : ''}`}
+  return html`<button data-ui-exempt type="button" class=${`cost-toggle mux-cost-toggle${hidden ? ' off' : ''}`}
     aria-label="Show agent costs" aria-pressed=${!hidden}
     title="Show or hide per-agent costs on these tabs (Groups has its own toggle); hovering a tab shows its cost either way"
     onClick=${toggleTerminalCosts}>$</button>`;
@@ -895,7 +906,7 @@ function PaneTab({
       <${TerminalCosts} agent=${agentStatus.agent} />
       ${!pane.seed.remote && pane.seed.agent ? html`<${ProcessTabIcons} agentId=${pane.seed.agent}
         enabled=${!!snapshot?.value?.processes_enabled} />` : null}
-      <button
+      <button data-ui-exempt
         type="button"
         class="mux-tab-close"
         draggable="false"
@@ -1011,7 +1022,7 @@ function GroupStack({
       ${renaming ? html`
         <${TabGroupRename} group=${group} label=${`Rename terminal group ${group.name}`} onCommit=${onRenameCommit} onCancel=${onRenameCancel} />
       ` : html`
-        <button
+        <button data-ui-exempt
           type="button"
           class="mux-group-pill"
           draggable="true"
@@ -1081,7 +1092,7 @@ function PaneContextMenu({
         item('Rename group…', () => onRenameGroup(menu.id), { refocus: false }),
         item('Ungroup tabs', () => actions.dissolveGroup(menu.id)),
         separator,
-        item('Close tabs in group', () => actions.closeGroupPanes(menu.id), { className: 'mux-tab-menu-item danger' }),
+        item('Close tabs in group', () => actions.closeGroupPanes(menu.id), { className: 'ui-btn-danger mux-tab-menu-item danger' }),
       ] : [
         item('New group from this tab', () => {
           const group = actions.createGroup({ keys: [menu.key] });
@@ -1095,10 +1106,10 @@ function PaneContextMenu({
         ...(menu.floats ? [item('Open in overlay', () => actions.openPaneInOverlay(menu.key))] : []),
         item('Open in separate window', () => actions.popOutPane(menu.key, { floats: menu.floats })),
         separator,
-        ...(menu.board ? [item('Delete board…', () => askDeleteBoard({ id: menu.boardId, title: menu.label }), { className: 'mux-tab-menu-item danger', refocus: false })] : []),
+        ...(menu.board ? [item('Delete board…', () => askDeleteBoard({ id: menu.boardId, title: menu.label }), { className: 'ui-btn-danger mux-tab-menu-item danger', refocus: false })] : []),
         item('Close tab', () => actions.closePane(menu.key)),
         item('Close other tabs', () => actions.closeOtherPanes(menu.key)),
-        item('Close all tabs', () => actions.closeAllPanes(), { className: 'mux-tab-menu-item danger' }),
+        item('Close all tabs', () => actions.closeAllPanes(), { className: 'ui-btn-danger mux-tab-menu-item danger' }),
       ];
     }} />`;
 }
@@ -1893,7 +1904,7 @@ function TerminalBadge({ state }) {
   const title = background
     ? `${count} open, ${background} running in the background without a terminal`
     : `${count} open`;
-  return html`<span id="terminals-badge" class="tab-badge count" title=${title}
+  return html`<span id="terminals-badge" class="tab-badge ui-badge" title=${title}
     hidden=${count === 0 && background === 0}>${count}${background ? ` +${background}` : ''}</span>`;
 }
 

@@ -41,6 +41,7 @@ import { takeProcessStart } from './process-start-handoff.js';
 import { fusedSectionOpen, setFusedSectionOpen } from './groups-fused-sections.js';
 import { FusedLinks } from './groups-fused-links.js';
 import { useProcessScope } from './groups-process-scope.js';
+import { Button, Select } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -190,24 +191,24 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     ${agentScoped
     ? html`<span class="pk-chip pk-scope pk-scope-agent">◉ ${wizard ? 'hero-bound' : 'agent scope'}</span>
       ${agents.length
-        ? html`<select aria-label="Agent" data-start-agent value=${agent} disabled=${busy} onChange=${(event) => setAgent(event.currentTarget.value)}>
+        ? html`<${Select} size="sm" aria-label="Agent" data-start-agent value=${agent} disabled=${busy} onChange=${(event) => setAgent(event.currentTarget.value)}>
           ${agents.map((member) => html`<option key=${member.agent_id} value=${member.agent_id}>${memberName(member)}</option>`)}
-        </select>`
+        <//>`
         : html`<span class="gp-start-note">${wizard ? 'No hero here can bear a rite.' : 'No agent in this group to run it.'}</span>`}`
     : html`<span class="pk-chip pk-scope pk-scope-group">⌂ ${wizard ? 'circle-bound' : 'group scope'} · ${group.name}</span>`}
     ${templates === null
     ? html`<span class="gp-start-note">Loading templates…</span>`
     : templates.length === 0 && !error
       ? html`<span class="gp-start-note">${wizard ? 'No rites written yet.' : 'No saved processes yet.'}</span>`
-      : html`<select aria-label="Template" value=${templateId} disabled=${busy} onChange=${(event) => setTemplateId(event.currentTarget.value)}>
+      : html`<${Select} size="sm" aria-label="Template" value=${templateId} disabled=${busy} onChange=${(event) => setTemplateId(event.currentTarget.value)}>
         ${templates.map((template) => html`<option key=${template.id} value=${template.id}>${template.name}</option>`)}
-      </select>`}
-    <button type="submit" class="primary" disabled=${busy || !!draftWarning || !templateId || missing.length > 0 || (agentScoped && !agent)}
-      title=${missing.length ? `Fill ${missing.map((param) => param.name).join(', ')} first` : ''}>${busy ? 'starting…' : 'start'}</button>
-    <button type="button" disabled=${busy} onClick=${onClose}>cancel</button>
+      <//>`}
+    <${Button} size="sm" variant="primary" type="submit" disabled=${busy || !!draftWarning || !templateId || missing.length > 0 || (agentScoped && !agent)}
+      title=${missing.length ? `Fill ${missing.map((param) => param.name).join(', ')} first` : ''}>${busy ? 'starting…' : 'start'}<//>
+    <${Button} size="sm" disabled=${busy} onClick=${onClose}>cancel<//>
     ${draftWarning && html`<${DraftStartWarning} warning=${draftWarning} busy=${busy} openDisabled=${!onOpenTemplate} onOpen=${openDraft} onStartAnyway=${startAnyway} />`}
-    ${onBuild && html`<button type="button" class="gq-link" data-process-new=${group.name} onClick=${onBuild}
-      title=${wizard ? `Shape a new rite for ${group.name}` : `Build a new process for ${group.name} from steps or a starter`}>${wizard ? 'or shape a new rite ▸' : 'or build a new one ▸'}</button>`}
+    ${onBuild && html`<${Button} size="sm" variant="link" class="gq-link" data-process-new=${group.name} onClick=${onBuild}
+      title=${wizard ? `Shape a new rite for ${group.name}` : `Build a new process for ${group.name} from steps or a starter`}>${wizard ? 'or shape a new rite ▸' : 'or build a new one ▸'}<//>`}
     ${needs.params.length > 0 && html`<div class="gp-start-params" role="group" aria-label="Parameters">
       ${needs.params.map((param) => html`<label key=${param.name} class="gp-start-param" title=${param.description}>
         <span>${param.name}${param.required ? html`<b aria-label="required"> *</b>` : ''}</span>
@@ -292,7 +293,7 @@ function RunCard({ run, entry, nameOf, wizard, onOpen }) {
       ${(template || owner) && html`<span class="gp-card-meta">${template && html`${wizard ? 'grimoire' : 'template'} <code>${template}</code>`}${template && owner && ' · '}${owner && html`owner <b>${owner}</b>`}</span>`}
       <span class="gp-spacer"></span>
       ${runNeedsYou(named, entry) && html`<span class="pk-chip pk-state-waiting gp-needs-you">👤 ${wizard ? 'awaits your word' : 'waiting on you'}</span>`}
-      <button type="button" class="gp-open" data-process-open=${named.runId} onClick=${() => onOpen(named.runId)}
+      <button data-ui-exempt type="button" class="gp-open" data-process-open=${named.runId} onClick=${() => onOpen(named.runId)}
         title=${wizard ? `Gaze into ${runName(named)}` : `Open ${runName(named)}: live graph, node inspector and performers`}>${wizard ? 'gaze ›' : 'open ›'}</button>
     </div>
     <div class="gp-card-body"><${ProcessMiniGraph} run=${named} wizard=${wizard} /></div>
@@ -415,19 +416,19 @@ function RunControls({ group, runs, agentIds, wizard, runApi, source, notify, on
   const shared = { 'data-group': group.name };
   // Inline is Both's half-row beside the agent controls; otherwise the row.
   return html`<${inline ? 'span' : 'div'} class=${inline ? 'gp-run-controls gf-run-controls' : 'group-header-actions gp-run-controls'}>
-    <button type="button" class="spawn-btn" ...${shared} data-process-start-agent=${group.name} onClick=${() => onStart('agent')}
+    <${Button} size="sm" variant="primary" class="spawn-btn" ...${shared} data-process-start-agent=${group.name} onClick=${() => onStart('agent')}
       title=${wizard ? `Begin a rite for one hero of ${group.name}` : `Agent process: run a saved process, or build a new one, for one agent in ${group.name}`}
-      aria-label="Start a process for one agent in this group"><${RunIcon} /><span class="spawn-btn-label-wizard" aria-hidden="true">📜</span></button>
-    <button type="button" class="spawn-btn subgroup-btn" ...${shared} data-process-start=${group.name} onClick=${() => onStart('group')}
+      aria-label="Start a process for one agent in this group"><${RunIcon} /><span class="spawn-btn-label-wizard" aria-hidden="true">📜</span><//>
+    <${Button} size="sm" variant="primary" class="spawn-btn subgroup-btn" ...${shared} data-process-start=${group.name} onClick=${() => onStart('group')}
       title=${wizard ? `Begin a rite bound to ${group.name}` : `Group process: run a saved process, or build a new one, for the whole group`}
-      aria-label="Start a process for this group"><${RunIcon} group=${true} /><span class="subgroup-icon-wizard" aria-hidden="true">⚔📜</span></button>
+      aria-label="Start a process for this group"><${RunIcon} group=${true} /><span class="subgroup-icon-wizard" aria-hidden="true">⚔📜</span><//>
     <span class="group-actions">
-      <button type="button" ...${shared} data-process-resume-all=${group.name} disabled=${!!busy || !resumable.length}
+      <${Button} size="sm" ...${shared} data-process-resume-all=${group.name} disabled=${!!busy || !resumable.length}
         onClick=${() => bulk('resume', resumable)} aria-label="Resume every paused process in this group"
-        title=${resumable.length ? `Resume ${plural(resumable.length, 'paused process')}: what waited is planned again` : 'No paused processes in this group'}><${RunGlyph} kind="resume" /></button>
-      <button type="button" class="warn" ...${shared} data-process-pause-all=${group.name} disabled=${!!busy || !pausable.length}
+        title=${resumable.length ? `Resume ${plural(resumable.length, 'paused process')}: what waited is planned again` : 'No paused processes in this group'}><${RunGlyph} kind="resume" /><//>
+      <${Button} size="sm" class="warn" ...${shared} data-process-pause-all=${group.name} disabled=${!!busy || !pausable.length}
         onClick=${() => bulk('pause', pausable)} aria-label="Pause every running process in this group"
-        title=${pausable.length ? `Pause ${plural(pausable.length, 'running process')}: steps in flight finish, nothing new starts until you resume. Nothing is cancelled.` : 'No running processes to pause in this group'}><${RunGlyph} kind="pause" /></button>
+        title=${pausable.length ? `Pause ${plural(pausable.length, 'running process')}: steps in flight finish, nothing new starts until you resume. Nothing is cancelled.` : 'No running processes to pause in this group'}><${RunGlyph} kind="pause" /><//>
     </span>
   <//>`;
 }
@@ -576,7 +577,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         onReuse=${(templateId) => { setQuick(null); setStarting({ templateId }); }}
         onDismiss=${() => { markQuickStart('dismissed'); setQuick(null); setDismissed(true); }} />`
       : fresh && folded && !starting && html`<div class="gp-empty gq-folded" data-quickstart-folded=${group.name}>
-        ${wizard ? 'No rites yet' : 'No processes yet'} · <button type="button" class="gq-link" data-quickstart-expand onClick=${() => setQuick('pick')}>Get started ▸</button></div>`;
+        ${wizard ? 'No rites yet' : 'No processes yet'} · <${Button} size="sm" variant="link" class="gq-link" data-quickstart-expand onClick=${() => setQuick('pick')}>Get started ▸<//></div>`;
   const startScope = (scope) => { setQuick(null); setStarting({ scope }); };
   const controls = (inline) => html`<${RunControls} group=${group} runs=${liveGroupRuns(context, entry, members)}
     agentIds=${members.map((member) => member.agent_id).filter(Boolean)} wizard=${wizard} runApi=${runApi}
@@ -616,7 +617,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         actions=${fused.actions} closedActions=${fused.closedActions}>${fused.agents}<//>
       <${FusedSection} group=${group.name} section="processes" label=${wizard ? 'Rites' : 'Processes'}
         count=${runs.length + planned.length + memberRuns.length}
-        actions=${quick === 'pick' && html`<button type="button" class="gp-start" onClick=${() => setQuick(null)}>close</button>`}
+        actions=${quick === 'pick' && html`<${Button} size="sm" class="gp-start" onClick=${() => setQuick(null)}>close<//>`}
         closedActions=${controls(true)}
         auto=${shown} force=${!!starting || !!quick} attrs=${{ 'data-fused-processes': group.name }}>
         <div class=${`gp-group${pwfOver ? ' gp-pwf-over' : ''}`} data-process-group=${group.name} ...${pwfDrop}><div class="group-header-actions gf-title-row">${controls(true)}</div>${body}</div>
@@ -630,7 +631,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     <div class="gp-group-head">
       <${GroupAvatarStrip} members=${members} busy=${busy} wizard=${wizard} />
       <span class="gp-spacer"></span>
-      ${quick === 'pick' && html`<button type="button" class="gp-start" onClick=${() => setQuick(null)}>close</button>`}
+      ${quick === 'pick' && html`<${Button} size="sm" class="gp-start" onClick=${() => setQuick(null)}>close<//>`}
     </div>
     ${body}
   </div>`;
@@ -671,7 +672,7 @@ export function FusedSection({ group, section, label, count = null, auto = true,
   const title = force ? 'Open while a form inside is in use' : open ? `Fold ${label}` : `Show ${label}`;
   return html`<div class=${`gf-section gf-section-${section}${open ? ' open' : ''}${force ? ' forced' : ''}`} data-fused-section=${section} ...${attrs}>
     <div class="gf-section-head">
-      <button type="button" class="gf-section-toggle" aria-expanded=${open ? 'true' : 'false'} disabled=${force} title=${title} onClick=${toggle}>
+      <button data-ui-exempt type="button" class="gf-section-toggle" aria-expanded=${open ? 'true' : 'false'} disabled=${force} title=${title} onClick=${toggle}>
         <span class="gf-tri" aria-hidden="true">${open ? '▾' : '▸'}</span>
         <span class="gf-label">${label}</span>
         ${count !== null && html`<span class=${`gf-count${count ? '' : ' zero'}`}>${count}</span>`}

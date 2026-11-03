@@ -2,10 +2,7 @@ import { h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import {
   createGroupCreateDraft,
   derivedCloneDestination,
@@ -59,7 +56,7 @@ function GroupSourceSummary({ source, cloneMode, withAgents, copyOwners }) {
   </div>`;
   return html`<div class="group-clone-preview group-create-source-summary"
     id="group-create-source-summary">
-    <div class="gcp-title">${`Prefilled from ${source.name}`}</div>
+    <div class="ui-eyebrow gcp-title">${`Prefilled from ${source.name}`}</div>
     ${row('📁 directory', source.default_cwd || 'none', !source.default_cwd)}
     ${row('📝 description', source.descr || 'none', !source.descr)}
     ${row('📋 startup context', source.default_context
@@ -87,7 +84,6 @@ function GroupSourceSummary({ source, cloneMode, withAgents, copyOwners }) {
 function GroupCreateDialog({
   current, state, actions, confirmDiscard, words,
 }) {
-  const { requestClose, registerClose } = useGuardedOverlayClose();
   const baseline = useMemo(() => createGroupCreateDraft({
     templates: current.templates,
     groups: current.groups,
@@ -255,23 +251,24 @@ function GroupCreateDialog({
   const sourceVisible = templateMode;
   const disabled = busy;
 
-  return html`<${Overlay}
+  return html`<${Dialog}
     id="group-create-modal"
-    labelledby="group-create-title"
+    title=${html`<${Words} classPrefix="group-create-title" plain=${regularTitle} wizard=${wizardTitle} />`}
     onClose=${state.close}
     onSubmitHotkey=${submit}
     dirty=${dirty}
-    blocked=${busy}
+    busy=${busy}
     confirmDiscard=${confirmDiscard}
-    registerClose=${registerClose}
     initialFocusRef=${nameRef}
+    error=${error}
+    cancel="Cancel"
+    footer=${html`<${Button} variant="primary" id="group-create-submit" disabled=${busy}
+      busy=${busy}
+      onClick=${() => { void submit(); }}>${busy
+        ? (draft.workspaceMode === 'clone' && !cloneMode ? 'Cloning & creating…' : 'Creating…')
+        : 'Create group'}</${Button}>`}
   >
-    <h3 id="group-create-title"><${Words}
-      classPrefix="group-create-title"
-      plain=${regularTitle}
-      wizard=${wizardTitle}
-    /></h3>
-    <p class="modal-hint">Start blank or prefill from an existing group or template.</p>
+    <p class="modal-hint ui-hint">Start blank or prefill from an existing group or template.</p>
     <div class="cron-create-row group-create-origin-row">
       <span class="cron-create-label">Start from</span>
       <div class="ui-seg group-create-origin-options" role="group" aria-label="Group source">
@@ -421,7 +418,7 @@ function GroupCreateDialog({
             onChange=${(event) => setField('attachRepository', event.currentTarget.checked)} />
           <span>Show repository link on the group</span>
         </label>
-        <div class="group-create-clone-hint">The checkout becomes this group’s default working directory.</div>
+        <div class="group-create-clone-hint ui-hint">The checkout becomes this group’s default working directory.</div>
       `}
     </fieldset>
     <label class="cron-create-row">
@@ -498,17 +495,7 @@ function GroupCreateDialog({
         onKeyDown=${submitOnEnter} placeholder="optional display name / alias"
         autocomplete="off" spellcheck="false" />
     </label>` : null}
-    <div class="cron-create-error" id="group-create-error" role=${error ? 'alert' : undefined}>${error}</div>
-    <div class="modal-buttons">
-      <${Button} id="group-create-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
-      <span class="spacer"></span>
-      <${Button} variant="primary" id="group-create-submit" disabled=${busy}
-        busy=${busy}
-        onClick=${() => { void submit(); }}>${busy
-          ? (draft.workspaceMode === 'clone' && !cloneMode ? 'Cloning & creating…' : 'Creating…')
-          : 'Create group'}</${Button}>
-    </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 export function GroupCreateApp(props) {

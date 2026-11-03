@@ -56,8 +56,8 @@ func TestDashboardJobsPreactBoundary(t *testing.T) {
 			t.Errorf("Jobs cron spawn surface missing %q", needle)
 		}
 	}
-	css := read("dashboard.css")
-	subtabStart := strings.Index(css, ".jobs-subtab {")
+	css := dashboardAssetFile(t, "ui.css")
+	subtabStart := strings.Index(css, ".ui-tab {")
 	subtabEnd := -1
 	if subtabStart >= 0 {
 		subtabEnd = strings.Index(css[subtabStart:], "}")

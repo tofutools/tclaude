@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { UpdateScriptsSection } from './fleet-admin-update-scripts.js';
 import { CREDENTIAL_FILE_HARNESSES, SHARE_WARNING, accessHint, cellView, harnessColumns, jobActive } from './fleet-harness-model.js';
 
@@ -97,8 +97,7 @@ export function HarnessDialog({ node, row, actions, confirm, toast, onJob, onClo
     .catch((e) => toast(`Push failed: ${errText(e)}`, true));
 
   const cell = cellView(row);
-  return html`<${Overlay} id="fleet-harness-modal" labelledby="fleet-harness-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="fleet-harness-title">${label} on ${node.label}</h3>
+  return html`<${Dialog} id="fleet-harness-modal" onClose=${onClose} blocked=${busy} title=${html`${label} on ${node.label}`}>
     <div class="fa-dl">
       <span class="fa-k">Installed</span><span>${row?.installed ? `${row.version || 'version unknown'}${row.path ? ` · ${row.path}` : ''}` : 'no'}</span>
       ${row?.latest_version && html`<span class="fa-k">Latest</span><span>${row.latest_version}${row.update_available === true ? ' — update available' : ''}</span>`}
@@ -128,14 +127,14 @@ export function HarnessDialog({ node, row, actions, confirm, toast, onJob, onClo
               <${Button} size="sm" id="fleet-harness-backup" onClick=${backupNow}>Back up now<//>
             </div>
             ${backups && (backups.length
-              ? html`<table class="fa-table" id="fleet-harness-backups"><thead><tr><th>Backup</th><th>Taken</th><th></th></tr></thead>
+              ? html`<table class="fa-table ui-compact" id="fleet-harness-backups"><thead><tr><th>Backup</th><th>Taken</th><th></th></tr></thead>
                 <tbody>${backups.map((b) => html`<tr key=${b.id}><td><code>${b.id.slice(0, 12)}</code></td><td>${when(b.created_at)}</td>
                   <td class="fa-acts"><${Button} size="sm" data-fa="restore" onClick=${() => restore(b)}>Restore…<//></td></tr>`)}</tbody></table>`
               : html`<div class="muted">No backups yet.</div>`)}`}`
       : html`<div class="muted">${label} keeps its login outside copyable files (keychain or environment): log in on ${node.label} itself.</div>`}
     <div class="cron-create-error" role="alert">${error}</div>
     <div class="modal-buttons"><span class="spacer"></span><${Button} disabled=${busy} onClick=${onClose}>Close</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function JobRow({ entry, copy, toast, onDismiss }) {
@@ -220,7 +219,7 @@ export function HarnessesPage({ view, actions, confirm, toast, copy, timers = gl
       <${Button} size="sm" id="fleet-harness-refresh" onClick=${() => load(true)}>Re-check<//>
       <span class="muted">Versions are cached for a few minutes; Re-check probes again. A peer shows here when it shares node.harnesses.read. CLI: <code>tclaude harness ls|install|update|credentials</code>.</span>
     </div>
-    <table class="fa-table" id="fleet-harnesses">
+    <table class="fa-table ui-compact" id="fleet-harnesses">
       <thead><tr><th>Node</th>${columns.map((c) => html`<th key=${c}>${c}</th>`)}<th></th></tr></thead>
       <tbody>${nodes.map((node) => {
         const a = avail[node.id] || {};
@@ -243,7 +242,7 @@ export function HarnessesPage({ view, actions, confirm, toast, copy, timers = gl
         </tr>`;
       })}</tbody>
     </table>
-    ${jobList.length > 0 && html`<h4>Jobs</h4><table class="fa-table" id="fleet-harness-jobs">
+    ${jobList.length > 0 && html`<h4>Jobs</h4><table class="fa-table ui-compact" id="fleet-harness-jobs">
       <thead><tr><th>Node</th><th>Job</th><th>State</th><th>Result</th><th></th></tr></thead>
       <tbody>${jobList.map((entry) => html`<${JobRow} key=${entry.job.id} entry=${entry} copy=${copy} toast=${toast}
         onDismiss=${() => setJobs((cur) => { const next = { ...cur }; delete next[entry.job.id]; return next; })} />`)}</tbody>

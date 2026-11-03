@@ -3,6 +3,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { PREVIEW_MAX_BYTES, downloadRemoteFile, listRemoteDir, previewRemoteFile } from './remote-files.js';
 
 const html = htm.bind(h);
@@ -51,31 +52,31 @@ export function RemoteFilesPanel({ terminal, viewer, peer = 'the peer', fetchImp
   return html`<div class="term-files" id="term-files" role="region" aria-label=${`Files on ${peer}`}>
     <div class="term-files-head">
       <b>Files on ${peer}</b> <code id="term-files-dir">${dir}</code>
-      ${dir !== '.' && html`<button type="button" class="term-files-link" id="term-files-up" onClick=${() => open(parentDir(dir))}>↑ up</button>`}
-      <button type="button" class="term-files-link" id="term-files-refresh" onClick=${() => setTick((n) => n + 1)}>refresh</button>
+      ${dir !== '.' && html`<${Button} size="sm" variant="link" class="term-files-link" id="term-files-up" onClick=${() => open(parentDir(dir))}>↑ up<//>`}
+      <${Button} size="sm" variant="link" class="term-files-link" id="term-files-refresh" onClick=${() => setTick((n) => n + 1)}>refresh<//>
       <span class="term-files-spacer"></span>
       <span class="term-files-muted">Secret files, symlinks and files over 32 MiB are not listed.</span>
-      <button type="button" class="term-files-link" id="term-files-close" aria-label="Close files" onClick=${onClose}>×</button>
+      <button data-ui-exempt type="button" class="term-files-link" id="term-files-close" aria-label="Close files" onClick=${onClose}>×</button>
     </div>
-    ${note && html`<div class="term-files-error" role="alert">${note}</div>`}
+    ${note && html`<div class="term-files-error ui-error" role="alert">${note}</div>`}
     ${preview ? html`<div class="term-files-preview" id="term-files-preview">
         <div class="term-files-head"><code>${preview.path}</code>
-          <button type="button" class="term-files-link" id="term-files-preview-download" onClick=${() => download(preview.path)}>download</button>
-          <button type="button" class="term-files-link" id="term-files-preview-back" onClick=${() => setPreview(null)}>← back to ${dir}</button></div>
+          <${Button} size="sm" variant="link" class="term-files-link" id="term-files-preview-download" onClick=${() => download(preview.path)}>download<//>
+          <${Button} size="sm" variant="link" class="term-files-link" id="term-files-preview-back" onClick=${() => setPreview(null)}>← back to ${dir}<//></div>
         ${preview.loading ? html`<div class="term-files-muted">Loading…</div>`
-          : preview.error ? html`<div class="term-files-error" role="alert">${preview.error}</div>`
+          : preview.error ? html`<div class="term-files-error ui-error" role="alert">${preview.error}</div>`
           : preview.binary ? html`<div class="term-files-muted">This looks like a binary file; download it to open it.</div>`
           : preview.tooLarge ? html`<div class="term-files-muted">Too large to preview here; download it instead.</div>`
           : html`<pre class="term-files-text">${preview.text}</pre>`}
       </div>`
-    : listing?.error ? html`<div class="term-files-error" role="alert" id="term-files-error">${listing.error}</div>`
+    : listing?.error ? html`<div class="term-files-error ui-error" role="alert" id="term-files-error">${listing.error}</div>`
     : !listing ? html`<div class="term-files-muted">Loading…</div>`
     : !entries.length ? html`<div class="term-files-muted" id="term-files-empty">Nothing to show in this directory.</div>`
-    : html`<table class="term-files-table" id="term-files-list"><tbody>
-        ${dirs.map((e) => html`<tr key=${e.path} data-path=${e.path}><td><button type="button" class="term-files-link" data-files="open" onClick=${() => open(e.path)}>📁 ${baseName(e.path)}/</button></td><td></td><td></td></tr>`)}
+    : html`<table class="term-files-table ui-compact" id="term-files-list"><tbody>
+        ${dirs.map((e) => html`<tr key=${e.path} data-path=${e.path}><td><${Button} size="sm" variant="link" class="term-files-link" data-files="open" onClick=${() => open(e.path)}>📁 ${baseName(e.path)}/<//></td><td></td><td></td></tr>`)}
         ${files.map((e) => html`<tr key=${e.path} data-path=${e.path}><td>${baseName(e.path)}</td><td class="term-files-muted">${fileSize(e.size)}</td>
-          <td class="term-files-acts">${e.size <= PREVIEW_MAX_BYTES && html`<button type="button" class="term-files-link" data-files="preview" onClick=${() => show(e)}>preview</button>`}
-            <button type="button" class="term-files-link" data-files="download" onClick=${() => download(e.path)}>download</button></td></tr>`)}
+          <td class="term-files-acts">${e.size <= PREVIEW_MAX_BYTES && html`<${Button} size="sm" variant="link" class="term-files-link" data-files="preview" onClick=${() => show(e)}>preview<//>`}
+            <${Button} size="sm" variant="link" class="term-files-link" data-files="download" onClick=${() => download(e.path)}>download<//></td></tr>`)}
       </tbody></table>
       ${listing.truncated && html`<div class="term-files-muted" id="term-files-truncated">Only the first 100 entries were checked; open a narrower directory to see more.</div>`}`}
   </div>`;

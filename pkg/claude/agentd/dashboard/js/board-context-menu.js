@@ -47,7 +47,7 @@ export function BoardContextMenu({ x, y, label, items, win, onClose }) {
       if (item === 'separator') return html`<div key=${i} class="mux-tab-menu-separator" role="separator"></div>`;
       if (item.swatches) {
         return html`<div key=${i} class="board-context-swatches" role="group">
-          ${item.swatches.map((s) => html`<button key=${s.color} type="button" role="menuitem" tabIndex="-1" aria-label=${s.label} title=${s.label}
+          ${item.swatches.map((s) => html`<button data-ui-exempt key=${s.color} type="button" role="menuitem" tabIndex="-1" aria-label=${s.label} title=${s.label}
             class=${`board-swatch${s.color === 'transparent' ? ' fill' : ''}${s.on ? ' on' : ''}`} style=${s.color === 'transparent' ? '' : `background:${s.color}`}
             onClick=${() => run(s.run)}>${s.color === 'transparent' ? '∅' : ''}</button>`)}
         </div>`;
@@ -55,7 +55,7 @@ export function BoardContextMenu({ x, y, label, items, win, onClose }) {
       const noteId = item.note ? `board-context-note-${i}` : null;
       const note = item.note && html`<div key=${noteId} id=${noteId} class="board-context-note">${item.note}</div>`;
       return [html`<button key=${i} type="button" tabIndex="-1" aria-describedby=${noteId} disabled=${!!item.disabled} role=${item.checked === undefined ? 'menuitem' : 'menuitemradio'}
-        aria-checked=${item.checked === undefined ? null : String(item.checked)} class=${`mux-tab-menu-item${item.danger ? ' danger' : ''}`} onClick=${() => run(item.run)}>
+        aria-checked=${item.checked === undefined ? null : String(item.checked)} class=${`ui-menu-item mux-tab-menu-item${item.danger ? ' ui-btn-danger danger' : ''}`} onClick=${() => run(item.run)}>
         <span>${item.checked ? '✓ ' : ''}${item.label}</span>${item.keys && html`<kbd>${item.keys}</kbd>`}
       </button>`, note];
     })}

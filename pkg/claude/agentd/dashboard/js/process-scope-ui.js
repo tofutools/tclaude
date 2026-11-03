@@ -118,7 +118,7 @@ export function ScopeOutline({ controller, view }) {
   if (!outline.some((item) => item.type === 'subprocess')) return null;
   const scopePath = view.scope.trail.slice(1).map((step) => step.id);
   return html`<div class="process-scope-outline" data-scope-outline>
-    <div class="process-palette-section">Outline</div>
+    <div class="ui-eyebrow process-palette-section">Outline</div>
     <${OutlineItems} controller=${controller} items=${outline} path=${[]} scopePath=${scopePath} depth=${0} />
   </div>`;
 }

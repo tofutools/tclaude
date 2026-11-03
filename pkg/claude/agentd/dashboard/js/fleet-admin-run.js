@@ -139,7 +139,7 @@ function Settings({ actions, confirm, toast }) {
       action: save,
     }).then(done).catch(fail);
   };
-  return html`<div class="fa-run-settings" id="fleet-run-settings">
+  return html`<div class="fa-run-settings ui-card ui-inset" id="fleet-run-settings">
     <span class="fa-k">This node</span>
     <span class=${on ? 'fa-warn' : 'muted'}>${on ? '⚠ accepts remote scripts from peers with node.exec' : 'does not accept remote scripts'}</span>
     <${Button} size="sm" id="fleet-run-accept" variant=${on ? '' : 'danger'} onClick=${toggle}>${on ? 'Stop accepting…' : 'Accept remote scripts…'}<//>
@@ -172,7 +172,7 @@ function ResultPane({ node, entry, actions }) {
   const job = entry.job;
   const state = entry.error ? 'not started' : job?.state || 'starting';
   const bad = entry.error || (job && !runActive(job) && !runOK(job));
-  return html`<div class=${`fa-run-pane${bad ? ' bad' : ''}`} data-node=${node.id}>
+  return html`<div class=${`fa-run-pane ui-card ui-inset${bad ? ' bad' : ''}`} data-node=${node.id}>
     <div class="fa-run-head"><b>${node.local ? '⌂ ' : node.hub ? '⬡ ' : ''}${node.label}</b>
       <span class=${bad ? 'fa-danger' : runActive(job) ? 'fa-warn' : ''}>${state}</span>
       ${job && !runActive(job) && html`<span>exit ${job.exit_code}</span><span class="muted">${fmtDuration(job.duration_ms)}</span>`}

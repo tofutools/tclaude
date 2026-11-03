@@ -365,7 +365,7 @@ export function GroupsNotificationReader({
     aria-modal="false" aria-labelledby="human-notification-drawer-subject">
     <header class="human-notification-drawer-header">
       <div>
-        <span class="human-notification-drawer-kicker">Human notification</span>
+        <span class="ui-eyebrow human-notification-drawer-kicker">Human notification</span>
         <span class=${`human-notification-drawer-state ${message.read ? 'read' : 'unread'}`}>
           ${message.read ? 'read' : 'unread'}
         </span>

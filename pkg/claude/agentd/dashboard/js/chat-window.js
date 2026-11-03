@@ -16,6 +16,7 @@ import { ActionCards } from './message-action.js';
 import { ShellHere } from './terminal-here.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { withShortcut } from './keybindings.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -97,35 +98,36 @@ export function ChatWindow({
   const pane = { key: instance.id, id: instance.id, label: name, seed: { agent: agentId, harness: agent?.harness || '' } };
   const actions = { widgetFor: () => widgetRef.current, activatePane: () => setFocusToken((n) => n + 1) };
   const refocus = () => setFocusToken((n) => n + 1);
+  const toCollab = agent && onTerminals && !away ? () => onTerminals(instance, agent) : null;
   const title = html`${strip}
     <div class="companion-controls">
-      ${elevated && html`<button type="button" class="companion-state-sudo" aria-label=${`${name} has elevated access`}
+      ${elevated && html`<button data-ui-exempt type="button" class="companion-state-sudo" aria-label=${`${name} has elevated access`}
         title="Elevated access. The band in the window can end it." disabled=${!(agent.steward && agent.online && openSudo)}
         onClick=${() => openSudo(agentId, name)}>🛡 sudo</button>`}
-      ${standby > 0 && html`<button type="button" class="companion-state-roster" aria-label=${`${standby} on the Steward roster`}
+      ${standby > 0 && html`<button data-ui-exempt type="button" class="companion-state-roster" aria-label=${`${standby} on the Steward roster`}
         title="On the Steward roster" onClick=${() => rosterRef.current?.()}>✦ ${standby}</button>`}
-      ${toApprove.length > 0 && html`<button type="button" class="companion-access"
+      ${toApprove.length > 0 && html`<button data-ui-exempt type="button" class="companion-access"
         aria-label=${`${toApprove.length} permission ${toApprove.length === 1 ? 'request' : 'requests'} waiting. Open them`}
         title="Agents are asking for permission"
         onClick=${(event) => openAccessPanel({ launcher: event.currentTarget, documentRef: win?.document })}>🔑 ${toApprove.length}</button>`}
-      ${agent && voice?.supported && html`<button type="button" class=${`companion-voice${voiceOn ? ' on' : ''}`}
+      ${agent && voice?.supported && html`<button type="button" data-ui-exempt class=${`companion-voice${voiceOn ? ' on' : ''}`}
         aria-pressed=${voiceOn ? 'true' : 'false'} aria-label=${`Speak ${name}'s replies aloud`}
         title=${voiceOn ? 'Voice on: replies are spoken when a turn ends. Typing stops speech.' : 'Speak replies aloud'}
         onClick=${() => voice.toggle(agent)}>${voiceOn ? '🔊' : '🔈'}</button>`}
-      ${agent?.online && onCompose && html`<button type="button" class="companion-compose" aria-label=${`Message ${name}`} title=${withShortcut('Send a queued message', 'compose')} onClick=${() => onCompose(agent, refocus)}>✉</button>`}
+      ${agent?.online && onCompose && html`<button data-ui-exempt type="button" class="companion-compose" aria-label=${`Message ${name}`} title=${withShortcut('Send a queued message', 'compose')} onClick=${() => onCompose(agent, refocus)}>✉</button>`}
       <${AgentCog} agent=${agent} parked=${away} roster=${stewardRoster} canShutDown=${closeShutsDown} showRoster=${showRoster}
-        onCollab=${agent && onTerminals && !away ? () => onTerminals(instance, agent) : null}
+        onCollab=${toCollab} maximized=${overlay.placement.snap === 'max'} onMaximize=${() => overlay.toggleMaximize()}
         onFloat=${onFloat && (tabCount > 1 || away) ? () => onFloat(agent) : null} onDetach=${onSeparateWindow ? () => onSeparateWindow(agent, overlay.windowRef.current?.getBoundingClientRect?.()) : null} onMorph=${agent && openMorph ? () => openMorph(agent) : null}
         openPermissions=${openPermissions} openSudo=${openSudo} openHandover=${openStewardHandover} agents=${agents} showAgent=${showAgent}
         fetchImpl=${fetchImpl} notify=${notify} onDown=${stewardDown} askShutDownRef=${askShutDown} rosterRef=${rosterRef} />
     </div>
-    ${look === 'classic' && html`<button type="button" class="board-overlay-close" title="Minimize" aria-label=${`Minimize ${name}`} onClick=${onMinimize}>–</button>`}
-    ${look === 'classic' && html`<button type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${name}`} onClick=${close.onClose}>×</button>`}`;
+    ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title="Minimize" aria-label=${`Minimize ${name}`} onClick=${onMinimize}>–</button>`}
+    ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${name}`} onClick=${close.onClose}>×</button>`}`;
   const shown = agent?.online && (open || warm);
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} mounted=${open || (warm && !!agent?.online)}
     className=${`companion-window chat-window${open ? '' : ' companion-window-warm'}`} frameClass="companion-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Chat with ${name}`} title=${title}
-    controls=${{ look, closeLabel: `Close ${name}`, closeTitle: close.title, onClose: close.onClose, onMinimize }}>
+    controls=${{ look, closeLabel: `Close ${name}`, closeTitle: close.title, onClose: close.onClose, onMinimize, onCollab: snapshot.value?.collab_enabled === true ? toCollab : null }}>
     <div class=${`companion-body${approvals.length + decisions.length + actionMessages.length ? ' has-cards' : ''}`} id=${instance.id} data-chat-agent=${agentId}>
       ${approvals.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} />`)}
       ${decisions.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} />`)}
@@ -142,10 +144,10 @@ export function ChatWindow({
         <//>
         ${away && html`<div class="companion-empty">
           <p><b>${name}</b> is open in its own window.</p>
-          <button type="button" class="companion-primary" onClick=${() => onReclaim(agentId)}>Bring it back here</button>
+          <${Button} size="sm" variant="primary" class="companion-primary" onClick=${() => onReclaim(agentId)}>Bring it back here<//>
         </div>`}
         ${!away && status !== 'connected' && html`<div class="companion-floating-anchor"><div class="companion-term-status" role="status">${canReconnect
-          ? html`${status || 'disconnected'}. <button type="button" onClick=${() => setGeneration((n) => n + 1)}>Reconnect</button>`
+          ? html`${status || 'disconnected'}. <${Button} size="sm" variant="link" onClick=${() => setGeneration((n) => n + 1)}>Reconnect<//>`
           : status}</div></div>`}
         ${!away && html`<${Terminal} key=${agentId} agent=${agent} generation=${generation} widgetFactory=${widgetFactory} loadRuntime=${loadRuntime}
           focusToken=${focusToken} widgetRef=${widgetRef} fontSize=${() => readTerminalFont('companion', agentId, prefs)} onFontChange=${onFontChange}

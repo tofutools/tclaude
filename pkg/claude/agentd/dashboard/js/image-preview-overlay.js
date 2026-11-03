@@ -280,7 +280,7 @@ export function ImageAttachmentPreview({ messageID, attachment: launcherAttachme
   const ready = loadState === 'ready';
 
   return html`<${Fragment}>
-    <button type="button" class=${`human-attachment-preview-trigger${videoTrigger ? ' video-preview-trigger' : ''}`}
+    <button data-ui-exempt type="button" class=${`human-attachment-preview-trigger${videoTrigger ? ' video-preview-trigger' : ''}`}
       onClick=${() => { setSelected(null); setOpen(true); }} aria-label=${`${videoTrigger ? 'Play' : 'Preview'} ${launcherAttachment.filename || 'attachment'}`}>
       ${videoTrigger ? html`<${VideoPoster} href=${attachmentURL(messageID, launcherAttachment)} />
         <span class="video-preview-play" aria-hidden="true">▶</span>`
@@ -304,18 +304,18 @@ export function ImageAttachmentPreview({ messageID, attachment: launcherAttachme
           </div>
           <div class="image-preview-header-actions">
             ${items.length > 1 && html`<div role="group" class="attachment-preview-nav" aria-label="Message attachments">
-              <button type="button" class="viewer-display-button attachment-preview-step"
+              <button data-ui-exempt type="button" class="viewer-display-button attachment-preview-step"
                 onClick=${() => navigate(-1)} aria-label="Previous attachment"
                 title=${video ? 'Previous attachment (Shift+Left)' : 'Previous attachment (Left or Shift+Left)'}>‹</button>
               <span class="attachment-preview-position" role="status" aria-live="polite" aria-atomic="true">${index + 1} of ${items.length}</span>
-              <button type="button" class="viewer-display-button attachment-preview-step"
+              <button data-ui-exempt type="button" class="viewer-display-button attachment-preview-step"
                 onClick=${() => navigate(1)} aria-label="Next attachment"
                 title=${video ? 'Next attachment (Shift+Right)' : 'Next attachment (Right or Shift+Right)'}>›</button>
             </div>`}
             ${loadState !== 'gone' && html`<a class="image-preview-download" href=${href} download=${filename}
               title="Download this agent-published file">Download</a>`}
             <${ViewerDisplayButtons} ...${view} />
-            <button ref=${closeRef} type="button" class="image-preview-close"
+            <button data-ui-exempt ref=${closeRef} type="button" class="image-preview-close"
               onClick=${close} aria-label=${video ? 'Close video player' : 'Close image preview'} title="Close (Esc)">×</button>
           </div>
         </header>
@@ -345,16 +345,16 @@ export function ImageAttachmentPreview({ messageID, attachment: launcherAttachme
           <span class="image-preview-footer-size">${attachmentSize(attachment.size_bytes)}</span>
           <span class="grow"></span>
           <span class="image-preview-zoom-label">Zoom</span>
-          <button type="button" onClick=${() => zoomTo((value) => value / ZOOM_STEP)}
+          <button data-ui-exempt type="button" onClick=${() => zoomTo((value) => value / ZOOM_STEP)}
             disabled=${!ready || effective <= MIN_SCALE} aria-label="Zoom out" title="Zoom out (−)">−</button>
-          <button type="button" class="image-preview-zoom-value" onClick=${() => zoomTo('fit')}
+          <button data-ui-exempt type="button" class="image-preview-zoom-value" onClick=${() => zoomTo('fit')}
             disabled=${!ready} aria-label="Zoom level; fit to the viewer"
             title="Fit to the viewer (0)">${Math.round(effective * 100)}%</button>
-          <button type="button" onClick=${() => zoomTo((value) => value * ZOOM_STEP)}
+          <button data-ui-exempt type="button" onClick=${() => zoomTo((value) => value * ZOOM_STEP)}
             disabled=${!ready || effective >= MAX_SCALE} aria-label="Zoom in" title="Zoom in (+)">+</button>
-          <button type="button" onClick=${() => zoomTo('fit')} disabled=${!ready}
+          <button data-ui-exempt type="button" onClick=${() => zoomTo('fit')} disabled=${!ready}
             aria-pressed=${scale === null} title="Fit the whole image in the viewer">Fit</button>
-          <button type="button" onClick=${() => zoomTo(() => 1)} disabled=${!ready}
+          <button data-ui-exempt type="button" onClick=${() => zoomTo(() => 1)} disabled=${!ready}
             aria-pressed=${scale !== null && Math.abs(scale - 1) < 1e-4}
             aria-label="Actual size" title="Actual size (100%)">1:1</button>
         </footer>`}

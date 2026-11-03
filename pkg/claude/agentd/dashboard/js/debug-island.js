@@ -79,7 +79,7 @@ function PhaseBreakdown({ phases }) {
         </span>`)}
       </div>
     </${Fragment}>`}
-    <table class="debug-table">
+    <table class="debug-table ui-compact">
       <thead><tr><th scope="col">Phase</th><th scope="col">latest</th><th scope="col">p50</th><th scope="col">p90</th><th scope="col">p99</th><th scope="col">max</th></tr></thead>
       <tbody>
         <${PhaseRows} phases=${phases} expanded=${expanded} toggle=${toggle} />
@@ -98,7 +98,7 @@ function PhaseRows({ phases, expanded, toggle, depth = 0, parentPath = '', paren
     const row = html`<tr key=${path} data-key=${`phase-${path}`} data-depth=${depth} class=${depth ? 'debug-phase-child' : ''}>
       <td style=${{ paddingLeft: `${8 + depth * 20}px` }}>
         ${hasChildren
-          ? html`<button type="button" class="debug-phase-toggle" aria-expanded=${open}
+          ? html`<button data-ui-exempt type="button" class="debug-phase-toggle" aria-expanded=${open}
               aria-label=${`${open ? 'Collapse' : 'Expand'} ${phase.name} phase breakdown`}
               onClick=${() => toggle(path)}>${open ? '▾' : '▸'}</button>`
           : html`<span class="debug-phase-toggle-placeholder" aria-hidden="true"></span>`}
@@ -123,7 +123,7 @@ function EndpointCard({ endpoint }) {
   const samples = Array.isArray(endpoint.samples) ? endpoint.samples : [];
   const phases = Array.isArray(endpoint.phases) ? endpoint.phases : [];
   const latest = samples.length ? samples[samples.length - 1].total_ms : NaN;
-  return html`<div class="debug-card" data-key=${`debug-${endpoint.endpoint}`}>
+  return html`<div class="debug-card ui-card" data-key=${`debug-${endpoint.endpoint}`}>
     <div class="debug-card-head">
       <span class="rowname">${endpoint.endpoint}</span>
       <span class="muted">${endpoint.count} sample${endpoint.count === 1 ? '' : 's'}</span>

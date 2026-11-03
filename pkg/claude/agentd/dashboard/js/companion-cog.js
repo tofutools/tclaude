@@ -43,7 +43,7 @@ function rosterHint(roster) {
 // leaves its item out: a floated chat has no Float, for one.
 export function agentCogSections({
   agent, parked = false, roster = [], canShutDown = !!agent?.steward,
-  onCollab = null, onFloat = null, onDetach = null, onMorph = null,
+  onCollab = null, onFloat = null, onDetach = null, onMorph = null, onMaximize = null, maximized = false,
   onClearContext, openPermissions = null, openSudo = null, openRoster = null, onShutDown,
 }) {
   if (!agent) return [];
@@ -51,9 +51,10 @@ export function agentCogSections({
   const running = agent.online;
   const thisAgent = [
     onCollab && collabItem(onCollab),
+    onMaximize && { key: 'maximize', glyph: maximized ? '❐' : '□', label: maximized ? 'Restore' : 'Maximize', className: 'companion-maximize', ariaLabel: maximized ? 'Restore the window' : 'Maximize the window', run: onMaximize },
     running && onFloat && { key: 'float', glyph: '▣', label: 'Open in overlay', className: 'companion-float', ariaLabel: `Open ${agent.name} in an overlay window`, run: onFloat },
     running && onDetach && !parked && { key: 'detach', glyph: '⧉', label: TO_WINDOW_LABEL, className: 'companion-detach', ariaLabel: `Open ${agent.name} in a separate window`, run: onDetach },
-    running && onMorph && { key: 'morph', glyph: '⇄', label: 'Morph', hint: 'harness, model, profile', className: 'companion-morph', ariaLabel: `Morph ${agent.name}`, run: onMorph },
+    running && onMorph && { key: 'morph', glyph: '⤨', label: 'Morph', hint: 'harness, model, profile', className: 'companion-morph', ariaLabel: `Morph ${agent.name}`, run: onMorph },
     running && agent.harness !== 'shell' && { key: 'clear', glyph: '⟲', label: 'Clear context', className: 'companion-clear-open', ariaLabel: `Clear ${agent.name}'s context`, run: onClearContext },
   ];
   const access = agent.steward ? [
@@ -72,7 +73,7 @@ export function agentCogSections({
 }
 
 function collabItem(onCollab) {
-  return { key: 'collab', glyph: '⤢', label: TO_COLLAB_LABEL, ariaLabel: TO_COLLAB_LABEL, run: onCollab };
+  return { key: 'collab', glyph: '⇄', label: TO_COLLAB_LABEL, ariaLabel: TO_COLLAB_LABEL, run: onCollab };
 }
 
 // CompanionCog is the button and its menu. Choosing an item closes the menu first,
@@ -117,7 +118,7 @@ export function CompanionCog({ sections, children = null }) {
     item.run();
   };
   return html`<span ref=${rootRef} class="companion-cog">
-    <button ref=${buttonRef} type="button" class="companion-cog-button" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
+    <button data-ui-exempt ref=${buttonRef} type="button" class="companion-cog-button" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
       aria-label="More actions" title="More actions" onClick=${() => setOpen((value) => !value)}>⚙</button>
     <div ref=${menuRef} class=${`ui-menu ui-sm action-menu companion-cog-menu${open ? ' open' : ''}`} role="menu"
       onPointerDown=${(event) => event.stopPropagation()}>
@@ -139,7 +140,7 @@ export function CompanionCog({ sections, children = null }) {
 // AgentCog is the cog with what its items open: the questions that ask before
 // acting and the roster, which keep their own popovers and have no button here.
 export function AgentCog({
-  agent, parked, roster, showRoster = false, canShutDown, onCollab, onFloat, onDetach, onMorph, openPermissions, openSudo,
+  agent, parked, roster, showRoster = false, canShutDown, onCollab, onFloat, onDetach, onMorph, onMaximize = null, maximized = false, openPermissions, openSudo,
   openHandover, agents, showAgent, fetchImpl, notify, onDown, askShutDownRef = null, rosterRef = null,
 }) {
   const ownShutDown = useRef(null);
@@ -149,7 +150,7 @@ export function AgentCog({
   const openRoster = rosterRef || ownRoster;
   if (!agent) return null;
   const sections = agentCogSections({
-    agent, parked, roster, canShutDown, onCollab, onFloat, onDetach, onMorph, openPermissions, openSudo,
+    agent, parked, roster, canShutDown, onCollab, onFloat, onDetach, onMorph, onMaximize, maximized, openPermissions, openSudo,
     openRoster: showRoster ? () => openRoster.current?.() : null,
     onClearContext: () => askClear.current?.('here'), onShutDown: () => askShutDown.current?.('here'),
   });

@@ -6,15 +6,13 @@ import { dashboardState } from './snapshot-store.js';
 import { Fragment, h, render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { TransferTray } from './transfer-card.js';
 import { LockReason } from './lock-reason.js';
 import { isPageNode } from './node-api.js';
 import { profileSaveNodes } from './profile-save-nodes.js';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { relTime, shortCwd } from './helpers.js';
 import {
   CODEX_NATIVE_REGISTRY_SETUP_DOC,
@@ -192,7 +190,7 @@ function ErrorBanner({ error, onDismiss }) {
   if (!error) return html`<div ref=${ref} class="cron-create-error" id="agent-spawn-error" role="alert"></div>`;
   return html`<div ref=${ref} class="cron-create-error dismissible" id="agent-spawn-error" role="alert">
     <span class="cron-create-error-msg">${error}</span>
-    <button type="button" class="cron-create-error-x" aria-label="Dismiss error" onClick=${onDismiss}>×</button>
+    <button data-ui-exempt type="button" class="cron-create-error-x" aria-label="Dismiss error" onClick=${onDismiss}>×</button>
   </div>`;
 }
 
@@ -226,7 +224,7 @@ function AttachmentList({ attachments, remove, busy }) {
         : html`<span class="att-icon">📄</span>`}
       <span class="att-name" title=${attachment.name}>${attachment.name}</span>
       <span class="att-size">${formatAttachmentSize(attachment.size)}</span>
-      <button type="button" class="att-remove" title="Remove" disabled=${busy}
+      <button data-ui-exempt type="button" class="att-remove" title="Remove" disabled=${busy}
         aria-label=${`Remove ${attachment.name}`} onClick=${() => remove(attachment.id)}>✕</button>
     </li>`)}
   </ul>`;
@@ -1328,16 +1326,15 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     worktreeEmptyLabel = '(not a git repo — pick a sub-repo in "Worktree repo" above)';
   } else if (!worktrees.isRepo) worktreeEmptyLabel = '(not a git repo — worktrees unavailable)';
 
-  return html`<${Overlay}
+  return html`<${Dialog}
     id="agent-spawn-modal"
-    labelledby="agent-spawn-title"
     onClose=${state.close}
     onSubmitHotkey=${queued ? saveQueued : submit}
     onSubmitShiftHotkey=${remote ? noQueueHotkey : saveQueued}
     dirty=${dirty}
     blocked=${busy}
     confirmDiscard=${confirmDiscard}
-    registerClose=${registerClose}
+    guard=${{ requestClose, registerClose }}
     resizeKey="tclaude.dash.modalSize.agent-spawn"
     persistHeight=${false}
     guardBackdropDrag=${true}
@@ -1347,13 +1344,11 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     onDragOver=${dragOverEvent}
     onDragLeave=${dragLeave}
     onDrop=${drop}
-    onPaste=${paste}
-  >
-    <h3 id="agent-spawn-title">${queued
+    onPaste=${paste} title=${html`${queued
       ? html`<${Words} prefix="spawn-title" plain="Queued agent" wizard="Dormant summoning" />`
       : requestOnly
         ? html`<${Words} prefix="spawn-title" plain="Request an agent" wizard="Petition for a hero" />`
-        : html`<${Words} prefix="spawn-title" plain="Spawn a new agent" wizard="Summon a new hero" />`}${remote ? ` on ${remote.node}` : target?.name ? ` on ${target.name}` : ''}</h3>
+        : html`<${Words} prefix="spawn-title" plain="Spawn a new agent" wizard="Summon a new hero" />`}${remote ? ` on ${remote.node}` : target?.name ? ` on ${target.name}` : ''}`}>
     ${queued && html`<div class="agent-spawn-queued-banner" id="agent-spawn-queued-banner">
       ⏸ ${wizard ? 'Prepared' : 'Queued'}${queued.createdAt ? ` ${relTime(queued.createdAt)}` : ''} · not running yet
     </div>`}
@@ -1366,28 +1361,28 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       title=${`Pre-fill this dialog from a saved spawn profile — a reusable bundle of the harness / model / effort / sandbox + name / role / descr / initial-message fields (NOT the directory or worktree). Fields left blank here fall through to the resolved defaults. ${RESOLVED_DEFAULTS_CHAIN}`}>
       <span class="cron-create-label"><${Words} prefix="profiles-word" plain="Profile" wizard="Loadout" /></span>
       <div class="cron-create-target"><div class="cron-target-input-row">
-        <select id="agent-spawn-load-profile" value=${draft.profile} disabled=${busy}
+        <${Select} id="agent-spawn-load-profile" value=${draft.profile} disabled=${busy}
           onChange=${(event) => changeProfile(event.currentTarget.value)}>
           <option value="">${remote ? `— ${remote.node}'s defaults —` : '— none (blank form) —'}</option>
           ${remote
             ? html`<${RemoteProfileOptions} profiles=${profiles} remote=${remote} showFrom=${showFrom} selected=${draft.profile} />`
             : spawnProfileChoices(profiles).map((choice) => html`<option key=${choice.value} value=${choice.value}>${choice.label}</option>`)}
-        </select>
-        <button id="agent-spawn-clear" type="button" disabled=${busy}
+        <//>
+        <${Button} size="sm" id="agent-spawn-clear" disabled=${busy}
           title="Reset the profile-filled fields (harness / model / effort / name / role / …) to blank — leaves the group, directory and worktree untouched"
-          onClick=${() => changeProfile('')}>Clear</button>
-        <button id="agent-spawn-save-profile" type="button" disabled=${busy || !canSaveProfile}
+          onClick=${() => changeProfile('')}>Clear<//>
+        <${Button} size="sm" id="agent-spawn-save-profile" disabled=${busy || !canSaveProfile}
           aria-disabled=${canSaveProfile ? undefined : 'true'} data-remote-spawn-free=${canSaveProfile ? '' : undefined}
           title=${canSaveProfile ? "Save the current dialog fields as a reusable spawn profile — opens the profile editor pre-filled so you can name it and pick the node it's saved on (the directory and worktree aren't stored)" : undefined}
-          onClick=${saveProfile}><${Words} prefix="profiles-word" plain="Save as profile…" wizard="Save as loadout…" /></button><${LockReason} id="agent-spawn-save-profile-lock" align="end" why=${canSaveProfile ? '' : `You can't save profiles on ${remote?.node || target?.name || 'that node'} or here: that needs unrestricted trust or the node.spawn.profiles.create grant.`}/>
+          onClick=${saveProfile}><${Words} prefix="profiles-word" plain="Save as profile…" wizard="Save as loadout…" /><//><${LockReason} id="agent-spawn-save-profile-lock" align="end" why=${canSaveProfile ? '' : `You can't save profiles on ${remote?.node || target?.name || 'that node'} or here: that needs unrestricted trust or the node.spawn.profiles.create grant.`}/>
       </div></div>
     </label>
     <label class="cron-create-row" id="agent-spawn-group-row" hidden=${draft.fixedGroup}>
       <span class="cron-create-label"><${Words} prefix="spawn-group-word" plain="Group" wizard="Party" /></span>
-      <select id="agent-spawn-group" value=${draft.group} disabled=${busy}
+      <${Select} id="agent-spawn-group" value=${draft.group} disabled=${busy}
         onChange=${(event) => changeGroup(event.currentTarget.value)}>
         ${context.groups.filter((group) => group?.name).map((group) => html`<option key=${group.name} value=${group.name}>${group.name}</option>`)}
-      </select>
+      <//>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Name</span>
@@ -1398,7 +1393,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           if (next.name !== draft.name) setDraft(next);
         }}
         placeholder="optional — sets /rename on the new pane" autocomplete="off" spellcheck="false" />
-      <div id="agent-spawn-name-hint" class=${`spawn-field-hint${nameHint.warn ? ' warn' : ''}`}>${nameHint.text}</div>
+      <div id="agent-spawn-name-hint" class=${`spawn-field-hint ui-hint${nameHint.warn ? ' warn' : ''}`}>${nameHint.text}</div>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Initial msg</span>
@@ -1426,29 +1421,29 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <span class="cron-create-label">Attachments</span>
       <div class="cron-create-target spawn-attachments">
         <div class="spawn-attachments-controls">
-          <button type="button" id="agent-spawn-attach-btn" disabled=${busy} onClick=${() => fileRef.current?.click()}>📎 Attach files…</button>
+          <${Button} size="sm" id="agent-spawn-attach-btn" disabled=${busy} onClick=${() => fileRef.current?.click()}>📎 Attach files…<//>
           <input ref=${fileRef} type="file" id="agent-spawn-attach-input" multiple hidden disabled=${busy}
             onChange=${(event) => { addAttachments(event.currentTarget.files); event.currentTarget.value = ''; }} />
-          <span class="spawn-attachments-hint">…or drag files here / paste (${shortcutText('terminal-paste')})</span>
+          <span class="spawn-attachments-hint ui-hint">…or drag files here / paste (${shortcutText('terminal-paste')})</span>
         </div>
         <${AttachmentList} attachments=${attachments} remove=${removeAttachment} busy=${busy} />
       </div>
     </div>
-		<div class="cron-create-row" id="agent-spawn-environment-row" data-remote-spawn-field="environment"><span class="cron-create-label"><${Words} plain="Environment" wizard="Summoning runes" /></span><div class="cron-create-target"><div class="sbx-rows">${(draft.environment || []).map((row, index) => html`<div key=${index} class="sbx-row sbx-environment-row"><input class="sbx-env-name" value=${row.name || ''} disabled=${busy} placeholder="NAME" onInput=${(event) => update('environment', draft.environment.map((entry, rowIndex) => rowIndex === index ? { ...entry, name: event.currentTarget.value } : entry))}/><input data-capture-mask class="sbx-env-value" value=${row.value || ''} disabled=${busy} placeholder="value" onInput=${(event) => update('environment', draft.environment.map((entry, rowIndex) => rowIndex === index ? { ...entry, value: event.currentTarget.value } : entry))}/><button type="button" disabled=${busy} onClick=${() => update('environment', draft.environment.filter((_, rowIndex) => rowIndex !== index))}>×</button></div>`)}</div><div class="sbx-add-row-help"><button type="button" class="sbx-add-row" disabled=${busy} onClick=${() => update('environment', [...(draft.environment || []), { name: '', value: '' }])}><${Words} plain="＋ add override" wizard="✦ bind override" /></button>${effectiveEnvironment.length ? html`<button type="button" class="sbx-effective-environment-toggle" id="agent-spawn-effective-environment-toggle" disabled=${busy} aria-expanded=${effectiveEnvironmentOpen ? 'true' : 'false'} aria-controls="agent-spawn-environment-preview" aria-label=${`${effectiveEnvironmentOpen ? 'Hide' : 'Show'} effective environment (${effectiveEnvironment.length} ${effectiveEnvironment.length === 1 ? 'variable' : 'variables'})`} onClick=${() => { setHelpOpen(''); setEffectiveEnvironmentOpen((value) => !value); }}>${effectiveEnvironmentOpen ? '▾' : '▸'} <${Words} plain="Effective env" wizard="Runes in force" /> (${effectiveEnvironment.length})</button>` : null}<${HelpDisclosure} id="agent-spawn-environment-help" label=${wizard ? 'Summoning rune overrides' : 'Environment overrides'} help=${wizard ? ENVIRONMENT_OVERRIDE_HELP_WIZARD : ENVIRONMENT_OVERRIDE_HELP} open=${helpOpen === 'agent-spawn-environment-help'} setOpen=${setHelpOpen} /></div>${effectiveEnvironment.length ? html`<div id="agent-spawn-environment-preview" class="sbx-effective-environment-help" hidden=${!effectiveEnvironmentOpen}><div class="sbx-caps">${effectiveEnvironment.map((entry) => html`<div class="sbx-cap"><span class="sbx-cap-tag sbx-cap-env">${entry.name}</span><span data-capture-mask class="sbx-cap-val" title=${entry.value}>${entry.value}</span><span class="muted">${entry.source}</span></div>`)}</div><${HelpDisclosure} id="agent-spawn-effective-environment-help" label=${wizard ? 'Runes in force' : 'Effective environment'} help=${wizard ? EFFECTIVE_ENVIRONMENT_HELP_WIZARD : EFFECTIVE_ENVIRONMENT_HELP} open=${helpOpen === 'agent-spawn-effective-environment-help'} setOpen=${setHelpOpen} /></div>` : null}</div></div>
+		<div class="cron-create-row" id="agent-spawn-environment-row" data-remote-spawn-field="environment"><span class="cron-create-label"><${Words} plain="Environment" wizard="Summoning runes" /></span><div class="cron-create-target"><div class="sbx-rows">${(draft.environment || []).map((row, index) => html`<div key=${index} class="sbx-row sbx-environment-row"><input class="sbx-env-name" value=${row.name || ''} disabled=${busy} placeholder="NAME" onInput=${(event) => update('environment', draft.environment.map((entry, rowIndex) => rowIndex === index ? { ...entry, name: event.currentTarget.value } : entry))}/><input data-capture-mask class="sbx-env-value" value=${row.value || ''} disabled=${busy} placeholder="value" onInput=${(event) => update('environment', draft.environment.map((entry, rowIndex) => rowIndex === index ? { ...entry, value: event.currentTarget.value } : entry))}/><${Button} size="sm" variant="ghost danger" icon=${true} aria-label="Remove variable" disabled=${busy} onClick=${() => update('environment', draft.environment.filter((_, rowIndex) => rowIndex !== index))}>×<//></div>`)}</div><div class="sbx-add-row-help"><${Button} size="sm" class="sbx-add-row" disabled=${busy} onClick=${() => update('environment', [...(draft.environment || []), { name: '', value: '' }])}><${Words} plain="＋ add override" wizard="✦ bind override" /><//>${effectiveEnvironment.length ? html`<button data-ui-exempt type="button" class="sbx-effective-environment-toggle" id="agent-spawn-effective-environment-toggle" disabled=${busy} aria-expanded=${effectiveEnvironmentOpen ? 'true' : 'false'} aria-controls="agent-spawn-environment-preview" aria-label=${`${effectiveEnvironmentOpen ? 'Hide' : 'Show'} effective environment (${effectiveEnvironment.length} ${effectiveEnvironment.length === 1 ? 'variable' : 'variables'})`} onClick=${() => { setHelpOpen(''); setEffectiveEnvironmentOpen((value) => !value); }}>${effectiveEnvironmentOpen ? '▾' : '▸'} <${Words} plain="Effective env" wizard="Runes in force" /> (${effectiveEnvironment.length})</button>` : null}<${HelpDisclosure} id="agent-spawn-environment-help" label=${wizard ? 'Summoning rune overrides' : 'Environment overrides'} help=${wizard ? ENVIRONMENT_OVERRIDE_HELP_WIZARD : ENVIRONMENT_OVERRIDE_HELP} open=${helpOpen === 'agent-spawn-environment-help'} setOpen=${setHelpOpen} /></div>${effectiveEnvironment.length ? html`<div id="agent-spawn-environment-preview" class="sbx-effective-environment-help" hidden=${!effectiveEnvironmentOpen}><div class="sbx-caps">${effectiveEnvironment.map((entry) => html`<div class="sbx-cap"><span class="sbx-cap-tag sbx-cap-env">${entry.name}</span><span data-capture-mask class="sbx-cap-val" title=${entry.value}>${entry.value}</span><span class="muted">${entry.source}</span></div>`)}</div><${HelpDisclosure} id="agent-spawn-effective-environment-help" label=${wizard ? 'Runes in force' : 'Effective environment'} help=${wizard ? EFFECTIVE_ENVIRONMENT_HELP_WIZARD : EFFECTIVE_ENVIRONMENT_HELP} open=${helpOpen === 'agent-spawn-effective-environment-help'} setOpen=${setHelpOpen} /></div>` : null}</div></div>
     <div class="cron-create-row agent-spawn-roles-row">
       <span class="cron-create-label"><${Words} plain="Roles" wizard="Classes" /></span>
       <div class="agent-spawn-role-picker">
         <div class="agent-spawn-role-chips" id="agent-spawn-role-refs">
           ${selectedRoles.map((role) => html`<span key=${role.name} class=${`agent-spawn-role-chip${role.missing ? ' missing' : ''}`}>
-            <button type="button" class="role-chip-inspect" disabled=${busy} data-remote-spawn-free="" title=${role.missing ? 'This role is missing from the library' : roleHoverText(role)}
+            <button data-ui-exempt type="button" class="role-chip-inspect" disabled=${busy} data-remote-spawn-free="" title=${role.missing ? 'This role is missing from the library' : roleHoverText(role)}
               aria-expanded=${inspectedRole === role.name ? 'true' : 'false'} onClick=${() => setInspectedRole(inspectedRole === role.name ? '' : role.name)}>${role.name}</button>
-            <button type="button" class="role-chip-remove" disabled=${busy} data-remote-spawn-field="roles" title=${`Remove ${role.name}`}
+            <button data-ui-exempt type="button" class="role-chip-remove" disabled=${busy} data-remote-spawn-field="roles" title=${`Remove ${role.name}`}
               aria-label=${`Remove role ${role.name}`} onClick=${() => {
                 setInspectedRole((currentRole) => currentRole === role.name ? '' : currentRole);
                 update('roleRefs', (draft.roleRefs || []).filter((name) => name !== role.name));
               }}>×</button>
           </span>`)}
-          <select id="agent-spawn-role-add" value="" disabled=${busy || (context.roles || []).every((role) => (draft.roleRefs || []).includes(role.name))}
+          <select data-ui-exempt id="agent-spawn-role-add" value="" disabled=${busy || (context.roles || []).every((role) => (draft.roleRefs || []).includes(role.name))}
             aria-label=${wizard ? 'Add class' : 'Add role'} onChange=${(event) => {
               const next = event.currentTarget.value;
               if (!next) return;
@@ -1478,13 +1473,13 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         <input id="agent-spawn-owner" type="checkbox" checked=${draft.owner} disabled=${busy}
           onChange=${(event) => update('owner', event.currentTarget.checked)} /> owner
       </label>
-      <button type="button" id="agent-spawn-perms" disabled=${busy}
+      <${Button} size="sm" id="agent-spawn-perms" disabled=${busy}
         title="Set the new agent's permanent per-slug permissions (grant / deny / inherit) to apply when it spawns."
-        onClick=${openPermissions}>Permissions…</button>
+        onClick=${openPermissions}>Permissions…<//>
       <span id="agent-spawn-perms-indicator" class="spawn-perms-indicator" hidden=${!permissionsLabel}>${permissionsLabel}</span>
-      ${view.showContextFeatures && html`<button type="button" id="agent-spawn-context-features" disabled=${busy}
+      ${view.showContextFeatures && html`<${Button} size="sm" id="agent-spawn-context-features" disabled=${busy}
         title="Choose how much of Claude Code's startup context this agent loads — trim bundled skills, unused tool schemas and system-prompt blocks so more of its window is about your task."
-        onClick=${openContextFeatures}>Context…</button>`}
+        onClick=${openContextFeatures}>Context…<//>`}
       ${view.showContextFeatures && html`<span id="agent-spawn-context-features-indicator" class="spawn-perms-indicator"
         hidden=${!contextFeaturesLabel}>${contextFeaturesLabel}</span>`}
     </div>
@@ -1503,31 +1498,31 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     <label class="cron-create-row" id="agent-spawn-harness-row"
       title="Coding harness for the new agent. The harness switches the Model + Effort menus and launch controls.">
       <span class="cron-create-label">Harness</span>
-      <select id="agent-spawn-harness" value=${draft.harness} disabled=${busy}
+      <${Select} id="agent-spawn-harness" value=${draft.harness} disabled=${busy}
         onChange=${(event) => changeHarness(event.currentTarget.value)}>
         ${context.harnesses.map((harness) => html`<option key=${harness.name} value=${harness.name}>${harness.display_name || harness.name}</option>`)}
-      </select>
+      <//>
     </label>
     <label class="cron-create-row" id="agent-spawn-fast-mode-row" hidden=${!view.showFastMode}
       title="Codex fast mode uses a higher-cost, lower-latency service tier. Harness default leaves ~/.codex/config.toml in charge.">
       <span class="cron-create-label">Fast mode</span>
-      <select id="agent-spawn-fast-mode" value=${draft.fastMode} disabled=${busy}
+      <${Select} id="agent-spawn-fast-mode" value=${draft.fastMode} disabled=${busy}
         onChange=${(event) => update('fastMode', event.currentTarget.value)}>
         <option value="">Harness default (config.toml)</option>
         <option value="1">On</option>
         <option value="0">Off</option>
-      </select>
+      <//>
     </label>
     <div class="spawn-inline-fields">
       <label class="cron-create-row" id="agent-spawn-model-claude-row" hidden=${!view.hasModelList}
         title="Model suggested by the selected harness. Default passes no --model; Custom model id accepts an out-of-catalog model.">
         <span class="cron-create-label">Model</span>
-        <select id="agent-spawn-model" value=${selectedModel} disabled=${busy}
+        <${Select} id="agent-spawn-model" value=${selectedModel} disabled=${busy}
           onChange=${(event) => changeModel(event.currentTarget.value)}>
           <option value="">${spawnModelDefaultLabel(draft, context, profiles)}</option>
           ${view.models.map((model) => html`<option key=${model} value=${model}>${model}</option>`)}
           <option value=${MODEL_CUSTOM_VALUE}>Custom model id…</option>
-        </select>
+        <//>
       </label>
       <label class="cron-create-row" id="agent-spawn-model-codex-row" hidden=${view.hasModelList}
         title="Free-text model id for a harness with no curated suggestions. Blank passes no --model.">
@@ -1545,11 +1540,11 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           placeholder="blank = harness default; model id or alias" autocomplete="off" spellcheck="false" />
       </label>
       <label class="cron-create-row" title="Reasoning effort for the new agent.">
-        <select id="agent-spawn-effort" aria-label="Effort" value=${draft.effort} disabled=${busy}
+        <${Select} id="agent-spawn-effort" aria-label="Effort" value=${draft.effort} disabled=${busy}
           onChange=${(event) => update('effort', event.currentTarget.value)}>
           <option value="">Default (harness's own)</option>
           ${view.efforts.map((effort) => html`<option key=${effort} value=${effort}>${effort}</option>`)}
-        </select>
+        <//>
       </label>
       <label class="cron-create-row" id="agent-spawn-auto-compact-window-row" hidden=${!view.showAutoCompactWindow}
         title=${AUTO_COMPACT_WINDOW_TITLE}>
@@ -1571,14 +1566,14 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <div class="cron-create-row" id="agent-spawn-auto-compact-window-hint">
         <span class="cron-create-label"></span>
         <div class="cron-create-target">
-          <div class=${`spawn-field-hint${autoCompactWindowHint.warn ? ' warn' : ''}`}>${autoCompactWindowHint.text}</div>
+          <div class=${`spawn-field-hint ui-hint${autoCompactWindowHint.warn ? ' warn' : ''}`}>${autoCompactWindowHint.text}</div>
         </div>
       </div>`}
     ${view.showContextWindowMax && contextWindowMaxHint && html`
       <div class="cron-create-row" id="agent-spawn-context-window-max-hint">
         <span class="cron-create-label"></span>
         <div class="cron-create-target">
-          <div class=${`spawn-field-hint${contextWindowMaxHint.warn ? ' warn' : ''}`}>${contextWindowMaxHint.text}</div>
+          <div class=${`spawn-field-hint ui-hint${contextWindowMaxHint.warn ? ' warn' : ''}`}>${contextWindowMaxHint.text}</div>
         </div>
       </div>`}
     <label class="cron-create-row" id="agent-spawn-model-custom-row" hidden=${selectedModel !== MODEL_CUSTOM_VALUE}
@@ -1600,7 +1595,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       title="Whose provider account pays for this agent's model calls. A peer's share routes them through that peer's model gateway; the agent still runs here.">
       <label class="cron-create-label" for="agent-spawn-usage">Usage from</label>
       <div class="cron-create-target">
-        <select id="agent-spawn-usage" value=${usageChoice && !usageChoice.reason ? draft.usageFrom : ''} disabled=${busy}
+        <${Select} id="agent-spawn-usage" value=${usageChoice && !usageChoice.reason ? draft.usageFrom : ''} disabled=${busy}
           onChange=${(event) => {
             const value = event.currentTarget.value;
             const pick = usageChoices.find((o) => o.value === value);
@@ -1608,26 +1603,26 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           }}>
           <option value="">⌂ Your own account</option>
           ${usageChoices.map((o) => html`<option key=${o.value} value=${o.value} disabled=${!!o.reason}>${o.label} — ${o.reason || o.detail}</option>`)}
-        </select>
-        ${usageChoice && !usageChoice.reason && html`<div class="spawn-field-hint info" id="agent-spawn-usage-hint">${shareHint(usageChoice.share)}</div>`}
-        ${usageChoice?.reason && html`<div class="spawn-field-hint warn" id="agent-spawn-usage-hint">${usageChoice.label} cannot pay for this spawn: ${usageChoice.reason}. It will use your own account.</div>`}
+        <//>
+        ${usageChoice && !usageChoice.reason && html`<div class="spawn-field-hint ui-hint info" id="agent-spawn-usage-hint">${shareHint(usageChoice.share)}</div>`}
+        ${usageChoice?.reason && html`<div class="spawn-field-hint ui-hint warn" id="agent-spawn-usage-hint">${usageChoice.label} cannot pay for this spawn: ${usageChoice.reason}. It will use your own account.</div>`}
       </div>
     </div>`}
     ${subscriptionRow && html`<div class="cron-create-row" id="agent-spawn-claude-login-row" data-remote-spawn-free=""
       title="Which Claude login the agent runs on. Your subscription: the token you stored on this node travels in the encrypted spawn request, stays in memory on the node running the agent, and reaches Claude Code through a pipe — never its disk or environment.">
       <label class="cron-create-label" for="agent-spawn-claude-login">Claude login</label>
       <div class="cron-create-target">
-        <select id="agent-spawn-claude-login" value=${draft.claudeSubscription && subscription?.set ? 'mine' : ''} disabled=${busy}
+        <${Select} id="agent-spawn-claude-login" value=${draft.claudeSubscription && subscription?.set ? 'mine' : ''} disabled=${busy}
           onChange=${(event) => {
             const mine = event.currentTarget.value === 'mine';
             setDraft((before) => ({ ...before, claudeSubscription: mine }));
           }}>
           <option value="">${spawnNodeName}'s own login</option>
           <option value="mine" disabled=${!subscription?.set}>Your Claude subscription${subscription?.set ? '' : ' (not set up)'}</option>
-        </select>
+        <//>
         ${draft.claudeSubscription && subscription?.set
-          ? html`<div class="spawn-field-hint info" id="agent-spawn-claude-login-hint">Runs on your subscription and is billed to it. ${spawnNodeName} holds the token in memory only: if its tclaude restarts, the agent cannot be restarted, and you spawn a new one.</div>`
-          : !subscription?.set && html`<div class="spawn-field-hint" id="agent-spawn-claude-login-hint">To run it on your own subscription, store a token from <code>claude setup-token</code> under Fleet config → Model gateways → My Claude subscription.</div>`}
+          ? html`<div class="spawn-field-hint ui-hint info" id="agent-spawn-claude-login-hint">Runs on your subscription and is billed to it. ${spawnNodeName} holds the token in memory only: if its tclaude restarts, the agent cannot be restarted, and you spawn a new one.</div>`
+          : !subscription?.set && html`<div class="spawn-field-hint ui-hint" id="agent-spawn-claude-login-hint">To run it on your own subscription, store a token from <code>claude setup-token</code> under Fleet config → Model gateways → My Claude subscription.</div>`}
       </div>
     </div>`}
     <div class="cron-create-row" id="agent-spawn-sandbox-impl-row" hidden=${!view.showSandboxImpl}
@@ -1635,7 +1630,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <label class="cron-create-label" for="agent-spawn-sandbox-impl">Sandbox</label>
       <div class="cron-create-target spawn-field-help-column">
         <div class="spawn-field-with-help">
-          <select id="agent-spawn-sandbox-impl" value=${draft.sandboxImpl} disabled=${busy}
+          <${Select} id="agent-spawn-sandbox-impl" value=${draft.sandboxImpl} disabled=${busy}
             aria-describedby="agent-spawn-sandbox-impl-help"
             onChange=${(event) => {
     const value = event.currentTarget.value;
@@ -1647,7 +1642,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
             <option value="">${resolvedDefaultOption(resolvedSandboxImplLabel)}</option>
             ${(view.sandboxImplOptions || []).map((option) => html`
               <option key=${option.value} value=${option.value}>${option.label}</option>`)}
-          </select>
+          <//>
           <${HelpDisclosure} id="agent-spawn-sandbox-impl"
             descriptionID="agent-spawn-sandbox-impl-help" label="Sandbox"
             help=${sandboxImplHelp} warn=${!!sandboxImplCaveat}
@@ -1681,7 +1676,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <div class="cron-create-row" id="agent-spawn-sandbox-impl-cleared-row" role="alert">
         <span class="cron-create-label"></span>
         <div class="cron-create-target">
-          <div class="spawn-field-hint warn">${sandboxImplCleared.text}</div>
+          <div class="spawn-field-hint ui-hint warn">${sandboxImplCleared.text}</div>
         </div>
       </div>`}
     <${HelpField} id="agent-spawn-sandbox-profile" descriptionID="agent-spawn-sandbox-profile-preview" label="Sandbox profile"
@@ -1750,7 +1745,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <span class="cron-create-label"></span>
       <div class="cron-create-target" role="status">
         ${sandboxInfo.map((message) => html`
-          <div class="spawn-field-hint info" key=${message}>ℹ ${message}</div>`)}
+          <div class="spawn-field-hint ui-hint info" key=${message}>ℹ ${message}</div>`)}
       </div>
     </div>
     ${/* Sits between the two selects it is about — the sandbox above and the
@@ -1764,7 +1759,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         <span class="cron-create-label"></span>
         <div class="cron-create-target" role="alert">
           ${autonomyWarnings.map((warning) => html`
-            <div class="spawn-field-hint warn" key=${warning}>${warning}</div>`)}
+            <div class="spawn-field-hint ui-hint warn" key=${warning}>${warning}</div>`)}
         </div>
       </div>`}
     <${HelpField} id="agent-spawn-approval-reviewer" label="Approval reviewer"
@@ -1800,10 +1795,10 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <input id="agent-spawn-cwd" type="text" value=${draft.cwd} disabled=${busy}
         onInput=${(event) => { touched.current.add('cwd'); operatorSet.current.add('cwd'); setDraft((before) => setSpawnCwd(before, event.currentTarget.value)); }}
         placeholder="optional — prefilled from the group's default dir; ~ expands to home" autocomplete="off" spellcheck="false" />
-      <button id="agent-spawn-cwd-browse" type="button" class="dir-browse-btn" disabled=${busy || !!browseBusy || away}
+      <${Button} id="agent-spawn-cwd-browse" class="dir-browse-btn" disabled=${busy || !!browseBusy || away}
         title=${awayHint || 'Browse for a directory'} onClick=${() => { void browse('cwd'); }}>
         ${browseBusy === 'cwd' ? 'Opening…' : 'Browse…'}
-      </button>
+      <//>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Worktree repo</span>
@@ -1813,14 +1808,14 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <datalist id="agent-spawn-subrepo-list">
         ${(worktrees.subRepos || []).map((repo) => html`<option key=${repo.path} value=${repo.path}>${repo.rel}</option>`)}
       </datalist>
-      <button id="agent-spawn-wt-repo-browse" type="button" class="dir-browse-btn" disabled=${busy || !!browseBusy || away}
+      <${Button} id="agent-spawn-wt-repo-browse" class="dir-browse-btn" disabled=${busy || !!browseBusy || away}
         title=${awayHint || 'Browse for a directory'} onClick=${() => { void browse('repo'); }}>
         ${browseBusy === 'repo' ? 'Opening…' : 'Browse…'}
-      </button>
+      <//>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Worktree</span>
-      <select id="agent-spawn-worktree" value=${draft.worktree} disabled=${busy || !worktreeUsable}
+      <${Select} id="agent-spawn-worktree" value=${draft.worktree} disabled=${busy || !worktreeUsable}
         onChange=${(event) => {
           for (const key of ['worktree', 'worktreeBranch', 'syncWorktree']) touched.current.add(key);
           profileOverrides.current.add('syncWorktree');
@@ -1834,7 +1829,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
             title=${`${branch}${main} — ${worktree.path}`}>${branch}${main} — ${shortCwd(worktree.path)}</option>`;
         })}
         ${worktreeUsable && html`<option value=${WT_NEW}>+ create new worktree…</option>`}
-      </select>
+      <//>
     </label>
     <label class=${`cron-create-enabled cron-check-aligned${worktreeUsable ? '' : ' disabled'}`} id="agent-spawn-wt-sync-row"
       title="Spawn the agent in a fresh git worktree whose branch is named after the name above. Needs a CWD inside a git repo.">
@@ -1871,10 +1866,10 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     <label class="cron-create-row" id="agent-spawn-wt-base-row"
       hidden=${draft.worktree !== WT_NEW || !worktrees.hasCommits}>
       <span class="cron-create-label">Base branch</span>
-      <select id="agent-spawn-wt-base" value=${draft.worktreeBase} disabled=${busy}
+      <${Select} id="agent-spawn-wt-base" value=${draft.worktreeBase} disabled=${busy}
         onChange=${(event) => update('worktreeBase', event.currentTarget.value)}>
         ${(worktrees.branches || []).map((branch) => html`<option key=${branch} value=${branch}>${branch}</option>`)}
-      </select>
+      <//>
     </label>
     <p class="wt-orphan-warn" id="agent-spawn-wt-orphan-hint"
       hidden=${draft.worktree !== WT_NEW || worktrees.hasCommits}>
@@ -1929,7 +1924,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       <div class="cron-create-row" id="agent-spawn-codex-native-registry-warning">
         <span class="cron-create-label"></span>
         <div class="cron-create-target" role="alert">
-          <div class="spawn-field-hint warn">
+          <div class="spawn-field-hint ui-hint warn">
             ⚠ Native Codex permission-profile integration is not ready; this launch will be refused: ${nativeCodexRegistryWarning}.
             <a href=${CODEX_NATIVE_REGISTRY_SETUP_DOC} target="_blank" rel="noopener">Setup and repair</a>
           </div>
@@ -1969,7 +1964,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         ${busy && !queueing ? (requestOnly ? 'Sending…' : 'Spawning…') : (queued ? '▶ Spawn now' : requestOnly ? 'Send request' : 'Spawn')}
       </${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 export function AgentSpawnApp(props) {

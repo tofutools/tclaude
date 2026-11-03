@@ -92,7 +92,7 @@ function DockPill({ entry: { tab, tabs }, needs, onChip }) {
   const removes = tabs.length === 1 && !onChip(tab) && tab.kind !== DECIDE_WINDOW_KIND && REMOVE_TITLES[tab.kind];
   return html`<span class=${`overlay-dock-pill${tabs.some(needs) ? ' needs' : ''}`}>
     <button type="button" class="ui-btn ui-btn-ghost ui-sm overlay-dock-item" title=${`Bring back ${tab.label}`} ...${peeksOf(tab)}
-      onClick=${() => bringBack(tab)}>${WINDOW_GLYPHS[tab.kind] || '▣'} ${tab.label}${tabs.length > 1 && html` <span class="overlay-dock-count" aria-label=${`${tabs.length} tabs`}>${tabs.length}</span>`}</button>
+      onClick=${() => bringBack(tab)}>${WINDOW_GLYPHS[tab.kind] || '▣'} ${tab.label}${tabs.length > 1 && html` <span class="overlay-dock-count ui-badge" aria-label=${`${tabs.length} tabs`}>${tabs.length}</span>`}</button>
     ${removes && html`<button type="button" class="ui-btn ui-btn-ghost ui-sm overlay-dock-remove" aria-label=${`${removes[0]} ${tab.label}`} title=${removes[1]} onClick=${() => (tabMoves(tab).close || (() => closeOverlayTab(tab.id)))()}>×</button>`}
   </span>`;
 }
@@ -115,7 +115,7 @@ function DockMenuButton({ folded = [], needs }) {
   const label = folded.length ? `All windows, ${folded.length} minimized` : 'All windows';
   return html`<span class=${`overlay-dock-menu${folded.some(({ tabs }) => tabs.some(needs)) ? ' needs' : ''}`}>
     <button type="button" class="ui-btn ui-btn-ghost ui-sm overlay-dock-menu-button" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
-      title=${label} aria-label=${label} onClick=${(event) => toggle('actions', event)}>☰${folded.length > 0 && html` <span class="overlay-dock-count">${folded.length}</span>`}</button>
+      title=${label} aria-label=${label} onClick=${(event) => toggle('actions', event)}>☰${folded.length > 0 && html` <span class="overlay-dock-count ui-badge">${folded.length}</span>`}</button>
   </span>`;
 }
 

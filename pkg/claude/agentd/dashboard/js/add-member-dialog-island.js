@@ -1,8 +1,9 @@
 import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { shortId } from './helpers.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { isPageNode, nodeSnapshot } from './node-api.js';
 
 const html = htm.bind(h);
@@ -206,7 +207,7 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
   const wizardEmptyRetry = includeOffline
     ? '(Try a different filter.)'
     : '(Try ticking "Include slumbering / archived" for a wider pool.)';
-  return html`<${Overlay}
+  return html`<${Dialog}
     id="add-member-modal" dialogClass="add-member-modal" labelledby="add-member-title"
     onClose=${state.closeAddMember} dirty=${dirty} blocked=${busy}
     confirmDiscard=${confirmDiscard} guardBackdropDrag=${true}
@@ -226,16 +227,16 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
         class="add-member-list" id="add-member-list" ref=${listRef}
         role="listbox" aria-busy=${busy || poolLoading ? 'true' : 'false'}
       >
-        ${poolError ? html`<div class="add-member-empty" role="alert">${poolError} <button id="add-member-pool-retry" type="button" disabled=${poolLoading || busy} onClick=${retryPool}>Retry</button></div>` : null}
+        ${poolError ? html`<div class="ui-empty-block" role="alert">${poolError} <${Button} size="sm" id="add-member-pool-retry" disabled=${poolLoading || busy} onClick=${retryPool}>Retry<//></div>` : null}
         ${candidates.map((candidate, index) => html`<${CandidateRow}
           key=${candidate.conv_id} candidate=${candidate} index=${index}
           highlighted=${index === selectedIndex} busy=${busy}
           onHighlight=${setHighlightConv} onAdd=${addOne}
         />`)}
-        ${!candidates.length && poolLoading ? html`<div class="add-member-empty" role="status">Loading conversations…</div>` : null}
-        ${!candidates.length && !poolLoading ? html`<div class="add-member-empty"><span class="theme-copy-regular">No matching conversations. ${emptyRetry}</span><span class="theme-copy-wizard">No matching conversations. ${wizardEmptyRetry}</span></div>` : null}
+        ${!candidates.length && poolLoading ? html`<div class="ui-empty-block" role="status">Loading conversations…</div>` : null}
+        ${!candidates.length && !poolLoading ? html`<div class="ui-empty-block"><span class="theme-copy-regular">No matching conversations. ${emptyRetry}</span><span class="theme-copy-wizard">No matching conversations. ${wizardEmptyRetry}</span></div>` : null}
       </div>
-      ${addError ? html`<div class="cron-create-error" id="add-member-error" role="alert">${addError}${failedCandidate ? html` <button id="add-member-retry" type="button" disabled=${busy} onClick=${() => addOne(failedCandidate)}>Retry</button>` : null}</div>` : null}
+      ${addError ? html`<div class="cron-create-error" id="add-member-error" role="alert">${addError}${failedCandidate ? html` <${Button} size="sm" id="add-member-retry" disabled=${busy} onClick=${() => addOne(failedCandidate)}>Retry<//>` : null}</div>` : null}
       <div class="add-member-foot">
         <label title="Include archived / never-online conversations in the candidate list">
           <input id="add-member-all" type="checkbox" checked=${includeOffline} disabled=${busy}
@@ -245,7 +246,7 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
         <span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> <span class="theme-copy-regular">add</span><span class="theme-copy-wizard">invite</span> · <kbd>Esc</kbd> close</span>
       </div>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 export function GroupsAddMemberDialog({ state, actions, confirmDiscard }) {

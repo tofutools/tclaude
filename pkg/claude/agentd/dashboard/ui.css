@@ -55,6 +55,9 @@
 }
 
 :root {
+  /* The wizard skin's gold: button and primary borders, note edges and the
+     active scrollbar thumb. One token so the gilt is tuned in one place. */
+  --ui-wizard-gold: #d9b45a;
   --ui-bg: #21262d;
   --ui-bg-hover: #2d333b;
   --ui-danger-hover: #6b2424;
@@ -63,6 +66,9 @@
   --ui-text: #c9d1d9;
   --ui-text-strong: #e6edf3;
   --ui-muted: #7d8590;
+  --ui-muted-text: #7d8590;
+  --ui-body-text: #c9d1d9;
+  --ui-strong-text: #e6edf3;
   --ui-placeholder: #6e7681;
   --ui-focus: #58a6ff;
   --ui-pressed-bg: #30363d;
@@ -81,29 +87,91 @@
   --ui-danger-bg: #4d1d1d;
   --ui-switch-off: #30363d;
   --ui-radius: 4px;
+  --ui-badge-bg: #21262d;
+  --ui-badge-text: #8b949e;
+  --ui-badge-accent: #1f6feb;
+  --ui-badge-accent-text: #fff;
+  --ui-badge-warn: #9e6a03;
+  --ui-dialog-bg: #161b22;
+  --ui-dialog-line: #2a3340;
+  --ui-dialog-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --ui-dialog-text: #c9d1d9;
+  --ui-dialog-title: #d4d4d4;
+  --ui-dialog-title-font: inherit;
+  --ui-dialog-title-spacing: normal;
+  --ui-dialog-title-shadow: none;
+  --ui-card-bg: #161b22;
+  --ui-card-inset-bg: #0d1117;
+  --ui-card-line: #2a3340;
+  /* Dialog meta lines (.modal-meta): the boxed one's text, and the left
+     edge of the note one in .cron-create-modal dialogs. */
+  --ui-meta-text: #c9d1d9;
+  --ui-note-edge: #2a3340;
 }
 body.wizard {
   --ui-bg: #241b3d;
   --ui-bg-hover: #3a2a63;
   --ui-line: rgba(122, 93, 176, 0.58);
-  --ui-btn-line: #d9b45a;
+  --ui-btn-line: var(--ui-wizard-gold);
   --ui-text: #e7d9f5;
   --ui-text-strong: #f3e6c0;
-  --ui-muted: #ad9abb;
+  --ui-muted: #b39ddb;
+  --ui-muted-text: #b39ddb;
+  --ui-body-text: #e7d9f5;
+  --ui-strong-text: #f3e6c0;
   --ui-focus: #a97bd6;
   --ui-pressed-bg: #3b2a63;
   --ui-field-bg: #100c17;
   --ui-menu-bg: #100c17;
   --ui-menu-hover: rgba(169, 123, 214, 0.25);
   --ui-primary: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  --ui-primary-line: #d9b45a;
+  --ui-primary-line: var(--ui-wizard-gold);
   --ui-primary-hover: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   --ui-primary-text: #f3e6c0;
   --ui-switch-off: #2f2350;
+  --ui-badge-bg: #2a2140;
+  --ui-badge-text: #b39ddb;
+  --ui-badge-accent: #a97bd6;
+  --ui-badge-accent-text: #14102a;
+  --ui-dialog-bg: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  --ui-dialog-line: #7a5db0;
+  --ui-dialog-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  --ui-dialog-text: #e7d9f5;
+  --ui-dialog-title: #f3e6c0;
+  --ui-dialog-title-font: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  --ui-dialog-title-spacing: 1px;
+  --ui-dialog-title-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+  --ui-card-bg: #140f28;
+  --ui-card-inset-bg: #140f28;
+  --ui-card-line: rgba(122, 93, 176, 0.5);
+  --ui-meta-text: #f3e6c0;
+  --ui-note-edge: var(--ui-wizard-gold);
 }
 /* The wizard dialogs' house primary: a gilded, glowing gradient. */
 body.wizard .ui-btn-primary { text-shadow: 0 0 6px rgba(169, 123, 214, 0.6); box-shadow: 0 0 10px rgba(122, 93, 176, 0.4); }
 body.wizard .ui-btn-primary:hover:not(:disabled) { box-shadow: 0 0 16px rgba(169, 123, 214, 0.7); }
+/* A wizard dialog's footer submit is a lever: a thicker gold rim on a drop
+   shadow that presses in on click, crimson when the submit destroys (only the
+   <dialog>-submit button: a danger secondary such as Discard or Force stays
+   flat beside it). Toolbar and inline primaries stay flat. */
+body.wizard .modal-buttons :is(.ui-btn-primary, .ui-btn-danger:not(.ui-btn-ghost)[id$="-submit"]) {
+  border-width: 2px; border-radius: 6px; padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+}
+body.wizard .modal-buttons .ui-btn-primary:hover:not(:disabled) { box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8); }
+body.wizard .modal-buttons .ui-btn-danger:not(.ui-btn-ghost)[id$="-submit"] {
+  background: linear-gradient(180deg, #6e1f2a 0%, #3a1018 100%); border-color: #f0883e; color: var(--ui-text-strong);
+  box-shadow: 0 4px 0 #1e1640, 0 0 10px rgba(240, 136, 62, 0.5);
+}
+body.wizard .modal-buttons .ui-btn-danger:not(.ui-btn-ghost)[id$="-submit"]:hover:not(:disabled) {
+  background: linear-gradient(180deg, #8a2836 0%, #4a141f 100%); color: var(--ui-text-strong);
+  box-shadow: 0 4px 0 #1e1640, 0 0 16px rgba(240, 136, 62, 0.8);
+}
+body.wizard .modal-buttons :is(.ui-btn-primary, .ui-btn-danger:not(.ui-btn-ghost)[id$="-submit"]):active:not(:disabled) {
+  transform: translateY(2px); box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+/* A busy lever keeps its wizard copy ("🕯 Sealing…") legible. */
+body.wizard .modal-buttons :is(.ui-btn-primary, .ui-btn-danger[id$="-submit"]):disabled { opacity: .7; box-shadow: none; transform: none; }
 body.slop {
   --ui-bg: #2a0a0a;
   --ui-bg-hover: #4a1414;
@@ -112,6 +180,9 @@ body.slop {
   --ui-text: #f0dcc0;
   --ui-text-strong: #ffe88c;
   --ui-muted: #c0a080;
+  --ui-muted-text: #c0a080;
+  --ui-body-text: #f0dcc0;
+  --ui-strong-text: #ffe88c;
   --ui-focus: #ffd700;
   --ui-pressed-bg: rgba(255, 215, 0, 0.18);
   --ui-field-bg: #1a0505;
@@ -122,6 +193,8 @@ body.slop {
   --ui-primary-hover: #6a1010;
   --ui-primary-text: #ffe88c;
   --ui-switch-off: #4a1a1a;
+  --ui-badge-bg: #2a0a0a;
+  --ui-badge-text: #c0a080;
 }
 
 /* Buttons. One hover for every variant: the background brightens a step and
@@ -181,6 +254,70 @@ body.slop {
 .ui-seg > .ui-btn[aria-pressed="true"]:hover:not(:disabled) { background: var(--ui-pressed-bg); border-color: transparent; color: var(--ui-text-strong); }
 .ui-seg > .ui-btn:focus-visible { position: relative; }
 
+/* Compact tables: the dense density for tables inside dialogs, panels and
+   dense views (fleet admin, logs, debug, queues); the global table rule in
+   dashboard.css is the roomy default. */
+table.ui-compact :is(th, td) { padding: 4px 8px; }
+
+/* Tabs (js/ui-tabs.js): a section's sub-navigation is one framed bar of pill
+   tabs under the top nav (operator pick C: pills for section sub-nav, the
+   joined bar for a mode inside a dialog, underline only for the top nav).
+   The selected tab carries aria-selected (or .active, from static markup)
+   and a subtle fill. */
+.ui-tabs {
+  display: inline-flex; flex-wrap: wrap; gap: 2px; margin: 0 0 12px; padding: 2px;
+  background: var(--ui-card-bg); border: 1px solid var(--ui-card-line); border-radius: 6px;
+}
+.ui-tab {
+  background: none; border: 0; border-radius: 4px; color: var(--ui-muted-text); cursor: pointer;
+  font-family: inherit; font-size: 13px; padding: 6px 14px; text-decoration: none; white-space: nowrap;
+}
+.ui-tab:hover { color: #d4d4d4; }
+.ui-tab:is(.active, [aria-selected="true"]) { background: #21262d; color: #d4d4d4; font-weight: 500; }
+.ui-tab:disabled { cursor: not-allowed; opacity: .5; }
+body.wizard .ui-tab:hover { color: #f3e6c0; }
+body.wizard .ui-tab:is(.active, [aria-selected="true"]) {
+  background: #3a2a63; color: #f3e6c0; text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
+}
+/* .ui-tabs-seg: a mode switch inside a dialog or panel, one joined bar with
+   dividers; the chosen mode takes an accent fill. */
+.ui-tabs.ui-tabs-seg { gap: 0; padding: 0; margin: 0; overflow: hidden; background: var(--ui-card-inset-bg); border-color: var(--ui-line); }
+.ui-tabs-seg > .ui-tab { border-radius: 0; padding: 5px 12px; font-size: 12px; color: var(--ui-muted); }
+.ui-tabs-seg > .ui-tab + .ui-tab { border-left: 1px solid var(--ui-line); }
+.ui-tabs-seg > .ui-tab:is(.active, [aria-selected="true"], [aria-checked="true"]) { background: rgba(31, 111, 235, 0.2); color: var(--ui-text-strong); font-weight: normal; }
+body.wizard .ui-tabs-seg > .ui-tab:is(.active, [aria-selected="true"], [aria-checked="true"]) { background: #3a2a63; color: #f3e6c0; text-shadow: none; }
+
+/* Tags: an outlined label chip (operator pick B: one round pill, coloured by
+   variant). An area class keeps placement; a state modifier on it may still
+   set color / border-color.
+     .ui-tag          neutral label (kind, scope, state)
+     .ui-tag-accent   informational (fleet counts, enabled)
+     .ui-tag-warn     needs attention
+     .ui-tag-own      ownership / authority */
+.ui-tag {
+  display: inline-block; padding: 0 7px; border: 1px solid #30363d; border-radius: 999px;
+  background: transparent; color: #8b949e; font-size: 11px; font-weight: normal; line-height: 16px;
+  white-space: nowrap;
+}
+.ui-tag-accent { border-color: #1f6feb; color: #58a6ff; }
+.ui-tag-warn { border-color: #9e6a03; color: #d29922; }
+.ui-tag-own { border-color: #4d3a1d; background: #1d2a3a; color: #d29922; }
+body.wizard :where(.ui-tag) { border-color: rgba(122, 93, 176, 0.5); color: #b39ddb; }
+body.wizard :where(.ui-tag-accent) { border-color: #a97bd6; color: #d2b8ff; }
+body.wizard :where(.ui-tag-warn) { border-color: #9e6a03; color: #d9b45a; }
+body.wizard :where(.ui-tag-own) { border-color: #d9b45a; background: #241b3d; color: #f3e6c0; }
+
+/* Eyebrows: the small uppercase label over a group of fields, a list
+   section or a popover (operator pick C). -section marks a settings / section
+   head in the accent. The area class keeps placement only. The wizard paint
+   sits in :where() so an area state colour still wins. */
+.ui-eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #8b949e; }
+.ui-eyebrow-section { color: #58a6ff; }
+/* A control inside a head (Add agent, Save selection…) stays a control. */
+.ui-eyebrow :is(.ui-btn, button) { font-weight: normal; letter-spacing: normal; text-transform: none; }
+body.wizard :where(.ui-eyebrow) { color: #b39ddb; }
+body.wizard :where(.ui-eyebrow-section) { color: var(--ui-wizard-gold); }
+
 /* Fields */
 .ui-input, .ui-select, .ui-textarea {
   min-width: 0; margin: 0; padding: 6px 10px;
@@ -197,6 +334,19 @@ body.slop {
 .ui-select { text-overflow: ellipsis; cursor: pointer; }
 .ui-select option { background: var(--ui-field-bg); color: var(--ui-text); }
 .ui-textarea { resize: vertical; }
+/* Raw fields inside a wizard dialog, filter bar or config form (markup not
+   yet .ui-input/.ui-select/.ui-textarea) take the wizard field paint here,
+   once, instead of a per-dialog or per-area copy. A dialog that needs a
+   different field look still wins with its own id-scoped rule. The process
+   editors, process params and git repositories dialogs keep their own field
+   palette and states, so they are left out here, as is the Groups toolbar
+   node chip, an unboxed select inside its node-coloured pill. */
+body.wizard :is(.ui-dialog, .filter-bar, .cfg-field, .cfg-row-ctl) :is(input:not([type]), input[type=text], input[type=url], input[type=search], input[type=number], input[type=password], input[type=email], select, textarea):where(:not(.ui-input, .ui-select, .ui-textarea, .process-editor-modal *, .process-param-row *, .git-repositories-modal *, .toolbar-node-select)) {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard :is(.ui-dialog, .filter-bar, .cfg-field, .cfg-row-ctl) :is(input:not([type]), input[type=text], input[type=url], input[type=search], input[type=number], input[type=password], input[type=email], select, textarea):where(:not(.ui-input, .ui-select, .ui-textarea, .process-editor-modal *, .process-param-row *, .git-repositories-modal *, .toolbar-node-select)):focus {
+  border-color: #a97bd6;
+}
 .ui-input.ui-sm, .ui-select.ui-sm, .ui-textarea.ui-sm { padding: 3px 8px; font-size: 12px; }
 
 /* Checkbox / radio with its label, and the on/off switch. */
@@ -279,7 +429,7 @@ label:has(> input:disabled) { cursor: not-allowed !important; }
 :root:has(> body.wizard) {
   --ui-scroll-thumb: #7a5db0;
   --ui-scroll-thumb-hover: #a97bd6;
-  --ui-scroll-thumb-active: #d9b45a;
+  --ui-scroll-thumb-active: var(--ui-wizard-gold);
 }
 :root:has(> body.slop) {
   --ui-scroll-thumb: #9e7a00;
@@ -310,4 +460,89 @@ label:has(> input:disabled) { cursor: not-allowed !important; }
   ::-webkit-scrollbar-thumb { background: ButtonText; border: 1px solid Canvas; }
   ::-webkit-scrollbar-thumb:hover,
   ::-webkit-scrollbar-thumb:active { background: Highlight; }
+}
+
+/* Empty states: the muted line a list, panel or popover shows when it has
+   nothing to show ("No matches", "Nothing to do.", "Loading…").
+     .ui-empty        inline, inside a row or a sentence
+     .ui-empty-block  the whole content of a list or panel: padded, centred
+   An area keeps its own class only for placement (a margin, a grid column),
+   never for the text's colour, size or style; skins recolour --ui-muted. */
+/* Box metrics are :where() (no specificity), so an area's placement class
+   (a margin, a grid column) wins although this sheet loads last. */
+:where(.ui-empty, .ui-empty-block) { margin: 0; }
+:where(.ui-empty-block) { display: block; padding: 14px 12px; }
+.ui-empty, .ui-empty-block { color: var(--ui-muted); font-size: 12px; font-style: italic; }
+.ui-empty-block { text-align: center; }
+
+/* Help and error text around fields and dialogs.
+     .ui-hint       the muted help line under or beside a field or option
+     .ui-error      an inline error message
+     .ui-error-box  an error banner: red edge, faint red wash
+   Text style only (the box adds its edge and wash); an area class keeps
+   placement and spacing, and a stronger state (a .warn variant) may still
+   recolour. Skins recolour --ui-muted; --ui-danger-text is shared. */
+.ui-hint { color: var(--ui-muted); font-size: 11px; line-height: 1.4; }
+.ui-error { color: var(--ui-danger-text); font-size: 12px; line-height: 1.4; }
+.ui-error-box {
+  border-left: 3px solid var(--ui-danger); background: rgba(248, 81, 73, .08);
+  color: var(--ui-danger-text); font-size: 12px; line-height: 1.4;
+}
+
+/* Count badges: the small number beside a tab, button or list entry.
+     .ui-badge          a quiet neutral count (open panes, tabs, members)
+     .ui-badge-accent   something new for you (unread, attention)
+     .ui-badge-danger   an alert (unread messages, blocking problems)
+     .ui-badge-warn     needs attention soon (pending plugins, queued spawns)
+     .ui-badge-corner   the smaller bubble pinned to an icon button's corner;
+                        the area sets position and offsets
+   An area class keeps placement (margins, position); size, shape and tone
+   come from here. Domain chips (CI, review, sandbox, owner) are not counts. */
+.ui-badge {
+  display: inline-block; box-sizing: border-box; min-width: 16px; padding: 0 5px;
+  border-radius: 8px; background: var(--ui-badge-bg); color: var(--ui-badge-text);
+  font-size: 10px; font-weight: 600; line-height: 16px; text-align: center;
+  font-variant-numeric: tabular-nums; vertical-align: middle;
+}
+.ui-badge-corner {
+  position: absolute; min-width: 14px; padding: 0 3px; border-radius: 7px;
+  background: var(--ui-pressed-bg); color: var(--ui-text-strong);
+  font-size: 9px; font-weight: 700; line-height: 13px;
+  box-shadow: 0 0 0 1px var(--ui-field-bg);
+}
+.ui-badge-accent { background: var(--ui-badge-accent); color: var(--ui-badge-accent-text); }
+.ui-badge-danger { background: var(--ui-danger); color: #fff; }
+.ui-badge-warn { background: var(--ui-badge-warn); color: #fff; }
+
+/* Dialog box: the panel a modal dialog sits in. ManagementOverlay puts it on
+   every dialog it renders; a dialog built without it adds the class itself.
+   The box paint (background, edge, corners, shadow, text colour) comes from
+   here and the skin tokens; an area class keeps size, padding and layout. */
+.ui-dialog {
+  background: var(--ui-dialog-bg); border: 1px solid var(--ui-dialog-line);
+  border-radius: 6px; box-shadow: var(--ui-dialog-shadow); color: var(--ui-dialog-text);
+}
+/* Dialog headings take the skin's title face (the wizard's gilded serif).
+   Zero specificity: an area heading with its own colour or face keeps it;
+   size and margins stay with the area. */
+:where(.ui-dialog) h3 {
+  color: var(--ui-dialog-title); font-family: var(--ui-dialog-title-font);
+  letter-spacing: var(--ui-dialog-title-spacing); text-shadow: var(--ui-dialog-title-shadow);
+}
+/* Card: a bordered surface inside a page or dialog (a list entry, a choice
+   tile, a framed note). .ui-card is the raised surface; add .ui-inset for the
+   darker, recessed one. The paint (background, edge, corners) comes from the
+   --ui-card-* tokens; an area class keeps size, padding, layout and its own
+   state edges (selected, hover, danger). */
+.ui-card {
+  background: var(--ui-card-bg); border: 1px solid var(--ui-card-line); border-radius: 6px;
+}
+.ui-card.ui-inset { background: var(--ui-card-inset-bg); }
+/* Popover: a floating panel anchored to a control (a node picker, the open-PRs
+   list, filter and settings panels). Same paint as a dialog box from the
+   --ui-dialog-* tokens, with a slightly rounder corner; the area keeps
+   position, size and layout. Menus of actions use .ui-menu instead. */
+.ui-popover {
+  background: var(--ui-dialog-bg); border: 1px solid var(--ui-dialog-line);
+  border-radius: 8px; box-shadow: var(--ui-dialog-shadow); color: var(--ui-dialog-text);
 }

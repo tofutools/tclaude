@@ -5,6 +5,7 @@
 import { h } from 'preact';
 import { useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
@@ -104,20 +105,20 @@ export function StewardRoster({ roster, agents, fetchImpl, notify, openHandover,
   });
 
   return html`<span ref=${rootRef} class="steward-roster">
-    ${trigger && html`<button type="button" class="companion-steward-roster" aria-label="Steward roster" aria-expanded=${open ? 'true' : 'false'}
+    ${trigger && html`<button data-ui-exempt type="button" class="companion-steward-roster" aria-label="Steward roster" aria-expanded=${open ? 'true' : 'false'}
       title="Steward roster: switch or make another agent the Steward" onClick=${() => setOpen((value) => !value)}>✦ ${roster.length || ''}</button>`}
-    ${open && html`<div class="steward-roster-menu" role="dialog" aria-label="Steward roster">
+    ${open && html`<div class="steward-roster-menu ui-popover" role="dialog" aria-label="Steward roster">
       ${roster.length === 0 && html`<p class="steward-roster-note">No Steward yet.</p>`}
       ${roster.map((entry) => html`<div key=${entry.agent_id} class=${`steward-roster-row ${entry.seat}`}>
         <span class="steward-roster-who"><b>${entry.name}</b><small>${SEAT_LABEL[entry.seat] || entry.seat}${entry.online ? '' : ', offline'}</small></span>
         ${entry.seat === 'active'
-          ? html`<button type="button" disabled=${!!busy} title="Remove its Steward access and put it on the roster. It keeps running." onClick=${() => stepDown(entry)}>Stand down</button>`
-          : html`<button type="button" class="primary" disabled=${!!busy} title="Make this the active Steward. The current one goes on the roster." onClick=${() => switchTo(entry)}>${busy === entry.agent_id ? 'Switching…' : 'Switch'}</button>`}
-        ${entry.seat === 'standby' && html`<button type="button" class="steward-roster-remove" disabled=${!!busy} aria-label=${`Take ${entry.name} off the roster`} title="Take off the roster. It stays a normal agent." onClick=${() => remove(entry)}>×</button>`}
+          ? html`<${Button} size="sm" disabled=${!!busy} title="Remove its Steward access and put it on the roster. It keeps running." onClick=${() => stepDown(entry)}>Stand down<//>`
+          : html`<${Button} size="sm" variant="primary" disabled=${!!busy} title="Make this the active Steward. The current one goes on the roster." onClick=${() => switchTo(entry)}>${busy === entry.agent_id ? 'Switching…' : 'Switch'}<//>`}
+        ${entry.seat === 'standby' && html`<${Button} size="sm" variant="ghost danger" icon=${true} class="steward-roster-remove" disabled=${!!busy} aria-label=${`Take ${entry.name} off the roster`} title="Take off the roster. It stays a normal agent." onClick=${() => remove(entry)}>×<//>`}
       </div>`)}
       <input type="search" class="steward-roster-filter" placeholder="Make another agent the Steward…" aria-label="Find an agent to make the Steward"
         value=${filter} onInput=${(event) => setFilter(event.currentTarget.value)} />
-      ${candidates.map((agent) => html`<button key=${agent.agentId} type="button" class="steward-roster-candidate"
+      ${candidates.map((agent) => html`<button data-ui-exempt key=${agent.agentId} type="button" class="steward-roster-candidate"
         title=${`Make ${agent.name} the Steward`} onClick=${() => handOverTo({ agent_id: agent.agentId, name: agent.name })}>${agent.name}</button>`)}
     </div>`}
   </span>`;

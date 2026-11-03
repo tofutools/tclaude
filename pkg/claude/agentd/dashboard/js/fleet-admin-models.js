@@ -113,7 +113,7 @@ export function SubscriptionCard({ actions, confirm, toast }) {
   return html`<div class="fa-subscription" id="fleet-claude-subscription">
     <h4 class="fa-h">My Claude subscription <span class="muted">— run agents on your other nodes as yourself</span></h4>
     <p class="muted">Agents you spawn on another node can run Claude Code on your own subscription instead of that node's login: pick <b>Your Claude subscription</b> under Claude login in the spawn dialog. The token travels in the encrypted spawn request, stays in memory on that node, and reaches Claude Code through a pipe, never its disk or environment. Only you can use it, and only Claude Code; a model gateway cannot.</p>
-    ${!state ? html`<div class="empty">Loading…</div>` : html`<div class="fa-run-settings">
+    ${!state ? html`<div class="empty">Loading…</div>` : html`<div class="fa-run-settings ui-card ui-inset">
       <span class="fa-k">Token</span>
       <span class=${set ? '' : 'muted'} id="fleet-claude-subscription-state">${set ? `stored${state.set_at ? ` ${new Date(state.set_at).toLocaleDateString()}` : ''}` : 'not set up'}</span>
       ${!editing && html`<${Button} size="sm" id="fleet-claude-subscription-edit" onClick=${() => { setEditing(true); setError(''); }}>${set ? 'Replace…' : 'Set up…'}<//>`}
@@ -221,7 +221,7 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
   return html`<div class="fa-models">
     ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
     ${!control && !error && html`<div class="empty">Loading…</div>`}
-    ${control && html`<div class="fa-run-settings" id="fleet-models-master">
+    ${control && html`<div class="fa-run-settings ui-card ui-inset" id="fleet-models-master">
       <span class="fa-k">Model gateways</span>
       <span class=${control.disabled ? 'fa-warn' : 'muted'}>${control.disabled ? 'all off: no peer model requests are served' : `on (${gws.filter(([, p]) => p.enabled).length} of ${gws.length} enabled)`}</span>
       <${Button} size="sm" id="fleet-models-master-toggle" variant=${control.disabled ? '' : 'danger'} onClick=${master}>${control.disabled ? 'Turn on…' : 'Turn off all…'}<//>
@@ -229,7 +229,7 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
       <${Button} size="sm" variant="link" class="fa-link" onClick=${reload}>refresh<//>
     </div>
     ${gws.length === 0 ? html`<div class="empty">No model gateways yet. Add one to let workers on your other nodes use this node's provider API key.</div>` : html`
-    <table class="fa-table" id="fleet-model-gateways">
+    <table class="fa-table ui-compact" id="fleet-model-gateways">
       <thead><tr><th>Gateway</th><th>State</th><th>Models</th><th>Daily: all · per peer · per session</th><th>Per request</th><th>Blocked peers</th><th></th></tr></thead>
       <tbody>${gws.map(([name, p]) => html`<tr key=${name} data-gateway=${name}>
         <td><code>${name}</code>${p.dialect ? html` <span class="muted">${p.dialect}</span>` : ''}</td>
@@ -251,7 +251,7 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
     <${SubscriptionCard} actions=${actions} confirm=${confirm} toast=${toast} />
     <h4 class="fa-h">Leases <span class="muted">— requester-paid workers using a gateway</span></h4>
     ${leases?.error ? html`<div class="fa-danger">${leases.error}</div>` : !leases ? html`<div class="empty">Loading…</div>` : leaseList.length === 0 ? html`<div class="empty">No leases.</div>` : html`
-    <table class="fa-table" id="fleet-model-leases">
+    <table class="fa-table ui-compact" id="fleet-model-leases">
       <thead><tr><th>Lease</th><th>Peer</th><th>Gateway</th><th>Worker</th><th>Last used</th><th></th></tr></thead>
       <tbody>${leaseList.map((l) => html`<tr key=${l.id} data-lease=${l.id} class=${l.revoked ? 'muted' : ''}>
         <td><code title=${l.id}>${l.id.slice(0, 12)}</code>${l.kind ? html` <span class="muted">${l.kind}</span>` : ''}</td>
@@ -264,7 +264,7 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
     </table>`}
     <h4 class="fa-h">Usage <input type="date" id="fleet-model-day" value=${day} max=${utcToday(now)} onChange=${(e) => e.currentTarget.value && setDay(e.currentTarget.value)} /> <span class="muted">UTC day</span></h4>
     ${usage?.error ? html`<div class="fa-danger">${usage.error}</div>` : !usage ? html`<div class="empty">Loading…</div>` : used.length === 0 ? html`<div class="empty">No model requests on ${day}.</div>` : html`
-    <table class="fa-table" id="fleet-model-usage">
+    <table class="fa-table ui-compact" id="fleet-model-usage">
       <thead><tr><th>Gateway</th><th>Peer</th><th>Model</th><th>Requests</th><th>Charged tokens</th><th>In · out</th><th>Cost</th></tr></thead>
       <tbody>${used.map((u) => html`<tr key=${`${u.proxy}/${u.peer}/${u.model}`}>
         <td><code>${u.proxy}</code></td><td>${label(u.peer)}</td><td>${u.model || '—'}</td>

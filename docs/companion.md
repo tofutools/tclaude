@@ -66,8 +66,11 @@ blocking it, and comes back when you reload the tab.
   marker on each free edge of a tiled window. A window snaps, fills or splits only when
   you let go over one of them, and the one under the pointer lights up with a preview.
   Let go anywhere else and it floats where it is, so a window moves freely over a
-  split. A box fills its whole cell, and an edge or corner strip over an empty half
-  takes that half's part of it. A marker splits its window on that side, so two
+  split. Boxes and markers come first: one under the pointer takes the drop even
+  where it sits on a title bar's tabs or the Collab strip. Over a split, the edge and
+  corner strips are cut where they cross its cells, and each piece acts on the cell
+  under it: over an empty cell it takes that cell's part, over a window it splits that
+  window on the strip's side. A box fills its whole cell. A marker splits its window on that side, so two
   windows, 2+1 and four are all possible, and four around one crossing drag together
   at the crossing. Bring the pointer near the centre of a line for a detach button,
   which unlocks that line: the windows stay snapped where they are, the line goes, and
@@ -93,9 +96,10 @@ blocking it, and comes back when you reload the tab.
   It is the same terminal, and it moves, snaps, splits, minimizes and closes on its
   own. Drag its tab onto another window to join them again. Open windows come back
   after a reload. The agent keeps running when its window closes.
-- **Each agent is a tab**. **＋** summons the Steward or adds another live agent, and
-  **×** on a tab sends it to the dock. The agent keeps running. **×** on its dock pill
-  removes it for good.
+- **Each agent is a tab**. **＋** summons the Steward or adds another live agent.
+  **–** on a tab sends it to the dock, and **×** on a tab detaches it to the background,
+  as the window's × does for every tab. Either way the agent keeps running. **×** on its
+  dock pill removes it for good.
 - **Scribes and Stewards** get a tab by themselves. One you remove stays removed until
   you bring it back with **＋**.
 
@@ -117,15 +121,16 @@ otherwise open a terminal.
 | 🔈 / 🔊 | Turn [voice](#voice-and-dictation) on or off for this agent |
 | ✉ | Send a queued message (Ctrl M) |
 | ⚙ | Everything else, listed below. Type to filter it |
-| – | Minimize (Ctrl .) |
-| □ | Maximize, or restore the size it had |
-| × | Send every tab in the window to the dock. They keep running. On a window holding a running Steward it asks first, then shuts the Steward down, like **Shut down…** |
+| − | Minimize to the dock (Ctrl .) |
+| ⇄ | Open it in the Collab tab. Where it cannot go there (Collab off, or a window with no Collab place), this is □: maximize, or restore the size it had |
+| × | Close the window. Its tabs leave the overlay and the dock, and keep running in the background: open them again from the Groups tab, the palette or Collab. On a window holding a running Steward the Steward asks first, then shuts down, like **Shut down…** |
 
 Under **⚙**, each shown when it applies:
 
 | Item | What it does |
 |---|---|
 | Open in the Collab tab | Move it to the Collab tab |
+| Maximize / Restore | Fill the room, or restore the size it had. A double click on the title bar does the same |
 | Open in overlay | Give it an overlay window of its own |
 | Open in separate window | Move it to a browser window of its own |
 | Morph | Move, Teleport, Clone, Recall home, or relaunch it on another harness, model or profile |
@@ -135,14 +140,21 @@ Under **⚙**, each shown when it applies:
 | Stewards | Open the Steward roster |
 | Shut down… | Shut the Steward down, after asking (Steward only) |
 
-The last three are shaped like your OS's own window buttons: traffic lights at
-the top left on macOS, flush in the top right corner on Windows, and round
-GNOME-style buttons on Linux. **Config > Appearance > Window controls** picks a
-look by hand. **Classic** keeps a plain minimize button and has no maximize or
-close.
+The last three are plain symbols on the far right, as elsewhere in the dashboard.
+**Config > Appearance > Window controls** can opt in to your OS's own window
+buttons instead: traffic lights at the top left on macOS, flush in the top right
+corner on Windows, and round GNOME-style buttons on Linux, each with minimize,
+maximize and close (the Collab move is then on **⚙**). **Match my OS** picks the one
+for the system your browser runs on. **Classic** keeps a plain minimize and close in
+the bar. In every look, a double click on the title bar's empty space maximizes or
+restores.
 
-The small × on a tab, next to the name, sends that tab to the dock and leaves it
-running, on a Steward's tab too. The Steward's pill brings it back.
+Each tab has the window's two verbs, in the same order: **–** (Minimize to dock) sends
+that tab to the dock and leaves it running, on a Steward's tab too, and the Steward's pill
+brings it back. **×** (Detach to background) is the window's × for that one tab: it
+leaves the window and the dock and keeps running. On a running Steward's tab it asks
+first, then shuts down, as the window's × does. The tab showing always has both
+buttons; the others show them under the pointer or keyboard focus.
 
 Dragging a maximized window by its title bar also restores it.
 
@@ -221,12 +233,18 @@ overlay window.
 
 ![The footer at 1000 pixels wide: the version text on the left; on the right a +3 button whose list is open above it, one minimized chat, ☰, the Steward's pill and Open PRs](assets/companion-footer-dock.png)
 
-A tab's × minimizes that tab to the dock and stops nothing, and so does `Minimize tab` on its
+A tab's – minimizes that tab to the dock and stops nothing, and so does `Minimize tab` on its
 menu, beside `Minimize other tabs` and `Minimize all tabs`. These never ask, even for a Steward,
 because nothing stops. Its pill brings it back to the
-window it left, or to a new window where that one stood. The window's close button does the
-same for each of its tabs, except that a running Steward asks first and shuts down.
+window it left, or to a new window where that one stood.
 The window's – keeps its tabs together on one pill, showing the active tab and a count.
+
+The window's close button is different: it closes the window, and its tabs leave the
+dock too, as the × on a pill takes them. A tab's × does the same for that tab alone. Nothing stops. Agents and shells keep running
+in the background, and a reload does not bring the window back. Open them again from
+wherever you opened them: the Groups tab, the palette, the Terminals or Collab tab.
+A floating process editor with unsaved edits asks first, and stays if you keep them.
+A running Steward is the exception: it asks first, then shuts down.
 
 To take something off for good, use the × on its pill: it unpins an agent, which keeps
 running, and closes a shell's or board's window. A pill for several tabs has no ×, so bring

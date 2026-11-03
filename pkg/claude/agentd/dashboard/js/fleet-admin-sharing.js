@@ -106,11 +106,11 @@ export function SharingPage({ actions, confirm, toast, now = Date.now(), peerAcc
   const receivedErrors = Object.entries(received?.errors || {});
   const givenRows = given?.shares || [];
   return html`<div class="fa-sharing">
-    ${globalThis.__tclaudeRemoteNode?.id ? '' : html`<p class="fa-sharing-fleet modal-hint">Budgets across nodes — fleet and node-pool spend caps, and what each node shares with you — live in <${Button} size="sm" variant="link" class="fa-link" id="fa-open-fleet-usage" onClick=${() => openUsageRulesManager({ tab: 'fleet' })}>Fleet usage limits…<//></p>`}
+    ${globalThis.__tclaudeRemoteNode?.id ? '' : html`<p class="fa-sharing-fleet modal-hint ui-hint">Budgets across nodes — fleet and node-pool spend caps, and what each node shares with you — live in <${Button} size="sm" variant="link" class="fa-link" id="fa-open-fleet-usage" onClick=${() => openUsageRulesManager({ tab: 'fleet' })}>Fleet usage limits…<//></p>`}
     <h4 class="fa-h">Shared with you <span class="muted">— peers paying for your agents' model calls</span> <${Button} size="sm" variant="link" class="fa-link" onClick=${reload}>refresh<//></h4>
     ${received?.error ? html`<div class="fa-danger">${received.error}</div>` : !received ? html`<div class="empty">Asking peers…</div>`
       : receivedRows.length === 0 ? html`<div class="empty">${received.offline ? 'Federation is off.' : 'No peer shares usage with you. Ask one from its peer view (ask for usage…).'}</div>` : html`
-    <table class="fa-table" id="fleet-shares-received">
+    <table class="fa-table ui-compact" id="fleet-shares-received">
       <thead><tr><th>Peer</th><th>Gateway</th><th>Spent</th><th>Ends</th><th></th></tr></thead>
       <tbody>${receivedRows.map((s) => html`<${ShareRow} key=${`${s.peer}/${s.gateway}`} share=${s} now=${now}>
         <${Button} size="sm" data-fa="ask-more" onClick=${() => setAsking(s)}>Ask for more…<//></${ShareRow}>`)}</tbody>
@@ -119,7 +119,7 @@ export function SharingPage({ actions, confirm, toast, now = Date.now(), peerAcc
     <h4 class="fa-h">You share <span class="muted">— peers whose agents bill your model gateways</span></h4>
     ${given?.error ? html`<div class="fa-danger">${given.error}</div>` : !given ? html`<div class="empty">Loading…</div>`
       : givenRows.length === 0 ? html`<div class="empty">You share no model gateway. Grant <code>models.proxy</code> on Peer grants, with a dollar cap and a time, or approve a peer's usage request.</div>` : html`
-    <table class="fa-table" id="fleet-shares-given">
+    <table class="fa-table ui-compact" id="fleet-shares-given">
       <thead><tr><th>Peer</th><th>Gateway</th><th>Spent</th><th>Ends</th><th></th></tr></thead>
       <tbody>${givenRows.map((s) => html`<${ShareRow} key=${`${s.peer}/${s.gateway}`} share=${s} now=${now}>
         ${s.since && s.pool && html`<span class="muted" title="Change it on Peer grants, as that node group's grant">from node group ${s.pool}</span>`}

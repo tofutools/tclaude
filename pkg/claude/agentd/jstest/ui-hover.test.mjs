@@ -58,7 +58,7 @@ test('no sheet brightens a button border on hover', () => {
   ].join('\n'));
 });
 
-test('every selector closes its parentheses', () => {
+test('every selector closes its parentheses and nothing is glued to one', () => {
   // A mechanical selector edit that drops a ")" makes the browser discard the
   // rule (and can swallow the next one), which a text scan would miss.
   const balanced = (selector) => {
@@ -69,6 +69,8 @@ test('every selector closes its parentheses', () => {
     }
     return depth === 0;
   };
-  const bad = rules().filter((r) => !balanced(r.selector));
+  // A fence pasted inside a class name (`.foo-button:where(…)s`) leaves a
+  // word glued to the closing paren and the selector silently stops matching.
+  const bad = rules().filter((r) => !balanced(r.selector) || /\)[\w-]/.test(r.selector));
   assert.deepEqual(bad.map((r) => `${r.sheet}: ${r.selector.slice(0, 120)}`), []);
 });

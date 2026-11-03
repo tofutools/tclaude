@@ -476,8 +476,8 @@ test('Config saves live wizard and slop activity-bot selections over their loade
   selectLiveOption('#cfg-dashboard-activity-bots-slop', 'sprites', 'emoji');
 
   const windowControls = mounted.container.querySelector('#cfg-dashboard-window-controls');
-  assert.deepEqual([...windowControls.querySelectorAll('option')].map((option) => option.textContent), ['Automatic', 'macOS', 'Windows', 'Linux', 'Classic']);
-  assert.equal(adapter.assembleConfig().dashboard.window_controls, undefined, 'Automatic is the default and stays unset');
+  assert.deepEqual([...windowControls.querySelectorAll('option')].map((option) => option.textContent), ['Standard', 'Match my OS (opt-in)', 'macOS (opt-in)', 'Windows (opt-in)', 'Linux (opt-in)', 'Classic']);
+  assert.equal(adapter.assembleConfig().dashboard.window_controls, undefined, 'Standard is the default and stays unset');
   selectLiveOption('#cfg-dashboard-window-controls', 'auto', 'classic');
   const snapAssist = mounted.container.querySelector('#cfg-dashboard-snap-assist');
   assert.equal(adapter.assembleConfig().dashboard.no_snap_assist, undefined, 'Snap Assist is on by default and stays unset');
@@ -884,23 +884,17 @@ test('Config search filters individual settings across panels', async (t) => {
   await mounted.unmount();
 });
 
-test('Config moves the static remote-access certificate panel into Daemon & network and back', async (t) => {
+test('Config renders the remote-access certificate panel in Daemon & network', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }] = await Promise.all([
     harness.importDashboardModule('js/config-state.js'), harness.importDashboardModule('js/config-island.js'),
   ]);
-  const tab = harness.document.body.appendChild(harness.document.createElement('section'));
-  tab.id = 'tab-config';
-  const host = tab.appendChild(harness.document.createElement('div'));
-  const admin = tab.appendChild(harness.document.createElement('div'));
-  admin.id = 'cfg-remote-admin';
-  admin.className = 'cfg-section';
   const state = createConfigState({ activeTab: harness.signals.signal('groups') });
-  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`, host);
-  assert.equal(admin.parentElement.id, 'cfg-remote-admin-slot');
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`);
+  const admin = mounted.container.querySelector('#cfg-remote-admin');
+  assert.ok(admin, 'the panel renders inside the Config form');
   assert.equal(admin.closest('[data-cfg-panel]').getAttribute('data-cfg-panel'), 'daemon');
   await mounted.unmount();
-  assert.equal(admin.parentElement, tab);
 });
 
 test('Config auto-close terminal tabs matrix shows defaults and persists only overrides', async (t) => {

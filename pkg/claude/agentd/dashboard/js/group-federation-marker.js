@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { relTime } from './helpers.js';
 import { useDismissablePopover } from './hover-popover.js';
 
@@ -61,12 +62,12 @@ export function GroupFederationMarker({ group, openNode = openNodeView }) {
   // the popover never toggles the group open or closed.
   const swallow = (event) => { event.preventDefault(); event.stopPropagation(); };
   return html`<span ref=${rootRef} class="group-federation-marker" onClick=${swallow}>
-    <button type="button" class=${`group-federation-chip${view.live ? ' live' : ''}`}
+    <button data-ui-exempt type="button" class=${`group-federation-chip${view.live ? ' live' : ''}`}
       aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'} title=${view.title}
       onClick=${(event) => { swallow(event); setOpen(!open); }}
       onKeyDown=${(event) => { if (event.key === ' ') event.stopPropagation(); }}
     >🌐<span class="gfm-dot" aria-hidden="true"></span></button>
-    ${open ? html`<div class="group-federation-pop" role="dialog" aria-label=${`Federation links of ${group.name}`}>
+    ${open ? html`<div class="group-federation-pop ui-popover" role="dialog" aria-label=${`Federation links of ${group.name}`}>
       <div class="gfm-head">Federation links · ${group.name}</div>
       ${group.federation_links.map((link, i) => {
         const v = linkView(link);
@@ -77,8 +78,8 @@ export function GroupFederationMarker({ group, openNode = openNodeView }) {
             <span class="gfm-how">${v.how} · ${v.state}</span>
             <span class="gfm-can">${v.can}</span>
           </span>
-          <button type="button" class="gfm-open" title=${`Open ${v.name}'s dashboard`}
-            onClick=${(event) => { swallow(event); setOpen(false); openNode(link.peer); }}>open node</button>
+          <${Button} size="sm" class="gfm-open" title=${`Open ${v.name}'s dashboard`}
+            onClick=${(event) => { swallow(event); setOpen(false); openNode(link.peer); }}>open node<//>
         </div>`;
       })}
       <div class="gfm-foot">Manage grants and routes in Fleet administration or <code>tclaude federation</code>.</div>

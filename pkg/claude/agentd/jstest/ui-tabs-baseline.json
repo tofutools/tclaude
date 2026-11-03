@@ -1,0 +1,13 @@
+{
+  "markup": {
+    "js/doctor-island.js": 1,
+    "js/overlay-tab-strip.js": 1,
+    "js/shell-island.js": 1,
+    "js/terminal-shell-island.js": 1
+  },
+  "skins": {
+    "dashboard.css": [
+      ".usage-subtab-meta"
+    ]
+  }
+}

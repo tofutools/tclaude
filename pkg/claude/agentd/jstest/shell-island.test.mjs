@@ -299,7 +299,7 @@ test('footer open PRs stays mounted at zero and lists recently closed PRs', asyn
 
   await harness.act(() => trigger.click());
   assert.equal(mounted.container.querySelectorAll('.open-pr-row').length, 0);
-  assert.match(mounted.container.querySelector('.open-prs-empty').textContent, /No open pull requests\./);
+  assert.match(mounted.container.querySelector('.ui-empty-block').textContent, /No open pull requests\./);
 
   await harness.act(() => getByRole(mounted.container, 'button', { name: /Closed 3d 1/ }).click());
   assert.deepEqual([...mounted.container.querySelectorAll('.open-pr-title')].map((node) => node.textContent), ['Landed']);
@@ -803,7 +803,7 @@ test('footer open PRs tracks colleagues in their own tabs', async (t) => {
     "a colleague's ignore stays out of your Ignored list");
 
   await harness.act(() => getByRole(c, 'tab', { name: /bob/ }).click());
-  assert.match(c.querySelector('.open-prs-empty').textContent, /Searching GitHub for bob’s pull requests/);
+  assert.match(c.querySelector('.ui-empty-block').textContent, /Searching GitHub for bob’s pull requests/);
 
   await harness.act(() => getByRole(c, 'button', { name: /Add person/ }).click());
   const field = c.querySelector('input[aria-label="GitHub username"]');
@@ -942,7 +942,7 @@ test('footer open MRs shows mine and all, and a tab per project for everyone\'s'
   assert.equal(mounted.container.querySelector('.open-mrs-all-count').textContent, '2');
 
   await harness.act(() => trigger.click());
-  assert.match(mounted.container.querySelector('.open-prs-empty').textContent, /No open merge requests/);
+  assert.match(mounted.container.querySelector('.ui-empty-block').textContent, /No open merge requests/);
   assert.equal(mounted.container.querySelector('.open-prs-stale'), null,
     'a failed project-wide read is not an instance failure on Mine');
   const tab = getByRole(mounted.container, 'tab', { name: /player 2/ });

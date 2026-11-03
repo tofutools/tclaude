@@ -1,11 +1,9 @@
 import { Fragment, h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { Button, Select } from './ui-components.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { agentCandidates, groupMembers, groupsForPicker } from './message-access-dialog-model.js';
 import { idTooltip, shortAgentId } from './helpers.js';
 import { wizWord } from './slop.js';
@@ -56,25 +54,25 @@ function CronTargetPicker({ value, onChange, snapshot, onPick, groupOnly = false
       <input id="cron-create-target" type="text" value=${value.target}
         placeholder="agt_ id / title / conv-id / 8+-char prefix" autocomplete="off" spellcheck=${false}
         onInput=${(event) => onChange({ ...value, target: event.currentTarget.value })} />
-      <button type="button" id="cron-create-target-pick" title="Pick from the agent / hero list" onClick=${onPick}>🔍</button>
+      <${Button} id="cron-create-target-pick" title="Pick from the agent / hero list" onClick=${onPick}>🔍<//>
     </div>`}
     ${value.mode === 'solo' && scope && html`<div class="cron-target-input-row" id="cron-create-target-scoped">
-      <select id="cron-create-scoped-member" value=${value.target}
+      <${Select} id="cron-create-scoped-member" value=${value.target}
         onChange=${(event) => onChange({ ...value, target: event.currentTarget.value })}>
         ${memberOptions.length
           ? html`<${Fragment}><option value="">${wizWord('(pick a member)', '(pick a hero)')}</option>${memberOptions.map((member) => html`
               <option key=${member.key} value=${member.key}>${member.title || member.conv_id}${member.online ? '' : ' (offline)'}</option>`)}</${Fragment}>`
           : html`<option value="">${wizWord('(no members in this group)', '(no heroes in this party)')}</option>`}
-      </select>
+      <//>
     </div>`}
     ${value.mode === 'group' && html`<div class="cron-target-input-row" id="cron-create-target-group">
-      <select id="cron-create-group" value=${value.groupName} disabled=${!!scope}
+      <${Select} id="cron-create-group" value=${value.groupName} disabled=${!!scope}
         onChange=${(event) => onChange({ ...value, groupName: event.currentTarget.value })}>
         ${groupOptions.length
           ? html`<${Fragment}><option value="">${wizWord('(pick a group)', '(pick a party)')}</option>${groupOptions.map((name) => html`
               <option key=${name} value=${name}>${name}${groups.includes(name) ? '' : ' (missing)'}</option>`)}</${Fragment}>`
           : html`<option value="">${wizWord('(no groups — create one first)', '(no parties — form one first)')}</option>`}
-      </select>
+      <//>
     </div>`}
   </div>`;
 }
@@ -101,10 +99,8 @@ function AgentPicker({ descriptor, snapshot, onChoose, onClose, confirmDiscard }
       event.preventDefault(); choose(candidates[bounded]);
     }
   };
-  return html`<${Overlay} id="cron-pick-target-modal" dialogClass="add-member-modal"
-    labelledby="cron-pick-target-title" onClose=${onClose} dirty=${false} blocked=${false}
-    confirmDiscard=${confirmDiscard}>
-    <h3 id="cron-pick-target-title">${descriptor.title} <span class="muted"><${Words} plain="— pick agent" wizard="— pick hero"/></span></h3>
+  return html`<${Dialog} id="cron-pick-target-modal" dialogClass="add-member-modal" onClose=${onClose} dirty=${false} blocked=${false}
+    confirmDiscard=${confirmDiscard} title=${html`${descriptor.title} <span class="muted"><${Words} plain="— pick agent" wizard="— pick hero"/></span>`}>
     <input id="cron-pick-target-search" class="add-member-search" type="text" value=${query}
       placeholder="Filter by title / role / descr / conv-id / group…" autocomplete="off" spellcheck=${false}
       role="combobox" aria-label="Filter agents" aria-controls="cron-pick-target-list" aria-expanded="true"
@@ -112,7 +108,7 @@ function AgentPicker({ descriptor, snapshot, onChoose, onClose, confirmDiscard }
       onInput=${(event) => { setQuery(event.currentTarget.value); setHighlight(0); }} onKeyDown=${onKeyDown} />
     <div class="add-member-list" id="cron-pick-target-list" role="listbox">
       ${candidates.length === 0
-        ? html`<div class="add-member-empty">No matching conversations. ${includeOffline ? '(Try a different filter.)' : '(Try ticking “Include offline / archived” for a wider pool.)'}</div>`
+        ? html`<div class="ui-empty-block">No matching conversations. ${includeOffline ? '(Try a different filter.)' : '(Try ticking “Include offline / archived” for a wider pool.)'}</div>`
         : candidates.map((agent, index) => html`<div key=${agent.agent_id || agent.conv_id}
           ref=${index === bounded ? highlightedRef : null} id=${`cron-pick-target-option-${index}`}
           role="option" aria-selected=${index === bounded ? 'true' : 'false'}
@@ -128,15 +124,15 @@ function AgentPicker({ descriptor, snapshot, onChoose, onClose, confirmDiscard }
       <input id="cron-pick-target-all" type="checkbox" checked=${includeOffline}
         onChange=${(event) => { setIncludeOffline(event.currentTarget.checked); setHighlight(0); }} />Include offline / archived
       </label><span class="spacer"></span><span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> pick · <kbd>Esc</kbd> close</span></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function CronExplanation({ result, loading, onRetry }) {
   if (loading) return html`<div class="muted">Explaining…</div>`;
   if (!result) return null;
-  if (result.error) return html`<span class="cron-explain-error">explain failed: ${result.error}
-    <button type="button" onClick=${onRetry}>retry</button></span>`;
-  if (!result.valid) return html`<span class="cron-explain-error">${result.message || 'invalid expression'}</span>`;
+  if (result.error) return html`<span class="cron-explain-error ui-error">explain failed: ${result.error}
+    <${Button} size="sm" onClick=${onRetry}>retry<//></span>`;
+  if (!result.valid) return html`<span class="cron-explain-error ui-error">${result.message || 'invalid expression'}</span>`;
   const fires = (result.next || []).map((value) => new Date(value).toLocaleString()).join(' · ');
   return html`<${Fragment}>
     ${result.description && html`<div class="cron-explain-desc">${result.description}</div>`}
@@ -258,13 +254,11 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
       ? `copy of #${descriptor.sourceID} · ${descriptor.job?.name || '(unnamed)'}` : '';
 
   return html`<${Fragment}>
-    <${Overlay} id="cron-create-modal"
-      overlayClass=${editing ? 'cron-editing' : descriptor.kind === 'duplicate' ? 'cron-duplicating' : ''}
-      labelledby="cron-create-title" onClose=${actions.closeCronDialog}
+    <${Dialog} id="cron-create-modal"
+      overlayClass=${editing ? 'cron-editing' : descriptor.kind === 'duplicate' ? 'cron-duplicating' : ''} onClose=${actions.closeCronDialog}
       onSubmitHotkey=${busy ? null : () => submit(false)} dirty=${dirty} blocked=${busy}
-      confirmDiscard=${confirmDiscard} registerClose=${registerClose}
-      resizeKey="tclaude.dash.modalSize.cron-create">
-      <h3 id="cron-create-title">${title}</h3>
+      confirmDiscard=${confirmDiscard} guard=${{ requestClose, registerClose }}
+      resizeKey="tclaude.dash.modalSize.cron-create" title=${title}>
       ${meta && html`<div class="modal-meta" id="cron-create-meta">${meta}</div>`}
       <label class="cron-create-row"><span class="cron-create-label">Name</span>
         <input ref=${nameRef} id="cron-create-name" type="text" value=${draft.name}
@@ -275,8 +269,8 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
         <input id="cron-create-owner" type="text" value=${draft.owner}
           placeholder="blank = you (the operator) · or a sender: title / conv-id / 8+-char prefix" autocomplete="off" spellcheck=${false}
           onInput=${(event) => update({ owner: event.currentTarget.value })} />
-        <button type="button" id="cron-create-owner-pick" title="Pick from the agent / hero list"
-          onClick=${() => setPicker({ field: 'owner', title: 'Pick owner' })}>🔍</button>
+        <${Button} id="cron-create-owner-pick" title="Pick from the agent / hero list"
+          onClick=${() => setPicker({ field: 'owner', title: 'Pick owner' })}>🔍<//>
       </div></div></label>
       <label class="cron-create-row"><span class="cron-create-label">Target</span>
         <${CronTargetPicker} value=${draft.target} snapshot=${snapshot}
@@ -284,11 +278,11 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
           onChange=${(target) => update({ target })}
           onPick=${() => setPicker({ field: 'target', title: 'Pick target' })}/></label>
       <label class="cron-create-row"><span class="cron-create-label">Action</span>
-        <select id="cron-create-action-kind" value=${draft.actionKind}
+        <${Select} id="cron-create-action-kind" value=${draft.actionKind}
           onChange=${(event) => setActionKind(event.currentTarget.value)}>
           <option value="message">message</option>
           ${triggersEnabled && html`<option value="spawn">spawn agent</option>`}
-        </select>
+        <//>
       </label>
       ${draft.target.mode === 'group' && draft.actionKind === 'message' && html`<label class="cron-create-row" id="cron-create-role-row"><span class="cron-create-label"
         title="For a group / party target only: deliver only to members / heroes whose role / class matches. Blank or 'all' means the whole target.">
@@ -305,7 +299,7 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
         </div>
         ${draft.scheduleMode === 'interval' ? html`<div class="cron-schedule-interval" id="cron-create-schedule-interval">
           <div class="cron-schedule-chips" id="cron-create-chips">${INTERVAL_PRESETS.map((value) => html`
-            <button type="button" data-chip=${value} class=${draft.interval.trim() === value ? 'selected' : ''}
+            <button data-ui-exempt type="button" data-chip=${value} class=${draft.interval.trim() === value ? 'selected' : ''}
               onClick=${() => update({ interval: value })}>${value === '24h' ? 'daily' : value}</button>`)}</div>
           <input id="cron-create-interval" type="text" value=${draft.interval}
             placeholder="custom (30s min, e.g. 10m, 2h, 1h30m)" autocomplete="off" spellcheck=${false}
@@ -344,12 +338,12 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
             workerDeadlineSeconds: spawn.workerDeadlineSeconds,
           } })} />
         <div class="trigger-action-fields cron-spawn-concurrency">
-          <label>Concurrency policy<select id="cron-create-spawn-concurrency" value=${draft.spawn.concurrencyPolicy}
+          <label>Concurrency policy<${Select} id="cron-create-spawn-concurrency" value=${draft.spawn.concurrencyPolicy}
             onChange=${(event) => update({ spawn: { ...draft.spawn, concurrencyPolicy: event.currentTarget.value } })}>
             <option value="Forbid">Forbid — skip while a worker is live</option>
             <option value="Replace">Replace — stop the live worker first</option>
             <option value="Allow">Allow — run workers concurrently</option>
-          </select></label>
+          <//></label>
           ${draft.spawn.concurrencyPolicy === 'Allow' && html`<label>Max live workers<input
             id="cron-create-spawn-max-live" type="number" min="1" value=${draft.spawn.maxLiveWorkers}
             onInput=${(event) => update({ spawn: { ...draft.spawn, maxLiveWorkers: Number(event.currentTarget.value) } })} /></label>`}
@@ -372,7 +366,7 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
           title="Save and reset the form so you can create another in the same sitting" onClick=${() => submit(true)}>Save & create another</${Button}>`}
         <${Button} variant="primary" id="cron-create-submit" disabled=${busy} onClick=${() => submit(false)}>
           ${busy ? (editing ? 'Saving…' : 'Creating…') : (editing ? 'Save' : 'Create')}</${Button}></div>
-    </${Overlay}>
+    </${Dialog}>
     ${picker && html`<${AgentPicker} descriptor=${picker} snapshot=${snapshot} onChoose=${choose}
       onClose=${() => setPicker(null)} confirmDiscard=${confirmDiscard}/>`}
   </${Fragment}>`;

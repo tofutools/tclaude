@@ -9,6 +9,7 @@ import {
 import { pickToolbarNode, toolbarNode, toolbarNodes, toolbarRefusal, toolbarTarget } from './toolbar-node.js';
 import { featureState } from './peer-view-limits.js';
 import { FleetUsageChip, NodeUsageRulesButton, UsageProfileChip, RemoteUsageRulesButton } from './usage-profile-chip.js';
+import { Select } from './ui-components.js';
 
 const html = htm.bind(h);
 const NEW_PROFILE = '/new-profile';
@@ -85,7 +86,7 @@ function ToolbarNodeChip() {
   return html`<span class=${`toolbar-node${flash ? ' flash' : ''}`} style=${`--nc:${node.color || 'currentColor'}`}
     title="The node whose global defaults and + new group this toolbar shows and sets. It follows the group you last clicked; pick another here.">
     <i aria-hidden="true"></i>
-    <select class="toolbar-node-select" aria-label="Node the toolbar's global defaults act on" value=${node.id}
+    <select data-ui-exempt class="toolbar-node-select" aria-label="Node the toolbar's global defaults act on" value=${node.id}
       onChange=${(event) => pickToolbarNode(event.currentTarget.value)}>
       ${nodes.map((n) => html`<option key=${n.id} value=${n.id}>${n.local ? '⌂ ' : ''}${n.name}</option>`)}
     </select>
@@ -144,7 +145,7 @@ function ToolbarProfileControl({ kind, state, actions }) {
     // Another node's control runs here, gated by that node's grants: a
     // refused one keeps no data-act (nothing opens) and says why.
     const shown = hidden ? '?' : current;
-    return html`<button ref=${triggerRef} type="button" id=${copy.id}
+    return html`<button ref=${triggerRef} type="button" id=${copy.id} data-ui-exempt
       class=${`${copy.className}${shown ? '' : ' unset'}${refusal ? ' toolbar-node-refused' : ''}`}
       data-act=${refusal ? undefined : copy.act} data-node=${target || undefined}
       aria-disabled=${refusal ? 'true' : undefined}
@@ -160,7 +161,7 @@ function ToolbarProfileControl({ kind, state, actions }) {
     if (closed && restoreFocus) restoreFocusRef.current = true;
     return closed;
   };
-  return html`<${Fragment}><select ref=${selectRef} class="toolbar-profile-select" value=${current} disabled=${saving}
+  return html`<${Fragment}><${Select} size="sm" domRef=${selectRef} class="toolbar-profile-select" value=${current} disabled=${saving}
     aria-label=${copy.name}
     aria-busy=${loading ? 'true' : undefined} aria-invalid=${error ? 'true' : undefined}
     aria-describedby=${error ? errorID : undefined} title=${error || undefined}
@@ -205,7 +206,7 @@ function ToolbarProfileControl({ kind, state, actions }) {
     <option value="">${copy.none}</option>
     ${choices.map((choice) => html`<option key=${choice.value} value=${choice.value}>${choice.label}</option>`)}
     ${missing ? html`<option value=${current}>${current} (missing)</option>` : null}
-  </select>${error ? html`<span id=${errorID} class="toolbar-profile-error" role="alert" title=${error}>⚠ ${error}</span>` : null}</${Fragment}>`;
+  <//>${error ? html`<span id=${errorID} class="toolbar-profile-error ui-error" role="alert" title=${error}>⚠ ${error}</span>` : null}</${Fragment}>`;
 }
 
 // ToolbarUsageProfile is the 💰 global default usage profile. While the

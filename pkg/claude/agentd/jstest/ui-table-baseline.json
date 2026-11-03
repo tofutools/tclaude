@@ -1,0 +1,21 @@
+{
+  "dashboard.css": [
+    "#costs-table tr.cost-continued td:first-child",
+    "#fleet-key-transition .fa-table th",
+    "#fleet-profile-grants td",
+    ".cfg-shortcut-list td",
+    ".cfg-shortcut-list th",
+    ".cfg-tool-list td",
+    ".cfg-tool-list th",
+    ".cron-run-inspector-row > td",
+    ".fa-boards .fa-table tr.fa-board-detail-row > td",
+    ".fa-table tr.fa-grant-peer td",
+    ".fused-jobs-head td",
+    ".fused-usage-table tfoot th",
+    ".markdown-document td",
+    ".markdown-document th",
+    ".spawn-queue-table tr:last-child td",
+    ".trigger-inspector-row > td",
+    "thead.gf-lead-head th"
+  ]
+}

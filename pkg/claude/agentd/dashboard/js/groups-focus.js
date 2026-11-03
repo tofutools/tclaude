@@ -180,7 +180,7 @@ function BothIcon() {
 function RunKindMenu({ state, wizard, counts }) {
   const filter = state.processFilter?.value;
   return html`<div class="groups-run-menu" role="group" aria-label=${wizard ? 'Show rites' : 'Show processes'}>
-    <div class="groups-run-menu-head">${wizard ? 'Show rites' : 'Show processes'}</div>
+    <div class="ui-eyebrow groups-run-menu-head">${wizard ? 'Show rites' : 'Show processes'}</div>
     ${RUN_KINDS.map((kind) => {
       const checked = runFilterHas(filter, kind);
       return html`<label key=${kind} class=${`groups-run-kind groups-run-kind-${kind}${checked ? ' checked' : ''}`}>
@@ -205,7 +205,7 @@ export function GroupsFocusSwitch({ state, groups, wizard = false, source = proc
   const ready = source.status.value === 'ready';
   const runs = ready ? activeRunCount(source.context.value) : null;
   const focus = effectiveGroupsFocus(state);
-  const button = (value, icon, plain, arcane, count, title) => html`<button
+  const button = (value, icon, plain, arcane, count, title) => html`<button data-ui-exempt
       type="button"
       class=${`groups-focus-option${focus === value ? ' active' : ''}`}
       aria-pressed=${focus === value ? 'true' : 'false'}
@@ -213,7 +213,7 @@ export function GroupsFocusSwitch({ state, groups, wizard = false, source = proc
       data-groups-focus=${value}
       title=${title}
       onClick=${() => chooseGroupsFocus(state, value)}
-    >${icon}${count != null && html`<span class="groups-focus-count">${count}</span>`}</button>`;
+    >${icon}${count != null && html`<span class=${`groups-focus-count ui-badge ui-badge-corner${focus === value ? ' ui-badge-accent' : ''}`}>${count}</span>`}</button>`;
   const counts = ready ? runKindCounts(source.context.value) : null;
   return html`<div class="groups-focus-switch" role="group" aria-label=${wizard ? 'Party lens' : 'Groups focus'}>
     <span class="groups-focus-runs groups-focus-lead">

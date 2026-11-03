@@ -183,7 +183,7 @@ function PRDetailsBody({ details, now }) {
     </div>`}
     ${details.excerpt
       ? html`<p class="prd-excerpt">${details.excerpt}</p>`
-      : html`<p class="prd-excerpt prd-excerpt-empty">No description provided.</p>`}
+      : html`<p class="prd-excerpt ui-empty">No description provided.</p>`}
   `;
 }
 
@@ -220,8 +220,8 @@ function PRDetailsPanel({ prURL, prNumber, title, prState, state, panelID, headi
         ${STATE_LABELS[chipState] ? html`
           <div class="prd-meta"><span class=${`prd-state prd-state-${chipState}`}>${STATE_LABELS[chipState]}</span></div>
         ` : null}
-        ${error ? html`<p class="ci-panel-empty">Could not load details — ${error}</p>`
-          : pending ? html`<p class="ci-panel-empty prd-loading">Fetching details…</p>` : null}
+        ${error ? html`<p class="ci-panel-empty ui-empty">Could not load details — ${error}</p>`
+          : pending ? html`<p class="ci-panel-empty ui-empty prd-loading">Fetching details…</p>` : null}
       `}
       <p class="ci-panel-note">
         <a href=${prURL} target="_blank" rel="noopener noreferrer">${mr ? 'Overview' : 'Conversation'} ↗</a>

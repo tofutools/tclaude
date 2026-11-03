@@ -1,0 +1,37 @@
+{
+  "board.css": [
+    ".board-section-name"
+  ],
+  "companion.css": [
+    ".companion-cog-head"
+  ],
+  "dashboard.css": [
+    ".cfg-advanced > summary",
+    ".cleanup-cats-label",
+    ".dnd-trash-label",
+    ".fa-k",
+    ".fleet-card-body dt",
+    ".force-role-name",
+    ".gf-label",
+    ".group-pending-title",
+    ".loc-tag",
+    ".mailbox-section",
+    ".pdr-verdict",
+    ".process-inspector-kind",
+    ".process-scribe-state",
+    ".queued-spawns-popover-head",
+    ".role-inspect-key",
+    ".sbx-network-control-kind",
+    ".tc-disabled",
+    ".tc-operator-only",
+    ".usage-ov-heading",
+    ".window-groups .roles-label",
+    ".window-roles .roles-label"
+  ],
+  "mux.css": [
+    ".mux-bg-sec-head"
+  ],
+  "process-terminal-overlay.css": [
+    ".pk-run-popover-kicker"
+  ]
+}

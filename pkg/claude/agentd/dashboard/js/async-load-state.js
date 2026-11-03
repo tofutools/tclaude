@@ -1,5 +1,6 @@
 import { h } from 'preact';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -10,7 +11,7 @@ export function AsyncLoadState({ label, request, retry, errorClass = 'island-err
     const suffix = request.hasLoaded ? ' Showing the last successful page.' : '';
     return html`<div class=${errorClass} role="alert">
       ${label} refresh failed: ${request.error}.${suffix}
-      <button onClick=${retry}>Retry</button>
+      <${Button} size="sm" onClick=${retry}>Retry<//>
     </div>`;
   }
   if (!request?.hasLoaded) {

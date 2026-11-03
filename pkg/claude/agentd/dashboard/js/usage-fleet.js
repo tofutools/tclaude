@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import {
   ENFORCE_STATES, FLEET_PRESETS, MEMBER_STATES, barTone, blankRule, draftToRule, fleetTargetOptions, fmtAmount,
   nodeGrants, ruleSummary, ruleToDraft, worstLimit,
@@ -18,7 +18,7 @@ function money(v) { return fmtAmount('total_usd', v || 0); }
 
 function GrantChips({ node }) {
   const g = nodeGrants(node);
-  const chip = (on, label, title) => html`<span class=${`usage-grant-chip${on ? ' on' : ''}`} title=${title}>${on ? '✓' : '·'} ${label}</span>`;
+  const chip = (on, label, title) => html`<span class=${`ui-tag usage-grant-chip${on ? ' on' : ''}`} title=${title}>${on ? '✓' : '·'} ${label}</span>`;
   return html`<span class="usage-grant-chips">
     ${chip(g.read, 'usage', 'usage.read: its totals count towards your fleet limits')}
     ${chip(g.manage, 'rules', 'usage-rules.manage: you can manage its usage rules from here')}
@@ -27,7 +27,7 @@ function GrantChips({ node }) {
 }
 
 function MemberRows({ status }) {
-  return html`<table class="usage-fleet-members">
+  return html`<table class="usage-fleet-members ui-compact">
     <tbody>${(status.members || []).map((m) => html`<tr key=${m.node} class=${m.counted ? '' : 'muted'} data-fleet-member=${m.node}>
       <td>${m.label}</td>
       <td>${MEMBER_STATES[m.state] || m.state}</td>
@@ -71,32 +71,32 @@ export function FleetTab({ api, busy, reloadKey = 0, onEdit, onToggle, onManageN
   useEffect(() => () => { live.current = false; }, []);
   if (!fleet) {
     return error
-      ? html`<div class="cron-create-error" role="alert">${error} <button type="button" onClick=${() => void load()}>Retry</button></div>`
+      ? html`<div class="cron-create-error" role="alert">${error} <${Button} size="sm" onClick=${() => void load()}>Retry<//></div>`
       : html`<div class="empty">Reading the fleet…</div>`;
   }
   const statusFor = (limit) => (fleet.statuses || []).find((s) => s.fleet_id === limit.id);
   const selfTotals = fleet.self?.totals;
   return html`<div class="usage-rules-tab usage-fleet-tab">
-    <p class="modal-hint">A fleet limit sums spend across nodes: every trusted node, a node pool (a sub-fleet) or one node, and this node unless you leave it out. Nodes count once they grant you <code>usage.read</code>; a step acts on a node's agents only where it granted you <code>usage-rules.enforce</code>, and the node carries it out itself.</p>
+    <p class="modal-hint ui-hint">A fleet limit sums spend across nodes: every trusted node, a node pool (a sub-fleet) or one node, and this node unless you leave it out. Nodes count once they grant you <code>usage.read</code>; a step acts on a node's agents only where it granted you <code>usage-rules.enforce</code>, and the node carries it out itself.</p>
     <${FleetPresets} disabled=${busy} onPick=${(preset) => onEdit({ id: 0, target: 'all', include_self: true, enabled: true, rule: preset ? preset.rule : blankRule('global') }, fleet)}/>
     ${(fleet.limits || []).length ? html`<div class="usage-rule-cards">${fleet.limits.map((limit) => {
       const status = statusFor(limit);
-      return html`<div key=${limit.id} class=${`usage-rule-card${limit.enabled ? '' : ' disabled'}`} data-fleet-limit-id=${limit.id}>
+      return html`<div key=${limit.id} class=${`usage-rule-card ui-card ui-inset${limit.enabled ? '' : ' disabled'}`} data-fleet-limit-id=${limit.id}>
         <div class="usage-rule-card-head">
           <span class="usage-rule-name">${limit.rule.name}</span>
           <span class="usage-rule-scope">${limit.target_label}${limit.include_self ? ' + this node' : ''}</span>
           ${limit.rule.dry_run ? html`<span class="usage-rule-tag">dry run</span>` : null}
           <span class="spacer"></span>
           <label class="usage-rule-enabled"><input type="checkbox" checked=${limit.enabled} disabled=${busy} onChange=${() => onToggle(limit)}/> enabled</label>
-          <button type="button" class="tool" disabled=${busy} onClick=${() => onEdit(limit, fleet)}>edit</button>
+          <${Button} size="sm" disabled=${busy} onClick=${() => onEdit(limit, fleet)}>edit<//>
         </div>
         <div class="usage-rule-summary">${ruleSummary(limit.rule)}</div>
         ${limit.enabled ? html`<${FleetBar} status=${status}/>${status ? html`<${MemberRows} status=${status}/>` : null}` : null}
       </div>`;
-    })}</div>` : html`<div class="template-empty">No fleet limits yet.</div>`}
+    })}</div>` : html`<div class="ui-empty-block">No fleet limits yet.</div>`}
 
-    <h4 class="usage-fleet-h">Nodes</h4>
-    <div class="usage-fleet-nodes-wrap"><table class="usage-fleet-nodes">
+    <h4 class="ui-eyebrow">Nodes</h4>
+    <div class="usage-fleet-nodes-wrap"><table class="usage-fleet-nodes ui-compact">
       <thead><tr><th>Node</th><th class="num">Today</th><th class="num">This week</th><th class="num">This month</th><th>Its limits</th><th>Shares with you</th><th></th></tr></thead>
       <tbody>
         ${selfTotals ? html`<tr class="usage-fleet-self"><td>this node</td>
@@ -110,21 +110,21 @@ export function FleetTab({ api, busy, reloadKey = 0, onEdit, onToggle, onManageN
             ${t ? html`<td class="num">${money(t.day?.total_usd)}</td><td class="num">${money(t.week?.total_usd)}</td><td class="num">${money(t.month?.total_usd)}</td><td>${limitCell(n.summary)}</td>`
               : html`<td class="muted" colspan="4">${n.summary ? 'shares no usage with you' : 'not read'}</td>`}
             <td><${GrantChips} node=${n}/></td>
-            <td>${g.manage ? html`<button type="button" class="tool" disabled=${busy} onClick=${() => onManageNode(n)}>manage its rules…</button>` : null}</td>
+            <td>${g.manage ? html`<${Button} size="sm" disabled=${busy} onClick=${() => onManageNode(n)}>manage its rules…<//>` : null}</td>
           </tr>`;
         })}
       </tbody>
     </table></div>
-    ${(fleet.nodes || []).length ? html`<p class="modal-hint">A node shares with you what its operator grants you: <code>usage.read</code> (its totals), <code>usage-rules.manage</code> (its rules, from here), <code>usage-rules.enforce</code> (your fleet limits act on its agents). Ask from its peer view (the <b>peer view</b> pill → request…), or its operator runs <code>${'tclaude federation grant <this node> usage.read'}</code>.</p>`
-      : html`<div class="template-empty">No trusted peers. Link nodes under Fleet to build a fleet.</div>`}
+    ${(fleet.nodes || []).length ? html`<p class="modal-hint ui-hint">A node shares with you what its operator grants you: <code>usage.read</code> (its totals), <code>usage-rules.manage</code> (its rules, from here), <code>usage-rules.enforce</code> (your fleet limits act on its agents). Ask from its peer view (the <b>peer view</b> pill → request…), or its operator runs <code>${'tclaude federation grant <this node> usage.read'}</code>.</p>`
+      : html`<div class="ui-empty-block">No trusted peers. Link nodes under Fleet to build a fleet.</div>`}
 
-    ${(fleet.controls || []).length ? html`<h4 class="usage-fleet-h">Peers' fleet limits in force here</h4>
+    ${(fleet.controls || []).length ? html`<h4 class="ui-eyebrow">Peers' fleet limits in force here</h4>
       <ul class="usage-fleet-controls">${fleet.controls.map((c) => html`<li key=${c.peer + c.rule_key}>
         <b>${c.peer_label}</b>'s "${c.rule_name}" (${c.fleet}) at ${Math.round(c.pct)}%: ${[c.block ? 'blocks spawns' : '', c.stop ? 'stops agents that run' : ''].filter(Boolean).join(' and ')} in the groups its grant covers, until ${new Date(c.until).toLocaleTimeString()} unless renewed. Revoke its <code>usage-rules.enforce</code> grant to end it.</li>`)}</ul>` : null}
     <div class="usage-fleet-foot">
       ${fleet.evaluated_at ? html`<span class="muted">fleet readings from ${new Date(fleet.evaluated_at).toLocaleTimeString()}</span>` : null}
       <span class="spacer"></span>
-      <button type="button" class="tool" disabled=${loading} onClick=${() => void load(true)}>${loading ? 'Reading…' : '↻ read nodes now'}</button>
+      <${Button} size="sm" disabled=${loading} onClick=${() => void load(true)}>${loading ? 'Reading…' : '↻ read nodes now'}<//>
     </div>
   </div>`;
 }
@@ -141,9 +141,9 @@ function limitCell(summary) {
 
 function FleetPresets({ disabled, onPick }) {
   return html`<div class="usage-presets">
-    <button type="button" class="tool" disabled=${disabled} onClick=${() => onPick(null)}>＋ Blank fleet limit</button>
-    ${FLEET_PRESETS.map((preset) => html`<button key=${preset.id} type="button" class="tool" disabled=${disabled}
-      title=${ruleSummary(preset.rule)} onClick=${() => onPick(preset)}>＋ Fleet ${preset.label.toLowerCase()}</button>`)}
+    <${Button} size="sm" disabled=${disabled} onClick=${() => onPick(null)}>＋ Blank fleet limit<//>
+    ${FLEET_PRESETS.map((preset) => html`<${Button} size="sm" key=${preset.id} disabled=${disabled}
+      title=${ruleSummary(preset.rule)} onClick=${() => onPick(preset)}>＋ Fleet ${preset.label.toLowerCase()}<//>`)}
   </div>`;
 }
 
@@ -167,14 +167,14 @@ export function FleetLimitEditor({ limit, fleet, busy, RuleEditor, onSave, onDel
   return html`<div class="usage-rules-tab usage-editor" id="usage-fleet-limit-editor">
     <h4>${limit.id ? `Edit fleet limit "${limit.rule.name}"` : 'New fleet limit'}</h4>
     <div class="usage-rule-fields">
-      <label>Covers <select aria-label="Fleet limit target" value=${target} disabled=${busy}
-        onChange=${(e) => touch(setTarget)(e.currentTarget.value)}>${options.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}</select></label>
+      <label>Covers <${Select} size="sm" aria-label="Fleet limit target" value=${target} disabled=${busy}
+        onChange=${(e) => touch(setTarget)(e.currentTarget.value)}>${options.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}<//></label>
       <label title="Add this node's own spend, and let agent steps reach its agents"><input type="checkbox" checked=${includeSelf} disabled=${busy}
         aria-label="Count this node" onChange=${(e) => touch(setIncludeSelf)(e.currentTarget.checked)}/> count this node</label>
       <label><input type="checkbox" checked=${enabled} disabled=${busy} onChange=${(e) => touch(setEnabled)(e.currentTarget.checked)}/> enabled</label>
     </div>
     <${RuleEditor} draft=${draft} scope="fleet" windows=${[]} disabled=${busy} onChange=${touch(setDraft)}/>
-    <p class="modal-hint">Agent steps (notify agents, wrap up, hard stop, block spawns) reach this node's agents when it is counted, and each member's agents in the groups its <code>usage-rules.enforce</code> grant covers. Elsewhere they only alert you.</p>
+    <p class="modal-hint ui-hint">Agent steps (notify agents, wrap up, hard stop, block spawns) reach this node's agents when it is counted, and each member's agents in the groups its <code>usage-rules.enforce</code> grant covers. Elsewhere they only alert you.</p>
     <div role="alert" class="cron-create-error">${error}</div>
     <div class="modal-buttons">
       <${Button} disabled=${busy} onClick=${onCancel}>Back</${Button}>

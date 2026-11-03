@@ -55,7 +55,7 @@ test('order is preserved when a middle column is hidden', () => {
   reset();
   setMemberColHidden('state', true);
   // visibleMemberCols is MEMBER_COLS minus the hidden entry, same order — so
-  // the header (sortHead) and each row emit the same cells in the same order.
+  // the header (SortHead) and each row emit the same cells in the same order.
   assert.deepEqual(visKeys(), shownByDefault().filter(c => c.key !== 'state').map(c => c.key));
 });
 

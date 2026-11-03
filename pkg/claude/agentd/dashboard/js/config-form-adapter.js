@@ -669,7 +669,9 @@ function populateConfigForm(cfg) {
   // dashboard.show_group_description true checks it.
   $('#cfg-dashboard-show-group-description').checked = !!(cfg.dashboard && cfg.dashboard.show_group_description);
   setSelectValue($('#cfg-dashboard-overlay-backdrop'), cfg.dashboard?.overlay_backdrop || 'dim');
-  setSelectValue($('#cfg-dashboard-window-controls'), cfg.dashboard?.window_controls || 'auto');
+  // A hand-written "standard" is the default look, which the select names auto.
+  const windowControls = cfg.dashboard?.window_controls;
+  setSelectValue($('#cfg-dashboard-window-controls'), !windowControls || windowControls === 'standard' ? 'auto' : windowControls);
   // Snap Assist is on unless dashboard.no_snap_assist says otherwise.
   $('#cfg-dashboard-snap-assist').checked = !cfg.dashboard?.no_snap_assist;
 

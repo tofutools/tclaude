@@ -1,7 +1,8 @@
 import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Button, Select } from './ui-components.js';
+import { Dialog } from './ui-dialog.js';
 import { registerGitRepositoriesController } from './git-repositories-controller.js';
 import { gitRepoRequests, matchingGitRepos, readGitConcurrency, rememberGitConcurrency } from './git-repositories-actions.js';
 import { withShortcut } from './keybindings.js';
@@ -61,14 +62,14 @@ export function GitRepositoriesDialog({ current, state, actions }) {
     } catch (err) { setError(err.message); }
     finally { running.current = false; setBusy(false); setDone(true); }
   };
-  return html`<${Overlay} id="git-repositories-modal" dialogClass="cron-create-modal git-repositories-modal"
+  return html`<${Dialog} id="git-repositories-modal" dialogClass="cron-create-modal git-repositories-modal"
     labelledby="git-repositories-title" onClose=${state.close} blocked=${busy}
     onSubmitHotkey=${done ? state.close : submit} onSubmitEnter=${done ? state.close : null} initialFocusRef=${filterRef}>
     <div class="git-repos-heading">
       <h3 id="git-repositories-title"><${Words} plain=${`${verb} repositories`} wizard=${sync ? '✧ Harmonize repositories' : '↓ Summon latest code'} /></h3>
       <p role="status"><${Words} plain=${loading ? 'Discovering repositories…' : `${repos.length} repositories discovered in group homes and two levels of subdirectories.`}
         wizard=${loading ? 'Seeking repositories…' : `${repos.length} repositories discovered in party homes and two levels of subdirectories.`} /></p>
-      <p class="git-repos-hint"><${Words} plain="Scope: " />${current.group || html`<${Words} plain="All groups" wizard="All parties" />`} · <${Words} plain="Canonical absolute paths; shared directories appear once." /></p>
+      <p class="git-repos-hint ui-hint"><${Words} plain="Scope: " />${current.group || html`<${Words} plain="All groups" wizard="All parties" />`} · <${Words} plain="Canonical absolute paths; shared directories appear once." /></p>
     </div>
     <div class="git-repos-options">
       <label><input type="checkbox" checked=${switchDefault} disabled=${locked} onChange=${(e) => setSwitchDefault(e.currentTarget.checked)} />
@@ -77,19 +78,19 @@ export function GitRepositoriesDialog({ current, state, actions }) {
         <span><${Words} plain="Discard uncommitted changes" /><small class="git-repos-warning"><${Words} plain="Deletes tracked edits and untracked files in selected repositories. Ignored files are kept." /></small></span></label>
       <label class="git-repos-concurrency">
         <span><${Words} plain="Parallel updates" wizard="Parallel invocations" /><small><${Words} plain="Repositories to update at once. Remembered for this dashboard." /></small></span>
-        <select aria-label="Parallel repository updates" value=${concurrency} disabled=${locked}
+        <${Select} aria-label="Parallel repository updates" value=${concurrency} disabled=${locked}
           onChange=${(e) => { const value = Number(e.currentTarget.value); setConcurrency(value); rememberGitConcurrency(value); }}>
           ${Array.from({ length: 100 }, (_, i) => html`<option key=${i + 1} value=${i + 1}>${i + 1}</option>`)}
-        </select>
+        <//>
       </label>
     </div>
-    <p class="git-repos-hint"><${Words} plain=${sync ? 'Fetch remote updates, prune stale remote references, then pull. Does not push.' : 'Fetch and pull the latest code. Does not push.'} /></p>
+    <p class="git-repos-hint ui-hint"><${Words} plain=${sync ? 'Fetch remote updates, prune stale remote references, then pull. Does not push.' : 'Fetch and pull the latest code. Does not push.'} /></p>
     <div class="git-repos-toolbar">
       <input ref=${filterRef} type="search" aria-label="Filter repositories or groups" placeholder="Filter repositories / groups…"
         value=${query} onInput=${(e) => setQuery(e.currentTarget.value)} />
-      <button type="button" disabled=${locked || !selectable.length} onClick=${() => {
+      <${Button} size="sm" disabled=${locked || !selectable.length} onClick=${() => {
         setSelected((before) => { const next = new Set(before); selectable.forEach((r) => allShown ? next.delete(r.path) : next.add(r.path)); return next; });
-      }}><${Words} plain=${`${allShown ? 'Deselect' : 'Select'} ${query.trim() ? 'shown' : 'all'}`} /></button>
+      }}><${Words} plain=${`${allShown ? 'Deselect' : 'Select'} ${query.trim() ? 'shown' : 'all'}`} /><//>
     </div>
     <div class="git-repos-list" tabIndex="0" aria-label="Repositories" aria-busy=${loading}>
       ${visible.map((repo) => {
@@ -107,21 +108,21 @@ export function GitRepositoriesDialog({ current, state, actions }) {
           ${repo.error || outcome?.detail ? html`<div class="git-repo-detail" role=${outcome?.status === 'failed' ? 'alert' : undefined}>${outcome?.detail || repo.error}</div>` : null}
         </div>`;
       })}
-      ${!loading && !visible.length ? html`<p class="git-repos-empty">${repos.length ? 'No matching repositories.' : 'No repositories found in this scope.'}</p>` : null}
+      ${!loading && !visible.length ? html`<p class="ui-empty-block">${repos.length ? 'No matching repositories.' : 'No repositories found in this scope.'}</p>` : null}
     </div>
     ${issues.length ? html`<details class="git-repos-issues"><summary><${Words} plain=${`${issues.length} group discovery notes`} wizard=${`${issues.length} party discovery notes`} /></summary>
       <ul>${issues.map((issue) => html`<li key=${issue.group}>${issue.group}: ${issue.detail}</li>`)}</ul></details>` : null}
-    <p class="git-repos-hint"><${Words} plain="Fast-forward only. Dirty checkouts are skipped unless discard is selected; diverged or blocked branches are reported individually." /></p>
-    ${error ? html`<p class="git-repos-error" role="alert">${error}</p>` : null}
+    <p class="git-repos-hint ui-hint"><${Words} plain="Fast-forward only. Dirty checkouts are skipped unless discard is selected; diverged or blocked branches are reported individually." /></p>
+    ${error ? html`<p class="git-repos-error ui-error" role="alert">${error}</p>` : null}
     <div class="git-repos-footer">
       <span role="status" aria-live="polite">${busy || done ? `${completed.length} / ${selected.size} completed · ${completed.filter((o) => o.status === 'updated').length} updated · ${completed.filter((o) => o.status === 'skipped').length} skipped · ${completed.filter((o) => o.status === 'failed').length} failed` : `${selected.size} of ${repos.length} selected`}</span>
-      <div>${!done ? html`<button type="button" disabled=${loading || busy} onClick=${() => setGeneration((n) => n + 1)}><${Words} plain="Rescan" wizard="Seek again" /></button>` : null}
-        <button type="button" disabled=${busy} onClick=${state.close}><${Words} plain=${done ? 'Done' : 'Cancel'} /></button>
-        ${!done ? html`<button type="button" class=${`primary${discard ? ' danger' : ''}`} disabled=${locked || !selected.size} onClick=${submit} aria-keyshortcuts="Control+Enter Meta+Enter" title=${withShortcut('Submit selected repositories', 'dialog-submit')}>
+      <div>${!done ? html`<${Button} size="sm" disabled=${loading || busy} onClick=${() => setGeneration((n) => n + 1)}><${Words} plain="Rescan" wizard="Seek again" /><//>` : null}
+        <${Button} size="sm" disabled=${busy} onClick=${state.close}><${Words} plain=${done ? 'Done' : 'Cancel'} /><//>
+        ${!done ? html`<${Button} size="sm" variant=${discard ? 'danger' : 'primary'} class="git-repos-submit" disabled=${locked || !selected.size} onClick=${submit} aria-keyshortcuts="Control+Enter Meta+Enter" title=${withShortcut('Submit selected repositories', 'dialog-submit')}>
           <${Words} plain=${busy ? `${verb === 'Sync' ? 'Syncing' : 'Pulling'}…` : `${verb} ${selected.size} ${selected.size === 1 ? 'repository' : 'repositories'}`}
-            wizard=${busy ? 'Channeling…' : `${wizardVerb} ${selected.size} ${selected.size === 1 ? 'repository' : 'repositories'}`} /></button>` : null}</div>
+            wizard=${busy ? 'Channeling…' : `${wizardVerb} ${selected.size} ${selected.size === 1 ? 'repository' : 'repositories'}`} /><//>` : null}</div>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function GitRepositoriesApp({ state, actions }) {

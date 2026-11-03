@@ -62,12 +62,12 @@ export function TerminalZoom({ font, widget }) {
   }, []);
   return html`<span ref=${group} class="term-zoom" role="group" aria-label="Terminal zoom"
     title="Pinch or Ctrl+scroll over the terminal to zoom it">
-    <button type="button" class="companion-tool" aria-label="Zoom terminal out" title="Zoom out" disabled=${font.size <= TERMINAL_FONT_MIN}
+    <button data-ui-exempt type="button" class="companion-tool" aria-label="Zoom terminal out" title="Zoom out" disabled=${font.size <= TERMINAL_FONT_MIN}
       onMouseDown=${keepFocus} onClick=${() => widget()?.zoomBy?.(-TERMINAL_FONT_STEP)}>−</button>
     <span class="term-zoom-size" role="status" aria-label=${label}>${font.size}</span>
-    <button type="button" class="companion-tool" aria-label="Zoom terminal in" title="Zoom in" disabled=${font.size >= TERMINAL_FONT_MAX}
+    <button data-ui-exempt type="button" class="companion-tool" aria-label="Zoom terminal in" title="Zoom in" disabled=${font.size >= TERMINAL_FONT_MAX}
       onMouseDown=${keepFocus} onClick=${() => widget()?.zoomBy?.(TERMINAL_FONT_STEP)}>+</button>
-    <button type="button" class="companion-tool" aria-label="Reset terminal zoom" title="Back to the terminal's own size" disabled=${!font.zoomed}
+    <button data-ui-exempt type="button" class="companion-tool" aria-label="Reset terminal zoom" title="Back to the terminal's own size" disabled=${!font.zoomed}
       onMouseDown=${keepFocus} onClick=${() => widget()?.resetZoom?.()}>⟲</button>
   </span>`;
 }

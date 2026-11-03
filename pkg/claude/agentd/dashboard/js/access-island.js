@@ -3,7 +3,8 @@ import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { ACCESS_SUBTABS, SUDO_COLUMNS, fmtRemaining } from './access-model.js';
 import { idTooltip, relTime, shortAgentId } from './helpers.js';
-import { Button, Input } from './ui-components.js';
+import { Button, Input, SortTh } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
 
 const html = htm.bind(h);
 
@@ -74,8 +75,8 @@ function SlugsView({ state, current }) {
         <td><span class="slug">${slug.slug}</span></td>
         <td>${slug.owner_implied || slug.member_implied
           ? html`<${Fragment}>
-              ${slug.owner_implied ? html`<span class="owner-badge" title=${ownerGrantTitle(slug.scope_dims)}>👑 ${ownerGrantLabel(slug.scope_dims)}</span>` : ''}
-              ${slug.member_implied ? html` <span class="owner-badge" title="Conferred by membership — only for the group the agent belongs to">👥 group</span>` : ''}
+              ${slug.owner_implied ? html`<span class="ui-tag ui-tag-own owner-badge" title=${ownerGrantTitle(slug.scope_dims)}>👑 ${ownerGrantLabel(slug.scope_dims)}</span>` : ''}
+              ${slug.member_implied ? html` <span class="ui-tag ui-tag-own owner-badge" title="Conferred by membership — only for the group the agent belongs to">👥 group</span>` : ''}
             </${Fragment}>`
           : html`<span class="muted">—</span>`}</td>
         <td>${slug.description || ''}</td>
@@ -85,20 +86,11 @@ function SlugsView({ state, current }) {
 }
 
 function SudoHeader({ state, current }) {
-  const activate = (event, key) => {
-    if (!key) return;
-    if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') return;
-    event.preventDefault();
-    state.cycleSudoSort(key);
-  };
   return html`<thead><tr>${SUDO_COLUMNS.map((column) => {
-    const active = column.key && current.sudoSort?.key === column.key;
-    return html`<th class=${column.key ? `sortable${active ? ' sort-active' : ''}` : undefined}
-      tabIndex=${column.key ? '0' : undefined} aria-sort=${active ? (current.sudoSort.dir === 'asc' ? 'ascending' : 'descending') : column.key ? 'none' : undefined}
-      title=${column.key ? `Sort by ${column.label}` : undefined}
-      onClick=${(event) => activate(event, column.key)} onKeyDown=${(event) => activate(event, column.key)}>
-      ${column.label}${column.key && html`<span class="sort-arrow">${active ? (current.sudoSort.dir === 'asc' ? '▲' : '▼') : '▾'}</span>`}
-    </th>`;
+    if (!column.key) return html`<th>${column.label}</th>`;
+    const active = current.sudoSort?.key === column.key;
+    return html`<${SortTh} active=${active} dir=${current.sudoSort?.dir} sortLabel=${column.label}
+      onSort=${() => state.cycleSudoSort(column.key)}>${column.label}<//>`;
   })}</tr></thead>`;
 }
 
@@ -150,25 +142,16 @@ function AccessSubnav({ state, current }) {
   const notifyNavigation = (subtab) => document.dispatchEvent(new CustomEvent('tclaude:navigated', {
     detail: { location: { tab: 'access', subtab } },
   }));
-  const navigate = (event, subtab) => {
-    if (event.button > 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    event.preventDefault();
+  const select = (subtab) => {
     state.setSubtab(subtab);
     notifyNavigation(subtab);
   };
-  const keyDown = (event, subtab) => {
-    if (event.key !== ' ' && event.key !== 'Spacebar') return;
-    event.preventDefault();
-    state.setSubtab(subtab);
-    notifyNavigation(subtab);
-  };
-  return html`<div class="access-subnav" role="tablist" aria-label="Access control views">
-    ${ACCESS_SUBTABS.map((subtab) => html`<a key=${subtab} class=${`access-subtab${current.subtab === subtab ? ' active' : ''}`}
-      data-subtab=${subtab} href=${`/access/${subtab}`} role="tab" aria-selected=${current.subtab === subtab ? 'true' : 'false'}
-      aria-controls=${`access-${subtab}`} onClick=${(event) => navigate(event, subtab)} onKeyDown=${(event) => keyDown(event, subtab)}>
-      ${{ permissions: 'Permissions', slugs: 'Slug registry', sudo: 'Sudo' }[subtab]}
-    </a>`)}
-  </div>`;
+  const labels = { permissions: 'Permissions', slugs: 'Slug registry', sudo: 'Sudo' };
+  return html`<${Tabs} class="access-subnav" label="Access control views" value=${current.subtab} onSelect=${select}
+    items=${ACCESS_SUBTABS.map((subtab) => ({
+      key: subtab, label: labels[subtab], href: `/access/${subtab}`, class: 'access-subtab',
+      attrs: { 'data-subtab': subtab, 'aria-controls': `access-${subtab}` },
+    }))} />`;
 }
 
 export function AccessApp({ state, actions }) {

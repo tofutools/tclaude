@@ -22,10 +22,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { computed, signal } from '@preact/signals';
 import htm from 'htm';
 import {
-  clampPlacement, fitPlacement, freeEdges, parsePlacement, resizedPlacement, savedAfterResize, snappedResize, snapReach, snapZone, snapZoneRects, viewportOf, zoneRect,
+  clampPlacement, fitPlacement, freeEdges, parsePlacement, resizedPlacement, savedAfterResize, snappedResize, snapReach, snapZoneRects, viewportOf, zoneRect,
 } from './overlay-window-model.js';
 import {
-  detachSpot, dropTargets, dropTree, edgeMeets, fits, keepingWindows, leavesOf, lockedEdge, movedEdge, movedLine, nodeAt, normalized, parseSplit, rectZone, roomTree, splitEdges, splitLayout, targetAt, unlockedLine, withWindow, withinGap, withoutWindow,
+  detachSpot, dragHit, dropTargets, edgeMeets, edgeTargets, fits, keepingWindows, leavesOf, lockedEdge, movedEdge, movedLine, nodeAt, normalized, parseSplit, rectZone, roomTree, splitEdges, splitLayout, targetAt, unlockedLine, withWindow, withinGap, withoutWindow,
 } from './overlay-split-model.js';
 import { WindowControls } from './overlay-window-controls.js';
 
@@ -395,12 +395,16 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     const viewport = viewportOf(win);
     const bounds = splitArea();
     const { edge: reach } = snapReach(viewport);
-    const edges = snapZoneRects(viewport, snapTop());
+    const zones = snapZoneRects(viewport, snapTop());
     const savedTree = splitTree.peek();
     const shownNow = new Set(snappedWindows.peek().keys());
     if (liveSplit.peek()) {
-      return { edges, tree: savedTree, ...dropTargets(savedTree, bounds, id, { here: shownNow, alive: keepsCell, vacated, reach }) };
+      const edges = edgeTargets(savedTree, bounds, id, { here: shownNow, alive: keepsCell, vacated, zones });
+      return { edges, split: true, tree: savedTree, ...dropTargets(savedTree, bounds, id, { here: shownNow, alive: keepsCell, vacated, reach }) };
     }
+    // Windows snapped alone are side panels, not a tiling: the room's own
+    // strips snap there, each with its kind of snap.
+    const edges = edgeTargets(null, bounds, id, { zones });
     const inTree = (other) => leavesOf(savedTree).includes(other);
     const loners = [...snappedWindows.peek()].filter(([other]) => other !== id && !inTree(other));
     const tree = loners.length ? roomTree(loners.map(([other, { zone }]) => [other, zone])) : null;
@@ -408,18 +412,19 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     return { edges, tree, ...(tree ? dropTargets(tree, bounds, id, { here: shownNow, vacated, reach, drawn }) : { gaps: [], markers: [] }) };
   }
 
-  // Where a drop at pointer lands: { zone, tree?, guide }, or null to float. At
-  // the room's edge it snaps there: into what the room's zone covers of an empty
-  // cell, or splitting a window of the split there, or with windows snapped alone
-  // making a tree together, each keeping its kind of snap. Over a target, a box
-  // fills its empty cell and a marker splits its window on that side. Anywhere
-  // else it floats: nearness to an empty cell or a window does nothing.
+  const hitAt = (raw, targets) => dragHit(raw, targets, splitArea());
+
+  // Where a drop at pointer lands: { zone, tree?, guide }, or null to float.
+  // Over a target, a box fills its empty cell and a marker splits its window on
+  // that side; they come first, over the room's edge too. On the room's edge it
+  // snaps there: over a split, as the piece of the strip there says (edgeTargets),
+  // or with windows snapped alone making a tree together, each keeping its kind
+  // of snap. Anywhere else it floats: nearness to an empty cell or a window does
+  // nothing.
   function dropPlan(raw, targets, vacated = null) {
-    const viewport = viewportOf(win);
-    const room = snapZone(raw, viewport, snapTop());
     const bounds = splitArea();
-    // The room's edge reaches past it, over the footer.
-    const pointer = { x: Math.max(bounds.x, Math.min(bounds.x + bounds.w - 1, raw.x)), y: Math.max(bounds.y, Math.min(bounds.y + bounds.h - 1, raw.y)) };
+    const hit = hitAt(raw, targets);
+    const room = hit?.edge?.zone || '';
     const plain = room ? { zone: room, guide: snappedPlacement(room) } : null;
     const savedTree = splitTree.peek();
     const others = [...snappedWindows.peek()].filter(([other]) => other !== id);
@@ -430,7 +435,7 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
       const rect = next?.rects[id];
       return rect ? { zone: zone === 'top' ? 'top-left' : zone || rectZone(rect, bounds), tree, guide: rect } : null;
     };
-    const target = room ? null : targetAt(raw, targets);
+    const target = hit?.target;
     if (target?.gap) {
       const { rect } = target.gap;
       return planned(withinGap(targets.tree, target.gap, { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 }, id, '', bounds));
@@ -438,12 +443,12 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     if (target) return planned(withWindow(targets.tree, target.window, target.zone, id), target.zone);
     if (!room) return null;
     // A window outside the split cannot start a tree of its own: there is one.
-    if (liveSplit.peek()) {
-      const drop = dropTree(savedTree, bounds, pointer, id, { here: new Set(snappedWindows.peek().keys()), alive: keepsCell, room, vacated });
-      if (drop?.float) return null;
-      return (drop && planned(drop.tree, drop.zone)) || plain;
+    if (targets.split) {
+      const { edge } = hit;
+      return (edge.tree && planned(edge.tree, edge.window ? edge.zone : '')) || plain;
     }
     // Still over the cell it left, even at the room's edge, the window floats.
+    const pointer = { x: Math.max(bounds.x, Math.min(bounds.x + bounds.w - 1, raw.x)), y: Math.max(bounds.y, Math.min(bounds.y + bounds.h - 1, raw.y)) };
     const inVacated = vacated && pointer.x >= vacated.x && pointer.x < vacated.x + vacated.w && pointer.y >= vacated.y && pointer.y < vacated.y + vacated.h;
     if (inVacated) return null;
     // Windows snapped alone are side panels, not a tiling: only their edges and
@@ -492,6 +497,11 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   function onTitlePointerDown(event) {
     if (event.target.closest?.('button, input, [role="tab"]')) return;
     dragWindow(event);
+  }
+
+  function onTitleDoubleClick(event) {
+    if (event.target.closest?.('button, input, select, a, [role="tab"], [role="tablist"] *')) return;
+    toggleMaximize();
   }
 
   function dragWindow(event) {
@@ -560,7 +570,13 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
       moved = true;
       last = clampPlacement({ ...start, x: start.x + m.clientX - sx, y: start.y + m.clientY - sy, snap: '' }, viewportOf(win));
       setPlacement(last);
-      if (join?.over({ x: m.clientX, y: m.clientY })) {
+      const pointer = { x: m.clientX, y: m.clientY };
+      const shownTargets = snaps ? dragTargets(vacated) : null;
+      // A box or a marker under the pointer takes the drop over a tab strip
+      // there, the Collab view's included: they sit on top of everything.
+      const onTarget = !!shownTargets && !!targetAt(pointer, shownTargets);
+      if (onTarget) join?.cancel();
+      else if (join?.over(pointer)) {
         plan = null;
         setGuide(null);
         setTargets(null);
@@ -568,11 +584,9 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
         return;
       }
       if (!snaps) return;
-      const pointer = { x: m.clientX, y: m.clientY };
-      const shownTargets = dragTargets(vacated);
       plan = dropPlan(pointer, shownTargets, vacated);
-      const room = snapZone(pointer, viewportOf(win), snapTop());
-      setTargets({ ...shownTargets, hot: room ? { edge: room } : targetAt(pointer, shownTargets) });
+      const hit = hitAt(pointer, shownTargets);
+      setTargets({ ...shownTargets, hot: hit?.target || (hit?.edge && { edge: hit.edge.key }) || null });
       setGuide(plan?.guide || null);
       setFloating(!plan);
     }, release, cancelJoin, putBack);
@@ -711,7 +725,7 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   const edges = cell ? splitEdges(layout.edges[id]) : freeEdges(placement.snap);
   const unitLevel = levelOf(cell ? SPLIT_UNIT : id);
   const splitFront = cell && overlayStack.value.findLast((other) => layout.rects[other]) === id;
-  return { placement: shown, floating, targets, edges, level: unitLevel + (splitFront ? 1 : 0), linesLevel: unitLevel + 2, splitLines, onLinePointerDown, detachLine, win, guide, windowRef, openFrom, onTitlePointerDown, onResizePointerDown, onWindowClick, releaseFocus, toggleMaximize, shrinkTo, dragWindow, cancelGesture: () => gesture.current?.() };
+  return { placement: shown, floating, targets, edges, level: unitLevel + (splitFront ? 1 : 0), linesLevel: unitLevel + 2, splitLines, onLinePointerDown, detachLine, win, guide, windowRef, openFrom, onTitlePointerDown, onTitleDoubleClick, onResizePointerDown, onWindowClick, releaseFocus, toggleMaximize, shrinkTo, dragWindow, cancelGesture: () => gesture.current?.() };
 }
 
 // SnapTargets are the drop targets of a window being dragged, drawn over every
@@ -723,8 +737,8 @@ function SnapTargets({ targets }) {
   const at = ({ x, y, w, h }) => `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
   const same = (a, b) => !!a && !!b && a.path.join() === b.path.join();
   return html`<div class="overlay-snap-targets" aria-hidden="true">
-    ${edges.flatMap(({ zone, rects }) => rects.map((rect, index) => html`<div key=${`edge:${zone}:${index}`}
-      class=${`overlay-snap-edge${hot?.edge === zone ? ' hot' : ''}`} data-snap-zone=${zone} style=${at(rect)}></div>`))}
+    ${edges.map(({ key, zone, rect }, index) => html`<div key=${`edge:${key}:${index}`}
+      class=${`overlay-snap-edge${hot?.edge === key ? ' hot' : ''}`} data-snap-zone=${zone} style=${at(rect)}></div>`)}
     ${gaps.map(({ gap, rect }) => html`<div key=${`gap:${gap.path.join()}`}
       class=${`overlay-snap-target gap${same(hot?.gap, gap) ? ' hot' : ''}`} data-snap-gap=${gap.path.join('.')} style=${at(rect)}></div>`)}
     ${markers.map(({ window, zone, rect }) => html`<div key=${`split:${window}:${zone}`}
@@ -770,7 +784,7 @@ function SplitLines({ overlay }) {
       onPointerDown=${(event) => overlay.onLinePointerDown(event, [line.axis], line.path, line.area)}></div>`)}
     ${crossings.map((crossing) => html`<div key=${crossing.path.join()} class="overlay-split-cross" aria-hidden="true" style=${`left:${crossing.x}px;top:${crossing.y}px;z-index:${above}`}
       onPointerDown=${(event) => overlay.onLinePointerDown(event, ['x', 'y'], crossing.path, crossing.area)}></div>`)}
-    ${spots.map(({ line, spot }, index) => html`<button type="button" key=${`detach:${line.path.join()}:${line.axis}`} class=${`overlay-split-detach${near === index ? ' near' : ''}`}
+    ${spots.map(({ line, spot }, index) => html`<button data-ui-exempt type="button" key=${`detach:${line.path.join()}:${line.axis}`} class=${`overlay-split-detach${near === index ? ' near' : ''}`}
       title="Detach: each side then resizes on its own" aria-label="Unlock this split line" style=${`left:${spot.x}px;top:${spot.y}px;z-index:${above}`}
       onClick=${() => overlay.detachLine(line)}>⇱</button>`)}`;
 }
@@ -778,9 +792,11 @@ function SplitLines({ overlay }) {
 // OverlayWindow draws what useOverlayWindow (the window prop) runs. id names it
 // for stacking. mounted keeps a hidden window in the page, for content that must
 // stay alive while minimized. lead and title are the title bar's content,
-// and controls, { look, closeLabel, closeTitle, onMinimize, onClose }, adds the
-// native buttons, which the classic look leaves to the content. A window with
-// nowhere to minimize to leaves out onMinimize.
+// and controls, { look, closeLabel, closeTitle, onMinimize, onCollab, onClose },
+// adds the title bar's buttons, which the classic look leaves to the content. A
+// window with nowhere to minimize to leaves out onMinimize, and one that cannot
+// go to the Collab tab now leaves out onCollab. A double click on the bar's
+// empty space maximizes or restores, whatever the look.
 export function OverlayWindow({ id, window: overlay, open = true, mounted = open, className, frameClass, titlebarClass, label, lead = null, title, controls = null, onTitleWheel = null, children }) {
   const { placement, guide } = overlay;
   const front = frontOverlayWindow.value === id ? ' overlay-window-front' : '';
@@ -797,7 +813,7 @@ export function OverlayWindow({ id, window: overlay, open = true, mounted = open
       style=${`left:${placement.x}px;top:${placement.y}px;width:${placement.w}px;height:${placement.h}px;${level}`}
       role="dialog" tabindex="-1" aria-label=${label} aria-modal="false" aria-hidden=${open ? undefined : 'true'}
       onClick=${overlay.onWindowClick} onPointerDownCapture=${raise}>
-      <header class=${titlebarClass} onPointerDown=${overlay.onTitlePointerDown} onWheel=${onTitleWheel}>
+      <header class=${titlebarClass} onPointerDown=${overlay.onTitlePointerDown} onDblClick=${overlay.onTitleDoubleClick} onWheel=${onTitleWheel}>
         ${look === 'macos' ? windowControls : lead}
         ${title}
         ${look !== 'macos' && windowControls}

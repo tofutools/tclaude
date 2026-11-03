@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, MenuItem } from './ui-components.js';
+import { Button, MenuItem, Select, SortTh } from './ui-components.js';
 import { UsageProfileChip } from './usage-profile-chip.js';
 import {
   applySort, tableSortState, RETIRED_COLS, RETIRED_ACCESSORS,
@@ -58,7 +58,7 @@ function GroupActivity({ members, snapshot }) {
   const hintLabel = `A member of this group has unread notifications — open ${attention?.member.title || 'it'} in the quick reader`;
   return html`<span class="group-activity"
     aria-label=${attention ? `${summary.summaryText} · a member has unread notifications` : null}>
-    ${attention ? html`<button type="button" class="human-notification-hint human-notification-hint-button"
+    ${attention ? html`<button data-ui-exempt type="button" class="human-notification-hint human-notification-hint-button"
       draggable=${false} title=${hintLabel} aria-label=${hintLabel}
       onClick=${openReader}>!</button>` : null}
     <${ActivityModes} modes=${modes} modeTitles />
@@ -110,7 +110,7 @@ function GroupAttachment({ group, actions, placement }) {
     : '📎';
   const placementClass = fixed ? 'group-attachment-fixed' : 'group-attachment-float';
   if (!rawURL) {
-    return html`<button
+    return html`<button data-ui-exempt
       type="button" class=${`group-attachment ${placementClass} group-attachment-empty`}
       aria-label=${`Attach a persistent link to ${group.name}`}
       title="Attach a persistent Linear project, GitHub board, or other reference"
@@ -124,7 +124,7 @@ function GroupAttachment({ group, actions, placement }) {
         title=${`Open ${label} — ${url}`}
         onClick=${(event) => event.stopPropagation()}
       >${visibleIcon}${visibleLabel}</a>`
-    : html`<button
+    : html`<button data-ui-exempt
         type="button" class="group-attachment-invalid"
         aria-label=${`Edit the unsafe stored attachment for ${group.name}`}
         title="Stored attachment is not a safe HTTP(S) URL — edit or clear it"
@@ -132,7 +132,7 @@ function GroupAttachment({ group, actions, placement }) {
       >${visibleIcon}${visibleLabel}</button>`;
   return html`<span class=${`group-attachment ${placementClass} group-attachment-set`}>
     ${display}
-    <button
+    <button data-ui-exempt
       type="button" class="group-attachment-edit"
       tabindex=${fixed ? '-1' : undefined}
       aria-label=${`Edit the persistent link for ${group.name}`}
@@ -249,14 +249,14 @@ function SortHead({ table, columns, lead = null }) {
       ? html`<${ThemeText} regular=${column.label} wizard=${column.wizardLabel} />`
       : (column.label || '');
     if (!column.col) return html`<th key=${column.key || column.label || 'blank'}>${lead && column.key === 'ctl' ? lead : label}</th>`;
-    const selected = active?.col === column.col;
-    return html`<th
+    return html`<${SortTh}
       key=${column.key || column.col}
-      class=${selected ? 'sortable sort-active' : 'sortable'}
+      active=${active?.col === column.col}
+      dir=${active?.dir}
       data-sort-table=${table}
       data-sort-col=${column.col}
-      title=${`Sort by ${isWizardActive() && column.wizardLabel ? column.wizardLabel : column.label}`}
-    >${label}<span class="sort-arrow">${selected ? (active.dir === 'asc' ? '▲' : '▼') : '▾'}</span></th>`;
+      sortLabel=${isWizardActive() && column.wizardLabel ? column.wizardLabel : column.label}
+    >${label}<//>`;
   })}</tr></thead>`;
 }
 
@@ -329,8 +329,8 @@ function GroupProfileChip({ group, actions, kind }) {
   }, [active]);
   if (active) {
     const missing = current && !choices.some((choice) => choice.value === current);
-    return html`<select
-      ref=${selectRef} class="group-default-profile-select" value=${current} disabled=${busy}
+    return html`<${Select} size="sm"
+      domRef=${selectRef} class="group-default-profile-select" value=${current} disabled=${busy}
       aria-invalid=${error ? 'true' : undefined} title=${error || undefined}
       onKeyDown=${(event) => {
         if (event.key === 'Escape') {
@@ -378,7 +378,7 @@ function GroupProfileChip({ group, actions, kind }) {
       <option value="">${sandbox ? '(none — no group layer)' : '(none)'}</option>
       ${choices.map((choice) => html`<option key=${choice.value} value=${choice.value}>${choice.label}</option>`)}
       ${missing ? html`<option value=${current}>${current} (missing)</option>` : null}
-    </select>`;
+    <//>`;
   }
   const className = sandbox
     ? `group-sandbox-profile${current ? '' : ' unset'}`
@@ -412,7 +412,7 @@ function ProcessChip({ group }) {
   if (process.transitions?.length) lines.push('', 'transitions:', ...process.transitions.map((item) => `${item.from || '(start)'} → ${item.to}`));
   const next = index >= 0 && index + 1 < process.phase_count ? process.phases[index + 1].name : '';
   return html`<span class="group-process-chip" title=${['Advisory process — tracked, not enforced', '', ...lines].join('\n')}>${text}</span>
-    ${next ? html`<button class="group-process-advance" data-act="advance-phase" data-group=${group.name} data-label=${group.name} title=${`Advance to the next phase (${next})`}>▸ advance</button>` : null}`;
+    ${next ? html`<${Button} size="sm" class="group-process-advance" data-act="advance-phase" data-group=${group.name} data-label=${group.name} title=${`Advance to the next phase (${next})`}>▸ advance<//>` : null}`;
 }
 
 function GroupLinkChips({ group, snapshot }) {
@@ -527,7 +527,7 @@ function RealGroupSummary({ node, group, activity, membersView, snapshot, action
       title=${`${titleParts.join(' · ')}${group.max_members ? ' — click to edit cap' : ' — click to set a cap'}`}
       message=${(value) => value > 0 ? `${group.name}: member cap → ${value}` : `${group.name}: member cap cleared`}
     >👥 ${count}<//>
-    ${away ? html`<span class="group-away-hint" title=${`${away} member${away === 1 ? ' is' : 's are'} away on another node. ${away === 1 ? 'Its row stays' : 'Their rows stay'} here, dimmed, but ${away === 1 ? 'is' : 'are'} not counted as members.`}>+${away} away</span>` : null}
+    ${away ? html`<span class="group-away-hint ui-hint" title=${`${away} member${away === 1 ? ' is' : 's are'} away on another node. ${away === 1 ? 'Its row stays' : 'Their rows stay'} here, dimmed, but ${away === 1 ? 'is' : 'are'} not counted as members.`}>+${away} away</span>` : null}
     <${GroupProfileChip} group=${group} actions=${actions} kind="profile" />
     <${GroupProfileChip} group=${group} actions=${actions} kind="sandbox" />
     ${!group.fleet_node || group.fleet_node.local ? html`<${GroupUsageProfileChip} group=${group} />` : null}
@@ -559,11 +559,11 @@ function GroupActions({ group, actions, controls = true, fold = true }) {
   const toggle = fold && isForce(group);
   if (!controls && !toggle) return null;
   return html`
-    ${controls && html`<button class="spawn-btn" ...${shared} data-act="spawn-agent" title="Spawn agent — start a new tclaude session and join this group" aria-label="Spawn agent into this group"><${SpawnIcon} /><span class="spawn-btn-label-wizard" aria-hidden="true">🔮</span></button>`}
+    ${controls && html`<${Button} size="sm" variant="primary" class="spawn-btn" ...${shared} data-act="spawn-agent" title="Spawn agent — start a new tclaude session and join this group" aria-label="Spawn agent into this group"><${SpawnIcon} /><span class="spawn-btn-label-wizard" aria-hidden="true">🔮</span><//>`}
     <span class="group-actions">
-      ${controls && html`<button ...${shared} data-act="power-on-group" aria-label="Awaken — power on every offline agent in this group" title="Power on — resume every offline agent in this group. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular" aria-hidden="true">🟢</span><span class="pwr-label-wizard" aria-hidden="true">✨</span></button>
-      <button class="warn" ...${shared} data-act="shutdown-group" aria-label="Slumber — shutdown every running agent in this group" title="Shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular" aria-hidden="true">🛑</span><span class="pwr-label-wizard" aria-hidden="true">🌙</span></button>`}
-      ${toggle ? html`<button class=${`force-fold-btn${folded ? ' folded' : ''}`} ...${shared} data-folded=${folded ? '1' : '0'} aria-pressed=${folded ? 'true' : 'false'} title=${folded ? 'Task force info card is hidden — click to show it again (mission, phase, roles, re-brief / stand-down controls). Per-browser view state.' : 'Hide the task force info card (mission, phase, roles, controls). The 🎯 button stays here to bring it back. Per-browser view state.'} onClick=${() => actions.toggleForceFold(group)}>🎯<span class="force-fold-label-regular">${folded ? ' show info' : ' hide info'}</span><span class="force-fold-label-wizard">${folded ? ' reveal quest' : ' hide quest'}</span></button>` : null}
+      ${controls && html`<${Button} size="sm" ...${shared} data-act="power-on-group" aria-label="Awaken — power on every offline agent in this group" title="Power on — resume every offline agent in this group. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular" aria-hidden="true">🟢</span><span class="pwr-label-wizard" aria-hidden="true">✨</span><//>
+      <${Button} size="sm" class="warn" ...${shared} data-act="shutdown-group" aria-label="Slumber — shutdown every running agent in this group" title="Shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular" aria-hidden="true">🛑</span><span class="pwr-label-wizard" aria-hidden="true">🌙</span><//>`}
+      ${toggle ? html`<${Button} size="sm" pressed=${folded} class=${`force-fold-btn${folded ? ' folded' : ''}`} ...${shared} data-folded=${folded ? '1' : '0'} title=${folded ? 'Task force info card is hidden — click to show it again (mission, phase, roles, re-brief / stand-down controls). Per-browser view state.' : 'Hide the task force info card (mission, phase, roles, controls). The 🎯 button stays here to bring it back. Per-browser view state.'} onClick=${() => actions.toggleForceFold(group)}>🎯<span class="force-fold-label-regular">${folded ? ' show info' : ' hide info'}</span><span class="force-fold-label-wizard">${folded ? ' reveal quest' : ' hide quest'}</span><//>` : null}
     </span>`;
 }
 
@@ -571,7 +571,7 @@ function GroupActions({ group, actions, controls = true, fold = true }) {
 // opens the create dialog pinned to this group. Like any control on a folded
 // section line, a click unfolds the section, so the new subgroup lands in view.
 function CreateSubgroupButton({ group }) {
-  return html`<button class="spawn-btn subgroup-btn" data-group=${group.name} data-label=${group.name} data-act="create-subgroup" title="Create subgroup — make a new group nested under this group" aria-label="Create a subgroup under this group"><${SpawnIcon} subgroup=${true} /><span class="subgroup-icon-wizard" aria-hidden="true">⚔＋</span></button>`;
+  return html`<${Button} size="sm" variant="primary" class="spawn-btn subgroup-btn" data-group=${group.name} data-label=${group.name} data-act="create-subgroup" title="Create subgroup — make a new group nested under this group" aria-label="Create a subgroup under this group"><${SpawnIcon} subgroup=${true} /><span class="subgroup-icon-wizard" aria-hidden="true">⚔＋</span><//>`;
 }
 
 function ForceBlock({ group }) {
@@ -585,7 +585,7 @@ function ForceBlock({ group }) {
   const live = members.filter((member) => member.online);
   const stalling = live.length > 0 && live.every((member) => member.state?.status === 'idle');
   const process = group.process;
-  return html`<div class="group-force-block">
+  return html`<div class="group-force-block ui-card">
     ${group.mission ? html`<div class="force-mission"><span class="force-mission-label-regular">🎯 Mission</span><span class="force-mission-label-wizard">🗺 Quest</span>: <span class="force-mission-text">${group.mission}</span>${group.source_template ? html` <span class="force-from">from ${group.source_template}</span>` : null}</div>` : group.source_template ? html`<div class="force-mission force-mission-unset">Deployed from template <strong>${group.source_template}</strong> — no mission recorded</div>` : null}
     ${process?.phases?.length ? html`<div class="force-phase"><span class="force-phase-label">◆ ${typeof process.phase_index === 'number' && process.phase_index >= 0 ? `phase ${process.phase_index + 1}/${process.phase_count}: ${process.current_phase}` : process.current_phase}</span>${process.transitions?.length ? html`<span class="force-phase-history" title=${process.transitions.map((item) => `${item.from || '(start)'} → ${item.to}${item.at ? `  ${item.at}` : ''}`).join('\n')}>history (${process.transitions.length})</span>` : null}</div>` : null}
     ${members.length ? html`<div class="force-roles"><div class="force-roles-head"><span class="force-roles-label">Roles</span>${stalling ? html`<span class="force-stalling" title="Every live member is idle — nothing appears to be in flight. The force may be waiting on a nudge, a decision, or the next phase.">⚠ stalling</span>` : null}</div>${[...roles].map(([role, list]) => html`<div key=${role} class="force-role-row"><span class="force-role-name">${role}</span><span class="force-role-members">${list.map((member) => {
@@ -594,7 +594,7 @@ function ForceBlock({ group }) {
       const name = member.title || member.conv_id?.slice(0, 8) || '(unnamed)';
       return html`<span key=${member.agent_id || member.conv_id} class=${`force-member force-member-${liveness}`} title=${`${name} — ${liveness}${pct ? ` · context ${pct}%` : ''}`}>${liveness === 'working' ? '●' : liveness === 'idle' ? '○' : '✕'} ${name}${pct ? html` <span class="force-member-ctx">${pct}%</span>` : null}</span>`;
     })}</span></div>`)}</div>` : null}
-    <div class="force-controls"><button class="force-rebrief-btn" data-act="rebrief-force" data-group=${group.name} data-label=${group.name} title="Re-brief the force — re-deliver the source template's current work pattern to the live roster, with the mission interpolated. Useful when the roster drifted or the original briefing scrolled out of context.">↻ re-brief</button><button class="force-standdown-btn" data-act="stand-down-force" data-group=${group.name} data-label=${group.name} title="Stand down the force — the mirror of deploy. Retires every member and sweeps the deploy-seeded rhythms + pending waves, keeping the group as a dormant record (mission & history preserved). Not a delete.">⏻ stand down</button></div>
+    <div class="force-controls"><${Button} size="sm" class="force-rebrief-btn" data-act="rebrief-force" data-group=${group.name} data-label=${group.name} title="Re-brief the force — re-deliver the source template's current work pattern to the live roster, with the mission interpolated. Useful when the roster drifted or the original briefing scrolled out of context.">↻ re-brief<//><${Button} size="sm" variant="danger" class="force-standdown-btn" data-act="stand-down-force" data-group=${group.name} data-label=${group.name} title="Stand down the force — the mirror of deploy. Retires every member and sweeps the deploy-seeded rhythms + pending waves, keeping the group as a dormant record (mission & history preserved). Not a delete.">⏻ stand down<//></div>
   </div>`;
 }
 
@@ -609,7 +609,7 @@ function GroupLinksSection({ group, snapshot }) {
       const other = direction === 'out' ? link.to : link.from;
       return html`<tr key=${`${direction}-${link.id}`}><td><span class="muted">${direction === 'out' ? '→' : '←'}</span></td><td><span class="rowname">${other || '(deleted)'}</span></td><td><span class="id">${link.mode}</span></td><td><div class="row-actions"><${Button} size="sm" data-act="link-edit" data-id=${link.id} data-group=${group.name} data-from=${link.from} data-to=${link.to} data-mode=${link.mode} title=${isWizardActive() ? 'Rebind this arcane channel' : "Change this link's mode"}><${ThemeText} regular="edit" wizard="rebind" /><//><${Button} size="sm" variant="ghost danger" data-act="link-delete" data-id=${link.id} data-group=${group.name} data-from=${link.from} data-to=${link.to} title=${isWizardActive() ? 'Sever this arcane channel' : 'Remove this link'}>×<//></div></td></tr>`;
     })}</tbody></table>` : html`<span class="muted" style="font-size:11px"><${ThemeText} regular="No links involving this group." wizard="No arcane channels are woven to or from this party." /></span>`}
-    <button data-act="link-new" data-group=${group.name} data-from=${group.name} data-label=${group.name} title=${isWizardActive() ? 'Weave an outbound arcane channel from this party' : 'Add an outbound link from this group'}><${ThemeText} regular="+ link" wizard="+ weave channel" /></button>
+    <${Button} size="sm" data-act="link-new" data-group=${group.name} data-from=${group.name} data-label=${group.name} title=${isWizardActive() ? 'Weave an outbound arcane channel from this party' : 'Add an outbound link from this group'}><${ThemeText} regular="+ link" wizard="+ weave channel" /><//>
   </div>`;
 }
 
@@ -632,7 +632,7 @@ function GroupTriggersSection({ group, triggers }) {
   return html`<details class="group-triggers-section">
     <summary><strong>Triggers</strong><span class="muted">${rows.length} installed here</span>
       <a href="/automations/triggers" onClick=${(event) => event.stopPropagation()}>edit in Automations →</a></summary>
-    <table><thead><tr><th>Name</th><th>When</th><th>State</th><th>Enabled</th></tr></thead><tbody>
+    <table class="ui-compact"><thead><tr><th>Name</th><th>When</th><th>State</th><th>Enabled</th></tr></thead><tbody>
       ${visible.map((rule) => html`<tr key=${rule.id}>
         <td><span class="rowname">${rule.name}</span>${rule.scope === 'global' && html`<span class="trigger-scope global">global</span>`}</td>
         <td><code>${rule.source}</code><span class="muted">${rule.author_is_agent === true ? ' · agent PRs' : ''}</span></td>

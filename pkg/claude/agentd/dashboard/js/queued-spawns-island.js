@@ -32,14 +32,14 @@ export function QueuedSpawnsChip({ snapshot }) {
   }, [rows.length]);
   if (!rows.length) return null;
   return html`<span class="queued-spawns-chip-wrap" ref=${root}>
-    <button type="button" id="queued-spawns-open" class=${`queued-spawns-chip${open ? ' open' : ''}`}
+    <button data-ui-exempt type="button" id="queued-spawns-open" class=${`queued-spawns-chip${open ? ' open' : ''}`}
       aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
       title="Queued agents — prepared spawns that have not started yet"
       onClick=${toggle}>
       ⏸ <span class="theme-copy-regular">queued</span><span class="theme-copy-wizard">dormant</span>
-      <span class="queued-spawns-count">${rows.length}</span>
+      <span class="queued-spawns-count ui-badge ui-badge-warn">${rows.length}</span>
     </button>
-    ${open && html`<div class="queued-spawns-popover" role="dialog" aria-label="Queued agents"
+    ${open && html`<div class="queued-spawns-popover ui-popover" role="dialog" aria-label="Queued agents"
       style=${anchor ? { top: `${anchor.top}px`, right: `${anchor.right}px` } : undefined}
       onClick=${(event) => { if (event.target.closest('.queued-spawn-row')) setOpen(false); }}>
       <div class="queued-spawns-popover-head">

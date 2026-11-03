@@ -3,7 +3,7 @@ import { useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime, shortId } from './helpers.js';
 import { dashboardState } from './snapshot-store.js';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import {
   LINK_MODES, decisionFor, initialDraft, itemText, modeText, proposalLines,
   proposalStateText, proposalTurn, withdrawLabel,
@@ -16,8 +16,8 @@ function HeaderRow({ label, children }) {
 }
 
 function ItemStatus({ item }) {
-  if (item.status === 'accepted') return html`<span class="proposal-pill ok">accepted</span>`;
-  if (item.status === 'declined') return html`<span class="proposal-pill off">declined</span>`;
+  if (item.status === 'accepted') return html`<span class="ui-tag proposal-pill ok">accepted</span>`;
+  if (item.status === 'declined') return html`<span class="ui-tag proposal-pill off">declined</span>`;
   return null;
 }
 
@@ -38,9 +38,9 @@ function ProposalItemRow({ item, peer, draft, setDraft, open }) {
       <input type="checkbox" class="proposal-members-tick" checked=${!!draft.members[item.id]} disabled=${locked || !ticked}
         onChange=${(event) => set('members', event.currentTarget.checked)} /> member list</span>`}
     ${item.kind === 'group_link' && (open && !locked
-      ? html`<select class="proposal-mode" value=${draft.modes[item.id]} disabled=${!ticked}
+      ? html`<${Select} size="sm" class="proposal-mode" value=${draft.modes[item.id]} disabled=${!ticked}
           onChange=${(event) => set('modes', event.currentTarget.value)}>
-          ${LINK_MODES.map((mode) => html`<option key=${mode} value=${mode}>${modeText(mode)}</option>`)}</select>`
+          ${LINK_MODES.map((mode) => html`<option key=${mode} value=${mode}>${modeText(mode)}</option>`)}<//>`
       : html`<span class="proposal-mode-text">${modeText(item.mode)}</span>`)}
     <${ItemStatus} item=${item} />
   </label>`;
@@ -59,7 +59,7 @@ function ShareBack({ view, draft, setDraft }) {
       <input type="checkbox" class="proposal-shareback-tick" data-group=${group.name} checked=${draft.shareBack.includes(group.name)}
         onChange=${(event) => toggle(group.name, event.currentTarget.checked)} />
       <span class="grow">${group.name} · ${(group.members || []).length} members</span></label>`)}
-    <div class="proposal-hint">They see the name, description and member count; no member list, mail or presence.</div>
+    <div class="proposal-hint ui-hint">They see the name, description and member count; no member list, mail or presence.</div>
   </details>`;
 }
 
@@ -106,7 +106,7 @@ export function ProposalReader({ request, controller }) {
       <div class="proposal-items">${items.map((item) => html`<${ProposalItemRow} key=${item.id}
         item=${item} peer=${peer} draft=${draft} setDraft=${setDraft} open=${open} />`)}</div>
       ${open && html`<${ShareBack} view=${view} draft=${draft} setDraft=${setDraft} />`}
-      ${open && html`<div class="proposal-hint">Each side applies only its own items. Accepting changes nothing else: no broader messaging and no further links.</div>`}
+      ${open && html`<div class="proposal-hint ui-hint">Each side applies only its own items. Accepting changes nothing else: no broader messaging and no further links.</div>`}
     </div>
     <div class="mail-reader-actions access-reader-actions">
       ${open ? html`<${Fragment}>

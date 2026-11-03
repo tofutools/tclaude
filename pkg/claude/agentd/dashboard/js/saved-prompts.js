@@ -1,14 +1,15 @@
 import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
-import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
+import { Button, Select } from './ui-components.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import {
   loadSavedPrompts, saveSavedPrompt, deleteSavedPrompt,
   savedPromptsExportBlob, parseSavedPromptsImport,
 } from './saved-prompts-actions.js';
 import { shellConfirmDiscard, shellToast } from './shell-state.js';
-import { downloadBlob } from './paf-model.js';
+import { downloadBlob } from './download.js';
 import { announceNodeChanged, nodeFetch } from './node-api.js';
 
 const html = htm.bind(h);
@@ -115,11 +116,10 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
     // Escape and Tab must reach the shared document-level dialog controller.
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) event.stopPropagation();
   }}>
-    <${Overlay} id="saved-prompts-manage-modal" labelledby="saved-prompts-title"
+    <${Dialog} id="saved-prompts-manage-modal"
       onClose=${onClose} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
-      initialFocusRef=${nameRef} registerClose=${registerClose}>
-      <h3 id="saved-prompts-title">Saved prompts</h3>
-      <p class="modal-hint">Reusable text shared across all groups. Add prompts to a spawn, profile or group so their text opens the agent's task brief, or insert one into a message and edit before sending.</p>
+      initialFocusRef=${nameRef} guard=${{ requestClose, registerClose }} titleId="saved-prompts-title" title="Saved prompts">
+      <p class="modal-hint ui-hint">Reusable text shared across all groups. Add prompts to a spawn, profile or group so their text opens the agent's task brief, or insert one into a message and edit before sending.</p>
       <div class="filter-bar saved-prompts-transfer">
         <span class="spacer"></span>
         <${Button} id="saved-prompts-export" disabled=${busy || !prompts.length}
@@ -132,7 +132,7 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
       ${incoming ? html`<${SavedPromptImport} incoming=${incoming} prompts=${prompts} busy=${busy}
         onImport=${(writes) => void importPrompts(writes)} onCancel=${() => setIncoming(null)}/>` : null}
       <label class="cron-create-row"><span class="cron-create-label">Edit prompt</span>
-        <select aria-label="Edit saved prompt" disabled=${busy} value=${original?.name || ''}
+        <${Select} aria-label="Edit saved prompt" disabled=${busy} value=${original?.name || ''}
           onChange=${(event) => {
             const name = event.currentTarget.value;
             event.currentTarget.value = original?.name || '';
@@ -140,7 +140,7 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
           }}>
           <option value="">New prompt</option>
           ${prompts.map((prompt) => html`<option key=${prompt.name} value=${prompt.name}>${prompt.name}</option>`)}
-        </select></label>
+        <//></label>
       <label class="cron-create-row"><span class="cron-create-label">Name</span>
         <input ref=${nameRef} aria-label="Prompt name" value=${draft.name} disabled=${busy}
           placeholder="e.g. cold-review" autocomplete="off"
@@ -159,7 +159,7 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
         <${Button} variant="primary" disabled=${busy || !draft.name.trim() || !draft.body.trim()}
           onClick=${() => void mutate()}>${busy ? 'Saving…' : 'Save prompt'}</${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   </div>`;
 }
 
@@ -199,7 +199,8 @@ export function SavedPromptsDialog({ descriptor, onClose, confirmDiscard }) {
 }
 
 // SavedPromptChips selects an ordered set of saved prompts with the same chip
-// + "Add…" control the role pickers use. value/onChange carry prompt names.
+// + "Add…" control the role pickers use (that chip-styled select stays
+// data-ui-exempt, as theirs does). value/onChange carry prompt names.
 //
 // node names the node whose library the chips pick from and Manage… edits
 // (node-api.js; blank: the page's). library replaces it with a given list (a remote
@@ -233,18 +234,18 @@ export function SavedPromptChips({
   return html`<div class="agent-spawn-role-picker saved-prompt-picker">
     <div class="agent-spawn-role-chips" id=${id}>
       ${selected.map((prompt) => html`<span key=${prompt.name} class=${`agent-spawn-role-chip${prompt.missing ? ' missing' : ''}${fixed.has(prompt.name) ? ' locked' : ''}`}>
-        <button type="button" class="role-chip-inspect" disabled=${disabled} data-remote-spawn-free=""
+        <button data-ui-exempt type="button" class="role-chip-inspect" disabled=${disabled} data-remote-spawn-free=""
           title=${prompt.missing ? 'This prompt is missing from the library' : prompt.unknown ? lockedReason : prompt.body}
           aria-expanded=${inspected === prompt.name ? 'true' : 'false'}
           onClick=${() => setInspected(inspected === prompt.name ? '' : prompt.name)}>${chipLabel(prompt)}</button>
-        <button type="button" class="role-chip-remove" disabled=${disabled || fixed.has(prompt.name)} data-remote-spawn-field="prompts"
+        <button data-ui-exempt type="button" class="role-chip-remove" disabled=${disabled || fixed.has(prompt.name)} data-remote-spawn-field="prompts"
           title=${fixed.has(prompt.name) ? lockedReason : `Remove ${prompt.name}`}
           aria-label=${`Remove prompt ${prompt.name}`} onClick=${() => {
             setInspected((current) => current === prompt.name ? '' : current);
             onChange(value.filter((name) => name !== prompt.name));
           }}>×</button>
       </span>`)}
-      <select class="saved-prompt-chip-add" value="" disabled=${disabled || !available.length} data-remote-spawn-field="prompts"
+      <select data-ui-exempt class="saved-prompt-chip-add" value="" disabled=${disabled || !available.length} data-remote-spawn-field="prompts"
         aria-label="Add saved prompt" onChange=${(event) => {
           const next = event.currentTarget.value;
           event.currentTarget.value = '';
@@ -255,14 +256,14 @@ export function SavedPromptChips({
           ? groups.map((group) => html`<optgroup key=${group.source} label=${group.label}>${group.prompts.map(option)}</optgroup>`)
           : available.map(option)}
       </select>
-      ${library ? null : html`<button type="button" class="tool saved-prompt-chip-manage" disabled=${disabled}
-        title="Create, edit, clone, import or export saved prompts" onClick=${() => setManaging(true)}>Manage…</button>`}
+      ${library ? null : html`<${Button} size="sm" class="saved-prompt-chip-manage" disabled=${disabled}
+        title="Create, edit, clone, import or export saved prompts" onClick=${() => setManaging(true)}>Manage…<//>`}
     </div>
-    ${hint ? html`<div class="spawn-field-hint">${hint}</div>` : null}
+    ${hint ? html`<div class="spawn-field-hint ui-hint">${hint}</div>` : null}
     ${shown && html`<div class=${`agent-spawn-role-inspect${shown.missing ? ' missing' : ''}`}>
       ${shown.missing ? '⚠ This prompt is no longer in the library.' : shown.unknown ? lockedReason : html`<div class="saved-prompt-inspect-body">${shown.body}</div>`}
     </div>`}
-    ${error ? html`<div class="cron-create-error" role="alert">${error} <button type="button" onClick=${() => void reload().catch((cause) => setError(cause.message))}>Retry</button></div>` : null}
+    ${error ? html`<div class="cron-create-error" role="alert">${error} <${Button} size="sm" onClick=${() => void reload().catch((cause) => setError(cause.message))}>Retry<//></div>` : null}
     ${managing ? html`<${SavedPromptManager} prompts=${prompts} node=${node} onClose=${() => setManaging(false)}
       onChanged=${reload} confirmDiscard=${confirmDiscard}/>` : null}
   </div>`;
@@ -293,13 +294,13 @@ export function SavedPromptPicker({ value, onChange, textareaRef, disabled = fal
     <span class="cron-create-label">Saved prompts</span>
     <div class="cron-create-target">
       <div class="cron-target-input-row saved-prompts-controls">
-        <select aria-label="Insert saved prompt" disabled=${disabled || !prompts.length} value="" onChange=${insert}>
+        <${Select} aria-label="Insert saved prompt" disabled=${disabled || !prompts.length} value="" onChange=${insert}>
           <option value="">${prompts.length ? 'Insert prompt…' : 'No saved prompts'}</option>
           ${prompts.map((prompt) => html`<option key=${prompt.name} value=${prompt.name}>${prompt.name}</option>`)}
-        </select>
-        <button type="button" disabled=${disabled} onClick=${() => setManaging(true)}>Manage prompts…</button>
+        <//>
+        <${Button} size="sm" disabled=${disabled} onClick=${() => setManaging(true)}>Manage prompts…<//>
       </div>
-      ${error ? html`<div class="cron-create-error" role="alert">${error} <button type="button" onClick=${() => void reload().catch((cause) => setError(cause.message))}>Retry</button></div>` : null}
+      ${error ? html`<div class="cron-create-error" role="alert">${error} <${Button} size="sm" onClick=${() => void reload().catch((cause) => setError(cause.message))}>Retry<//></div>` : null}
     </div>
     ${managing ? html`<${SavedPromptManager} prompts=${prompts} onClose=${() => setManaging(false)}
       onChanged=${reload} confirmDiscard=${confirmDiscard}/>` : null}

@@ -47,7 +47,7 @@ export function templateReadbackBadges(template) {
 
 export function templateRosterRowsHTML(template, prefix, defaultProfile) {
   const agents = template?.agents || [];
-  if (!agents.length) return `<span class="tp-empty">${wizWord('this template has no agents', 'this circle names no heroes')}</span>`;
+  if (!agents.length) return `<span class="ui-empty">${wizWord('this template has no agents', 'this circle names no heroes')}</span>`;
   const shown = prefix?.trim() || wizWord('‹group›', '‹party›');
   const defaultName = defaultProfile?.trim() || '';
   const defaultValue = defaultName && findProfileByHandle(cachedProfiles(), defaultName);

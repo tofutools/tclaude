@@ -106,10 +106,10 @@ export function MessageAttachments({ message, label = 'Agent file', downloadTitl
   const attachments = messageAttachments(message);
   if (!attachments.length) return null;
   return html`<${Fragment}>${attachments.map((attachment, index) => html`
-    <div class="mail-attachment" key=${attachment.url || attachment.id || index}>
+    <div class="mail-attachment ui-card ui-inset" key=${attachment.url || attachment.id || index}>
       <${ImageAttachmentPreview} messageID=${message.id} attachment=${attachment} siblings=${attachments} surface="messages" />
       <${VideoAttachmentPreview} messageID=${message.id} attachment=${attachment} siblings=${attachments} surface="messages" />
-      <span class="mail-attachment-label">${label}</span>
+      <span class="ui-eyebrow mail-attachment-label">${label}</span>
       <a href=${attachmentHref(message, attachment)}
         download=${attachment.filename || ''} title=${downloadTitle}>⤓ ${attachment.filename || 'attachment'}</a>
       <span class="mail-attachment-size">${attachmentSize(attachment.size_bytes)}</span>
@@ -166,7 +166,7 @@ export function FolderRow({
     <span class="mailbox-name">${label}</span>
     ${tags}
     ${total !== null && html`<span class="mailbox-count" title=${totalTitle}>${total}</span>`}
-    ${unread ? html`<span class="mailbox-unread">${unread > 99 ? '99+' : unread}</span>` : null}
+    ${unread ? html`<span class="mailbox-unread ui-badge ui-badge-accent">${unread > 99 ? '99+' : unread}</span>` : null}
   </button></div>`;
 }
 
@@ -186,7 +186,7 @@ export function SectionToggle({ expanded, label, unread = 0, onToggle, className
     title=${expanded ? 'Collapse the agent list' : 'Expand the agent list'}
     onClick=${onToggle}><span class="mailbox-section-caret">${expanded ? '▾' : '▸'}</span>
     ${label}
-    ${unread > 0 && html` <span class="mailbox-unread">${unread > 99 ? '99+' : unread}</span>`}</button>`;
+    ${unread > 0 && html` <span class="mailbox-unread ui-badge ui-badge-accent">${unread > 99 ? '99+' : unread}</span>`}</button>`;
 }
 
 // MessageHead names a row's parties: sender → recipient in an aggregate

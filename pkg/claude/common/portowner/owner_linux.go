@@ -47,6 +47,40 @@ func ProcessOwnsLoopbackPort(rootPID, port int) bool {
 	return false
 }
 
+// ProcessOwnsAllLoopbackListeners is the strict form: EVERY socket listening
+// on 127.0.0.1:port must be held by the subtree, not just one. With
+// SO_REUSEPORT several sockets can share the port and the kernel spreads
+// connections across them, so "one of them is ours" does not say where a dial
+// will land. A caller that proxies arbitrary traffic to the port needs this.
+func ProcessOwnsAllLoopbackListeners(rootPID, port int) bool {
+	if port <= 0 || port > 65535 {
+		return false
+	}
+	inodes := listeningSocketInodes(hexPort(port))
+	if len(inodes) == 0 {
+		return false
+	}
+	owned := map[string]struct{}{}
+	for _, pid := range ProcessSubtree(rootPID) {
+		entries, err := os.ReadDir(filepath.Join("/proc", strconv.Itoa(pid), "fd"))
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			target, err := os.Readlink(filepath.Join(
+				"/proc", strconv.Itoa(pid), "fd", entry.Name()))
+			if err != nil || !strings.HasPrefix(target, "socket:[") || !strings.HasSuffix(target, "]") {
+				continue
+			}
+			inode := strings.TrimSuffix(strings.TrimPrefix(target, "socket:["), "]")
+			if _, found := inodes[inode]; found {
+				owned[inode] = struct{}{}
+			}
+		}
+	}
+	return len(owned) == len(inodes)
+}
+
 // HasLoopbackListener reports whether ANY process is listening on
 // 127.0.0.1:port.
 //

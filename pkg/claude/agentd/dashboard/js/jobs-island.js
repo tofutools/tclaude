@@ -19,7 +19,7 @@ import { dashboardState } from './snapshot-store.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { LockReason } from './lock-reason.js';
 import { Pager } from './pager.js';
-import { Button, Input } from './ui-components.js';
+import { Button, Input, SortTh } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -77,11 +77,11 @@ function CronStatus({ status }) {
 }
 
 function CronActionSummary({ job }) {
-  if (job.action_kind !== 'spawn') return html`<span class="cron-action-kind message">✉ message</span>`;
+  if (job.action_kind !== 'spawn') return html`<span class="ui-tag cron-action-kind message">✉ message</span>`;
   const roles = (job.spawn_roles || []).join(', ');
   const policy = job.spawn_concurrency_policy || 'Forbid';
   return html`<${Fragment}>
-    <span class="cron-action-kind spawn">⚡ spawn</span>
+    <span class="ui-tag cron-action-kind spawn">⚡ spawn</span>
     <div class="muted cron-spawn-summary">${job.spawn_profile || 'profile missing'}
       ${roles ? ` · roles ${roles}` : ''} · ${policy}
       ${policy === 'Allow' ? ` up to ${job.spawn_max_live_workers || 1}` : ''}
@@ -93,8 +93,8 @@ function CronRunInspector({ id, runs, loading, error, onRefresh }) {
   return html`<div class="cron-run-inspector" id=${id}>
     <div class="cron-run-inspector-head"><strong>Recent runs</strong>
       <span class="muted">Recorded scheduler outcomes; worker identity appears when a spawn reached a managed worker.</span>
-      <button type="button" onClick=${onRefresh} disabled=${loading}>refresh</button></div>
-    ${error && html`<div class="jobs-error" role="alert">${error}<button type="button" onClick=${onRefresh}>retry</button></div>`}
+      <${Button} size="sm" onClick=${onRefresh} disabled=${loading}>refresh<//></div>
+    ${error && html`<div class="jobs-error ui-error-box" role="alert">${error}<${Button} size="sm" onClick=${onRefresh}>retry<//></div>`}
     ${loading ? html`<div class="muted">Loading run history…</div>` : !error && runs.length === 0
       ? html`<div class="muted">No runs recorded.</div>`
       : html`<div class="cron-runs">${runs.map((run) => html`<div class="cron-run" key=${run.id}>
@@ -325,22 +325,10 @@ function ExportRow({ job, actions }) {
 }
 
 function SortHead({ active, onSort }) {
-  const activate = (event, col) => {
-    if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') return;
-    event.preventDefault();
-    onSort(col);
-  };
-  return html`<thead><tr>${JOBS_COLS.map((column) => {
-    if (!column.col) return html`<th>${column.label || ''}</th>`;
-    const selected = active?.col === column.col;
-    const arrow = selected ? (active.dir === 'asc' ? '▲' : '▼') : '▾';
-    return html`<th class=${selected ? 'sortable sort-active' : 'sortable'}
-      tabIndex="0" aria-sort=${selected ? (active.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
-      title=${`Sort by ${column.label}`} onClick=${(event) => activate(event, column.col)}
-      onKeyDown=${(event) => activate(event, column.col)}>
-      ${column.label}<span class="sort-arrow">${arrow}</span>
-    </th>`;
-  })}</tr></thead>`;
+  return html`<thead><tr>${JOBS_COLS.map((column) => (column.col
+    ? html`<${SortTh} active=${active?.col === column.col} dir=${active?.dir} sortLabel=${column.label}
+        onSort=${() => onSort(column.col)}>${column.label}<//>`
+    : html`<th>${column.label || ''}</th>`))}</tr></thead>`;
 }
 
 function JobsPager({ state, paging, refresh, disabled = false }) {
@@ -462,7 +450,7 @@ export function JobsApp({ state, actions, fleet = fleetState, activeTab = dashbo
         autocomplete="off" spellcheck=${false} value=${current.query}
         onInput=${(event) => onQuery(event.currentTarget.value)} />
       <span class="filter-count" id="filter-jobs-count" aria-live="polite">${count}</span>
-      <button class="clear-filter" id="filter-jobs-clear" title="Clear filter" aria-label="Clear automation filter"
+      <button data-ui-exempt class="clear-filter" id="filter-jobs-clear" title="Clear filter" aria-label="Clear automation filter"
         onClick=${() => { onQuery(''); inputRef.current?.focus(); }}>×</button>
       <span class="spacer"></span>
       ${(displayKind === 'all' || displayKind === 'cron') && html`
@@ -478,7 +466,7 @@ export function JobsApp({ state, actions, fleet = fleetState, activeTab = dashbo
     </div>`}
     ${displayKind === 'trigger' ? html`<${TriggerWorkspace} state=${state} actions=${actions} />` : html`<${Fragment}>
     <${AsyncLoadState} label="Automations" request=${current.request}
-      retry=${() => void actions.refresh()} errorClass="jobs-error" />
+      retry=${() => void actions.refresh()} errorClass="jobs-error ui-error-box" />
     <div id="jobs-list" aria-busy=${current.request.phase === 'loading' ? 'true' : 'false'}>
       ${!current.request.hasLoaded
         ? null
@@ -507,7 +495,7 @@ export function JobsApp({ state, actions, fleet = fleetState, activeTab = dashbo
 
 export function JobsBadge({ state }) {
   const count = state.view.value.activeExports;
-  return html`<span id="jobs-badge" class="tab-badge count" hidden=${count === 0}>${count}</span>`;
+  return html`<span id="jobs-badge" class="tab-badge ui-badge" hidden=${count === 0}>${count}</span>`;
 }
 
 export function mountJobsIsland({

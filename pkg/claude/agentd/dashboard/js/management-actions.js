@@ -31,6 +31,7 @@ import {
   createSandboxDirectories,
   sandboxVia,
 } from './sandbox-profiles-data.js';
+import { downloadJSON, downloadURL } from './download.js';
 
 const MAX_SANDBOX_PROFILE_NAME_BYTES = 200;
 
@@ -56,20 +57,6 @@ function cloneName(sourceName, existingNames, maxBytes = Infinity) {
     const candidate = prefix + tail;
     if (!names.has(candidate)) return candidate;
   }
-}
-
-function downloadJSON(name, value) {
-  const blob = new Blob([JSON.stringify(value, null, 2) + '\n'], {
-    type: 'application/json',
-  });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = name;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
 }
 
 export function createManagementActions(deps) {
@@ -501,12 +488,7 @@ export function createManagementActions(deps) {
   }
   function exportTemplate(name) {
     if (refuseOnRestrictedPeer('Template export', '', notify)) return;
-    const anchor = document.createElement('a');
-    anchor.href = nodeDownloadPath('', `/api/templates/${encodeURIComponent(name)}/export`);
-    anchor.download = `${name}.task-force.json`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
+    downloadURL(nodeDownloadPath('', `/api/templates/${encodeURIComponent(name)}/export`), { filename: `${name}.task-force.json` });
   }
   function openTemplateFromGroup(presetGroup = '', node = '') {
     // Another node's group snapshots into that node's templates.
@@ -1358,5 +1340,3 @@ function dispositionName(response) {
   const match = /filename="?([^";]+)"?/.exec(response.headers.get('Content-Disposition') || '');
   return match ? match[1] : '';
 }
-
-// dashboard-imperative-boundary: browser-io

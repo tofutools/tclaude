@@ -4,10 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { TransferTray } from './transfer-card.js';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { registerMessageAccessDialogController } from './message-access-dialog-controller.js';
 import { isPageNode, nodeSnapshot } from './node-api.js';
 import { LockReason, NodeChip } from './lock-reason.js';
@@ -120,11 +118,10 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
     }
   };
 
-  return html`<${Overlay}
+  return html`<${Dialog}
     id="operator-message-modal"
     overlayClass="operator-message-overlay"
     dialogClass="cron-create-modal operator-message-modal"
-    labelledby="operator-message-title"
     describedby="operator-message-desc"
     onClose=${state.close}
     onSubmitHotkey=${submit}
@@ -133,7 +130,7 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
     confirmDiscard=${confirmDiscard}
     resizeKey="tclaude.dash.modalSize.operator-message"
     initialFocusRef=${bodyRef}
-    registerClose=${registerClose}
+    guard=${{ requestClose, registerClose }}
     guardBackdropDrag=${true}
     onPaste=${(event) => {
       if (textOnly) return;
@@ -152,11 +149,10 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
       if (!dropped.length) return;
       event.preventDefault();
       addFiles(dropped);
-    }}>
-    <h3 id="operator-message-title"><${Words}
+    }} title=${html`<${Words}
       plain=${allLive ? 'Announce to all live agents' : 'Send message to agent'}
-      wizard=${allLive ? '📯 Proclaim to all channeling heroes' : '✒ Send a missive to the hero'}/><${NodeChip} name=${descriptor.node ? descriptor.nodeName || descriptor.node.slice(0, 13) : ''}/></h3>
-    <p class="modal-hint" id="operator-message-desc"><${Words}
+      wizard=${allLive ? '📯 Proclaim to all channeling heroes' : '✒ Send a missive to the hero'}/><${NodeChip} name=${descriptor.node ? descriptor.nodeName || descriptor.node.slice(0, 13) : ''}/>`}>
+    <p class="modal-hint ui-hint" id="operator-message-desc"><${Words}
       plain=${allLive
         ? 'Sent once to every agent that is live when you submit. Offline agents are not queued.'
         : 'Queued through the agent mailbox, so incoming agent output cannot interfere with what you type.'}
@@ -180,13 +176,13 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
           onClick=${() => fileInputRef.current?.click()}><${Words} plain="📎 Attach files…" wizard="📎 Bind relics…"/><//>
         <input ref=${fileInputRef} type="file" id="operator-message-attach-input" multiple hidden disabled=${busy}
           onChange=${(event) => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
-        <span class="spawn-attachments-hint"><${Words} plain="…or drag files here / paste a screenshot" wizard="…or draw relics here / paste a captured vision"/></span>
+        <span class="spawn-attachments-hint ui-hint"><${Words} plain="…or drag files here / paste a screenshot" wizard="…or draw relics here / paste a captured vision"/></span>
       </div><${OperatorAttachmentList} files=${files} busy=${busy} remove=${removeFile}/></div></div>`}
     <${ErrorLine} id="operator-message-error" value=${error}/>
     <div class="modal-buttons"><${Button} id="operator-message-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></${Button}>
       <span class="spacer"></span><${Button} variant="primary" class="operator-message-submit" id="operator-message-submit" disabled=${busy} onClick=${submit}>
         <${Words} plain=${busy ? 'Queueing…' : allLive ? 'Announce' : 'Send'} wizard=${busy ? '✒ Sending missive…' : allLive ? '📯 Proclaim' : '✒ Send missive'}/></${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function useLiveTheme() {
@@ -266,17 +262,15 @@ function AgentPicker({ descriptor, state, snapshot, confirmDiscard }) {
     else if (event.key === 'ArrowUp') { event.preventDefault(); setHighlight(Math.max(bounded - 1, 0)); }
     else if (event.key === 'Enter' && candidates[bounded]) { event.preventDefault(); choose(candidates[bounded]); }
   };
-  return html`<${Overlay} id="cron-pick-target-modal" dialogClass="add-member-modal"
-    labelledby="cron-pick-target-title" onClose=${() => state.finishPicker('')}
-    dirty=${false} blocked=${false} confirmDiscard=${confirmDiscard}>
-    <h3 id="cron-pick-target-title">${descriptor.title} <span class="muted"><${Words} plain="— pick agent" wizard="— pick hero"/></span></h3>
+  return html`<${Dialog} id="cron-pick-target-modal" dialogClass="add-member-modal" onClose=${() => state.finishPicker('')}
+    dirty=${false} blocked=${false} confirmDiscard=${confirmDiscard} title=${html`${descriptor.title} <span class="muted"><${Words} plain="— pick agent" wizard="— pick hero"/></span>`}>
     <input ref=${searchRef} id="cron-pick-target-search" class="add-member-search" type="text"
       value=${query} placeholder="Filter by title / role / descr / conv-id / group…" autocomplete="off" spellcheck="false"
       role="combobox" aria-label="Filter agents" aria-controls="cron-pick-target-list" aria-expanded="true"
       aria-autocomplete="list" aria-activedescendant=${activeID}
       onInput=${(event) => { setQuery(event.currentTarget.value); setHighlight(0); }} onKeyDown=${onKeyDown} />
     <div class="add-member-list" id="cron-pick-target-list" role="listbox">
-      ${candidates.length === 0 ? html`<div class="add-member-empty">No matching conversations. ${includeOffline ? '(Try a different filter.)' : '(Try ticking “Include offline / archived” for a wider pool.)'}</div>`
+      ${candidates.length === 0 ? html`<div class="ui-empty-block">No matching conversations. ${includeOffline ? '(Try a different filter.)' : '(Try ticking “Include offline / archived” for a wider pool.)'}</div>`
         : candidates.map((agent, index) => html`<div key=${agent.agent_id || agent.conv_id}
           ref=${index === bounded ? highlightedRef : null} id=${`cron-pick-target-option-${index}`}
           role="option" aria-selected=${index === bounded ? 'true' : 'false'}
@@ -297,7 +291,7 @@ function AgentPicker({ descriptor, state, snapshot, confirmDiscard }) {
       </label>
       <span class="spacer"></span><span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> pick · <kbd>Esc</kbd> close</span>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard }) {
@@ -426,13 +420,12 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     } catch (cause) { setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };
-  return html`<${Overlay} id="message-create-modal" labelledby="message-create-title"
+  return html`<${Dialog} id="message-create-modal"
     onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
-    initialFocusRef=${bodyRef} registerClose=${registerClose}>
-    <h3 id="message-create-title"><${Words}
+    initialFocusRef=${bodyRef} guard=${{ requestClose, registerClose }} title=${html`<${Words}
       plain=${scopedGroup ? `Send a message to group “${scopedGroup}”` : 'Send a message'}
-      wizard=${scopedGroup ? `Send a missive to party “${scopedGroup}”` : 'Send a missive'}/><${NodeChip} name=${nodeName}/></h3>
-    <p id="message-create-desc" class="modal-hint"><${Words}
+      wizard=${scopedGroup ? `Send a missive to party “${scopedGroup}”` : 'Send a missive'}/><${NodeChip} name=${nodeName}/>`}>
+    <p id="message-create-desc" class="modal-hint ui-hint"><${Words}
       plain=${scopedGroup ? `Delivers one immediate message to the members of “${scopedGroup}” ticked below. Leave From blank to send it as you, the operator.` : 'Delivers one immediate message to a single agent, or multicasts it to every member of a group. Leave From blank on a group send to multicast as you, the operator.'}
       wizard=${scopedGroup ? `Delivers one immediate missive to the heroes of “${scopedGroup}” ticked below. Leave the sender blank to send it as yourself.` : 'Delivers one immediate missive to a hero, or multicasts it to every hero in a party. Leave the sender blank on a party send to multicast as yourself.'}/></p>
     <label class="cron-create-row"><span class="cron-create-label" title="Leave blank to multicast as the human operator; a solo message needs a sender agent">From</span><div class="cron-create-target"><div class=${`cron-target-input-row${lock.from ? ' locked-field' : ''}`}>
@@ -443,7 +436,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     ${!scopedGroup ? html`<label class="cron-create-row" id="message-create-target-row"><span class="cron-create-label"><${Words} plain="Target" wizard="Recipient"/></span>
       <${TargetPicker} prefix="message-create" value=${target} onChange=${setTarget} snapshot=${snapshot} pickAgent=${state.pickAgent} groupLocked=${lock.group || ''}/>
     </label>` : html`<div class="cron-create-row" id="message-create-group-row"><span class="cron-create-label">Recipients</span><div class="cron-create-target">
-      <p class="cleanup-hint" id="message-create-group-hint">${groupExists
+      <p class="cleanup-hint ui-hint" id="message-create-group-hint">${groupExists
         ? `${members.length} current member${members.length === 1 ? '' : 's'} — ${preset === 'online' ? 'online members selected, following live presence; tick an offline member to queue it in their inbox.'
           : preset === 'all' ? 'all selected follows live membership.' : 'custom selection is retained across live updates.'}`
         : `Group “${scopedGroup}” is missing; sending is blocked.`}</p>
@@ -461,8 +454,8 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
         <span class="title">${member.title || '(untitled)'}</span><span class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</span>
       </label>${openMemberPRs(member).length
         // Outside the <label>: a click inside a PR hover panel must not toggle the recipient.
-        ? html`<span class="recipient-prs">${openMemberPRs(member).map((pr) => html`<${PRChain} key=${pr.url} pr=${pr} />`)}</span>` : null}</div>`) : html`<div class="cleanup-empty">no members in this group</div>`}</div>
-      <p class="cleanup-hint recipient-picks-hint">Quick select: click = only these · Shift-click = add · ${modClickText()} = narrow</p>
+        ? html`<span class="recipient-prs">${openMemberPRs(member).map((pr) => html`<${PRChain} key=${pr.url} pr=${pr} />`)}</span>` : null}</div>`) : html`<div class="ui-empty-block">no members in this group</div>`}</div>
+      <p class="cleanup-hint ui-hint recipient-picks-hint">Quick select: click = only these · Shift-click = add · ${modClickText()} = narrow</p>
     </div></div>`}
     ${(scopedGroup || target.mode === 'group') && html`<label class="cron-create-row" id="message-create-role-row"><span class="cron-create-label"
       title="Optional group role filter; blank or all reaches every selected member"><${Words} plain="Role filter" wizard="Class filter"/></span>
@@ -476,7 +469,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     <div class="modal-buttons"><${Button} id="message-create-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></${Button}>
       <span class="spacer"></span><${Button} variant="primary" id="message-create-submit" disabled=${busy || (scopedGroup && (!groupExists || !selectedMembers.length))} onClick=${submit}>
         <${Words} plain=${busy ? 'Sending…' : 'Send'} wizard=${busy ? 'Sending…' : '✒ Send missive'}/></${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard }) {
@@ -520,9 +513,9 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
     catch (cause) { if (cause?.code === 'offline') setServerOffline(true); setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };
-  return html`<${Overlay} id="human-reply-modal" labelledby="human-reply-title"
+  return html`<${Dialog} id="human-reply-modal"
     onClose=${state.close} dirty=${!!body || files.length > 0} blocked=${busy} confirmDiscard=${confirmDiscard}
-    initialFocusRef=${bodyRef} registerClose=${registerClose} guardBackdropDrag=${true}
+    initialFocusRef=${bodyRef} guard=${{ requestClose, registerClose }} guardBackdropDrag=${true}
     onPaste=${(event) => {
       const pasted = Array.from(event.clipboardData?.files || []);
       if (!pasted.length) return;
@@ -537,9 +530,8 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
       if (!dropped.length) return;
       event.preventDefault();
       addFiles(dropped);
-    }}>
-    <h3 id="human-reply-title"><span class="human-reply-title-regular">Reply to agent</span><span class="human-reply-title-wizard">✒ Answer the hero</span></h3>
-    <p id="human-reply-desc" class="modal-hint">${remote
+    }} title=${html`<span class="human-reply-title-regular">Reply to agent</span><span class="human-reply-title-wizard">✒ Answer the hero</span>`}>
+    <p id="human-reply-desc" class="modal-hint ui-hint">${remote
       ? `Sent through ${context.nodeName || 'its node'}, which queues your answer in this agent's inbox for delivery when its pane is ready. The agent sees it comes from this node's operator.`
       : "Queues your answer in this agent's inbox for delivery when its pane is ready. Delivered as a message from you, the operator."}</p>
     <label class="cron-create-row"><span class="cron-create-label">To</span><div class="cron-create-target"><div id="human-reply-to">
@@ -555,13 +547,13 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
           onClick=${() => fileInputRef.current?.click()}>📎 Attach files…<//>
         <input ref=${fileInputRef} type="file" id="human-reply-attach-input" multiple hidden disabled=${busy}
           onChange=${(event) => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
-        <span class="spawn-attachments-hint">…or drag files here / paste a screenshot</span>
+        <span class="spawn-attachments-hint ui-hint">…or drag files here / paste a screenshot</span>
       </div><${OperatorAttachmentList} files=${files} busy=${busy} remove=${removeFile}/></div></div>`}
     <${ErrorLine} id="human-reply-error" value=${error}/><div class="modal-buttons">
       <${Button} id="human-reply-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}><span class="spacer"></span>
       <${Button} variant="primary" id="human-reply-submit" disabled=${busy || !online} onClick=${submit}>${busy ? 'Sending…' : 'Send reply'}</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // ScopeSummary is the row's read-at-a-glance scope: one chip per constrained
@@ -1056,11 +1048,10 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     : descriptor.mode === 'agent' ? `Hero: ${descriptor.label || shortConv} · ${shortConv}`
     : roleMode ? `Class${descriptor.label ? `: ${descriptor.label}` : ''} · bestowed when the class is assigned`
     : `New hero${descriptor.label ? ` “${descriptor.label}”` : ''}${descriptor.group ? ` → ${descriptor.group}` : ''} · bestowed when summoned`;
-  return html`<${Overlay} id="perm-edit-modal" dialogClass=${`perm-edit-modal${sudoMode ? ' sudo-edit-modal' : ''}`} labelledby="perm-edit-title"
+  return html`<${Dialog} id="perm-edit-modal" dialogClass=${`perm-edit-modal${sudoMode ? ' sudo-edit-modal' : ''}`}
     onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
-    registerClose=${registerClose}>
-    <h3 id="perm-edit-title"><span class="perm-edit-title-regular">${futureStewards ? 'Permissions for future Stewards' : sudoMode ? 'Grant sudo' : groupMode ? 'Edit group permissions' : roleMode ? 'Edit role permissions' : 'Edit permanent permissions'}</span>
-      <span class="perm-edit-title-wizard">${futureStewards ? '📕 The Stewards’ Grimoire' : sudoMode ? '⏳ Bounded Boon' : groupMode ? '✨ Party Boons' : roleMode ? '📕 Class Boons' : '📕 The Grimoire'}</span></h3>
+    guard=${{ requestClose, registerClose }} title=${html`<span class="perm-edit-title-regular">${futureStewards ? 'Permissions for future Stewards' : sudoMode ? 'Grant sudo' : groupMode ? 'Edit group permissions' : roleMode ? 'Edit role permissions' : 'Edit permanent permissions'}</span>
+      <span class="perm-edit-title-wizard">${futureStewards ? '📕 The Stewards’ Grimoire' : sudoMode ? '⏳ Bounded Boon' : groupMode ? '✨ Party Boons' : roleMode ? '📕 Class Boons' : '📕 The Grimoire'}</span>`}>
     <div class="perm-edit-banner" id="perm-edit-banner">${futureStewards
       ? html`<strong>STORED</strong> — given to each new Steward. <strong>Grant</strong> adds a slug, <strong>Deny</strong> takes one away even if Reads or Writes give it, and <strong>Default</strong> leaves it to them.`
       : sudoMode
@@ -1115,7 +1106,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
       ? html`<div class="perm-area-head">${row.area}</div>` : null}<div class=${`perm-row${row.risky ? ' risky' : ''}`} data-slug=${row.slug}>
       ${anyScopable && html`<${ScopeTwisty} scopable=${scopable} slug=${row.slug} open=${openScope === row.slug}
         toggle=${() => setOpenScope(openScope === row.slug ? '' : row.slug)} />`}
-      <div class="perm-row-info"><span class="perm-row-slug">${row.slug}${row.risky ? html` <span class="perm-risk-badge" title="Reaches the host or credentials, destroys work, or widens what an agent can hand itself">⚠ risky</span>` : null}${row.owner_implied ? html` <span class="owner-badge" title="Group ownership can confer this slug">👑 owner</span>` : null}</span>
+      <div class="perm-row-info"><span class="perm-row-slug">${row.slug}${row.risky ? html` <span class="perm-risk-badge" title="Reaches the host or credentials, destroys work, or widens what an agent can hand itself">⚠ risky</span>` : null}${row.owner_implied ? html` <span class="ui-tag ui-tag-own owner-badge" title="Group ownership can confer this slug">👑 owner</span>` : null}</span>
         <span class="perm-row-desc" title=${row.description || row.descr || ''}>${row.description || row.descr || ''}</span>
         ${refusedWhy ? html`<span class="perm-row-desc perm-refused-why">${refusedWhy}</span>` : null}
         ${heldNote ? html`<span class="perm-row-desc perm-narrows-held">${heldNote}</span>` : null}</div>
@@ -1158,7 +1149,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     </div>`}
     ${sudoMode && html`<${SudoLimits} uses=${sudoBundleUses} setUses=${setSudoBundleUses} usesBad=${!usesValid(sudoBundleUses.trim())} uncounted=${sudoBundleUses.trim() ? sudoUncounted : 0} duration=${duration} setDuration=${chooseDuration} reason=${reason} setReason=${setReason}
       maxSeconds=${policy.max_seconds} submit=${submit} />`}
-    <${ErrorLine} id="perm-edit-error" className="sudo-grant-error" value=${error}/><div class="modal-buttons">
+    <${ErrorLine} id="perm-edit-error" className="sudo-grant-error ui-error" value=${error}/><div class="modal-buttons">
       ${sudoMode && html`<span class="sudo-picked" id="sudo-picked">${usesBad ? 'A use limit is a whole number from 1 to 1000' : sudoPicked.length ? `${sudoPicked.length} picked${sudoRisky ? ` · ${sudoRisky} risky` : ''}` : 'Pick at least one permission'}</span>`}
       <${Button} id="perm-edit-reset" disabled=${busy || !resettable}
         title=${`Set every slug back to Default (${sudoMode ? 'not picked' : 'inherit'}), including any the filter hides`}
@@ -1166,7 +1157,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
       <${Button} id="perm-edit-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><span class="pe-btn-regular">Cancel</span><span class="pe-btn-wizard">Dispel</span></${Button}>
       <${Button} variant="primary" id="perm-edit-submit" disabled=${busy || (sudoMode && !sudoReady)} onClick=${submit}>${busy ? 'Saving…' : sudoMode ? sudoLabel : 'Save'}</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // ContextFeaturesDialog edits which parts of Claude Code's startup context an
@@ -1203,11 +1194,9 @@ function ContextFeaturesDialog({ descriptor, state, confirmDiscard }) {
     descriptor.onSave?.({ ...selection });
     state.close();
   };
-  return html`<${Overlay} id="context-features-modal" dialogClass="perm-edit-modal context-features-modal"
-    labelledby="context-features-title" onClose=${state.close} dirty=${dirty} confirmDiscard=${confirmDiscard}
-    registerClose=${registerClose}>
-    <h3 id="context-features-title"><span class="perm-edit-title-regular">Startup context</span>
-      <span class="perm-edit-title-wizard">🧹 Trim the Tome</span></h3>
+  return html`<${Dialog} id="context-features-modal" dialogClass="perm-edit-modal context-features-modal" onClose=${state.close} dirty=${dirty} confirmDiscard=${confirmDiscard}
+    guard=${{ requestClose, registerClose }} title=${html`<span class="perm-edit-title-regular">Startup context</span>
+      <span class="perm-edit-title-wizard">🧹 Trim the Tome</span>`}>
     <div class="perm-edit-banner" id="context-features-banner"><${Words}
       plain=${html`<strong>FOCUS</strong> — every capability the harness advertises is context the agent reads past before it reaches your brief. <strong>Trim</strong> what this agent will not use; <strong>Keep</strong> overrides a profile that trimmed it; <strong>Default</strong> leaves the harness alone.`}
       wizard=${html`<strong>FOCUS</strong> — every spell in the tome is a page the hero must turn before it finds your task. <strong>Tear out</strong> what it will not cast; <strong>Keep</strong> restores a page a profile removed; <strong>Default</strong> leaves the tome untouched.`}/></div>
@@ -1230,7 +1219,7 @@ function ContextFeaturesDialog({ descriptor, state, confirmDiscard }) {
       <div class="perm-row" key=${row.slug} data-slug=${row.slug}>
         <div class="perm-row-info">
           <span class="perm-row-slug">${row.label || row.slug}${row.heavy
-    ? html` <span class="owner-badge" title="One of the largest startup-context wins">★ heavy</span>` : null}</span>
+    ? html` <span class="ui-tag ui-tag-own owner-badge" title="One of the largest startup-context wins">★ heavy</span>` : null}</span>
           <span class="perm-row-desc" title=${row.descr || ''}>${row.descr || ''}</span>
           ${row.caution ? html`<span class="perm-row-desc context-features-caution" title=${row.caution}>⚠ ${row.caution}</span>` : null}
         </div>
@@ -1254,7 +1243,7 @@ function ContextFeaturesDialog({ descriptor, state, confirmDiscard }) {
       <span class="spacer"></span>
       <${Button} variant="primary" id="context-features-submit" onClick=${submit}>Save</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 export function MessageAccessDialogApp({ state, actions, snapshot: pageSnapshot, confirmDiscard }) {

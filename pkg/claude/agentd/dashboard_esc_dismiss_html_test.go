@@ -35,7 +35,7 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	// overlay confirms accidental close, preserves the legacy backdrop-drag
 	// gesture guard, and yields Escape by painted overlay order to both the
 	// stacked permission editor and the discard confirm.
-	must("dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}", "the member editor confirms dirty accidental closes")
+	must("dirty=${dirty} busy=${busy} confirmDiscard=${confirmDiscard}", "the member editor confirms dirty accidental closes")
 	must("guardBackdropDrag=${true}", "the member editor preserves selection-drag backdrop safety")
 	must("shouldHandle: () => isTopmostOverlay(overlayRef.current)", "stacked Preact overlays give Escape only to the painted topmost dialog")
 	mustNot("function editMemberModal(", "the legacy inline edit-member lifecycle is removed")
@@ -59,13 +59,14 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 		"component mode controls only the overlay presentation class")
 	must("onSubmitHotkey=${busy ? null : () => submit(false)} dirty=${dirty} blocked=${busy}",
 		"the cron editor confirms dirty dismissal and blocks close while saving")
-	must(`id="human-reply-modal" labelledby="human-reply-title"`, "the human-reply dialog uses the shared Preact overlay")
+	must("<${Dialog} id=\"human-reply-modal\"", "the human-reply dialog uses the shared Dialog overlay")
 	must("onClose=${state.close} dirty=${!!body || files.length > 0} blocked=${busy} confirmDiscard=${confirmDiscard}", "the Preact human-reply dialog confirms before discarding")
 	must(`id="operator-message-modal"`, "the terminal operator composer is rendered by the Preact dialog owner")
 	must("dirty=${dirty}", "the operator composer derives dismissal state from its controlled draft")
 	must(`id="group-create-modal"`, "the Preact group-create dialog retains its scoped overlay id")
 	must("dirty=${dirty}", "the Preact group-create dialog publishes its controlled dirty state")
-	must("blocked=${busy}", "the Preact group-create dialog blocks dismissal while submitting")
+	must("busy=${busy}\n    confirmDiscard=${confirmDiscard}\n    initialFocusRef=${nameRef}", "the Preact group-create dialog blocks dismissal while submitting")
+	must("blocked=${blocked ?? busy}", "Dialog turns busy into a blocked close")
 
 	// The non-form LISTING overlays get the friction-free clean close (no
 	// "discard?" for a typed filter). A child .modal-overlay on top claims

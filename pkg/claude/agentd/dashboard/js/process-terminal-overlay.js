@@ -22,6 +22,7 @@ import {
   normalizeNodeState, reassignableNode, runIconView, runName,
 } from './process-kit.js';
 import { ProcessAgentStepper, isAgentScopedTo, namedScope } from './process-agent-stepper.js';
+import { Button, Select } from './ui-components.js';
 
 export { reassignableNode };
 
@@ -208,7 +209,7 @@ export function ProcessPaneOverlay({ agentId, enabled, actions = {}, bounds = nu
           ? html`<span class="pk-pane-overlay-count" aria-hidden="true">◈ ${runs.length}</span>`
           : runs.map((run) => html`<${ProcessRunIcon} key=${run.runId} run=${run} performerId=${agentId}
               active=${openID === run.runId} onOpen=${() => setOpenID(openID === run.runId ? '' : run.runId)} />`)}
-        <button type="button" class="pk-pane-overlay-toggle" aria-expanded=${collapsed ? 'false' : 'true'}
+        <button data-ui-exempt type="button" class="pk-pane-overlay-toggle" aria-expanded=${collapsed ? 'false' : 'true'}
           title=${toggleTitle} aria-label=${toggleTitle}
           onClick=${() => { setCollapsed(!collapsed); setOpenID(''); }}>${collapsed ? '◂' : '▾'}</button>
       </div>
@@ -275,16 +276,16 @@ function ReassignControl({ run, node, actions, candidatesFor }) {
     }
   };
   if (!open) {
-    return html`<button type="button" class="mux-btn" disabled=${!enabled} title=${title}
-      onClick=${() => setOpen(true)}>↻ reassign node</button>`;
+    return html`<${Button} size="sm" class="mux-btn" disabled=${!enabled} title=${title}
+      onClick=${() => setOpen(true)}>↻ reassign node<//>`;
   }
   return html`<span class="pk-reassign" data-process-reassign=${node.id}>
-    <select class="pk-reassign-select" aria-label=${`New performer for ${node.label || node.id}`}
+    <${Select} size="sm" class="pk-reassign-select" aria-label=${`New performer for ${node.label || node.id}`}
       value=${chosen} onChange=${(event) => setTarget(event.currentTarget.value)}>
       ${candidates.map((candidate) => html`<option key=${candidate.id} value=${candidate.id}>${candidate.label}</option>`)}
-    </select>
-    <button type="button" class="mux-btn" disabled=${busy || !chosen || !enabled} onClick=${() => void assign()}>assign</button>
-    <button type="button" class="mux-btn" disabled=${busy} onClick=${() => { setOpen(false); setError(''); }}>cancel</button>
+    <//>
+    <${Button} size="sm" class="mux-btn" disabled=${busy || !chosen || !enabled} onClick=${() => void assign()}>assign<//>
+    <${Button} size="sm" class="mux-btn" disabled=${busy} onClick=${() => { setOpen(false); setError(''); }}>cancel<//>
     ${error ? html`<span class="pk-run-popover-error" role="alert">${error}</span>` : null}
   </span>`;
 }
@@ -321,7 +322,7 @@ function ProcessRunGraphPopover({ run, agentId, agentName = '', actions = {}, on
         <${ProcessScopeChip} scope=${namedScope(run.scope, agentId, agentName)} />
         <${ProcessStateChip} state=${view.state} label=${`${run.status || view.state}${age ? ` ${age}` : ''}`} />
         <${ProcessPausedChip} run=${run} />
-        <button type="button" class="pk-run-popover-close" title="Close" aria-label="Close" onClick=${onClose}>×</button>
+        <button data-ui-exempt type="button" class="pk-run-popover-close" title="Close" aria-label="Close" onClick=${onClose}>×</button>
       </div>
       <div class="pk-run-popover-graph"><${ProcessMiniGraph} run=${run} performerId=${agentId} compact=${true} /></div>
       <div class="pk-run-popover-body">
@@ -342,19 +343,19 @@ function ProcessRunGraphPopover({ run, agentId, agentName = '', actions = {}, on
         </div>
       </div>
       <div class="pk-run-popover-actions">
-        ${onStepper ? html`<button type="button" class="mux-btn" onClick=${onStepper}>☰ stepper view</button>` : null}
-        <button type="button" class="mux-btn" disabled=${!actions.openGroups} onClick=${() => actions.openGroups?.(run)}>↗ open in Groups</button>
-        <button type="button" class="mux-btn" disabled=${!owner || !actions.onComposeMessage}
+        ${onStepper ? html`<${Button} size="sm" class="mux-btn" onClick=${onStepper}>☰ stepper view<//>` : null}
+        <${Button} size="sm" class="mux-btn" disabled=${!actions.openGroups} onClick=${() => actions.openGroups?.(run)}>↗ open in Groups<//>
+        <${Button} size="sm" class="mux-btn" disabled=${!owner || !actions.onComposeMessage}
           title=${owner ? `Message the run owner (${owner})` : 'The run owner is the human'}
-          onClick=${() => actions.onComposeMessage?.({ agent: owner, label: owner })}>✉ message owner</button>
+          onClick=${() => actions.onComposeMessage?.({ agent: owner, label: owner })}>✉ message owner<//>
         <${ProcessPauseControl} run=${run} actions=${actions} />
         <${ReassignControl} key=${`${node?.id || ''}:${node?.dispatch?.nodeId || ''}:${node?.dispatch?.attempt || 0}`}
           run=${run} node=${node} actions=${actions} candidatesFor=${candidatesFor} />
         ${awaitingDecision && actions.decide
-          ? around.outcomes.map((verdict) => html`<button key=${verdict} type="button" class="mux-btn pk-run-popover-verdict"
-              disabled=${deciding} title=${`Decide ${verdict} as the human`} onClick=${() => void decide(verdict)}>✓ ${verdict} (as human)</button>`)
-          : html`<button type="button" class="mux-btn" disabled=${true}
-              title="Marking an outcome as the human applies to a node waiting on a decision">✓ mark outcome (as human)</button>`}
+          ? around.outcomes.map((verdict) => html`<${Button} size="sm" key=${verdict} class="mux-btn pk-run-popover-verdict"
+              disabled=${deciding} title=${`Decide ${verdict} as the human`} onClick=${() => void decide(verdict)}>✓ ${verdict} (as human)<//>`)
+          : html`<${Button} size="sm" class="mux-btn" disabled=${true}
+              title="Marking an outcome as the human applies to a node waiting on a decision">✓ mark outcome (as human)<//>`}
         ${decideError ? html`<span class="pk-run-popover-error" role="alert">${decideError}</span>` : null}
       </div>
     </div>

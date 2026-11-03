@@ -60,6 +60,7 @@ func startPopupServer(bindHost string, port int) (*http.Server, string, error) {
 	}
 	listeners := []net.Listener{ln}
 	addr := ln.Addr().(*net.TCPAddr)
+	registerStageDaemonPort(addr.Port)
 	if !addr.IP.IsUnspecified() && !addr.IP.IsLoopback() {
 		loopbackAddr := net.JoinHostPort(defaultDashboardBind, strconv.Itoa(addr.Port))
 		loopback, loopbackErr := net.Listen("tcp", loopbackAddr)
@@ -84,8 +85,10 @@ func startPopupServer(bindHost string, port int) (*http.Server, string, error) {
 		// auditRequests records dashboard commands (spawn, message,
 		// lifecycle, access-request decisions, …) to the audit log;
 		// non-command routes (/, /static, the snapshot poll) fall through
-		// unmatched. See audit.go (JOH-268).
-		Handler:           auditRequests(mux),
+		// unmatched. See audit.go (JOH-268). Live-page origins
+		// (*.ui.localhost) split off to the stage handler before any of
+		// that; see stage.go.
+		Handler:           buildPopupHandler(auditRequests(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	for _, listener := range listeners {

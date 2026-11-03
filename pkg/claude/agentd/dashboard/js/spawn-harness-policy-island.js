@@ -1,11 +1,8 @@
 import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { Button, Select } from './ui-components.js';
+import { Dialog } from './ui-dialog.js';
 import { registerSpawnHarnessPolicyController } from './spawn-harness-policy-controller.js';
 import { isWizardActive } from './slop.js';
 import { nodeFetch } from './node-api.js';
@@ -106,7 +103,6 @@ function capDialogToContent() {
 }
 
 function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify }) {
-  const { requestClose, registerClose } = useGuardedOverlayClose();
   const wizard = useWizardTheme();
   const [view, setView] = useState(null);
   const [draft, setDraft] = useState({});
@@ -213,11 +209,12 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
   };
 
   return html`
-    <${Overlay} id="spawn-harness-policy-modal" labelledby="spawn-harness-policy-title"
-      onClose=${close} onSubmitHotkey=${submit} dirty=${dirty} blocked=${busy}
-      confirmDiscard=${confirmDiscard} registerClose=${registerClose}
-      resizeKey="tclaude.dash.modalSize.spawn-harness-policy">
-      <h3 id="spawn-harness-policy-title">${copy.title}</h3>
+    <${Dialog} id="spawn-harness-policy-modal" title=${copy.title}
+      onClose=${close} onSubmitHotkey=${submit} dirty=${dirty} busy=${busy}
+      confirmDiscard=${confirmDiscard}
+      resizeKey="tclaude.dash.modalSize.spawn-harness-policy"
+      error=${error} cancel=${copy.cancel}
+      footer=${html`<${Button} variant="primary" disabled=${busy || !view} onClick=${submit}>${copy.save}</${Button}>`}>
       <p class="manage-intro">${copy.intro} ${copy.scope}</p>
       ${busy && !view ? html`<div class="empty">${copy.loading}</div>` : null}
       ${view ? html`
@@ -236,7 +233,7 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
                   const edge = draft[key];
                   const inherited = groupScope ? effectiveGlobal(view, source.name, target.name) : null;
                   return html`<td key=${target.name} class=${`spawn-harness-cell ${edge?.decision || ''}`}>
-                    <select value=${edge?.decision || 'allow'} disabled=${busy}
+                    <${Select} value=${edge?.decision || 'allow'} disabled=${busy}
                       aria-label=${wizard
                         ? `${source.name} to ${target.name} summoning ward`
                         : `${source.name} to ${target.name} decision`}
@@ -244,7 +241,7 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
                       ${groupScope ? html`<option value="inherit">${copy.inherit}</option>` : null}
                       <option value="allow">${copy.allow}</option>
                       <option value="deny">${copy.deny}</option>
-                    </select>
+                    <//>
                     ${edge?.decision === 'deny' ? html`<textarea rows="3" maxlength="1000"
                       aria-label=${wizard
                         ? `${source.name} to ${target.name} forbidden-summon reason`
@@ -263,13 +260,7 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
           </table>
         </div>
       ` : null}
-      <div class="cron-create-error" role="alert">${error}</div>
-      <div class="modal-buttons">
-        <${Button} disabled=${busy} onClick=${() => { void requestClose(); }}>${copy.cancel}</${Button}>
-        <span class="spacer"></span>
-        <${Button} variant="primary" disabled=${busy || !view} onClick=${submit}>${copy.save}</${Button}>
-      </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 

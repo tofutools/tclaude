@@ -15,6 +15,7 @@ import { TERMINAL_WINDOW_KIND, paneSeedOf } from './terminal-window-model.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { detachSeedWindow, openTerminalPane, setFloatingTerminals } from './terminals-tab.js';
 import { POPUP_BLOCKED, TO_COLLAB_LABEL, TO_WINDOW_LABEL, registerTabMoves, tabMoves } from './overlay-tab-moves.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -68,19 +69,20 @@ export function TerminalWindow({ instance, overlay, focusRef, strip, close, snap
   const { toCollab, toWindow } = tabMoves(instance);
   const toSeparateWindow = () => toWindow({ rect: overlay.windowRef.current?.getBoundingClientRect?.(), win, notify });
   const title = html`${strip}
-    <button type="button" class="board-overlay-action" title="Move this terminal to a tab of the Collab view" onClick=${toCollab}>${TO_COLLAB_LABEL}</button>
-    <button type="button" class="board-overlay-action" title="Move this terminal to a browser window of its own" onClick=${toSeparateWindow}>${TO_WINDOW_LABEL}</button>
-    ${look === 'classic' && html`<button type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${name}`} onClick=${close.onClose}>×</button>`}`;
+    <${Button} size="sm" class="board-overlay-action" title="Move this terminal to a tab of the Collab view" onClick=${toCollab}>${TO_COLLAB_LABEL}<//>
+    <${Button} size="sm" class="board-overlay-action" title="Move this terminal to a browser window of its own" onClick=${toSeparateWindow}>${TO_WINDOW_LABEL}<//>
+    ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title="Minimize" aria-label=${`Minimize ${name}`} onClick=${() => minimizeOverlayWindow(instance.id)}>–</button>`}
+    ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${name}`} onClick=${close.onClose}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="companion-window chat-window" frameClass="companion-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Terminal ${name}`} title=${title}
-    controls=${{ look, closeLabel: `Close ${name}`, closeTitle: close.title, onClose: close.onClose, onMinimize: () => minimizeOverlayWindow(instance.id) }}>
+    controls=${{ look, closeLabel: `Close ${name}`, closeTitle: close.title, onClose: close.onClose, onMinimize: () => minimizeOverlayWindow(instance.id), onCollab: snapshot.value?.collab_enabled === true ? toCollab : null }}>
     <div class="companion-body" id=${instance.id}>
       ${open && html`
         <${PaneDictation} pane=${pane} active=${true} solo=${true} status=${status} canType=${true} target=${null} snapshot=${snapshot} actions=${actions} win=${win} notify=${notify}>
           <${TerminalZoom} font=${font} widget=${() => widgetRef.current} />
         <//>
         ${status !== 'connected' && html`<div class="companion-floating-anchor"><div class="companion-term-status" role="status">${canReconnect
-          ? html`${status || 'disconnected'}. <button type="button" onClick=${() => setGeneration((n) => n + 1)}>Reconnect</button>`
+          ? html`${status || 'disconnected'}. <${Button} size="sm" variant="link" onClick=${() => setGeneration((n) => n + 1)}>Reconnect<//>`
           : status}</div></div>`}
         <${Terminal} key=${instance.paneKey} agent=${{ agentId: instance.paneKey, harness: '' }} wsPath=${instance.ws} generation=${generation}
           widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} focusToken=${focusToken} widgetRef=${widgetRef}

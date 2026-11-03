@@ -7,7 +7,7 @@ import { NodeSelect } from './node-select.js';
 import { Pager } from './pager.js';
 import { actorTitle, AUDIT_COLUMNS, AUDIT_PAGE_SIZES, fmtAuditTime, statusView, targetTitle, verbClass } from './audit-model.js';
 import { useDismissablePopover } from './hover-popover.js';
-import { Input, Select } from './ui-components.js';
+import { Input, Select, SortTh } from './ui-components.js';
 
 const html = htm.bind(h); const REPOLL_MS = 30000;
 
@@ -44,23 +44,25 @@ function SpawnDetails({ entry }) {
   useDismissablePopover([popoverRef, triggerRef], open && !!details, (why) => dismiss(why !== 'outside'));
   if (!details) return null;
   return html`<span class="audit-spawn-info">
-    <button type="button" class="spawn-field-help-trigger audit-spawn-info-trigger"
+    <button data-ui-exempt type="button" class="spawn-field-help-trigger audit-spawn-info-trigger"
       ref=${triggerRef}
       aria-label="Show spawn request, resolved parameters, and response"
       aria-controls=${open ? panelID : undefined} aria-expanded=${open ? 'true' : 'false'} title="Show spawn request, resolved parameters, and response"
       onClick=${() => open ? dismiss() : setOpen(true)}>?</button>
-    ${open && html`<div id=${panelID} ref=${popoverRef} class="audit-spawn-popover" role="dialog" aria-label="Spawn details" tabIndex="-1">
-      <div class="audit-spawn-popover-head"><strong>Spawn details</strong><button ref=${closeRef} type="button" class="audit-spawn-popover-close" aria-label="Close spawn details" title="Close" onClick=${() => dismiss()}>×</button></div>
+    ${open && html`<div id=${panelID} ref=${popoverRef} class="audit-spawn-popover ui-popover" role="dialog" aria-label="Spawn details" tabIndex="-1">
+      <div class="audit-spawn-popover-head"><strong>Spawn details</strong><button data-ui-exempt ref=${closeRef} type="button" class="audit-spawn-popover-close" aria-label="Close spawn details" title="Close" onClick=${() => dismiss()}>×</button></div>
       ${details.snapshot_truncated && html`<div class="audit-spawn-popover-note">The request snapshot exceeded the audit size limit; the resolved values and response are retained where possible.</div>`}
-      <section><h4>Request input</h4><pre data-capture-mask>${prettyAuditValue(details.input, details.input_raw)}</pre></section>
-      <section><h4>Resolved parameters and profiles</h4><pre data-capture-mask>${prettyAuditValue(details.resolved)}</pre></section>
-      <section><h4>Command response${details.response_truncated ? ' (truncated)' : ''}</h4><pre>${prettyAuditValue(details.response, details.response_raw)}</pre></section>
+      <section><h4 class="ui-eyebrow ui-eyebrow-section">Request input</h4><pre data-capture-mask>${prettyAuditValue(details.input, details.input_raw)}</pre></section>
+      <section><h4 class="ui-eyebrow ui-eyebrow-section">Resolved parameters and profiles</h4><pre data-capture-mask>${prettyAuditValue(details.resolved)}</pre></section>
+      <section><h4 class="ui-eyebrow ui-eyebrow-section">Command response${details.response_truncated ? ' (truncated)' : ''}</h4><pre>${prettyAuditValue(details.response, details.response_raw)}</pre></section>
     </div>`}
   </span>`;
 }
 function Header({ current, state, actions }) {
-  const activate = (event, key) => { if (!key || (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar')) return; event.preventDefault(); state.cycleSort(key); actions.load(); };
-  return html`<thead><tr>${AUDIT_COLUMNS.map((column) => { const active = column.key === current.sort; return html`<th key=${column.label} class=${column.key ? `audit-sort${active ? ' active' : ''}` : undefined} tabIndex=${column.key ? 0 : undefined} aria-sort=${column.key ? active ? current.dir === 'asc' ? 'ascending' : 'descending' : 'none' : undefined} title=${column.key ? `Sort by ${column.label}` : undefined} onClick=${(event) => activate(event, column.key)} onKeyDown=${(event) => activate(event, column.key)}>${column.label}${active ? current.dir === 'asc' ? ' ▲' : ' ▼' : ''}</th>`; })}</tr></thead>`;
+  return html`<thead><tr>${AUDIT_COLUMNS.map((column) => (column.key
+    ? html`<${SortTh} key=${column.label} active=${column.key === current.sort} dir=${current.dir} sortLabel=${column.label}
+        onSort=${() => { state.cycleSort(column.key); actions.load(); }}>${column.label}<//>`
+    : html`<th key=${column.label}>${column.label}</th>`))}</tr></thead>`;
 }
 function Rows({ current, state, actions }) {
   if (current.request.phase === 'loading') return html`<div class="empty">Loading audit log…</div>`;
@@ -119,6 +121,6 @@ export function AuditApp({ state, actions }) {
   useEffect(() => () => clearTimeout(searchTimer.current), []);
   const filter = (name, value, debounce = false) => { state.setFilter(name, value); clearTimeout(searchTimer.current); if (debounce) searchTimer.current = setTimeout(actions.load, 300); else actions.load(); };
   const retention = current.response ? current.response.pruning_on ? `keeping ${current.response.retention_days} day${current.response.retention_days === 1 ? '' : 's'}` : 'kept forever' : '';
-  return html`<${Fragment}><div class="filter-bar"><${Input} domRef=${filterRef} id="filter-audit" aria-label="Search audit events" placeholder="Search (actor / verb / target / group / detail) — server-side" autocomplete="off" spellcheck=${false} value=${current.query} onInput=${(event) => filter('query', event.currentTarget.value, true)} /><span class="filter-count" id="filter-audit-count" aria-live="polite">${current.totalUnfiltered === 0 ? '' : current.total === current.totalUnfiltered ? `${current.total} event${current.total === 1 ? '' : 's'}` : `${current.total} / ${current.totalUnfiltered}`}</span><button class="clear-filter" id="filter-audit-clear" title="Clear search" aria-label="Clear audit search" onClick=${() => { filter('query', ''); filterRef.current?.focus(); }}>×</button><label class="filter-toggle" title="Which audit source or observer to show"><span>source</span><${Select} size="sm" id="audit-source" value=${current.source} onChange=${(event) => filter('source', event.currentTarget.value)}><option value="">all</option><option value="cli">CLI</option><option value="dashboard">dashboard</option><option value="popup">approval popup</option><option value="tmux">pane bootstrap observer</option><option value="hook">SessionEnd hook</option><option value="reaper">reaper</option><option value="reconcile">startup reconciliation</option><//></label><label class="filter-toggle" title="Which command outcomes to show"><span>outcome</span><${Select} size="sm" id="audit-outcome" value=${current.outcome} onChange=${(event) => filter('outcome', event.currentTarget.value)}><option value="">all</option><option value="success">success</option><option value="failure">denied / error</option><//></label><${NodeFilter} nodes=${nodes} value=${current.node} onChange=${(value) => { state.setNode(value); actions.load(); }} /><span class="spacer"></span><span id="audit-retention" class="muted">${current.response?.merged ? '' : retention}</span></div><${MergedNote} response=${current.response} /><div id="audit-list" aria-busy=${current.request.phase === 'loading' || current.request.phase === 'refreshing'}><${Rows} current=${current} state=${state} actions=${actions} /></div><${AuditPager} current=${current} state=${state} actions=${actions} /></${Fragment}>`;
+  return html`<${Fragment}><div class="filter-bar"><${Input} domRef=${filterRef} id="filter-audit" aria-label="Search audit events" placeholder="Search (actor / verb / target / group / detail) — server-side" autocomplete="off" spellcheck=${false} value=${current.query} onInput=${(event) => filter('query', event.currentTarget.value, true)} /><span class="filter-count" id="filter-audit-count" aria-live="polite">${current.totalUnfiltered === 0 ? '' : current.total === current.totalUnfiltered ? `${current.total} event${current.total === 1 ? '' : 's'}` : `${current.total} / ${current.totalUnfiltered}`}</span><button data-ui-exempt class="clear-filter" id="filter-audit-clear" title="Clear search" aria-label="Clear audit search" onClick=${() => { filter('query', ''); filterRef.current?.focus(); }}>×</button><label class="filter-toggle" title="Which audit source or observer to show"><span>source</span><${Select} size="sm" id="audit-source" value=${current.source} onChange=${(event) => filter('source', event.currentTarget.value)}><option value="">all</option><option value="cli">CLI</option><option value="dashboard">dashboard</option><option value="popup">approval popup</option><option value="tmux">pane bootstrap observer</option><option value="hook">SessionEnd hook</option><option value="reaper">reaper</option><option value="reconcile">startup reconciliation</option><//></label><label class="filter-toggle" title="Which command outcomes to show"><span>outcome</span><${Select} size="sm" id="audit-outcome" value=${current.outcome} onChange=${(event) => filter('outcome', event.currentTarget.value)}><option value="">all</option><option value="success">success</option><option value="failure">denied / error</option><//></label><${NodeFilter} nodes=${nodes} value=${current.node} onChange=${(value) => { state.setNode(value); actions.load(); }} /><span class="spacer"></span><span id="audit-retention" class="muted">${current.response?.merged ? '' : retention}</span></div><${MergedNote} response=${current.response} /><div id="audit-list" aria-busy=${current.request.phase === 'loading' || current.request.phase === 'refreshing'}><${Rows} current=${current} state=${state} actions=${actions} /></div><${AuditPager} current=${current} state=${state} actions=${actions} /></${Fragment}>`;
 }
 export function mountAuditIsland({ host, state, actions, registerCleanup }) { render(html`<${AuditApp} state=${state} actions=${actions} />`, host); registerCleanup(() => render(null, host)); }

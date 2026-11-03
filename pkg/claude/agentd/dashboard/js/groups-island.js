@@ -129,7 +129,7 @@ export function GroupsControls({ state, actions }) {
         title=${wizard ? 'Parties shown / all parties' : 'Groups shown / all groups'}
       >${filtering ? `${current.shownReal} / ${current.total}` : ''}</span>
       ${filtering && html`
-        <button
+        <button data-ui-exempt
           class="clear-filter"
           id="filter-groups-clear"
           type="button"
@@ -169,7 +169,7 @@ export function GroupsControls({ state, actions }) {
         onClick=${() => { state.viewOpen.value = !state.viewOpen.value; }}
       >
         ▾ view
-        <span id="filter-groups-view-badge" class="view-badge" hidden=${badge === 0}>${badge || ''}</span>
+        <span id="filter-groups-view-badge" class="view-badge ui-badge" hidden=${badge === 0}>${badge || ''}</span>
       <//>
       <div
         ref=${menuRef}
@@ -188,7 +188,7 @@ export function GroupsControls({ state, actions }) {
         `)}
         <div class="view-menu-sep" role="separator"></div>
         <div
-          class="view-menu-heading"
+          class="ui-eyebrow view-menu-heading"
           title="Show or hide individual columns in the member tables. The Name and controls columns always stay. Hiding the ID column moves its agent-id / conv-id hover onto the Name."
         >Columns</div>
         <div id="filter-groups-cols" class="view-cols">
@@ -446,7 +446,7 @@ export function BrokerRefusalNotice({ snapshot }) {
   return html`<div class="broker-refusal-notice" role="status" title=${title}>
     <span class="broker-refusal-notice-glyph" aria-hidden="true">🚫</span>
     <span>agentd refused ${total} brokered callback${plural}${detail} in the last 15 minutes — telemetry for at least one agent is being lost. Look for a 🚫 on an agent row; if there is none, the affected row is hidden or unplaceable, and the daemon log has the caller pid.</span>
-    <button type="button" class="broker-refusal-notice-dismiss" aria-label="Dismiss this warning"
+    <button data-ui-exempt type="button" class="broker-refusal-notice-dismiss" aria-label="Dismiss this warning"
       title="Dismiss this warning. It comes back if agentd refuses another callback." onClick=${dismiss}>×</button>
   </div>`;
 }

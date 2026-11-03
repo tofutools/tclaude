@@ -1,6 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { DOCTOR_CATEGORIES } from './doctor-state.js';
 import { clipboardFailure, writeClipboard } from './insecure-origin.js';
 
@@ -66,25 +67,25 @@ function SandboxDefaultControl({ check, state, actions }) {
   const busy = state.busy.value;
   if (check.severity === 'decision' || !check.value) {
     return html`<div class="doctor-choice">
-      <div class="doctor-opt rec">
+      <div class="doctor-opt ui-card ui-inset rec">
         <div class="doctor-opt-title">tclaude sandbox <span class="doctor-tag">recommended</span></div>
         <div class="doctor-opt-detail">bubblewrap on Linux, Seatbelt on macOS. The same wall for every harness, and it enforces your sandbox profiles.</div>
       </div>
-      <div class="doctor-opt">
+      <div class="doctor-opt ui-card ui-inset">
         <div class="doctor-opt-title">Harness sandboxes</div>
         <div class="doctor-opt-detail">Keep current behaviour: each harness confines itself with its own sandbox, or not at all.</div>
       </div>
       <div class="doctor-acts">
-        <button type="button" class="tool doctor-primary" disabled=${busy} onClick=${() => actions.setSandboxDefault('tclaude-layer')}>Use tclaude sandbox</button>
-        <button type="button" class="tool" disabled=${busy} onClick=${() => actions.setSandboxDefault('harness')}>Keep harness sandboxes</button>
+        <${Button} size="sm" variant="success" class="doctor-primary" disabled=${busy} onClick=${() => actions.setSandboxDefault('tclaude-layer')}>Use tclaude sandbox<//>
+        <${Button} size="sm" disabled=${busy} onClick=${() => actions.setSandboxDefault('harness')}>Keep harness sandboxes<//>
       </div>
     </div>`;
   }
   const other = check.value === 'tclaude-layer' ? 'harness' : 'tclaude-layer';
   return html`<div class="doctor-acts">
-    <button type="button" class="tool" disabled=${busy} onClick=${() => actions.setSandboxDefault(other)}>
+    <${Button} size="sm" disabled=${busy} onClick=${() => actions.setSandboxDefault(other)}>
       ${other === 'tclaude-layer' ? 'Switch to tclaude sandbox' : 'Switch to harness sandboxes'}
-    </button>
+    <//>
   </div>`;
 }
 
@@ -99,7 +100,7 @@ function CheckRow({ check, state, actions, notify }) {
         ${showCategory && categoryLabel && html`<span class="doctor-cat">${categoryLabel}</span>`}${showCategory && categoryLabel && check.detail ? ' · ' : ''}${check.detail}
       </div>`}
       ${check.fix && html`<div class="doctor-fix"><code>${check.fix}</code>
-        <button type="button" class="doctor-copy" onClick=${() => copy(check.fix, notify)}>copy</button></div>`}
+        <${Button} size="sm" variant="link" class="doctor-copy" onClick=${() => copy(check.fix, notify)}>copy<//></div>`}
       ${check.action === 'sandbox-default' && html`<${SandboxDefaultControl} check=${check} state=${state} actions=${actions} />`}
     </div>
   </div>`;
@@ -121,21 +122,21 @@ function DoctorApp({ state, actions, notify }) {
     lede = counts.attention === 0 ? 'Nothing needs your attention.'
       : `${counts.attention} item${counts.attention === 1 ? '' : 's'} across ${Object.keys(counts.byCategory).length} categor${Object.keys(counts.byCategory).length === 1 ? 'y' : 'ies'}.`;
   }
-  return html`<div class="doctor-island">
+  return html`<div class="doctor-island ui-card">
     <div class="doctor-side" role="tablist" aria-label="Doctor categories">
-      <button type="button" role="tab" class=${category === 'attention' ? 'on' : ''} aria-selected=${category === 'attention'}
+      <button data-ui-exempt type="button" role="tab" class=${category === 'attention' ? 'on' : ''} aria-selected=${category === 'attention'}
         onClick=${() => select('attention')}>Needs attention <span>${counts.attention}</span></button>
       <div class="doctor-sep"></div>
-      ${DOCTOR_CATEGORIES.map((c) => html`<button key=${c.id} type="button" role="tab" class=${category === c.id ? 'on' : ''}
+      ${DOCTOR_CATEGORIES.map((c) => html`<button data-ui-exempt key=${c.id} type="button" role="tab" class=${category === c.id ? 'on' : ''}
         aria-selected=${category === c.id} onClick=${() => select(c.id)}>${c.label} <span>${counts.byCategory[c.id] || 0}</span></button>`)}
       <div class="doctor-sep"></div>
-      <button type="button" role="tab" class=${category === 'all' ? 'on' : ''} aria-selected=${category === 'all'}
+      <button data-ui-exempt type="button" role="tab" class=${category === 'all' ? 'on' : ''} aria-selected=${category === 'all'}
         onClick=${() => select('all')}>All checks <span>${counts.all}</span></button>
     </div>
     <div class="doctor-main">
       <div class="doctor-head">
         <div><h2>${heading}</h2>${lede && html`<p class="doctor-lede">${lede}</p>`}</div>
-        <button type="button" class="tool" onClick=${() => actions.load({ refresh: true })}>Re-check</button>
+        <${Button} size="sm" onClick=${() => actions.load({ refresh: true })}>Re-check<//>
       </div>
       ${state.phase.value === 'error' && html`<div class="doctor-error">Could not load checks: ${state.error.value}</div>`}
       ${state.phase.value === 'loading' && html`<p class="doctor-lede">Checking…</p>`}
@@ -150,8 +151,8 @@ function DoctorApp({ state, actions, notify }) {
 function DoctorBadge({ state }) {
   const { decision, blocking } = state.counts.value;
   return html`<span class="doctor-badges">
-    <span class="tab-badge doctor-ask" hidden=${decision === 0} title="Decisions waiting for you">${decision}</span>
-    <span class="tab-badge" hidden=${blocking === 0} title="Blocking problems">${blocking}</span>
+    <span class="tab-badge ui-badge ui-badge-accent" hidden=${decision === 0} title="Decisions waiting for you">${decision}</span>
+    <span class="tab-badge ui-badge ui-badge-danger" hidden=${blocking === 0} title="Blocking problems">${blocking}</span>
   </span>`;
 }
 

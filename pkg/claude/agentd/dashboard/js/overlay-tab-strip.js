@@ -1,7 +1,10 @@
 // overlay-tab-strip.js -- a window's tabs, in its title bar. Even a window of one
 // tab shows it, so there is one layout. That tab drags the window, as a browser's
-// only tab does, and a window of several drags by the bar around them. A tab's ×
-// minimizes that tab to the dock and stops nothing. Tabs group and take a
+// only tab does, and a window of several drags by the bar around them. A tab has
+// the window's two verbs, in the title bar's order: − minimizes it to the dock,
+// and × detaches it, as the window's ✕ does for every tab: it leaves the window
+// and the dock and keeps running in the background (tabClose). Neither stops
+// anything, but a running Steward asks first. Tabs group and take a
 // right-click menu as a Terminals strip's do, and a menu rests under a held finger.
 
 import { h } from 'preact';
@@ -17,6 +20,7 @@ import {
 import { aimFromCollab, collabDrag, holdForMenu, startTabDrag, stripTargetAt, tabDropTarget, tabGhost } from './overlay-tab-drag.js';
 import { groupsOf, windowHolding } from './overlay-tab-model.js';
 import { TO_COLLAB_LABEL, TO_WINDOW_LABEL, tabMoves } from './overlay-tab-moves.js';
+import { Glyph, STANDARD_GLYPHS } from './overlay-window-controls.js';
 
 const html = htm.bind(h);
 
@@ -165,7 +169,7 @@ function GroupStack({ window, group, overlay, win, renderTab }) {
     aria-label=${`${group.name}, ${members.length} tab${members.length === 1 ? '' : 's'}`} data-tab-group=${group.id}>
     ${isRenaming ? html`<${TabGroupRename} group=${group} label=${`Rename tab group ${group.name}`} onCancel=${stopRename}
       onCommit=${(id, value) => { stopRename(); changeOverlayGroup(window.id, id, { name: sanitizeGroupName(value, group.name) }); }} />` : html`
-      <button type="button" class="mux-group-pill" aria-expanded=${group.collapsed ? 'false' : 'true'} aria-haspopup="menu"
+      <button data-ui-exempt type="button" class="mux-group-pill" aria-expanded=${group.collapsed ? 'false' : 'true'} aria-haspopup="menu"
         aria-label=${`${group.name}, ${members.length} tab${members.length === 1 ? '' : 's'}`}
         title=${`Drag to move the whole ${group.name} group · click to ${group.collapsed ? 'expand' : 'collapse'} · double-click or F2 to rename · right-click or press and hold for more`}
         onPointerDown=${onPointerDown} onClick=${onClick} onDblClick=${(event) => { event.preventDefault(); event.stopPropagation(); startRename(); }}
@@ -178,7 +182,7 @@ function GroupStack({ window, group, overlay, win, renderTab }) {
   </div>`;
 }
 
-export function OverlayTabStrip({ window, overlay, win, viewOf }) {
+export function OverlayTabStrip({ window, overlay, win, viewOf, tabClose = null }) {
   const target = tabDropTarget.value?.windowId === window.id ? tabDropTarget.value : null;
   const stripRef = useRef(null);
   // A strip too full for its bar still shows the tab that is showing.
@@ -245,11 +249,15 @@ export function OverlayTabStrip({ window, overlay, win, viewOf }) {
     const selected = tab.id === window.active;
     const menu = menuHandlers({ tabId: tab.id, label });
     return html`<div key=${tab.id} class=${`companion-tab${selected ? ' selected' : ''}${landsBefore === tab.id ? ' drop-before' : ''}`} data-tab-id=${tab.id}>
-      <button type="button" role="tab" aria-selected=${selected ? 'true' : 'false'} aria-haspopup="menu" title=${title}
+      <button data-ui-exempt type="button" role="tab" aria-selected=${selected ? 'true' : 'false'} aria-haspopup="menu" title=${title}
         onPointerDown=${(event) => onPointerDown(event, tab)} onClick=${(event) => (selected ? overlay.releaseFocus(event) : activateOverlayTab(tab.id))}
         ...${menu}>${lead}<span>${label}</span></button>
-      <button type="button" class="companion-tab-close" aria-label=${`Minimize ${label}`} title="Minimize this tab (it keeps running)"
-        onClick=${() => minimizeOverlayTab(tab.id)}>×</button>
+      <span class="companion-tab-buttons">
+        <button data-ui-exempt type="button" class="companion-tab-minimize" aria-label=${`Minimize ${label} to dock`} title="Minimize to dock (it keeps running)"
+          onClick=${() => minimizeOverlayTab(tab.id)}><${Glyph} path=${STANDARD_GLYPHS.minimize} /></button>
+        ${tabClose && html`<button data-ui-exempt type="button" class="companion-tab-close" aria-label=${`Detach ${label} to background`} title=${tabClose.title(tab)}
+          onClick=${() => tabClose.onClose(tab.id)}><${Glyph} path=${STANDARD_GLYPHS.close} /></button>`}
+      </span>
     </div>`;
   };
   const groups = new Map((window.groups || []).map((group) => [group.id, group]));

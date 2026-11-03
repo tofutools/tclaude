@@ -42,7 +42,7 @@ function LogRows({ current }) {
   if (current.request.phase === 'loading') return html`<div class="empty">Loading logs…</div>`;
   if (current.request.phase === 'error') return html`<div role="alert" class="island-error">Failed to load logs: ${current.request.error}</div>`;
   if (!current.rows.length) return html`<div class="empty">${current.totalUnfiltered ? 'No log lines match the filter.' : html`No log lines yet. tclaude writes its daemon + CLI log to <code>~/.tclaude/data/output.log</code>.`}</div>`;
-  return html`<table class="logs-table"><thead><tr><th>When</th><th>Level</th><th>Message</th></tr></thead><tbody>
+  return html`<table class="logs-table ui-compact"><thead><tr><th>When</th><th>Level</th><th>Message</th></tr></thead><tbody>
     ${current.rows.map(({ row, key }) => { const level = levelKey(row.level); const fields = fieldsText(row.fields); return html`<tr key=${key} data-key=${key} class=${`log-row log-row-${level}`}>
       <td class="logs-nowrap"><span class="last-hook" title=${row.time || ''}>${fmtAbsTime(row.time)}</span>${relTime(row.time) && html` <span class="muted">(${relTime(row.time)})</span>`}</td>
       <td class="logs-nowrap"><span class=${`log-level log-${level}`} title=${level === 'raw' ? 'not a structured log line' : undefined}>${level}</span></td>
@@ -78,7 +78,7 @@ export function LogsApp({ state, actions }) {
     <div class="filter-bar">
       <${Input} domRef=${filterRef} id="filter-logs" aria-label="Search logs" placeholder="Search (message / level / fields) — server-side" autocomplete="off" spellcheck=${false} value=${current.query} onInput=${(event) => filter('query', event.currentTarget.value, true)} />
       <span class="filter-count" id="filter-logs-count" aria-live="polite">${current.totalUnfiltered === 0 ? '' : current.total === current.totalUnfiltered ? `${current.total} line${current.total === 1 ? '' : 's'}` : `${current.total} / ${current.totalUnfiltered}`}</span>
-      <button class="clear-filter" id="filter-logs-clear" title="Clear search" aria-label="Clear log search" onClick=${() => { filter('query', ''); filterRef.current?.focus(); }}>×</button>
+      <button data-ui-exempt class="clear-filter" id="filter-logs-clear" title="Clear search" aria-label="Clear log search" onClick=${() => { filter('query', ''); filterRef.current?.focus(); }}>×</button>
       <${ActivityNodeSwitch} />
       <label class="filter-toggle"><span>level</span><${Select} size="sm" id="logs-level" value=${current.level} onChange=${(event) => filter('level', event.currentTarget.value)}><option value="">all</option><option value="debug">debug+</option><option value="info">info+</option><option value="warn">warn+</option><option value="error">error</option><//></label>
       <label class="filter-toggle"><span>since</span><${Select} size="sm" id="logs-range" value=${current.rangeMs} onChange=${(event) => filter('rangeMs', Number(event.currentTarget.value))}><option value="0">all</option><option value="900000">15m</option><option value="3600000">1h</option><option value="21600000">6h</option><option value="86400000">24h</option><option value="604800000">7d</option><//></label>

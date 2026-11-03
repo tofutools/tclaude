@@ -111,7 +111,7 @@ function ProfileModal({ state, actions }) {
   const field = (key) => (event) => state.updateModal({ [key]: event.currentTarget.value, error: '' });
   return html`<div ref=${dialogRef} class="modal-overlay show" id="profile-modal"
     onClick=${(event) => { if (event.target === event.currentTarget) close(); }}>
-    <form class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="profile-modal-title"
+    <form class="cron-create-modal ui-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-modal-title"
       onSubmit=${(event) => { event.preventDefault(); void actions.start(); }}>
       <h3 id="profile-modal-title">Profile the daemon</h3>
       <p class="muted">Captures a CPU profile of this agentd process while it keeps running normally, plus heap,
@@ -146,7 +146,7 @@ function CaptureList({ current, actions, now }) {
   if (!current.captures.length) {
     return html`<div class="empty">No captures yet. Start one while agentd is busy to see where its CPU goes; captures from <code>tclaude agentd profile</code> appear here too.</div>`;
   }
-  return html`<table class="debug-table profile-table">
+  return html`<table class="debug-table profile-table ui-compact">
     <thead><tr>
       <th scope="col">Started</th><th scope="col">Label</th><th scope="col">Status</th>
       <th scope="col">agentd CPU</th><th scope="col">child CPU</th><th scope="col">subproc</th>

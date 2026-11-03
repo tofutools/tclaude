@@ -3,7 +3,7 @@ import { ProfileEditor } from './fleet-admin-profile-editor.js';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { POOL_NAME_RE, UNRESTRICTED_CONSEQUENCE, changeText, grantText, profileSummary } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
@@ -42,8 +42,7 @@ export function ApplyDialog({ profile, peers, actions, poolNames = new Map(), on
       onDone(`Applied ${profile.name} to ${row.label}`);
     } catch (e) { setError(errText(e)); } finally { setBusy(false); }
   };
-  return html`<${Overlay} id="fleet-apply-modal" labelledby="fleet-apply-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="fleet-apply-title">Apply profile ${profile.name}</h3>
+  return html`<${Dialog} id="fleet-apply-modal" onClose=${onClose} blocked=${busy} title=${html`Apply profile ${profile.name}`}>
     <label class="cron-create-row"><span class="cron-create-label">To peer</span>
       <${Select} size="sm" id="fleet-apply-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
         ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label} (${p.level})</option>`)}
@@ -64,7 +63,7 @@ export function ApplyDialog({ profile, peers, actions, poolNames = new Map(), on
       <span class="spacer"></span>
       <${Button} id="fleet-apply-submit" variant=${widens ? 'danger' : 'primary'} disabled=${busy || !ready || !changes.length} onClick=${apply}>${busy ? 'Applying…' : 'Apply'}</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // ProfilesPage manages node pools (membership carries the pool's grants) and
@@ -162,7 +161,7 @@ export function ProfilesPage({ view, pools, groups = [], actions, confirm, toast
     ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
     <h4>Node pools <span class="muted">${pools.length}</span></h4>
     <div class="muted">A pool's grants apply to every member node — peer grants for a pool are edited on the Peer grants page.</div>
-    ${pools.length > 0 && html`<table class="fa-table" id="fleet-pools">
+    ${pools.length > 0 && html`<table class="fa-table ui-compact" id="fleet-pools">
       <thead><tr><th>Pool</th><th>Members</th><th>Add member</th><th></th></tr></thead>
       <tbody>${pools.map((pool) => {
         const ids = (pool.members || []).map((m) => m.instance_id);
@@ -185,10 +184,10 @@ export function ProfilesPage({ view, pools, groups = [], actions, confirm, toast
     <h4>Node profiles <span class="muted">${summaries ? summaries.length : ''}</span></h4>
     <div class="muted">A profile bundles a trust level, pools, peer grants and worker defaults for a peer. <${Button} size="sm" variant="link" id="fleet-profile-new" class="fa-link" onClick=${() => setEditing({ profile: null })}>New profile…<//> CLI: <code>tclaude federation profile</code>.</div>
     ${summaries && summaries.length === 0 && html`<div class="empty">No profiles yet.</div>`}
-    ${summaries && summaries.length > 0 && html`<table class="fa-table" id="fleet-profiles">
+    ${summaries && summaries.length > 0 && html`<table class="fa-table ui-compact" id="fleet-profiles">
       <thead><tr><th>Profile</th><th>Level</th><th>Pools</th><th>Grants</th><th>Labels</th><th></th></tr></thead>
       <tbody>${summaries.map((p) => html`<tr key=${p.id} data-profile=${p.name}>
-        <td><b>${p.name}</b> <span class="muted">rev ${p.revision}</span>${p.id === defaultID ? html` <span class="fa-badge">default</span>` : ''}</td>
+        <td><b>${p.name}</b> <span class="muted">rev ${p.revision}</span>${p.id === defaultID ? html` <span class="ui-tag ui-tag-accent fa-badge">default</span>` : ''}</td>
         <td><span class=${`fa-level ${p.level}`}>${p.level}</span></td>
         <td>${p.pools.join(', ') || html`<span class="muted">—</span>`}</td>
         <td>${p.grants}</td>

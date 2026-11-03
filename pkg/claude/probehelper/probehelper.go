@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/netnsdial"
 	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 )
 
@@ -40,6 +41,11 @@ func Dispatch(args []string) (bool, int) {
 		return false, 0
 	}
 	switch args[1] {
+	case netnsdial.HelperMode:
+		// The live-page stage's dial into an agent's private network
+		// namespace; nsenter has already joined it. See netnsdial.
+		_, code := netnsdial.RunHelper(args)
+		return true, code
 	case OpenCodeUnixRelayMode:
 		if len(args) < 6 || args[4] != "--" {
 			return true, invalidInvocationExit

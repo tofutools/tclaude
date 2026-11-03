@@ -127,7 +127,7 @@ test('shutting a Steward down asks first, retires it, and offers a new one', asy
   const stops = () => calls.filter(([, url]) => url.endsWith('/stop'));
   assert.deepEqual(stops(), [], 'nothing happens before the confirmation');
   assert.match(view.container.querySelector('.steward-shutdown-confirm').textContent, /keeps its conversation/);
-  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .danger').click(); await Promise.resolve(); await Promise.resolve(); });
+  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .ui-btn-danger').click(); await Promise.resolve(); await Promise.resolve(); });
   assert.deepEqual(stops(), [['POST', `/api/agents/${encodeURIComponent(S)}/stop`]], 'it stops; it is not retired');
   assert.equal(calls.some(([, url]) => url.endsWith('/retire')), false);
   assert.match(view.container.querySelector('.companion-shutdown-note').textContent, /is shut down/);
@@ -137,12 +137,12 @@ test('shutting a Steward down asks first, retires it, and offers a new one', asy
   assert.equal(calls.at(-1)[1], `/api/agents/${encodeURIComponent(S)}/resume`, 'Resume is the same agent');
 });
 
-test('a Steward tab × only minimizes, and the tab stays pinned', async (t) => {
+test('a Steward tab – only minimizes, and the tab stays pinned', async (t) => {
   const prefs = memoryPrefs();
   const { view, harness, controller } = await setup(t, { prefs, snapshot: snapshotWith({ steward: true }) });
   await harness.act(() => controller().open(S));
-  const tab = view.container.querySelector('.companion-tab-close');
-  assert.match(tab.title, /Minimize/);
+  const tab = view.container.querySelector('.companion-tab-minimize');
+  assert.match(tab.title, /Minimize to dock/);
   await harness.act(() => tab.click());
   await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   assert.ok(!view.container.querySelector(SHOWN_WINDOW), 'the window went away');
@@ -166,7 +166,7 @@ test('the window ✕ on a Steward asks what ⏻ asks, then shuts it down and clo
   assert.ok(view.container.querySelector(SHOWN_WINDOW));
 
   await harness.act(() => close().click());
-  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .danger').click(); await new Promise((r) => setTimeout(r, 0)); });
+  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .ui-btn-danger').click(); await new Promise((r) => setTimeout(r, 0)); });
   assert.deepEqual(stops(), [['POST', `/api/agents/${encodeURIComponent(S)}/stop`]]);
   assert.ok(!view.container.querySelector(SHOWN_WINDOW), 'the window closed');
 });
@@ -178,7 +178,7 @@ test('⏻ after a cancelled ✕ still keeps the window on the way back', async (
   await harness.act(() => view.container.querySelector('.overlay-wc-close').click());
   await harness.act(() => view.container.querySelector('.steward-shutdown-actions button:not(.danger)').click());
   await harness.act(() => view.container.querySelector('.steward-shutdown-open').click());
-  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .danger').click(); await new Promise((r) => setTimeout(r, 0)); });
+  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .ui-btn-danger').click(); await new Promise((r) => setTimeout(r, 0)); });
   assert.ok(view.container.querySelector(SHOWN_WINDOW));
   assert.match(view.container.querySelector('.companion-resume-steward').textContent, /Resume/);
 });
@@ -198,7 +198,7 @@ test('a floated Steward: its window ✕ asks too, and Cancel keeps it running', 
   assert.deepEqual(stops(), []);
 
   await harness.act(() => floated().querySelector('.overlay-wc-close').click());
-  await harness.act(async () => { floated().querySelector('.steward-shutdown-actions .danger').click(); await new Promise((r) => setTimeout(r, 0)); });
+  await harness.act(async () => { floated().querySelector('.steward-shutdown-actions .ui-btn-danger').click(); await new Promise((r) => setTimeout(r, 0)); });
   assert.deepEqual(stops(), [['POST', `/api/agents/${encodeURIComponent(S)}/stop`]]);
   assert.equal(floated(), null, 'the window closed');
 });
@@ -209,7 +209,7 @@ test('a Steward shut down from its window ✕ leaves Resume behind its chip', as
   await harness.act(() => controller().open(S));
   const floated = () => view.container.querySelector('.chat-window');
   await harness.act(() => floated().querySelector('.overlay-wc-close').click());
-  await harness.act(async () => { floated().querySelector('.steward-shutdown-actions .danger').click(); await new Promise((r) => setTimeout(r, 0)); });
+  await harness.act(async () => { floated().querySelector('.steward-shutdown-actions .ui-btn-danger').click(); await new Promise((r) => setTimeout(r, 0)); });
   assert.ok(!floated());
   await harness.act(() => harness.getByRole(view.container, 'button', { name: /Open the companion/ }).click());
   assert.match(view.container.querySelector('.companion-resume-steward').textContent, /Resume/);
@@ -280,12 +280,100 @@ test('a floated agent that is no Steward still closes at once', async (t) => {
   assert.equal(floated(), null);
 });
 
+test('the window ✕ on several agents takes them all off the dock, still running, and they open again', async (t) => {
+  const { view, harness, controller, requests } = await setup(t);
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  await harness.act(() => controller().open(A));
+  await harness.act(() => controller().open(B));
+  assert.deepEqual(overlays.overlayWindows.peek().map((window) => window.tabs.length), [2], 'one window, two tabs');
+  const close = view.container.querySelector('.overlay-wc-close');
+  assert.match(close.title, /keeps running in the background/);
+  await harness.act(async () => { close.click(); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(overlays.overlayWindows.peek(), []);
+  assert.deepEqual(overlays.minimizedOverlayTabs.peek(), [], 'no pill is left on the dock');
+  assert.ok(!view.container.querySelector('.steward-shutdown-confirm'), 'nothing asked');
+  assert.deepEqual(requests.filter(({ url }) => /\/(stop|retire)$/.test(url)), [], 'nothing stopped');
+  await harness.act(() => controller().open(A));
+  assert.ok(view.container.querySelector(`${SHOWN_WINDOW} [data-chat-agent="${A}"]`), 'it opens again from where agents open');
+});
+
+test('a tab – sends that agent to the dock, still running', async (t) => {
+  const { view, harness, controller, requests } = await setup(t);
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  await harness.act(() => controller().open(A));
+  await harness.act(() => controller().open(B));
+  const tabMinimize = [...view.container.querySelectorAll('.companion-tab')].find((tab) => tab.textContent.includes('bravo')).querySelector('.companion-tab-minimize');
+  assert.ok(tabMinimize.querySelector('svg path'), 'a drawn glyph, centred in its box');
+  await harness.act(() => tabMinimize.click());
+  assert.deepEqual(overlays.minimizedOverlayTabs.peek().map(({ tab }) => tab.id), [`chat:${B}`]);
+  assert.deepEqual(overlays.overlayWindows.peek().map((window) => window.tabs.map((tab) => tab.id)), [[`chat:${A}`]]);
+  assert.deepEqual(requests.filter(({ url }) => /\/(stop|retire)$/.test(url)), [], 'nothing stopped');
+});
+
+test('a tab × is the window ✕ for that tab: it leaves window and dock, still running, and stays gone on reload', async (t) => {
+  const prefs = memoryPrefs();
+  const { view, harness, controller, requests } = await setup(t, { prefs });
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  await harness.act(() => controller().open(A));
+  await harness.act(() => controller().open(B));
+  const bravo = [...view.container.querySelectorAll('.companion-tab')].find((tab) => tab.textContent.includes('bravo'));
+  const buttons = [...bravo.querySelectorAll('button:not([role="tab"])')];
+  assert.deepEqual(buttons.map((button) => button.className), ['companion-tab-minimize', 'companion-tab-close'], 'the title bar\'s order: – then ×');
+  const tabClose = bravo.querySelector('.companion-tab-close');
+  assert.match(tabClose.title, /Detach to background/);
+  assert.match(tabClose.getAttribute('aria-label'), /Detach .*to background/);
+  await harness.act(async () => { tabClose.click(); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(overlays.overlayWindows.peek().map((window) => window.tabs.map((tab) => tab.id)), [[`chat:${A}`]], 'the other tab stays');
+  assert.deepEqual(overlays.minimizedOverlayTabs.peek(), [], 'no pill is left on the dock');
+  assert.ok(!view.container.querySelector('.steward-shutdown-confirm'), 'nothing asked');
+  assert.deepEqual(requests.filter(({ url }) => /\/(stop|retire)$/.test(url)), [], 'nothing stopped');
+  assert.ok(!JSON.parse(prefs.store.get('tclaude.dash.companion.tabs') || '[]').includes(B), 'not brought back by a reload');
+});
+
+test('a Steward tab × asks what the window ✕ asks, and the others stay', async (t) => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => { calls.push([options.method, url]); return { ok: true, text: async () => '', json: async () => ({}) }; };
+  const { view, harness, controller } = await setup(t, { fetchImpl, snapshot: snapshotWith({ steward: true }) });
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  await harness.act(() => controller().open(S));
+  await harness.act(() => controller().open(A));
+  const tabsOf = () => overlays.overlayWindows.peek().map((window) => window.tabs.map((tab) => tab.id));
+  const stewardTab = view.container.querySelector(`.companion-tab[data-tab-id="chat:${S}"]`);
+  const tabClose = stewardTab.querySelector('.companion-tab-close');
+  assert.match(tabClose.title, /shut it down, after asking/);
+  await harness.act(() => tabClose.click());
+  assert.match(view.container.querySelector('.steward-shutdown-confirm').textContent, /keeps its conversation/, 'the Steward asks, as the window ✕ does');
+  assert.deepEqual(tabsOf(), [[`chat:${S}`, `chat:${A}`]], 'nothing left while it asks');
+  assert.deepEqual(calls.filter(([, url]) => url.endsWith('/stop')), []);
+  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .ui-btn-danger').click(); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(calls.filter(([, url]) => url.endsWith('/stop')), [['POST', `/api/agents/${encodeURIComponent(S)}/stop`]]);
+  assert.deepEqual(tabsOf(), [[`chat:${A}`]], 'the worker stays in its window');
+});
+
+test('the window ✕ beside a running Steward takes the others off, and the Steward still asks', async (t) => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => { calls.push([options.method, url]); return { ok: true, text: async () => '', json: async () => ({}) }; };
+  const { view, harness, controller } = await setup(t, { fetchImpl, snapshot: snapshotWith({ steward: true }) });
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  await harness.act(() => controller().open(S));
+  await harness.act(() => controller().open(A));
+  const tabsOf = () => overlays.overlayWindows.peek().map((window) => window.tabs.map((tab) => tab.id));
+  assert.deepEqual(tabsOf(), [[`chat:${S}`, `chat:${A}`]]);
+  const close = view.container.querySelector('.overlay-wc-close');
+  assert.match(close.title, /Steward shuts down, after asking/);
+  await harness.act(() => close.click());
+  assert.deepEqual(tabsOf(), [[`chat:${S}`]], 'the worker left');
+  assert.deepEqual(overlays.minimizedOverlayTabs.peek(), [], 'with no pill');
+  assert.match(view.container.querySelector('.steward-shutdown-confirm').textContent, /keeps its conversation/, 'the Steward asks, as before');
+  assert.deepEqual(calls.filter(([, url]) => url.endsWith('/stop')), []);
+});
+
 test('a refused shut-down stays on the Steward and says why', async (t) => {
   const fetchImpl = async () => ({ ok: false, status: 409, text: async () => '{"message":"nothing to retire"}', json: async () => ({}) });
   const { view, harness, controller } = await setup(t, { fetchImpl, snapshot: snapshotWith({ steward: true }) });
   await harness.act(() => controller().open(S));
   await harness.act(() => view.container.querySelector('.steward-shutdown-open').click());
-  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .danger').click(); await new Promise((resolve) => { setTimeout(resolve, 0); }); });
+  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .ui-btn-danger').click(); await new Promise((resolve) => { setTimeout(resolve, 0); }); });
   assert.match(view.container.querySelector('.steward-shutdown-error').textContent, /nothing to retire/);
   assert.ok(!view.container.querySelector('.companion-shutdown-note'));
 });
@@ -484,7 +572,7 @@ test('Ctrl+. toggles the window, and a tab × sends it to the dock', async (t) =
   assert.ok(!view.container.querySelector(SHOWN_WINDOW), 'window minimized');
   assert.equal(mounted[0].disposed, false, 'a minimized window keeps its terminal attached');
   await key();
-  await harness.act(() => view.container.querySelector('.companion-tab-close').click());
+  await harness.act(() => view.container.querySelector('.companion-tab-minimize').click());
   assert.ok(!view.container.querySelector(SHOWN_WINDOW));
   assert.deepEqual(JSON.parse(prefs.store.get('tclaude.dash.companion.tabs')), [A], 'a tab × stops nothing, and the agent waits on the dock');
   const overlays = await harness.importDashboardModule('js/overlay-instances.js');
@@ -1752,20 +1840,63 @@ test('the classic look has its one minimize', async (t) => {
   assert.ok(view.container.querySelector('.companion-window-warm'), 'minimized');
 });
 
-test('an unknown or missing look follows the browser OS', async (t) => {
+test('an unknown or missing look is the standard one, and the OS looks are opt-in', async (t) => {
   const harness = await createPreactHarness(t);
   const { windowControlsLook } = await harness.importDashboardModule('js/overlay-window-controls.js');
-  assert.equal(windowControlsLook('auto', 'macos'), 'macos');
-  assert.equal(windowControlsLook(undefined, 'windows'), 'windows');
-  assert.equal(windowControlsLook('beos', 'linux'), 'linux');
+  assert.equal(windowControlsLook('auto', 'macos'), 'standard');
+  assert.equal(windowControlsLook(undefined, 'windows'), 'standard');
+  assert.equal(windowControlsLook('beos', 'linux'), 'standard');
+  assert.equal(windowControlsLook('os', 'macos'), 'macos', 'Match my OS follows the browser');
   assert.equal(windowControlsLook('classic', 'macos'), 'classic');
   assert.equal(windowControlsLook('linux', 'macos'), 'linux');
+});
+
+test('the standard look is − ⇄ × on the far right, and ⇄ opens the window in the Collab tab', async (t) => {
+  const opened = [];
+  const store = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A, B]), 'tclaude.dash.companion.active': A });
+  const { view, harness, controller } = await setup(t, { prefs: store, snapshot: { ...snapshotWith(), window_controls: 'auto' }, openTerminalsPane: (...args) => opened.push(args) });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const bar = view.container.querySelector('.board-overlay-titlebar');
+  assert.ok(bar.classList.contains('overlay-look-standard'));
+  const group = bar.querySelector('.overlay-window-controls');
+  assert.equal(bar.lastElementChild, group, 'on the far right');
+  assert.deepEqual([...group.querySelectorAll('button')].map((button) => button.className), ['overlay-wc-minimize', 'overlay-wc-collab', 'overlay-wc-close'], '− ⇄ ×');
+  assert.ok([...group.querySelectorAll('button')].every((button) => button.querySelector('svg path')), 'each glyph drawn in its box');
+  assert.deepEqual(buttonNames(group), ['Minimize (Ctrl .)', 'Open in the Collab tab', 'Close alpha']);
+  for (const button of group.querySelectorAll('button')) assert.ok(button.title, `${button.className} has a tooltip`);
+  await harness.act(async () => { group.querySelector('.overlay-wc-collab').click(); await new Promise((r) => setTimeout(r, 80)); });
+  assert.deepEqual(opened.map(([agent]) => agent), [A], 'the cog item\'s move');
+  assert.ok(!view.container.querySelector('.companion-tab[data-tab-id="chat:' + A + '"]'), 'and it left the window');
+});
+
+test('the standard look\'s middle button maximizes where the window cannot go to Collab', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { WindowControls } = await harness.importDashboardModule('js/overlay-window-controls.js');
+  let sized = 0;
+  const view = await harness.mount(harness.html`<${WindowControls} look="standard" maximized=${false} closeLabel="Close x" closeTitle="Close" onMinimize=${() => {}} onMaximize=${() => { sized++; }} onClose=${() => {}} />`);
+  assert.deepEqual(buttonNames(view.container), ['Minimize (Ctrl .)', 'Maximize', 'Close x'], 'always three buttons');
+  await harness.act(() => view.container.querySelector('.overlay-wc-maximize').click());
+  assert.equal(sized, 1);
+});
+
+test('a double click on the title bar\'s empty space maximizes and restores, in the standard look too', async (t) => {
+  const { view, harness } = await openLook(t, 'auto');
+  const section = () => view.container.querySelector('.chat-window');
+  const bar = () => view.container.querySelector('.board-overlay-titlebar');
+  const dbl = (target) => harness.act(() => target.dispatchEvent(new harness.window.Event('dblclick', { bubbles: true })));
+  await dbl(bar());
+  assert.match(section().className, /snapped-max/);
+  await dbl(bar().querySelector('[role="tab"]'));
+  assert.match(section().className, /snapped-max/, 'not on a tab');
+  await dbl(bar());
+  assert.doesNotMatch(section().className, /snapped-max/);
 });
 
 test('minimize and close are their own actions, and close leaves the agent running', async (t) => {
   const { view, harness, requests } = await openLook(t, 'windows');
   const bar = () => view.container.querySelector('.board-overlay-titlebar');
-  await harness.act(() => bar().querySelector('.companion-tab-close').click());
+  await harness.act(() => bar().querySelector('.companion-tab-minimize').click());
   assert.deepEqual([...bar().querySelectorAll('[role="tab"]')].map((tab) => tab.title.split(':')[0]), ['bravo'], 'the tab went to the dock');
   assert.ok(!view.container.querySelector('.companion-window-warm'), 'the window stays for the other tab');
   await harness.act(async () => { bar().querySelector('.overlay-wc-minimize').click(); await new Promise((r) => setTimeout(r, 0)); });
@@ -2333,7 +2464,7 @@ test('Clear context asks first, for any agent that is not a shell', async (t) =>
   await harness.act(() => view.container.querySelector('.companion-clear-open').click());
   assert.match(clear().querySelector('.steward-shutdown-confirm').textContent, /same identity and permissions/);
   assert.deepEqual(calls.filter(([url]) => url.endsWith('/reincarnate')), [], 'nothing happens before the confirmation');
-  await harness.act(async () => { clear().querySelector('.danger').click(); await new Promise((resolve) => { setTimeout(resolve, 0); }); });
+  await harness.act(async () => { clear().querySelector('.ui-btn-danger').click(); await new Promise((resolve) => { setTimeout(resolve, 0); }); });
   assert.deepEqual(calls.filter(([url]) => url.endsWith('/reincarnate')), [[`/api/agents/${encodeURIComponent(A)}/reincarnate`, '{"mode":"clear"}']]);
 });
 

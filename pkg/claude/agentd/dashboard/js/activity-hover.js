@@ -15,7 +15,7 @@ function ActivityState({ state, wizard }) {
     <div class=${`activity-hover-state activity-hover-state-${state.key}`}>
       <div class="activity-hover-state-heading">
         <span class="activity-hover-state-label">${label}</span>
-        <span class="activity-hover-state-count">${state.members.length}</span>
+        <span class="activity-hover-state-count ui-badge">${state.members.length}</span>
       </div>
       <ul class="activity-hover-workers">
         ${state.members.map((member) => html`
@@ -115,7 +115,7 @@ export function ActivityHover({
       onFocusOut=${onBlur}
     >
       ${badge}
-      <button
+      <button data-ui-exempt
         id=${id}
         type="button"
         class="activity-hover-trigger"

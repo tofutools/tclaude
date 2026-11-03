@@ -22,10 +22,10 @@ export function DiffReviewBar({ controller, view }) {
   return html`<div class="process-diff-review" role="region" aria-label="Proposal review" data-diff-review>
     <div class="pdr-summary">
       <strong class="pdr-title">Proposal ${shortHash(diff.semanticHash)}</strong>
-      <span class="pdr-chip is-added" title="added">+${counts.added} added</span>
-      <span class="pdr-chip is-changed" title="changed">~${counts.changed} changed</span>
-      <span class="pdr-chip is-removed" title="removed">−${counts.removed} removed</span>
-      ${counts.conflicts > 0 && html`<span class="pdr-chip is-conflict" title="Also changed in your unsaved draft">⚠ ${counts.conflicts} conflict${counts.conflicts === 1 ? '' : 's'}</span>`}
+      <span class="ui-tag pdr-chip is-added" title="added">+${counts.added} added</span>
+      <span class="ui-tag pdr-chip is-changed" title="changed">~${counts.changed} changed</span>
+      <span class="ui-tag pdr-chip is-removed" title="removed">−${counts.removed} removed</span>
+      ${counts.conflicts > 0 && html`<span class="ui-tag pdr-chip is-conflict" title="Also changed in your unsaved draft">⚠ ${counts.conflicts} conflict${counts.conflicts === 1 ? '' : 's'}</span>`}
       <span class="pdr-progress">${decided} of ${counts.total} decided</span>
       <span class="spacer"></span>
       <${Button} size="sm" class="process-action" data-diff-action="reject-all" onClick=${() => controller.decideAllDiff('reject')}>reject all<//>

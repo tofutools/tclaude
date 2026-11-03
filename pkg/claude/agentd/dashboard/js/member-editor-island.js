@@ -4,10 +4,7 @@ import htm from 'htm';
 import { Button } from './ui-components.js';
 import { LockReason, trustLock } from './lock-reason.js';
 import { agentTitleHint, resolveAgentTitle, validAgentTitle } from './agent-title.js';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { Dialog, DialogClose } from './ui-dialog.js';
 
 const html = htm.bind(h);
 
@@ -73,7 +70,6 @@ const FAILURE_LABELS = {
 };
 
 export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard }) {
-  const { requestClose, registerClose } = useGuardedOverlayClose();
   // The descriptor and first baseline are keyed by launchID. Snapshot polling
   // updates the rows behind this overlay, never this local transaction.
   const [baseline, setBaseline] = useState(() => initialBaseline(descriptor));
@@ -142,14 +138,19 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
   // operator: here, or from a node that node trusts unrestricted.
   const adminLock = trustLock(descriptor.node, 'ownership and permissions');
   const here = !adminLock;
-  return html`<${Overlay}
-    id="edit-member-modal" dialogClass="modal" labelledby="edit-member-title"
+  return html`<${Dialog}
+    id="edit-member-modal" dialogClass="modal"
+    title=${html`<span class="edit-member-title-regular">Edit agent</span><span class="edit-member-title-wizard">Enchant this hero</span>`}
     onClose=${state.closeMemberEditor} onSubmitHotkey=${submit}
-    dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
-    registerClose=${registerClose}
+    dirty=${dirty} busy=${busy} confirmDiscard=${confirmDiscard}
     guardBackdropDrag=${true}
+    error=${error}
+    footerStart=${html`<${Button} id="edit-member-perms" disabled=${busy || !here}
+      title="Open this agent / hero's permanent permission grimoire (grant / deny / inherit per slug)"
+      onClick=${() => actions.openMemberPermissions(descriptor)}><span class="em-btn-regular">Permissions…</span><span class="em-btn-wizard">Grimoire…</span></${Button}><${LockReason} id="edit-member-perms-lock" why=${adminLock}/>`}
+    footer=${html`<${DialogClose} id="edit-member-cancel" disabled=${busy}><span class="em-btn-regular">Cancel</span><span class="em-btn-wizard">Dispel</span></${DialogClose}>
+      <${Button} id="edit-member-save" disabled=${busy} onClick=${submit}>${busy ? 'Saving…' : 'Save'}</${Button}>`}
   >
-    <h3 id="edit-member-title"><span class="edit-member-title-regular">Edit agent</span><span class="edit-member-title-wizard">Enchant this hero</span></h3>
     <div class="modal-meta" id="edit-member-meta">${descriptor.label} → ${descriptor.group}</div>
     <div class="field">
       <label for="edit-member-title-input">Title</label>
@@ -158,7 +159,7 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
         autocomplete="off" spellcheck=${false}
         placeholder="1-64 chars, [A-Za-z0-9_-[]{}() ] only"
         onInput=${(event) => update('title', event.currentTarget.value)} />
-      <div id="edit-member-title-hint" class=${`spawn-field-hint${titleHint.warn ? ' warn' : ''}`}>${titleHint.text}</div>
+      <div id="edit-member-title-hint" class=${`spawn-field-hint ui-hint${titleHint.warn ? ' warn' : ''}`}>${titleHint.text}</div>
       <label class="edit-member-auto-row" title="Ask this agent / hero to pick a descriptive title itself via the agent-rename skill / CLI.">
         <input id="edit-member-auto" type="checkbox" checked=${auto} disabled=${busy}
           onChange=${(event) => setAuto(event.currentTarget.checked)} /> <span class="theme-copy-regular">Auto — let the agent choose its own title</span><span class="theme-copy-wizard">Auto — let the hero choose its own title</span>
@@ -186,17 +187,7 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
         title="Short labels rendered as chips in the Description column. They follow this agent / hero across groups / parties."
         onInput=${(event) => update('tags', event.currentTarget.value)} />
     </div>
-    <div class="cron-create-error" id="edit-member-error" role="alert">${error}</div>
-    <div class="modal-buttons">
-      <${Button} id="edit-member-perms" disabled=${busy || !here}
-        title="Open this agent / hero's permanent permission grimoire (grant / deny / inherit per slug)"
-        onClick=${() => actions.openMemberPermissions(descriptor)}><span class="em-btn-regular">Permissions…</span><span class="em-btn-wizard">Grimoire…</span></${Button}><${LockReason} id="edit-member-perms-lock" why=${adminLock}/>
-      <span class="spacer"></span>
-      <${Button} id="edit-member-cancel" disabled=${busy}
-        onClick=${() => { void requestClose(); }}><span class="em-btn-regular">Cancel</span><span class="em-btn-wizard">Dispel</span></${Button}>
-      <${Button} id="edit-member-save" disabled=${busy} onClick=${submit}>${busy ? 'Saving…' : 'Save'}</${Button}>
-    </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 export function GroupsMemberDialog({ state, actions, confirmDiscard }) {

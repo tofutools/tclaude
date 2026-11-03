@@ -454,7 +454,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	mustContain("process-params-dialog.js", params,
 		"export function ParamsDialog(",
 		"export function openProcessParamsDialog(",
-		"<${Overlay}",
+		"<${Dialog}",
 		"registered?.({ isDirty, requestClose })",
 		"dispose.isDirty = () => !!handle?.isDirty?.()",
 		"dispose.requestClose = () => handle?.requestClose?.()",
@@ -510,7 +510,6 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		// Inline controls are explicitly dark-themed (UA-white trap).
 		".process-inspector-select",
 		"body.wizard .process-palette-card",
-		"body.wizard .process-editor .process-action",
 		// Live-validation issues panel, explicitly themed on both skins.
 		".process-issues-panel",
 		".process-issue:hover, .process-issue:focus-visible",

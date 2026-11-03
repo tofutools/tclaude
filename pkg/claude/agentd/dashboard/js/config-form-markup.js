@@ -2,6 +2,7 @@ import { COST_FACTOR_HARNESSES } from './cost-factors.js';
 import { createContext, h } from 'preact';
 import { useContext, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { browserNotifyPermission, notificationsUnsupportedNote, requestBrowserNotifyPermission } from './browser-notify.js';
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS } from './terminal-close-tabs.js';
 import { configLocation, configPanel, setConfigPanel } from './config-panel.js';
@@ -9,6 +10,7 @@ import { FormFillBar } from './form-fill-bar.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { KnowledgeSourceRow } from './knowledge-source-island.js';
 import { ExternalStewardManager } from './config-external-stewards.js';
+import { RemoteAdminPanel } from './remote-admin.js';
 import { StewardDefaultPermissions } from './steward-default-permissions.js';
 import { dashboardState } from './snapshot-store.js';
 import { DICTATED_MARKER } from './companion-model.js';
@@ -58,10 +60,10 @@ function BrowserNotifyPermissionButton() {
   }
   if (state === 'granted') return html`<span class="cfg-inline">✓ browser permission granted</span>`;
   const denied = state === 'denied';
-  return html`<button type="button" class="cfg-inline" disabled=${denied}
+  return html`<${Button} size="sm" class="cfg-inline" disabled=${denied}
     onClick=${async () => { setState(await requestBrowserNotifyPermission()); }}>
     ${denied ? 'Browser permission blocked — allow it in site settings' : 'Grant browser permission'}
-  </button>`;
+  <//>`;
 }
 
 function appendAndFocus(event, id, values, value, onChange) {
@@ -80,10 +82,10 @@ function StringList({ id, values = [], datalist, placeholder, onChange }) {
       <${ConfigInput} type="text" value=${value} placeholder=${placeholder || ''} aria-label=${placeholder || undefined}
         list=${datalist || undefined} autocomplete="off" spellcheck=${false}
         onInput=${event => update(index, event.currentTarget.value)} />
-      <${ConfigButton} type="button" class="cfg-row-del" title="Remove"
+      <${ConfigButton} type="button" class="ui-btn ui-sm ui-btn-ghost ui-btn-danger cfg-row-del" title="Remove"
         onClick=${() => onChange(id, values.filter((_, i) => i !== index))}>×</${ConfigButton}>
     </div>`)}
-    <${ConfigButton} type="button" class="cfg-list-add"
+    <${ConfigButton} type="button" class="ui-btn ui-sm cfg-list-add"
       onClick=${event => appendAndFocus(event, id, values, '', onChange)}>+ add</${ConfigButton}>
   </div>`;
 }
@@ -100,10 +102,10 @@ function TransitionList({ values = [], onChange }) {
       <${ConfigInput} type="text" value=${item.to || ''} placeholder="to state" aria-label="to state"
         data-role="to" list="cfg-state-list" autocomplete="off" spellcheck=${false}
         onInput=${event => update(index, 'to', event.currentTarget.value)} />
-      <${ConfigButton} type="button" class="cfg-row-del" title="Remove"
+      <${ConfigButton} type="button" class="ui-btn ui-sm ui-btn-ghost ui-btn-danger cfg-row-del" title="Remove"
         onClick=${() => onChange(id, values.filter((_, i) => i !== index))}>×</${ConfigButton}>
     </div>`)}
-    <${ConfigButton} type="button" class="cfg-list-add"
+    <${ConfigButton} type="button" class="ui-btn ui-sm cfg-list-add"
       onClick=${event => appendAndFocus(event, id, values, { from: '', to: '' }, onChange)}>+ add transition</${ConfigButton}>
   </div>`;
 }
@@ -120,10 +122,10 @@ function ThresholdList({ values = [], onChange }) {
       <${ConfigInput} type="number" min="1" value=${item.min_tokens ?? ''} placeholder="min used tokens before compaction"
         aria-label="min used tokens before compaction" data-role="min" autocomplete="off" style="min-width:170px"
         onInput=${event => update(index, 'min_tokens', event.currentTarget.value)} />
-      <${ConfigButton} type="button" class="cfg-row-del" title="Remove"
+      <${ConfigButton} type="button" class="ui-btn ui-sm ui-btn-ghost ui-btn-danger cfg-row-del" title="Remove"
         onClick=${() => onChange(id, values.filter((_, i) => i !== index))}>×</${ConfigButton}>
     </div>`)}
-    <${ConfigButton} type="button" class="cfg-list-add"
+    <${ConfigButton} type="button" class="ui-btn ui-sm cfg-list-add"
       onClick=${event => appendAndFocus(event, id, values, { window_size: '', min_tokens: '' }, onChange)}>+ add floor</${ConfigButton}>
   </div>`;
 }
@@ -261,7 +263,7 @@ function ExternalStewardGroup({ loads }) {
 
 function Group({ title, lede, children }) {
   return html`<div class="cfg-section">
-    <h3>${title}</h3>
+    <h3 class="ui-eyebrow ui-eyebrow-section">${title}</h3>
     ${lede && html`<p class="cfg-group-lede">${lede}</p>`}
     ${children}
   </div>`;
@@ -343,7 +345,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     </p>
     <div id="cfg-notice" class="cfg-notice" style="display:none"></div>
     <div id="cfg-errors" class="cfg-errors" style="display:none"></div>
-    <div class="cfg-filter-empty" id="cfg-filter-empty" hidden>No settings match “<span id="cfg-filter-empty-q"></span>”.</div>
+    <div class="cfg-filter-empty ui-empty-block" id="cfg-filter-empty" hidden>No settings match “<span id="cfg-filter-empty-q"></span>”.</div>
 
     <${Panel} id="appearance" active=${active}>
       <${Group} title="Activity bots">
@@ -388,13 +390,14 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           </${ConfigSelect}>
         </${Setting}>
         <${Setting} title="Window controls" forId="cfg-dashboard-window-controls" k="dashboard.window_controls"
-          summary="How the minimize, maximize and close buttons look on the companion window."
-          more=${html`Automatic follows the operating system your browser runs on. Linux desktops vary, so Linux uses GNOME-style buttons. Classic keeps the plain minimize button on its own.`}>
+          summary="The buttons on an overlay window's title bar."
+          more=${html`Standard, the default, puts plain symbols on the far right, as elsewhere in the dashboard: − minimizes to the dock, ⇄ opens the window in the Collab tab (or maximizes, where it cannot go there), × closes. The OS looks are opt-in: they draw the native minimize, maximize and close, and Match my OS picks the one for the system your browser runs on (GNOME-style on Linux). Classic keeps a plain minimize and close in the bar. In every look, a double click on the title bar maximizes or restores.`}>
           <${ConfigSelect} id="cfg-dashboard-window-controls" aria-label="Window controls">
-            <option value="auto">Automatic</option>
-            <option value="macos">macOS</option>
-            <option value="windows">Windows</option>
-            <option value="linux">Linux</option>
+            <option value="auto">Standard</option>
+            <option value="os">Match my OS (opt-in)</option>
+            <option value="macos">macOS (opt-in)</option>
+            <option value="windows">Windows (opt-in)</option>
+            <option value="linux">Linux (opt-in)</option>
             <option value="classic">Classic</option>
           </${ConfigSelect}>
         </${Setting}>
@@ -578,7 +581,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
               <option value="pre_attach">Resize before attach</option>
             </${ConfigSelect}>
             <div class="cfg-terminal-attach-timings">
-              <strong>Timing overrides</strong>
+              <strong class="ui-eyebrow ui-eyebrow-section">Timing overrides</strong>
               <label><span>Before initial resize</span><${ConfigInput} type="number" id="cfg-terminal-attach-initial-delay" min="0" max="10000" placeholder="0" aria-label="Initial terminal resize delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
               <label><span>Post-attach repair wait</span><${ConfigInput} type="number" id="cfg-terminal-attach-repair-delay" min="0" max="10000" placeholder="250" aria-label="Post-attach terminal repair delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
               <label><span>Resize-to-attach wait</span><${ConfigInput} type="number" id="cfg-terminal-attach-pre-delay" min="0" max="10000" placeholder="250" aria-label="Resize before attach delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
@@ -592,7 +595,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <${Setting} title="Auto-close tabs" k="dashboard.close_terminal_tabs" wide
           summary="Close a terminal tab by itself when its tmux side goes away."
           more=${html`<strong>Session ended</strong>: the tmux session is gone — the shell exited (<code>exit</code> / Ctrl-D), the agent exited, or the session was killed. Reconnecting a shell would only start a fresh one, so shell tabs close by default; agent windows stay open so the exit stays visible. <strong>Detached</strong>: the tmux client left but the session lives on — <kbd>prefix</kbd>+<kbd>d</kbd>, or the session was opened elsewhere. Kept by default so Reconnect can bring it back. Closing a tab detaches every viewer of that session, so with <em>Detached</em> on, the other open tabs on it close too. Applies to tabs already open. Stored under <code>dashboard.close_terminal_tabs</code> (defaults are omitted).`}>
-          <table class="cfg-close-tabs" aria-label="Auto-close terminal tabs">
+          <table class="cfg-close-tabs ui-compact" aria-label="Auto-close terminal tabs">
             <thead><tr><th></th>${CLOSE_TAB_TARGETS.map(([, label]) => html`<th scope="col">${label}</th>`)}</tr></thead>
             <tbody>${CLOSE_TAB_EVENTS.map(([event, label]) => html`<tr>
               <th scope="row">${label}</th>
@@ -815,7 +818,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <${Setting} title="Limits & budgets"
           summary="Spend caps, quota guards and per-agent usage profiles live in their own manager."
           more=${html`Global and group limits (for example "$500 a month, alert at 50%, wrap everyone up at 100%"), usage profiles that budget each agent, and per-agent extensions. The former daily/monthly spend limits were converted into global limits there.`}>
-          <button type="button" class="tool" id="cfg-open-usage-rules" onClick=${() => openUsageRulesManager()}>Open usage limits & budgets…</button>
+          <${Button} size="sm" id="cfg-open-usage-rules" onClick=${() => openUsageRulesManager()}>Open usage limits & budgets…<//>
         </${Setting}>
       </${Group}>
       <${Group} title="Cost display">
@@ -1057,7 +1060,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           <span class="cfg-remote-status" id="cfg-remote-status"></span>
         </${Setting}>
       </${Group}>
-      <div id="cfg-remote-admin-slot"></div>
+      <${RemoteAdminPanel} />
     </${Panel}>
 
     <${Panel} id="logs" active=${active}>

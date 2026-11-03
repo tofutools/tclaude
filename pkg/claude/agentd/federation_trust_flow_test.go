@@ -80,29 +80,32 @@ func TestFederation_TrustDowngradeCatalogOrdering(t *testing.T) {
 	building := make(chan struct{})
 	released := make(chan struct{})
 	var enter, leave sync.Once
+	var heldAt time.Time
 	release := func() { leave.Do(func() { close(released) }) }
 	restore := agentd.SetCatalogBuiltHookForTest(func(cat *proto.CatalogPayload) {
 		if len(cat.Groups) == 0 {
 			return
 		}
-		enter.Do(func() { close(building) })
+		enter.Do(func() { heldAt = cat.NodeAt; close(building) })
 		<-released
 	})
 	t.Cleanup(func() {
 		release()
 		restoreAfterBackgroundDrain(restore)
 	})
-	// Only catalogs built after the upgrade count. One built under the old
-	// restricted trust can still be on its way to the peer when the held build
-	// starts, and is empty just like the downgrade's, so it is told apart by
-	// when it was built.
-	upgraded := time.Now().UTC()
+	// Only the held build and catalogs built after it count. One built under
+	// the old restricted trust can still be on its way to the peer when the
+	// held build starts (hub delivery is asynchronous), and is empty just like
+	// the downgrade's. A wall-clock mark taken here cannot tell them apart: a
+	// build stamps NodeAt after reading trust, so a restricted build that
+	// started before the upgrade can be stamped after the mark. Builds are
+	// serialized per peer, so the held build's own stamp is the boundary.
 	sinceUpgrade := func() []proto.CatalogPayload {
 		var out []proto.CatalogPayload
 		for _, env := range p.envelopes(proto.KindCatalog) {
 			var cat proto.CatalogPayload
 			require.NoError(t, env.DecodePayload(&cat))
-			if !cat.NodeAt.Before(upgraded) {
+			if cat.NodeAt.After(heldAt) || cat.NodeAt.Equal(heldAt) && len(cat.Groups) > 0 {
 				out = append(out, cat)
 			}
 		}

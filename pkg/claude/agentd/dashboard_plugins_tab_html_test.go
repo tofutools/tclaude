@@ -22,7 +22,7 @@ func TestDashboardHTML_PluginsTab(t *testing.T) {
 	// Nav button + warning badge.
 	present(`data-tab="plugins"`, "the Plugins nav button")
 	present(`id="plugins-badge"`, "the warning badge on the nav button")
-	present(`class="tab-badge warn"`, "the badge uses the amber warn variant")
+	present(`class="tab-badge ui-badge ui-badge-warn"`, "the badge uses the amber warn variant")
 
 	// Tab section + filter bar + toolbar buttons.
 	present(`id="tab-plugins"`, "the Plugins tab section")

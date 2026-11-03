@@ -39,8 +39,6 @@ func TestDashboardCSS_StylingSweep(t *testing.T) {
 	// Hover brightens the background at the base rule's own rank (:where), so a
 	// scoped (do-not-touch) toolbar skin always out-ranks it and nothing leaks.
 	must("\nbutton.tool:where(:hover) { background: var(--ui-bg-hover); }", "the fallback hover brightens the background without out-ranking scoped skins")
-	// The deploy/summon action is a `.primary`, not a `.tool`.
-	must(".template-card .tc-actions button:where(:not(.ui-btn)).primary {", "the template deploy .primary button is themed")
 
 	// Group 2 — A1 sizing (both skins): the "⧉ manage templates…" tool button
 	// beside the template <select> gets the dir-browse flex idiom so it matches
@@ -53,21 +51,10 @@ func TestDashboardCSS_StylingSweep(t *testing.T) {
 	must(".template-agent-row input[type=number],", "the .ta-wave number input is folded into the row-input rule")
 	must(".template-editor-field input[type=number] {", "the wave-max-wait number field is themed")
 
-	// Group 4 — A8 mail-reader action bar: reply / focus / mark / delete are
-	// plain <button>s with no .tool class, so they needed a base rule.
-	must(".mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)) {", "the mail-reader action bar has a base button skin")
-
-	// Group 5 — B1/B2/B3 buttons that sit outside a .row-actions wrapper.
-	must(".plugin-step-edit-head button,", "the plugin step-editor remove button is themed")
-	must(".plugin-head > button.primary,", "the catalog +install button is themed (direct child only)")
-	must("#sudo-list td > button:where(:not(.ui-btn)) {", "the sudo-grants revoke button is themed (raw skin fenced off the standard button)")
-
-	// Group 6 — B4/B5/B6 remote-access controls (both skins for buttons; plain +
-	// the wizard twin for the fields).
-	must(".ra-inline-form button {", "the remote-access action buttons are themed")
+	// Group 6 — B5/B6 remote-access fields (plain + the wizard twin). The
+	// action buttons are standard ui-btns, held by jstest/ui-controls.
 	must(".cfg-field input[type=password],", "password fields join the cfg-field input rule")
-	must(".cfg-field select, .ra-form-grid input {", "the .ra-form-grid setup inputs join the cfg-field input rule")
-	must("body.wizard #tab-config .cfg-field input[type=password],", "the wizard twin also covers password fields")
+	must(".cfg-field select:where(:not(.ui-select)), .ra-form-grid input {", "the .ra-form-grid setup inputs join the cfg-field input rule")
 	must("body.wizard #tab-config .ra-form-grid input,", "the wizard twin also covers the .ra-form-grid inputs")
 
 	// C1 — the spawn-dialog attachment ✕ stays a ghost button in the wizard skin:

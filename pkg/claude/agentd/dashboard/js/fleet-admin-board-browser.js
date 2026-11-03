@@ -1,8 +1,9 @@
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Button, Select, SortTh } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
+import { Dialog } from './ui-dialog.js';
 import { ImportDialog, PublishDialog, canPost, postedBy } from './fleet-admin-board-items.js';
 import { dashPrefs } from './prefs.js';
 import { applySortState, persistTableSort, persistedTableSort, timestampSortValue } from './sort.js';
@@ -133,7 +134,7 @@ function TrustBadge({ trust, compact = false }) {
 }
 
 function KindChip({ kind }) {
-  return html`<span class=${`fa-cb-kind fa-cb-k-${kind}`}>${kind}</span>`;
+  return html`<span class=${`ui-tag fa-cb-kind fa-cb-k-${kind}`}>${kind}</span>`;
 }
 
 // fingerprint shortens a base64 public key for display.
@@ -214,7 +215,7 @@ export function ItemDetail({ row, view, actions, onInstall, onOpenBoard }) {
       <span>Content</span><span><code title=${row.digest || ''}>sha256 ${short(row.digest)}…</code> · ${size(row.bytes)}</span>
       <span>Credential scan</span><span>${files?.files ? html`<span class="fa-cb-ok">✓ clean when posted and when fetched here</span>` : files?.error ? html`<span class="fa-danger">${files.error}</span>` : html`<span class="muted">checked when posted; again when fetched</span>`}</span>
     </div>
-    <div class="fa-cb-sect">Files${scripts ? html` · <span class="fa-sensitive">${scripts} security-relevant</span>` : ''}</div>
+    <div class="ui-eyebrow fa-cb-sect">Files${scripts ? html` · <span class="fa-sensitive">${scripts} security-relevant</span>` : ''}</div>
     ${!files || files.loading ? html`<div class="muted">Fetching and verifying…</div>` : files.error ? html`<div class="muted">Files unavailable.</div>` : html`<${FileList} row=${row} files=${files.files} actions=${actions} />`}
     ${onOpenBoard && html`<div class="fa-row"><${Button} size="sm" variant="link" class="fa-link" data-cb-act="board" onClick=${() => onOpenBoard(row.board.id)}>Versions and more on ${row.board.name}…<//></div>`}
   </div>`;
@@ -299,13 +300,12 @@ export function SkillInstallDialog({ row, actions, confirm, onClose, onDone }) {
       .then(() => onDone(`Downloading ${row.name}`)).catch((e) => setError(errText(e))).finally(() => setBusy(false));
   };
   const scripts = (preview?.files || []).filter((f) => f.security);
-  return html`<${Overlay} id="fleet-cb-install" labelledby="fleet-cb-install-title" onClose=${onClose}>
-    <h3 id="fleet-cb-install-title">Install ${row.name} <span class="muted">v ${short(row.version)}</span></h3>
+  return html`<${Dialog} id="fleet-cb-install" onClose=${onClose} title=${html`Install ${row.name} <span class="muted">v ${short(row.version)}</span>`}>
     <div class="muted">From ${row.board.name}, posted by ${row.by} <${TrustBadge} trust=${row.trust} /></div>
     <div class="fa-cb-steps">${['Target', 'Preview', 'Install'].map((s, i) => html`<span key=${s} class=${i < step ? 'done' : i === step ? 'on' : ''}>${i + 1} · ${s}</span>`)}</div>
-    ${TARGETS.map((t) => html`<label key=${t.id} class=${`fa-cb-opt${opts.target === t.id ? ' on' : ''}`} data-target=${t.id}>
+    ${TARGETS.map((t) => html`<label key=${t.id} class=${`fa-cb-opt ui-card ui-inset${opts.target === t.id ? ' on' : ''}`} data-target=${t.id}>
       <input type="radio" name="fleet-cb-target" checked=${opts.target === t.id} onChange=${() => change({ target: t.id })} />
-      <span class="fa-cb-opt-body"><span><b>${t.label}</b>${t.id === 'custom' && html` <span class="fa-badge">human only</span>`}</span><span class="muted">${t.note}</span>
+      <span class="fa-cb-opt-body"><span><b>${t.label}</b>${t.id === 'custom' && html` <span class="ui-tag ui-tag-accent fa-badge">human only</span>`}</span><span class="muted">${t.note}</span>
         ${opts.target === t.id && t.id === 'harness' && (!roots ? html`<span class="muted">Loading…</span>` : html`${harness.map((r) => html`<label key=${r.id} class="fa-cb-sub"><input type="checkbox" data-skill-target=${r.id} checked=${opts.harness.includes(r.id)}
             onChange=${(e) => change({ harness: e.currentTarget.checked ? [...opts.harness, r.id] : opts.harness.filter((x) => x !== r.id) })} /> ${r.label} <code>${r.path}</code></label>`)}`)}
         ${opts.target === t.id && t.id === 'group' && (!roots ? html`<span class="muted">Loading…</span>` : groups.length ? html`<${Select} size="sm" id="fleet-cb-group" value=${opts.group} onChange=${(e) => change({ group: e.currentTarget.value })}>
@@ -320,8 +320,8 @@ export function SkillInstallDialog({ row, actions, confirm, onClose, onDone }) {
       Keep executable bits${scripts.length ? html` on ${scripts.map((f, i) => html`${i ? ', ' : ''}<code>${f.path}</code>`)}` : ''}: agents can run them directly. I have inspected them. <span class="muted">(Otherwise they are removed; scripts stay readable.)</span></label>
     ${opts.target !== 'download' && html`<label class="fa-cb-check"><input type="checkbox" id="fleet-cb-replace" checked=${opts.replace} onChange=${(e) => change({ replace: e.currentTarget.checked })} />
       Overwrite a skill with this name if one exists <span class="muted">(the preview shows which)</span></label>`}
-    ${opts.target !== 'download' && preview && !stale && html`<div class="fa-cb-sect">Preview</div>
-      ${changes.length ? html`<table class="fa-table" id="fleet-cb-preview"><tbody>${changes.map((c) => html`<tr key=${c.item} data-change=${c.item}>
+    ${opts.target !== 'download' && preview && !stale && html`<div class="ui-eyebrow fa-cb-sect">Preview</div>
+      ${changes.length ? html`<table class="fa-table ui-compact" id="fleet-cb-preview"><tbody>${changes.map((c) => html`<tr key=${c.item} data-change=${c.item}>
         <td><code>${c.path || c.item}</code></td>
         <td class=${c.action === 'replace' ? 'fa-warn' : c.action === 'unchanged' ? 'muted' : ''}>${c.action === 'replace' ? 'overwrites existing' : c.action === 'create' ? 'new' : 'unchanged'}</td></tr>`)}</tbody></table>`
         : html`<div class="muted">Nothing to install for this target.</div>`}
@@ -334,18 +334,17 @@ export function SkillInstallDialog({ row, actions, confirm, onClose, onDone }) {
         : html`<${Button} id="fleet-cb-preview-btn" disabled=${busy || !targetReady} onClick=${() => run(opts)}>${busy ? 'Previewing…' : preview && !stale ? 'Preview again' : 'Preview'}</${Button}>
           <${Button} variant="primary" id="fleet-cb-install-btn" disabled=${blocked} title=${stale ? 'Preview first' : ''} onClick=${install}>Install…</${Button}>`}
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // UploadDialog picks the board to post to; posting itself is the board
 // detail view's Post config… dialog, unchanged.
 function UploadPicker({ boards, onPick, onClose }) {
-  return html`<${Overlay} id="fleet-cb-upload" labelledby="fleet-cb-upload-title" onClose=${onClose}>
-    <h3 id="fleet-cb-upload-title">Upload to which board?</h3>
+  return html`<${Dialog} id="fleet-cb-upload" onClose=${onClose} title="Upload to which board?">
     <div class="muted">Skills and config you post are signed by this node and readable by every member of the board.</div>
     <div class="fa-cb-pick">${boards.map((b) => html`<${Button} size="sm" key=${b.id} data-upload-board=${b.id} onClick=${() => onPick(b)}>${b.name}<//>`)}</div>
     <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${onClose}>Cancel</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function Facets({ rows, query, setQuery, boards }) {
@@ -354,14 +353,14 @@ function Facets({ rows, query, setQuery, boards }) {
   const facet = (key, value, label, n) => html`<button type="button" data-ui-exempt key=${`${key}:${value}`} class=${`fa-cb-facet${f[key] === value.toLowerCase() ? ' on' : ''}`} data-facet=${`${key}:${value}`}
     onClick=${() => setQuery(withToken(query, key, value))}><span>${label}</span><span class="muted">${n}</span></button>`;
   return html`<div class="fa-cb-facets">
-    <h5>Kind</h5>${KINDS.map((k) => facet('kind', k.id, k.label, count((r) => r.kind === k.id)))}
-    <h5>Board</h5>${boards.map((b) => facet('board', b.name, b.name, count((r) => r.board.id === b.id)))}
-    <h5>Publisher</h5>${facet('publisher', 'trusted', '✓ Trusted peers', count((r) => r.trust === 'trusted'))}${facet('publisher', 'unknown', '? Unknown', count((r) => r.trust === 'unknown'))}${facet('publisher', 'mine', 'This node', count((r) => r.trust === 'mine'))}
+    <h5 class="ui-eyebrow">Kind</h5>${KINDS.map((k) => facet('kind', k.id, k.label, count((r) => r.kind === k.id)))}
+    <h5 class="ui-eyebrow">Board</h5>${boards.map((b) => facet('board', b.name, b.name, count((r) => r.board.id === b.id)))}
+    <h5 class="ui-eyebrow">Publisher</h5>${facet('publisher', 'trusted', '✓ Trusted peers', count((r) => r.trust === 'trusted'))}${facet('publisher', 'unknown', '? Unknown', count((r) => r.trust === 'unknown'))}${facet('publisher', 'mine', 'This node', count((r) => r.trust === 'mine'))}
   </div>`;
 }
 
 function Card({ row, selected, onSelect }) {
-  return html`<button type="button" data-ui-exempt class=${`fa-cb-card${selected ? ' sel' : ''}`} data-card=${row.key} onClick=${() => onSelect(row)}>
+  return html`<button type="button" data-ui-exempt class=${`fa-cb-card ui-card${selected ? ' sel' : ''}`} data-card=${row.key} onClick=${() => onSelect(row)}>
     <span class="fa-cb-card-meta">${row.invalid ? html`<span class="fa-danger">invalid</span>` : html`<${KindChip} kind=${row.kind} />`}<span class="muted">v ${short(row.version)} · ${row.board.name}</span></span>
     <b>${row.name}</b>
     ${row.description && html`<span class="muted fa-cb-desc">${row.description}</span>`}
@@ -430,13 +429,14 @@ export function ContentBrowser({ boards, view, actions, confirm, toast, onOpenBo
         </div>`
       : html`<div class="fa-cb-list-wrap">
           <div class="fa-cb-list">
-            <div class="fa-cb-tabs" role="tablist">${[{ id: '', label: 'All' }, ...KINDS].map((k) => html`<button type="button" data-ui-exempt role="tab" key=${k.id || 'all'} data-kind-tab=${k.id || 'all'} aria-selected=${f.kind === k.id ? 'true' : 'false'} class=${f.kind === k.id ? 'on' : ''}
-              onClick=${() => setQuery(withToken(query, 'kind', k.id || f.kind))}>${k.label} <span class="muted">${k.id ? rows.filter((r) => r.kind === k.id).length : rows.length}</span></button>`)}</div>
-            <table class="fa-table" id="fleet-cb-table" tabindex="0" onKeyDown=${(e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); move(e.key === 'ArrowDown' ? 1 : -1); } }}>
+            <${Tabs} class="fa-cb-tabs" label="Item kinds" value=${f.kind || 'all'}
+              onSelect=${(id) => setQuery(withToken(query, 'kind', id === 'all' ? f.kind : id))}
+              items=${[{ id: '', label: 'All' }, ...KINDS].map((k) => ({ key: k.id || 'all', attrs: { 'data-kind-tab': k.id || 'all' },
+                label: html`${k.label} <span class="muted">${k.id ? rows.filter((r) => r.kind === k.id).length : rows.length}</span>` }))} />
+            <table class="fa-table ui-compact" id="fleet-cb-table" tabindex="0" onKeyDown=${(e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); move(e.key === 'ArrowDown' ? 1 : -1); } }}>
               <thead><tr>${SORT_COLS.map((c) => {
-                const on = sort?.col === c.col;
-                return html`<th key=${c.col} class=${on ? 'sortable sort-active' : 'sortable'} data-sort-col=${c.col} title=${`Sort by ${c.label}`}
-                  aria-sort=${on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'} onClick=${() => setSort((cur) => nextSort(cur, c.col))}>${c.label}<span class="sort-arrow">${on ? (sort.dir === 'asc' ? '▲' : '▼') : '▾'}</span></th>`;
+                return html`<${SortTh} key=${c.col} active=${sort?.col === c.col} dir=${sort?.dir} data-sort-col=${c.col} sortLabel=${c.label}
+                  onSort=${() => setSort((cur) => nextSort(cur, c.col))}>${c.label}<//>`;
               })}</tr></thead>
               <tbody>${shown.map((r) => html`<tr key=${r.key} data-row=${r.key} class=${r.key === selected ? 'on' : ''} onClick=${() => setSelected(r.key)}>
                 <td>${r.name || 'Invalid item'}</td><td>${r.invalid ? html`<span class="fa-danger">invalid</span>` : html`<${KindChip} kind=${r.kind} />`}</td>
@@ -445,8 +445,8 @@ export function ContentBrowser({ boards, view, actions, confirm, toast, onOpenBo
           </div>
           <div class="fa-cb-pane">${detail(sel)}</div>
         </div>`}
-    ${d?.kind === 'detail' && html`<${Overlay} id="fleet-cb-detail" ariaLabel=${d.row.name} onClose=${() => setDialog(null)}>${detail(d.row)}
-      <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${() => setDialog(null)}>Close</${Button}></div></${Overlay}>`}
+    ${d?.kind === 'detail' && html`<${Dialog} id="fleet-cb-detail" ariaLabel=${d.row.name} onClose=${() => setDialog(null)}>${detail(d.row)}
+      <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${() => setDialog(null)}>Close</${Button}></div></${Dialog}>`}
     ${d?.kind === 'skill' && html`<${SkillInstallDialog} row=${d.row} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${d?.kind === 'config' && html`<${ImportDialog} board=${d.row.board} item=${d.row} version=${d.row.version} by=${d.row.by} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${d?.kind === 'pick' && html`<${UploadPicker} boards=${posters} onPick=${(b) => setDialog({ kind: 'publish', board: b })} onClose=${() => setDialog(null)} />`}

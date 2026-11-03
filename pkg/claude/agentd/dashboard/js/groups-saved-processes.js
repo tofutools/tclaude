@@ -19,6 +19,7 @@ import { DraftStartWarning, noteDraftOpened, reopenScribeDraft, scribeDraftsOf, 
 import { bindSavedProcessDnd, registerSavedProcessRemover } from './groups-saved-process-dnd.js';
 import { WorkflowExportButton } from './process-workflow-share.js';
 import { shellConfirm } from './shell-state.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -141,26 +142,26 @@ function StartStrip({ group, process, api, source, wizard, notify, editing = '',
       <span>Allow its commands to run on this host <span class="gq-dim">(program profile: ${profile || 'default'})</span></span>
     </label>`)}
     <span class="gq-strip-acts">
-    <button type="submit" class="gq-btn primary" data-saved-start disabled=${!!busy || !!blockedWhy || !!draftWarning} title=${blockedWhy}>${busy === 'start' ? 'starting…' : 'Start'}</button>
+    <${Button} size="sm" variant="primary" type="submit" data-saved-start disabled=${!!busy || !!blockedWhy || !!draftWarning} title=${blockedWhy}>${busy === 'start' ? 'starting…' : 'Start'}<//>
     ${blockedWhy && html`<span class="gq-why" data-start-blocked>${blockedWhy}</span>`}
     ${draftWarning && html`<${DraftStartWarning} warning=${draftWarning} busy=${!!busy} openDisabled=${!!editing} onOpen=${edit} onStartAnyway=${startAnyway} />`}
-    <button type="button" class="gq-btn" data-saved-edit disabled=${!!busy || !!editing} onClick=${edit}
-      title=${editing ? 'Save or cancel the open editor first' : 'Edit the steps; saving writes a new version'}>${busy === 'edit' ? 'opening…' : '✎ Edit steps'}</button>
-    ${scribeDraft && html`<button type="button" class="gq-btn" data-saved-scribe disabled=${!!busy || !!editing}
-      title=${editing ? 'Save or cancel the open editor first' : 'Show the scribe drafting this process'} onClick=${() => { reopenScribeDraft(process.templateId); onEdit({ mode: 'scribe', draft: scribeDraft }); }}>✎ Scribe</button>`}
-    ${!process.listed && html`<button type="button" class="gq-link" data-saved-publish disabled=${!!busy} onClick=${publish}
-      title="List it in the template library, for every group to reuse">publish as template</button>`}
+    <${Button} size="sm" data-saved-edit disabled=${!!busy || !!editing} onClick=${edit}
+      title=${editing ? 'Save or cancel the open editor first' : 'Edit the steps; saving writes a new version'}>${busy === 'edit' ? 'opening…' : '✎ Edit steps'}<//>
+    ${scribeDraft && html`<${Button} size="sm" data-saved-scribe disabled=${!!busy || !!editing}
+      title=${editing ? 'Save or cancel the open editor first' : 'Show the scribe drafting this process'} onClick=${() => { reopenScribeDraft(process.templateId); onEdit({ mode: 'scribe', draft: scribeDraft }); }}>✎ Scribe<//>`}
+    ${!process.listed && html`<${Button} size="sm" variant="link" class="gq-link" data-saved-publish disabled=${!!busy} onClick=${publish}
+      title="List it in the template library, for every group to reuse">publish as template<//>`}
     <${WorkflowExportButton} id=${process.templateId} className="gq-link" variant="link" size="sm" />
     ${removing
     ? html`<span class="gq-confirm" role="group" aria-label="Confirm removal">
         ${process.listed ? `Remove from ${group.name}? It stays in the template library.` : `Remove from ${group.name}? It is not in the template library, so publish it first to keep it.`}
-        <button type="button" class="gq-btn" data-saved-remove-confirm disabled=${!!busy} onClick=${remove}>remove</button>
-        <button type="button" class="gq-link" onClick=${() => onRemoving(false)}>keep</button></span>`
-    : html`<button type="button" class="gq-link" data-saved-remove disabled=${!!busy} onClick=${() => onRemoving(true)}
-      title=${`Remove ${process.name} from ${group.name}'s processes`}>remove</button>`}
+        <${Button} size="sm" variant="danger" data-saved-remove-confirm disabled=${!!busy} onClick=${remove}>remove<//>
+        <${Button} size="sm" variant="link" class="gq-link" onClick=${() => onRemoving(false)}>keep<//></span>`
+    : html`<${Button} size="sm" variant="link danger" class="gq-link" data-saved-remove disabled=${!!busy} onClick=${() => onRemoving(true)}
+      title=${`Remove ${process.name} from ${group.name}'s processes`}>remove<//>`}
     </span>
     <span class="gq-spacer"></span>
-    <button type="button" class="gq-link" aria-label="Close" onClick=${onClose}>✕</button>
+    <${Button} size="sm" variant="link" class="gq-link" aria-label="Close" onClick=${onClose}>✕<//>
     ${error && html`<div class="gq-error" role="alert">${error}</div>`}
   </form>`;
 }
@@ -210,7 +211,7 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
   const current = processes.find((process) => process.templateId === open) || null;
   return html`<div class="gq-saved" data-saved-processes=${group.name}>
     <div class="gq-saved-row">
-      <span class="gq-saved-label">${wizard ? 'Rites' : 'Processes'}</span>
+      <span class="ui-eyebrow gq-saved-label">${wizard ? 'Rites' : 'Processes'}</span>
       ${processes.map((process) => html`<span key=${process.templateId} class=${`gq-saved-chip${open === process.templateId ? ' open' : ''}`}
         data-saved-process=${process.templateId} draggable="true" data-saved-process-drag=${process.templateId}
         data-saved-process-group=${group.name} data-saved-process-name=${process.name}
@@ -219,12 +220,12 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
         <span class="gq-dim">${plural(process.steps || 0, 'step')}</span>
         ${editing === process.templateId
     ? html`<span class="gq-saved-editing" data-saved-editing=${process.templateId}>✎ editing</span>`
-    : html`<button type="button" class="gq-saved-edit" data-saved-edit-graph=${process.templateId} disabled=${!!loading || !!editing}
+    : html`<button data-ui-exempt type="button" class="gq-saved-edit" data-saved-edit-graph=${process.templateId} disabled=${!!loading || !!editing}
         aria-label=${`Edit ${process.name}`} title=${editing ? 'Save or cancel the open editor first' : `Edit ${process.name} here as a graph`} onClick=${() => editGraph(process)}>✎</button>`}
-        <button type="button" class="gq-saved-run" data-saved-run=${process.templateId} aria-expanded=${open === process.templateId}
+        <button data-ui-exempt type="button" class="gq-saved-run" data-saved-run=${process.templateId} aria-expanded=${open === process.templateId}
           aria-label=${`Start ${process.name}`} title=${`Start ${process.name} in ${group.name}`}
           onClick=${() => { setOpen(open === process.templateId && !removing ? '' : process.templateId); setRemoving(false); }}>▶</button>
-        <button type="button" class="gq-saved-remove" data-saved-remove-chip=${process.templateId}
+        <button data-ui-exempt type="button" class="gq-saved-remove" data-saved-remove-chip=${process.templateId}
           aria-label=${`Remove ${process.name} from ${group.name}`} title=${`Remove ${process.name} from ${group.name}'s processes`}
           onClick=${() => { setRemoving(true); setOpen(process.templateId); }}>×</button>
       </span>`)}

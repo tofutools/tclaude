@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { BundleInspectDialog } from './fleet-admin-bundle.js';
 
 const html = htm.bind(h);
@@ -110,8 +110,7 @@ export function PublishDialog({ board, item, actions, confirm, onClose, onDone }
       action: () => actions.publishBoardItem(board.id, { name: name.trim(), only, ...(skillRoot ? {skill_root:skillRoot}:{}), ...(item ? { item: item.id, parent: item.latest_version } : {}) }),
     }).then((r) => { if (r) onDone(`Posted ${name.trim()} to ${board.name}`); }).catch((e) => setError(errText(e)));
   };
-  return html`<${Overlay} id="fleet-board-publish" labelledby="fleet-board-publish-title" onClose=${onClose}>
-    <h3 id="fleet-board-publish-title">${item ? `New version of ${item.name}` : `Post config to ${board.name}`}</h3>
+  return html`<${Dialog} id="fleet-board-publish" onClose=${onClose} title=${item ? `New version of ${item.name}` : `Post config to ${board.name}`}>
     <label class="fa-of-row"><span class="fa-k">name</span><input id="fleet-board-publish-name" value=${name} disabled=${!!item} placeholder="what members see, e.g. review roles" onInput=${(e) => setName(e.currentTarget.value)} /></label>
     <div class="fa-cli-note">Share these parts of this node's config:</div>
     <div class="fa-grant-form">${POSTABLE.map((s) => html`<label key=${s}><input type="checkbox" data-section=${s} checked=${sections.includes(s)}
@@ -124,7 +123,7 @@ export function PublishDialog({ board, item, actions, confirm, onClose, onDone }
     <div class="modal-buttons"><span class="spacer"></span>
       <${Button} onClick=${onClose}>Cancel</${Button}>
       <${Button} variant="primary" id="fleet-board-publish-post" disabled=${!ready} onClick=${post}>Post…</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // repostTargets are the other boards this node may post to.
@@ -149,8 +148,7 @@ function RepostDialog({ board, boards, item, version, by, actions, confirm, onCl
       action: () => actions.publishBoardItem(to.id, { source: { board: board.id, item: item.id, version } }),
     }).then((r) => { if (r) onDone(`Posted ${item.name} to ${to.name}`); }).catch((e) => setError(errText(e)));
   };
-  return html`<${Overlay} id="fleet-board-repost" labelledby="fleet-board-repost-title" onClose=${onClose}>
-    <h3 id="fleet-board-repost-title">Post ${item.name} to another board</h3>
+  return html`<${Dialog} id="fleet-board-repost" onClose=${onClose} title=${html`Post ${item.name} to another board`}>
     <div class="muted">Version ${short(version)}, from ${board.name}, by ${by}. Posted unchanged; to change it, post your own config instead.</div>
     <label class="fa-of-row"><span class="fa-k">board</span><${Select} size="sm" id="fleet-board-repost-dest" value=${dest} onChange=${(e) => setDest(e.currentTarget.value)}>
       <option value="">pick a board…</option>
@@ -160,7 +158,7 @@ function RepostDialog({ board, boards, item, version, by, actions, confirm, onCl
     <div class="modal-buttons"><span class="spacer"></span>
       <${Button} onClick=${onClose}>Cancel</${Button}>
       <${Button} variant="primary" id="fleet-board-repost-post" disabled=${!to} onClick=${post}>Post…</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // ImportDialog previews an item version against this node's config and
@@ -215,20 +213,19 @@ export function ImportDialog({ board, item, version, by, actions, confirm, onClo
       setStale(true);
       setError(e?.code === 'preview_required' || e?.code === 'preview_changed' ? 'This node\'s config or the choices changed since the preview — preview again, then import.' : `${errText(e)} — preview again to retry.`);
     });
-  return html`<${Overlay} id="fleet-board-import" labelledby="fleet-board-import-title" onClose=${onClose}>
-    <h3 id="fleet-board-import-title">Import ${item.name} <span class="muted">v ${short(version)}</span></h3>
+  return html`<${Dialog} id="fleet-board-import" onClose=${onClose} title=${html`Import ${item.name} <span class="muted">v ${short(version)}</span>`}>
     <div class="muted">From board ${board.name}, posted by ${by}. Nothing changes here until you import.</div>
     ${preview?.kind === 'skill' && html`<div class="fa-cli-note">Install skills/${preview.skill} into:</div><div class="fa-grant-form">${(preview.skill_roots || []).map((root) => html`<label key=${root.id}><input type="checkbox" data-skill-target=${root.id} checked=${opts.skill_targets.includes(root.id)} onChange=${(e) => change({skill_targets:e.currentTarget.checked ? [...opts.skill_targets,root.id]:opts.skill_targets.filter((id)=>id!==root.id)})} /> ${root.label} <code>${root.path}</code></label>`)}</div>
       <label class="fa-of-check"><input id="fleet-board-skill-executable" type="checkbox" checked=${opts.preserve_executable} onChange=${(e)=>change({preserve_executable:e.currentTarget.checked})} /> Preserve executable bits: the listed scripts and executables can be run by agents. I have inspected them. Otherwise executable bits are stripped; an interpreter can still run scripts.</label>
       <div class="fa-cli-note">Files (inspect security-relevant content before importing):</div>
-      ${(preview.files || []).map((file)=>html`<details key=${file.path} data-skill-file=${file.path}><summary><code>${file.path}</code> · ${file.bytes} bytes ${file.security && html`<span class="fa-badge fa-sensitive">security-relevant</span>`} ${file.executable ? '· executable' : ''}</summary>${file.binary && html`<div class="fa-warn">Binary file: use the verified download to inspect its bytes.</div>`}${file.text !== undefined && html`<pre>${file.text}</pre>`}</details>`)}`}
-    ${changes.length > 0 && html`<table class="fa-table" id="fleet-board-import-changes"><thead><tr><th></th><th>Item</th><th>Change</th><th></th></tr></thead>
+      ${(preview.files || []).map((file)=>html`<details key=${file.path} data-skill-file=${file.path}><summary><code>${file.path}</code> · ${file.bytes} bytes ${file.security && html`<span class="ui-tag ui-tag-accent fa-badge fa-sensitive">security-relevant</span>`} ${file.executable ? '· executable' : ''}</summary>${file.binary && html`<div class="fa-warn">Binary file: use the verified download to inspect its bytes.</div>`}${file.text !== undefined && html`<pre>${file.text}</pre>`}</details>`)}`}
+    ${changes.length > 0 && html`<table class="fa-table ui-compact" id="fleet-board-import-changes"><thead><tr><th></th><th>Item</th><th>Change</th><th></th></tr></thead>
       <tbody>${changes.map((c) => html`<tr key=${c.item} data-item=${c.item}>
         <td><input type="checkbox" aria-label=${`include ${c.item}`} checked=${!opts.skip.includes(c.item)} disabled=${preview?.kind === 'skill' || c.action === 'unchanged'}
           onChange=${(e) => change({ skip: e.currentTarget.checked ? opts.skip.filter((x) => x !== c.item) : [...opts.skip, c.item] })} /></td>
         <td><code>${c.item}</code></td>
         <td class=${c.action === 'replace' ? 'fa-warn' : c.action === 'unchanged' ? 'muted' : ''}>${c.action === 'replace' ? 'overwrites yours' : c.action === 'create' ? 'new' : 'unchanged'}</td>
-        <td>${c.security && c.action !== 'unchanged' ? html`<span class="fa-badge fa-sensitive" title="decides what this node's agents may do">security</span>` : ''}</td>
+        <td>${c.security && c.action !== 'unchanged' ? html`<span class="ui-tag ui-tag-accent fa-badge fa-sensitive" title="decides what this node's agents may do">security</span>` : ''}</td>
       </tr>`)}</tbody></table>`}
     ${preview && !changes.length && html`<div class="muted">${preview.kind === 'skill' ? 'Select a destination skill root, then preview again.' : 'This version has nothing to import.'}</div>`}
     ${(preview?.warnings || []).map((w) => html`<div class="fa-warn">${w}</div>`)}
@@ -241,7 +238,7 @@ export function ImportDialog({ board, item, version, by, actions, confirm, onClo
       <${Button} id="fleet-board-import-preview" disabled=${busy} onClick=${() => run()}>${busy ? 'Previewing…' : stale && preview ? 'Preview again' : 'Preview'}</${Button}>
       <${Button} variant="primary" id="fleet-board-import-apply" disabled=${blocked} title=${stale && preview ? 'Preview again after changing options' : ''} onClick=${apply}>Import…</${Button}>
       <${Button} onClick=${onClose}>Close</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // VersionsDialog lists an item's versions: open one, or keep (pin) it.
@@ -260,12 +257,11 @@ function VersionsDialog({ board, item, name, actions, confirm, toast, onOpen, on
     action: () => actions.pinBoardItem(board.id, item.id, v.version),
   }).then((r) => { if (r) { toast(`Keeping ${short(v.version)}`, false); onPinned(); } }).catch((e) => toast(`Keep failed: ${errText(e)}`, true));
   const list = Array.isArray(versions) ? versions : [];
-  return html`<${Overlay} id="fleet-board-versions" labelledby="fleet-board-versions-title" onClose=${onClose}>
-    <h3 id="fleet-board-versions-title">Versions of ${item.name}</h3>
-    ${versions?.error ? html`<div class="fa-danger">${versions.error}</div>` : !versions ? html`<div class="muted">Loading…</div>` : html`<table class="fa-table" id="fleet-board-version-list">
+  return html`<${Dialog} id="fleet-board-versions" onClose=${onClose} title=${html`Versions of ${item.name}`}>
+    ${versions?.error ? html`<div class="fa-danger">${versions.error}</div>` : !versions ? html`<div class="muted">Loading…</div>` : html`<table class="fa-table ui-compact" id="fleet-board-version-list">
       <thead><tr><th>Version</th><th>Posted by</th><th>Size</th><th></th></tr></thead>
       <tbody>${list.map((v) => html`<tr key=${v.version} data-version=${v.version}>
-        <td><code title=${v.version}>${short(v.version)}</code>${v.version === item.pinned_version ? html` <span class="fa-badge">kept</span>` : ''}${v.version === item.latest_version ? html` <span class="muted">latest</span>` : ''}</td>
+        <td><code title=${v.version}>${short(v.version)}</code>${v.version === item.pinned_version ? html` <span class="ui-tag ui-tag-accent fa-badge">kept</span>` : ''}${v.version === item.latest_version ? html` <span class="muted">latest</span>` : ''}</td>
         <td>${v.invalid ? html`<span class="fa-danger">${v.error || 'invalid'}</span>` : postedBy(v, name)}</td>
         <td>${size(v.bytes)}</td>
         <td class="fa-acts">${!v.invalid && html`<${Button} size="sm" data-version-act="open" onClick=${() => onOpen(v)}>Open…<//>
@@ -273,7 +269,7 @@ function VersionsDialog({ board, item, name, actions, confirm, toast, onOpen, on
           ${onRepost && html`<${Button} size="sm" data-version-act="repost" onClick=${() => onRepost(v)}>Post to…<//>`}`}</td>
       </tr>`)}</tbody></table>`}
     <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${onClose}>Close</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // BoardItems is a board's item list inside its detail view.
@@ -305,12 +301,12 @@ export function BoardItems({ board, boards = [], name, actions, confirm, toast, 
   return html`<div class="fa-board-items" id="fleet-board-items">
     <div class="fa-row"><b>Shared config</b><span class="spacer"></span>
       ${poster && html`<${Button} size="sm" id="fleet-board-post" onClick=${() => setDialog({ kind: 'publish' })}>Post config…<//>`}</div>
-    ${items?.error ? html`<div class="fa-danger">${items.error}</div>` : !items ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted" id="fleet-board-items-empty">Nothing posted yet.</div>` : html`<table class="fa-table" id="fleet-board-item-list">
+    ${items?.error ? html`<div class="fa-danger">${items.error}</div>` : !items ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted" id="fleet-board-items-empty">Nothing posted yet.</div>` : html`<table class="fa-table ui-compact" id="fleet-board-item-list">
       <thead><tr><th>Item</th><th>Posted by</th><th>Size</th><th></th></tr></thead>
       <tbody>${list.map((it) => it.invalid ? html`<tr key=${`${it.id}/${it.version}`} data-item-id=${it.id} class="fa-invalid">
           <td>${it.name || 'Invalid item'}</td><td colspan="2" class="fa-danger">${it.error || 'could not be verified'}</td><td class="fa-acts muted">not importable</td></tr>`
         : html`<tr key=${it.id} data-item-id=${it.id}>
-          <td>${it.name}${it.update_available ? html` <span class="fa-badge" title="A newer version than the one you keep was posted">update</span>` : ''}${it.pinned_version ? html` <span class="muted">kept ${short(it.pinned_version)}</span>` : ''}</td>
+          <td>${it.name}${it.update_available ? html` <span class="ui-tag ui-tag-accent fa-badge" title="A newer version than the one you keep was posted">update</span>` : ''}${it.pinned_version ? html` <span class="muted">kept ${short(it.pinned_version)}</span>` : ''}</td>
           <td>${postedBy(it, name)}</td>
           <td>${size(it.bytes)}</td>
           <td class="fa-acts">

@@ -306,7 +306,7 @@ export function GuideOverlay({ cue, element, marks = [], onDismiss, win = global
     <div><b>${who}</b>${cue.note ? html`<span>${cue.note}</span>` : null}
       ${missing ? html`<small>Couldn't find “${cue.target}” on this view.</small>` : null}
       ${lost.length ? html`<small>Couldn't find ${lost.map((t) => `“${t}”`).join(', ')} on this view.</small>` : null}</div>
-    <button type="button" aria-label="Dismiss" onClick=${onDismiss}>×</button>
+    <button type="button" data-ui-exempt aria-label="Dismiss" onClick=${onDismiss}>×</button>
   </div>`;
   if (!element || !rect) {
     return html`${markLayer}${(cue.note || missing || lost.length) ? html`<div class="companion-guide-float">${note}</div>` : null}`;

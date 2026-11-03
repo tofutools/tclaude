@@ -1,11 +1,9 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { Button, Select } from './ui-components.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { exportChecklistSteps, fmtBytes } from './export-progress.js';
 import { relTime, shortId } from './helpers.js';
 
@@ -56,14 +54,14 @@ export function PresetCloneDialog({ descriptor, actions, confirmDiscard }) {
     }
   };
   return html`
-    <${Overlay}
+    <${Dialog}
       id="clone-modal"
       labelledby="clone-modal-title"
       onClose=${() => actions.close(descriptor)}
       dirty=${name !== suggested}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
-      registerClose=${registerClose}
+      guard=${{ requestClose, registerClose }}
     >
       <h3 id="clone-modal-title"><${Words}
         plain=${`Clone ${descriptor.presetKind}: ${descriptor.source.name}`}
@@ -99,7 +97,7 @@ export function PresetCloneDialog({ descriptor, actions, confirmDiscard }) {
           <${Words} plain=${busy ? 'Creating…' : 'Create copy'} wizard=${busy ? 'Mirroring…' : 'Mirror it'}/>
         </${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 
@@ -125,14 +123,13 @@ function ExportHistory({ jobs, actions, conv, refreshHistory }) {
   return html`
     <div id="export-agent-history" class="export-history">
       <div class="export-history-head">
-        <span class="export-history-title">Previous exports</span>
-        <button
+        <span class="ui-eyebrow export-history-title">Previous exports</span>
+        <${Button} size="sm" variant="ghost danger"
           id="export-agent-clear"
-          type="button"
           class="export-history-clear"
           title="Delete every saved export for this agent"
           onClick=${() => mutate(() => actions.clearExports(conv))}
-        >Clear all</button>
+        >Clear all<//>
       </div>
       <div id="export-agent-history-list" class="export-history-list">
         ${jobs.map((job) => {
@@ -146,8 +143,8 @@ function ExportHistory({ jobs, actions, conv, refreshHistory }) {
                 <div class="ehi-sub">${when}${size}</div>
               </div>
               <span class=${`ehi-status ${job.status || ''}`}>${job.status || ''}</span>
-              ${job.ready && html`<button data-export-act="download" title="Download this export" aria-label="Download this export" onClick=${() => actions.downloadExport(job.id)}>⤓</button>`}
-              <button class="ehi-del" data-export-act="delete" title="Delete this export" aria-label="Delete this export" onClick=${() => mutate(() => actions.deleteExport(job.id))}>🗑</button>
+              ${job.ready && html`<${Button} size="sm" variant="ghost" icon=${true} data-export-act="download" title="Download this export" aria-label="Download this export" onClick=${() => actions.downloadExport(job.id)}>⤓<//>`}
+              <${Button} size="sm" variant="ghost danger" icon=${true} class="ehi-del" data-export-act="delete" title="Delete this export" aria-label="Delete this export" onClick=${() => mutate(() => actions.deleteExport(job.id))}>🗑<//>
             </div>
           `;
         })}
@@ -268,17 +265,14 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
   };
 
   return html`
-    <${Overlay}
+    <${Dialog}
       id="export-agent-modal"
-      labelledby="export-agent-title"
       onClose=${close}
       onSubmitHotkey=${submit}
       dirty=${dirty}
       blocked=${submitting}
       confirmDiscard=${confirmDiscard}
-      registerClose=${registerClose}
-    >
-      <h3 id="export-agent-title"><${Words} plain="Export conversation" wizard="Inscribe conversation scroll"/></h3>
+      guard=${{ requestClose, registerClose }} title=${html`<${Words} plain="Export conversation" wizard="Inscribe conversation scroll"/>`}>
       <div class="modal-meta" id="export-agent-meta">target: ${descriptor.label || shortId(descriptor.conv)}</div>
       ${phase === 'form' ? html`
         <div id="export-agent-form">
@@ -288,7 +282,7 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
           /></p>
           <label class="cron-create-row">
             <span class="cron-create-label">Format</span>
-            <select id="export-agent-preset" value=${preset} onChange=${(event) => {
+            <${Select} id="export-agent-preset" value=${preset} onChange=${(event) => {
               const next = event.currentTarget.value;
               setPreset(next);
               if (!instructionsEdited.current || !instructions.trim()) {
@@ -299,7 +293,7 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
               <option value="summary">Summary report (Markdown)</option>
               <option value="detailed">Full detailed report</option>
               <option value="custom">Custom — see instructions</option>
-            </select>
+            <//>
           </label>
           <label class="cron-create-row">
             <span class="cron-create-label">Title</span>
@@ -312,8 +306,8 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
           <label class="export-same-group" title="The export runs on an isolated clone of this conversation so the live agent is never disturbed. By default the clone is standalone. Check this to put the clone in the same group(s) as the original, so the summary writer can message peers if it needs to.">
             <input id="export-agent-same-group" type="checkbox" checked=${sameGroup} onChange=${(event) => setSameGroup(event.currentTarget.checked)} />
             <span><${Words}
-              plain=${html`Clone into the same group <span class="export-same-group-hint">— lets the summary writer message peers (default: isolated)</span>`}
-              wizard=${html`Mirror into the same party <span class="export-same-group-hint">— lets the scribe send missives to peers (default: isolated)</span>`}
+              plain=${html`Clone into the same group <span class="export-same-group-hint ui-hint">— lets the summary writer message peers (default: isolated)</span>`}
+              wizard=${html`Mirror into the same party <span class="export-same-group-hint ui-hint">— lets the scribe send missives to peers (default: isolated)</span>`}
             /></span>
           </label>
         </div>
@@ -332,21 +326,18 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
         ${phase === 'failed' && html`<${Button} variant="primary" id="export-agent-retry" onClick=${retry}>Retry</${Button}>`}
         ${phase === 'form' && html`<${Button} variant="primary" id="export-agent-submit" disabled=${submitting} onClick=${submit}>${submitting ? 'Requesting…' : 'Export'}</${Button}>`}
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 
 export function TerminalDirectoryDialog({ descriptor, actions, confirmDiscard }) {
   const choose = (value) => actions.finishChoice(descriptor, value);
   return html`
-    <${Overlay}
+    <${Dialog}
       id="term-modal"
       dialogClass="modal"
-      labelledby="term-title"
       onClose=${() => choose(null)}
-      confirmDiscard=${confirmDiscard}
-    >
-      <h3 id="term-title"><span class="term-title-regular">Open a terminal</span><span class="term-title-wizard">🔮 Open a scrying portal</span></h3>
+      confirmDiscard=${confirmDiscard} title=${html`<span class="term-title-regular">Open a terminal</span><span class="term-title-wizard">🔮 Open a scrying portal</span>`}>
       <p><${Words}
         plain=${html`Spawn a terminal window for this agent. <strong>Current</strong> is where it has most recently been editing files; <strong>Worktree</strong> is the git worktree/repo root around that; <strong>Launch</strong> is where Claude Code was started.`}
         wizard=${html`Open a scrying portal for this hero. <strong>Current</strong> is where it most recently worked its craft; <strong>Worktree</strong> is the surrounding git worktree/repo root; <strong>Launch</strong> is where it was summoned.`}
@@ -358,7 +349,7 @@ export function TerminalDirectoryDialog({ descriptor, actions, confirmDiscard })
         <${Button} id="term-worktree" onClick=${() => choose('worktree')}>Worktree dir</${Button}>
         <${Button} id="term-current" autofocus onClick=${() => choose('current')}>Current dir</${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 
@@ -395,7 +386,7 @@ const TERMINAL_CHOICES = Object.freeze([
 
 function TerminalChoice({ choice, index, onPick, autofocus }) {
   return html`
-    <button type="button" class="term-choice" id=${`term-pick-${choice.act}`} data-term-pick=${choice.act} autofocus=${autofocus}
+    <button data-ui-exempt type="button" class="term-choice" id=${`term-pick-${choice.act}`} data-term-pick=${choice.act} autofocus=${autofocus}
       onClick=${() => onPick(choice.act)}>
       <span class="term-choice-icon" aria-hidden="true"><${Words} plain=${choice.icon} wizard=${choice.wizardIcon} /></span>
       <span class="term-choice-body">
@@ -420,11 +411,11 @@ export function TerminalChooserDialog({ descriptor, actions, confirmDiscard }) {
     pick(choice.act);
   };
   const section = (name, plain, wizard) => html`
-    <div class="term-choice-section" role="presentation"><${Words} plain=${plain} wizard=${wizard} /></div>
+    <div class="ui-eyebrow term-choice-section" role="presentation"><${Words} plain=${plain} wizard=${wizard} /></div>
     ${TERMINAL_CHOICES.map((choice, index) => choice.section === name && html`<${TerminalChoice} key=${choice.act} choice=${choice} index=${index} onPick=${pick} autofocus=${index === 0} />`)}
   `;
   return html`
-    <${Overlay}
+    <${Dialog}
       id="term-chooser-modal"
       dialogClass="modal"
       labelledby="term-chooser-title"
@@ -440,7 +431,7 @@ export function TerminalChooserDialog({ descriptor, actions, confirmDiscard }) {
           ${section('session', 'Watch or drive the agent', 'Gaze into the hero')}
           ${section('shell', 'Your own shell', 'Enter its lair')}
         </div>
-        <p class="term-chooser-hint"><${Words}
+        <p class="term-chooser-hint ui-hint"><${Words}
           plain=${html`Press <kbd>1</kbd>–<kbd>4</kbd> to pick.`}
           wizard=${html`Speak <kbd>1</kbd>–<kbd>4</kbd> to choose.`}
         /></p>
@@ -448,7 +439,7 @@ export function TerminalChooserDialog({ descriptor, actions, confirmDiscard }) {
           <${Button} id="term-chooser-cancel" onClick=${() => actions.finishChoice(descriptor, null)}>Cancel</${Button}>
         </div>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 
@@ -547,22 +538,19 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
   };
 
   return html`
-    <${Overlay}
+    <${Dialog}
       id="sandbox-impl-modal"
       dialogClass="modal"
-      labelledby="sandbox-impl-title"
       initialFocusRef=${firstOptionRef}
       onClose=${() => actions.close(descriptor)}
       onSubmitHotkey=${moveOut ? undefined : submit}
       dirty=${dirty}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
-      registerClose=${registerClose}
-    >
-      <h3 id="sandbox-impl-title"><${Words}
+      guard=${{ requestClose, registerClose }} title=${html`<${Words}
         plain="Sandbox implementation"
         wizard="Ward implementation"
-      /></h3>
+      />`}>
       <div class="modal-meta" id="sandbox-impl-meta">${descriptor.label || shortId(descriptor.conv)}</div>
       <p><${Words}
         plain="Which layer owns OS-level confinement for this agent's launches. Recorded now and applied by the next launch — wake the agent to run under it."
@@ -596,35 +584,35 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
           })}
         </div>
         ${availability && html`
-          <p class="sandbox-impl-hint sandbox-impl-warn" id="sandbox-impl-availability" role="status">
+          <p class="sandbox-impl-hint ui-hint sandbox-impl-warn" id="sandbox-impl-availability" role="status">
             ⚠ ${availability}
           </p>
         `}
         ${modes.length > 0 && html`
           <label class="cron-create-row" id="sandbox-impl-mode-row">
             <span class="cron-create-label">Harness sandbox mode</span>
-            <select id="sandbox-impl-mode" value=${mode} disabled=${busy}
+            <${Select} id="sandbox-impl-mode" value=${mode} disabled=${busy}
               onChange=${(event) => setMode(event.currentTarget.value)}>
               <option value=${SANDBOX_IMPL_MODE_INHERIT}>leave to the server</option>
               ${modes.map((value) => html`<option key=${value} value=${value}>${value}</option>`)}
-            </select>
+            <//>
           </label>
-          <p class="sandbox-impl-hint" id="sandbox-impl-hint"><${Words}
+          <p class="sandbox-impl-hint ui-hint" id="sandbox-impl-hint"><${Words}
             plain="Leave this alone unless you mean to pin it. Left alone, the server carries the agent's recorded mode forward, or uses the harness default when the implementation being replaced had forced one."
             wizard="Leave this be unless you mean to bind it. Left alone, the recorded mode carries forward."
           /></p>
         `}
         ${restart && html`
-          <p class="sandbox-impl-hint" id="sandbox-impl-restart"><${Words}
+          <p class="sandbox-impl-hint ui-hint" id="sandbox-impl-restart"><${Words}
             plain="This agent is running. Assigning restarts it in the same conversation under the new implementation; it must be idle (no turn, background agents, shells or monitors running)."
             wizard="This familiar is awake. Binding the ward re-summons it under the new one; it must be at rest."
           /></p>
         `}
         ${posture.temporary_sandbox_active && html`
-          <p class="sandbox-impl-hint" id="sandbox-impl-unlocked">⚠ the temporary sandbox unlock is active on this agent; restore its normal sandbox before assigning.</p>
+          <p class="sandbox-impl-hint ui-hint" id="sandbox-impl-unlocked">⚠ the temporary sandbox unlock is active on this agent; restore its normal sandbox before assigning.</p>
         `}
         ${moveOut && html`
-          <p class="sandbox-impl-hint sandbox-impl-warn" id="sandbox-impl-move-out" role="alert">⚠ ${moveOut}</p>
+          <p class="sandbox-impl-hint ui-hint sandbox-impl-warn" id="sandbox-impl-move-out" role="alert">⚠ ${moveOut}</p>
         `}
       `}
       <div class="cron-create-error" id="sandbox-impl-error" role="alert">${error}</div>
@@ -639,6 +627,6 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
               ? `Move conversations & ${restart ? 'restart' : 'assign'}`
               : (restart ? 'Assign & restart' : 'Assign')}</${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }

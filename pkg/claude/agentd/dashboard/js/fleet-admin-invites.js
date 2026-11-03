@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { fmtAge } from './fleet-model.js';
 import { TOKEN_TTLS, UNRESTRICTED_CONSEQUENCE, joinCommand, shortID, tokenState } from './fleet-admin-model.js';
 
@@ -20,8 +20,7 @@ function until(iso, now) {
 // dialog's props: closing drops it, and nothing re-reads it from the daemon.
 function TokenDialog({ created, self, copy, toast, onClose }) {
   const onCopy = (text, what) => copy(text).then(() => toast(`${what} copied`, false)).catch(() => toast('Copy failed — select the text instead', true));
-  return html`<${Overlay} id="fleet-token-modal" labelledby="fleet-token-title" onClose=${onClose}>
-    <h3 id="fleet-token-title">Invite token for profile ${created.claims?.profile_name || ''}</h3>
+  return html`<${Dialog} id="fleet-token-modal" onClose=${onClose} title=${html`Invite token for profile ${created.claims?.profile_name || ''}`}>
     <div class="fa-consequence" role="note">Shown once. It is a bearer secret: deliver it privately (not in chat or a ticket), and the joining operator should pass it on stdin.</div>
     <textarea data-capture-mask id="fleet-token-bearer" class="fa-bearer" readonly rows="3" onFocus=${(e) => e.currentTarget.select?.()}>${created.token}</textarea>
     <div class="fa-dl">
@@ -37,7 +36,7 @@ function TokenDialog({ created, self, copy, toast, onClose }) {
       <span class="spacer"></span>
       <${Button} variant="primary" id="fleet-token-close" onClick=${onClose}>Done</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // JoinDialog enrolls this node to a master with a token it received. It
@@ -68,8 +67,7 @@ export function JoinDialog({ masters, actions, onClose, onDone }) {
     } finally { setBusy(false); }
   };
   const c = preview?.claims || {};
-  return html`<${Overlay} id="fleet-join-modal" labelledby="fleet-join-title" onClose=${onClose} blocked=${busy} dirty=${!!token}>
-    <h3 id="fleet-join-title">Join a master with an invite token</h3>
+  return html`<${Dialog} id="fleet-join-modal" onClose=${onClose} blocked=${busy} dirty=${!!token} title="Join a master with an invite token">
     <label class="cron-create-row"><span class="cron-create-label">Master</span>
       <${Select} size="sm" id="fleet-join-master" value=${master} onChange=${(e) => { setMaster(e.currentTarget.value); reset(); }}>
         ${masters.map((m) => html`<option key=${m.id} value=${m.id}>${m.label} · ${shortID(m.id)}</option>`)}
@@ -98,7 +96,7 @@ export function JoinDialog({ masters, actions, onClose, onDone }) {
         ? html`<${Button} id="fleet-join-submit" variant=${c.trust_level === 'unrestricted' ? 'danger' : 'primary'} disabled=${busy || !checked} onClick=${enroll}>${busy ? 'Enrolling…' : 'Enroll'}</${Button}>`
         : html`<${Button} variant="primary" id="fleet-join-preview" disabled=${busy || !master || !token.trim()} onClick=${doPreview}>${busy ? 'Checking…' : 'Preview'}</${Button}>`}
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // InvitesPage issues and revokes invite tokens (this node as master), joins
@@ -182,7 +180,7 @@ export function InvitesPage({ view, actions, confirm, toast, copy, now }) {
         <//></label>
         <${Button} size="sm" variant="primary" id="fleet-invite-create" disabled=${!chosen} onClick=${create}>Create invite…<//>
       </div>`}
-    ${tokens.length > 0 && html`<table class="fa-table" id="fleet-tokens">
+    ${tokens.length > 0 && html`<table class="fa-table ui-compact" id="fleet-tokens">
       <thead><tr><th>Token</th><th>Uses</th><th>Expires</th><th>State</th><th></th></tr></thead>
       <tbody>${tokens.map((t) => { const st = tokenState(t, now); return html`<tr key=${t.id} data-token=${t.id}>
         <td><code>${t.id}</code></td><td>${t.used} / ${t.max_uses}</td><td>${until(t.expires_at, now)}</td>
@@ -195,7 +193,7 @@ export function InvitesPage({ view, actions, confirm, toast, copy, now }) {
       <${Button} size="sm" id="fleet-join-open" disabled=${!masters.length} onClick=${() => setJoining(true)}>Join with a token…<//>
       <span class="muted">${masters.length ? 'Enroll this node with an invite token another node issued.' : 'The issuing node must be online on the hub.'}</span>
     </div>
-    ${enrollments.length > 0 && html`<h4>Enrollments</h4><table class="fa-table" id="fleet-enrollments">
+    ${enrollments.length > 0 && html`<h4>Enrollments</h4><table class="fa-table ui-compact" id="fleet-enrollments">
       <thead><tr><th>Direction</th><th>Peer</th><th>Token</th><th>State</th></tr></thead>
       <tbody>${enrollments.map((e) => html`<tr key=${`${e.direction}|${e.token_id}|${e.peer}`}>
         <td>${e.direction}</td><td>${peerName(e.peer)}</td><td><code>${e.token_id}</code></td><td class=${e.retired ? 'muted' : ''}>${e.retired ? 'retired' : 'bound'}</td>

@@ -6,6 +6,7 @@
 import { Component, h } from 'preact';
 import { useRef } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { BoardOverlayWindow, boardStartPlacement } from './board-overlay.js';
 import { WINDOW_GLYPHS } from './overlay-dock.js';
 import { BOARD_WINDOW_KIND, boardOverlays } from './board-overlay-state.js';
@@ -14,9 +15,10 @@ import { ProcessOverlayWindow, processStartPlacement } from './process-overlay.j
 import { ChatWindow } from './chat-window.js';
 import { CHAT_WINDOW_KIND } from './chat-window-model.js';
 import { defaultPlacement } from './companion-model.js';
-import { askOverlayClose, minimizeEveryTab, useDropPoint } from './overlay-instances.js';
+import { askOverlayClose, closeWindowTabs, useDropPoint } from './overlay-instances.js';
 import { tabJoin } from './overlay-tab-drag.js';
 import { activeTabOf } from './overlay-tab-model.js';
+import { tabMoves } from './overlay-tab-moves.js';
 import { OverlayTabStrip } from './overlay-tab-strip.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { OverlayWindow, useOverlayWindow } from './overlay-window.js';
@@ -56,8 +58,8 @@ export const plainView = ({ kind, label }) => ({ label: label || 'Terminal', lea
 export const tabViewOf = (kinds) => (tab) => (kinds[tab.kind]?.view || plainView)(tab);
 
 const closeTitle = (window, stewardInside) => {
-  if (stewardInside) return window.tabs.length > 1 ? 'Close: other tabs go to the dock, and the Steward shuts down, after asking' : 'Close: shut it down, after asking';
-  return window.tabs.length > 1 ? 'Close: every tab goes to the dock, and keeps running' : 'Close: it goes to the dock, and keeps running';
+  if (stewardInside) return window.tabs.length > 1 ? 'Close: other tabs leave and keep running, and the Steward shuts down, after asking' : 'Close: shut it down, after asking';
+  return window.tabs.length > 1 ? 'Close: every tab leaves and keeps running in the background' : 'Close: it leaves and keeps running in the background';
 };
 
 export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = null, add = null }) {
@@ -73,16 +75,24 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = n
     ...(window.place === home?.place && { spotted: home.spotted, onPlaced: home.onPlaced }),
     join: window.tabs.length === 1 ? tabJoin(win, tab.id, window.id) : null,
   });
-  const asking = window.tabs.find((candidate) => kinds[candidate.kind]?.asksToClose?.(candidate));
+  const asksToClose = (candidate) => !!kinds[candidate.kind]?.asksToClose?.(candidate);
+  // The window's ✕ and a tab's × are one close: the tabs leave and keep running
+  // in the background, and a running Steward asks first, as ⏻ does.
+  const closeTabs = (picks) => {
+    const asking = window.tabs.filter(picks).find(asksToClose);
+    closeWindowTabs(window.id, picks, { asking: asking?.id, closeOf: (candidate) => tabMoves(candidate).close });
+    if (asking) askOverlayClose(asking.id);
+  };
   const close = {
-    title: closeTitle(window, !!asking),
-    onClose: () => {
-      minimizeEveryTab(window.id, asking?.id);
-      if (asking) askOverlayClose(asking.id);
-    },
+    title: closeTitle(window, window.tabs.some(asksToClose)),
+    onClose: () => closeTabs(() => true),
+  };
+  const tabClose = {
+    title: (candidate) => (asksToClose(candidate) ? 'Detach: shut it down, after asking' : 'Detach to background: it leaves the window and dock and keeps running'),
+    onClose: (id) => closeTabs((candidate) => candidate.id === id),
   };
   const viewOf = tabViewOf(kinds);
-  const strip = html`<${OverlayTabStrip} window=${window} overlay=${overlay} win=${win} viewOf=${viewOf} />${add?.(window)}`;
+  const strip = html`<${OverlayTabStrip} window=${window} overlay=${overlay} win=${win} viewOf=${viewOf} tabClose=${tabClose} />${add?.(window)}`;
   const Body = kinds[tab.kind]?.Body || TAB_BODIES[tab.kind];
   const minimize = home?.shrinks?.(window, overlay);
   const fallback = (retry) => {
@@ -91,7 +101,7 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = n
       titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Failed: ${tab.label}`} title=${strip}
       controls=${{ look, closeLabel: `Close ${tab.label}`, closeTitle: close.title, onClose: close.onClose }}>
       <div class="companion-empty" role="alert"><p><b>${tab.label}</b> stopped drawing. Nothing it runs has stopped.</p>
-        <button type="button" class="companion-primary" onClick=${retry}>Try again</button></div>
+        <${Button} size="sm" variant="primary" class="companion-primary" onClick=${retry}>Try again<//></div>
     <//>`;
   };
   return html`<${TabBoundary} key=${tab.id} fallback=${fallback}>

@@ -76,7 +76,7 @@ export function PaletteLauncher({ state, snapshot, documentRef = document }) {
   }, [documentRef, state, terminalShortcutEnabled]);
 
   return html`
-    <button id="command-palette-btn" type="button"
+    <button data-ui-exempt id="command-palette-btn" type="button"
       aria-label=${withShortcut('Open the command palette', 'palette')} aria-haspopup="dialog"
       title="Command palette — a keyboard launcher (${shortcutText('palette')}) to search and run dashboard actions: hide / focus all (or a group's, or one agent's) windows, jump to a tab, spawn an agent. Type to filter, ↑/↓ to pick, Enter to run."
       onClick=${state.show}>🔍</button>
@@ -183,7 +183,7 @@ export function PaletteOverlay({
               ${command.shortcut ? html`<${Keys} id=${command.shortcut} />` : null}
               ${command.enabled === false || command.hint ? html`<span class="palette-hint">${command.enabled === false ? command.disabledReason || 'Unavailable' : command.hint}</span>` : null}
             </div>
-          `) : html`<div class="palette-empty">${wizard ? WIZARD_EMPTY : 'No matching commands'}</div>`}
+          `) : html`<div class="ui-empty-block">${wizard ? WIZARD_EMPTY : 'No matching commands'}</div>`}
         </div>
         <div class="palette-foot">
           <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>

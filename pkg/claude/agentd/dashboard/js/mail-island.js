@@ -111,7 +111,7 @@ function MailSidebar({ current, controller }) {
   const model = controller.mailboxView();
   const wizard = document.body.classList.contains('wizard');
   if (model.empty) {
-    return html`<aside class="mail-sidebar" id="mail-sidebar"><div class="empty">${model.hasRoster
+    return html`<aside class="mail-sidebar ui-card" id="mail-sidebar"><div class="empty">${model.hasRoster
       ? 'No mailboxes match the filter.' : 'No mailboxes.'}</div></aside>`;
   }
   // The flat agent list is server-paged, so its count and folded unread
@@ -130,7 +130,7 @@ function MailSidebar({ current, controller }) {
     })) return;
     moveRow(event);
   };
-  return html`<aside class="mail-sidebar" id="mail-sidebar" onKeyDown=${onKeyDown}>
+  return html`<aside class="mail-sidebar ui-card" id="mail-sidebar" onKeyDown=${onKeyDown}>
     ${model.pinned.map(mailbox => html`<${MailboxRow} key=${mailbox.id} mailbox=${mailbox} current=${current} controller=${controller} />`)}
     ${model.groups.length > 0 && html`<div class="mailbox-section">${wizard ? 'Parties' : 'Groups'}</div>`}
     ${model.groups.map(group => html`<${Fragment} key=${group.mailbox.id}>
@@ -138,7 +138,7 @@ function MailSidebar({ current, controller }) {
       ${group.expanded && (group.members.length > 0
         ? group.members.map(mailbox => html`<${MailboxRow} key=${mailbox.id} mailbox=${mailbox} nested=${true}
             prevGen=${model.prevGens.has(mailbox.id)} current=${current} controller=${controller} />`)
-        : html`<div class="mailbox-row nested"><span class="mail-box-check-spacer"></span><div class="mailbox-nested-empty">no member folders shown</div></div>`)}
+        : html`<div class="mailbox-row nested"><span class="mail-box-check-spacer"></span><div class="mailbox-nested-empty ui-empty">no member folders shown</div></div>`)}
       ${group.expanded && group.membersTotal > group.members.length && html`<${LoadMore} nested=${true} shown=${group.members.length}
         total=${group.membersTotal} busy=${current.busy} what=${`${group.mailbox.title}'s member mailboxes`}
         onMore=${() => controller.loadMoreMembers(group.mailbox.title)} />`}
@@ -148,7 +148,7 @@ function MailSidebar({ current, controller }) {
       : html`<${SectionToggle} expanded=${model.agentsExpanded} unread=${agentUnread} onToggle=${controller.toggleAgentsExpand}
           label=${`${wizard ? 'The Rookery' : 'All agent mailboxes'} (${model.agentsTotal})`} />`)}
     ${model.agentsTotal > 0 && model.agentsExpanded && html`<${Fragment}>
-      ${operatorHere() && html`<div class="mailbox-section-help">Tick a mailbox to select it for bulk wipe; the 🗑 bar at the top of the sidebar then deletes every stored message in the ticked mailboxes.</div>`}
+      ${operatorHere() && html`<div class="mailbox-section-help ui-hint">Tick a mailbox to select it for bulk wipe; the 🗑 bar at the top of the sidebar then deletes every stored message in the ticked mailboxes.</div>`}
       ${model.agents.map(mailbox => html`<${MailboxRow} key=${mailbox.id} mailbox=${mailbox}
         prevGen=${model.prevGens.has(mailbox.id)} current=${current} controller=${controller} />`)}
       ${model.moreAgents > 0 && html`<${LoadMore} shown=${model.agents.length} total=${model.agentsTotal}
@@ -200,7 +200,7 @@ function MessageList({ current, controller, model }) {
     controller.consumeAccessHighlight(id);
   });
   if (current.messageRequest?.phase === 'error') {
-    return html`<div class="mail-list" id="mail-list"><div class="island-error mail-error" role="alert">
+    return html`<div class="mail-list ui-card" id="mail-list"><div class="island-error mail-error ui-error-box" role="alert">
       Messages failed to load: ${current.messageRequest.error}
       <${Button} size="sm" onClick=${controller.reloadMessagesPage}>Retry<//>
     </div></div>`;
@@ -220,10 +220,10 @@ function MessageList({ current, controller, model }) {
     moveRow(event);
   };
   if (model.access) {
-    if (model.allAccess.length === 0) return html`<div class="mail-list" id="mail-list"><div class="empty">${wizard
+    if (model.allAccess.length === 0) return html`<div class="mail-list ui-card" id="mail-list"><div class="empty">${wizard
       ? 'No petitions await. When a hero begs a boon beyond its station, it appears here for your judgement.'
       : 'No pending access requests. When an agent asks for access it can’t self-grant, it appears here for your decision.'}</div></div>`;
-    if (model.pendingAccess.length + model.handledAccess.length === 0) return html`<div class="mail-list" id="mail-list"><div class="empty">${wizard
+    if (model.pendingAccess.length + model.handledAccess.length === 0) return html`<div class="mail-list ui-card" id="mail-list"><div class="empty">${wizard
       ? 'No petitions match your seeking.' : 'No access requests match the filter.'}</div></div>`;
     // Pending rows, the divider, and handled rows are ONE keyed child list, not
     // three interpolations. This folder regroups itself: a request decided
@@ -237,16 +237,16 @@ function MessageList({ current, controller, model }) {
     const accessRows = [
       ...model.pendingAccess.map(request => html`<${AccessRow} key=${request.id} request=${request} current=${current} controller=${controller} />`),
       ...(model.handledAccess.length > 0
-        ? [html`<div key="__access_handled__" class="access-divider" data-key="__access_handled__">${wizard ? 'Judgements past' : 'Recently handled'}</div>`]
+        ? [html`<div key="__access_handled__" class="ui-eyebrow access-divider" data-key="__access_handled__">${wizard ? 'Judgements past' : 'Recently handled'}</div>`]
         : []),
       ...model.handledAccess.map(request => html`<${AccessRow} key=${request.id} request=${request} current=${current} controller=${controller} />`),
     ];
-    return html`<div class="mail-list" id="mail-list" onKeyDown=${onKeyDown}>${accessRows}</div>`;
+    return html`<div class="mail-list ui-card" id="mail-list" onKeyDown=${onKeyDown}>${accessRows}</div>`;
   }
-  if (model.messages.length === 0) return html`<div class="mail-list" id="mail-list"><div class="empty">${current.totalUnfiltered
+  if (model.messages.length === 0) return html`<div class="mail-list ui-card" id="mail-list"><div class="empty">${current.totalUnfiltered
     ? (wizard ? 'No scrolls match your seeking.' : 'No messages match the filter.')
     : (wizard ? 'This roost holds no scrolls.' : 'This mailbox is empty.')}</div></div>`;
-  return html`<div class="mail-list" id="mail-list" onKeyDown=${onKeyDown}>${model.messages.map(message => html`
+  return html`<div class="mail-list ui-card" id="mail-list" onKeyDown=${onKeyDown}>${model.messages.map(message => html`
     <${MessageRow} key=${message.id} message=${message} current=${current} aggregate=${model.isAggregate} controller=${controller} />`)}</div>`;
 }
 
@@ -605,15 +605,15 @@ function ReviewSpawnRequest({ id, instance, load = () => createFleetAdminActions
 function MessageReader({ current, controller, model }) {
   const wizard = document.body.classList.contains('wizard');
   if (model.access) {
-    if (model.allAccess.length === 0) return html`<div class="mail-reader" id="mail-reader"
+    if (model.allAccess.length === 0) return html`<div class="mail-reader ui-card" id="mail-reader"
       role="region" aria-label="Message reader" tabindex="0"><div class="empty">${wizard
       ? 'No petitions await judgement.' : 'No access requests to review.'}</div></div>`;
     const request = model.allAccess.find(item => item.id === String(current.selectedMsgId || ''));
-    return html`<div class="mail-reader" id="mail-reader" data-kind=${request ? 'decree' : undefined}
+    return html`<div class="mail-reader ui-card" id="mail-reader" data-kind=${request ? 'decree' : undefined}
       role="region" aria-label="Message reader" tabindex="0"><${AccessReader} request=${request} controller=${controller} /></div>`;
   }
   const message = model.messages.find(item => item.id === current.selectedMsgId);
-  if (!message) return html`<div class="mail-reader" id="mail-reader"
+  if (!message) return html`<div class="mail-reader ui-card" id="mail-reader"
     role="region" aria-label="Message reader" tabindex="0"><div class="empty">${wizard
     ? 'Unfurl a scroll to read it.' : 'Select a message to read.'}</div></div>`;
   const human = current.selected === 'human';
@@ -645,7 +645,7 @@ function MessageReader({ current, controller, model }) {
         onClick=${() => controller.deleteOneMessage(message.id)} title=${deleteLock ? undefined : 'Permanently delete this message'}>delete<//><${LockReason} why=${deleteLock} />
     </div>`;
   }
-  return html`<div class="mail-reader" id="mail-reader" data-kind=${controller.msgKind(message)}
+  return html`<div class="mail-reader ui-card" id="mail-reader" data-kind=${controller.msgKind(message)}
     role="region" aria-label="Message reader" tabindex="0">
     <${MessageHeaders} message=${message} />
     <${MessageBody} message=${message} agentMail=${!human} />
@@ -696,7 +696,7 @@ export function MailApp({ controller }) {
     <div class="mail-col mail-sidebar-col">
       <${RemoteInboxSection} />
       <${WipeBar} current=${current} controller=${controller} />
-      ${current.mailboxRequest?.phase === 'error' && html`<div class="island-error mail-error" role="alert">
+      ${current.mailboxRequest?.phase === 'error' && html`<div class="island-error mail-error ui-error-box" role="alert">
         Mailboxes failed to refresh: ${current.mailboxRequest.error}
         <${Button} size="sm" onClick=${controller.reloadMail}>Retry<//>
       </div>`}

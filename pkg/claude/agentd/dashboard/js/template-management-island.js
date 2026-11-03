@@ -4,7 +4,8 @@ import htm from 'htm';
 import { Button, Input, Select } from './ui-components.js';
 import { profileSummary, getDashDefaultProfile, findProfileByHandle, profileChoices } from './profiles.js';
 import { pickDirectory } from './helpers.js';
-import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { wizWord } from './slop.js';
 import { ProfileChips, useUsageProfileLink } from './usage-rules.js';
 import { usageRulesApi } from './usage-rules-actions.js';
@@ -50,7 +51,7 @@ function TemplateCard({ template, groups, profiles, actions }) {
   );
   const waves = templateWaveCount(template);
   return html`<div
-    class="template-card"
+    class="template-card ui-card"
     data-key=${template.name}
     data-template=${template.name}
   >
@@ -198,7 +199,7 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
   const list = filterTemplates(current.templates, current.templateFilter);
   const filtered = !!current.templateFilter.trim();
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'templates-manage-modal',
       manage: true,
@@ -292,7 +293,7 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
                   actions=${actions}
                 />`,
             )
-          : html`<div class="template-empty">
+          : html`<div class="ui-empty-block">
               ${current.templates.length
                 ? html`<${Words}
                     plain="No templates match the filter."
@@ -348,7 +349,7 @@ export function TemplateDuplicateDialog({
     }
   };
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'template-duplicate-modal',
       labelledby: 'template-duplicate-title',
@@ -357,7 +358,7 @@ export function TemplateDuplicateDialog({
       dirty: name !== `${descriptor.source.name}-copy`,
       blocked: busy,
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
     },
     html`<h3 id="template-duplicate-title">
         <${Words} plain="Duplicate a template" wizard="🪞 Mirror the circle" />
@@ -435,7 +436,7 @@ export function TemplateImportDialog({ initialRaw = '', state, actions, confirmD
     }
   };
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'template-import-modal',
       labelledby: 'template-import-title',
@@ -443,7 +444,7 @@ export function TemplateImportDialog({ initialRaw = '', state, actions, confirmD
       dirty: !!(file || raw || as || update),
       blocked: busy,
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
     },
     html`<h3 id="template-import-title">
         <${Words}
@@ -557,9 +558,11 @@ export function TemplateFromGroupDialog({
     }
   };
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'template-from-group-modal',
+      // Update mode re-labels the wizard lever (dashboard.css .tfg-updating).
+      overlayClass: updating ? 'tfg-updating' : '',
       labelledby: 'template-from-group-title',
       onClose: state.closeDialog,
       onSubmitHotkey: busy ? null : submit,
@@ -568,7 +571,7 @@ export function TemplateFromGroupDialog({
         group !== (descriptor.presetGroup || descriptor.groups[0] || ''),
       blocked: busy,
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
     },
     html`<h3 id="template-from-group-title">
         <${Words}
@@ -666,7 +669,7 @@ export function TemplateStartersDialog({
     }
   };
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'starters-modal',
       labelledby: 'starters-title',
@@ -685,7 +688,7 @@ export function TemplateStartersDialog({
       </div>
       <div id="starters-list" class="starters-list">
         ${descriptor.request.phase === 'loading'
-          ? html`<div class="template-empty">
+          ? html`<div class="ui-empty-block">
               <${Words} plain="Loading starters…" wizard="Conjuring presets…" />
             </div>`
           : rows.length
@@ -693,7 +696,7 @@ export function TemplateStartersDialog({
                 (starter) =>
                   html`<div
                     key=${starter.name}
-                    class="starter-row"
+                    class="starter-row ui-card"
                     data-starter=${starter.name}
                   >
                     <div class="starter-head">
@@ -737,7 +740,7 @@ export function TemplateStartersDialog({
                   </div>`,
               )
             : descriptor.request.phase === 'ready' &&
-              html`<div class="template-empty">
+              html`<div class="ui-empty-block">
                 <${Words}
                   plain="No starters bundled."
                   wizard="No presets bound."
@@ -783,7 +786,7 @@ function GroupImportPreview({ inspection, into }) {
     ['Format version', `v${inspection.format_version} — supported`],
   ];
   return html`<div class="group-import-preview" id="group-import-preview">
-    <div class="gi-head">Archive contents</div>
+    <div class="ui-eyebrow gi-head">Archive contents</div>
     ${rows.map(
       ([key, value], index) =>
         html`<div key=${key} class="gi-row">
@@ -793,7 +796,7 @@ function GroupImportPreview({ inspection, into }) {
           >
         </div>`,
     )}
-    <div class="gi-sep gi-head">Collisions on this machine</div>
+    <div class="ui-eyebrow gi-sep gi-head">Collisions on this machine</div>
     ${collisions.length
       ? html`<div class="gi-warn">
             ⚠ ${collisions.length}
@@ -982,7 +985,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
   const ready = kind === 'agent' ? agentReady : groupReady;
   if (landed) {
     return h(
-      Overlay,
+      Dialog,
       {
         id: 'group-import-modal',
         labelledby: 'group-import-title',
@@ -990,7 +993,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
         onSubmitHotkey: state.closeDialog,
         dirty: false,
         confirmDiscard,
-        registerClose,
+        guard: { requestClose, registerClose },
       },
       html`<h3 id="group-import-title">Imported</h3>
         <div class="modal-meta" id="group-import-result-summary">${landed.summary}</div>
@@ -1003,7 +1006,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
     );
   }
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'group-import-modal',
       labelledby: 'group-import-title',
@@ -1014,7 +1017,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
       dirty: !!(file || into || as),
       blocked: phase === 'importing',
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
     },
     html`<h3 id="group-import-title">
         <${Words}
@@ -1034,7 +1037,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
           type="file"
           accept=".zip,.paf,application/zip,application/vnd.tclaude.paf+zip"
           onChange=${(event) => pickFile(event.currentTarget.files?.[0] || null)}
-          autofocus />${file && initialFile === file && html`<span class="paf-hint" id="group-import-dropped">${file.name}</span>`}</label
+          autofocus />${file && initialFile === file && html`<span class="paf-hint ui-hint" id="group-import-dropped">${file.name}</span>`}</label
       >${kind !== 'agent' && html`<label class="cron-create-row"
         ><span class="cron-create-label">Into dir</span
         ><input
@@ -1057,10 +1060,10 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
           spellcheck="false" /></label
       >`}${phase === 'loading' &&
       html`<div class="group-import-preview" id="group-import-preview">
-        <div class="gi-head">Inspecting file…</div>
+        <div class="ui-eyebrow gi-head">Inspecting file…</div>
       </div>`}${phase === 'error' &&
       html`<div class="group-import-preview" id="group-import-preview">
-        <div class="gi-head">File</div>
+        <div class="ui-eyebrow gi-head">File</div>
         <div class="gi-verdict gi-bad">✗ ${error}</div>
         <div class="gi-bad">
           This file is not an importable group or agent — pick a .zip or .paf
@@ -1126,7 +1129,7 @@ export function GroupContextDialog({
     }
   };
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'group-context-modal',
       labelledby: 'group-context-title',
@@ -1135,7 +1138,7 @@ export function GroupContextDialog({
       dirty: context !== descriptor.context,
       blocked: busy,
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
     },
     html`<h3 id="group-context-title">
         <${Words}
@@ -1146,7 +1149,7 @@ export function GroupContextDialog({
       <div class="modal-meta" id="group-context-meta">
         group: ${descriptor.group}
       </div>
-      <p class="modal-hint">
+      <p class="modal-hint ui-hint">
         Shared guidance auto-injected into every agent spawned into this group,
         right after the spawn welcome. Multi-line is fine. Leave empty to clear
         it.
@@ -1222,7 +1225,7 @@ function suggestedGroup(name, groups) {
 
 function DeployRosterPreview({ template, prefix, profiles, defaultProfile }) {
   if (!template?.agents?.length)
-    return html`<span class="tp-empty"
+    return html`<span class="ui-empty"
       ><${Words}
         plain="this template has no agents"
         wizard="this circle names no heroes"
@@ -1615,7 +1618,7 @@ export function TemplateDeployDialog({
   const worktreeLoading =
     !reinforcing && wtPhase === 'loading' && !!(worktree || perAgent);
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'template-deploy-modal',
       labelledby: 'template-deploy-title',
@@ -1624,14 +1627,14 @@ export function TemplateDeployDialog({
       dirty,
       blocked: busy || worktreeLoading,
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
     },
     html`<h3 id="template-deploy-title">
         <${Words} plain="Deploy a task force" wizard="🧙 Summon a hero party" />
       </h3>
       ${dropGroup &&
       html`<div
-        class="deploy-mode"
+        class="deploy-mode ui-card"
         id="template-deploy-mode"
         role="radiogroup"
         aria-label="Drop mode"
@@ -2030,7 +2033,7 @@ function ProfileReadback({ agent, profiles }) {
       >`;
     return (
       profileSummary(profile) ||
-      html`<span class="ta-profile-summary-empty"
+      html`<span class="ui-empty"
         >(profile sets no launch fields)</span
       >`
     );
@@ -2369,7 +2372,7 @@ function Concepts() {
           group disables them (a later resume re-enables them).
         </li>
       </ul>
-      <table class="tpl-concepts-table">
+      <table class="tpl-concepts-table ui-compact">
         <thead>
           <tr>
             <th></th>
@@ -2435,7 +2438,7 @@ function Concepts() {
           the ranks stills them (a later resume wakes them again).
         </li>
       </ul>
-      <table class="tpl-concepts-table">
+      <table class="tpl-concepts-table ui-compact">
         <thead>
           <tr>
             <th></th>
@@ -2535,7 +2538,7 @@ export function TemplateEditor({
     );
   };
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'template-editor-modal',
       labelledby: 'template-editor-title',
@@ -2544,7 +2547,7 @@ export function TemplateEditor({
       dirty,
       blocked: saving,
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
       resizeKey: 'tclaude.dash.modalSize.template-editor',
     },
     html`<h3 id="template-editor-title">
@@ -2631,14 +2634,14 @@ export function TemplateEditor({
                 onChange=${setUsageNames}
                 onNew=${() => openUsageRulesManager({ tab: 'profiles', newProfile: true })}
               />
-              <div class="spawn-field-hint">
+              <div class="spawn-field-hint ui-hint">
                 The deployed group's usage profiles. A member's spawn profile can
                 add to them, and an agent's own assignment replaces them.
               </div>
             </div>
           </div>`
         : null}
-      <div class="template-agents-head">
+      <div class="ui-eyebrow template-agents-head">
         <span><${Words} plain="Agents" wizard="Heroes" /></span
         ><${Button}
           id="template-editor-add-agent"
@@ -2667,7 +2670,7 @@ export function TemplateEditor({
       </div>
       <${Concepts} />
       <div
-        class="template-agents-head"
+        class="ui-eyebrow template-agents-head"
         title="Ordered briefing messages delivered after the whole roster has spawned."
       >
         <span><${Words} plain="Work pattern" wizard="Rite of command" /></span
@@ -2760,7 +2763,7 @@ export function TemplateEditor({
           </div>`;
         })}
       </div>
-      <div class="template-agents-head">
+      <div class="ui-eyebrow template-agents-head">
         <span><${Words} plain="Process" wizard="Quest plan" /></span
         ><${Button}
           id="template-editor-add-phase"
@@ -2847,7 +2850,7 @@ export function TemplateEditor({
             </div>`,
         )}
       </div>
-      <div class="template-agents-head">
+      <div class="ui-eyebrow template-agents-head">
         <span><${Words} plain="Rhythms" wizard="Drumbeats" /></span
         ><${Button}
           id="template-editor-add-rhythm"

@@ -2,10 +2,8 @@ import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { relTime } from './helpers.js';
 import { LockReason, trustLock } from './lock-reason.js';
 import { registerTransactionDialogController } from './transaction-dialog-controller.js';
@@ -73,7 +71,7 @@ export function TransactionDialogFrame({
     if (!busy) onClose?.();
   };
   return html`
-    <${Overlay}
+    <${Dialog}
       id=${id}
       labelledby=${labelledby}
       onClose=${close}
@@ -84,12 +82,12 @@ export function TransactionDialogFrame({
       guardBackdropDrag=${true}
       initialFocusRef=${submitRef}
       dialogClass=${dialogClass}
-      registerClose=${registerClose}
+      guard=${{ requestClose, registerClose }}
     >
       <h3 id=${labelledby}>${title}</h3>
       ${meta ? html`<div class="modal-meta" id=${metaID || undefined}>${meta}</div>` : null}
       ${children}
-      <div class="cleanup-error" id=${errorID || undefined} role=${error ? 'alert' : undefined}>${error}</div>
+      <div class="cleanup-error ui-error" id=${errorID || undefined} role=${error ? 'alert' : undefined}>${error}</div>
       <div class="modal-buttons">
         ${hideCancel ? null : html`<${Button} id=${cancelID || `${baseID}-cancel`} disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>`}
         <span class="spacer"></span>
@@ -110,7 +108,7 @@ export function TransactionDialogFrame({
           onClick=${() => submit('primary')}
         >${busy && busyAction === 'primary' ? busyLabel : primaryLabel}</${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 
@@ -254,8 +252,8 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
     onSubmit=${submit}
     confirmDiscard=${confirmDiscard}
   >
-    <p class="cleanup-hint" id="window-hint"><${Words} plain=${plainHint} wizard=${wizardHint} /></p>
-    <div class="window-direction" id="window-direction" role="radiogroup" aria-label="Window action">
+    <p class="cleanup-hint ui-hint" id="window-hint"><${Words} plain=${plainHint} wizard=${wizardHint} /></p>
+    <div class="window-direction ui-card" id="window-direction" role="radiogroup" aria-label="Window action">
       <label><input
         type="radio" name="window-direction" value="focus"
         checked=${direction === 'focus'} disabled=${busy || locked}
@@ -274,8 +272,8 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
       </label>
     </div>
     <div class="cleanup-toolbar">
-      <button type="button" id="window-select-all" disabled=${busy || locked} onClick=${() => updateAll(true)}>select all</button>
-      <button type="button" id="window-select-none" disabled=${busy || locked} onClick=${() => updateAll(false)}>select none</button>
+      <${Button} size="sm" id="window-select-all" disabled=${busy || locked} onClick=${() => updateAll(true)}>select all<//>
+      <${Button} size="sm" id="window-select-none" disabled=${busy || locked} onClick=${() => updateAll(false)}>select none<//>
       <input
         type="search" id="window-search" placeholder="filter title / id…"
         aria-label="Filter agents" value=${query} disabled=${busy || locked}
@@ -290,7 +288,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
         const members = bucketCandidates('groups', key, NO_WINDOW_GROUP);
         const on = members.filter((candidate) => selected.has(candidate.conv_id)).length;
         const stateClass = on === 0 ? '' : on === members.length ? ' on' : ' partial';
-        return html`<button
+        return html`<button data-ui-exempt
           type="button" key=${key} class=${`window-role-chip${stateClass}`}
           data-group-chip=${key} disabled=${busy || locked}
           onClick=${() => updateBucket('groups', key, NO_WINDOW_GROUP)}
@@ -303,7 +301,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
         const members = bucketCandidates('roles', key, NO_WINDOW_ROLE);
         const on = members.filter((candidate) => selected.has(candidate.conv_id)).length;
         const stateClass = on === 0 ? '' : on === members.length ? ' on' : ' partial';
-        return html`<button
+        return html`<button data-ui-exempt
           type="button" key=${key} class=${`window-role-chip${stateClass}`}
           data-role=${key} disabled=${busy || locked}
           onClick=${() => updateBucket('roles', key, NO_WINDOW_ROLE)}
@@ -322,7 +320,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
           <span class="id">${candidate.conv_id.slice(0, 8)}</span>
           ${candidate.roles.map((role) => html`<span class="cleanup-badge" key=${role}>${role}</span>`)}
         </label></div>
-      `) : html`<div class="cleanup-empty"><${Words} plain="no agents match the filter" wizard="no heroes match the filter" /></div>`}
+      `) : html`<div class="ui-empty-block"><${Words} plain="no agents match the filter" wizard="no heroes match the filter" /></div>`}
     </div>
   </${TransactionDialogFrame}>`;
 }
@@ -368,7 +366,7 @@ function CleanupResult({ response }) {
         <span class="id">${String(outcome.conv_id || '').slice(0, 8)}</span>
         <span class="meta">${outcome.detail || ''}</span>
       </div>
-    `) : html`<div class="cleanup-empty">Nothing to do.</div>`}
+    `) : html`<div class="ui-empty-block">Nothing to do.</div>`}
   </div>`;
 }
 
@@ -557,7 +555,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
       onSubmit=${close}
       confirmDiscard=${confirmDiscard}
     >
-      <p class="cleanup-hint" id="cleanup-hint">Cleanup complete — ${resultBits.join(' · ') || 'nothing to do'}.</p>
+      <p class="cleanup-hint ui-hint" id="cleanup-hint">Cleanup complete — ${resultBits.join(' · ') || 'nothing to do'}.</p>
       <${CleanupResult} response=${result} />
       ${(result.warnings || []).length ? html`<div class="cleanup-warn" id="cleanup-warn">
         ⚠ ${(result.warnings || []).join('\n⚠ ')}
@@ -591,10 +589,10 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
     onSubmit=${submit}
     confirmDiscard=${confirmDiscard}
   >
-    <p class=${`cleanup-hint${effectiveTier === 'delete' ? ' danger' : ''}`} id="cleanup-hint">${hint}</p>
+    <p class=${`cleanup-hint ui-hint${effectiveTier === 'delete' ? ' danger' : ''}`} id="cleanup-hint">${hint}</p>
     <div class="cleanup-toolbar" id="cleanup-toolbar">
-      <button type="button" id="cleanup-select-all" disabled=${controlsDisabled} onClick=${selectAll}>select all</button>
-      <button type="button" id="cleanup-select-none" disabled=${controlsDisabled} onClick=${selectNone}>select none</button>
+      <${Button} size="sm" id="cleanup-select-all" disabled=${controlsDisabled} onClick=${selectAll}>select all<//>
+      <${Button} size="sm" id="cleanup-select-none" disabled=${controlsDisabled} onClick=${selectNone}>select none<//>
       <span title="Tick every visible row whose last activity is at least this many hours ago. 0 selects all.">
         inactive ≥ <input
           type="number" id="cleanup-age" min="0" step="1" value=${age}
@@ -629,7 +627,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
         const rows = visibleCandidates.filter((candidate) => candidate.category === category);
         if (!rows.length || (!multiCategory && category !== 'agent')) return null;
         return html`<div class="cleanup-category" key=${category}>
-          ${multiCategory ? html`<div class="cleanup-cat-head">${CLEANUP_CATEGORY_LABEL[category]} <span>(${rows.length})</span></div>` : null}
+          ${multiCategory ? html`<div class="ui-eyebrow cleanup-cat-head">${CLEANUP_CATEGORY_LABEL[category]} <span>(${rows.length})</span></div>` : null}
           ${rows.map((candidate) => {
             const enabled = rowEnabled(candidate);
             return html`<div class=${`cleanup-row${enabled ? '' : ' disabled'}`} key=${candidate.conv_id}>
@@ -653,7 +651,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
             </div>`;
           })}
         </div>`;
-      }) : html`<div class="cleanup-empty">${candidates.length
+      }) : html`<div class="ui-empty-block">${candidates.length
         ? 'No conversations match the current filters.' : 'Nothing to clean up.'}</div>`}
     </div>
     <div class="cleanup-options" id="cleanup-options">
@@ -667,7 +665,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
           wizard="— also revokes their party-owner mark"
         /></span>
       </label>` : html`
-        <div class="cleanup-tier">
+        <div class="cleanup-tier ui-card">
           ${tierOption('unjoin', 'Unjoin from groups', 'stays an agent — only its group memberships are dropped')}
           ${tierOption('retire', 'Retire (soft-delete)', 'demote to a plain conversation: revokes groups + permissions, keeps the .jsonl, reinstatable')}
           ${tierOption('delete', 'Delete permanently', 'wipes the conversation from disk and every agent row — cannot be undone')}
@@ -693,13 +691,12 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
           disabled=${controlsDisabled || effectiveTier !== 'delete'}
           onChange=${(event) => setDeleteWorktrees(event.currentTarget.checked)}
         /> Delete associated git worktrees <span class="opt-note">— removes the worktree directory; the branch and its commits are kept. The main repo and worktrees shared with another agent are always skipped.</span></label>
-        <div class="cleanup-related"><button
-          type="button" id="cleanup-worktrees-all" disabled=${controlsDisabled}
+        <div class="cleanup-related"><${Button} size="sm" id="cleanup-worktrees-all" disabled=${controlsDisabled}
           onClick=${() => actions.handoffCleanupWorktrees({ group: '' })}
         ><${Words}
           plain="🧹 Review worktrees across all groups…"
           wizard="🍂 Prune stray branches across all parties…"
-        /></button><span class="opt-note"><${Words}
+        /><//><span class="opt-note"><${Words}
           plain="— opens a safe preview of stale worktrees in every group repo"
           wizard="— opens a safe preview of withered branches in every party grove"
         /></span></div>
@@ -815,7 +812,7 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
     onSubmit=${submit}
     confirmDiscard=${confirmDiscard}
   >
-    <p class="cleanup-hint danger" id="delete-group-hint"><${Words}
+    <p class="cleanup-hint ui-hint danger" id="delete-group-hint"><${Words}
       plain=${plainHint} wizard=${wizardHint}
     /></p>
     <div class="cleanup-toolbar">
@@ -854,7 +851,7 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
           /></span>
           <span class="muted"> <${Words} plain=${plainWhy} wizard=${wizardWhy} /></span>
         </label></div>`;
-      }) : html`<div class="cleanup-empty"><${Words}
+      }) : html`<div class="ui-empty-block"><${Words}
         plain="no agents in this group" wizard="no heroes in this party"
       /></div>`}
     </div>
@@ -891,7 +888,7 @@ function BulkRetireResult({ descriptor, response }) {
           worktree ${worktree.action || 'unknown'}
         </span><span class="meta">${worktree.detail || ''}</span>` : null}
       </div>`;
-    }) : html`<div class="cleanup-empty">Nothing to do.</div>`}
+    }) : html`<div class="ui-empty-block">Nothing to do.</div>`}
   </div>`;
 }
 
@@ -1100,11 +1097,11 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
     onSubmit=${submit}
     confirmDiscard=${confirmDiscard}
   >
-    <p class="cleanup-hint" id="retire-preview-hint">${hint}</p>
+    <p class="cleanup-hint ui-hint" id="retire-preview-hint">${hint}</p>
     ${result ? html`<${BulkRetireResult} descriptor=${descriptor} response=${result} />` : html`
       <div class="cleanup-toolbar">
-        <button type="button" id="retire-preview-select-all" disabled=${busy || locked} onClick=${() => updateVisible(true)}>select all</button>
-        <button type="button" id="retire-preview-select-none" disabled=${busy || locked} onClick=${() => updateVisible(false)}>select none</button>
+        <${Button} size="sm" id="retire-preview-select-all" disabled=${busy || locked} onClick=${() => updateVisible(true)}>select all<//>
+        <${Button} size="sm" id="retire-preview-select-none" disabled=${busy || locked} onClick=${() => updateVisible(false)}>select none<//>
         <input
           type="search"
           id="retire-preview-search"
@@ -1135,7 +1132,7 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
               wizard=${candidate.groups?.length ? `parties: ${candidate.groups.join(', ')}` : 'in: Unbound'}
             /></span>` : null}
           </label></div>
-        `) : html`<div class="cleanup-empty">no agents match the filter</div>`}
+        `) : html`<div class="ui-empty-block">no agents match the filter</div>`}
       </div>
       <label class="delete-agent-wt" id="retire-preview-shutdown-row">
         <input
@@ -1184,7 +1181,7 @@ function DeleteRetiredResult({ response }) {
         <span class="id">${String(outcome.conv_id || '').slice(0, 8)}</span>
         <span class="meta">${outcome.detail || ''}</span>
       </div>
-    `) : html`<div class="cleanup-empty">Nothing to do.</div>`}
+    `) : html`<div class="ui-empty-block">Nothing to do.</div>`}
   </div>`;
 }
 
@@ -1328,11 +1325,11 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
     onSubmit=${submit}
     confirmDiscard=${confirmDiscard}
   >
-    <p class=${`cleanup-hint${result ? '' : ' danger'}`} id="delete-retired-hint">${hint}</p>
+    <p class=${`cleanup-hint ui-hint${result ? '' : ' danger'}`} id="delete-retired-hint">${hint}</p>
     ${result ? html`<${DeleteRetiredResult} response=${result} />` : html`
       <div class="cleanup-toolbar">
-        <button type="button" id="delete-retired-select-all" disabled=${busy} onClick=${() => updateVisible(true)}>select all</button>
-        <button type="button" id="delete-retired-select-none" disabled=${busy} onClick=${() => updateVisible(false)}>select none</button>
+        <${Button} size="sm" id="delete-retired-select-all" disabled=${busy} onClick=${() => updateVisible(true)}>select all<//>
+        <${Button} size="sm" id="delete-retired-select-none" disabled=${busy} onClick=${() => updateVisible(false)}>select none<//>
         <span title="Hide retired agents younger than this — only those retired at least this many days ago stay in the list (and so can be deleted). 0 shows them all.">
           retired ≥ <input
             type="number"
@@ -1374,7 +1371,7 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
             ${candidate.online ? html`<span class="cleanup-badge online">online — will skip</span>` : null}
             ${candidate.retired_by ? html`<span class="cleanup-badge">by ${candidate.retired_by}</span>` : null}
           </label></div>`;
-        }) : html`<div class="cleanup-empty">no retired agents match the filter</div>`}
+        }) : html`<div class="ui-empty-block">no retired agents match the filter</div>`}
       </div>
       <label class="delete-agent-wt" id="delete-retired-wt-row">
         <input
@@ -1813,12 +1810,11 @@ function DeleteAgentDialog({ descriptor, actions, confirmDiscard }) {
         }}
       />
       ${probeError && !retrying ? html`<div class="transaction-probe-retry">
-        <button
+        <${Button} size="sm"
           id="delete-agent-wt-retry"
-          type="button"
           disabled=${probing || busy}
           onClick=${retryProbe}
-        >Retry worktree check</button>
+        >Retry worktree check<//>
       </div>` : null}
     </${TransactionDialogFrame}>
   `;

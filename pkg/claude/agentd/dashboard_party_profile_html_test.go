@@ -54,7 +54,6 @@ func TestDashboardHTML_PartyProfilePicker(t *testing.T) {
 	// (b) CSS: the new <select> and the roster readback get the wizard skin,
 	// scoped to #group-create-modal (an unscoped rule would repaint the sibling
 	// dialogs). The badge row has its own colour.
-	must("body.wizard #group-create-modal .cron-create-row select:where(:not(.ui-select)) {", "the party-profile select is wizard-skinned")
 	must("body.wizard #group-create-modal .template-preview {", "the roster readback is wizard-skinned")
 	must(".template-preview .tp-badges .tc-count {", "the readback badge chips are styled")
 

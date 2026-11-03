@@ -56,6 +56,5 @@ func TestDashboardHTML_TemplateDuplicate(t *testing.T) {
 	// skin block is still bespoke (a white-button regression can't be caught by
 	// strings, but the block's ABSENCE can).
 	must(`<${Button} size="sm" data-tact="duplicate"`, "the duplicate card button is a standard small button")
-	must("body.wizard #template-duplicate-modal .cron-create-modal {", "the duplicate dialog has a wizard skin block")
 	must(`content: "🪞 Mirror it!";`, "the wizard submit lever reads 🪞 Mirror it!")
 }

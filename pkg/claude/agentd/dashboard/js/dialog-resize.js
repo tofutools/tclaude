@@ -226,7 +226,7 @@ export function useDialogResize({ dialogRef, prefKey }) {
 // DialogResizer is the corner grip itself. It sits inside the dialog, over the
 // bottom-right corner of whatever the last row happens to be.
 export function DialogResizer({ onPointerDown, onKeyDown, onDoubleClick, label = 'Resize this viewer' }) {
-  return html`<button type="button" class="dialog-resizer"
+  return html`<button data-ui-exempt type="button" class="dialog-resizer"
     onPointerDown=${onPointerDown} onKeyDown=${onKeyDown} onDblClick=${onDoubleClick}
     aria-label=${`${label} (arrow keys resize, Home restores the default size)`}
     title="Drag to resize · double-click to restore the default size">

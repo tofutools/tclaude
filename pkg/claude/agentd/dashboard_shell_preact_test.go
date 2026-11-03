@@ -134,9 +134,12 @@ func TestDashboardOpenPRsThemed(t *testing.T) {
 	css := string(mustReadFS(dashboardAssetsFS, "dashboard.css"))
 	island := string(mustReadFS(dashboardAssetsFS, "js/shell-island.js"))
 
+	for _, id := range []string{"open-prs-popover", "open-mrs-popover"} {
+		if !strings.Contains(island, `id="`+id+`" class="open-prs-popover ui-popover"`) {
+			t.Errorf("the %s panel must be a .ui-popover so every skin paints it", id)
+		}
+	}
 	for _, want := range []string{
-		"body.wizard .open-prs-popover {",
-		"background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);",
 		"body.wizard .open-prs-filters button.active {",
 		"body.wizard .open-prs-final-ci { color: #b39ddb; }",
 	} {
@@ -162,7 +165,7 @@ func TestDashboardOpenPRsThemed(t *testing.T) {
 		}
 		body := island[from:to]
 		list := strings.Index(body, "? html`<ul class=\"open-pr-list\">")
-		empty := strings.Index(body, ": html`<p class=\"open-prs-empty\">")
+		empty := strings.Index(body, ": html`<p class=\"ui-empty-block\">")
 		filters := strings.Index(body, popover.filters)
 		footer := strings.Index(body, `<div class="open-prs-foot">`)
 		if list < 0 || empty < 0 || filters < 0 || footer < 0 || list >= filters || empty >= filters || filters >= footer {

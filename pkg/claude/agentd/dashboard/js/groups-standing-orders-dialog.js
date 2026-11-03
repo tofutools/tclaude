@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { isWizardActive } from './slop.js';
 
 const html = htm.bind(h);
@@ -104,7 +104,7 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
     }
   };
 
-  return html`<${Overlay}
+  return html`<${Dialog}
     id="group-standing-orders-modal"
     labelledby="group-standing-orders-title"
     onClose=${actions.closeStandingOrders}
@@ -118,11 +118,11 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
           ? 'Enduring commandments whispered to every hero in this party.'
           : 'Durable guidance delivered to every agent in this group.'}</p>
       </div>
-      <button type="button" class="group-standing-orders-close"
+      <button data-ui-exempt type="button" class="group-standing-orders-close"
         aria-label=${wizard ? 'Seal decrees' : 'Close rules'}
         disabled=${changing.size > 0} onClick=${actions.closeStandingOrders}>×</button>
     </div>
-    ${error && html`<div class="jobs-error" role="alert">${error}</div>`}
+    ${error && html`<div class="jobs-error ui-error-box" role="alert">${error}</div>`}
     ${loading
       ? html`<div class="empty">Loading standing orders…</div>`
       : loadFailed
@@ -131,7 +131,7 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
             <span class="muted">${wizard
               ? 'The silence is not proof that no decrees are bound. Try the archive again.'
               : 'The rulebook may not be empty. Retry to load its current state.'}</span>
-            <button type="button" onClick=${() => void load()}>${wizard ? 'consult again' : 'retry'}</button>
+            <${Button} onClick=${() => void load()}>${wizard ? 'consult again' : 'retry'}<//>
           </div>`
       : rows.length === 0
         ? html`<div class="group-standing-orders-first-run">
@@ -141,11 +141,11 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
               ? 'Inscribe the first enduring commandment. Present and future heroes alike shall heed its words.'
               : 'Create the first reusable rule for this group. It will apply to every current member and anyone added later.'}</p>
             <div class="group-standing-orders-first-actions">
-              <button type="button" class="primary" onClick=${() => actions.openStandingOrderCreate(group)}>
-                ${wizard ? '✦ inscribe first decree' : '+ create first rule'}</button>
-              <button type="button" onClick=${() => setExplaining(!explaining)}
+              <${Button} variant="primary" onClick=${() => actions.openStandingOrderCreate(group)}>
+                ${wizard ? '✦ inscribe first decree' : '+ create first rule'}<//>
+              <${Button} onClick=${() => setExplaining(!explaining)}
                 aria-expanded=${explaining ? 'true' : 'false'}>
-                ${wizard ? 'consult the lore' : 'what are standing orders?'}</button>
+                ${wizard ? 'consult the lore' : 'what are standing orders?'}<//>
             </div>
             ${explaining && html`<div class="group-standing-orders-explainer">
               ${wizard
@@ -153,7 +153,7 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
                 : 'Standing orders are reusable instructions delivered when a chosen trigger occurs. Their scope and trigger remain editable in Automations.'}
             </div>`}
           </div>
-          <div class="group-standing-orders-first-hint">
+          <div class="group-standing-orders-first-hint ui-hint">
             <strong>${wizard ? 'Scrolls already bound elsewhere?' : 'Already have rules elsewhere?'}</strong>
             ${wizard
               ? ' When the archive holds decrees, it may be opened from here.'
@@ -194,8 +194,8 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
                   <span class=${`group-standing-order-scope ${row.global ? 'global' : 'group'}`}>${scopeLabel(row, wizard)}</span>
                   ${locked
                     ? html`<span class="group-standing-order-lock" aria-label=${wizard ? 'governed elsewhere' : 'managed elsewhere'}>◇</span>`
-                    : html`<button type="button" class="group-standing-order-remove" disabled=${busy}
-                        onClick=${() => void toggle(row, false)}>${wizard ? 'unbind' : 'remove'}</button>`}
+                    : html`<${Button} size="sm" variant="ghost danger" class="group-standing-order-remove" disabled=${busy}
+                        onClick=${() => void toggle(row, false)}>${wizard ? 'unbind' : 'remove'}<//>`}
                 </div>`;
               })}</div>`}
         ${paused.length > 0 && html`
@@ -214,8 +214,8 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
                 <span class=${`group-standing-order-scope ${row.global ? 'global' : 'group'}`}>${scopeLabel(row, wizard)}</span>
                 ${locked
                   ? html`<span class="group-standing-order-lock" aria-label=${wizard ? 'governed elsewhere' : 'managed elsewhere'}>◇</span>`
-                  : html`<button type="button" class="group-standing-order-remove" disabled=${busy}
-                      onClick=${() => void toggle(row, false)}>${wizard ? 'unbind' : 'remove'}</button>`}
+                  : html`<${Button} size="sm" variant="ghost danger" class="group-standing-order-remove" disabled=${busy}
+                      onClick=${() => void toggle(row, false)}>${wizard ? 'unbind' : 'remove'}<//>`}
               </div>`;
             })}
           </div>`}
@@ -230,7 +230,7 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
               placeholder=${wizard ? 'Scry for a decree…' : 'Filter reusable rules…'}
               aria-label=${wizard ? 'Scry for a decree' : 'Filter reusable rules'}
               value=${query} onInput=${(event) => setQuery(event.currentTarget.value)} />
-            <button type="button" onClick=${() => { setBrowsing(false); setQuery(''); }}>hide</button>
+            <${Button} onClick=${() => { setBrowsing(false); setQuery(''); }}>hide<//>
           </div>
           ${shownAvailable.length === 0
             ? html`<div class="empty">${available.length
@@ -243,8 +243,8 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
                 return html`<div key=${order.id} class=${`standing-order-choice group-standing-order-choice${order.enabled ? '' : ' disabled'}`}>
                   <span class="group-standing-order-origin" aria-hidden="true">＋</span>
                   <${OrderDetails} row=${row} wizard=${wizard} />
-                  <button type="button" class="primary" disabled=${busy}
-                    onClick=${() => void toggle(row, true)}>${wizard ? 'bind' : 'add'}</button>
+                  <${Button} variant="primary" disabled=${busy}
+                    onClick=${() => void toggle(row, true)}>${wizard ? 'bind' : 'add'}<//>
                 </div>`;
               })}</div>`}
         </div>`}
@@ -254,11 +254,11 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
               ? 'Read, divine, and bind an existing scroll to this party.'
               : 'Browse, preview, and add existing rules without leaving this group.'}</span></div>
           <div class="group-standing-orders-callout-actions">
-            <button type="button" onClick=${() => setBrowsing(!browsing)}>${browsing
+            <${Button} onClick=${() => setBrowsing(!browsing)}>${browsing
               ? (wizard ? 'close archive' : 'hide library')
-              : (wizard ? 'open archive…' : 'browse library…')}</button>
-            <button type="button" class="primary" onClick=${() => actions.openStandingOrderCreate(group)}>
-              ${wizard ? '✦ inscribe decree' : '+ create rule'}</button>
+              : (wizard ? 'open archive…' : 'browse library…')}<//>
+            <${Button} variant="primary" onClick=${() => actions.openStandingOrderCreate(group)}>
+              ${wizard ? '✦ inscribe decree' : '+ create rule'}<//>
           </div>
         </div>`}
     <div class="modal-buttons">

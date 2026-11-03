@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { GRANT_CATEGORIES, GRANT_LIFETIMES, LAUNCH_FIELDS, PEER_SLUGS, REQUESTER_PAYS, extraPolicy, grantConsequence, grantExpiryText, grantRows, planGrants, slugCategory, slugInfo } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
@@ -115,8 +115,7 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
   };
 
   let lastCat = '';
-  return html`<${Overlay} id="fleet-grant-dialog" labelledby="fleet-grant-dialog-title" dialogClass="cron-create-modal fa-grant-dialog" onClose=${onClose} blocked=${busy}>
-    <h3 id="fleet-grant-dialog-title">Add grants</h3>
+  return html`<${Dialog} id="fleet-grant-dialog" dialogClass="cron-create-modal fa-grant-dialog" onClose=${onClose} blocked=${busy} title="Add grants">
     <div class="fa-gd">
       <div class="fa-gd-pick">
         <input id="fleet-grant-search" type="text" placeholder="Search permissions: name or what it allows…" value=${q} autocomplete="off" spellcheck="false" onInput=${(e) => setQ(e.currentTarget.value)} />
@@ -129,14 +128,14 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
           ${visible.length === 0 && html`<div class="empty">No permission matches.</div>`}
           ${[...visible].sort((a, b) => GRANT_CATEGORIES.indexOf(slugCategory(a.slug)) - GRANT_CATEGORIES.indexOf(slugCategory(b.slug))).map((s) => {
             const c = slugCategory(s.slug);
-            const head = c !== lastCat ? html`<div class="fa-gd-cat" key=${`c|${c}`}>${c}</div>` : null;
+            const head = c !== lastCat ? html`<div class="ui-eyebrow fa-gd-cat" key=${`c|${c}`}>${c}</div>` : null;
             lastCat = c;
             const held = heldText(rows || [], s.slug);
             const on = picked.includes(s.slug);
             return html`${head}<label key=${s.slug} class=${`fa-gd-item${on ? ' on' : ''}`} data-grant-slug=${s.slug}>
               <input type="checkbox" checked=${on} onChange=${() => toggle(s.slug)} />
               <code class=${s.sensitive ? 'fa-sensitive' : ''}>${s.slug}</code>
-              <span class="fa-gd-badges">${held && html`<span class="fa-gd-badge held">${held}</span>`}${s.sensitive && html`<span class="fa-gd-badge sens">sensitive</span>`}<span class="fa-gd-badge">${s.gateway ? 'gateway' : s.kind === 'node' ? 'node-wide' : 'group'}</span></span>
+              <span class="fa-gd-badges">${held && html`<span class="ui-tag fa-gd-badge held">${held}</span>`}${s.sensitive && html`<span class="ui-tag fa-gd-badge sens">sensitive</span>`}<span class="ui-tag fa-gd-badge">${s.gateway ? 'gateway' : s.kind === 'node' ? 'node-wide' : 'group'}</span></span>
               <span class="fa-gd-what muted">${s.what}</span>
               ${s.warning && html`<span class="fa-gd-what fa-warn">${s.warning}</span>`}
             </label>`;
@@ -171,7 +170,7 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
         ${!target?.pool && html`<label class="fa-gd-row"><span class="fa-k">For</span><${Select} size="sm" id="fleet-grant-lifetime" value=${lifetime} onChange=${(e) => setLifetime(e.currentTarget.value)}>
           ${GRANT_LIFETIMES.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}<//></label>`}
         ${!target?.pool && !lifetime && rows?.some((r) => !r.pool && r.expiresAt && picked.includes(r.slug)) && html`<div class="muted fa-gd-note">A timed grant you update keeps its time limit.</div>`}
-        <div class="fa-gd-plan" id="fleet-grant-plan">
+        <div class="fa-gd-plan ui-card ui-inset" id="fleet-grant-plan">
           ${rowsError ? html`<span class="fa-danger" role="alert">Could not read ${target?.label}'s grants: ${rowsError}</span>` : !picked.length ? html`<span class="muted">Tick permissions on the left.</span>` : !target ? html`<span class="muted">Pick who gets them.</span>` : !rows ? html`<span class="muted">Loading ${target.label}'s grants…</span>` : html`
             <b>${todo.length ? `${target.label} gets ${todo.length} grant${todo.length === 1 ? '' : 's'}:` : 'Nothing new to grant.'}</b>
             <ul>${plan.grants.map((g) => html`<li key=${g.key} data-plan=${g.key} class=${g.skip ? 'muted' : ''}><code class=${slugInfo(g.slug).sensitive ? 'fa-sensitive' : ''}>${g.slug}</code> ${where(g)}${g.body.spawn_policy ? ` (cap ${g.body.spawn_policy.max_live})` : ''}${g.body.expires_at ? html` <span class="muted">${grantExpiryText(g.body.expires_at)}</span>` : ''}${g.skip ? ' — already granted' : g.existing ? ' — updates the existing grant' : ''}</li>`)}</ul>
@@ -184,5 +183,5 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
       </div>
     </div>
     <div class="muted fa-cli-note">CLI: <code>tclaude federation grant PEER SLUG [--scope …] [--max-live N] [--profile …] [--harness …] [--model …] [--cwd …] [--allow-profile …] [--requester-pays …] [--job-approval …] [--for 7d]</code> · <code>tclaude federation extend PEER SLUG --for 7d</code></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }

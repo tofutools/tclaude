@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { approvalSummary, stewardSummonBody, timeLeft } from './companion-model.js';
 import { useDismissablePopover } from './hover-popover.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -109,14 +110,14 @@ function ConfirmedAction({ className = '', openClass = 'steward-shutdown-open', 
     }
   }
   return html`<span ref=${rootRef} class=${`steward-shutdown ${className}`}>
-    ${trigger && html`<button type="button" class=${openClass} aria-label=${label} aria-expanded=${asking ? 'true' : 'false'}
+    ${trigger && html`<button type="button" data-ui-exempt class=${openClass} aria-label=${label} aria-expanded=${asking ? 'true' : 'false'}
       title=${title} onClick=${() => { setError(''); setAsking((value) => (value ? false : 'here')); }}>${glyph}</button>`}
     ${asking && html`<div class="steward-shutdown-confirm" role="alertdialog" aria-label=${label}>
       <p>${question}</p>
-      ${error && html`<p class="steward-shutdown-error" role="alert">${error}</p>`}
+      ${error && html`<p class="steward-shutdown-error ui-error" role="alert">${error}</p>`}
       <div class="steward-shutdown-actions">
-        <button type="button" disabled=${busy} onClick=${() => setAsking(false)}>Cancel</button>
-        <button type="button" class="danger" disabled=${busy} onClick=${run}>${busy ? busyLabel : confirm}</button>
+        <${Button} size="sm" disabled=${busy} onClick=${() => setAsking(false)}>Cancel<//>
+        <${Button} size="sm" variant="danger" disabled=${busy} onClick=${run}>${busy ? busyLabel : confirm}<//>
       </div>
     </div>`}
   </span>`;
@@ -168,7 +169,7 @@ export function ElevatedBand({ agent, access, fetchImpl, notify }) {
       ${access.standing.map((slug) => html`<span key=${slug}><code>${slug}</code> ${access.stored?.has(slug) ? 'standing, all future Stewards' : 'standing'}</span>`)}
       ${access.inherited.map((slug) => html`<span key=${slug}><code>${slug}</code> from a group</span>`)}
     </div>
-    ${access.sudo.length > 0 && html`<button type="button" disabled=${busy} title=${access.sudoStored ? 'Ends its temporary sudo, including what is stored for future Stewards. Permanent permissions stay.' : 'Ends its temporary sudo. Permanent permissions stay.'} onClick=${end}>${busy ? 'Ending…' : 'End sudo'}</button>`}
+    ${access.sudo.length > 0 && html`<${Button} size="sm" disabled=${busy} title=${access.sudoStored ? 'Ends its temporary sudo, including what is stored for future Stewards. Permanent permissions stay.' : 'Ends its temporary sudo. Permanent permissions stay.'} onClick=${end}>${busy ? 'Ending…' : 'End sudo'}<//>`}
   </div>`;
 }
 
@@ -210,12 +211,12 @@ export function ApprovalCard({ request, fetchImpl, notify, from = '', onMore = n
       ${request.path && !request.body && html`<dt>Endpoint</dt><dd><code>${request.method ? `${request.method} ` : ''}${request.path}</code></dd>`}
     </dl>
     ${request.body && html`<pre class="companion-approval-body">${request.body}</pre>`}
-    ${onMore && request.auto_grantable && html`<button type="button" class="access-panel-more" onClick=${onMore}>Always allow? Open in Messages</button>`}
+    ${onMore && request.auto_grantable && html`<button data-ui-exempt type="button" class="access-panel-more" onClick=${onMore}>Always allow? Open in Messages</button>`}
     <div class="companion-approval-actions">
-      ${expired ? html`<span class="companion-approval-expired">Timing out…</span>` : html`<button type="button" class="companion-approval-extend" disabled=${!!busy}
-        title="Push the auto-decline back five minutes" onClick=${() => decide('extend')}>+5 min</button>`}
-      <button type="button" class="companion-approval-deny" disabled=${!!busy || expired} onClick=${() => decide('deny')}>${busy === 'deny' ? 'Denying…' : 'Deny'}</button>
-      <button type="button" class="companion-primary" disabled=${!!busy || expired} onClick=${() => decide('approve')}>${busy === 'approve' ? 'Approving…' : summary.kind === 'plan' ? 'Approve plan' : 'Approve'}</button>
+      ${expired ? html`<span class="companion-approval-expired">Timing out…</span>` : html`<${Button} size="sm" variant="link" class="companion-approval-extend" disabled=${!!busy}
+        title="Push the auto-decline back five minutes" onClick=${() => decide('extend')}>+5 min<//>`}
+      <${Button} size="sm" variant="danger" class="companion-approval-deny" disabled=${!!busy || expired} onClick=${() => decide('deny')}>${busy === 'deny' ? 'Denying…' : 'Deny'}<//>
+      <${Button} size="sm" variant="primary" class="companion-primary" disabled=${!!busy || expired} onClick=${() => decide('approve')}>${busy === 'approve' ? 'Approving…' : summary.kind === 'plan' ? 'Approve plan' : 'Approve'}<//>
     </div>
   </div>`;
 }

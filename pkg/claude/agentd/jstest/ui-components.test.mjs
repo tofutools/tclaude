@@ -153,3 +153,39 @@ test('a danger or warn menu row keeps its tone under the keyboard cursor, not on
     assert.match(css, new RegExp(`\\.ui-menu-item\\.${tone}:is\\(:hover, \\[data-menu-active\\]\\):not\\(:disabled\\) \\{[^}]*color:`), tone);
   }
 });
+
+test('SortTh renders the house sortable header and sorts on click and Enter or Space', async (t) => {
+  const { harness, ui, host } = await setup(t);
+  const sorts = [];
+  const clicks = [];
+  const mounted = await harness.mount(harness.html`
+    <table><thead><tr>
+      <${ui.SortTh} id="name" sortLabel="Name" onSort=${() => sorts.push('name')}>Name</${ui.SortTh}>
+      <${ui.SortTh} id="age" active dir="desc" sortLabel="Age" class="extra" title="Custom">Age</${ui.SortTh}>
+      <${ui.SortTh} id="delegated" data-sort-col="when">When</${ui.SortTh}>
+    </tr></thead></table>
+  `, host);
+  host.addEventListener('click', (event) => { const th = event.target.closest('th[data-sort-col]'); if (th) clicks.push(th.dataset.sortCol); });
+  const name = host.querySelector('#name');
+  const age = host.querySelector('#age');
+  assert.equal(name.className, 'sortable');
+  assert.equal(name.getAttribute('aria-sort'), 'none');
+  assert.equal(name.getAttribute('tabindex'), '0');
+  assert.equal(name.title, 'Sort by Name');
+  assert.equal(name.querySelector('.sort-arrow').textContent, '▾');
+  assert.equal(age.className, 'sortable sort-active extra');
+  assert.equal(age.getAttribute('aria-sort'), 'descending');
+  assert.equal(age.title, 'Custom', 'an explicit title wins');
+  assert.equal(age.querySelector('.sort-arrow').textContent, '▼');
+
+  const key = (node, k) => harness.act(() => harness.fireEvent(node, 'keydown', { key: k }));
+  await harness.act(() => harness.fireEvent(name, 'click'));
+  await key(name, 'Enter');
+  await key(name, ' ');
+  await key(name, 'a');
+  assert.deepEqual(sorts, ['name', 'name', 'name']);
+
+  await key(host.querySelector('#delegated'), 'Enter');
+  assert.deepEqual(clicks, ['when'], 'without onSort a key press clicks through to a delegated handler');
+  await mounted.unmount();
+});

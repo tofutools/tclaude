@@ -273,22 +273,9 @@ body.hide-costs .mux-cost-toggle { display: none; }
   border: 1px solid #3d4451; border-radius: 6px;
   background: #161b22; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
-.mux-tab-menu-item {
-  border: 1px solid transparent; border-radius: 4px; padding: 6px 9px;
-  background: transparent; color: #c9d1d9; cursor: pointer; text-align: left;
-  font: inherit;
-}
-.mux-tab-menu-item:hover,
-.mux-tab-menu-item:focus-visible {
-  outline: none; border-color: #58a6ff; background: #1f2935; color: #f0f6fc;
-}
+/* The rows are standard .ui-menu-items (ui.css), Close/Delete the danger row. */
 .mux-tab-menu-separator {
   height: 1px; margin: 4px 5px; background: #30363d;
-}
-.mux-tab-menu-item.danger { color: #f0a3a0; }
-.mux-tab-menu-item.danger:hover,
-.mux-tab-menu-item.danger:focus-visible {
-  border-color: #f85149; background: #2b1516; color: #ff7b72;
 }
 
 /* Pane area — every terminal is absolutely positioned and stacked; only the
@@ -388,7 +375,6 @@ body.hide-costs .mux-cost-toggle { display: none; }
   padding: 7px 10px; border-bottom: 1px solid #30363d; font-weight: 600;
 }
 .transfer-title { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.transfer-cancel { padding: 2px 8px; font-size: 11px; }
 .transfer-min {
   border: none; background: none; color: #8b949e; cursor: pointer;
   font-size: 12px; padding: 0 3px; line-height: 1;
@@ -448,14 +434,11 @@ body.hide-costs .mux-cost-toggle { display: none; }
 .mux-terminal-disconnect-status { margin: 0; font-size: 13px; color: #7d8590; }
 /* The header Reconnect is small and far from the curtain's focal point; this
    is the same action placed where the eye already is. */
-.mux-terminal-disconnect-reconnect {
+.mux-terminal-disconnect-reconnect, .ui-btn.mux-terminal-disconnect-reconnect {
   display: inline-flex; align-items: center; gap: 8px;
   margin: 4px 0 14px; padding: 9px 22px;
   font: inherit; font-size: 15px; font-weight: 600;
-  color: #fff; background: #238636; border: 1px solid #2ea043; border-radius: 6px;
-  cursor: pointer;
 }
-.mux-terminal-disconnect-reconnect:hover { background: #2ea043; border-color: #3fb950; }
 .mux-terminal-disconnect-reconnect:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
   .mux-terminal-disconnect-card { animation: none; }
@@ -476,16 +459,16 @@ body.wizard .mux-tab {
 body.wizard .mux-tab:hover { color: #f3e6c0; border-color: #7a5db0; }
 body.wizard .mux-tab.active {
   background: linear-gradient(180deg, #34234f 0%, #24183c 100%);
-  color: #f3e6c0; border-color: #d9b45a;
+  color: #f3e6c0; border-color: var(--ui-wizard-gold);
   box-shadow: 0 -2px 8px rgba(169, 123, 214, 0.28);
 }
 body.wizard .mux-tab.drop-before::before,
 body.wizard .mux-tab.drop-after::after {
-  background: #d9b45a; box-shadow: 0 0 8px rgba(217, 180, 90, 0.78);
+  background: var(--ui-wizard-gold); box-shadow: 0 0 8px rgba(217, 180, 90, 0.78);
 }
 body.wizard .mux-tab.drop-group {
-  background: #34234f; border-color: #d9b45a;
-  box-shadow: inset 0 0 0 1px #d9b45a, 0 0 8px rgba(217, 180, 90, 0.55);
+  background: #34234f; border-color: var(--ui-wizard-gold);
+  box-shadow: inset 0 0 0 1px var(--ui-wizard-gold), 0 0 8px rgba(217, 180, 90, 0.55);
 }
 body.wizard .mux-tab-close:hover { color: #f0a868; }
 /* Group accents keep their hue in the portal frame but are mixed against the
@@ -504,30 +487,20 @@ body.wizard .mux-group-pill:hover {
 }
 body.wizard .mux-group-rename { background: #171024; color: #f3e6c0; }
 body.wizard .mux-strip-gap.armed {
-  background: #d9b45a; box-shadow: 0 0 8px rgba(217, 180, 90, 0.78);
+  background: var(--ui-wizard-gold); box-shadow: 0 0 8px rgba(217, 180, 90, 0.78);
 }
 /* The trailing end-zone keeps its left-edge insertion bar in wizard chrome too,
    rather than flooding the grown margin with the gap's fill colour. */
 body.wizard .mux-strip-gap.grow.armed { background: none; box-shadow: none; }
 body.wizard .mux-strip-gap.grow.armed::before {
-  background: #d9b45a; box-shadow: 0 0 7px rgba(217, 180, 90, 0.78);
+  background: var(--ui-wizard-gold); box-shadow: 0 0 7px rgba(217, 180, 90, 0.78);
 }
 body.wizard .mux-tab-menu {
   border-color: #7a5db0;
   background: linear-gradient(180deg, #2a1c43 0%, #171024 100%);
   box-shadow: 0 8px 28px rgba(8, 3, 18, 0.72), inset 0 0 0 1px rgba(217, 180, 90, 0.12);
 }
-body.wizard .mux-tab-menu-item { color: #e7d9f5; }
-body.wizard .mux-tab-menu-item:hover,
-body.wizard .mux-tab-menu-item:focus-visible {
-  border-color: #d9b45a; background: #3a2a63; color: #f3e6c0;
-}
 body.wizard .mux-tab-menu-separator { background: rgba(217, 180, 90, 0.38); }
-body.wizard .mux-tab-menu-item.danger { color: #e6a3ad; }
-body.wizard .mux-tab-menu-item.danger:hover,
-body.wizard .mux-tab-menu-item.danger:focus-visible {
-  border-color: #f0a868; background: #4a2433; color: #ffd09a;
-}
 body.wizard .mux-pane-header {
   background: linear-gradient(180deg, #211832 0%, #171024 100%);
   border-bottom-color: #4a3a6b;
@@ -538,16 +511,16 @@ body.wizard .mux-pane-title {
   text-shadow: 0 0 7px rgba(169, 123, 214, 0.45);
 }
 body.wizard .mux-tabs.drag-out-armed,
-body.wizard .mux-pane-header.drag-out-armed { outline-color: #d9b45a; }
+body.wizard .mux-pane-header.drag-out-armed { outline-color: var(--ui-wizard-gold); }
 body.wizard .mux-drag-out-hint {
   color: #f0a868; background: #171024; border-bottom-color: #4a3a6b;
 }
 body.wizard .mux-pane-status,
 body.wizard .terminal-interaction-hint { color: #a997ca; }
-body.wizard .mux-btn {
+body.wizard .mux-btn:where(:not(.ui-btn)) {
   background: #2a1c43; border-color: #7a5db0; color: #e7d9f5;
 }
-body.wizard .mux-btn:hover {
+body.wizard .mux-btn:where(:not(.ui-btn)):hover {
   background: #3a2a63; color: #f3e6c0;
 }
 body.wizard .mux-palette-toggle { color: #d8ccea; }
@@ -669,7 +642,6 @@ body.wizard .mux-pane-xterm {
 .mux-bg-idle.stale { color: #d29922; }
 .mux-bg-attach { padding: 2px 10px; font-size: 11px; }
 .mux-bg-kill { padding: 2px 8px; font-size: 11px; color: #8b949e; }
-.mux-bg-kill.armed { color: #fff; background: #b62324; border-color: #f85149; }
 .mux-bg-noattach { color: #6e7681; font-size: 11px; font-style: italic; white-space: nowrap; }
 .mux-bg-foot { display: flex; justify-content: flex-end; padding: 8px 12px; border-top: 1px solid #2a3340; }
 .mux-bg-empty {

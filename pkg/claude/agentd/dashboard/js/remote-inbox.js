@@ -3,7 +3,7 @@ import { useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { remoteNodeID } from './fleet-model.js';
 import { fleetState } from './fleet-state.js';
 import { nodeSnapshot } from './node-api.js';
@@ -206,7 +206,7 @@ function InboxReader({ item, onClose, actions, confirm, toast }) {
     action: () => actions.decide(node, data.id, 'approve'),
   }).then((r) => { if (r) done(`Approved once on ${label}`); }).catch(fail('Approve'));
   const deny = () => { setBusy(true); actions.decide(node, data.id, 'deny').then(() => done(`Denied on ${label}`), fail('Deny')); };
-  return html`<${Overlay} id="remote-inbox-reader" labelledby="remote-inbox-title" onClose=${onClose}>
+  return html`<${Dialog} id="remote-inbox-reader" labelledby="remote-inbox-title" onClose=${onClose}>
     ${kind === 'request' ? html`
       <h3 id="remote-inbox-title">🔐 ${data.perm} <span class="muted">@${label}</span></h3>
       <div class="muted">${data.title || data.agent_id || 'agent'} is waiting${data.deadline ? ` · auto-declines ${new Date(data.deadline).toLocaleTimeString()}` : ''}</div>
@@ -231,7 +231,7 @@ function InboxReader({ item, onClose, actions, confirm, toast }) {
         ${data.replyable && html`<${Button} variant="primary" id="remote-inbox-send" disabled=${busy || !reply.trim()} onClick=${send}>Send reply</${Button}>`}
         <${Button} onClick=${onClose}>Close</${Button}></div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation human-inbox ${kind === 'request' ? `decide ${label} ID approve|deny` : `reply ${label} ${data.id} --body …`}</code></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // RemoteInboxSection lists the other nodes' unread notifications and pending
@@ -244,9 +244,9 @@ export function RemoteInboxSection({ inbox = remoteInbox.value, actions = defaul
     <div class="mailbox-section">Other nodes</div>
     ${nodes.map(([id, n]) => html`<div class="remote-inbox-node" key=${id} data-node=${id}>
       ${n.error && html`<div class="mailbox-row nested muted" title=${n.error}>@${n.label}: unreachable</div>`}
-      ${(n.access_requests || []).map((r) => html`<button type="button" class="mailbox-row remote-inbox-item pending" key=${`r${r.id}`} data-request=${r.id}
+      ${(n.access_requests || []).map((r) => html`<button data-ui-exempt type="button" class="mailbox-row remote-inbox-item pending" key=${`r${r.id}`} data-request=${r.id}
         title=${`${r.perm} for ${r.title || r.agent_id} on ${n.label}`} onClick=${() => setOpen({ node: id, label: n.label, kind: 'request', data: r })}>🔐 ${r.perm} <span class="muted">@${n.label}</span></button>`)}
-      ${(n.messages || []).map((m) => html`<button type="button" class="mailbox-row remote-inbox-item" key=${`m${m.id}`} data-message=${m.id}
+      ${(n.messages || []).map((m) => html`<button data-ui-exempt type="button" class="mailbox-row remote-inbox-item" key=${`m${m.id}`} data-message=${m.id}
         title=${`${m.subject || ''} — from ${m.from_title || m.from_agent || ''} on ${n.label}`} onClick=${() => setOpen({ node: id, label: n.label, kind: 'message', data: m, markable: n.markable !== false })}>✉ ${m.subject || m.from_title || 'notification'} <span class="muted">@${n.label}</span></button>`)}
     </div>`)}
     ${open && html`<${InboxReader} item=${open} actions=${actions} confirm=${confirm} toast=${toast} onClose=${() => setOpen(null)} />`}

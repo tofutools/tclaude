@@ -3,6 +3,7 @@ import { SpendLimitBanner } from './spend-limits.js';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
 import { syncBotAnimations } from './helpers.js';
 import { ActivityModes } from './activity-bots.js';
 import { ActivityHover } from './activity-hover.js';
@@ -64,12 +65,12 @@ async function postTrackedAuthor(action, login) {
 
 // PeopleTabs switches the popover between the operator's own pull requests
 // and each tracked colleague's, and adds or removes colleagues inline.
-// ListTab is one tab of a footer popover's tab strip (whose pull requests,
-// which project's merge requests), with an optional control after it.
+// ListTab is one tab of Open PRs' people strip, with an optional control after
+// it (a tracked colleague's ✕), which the standard Tabs row has no place for.
 function ListTab({ active, label, count, title = '', onSelect, extra = null }) {
   return html`
     <span class=${`open-prs-person${active ? ' active' : ''}`}>
-      <button type="button" role="tab" aria-selected=${active ? 'true' : 'false'} title=${title || undefined}
+      <button type="button" data-ui-exempt role="tab" aria-selected=${active ? 'true' : 'false'} title=${title || undefined}
         onClick=${onSelect}>
         ${label} <span class="open-prs-person-n">${count ?? '…'}</span>
       </button>
@@ -112,7 +113,7 @@ function PeopleTabs({ active, mine, people, onSelect, onAdd, onRemove }) {
       <div role="tablist" aria-label="Whose pull requests" class="open-prs-people-tabs">
         ${tab('', 'You', mine)}
         ${people.map((p) => tab(p.login, p.login, p.total, html`
-          <button type="button" class="open-prs-person-x" aria-label=${`Stop tracking ${p.login}`}
+          <button data-ui-exempt type="button" class="open-prs-person-x" aria-label=${`Stop tracking ${p.login}`}
             title=${`Stop tracking ${p.login}`} onClick=${() => onRemove(p.login)}>✕</button>
         `))}
       </div>
@@ -127,14 +128,14 @@ function PeopleTabs({ active, mine, people, onSelect, onAdd, onRemove }) {
           <input ref=${inputRef} type="text" aria-label="GitHub username" placeholder="GitHub username"
             maxlength="40" autocomplete="off" spellcheck="false" value=${login} disabled=${busy}
             onInput=${(event) => { setLogin(event.currentTarget.value); setError(''); }} />
-          <button type="submit" class="open-prs-add-ok" disabled=${busy || !login.trim()}>Add</button>
-          <button type="button" class="open-prs-add-cancel" aria-label="Cancel adding a person" onClick=${cancel}>✕</button>
+          <${Button} size="sm" variant="primary" type="submit" class="open-prs-add-ok" disabled=${busy || !login.trim()}>Add<//>
+          <button data-ui-exempt type="button" class="open-prs-add-cancel" aria-label="Cancel adding a person" onClick=${cancel}>✕</button>
         </form>
       ` : people.length < TRACKED_AUTHORS_MAX ? html`
-        <button type="button" class="open-prs-add-person" title="Track another GitHub user’s open pull requests"
-          onClick=${() => setAdding(true)}>＋ Add person</button>
+        <${Button} size="sm" class="open-prs-add-person" title="Track another GitHub user’s open pull requests"
+          onClick=${() => setAdding(true)}>＋ Add person<//>
       ` : null}
-      ${error ? html`<span class="open-prs-people-error" role="alert">${error}</span>` : null}
+      ${error ? html`<span class="open-prs-people-error ui-error" role="alert">${error}</span>` : null}
     </div>
   `;
 }
@@ -212,7 +213,7 @@ function Usage({ state, fleet = fleetState, fetchImpl = undefined }) {
           <span class="usage-source">
             <span class="usage-unit-switch-slot">
               ${line.modes?.length ? html`<span class="usage-unit-switch" role="group" aria-label=${`${line.label.replace(':', '')} usage units`}>
-                ${line.modes.map((mode) => html`<button type="button" class=${line.mode === mode ? 'active' : ''}
+                ${line.modes.map((mode) => html`<button data-ui-exempt type="button" class=${line.mode === mode ? 'active' : ''}
                   aria-pressed=${line.mode === mode} onClick=${() => setMode(line.key, mode)}>${mode === 'usage' ? '%' : mode === 'cost' ? '≈$' : 'AIC'}</button>`)}
               </span>` : null}
             </span>
@@ -266,7 +267,7 @@ function GlobalActivity({ state, groupsState }) {
   };
   const hintLabel = 'One or more agents have unread notifications — open the latest in the quick reader';
   const badge = first
-    ? html`<button type="button" class="human-notification-hint human-notification-hint-button"
+    ? html`<button data-ui-exempt type="button" class="human-notification-hint human-notification-hint-button"
         title=${hintLabel} aria-label=${hintLabel} onClick=${openReader}>!</button>`
     : hasNotifications
       ? html`<span class="human-notification-hint" aria-hidden="true"
@@ -298,7 +299,7 @@ function Status({ feedback }) {
 function MessagesBadge({ state }) {
   const view = messagesBadgeView(state.snapshot.value);
   return html`
-    <span id="messages-badge" class=${`tab-badge${view.blink ? ' blink' : ''}`} hidden=${view.hidden}>${view.text}</span>
+    <span id="messages-badge" class=${`tab-badge ui-badge ui-badge-danger${view.blink ? ' blink' : ''}`} hidden=${view.hidden}>${view.text}</span>
   `;
 }
 
@@ -355,14 +356,14 @@ function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = nu
         </span>
       </span>
       <span class="open-pr-badges">
-        ${ignored ? html`<button type="button" class="open-pr-restore"
-            aria-label=${`Bring back ${mr ? 'merge' : 'pull'} request ${ref}`} onClick=${() => onRestore?.(pr)}>Restore</button>` : html`
+        ${ignored ? html`<${Button} size="sm" class="open-pr-restore"
+            aria-label=${`Bring back ${mr ? 'merge' : 'pull'} request ${ref}`} onClick=${() => onRestore?.(pr)}>Restore<//>` : html`
           <${PRChecksBadge} url=${pr.url} prNumber=${pr.number}
             summary=${terminal && !showFinalCI ? null : pr.checks} countText=${mr ? 'pipeline' : ''} />
           ${terminal || draft ? null : html`<${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} />`}
-          ${onIgnore && !terminal ? html`<button type="button" class="open-pr-ignore"
+          ${onIgnore && !terminal ? html`<${Button} size="sm" icon=${true} class="open-pr-ignore"
             aria-label=${`Ignore ${mr ? 'merge' : 'pull'} request ${ref}…`} title="Ignore…"
-            onClick=${() => onIgnore(pr)}>⊘</button>` : null}
+            onClick=${() => onIgnore(pr)}>⊘<//>` : null}
         `}
       </span>
     </li>
@@ -415,8 +416,8 @@ function IgnorePRDialog({ pr, onCancel, onConfirm, kind = 'pr' }) {
           `)}
         </fieldset>
         <div class="open-prs-confirm-buttons">
-          <button type="button" onClick=${onCancel}>Cancel</button>
-          <button ref=${okRef} type="button" class="confirm-danger" onClick=${() => onConfirm(chosen.ms)}>Ignore</button>
+          <${Button} size="sm" onClick=${onCancel}>Cancel<//>
+          <${Button} size="sm" variant="danger" domRef=${okRef} onClick=${() => onConfirm(chosen.ms)}>Ignore<//>
         </div>
       </div>
     </div>
@@ -494,22 +495,28 @@ function TitleDetailsToggle({ checked, onChange, noun }) {
 // filter chips (each { key, text, active, onClick, title? }).
 // totalLabel names the count when a trigger carries more than one (Open MRs:
 // "mine" and, in extra, "all").
-function FooterListTrigger({ label, total, open, controls, onClick, totalLabel = '', extra = null, title = '' }) {
+// The counts are standard badges (.ui-badge), accented while something needs
+// attention; the trigger itself is the footer's own control (data-ui-exempt).
+function FooterListTrigger({ label, total, open, controls, onClick, totalLabel = '', extra = null, title = '', attention = false }) {
   return html`
-    <button type="button" class="open-prs-trigger" aria-haspopup="dialog"
+    <button data-ui-exempt type="button" class="open-prs-trigger" aria-haspopup="dialog"
       aria-expanded=${open ? 'true' : 'false'} aria-controls=${controls} title=${title || undefined}
       onClick=${onClick}>
       <span class="open-prs-dot" aria-hidden="true"></span>
-      <span>${label}</span>${totalLabel ? html`<span class="open-mrs-scope">${totalLabel}</span>` : null}<span class="open-prs-count">${total}</span>${extra}
+      <span>${label}</span>${totalLabel ? html`<span class="open-mrs-scope">${totalLabel}</span>` : null}<span class=${footerCountClass(attention)}>${total}</span>${extra}
       <span class="open-prs-chevron" aria-hidden="true">⌃</span>
     </button>
   `;
 }
 
+function footerCountClass(attention = false) {
+  return `open-prs-count ui-badge${attention ? ' ui-badge-accent' : ''}`;
+}
+
 function FooterListFilters({ label, filters }) {
   return html`
     <div class="open-prs-filters" role="group" aria-label=${label}>
-      ${filters.map((chip) => html`<button key=${chip.key} class=${chip.active ? 'active' : ''}
+      ${filters.map((chip) => html`<button data-ui-exempt key=${chip.key} class=${chip.active ? 'active' : ''}
         aria-pressed=${chip.active} title=${chip.title || undefined}
         onClick=${chip.onClick}>${chip.text}</button>`)}
     </div>
@@ -656,22 +663,22 @@ function OpenPRs({ state }) {
   return html`
     <span ref=${rootRef} class=${`open-prs${open ? ' is-open' : ''}${view.total > 0 ? '' : ' is-empty'}${view.attention > 0 ? ' has-attention' : ''}`}
       onMouseEnter=${enter} onMouseLeave=${leave}>
-      <${FooterListTrigger} label="Open PRs" total=${view.total} open=${open}
+      <${FooterListTrigger} label="Open PRs" total=${view.total} attention=${view.attention > 0} open=${open}
         controls="open-prs-popover" onClick=${() => setPinned((value) => !value)} />
       ${open ? html`
-        <div id="open-prs-popover" class="open-prs-popover" role="dialog" aria-label=${heading}>
-          <div class="open-prs-head"><strong>${heading}</strong><span class="open-prs-count">${panel.total}</span>${panelAge ? html`<span class="open-prs-age">updated ${panelAge}</span>` : null}</div>
+        <div id="open-prs-popover" class="open-prs-popover ui-popover" role="dialog" aria-label=${heading}>
+          <div class="open-prs-head"><strong>${heading}</strong><span class=${footerCountClass(view.attention > 0)}>${panel.total}</span>${panelAge ? html`<span class="open-prs-age">updated ${panelAge}</span>` : null}</div>
           <${PeopleTabs} active=${personEntry ? personEntry.login : ''} mine=${view.total} people=${people}
             onSelect=${setPerson} onAdd=${addPerson} onRemove=${removePerson} />
           ${panelWarning ? html`<p class="open-prs-stale" role="status">${panelWarning}</p>` : null}
-          ${panelNotice ? html`<p class="open-prs-empty">${panelNotice}</p>` : panel.items.length
+          ${panelNotice ? html`<p class="ui-empty-block">${panelNotice}</p>` : panel.items.length
             ? html`<ul class="open-pr-list">${panel.items.map((pr) => html`<${OpenPRRow} key=${pr.url} pr=${pr}
                 showFinalCI=${panel.showingRecent && showFinalCI} titleDetails=${titleDetails}
                 onIgnore=${askIgnore} onRestore=${(target) => {
                   saveIgnored(unignorePR(ignored, target.url));
                   setFocusBack((n) => n + 1);
                 }} />`)}</ul>`
-            : html`<p class="open-prs-empty">${panel.showingIgnored
+            : html`<p class="ui-empty-block">${panel.showingIgnored
               ? 'No ignored pull requests.'
               : panel.showingRecent
               ? `Nothing merged or closed in the last ${panel.recentWindowDays} day(s).`
@@ -726,6 +733,10 @@ function OpenPRs({ state }) {
 // merge / Unattached filters, its Ignored filter, whose ignores share Open
 // PRs' store, and on Mine the recently closed list with its Final CI switch.
 // Colleagues' tabs are GitHub's and are not offered here.
+// MINE_TAB is the Open MRs tab key for your own list; a project tab's key is
+// host/project, which never collides with it.
+const MINE_TAB = 'mine';
+
 function OpenMRs({ state }) {
   const [filter, setFilter] = useState('all');
   // '' is your own list; otherwise a project tab's key.
@@ -814,19 +825,23 @@ function OpenMRs({ state }) {
       <${FooterListTrigger} label="Open MRs" totalLabel="mine" total=${view.total} open=${open}
         controls="open-mrs-popover" onClick=${() => setPinned((value) => !value)}
         title=${`Open merge requests: ${view.total} of yours, ${everyone} by everyone`}
-        extra=${html`<span class="open-mrs-scope">all</span><span class="open-prs-count open-mrs-all-count">${everyone}</span>`} />
+        attention=${view.attention > 0}
+        extra=${html`<span class="open-mrs-scope">all</span><span class=${`${footerCountClass()} open-mrs-all-count`}>${everyone}</span>`} />
       ${open ? html`
-        <div id="open-mrs-popover" class="open-prs-popover" role="dialog" aria-label=${heading}>
-          <div class="open-prs-head"><strong>${heading}</strong><span class="open-prs-count">${panel.total}</span>${age ? html`<span class="open-prs-age">updated ${age}</span>` : null}</div>
+        <div id="open-mrs-popover" class="open-prs-popover ui-popover" role="dialog" aria-label=${heading}>
+          <div class="open-prs-head"><strong>${heading}</strong><span class=${footerCountClass(view.attention > 0)}>${panel.total}</span>${age ? html`<span class="open-prs-age">updated ${age}</span>` : null}</div>
           ${view.projects.length ? html`
             <div class="open-prs-people">
-              <div role="tablist" aria-label="Whose merge requests" class="open-prs-people-tabs">
-                <${ListTab} active=${!where} label="Mine" count=${view.total} onSelect=${() => setProject('')} />
-                ${view.projects.map((entry) => html`<${ListTab} key=${entry.key} active=${where?.key === entry.key}
-                  label=${entry.label} count=${`${entry.total}${entry.truncated ? '+' : ''}`}
-                  title=${`Everyone's open merge requests in ${entry.host}/${entry.project}${entry.agents ? ' (your agents work here)' : ''}`}
-                  onSelect=${() => setProject(entry.key)} />`)}
-              </div>
+              <${Tabs} label="Whose merge requests" class="open-prs-people-tabs" value=${where ? where.key : MINE_TAB}
+                onSelect=${(key) => setProject(key === MINE_TAB ? '' : key)}
+                items=${[
+                  { key: MINE_TAB, label: html`Mine <span class="open-prs-person-n">${view.total}</span>` },
+                  ...view.projects.map((entry) => ({
+                    key: entry.key,
+                    label: html`${entry.label} <span class="open-prs-person-n">${entry.total}${entry.truncated ? '+' : ''}</span>`,
+                    title: `Everyone's open merge requests in ${entry.host}/${entry.project}${entry.agents ? ' (your agents work here)' : ''}`,
+                  })),
+                ]} />
             </div>
           ` : null}
           ${failed.map((entry) => html`<p key=${entry.host} class="open-prs-stale" role="status">${entry.host}: ${entry.error}</p>`)}
@@ -841,7 +856,7 @@ function OpenMRs({ state }) {
                   saveIgnored(unignorePR(ignored, target.url));
                   setFocusBack((n) => n + 1);
                 }} />`)}</ul>`
-            : html`<p class="open-prs-empty">${panel.showingIgnored ? 'No ignored merge requests.'
+            : html`<p class="ui-empty-block">${panel.showingIgnored ? 'No ignored merge requests.'
               : panel.showingRecent ? `Nothing merged or closed in the last ${panel.recentWindowDays} day(s).`
               : mrOpenActive ? 'No open merge requests.' : 'No merge requests match this filter.'}</p>`}
           <${FooterListFilters} label="Filter merge requests" filters=${[
@@ -956,7 +971,7 @@ function Confirm({ feedback }) {
   };
   return html`
     <div class=${`modal-overlay${model ? ' show' : ''}`} id="confirm-modal" onClick=${dismissBackdrop}>
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <div class="modal ui-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
         <h3 id="confirm-title">${model?.title || ''}</h3>
         <p id="confirm-body" class=${model?.preformatted ? 'confirm-body-preformatted' : ''}>${model?.body || ''}</p>
         <div class="modal-meta" id="confirm-meta" style=${`display:${model?.meta ? 'block' : 'none'}`}>${model?.meta || ''}</div>
@@ -967,7 +982,7 @@ function Confirm({ feedback }) {
                 check.checked = event.currentTarget.checked;
                 feedback.confirmation.value = { ...model };
               }} />
-            <span>${check.label}${check.hint ? html`<span class="confirm-check-hint">${check.hint}</span>` : null}</span>
+            <span>${check.label}${check.hint ? html`<span class="confirm-check-hint ui-hint">${check.hint}</span>` : null}</span>
           </label>`)}
         </div>` : null}
         <div class="modal-buttons">

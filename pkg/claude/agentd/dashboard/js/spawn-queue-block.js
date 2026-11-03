@@ -124,8 +124,8 @@ function CapacityLine({ queue }) {
     ${s.max > 0 ? html`<span class=${`spawn-queue-meter${s.full ? ' full' : ''}`} role="meter" aria-valuemin="0" aria-valuemax=${s.max} aria-valuenow=${s.used ?? 0}
       aria-label="Agents counted toward capacity"><i style=${{ width: `${Math.round(s.ratio * 100)}%` }}></i></span>
       <span>${s.used ?? '?'} / ${s.max} agents</span>` : null}
-    <span class=${`spawn-queue-chip ${s.full ? 'full' : 'room'}`}>${s.full ? 'full' : 'room'}</span>
-    ${s.waiting ? html`<span class="spawn-queue-chip waiting">⌛ ${s.waiting} waiting</span>` : null}
+    <span class=${`ui-tag spawn-queue-chip ${s.full ? 'full' : 'room'}`}>${s.full ? 'full' : 'room'}</span>
+    ${s.waiting ? html`<span class="ui-tag spawn-queue-chip waiting">⌛ ${s.waiting} waiting</span>` : null}
     <span class="muted spawn-queue-limits">${limitsText(cap)}</span>
   </div>`;
 }
@@ -137,7 +137,7 @@ export function SpawnQueueBlock({ snapshot }) {
   // A div: the dashboard's <section>s are its tabs, hidden unless active.
   return html`<div class=${`spawn-queue-block${rows.length ? '' : ' idle'}`} id="spawn-queue-block" role="region" aria-label="Spawn queue">
     <${CapacityLine} queue=${queue} />
-    ${rows.length ? html`<table class="spawn-queue-table"><thead><tr>
+    ${rows.length ? html`<table class="spawn-queue-table ui-compact"><thead><tr>
       <th>#</th><th>Name</th><th>Group</th><th>Requested by</th><th>Waiting</th><th></th>
     </tr></thead><tbody>${rows.map((entry) => html`<${SpawnQueueRow} key=${entry.id} entry=${entry} />`)}</tbody></table>` : null}
   </div>`;
