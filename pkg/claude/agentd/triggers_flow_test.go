@@ -709,3 +709,38 @@ func TestTriggerMaxLiveWorkersIsPerAction(t *testing.T) {
 	assert.Equal(t, "spawned", rows[0].Actions[0].Outcome)
 	assert.Equal(t, "spawned", rows[0].Actions[1].Outcome)
 }
+
+// A trigger spawn refused by a spawn guardrail records the guardrail's own
+// message as the action detail, not an HTTP error body.
+func TestTriggerSpawnGuardrailRefusalRecordsPlainDetail(t *testing.T) {
+	f := triggerFlow(t)
+	f.HaveGroup("alpha")
+	_, err := db.SetAgentGroupDefaultCwd("alpha", t.TempDir())
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "reviewer", Harness: "claude"})
+	require.NoError(t, err)
+	const author = "guardrail-author-conv"
+	f.HaveConvWithTitle(author, "author")
+	f.HaveMember("alpha", author)
+	_, err = db.SetAgentGroupMaxMembers("alpha", 1)
+	require.NoError(t, err)
+	g, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	ruleID, err := db.InsertTriggerRule(&db.TriggerRule{Name: "full-group", Enabled: true, OperatorAuthored: true,
+		ScopeKind: db.TriggerScopeGroup, GroupID: g.ID, Source: db.TriggerSourcePROpened,
+		DraftFilter: db.TriggerDraftInclude, Actions: []db.TriggerAction{{Type: db.TriggerActionSpawn,
+			Spawn: &db.TriggerSpawnAction{Profile: "reviewer", InstructionTemplate: "Review {{pr.url}}", MaxLiveWorkers: 1}}}})
+	require.NoError(t, err)
+	authorAgent, err := db.AgentIDForConv(author)
+	require.NoError(t, err)
+	_, err = db.UpsertAgentPR(authorAgent, "https://github.com/o/r/pull/41", "ready", "open")
+	require.NoError(t, err)
+	agentd.RunTriggerTickForTest(time.Now().Add(time.Second))
+	rows, err := db.ListTriggerFirings(ruleID, 10)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0].Actions, 1)
+	assert.Equal(t, "guardrail_denied", rows[0].Actions[0].Outcome)
+	assert.Contains(t, rows[0].Actions[0].Detail, `group "alpha" is at its member cap (1/1)`)
+	assert.NotContains(t, rows[0].Actions[0].Detail, `"code"`, "detail is the message, not a JSON error body")
+}

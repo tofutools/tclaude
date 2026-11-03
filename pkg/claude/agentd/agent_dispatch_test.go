@@ -116,7 +116,7 @@ func TestRequireSpawnPermission_ApprovedGlobalSlugReachesForeignGroup(t *testing
 	require.True(t, ok, "approved global spawn should pass; body=%s", w.Body.String())
 	assert.Equal(t, "manager", caller)
 	assert.Equal(t, PermAgentSpawn, authorizedPermissionForRequest(r, ""))
-	assert.True(t, checkSpawnGuardrails(w, g, caller,
+	assert.Nil(t, checkSpawnGuardrails(g, caller,
 		authorizedPermissionForRequest(r, "") == PermAgentSpawn),
 		"the recorded global slug bypasses only the same-group restriction")
 }

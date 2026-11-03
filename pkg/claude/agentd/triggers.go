@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -725,16 +724,15 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 			return nil, status, detail
 		}
 	}
-	recorder := httptest.NewRecorder()
-	if !checkSpawnGuardrails(recorder, g, ownerConv, allowAnyGroup) {
-		return nil, "guardrail_denied", strings.TrimSpace(recorder.Body.String())
+	if fail := checkSpawnGuardrails(g, ownerConv, allowAnyGroup); fail != nil {
+		return nil, "guardrail_denied", fail.Msg
 	}
-	claimed := claimSpawnRateSlot(recorder, ownerConv)
+	rateFail := claimSpawnRateSlot(ownerConv)
 	if ownerConv == "" {
-		claimed = claimDaemonSpawnRateSlot(recorder, ratePrincipal)
+		rateFail = claimDaemonSpawnRateSlot(ratePrincipal)
 	}
-	if !claimed {
-		return nil, "rate_limited", strings.TrimSpace(recorder.Body.String())
+	if rateFail != nil {
+		return nil, "rate_limited", rateFail.Msg
 	}
 
 	roles := roleRefs

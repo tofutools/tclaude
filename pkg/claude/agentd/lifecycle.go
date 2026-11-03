@@ -3751,12 +3751,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if body.NonInteractive && r.Context().Value(federationJobContextKey{}) == nil {
 		// A one-shot does not consume a group seat. Keep the caller's group
 		// restriction and the rate limit while leaving max_members for members.
-		if spawnerConvID != "" && authorizedPermissionForRequest(r, "") != PermAgentSpawn &&
-			!checkSpawnGroupRestriction(w, g, spawnerConvID) {
-			return
+		if spawnerConvID != "" && authorizedPermissionForRequest(r, "") != PermAgentSpawn {
+			if fail := checkSpawnGroupRestriction(g, spawnerConvID); fail != nil {
+				writeError(w, fail.Status, fail.Kind, fail.Msg)
+				return
+			}
 		}
-	} else if !checkSpawnGuardrails(w, g, spawnerConvID,
-		authorizedPermissionForRequest(r, "") == PermAgentSpawn) {
+	} else if fail := checkSpawnGuardrails(g, spawnerConvID,
+		authorizedPermissionForRequest(r, "") == PermAgentSpawn); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
 
@@ -5073,11 +5076,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 	if remotePrincipal, _ := r.Context().Value(federationSpawnRateKey{}).(string); remotePrincipal != "" {
-		if !claimDaemonSpawnRateSlot(w, remotePrincipal) {
+		if fail := claimDaemonSpawnRateSlot(remotePrincipal); fail != nil {
+			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
-	} else if spawnQueueReplayFrom(r) == nil && !claimSpawnRateSlot(w, spawnerConvID) {
-		return
+	} else if spawnQueueReplayFrom(r) == nil {
+		if fail := claimSpawnRateSlot(spawnerConvID); fail != nil {
+			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			return
+		}
 	}
 
 	// Hand the validated request to the shared spawn core. executeSpawn

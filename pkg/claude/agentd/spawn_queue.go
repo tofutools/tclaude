@@ -133,7 +133,8 @@ func queueSpawnIfFull(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, 
 	}
 	// Queueing is a spawn request like any other for the rate limit; the
 	// launch later does not claim a second slot.
-	if !claimSpawnRateSlot(w, c.spawnerConv) {
+	if fail := claimSpawnRateSlot(c.spawnerConv); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return true
 	}
 	id, position, err := db.InsertSpawnQueueEntry(entry, c.rawBody, limits.MaxQueued)
