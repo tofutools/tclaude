@@ -9459,15 +9459,15 @@ label.cfg-label { cursor: pointer; }
    mode. Folding them in matches the sibling text/number inputs; the wizard twin
    (below) gains the same coverage so both skins stay consistent. */
 .cfg-field input[type=text], .cfg-field input[type=number], .cfg-field input[type=password],
-.cfg-field select, .ra-form-grid input {
+.cfg-field select:where(:not(.ui-select)), .ra-form-grid input {
   background: #010409; border: 1px solid #30363d; border-radius: 4px;
   color: #d4d4d4; padding: 4px 7px; font-family: inherit; font-size: 12px;
 }
 .ra-form-grid input:focus { outline: none; border-color: #58a6ff; }
 .cfg-field input[type=text] { min-width: 210px; }
 .cfg-field input[type=number] { width: 84px; }
-.cfg-field input:focus, .cfg-field select:focus { outline: none; border-color: #58a6ff; }
-.cfg-field input:disabled, .cfg-field select:disabled { opacity: 0.4; cursor: default; }
+.cfg-field input:focus, .cfg-field select:where(:not(.ui-select)):focus { outline: none; border-color: #58a6ff; }
+.cfg-field input:disabled, .cfg-field select:where(:not(.ui-select)):disabled { opacity: 0.4; cursor: default; }
 .cfg-field label.cfg-inline { display: flex; align-items: center; gap: 5px; cursor: pointer; }
 .cfg-field input[type=checkbox] { cursor: pointer; }
 /* Web-terminal attachment geometry is a small subsection rather than one long
@@ -12017,11 +12017,11 @@ body.wizard #message-create-modal #message-create-submit { letter-spacing: 0.5px
 
 body.wizard .operator-message-overlay :is(.modal-hint, .cron-create-label, .spawn-attachments-hint) { color: #b39ddb; }
 body.wizard .operator-message-overlay .cron-create-target { color: #f3e6c0; }
-body.wizard .operator-message-overlay .cron-create-row :is(input[type=text], textarea, select) {
+body.wizard .operator-message-overlay .cron-create-row :is(input[type=text], textarea, select:where(:not(.ui-select))) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
-body.wizard .operator-message-overlay .cron-create-row :is(input[type=text], textarea, select):focus { border-color: #a97bd6; }
-body.wizard .operator-message-overlay .cron-create-row select:where(:not(.ui-select)):where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
+body.wizard .operator-message-overlay .cron-create-row :is(input[type=text], textarea, select:where(:not(.ui-select))):focus { border-color: #a97bd6; }
+body.wizard .operator-message-overlay .cron-create-row select:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
 body.wizard .operator-message-overlay .spawn-attachments-list li {
   background: #120c24; border-color: rgba(122, 93, 176, 0.5);
 }
@@ -14548,7 +14548,7 @@ body.wizard #tab-config .cfg-advanced textarea {
 }
 body.wizard #tab-config .ra-form-grid input:focus,
 body.wizard #tab-config .cfg-advanced textarea:focus { border-color: #a97bd6; }
-body.wizard #tab-config .cfg-field select option { color: #1a1330; background: #e7d9f5; }
+body.wizard #tab-config .cfg-field select:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
 
 /* The list add chip keeps its parchment text over the standard wizard button.
    The delete chip stays the standard quiet danger, its red hover a destructive

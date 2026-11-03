@@ -54,7 +54,7 @@ func TestDashboardCSS_StylingSweep(t *testing.T) {
 	// Group 6 — B5/B6 remote-access fields (plain + the wizard twin). The
 	// action buttons are standard ui-btns, held by jstest/ui-controls.
 	must(".cfg-field input[type=password],", "password fields join the cfg-field input rule")
-	must(".cfg-field select, .ra-form-grid input {", "the .ra-form-grid setup inputs join the cfg-field input rule")
+	must(".cfg-field select:where(:not(.ui-select)), .ra-form-grid input {", "the .ra-form-grid setup inputs join the cfg-field input rule")
 	must("body.wizard #tab-config .ra-form-grid input,", "the wizard twin also covers the .ra-form-grid inputs")
 
 	// C1 — the spawn-dialog attachment ✕ stays a ghost button in the wizard skin:
