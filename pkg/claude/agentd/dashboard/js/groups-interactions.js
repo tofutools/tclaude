@@ -308,5 +308,5 @@ export function InlineEditor({
     onBlur=${() => cancel()}
   />`;
   if (!note?.text) return input;
-  return html`${input}<div class=${`inline-editor-hint${note.warn ? ' warn' : ''}`} role="status">${note.text}</div>`;
+  return html`${input}<div class=${`inline-editor-hint ui-hint${note.warn ? ' warn' : ''}`} role="status">${note.text}</div>`;
 }

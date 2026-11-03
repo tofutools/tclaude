@@ -138,7 +138,7 @@ function DoctorApp({ state, actions, notify }) {
         <div><h2>${heading}</h2>${lede && html`<p class="doctor-lede">${lede}</p>`}</div>
         <${Button} size="sm" onClick=${() => actions.load({ refresh: true })}>Re-check<//>
       </div>
-      ${state.phase.value === 'error' && html`<div class="doctor-error">Could not load checks: ${state.error.value}</div>`}
+      ${state.phase.value === 'error' && html`<div class="doctor-error ui-error-box">Could not load checks: ${state.error.value}</div>`}
       ${state.phase.value === 'loading' && html`<p class="doctor-lede">Checking…</p>`}
       ${state.phase.value === 'ready' && (visible.length
         ? html`<div class="doctor-list">${visible.map((check) => html`<${CheckRow} key=${check.id}
