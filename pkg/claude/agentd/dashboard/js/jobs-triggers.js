@@ -2,7 +2,7 @@ import { Fragment, h } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Input, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { relTime, shortAgentId } from './helpers.js';
 import { SpawnActionFields, TemplatePlaceholderChips } from './spawn-action-fields.js';
 
@@ -448,7 +448,7 @@ function TriggerDialog({ descriptor, state, actions }) {
       for_seconds: nextIsState ? (wasState ? value.for_seconds : (Number(value.for_seconds) || 300)) : 0,
     };
   });
-  return html`<${Overlay} id="trigger-modal" dialogClass="cron-create-modal trigger-modal" labelledby="trigger-modal-title"
+  return html`<${Dialog} id="trigger-modal" dialogClass="cron-create-modal trigger-modal" labelledby="trigger-modal-title"
     onClose=${state.closeTriggerDialog} blocked=${busy} resizeKey="tclaude.dash.modalSize.trigger">
     <form onSubmit=${save}>
       <div class="trigger-modal-heading"><div><h3 id="trigger-modal-title">${editing ? `Edit trigger — ${descriptor.rule.name}` : 'New trigger'}</h3>
@@ -504,7 +504,7 @@ function TriggerDialog({ descriptor, state, actions }) {
       <div class="modal-buttons"><${Button} onClick=${state.closeTriggerDialog} disabled=${busy}>Cancel</${Button}>
         <${Button} variant="primary" type="submit" disabled=${busy || !draftValid(draft)}>${busy ? 'Saving…' : editing ? 'Save trigger' : 'Create trigger'}</${Button}></div>
     </form>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 export { actionSummary, scopeSummary, triggerSource, triggerState, whenSummary };

@@ -4,19 +4,16 @@
 // Dialogs used to hand-write those around the overlay, and drifted: about a
 // third of the error slots never announced themselves.
 //
-// Rendering ManagementOverlay directly is a ratchet: ui-dialog-component-
-// baseline.json records each file's count of <${ManagementOverlay}> tags
-// (under any import alias). A file may not exceed it, a new file may not
-// start, and a migrated file must bring its count down. Regenerate with
-//   UPDATE_UI_DIALOG_COMPONENT_BASELINE=1 node --test jstest/ui-dialog-component.test.mjs
+// Every dialog now goes through Dialog, so rendering ManagementOverlay
+// directly (under any import alias) outside its owners fails. A dialog whose
+// title sits deeper in its own markup passes labelledby and keeps its heading.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const JS = new URL('../dashboard/js/', import.meta.url);
-const BASELINE = new URL('./ui-dialog-component-baseline.json', import.meta.url);
 const OWNERS = new Set(['management-overlay.js', 'ui-dialog.js']);
 
 // rawOverlays counts the <${…}> tags in source that render ManagementOverlay,
@@ -35,18 +32,16 @@ test('the scanner counts direct overlays under any alias', () => {
   assert.equal(rawOverlays("import { Dialog } from './ui-dialog.js';\nhtml`<${Dialog} id=a>`"), 0);
 });
 
-test('no file renders ManagementOverlay directly beyond its baseline', () => {
-  const counts = {};
-  for (const name of readdirSync(JS).filter((f) => f.endsWith('.js') && !OWNERS.has(f)).sort()) {
-    const n = rawOverlays(readFileSync(new URL(name, JS), 'utf8'));
-    if (n) counts[`js/${name}`] = n;
-  }
-  if (process.env.UPDATE_UI_DIALOG_COMPONENT_BASELINE) writeFileSync(BASELINE, `${JSON.stringify(counts, null, 2)}\n`);
-  const baseline = JSON.parse(readFileSync(BASELINE, 'utf8'));
-  const over = Object.entries(counts).filter(([file, n]) => n > (baseline[file] ?? 0)).map(([file, n]) => `${file}: ${n} (baseline ${baseline[file] ?? 0})`);
-  assert.deepEqual(over, [], 'render dialogs with Dialog from js/ui-dialog.js, not ManagementOverlay directly');
-  const stale = Object.entries(baseline).filter(([file, n]) => (counts[file] ?? 0) < n).map(([file]) => file);
-  assert.deepEqual(stale, [], 'a migrated file must bring its baseline down (UPDATE_UI_DIALOG_COMPONENT_BASELINE=1)');
+test('no file renders ManagementOverlay directly', () => {
+  const raw = readdirSync(JS).filter((f) => f.endsWith('.js') && !OWNERS.has(f)).sort()
+    .filter((name) => rawOverlays(readFileSync(new URL(name, JS), 'utf8')) > 0);
+  assert.deepEqual(raw, [], 'render dialogs with Dialog from js/ui-dialog.js, not ManagementOverlay directly');
+  // Dialog registers its own guarded close; a dialog that owns one passes it
+  // as guard=${{ requestClose, registerClose }}. A registerClose prop would be
+  // replaced silently and its Cancel would stop closing.
+  const passthrough = readdirSync(JS).filter((f) => f.endsWith('.js') && !OWNERS.has(f)).sort()
+    .filter((name) => /\bregisterClose=\$\{/.test(readFileSync(new URL(name, JS), 'utf8')));
+  assert.deepEqual(passthrough, [], 'pass a dialog-owned close to Dialog as guard, not registerClose');
 });
 
 async function setup(t) {

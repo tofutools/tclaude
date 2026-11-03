@@ -2,10 +2,8 @@ import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { relTime } from './helpers.js';
 import { LockReason, trustLock } from './lock-reason.js';
 import { registerTransactionDialogController } from './transaction-dialog-controller.js';
@@ -73,7 +71,7 @@ export function TransactionDialogFrame({
     if (!busy) onClose?.();
   };
   return html`
-    <${Overlay}
+    <${Dialog}
       id=${id}
       labelledby=${labelledby}
       onClose=${close}
@@ -84,7 +82,7 @@ export function TransactionDialogFrame({
       guardBackdropDrag=${true}
       initialFocusRef=${submitRef}
       dialogClass=${dialogClass}
-      registerClose=${registerClose}
+      guard=${{ requestClose, registerClose }}
     >
       <h3 id=${labelledby}>${title}</h3>
       ${meta ? html`<div class="modal-meta" id=${metaID || undefined}>${meta}</div>` : null}
@@ -110,7 +108,7 @@ export function TransactionDialogFrame({
           onClick=${() => submit('primary')}
         >${busy && busyAction === 'primary' ? busyLabel : primaryLabel}</${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 

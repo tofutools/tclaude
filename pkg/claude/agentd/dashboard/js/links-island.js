@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Input, Select, SortTh } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
-import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { registerLinksController } from './links-controller.js';
 import { nodeSnapshot } from './node-api.js';
@@ -303,20 +303,17 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
   };
 
   return html`
-    <${Overlay}
+    <${Dialog}
       id="link-modal"
-      labelledby="link-modal-title"
       onClose=${actions.closeEditor}
       onSubmitHotkey=${submit}
       dirty=${dirty}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
-      registerClose=${registerClose}
-    >
-      <h3 id="link-modal-title"><${Words}
+      guard=${{ requestClose, registerClose }} titleId="link-modal-title" title=${html`<${Words}
         plain=${edit ? 'Edit link mode' : 'Add inter-group link'}
         wizard=${edit ? 'Rebind an arcane channel' : 'Weave an arcane channel'}
-      /></h3>
+      />`}>
       ${edit && html`<div class="modal-meta" id="link-modal-meta">#${descriptor.id} · ${from} → ${to}</div>`}
       <label class="cron-create-row">
         <span class="cron-create-label">From</span>
@@ -389,7 +386,7 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
           />
         </${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 
@@ -440,9 +437,8 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
   };
 
   return html`
-    <${Overlay} id="proposal-modal" labelledby="proposal-modal-title" onClose=${actions.closeEditor}
-      onSubmitHotkey=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
-      <h3 id="proposal-modal-title">Propose to ${peer ? label : 'a peer node'} 🌐</h3>
+    <${Dialog} id="proposal-modal" onClose=${actions.closeEditor}
+      onSubmitHotkey=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} guard=${{ requestClose, registerClose }} titleId="proposal-modal-title" title=${html`Propose to ${peer ? label : 'a peer node'} 🌐`}>
       <div class="modal-meta">Nothing changes on either node until ${label}'s operator accepts. You can withdraw it until then.</div>
       ${targets === undefined ? html`<div class="empty">Loading peers…</div>`
         : !connected ? html`<div class="link-peer-note off" id="proposal-offline">🌐 Proposals need a hub connection.${targets?.reason ? ` ${targets.reason}` : ''}</div>`
@@ -496,7 +492,7 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
         <${Button} variant="primary" id="proposal-submit" disabled=${busy || !peer || !connected || !items.length} onClick=${submit}>
           ${busy ? 'Sending…' : 'Send proposal'}</${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 

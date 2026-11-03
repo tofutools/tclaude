@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select, SortTh } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { ImportDialog, PublishDialog, canPost, postedBy } from './fleet-admin-board-items.js';
 import { dashPrefs } from './prefs.js';
@@ -446,8 +445,8 @@ export function ContentBrowser({ boards, view, actions, confirm, toast, onOpenBo
           </div>
           <div class="fa-cb-pane">${detail(sel)}</div>
         </div>`}
-    ${d?.kind === 'detail' && html`<${Overlay} id="fleet-cb-detail" ariaLabel=${d.row.name} onClose=${() => setDialog(null)}>${detail(d.row)}
-      <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${() => setDialog(null)}>Close</${Button}></div></${Overlay}>`}
+    ${d?.kind === 'detail' && html`<${Dialog} id="fleet-cb-detail" ariaLabel=${d.row.name} onClose=${() => setDialog(null)}>${detail(d.row)}
+      <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${() => setDialog(null)}>Close</${Button}></div></${Dialog}>`}
     ${d?.kind === 'skill' && html`<${SkillInstallDialog} row=${d.row} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${d?.kind === 'config' && html`<${ImportDialog} board=${d.row.board} item=${d.row} version=${d.row.version} by=${d.row.by} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${d?.kind === 'pick' && html`<${UploadPicker} boards=${posters} onPick=${(b) => setDialog({ kind: 'publish', board: b })} onClose=${() => setDialog(null)} />`}

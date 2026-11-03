@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { shortId } from './helpers.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { isPageNode, nodeSnapshot } from './node-api.js';
 
 const html = htm.bind(h);
@@ -207,7 +207,7 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
   const wizardEmptyRetry = includeOffline
     ? '(Try a different filter.)'
     : '(Try ticking "Include slumbering / archived" for a wider pool.)';
-  return html`<${Overlay}
+  return html`<${Dialog}
     id="add-member-modal" dialogClass="add-member-modal" labelledby="add-member-title"
     onClose=${state.closeAddMember} dirty=${dirty} blocked=${busy}
     confirmDiscard=${confirmDiscard} guardBackdropDrag=${true}
@@ -246,7 +246,7 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
         <span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> <span class="theme-copy-regular">add</span><span class="theme-copy-wizard">invite</span> · <kbd>Esc</kbd> close</span>
       </div>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 export function GroupsAddMemberDialog({ state, actions, confirmDiscard }) {

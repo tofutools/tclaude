@@ -2,7 +2,8 @@ import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import {
   loadSavedPrompts, saveSavedPrompt, deleteSavedPrompt,
   savedPromptsExportBlob, parseSavedPromptsImport,
@@ -115,10 +116,9 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
     // Escape and Tab must reach the shared document-level dialog controller.
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) event.stopPropagation();
   }}>
-    <${Overlay} id="saved-prompts-manage-modal" labelledby="saved-prompts-title"
+    <${Dialog} id="saved-prompts-manage-modal"
       onClose=${onClose} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
-      initialFocusRef=${nameRef} registerClose=${registerClose}>
-      <h3 id="saved-prompts-title">Saved prompts</h3>
+      initialFocusRef=${nameRef} guard=${{ requestClose, registerClose }} titleId="saved-prompts-title" title="Saved prompts">
       <p class="modal-hint ui-hint">Reusable text shared across all groups. Add prompts to a spawn, profile or group so their text opens the agent's task brief, or insert one into a message and edit before sending.</p>
       <div class="filter-bar saved-prompts-transfer">
         <span class="spacer"></span>
@@ -159,7 +159,7 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
         <${Button} variant="primary" disabled=${busy || !draft.name.trim() || !draft.body.trim()}
           onClick=${() => void mutate()}>${busy ? 'Saving…' : 'Save prompt'}</${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   </div>`;
 }
 
