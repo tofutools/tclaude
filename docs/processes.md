@@ -432,7 +432,9 @@ things there are specific to processes:
   moves as it does between the other places, draft and all, and an editor open
   in the Processes tab moves to the strip when you pick it from the **＋**.
   Closing a process tab asks first when it has unsaved edits. Turning Collab
-  off sends a process tab's editor back to the Processes tab.
+  off sends a process tab's editor with unsaved edits back to the Processes
+  tab. Back to the Processes tab's URL of a template in a Collab tab brings
+  the editor back there.
 - **Subprocesses.** A ▣ node runs a nested graph (see
   [Subprocess nodes](#what-executes-today)). Double-click it to edit its body
   in place: a breadcrumb and a minimap of the parent show where you are, the

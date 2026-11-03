@@ -8,7 +8,7 @@ import {
 } from './process-scribe.js';
 import { randomUUID } from './insecure-origin.js';
 import { focusOverlayWindow, openOverlayWindow, overlayHostUp } from './overlay-instances.js';
-import { floatProcessEditor, floatingProcessTab, returnLiveEditor, revealProcessTab, takeFloatingEditor } from './process-editor-place.js';
+import { floatProcessEditor, floatingProcessTab, returnLiveEditor, revealProcessTab, stripProcesses, takeFloatingEditor } from './process-editor-place.js';
 import { editorToWindow, processEditorAway } from './process-editor-window.js';
 
 export function processActorPresentation(snapshot, actor) {
@@ -166,10 +166,17 @@ export function createProcessesActions({
       state.setNotice(`${called} is open in a separate window.`);
       return false;
     }
-    // One open as a Collab tab comes forward there.
-    if (!blank && !live && !handoff && revealProcessTab(id)) {
-      state.setNotice(`${called} is open in a Collab tab.`);
-      return false;
+    // One open as a Collab tab comes forward there when the operator opens it
+    // here. A location restored from the URL (Back, a bookmark) names this tab,
+    // so the editor comes back here instead, unsaved edits and all, rather
+    // than bouncing to Collab.
+    if (!blank && !live && !handoff && stripProcesses.peek().includes(id)) {
+      if (navigate && revealProcessTab(id)) {
+        state.setNotice(`${called} is open in a Collab tab.`);
+        return false;
+      }
+      const held = takeFloatingEditor(id);
+      if (held) return openEditor(id, false, called, { navigate, live: held });
     }
     let floating = !blank && !live && !handoff ? floatingProcessTab(id) : null;
     // With no overlay to show it (Collab off), a floating editor docks here

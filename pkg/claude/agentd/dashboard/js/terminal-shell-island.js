@@ -59,7 +59,7 @@ import { matchesShortcut, shortcutText, withShortcut } from './keybindings.js';
 import { Button } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
 import {
-  dockProcessEditor, floatingProcessEditor, openProcessTab, processPaneKey, registerProcessStrip, returnLiveEditor, stripProcesses, takeFloatingEditor,
+  dockProcessEditor, editorDirty, floatingProcessEditor, openProcessTab, processPaneKey, registerProcessStrip, returnLiveEditor, stripProcesses, takeFloatingEditor,
 } from './process-editor-place.js';
 import { ProcessPane } from './process-pane.js';
 import { ProcessMenuList } from './process-collab-menu.js';
@@ -2010,13 +2010,18 @@ export function mountTerminalShellIsland({
   const stopCollabGate = snapshot ? snapshot.subscribe((value) => {
     if (!value || value.collab_enabled === true) return;
     state.removePanes(state.panes.peek().filter((pane) => pane.seed.board).map((pane) => pane.key));
-    // A process editor goes back to the Processes tab rather than lose its edits.
-    for (const pane of state.panes.peek().filter((candidate) => candidate.seed.process)) {
-      const id = pane.seed.process;
-      const live = floatingProcessEditor(id) ? takeFloatingEditor(id) : null;
-      if (live) void returnLiveEditor(id, pane.label, live);
-      else void actions.closePane(pane.key, { moving: true });
-    }
+    // A process editor with unsaved edits goes back to the Processes tab rather
+    // than lose them, one at a time so none replaces another there, and never to
+    // an overlay window, which goes with Collab. One with nothing unsaved closes.
+    void (async () => {
+      for (const pane of state.panes.peek().filter((candidate) => candidate.seed.process)) {
+        const id = pane.seed.process;
+        const live = floatingProcessEditor(id) ? takeFloatingEditor(id) : null;
+        if (!live) void actions.closePane(pane.key, { moving: true });
+        else if (editorDirty(live.editor)) await returnLiveEditor(id, pane.label, live, { overlay: false });
+        else { live.mount.remove(); live.editor?.destroy?.(); }
+      }
+    })();
   }) : () => {};
   render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory}
     onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind}

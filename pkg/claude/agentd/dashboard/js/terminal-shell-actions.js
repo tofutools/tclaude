@@ -8,7 +8,7 @@ import { chatWindowId } from './chat-window-model.js';
 import { moveOverlayTab, openOverlayWindow, overlayTabs } from './overlay-instances.js';
 import { agentSessionSeed, overlayablePane, terminalWindowOf } from './terminal-window-model.js';
 import { companionAvailable, floatInCompanion } from './companion-facade.js';
-import { confirmProcessTabClose, floatProcessTab, processTabToWindow } from './process-editor-place.js';
+import { confirmProcessTabClose, floatProcessTab, floatingProcessEditor, processTabToWindow } from './process-editor-place.js';
 
 export function createTerminalShellActions({
   state,
@@ -229,7 +229,13 @@ export function createTerminalShellActions({
     const rect = documentRef.querySelector?.('.mux-panes')?.getBoundingClientRect?.();
     // A process editor goes to a browser window of its own as the Processes
     // tab sends it, its draft handed over.
-    if (pane.seed.process) return processTabToWindow(pane.seed.process, pane.label, { rect, win: windowRef, notify });
+    if (pane.seed.process) {
+      if (floatingProcessEditor(pane.seed.process)) return processTabToWindow(pane.seed.process, pane.label, { rect, win: windowRef, notify });
+      // A tab never looked at has no editor to hand over yet: show it, and say so.
+      state.activatePane(key);
+      notify('The editor is opening here first: move it to a separate window once it has loaded.', true);
+      return false;
+    }
     const features = detachWindowFeatures({
       ...(detachTo || { size: rect, at: elementScreenPoint(windowRef, rect) }),
       screen: windowRef.screen,

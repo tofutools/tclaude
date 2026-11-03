@@ -239,8 +239,8 @@ export const returningEditor = signal(null);
 // overlay window, which takes it without a question, or else to the Processes
 // tab, if the editor open there may go. If that one stays, this one waits until
 // it closes (processes-island.js), so neither loses its edits.
-export async function returnLiveEditor(id, label, live) {
-  if (overlayHostUp.peek()) {
+export async function returnLiveEditor(id, label, live, { overlay = true } = {}) {
+  if (overlay && overlayHostUp.peek()) {
     floatProcessEditor({ id, label, editor: live.editor });
     return;
   }
