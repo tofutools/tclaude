@@ -8,6 +8,7 @@ import htm from 'htm';
 import { nodeFetch } from './node-api.js';
 import { fleetState } from './fleet-state.js';
 import { tickedNodes } from './fleet-scope.js';
+import { Select } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -44,8 +45,8 @@ export function activityFetch(fetchImpl, { target = activityTarget(), fetchFor =
 export function ActivityNodeSwitch({ nodes = activityNodes(), value = activityNode.value, onChange }) {
   if (nodes.length < 2) return null;
   const shown = activityTarget(nodes, value) ? value : '';
-  return html`<label class="filter-toggle" title="Whose daemon to show"><span>node</span><select class="activity-node" value=${shown}
+  return html`<label class="filter-toggle" title="Whose daemon to show"><span>node</span><${Select} size="sm" class="activity-node" value=${shown}
     onChange=${(event) => { activityNode.value = event.currentTarget.value; onChange?.(); }}>
     ${nodes.map((n) => html`<option key=${n.id} value=${n.local ? '' : n.id}>${n.local ? `⌂ ${n.name}` : n.name}</option>`)}
-  </select></label>`;
+  <//></label>`;
 }

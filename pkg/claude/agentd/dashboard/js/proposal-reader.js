@@ -3,7 +3,7 @@ import { useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime, shortId } from './helpers.js';
 import { dashboardState } from './snapshot-store.js';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import {
   LINK_MODES, decisionFor, initialDraft, itemText, modeText, proposalLines,
   proposalStateText, proposalTurn, withdrawLabel,
@@ -38,9 +38,9 @@ function ProposalItemRow({ item, peer, draft, setDraft, open }) {
       <input type="checkbox" class="proposal-members-tick" checked=${!!draft.members[item.id]} disabled=${locked || !ticked}
         onChange=${(event) => set('members', event.currentTarget.checked)} /> member list</span>`}
     ${item.kind === 'group_link' && (open && !locked
-      ? html`<select class="proposal-mode" value=${draft.modes[item.id]} disabled=${!ticked}
+      ? html`<${Select} size="sm" class="proposal-mode" value=${draft.modes[item.id]} disabled=${!ticked}
           onChange=${(event) => set('modes', event.currentTarget.value)}>
-          ${LINK_MODES.map((mode) => html`<option key=${mode} value=${mode}>${modeText(mode)}</option>`)}</select>`
+          ${LINK_MODES.map((mode) => html`<option key=${mode} value=${mode}>${modeText(mode)}</option>`)}<//>`
       : html`<span class="proposal-mode-text">${modeText(item.mode)}</span>`)}
     <${ItemStatus} item=${item} />
   </label>`;

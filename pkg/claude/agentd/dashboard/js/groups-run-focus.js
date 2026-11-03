@@ -12,7 +12,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import {
   ProcessMiniGraph, ProcessNodeGlyph, ProcessPauseControl, ProcessPausedChip, ProcessScopeChip, ProcessStateChip,
   ProcessStepStrip,
@@ -312,10 +312,10 @@ function ReassignForm({ run, node, members, onAssign, wizard }) {
   };
   return html`<div class="grf-reassign" data-run-reassign=${node.id}>
     <div class="grf-section">${wizard ? 'REBIND' : 'REASSIGN'}</div>
-    ${candidates.length ? html`<select aria-label=${`New performer for ${node.label}`} value=${chosen}
+    ${candidates.length ? html`<${Select} size="sm" aria-label=${`New performer for ${node.label}`} value=${chosen}
         onChange=${(event) => setTarget(event.currentTarget.value)}>
         ${candidates.map((member) => html`<option key=${member.agent_id} value=${member.agent_id}>${memberName(member)}</option>`)}
-      </select>
+      <//>
       <${Button} size="sm" disabled=${busy || !chosen} onClick=${() => void submit()}>↻ reassign<//>`
     : html`<div class="grf-muted">Nobody else in the group can take it.</div>`}
     ${error && html`<div class="grf-error" role="alert">${error}</div>`}

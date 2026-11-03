@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { writeClipboard } from './insecure-origin.js';
 import { shellConfirm } from './shell-state.js';
 
@@ -62,12 +62,12 @@ function WorkerPin({ steward, choices, busy, onSave, onClose }) {
     event.preventDefault();
     onSave({ groups, spawn_profile: spawnProfile, sandbox_profile: sandboxProfile });
   }}>
-    <label>Groups <select multiple aria-label="Groups it can start workers in" onChange=${event => setGroups(selected(event))}>
-      ${options(choices.groups || [], groups)}</select></label>
-    <label>Spawn profile <select aria-label="Spawn profile for its workers" onChange=${event => setSpawnProfile(event.currentTarget.value)}>
-      <option value="">Choose</option>${options(choices.spawn_profiles || [], [spawnProfile])}</select></label>
-    <label>Sandbox profile <select aria-label="Sandbox profile for its workers" onChange=${event => setSandboxProfile(event.currentTarget.value)}>
-      <option value="">Choose</option>${options(choices.sandbox_profiles || [], [sandboxProfile])}</select></label>
+    <label>Groups <${Select} multiple aria-label="Groups it can start workers in" onChange=${event => setGroups(selected(event))}>
+      ${options(choices.groups || [], groups)}<//></label>
+    <label>Spawn profile <${Select} aria-label="Spawn profile for its workers" onChange=${event => setSpawnProfile(event.currentTarget.value)}>
+      <option value="">Choose</option>${options(choices.spawn_profiles || [], [spawnProfile])}<//></label>
+    <label>Sandbox profile <${Select} aria-label="Sandbox profile for its workers" onChange=${event => setSandboxProfile(event.currentTarget.value)}>
+      <option value="">Choose</option>${options(choices.sandbox_profiles || [], [sandboxProfile])}<//></label>
     <div class="cfg-steward-row-actions">
       <${Button} type="submit" size="sm" class="cfg-list-add" disabled=${busy || !ready}>Save<//>
       ${steward.spawn && html`<${Button} size="sm" class="cfg-list-add" disabled=${busy} onClick=${() => onSave({ off: true })}>Turn off<//>`}

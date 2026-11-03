@@ -61,7 +61,7 @@ func TestDashboardHTMLSpawnHarnessPolicyUI(t *testing.T) {
 		`Reason returned to the spawning agent`:                            "regular denial reason input",
 		`: 'Global cross-realm summons'`:                                   "wizard dialog title",
 		`<option value="inherit">${copy.inherit}</option>`:                 "theme-aware group inheritance choice",
-		`.spawn-harness-cell select,`:                                      "dark form control styling",
+		`.spawn-harness-cell select:where(:not(.ui-select)),`:              "dark form control styling",
 		`resizeKey="tclaude.dash.modalSize.spawn-harness-policy"`:          "persisted dialog resize wiring",
 		`resize: both; overflow: hidden;`:                                  "single flexible matrix scroll surface",
 		`flex: 1 1 auto; min-height: 0; overflow: auto;`:                   "matrix owns scrolling",

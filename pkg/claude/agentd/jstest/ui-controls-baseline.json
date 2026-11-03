@@ -1,17 +1,3 @@
 {
-  "js/activity-node.js": 1,
-  "js/config-external-stewards.js": 3,
-  "js/git-repositories-island.js": 1,
-  "js/groups-route-map.js": 1,
-  "js/groups-run-focus.js": 1,
-  "js/help-field.js": 3,
-  "js/paf-dialogs.js": 3,
-  "js/process-agent-stepper.js": 1,
-  "js/process-node-fields.js": 1,
-  "js/proposal-reader.js": 1,
-  "js/saved-prompts.js": 3,
-  "js/small-dialog-components.js": 2,
-  "js/spawn-harness-policy-island.js": 1,
-  "js/usage-fleet.js": 1,
   "js/vegas.js": 3
 }

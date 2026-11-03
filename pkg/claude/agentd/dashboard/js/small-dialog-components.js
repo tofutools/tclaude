@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -287,7 +287,7 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
           /></p>
           <label class="cron-create-row">
             <span class="cron-create-label">Format</span>
-            <select id="export-agent-preset" value=${preset} onChange=${(event) => {
+            <${Select} id="export-agent-preset" value=${preset} onChange=${(event) => {
               const next = event.currentTarget.value;
               setPreset(next);
               if (!instructionsEdited.current || !instructions.trim()) {
@@ -298,7 +298,7 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
               <option value="summary">Summary report (Markdown)</option>
               <option value="detailed">Full detailed report</option>
               <option value="custom">Custom — see instructions</option>
-            </select>
+            <//>
           </label>
           <label class="cron-create-row">
             <span class="cron-create-label">Title</span>
@@ -602,11 +602,11 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
         ${modes.length > 0 && html`
           <label class="cron-create-row" id="sandbox-impl-mode-row">
             <span class="cron-create-label">Harness sandbox mode</span>
-            <select id="sandbox-impl-mode" value=${mode} disabled=${busy}
+            <${Select} id="sandbox-impl-mode" value=${mode} disabled=${busy}
               onChange=${(event) => setMode(event.currentTarget.value)}>
               <option value=${SANDBOX_IMPL_MODE_INHERIT}>leave to the server</option>
               ${modes.map((value) => html`<option key=${value} value=${value}>${value}</option>`)}
-            </select>
+            <//>
           </label>
           <p class="sandbox-impl-hint ui-hint" id="sandbox-impl-hint"><${Words}
             plain="Leave this alone unless you mean to pin it. Left alone, the server carries the agent's recorded mode forward, or uses the harness default when the implementation being replaced had forced one."

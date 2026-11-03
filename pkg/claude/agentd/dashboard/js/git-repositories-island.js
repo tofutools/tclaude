@@ -1,7 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { registerGitRepositoriesController } from './git-repositories-controller.js';
 import { gitRepoRequests, matchingGitRepos, readGitConcurrency, rememberGitConcurrency } from './git-repositories-actions.js';
@@ -78,10 +78,10 @@ export function GitRepositoriesDialog({ current, state, actions }) {
         <span><${Words} plain="Discard uncommitted changes" /><small class="git-repos-warning"><${Words} plain="Deletes tracked edits and untracked files in selected repositories. Ignored files are kept." /></small></span></label>
       <label class="git-repos-concurrency">
         <span><${Words} plain="Parallel updates" wizard="Parallel invocations" /><small><${Words} plain="Repositories to update at once. Remembered for this dashboard." /></small></span>
-        <select aria-label="Parallel repository updates" value=${concurrency} disabled=${locked}
+        <${Select} aria-label="Parallel repository updates" value=${concurrency} disabled=${locked}
           onChange=${(e) => { const value = Number(e.currentTarget.value); setConcurrency(value); rememberGitConcurrency(value); }}>
           ${Array.from({ length: 100 }, (_, i) => html`<option key=${i + 1} value=${i + 1}>${i + 1}</option>`)}
-        </select>
+        <//>
       </label>
     </div>
     <p class="git-repos-hint ui-hint"><${Words} plain=${sync ? 'Fetch remote updates, prune stale remote references, then pull. Does not push.' : 'Fetch and pull the latest code. Does not push.'} /></p>

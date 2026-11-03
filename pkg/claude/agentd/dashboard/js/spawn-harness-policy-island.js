@@ -1,7 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
 import { registerSpawnHarnessPolicyController } from './spawn-harness-policy-controller.js';
 import { isWizardActive } from './slop.js';
@@ -233,7 +233,7 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
                   const edge = draft[key];
                   const inherited = groupScope ? effectiveGlobal(view, source.name, target.name) : null;
                   return html`<td key=${target.name} class=${`spawn-harness-cell ${edge?.decision || ''}`}>
-                    <select value=${edge?.decision || 'allow'} disabled=${busy}
+                    <${Select} value=${edge?.decision || 'allow'} disabled=${busy}
                       aria-label=${wizard
                         ? `${source.name} to ${target.name} summoning ward`
                         : `${source.name} to ${target.name} decision`}
@@ -241,7 +241,7 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
                       ${groupScope ? html`<option value="inherit">${copy.inherit}</option>` : null}
                       <option value="allow">${copy.allow}</option>
                       <option value="deny">${copy.deny}</option>
-                    </select>
+                    <//>
                     ${edge?.decision === 'deny' ? html`<textarea rows="3" maxlength="1000"
                       aria-label=${wizard
                         ? `${source.name} to ${target.name} forbidden-summon reason`

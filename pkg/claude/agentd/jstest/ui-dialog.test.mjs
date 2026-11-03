@@ -143,7 +143,7 @@ const SHARED_FIELD_DECLS = new Set([
 // The spawn-harness focus edge must out-rank that dialog's own id-scoped
 // field paint.
 const FIELD_COPY_EXEMPT = new Set([
-  'body.wizard #spawn-harness-policy-modal .spawn-harness-cell select:focus',
+  'body.wizard #spawn-harness-policy-modal .spawn-harness-cell select:where(:not(.ui-select)):focus',
   'body.wizard #spawn-harness-policy-modal .spawn-harness-cell textarea:focus',
   'body.wizard :is(#paf-export-modal, #group-export-modal) .paf-check input',
   'body.wizard #trigger-modal .trigger-scope-option input[type=radio]',
