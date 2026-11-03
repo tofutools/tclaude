@@ -9164,8 +9164,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
    this list, so in PLAIN mode it fell back to the browser's white UA field and
    a content-width box — out of step with its .ta-name / .ta-role siblings in
    the same flex grid. Folding it in gives it the same dark chrome and flex:1.
-   (The wizard twin already covers input[type=number] — see the JOH note at the
-   body.wizard #template-editor-modal rule.) */
+   (In the wizard skin the shared dialog field paint in ui.css covers it.) */
 .template-agent-row input[type=text],
 .template-agent-row input[type=number],
 .template-agent-row textarea {
@@ -12709,8 +12708,6 @@ body.wizard #group-create-title .group-create-title-wizard { display: inline; }
    fields stay a legible violet-tinted dark so the form is still readable. */
 
 body.wizard #group-create-modal .cron-create-label { color: #b39ddb; }
-/* Max members is a number input and the attachment link is a URL input; theme
-   every field so none stays a bright default-dark against the violet surface. */
 /* Secondary + inline buttons (Cancel / the Browse… dir picker). Excluded via
    :not(.primary) so the Form-the-party lever below keeps its gilded treatment;
    the #group-create-modal id already out-specifies the base .dir-browse-btn
@@ -12773,9 +12770,6 @@ body.wizard #group-create-modal #group-create-submit:disabled::before { content:
    roster rows. */
 .template-preview .tp-badges { margin-bottom: 6px; display: flex; flex-wrap: wrap; gap: 8px; }
 .template-preview .tp-badges .tc-count { color: #6e7681; font-size: 11px; }
-/* Wizard skin for the party-profile <select> + its options (mirrors the cron
-   dialog's select re-skin — the group-create modal gained its first <select>
-   with this feature, so these rules are new rather than an extension). */
 /* Open <select> options render on the OS layer — keep them dark-on-parchment. */
 body.wizard #group-create-modal .cron-create-row select:where(:not(.ui-select)) option {
   color: #1a1330; background: #e7d9f5;
@@ -14109,14 +14103,6 @@ body.wizard #templates-manage-modal .template-card .tc-actions button:where(:not
 
 body.wizard #template-editor-modal .cron-create-label,
 body.wizard #template-editor-modal .template-agents-head { color: #b39ddb; }
-/* Every text/number input + textarea — the top rows AND the per-hero rows
-   — goes violet-void. input[type=number] carries the per-agent wave field
-   (.ta-wave) and the wave-max-wait field, which the plain skin leaves
-   browser-default; folding it in here keeps them consistent with the text
-   inputs. The id out-specifies the .template-agent-row rules. */
-/* Checkboxes (the per-hero ★ owner box): accent-color is the one lever
-   that recolors a native checkbox cross-browser — arcane purple to match the
-   family's focus accent. */
 /* Hero rows: violet-framed panels; the row number goes arcane purple,
    the owner / permission labels parchment. */
 body.wizard #template-editor-modal .template-agent-row {
@@ -14546,7 +14532,6 @@ body.wizard #template-import-modal .cron-create-row input {
   color: #f3e6c0;
 }
 body.wizard #template-import-modal .cron-create-row input:focus { border-color: #a97bd6; }
-/* The overwrite checkbox: arcane-purple accent to match the family. */
 /* The file picker's Choose-file chip is a pseudo-element with its own chrome. */
 body.wizard #template-import-modal .cron-create-row input[type=file]::file-selector-button {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
@@ -18205,6 +18190,8 @@ body.wizard #spawn-harness-policy-modal .spawn-harness-cell select,
 body.wizard #spawn-harness-policy-modal .spawn-harness-cell textarea {
   background: #140f28; border-color: rgba(122, 93, 176, 0.55); color: #f3e6c0;
 }
+body.wizard #spawn-harness-policy-modal .spawn-harness-cell select:focus,
+body.wizard #spawn-harness-policy-modal .spawn-harness-cell textarea:focus { border-color: #a97bd6; }
 body.wizard #spawn-harness-policy-modal .spawn-harness-cell select option {
   color: #1a1330; background: #e7d9f5;
 }
