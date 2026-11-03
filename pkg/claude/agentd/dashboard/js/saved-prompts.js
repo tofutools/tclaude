@@ -233,11 +233,11 @@ export function SavedPromptChips({
   return html`<div class="agent-spawn-role-picker saved-prompt-picker">
     <div class="agent-spawn-role-chips" id=${id}>
       ${selected.map((prompt) => html`<span key=${prompt.name} class=${`agent-spawn-role-chip${prompt.missing ? ' missing' : ''}${fixed.has(prompt.name) ? ' locked' : ''}`}>
-        <button type="button" class="role-chip-inspect" disabled=${disabled} data-remote-spawn-free=""
+        <button data-ui-exempt type="button" class="role-chip-inspect" disabled=${disabled} data-remote-spawn-free=""
           title=${prompt.missing ? 'This prompt is missing from the library' : prompt.unknown ? lockedReason : prompt.body}
           aria-expanded=${inspected === prompt.name ? 'true' : 'false'}
           onClick=${() => setInspected(inspected === prompt.name ? '' : prompt.name)}>${chipLabel(prompt)}</button>
-        <button type="button" class="role-chip-remove" disabled=${disabled || fixed.has(prompt.name)} data-remote-spawn-field="prompts"
+        <button data-ui-exempt type="button" class="role-chip-remove" disabled=${disabled || fixed.has(prompt.name)} data-remote-spawn-field="prompts"
           title=${fixed.has(prompt.name) ? lockedReason : `Remove ${prompt.name}`}
           aria-label=${`Remove prompt ${prompt.name}`} onClick=${() => {
             setInspected((current) => current === prompt.name ? '' : current);
@@ -255,14 +255,14 @@ export function SavedPromptChips({
           ? groups.map((group) => html`<optgroup key=${group.source} label=${group.label}>${group.prompts.map(option)}</optgroup>`)
           : available.map(option)}
       </select>
-      ${library ? null : html`<button type="button" class="tool saved-prompt-chip-manage" disabled=${disabled}
-        title="Create, edit, clone, import or export saved prompts" onClick=${() => setManaging(true)}>Manage…</button>`}
+      ${library ? null : html`<${Button} size="sm" class="saved-prompt-chip-manage" disabled=${disabled}
+        title="Create, edit, clone, import or export saved prompts" onClick=${() => setManaging(true)}>Manage…<//>`}
     </div>
     ${hint ? html`<div class="spawn-field-hint ui-hint">${hint}</div>` : null}
     ${shown && html`<div class=${`agent-spawn-role-inspect${shown.missing ? ' missing' : ''}`}>
       ${shown.missing ? '⚠ This prompt is no longer in the library.' : shown.unknown ? lockedReason : html`<div class="saved-prompt-inspect-body">${shown.body}</div>`}
     </div>`}
-    ${error ? html`<div class="cron-create-error" role="alert">${error} <button type="button" onClick=${() => void reload().catch((cause) => setError(cause.message))}>Retry</button></div>` : null}
+    ${error ? html`<div class="cron-create-error" role="alert">${error} <${Button} size="sm" onClick=${() => void reload().catch((cause) => setError(cause.message))}>Retry<//></div>` : null}
     ${managing ? html`<${SavedPromptManager} prompts=${prompts} node=${node} onClose=${() => setManaging(false)}
       onChanged=${reload} confirmDiscard=${confirmDiscard}/>` : null}
   </div>`;
@@ -297,9 +297,9 @@ export function SavedPromptPicker({ value, onChange, textareaRef, disabled = fal
           <option value="">${prompts.length ? 'Insert prompt…' : 'No saved prompts'}</option>
           ${prompts.map((prompt) => html`<option key=${prompt.name} value=${prompt.name}>${prompt.name}</option>`)}
         </select>
-        <button type="button" disabled=${disabled} onClick=${() => setManaging(true)}>Manage prompts…</button>
+        <${Button} size="sm" disabled=${disabled} onClick=${() => setManaging(true)}>Manage prompts…<//>
       </div>
-      ${error ? html`<div class="cron-create-error" role="alert">${error} <button type="button" onClick=${() => void reload().catch((cause) => setError(cause.message))}>Retry</button></div>` : null}
+      ${error ? html`<div class="cron-create-error" role="alert">${error} <${Button} size="sm" onClick=${() => void reload().catch((cause) => setError(cause.message))}>Retry<//></div>` : null}
     </div>
     ${managing ? html`<${SavedPromptManager} prompts=${prompts} onClose=${() => setManaging(false)}
       onChanged=${reload} confirmDiscard=${confirmDiscard}/>` : null}

@@ -67,9 +67,9 @@ function RedactPanel({ actions, source, filename, onDone }) {
     </div>`}
     <div class="cron-create-error" role="alert">${error}</div>
     <div class="paf-row-buttons">
-      <button type="button" id="paf-redact-preview" disabled=${!!busy} onClick=${() => run(true)}>${busy === 'preview' ? 'Previewing…' : 'Preview redaction'}</button>
-      <button type="button" id="paf-redact-download" class="primary" disabled=${!!busy || !report || (stillFlagged && !ack)} title=${report ? '' : 'Preview the redaction first'}
-        onClick=${() => run(false)}>${busy === 'download' ? 'Redacting…' : '⤓ Download redacted .paf'}</button>
+      <${Button} id="paf-redact-preview" disabled=${!!busy} onClick=${() => run(true)}>${busy === 'preview' ? 'Previewing…' : 'Preview redaction'}<//>
+      <${Button} variant="primary" id="paf-redact-download" disabled=${!!busy || !report || (stillFlagged && !ack)} title=${report ? '' : 'Preview the redaction first'}
+        onClick=${() => run(false)}>${busy === 'download' ? 'Redacting…' : '⤓ Download redacted .paf'}<//>
     </div>
   </div>`;
 }
@@ -131,7 +131,7 @@ export function AgentExportDialog({ descriptor, state, actions, confirmDiscard }
     ${findings && html`<${FindingsPanel} findings=${findings} />
       ${!redacting && html`<div class="paf-flagged-actions">
         <${Check} id="paf-export-ack" checked=${ack} onChange=${setAck}>Export anyway; I have checked the findings</${Check}>
-        <button type="button" id="paf-export-redact" onClick=${() => setRedacting(true)}>Redact…</button>
+        <${Button} id="paf-export-redact" onClick=${() => setRedacting(true)}>Redact…<//>
       </div>`}
       ${redacting && html`<${RedactPanel} actions=${actions} source=${unredacted} filename=${safeFilename(label, '.redacted.paf')} onDone=${state.closeDialog} />`}`}
     <div class="cron-create-error" role="alert">${error}</div>
@@ -262,7 +262,7 @@ export function ImportConfirmList({ confirm, overrides, setOverrides, reveal }) 
       ${group.items.map((item) => html`<div key=${item.id} class="import-confirm-item" data-item=${item.id}>
         <${Check} id=${`import-keep-${item.id}`} checked=${canKeep && (overrides[item.id] ?? !!item.default)} disabled=${!canKeep}
           onChange=${(value) => setOverrides({ ...overrides, [item.id]: value })} hint=${item.gives}>${item.label}</${Check}>
-        ${item.revealable && canKeep && shown[item.id]?.value === undefined && html`<button type="button" class="import-confirm-reveal" onClick=${() => show(item)}>Reveal value</button>`}
+        ${item.revealable && canKeep && shown[item.id]?.value === undefined && html`<button data-ui-exempt type="button" class="import-confirm-reveal" onClick=${() => show(item)}>Reveal value</button>`}
         ${shown[item.id]?.value !== undefined && html`<code data-capture-mask class="import-confirm-value">${shown[item.id].value}</code>`}
         ${shown[item.id]?.error && html`<div class="gi-warn">⚠ ${shown[item.id].error}</div>`}
       </div>`)}
