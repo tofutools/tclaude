@@ -2534,10 +2534,12 @@ export function TemplateEditor({
   // still decline its grant, and then keeps the editor as it was.
   const handoff = async () => {
     if (saving || (dirty && !(await confirmDiscard()))) return;
+    const handedOff = state.templateDialog.value;
     const result = await actions.editTemplateWithAgent(
       editing ? descriptor.seed.name : draft.name.trim(),
     );
-    if (result?.opened) state.closeTemplateDialog();
+    // Only this editor: another one opened meanwhile keeps its draft.
+    if (result?.opened && state.templateDialog.value === handedOff) state.closeTemplateDialog();
   };
   return h(
     Dialog,
