@@ -98,7 +98,7 @@ export function KeyboardShortcutList({ Setting, drafts = [], onChange = () => {}
       const editable = rows.some(entry => isRebindable(entry.id));
       const columns = 3 + (terminalColumn ? 1 : 0) + (editable ? 1 : 0);
       return html`<div class="cfg-section" key=${scope.id} data-shortcut-scope=${scope.id}>
-        <h3>${scope.title}</h3>
+        <h3 class="ui-eyebrow ui-eyebrow-section">${scope.title}</h3>
         <${Setting} title=${`${scope.title}: ${rows.length} shortcut${rows.length === 1 ? '' : 's'}`} wide summary=${scope.summary}>
           <table class=${`cfg-shortcut-list${editable ? ' is-editable' : ''}`}>
             <thead><tr>

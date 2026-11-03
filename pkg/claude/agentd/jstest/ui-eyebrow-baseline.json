@@ -1,0 +1,47 @@
+{
+  "board.css": [
+    ".board-section-name"
+  ],
+  "companion.css": [
+    ".companion-cog-head"
+  ],
+  "dashboard.css": [
+    ".cfg-advanced > summary",
+    ".cleanup-cat-head",
+    ".cleanup-cats-label",
+    ".dnd-trash-label",
+    ".export-history-title",
+    ".fa-k",
+    ".fleet-card-body dt",
+    ".force-role-name",
+    ".gf-label",
+    ".group-import-preview .gi-head",
+    ".group-pending-title",
+    ".loc-tag",
+    ".lt-carries-title",
+    ".mailbox-section",
+    ".paf-sec",
+    ".pdr-verdict",
+    ".process-inspector-kind",
+    ".process-scribe-state",
+    ".proposal-sec",
+    ".pwf-import-dialog h4",
+    ".queued-spawns-popover-head",
+    ".role-inspect-key",
+    ".sbx-network-control-kind",
+    ".tc-disabled",
+    ".tc-operator-only",
+    ".term-choice-section",
+    ".trigger-inspector h4",
+    ".usage-ov-heading",
+    ".usage-rules-tab h4",
+    ".window-groups .roles-label",
+    ".window-roles .roles-label"
+  ],
+  "mux.css": [
+    ".mux-bg-sec-head"
+  ],
+  "process-terminal-overlay.css": [
+    ".pk-run-popover-kicker"
+  ]
+}

@@ -215,7 +215,7 @@ export function ItemDetail({ row, view, actions, onInstall, onOpenBoard }) {
       <span>Content</span><span><code title=${row.digest || ''}>sha256 ${short(row.digest)}…</code> · ${size(row.bytes)}</span>
       <span>Credential scan</span><span>${files?.files ? html`<span class="fa-cb-ok">✓ clean when posted and when fetched here</span>` : files?.error ? html`<span class="fa-danger">${files.error}</span>` : html`<span class="muted">checked when posted; again when fetched</span>`}</span>
     </div>
-    <div class="fa-cb-sect">Files${scripts ? html` · <span class="fa-sensitive">${scripts} security-relevant</span>` : ''}</div>
+    <div class="ui-eyebrow fa-cb-sect">Files${scripts ? html` · <span class="fa-sensitive">${scripts} security-relevant</span>` : ''}</div>
     ${!files || files.loading ? html`<div class="muted">Fetching and verifying…</div>` : files.error ? html`<div class="muted">Files unavailable.</div>` : html`<${FileList} row=${row} files=${files.files} actions=${actions} />`}
     ${onOpenBoard && html`<div class="fa-row"><${Button} size="sm" variant="link" class="fa-link" data-cb-act="board" onClick=${() => onOpenBoard(row.board.id)}>Versions and more on ${row.board.name}…<//></div>`}
   </div>`;
@@ -321,7 +321,7 @@ export function SkillInstallDialog({ row, actions, confirm, onClose, onDone }) {
       Keep executable bits${scripts.length ? html` on ${scripts.map((f, i) => html`${i ? ', ' : ''}<code>${f.path}</code>`)}` : ''}: agents can run them directly. I have inspected them. <span class="muted">(Otherwise they are removed; scripts stay readable.)</span></label>
     ${opts.target !== 'download' && html`<label class="fa-cb-check"><input type="checkbox" id="fleet-cb-replace" checked=${opts.replace} onChange=${(e) => change({ replace: e.currentTarget.checked })} />
       Overwrite a skill with this name if one exists <span class="muted">(the preview shows which)</span></label>`}
-    ${opts.target !== 'download' && preview && !stale && html`<div class="fa-cb-sect">Preview</div>
+    ${opts.target !== 'download' && preview && !stale && html`<div class="ui-eyebrow fa-cb-sect">Preview</div>
       ${changes.length ? html`<table class="fa-table ui-compact" id="fleet-cb-preview"><tbody>${changes.map((c) => html`<tr key=${c.item} data-change=${c.item}>
         <td><code>${c.path || c.item}</code></td>
         <td class=${c.action === 'replace' ? 'fa-warn' : c.action === 'unchanged' ? 'muted' : ''}>${c.action === 'replace' ? 'overwrites existing' : c.action === 'create' ? 'new' : 'unchanged'}</td></tr>`)}</tbody></table>`
@@ -355,9 +355,9 @@ function Facets({ rows, query, setQuery, boards }) {
   const facet = (key, value, label, n) => html`<button type="button" data-ui-exempt key=${`${key}:${value}`} class=${`fa-cb-facet${f[key] === value.toLowerCase() ? ' on' : ''}`} data-facet=${`${key}:${value}`}
     onClick=${() => setQuery(withToken(query, key, value))}><span>${label}</span><span class="muted">${n}</span></button>`;
   return html`<div class="fa-cb-facets">
-    <h5>Kind</h5>${KINDS.map((k) => facet('kind', k.id, k.label, count((r) => r.kind === k.id)))}
-    <h5>Board</h5>${boards.map((b) => facet('board', b.name, b.name, count((r) => r.board.id === b.id)))}
-    <h5>Publisher</h5>${facet('publisher', 'trusted', '✓ Trusted peers', count((r) => r.trust === 'trusted'))}${facet('publisher', 'unknown', '? Unknown', count((r) => r.trust === 'unknown'))}${facet('publisher', 'mine', 'This node', count((r) => r.trust === 'mine'))}
+    <h5 class="ui-eyebrow">Kind</h5>${KINDS.map((k) => facet('kind', k.id, k.label, count((r) => r.kind === k.id)))}
+    <h5 class="ui-eyebrow">Board</h5>${boards.map((b) => facet('board', b.name, b.name, count((r) => r.board.id === b.id)))}
+    <h5 class="ui-eyebrow">Publisher</h5>${facet('publisher', 'trusted', '✓ Trusted peers', count((r) => r.trust === 'trusted'))}${facet('publisher', 'unknown', '? Unknown', count((r) => r.trust === 'unknown'))}${facet('publisher', 'mine', 'This node', count((r) => r.trust === 'mine'))}
   </div>`;
 }
 

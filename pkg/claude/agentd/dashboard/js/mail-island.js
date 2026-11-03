@@ -237,7 +237,7 @@ function MessageList({ current, controller, model }) {
     const accessRows = [
       ...model.pendingAccess.map(request => html`<${AccessRow} key=${request.id} request=${request} current=${current} controller=${controller} />`),
       ...(model.handledAccess.length > 0
-        ? [html`<div key="__access_handled__" class="access-divider" data-key="__access_handled__">${wizard ? 'Judgements past' : 'Recently handled'}</div>`]
+        ? [html`<div key="__access_handled__" class="ui-eyebrow access-divider" data-key="__access_handled__">${wizard ? 'Judgements past' : 'Recently handled'}</div>`]
         : []),
       ...model.handledAccess.map(request => html`<${AccessRow} key=${request.id} request=${request} current=${current} controller=${controller} />`),
     ];

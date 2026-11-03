@@ -266,13 +266,13 @@ function Palette({ controller, hidden, snippets, view }) {
     onDragStart=${(event) => controller.paletteDragStart(event)}
     onDragEnd=${(event) => controller.paletteDragEnd(event)}>
     ${view && html`<${ScopeOutline} controller=${controller} view=${view} />`}
-    <div class="process-palette-section">Primitives</div>
+    <div class="ui-eyebrow process-palette-section">Primitives</div>
     ${PALETTE_PRIMITIVES.map((item) => card({ kind: 'primitive', type: item.type }, item.label, item.hint))}
-    ${!!view?.templateRefs?.length && html`<div class="process-palette-section" title="Drop onto the canvas, or onto a connector to splice it in">Templates</div>
+    ${!!view?.templateRefs?.length && html`<div class="ui-eyebrow process-palette-section" title="Drop onto the canvas, or onto a connector to splice it in">Templates</div>
     ${view.templateRefs.map((item) => card({ kind: 'template', id: item.id, name: item.name }, `▣ ${item.name}`, `Run template ${item.id} as a subprocess${item.versions ? ` · ${item.versions} version${item.versions === 1 ? '' : 's'}` : ''}`))}`}
-    <div class="process-palette-section">Built-in snippets</div>
+    <div class="ui-eyebrow process-palette-section">Built-in snippets</div>
     ${PALETTE_SNIPPETS.map((item) => card({ kind: 'snippet', key: item.key }, item.label, item.hint))}
-    <div class="process-palette-section process-palette-custom-heading"><span>Custom snippets</span><${Button} size="sm" class="process-palette-save" disabled=${!snippets.canSaveSelection || snippets.creating}
+    <div class="ui-eyebrow process-palette-section process-palette-custom-heading"><span>Custom snippets</span><${Button} size="sm" class="process-palette-save" disabled=${!snippets.canSaveSelection || snippets.creating}
       title=${snippets.canSaveSelection ? 'Save the selected nodes and their internal edges as a reusable snippet' : 'Select one or more nodes in an editable template first.'}
       onClick=${() => controller.saveSelectionAsSnippet()}>${snippets.creating ? 'Saving…' : 'Save selection…'}<//></div>
     ${snippets.loading && html`<p class="process-palette-state" role="status">Loading custom snippets…</p>`}

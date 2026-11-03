@@ -307,6 +307,15 @@ body.wizard :where(.ui-tag-accent) { border-color: #a97bd6; color: #d2b8ff; }
 body.wizard :where(.ui-tag-warn) { border-color: #9e6a03; color: #d9b45a; }
 body.wizard :where(.ui-tag-own) { border-color: #d9b45a; background: #241b3d; color: #f3e6c0; }
 
+/* Eyebrows: the small uppercase label over a group of fields, a list
+   section or a popover (operator pick C). -section marks a settings / section
+   head in the accent. The area class keeps placement only. The wizard paint
+   sits in :where() so an area state colour still wins. */
+.ui-eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #8b949e; }
+.ui-eyebrow-section { color: #58a6ff; }
+body.wizard :where(.ui-eyebrow) { color: #b39ddb; }
+body.wizard :where(.ui-eyebrow-section) { color: var(--ui-wizard-gold); }
+
 /* Fields */
 .ui-input, .ui-select, .ui-textarea {
   min-width: 0; margin: 0; padding: 6px 10px;

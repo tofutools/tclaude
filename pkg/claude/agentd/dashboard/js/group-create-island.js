@@ -56,7 +56,7 @@ function GroupSourceSummary({ source, cloneMode, withAgents, copyOwners }) {
   </div>`;
   return html`<div class="group-clone-preview group-create-source-summary"
     id="group-create-source-summary">
-    <div class="gcp-title">${`Prefilled from ${source.name}`}</div>
+    <div class="ui-eyebrow gcp-title">${`Prefilled from ${source.name}`}</div>
     ${row('📁 directory', source.default_cwd || 'none', !source.default_cwd)}
     ${row('📝 description', source.descr || 'none', !source.descr)}
     ${row('📋 startup context', source.default_context

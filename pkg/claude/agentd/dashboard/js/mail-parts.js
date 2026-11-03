@@ -109,7 +109,7 @@ export function MessageAttachments({ message, label = 'Agent file', downloadTitl
     <div class="mail-attachment ui-card ui-inset" key=${attachment.url || attachment.id || index}>
       <${ImageAttachmentPreview} messageID=${message.id} attachment=${attachment} siblings=${attachments} surface="messages" />
       <${VideoAttachmentPreview} messageID=${message.id} attachment=${attachment} siblings=${attachments} surface="messages" />
-      <span class="mail-attachment-label">${label}</span>
+      <span class="ui-eyebrow mail-attachment-label">${label}</span>
       <a href=${attachmentHref(message, attachment)}
         download=${attachment.filename || ''} title=${downloadTitle}>⤓ ${attachment.filename || 'attachment'}</a>
       <span class="mail-attachment-size">${attachmentSize(attachment.size_bytes)}</span>

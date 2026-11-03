@@ -211,7 +211,7 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
   const current = processes.find((process) => process.templateId === open) || null;
   return html`<div class="gq-saved" data-saved-processes=${group.name}>
     <div class="gq-saved-row">
-      <span class="gq-saved-label">${wizard ? 'Rites' : 'Processes'}</span>
+      <span class="ui-eyebrow gq-saved-label">${wizard ? 'Rites' : 'Processes'}</span>
       ${processes.map((process) => html`<span key=${process.templateId} class=${`gq-saved-chip${open === process.templateId ? ' open' : ''}`}
         data-saved-process=${process.templateId} draggable="true" data-saved-process-drag=${process.templateId}
         data-saved-process-group=${group.name} data-saved-process-name=${process.name}

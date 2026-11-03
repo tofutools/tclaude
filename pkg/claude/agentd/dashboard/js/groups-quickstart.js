@@ -165,7 +165,7 @@ export function GetStarted({ group, roster, wizard = false, api, onEditList, onO
     </form>
     ${onImport && html`<p class="gq-import"><${Button} size="sm" variant="link" class="gq-link" data-quickstart-import disabled=${pending} onClick=${onImport}
       title="Import a shared .pwf workflow file: you review what it runs before anything is stored, and it never starts a run">⤒ Import a .pwf<//> or drop one on this group</p>`}
-    <div class="gq-sec">Or start from</div>
+    <div class="ui-eyebrow gq-sec">Or start from</div>
     <div class="gq-starters">
       ${STARTERS.map((starter) => {
         const uses = starter.build(roster).uses;
@@ -177,7 +177,7 @@ export function GetStarted({ group, roster, wizard = false, api, onEditList, onO
         </button>`;
       })}
     </div>
-    <div class="gq-sec">Or reuse</div>
+    <div class="ui-eyebrow gq-sec">Or reuse</div>
     <div class="gq-reuse">
       ${templates === null && html`<span class="gq-note">Loading the template library…</span>`}
       ${templates !== null && !shown.length && html`<span class="gq-note">The template library is empty.</span>`}
@@ -724,9 +724,9 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
       </div>`}
     </div>
     <div class="gq-side">
-      <div class="gq-sec">Preview</div>
+      <div class="ui-eyebrow gq-sec">Preview</div>
       <${FlowPreview} flow=${stepListFlow(list, { whoOf: (step) => { const now = nowOf(step); const note = now.spawns ? '' : fallbackNote(step, fallbackInfo); return note ? `${now.label} ${note}` : now.label; } })} wizard=${wizard} />
-      ${needs.params.length > 0 && html`<div class="gq-sec">Start inputs <span class="gq-dim">· found in the steps</span></div>
+      ${needs.params.length > 0 && html`<div class="ui-eyebrow gq-sec">Start inputs <span class="gq-dim">· found in the steps</span></div>
         <div class="gq-params">${needs.params.map((param) => html`<label key=${param.name} class="gq-param">
           <span>${param.name}${param.required ? html`<b aria-label="required"> *</b>` : ''}</span>
           <input type="text" data-start-param=${param.name} value=${values[param.name] ?? ''}
@@ -740,7 +740,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
           <span>Allow ${consentSubject({ profile, steps })} to run${steps.length === 1 && steps[0].command ? html` <code>${steps[0].command}</code>` : ''}
             <span class="gq-dim"> (program profile: ${profile || 'default'})</span></span></label>`)}
       </div>`}
-      <div class="gq-sec">Who it will use now</div>
+      <div class="ui-eyebrow gq-sec">Who it will use now</div>
       <ul class="gq-whonow">${whoRows.map(({ step, i, now }) => html`<li key=${step.id} class=${now.waits ? 'waits' : ''}>
         <b>${now.label}</b> · step ${i + 1}${now.waits || now.spawns ? html` · <span>${now.detail}</span>` : ''}</li>`)}
         ${!whoRows.length && html`<li class="gq-dim">nobody yet</li>`}</ul>

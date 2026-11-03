@@ -159,7 +159,7 @@ function HostRouteControls({ route, local }) {
 function RouteDetail({ route, onClose, local }) {
   if (!route) return html`<aside class="route-map-detail route-map-detail-empty"><strong>Select a route</strong><span>Choose an edge or exact-list row to inspect its safe authority status.</span></aside>`;
   return html`<aside class="route-map-detail" aria-label="Route details">
-    <div class="route-map-detail-head"><div><span class="route-map-kicker">Route detail</span><h3>${route.name}</h3></div><button data-ui-exempt type="button" class="route-map-close" onClick=${onClose} aria-label="Close route detail">×</button></div>
+    <div class="route-map-detail-head"><div><span class="ui-eyebrow route-map-kicker">Route detail</span><h3>${route.name}</h3></div><button data-ui-exempt type="button" class="route-map-close" onClick=${onClose} aria-label="Close route detail">×</button></div>
     <dl class="route-map-fields">
       <div><dt>Stable reference</dt><dd><code>${route.stable_reference}</code></dd></div>
       <div><dt>Publisher</dt><dd>${route.publisher_name || friendlyEndpoint('', route.publisher_boundary)} <${Boundary} value=${route.publisher_boundary} /></dd></div>
