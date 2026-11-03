@@ -138,6 +138,16 @@ const placed = (id) => !!overlayOf(id) || inSeparateWindow(id) || !!strip?.has(i
 // lost its place without being closed (a separate window shut, a close that failed, a dashboard load) opens quietly behind the tab
 // showing. A page the snapshot no longer lists leaves every place, a restored
 // overlay tab included. It answers its stop.
+// expected holds pages this dashboard just created (groups-resources.js):
+// each opens focused once the snapshot lists it, unannounced. Opening it
+// before then would lose the race with an older snapshot, whose watcher
+// pass forgets every page it does not list.
+const expected = new Set();
+
+export function expectPage(id) {
+  if (id) expected.add(id);
+}
+
 export function watchLivePages({ snapshot, notify = null }) {
   let known = null;
   const stop = snapshot.subscribe((value) => {
@@ -151,16 +161,19 @@ export function watchLivePages({ snapshot, notify = null }) {
     for (const id of [...closing]) if (!live.has(id)) closing.delete(id);
     for (const page of pages) {
       const label = pageLabel(page);
-      if (!placed(page.id) && !closing.has(page.id)) void openPagePane(page.id, label, { activate: false });
+      if (!placed(page.id) && !closing.has(page.id)) void openPagePane(page.id, label, { activate: expected.has(page.id) });
       else setPageOverlayLabel(page.id, label);
     }
     for (const page of [...added, ...reshown]) {
-      if (!strip?.isActive?.(page.id)) markPageUnseen(page.id);
+      if (!strip?.isActive?.(page.id) && !expected.has(page.id)) markPageUnseen(page.id);
     }
     for (const page of added) {
+      // No one "showed" a page the operator made: no announcement for it.
+      if (expected.has(page.id) || page.group_owned) continue;
       const label = pageLabel(page);
       notify?.(`${pageSender(value, page).name} showed ${label}`, false, { action: { label: 'Open', run: () => revealPage(page.id, label) } });
     }
+    for (const id of [...expected]) if (live.has(id)) expected.delete(id);
   });
   return () => {
     stop();

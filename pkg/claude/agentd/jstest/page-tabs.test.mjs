@@ -266,3 +266,27 @@ test('a close that fails gives the page its tab back, and a restored overlay tab
   assert.deepEqual(instances.overlayTabs.peek().filter((tab) => tab.kind === 'page').map((tab) => tab.page), [], 'a page the snapshot does not list leaves its overlay tab');
   env.stop();
 });
+
+// tcl-20ihu3: a page the operator creates from a group's ＋▾ opens focused
+// once the snapshot lists it, with no "showed" toast and no unseen dot; the
+// group's name stands where an agent's would.
+test('a page this dashboard created opens focused, unannounced, and names its group', async (t) => {
+  fakeDaemon(t);
+  const env = await mountShell(t);
+  const { harness, host, state, shellState } = env;
+  const page = { ...PAGE, id: 'pg_00112233445566bb', name: 'sketch', title: 'sketch', owner: '', group_owned: true, group: 'shop', kind: 'scratch', target: 'scratch' };
+  env.place.expectPage(page.id);
+  const toastBefore = shellState.toast.peek();
+  await env.setSnapshot(snap([]));
+  const tabOf = () => host.querySelector(`.mux-tab[data-pane-key="page:${page.id}"]`);
+  assert.equal(tabOf(), null, 'an older snapshot without it opens nothing');
+  await env.setSnapshot(snap([page]));
+  const tab = tabOf();
+  assert.ok(tab, 'it opens when the snapshot lists it');
+  assert.equal(state.activeKey.peek(), `page:${page.id}`, 'focused');
+  assert.equal(tab.querySelector('.mux-tab-unseen'), null, 'no unseen dot');
+  assert.equal(shellState.toast.peek(), toastBefore, 'no "showed" toast');
+  await harness.act(() => wait());
+  assert.match(host.querySelector(`[data-page-pane="${page.id}"] .page-head-from`).textContent, /from group shop/);
+  env.stop();
+});

@@ -13,7 +13,7 @@ import { useDismissablePopover } from './hover-popover.js';
 import htm from 'htm';
 import { openBoardPane } from './board-overlay-state.js';
 import { freeBoardId } from './board-manage.js';
-import { openPagePane } from './page-place.js';
+import { expectPage, openPagePane } from './page-place.js';
 import { defaultNotify } from './groups-quickstart.js';
 import { Button, Menu, MenuItem } from './ui-components.js';
 import { LockChip } from './resource-lock.js';
@@ -90,7 +90,8 @@ export function AddResource({ group, pages = [], api, source, wizard = false, no
       const page = await api.createGroupPage(group.name, freePageName(pages));
       notify(`Created a blank page in ${group.name}: draw on it, then a member takes it over`);
       void source?.refresh?.();
-      openPagePane(page.id, page.title || page.name);
+      // It opens, focused, when the snapshot lists it (page-place.js).
+      expectPage(page.id);
     } catch (cause) {
       notify(`Could not create the page: ${cause.message}`, true);
     }
