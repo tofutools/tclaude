@@ -339,11 +339,7 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       }, fetchImpl);
     },
-    // scribeChat reads a scribe's transcript and live tail; sendScribeMessage
-    // is the operator's mail to it.
-    async scribeChat(agentId) {
-      return processRequest(`/api/scribe/${encodeURIComponent(agentId)}/chat`, {}, fetchImpl);
-    },
+    // sendScribeMessage is the operator's mail to a scribe.
     async sendScribeMessage(convId, { subject, body }) {
       return processRequest('/api/operator-message', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: convId, subject, body }),

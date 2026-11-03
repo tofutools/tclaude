@@ -15,23 +15,17 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
 )
 
-// The scribe chat's live tail (tcl-fbxfwa). The Stop hook records a scribe's
-// final message only when its turn ends, so a long turn used to show nothing
-// but "scribe is working…". While a turn is open, the chat read also decodes
-// the scribe's own harness transcript and returns what the scribe has said and
-// done so far in this turn: its text, plus a one-line summary of each tool
-// call. The dock re-reads it on every poll and replaces it wholesale; the
-// recorded reply supersedes it once the turn ends.
+// An agent's transcript live tail (tcl-fbxfwa): what it has said and done so
+// far in its current turn, decoded from its own harness transcript: its text,
+// plus a one-line summary of each tool call. It was first the scribe chat's;
+// the companion's voice output (dashboard_companion_speech.go) reads it now. A
+// harness whose history cannot be decoded answers with the reason in
+// unavailable.
 //
-// It is served only through the scribe chat read, so it inherits that read's
-// scribe-only gate and never becomes a general transcript surface. A harness
-// whose history cannot be decoded degrades to the old behavior, with the
-// reason in live.unavailable.
-//
-// The dock polls about once a second while there is progress to show, so a
-// decode is reused until the transcript changes: a JSONL transcript the conv
-// index locates is keyed by its size and mtime, so an idle poll costs a stat;
-// any other is decoded at most every scribeLiveReuse.
+// A reader may poll, so a decode is reused until the transcript changes: a
+// JSONL transcript the conv index locates is keyed by its size and mtime, so
+// an idle poll costs a stat; any other is decoded at most every
+// scribeLiveReuse.
 
 const (
 	scribeLiveMaxItems     = 40

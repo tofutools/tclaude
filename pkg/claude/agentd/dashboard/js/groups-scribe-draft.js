@@ -1,7 +1,8 @@
 // groups-scribe-draft.js -- "Draft steps" in Groups › Processes (tcl-m23mb2).
 // The operator's words go to a background process scribe on one stored
-// template, with no terminal; its live reply shows in the group body and the
-// draft it saves opens in the inline step list for review.
+// template, with no terminal. The conversation happens in the scribe's regular
+// overlay chat window; the group body says how far it is, and the draft it
+// saves opens in the inline step list for review.
 //
 // Nothing here starts on its own. A scribe costs a model run, so it starts
 // only from the operator's click, after they approved the same grant as every
@@ -12,12 +13,13 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import { markQuickStart, scribeDraftAsked, scribeDraftName, scribeDraftRequest } from './groups-quickstart.js';
+import { markQuickStart, scribeDraftName, scribeDraftRequest } from './groups-quickstart.js';
 import { handOffProcessDraft } from './process-draft-handoff.js';
 import { dashPrefs } from './prefs.js';
+import { openHelperWindow } from './get-help.js';
 import {
-  PROCESS_SCRIBE_CHAT_SUBJECT, PROCESS_SCRIBE_GRANT_META, PROCESS_SCRIBE_NAME, PROCESS_SCRIBE_PROMPT_MAX, PROCESS_SCRIBE_SLUGS,
-  processScribeBrief, processScribeChatLive, processScribeChatMessage, processScribeChatTranscript, processScribeDraftLabel, processScribeGrantBody, processScribeHandoff, processScribeTaskRef,
+  PROCESS_SCRIBE_CHAT_SUBJECT, PROCESS_SCRIBE_GRANT_META, PROCESS_SCRIBE_NAME, PROCESS_SCRIBE_SLUGS,
+  processScribeBrief, processScribeChatMessage, processScribeDraftLabel, processScribeGrantBody, processScribeHandoff, processScribeTaskRef,
 } from './process-scribe.js';
 
 const html = htm.bind(h);
@@ -130,11 +132,11 @@ export function restorableScribeDraft(scribes, processes) {
 // then stores a near-empty template, saved to the group (pinned, not listed
 // in the library), and summons a background scribe on it. The scribe is
 // summoned for a stored template, which is why the draft is stored first. The
-// request goes as operator mail, not in the brief, because that is what the
-// chat route reads as an open turn: its live tail, and when the turn ends. A
-// declined approval stores and starts nothing and answers null. A failed
-// start deletes the empty draft again, so nothing is left behind unlisted.
-export async function draftWithScribe(api, { group, text, roster = [], confirm }) {
+// request goes as operator mail, so it reads as the operator's first message
+// in the scribe's chat window, which opens once it is sent. A declined
+// approval stores and starts nothing and answers null. A failed start deletes
+// the empty draft again, so nothing is left behind unlisted.
+export async function draftWithScribe(api, { group, text, roster = [], confirm, openChat = openHelperWindow }) {
   const name = scribeDraftName(text);
   const approved = await confirm({
     title: 'Grant process-scribe access?',
@@ -168,9 +170,13 @@ export async function draftWithScribe(api, { group, text, roster = [], confirm }
       body: processScribeChatMessage({ prompt: scribeDraftRequest(text, group.name, roster) }),
     });
     markQuickStart();
+    const scribeName = String(scribe?.name || PROCESS_SCRIBE_NAME);
+    // The conversation is the chat window's; a window that cannot open still
+    // leaves the draft and its panel, which opens it again.
+    await Promise.resolve(openChat(agentId, scribeName, { starting: true })).catch(() => {});
     return {
       templateId, name, sourceHash, request: String(text || '').trim(),
-      scribe: { agentId, convId, name: String(scribe?.name || PROCESS_SCRIBE_NAME) },
+      scribe: { agentId, convId, name: scribeName },
       view: { ...view, template: { ...view.template, id: templateId }, currentRef, sourceHash, semanticHash: String(body?.semanticHash || '') },
     };
   } catch (cause) {
@@ -193,66 +199,50 @@ function scribeSaved(draft, view) {
   return Object.values(view?.template?.nodes || {}).some((node) => node?.type !== 'start' && node?.type !== 'end');
 }
 
-// useScribeDraft polls the scribe's conversation and the draft template.
-// `ready` is the newest version the scribe saved.
-function useScribeDraft(api, draft) {
-  const [state, setState] = useState({ messages: [], live: null, ready: null, error: '', loaded: false });
+// useScribeDraftHead polls the draft template for the newest version the
+// scribe saved. The conversation itself is the chat window's.
+function useScribeDraftHead(api, draft) {
+  const [state, setState] = useState({ ready: null, error: '' });
   useEffect(() => {
     let stopped = false;
     let timer = null;
     const poll = async () => {
-      const [chat, stored] = await Promise.allSettled([api.scribeChat(draft.scribe.agentId), api.getTemplateHead(draft.templateId)]);
-      if (stopped) return;
-      setState((prev) => {
-        const read = chat.status === 'fulfilled' ? chat.value : null;
-        const view = stored.status === 'fulfilled' ? stored.value : null;
-        const failed = chat.status === 'rejected' ? chat.reason : null;
-        return {
-          messages: read ? processScribeChatTranscript(read) : prev.messages,
-          live: read ? processScribeChatLive(read) : prev.live,
-          ready: view && scribeSaved(draft, view) ? view : prev.ready,
-          error: failed ? failed.message || String(failed) : '',
-          loaded: prev.loaded || !!read,
-        };
-      });
-      timer = setTimeout(poll, SCRIBE_DRAFT_POLL_MS);
+      try {
+        const view = await api.getTemplateHead(draft.templateId);
+        if (!stopped) setState((prev) => ({ ready: view && scribeSaved(draft, view) ? view : prev.ready, error: '' }));
+      } catch (cause) {
+        if (!stopped) setState((prev) => ({ ...prev, error: `Could not read the draft: ${cause?.message || cause}` }));
+      }
+      if (!stopped) timer = setTimeout(poll, SCRIBE_DRAFT_POLL_MS);
     };
     void poll();
     return () => { stopped = true; clearTimeout(timer); };
-  }, [api, draft.scribe.agentId, draft.templateId, draft.sourceHash]);
+  }, [api, draft.templateId, draft.sourceHash]);
   return state;
 }
 
-// scribeFinished says the newest saved draft is the scribe's finished work:
-// it is not in a turn, and its last word came after that save. A reply from
-// before the save does not count: a scribe's welcome turn can end after the
-// request was mailed, and the turn that does the work then looks closed.
-// Review waits for this, because a scribe still writing would change the head
-// under the step list and Start runs the head. A missing time is not finished:
-// stopping the scribe still opens the draft.
-export function scribeFinished({ messages, live, ready }) {
-  const last = messages.at(-1);
-  if (!ready || live || last?.role !== 'scribe') return false;
-  return Date.parse(last.at) >= Date.parse(ready.authoredAt);
+// scribeFinished says the newest saved draft is the scribe's finished work: it
+// saved one, and it is idle, out of the turn that saved it. Review waits for
+// this, because a scribe still writing would change the head under the step
+// list and Start runs the head. An unknown status is not finished: stopping
+// the scribe still opens the draft.
+export function scribeFinished({ ready, status }) {
+  return !!ready && status === 'idle';
 }
 
-// ScribeDraft is the group body while a scribe drafts: the request, its live
-// reply and a way to answer it, then the draft. The operator opens the
-// finished draft, so its closing message stays readable and answerable; a
-// scribe that has not finished is stopped first. Reviewing starts nothing.
-export function ScribeDraft({ group, draft, api, wizard = false, notify, onReview, onClose }) {
-  const { messages, live, ready, error, loaded } = useScribeDraft(api, draft);
-  const [reply, setReply] = useState('');
+// ScribeDraft is the group body while a scribe drafts: the request, how far the
+// scribe is, and the draft. The conversation is in the scribe's chat window;
+// the operator opens the finished draft from here, and a scribe that has not
+// finished is stopped first. Reviewing starts nothing. scribes are the
+// snapshot's process scribes, for this one's status.
+export function ScribeDraft({ group, draft, api, scribes = [], wizard = false, notify, onReview, onClose, openChat = openHelperWindow }) {
+  const { ready, error } = useScribeDraftHead(api, draft);
   const [busy, setBusy] = useState('');
   const [failure, setFailure] = useState('');
-  // The first human message is the request with its group context; the panel
-  // shows the operator's own words instead.
-  const request = messages.findIndex((message) => message.role === 'human');
-  const log = messages.filter((message, index) => index !== request);
-  const asked = draft.request || scribeDraftAsked(messages[request]?.body);
-  const last = messages.at(-1);
-  const working = busy === 'send' || !!live || last?.role === 'human' || !loaded;
-  const finished = scribeFinished({ messages, live, ready });
+  const session = scribes.find((scribe) => scribe.agentId === draft.scribe.agentId);
+  const status = session?.online ? session.status : '';
+  const finished = scribeFinished({ ready, status });
+  const waiting = !ready && status === 'idle';
   // Reads the head again: the poll may be a beat behind the last save.
   const review = async () => onReview(await api.getTemplate(draft.templateId));
   const openReview = async () => {
@@ -266,20 +256,8 @@ export function ScribeDraft({ group, draft, api, wizard = false, notify, onRevie
       setBusy('');
     }
   };
-  const send = async (event) => {
-    event.preventDefault();
-    if (!reply.trim() || busy) return;
-    setBusy('send');
-    setFailure('');
-    try {
-      await api.sendScribeMessage(draft.scribe.convId, { subject: PROCESS_SCRIBE_CHAT_SUBJECT, body: processScribeChatMessage({ prompt: reply }) });
-      setReply('');
-    } catch (cause) {
-      setFailure(`Could not send: ${cause.message}`);
-    } finally {
-      setBusy('');
-    }
-  };
+  const chat = () => Promise.resolve(openChat(draft.scribe.agentId, draft.scribe.name))
+    .catch((cause) => setFailure(`Could not open the chat window: ${cause?.message || cause}`));
   // Stopping keeps the draft: it stays one of the group's processes, and
   // what the scribe saved so far opens for review.
   const stop = async () => {
@@ -302,23 +280,17 @@ export function ScribeDraft({ group, draft, api, wizard = false, notify, onRevie
       <h3>${wizard ? `A scribe sets down ${draft.name}` : `A scribe is drafting ${draft.name}`}</h3>
       <span class="gq-tag" title="It holds process.templates.read and process.templates.manage: it can save process templates, and it cannot start a run">background · ${draft.scribe.name}</span>
     </div>
-    ${asked && html`<p class="gq-draft-ask" data-scribe-request>${asked}</p>`}
-    <div class="gq-draft-log" aria-live="polite">
-      ${log.map((message) => html`<div key=${message.id} class=${`gq-draft-msg is-${message.role}`} data-scribe-msg=${message.role}>${message.body}</div>`)}
-      ${(live?.items || []).map((item, index) => html`<div key=${index} class=${item.kind === 'tool' ? 'gq-draft-tool' : 'gq-draft-msg is-scribe is-live'} data-scribe-live=${item.kind}>${item.text}</div>`)}
-      ${working && html`<p class="gq-draft-working" role="status" title=${live?.unavailable || ''}><span class="psd-dot" aria-hidden="true"></span>scribe is working…</p>`}
-    </div>
+    ${draft.request && html`<p class="gq-draft-ask" data-scribe-request>${draft.request}</p>`}
+    ${!finished && html`<p class="gq-draft-working" role="status" data-scribe-status=${waiting ? 'waiting' : 'working'}>${waiting
+    ? 'The scribe is waiting for you in its chat window.'
+    : html`<span class="psd-dot" aria-hidden="true"></span>scribe is working… follow it in its chat window`}</p>`}
     ${ready && html`<p class="gq-draft-ready" data-scribe-ready>${finished
-    ? `Draft saved: ${draftSteps(ready)} ${draftSteps(ready) === 1 ? 'step' : 'steps'}. Nothing runs until you press Start.`
+    ? `Draft saved: ${draftSteps(ready)} ${draftSteps(ready) === 1 ? 'step' : 'steps'}. Its last word is in its chat window. Nothing runs until you press Start.`
     : `${draftSteps(ready)} ${draftSteps(ready) === 1 ? 'step' : 'steps'} saved so far. Stop the scribe to review them now.`}</p>`}
-    <form class="gq-draft-reply" onSubmit=${send}>
-      <input type="text" aria-label="Answer the scribe" data-scribe-reply maxlength=${PROCESS_SCRIBE_PROMPT_MAX} value=${reply}
-        placeholder="Answer the scribe, or ask for a change" onInput=${(event) => setReply(event.currentTarget.value)} />
-      <${Button} size="sm" type="submit" data-scribe-send disabled=${!reply.trim() || !!busy}>${busy === 'send' ? 'sending…' : 'Send'}<//>
-    </form>
     <div class="gq-foot">
       <${Button} size="sm" variant="primary" data-scribe-review disabled=${!finished || !!busy} title=${finished ? 'Open the saved draft in the step list' : 'The scribe has not finished a draft yet'}
         onClick=${openReview}>Review steps<//>
+      <${Button} size="sm" data-scribe-chat onClick=${chat} title="Answer the scribe, or ask for a change, in its chat window">💬 chat window<//>
       <${Button} size="sm" data-scribe-graph onClick=${graph} title="Open the draft in the graph editor">⤢ open in graph editor<//>
       <${Button} size="sm" variant="link" class="gq-link" data-scribe-stop disabled=${!!busy} onClick=${stop} title="Stop the scribe; the draft stays in the group, and what it saved opens for review">${busy === 'stop' ? 'stopping…' : 'stop scribe'}<//>
       <${Button} size="sm" variant="link" class="gq-link" data-scribe-hide disabled=${!!busy} onClick=${onClose} title="Hide this panel and leave the scribe working; ▶ on the process brings it back">hide<//>

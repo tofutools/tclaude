@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -75,7 +76,7 @@ func TestDashboardCompanionSpeech_ReturnsTheAgentsTextAfterTheCursor(t *testing.
 		} `json:"items"`
 		Now int64 `json:"now"`
 	}
-	rec = testharness.Serve(mux, httptestGet(t, "/api/companion/"+agentID+"/speech?since="+strconv.FormatInt(cursor.UnixNano(), 10)))
+	rec = testharness.Serve(mux, httptest.NewRequest(http.MethodGet, "/api/companion/"+agentID+"/speech?since="+strconv.FormatInt(cursor.UnixNano(), 10), nil))
 	require.Equalf(t, http.StatusOK, rec.Code, "speech body=%s", rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	var texts []string
@@ -85,8 +86,8 @@ func TestDashboardCompanionSpeech_ReturnsTheAgentsTextAfterTheCursor(t *testing.
 	assert.Equal(t, []string{"Let me look.", "You have three profiles."}, texts, "text after the cursor, no tool calls")
 	assert.Greater(t, body.Now, cursor.UnixNano())
 
-	rec = testharness.Serve(mux, httptestGet(t, "/api/companion/"+agentID+"/speech?since=yesterday"))
+	rec = testharness.Serve(mux, httptest.NewRequest(http.MethodGet, "/api/companion/"+agentID+"/speech?since=yesterday", nil))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	rec = testharness.Serve(mux, httptestGet(t, "/api/companion/not-an-agent/speech"))
+	rec = testharness.Serve(mux, httptest.NewRequest(http.MethodGet, "/api/companion/not-an-agent/speech", nil))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }

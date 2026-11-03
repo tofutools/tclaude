@@ -11,7 +11,7 @@ import (
 // pinned agent with voice on ends its turn, the companion reads its last text
 // here and speaks it.
 //
-// It reuses the scribe chat's transcript live tail (scribeLiveTail), keeping
+// It reuses the transcript live tail (scribeLiveTail), keeping
 // only the agent's text blocks, never tool calls. It reads nothing a dashboard
 // session could not already see: the same operator can attach the agent's
 // full terminal over /api/open-window-ws. Like the peek, it is an own-node

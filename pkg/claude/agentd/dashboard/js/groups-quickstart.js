@@ -91,11 +91,6 @@ export function scribeDraftRequest(text, groupName, roster = []) {
   return listed < members.length ? `${body}\n…and ${members.length - listed} more` : body;
 }
 
-// scribeDraftAsked reads the operator's own words back out of that request.
-export function scribeDraftAsked(body) {
-  return String(body || '').split(DRAFT_GROUP_CONTEXT)[0].trim();
-}
-
 // QUICKSTART_PREF remembers that the operator is past the first run: 'used'
 // once they created or started a process here, 'dismissed' once they closed
 // the Get started panel. Either folds an empty group's panel to one line.
