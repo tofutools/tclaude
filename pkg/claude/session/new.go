@@ -1479,38 +1479,15 @@ func runNew(params *NewParams) error {
 	); err != nil {
 		return err
 	}
-	// Every tclaude-launched Claude pane reads its config from the state root
-	// rather than the top-level ~/.claude.json, which a constructed root could
-	// not see (the pane would park on the login wizard) and which would
-	// otherwise fork state between an agent's sandboxed and unsandboxed
-	// launches. No-op for other harnesses. See ApplyClaudeConfigDirEnv.
-	if err := ApplyClaudeConfigDirEnv(h.Name, additionalEnv); err != nil {
+	// The launch-posture environment (state-root config dir, resume chooser,
+	// auto memory, agent view, startup-context trims, auto-compaction window) is
+	// shared with resume, which must rebuild the same pane. See
+	// ApplyLaunchPostureEnv for the order and what each step sets.
+	if err := ApplyLaunchPostureEnv(h, LaunchPostureEnv{
+		AutoMemory: autoMemory, ContextFeatures: contextFeatures, AutoCompactWindow: autoCompactWindow,
+	}, additionalEnv); err != nil {
 		return err
 	}
-	// Keep Claude Code's interactive "Resume from summary" chooser from blocking
-	// this detached pane (the daemon forks `tclaude session new -r` here, and a
-	// tmux-driven flow can't answer a TUI it didn't expect). No-op for non-Claude
-	// harnesses. See ApplyClaudeResumeEnv.
-	ApplyClaudeResumeEnv(h, additionalEnv)
-	// Pin the auto-memory posture for this launch. Unset resolves to OFF, so a
-	// Claude Code pane spawned by tclaude does not accumulate per-project
-	// memory files that every other agent on the repo would inherit. No-op for
-	// harnesses without an auto-memory system. See ApplyAutoMemoryEnv.
-	ApplyAutoMemoryEnv(h, autoMemory, additionalEnv)
-	// Claude Code's agent view moves the conversation out of the pane, so it
-	// defaults off. This must stay before ApplyContextFeaturesEnv, which is how
-	// an explicit agent-view=on opts back in. See ApplyAgentViewEnv.
-	ApplyAgentViewEnv(h, additionalEnv)
-	// Trim this pane's Claude Code startup context to what the operator actually
-	// wants the agent thinking about. Sparse and opt-in: an empty map injects
-	// nothing. Settings-only trims ride the `--settings` payload the spec builds
-	// below instead. See ApplyContextFeaturesEnv.
-	ApplyContextFeaturesEnv(h, contextFeatures, additionalEnv)
-	// Pin where Claude Code's auto-compaction fires. Unset injects nothing and
-	// the model's own threshold decides; a pinned window makes a long-lived agent
-	// compact while it is still sharp. No-op for harnesses with no such knob.
-	// See ApplyAutoCompactWindowEnv.
-	ApplyAutoCompactWindowEnv(h, autoCompactWindow, additionalEnv)
 	envExports := clcommon.BuildEnvExports(additionalEnv)
 	openCodeServerURL := ""
 	openCodeTransport := ""
