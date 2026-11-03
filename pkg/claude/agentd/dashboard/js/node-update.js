@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog, DialogClose } from './ui-dialog.js';
 
 const html = htm.bind(h);
 
@@ -153,8 +153,12 @@ export function NodeUpdateDialog({ node, confirm, toast, onClose, actions = defa
     okLabel: 'Roll back',
   }).then((ok) => ok && start('rollback'));
 
-  return html`<${Overlay} id="fleet-node-update-modal" labelledby="fleet-node-update-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="fleet-node-update-title">${node.hub ? 'tclaude-hub' : `tclaude on ${node.label}`}</h3>
+  return html`<${Dialog} id="fleet-node-update-modal" title=${node.hub ? 'tclaude-hub' : `tclaude on ${node.label}`} onClose=${onClose} busy=${busy}
+    footerStart=${status && html`<${Button} id="fleet-node-update-check" disabled=${busy || active} onClick=${() => start('check')}>Check now</${Button}>
+      ${v.update && html`<${Button} variant="primary" id="fleet-node-update-apply" disabled=${busy || active || !!blocked} onClick=${apply}>Update to ${v.latest}…</${Button}>`}
+      ${status.rollback_available && html`<${Button} variant="danger" id="fleet-node-update-rollback" disabled=${busy || active || !!blocked} onClick=${rollback}>Roll back…</${Button}>`}`}
+    footer=${html`<${DialogClose} disabled=${busy}>Close<//>`}
+    after=${html`<div class="muted fa-cli-note">CLI: <code>${node.hub ? 'tclaude federation hub update' : `tclaude update${node.local ? '' : ` --node ${node.id}`}`} --check|--apply|--rollback</code></div>`}>
     ${error ? html`<div class="muted" role="alert">${accessText(error, node)}</div>` : !status ? html`<div class="muted">Loading…</div>` : html`
       <div class="fa-dl">
         <span class="fa-k">Version</span><span>${v.current || 'unknown'}${status.install_method ? html` <span class="muted">(${status.install_method.replaceAll('_', ' ')})</span>` : ''}</span>
@@ -168,13 +172,5 @@ export function NodeUpdateDialog({ node, confirm, toast, onClose, actions = defa
         ${job.action} ${job.from_version ? `${job.from_version} → ` : ''}${job.version || ''}: <b>${unanswered ? `${job.state === 'rolling_back' || job.phase === 'rolling_back' ? 'rolling back' : 'restarting'}… (not answering yet)` : job.state.replaceAll('_', ' ')}</b>${job.phase && job.phase !== job.state && !(job.state === 'completed' && job.phase === 'complete') ? ` (${job.phase.replaceAll('_', ' ')})` : ''}${job.rolled_back && job.state !== 'rolled_back' ? ' — rolled back' : ''}${job.error ? ` — ${job.error}` : ''}
         ${job.deadline && updateJobActive(job) && html`<span class="muted"> · healthy by ${new Date(job.deadline).toLocaleTimeString()} or it rolls back</span>`}
       </div>`}`}
-    <div class="modal-buttons">
-      ${status && html`<${Button} id="fleet-node-update-check" disabled=${busy || active} onClick=${() => start('check')}>Check now</${Button}>
-        ${v.update && html`<${Button} variant="primary" id="fleet-node-update-apply" disabled=${busy || active || !!blocked} onClick=${apply}>Update to ${v.latest}…</${Button}>`}
-        ${status.rollback_available && html`<${Button} variant="danger" id="fleet-node-update-rollback" disabled=${busy || active || !!blocked} onClick=${rollback}>Roll back…</${Button}>`}`}
-      <span class="spacer"></span>
-      <${Button} disabled=${busy} onClick=${onClose}>Close</${Button}>
-    </div>
-    <div class="muted fa-cli-note">CLI: <code>${node.hub ? 'tclaude federation hub update' : `tclaude update${node.local ? '' : ` --node ${node.id}`}`} --check|--apply|--rollback</code></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }

@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog, DialogClose } from './ui-dialog.js';
 import { slugInfo } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
@@ -125,8 +125,11 @@ export function RequestAccessDialog({ node, perm, groups = [], gateway = '', onC
       .finally(() => setBusy(false));
   };
   const group = groups.find((g) => String(g.id) === String(groupID));
-  return html`<${Overlay} id="peer-access-modal" labelledby="peer-access-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="peer-access-title">${usage ? html`Ask ${node} for usage` : html`Request <code>${perm}</code> from ${node}`}</h3>
+  return html`<${Dialog} id="peer-access-modal" title=${usage ? html`Ask ${node} for usage` : html`Request <code>${perm}</code> from ${node}`}
+    onClose=${onClose} blocked=${busy}
+    footer=${html`<${DialogClose} disabled=${busy}>${request ? 'Close' : 'Cancel'}<//>
+      ${!request && html`<${Button} variant="primary" id="peer-access-submit" disabled=${busy || (scope === 'scoped' && !groupID) || maxUSD === null} onClick=${send}>Send request</${Button}>`}`}
+    after=${html`<div class="muted fa-cli-note">CLI: <code>tclaude federation access request --node … --permission ${perm}${scope !== 'node' ? ' [--group-id …]' : ''}${usage ? ' --max-usd … [--http-proxy …]' : ''}</code></div>`}>
     ${request ? html`<div id="peer-access-status" class=${request.status === 'approved' ? '' : request.status === 'pending' ? 'muted' : 'fa-danger'}>
         Request ${request.id}: <b>${request.status}</b>
         ${request.status === 'pending' && (misses >= MAX_MISSES
@@ -154,11 +157,5 @@ export function RequestAccessDialog({ node, perm, groups = [], gateway = '', onC
       ${usage && maxUSD === null && html`<div class="fa-danger" role="alert">Amount is a dollar amount, or blank for no cap.</div>`}
       <div class="muted">${node}'s operator sees the ${usage ? 'amount' : 'permission'}${group ? `, group ${group.name}` : ''}, how long, and your reason, and may approve it for less. Requests time out after 5 minutes without a decision.</div>
       ${error && html`<div class="fa-danger" role="alert">${error}</div>`}`}
-    <div class="modal-buttons">
-      <span class="spacer"></span>
-      <${Button} onClick=${onClose}>${request ? 'Close' : 'Cancel'}</${Button}>
-      ${!request && html`<${Button} variant="primary" id="peer-access-submit" disabled=${busy || (scope === 'scoped' && !groupID) || maxUSD === null} onClick=${send}>Send request</${Button}>`}
-    </div>
-    <div class="muted fa-cli-note">CLI: <code>tclaude federation access request --node … --permission ${perm}${scope !== 'node' ? ' [--group-id …]' : ''}${usage ? ' --max-usd … [--http-proxy …]' : ''}</code></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
