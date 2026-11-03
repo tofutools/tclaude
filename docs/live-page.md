@@ -250,7 +250,11 @@ not the daemon's own.
     nothing (503) rather than the host's files.
   - *No OS sandbox* (`off`, `resource-only`, or a harness whose own sandbox is
     recorded off; for Claude Code, its launch-time verdict must say off, since
-    a managed policy can keep its sandbox on): the agent reads what the daemon
+    a managed policy can keep its sandbox on; Codex, which runs
+    `danger-full-access` in all three, counts only when it reports no managed
+    requirements at launch, since a
+    `requirements.toml`, MDM or cloud requirement can make Codex fall back to
+    its own sandbox): the agent reads what the daemon
     reads, so the page is served from the host. The launch is re-read, so a
     sandbox restored on the same conversation stops the read-back at once.
   - *Anything else* (a harness's own sandbox, macOS Seatbelt, or a launch with

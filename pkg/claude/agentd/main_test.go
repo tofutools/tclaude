@@ -137,10 +137,16 @@ func TestMain(m *testing.M) {
 		func(string, []sandboxpolicy.EnvironmentEntry, string) (json.RawMessage, error) {
 			return json.RawMessage(`{"config":{},"origins":{}}`), nil
 		})
+	// And the managed-requirements read a no-sandbox Codex launch makes.
+	restoreCodexRequirements := session.SetCodexRequirementsProbeForTest(
+		func(string, []sandboxpolicy.EnvironmentEntry) (json.RawMessage, error) {
+			return json.RawMessage(`{"requirements":null}`), nil
+		})
 	restoreCodexNativeRegistry := agentd.SetCodexNativeRegistryReadinessForTest(func() error { return nil })
 	code := m.Run()
 	restoreCodexNativeRegistry()
 	restoreCodexProbe()
+	restoreCodexRequirements()
 	restoreCopilotReconnect()
 	restoreCopilotPostInitWait()
 	restoreCopilotBootstrap()

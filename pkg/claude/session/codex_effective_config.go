@@ -52,6 +52,11 @@ const codexEffectiveConfigWaitDelay = 2 * time.Second
 // test.
 var codexEffectiveConfigTimeout = 45 * time.Second
 
+// codexRequirementsTimeout bounds the managed-requirements read, which only
+// shapes the launch's record (codex_requirements.go) and runs on resume paths
+// where the pane is already up. A timeout records an unverified "on".
+var codexRequirementsTimeout = 10 * time.Second
+
 // setCodexEffectiveConfigTimeoutForTest shrinks the probe deadline for the
 // duration of one test. It exists so the constraint above is enforced by the
 // helper rather than only described in a comment.
@@ -212,10 +217,28 @@ func readCodexEffectiveConfigJSON(
 	permissionProfile string,
 	overrides ...string,
 ) (json.RawMessage, error) {
-	timing := config.StartupTiming("codex_effective_config")
+	return readCodexAppServerJSON(cwd, environment, permissionProfile,
+		"config/read", codexConfigReadParams(cwd), overrides...)
+}
+
+// readCodexAppServerJSON starts a short-lived Codex app-server for a launch
+// (its cwd, environment and Codex profile), sends one read request, and
+// returns its raw result. params nil sends a request without params.
+func readCodexAppServerJSON(
+	cwd string,
+	environment []sandboxpolicy.EnvironmentEntry,
+	permissionProfile string,
+	method string,
+	params any,
+	overrides ...string,
+) (json.RawMessage, error) {
+	label, what, timeout := "codex_effective_config", "effective-config", codexEffectiveConfigTimeout
+	if method != "config/read" {
+		label, what, timeout = "codex_requirements", "requirements", codexRequirementsTimeout
+	}
+	timing := config.StartupTiming(label)
 	defer timing("return_after_cleanup")
-	ctx, cancel := context.WithTimeout(
-		context.Background(), codexEffectiveConfigTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	// exec.Command resolves the binary against the PARENT process PATH at
@@ -304,11 +327,12 @@ func readCodexEffectiveConfigJSON(
 			}},
 		},
 		map[string]any{"jsonrpc": "2.0", "method": "initialized"},
-		map[string]any{
-			"jsonrpc": "2.0", "id": 2, "method": "config/read",
-			"params": codexConfigReadParams(cwd),
-		},
 	}
+	read := map[string]any{"jsonrpc": "2.0", "id": 2, "method": method}
+	if params != nil {
+		read["params"] = params
+	}
+	requests = append(requests, read)
 	for _, request := range requests {
 		encoded, marshalErr := json.Marshal(request)
 		if marshalErr != nil {
@@ -321,8 +345,8 @@ func readCodexEffectiveConfigJSON(
 			// error before Wait intermittently dropped the only useful clue.
 			exitErr := finish(true)
 			return nil, fmt.Errorf(
-				"the Codex app-server produced no config/read result (%s; stdin closed: %v)%s",
-				codexEffectiveConfigExit(exitErr), writeErr, diagnostics.suffix())
+				"the Codex app-server produced no %s result (%s; stdin closed: %v)%s",
+				method, codexEffectiveConfigExit(exitErr), writeErr, diagnostics.suffix())
 		}
 	}
 
@@ -345,8 +369,8 @@ func readCodexEffectiveConfigJSON(
 		// explains the failure and fall through to the generic no-result path.
 		if message.Error != nil && (message.ID == nil || *message.ID == 2) {
 			return nil, fmt.Errorf(
-				"the Codex app-server refused config/read: %s",
-				message.Error.Message)
+				"the Codex app-server refused %s: %s",
+				method, message.Error.Message)
 		}
 		if message.ID == nil || *message.ID != 2 {
 			continue
@@ -362,19 +386,19 @@ func readCodexEffectiveConfigJSON(
 		// with nothing to act on.
 		_ = finish(true)
 		return nil, fmt.Errorf(
-			"the Codex app-server effective-config read did not answer within %s%s",
-			codexEffectiveConfigTimeout, diagnostics.suffix())
+			"the Codex app-server %s read did not answer within %s%s",
+			what, timeout, diagnostics.suffix())
 	}
 	if err := scanner.Err(); err != nil {
 		_ = finish(true)
 		return nil, fmt.Errorf(
-			"cannot read the Codex app-server effective-config reply: %w%s",
-			err, diagnostics.suffix())
+			"cannot read the Codex app-server %s reply: %w%s",
+			what, err, diagnostics.suffix())
 	}
 	waitErr = finish(false)
 	return nil, fmt.Errorf(
-		"the Codex app-server produced no config/read result (%s)%s",
-		codexEffectiveConfigExit(waitErr), diagnostics.suffix())
+		"the Codex app-server produced no %s result (%s)%s",
+		method, codexEffectiveConfigExit(waitErr), diagnostics.suffix())
 }
 
 // codexConfigReadParams asks for the effective config as seen from the launch

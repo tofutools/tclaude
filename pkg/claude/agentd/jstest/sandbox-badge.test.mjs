@@ -509,6 +509,24 @@ test('SandboxBadge shortcuts only valid temporary sandbox transitions', async (t
     }
   });
 
+  await t.test('a Codex danger-full-access launch recorded off renders as it did unrecorded', async () => {
+    const render = async (state) => {
+      const mounted = await mount({
+        harness: 'codex', sandbox_mode: 'danger-full-access', os_sandbox_state: state,
+        sandbox_implementation: 'harness-builtin',
+      });
+      try {
+        const badge = mounted.container.querySelector('.sandbox-badge');
+        return badge && { text: badge.textContent.trim(), act: badge.dataset.action || '', cls: badge.className };
+      } finally {
+        await mounted.unmount();
+      }
+    };
+    const unrecorded = await render('');
+    assert.ok(unrecorded, 'an unconfined Codex agent has a badge');
+    assert.deepEqual(await render('off'), unrecorded);
+  });
+
   await t.test('a Codex tclaude-layer lock still offers outer-layer removal', async () => {
     const mounted = await mount({
       harness: 'codex', sandbox_mode: 'danger-full-access', os_sandbox_state: 'on',

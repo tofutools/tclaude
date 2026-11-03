@@ -651,6 +651,10 @@ Useful boundaries:
 - `codex_effective_config` separates launching the preflight Codex app-server,
   waiting for `config/read`, and process teardown. This probe runs separately
   from the agent's actual Codex process and can occur in either daemon or wrapper.
+- `codex_requirements` is the same for the `configRequirements/read` a
+  Codex launch in `danger-full-access` (harness-builtin, `off` or
+  `resource-only`) makes, bounded at 10s, to learn whether
+  managed requirements keep Codex's own sandbox on.
 - `codex_bootstrap` separates version/PID availability, listener ownership
   proof, the TUI's thread binding, client initialization, and verified readiness.
   `codex_await_ready`, `spawn_backfill`, and `spawn_post_init` cover later work.

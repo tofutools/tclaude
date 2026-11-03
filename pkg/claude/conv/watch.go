@@ -3481,6 +3481,15 @@ func createSessionForConv(conv *SessionEntry) error {
 	// fresh launch, so it has the same tmux ~16KB argv cliff and the same
 	// ps-visible-credentials exposure the spawn path already fixed.
 	launchStarted := time.Now()
+	// A no-sandbox Codex launch's managed requirements (codex_requirements.go),
+	// read before the pane starts, with the environment it launches with.
+	var codexEnvironment []sandboxpolicy.EnvironmentEntry
+	if launchEffectiveSandbox != nil {
+		codexEnvironment = sandboxpolicy.EnvironmentForLaunch(launchEffectiveSandbox)
+	}
+	codexImplementation, _ := resumeSandboxImplementation(conv.SessionID)
+	codexVerdict, codexChecked := session.VerifyCodexSandboxOff(h, codexImplementation,
+		resumeHarnessBuiltinMode(conv.SessionID), cwd, codexEnvironment)
 	if err := session.LaunchResumedTmuxSession(sessionID, tmuxSession, cwd, launchCmd, h.Name,
 		session.CodexProfileMarkerArgs(profilePath)...); err != nil {
 		return err
@@ -3502,6 +3511,9 @@ func createSessionForConv(conv *SessionEntry) error {
 	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, cwd)
 	if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
 		launchOSSandbox = resumeTclaudeLayerLaunchOSSandbox(conv.SessionID)
+	}
+	if codexChecked {
+		launchOSSandbox = codexVerdict
 	}
 	state := &session.SessionState{
 		ID:                       sessionID,

@@ -1,8 +1,11 @@
 package session
 
 import (
+	"encoding/json"
 	"os"
 	"testing"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // TestMain scrubs the launch-identity environment a tclaude-managed pane
@@ -23,6 +26,11 @@ func TestMain(m *testing.M) {
 	// the production resolver and therefore continue exercising os.Executable.
 	if binary := os.Getenv("TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY"); binary != "" {
 		tclaudeLayerTclaudeCLIPath = func() string { return binary }
+	}
+	// A harness-builtin Codex launch with no sandbox asks a real Codex for its
+	// managed requirements. Tests launch none: they report no requirements.
+	codexRequirementsReader = func(string, []sandboxpolicy.EnvironmentEntry) (json.RawMessage, error) {
+		return json.RawMessage(`{"requirements":null}`), nil
 	}
 	os.Exit(m.Run())
 }

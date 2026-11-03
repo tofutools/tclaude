@@ -304,7 +304,9 @@ function osSandboxBadge(mode, state, unverified, implementation) {
       danger,
     };
   }
-  if (mode === 'on' || mode === 'off') return { status: 'OFF', danger: true };
+  // Codex records "off" for danger-full-access when no managed requirement
+  // overrules it.
+  if (mode === 'on' || mode === 'off' || mode === 'danger-full-access') return { status: 'OFF', danger: true };
   return null;
 }
 
