@@ -12,8 +12,6 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -37,99 +35,9 @@ import (
 // state, so like a role it is supplied as a JSON file (--file) rather than via
 // a flag-per-field; the JSON round-trips `show --json`.
 //
-// profileJSON mirrors the daemon's wire shape (agentd.spawnProfileJSON) field
-// for field, so `show --json` round-trips exactly what the dashboard editor
-// posts. Every field is optional: a blank text field / absent toggle is unset.
-type profileJSON struct {
-	Name    string   `json:"name"`
-	Aliases []string `json:"aliases,omitempty"`
-	// Disabled is a pointer so CLI file input can distinguish an explicit false
-	// from the pre-v122 shape where disabled_reason was the disable switch.
-	Disabled       *bool  `json:"disabled,omitempty"`
-	DisabledReason string `json:"disabled_reason,omitempty"`
-	OperatorOnly   bool   `json:"operator_only,omitempty"`
-
-	// Launch fields.
-	Harness    string `json:"harness,omitempty"`
-	Model      string `json:"model,omitempty"`
-	ModelProxy string `json:"model_proxy,omitempty"`
-	Effort     string `json:"effort,omitempty"`
-	Sandbox    string `json:"sandbox,omitempty"`
-	// SandboxImplementation is the profile's pinned owner of OS-level
-	// containment: "harness-builtin" or the "tclaude-layer"
-	// ("" = unset, so it falls through to the next spawn precedence tier).
-	SandboxImplementation string `json:"sandbox_implementation,omitempty"`
-	Approval              string `json:"approval,omitempty"`
-	ToolGovernance        string `json:"tools,omitempty"`
-	// AskUserQuestionTimeout is the profile's Claude Code AskUserQuestion
-	// idle-timeout default (inherit|never|60s|5m|10m; "" = unset), delivered
-	// per-spawn via `--settings`. Claude-Code-only.
-	AskUserQuestionTimeout string `json:"ask_user_question_timeout,omitempty"`
-	// AutoCompactWindow is the profile's auto-compaction context capacity in
-	// tokens ("450000"; "" = unset). Claude-Code-only.
-	AutoCompactWindow string `json:"auto_compact_window,omitempty"`
-	// ContextWindowMax is a Copilot-only configured context cap.
-	ContextWindowMax int64 `json:"context_window_max,omitempty"`
-	// CopilotAPI is the profile's Copilot-only "drive over the embedded JSON-RPC
-	// API instead of tmux send-keys" default (tri-state). NOTE: like
-	// remote_control / auto_memory, `tclaude agent spawn --profile` does NOT fold
-	// this in client-side — the daemon resolves it down the full tier stack, so
-	// leaving it out here is what lets the group/global tiers speak too.
-	CopilotAPI     *bool `json:"copilot_api,omitempty"`
-	CodexAppServer *bool `json:"codex_app_server,omitempty"`
-	// FastMode is Codex's nullable service-tier choice: nil inherits the global
-	// Codex config, true forces fast, false forces standard.
-	FastMode   *bool `json:"fast_mode,omitempty"`
-	AutoReview *bool `json:"auto_review,omitempty"`
-	TrustDir   *bool `json:"trust_dir,omitempty"`
-	// RemoteControl is the profile's "start with Remote Access on" default
-	// (tri-state). NOTE: `tclaude agent spawn --profile` does not fold this in
-	// CLIENT-side — the CLI can't see the group's remote-control policy, which
-	// must win. It is not lost: the daemon resolves it down the full tier stack
-	// under that policy, so leaving it out here is what lets every tier speak.
-	// Use the explicit --remote-control flag to force it on regardless.
-	RemoteControl *bool `json:"remote_control,omitempty"`
-	// AutoMemory is the profile's "keep Claude Code's auto memory on" default
-	// (tri-state). Unset resolves to OFF at spawn — tclaude disables auto
-	// memory so agents sharing a repo don't cross-pollute one project memory
-	// store. Claude-Code-only.
-	AutoMemory *bool `json:"auto_memory,omitempty"`
-
-	// PeerMessaging is the profile's "keep Claude Code's own cross-session
-	// messaging on" default — tri-state, unset resolving to OFF at spawn.
-	PeerMessaging *bool `json:"peer_messaging,omitempty"`
-	// SSHWorkaround is the Git-over-SSH compatibility default. nil leaves
-	// the launch default in place; false explicitly opts out. The launch applies
-	// it only to an ownership-isolating sandbox shape that needs it.
-	SSHWorkaround *bool                            `json:"ssh_workaround,omitempty"`
-	Environment   []sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
-
-	// Identity / enrollment fields.
-	AgentName      string   `json:"agent_name,omitempty"`
-	Role           string   `json:"role,omitempty"`
-	RoleRef        string   `json:"role_ref,omitempty"`
-	RoleRefs       []string `json:"role_refs,omitempty"`
-	PromptRefs     []string `json:"prompt_refs,omitempty"`
-	Descr          string   `json:"descr,omitempty"`
-	InitialMessage string   `json:"initial_message,omitempty"`
-	StartupContext string   `json:"startup_context,omitempty"`
-
-	// Dialog toggles.
-	SyncWorktree               *bool `json:"sync_worktree,omitempty"`
-	FetchLatestWorktree        *bool `json:"fetch_latest_worktree,omitempty"`
-	AutoFocus                  *bool `json:"auto_focus,omitempty"`
-	IncludeGroupDefaultContext *bool `json:"include_group_default_context,omitempty"`
-
-	// Birth-time access controls.
-	IsOwner             *bool                            `json:"is_owner,omitempty"`
-	PermissionOverrides map[string]db.PermissionOverride `json:"permission_overrides,omitempty"`
-	// ContextFeatures is the profile's startup-context trim map (slug → "on" |
-	// "off"). Absent = the profile trims nothing. See harness/context_features.go.
-	ContextFeatures map[string]string `json:"context_features,omitempty"`
-
-	CreatedAt string `json:"created_at,omitempty"`
-	UpdatedAt string `json:"updated_at,omitempty"`
-}
+// profileJSON is the shared spawn-profile wire shape (SpawnProfileJSON), so
+// `show --json` round-trips exactly what the dashboard editor posts.
+type profileJSON = SpawnProfileJSON
 
 func profilesCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
