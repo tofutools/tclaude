@@ -1634,7 +1634,7 @@ func TestDashboardHTML_WizardDeleteRetiredModal(t *testing.T) {
 	must("body.wizard #delete-retired-modal .cleanup-toolbar input[type=number]", "the age filter is re-skinned")
 	must("body.wizard #delete-retired-modal .cleanup-list {", "the retired-agent preview list is re-skinned")
 	must("body.wizard #delete-retired-modal .cleanup-row label .cleanup-badge:not(.online)", "wizard badge chrome leaves online and result status colors semantic")
-	must("body.wizard #delete-retired-modal .delete-agent-wt", "the worktree option is re-skinned")
+	must("font-size: 12px; color: var(--ui-body-text); margin: 12px 0 0;", "the worktree option row takes its text colour from --ui-body-text, so every skin colours it")
 	must("body.wizard #delete-retired-modal #delete-retired-submit {", "the result-phase Done button gets gilded chrome")
 	must("body.wizard #delete-retired-modal #delete-retired-submit:is(.danger, .ui-btn-danger) {", "the selection-phase delete action stays destructive")
 }
@@ -1653,7 +1653,6 @@ func TestDashboardHTML_WizardDeleteGroupModal(t *testing.T) {
 
 	must("body.wizard #delete-group-modal .cleanup-list {", "the preview list is re-skinned")
 	must("body.wizard #delete-group-modal .cleanup-row .title", "preview row titles are parchment")
-	must("body.wizard #delete-group-modal .delete-agent-wt", "the retire-default checkbox row is re-skinned")
 	must(`<span class="delete-group-copy-wizard">Banish checked heroes before disbanding the party</span>`, "the wizard checkbox label uses hero/party wording")
 	must(`single-party heroes are checked by default; heroes also in other parties`, "the wizard helper copy uses hero/party wording")
 	must(".delete-group-copy-wizard { display: none; }", "wizard copy is hidden outside wizard mode")

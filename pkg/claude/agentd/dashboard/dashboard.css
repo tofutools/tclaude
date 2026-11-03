@@ -334,7 +334,7 @@ body.dock-open .open-prs.is-open::before {
 }
 .open-prs-confirm h4 { margin: 0 0 6px; color: #f0f6fc; font-size: 13px; }
 .open-prs-confirm p { margin: 0 0 10px; color: #8b949e; line-height: 1.4; }
-.open-prs-confirm-pr { display: block; margin-bottom: 4px; color: #c9d1d9; overflow-wrap: anywhere; }
+.open-prs-confirm-pr { display: block; margin-bottom: 4px; color: var(--ui-body-text); overflow-wrap: anywhere; }
 .open-prs-confirm-durations { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 0 0 12px; padding: 0; border: 0; }
 .open-prs-confirm-durations legend { width: 100%; margin-bottom: 4px; padding: 0; color: #8b949e; font-size: 10.5px; }
 .open-prs-confirm-durations label { display: inline-flex; align-items: center; gap: 4px; color: #c9d1d9; cursor: pointer; }
@@ -451,7 +451,7 @@ nav [data-tab].overlay-drop { color: #d4d4d4; background: #1f6feb2e; box-shadow:
 /* In the column-direction body row, flex-basis governs HEIGHT — reset it so the
    label doesn't reserve an 84px-tall band above the preview. */
 .access-body-row .access-k { flex: 0 0 auto; }
-.access-v { color: #c9d1d9; word-break: break-word; overflow-wrap: anywhere; }
+.access-v { color: var(--ui-body-text); word-break: break-word; overflow-wrap: anywhere; }
 .access-v.mono, .access-body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .access-body {
   margin: 0; background: #161b22; border: 1px solid #21262d; border-radius: 4px;
@@ -494,7 +494,6 @@ body.wizard .access-banner {
 body.wizard .ui-btn.access-banner-review { background: #a97bd6; border-color: #a97bd6; color: #14102a; }
 body.wizard .ui-btn.access-banner-review:hover:not(:disabled) { background: #c39ee8; color: #14102a; }
 body.wizard .access-k, body.wizard .access-countdown { color: #b39ddb; }
-body.wizard .access-v { color: #e7d9f5; }
 body.wizard .access-body { background: #14102a; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5; }
 body.wizard .ui-btn.access-btn.always:not(.scoped) { background: #2a2140; border-color: #a97bd6; color: #f3e6c0; }
 body.wizard .access-divider { color: #8f7bb5; }
@@ -908,7 +907,7 @@ button.tool:where(:hover) { background: var(--ui-bg-hover); }
 .mail-headers { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; }
 .mail-hrow { display: flex; gap: 8px; font-size: 12px; }
 .mail-hlabel { flex: 0 0 52px; color: var(--ui-muted-text); text-align: right; }
-.mail-hval { color: #c9d1d9; word-break: break-word; }
+.mail-hval { color: var(--ui-body-text); word-break: break-word; }
 .mail-cid { color: var(--ui-muted-text); font-family: ui-monospace, monospace; font-size: 11px; }
 .mail-state-unread { color: #58a6ff; }
 .mail-state-pending { color: #d29922; }
@@ -1301,7 +1300,7 @@ body:not(.show-final-pr-checks) .ci-hover.ci-final { display: none; }
 .ci-check-body { flex: 1 1 auto; min-width: 0; display: block; }
 .ci-check-link { flex: 1 1 auto; min-width: 0; text-decoration: none; }
 .ci-check-link:hover .ci-check-name { text-decoration: underline; }
-.ci-check-name { display: block; color: #e6edf3; overflow-wrap: anywhere; }
+.ci-check-name { display: block; color: var(--ui-strong-text); overflow-wrap: anywhere; }
 .ci-check-meta {
   display: block; color: #8b949e; font-size: 10.5px;
   font-family: ui-monospace, monospace;
@@ -1347,7 +1346,6 @@ body.wizard .ci-panel-summary,
 body.wizard .ci-check-meta,
 body.wizard .ci-check-time,
 body.wizard .ci-panel-note { color: #9a86c4; }
-body.wizard .ci-check-name { color: #f3e6c0; }
 body.wizard .ci-checks li + li { border-top-color: rgba(122, 93, 176, 0.35); }
 body.wizard .ci-panel-note { border-top-color: rgba(122, 93, 176, 0.5); }
 body.wizard .ci-icon-pass { color: #7ee08a; }
@@ -3165,7 +3163,7 @@ body.wizard header .activity-hover-trigger:hover { background: transparent; }
   margin: 2px 0 0 13px; padding: 0; color: #8b949e; list-style: none;
 }
 .activity-hover-workers li { overflow-wrap: anywhere; }
-.activity-hover-worker-name { color: #e6edf3; }
+.activity-hover-worker-name { color: var(--ui-strong-text); }
 .activity-hover-worker-detail,
 .activity-hover-worker-annotation { color: #8b949e; }
 .activity-hover-state-error .activity-hover-state-label { color: #ff7b72; }
@@ -3205,7 +3203,6 @@ body.wizard .activity-hover-note { color: #9a86c4; }
 body.wizard .activity-hover-group + .activity-hover-group,
 body.wizard .activity-hover-note { border-color: rgba(122, 93, 176, 0.5); }
 body.wizard .activity-hover-group h3 { color: #d9b45a; }
-body.wizard .activity-hover-worker-name { color: #f3e6c0; }
 @media (max-width: 560px) {
   .activity-hover-panel { left: -12px; width: min(360px, calc(100vw - 24px)); }
 }
@@ -8346,7 +8343,7 @@ body.wizard #agent-spawn-role-add { background: #140f28; color: #f3e6c0; }
 }
 .cron-create-target .cron-target-modes,
 .cron-create-schedule .cron-target-modes {
-  display: flex; gap: 12px; font-size: 12px; color: #c9d1d9;
+  display: flex; gap: 12px; font-size: 12px; color: var(--ui-body-text);
 }
 .cron-create-target .cron-target-modes label,
 .cron-create-schedule .cron-target-modes label { cursor: pointer; }
@@ -8372,7 +8369,7 @@ body.wizard #agent-spawn-role-add { background: #140f28; color: #f3e6c0; }
   flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px;
 }
 .standing-order-field > .cron-target-modes {
-  display: flex; flex-wrap: wrap; gap: 12px; color: #c9d1d9;
+  display: flex; flex-wrap: wrap; gap: 12px; color: var(--ui-body-text);
 }
 .standing-order-options {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -8862,7 +8859,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
    status line the JS paints + gates Send on. The wizard re-skin lives in
    its own scoped block near the group-create re-skin (kept out of here so
    the base chrome stays theme-neutral). */
-#human-reply-modal .human-reply-to-name { color: #c9d1d9; font-weight: 600; }
+#human-reply-modal .human-reply-to-name { color: var(--ui-body-text); font-weight: 600; }
 #human-reply-modal .human-reply-to-subject {
   color: var(--ui-muted-text); font-size: 12px; margin-top: 2px;
   overflow-wrap: anywhere;
@@ -8924,7 +8921,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 }
 .group-import-preview .gi-row { display: flex; gap: 8px; }
 .group-import-preview .gi-row .gi-k { flex: 0 0 118px; color: var(--ui-muted-text); }
-.group-import-preview .gi-row .gi-v { color: #c9d1d9; word-break: break-word; }
+.group-import-preview .gi-row .gi-v { color: var(--ui-body-text); word-break: break-word; }
 .group-import-preview .gi-ok { color: #3fb950; }
 .group-import-preview .gi-warn { color: #f0883e; }
 .group-import-preview .gi-bad { color: #f85149; }
@@ -9012,7 +9009,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .template-agent-num { color: #58a6ff; font-size: 11px; font-weight: 600; }
 .template-agent-owner {
   display: flex; align-items: center; gap: 4px; font-size: 11px;
-  color: #c9d1d9; cursor: pointer; user-select: none;
+  color: var(--ui-body-text); cursor: pointer; user-select: none;
 }
 .template-agent-owner input { margin: 0; }
 .template-agent-row-head .ta-remove { margin-left: auto; padding: 1px 7px; }
@@ -9115,7 +9112,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 }
 .tpl-concepts > summary::-webkit-details-marker { display: none; }
 .tpl-concepts > summary:hover { color: #79c0ff; }
-.tpl-concepts-body { font-size: 12px; color: #c9d1d9; line-height: 1.5; padding-bottom: 8px; }
+.tpl-concepts-body { font-size: 12px; color: var(--ui-body-text); line-height: 1.5; padding-bottom: 8px; }
 .tpl-concepts-body p { margin: 4px 0 8px; }
 .tpl-concepts-body b { color: #e6edf3; }
 .tpl-concepts-list { margin: 0 0 10px; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
@@ -9300,7 +9297,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   border-radius: 3px; color: #d4d4d4; padding: 1px 6px;
   font: inherit; font-size: 11px;
 }
-.cleanup-count { color: #c9d1d9; }
+.cleanup-count { color: var(--ui-body-text); }
 /* Category-filter row — Agents-tab modal only. */
 .cleanup-cats {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
@@ -9424,7 +9421,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 }
 .cleanup-options {
   display: flex; flex-direction: column; gap: 6px;
-  font-size: 12px; color: #c9d1d9;
+  font-size: 12px; color: var(--ui-body-text);
 }
 .cleanup-options label {
   display: flex; gap: 6px; align-items: baseline; cursor: pointer;
@@ -9454,7 +9451,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 /* Shared worktree choice row used by transaction and cleanup dialogs. */
 .delete-agent-wt {
   display: flex; gap: 6px; align-items: baseline;
-  font-size: 12px; color: #c9d1d9; margin: 12px 0 0;
+  font-size: 12px; color: var(--ui-body-text); margin: 12px 0 0;
 }
 .delete-agent-wt.disabled { opacity: 0.55; }
 .delete-agent-wt input[type=checkbox] { cursor: pointer; flex: 0 0 auto; }
@@ -9568,7 +9565,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .cfg-rail-links { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; }
 .cfg-rail-link {
   display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
-  background: none; border: 0; border-radius: 6px; color: #c9d1d9;
+  background: none; border: 0; border-radius: 6px; color: var(--ui-body-text);
   font-family: inherit; font-size: 13px; padding: 6px 10px; cursor: pointer;
 }
 .cfg-rail-link:hover { background: #161b22; }
@@ -9743,7 +9740,7 @@ label.cfg-label { cursor: pointer; }
 }
 .cfg-field {
   display: flex; align-items: center; gap: 9px; margin: 9px 0;
-  font-size: 12px; color: #c9d1d9; flex-wrap: wrap;
+  font-size: 12px; color: var(--ui-body-text); flex-wrap: wrap;
 }
 .cfg-field .cfg-label { flex: 0 0 168px; color: #c9d1d9; }
 /* JOH-364: input[type=password] (the remote-access .p12 / passphrase fields)
@@ -11355,7 +11352,7 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 /* --- export "Clone into the same group" toggle (JOH-266) --- */
 .export-same-group {
   display: flex; align-items: flex-start; gap: 8px;
-  margin: 8px 0 2px; font-size: 13px; color: #c9d1d9; cursor: pointer;
+  margin: 8px 0 2px; font-size: 13px; color: var(--ui-body-text); cursor: pointer;
 }
 .export-same-group input { margin-top: 2px; flex: 0 0 auto; }
 /* --- export "Previous exports" history panel (JOH-265) --- */
@@ -11503,7 +11500,6 @@ body.wizard .open-prs-add-form input { border-color: #7a5db0; background: #140f2
 body.wizard .open-prs-confirm h4 { color: #f3e6c0; }
 body.wizard .open-prs-confirm p,
 body.wizard .open-prs-confirm-durations legend { color: #9a86c4; }
-body.wizard .open-prs-confirm-pr,
 body.wizard .open-prs-confirm-durations label { color: #e7d9f5; }
 body.wizard .open-prs-confirm-durations input { accent-color: #7a5db0; }
 /* State pills keep their default fill; a purple/gold/emerald edge makes them
@@ -12154,9 +12150,6 @@ body.wizard #retire-modal .modal .modal-meta {
   border-color: rgba(122, 93, 176, 0.5);
   color: #f3e6c0;
 }
-/* Checkbox labels + their grey hint notes go violet/parchment. */
-body.wizard #retire-modal .delete-agent-wt { color: #e7d9f5; }
-
 /* Cancel (and any other non-confirm button) — the same tarnished-gold
    secondary treatment the spawn dialog's Clear / Cancel get. Scoped away
    from #retire-ok, which keeps its gilded Banish lever below. */
@@ -12503,7 +12496,6 @@ body.wizard #message-create-modal button:where(:not(.ui-btn)):not(.primary) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
 body.wizard #message-create-modal button:where(:not(.ui-btn)):not(.primary):hover { background: #3a2a63; }
-body.wizard #message-create-modal .cleanup-count { color: #e7d9f5; }
 body.wizard #message-create-modal .cleanup-list {
   background: #120c24; border-color: rgba(122, 93, 176, 0.5);
 }
@@ -12764,8 +12756,7 @@ body.wizard #human-reply-modal .cron-create-label { color: #b39ddb; }
 /* Copy stays legible on the violet surface — parchment for the name/desc,
    a dimmer lilac for the secondary "re: …" line. The online/offline status
    keeps its own green/amber (recolor chrome, not the honest signal). */
-body.wizard #human-reply-modal #human-reply-desc,
-body.wizard #human-reply-modal .human-reply-to-name { color: #e7d9f5; }
+body.wizard #human-reply-modal #human-reply-desc { color: #e7d9f5; }
 /* Cancel (the only non-primary button) — tarnished-gold on violet. */
 body.wizard #human-reply-modal button:where(:not(.ui-btn)):not(.primary) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
@@ -12929,7 +12920,6 @@ body.wizard #window-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
 body.wizard #window-modal .cleanup-toolbar button:where(:not(.ui-btn)):hover { background: #3a2a63; }
-body.wizard #window-modal .cleanup-count { color: #e7d9f5; }
 
 /* Group + role quick-select chip rows: arcane chips, gilded when ticked. */
 body.wizard #window-modal .window-role-chip {
@@ -13006,7 +12996,6 @@ body.wizard #cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
 body.wizard #cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)):hover { background: #3a2a63; }
-body.wizard #cleanup-modal .cleanup-count { color: #e7d9f5; }
 
 /* Category-filter row (agents mode only): parchment toggles, violet label
    + per-category counts. */
@@ -13033,7 +13022,6 @@ body.wizard #cleanup-modal .cleanup-row .id { color: #b39ddb; }
 
 /* The tier selector + its sub-options: an arcane inset panel, parchment
    labels, violet notes. The native radios / checkboxes stay legible. */
-body.wizard #cleanup-modal .cleanup-options { color: #e7d9f5; }
 body.wizard #cleanup-modal .cleanup-related { border-top-color: rgba(122, 93, 176, 0.5); }
 body.wizard #cleanup-modal .cleanup-related button {
   background: #241b3d; border-color: #d9b45a; color: #f3e6c0;
@@ -13075,7 +13063,6 @@ body.wizard #cleanup-modal #cleanup-submit:disabled { opacity: 0.6; }
    The initial submit stays ember-red because retirement revokes membership
    and boons; the result-phase Done action loses .danger and becomes gilded. */
 
-body.wizard #retire-preview-modal .cleanup-count { color: #e7d9f5; }
 body.wizard #retire-preview-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
@@ -13094,7 +13081,6 @@ body.wizard #retire-preview-modal .cleanup-row .id { color: #b39ddb; }
 body.wizard #retire-preview-modal .cleanup-row label .cleanup-badge {
   background: #1c1436; border-color: #3a2a63; color: #b39ddb;
 }
-body.wizard #retire-preview-modal .delete-agent-wt { color: #e7d9f5; }
 body.wizard #retire-preview-modal .modal-buttons {
   border-top-color: rgba(122, 93, 176, 0.4);
 }
@@ -13127,7 +13113,6 @@ body.wizard #retire-preview-modal #retire-preview-submit:disabled { opacity: 0.6
    removes .danger, the same button settles into the ordinary gilded style. */
 
 body.wizard #delete-retired-modal .cleanup-hint.danger { color: #f0a868; }
-body.wizard #delete-retired-modal .cleanup-count { color: #e7d9f5; }
 body.wizard #delete-retired-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
@@ -13150,7 +13135,6 @@ body.wizard #delete-retired-modal .cleanup-badge {
 body.wizard #delete-retired-modal .cleanup-row label .cleanup-badge:not(.online) {
   border-color: #3a2a63; color: #b39ddb;
 }
-body.wizard #delete-retired-modal .delete-agent-wt { color: #e7d9f5; }
 body.wizard #delete-retired-modal .modal-buttons {
   border-top-color: rgba(122, 93, 176, 0.4);
 }
@@ -13180,7 +13164,6 @@ body.wizard #delete-retired-modal #delete-retired-submit:disabled { opacity: 0.6
    violet surface, list, controls, and destructive lever strictly scoped to
    #worktree-cleanup-modal so those siblings retain their own skins. */
 
-body.wizard #worktree-cleanup-modal .cleanup-count { color: #e7d9f5; }
 body.wizard #worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
@@ -13204,7 +13187,6 @@ body.wizard #worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn))
 }
 body.wizard #worktree-cleanup-modal .cleanup-badge.merged { color: #7ee2a8; }
 body.wizard #worktree-cleanup-modal :is(.cleanup-badge.upstream-gone, .cleanup-badge.stale, .cleanup-dangling-note) { color: #d9b45a; }
-body.wizard #worktree-cleanup-modal .delete-agent-wt { color: #e7d9f5; }
 body.wizard #worktree-cleanup-modal .delete-agent-wt code {
   background: #241b3d; border: 1px solid #3a2a63; color: #f3e6c0;
 }
@@ -13234,7 +13216,6 @@ body.wizard #worktree-cleanup-modal #worktree-cleanup-submit:disabled { opacity:
 body.wizard #delete-group-modal .delete-group-copy-regular { display: none; }
 body.wizard #delete-group-modal .delete-group-copy-wizard { display: inline; }
 body.wizard #delete-group-modal .cleanup-hint.danger { color: #f0a868; }
-body.wizard #delete-group-modal .cleanup-count { color: #e7d9f5; }
 body.wizard #delete-group-modal .cleanup-list {
   background: #120c24; border-color: rgba(122, 93, 176, 0.5);
 }
@@ -13247,7 +13228,6 @@ body.wizard #delete-group-modal .cleanup-badge {
   border-color: #3a2a63;
   color: #b39ddb;
 }
-body.wizard #delete-group-modal .delete-agent-wt { color: #e7d9f5; }
 body.wizard #delete-group-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 body.wizard #delete-group-modal #delete-group-submit {
   font-size: 0;
@@ -13370,7 +13350,7 @@ body.wizard #term-modal #term-current:active {
 .term-choice:hover, .term-choice:focus-visible { border-color: #58a6ff; background: #1f2a3a; outline: none; }
 .term-choice-icon { font-size: 18px; width: 24px; flex: 0 0 auto; text-align: center; line-height: 1.2; }
 .term-choice-body { flex: 1 1 auto; min-width: 0; }
-.term-choice-title { color: #e6edf3; font-weight: 600; font-size: 13px; }
+.term-choice-title { color: var(--ui-strong-text); font-weight: 600; font-size: 13px; }
 .term-choice-tag {
   font-size: 10px; border: 1px solid #30363d; border-radius: 10px;
   padding: 0 6px; margin-left: 6px; color: #8b949e; vertical-align: 1px;
@@ -13397,7 +13377,6 @@ body.wizard #term-chooser-modal .term-choice:hover,
 body.wizard #term-chooser-modal .term-choice:focus-visible {
   border-color: #d9b45a; background: #2e2240; box-shadow: 0 0 10px rgba(217, 180, 90, 0.2);
 }
-body.wizard #term-chooser-modal .term-choice-title { color: #f3e6c0; }
 body.wizard #term-chooser-modal .term-choice-tag,
 body.wizard #term-chooser-modal .term-choice-key,
 body.wizard #term-chooser-modal .term-chooser-hint kbd { border-color: #59466b; color: #ad9abb; }
@@ -13515,8 +13494,6 @@ body.wizard #export-agent-modal .cron-create-label { color: #b39ddb; }
 body.wizard #export-agent-modal .cron-create-row select:where(:not(.ui-select)) option {
   color: #1a1330; background: #e7d9f5;
 }
-/* "Clone into the same group" toggle + its hint. */
-body.wizard #export-agent-modal .export-same-group { color: #e7d9f5; }
 /* The working phase: spinner caption + note go parchment/violet, and the
    spinner itself spins tarnished-gold on a violet track (from arcane blue). */
 body.wizard #export-agent-modal .export-spinner {
@@ -14008,7 +13985,6 @@ body.wizard #template-editor-modal .template-agent-row {
   background: #1b1338; border-color: rgba(122, 93, 176, 0.4);
 }
 body.wizard #template-editor-modal .template-agent-num { color: #a97bd6; }
-body.wizard #template-editor-modal .template-agent-owner { color: #e7d9f5; }
 /* Work-pattern rows ride the .template-agent-row re-skin above; only
    their send-to select needs its own arcane coat. */
 body.wizard #template-editor-modal select.tw-sendto:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
@@ -14104,7 +14080,6 @@ body.wizard #template-editor-modal .tpl-concepts {
 }
 body.wizard #template-editor-modal .tpl-concepts > summary { color: #d9b45a; }
 body.wizard #template-editor-modal .tpl-concepts > summary:hover { color: #f3e6c0; }
-body.wizard #template-editor-modal .tpl-concepts-body { color: #e7d9f5; }
 body.wizard #template-editor-modal .tpl-concepts-body b { color: #f3e6c0; }
 body.wizard #template-editor-modal .tpl-concepts-table th,
 body.wizard #template-editor-modal .tpl-concepts-table td { border-color: rgba(122, 93, 176, 0.4); }
@@ -14373,7 +14348,6 @@ body.wizard #group-import-modal .group-import-preview {
   background: #140f28; border-color: rgba(122, 93, 176, 0.4);
 }
 body.wizard #group-import-modal .group-import-preview .gi-head { color: #f3e6c0; }
-body.wizard #group-import-modal .group-import-preview .gi-row .gi-v { color: #e7d9f5; }
 body.wizard #group-import-modal .group-import-preview .gi-sep { border-top-color: rgba(122, 93, 176, 0.4); }
 body.wizard #group-import-modal button:where(:not(.ui-btn)):not(#group-import-submit) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
@@ -15698,7 +15672,6 @@ body.wizard .mail-reader[data-kind="decree"] .mail-reader-body {
   font-size: 14px; line-height: 1.6;
 }
 body.wizard .mail-reader[data-kind="decree"] .mail-reader-head { border-bottom-color: rgba(217, 180, 90, 0.4); }
-body.wizard .mail-reader[data-kind="decree"] .mail-hval { color: #e7d9f5; }
 body.wizard .mail-reader[data-kind="decree"] .mail-reader-body a {
   color: #f3e6c0; border-bottom: 1px solid rgba(243, 230, 192, 0.4); text-decoration: none;
 }
@@ -15813,7 +15786,6 @@ body.wizard #tab-config .cfg-section > h3 {
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.4);
 }
 /* Settings-app chrome: the rail, panel heads, row text and switches. */
-body.wizard #tab-config .cfg-rail-link { color: #e7d9f5; }
 body.wizard #tab-config .cfg-rail-link:hover { background: #1c1436; }
 body.wizard #tab-config .cfg-rail-link[aria-current="page"] { background: #241b3d; color: #f3e6c0; box-shadow: inset 2px 0 #d9b45a; }
 body.wizard #tab-config .cfg-panel-head h2 { color: #f3e6c0; }
@@ -15841,7 +15813,6 @@ body.wizard #tab-config .cfg-advanced > summary { color: #d9b45a; }
 
 /* Field labels + body text go parchment; hints and the field-nested advanced
    summary (the muted tier — see the two-tier note above) go violet. */
-body.wizard #tab-config .cfg-field,
 body.wizard #tab-config .cfg-field .cfg-label { color: #e7d9f5; }
 body.wizard #tab-config .cfg-field details.cfg-advanced > summary { color: #b39ddb; }
 body.wizard #tab-config .cfg-terminal-attach-field { border-top-color: rgba(122, 93, 176, 0.4); }
@@ -17210,7 +17181,7 @@ body.wizard .process-scope-ports { background: #140f28; border-left-color: #4a3d
   border-radius: 9px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, .55);
 }
-.process-node-chooser-title { color: #e6edf3; font-size: 13px; font-weight: 650; }
+.process-node-chooser-title { color: var(--ui-strong-text); font-size: 13px; font-weight: 650; }
 .process-node-chooser-input {
   width: 100%; box-sizing: border-box; padding: 7px 9px;
   color: #e6edf3; background: #0d1117; border: 1px solid #30363d;
@@ -17220,7 +17191,7 @@ body.wizard .process-scope-ports { background: #140f28; border-left-color: #4a3d
 .process-node-chooser-list { overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
 .process-node-chooser-option {
   display: flex; align-items: flex-start; gap: 9px; width: 100%; padding: 7px 8px;
-  color: #c9d1d9; background: transparent; border: 1px solid transparent;
+  color: var(--ui-body-text); background: transparent; border: 1px solid transparent;
   border-radius: 6px; text-align: left;
 }
 .process-node-chooser-option:hover,
@@ -17232,7 +17203,7 @@ body.wizard .process-scope-ports { background: #140f28; border-left-color: #4a3d
 .process-node-chooser-option.is-disabled.is-selected { background: #251b1b; border-color: #7d4a4a; }
 .process-node-chooser-icon { flex: none; width: 18px; color: #79c0ff; text-align: center; }
 .process-node-chooser-copy { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
-.process-node-chooser-label { color: #e6edf3; font-size: 13px; font-weight: 600; }
+.process-node-chooser-label { color: var(--ui-strong-text); font-size: 13px; font-weight: 600; }
 .process-node-chooser-hint,
 .process-node-chooser-empty { color: #8b949e; font-size: 11px; }
 .process-node-chooser-empty { margin: 5px 0; }
@@ -17386,7 +17357,7 @@ body.wizard .process-list .process-actions .process-delete-btn:focus-visible .tr
 }
 .process-scribe-prompt-label,
 .process-scribe-context-label {
-  color: #e6edf3;
+  color: var(--ui-strong-text);
   font-size: 12px;
   font-weight: 650;
 }
@@ -17592,13 +17563,10 @@ body.wizard .process-node-chooser {
   color: #e7d9f5; background: #211832; border-color: #d4af37;
   box-shadow: 0 12px 34px rgba(20, 15, 40, .72), 0 0 12px rgba(212, 175, 55, .2);
 }
-body.wizard .process-node-chooser-title,
-body.wizard .process-node-chooser-label { color: #f3e6c0; }
 body.wizard .process-node-chooser-input {
   color: #f3e6c0; background: #181226; border-color: #6d5695;
 }
 body.wizard .process-node-chooser-input:focus { border-color: #d4af37; outline-color: rgba(212, 175, 55, .25); }
-body.wizard .process-node-chooser-option { color: #e7d9f5; }
 body.wizard .process-node-chooser-option:hover,
 body.wizard .process-node-chooser-option.is-selected { background: #2c2042; border-color: #d4af37; }
 body.wizard .process-node-chooser-option.is-disabled:hover,
@@ -17630,8 +17598,6 @@ body.wizard .process-editor-modal .modal h3 {
 }
 body.wizard .process-editor-modal .modal p { color: #e7d9f5; }
 body.wizard .process-scribe-preview { background: #211832; border-color: #6d5695; }
-body.wizard .process-scribe-prompt-label,
-body.wizard .process-scribe-context-label { color: #f3e6c0; }
 body.wizard .process-scribe-prompt,
 body.wizard .process-scribe-context-preview { color: #f3e6c0; background: #181226; border-color: #6d5695; }
 body.wizard .process-scribe-prompt:focus { border-color: #d4af37; }
@@ -19380,7 +19346,7 @@ body.wizard .groups-processes-placeholder-glyph { color: #d4af37; }
 .gp-strip-text { color: #8b949e; font-size: 11px; }
 .gp-card { background: #161b22; border: 1px solid #2a3340; border-radius: 10px; margin: 0 0 10px 18px; }
 .gp-card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-bottom: 1px solid #2a3340; }
-.gp-card-name { font-weight: 700; font-size: 13.5px; color: #e6edf3; }
+.gp-card-name { font-weight: 700; font-size: 13.5px; color: var(--ui-strong-text); }
 .gp-card-meta { color: #8b949e; font-size: 11px; }
 .gp-card-meta code { color: #c9d1d9; }
 .gp-spacer { flex: 1; }
@@ -19486,7 +19452,6 @@ body.wizard .gf-section-head { border-bottom-color: rgba(122, 93, 176, 0.35); }
 body.wizard .gf-label { color: #f3e6c0; }
 body.wizard .gp-card { background: #1a1430; border-color: rgba(122, 93, 176, 0.4); }
 body.wizard .gp-card-head { border-bottom-color: rgba(122, 93, 176, 0.4); }
-body.wizard .gp-card-name { color: #f3e6c0; }
 body.wizard .gp-member.busy { box-shadow: 0 0 0 2px #a97bd6; }
 body.wizard .gp-member-count { background: #2c2248; color: #e7d9f5; box-shadow: 0 0 0 1.5px #0f0a1f; }
 .gp-start:where(:not(.ui-btn)), .gp-start-form button:where(:not(.ui-btn)), .gp-start-form select:where(:not(.ui-select)) { font: inherit; font-size: 12px; border: 1px solid #30363d; border-radius: 6px; padding: 3px 10px; background: #21262d; color: #e6edf3; cursor: pointer; }
@@ -19610,7 +19575,7 @@ body.wizard .gq-draft-ask, body.wizard .gq-draft-reply input { background: #120e
 .gq-flow-row.start, .gq-flow-row.end { display: flex; align-items: center; gap: 6px; border-radius: 999px; padding: 2px 10px; color: #8b949e; font-size: 11.5px; }
 .gq-flow-head { display: flex; gap: 5px; align-items: baseline; line-height: 15px; }
 .gq-flow-head b { color: #8b949e; font-weight: 600; min-width: 12px; }
-.gq-flow-name { color: #e6edf3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.gq-flow-name { color: var(--ui-strong-text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .gq-flow-who { font-size: 11px; color: #7ee787; margin: 2px 0 0 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gq-flow-answers { display: flex; flex-wrap: wrap; gap: 3px 8px; margin: 3px 0 0 17px; font-size: 11px; color: #d2a8ff; white-space: nowrap; overflow: hidden; }
 .gq-flow-down { position: absolute; left: 22px; display: flex; align-items: center; gap: 4px; font-size: 11px; color: #6e7681; }
@@ -19631,7 +19596,6 @@ body.wizard .gq-draft-ask, body.wizard .gq-draft-reply input { background: #120e
 .gq-profile input { margin-top: 2px; }
 .gq-profile code { color: #e6edf3; }
 body.wizard .gq-flow-row { background: #181226; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5; }
-body.wizard .gq-flow-name { color: #f3e6c0; }
 body.wizard .gq-flow-who { color: #b6e3a8; }
 body.wizard .gq-flow-answers, body.wizard .gq-flow-down em { color: #d4af37; }
 body.wizard .gq-flow-rails path { stroke: rgba(212, 175, 55, .7); }
@@ -19665,7 +19629,7 @@ body.wizard .gq-link:where(:not(.ui-btn)) { color: #d4af37; }
 /* The inline mini editor (mock M1): a saved process as an editable graph. */
 .gm-card { display: block; margin: 4px 0 12px 18px; border: 1px solid #2a3340; border-radius: 10px; background: #11161d; }
 .gm-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 14px; border-bottom: 1px solid #21262d; }
-.gm-name { font-size: 14px; color: #e6edf3; }
+.gm-name { font-size: 14px; color: var(--ui-strong-text); }
 .gm-toggle { display: inline-flex; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
 .gm-toggle button { font: inherit; font-size: 12px; padding: 2px 10px; border: 0; background: transparent; color: #8b949e; cursor: pointer; }
 .gm-toggle button.on { background: #21262d; color: #e6edf3; cursor: default; }
@@ -19718,7 +19682,6 @@ body.wizard .gm-loop { border-color: #a8892a; color: #f3e6c0; }
 .gq-saved-editing { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: #1f6feb; color: #fff; }
 body.wizard .gm-card { background: #140f28; border-color: rgba(122, 93, 176, 0.4); }
 body.wizard .gm-head, body.wizard .gm-foot { border-color: rgba(122, 93, 176, 0.3); }
-body.wizard .gm-name { color: #f3e6c0; }
 body.wizard .gm-toggle { border-color: rgba(122, 93, 176, 0.5); }
 body.wizard .gm-toggle button.on { background: #241b3d; color: #f3e6c0; }
 body.wizard .gm-handle { border-color: #d4af37; background: #140f28; color: #d4af37; }
@@ -19738,7 +19701,7 @@ body.wizard .gq-saved-editing { background: #3a2f16; color: #f3e6c0; border: 1px
 .gq-saved-chip.open { border-color: #58a6ff; }
 .gq-saved-chip[data-saved-process-drag] { cursor: grab; }
 .gq-saved-chip.gq-saved-drag-source { opacity: .45; }
-.gq-saved-name { color: #e6edf3; font-weight: 600; }
+.gq-saved-name { color: var(--ui-strong-text); font-weight: 600; }
 .gq-saved-run { font: inherit; font-size: 10px; line-height: 1; width: 20px; height: 20px; border-radius: 50%; border: 1px solid #238636; background: #1b3a26; color: #7ee787; cursor: pointer; }
 .gq-saved-run:hover, .gq-saved-run:focus-visible { background: #238636; color: #fff; outline: none; }
 .gq-saved-remove { font: inherit; font-size: 13px; line-height: 1; width: 20px; height: 20px; border-radius: 50%; border: 1px solid transparent; background: transparent; color: #6e7681; cursor: pointer; }
@@ -19753,7 +19716,7 @@ body.wizard .gq-saved-editing { background: #3a2f16; color: #f3e6c0; border: 1px
 .gq-confirm { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: #e3b341; }
 body.wizard .gq-saved-chip, body.wizard .gq-strip { background: #181226; border-color: rgba(122, 93, 176, 0.4); }
 body.wizard .gq-saved-chip.open { border-color: #d4af37; }
-body.wizard .gq-saved-name, body.wizard .gq-strip-title b { color: #f3e6c0; }
+body.wizard .gq-strip-title b { color: #f3e6c0; }
 body.wizard .gq-saved-run { background: #3a2f16; border-color: #d4af37; color: #f3e6c0; }
 body.wizard .gq-saved-run:hover, body.wizard .gq-saved-run:focus-visible { background: #d4af37; color: #140f28; }
 

@@ -1,10 +1,12 @@
-// Muted (secondary) text in page and dialog content takes its colour from
-// --ui-muted-text (ui.css): grey in the default skin, the house lavender in
-// the wizard skin. Content rules that used to hard-code the grey #7d8590 now
-// read the token, and the wizard skin used to repeat `color: #b39ddb` on
-// each of those classes, once per dialog id. A wizard rule that only sets
-// that colour on a class whose base rule already reads the token is a copy
-// and fails here.
+// Text in page and dialog content takes its colour from the content text
+// tokens (ui.css), one value per skin:
+//   --ui-muted-text   grey #7d8590      wizard lavender #b39ddb
+//   --ui-body-text    #c9d1d9           wizard #e7d9f5
+//   --ui-strong-text  #e6edf3           wizard gilt #f3e6c0
+// Content rules that used to hard-code the default value read the token, and
+// the wizard skin used to repeat its value on each of those classes, once per
+// dialog id. A wizard rule that only sets that value on an element a base
+// rule already colours with the token is a copy and fails here.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,13 +20,13 @@ const classesOf = (s) => new Set(s.replace(/:[\w-]+\([^)]*\)/g, '').match(/\.[\w
 const tagOf = (s) => s.replace(/[.:#[].*$/, '');
 const colourOf = (body) => body.match(/(?:^|[;\s])color:\s*([^;]+)/)?.[1].trim().toLowerCase();
 
-// copiedMutedText lists wizard selectors that only set the house lavender on
+// copiedTextColour lists wizard selectors that only set the wizard value on
 // an element a base rule already colours with the token. "Already" means: the
 // subject carries a class, every base rule colouring that subject reads the
 // token, and some token-reading base selector's compounds are an ordered
 // subsequence of the wizard selector's (descendant combinators only), so it
 // reaches every element the wizard rule does.
-export function copiedMutedText(css) {
+export function copiedTextColour(css, wizardValue = '#b39ddb', token = '--ui-muted-text') {
   const source = css.replace(/\/\*[\s\S]*?\*\//g, '');
   const rules = [...source.matchAll(/([^{};]*)\{([^{}]*)\}/g)].map(([, sel, body]) => [sel, body]);
   const baseColours = new Map();
@@ -37,7 +39,7 @@ export function copiedMutedText(css) {
       const s = subject(p);
       if (!baseColours.has(s)) baseColours.set(s, new Set());
       baseColours.get(s).add(colour);
-      if (colour === 'var(--ui-muted-text)' && !/[>+~]/.test(p)) tokenParts.push(p.split(' '));
+      if (colour === `var(${token})` && !/[>+~]/.test(p)) tokenParts.push(p.split(' '));
     }
   }
   const covered = (part) => {
@@ -53,7 +55,7 @@ export function copiedMutedText(css) {
       const tc = classesOf(t);
       if (t !== s && tc.size > own.size && [...own].every((x) => tc.has(x)) && (tagOf(t) === '' || tagOf(t) === tagOf(s))) for (const x of c) colours.add(x);
     }
-    if (colours.size !== 1 || !colours.has('var(--ui-muted-text)')) return false;
+    if (colours.size !== 1 || !colours.has(`var(${token})`)) return false;
     return tokenParts.some((b) => {
       if (b.at(-1) !== s) return false;
       let i = 0;
@@ -65,13 +67,13 @@ export function copiedMutedText(css) {
   for (const [sel, body] of rules) {
     if (!sel.includes('body.wizard')) continue;
     const decls = body.split(';').map((d) => d.trim().replace(/\s+/g, ' ')).filter(Boolean);
-    if (decls.length !== 1 || decls[0].toLowerCase() !== 'color: #b39ddb') continue;
+    if (decls.length !== 1 || decls[0].toLowerCase() !== `color: ${wizardValue}`) continue;
     for (const p of parts(sel)) if (p.startsWith('body.wizard ') && covered(p)) found.add(p);
   }
   return found;
 }
 
-test('the scanner finds wizard copies of the muted text colour', () => {
+test('the scanner finds wizard copies of a content text colour', () => {
   const css = [
     '.a-hint { color: var(--ui-muted-text); font-size: 11px; }',
     '.row .c-note { color: var(--ui-muted-text); }',
@@ -89,19 +91,24 @@ test('the scanner finds wizard copies of the muted text colour', () => {
   // base reaches (.c-note outside .row), a base hard-coding another colour,
   // a bare element subject, and a class whose modifier (.f-badge.online) a
   // base rule colours differently.
-  assert.deepEqual([...copiedMutedText(css)].sort(), ['body.wizard #x-modal .a-hint', 'body.wizard #z-modal .row .c-note']);
+  assert.deepEqual([...copiedTextColour(css)].sort(), ['body.wizard #x-modal .a-hint', 'body.wizard #z-modal .row .c-note']);
 });
 
-test('ui.css defines the muted text token per skin', () => {
+const TOKENS = [['--ui-muted-text', '#7d8590', '#b39ddb'], ['--ui-body-text', '#c9d1d9', '#e7d9f5'], ['--ui-strong-text', '#e6edf3', '#f3e6c0']];
+
+test('ui.css defines the content text tokens per skin', () => {
   const ui = readFileSync(new URL('ui.css', DASHBOARD), 'utf8');
-  assert.match(ui, /:root \{[^}]*--ui-muted-text: #7d8590/);
-  assert.match(ui, /body\.wizard \{[^}]*--ui-muted-text: #b39ddb/);
+  for (const [token, plain, wizard] of TOKENS) {
+    assert.match(ui, new RegExp(`:root \\{[^}]*${token}: ${plain}`));
+    assert.match(ui, new RegExp(`body\\.wizard \\{[^}]*${token}: ${wizard}`));
+  }
 });
 
-test('wizard skin does not repeat the muted text colour per dialog', () => {
+test('wizard skin does not repeat a content text colour per dialog', () => {
   const found = [];
   for (const file of readdirSync(DASHBOARD).filter((f) => f.endsWith('.css') && f !== 'ui.css')) {
-    for (const sel of copiedMutedText(readFileSync(new URL(file, DASHBOARD), 'utf8'))) found.push(`${file}: ${sel}`);
+    const css = readFileSync(new URL(file, DASHBOARD), 'utf8');
+    for (const [token, , wizard] of TOKENS) for (const sel of copiedTextColour(css, wizard, token)) found.push(`${file}: ${sel} (${token})`);
   }
-  assert.deepEqual(found, [], 'muted content text reads var(--ui-muted-text); the wizard sets the token once');
+  assert.deepEqual(found, [], 'content text reads the --ui-*-text tokens; the wizard sets each token once');
 });
