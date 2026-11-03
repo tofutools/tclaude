@@ -318,8 +318,6 @@ body.dock-open .open-prs.is-open::before {
   padding: 2px 8px; border: 1px solid #303946; border-radius: 6px; background: transparent;
   color: #8b949e; cursor: pointer; font-size: 10.5px;
 }
-.open-prs-add-form .open-prs-add-ok:where(:not(.ui-btn)) { border-color: #385b81; background: #172a40; color: #c9d1d9; }
-.open-prs-add-form button:where(:not(.ui-btn)):disabled { opacity: 0.5; cursor: default; }
 .open-prs-add-form button:where(:not(.ui-btn)):focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .open-prs-stale { margin: 0; padding: 6px 13px; border-bottom: 1px solid #222b35; color: #d29922; font-size: 10.5px; }
 .open-prs-people-error { flex-basis: 100%; margin: 0 0 6px; text-align: right; }
@@ -340,11 +338,6 @@ body.dock-open .open-prs.is-open::before {
 .open-prs-confirm-durations label { display: inline-flex; align-items: center; gap: 4px; color: #c9d1d9; cursor: pointer; }
 .open-prs-confirm-durations input { margin: 0; accent-color: #1f6feb; }
 .open-prs-confirm-buttons { display: flex; justify-content: flex-end; gap: 8px; }
-.open-prs-confirm-buttons button:where(:not(.ui-btn)) {
-  padding: 4px 12px; border: 1px solid #3a4654; border-radius: 6px; background: #21262d;
-  color: #c9d1d9; cursor: pointer; font-size: 11.5px;
-}
-.open-prs-confirm-buttons button:where(:not(.ui-btn)):hover { background: #30363d; }
 .open-prs-confirm-buttons button:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 @media (max-width: 620px) {
   .open-prs-popover, .open-prs.is-open::before { right: 8px; width: calc(100vw - 16px); }
@@ -689,18 +682,6 @@ button.tool:where(:hover) { background: var(--ui-bg-hover); }
 }
 .mail-folder-actions.solo { border-left: none; padding-left: 0; }
 .mail-bulk-bar label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
-/* Match the dark chrome the pager / row-action buttons use. Without an
-   explicit background these fell back to the native (light-grey) button,
-   which made the light "delete selected" / "wipe" labels unreadable. */
-.mail-bulk-bar button:where(:not(.ui-btn)) {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
-  color: #7d8590; cursor: pointer; font-family: inherit;
-  font-size: 12px; padding: 3px 8px;
-}
-.mail-bulk-bar button:where(:not(.ui-btn)):hover:not(:disabled) { color: #d4d4d4; background: var(--ui-bg-hover); }
-.mail-bulk-bar button:where(:not(.ui-btn)):disabled { opacity: .45; cursor: default; }
-.mail-bulk-bar button:where(:not(.ui-btn)).danger { color: #d4d4d4; }
-.mail-bulk-bar button:where(:not(.ui-btn)).danger:hover:not(:disabled) { color: #f85149; background: rgba(248, 81, 73, 0.15); }
 
 /* Pager footer under the message list: prev/next navigation on the left,
    a page-size selector pushed to the right. Same chrome as the bulk bar
@@ -935,37 +916,10 @@ button.tool:where(:hover) { background: var(--ui-bg-hover); }
 }
 .mail-decision.decided { border-color: #2a3340; background: #161b22; }
 .mail-decision-label { color: #8b949e; font-size: 12px; }
-.mail-decision button:where(:not(.ui-btn)) {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 4px; color: #d4d4d4;
-  cursor: pointer; font-family: inherit; font-size: 13px; padding: 4px 10px;
-}
-.mail-decision button:where(:not(.ui-btn)).primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-.mail-decision button:where(:not(.ui-btn)):not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
-.mail-decision button:where(:not(.ui-btn)):disabled { opacity: .5; cursor: default; }
 /* The button an agent put on a message (notify-human --action). */
 .message-action { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
-.message-action button:where(:not(.ui-btn)) {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 4px; color: #d4d4d4;
-  cursor: pointer; font-family: inherit; font-size: 13px; padding: 4px 10px;
-}
-.message-action button:where(:not(.ui-btn)).primary, .message-action button:where(:not(.ui-btn)).companion-primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-.message-action button:where(:not(.ui-btn)):not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
-.message-action button:where(:not(.ui-btn)):disabled { opacity: .5; cursor: default; }
 .message-action-detail { color: #d4d4d4; font-size: 12px; overflow-wrap: anywhere; }
 .message-action-note { flex-basis: 100%; color: #8b949e; font-size: 12px; }
-/* JOH-364: base chrome for the reading-pane action bar (reply / focus /
-   mark read|unread / delete). These are plain <button>s with no .tool class, so
-   nothing reached them in plain mode and they rendered white UA chrome. The
-   .danger:hover below and the wizard data-kind rules compose on top. Mirrors
-   .mail-bulk-bar button. */
-.mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)) {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
-  color: #7d8590; cursor: pointer; font-family: inherit;
-  font-size: 12px; padding: 3px 8px;
-}
-.mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):hover:not(:disabled) { color: #d4d4d4; background: var(--ui-bg-hover); }
-.mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):disabled { opacity: .45; cursor: default; }
-.mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover { color: #f85149; background: rgba(248, 81, 73, 0.15); }
 /* "⤓ download ▾" split button (message-download-menu.js). It sits at the far
    end of the action bar, just before delete, and its menu opens DOWNWARD: the
    reader scrolls, so a menu below the bar only lengthens the scroll area,
@@ -1700,12 +1654,6 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
   display: flex; align-items: center; gap: 8px; padding: 10px 18px;
   border-bottom: 1px solid #21262d; color: #8b949e; font-size: 11px;
 }
-.human-notification-drawer-nav button:where(:not(.ui-btn)) {
-  width: 28px; height: 26px; padding: 0; border: 1px solid #30363d;
-  border-radius: 4px; background: #161b22; color: #8b949e; cursor: pointer;
-}
-.human-notification-drawer-nav button:where(:not(.ui-btn)):hover:not(:disabled) { color: #f0f6fc; background: var(--ui-bg-hover); }
-.human-notification-drawer-nav button:where(:not(.ui-btn)):disabled { opacity: .35; cursor: default; }
 .human-notification-drawer-order { margin-left: auto; }
 .human-notification-drawer-announcement {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
@@ -1780,12 +1728,6 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
   border-top: 1px solid #30363d; background: #161b22;
 }
 .human-notification-drawer-actions-break { flex-basis: 100%; height: 0; }
-.human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)) {
-  padding: 7px 10px; border: 1px solid #30363d; border-radius: 5px;
-  background: #21262d; color: #c9d1d9; cursor: pointer; font: inherit; font-size: 12px;
-  line-height: 16px; white-space: nowrap;
-}
-.human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):disabled { opacity: .45; cursor: default; }
 .human-notification-drawer-actions .human-notification-drawer-delete { margin-left: auto; }
 /* The shared split button, joined and left-aligned on the second row. Its menu
    opens UPWARD here: the bar sits at the drawer's bottom edge. */
@@ -1806,10 +1748,6 @@ body.wizard header .human-notification-hint.human-notification-hint-button {
 .human-notification-drawer-actions .mail-download-menu button[role="menuitem"][type]:where(:not(.ui-menu-item)):hover,
 .human-notification-drawer-actions .mail-download-menu button[role="menuitem"][type]:where(:not(.ui-menu-item)):focus-visible {
   background: #263445; color: #f0f6fc; outline: none;
-}
-.human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):not(.primary, .companion-primary):hover:not(:disabled) { color: #f0f6fc; background: var(--ui-bg-hover); }
-.human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)).primary {
-  border-color: #1f6feb; background: #0d3a66; color: #dbeafe;
 }
 
 /* Human-notify image attachments. The thumbnail is deliberately a button
@@ -2617,7 +2555,6 @@ body.slop :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer
 body.slop :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer:hover,
 body.slop :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer:focus-visible { color: #ffd700; }
 
-
 /* The rendered document itself, on BOTH surfaces that show one: the card in
    the message and the viewer. Default-theme colours are in the .markdown-document
    block above; these are the same roles in each theme's palette. */
@@ -2664,7 +2601,6 @@ body.wizard :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resiz
   outline-color: #b39ddb;
 }
 
-
 body.slop .markdown-document { color: #f0dcc0; }
 body.slop .markdown-document :is(h1, h2, h3, h4) { color: #ffe88c; }
 body.slop .markdown-document :is(h5, h6) { color: #c9a86b; }
@@ -2708,7 +2644,6 @@ body.slop :is(.markdown-preview-overlay, .image-preview-overlay) .dialog-resizer
   outline-color: #ffd700;
 }
 
-
 /* ─── Reader skins for the cosmetic themes ────────────────────────────
    The reader is chrome, so it re-skins with the shell the way the dock does:
    the grimoire under body.wizard, the casino under body.slop. Both are kept
@@ -2739,10 +2674,6 @@ body.wizard .human-notification-drawer-sender small,
 body.wizard .human-notification-drawer-date,
 body.wizard .human-notification-drawer-file span { color: #9a86c9; }
 body.wizard .human-notification-drawer-nav { border-bottom-color: #2a2140; color: #b39ddb; }
-body.wizard .human-notification-drawer-nav button:where(:not(.ui-btn)) {
-  background: #1d1730; border-color: #3a2f57; color: #b39ddb;
-}
-body.wizard .human-notification-drawer-nav button:where(:not(.ui-btn)):hover:not(:disabled) { color: #e6dcff; background: #3a2a63; }
 body.wizard .human-notification-drawer-date { border-bottom-color: #2a2140; }
 body.wizard .human-notification-drawer-body { color: #d8cff0; }
 body.wizard .human-notification-drawer-body a { color: #b39ddb; }
@@ -2752,13 +2683,6 @@ body.wizard .human-notification-drawer-file-link:focus-visible { outline-color: 
 body.wizard .human-notification-drawer-file-icon { background: #241a3a; color: #d8cff0; }
 body.wizard .human-notification-drawer-download { border-color: #7c5cc4; color: #b39ddb; }
 body.wizard .human-notification-drawer-download:hover { background: rgba(124, 92, 196, .16); }
-body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)) {
-  background: #1d1730; border-color: #3a2f57; color: #d8cff0;
-}
-body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):not(.primary, .companion-primary):hover:not(:disabled) { color: #e6dcff; background: #3a2a63; }
-body.wizard .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)).primary {
-  background: #3b2a63; border-color: #7c5cc4; color: #f0e9ff;
-}
 
 body.slop .human-notification-drawer {
   background: #1a0505; border-left-color: #8b0000;
@@ -2781,10 +2705,6 @@ body.slop .human-notification-drawer-sender small,
 body.slop .human-notification-drawer-date,
 body.slop .human-notification-drawer-file span { color: #c9a86b; }
 body.slop .human-notification-drawer-nav { border-bottom-color: #5c0d0d; color: #c9a86b; }
-body.slop .human-notification-drawer-nav button:where(:not(.ui-btn)) {
-  background: #2a0a0a; border-color: #8b0000; color: #c9a86b;
-}
-body.slop .human-notification-drawer-nav button:where(:not(.ui-btn)):hover:not(:disabled) { color: #ffe88c; background: #4a1414; }
 body.slop .human-notification-drawer-date { border-bottom-color: #5c0d0d; }
 body.slop .human-notification-drawer-body { color: #f0dcc0; }
 body.slop .human-notification-drawer-body a { color: #ffd700; }
@@ -2794,13 +2714,6 @@ body.slop .human-notification-drawer-file-link:focus-visible { outline-color: #f
 body.slop .human-notification-drawer-file-icon { background: #4a0a0a; color: #f0dcc0; }
 body.slop .human-notification-drawer-download { border-color: #ffd700; color: #ffd700; }
 body.slop .human-notification-drawer-download:hover { background: rgba(255, 215, 0, .13); }
-body.slop .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)) {
-  background: #2a0a0a; border-color: #8b0000; color: #f0dcc0;
-}
-body.slop .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)):not(.primary, .companion-primary):hover:not(:disabled) { color: #ffe88c; background: #4a1414; }
-body.slop .human-notification-drawer-actions button:where(:not(.ui-btn, .ui-menu-item)).primary {
-  background: #4a0a0a; border-color: #ffd700; color: #ffe88c;
-}
 
 .rowname-input {
   background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
@@ -4852,13 +4765,6 @@ body.show-group-description .group-descr { display: inline; }
   display: grid; grid-template-columns: repeat(3, 1fr); flex: 1;
   padding: 2px; border: 1px solid #2a3340; border-radius: 5px; background: #0d1117;
 }
-.group-create-origin-options button:where(:not(.ui-btn)) {
-  height: 29px; border: 0; border-radius: 3px; background: transparent;
-  color: #7d8590; font: inherit; font-size: 11px; cursor: pointer;
-}
-.group-create-origin-options button:where(:not(.ui-btn)).selected {
-  background: #1f3f67; color: #79c0ff; box-shadow: inset 0 0 0 1px #1f6feb;
-}
 .group-create-source-summary { margin: 0; }
 .group-create-workspace {
   margin: 2px 0; padding: 10px 10px 9px; min-width: 0;
@@ -4880,15 +4786,6 @@ body.show-group-description .group-descr { display: inline; }
    the segment's quiet frame. */
 .ui-seg:is(.group-create-origin-options, .group-create-workspace-modes, .group-create-clone-transport) { display: grid; }
 .group-create-workspace-modes { margin-bottom: 10px; }
-.group-create-workspace-modes button:where(:not(.ui-btn)),
-.group-create-clone-transport button:where(:not(.ui-btn)) {
-  height: 27px; border: 0; border-radius: 3px; background: transparent;
-  color: #7d8590; font: inherit; font-size: 11px; cursor: pointer;
-}
-.group-create-workspace-modes button:where(:not(.ui-btn)).selected,
-.group-create-clone-transport button:where(:not(.ui-btn)).selected {
-  background: #1f3f67; color: #79c0ff; box-shadow: inset 0 0 0 1px #1f6feb;
-}
 .group-create-workspace-row { margin-top: 8px; }
 .group-create-workspace-simple-row > :last-child { margin-right: 0; }
 .group-create-attach-repository {
@@ -6328,20 +6225,14 @@ body.wizard .group-pending-title-wizard { display: inline; }
 }
 :is(.filter-bar, .content-search-bar) button.clear-filter:hover { color: #d4d4d4; }
 .filter-bar .spacer { flex: 1; }
-.filter-bar button.primary:where(:not(.ui-btn)) {
-  background: #1f6feb; border: 1px solid #1f6feb; color: white;
-  border-radius: 4px; padding: 5px 12px; font-size: 12px;
-  cursor: pointer; font-family: inherit;
-}
-.filter-bar button.primary:where(:not(.ui-btn)):hover { background: #388bfd; }
-.filter-bar button.tool:where(:not(.ui-btn)), .filter-bar a.tool {
+.filter-bar a.tool {
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
   border-radius: 4px; padding: 5px 12px; font-size: 12px;
   cursor: pointer; font-family: inherit;
 }
 /* A download link styled as a toolbar button (Logs tab "export"). */
 .filter-bar a.tool { display: inline-block; text-decoration: none; line-height: normal; }
-.filter-bar button.tool:where(:not(.ui-btn)):hover, .filter-bar a.tool:hover { color: #d4d4d4; background: var(--ui-bg-hover); }
+.filter-bar a.tool:hover { color: #d4d4d4; background: var(--ui-bg-hover); }
 .filter-bar label.filter-toggle {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 11px; color: var(--ui-muted-text); cursor: pointer; user-select: none;
@@ -6547,11 +6438,6 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 }
 .steward-shutdown-confirm p { margin: 0 0 8px; }
 .steward-shutdown-actions { display: flex; justify-content: flex-end; gap: 6px; }
-.steward-shutdown-actions button:where(:not(.ui-btn)) {
-  background: #21262d; border: 1px solid #2a3340; border-radius: 3px; padding: 3px 10px;
-  font-size: 12px; color: #c9d1d9; font-family: inherit; cursor: pointer;
-}
-.steward-shutdown-actions button:where(:not(.ui-btn)).danger { background: #8e1f1f; border-color: #da3633; color: #fff; }
 .steward-down-notice {
   display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 12px;
   background: #1e1a10; border-bottom: 1px solid #5c4a1e; color: #f0c674; font-size: 13px;
@@ -7734,19 +7620,6 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   width: 100%;
 }
 .sbx-prelaunch-actions { display: flex; gap: .3rem; }
-.sbx-prelaunch-actions button:where(:not(.ui-btn)) {
-  background: #21262d;
-  border: 1px solid #2a3340;
-  border-radius: 4px;
-  color: #c9d1d9;
-  cursor: pointer;
-  font: inherit;
-  font-size: .76rem;
-  min-height: 29px;
-  padding: 0 .55rem;
-}
-.sbx-prelaunch-actions button:where(:not(.ui-btn)):hover { background: #2d333b; }
-.sbx-prelaunch-actions button:where(:not(.ui-btn)):disabled { cursor: default; opacity: .35; }
 .sbx-prelaunch-actions .sbx-prelaunch-remove { color: #f0b0b0; }
 .sbx-prelaunch-add:disabled { cursor: default; opacity: .45; }
 
@@ -7898,9 +7771,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   color: #c9d1d9; font-family: inherit; font-size: 12px;
   padding: 0 10px; cursor: pointer; white-space: nowrap;
 }
-.sbx-row button:where(:not(.ui-btn)):last-child:not(.sbx-segmented-option) { padding: 0 9px; color: #8b949e; }
 .sbx-row button:where(:not(.ui-btn)):hover { background: #2d333b; }
-.sbx-row button:where(:not(.ui-btn)):last-child:hover:not(.sbx-segmented-option) { color: #f0b0b0; background: var(--ui-bg-hover); }
 /* Sandbox-profile card body: one compact line per grant / env binding, replacing
    the old ` · `-joined .modal-meta paragraph. Each line is a small tag plus a
    monospace value that ellipsis-truncates rather than wrapping. */
@@ -7935,7 +7806,6 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   color: #7d8590; font-family: inherit; font-size: 12px;
   padding: 4px 10px; cursor: pointer;
 }
-.sbx-add-row:where(:not(.ui-btn)):hover { background: #1c2330; color: #c9d1d9; }
 .sbx-effective-environment-toggle {
   background: transparent; border: 1px solid #30363d; border-radius: 4px;
   color: #8b949e; font-family: inherit; font-size: 12px; padding: 4px 9px;
@@ -7977,13 +7847,6 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   background: rgba(210, 153, 34, 0.08); color: #d2a84b; font-size: 12px;
 }
 .sbx-missing[hidden] { display: none; }
-.sbx-missing button:where(:not(.ui-btn)) {
-  flex: 0 0 auto; background: #21262d; border: 1px solid #6e5a2d; border-radius: 4px;
-  color: #e3b341; font-family: inherit; font-size: 12px; padding: 4px 9px;
-  cursor: pointer; white-space: nowrap;
-}
-.sbx-missing button:where(:not(.ui-btn)):hover { background: #2d2a20; }
-.sbx-missing button:where(:not(.ui-btn)):disabled { opacity: 0.55; cursor: default; }
 /* The common-rule preset menu sits under the filesystem table and ships
    folded: it is a long audited catalog most profiles never open, and every
    entry is only a row inserter — after the click there is nothing left of it
@@ -8149,13 +8012,6 @@ body.wizard #agent-spawn-role-add { background: #140f28; color: #f3e6c0; }
    open a native directory picker. align-self:stretch makes it match the
    adjacent input's height in the flex row. */
 .cron-create-row .dir-browse-btn { flex: 0 0 auto; align-self: stretch; }
-.cron-create-row .dir-browse-btn:where(:not(.ui-btn)) {
-  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
-  color: #c9d1d9; font-family: inherit; font-size: 12px;
-  padding: 0 12px; cursor: pointer; white-space: nowrap;
-}
-.cron-create-row .dir-browse-btn:where(:not(.ui-btn)):hover { background: #2d333b; }
-.cron-create-row .dir-browse-btn:where(:not(.ui-btn)):disabled { opacity: 0.5; cursor: default; }
 /* JOH-364: the "⧉ manage templates…" tool button sits beside the template
    <select> in a cron-create-row — exactly like a Browse… button beside a path
    input — so it needs the same flex sizing to match the select's height instead
@@ -8257,11 +8113,6 @@ body.wizard #agent-spawn-role-add { background: #140f28; color: #f3e6c0; }
 .spawn-attachments-controls {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
-.spawn-attachments-controls button:where(:not(.ui-btn)) {
-  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
-  color: #c9d1d9; padding: 5px 10px; font-size: 12px; cursor: pointer;
-}
-.spawn-attachments-controls button:where(:not(.ui-btn)):hover { background: var(--ui-bg-hover); }
 .spawn-attachments-list {
   list-style: none; margin: 0; padding: 0; display: flex;
   flex-direction: column; gap: 4px;
@@ -8314,12 +8165,6 @@ body.wizard #agent-spawn-role-add { background: #140f28; color: #f3e6c0; }
 .cron-create-target .cron-target-input-row select {
   flex: 1;
 }
-.cron-create-target .cron-target-input-row button:where(:not(.ui-btn)) {
-  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
-  padding: 5px 10px; font-size: 12px; color: #c9d1d9;
-  font-family: inherit; cursor: pointer;
-}
-.cron-create-target .cron-target-input-row button:where(:not(.ui-btn)):hover:not(:disabled) { background: #2d333b; }
 .cron-create-target .cron-target-input-row:not(.locked-field) button:disabled { opacity: .5; cursor: not-allowed; }
 /* Saved-prompt picker: one line — the insert select takes the width and the
    Manage button stays its natural size beside it. */
@@ -9158,17 +9003,6 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .template-card .tc-descr { flex: 0 200 auto; min-width: 22ch; color: var(--ui-muted-text); font-size: 12px; }
 .template-card .tc-count { color: #6e7681; font-size: 11px; }
 .template-card .tc-actions { flex: none; margin-left: auto; display: flex; gap: 6px; }
-/* JOH-364: the deploy/summon action is a `.primary` button (the sibling
-   instantiate/duplicate/edit/export/delete are `.tool`, covered by the base
-   button.tool rule). Without this it rendered white UA chrome in plain mode;
-   the wizard .tc-actions button.primary rule recolors it per skin. Mirrors
-   .filter-bar button.primary. */
-.template-card .tc-actions button:where(:not(.ui-btn)).primary {
-  background: #1f6feb; border: 1px solid #1f6feb; color: white;
-  border-radius: 4px; padding: 5px 12px; font-size: 12px;
-  cursor: pointer; font-family: inherit;
-}
-.template-card .tc-actions button:where(:not(.ui-btn)).primary:hover { background: #388bfd; }
 .template-card .tc-agents { display: flex; flex-wrap: wrap; gap: 6px; }
 .template-card .tc-agent {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
@@ -9216,12 +9050,6 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   display: flex; align-items: center; gap: 8px;
   font-size: 11px; color: var(--ui-muted-text);
 }
-.cleanup-toolbar button:where(:not(.ui-btn)) {
-  background: #21262d; border: 1px solid #2a3340; border-radius: 3px;
-  padding: 2px 8px; font-size: 11px; color: #c9d1d9;
-  font-family: inherit; cursor: pointer;
-}
-.cleanup-toolbar button:where(:not(.ui-btn)):hover { background: #2d333b; }
 .cleanup-toolbar .spacer { flex: 1; }
 .cleanup-toolbar input[type=number] {
   width: 3.6em; background: #0d1117; border: 1px solid #2a3340;
@@ -9296,8 +9124,6 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 #message-create-members .recipient-prs { margin-left: auto; display: flex; gap: 10px; flex: 0 0 auto; }
 #message-create-members .recipient-prs .pr-link { margin-left: 0; }
 .recipient-picks { flex-wrap: wrap; row-gap: 6px; }
-.recipient-picks button:where(:not(.ui-btn)):disabled { opacity: 0.45; cursor: default; }
-.recipient-picks button:where(:not(.ui-btn)).active { border-color: #1f6feb; color: #58a6ff; }
 .recipient-pick-count { color: #7d8590; margin-left: 2px; }
 .recipient-picks-hint { margin-top: 4px; }
 .cleanup-badge.removed, .cleanup-badge.deleted, .cleanup-badge.retired,
@@ -9332,8 +9158,6 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 #worktree-cleanup-modal .cleanup-row .path { flex: 1 1 14em; }
 #worktree-cleanup-modal .cleanup-row .cleanup-dangling-note { flex: 1 1 100%; margin: 2px 0 0 25px; color: #d29922; }
 #worktree-cleanup-modal .cleanup-toolbar button { white-space: nowrap; }
-.cleanup-toolbar button:where(:not(.ui-btn)).active,
-.cleanup-toolbar button:where(:not(.ui-btn))[aria-pressed="true"] { border-color: #1f6feb; color: #58a6ff; }
 .cleanup-prune-row { background: rgba(210, 153, 34, 0.035); }
 .cleanup-prune-note {
   margin: 5px 8px 0 25px; color: #7d8590; font-size: 11px; line-height: 1.4;
@@ -10334,14 +10158,6 @@ body.wizard nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #f
   display: flex; align-items: center; gap: 6px; margin-bottom: 12px;
 }
 .process-subnav .jobs-subnav { margin: 0; }
-.process-action:where(:not(.ui-btn)) {
-  border: 1px solid #30363d; border-radius: 6px; background: #161b22;
-  color: #c9d1d9; padding: 6px 12px; cursor: pointer; font: inherit;
-  text-decoration: none;
-}
-.process-action:where(:not(.ui-btn)):hover { background: var(--ui-bg-hover); }
-.process-action:where(:not(.ui-btn)).primary { color: #fff; background: #238636; border-color: #2ea043; }
-.process-action:where(:not(.ui-btn)).primary:hover { background: #2ea043; }
 /* Auto layout + its flow-direction picker read as one segmented control. */
 .process-auto-layout-group { display: inline-flex; align-items: stretch; }
 .process-auto-layout-group > .process-action { border-radius: 0; margin-left: -1px; }
@@ -10349,9 +10165,6 @@ body.wizard nav:has([data-tab="processes"].active) [data-tab="jobs"] { color: #f
 .process-auto-layout-group > .process-action:last-child { border-radius: 0 6px 6px 0; }
 .process-auto-layout-group > .process-layout-direction { padding: 6px 7px; min-width: 26px; }
 .process-auto-layout-group > .process-layout-direction:is(.is-active, [aria-pressed="true"]) { position: relative; }
-.process-auto-layout-group > .process-layout-direction:where(:not(.ui-btn)).is-active {
-  color: #fff; background: #1f6feb33; border-color: #388bfd;
-}
 .process-panel { display: none; }
 .process-panel.active { display: block; }
 .process-toolbar { min-height: 34px; }
@@ -10368,7 +10181,6 @@ body.wizard #tab-processes .process-scribe-wizard { display: inline; }
 .process-scribe-state.stopped { color: #d29922; }
 .process-scribe-open { border: 0; padding: 0; color: #58a6ff; background: none; font: inherit; cursor: pointer; text-decoration: underline dotted; }
 .process-scribe-open:disabled { color: #8b949e; cursor: default; }
-.process-scribe-session .process-action:where(:not(.ui-btn)) { padding: 3px 7px; font-size: 12px; }
 .process-scribe-task { color: #79c0ff; font-size: 12px; }
 .process-notice { color: #8b949e; font-size: 12px; }
 .process-list table { width: 100%; border-collapse: collapse; }
@@ -10384,7 +10196,6 @@ body.wizard #tab-processes .process-scribe-wizard { display: inline; }
    it with `min-height` rather than inheriting a stretched flex height — keep
    the two numbers in sync. */
 .process-list .process-actions .process-action { white-space: nowrap; vertical-align: middle; }
-.process-list .process-actions .process-action:where(:not(.ui-btn)) { padding: 4px 8px; font-size: 12px; line-height: 16px; }
 .process-list .process-actions .process-action + .process-action { margin-left: 6px; }
 .process-hash { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #79c0ff; }
 .process-description, .process-secondary { color: #8b949e; font-size: 12px; }
@@ -11178,16 +10989,6 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
   padding: 8px 10px; margin: 8px 0;
 }
 .plugin-step-edit-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-/* JOH-364: the sudo-grants table "revoke" button sits OUTSIDE a .row-actions
-   wrapper, so no rule reached it — white UA chrome in BOTH skins. The table
-   deliberately stays plain-dark in wizard, so no wizard twin is needed. */
-#sudo-list td > button:where(:not(.ui-btn)) {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
-  color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
-  font-family: inherit;
-}
-#sudo-list td > button:where(:not(.ui-btn)):hover { color: #d4d4d4; background: var(--ui-bg-hover); }
-#sudo-list td > button.danger:where(:not(.ui-btn)):hover { color: #f85149; background: rgba(248, 81, 73, 0.15); }
 #plugin-modal .cron-create-modal { max-width: 720px; }
 #plugin-modal-steps { max-height: 50vh; overflow-y: auto; }
 
@@ -11393,10 +11194,6 @@ body.wizard .open-prs-title-details { color: #b39ddb; }
 body.wizard .open-prs-title-details:hover,
 body.wizard .open-prs-title-details:has(input:focus-visible) { color: #f3e6c0; }
 body.wizard .open-prs-title-details input { accent-color: #7a5db0; }
-body.wizard .open-pr-ignore:where(:not(.ui-btn)),
-body.wizard .open-pr-restore:where(:not(.ui-btn)) { border-color: #4a3d6b; color: #b39ddb; }
-body.wizard .open-pr-ignore:where(:not(.ui-btn)):hover,
-body.wizard .open-pr-restore:where(:not(.ui-btn)):hover { background: #3a2a63; color: #f3e6c0; }
 body.wizard .open-pr-row.is-ignored .open-pr-title { color: #9a86c4; }
 body.wizard .open-prs-confirm { border-color: #7a5db0; background: #241b3d; }
 body.wizard .open-prs-people { border-color: #33284d; }
@@ -11404,7 +11201,6 @@ body.wizard .open-prs-person.active { border-color: #33284d; background: #241b3d
 body.wizard .open-prs-person > button[role="tab"] { color: #b39ddb; }
 body.wizard .open-prs-person.active > button[role="tab"] { color: #f3e6c0; }
 body.wizard .open-prs-person.active .open-prs-person-n { background: #7a5db0; }
-body.wizard .open-prs-add-person:where(:not(.ui-btn)) { border-color: #4a3d6b; color: #b39ddb; }
 body.wizard .open-prs-add-form input { border-color: #7a5db0; background: #140f28; color: #e7d9f5; }
 body.wizard .open-prs-confirm h4 { color: #f3e6c0; }
 body.wizard .open-prs-confirm p,
@@ -12022,7 +11818,6 @@ body.wizard #group-settings-modal #group-settings-submit:active:not(:disabled) {
   transform: translateY(2px);
   box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
 }
-body.wizard #group-settings-modal button:where(:not(.ui-btn)):disabled { opacity: 0.7; }
 
 /* ─── Wizard retire modal — "Banish this hero?" ─────────────────
    The arcane counterpart to the Summon dialog above: retiring a hero
@@ -12371,10 +12166,6 @@ body.wizard #message-create-modal .cron-target-modes { color: #e7d9f5; }
 body.wizard #message-create-modal .cron-create-row select:where(:not(.ui-select)) option {
   color: #1a1330; background: #e7d9f5;
 }
-body.wizard #message-create-modal button:where(:not(.ui-btn)):not(.primary) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #message-create-modal button:where(:not(.ui-btn)):not(.primary):hover { background: #3a2a63; }
 body.wizard #message-create-modal .cleanup-list {
   background: #120c24; border-color: rgba(122, 93, 176, 0.5);
 }
@@ -12411,10 +12202,6 @@ body.wizard .operator-message-overlay .spawn-attachments-list li {
   background: #120c24; border-color: rgba(122, 93, 176, 0.5);
 }
 body.wizard .operator-message-overlay .spawn-attachments-list .att-name { color: #f3e6c0; }
-body.wizard .operator-message-overlay button:where(:not(.ui-btn)):not(.operator-message-submit):not(.att-remove) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard .operator-message-overlay button:where(:not(.ui-btn)):not(.operator-message-submit):not(.att-remove):hover { background: #3a2a63; }
 body.wizard .operator-message-overlay .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 body.wizard .operator-message-overlay .operator-message-submit {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
@@ -12536,10 +12323,6 @@ body.wizard #group-create-modal button:where(:not(.ui-btn)):not(.primary):hover 
 body.wizard #group-create-modal .group-create-workspace {
   border-color: rgba(122, 93, 176, 0.45); background: #171126;
 }
-body.wizard #group-create-modal .group-create-workspace-modes button:where(:not(.ui-btn)).selected,
-body.wizard #group-create-modal .group-create-clone-transport button:where(:not(.ui-btn)).selected {
-  background: #3a2a63; color: #e5d3ff; box-shadow: inset 0 0 0 1px #a97bd6;
-}
 body.wizard #group-create-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 
 /* Create = ⚔ Form the party! — the submit button re-skinned into a gilded
@@ -12603,9 +12386,6 @@ body.wizard #group-create-modal .group-create-origin-options,
 body.wizard #group-create-modal .group-clone-preview {
   background: #140f28; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5;
 }
-body.wizard #group-create-modal .group-create-origin-options button:where(:not(.ui-btn)).selected {
-  background: #3a2a63; color: #e5d3ff; box-shadow: inset 0 0 0 1px #a97bd6;
-}
 body.wizard #group-create-modal .group-clone-preview .gcp-title { color: #f3e6c0; }
 body.wizard #group-create-modal .group-clone-preview .gcp-val { color: #e7d9f5; }
 body.wizard #group-create-modal .group-clone-preview .gcp-val.muted { color: #8a7fa8; }
@@ -12636,11 +12416,6 @@ body.wizard #human-reply-modal .cron-create-label { color: #b39ddb; }
    a dimmer lilac for the secondary "re: …" line. The online/offline status
    keeps its own green/amber (recolor chrome, not the honest signal). */
 body.wizard #human-reply-modal #human-reply-desc { color: #e7d9f5; }
-/* Cancel (the only non-primary button) — tarnished-gold on violet. */
-body.wizard #human-reply-modal button:where(:not(.ui-btn)):not(.primary) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #human-reply-modal button:where(:not(.ui-btn)):not(.primary):hover { background: #3a2a63; }
 body.wizard #human-reply-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 /* Send = a gilded raven-dispatch lever. Unlike the Summon / Bind levers it
    keeps its real text (see the block comment) with a 🕊 glyph prefix. The
@@ -12793,7 +12568,6 @@ body.wizard #window-modal .window-dir-note-regular { display: none; }
 body.wizard #window-modal .window-dir-label-wizard,
 body.wizard #window-modal .window-dir-note-wizard { display: inline; }
 
-
 /* Group + role quick-select chip rows: arcane chips, gilded when ticked. */
 body.wizard #window-modal .window-role-chip {
   background: #241b3d; border: 1px solid #3a2a63; color: #e7d9f5;
@@ -12861,7 +12635,6 @@ body.wizard #window-modal #window-submit:disabled { opacity: 0.6; }
    the violet surface. The .cleanup-warn / .cleanup-error status lines below
    are likewise left their honest warning hues (a signal, not chrome). */
 body.wizard #cleanup-modal .cleanup-hint.danger { color: #f0a868; }
-
 
 /* Category-filter row (agents mode only): parchment toggles, violet label
    + per-category counts. */
@@ -13017,14 +12790,6 @@ body.wizard #delete-retired-modal #delete-retired-submit:disabled { opacity: 0.6
    violet surface, list, controls, and destructive lever strictly scoped to
    #worktree-cleanup-modal so those siblings retain their own skins. */
 
-body.wizard #worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)):hover { background: #3a2a63; }
-body.wizard #worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)).active {
-  background: #3a2a63; border-color: #f3e6c0; color: #f3e6c0;
-  box-shadow: 0 0 8px rgba(169, 123, 214, 0.45);
-}
 body.wizard #worktree-cleanup-modal .cleanup-toolbar input[type=search]:focus {
   outline: none; border-color: #a97bd6;
 }
@@ -13034,10 +12799,6 @@ body.wizard #worktree-cleanup-modal .cleanup-list {
 body.wizard #worktree-cleanup-modal .cleanup-row { border-bottom-color: #241b3d; }
 body.wizard #worktree-cleanup-modal .cleanup-row .branch { color: #e7d9f5; }
 body.wizard #worktree-cleanup-modal .cleanup-badge { border-color: #3a2a63; }
-body.wizard #worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn))[aria-pressed="true"] {
-  background: #3a2a63; border-color: #f3e6c0; color: #f3e6c0;
-  box-shadow: 0 0 8px rgba(169, 123, 214, 0.45);
-}
 body.wizard #worktree-cleanup-modal .cleanup-badge.merged { color: #7ee2a8; }
 body.wizard #worktree-cleanup-modal :is(.cleanup-badge.upstream-gone, .cleanup-badge.stale, .cleanup-dangling-note) { color: #d9b45a; }
 body.wizard #worktree-cleanup-modal .delete-agent-wt code {
@@ -13351,14 +13112,6 @@ body.wizard #export-agent-modal .export-history-item {
 }
 body.wizard #export-agent-modal .export-history-item .ehi-title { color: #f3e6c0; }
 body.wizard #export-agent-modal .export-history-item .ehi-sub { color: #b39ddb; }
-/* Every non-primary button (Cancel/Close, Clear all, and the per-item
-   ⤓ download / 🗑 delete icons) gets the tarnished-gold secondary treatment.
-   Excluded via :not(.primary) so the two levers below (Scribe / Download) keep
-   their gilded fill — they are the modal's only .primary buttons. */
-body.wizard #export-agent-modal button:where(:not(.ui-btn)):not(.primary) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #export-agent-modal button:where(:not(.ui-btn)):not(.primary):hover { background: #3a2a63; }
 body.wizard #export-agent-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 
 /* The two primary levers share the gilded conjuring look (Summon's twin). The
@@ -13420,10 +13173,6 @@ body.wizard :is(#paf-export-modal, #group-export-modal) .paf-findings {
 body.wizard :is(#paf-export-modal, #group-export-modal) .paf-findings-head { color: #f0c860; }
 body.wizard :is(#paf-export-modal, #group-export-modal) .paf-ok { color: #7ee2a8; }
 body.wizard :is(#paf-export-modal, #group-export-modal) .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
-body.wizard :is(#paf-export-modal, #group-export-modal) button:where(:not(.ui-btn)):not(.primary) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard :is(#paf-export-modal, #group-export-modal) button:where(:not(.ui-btn)):not(.primary):hover:not(:disabled) { background: #3a2a63; }
 body.wizard :is(#paf-export-modal, #group-export-modal) button:is(.primary, .ui-btn-primary) {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   color: #f3e6c0;
@@ -13435,9 +13184,6 @@ body.wizard :is(#paf-export-modal, #group-export-modal) button:is(.primary, .ui-
 body.wizard :is(#paf-export-modal, #group-export-modal) button:is(.primary, .ui-btn-primary):hover:not(:disabled) {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   box-shadow: 0 3px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard :is(#paf-export-modal, #group-export-modal) button:where(:not(.ui-btn)):disabled {
-  opacity: 0.5; cursor: default; box-shadow: none;
 }
 body.wizard :is(#paf-export-modal, #group-export-modal) .ui-btn-primary:disabled { box-shadow: none; }
 
@@ -13645,10 +13391,6 @@ body.wizard #profiles-manage-modal #profile-create-open.ui-btn-primary:hover {
 /* Recipe cards: violet-framed void, gilt name, violet summary + arcane
    edit/delete actions. */
 body.wizard #profiles-manage-modal .template-card .tc-name { color: #f3e6c0; }
-body.wizard #profiles-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #profiles-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 
 /* Close (and any other non-primary footer button): tarnished-gold secondary. */
 
@@ -13789,17 +13531,6 @@ body.wizard #templates-manage-modal .template-card .tc-forces-label { color: #b3
 body.wizard #templates-manage-modal .template-card .tc-force {
   background: #1b1338; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5;
 }
-body.wizard #templates-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #templates-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)):hover { background: #3a2a63; }
-body.wizard #templates-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)):is(.primary, .ui-btn-primary) {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  box-shadow: 0 0 8px rgba(169, 123, 214, 0.45);
-}
-body.wizard #templates-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)):is(.primary, .ui-btn-primary):hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-}
 
 /* Close (and any other non-primary footer button): tarnished-gold secondary. */
 
@@ -13862,13 +13593,6 @@ body.wizard #template-editor-modal .role-inspect-brieftext {
 body.wizard #template-editor-modal .role-inspect-foot {
   color: #9d86c9; border-top-color: rgba(122, 93, 176, 0.4);
 }
-/* Secondary + inline buttons (+ add hero / ✕ remove / Cancel): the
-   tarnished-gold treatment; :not(#template-editor-submit) keeps the Seal
-   lever below out of this rule's reach. */
-body.wizard #template-editor-modal button:where(:not(.ui-btn)):not(#template-editor-submit) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #template-editor-modal button:where(:not(.ui-btn)):not(#template-editor-submit):hover { background: #3a2a63; }
 body.wizard #template-editor-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 /* Save = 🕯 Seal the circle! — the gilded lever, Summon's sibling. The
    button's "Save template" text hides (font-size: 0) behind the ::before
@@ -13938,10 +13662,6 @@ body.wizard #template-deploy-modal .template-preview {
 body.wizard #template-deploy-modal .template-preview .tp-name { color: #f3e6c0; }
 body.wizard #template-deploy-modal .template-preview .tp-owner { color: #d9b45a; }
 body.wizard #template-deploy-modal .template-preview .tp-default-tag { color: #9d86c9; }
-body.wizard #template-deploy-modal button:where(:not(.ui-btn)):not(#template-deploy-submit) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #template-deploy-modal button:where(:not(.ui-btn)):not(#template-deploy-submit):hover { background: #3a2a63; }
 body.wizard #template-deploy-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 /* Deploy = 🧙 Summon the hero party! — the gilded lever. The in-flight
    state (JS swaps the text to "Deploying…" and disables) stays hidden
@@ -13992,10 +13712,6 @@ body.wizard #template-from-group-modal .cron-create-label { color: #b39ddb; }
 body.wizard #template-from-group-modal .cron-create-row select:where(:not(.ui-select)) option {
   color: #1a1330; background: #e7d9f5;
 }
-body.wizard #template-from-group-modal button:where(:not(.ui-btn)):not(#template-from-group-submit) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #template-from-group-modal button:where(:not(.ui-btn)):not(#template-from-group-submit):hover { background: #3a2a63; }
 body.wizard #template-from-group-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 /* Save as template = 🕯 Trace it! — gilded lever; the brief disabled
    in-flight beat reads "🕯 Tracing…". */
@@ -14039,10 +13755,6 @@ body.wizard #template-from-group-modal.tfg-updating #template-from-group-submit:
    positive-per-#id scoping the trace dialog above follows. */
 
 body.wizard #template-duplicate-modal .cron-create-label { color: #b39ddb; }
-body.wizard #template-duplicate-modal button:where(:not(.ui-btn)):not(#template-duplicate-submit) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #template-duplicate-modal button:where(:not(.ui-btn)):not(#template-duplicate-submit):hover { background: #3a2a63; }
 body.wizard #template-duplicate-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 /* Duplicate template = 🪞 Mirror it! — gilded lever; the disabled
    in-flight beat reads "🪞 Mirroring…". */
@@ -14084,10 +13796,6 @@ body.wizard #template-duplicate-modal #template-duplicate-submit:disabled::befor
    The submit keeps its JS text (no font-size:0 / ::before swap) — just gilded. */
 
 body.wizard #clone-modal .cron-create-label { color: #b39ddb; }
-body.wizard #clone-modal button:where(:not(.ui-btn)):not(#clone-modal-submit) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #clone-modal button:where(:not(.ui-btn)):not(#clone-modal-submit):hover { background: #3a2a63; }
 body.wizard #clone-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 body.wizard #clone-modal #clone-modal-submit {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
@@ -14122,11 +13830,6 @@ body.wizard #clone-modal #clone-modal-submit:disabled { opacity: 0.7; }
    the same treatment the circle cards get in the templates overlay. */
 body.wizard #starters-modal .starter-row .tc-name { color: #f3e6c0; }
 body.wizard #starters-modal .starter-row .tc-count { color: #b39ddb; }
-/* The "⭐ copy into my circles" button + Close: tarnished-gold secondary. */
-body.wizard #starters-modal .starter-actions button:where(:not(.ui-btn)) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #starters-modal .starter-actions button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 body.wizard #starters-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 
 /* ─── Wizard unseal dialog — "⤒ Unseal a party archive" ──────────────
@@ -14202,10 +13905,6 @@ body.wizard #template-import-modal .cron-create-row input[type=file]::file-selec
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
 body.wizard #template-import-modal .cron-create-row input[type=file]::file-selector-button:hover { background: #3a2a63; }
-body.wizard #template-import-modal button:where(:not(.ui-btn)):not(#template-import-submit) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #template-import-modal button:where(:not(.ui-btn)):not(#template-import-submit):hover { background: #3a2a63; }
 body.wizard #template-import-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 /* The gilded lever chrome, honest "Import" label kept. */
 body.wizard #template-import-modal #template-import-submit {
@@ -14234,16 +13933,6 @@ body.wizard :is(#profile-export-modal, #profile-import-modal) input {
   color: #f3e6c0;
 }
 body.wizard :is(#profile-export-modal, #profile-import-modal) input:focus { border-color: #a97bd6; }
-/* Preview sits outside .modal-buttons, so it needs its own scoped wizard skin.
-   The same shared control appears in the sandbox-profile import sibling. */
-body.wizard :is(#profile-import-modal, #sandbox-profile-import-modal) .profile-transfer-preview-button:where(:not(.ui-btn)) {
-  background: #241b3d;
-  border-color: #d9b45a;
-  color: #f3e6c0;
-}
-body.wizard :is(#profile-import-modal, #sandbox-profile-import-modal) .profile-transfer-preview-button:where(:not(.ui-btn)):hover:not(:disabled) {
-  background: #3a2a63;
-}
 
 /* ─── Wizard sandbox-profile dialogs — "Wards" ─────────────────────────
    The sandbox-profile manage overlay + its editor and export/import modals get
@@ -14274,10 +13963,6 @@ body.wizard #sandbox-profiles-manage-modal #sandbox-profile-create-open.ui-btn-p
 }
 body.wizard #sandbox-profiles-manage-modal .template-card .tc-name { color: #f3e6c0; }
 body.wizard #sandbox-profiles-manage-modal .template-card .sbx-cap-val { color: #d8c9f0; }
-body.wizard #sandbox-profiles-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #sandbox-profiles-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 
 /* Editor (inscribe a ward), mirror of #profile-editor-modal. */
 
@@ -14437,10 +14122,6 @@ body.wizard #roles-manage-modal #role-create-open.ui-btn-primary:hover {
 /* Class cards: violet-framed void, gilt name, violet meta + descr. */
 body.wizard #roles-manage-modal .template-card .tc-name { color: #f3e6c0; }
 body.wizard #roles-manage-modal .template-card .tc-sub { color: #b39ddb; }
-body.wizard #roles-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #roles-manage-modal .template-card .tc-actions button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 /* Close (and any other non-primary footer button): tarnished-gold secondary. */
 
 /* ─── Wizard role editor — "Chalk a new class" ─────────────────────────
@@ -14454,12 +14135,6 @@ body.wizard #roles-manage-modal .template-card .tc-actions button:where(:not(.ui
 body.wizard #role-editor-modal .cron-create-label { color: #b39ddb; }
 /* Open <select> options render on the OS layer — dark ink on parchment. */
 body.wizard #role-editor-modal .cron-create-row select:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
-/* Secondary + inline buttons (Cancel): tarnished-gold; the exclusion keeps the
-   Save lever below out of reach. */
-body.wizard #role-editor-modal button:where(:not(.ui-btn)):not(#role-editor-submit) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #role-editor-modal button:where(:not(.ui-btn)):not(#role-editor-submit):hover { background: #3a2a63; }
 body.wizard #role-editor-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 /* Save role = the gilded conjuring lever, honest "Save role" label kept. */
 body.wizard #role-editor-modal #role-editor-submit {
@@ -14486,10 +14161,6 @@ body.wizard #role-editor-modal #role-editor-submit:disabled { opacity: 0.7; }
    #group-context-modal. */
 
 body.wizard #group-context-modal .cron-create-label { color: #b39ddb; }
-body.wizard #group-context-modal button:where(:not(.ui-btn)):not(#group-context-submit) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #group-context-modal button:where(:not(.ui-btn)):not(#group-context-submit):hover { background: #3a2a63; }
 body.wizard #group-context-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 /* Save = 📜 Inscribe it! — gilded lever; the brief disabled in-flight beat
    reads "📜 Inscribing…". */
@@ -14550,12 +14221,10 @@ body.wizard #context-features-modal .perm-edit-banner strong { color: #f3e6c0; }
 /* Owner note keeps its gold call-out feel (it already sits on a dark gold). */
 body.wizard #perm-edit-modal .perm-edit-owner-note code { color: #f0c674; }
 /* Toolbar: violet-tinted filter + arcane "all default" button. */
-body.wizard #perm-edit-modal .perm-edit-toolbar button:where(:not(.ui-btn)),
-body.wizard #context-features-modal .perm-edit-toolbar button:where(:not(.ui-btn)) {
+body.wizard #perm-edit-modal .perm-edit-toolbar button:where(:not(.ui-btn)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #perm-edit-modal .perm-edit-toolbar button:where(:not(.ui-btn)):hover,
-body.wizard #context-features-modal .perm-edit-toolbar button:where(:not(.ui-btn)):hover { background: #3a2a63; }
+body.wizard #perm-edit-modal .perm-edit-toolbar button:where(:not(.ui-btn)):hover { background: #3a2a63; }
 body.wizard #perm-edit-modal .perm-edit-toolbar .perm-edit-filter button { background: none; border: none; }
 body.wizard #perm-edit-modal .perm-edit-toolbar .perm-edit-filter button:hover { background: #3a2a63; }
 /* Slug list: violet frame + dividers, gilt slug label, violet description. */
@@ -14753,26 +14422,6 @@ body.wizard .view-menu label.filter-toggle:hover { background: #241b3d; }
    default blue-grey, so the section reads as part of the same spellbook. */
 body.wizard .view-menu .view-menu-sep { background: rgba(122, 93, 176, 0.5); }
 body.wizard .view-menu .view-menu-heading { color: #9a86c4; }
-/* Secondary "⟳" tool levers (Plugins' check-all, the Runes refresh).
-   #costs-spans opts out — the Treasury gilds its own span control. */
-body.wizard .filter-bar:not(#costs-spans) button.tool:where(:not(.ui-btn)) {
-  background: #241b3d; border-color: #d9b45a; color: #f3e6c0;
-}
-body.wizard .filter-bar:not(#costs-spans) button.tool:where(:not(.ui-btn)):hover {
-  background: #3a2a63; color: #f3e6c0;
-}
-/* Primary "+ new …" / "+ Grant sudo" levers that lack their own id-scoped
-   wizard rule (Parties + Labours already carry gilded overrides above). */
-body.wizard .filter-bar button.primary:where(:not(.ui-btn)) {
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  border: 1px solid #d9b45a; color: #f3e6c0;
-  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
-  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
-}
-body.wizard .filter-bar button.primary:where(:not(.ui-btn)):hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
-}
 
 /* ─── Wizard Debug tab — "The Alchemist's Observatory" ─────────────
    The Debug tab is Alchemy in wizard mode, but its diagnostic cards used to
@@ -15026,10 +14675,10 @@ body.wizard #trigger-modal .trigger-action-editor { background: #18122b; border-
 body.wizard #trigger-modal .trigger-step-head,
 body.wizard #trigger-modal .trigger-action-editor-head { background: #241b3d; border-color: rgba(122, 93, 176, .55); }
 body.wizard #trigger-modal .trigger-step-body { border-color: rgba(122, 93, 176, .55); }
-body.wizard :is(#trigger-modal .trigger-placeholder-chips button, #trigger-modal .modal-buttons button:where(:not(.ui-btn)):not(.primary)) {
+body.wizard #trigger-modal .trigger-placeholder-chips button {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard :is(#trigger-modal .trigger-placeholder-chips button, #trigger-modal .modal-buttons button:where(:not(.ui-btn)):not(.primary)):hover {
+body.wizard #trigger-modal .trigger-placeholder-chips button:hover {
   background: #3a2a63;
 }
 body.wizard #trigger-modal .trigger-placeholder-chips button { color: #f0d066; }
@@ -15327,12 +14976,6 @@ body.wizard .mail-bulk-bar,
 body.wizard .mail-pager {
   background: #1c1436; border-color: #4a3a6b; color: #d8cef0;
 }
-body.wizard .mail-bulk-bar button:where(:not(.ui-btn)) {
-  background: #241b3d; border-color: #d9b45a; color: #b39ddb;
-}
-body.wizard .mail-bulk-bar button:where(:not(.ui-btn)):hover:not(:disabled) { color: #f3e6c0; background: #3a2a63; }
-body.wizard .mail-bulk-bar button:where(:not(.ui-btn)).danger { color: #d8cef0; }
-body.wizard .mail-bulk-bar button:where(:not(.ui-btn)).danger:hover:not(:disabled) { color: #f2777a; background: rgba(248, 81, 73, 0.15); }
 body.wizard .mail-folder-actions { border-left-color: #4a3a6b; }
 body.wizard .mail-pager-pos,
 body.wizard .mail-pager-size { color: #b39ddb; }
@@ -15491,28 +15134,6 @@ body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-head::after {
   content: "❧" / ""; color: #f3e6c0; border: 1px solid #5f4519;
   background: radial-gradient(circle at 35% 30%, #c99a3e, #8a6a2e 60%, #5f4519);
 }
-
-/* Reader action buttons: gilded-on-parchment for the paper surfaces, dark
-   arcane for the decree slab (so each reads against its own ground). */
-body.wizard .mail-reader[data-kind="raven"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)),
-body.wizard .mail-reader[data-kind="reply"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)),
-body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)) {
-  background: linear-gradient(180deg, #e0cf9f, #cbb478);
-  border: 1px solid #7a5a2e; color: #3a2c17;
-}
-body.wizard .mail-reader[data-kind="raven"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):hover,
-body.wizard .mail-reader[data-kind="reply"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):hover,
-body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):hover {
-  background: linear-gradient(180deg, #ecdcae, #d4bd82);
-}
-body.wizard .mail-reader[data-kind="raven"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover,
-body.wizard .mail-reader[data-kind="reply"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover,
-body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover { color: #a5342e; background: rgba(248, 81, 73, 0.15); }
-body.wizard .mail-reader[data-kind="decree"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard .mail-reader[data-kind="decree"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)):hover { background: #3a2a63; }
-body.wizard .mail-reader[data-kind="decree"] .mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)).danger:hover { color: #f2777a; background: rgba(248, 81, 73, 0.15); }
 
 /* ─── Wizard config tab — "📜 The Wizard's Almanac" ─────────────────
    The 🧙 re-skin of the Config tab (#tab-config) — the settings-book twin of
@@ -16679,7 +16300,6 @@ body.process-solo #companion-root, body.process-solo #board-overlay-root { displ
 .process-editor-title-input:focus,
 .process-name-input:focus { outline: none; }
 .process-editor-identity { display: inline-flex; align-items: center; min-width: 0; }
-.process-editor .process-action:where(:not(.ui-btn)):disabled { opacity: .45; cursor: default; }
 .process-editor-version { font-size: 12px; }
 .process-editor-dirty { color: #e3a341; font-size: 12px; white-space: nowrap; }
 .process-editor-status { color: #8b949e; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
@@ -16847,17 +16467,12 @@ body.process-solo #companion-root, body.process-solo #board-overlay-root { displ
 .process-palette-card[draggable="false"] { cursor: default; }
 .process-palette-card-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
 .process-palette-card-actions { display: inline-flex; align-items: center; gap: 4px; }
-.process-palette-card-actions button:where(:not(.ui-btn)),
-.process-palette-save:where(:not(.ui-btn)),
-.process-palette-state button:where(:not(.ui-btn)) {
+.process-palette-card-actions button:where(:not(.ui-btn)) {
   border: 1px solid #30363d; border-radius: 5px; background: #21262d; color: #c9d1d9;
   font: inherit; font-size: 11px; padding: 3px 6px; cursor: pointer;
 }
-.process-palette-card-actions button:where(:not(.ui-btn)):hover:not(:disabled),
-.process-palette-save:where(:not(.ui-btn)):hover:not(:disabled),
-.process-palette-state button:where(:not(.ui-btn)):hover:not(:disabled) { color: #f0f6fc; background: var(--ui-bg-hover); }
-.process-palette-card-actions button:where(:not(.ui-btn)):disabled,
-.process-palette-save:where(:not(.ui-btn)):disabled { opacity: .45; cursor: default; }
+.process-palette-card-actions button:where(:not(.ui-btn)):hover:not(:disabled) { color: #f0f6fc; background: var(--ui-bg-hover); }
+.process-palette-card-actions button:where(:not(.ui-btn)):disabled { opacity: .45; cursor: default; }
 .process-palette-manage { width: 24px; padding-inline: 0 !important; }
 .process-palette-custom-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .process-palette-state { display: flex; align-items: center; gap: 6px; color: #8b949e; font-size: 11px; line-height: 1.35; margin: 6px 0; }
@@ -17064,21 +16679,9 @@ body.wizard .process-scope-ports { background: #140f28; border-left-color: #4a3d
    padding .process-actions .process-action sets. It sits last in the action
    row behind a small gap so a mis-aimed click lands on "instantiate" rather
    than on an irreversible delete. */
-.process-list .process-actions .process-delete-btn:where(:not(.ui-btn)) {
-  display: inline-flex; align-items: center; justify-content: center;
-  padding: 4px 7px;
-  /* Matches the text buttons' 26px border box: the 13px icon alone would
-     leave this one ~3px short, and it is no longer a flex item that gets
-     stretched to its siblings' height for free. */
-  min-height: 26px;
-}
 /* Same (0,4,0) specificity as the generic 6px gap rule up at .process-actions,
    so this wins on source order alone — it must stay below that rule. */
 .process-list .process-actions .process-action + .process-delete-btn { margin-left: 8px; }
-.process-list .process-actions .process-delete-btn:where(:not(.ui-btn)):disabled { opacity: .5; cursor: default; }
-.process-list .process-actions .process-delete-btn:where(:not(.ui-btn)):hover:not(:disabled) {
-  background: #2d1618;
-}
 /* Rows are draggable onto the shared bin; dim the source for the gesture the
    same way group-reorder.js dims a dragged group header. */
 .process-list tr[data-process-template-drag] { cursor: grab; }
@@ -17107,17 +16710,6 @@ body.wizard #dnd-trash.dnd-trash-unpin-mode .dnd-trash-label-unpin-wizard { disp
    sigil the group member rows' retire icon wears — tarnished gold at rest,
    flaring to a crimson-gold halo on reach. Deleting a template is destructive
    AND irreversible, so it flares crimson rather than the retire icon's gold. */
-body.wizard .process-list .process-actions .process-delete-btn:where(:not(.ui-btn)) {
-  color: #d9b45a; border-color: #7a5db0;
-}
-body.wizard .process-list .process-actions .process-delete-btn:where(:not(.ui-btn)):focus-visible {
-  color: #f3d98a; border-color: #d9b45a;
-  background: linear-gradient(180deg, #3a1826 0%, #241b3d 100%);
-}
-body.wizard .process-list .process-actions .process-delete-btn:where(:not(.ui-btn)):hover:not(:disabled) {
-  color: #f3d98a;
-  background: linear-gradient(180deg, #3a1826 0%, #241b3d 100%);
-}
 body.wizard .process-list .process-actions .process-delete-btn:hover:not(:disabled) .trash-ico,
 body.wizard .process-list .process-actions .process-delete-btn:focus-visible .trash-ico {
   filter: drop-shadow(0 0 4px rgba(242, 119, 122, 0.9));
@@ -17317,26 +16909,18 @@ body.wizard .process-external-review { color: #e3cf9c; }
 body.wizard .process-external-graph-summary,
 body.wizard .process-external-source-summary { background: rgba(24, 18, 38, .7); border-color: #8b6b38; }
 body.wizard .process-editor-palette { background: #181226; border-color: #4a3d6b; }
-body.wizard .process-editor .process-action:where(:not(.ui-btn)),
 body.wizard .process-editor .process-inspector-input {
   background: #2c2042;
   color: #f1e8ff;
   border-color: #4a3d6b;
 }
-body.wizard .process-editor .process-action:where(:not(.ui-btn)):hover { background: #3a2a63; }
 body.wizard .process-editor .process-inspector-input:focus { border-color: #d4af37; }
-body.wizard .process-editor .process-action:where(:not(.ui-btn)).primary { background: #6d4aa2; border-color: #d4af37; }
-body.wizard .process-editor .process-layout-direction:where(:not(.ui-btn)).is-active { background: #4a3270; border-color: #d4af37; color: #ffe9a8; }
 body.wizard .process-palette-card { background: #2c2042; border-color: #4a3d6b; }
 body.wizard .process-palette-card:hover { border-color: #d4af37; }
 body.wizard .process-palette-card.is-built-in { border-left-color: #8b6fb3; }
 body.wizard .process-palette-card.is-custom { border-left-color: #d4af37; }
-body.wizard .process-palette-card-actions button:where(:not(.ui-btn)),
-body.wizard .process-palette-save:where(:not(.ui-btn)),
-body.wizard .process-palette-state button:where(:not(.ui-btn)) { background: #211832; border-color: #6d568f; color: #f3e6c0; }
-body.wizard .process-palette-card-actions button:where(:not(.ui-btn)):hover:not(:disabled),
-body.wizard .process-palette-save:where(:not(.ui-btn)):hover:not(:disabled),
-body.wizard .process-palette-state button:where(:not(.ui-btn)):hover:not(:disabled) { background: #3a2a63; }
+body.wizard .process-palette-card-actions button:where(:not(.ui-btn)) { background: #211832; border-color: #6d568f; color: #f3e6c0; }
+body.wizard .process-palette-card-actions button:where(:not(.ui-btn)):hover:not(:disabled) { background: #3a2a63; }
 body.wizard .process-editor-band { stroke: #d4af37; }
 body.wizard .process-node-chooser {
   color: #e7d9f5; background: #211832; border-color: #d4af37;
@@ -17424,13 +17008,6 @@ body.wizard .process-param-check { color: #f3e6c0; }
 .pni-block-head .spacer { flex: 1; }
 .pni-grip { color: #6e7681; cursor: grab; user-select: none; }
 .pni-block-title { font-weight: 600; font-size: 12.5px; color: #e6edf3; }
-.pni-block-move:where(:not(.ui-btn)), .pni-block-remove:where(:not(.ui-btn)) {
-  background: transparent; border: 1px solid transparent; border-radius: 4px; color: #8b949e;
-  font: inherit; font-size: 11px; padding: 0 5px; cursor: pointer;
-}
-.pni-block-move:where(:not(.ui-btn)):hover:not(:disabled), .pni-block-remove:where(:not(.ui-btn)):hover { background: var(--ui-bg-hover); color: #e6edf3; }
-.pni-block-move:where(:not(.ui-btn)):focus-visible, .pni-block-remove:where(:not(.ui-btn)):focus-visible { border-color: #30363d; color: #e6edf3; }
-.pni-block-move:where(:not(.ui-btn)):disabled { opacity: .35; cursor: default; }
 .pni-block-body { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 10px; }
 .pni-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
 .pni-stage-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
@@ -17440,13 +17017,10 @@ body.wizard .process-param-check { color: #f3e6c0; }
 .pni-input-list { margin: 0; padding-left: 16px; font-size: 12px; color: #c9d1d9; }
 .pni-params { margin: 0; font-size: 12px; color: #8b949e; }
 .pni-add { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; border: 1px dashed #30363d; border-radius: 8px; font-size: 12px; color: #8b949e; }
-.pni-add-block:where(:not(.ui-btn)) { background: transparent; border: 1px solid #30363d; border-radius: 999px; color: #c9d1d9; font: inherit; font-size: 11.5px; padding: 1px 9px; cursor: pointer; }
-.pni-add-block:where(:not(.ui-btn)):hover { background: var(--ui-bg-hover); }
-.pni-add-block:where(:not(.ui-btn)):focus-visible { border-color: #58a6ff; }
 body.wizard .process-node-inspector { background: #140f28; border-left-color: #4a3d6b; }
 body.wizard .pni-block { background: #181226; border-color: #4a3d6b; }
 body.wizard .pni-block-head { border-bottom-color: #4a3d6b; }
-body.wizard .pni-add, body.wizard .pni-add-block:where(:not(.ui-btn)) { border-color: #4a3d6b; }
+body.wizard .pni-add { border-color: #4a3d6b; }
 @media (max-width: 900px) { .process-node-inspector { width: 280px; } }
 /* Proposal review overlay (E4): another author's saved version painted over
    the live draft. Added = green, changed = amber, removed = red dashed; the
@@ -17497,12 +17071,12 @@ body.wizard .pni-add, body.wizard .pni-add-block:where(:not(.ui-btn)) { border-c
 .pdr-verdict { font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; }
 .pdr-verdict.is-accepted { color: #56d364; }
 .pdr-verdict.is-rejected { color: #ff7b72; }
-.pdr-step:where(:not(.ui-btn)), .pdr-close {
+.pdr-close {
   background: transparent; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9;
   font: inherit; padding: 0 8px; cursor: pointer; line-height: 22px;
 }
-.pdr-step:where(:not(.ui-btn)):hover, .pdr-close:hover { background: var(--ui-bg-hover); }
-.pdr-step:where(:not(.ui-btn)):focus-visible, .pdr-close:focus-visible { border-color: #58a6ff; }
+.pdr-close:hover { background: var(--ui-bg-hover); }
+.pdr-close:focus-visible { border-color: #58a6ff; }
 body.wizard .process-diff-review { background: #160f2c; border-top-color: #7c5cff; }
 body.wizard .pdr-current { background: #181226; border-color: #4a3d6b; }
 
@@ -17536,7 +17110,6 @@ body.wizard .pdr-current { background: #181226; border-color: #4a3d6b; }
 .psd-chip { border: 1px solid #30363d; border-radius: 999px; padding: 1px 8px; font-size: 11.5px; color: #c9d1d9; }
 .psd-chip.is-empty { color: #6e7681; }
 .psd-chip.is-error { color: #ff7b72; border-color: #da3633; }
-.psd-actions .process-action:where(:not(.ui-btn)) { font-size: 11.5px; }
 .psd-log {
   flex: 1; min-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
   border: 1px solid #21262d; border-radius: 8px; padding: 8px; background: #0b0f14;
@@ -17574,7 +17147,6 @@ body.wizard .psd-log { border-color: #4a3d6b; background: #120d1f; }
 .psd-input:focus-visible { outline: 2px solid #58a6ff; outline-offset: -1px; }
 .psd-compose-row { display: flex; align-items: center; gap: 6px; }
 .psd-compose-row .spacer { flex: 1; }
-.process-scribe-action:where(:not(.ui-btn)).is-active { border-color: #58a6ff; color: #a5d6ff; }
 body.wizard .process-scribe-dock { background: #140f28; border-left-color: #4a3d6b; }
 body.wizard .psd-msg-body { background: #181226; border-color: #4a3d6b; }
 body.wizard .psd-msg.is-human .psd-msg-body { background: #2a1f4f; border-color: #7c5cff; }
@@ -18068,9 +17640,7 @@ body.wizard .git-repos-options, body.wizard .git-repos-toolbar input { backgroun
 body.wizard .git-repos-list { border-color: #483758; }
 body.wizard .git-repo-entry + .git-repo-entry, body.wizard .git-repos-footer { border-color: #443353; }
 body.wizard .git-repositories-modal input[type=checkbox] { accent-color: #a97bd6; }
-body.wizard .git-repositories-modal button:where(:not(.ui-btn)) { background: #30253f; border-color: #655080; color: #e7d9f5; }
 body.wizard .git-repositories-modal button:is(.primary, .ui-btn-primary) { background: #76539c; border-color: #a97bd6; }
-body.wizard .git-repositories-modal button:where(:not(.ui-btn)).danger { border-color: #c57e89; }
 body.wizard .git-repo-name small,
 body.wizard .git-repo-groups,
 body.wizard .git-repos-options small,
@@ -18088,15 +17658,8 @@ body.wizard .git-repos-options small.git-repos-warning { color: #e6bd89; }
   .git-repos-list { flex-shrink: 0; max-height: 176px; }
 }
 .git-repos-heading h3 { font-size: 20px; }
-.git-repositories-modal button:where(:not(.ui-btn)) {
-  font: inherit; font-size: 12px; cursor: pointer; border: 1px solid #3a4656;
-  border-radius: 5px; padding: 8px 12px; background: #222d3a; color: #d6e0ec;
-}
-.git-repositories-modal button:where(:not(.ui-btn)).primary { background: #276fce; border-color: #3681e6; color: #fff; }
-.git-repositories-modal button:where(:not(.ui-btn)).danger { border-color: #cc7e7e; }
-.git-repositories-modal button:where(:not(.ui-btn)):disabled { cursor: default; opacity: .5; }
-.git-repositories-modal button:where(:not(.ui-btn)):focus-visible, .git-repos-list:focus-visible { outline: 2px solid #72aaf9; outline-offset: 2px; }
-body.wizard .git-repositories-modal button:where(:not(.ui-btn)):focus-visible, body.wizard .git-repos-list:focus-visible { outline-color: #c39ee8; }
+.git-repos-list:focus-visible { outline: 2px solid #72aaf9; outline-offset: 2px; }
+body.wizard .git-repos-list:focus-visible { outline-color: #c39ee8; }
 
 .git-repos-options .git-repos-concurrency { align-items: center; justify-content: space-between; }
 .git-repos-concurrency select { background: #101720; color: #d4d4d4; border: 1px solid #354356; border-radius: 5px; padding: 6px 10px; min-width: 76px; }
@@ -18592,9 +18155,6 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
    with the dashboard accent. Under wizard it takes the Clone dialog family's
    arcane skin (the :is(#clone-agent-modal, …, #launch-target) rules). */
 #launch-target input[type="checkbox"] { accent-color: #58a6ff; color-scheme: dark; vertical-align: middle; margin: 0 4px 0 0; }
-:where(.fleet-admin, [id^="fleet-"]) button:where(:not(.ui-btn)):where(:disabled) { opacity: .5; cursor: default; }
-:where(.fleet-admin, [id^="fleet-"]) button:where(:not(.ui-btn)):where(.primary) { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-:where(.fleet-admin, [id^="fleet-"]) button:where(:not(.ui-btn)):where(.danger) { background: #21262d; border-color: #f8514966; color: #ffa198; }
 .fa-identity { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; padding: 8px 12px; }
 .fa-identity > button { margin-left: auto; }
 .fa-k { color: #7d8590; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin-right: 4px; }
@@ -18864,7 +18424,6 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
   .fleet-zoom, .fleet-map-hint { display: none; }
 }
 
-
 /* Fleet → Hub. */
 .fa-hub-head, .fa-hub-health { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; margin: 6px 0 10px; }
 .fa-hub-errors { flex-basis: 100%; margin: 4px 0 0; padding-left: 18px; }
@@ -18883,7 +18442,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
    grid). Trust is a badge on every item; an unknown publisher also gets the
    amber banner in the detail. Item text is a peer's data, shown as plain text. */
 .fa-cb-sort { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
-.fa-cb-sort select:where(:not(.ui-select)), .fa-cb-sort button:where(:not(.ui-btn)) { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 2px 6px; font: inherit; font-size: 12px; }
+.fa-cb-sort select:where(:not(.ui-select)) { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 2px 6px; font: inherit; font-size: 12px; }
 .fa-cb-views { display: inline-flex; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
 .fa-cb-views button { border: 0; background: #0d1117; color: #8b949e; padding: 3px 12px; font: inherit; font-size: 12px; cursor: pointer; }
 .fa-cb-views button + button { border-left: 1px solid #30363d; }
@@ -19229,10 +18788,7 @@ body.wizard .gp-card { background: #1a1430; border-color: rgba(122, 93, 176, 0.4
 body.wizard .gp-card-head { border-bottom-color: rgba(122, 93, 176, 0.4); }
 body.wizard .gp-member.busy { box-shadow: 0 0 0 2px #a97bd6; }
 body.wizard .gp-member-count { background: #2c2248; color: #e7d9f5; box-shadow: 0 0 0 1.5px #0f0a1f; }
-.gp-start:where(:not(.ui-btn)), .gp-start-form button:where(:not(.ui-btn)), .gp-start-form select:where(:not(.ui-select)) { font: inherit; font-size: 12px; border: 1px solid #30363d; border-radius: 6px; padding: 3px 10px; background: #21262d; color: #e6edf3; cursor: pointer; }
-.gp-start:where(:not(.ui-btn)):hover, .gp-start-form button:where(:not(.ui-btn)):not(.primary, .companion-primary):hover:not(:disabled) { background: var(--ui-bg-hover); }
-.gp-start-form button:where(:not(.ui-btn)).primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-.gp-start-form button:where(:not(.ui-btn)):disabled { opacity: .55; cursor: default; }
+.gp-start-form select:where(:not(.ui-select)) { font: inherit; font-size: 12px; border: 1px solid #30363d; border-radius: 6px; padding: 3px 10px; background: #21262d; color: #e6edf3; cursor: pointer; }
 .gp-start-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px 18px; padding: 8px 12px; border: 1px solid #2a3340; border-radius: 8px; background: #11161d; }
 .gp-start-note { color: #8b949e; font-size: 12px; }
 .gp-start-error { color: #ff7b72; font-size: 12px; flex-basis: 100%; }
@@ -19243,8 +18799,7 @@ body.wizard .gp-member-count { background: #2c2248; color: #e7d9f5; box-shadow: 
 .gp-start-profile { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #e3b341; }
 body.wizard .gp-start-param input { background: #1a1430; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
 body.wizard .gp-start-form { background: #140f28; border-color: rgba(122, 93, 176, 0.4); }
-body.wizard .gp-start:where(:not(.ui-btn)), body.wizard .gp-start-form button:where(:not(.ui-btn)), body.wizard .gp-start-form select:where(:not(.ui-select)) { background: #241b3d; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
-body.wizard .gp-start-form button:where(:not(.ui-btn)).primary { background: #3a2f16; border-color: #d4af37; color: #f3e6c0; }
+body.wizard .gp-start-form select:where(:not(.ui-select)) { background: #241b3d; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
 
 /* Groups › Processes quick start (js/groups-quickstart.js, mocks Q1/Q2):
    the Get started panel and the inline step-list editor. Section elements are
@@ -19314,10 +18869,6 @@ body.wizard .gq-step:hover .gq-decides { color: #d4af37; }
 .gq-res { margin-top: 3px; font-size: 10.5px; color: #6e7681; }
 .gq-res.waits, .gq-whonow li.waits span { color: #e3b341; }
 .gq-row-act { display: flex; flex-direction: column; gap: 2px; }
-.gq-row-act button:where(:not(.ui-btn)) { font: inherit; font-size: 11px; line-height: 1; padding: 2px 5px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #8b949e; cursor: pointer; }
-.gq-row-act button:where(:not(.ui-btn)):focus-visible { border-color: #30363d; color: #e6edf3; }
-.gq-row-act button:where(:not(.ui-btn)):hover:not(:disabled) { color: #e6edf3; background: var(--ui-bg-hover); }
-.gq-row-act button:where(:not(.ui-btn)):disabled { opacity: .35; cursor: default; }
 .gq-problem, .gq-problems, .gq-error { font-size: 11.5px; color: #ff7b72; }
 .gq-problems, .gq-error { margin-top: 8px; }
 .gq-empty { padding: 10px 8px; color: #8b949e; font-size: 12px; }
@@ -19394,7 +18945,6 @@ body.wizard .gq-starter:hover, body.wizard .gq-starter:focus-visible { border-co
 body.wizard .gq-chip, body.wizard .gq-who-select:where(:not(.ui-select)), body.wizard .gq-fallback-select:where(:not(.ui-select)), body.wizard .gq-then-link select:where(:not(.ui-select)), body.wizard .gq-fallback select:where(:not(.ui-select)) { background: #241b3d; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
 body.wizard .gq-ask-in, body.wizard .gq-step-text, body.wizard .gq-param input, body.wizard .gq-answers-in input { background: #1a1430; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
 body.wizard .gq-fallback { background: #1a1430; border-color: rgba(122, 93, 176, 0.35); }
-body.wizard .gq-link:where(:not(.ui-btn)) { color: #d4af37; }
 /* The inline mini editor (mock M1): a saved process as an editable graph. */
 .gm-card { display: block; margin: 4px 0 12px 18px; border: 1px solid #2a3340; border-radius: 10px; background: #11161d; }
 .gm-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 14px; border-bottom: 1px solid #21262d; }
@@ -19742,10 +19292,6 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
 
 body.wizard #saved-prompts-manage-modal :is(.modal-hint, .cron-create-label) { color: #b39ddb; }
 body.wizard #saved-prompts-manage-modal .cron-create-row select:where(:not(.ui-select)) option { color: #1a1330; background: #e7d9f5; }
-body.wizard #saved-prompts-manage-modal#saved-prompts-manage-modal button:where(:not(.ui-btn)):not(.primary) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #saved-prompts-manage-modal#saved-prompts-manage-modal button:where(:not(.ui-btn)):not(.primary):hover:not(:disabled) { background: #3a2a63; }
 body.wizard #saved-prompts-manage-modal#saved-prompts-manage-modal button:is(.primary, .ui-btn-primary) {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   color: #f3e6c0; border: 2px solid #d9b45a;

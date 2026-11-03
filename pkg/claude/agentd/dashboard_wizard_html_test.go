@@ -110,10 +110,6 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	if !strings.Contains(dashboardAssetFile(t, "ui.css"), "body.wizard :is(.ui-dialog, .filter-bar, .cfg-field, .cfg-row-ctl) :is(input:not([type])") {
 		t.Error("filter-bar and config fields must take the shared wizard field paint in ui.css")
 	}
-	must("body.wizard .filter-bar button.primary:where(:not(.ui-btn)) {", "unscoped filter-bar primary levers are gilded")
-	// The Treasury's bespoke span selector opts out of the generic tool re-skin
-	// so the Costs re-skin can gild it itself — pin the exclusion.
-	must("body.wizard .filter-bar:not(#costs-spans) button.tool:where(:not(.ui-btn)) {", "the costs span control opts out of the generic tool re-skin")
 
 	// The Wards (Access) tab's inset sub-nav (Permissions / Slug registry /
 	// Sudo) is themed too — frame + active chamber.
@@ -612,7 +608,6 @@ func TestDashboardHTML_WizardProfilesManage(t *testing.T) {
 	// The overlay surface + the gilded "+ new profile" action, both scoped.
 	must("body.wizard #profiles-manage-modal #profile-create-open.ui-btn-primary", "the + new profile button gets the gilded-arcane treatment")
 	must("body.wizard #profiles-manage-modal .template-card", "the profile cards are re-skinned")
-	must("body.wizard :is(#profile-import-modal, #sandbox-profile-import-modal) .profile-transfer-preview-button", "the profile import Preview action has a scoped wizard skin")
 }
 
 // TestDashboardCSS_WizardProfilesManageScoped guards that the wizard
@@ -1908,7 +1903,6 @@ func TestDashboardHTML_WizardCogDialogThemes(t *testing.T) {
 	must(`'Missive text is required.'`, "missive validation stays in wizard voice")
 
 	// Party worktree cleanup dialog, including dynamic category/submit copy.
-	must("body.wizard #worktree-cleanup-modal .cleanup-toolbar button:where(:not(.ui-btn)).active", "worktree category chips are re-skinned")
 	must("body.wizard #worktree-cleanup-modal .cleanup-list", "worktree candidate list is re-skinned")
 	must("body.wizard #worktree-cleanup-modal #worktree-cleanup-submit {", "prune lever is re-skinned")
 	must("Remove ${removeCopy} + prune ${pruneCopy}", "worktree submit names both selected cleanup actions")
@@ -1957,7 +1951,6 @@ func TestDashboardHTML_WizardTemplateNativeControlSweep(t *testing.T) {
 
 	// Roles library overlay + role editor (two whole modals, never themed).
 	must("body.wizard #roles-manage-modal #role-create-open.ui-btn-primary", "the + new class primary gets the gilded-arcane chrome")
-	must("body.wizard #role-editor-modal button:where(:not(.ui-btn)):not(#role-editor-submit)", "the shared permission editor entry gets the secondary wizard chrome")
 	must("body.wizard #role-editor-modal #role-editor-submit", "the Save-role button gets the gilded lever chrome")
 }
 

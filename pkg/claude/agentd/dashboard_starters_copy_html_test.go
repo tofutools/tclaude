@@ -46,5 +46,4 @@ func TestDashboardHTML_StartersCopyMechanism(t *testing.T) {
 	// exists (a white button regression can't be caught by strings, but the
 	// block's ABSENCE can).
 	must(`class="starter-row ui-card"`, "the starter rows are .ui-card so every skin paints them")
-	must("body.wizard #starters-modal .starter-actions button", "the copy button is wizard-skinned")
 }
