@@ -8,8 +8,9 @@ sandboxed frame.
 !!! note "In progress"
     So far the daemon's stage listener, its page sources, the agent commands and
     the dashboard's Page tab exist: an agent can show, update, list and close
-    pages, and the operator uses them live in the Collab view. Drawing and live
-    patches come in later releases.
+    pages, the operator uses them live in the Collab view and draws on top of
+    them, and the agent reads the marks, renders snapshots and reads the DOM.
+    Live patches come in a later release.
 
 ## Showing a page
 
@@ -86,6 +87,28 @@ showed the page can read what you type in it. Then:
   never loads as a top-level page.
 - **Close**, or the tab's ×, closes the page for good. The agent is told in
   its inbox. Moving a page between places does not close it.
+
+### Drawing on top
+
+![A live page in Draw mode: the boards' pen, arrow, box and text tools, the colours, undo, Clear, a note and Send to agent above the page, with a box and an arrow drawn over its form](assets/live-page-draw.png)
+
+**Interact** / **Draw** in the header switches what the pointer does. In Draw
+mode a layer over the page takes the boards' pen, arrow, box and text tools and
+colours (red first), with undo and **Clear**. The layer is the dashboard's, not
+the page's: the page cannot see or change the marks. Switch back to Interact to
+scroll or click; the marks stay where they were drawn on the page, because they
+are kept in page coordinates.
+
+When a mark ends, the page's probe names the elements under it: a short CSS path
+(`section#pay-area > button.pay`) and a text snippet. Type an optional note and
+press **Send to agent**. The marks, the note, the page's path, viewport and
+scroll go to the agent: its inbox gets `[page <name>] marks` with your note and
+how to read them. A note with no marks is a plain `[page <name>] note`. Nothing
+reaches the agent until you press Send. The batches are kept in memory with the
+page (the last 50) and end with it.
+
+The element paths and snippets come from the page, so they are treated as the
+page's content: checked, shown only as text, and kept out of the inbox message.
 
 When nothing answers for the page (the dev server stopped, say), the view says
 so and offers **Retry**. A page the agent closes leaves the dashboard. With
@@ -190,9 +213,15 @@ never runs with the dashboard's origin, cookies or API.
   stage answers those, preflights included, with `Access-Control-Allow-Origin: null`
   and never with credentials. It drops any CORS headers the page's server sends.
 - **The probe.** The stage inserts a small script into each HTML document it
-  serves. Later releases use it for marks and live patches. It is as untrusted as
-  the page and holds no secret. HTML that is compressed with anything but gzip
-  cannot be inspected, so it is refused.
+  serves (`stage_probe.js`). It reports the frame's scroll, names the elements
+  under a mark and answers read-only DOM reads, all over `postMessage` with the
+  dashboard view. It is as untrusted as the page and holds no secret: the page's
+  own scripts can read and forge what it sends. So the view reads only messages
+  from its own frame's window, carrying the nonce it minted for the frame's
+  current load, within size caps (64 KiB a message, 50 elements, 200-character
+  snippets) and the schema, and shows them only as text. The daemon checks the
+  same again. HTML that is compressed with anything but gzip cannot be
+  inspected, so it is refused.
 
 What a page cannot use in the frame: cookies, `localStorage` (until the probe
 provides a stand-in), IndexedDB and service workers. An app behind a login needs
@@ -213,3 +242,30 @@ Known limits of the boundary:
   pages can be read back by the agent.
 - Browsers resolve `*.localhost` to loopback themselves. A browser that hands
   these names to the system resolver instead trusts that resolver for them.
+
+## Marks, snapshots and DOM reads for the agent
+
+```bash
+tclaude agent page marks <name> [--since N]       # the batches the operator sent
+tclaude agent page snapshot <name> -o page.png    # the page as a PNG, with the marks
+tclaude agent page dom <name> <selector> [--text|--html|--styles]
+```
+
+- **`page marks`** prints each batch: the note, the path, viewport and scroll,
+  and each mark's kind, points in page pixels and the elements under it.
+  `--json` gives the same as data. The inbox message names the batch to read
+  from.
+- **`page snapshot`** renders the page in a headless Chrome on the host, at the
+  operator's last viewport and scroll, with the latest batch of marks drawn on
+  top (`--seq N` for another, `--no-marks` for none). Chrome is the host's own:
+  `google-chrome`, `chromium` or `chromium-browser` on `PATH`, the macOS app
+  bundles, or `TCLAUDE_CHROME`. tclaude never downloads a browser; without one,
+  the command says so. Chrome runs on a throwaway profile with its background
+  networking off. The page's snapshot token goes only on the page's own document
+  requests (intercepted in Chrome), never as a header for every request.
+- **`page dom`** reads up to 10 elements matching a selector in the operator's
+  open view of the page: their text, outer HTML or computed styles. It is
+  read-only, and needs the page open in the dashboard (it is read through that
+  view's frame). Otherwise it says no view is open.
+
+There are no MCP tools for live pages; the CLI is the agent's surface.

@@ -137,3 +137,33 @@ func OpenLivePageForTest(owner, name, title, target, kind, worktree, start strin
 	reg.byID[p.id] = p
 	return p.id
 }
+
+// PageSnapshotJobForTest is what a page snapshot asked its renderer for.
+type PageSnapshotJobForTest struct {
+	URL, Origin, Token string
+	Width, Height      int
+	ScrollX, ScrollY   int
+	Overlay            string
+}
+
+// SetPageSnapshotRenderForTest stands in for headless Chrome: render gets
+// each job and answers the PNG bytes. It also answers the page's snapshot
+// token, so a test can check the job carries it.
+func SetPageSnapshotRenderForTest(render func(PageSnapshotJobForTest) ([]byte, error)) func() {
+	prev := pageSnapshotRender
+	pageSnapshotRender = func(_ context.Context, j pageSnapshotJob) ([]byte, error) {
+		return render(PageSnapshotJobForTest{URL: j.URL, Origin: j.Origin, Token: j.Token, Width: j.Width, Height: j.Height,
+			ScrollX: j.ScrollX, ScrollY: j.ScrollY, Overlay: j.OverlaySV})
+	}
+	return func() { pageSnapshotRender = prev }
+}
+
+// PageSnapshotTokenForTest is a page's snapshot token, by page id.
+func PageSnapshotTokenForTest(id string) string {
+	livePages.mu.Lock()
+	defer livePages.mu.Unlock()
+	if p := livePages.byID[id]; p != nil {
+		return p.stage.snapshotToken
+	}
+	return ""
+}

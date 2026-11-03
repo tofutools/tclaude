@@ -662,6 +662,7 @@ func registerDashboardBoardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/boards", collabRoute(handleDashboardBoardList))
 	mux.HandleFunc("DELETE /api/pages/{id}", collabRoute(handleDashboardPageClose))
 	mux.HandleFunc("GET /api/pages/{id}/live", collabRoute(handleDashboardPageLive))
+	mux.HandleFunc("POST /api/pages/{id}/marks", collabRoute(handleDashboardPageMarks))
 	mux.HandleFunc("POST /api/boards", collabRoute(handleDashboardBoardCreate))
 	mux.HandleFunc("GET /api/boards/{id}", collabRoute(handleDashboardBoardRead))
 	mux.HandleFunc("PATCH /api/boards/{id}", collabRoute(handleDashboardBoardPatch))

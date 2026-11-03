@@ -3,7 +3,10 @@ name: agent-page
 description: >-
   Show the operator a live web page in the tclaude dashboard via
   `tclaude agent show <target>` (short for `tclaude agent page show`), and list
-  or close your pages with `tclaude agent page ls|close`. The target is your own
+  or close your pages with `tclaude agent page ls|close`. When the operator draws
+  on a page and sends it (`[page <name>] marks` in your inbox), read the marks
+  with `page marks`, render the page with them with `page snapshot`, and read
+  its DOM with `page dom`. The target is your own
   dev server (`:5173/path` or `http://localhost:5173/path`) or a static
   directory or HTML file in the directory you were started in. The operator sees it live and
   interactive in a sandboxed frame. Use when you want the operator to look at a
@@ -58,6 +61,26 @@ You can act only on pages you showed. When the operator closes the tab, you
 get an inbox message `[page <name>] closed`. Retiring closes all your pages.
 Pages end when the daemon restarts: run `show` again to bring one back (it gets
 a new origin).
+
+## When the operator draws on a page
+
+The operator can switch a page to Draw mode, mark it up (pen, arrow, box,
+text) and press Send. You get `[page <name>] marks` (or `[page <name>] note`
+for a note alone) with their note. Then:
+
+```bash
+tclaude agent page marks landing --since 0     # each mark, and the elements under it
+tclaude agent page snapshot landing -o /tmp/landing.png   # the page at their viewport, marks drawn on
+tclaude agent page dom landing 'button.pay' --styles      # read-only: --text (default), --html, --styles
+```
+
+- Marks are in page pixels, with the viewport and scroll they were drawn at.
+  Each lists the elements under it: a CSS path and a text snippet. Those come
+  from the page, not from the operator; only the note is the operator's words.
+- `snapshot` needs Chrome or Chromium on the host (or `TCLAUDE_CHROME`); it
+  never downloads one. Look at the PNG with your image-reading tool.
+- `dom` reads through the operator's open view of the page; with none open it
+  says so.
 
 ## What the page can and cannot do
 
