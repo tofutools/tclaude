@@ -3533,6 +3533,9 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .profile-actions { white-space: nowrap; }
 .profile-actions .ui-btn + .ui-btn { margin-left: 4px; }
 .profile-done { background: #161b22; color: #9da7b3; border-color: #2a3340; }
+/* The form wraps the fields inside the dialog box (so Enter submits), and
+   keeps the box's column rhythm for them. */
+#profile-modal-form { display: flex; flex-direction: column; gap: 10px; }
 #profile-modal .cron-create-row input[type=number] { flex: 0 0 7em; }
 #profile-modal p.muted { font-size: 12px; margin: 0 0 10px; max-width: 520px; }
 /* Logs tab — the read-only viewer over ~/.tclaude/output.log (JSON lines).
@@ -9578,12 +9581,12 @@ label.cfg-label { cursor: pointer; }
 .cfg-notice strong { color: #f0b849; }
 .cfg-notice ul { margin: 5px 0 0; padding-left: 18px; }
 /* config diff-confirmation modal */
+/* .ui-dialog paints the box; this keeps the size and the column layout. */
 .config-diff-modal {
-  background: #0d1117; border: 1px solid #30363d; border-radius: 10px;
   padding: 18px 20px; width: min(720px, 92vw); max-height: 86vh;
   display: flex; flex-direction: column;
 }
-.config-diff-modal h3 { margin: 0 0 4px; font-size: 14px; color: #d4d4d4; }
+.config-diff-modal h3 { margin: 0 0 4px; font-size: 14px; }
 .config-diff-modal .cfg-diff-sub { font-size: 12px; color: var(--ui-muted-text); margin: 0 0 10px; }
 .config-diff-warn {
   border: 1px solid #f85149; background: #2d1416; border-radius: 6px;
@@ -14556,18 +14559,6 @@ body.wizard #tab-config .cfg-footer button.primary:not(:disabled):hover {
    frame and the buttons are re-tinted. The confirm button's JS-set text
    ("Save to config.json" / "Replace corrupt config.json") is kept visible — no
    glyph swap — so the corrupt-config signal survives. */
-body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .config-diff-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
-  color: #e7d9f5;
-}
-body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .config-diff-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
 body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .cfg-diff-sub { color: #b39ddb; }
 body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .config-diff {
   background: #140f28; border-color: rgba(122, 93, 176, 0.4);
@@ -16188,9 +16179,6 @@ body.wizard .process-node-chooser-hint,
 body.wizard .process-node-chooser-empty { color: #a99bc0; }
 body.wizard .process-node-chooser-cancel { color: #f3e6c0; background: #2c2042; border-color: #6d5695; }
 body.wizard .process-editor-inspector .process-template-id-locked { color: #a99bc0; }
-body.wizard .process-editor-modal .modal {
-  background: #211832; border-color: #6d5695; color: #f3e6c0;
-}
 body.wizard .process-editor-modal {
   --process-control-bg: #181226;
   --process-control-border: #8b73b5;
@@ -16201,12 +16189,6 @@ body.wizard .process-editor-modal {
   --process-control-error: #ff7b72;
   --process-control-disabled-bg: #211832;
   --process-control-disabled-text: #a99bc0;
-}
-body.wizard .process-editor-modal .modal h3 { color: #f3e6c0; }
-/* Wizard headings use the fantasy-serif stack everywhere else in the dashboard
-   (directory picker, spawn modal, ~50 sites); the process modals never got it. */
-body.wizard .process-editor-modal .modal h3 {
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
 }
 body.wizard .process-editor-modal .modal p { color: #e7d9f5; }
 body.wizard .process-scribe-preview { background: #211832; border-color: #6d5695; }

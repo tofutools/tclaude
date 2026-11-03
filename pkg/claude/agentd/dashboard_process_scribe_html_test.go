@@ -116,7 +116,9 @@ func TestDashboardProcessScribeAssets(t *testing.T) {
 		".process-scribe-wizard { display: none; }",
 		"body.wizard #tab-processes .process-scribe-plain { display: none; }",
 		"body.wizard #tab-processes .process-scribe-wizard { display: inline; }",
-		"body.wizard .process-editor-modal .modal h3 { color: #f3e6c0; }",
+		// The process dialogs are .ui-dialog boxes; their wizard box and
+		// title come from the --ui-dialog-* tokens (jstest/ui-dialog.test.mjs).
+		"body.wizard .process-editor-modal .modal p { color: #e7d9f5; }",
 		// The click-to-edit name/title are <button>s, which do NOT inherit
 		// colour the way the <strong> they replaced did. Without this they
 		// render in the UA default (black on dark). Regression guard.
