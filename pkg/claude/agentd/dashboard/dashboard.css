@@ -8484,7 +8484,7 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
 .cron-create-error.flash { animation: cron-error-flash .9s ease-out; }
 @keyframes cron-error-flash {
   0%   { background: #5a201d; box-shadow: 0 0 0 1px #f85149; }
-  100% { background: #2d1413; box-shadow: none; }
+  100% { box-shadow: none; }
 }
 .cron-create-modal .modal-buttons {
   display: flex; justify-content: flex-end; gap: 8px;
