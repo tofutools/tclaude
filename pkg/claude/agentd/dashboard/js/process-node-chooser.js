@@ -176,7 +176,10 @@ export function openProcessNodeTypeChooser({
     input.focus({ preventScroll: true });
   });
   // A press outside or Escape closes it; the pointer wandering off does not.
-  unwatch = watchPopover({ roots: () => chooser, close: (why) => close(why), hold: () => true, doc: documentRef });
+  // A dialog opened over it keeps the focus it took.
+  const dialogOver = () => [...(documentRef.querySelectorAll?.('.modal-overlay.show, .manage-overlay.show') || [])]
+    .some((dialog) => !dialog.contains(chooser));
+  unwatch = watchPopover({ roots: () => chooser, close: (why) => close(why, { focus: !dialogOver() }), hold: () => true, doc: documentRef });
 
   const dispose = ({ focus = false } = {}) => close('dispose', { focus });
   dispose.close = () => close('cancel');

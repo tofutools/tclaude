@@ -4,9 +4,9 @@
 // dialog opened over it, and gives Escape only to the popover opened last.
 // Hand-rolled document listeners skipped all of that and drifted apart.
 //
-// So a document-level pointerdown / mousedown listener is allowed only in the
-// files below, each of which uses the press for something other than closing
-// a popover. A new one fails: use the shared rule, or add the file here with
+// So a document- or window-level pointerdown / mousedown / touchstart
+// listener is allowed only in the files below, each of which uses the press
+// for something other than closing a popover. A new one fails: use the shared rule, or add the file here with
 // the reason it is not a popover.
 
 import test from 'node:test';
@@ -24,7 +24,7 @@ const ALLOWED = {
   'vegas.js': 'the first press unmutes audio',
 };
 
-const PRESS = /\b(?:document|doc|documentRef|ownerDocument|owner)\??\.addEventListener\??\.?\(\s*['"](?:pointerdown|mousedown)['"]/;
+const PRESS = /\b(?:document|doc|documentRef|ownerDocument|owner|window|win|globalThis|body|documentElement)\??\.addEventListener\??\.?\(\s*['"`](?:pointerdown|mousedown|touchstart)['"`]/;
 
 export function pressListenerFiles(sources) {
   return Object.entries(sources).filter(([, src]) => PRESS.test(src)).map(([file]) => file).sort();
@@ -35,8 +35,9 @@ test('the scanner finds document press listeners', () => {
     'a.js': "document.addEventListener('pointerdown', away, true);",
     'b.js': "doc?.addEventListener?.('mousedown', away);",
     'c.js': "button.addEventListener('pointerdown', press);",
+    'e.js': "window.addEventListener(`touchstart`, away);",
     'd.js': "document.addEventListener('click', delegate);",
-  }), ['a.js', 'b.js']);
+  }), ['a.js', 'b.js', 'e.js']);
 });
 
 test('outside-press dismissal goes through the shared popover rule', () => {
