@@ -5,9 +5,10 @@
 
 import { overlayTabs } from './overlay-instances.js';
 import { placeTerminalPane } from './terminals-tab.js';
+import { TO_COLLAB_LABEL } from './overlay-window-controls.js';
 
 // The words, the same for every kind of tab.
-export const TO_COLLAB_LABEL = 'Open in the Collab tab';
+export { TO_COLLAB_LABEL };
 // A separate window says Terminals where Collab is off, as the main nav does.
 export const toTabsLabel = (collab = true) => (collab ? TO_COLLAB_LABEL : 'Open in the Terminals tab');
 export const TO_WINDOW_LABEL = 'Open in separate window';

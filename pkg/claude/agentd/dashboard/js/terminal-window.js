@@ -75,7 +75,7 @@ export function TerminalWindow({ instance, overlay, focusRef, strip, close, snap
     ${look === 'classic' && html`<button data-ui-exempt type="button" class="board-overlay-close" title=${close.title} aria-label=${`Close ${name}`} onClick=${close.onClose}>×</button>`}`;
   return html`<${OverlayWindow} id=${instance.windowId} window=${overlay} open=${open} className="companion-window chat-window" frameClass="companion-resize-frame"
     titlebarClass=${`board-overlay-titlebar overlay-look-${look}`} label=${`Terminal ${name}`} title=${title}
-    controls=${{ look, closeLabel: `Close ${name}`, closeTitle: close.title, onClose: close.onClose, onMinimize: () => minimizeOverlayWindow(instance.id) }}>
+    controls=${{ look, closeLabel: `Close ${name}`, closeTitle: close.title, onClose: close.onClose, onMinimize: () => minimizeOverlayWindow(instance.id), onCollab: snapshot.value?.collab_enabled === true ? toCollab : null }}>
     <div class="companion-body" id=${instance.id}>
       ${open && html`
         <${PaneDictation} pane=${pane} active=${true} solo=${true} status=${status} canType=${true} target=${null} snapshot=${snapshot} actions=${actions} win=${win} notify=${notify}>

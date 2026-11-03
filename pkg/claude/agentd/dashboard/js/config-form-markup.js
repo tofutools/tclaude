@@ -366,13 +366,14 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           </${ConfigSelect}>
         </${Setting}>
         <${Setting} title="Window controls" forId="cfg-dashboard-window-controls" k="dashboard.window_controls"
-          summary="How the minimize, maximize and close buttons look on the companion window."
-          more=${html`Automatic follows the operating system your browser runs on. Linux desktops vary, so Linux uses GNOME-style buttons. Classic keeps the plain minimize button on its own.`}>
+          summary="The buttons on an overlay window's title bar."
+          more=${html`Standard, the default, puts plain symbols on the far right, as elsewhere in the dashboard: − minimizes to the dock, ⇄ opens the window in the Collab tab (or maximizes, where it cannot go there), × closes. The OS looks are opt-in: they draw the native minimize, maximize and close, and Match my OS picks the one for the system your browser runs on (GNOME-style on Linux). Classic keeps a plain minimize and close in the bar. In every look, a double click on the title bar maximizes or restores.`}>
           <${ConfigSelect} id="cfg-dashboard-window-controls" aria-label="Window controls">
-            <option value="auto">Automatic</option>
-            <option value="macos">macOS</option>
-            <option value="windows">Windows</option>
-            <option value="linux">Linux</option>
+            <option value="auto">Standard</option>
+            <option value="os">Match my OS (opt-in)</option>
+            <option value="macos">macOS (opt-in)</option>
+            <option value="windows">Windows (opt-in)</option>
+            <option value="linux">Linux (opt-in)</option>
             <option value="classic">Classic</option>
           </${ConfigSelect}>
         </${Setting}>

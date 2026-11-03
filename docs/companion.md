@@ -121,8 +121,8 @@ otherwise open a terminal.
 | 🔈 / 🔊 | Turn [voice](#voice-and-dictation) on or off for this agent |
 | ✉ | Send a queued message (Ctrl M) |
 | ⚙ | Everything else, listed below. Type to filter it |
-| – | Minimize (Ctrl .) |
-| □ | Maximize, or restore the size it had |
+| − | Minimize to the dock (Ctrl .) |
+| ⇄ | Open it in the Collab tab. Where it cannot go there (Collab off, or a window with no Collab place), this is □: maximize, or restore the size it had |
 | × | Close the window. Its tabs leave the overlay and the dock, and keep running in the background: open them again from the Groups tab, the palette or Collab. On a window holding a running Steward the Steward asks first, then shuts down, like **Shut down…** |
 
 Under **⚙**, each shown when it applies:
@@ -130,6 +130,7 @@ Under **⚙**, each shown when it applies:
 | Item | What it does |
 |---|---|
 | Open in the Collab tab | Move it to the Collab tab |
+| Maximize / Restore | Fill the room, or restore the size it had. A double click on the title bar does the same |
 | Open in overlay | Give it an overlay window of its own |
 | Open in separate window | Move it to a browser window of its own |
 | Morph | Move, Teleport, Clone, Recall home, or relaunch it on another harness, model or profile |
@@ -139,11 +140,14 @@ Under **⚙**, each shown when it applies:
 | Stewards | Open the Steward roster |
 | Shut down… | Shut the Steward down, after asking (Steward only) |
 
-The last three are shaped like your OS's own window buttons: traffic lights at
-the top left on macOS, flush in the top right corner on Windows, and round
-GNOME-style buttons on Linux. **Config > Appearance > Window controls** picks a
-look by hand. **Classic** keeps a plain minimize button and has no maximize or
-close.
+The last three are plain symbols on the far right, as elsewhere in the dashboard.
+**Config > Appearance > Window controls** can opt in to your OS's own window
+buttons instead: traffic lights at the top left on macOS, flush in the top right
+corner on Windows, and round GNOME-style buttons on Linux, each with minimize,
+maximize and close (the Collab move is then on **⚙**). **Match my OS** picks the one
+for the system your browser runs on. **Classic** keeps a plain minimize and close in
+the bar. In every look, a double click on the title bar's empty space maximizes or
+restores.
 
 Each tab has the window's two verbs, in the same order: **–** (Minimize to dock) sends
 that tab to the dock and leaves it running, on a Steward's tab too, and the Steward's pill

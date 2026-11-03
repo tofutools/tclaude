@@ -1726,6 +1726,7 @@ func TestWindowControls(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{"", "auto"}, {"auto", "auto"}, {"beos", "auto"}, {"macos", "macos"},
 		{"windows", "windows"}, {"linux", "linux"}, {"classic", "classic"},
+		{"standard", "standard"}, {"os", "os"},
 	} {
 		c := &Config{Dashboard: &DashboardConfig{WindowControls: tc.in}}
 		assert.Equal(t, tc.want, c.WindowControls(), tc.in)

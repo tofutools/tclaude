@@ -1840,14 +1840,56 @@ test('the classic look has its one minimize', async (t) => {
   assert.ok(view.container.querySelector('.companion-window-warm'), 'minimized');
 });
 
-test('an unknown or missing look follows the browser OS', async (t) => {
+test('an unknown or missing look is the standard one, and the OS looks are opt-in', async (t) => {
   const harness = await createPreactHarness(t);
   const { windowControlsLook } = await harness.importDashboardModule('js/overlay-window-controls.js');
-  assert.equal(windowControlsLook('auto', 'macos'), 'macos');
-  assert.equal(windowControlsLook(undefined, 'windows'), 'windows');
-  assert.equal(windowControlsLook('beos', 'linux'), 'linux');
+  assert.equal(windowControlsLook('auto', 'macos'), 'standard');
+  assert.equal(windowControlsLook(undefined, 'windows'), 'standard');
+  assert.equal(windowControlsLook('beos', 'linux'), 'standard');
+  assert.equal(windowControlsLook('os', 'macos'), 'macos', 'Match my OS follows the browser');
   assert.equal(windowControlsLook('classic', 'macos'), 'classic');
   assert.equal(windowControlsLook('linux', 'macos'), 'linux');
+});
+
+test('the standard look is − ⇄ × on the far right, and ⇄ opens the window in the Collab tab', async (t) => {
+  const opened = [];
+  const store = memoryPrefs({ 'tclaude.dash.companion.tabs': JSON.stringify([A, B]), 'tclaude.dash.companion.active': A });
+  const { view, harness, controller } = await setup(t, { prefs: store, snapshot: { ...snapshotWith(), window_controls: 'auto' }, openTerminalsPane: (...args) => opened.push(args) });
+  await harness.act(() => controller().open(A));
+  await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  const bar = view.container.querySelector('.board-overlay-titlebar');
+  assert.ok(bar.classList.contains('overlay-look-standard'));
+  const group = bar.querySelector('.overlay-window-controls');
+  assert.equal(bar.lastElementChild, group, 'on the far right');
+  assert.deepEqual([...group.querySelectorAll('button')].map((button) => button.textContent), ['−', '⇄', '×']);
+  assert.deepEqual(buttonNames(group), ['Minimize (Ctrl .)', 'Open in the Collab tab', 'Close alpha']);
+  for (const button of group.querySelectorAll('button')) assert.ok(button.title, `${button.className} has a tooltip`);
+  await harness.act(async () => { group.querySelector('.overlay-wc-collab').click(); await new Promise((r) => setTimeout(r, 80)); });
+  assert.deepEqual(opened.map(([agent]) => agent), [A], 'the cog item\'s move');
+  assert.ok(!view.container.querySelector('.companion-tab[data-tab-id="chat:' + A + '"]'), 'and it left the window');
+});
+
+test('the standard look\'s middle button maximizes where the window cannot go to Collab', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { WindowControls } = await harness.importDashboardModule('js/overlay-window-controls.js');
+  let sized = 0;
+  const view = await harness.mount(harness.html`<${WindowControls} look="standard" maximized=${false} closeLabel="Close x" closeTitle="Close" onMinimize=${() => {}} onMaximize=${() => { sized++; }} onClose=${() => {}} />`);
+  assert.deepEqual(buttonNames(view.container), ['Minimize (Ctrl .)', 'Maximize', 'Close x'], 'always three buttons');
+  await harness.act(() => view.container.querySelector('.overlay-wc-maximize').click());
+  assert.equal(sized, 1);
+});
+
+test('a double click on the title bar\'s empty space maximizes and restores, in the standard look too', async (t) => {
+  const { view, harness } = await openLook(t, 'auto');
+  const section = () => view.container.querySelector('.chat-window');
+  const bar = () => view.container.querySelector('.board-overlay-titlebar');
+  const dbl = (target) => harness.act(() => target.dispatchEvent(new harness.window.Event('dblclick', { bubbles: true })));
+  await dbl(bar());
+  assert.match(section().className, /snapped-max/);
+  await dbl(bar().querySelector('[role="tab"]'));
+  assert.match(section().className, /snapped-max/, 'not on a tab');
+  await dbl(bar());
+  assert.doesNotMatch(section().className, /snapped-max/);
 });
 
 test('minimize and close are their own actions, and close leaves the agent running', async (t) => {

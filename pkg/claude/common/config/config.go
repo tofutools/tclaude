@@ -645,9 +645,10 @@ type DashboardConfig struct {
 	// them: "dim" (default), "blur", "both" or "none". Blur is slow in a
 	// browser without GPU acceleration. See (*Config).OverlayBackdrop.
 	OverlayBackdrop string `json:"overlay_backdrop,omitempty"`
-	// WindowControls picks the look of the companion window's controls:
-	// "auto" (default, follows the browser's OS), "macos", "windows", "linux"
-	// or "classic". See (*Config).WindowControls.
+	// WindowControls picks the look of an overlay window's title bar buttons:
+	// "auto" (default) or "standard" for plain − ⇄ × symbols, or the opt-in
+	// native looks: "os" (follows the browser's OS), "macos", "windows",
+	// "linux", or "classic". See (*Config).WindowControls.
 	WindowControls string `json:"window_controls,omitempty"`
 	// NoSnapAssist turns off Snap Assist: after the operator snaps an overlay
 	// window, the space left empty no longer offers the other windows. See
@@ -2330,7 +2331,7 @@ func (c *Config) SnapAssist() bool {
 func (c *Config) WindowControls() string {
 	if c != nil && c.Dashboard != nil {
 		switch v := c.Dashboard.WindowControls; v {
-		case "macos", "windows", "linux", "classic":
+		case "standard", "os", "macos", "windows", "linux", "classic":
 			return v
 		}
 	}

@@ -476,8 +476,8 @@ test('Config saves live wizard and slop activity-bot selections over their loade
   selectLiveOption('#cfg-dashboard-activity-bots-slop', 'sprites', 'emoji');
 
   const windowControls = mounted.container.querySelector('#cfg-dashboard-window-controls');
-  assert.deepEqual([...windowControls.querySelectorAll('option')].map((option) => option.textContent), ['Automatic', 'macOS', 'Windows', 'Linux', 'Classic']);
-  assert.equal(adapter.assembleConfig().dashboard.window_controls, undefined, 'Automatic is the default and stays unset');
+  assert.deepEqual([...windowControls.querySelectorAll('option')].map((option) => option.textContent), ['Standard', 'Match my OS (opt-in)', 'macOS (opt-in)', 'Windows (opt-in)', 'Linux (opt-in)', 'Classic']);
+  assert.equal(adapter.assembleConfig().dashboard.window_controls, undefined, 'Standard is the default and stays unset');
   selectLiveOption('#cfg-dashboard-window-controls', 'auto', 'classic');
   const snapAssist = mounted.container.querySelector('#cfg-dashboard-snap-assist');
   assert.equal(adapter.assembleConfig().dashboard.no_snap_assist, undefined, 'Snap Assist is on by default and stays unset');

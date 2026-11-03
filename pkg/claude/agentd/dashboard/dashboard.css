@@ -1826,6 +1826,16 @@ header.overlay-look-windows { padding-right: 0; }
 .overlay-look-linux .overlay-window-controls svg { width: 10px; height: 10px; stroke-width: 1.5; }
 .overlay-look-linux .overlay-window-controls button:hover { background: #484f58; }
 .overlay-look-linux .overlay-window-controls button:focus-visible { outline: 2px solid var(--cmp-blue); outline-offset: 1px; }
+
+/* Standard, the default: plain symbols, borderless with the house hover. */
+.overlay-look-standard .overlay-window-controls { gap: 2px; margin-left: 4px; }
+.overlay-look-standard .overlay-window-controls button {
+  width: 26px; height: 26px; border-radius: 6px; background: none; color: var(--cmp-muted);
+  font: inherit; font-size: 15px; line-height: 1;
+}
+.overlay-look-standard .overlay-window-controls button:hover { background: #21262d; color: var(--cmp-text); }
+.overlay-look-standard .overlay-window-controls .overlay-wc-close:hover { color: var(--cmp-red); }
+.overlay-look-standard .overlay-window-controls button:focus-visible { outline: 2px solid var(--cmp-blue); outline-offset: -2px; }
 /* A split's shared edges (overlay-window.js): above both windows they divide. */
 .overlay-split-line { position: fixed; touch-action: none; }
 .overlay-split-line.x { margin-left: -4px; width: 8px !important; cursor: ew-resize; }
