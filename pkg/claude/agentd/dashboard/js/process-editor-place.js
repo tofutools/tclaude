@@ -98,6 +98,54 @@ export function floatProcessEditor({ id, label, editor, at = null }) {
 // draft included.
 export const editorDirty = (editor) => !!(editor?.dirty ?? editor?.model?.dirty);
 
+// Views handed to an overlay window opened on a just-saved template (the Groups
+// tab's full editor, tcl-kqiiv0), for its editor to open on, by id.
+const seeds = new Map();
+
+// openProcessOverlay opens a template's editor in an overlay window over the
+// page that asked: the Groups tab's full editor, so the editor and a Get help
+// chat sit side by side there. A template is edited in one place: one already
+// open in a window comes forward, and one in a Collab strip tab or the
+// Processes tab moves here, unsaved edits and all. view is the stored version
+// it was handed, readable that the editor may open it before the list knows
+// it. It answers false without an overlay host, for the caller to go to the
+// Processes tab instead.
+export function openProcessOverlay(id, label = '', { view = null, readable = false } = {}) {
+  if (!isProcessTemplateId(id) || !overlayHostUp.peek()) return false;
+  const away = processEditorAway(id);
+  if (away) {
+    try { away.focus?.(); } catch { /* browser focus is best-effort */ }
+    return true;
+  }
+  const tab = floatingProcessTab(id);
+  if (tab) {
+    openOverlayWindow(tab);
+    focusOverlayWindow(tab.id);
+    return true;
+  }
+  if (stripProcesses.peek().includes(id)) {
+    focusOverlayWindow(floatProcessTab(id, label));
+    return true;
+  }
+  const docked = processEditorHost.peek()?.release?.(id) || null;
+  if (docked && (editorDirty(docked.editor) || !view)) {
+    // Unsaved edits there move here as they are; a newer save shows as the
+    // head-review banner, as for any editor that falls behind.
+    floatProcessEditor({ id, label: label || docked.label, editor: docked.editor });
+  } else {
+    // A clean one is behind the version just handed here: it goes, and the
+    // overlay's editor opens on that version.
+    if (docked) {
+      docked.mount?.remove();
+      docked.editor.destroy?.();
+    }
+    if (view) seeds.set(id, { view, readable });
+    openOverlayWindow({ id: processWindowId(id), kind: PROCESS_WINDOW_KIND, template: id, label: label || id });
+  }
+  focusOverlayWindow(processWindowId(id));
+  return true;
+}
+
 const opening = new Map();
 // openProcessTab opens a template's editor as a Collab strip tab. A template is
 // edited in one place: one in a browser window of its own or an overlay window
@@ -182,6 +230,9 @@ export function floatHandoff(id, label, handoff) {
 // reload, in a mount it puts in slot first. A tab shown twice while that loads
 // gets the one editor.
 export function openFloatingEditor(id, label, slot) {
+  // A seed is for the next editor of this template only, taken or not.
+  const seed = seeds.get(id) || {};
+  seeds.delete(id);
   if (floating.has(id)) return Promise.resolve(floating.get(id));
   if (opening.has(id)) return opening.get(id);
   const host = processEditorHost.peek();
@@ -190,7 +241,7 @@ export function openFloatingEditor(id, label, slot) {
   slot.appendChild(mount);
   const back = handoffs.get(id) || null;
   handoffs.delete(id);
-  const pending = Promise.resolve(host.open(mount, id, label, back?.handoff || null)).then((editor) => {
+  const pending = Promise.resolve(host.open(mount, id, label, back?.handoff || null, seed)).then((editor) => {
     opening.delete(id);
     back?.settle(!!editor);
     if (!editor) return null;

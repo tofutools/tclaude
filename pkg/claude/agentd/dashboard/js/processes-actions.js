@@ -676,7 +676,7 @@ export function createProcessesActions({
     const label = editor.model?.template?.name || spec.name || spec.id;
     const shown = state.view.value.active;
     state.setEditor(null); state.setCanvas(null);
-    state.setNotice(`${label} is open in a Collab tab.`);
+    state.setNotice(`${label} is open in Collab.`);
     if (shown) announceLocation();
     void load('templates', { quiet: true });
     return { mount: editor.mount, editor, label };

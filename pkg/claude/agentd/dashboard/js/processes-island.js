@@ -298,7 +298,7 @@ export function mountProcessesIsland({ host, state, actions, confirmDiscard, reg
   // An overlay window's process tab opens and docks its editor through here.
   const canLeave = () => (actions.canLeaveEditor ? actions.canLeaveEditor() : true);
   registerCleanup(registerProcessEditorHost({
-    open: (mount, id, name, handoff = null) => loadTemplateEditor(mount, { id, name, handoff, config: processEditorConfig({ mount, state, actions, confirmDiscard }) }),
+    open: (mount, id, name, handoff = null, { view = null, readable = false } = {}) => loadTemplateEditor(mount, { id, name, handoff, view, config: processEditorConfig({ mount, readable, state, actions, confirmDiscard }) }),
     dock: (id, live, name) => {
       void actions.openEditor(id, false, name, { live });
       document.querySelector('nav [data-tab="processes"]')?.click();
