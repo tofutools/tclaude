@@ -201,6 +201,9 @@ type pageWire struct {
 	Created   bool      `json:"created,omitempty"`
 	NewOrigin bool      `json:"new_origin,omitempty"`
 	Rules     []string  `json:"rules,omitempty"`
+	// RemoteBase is the --base a dev server needs for a dashboard on
+	// another machine.
+	RemoteBase string `json:"remote_base,omitempty"`
 }
 
 // pageTargetForDaemon makes a file target absolute against the caller's
@@ -247,6 +250,15 @@ func runPageShow(p *pageShowParams, target string, stdout, stderr io.Writer) int
 		fmt.Fprintf(stdout, "  origin:   %s  (sandboxed frame, its own origin; the token goes only to the dashboard)\n", resp.Origin)
 	} else {
 		fmt.Fprintln(stdout, "  origin:   (the dashboard is not listening; the page opens when it is)")
+	}
+	if base := resp.RemoteBase; base != "" {
+		port, _, _ := strings.Cut(strings.TrimPrefix(resp.Target, ":"), "/")
+		if strings.Contains(resp.Target, base) {
+			fmt.Fprintf(stdout, "  remote:   served under %s to a dashboard on another machine (VPN, LAN, remote access)\n", base)
+		} else {
+			fmt.Fprintf(stdout, "  remote:   for a dashboard on another machine (VPN, LAN, remote access), start the dev server with\n"+
+				"            --base %s (Vite: vite --base %s), then show it again at :%s%s\n", base, base, port, base)
+		}
 	}
 	if len(resp.Rules) > 0 {
 		fmt.Fprintln(stdout, "  rules:")

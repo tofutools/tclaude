@@ -45,9 +45,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"golang.org/x/net/http/httpguts"
 )
@@ -78,8 +80,17 @@ const (
 type stagePage struct {
 	token         string
 	snapshotToken string
-	owner         string // agent ID that showed the page
-	name          string
+	// remoteToken names the page on the remote stage, /p/<remoteToken>/ on
+	// the remote listener (remote_stage.go). It is not a key on its own:
+	// that listener takes only the remote-access client certificate. The
+	// agent is shown it, for a dev server's --base.
+	remoteToken string
+	// static is set for a static source, whose remote path loses its prefix
+	// before the source sees it. A page's kind never changes: another kind
+	// of source opens a new stagePage.
+	static atomic.Bool
+	owner  string // agent ID that showed the page
+	name   string
 	// allowOtherHosts widens the CSP to other hosts. It is an operator toggle,
 	// off by default; nothing an agent sends can set it.
 	allowOtherHosts bool
@@ -117,11 +128,12 @@ func (p *stagePage) otherHostsAllowed() bool {
 
 // stageRegistry holds the open pages, keyed by token.
 type stageRegistry struct {
-	mu      sync.RWMutex
-	byToken map[string]*stagePage
+	mu       sync.RWMutex
+	byToken  map[string]*stagePage
+	byRemote map[string]*stagePage
 }
 
-var stagePages = &stageRegistry{byToken: map[string]*stagePage{}}
+var stagePages = &stageRegistry{byToken: map[string]*stagePage{}, byRemote: map[string]*stagePage{}}
 
 func newStageToken() string {
 	b := make([]byte, stageTokenBytes)
@@ -138,6 +150,7 @@ func (s *stageRegistry) open(owner, name string, up http.RoundTripper) *stagePag
 	p := &stagePage{
 		token:         newStageToken(),
 		snapshotToken: newStageToken(),
+		remoteToken:   newStageToken(),
 		owner:         owner,
 		name:          name,
 		upstream:      up,
@@ -145,6 +158,7 @@ func (s *stageRegistry) open(owner, name string, up http.RoundTripper) *stagePag
 	}
 	s.mu.Lock()
 	s.byToken[p.token] = p
+	s.byRemote[p.remoteToken] = p
 	s.mu.Unlock()
 	return p
 }
@@ -155,6 +169,9 @@ func (s *stageRegistry) close(token string) {
 	s.mu.Lock()
 	p := s.byToken[token]
 	delete(s.byToken, token)
+	if p != nil {
+		delete(s.byRemote, p.remoteToken)
+	}
 	s.mu.Unlock()
 	if p != nil {
 		p.setUpstream(nil)
@@ -169,6 +186,16 @@ func (s *stageRegistry) lookup(token string) *stagePage {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.byToken[token]
+}
+
+// lookupRemote finds a page by its remote token.
+func (s *stageRegistry) lookupRemote(token string) *stagePage {
+	if len(token) != 2*stageTokenBytes || !isLowerHex(token) {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.byRemote[token]
 }
 
 // stageHost returns the host name (without port) of a page's origin.
@@ -220,6 +247,11 @@ func buildPopupHandler(dashboard http.Handler) http.Handler {
 			stage.ServeHTTP(w, r)
 			return
 		}
+		// A remote viewer's pages, by path (remote_stage.go).
+		if token, rest, ok := remoteStagePath(r.URL.Path); ok {
+			serveRemoteStage(w, r, token, rest, false)
+			return
+		}
 		dashboard.ServeHTTP(w, r)
 	})
 }
@@ -256,9 +288,48 @@ func (stageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		stageNotFound(w)
 		return
 	}
+	serveStagePage(w, r, page, stageSite{
+		origin:    "http://" + net.JoinHostPort(stageHost(page.token), strconv.Itoa(port)),
+		ancestors: stageDashboardOrigins(port),
+		snapshot:  true,
+	})
+}
+
+// stageSite is where a page is served: its own origin, the dashboard origins
+// that may frame it, and whether the daemon's snapshot client may present
+// its token there. The loopback stage is one site per page token; the remote
+// stage (remote_stage.go) one per page port.
+type stageSite struct {
+	origin    string
+	ancestors []string
+	snapshot  bool
+	// prefix is the page's path on a shared origin ("/p/<remote token>",
+	// the remote stage): its CSP names only that path, a request carrying
+	// the shared origin itself (the dashboard's) is refused, and so is a
+	// redirect that leaves the path.
+	prefix string
+	// host is the shared origin's host[:port], as the request named it
+	// (prefix sites only; their scheme is not known).
+	host string
+	// strip takes the prefix off before the upstream sees the path (a
+	// static source); a dev server started with --base keeps it.
+	strip bool
+}
+
+// serveStagePage serves one request for a page that the caller has already
+// admitted by its site (token host or port), under every rule of the stage.
+func serveStagePage(w http.ResponseWriter, r *http.Request, page *stagePage, site stageSite) {
+	h := w.Header()
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("Content-Security-Policy", stageRefusalCSP)
 
 	snapshot := false
 	if v := r.Header.Get(stageSnapshotHeader); v != "" {
+		if !site.snapshot {
+			stageNotFound(w)
+			return
+		}
 		if subtle.ConstantTimeCompare([]byte(v), []byte(page.snapshotToken)) != 1 {
 			stageNotFound(w)
 			return
@@ -274,8 +345,7 @@ func (stageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// loads and navigations). Any other origin is some other site holding
 	// the page token, and is refused before the dev server can treat it as a
 	// same-origin request (the upstream sees Origin rewritten to localhost).
-	if o := r.Header.Get("Origin"); o != "" && o != "null" &&
-		o != "http://"+net.JoinHostPort(stageHost(page.token), strconv.Itoa(port)) {
+	if o := r.Header.Get("Origin"); o != "" && o != "null" && (site.prefix != "" || o != site.origin) {
 		http.Error(w, "stage pages answer only their own frame", http.StatusForbidden)
 		return
 	}
@@ -284,7 +354,7 @@ func (stageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// response in ModifyResponse, after the upstream's are filtered. They are
 	// not pre-set on w: ReverseProxy clears w's header map after relaying a
 	// 1xx, which would silently drop a pre-set CSP.
-	fixed := stagePageHeaders(page, port, r.Header.Get("Origin") == "null")
+	fixed := stagePageHeaders(page, site, r.Header.Get("Origin") == "null")
 	if r.Header.Get("Origin") == "null" && r.Method == http.MethodOptions &&
 		r.Header.Get("Access-Control-Request-Method") != "" {
 		maps.Copy(h, fixed)
@@ -298,12 +368,20 @@ func (stageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this page has no source", http.StatusBadGateway)
 		return
 	}
+	if site.prefix != "" && site.strip {
+		r = stageStripPrefix(r, site.prefix)
+	}
 	proxy := &httputil.ReverseProxy{
 		Rewrite:   stageRewrite,
 		Transport: up,
 		ModifyResponse: func(res *http.Response) error {
 			if err := stageModifyResponse(res); err != nil {
 				return err
+			}
+			if site.prefix != "" {
+				if err := stageKeepRedirectInPrefix(res, site); err != nil {
+					return err
+				}
 			}
 			maps.Copy(res.Header, fixed)
 			res.Header.Add("Vary", "Origin")
@@ -317,6 +395,9 @@ func (stageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			eh.Set("Referrer-Policy", "no-referrer")
 			eh.Set("Content-Security-Policy", stageRefusalCSP)
 			msg := stageSourceMessage(err)
+			if errors.Is(err, errStageRedirectOut) {
+				msg = err.Error()
+			}
 			if msg == "" {
 				msg = "nothing is answering for this page"
 			}
@@ -333,11 +414,11 @@ func (stageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // for null only, never with credentials (there are none to send). Vary:
 // Origin goes on every response, so a no-cors load cached without CORS
 // headers is not reused for a later CORS load of the same URL.
-func stagePageHeaders(page *stagePage, port int, nullOrigin bool) http.Header {
+func stagePageHeaders(page *stagePage, site stageSite, nullOrigin bool) http.Header {
 	h := http.Header{}
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "no-referrer")
-	h.Set("Content-Security-Policy", stageCSP(page.token, port, page.otherHostsAllowed()))
+	h.Set("Content-Security-Policy", stageSiteCSP(site, page.otherHostsAllowed()))
 	if nullOrigin {
 		h.Set("Access-Control-Allow-Origin", "null")
 		h.Set("Access-Control-Expose-Headers", "*")
@@ -445,17 +526,32 @@ func stageHeaderList(s string) bool {
 	return true
 }
 
-// stageCSP builds the page policy. The page's own origin is named explicitly
-// next to 'self': a sandboxed frame's origin is opaque, and the explicit
-// source keeps the rules meaning "this page's origin" whatever a browser takes
-// 'self' to be there. Inline and eval are allowed (dev servers need them);
-// connections reach only the page's own origin (http and ws); only the
-// dashboard may frame it. CSP sandbox makes even a stray top-level load of the
-// origin an opaque, sandboxed document.
-func stageCSP(token string, port int, allowOtherHosts bool) string {
-	hp := net.JoinHostPort(stageHost(token), strconv.Itoa(port))
-	self := "'self' http://" + hp
-	ws := "ws://" + hp
+// stageSiteCSP builds the page policy. Inline and eval are allowed (dev
+// servers need them); connections reach only the page's own sources (http
+// and ws); only the dashboard may frame it. CSP sandbox makes even a stray
+// top-level load an opaque, sandboxed document.
+//
+// It is the policy for a page served at site. On the loopback
+// stage a page has an origin of its own, so its sources are 'self' and that
+// origin, named explicitly: a sandboxed frame's origin is opaque, and the
+// explicit source keeps the rules meaning "this page's origin" whatever a
+// browser takes 'self' to be there. On the remote stage every page shares the dashboard's origin, so
+// 'self' would name the dashboard: its sources are its own path prefix
+// alone, which is what keeps page A from loading or fetching page B.
+func stageSiteCSP(site stageSite, allowOtherHosts bool) string {
+	origin := site.origin
+	self := "'self' " + origin
+	ws := "ws" + strings.TrimPrefix(origin, "http")
+	ancestors := append(append([]string{}, site.ancestors...), origin)
+	if site.prefix != "" {
+		// The scheme is the viewer's: plain http, or https behind a proxy
+		// that terminated TLS (whose forwarding headers are not trusted).
+		// Both are named, for the Host the request arrived with.
+		path := site.host + site.prefix + "/"
+		self = "http://" + path + " https://" + path
+		ws = "ws://" + path + " wss://" + path
+		ancestors = []string{"http://" + site.host, "https://" + site.host}
+	}
 	other := ""
 	if allowOtherHosts {
 		other = " http: https: ws: wss:"
@@ -474,7 +570,7 @@ func stageCSP(token string, port int, allowOtherHosts bool) string {
 		"object-src 'none'",
 		"base-uri " + self,
 		"form-action " + self + other,
-		"frame-ancestors " + strings.Join(append(stageDashboardOrigins(port), "http://"+hp), " "),
+		"frame-ancestors " + strings.Join(ancestors, " "),
 		"sandbox allow-scripts allow-forms allow-modals",
 	}
 	return strings.Join(directives, "; ")
@@ -760,4 +856,55 @@ func stageAfterTag(buf []byte, open string) int {
 		}
 		from = j
 	}
+}
+
+// stageStripPrefix is r with the page's remote path prefix taken off.
+func stageStripPrefix(r *http.Request, prefix string) *http.Request {
+	r2 := r.Clone(r.Context())
+	r2.URL.Path = "/" + strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, prefix), "/")
+	r2.URL.RawPath = ""
+	return r2
+}
+
+var errStageRedirectOut = errors.New("the page redirected outside its own path; on the remote stage a page stays under its prefix")
+
+// stageKeepRedirectInPrefix holds a redirect on the remote stage to the
+// page's own path. A browser stops applying CSP path rules after a redirect,
+// so a redirect to another page, or to the dashboard, would carry the page
+// past its policy. A static source's redirect (a directory's trailing slash)
+// is within its unprefixed tree and gets the prefix back; a dev server
+// started with --base already names it.
+func stageKeepRedirectInPrefix(res *http.Response, site stageSite) error {
+	loc := res.Header.Get("Location")
+	if loc == "" || res.StatusCode < 300 || res.StatusCode > 399 {
+		return nil
+	}
+	base := &url.URL{Path: site.prefix + "/"}
+	if res.Request != nil {
+		base = &url.URL{Path: res.Request.URL.Path}
+		if site.strip {
+			base.Path = site.prefix + base.Path
+		}
+	}
+	u, err := url.Parse(loc)
+	if err != nil {
+		return errStageRedirectOut
+	}
+	if u.Scheme != "" || u.Host != "" || u.Opaque != "" || u.User != nil {
+		scheme := strings.ToLower(u.Scheme)
+		if (scheme != "http" && scheme != "https" && scheme != "") || !strings.EqualFold(u.Host, site.host) || u.User != nil || u.Opaque != "" {
+			return errStageRedirectOut
+		}
+		u.Scheme, u.Host = "", ""
+	} else if site.strip && strings.HasPrefix(u.Path, "/") {
+		u.Path = site.prefix + u.Path
+		u.RawPath = ""
+	}
+	abs := base.ResolveReference(u)
+	if abs.Path != site.prefix && !strings.HasPrefix(abs.Path, site.prefix+"/") {
+		return errStageRedirectOut
+	}
+	// Relative to the viewer's own scheme and host.
+	res.Header.Set("Location", abs.RequestURI())
+	return nil
 }

@@ -4078,7 +4078,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// The origins are the pages' keys: the local dashboard only, never a
 	// peer's snapshot, restricted or not.
 	if !isPeerSnapshot(r) {
-		out.LivePages = livePagesSnapshot()
+		out.LivePages = livePagesSnapshotFor(r)
 	}
 	out.Templates = templates
 	out.Profiles = profiles

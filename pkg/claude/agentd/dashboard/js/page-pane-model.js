@@ -15,6 +15,9 @@ const PAGE_ID = /^pg_[0-9a-f]{16}$/;
 // *.ui.localhost site, never the dashboard's.
 const PAGE_ORIGIN = /^http:\/\/f-[0-9a-f]{32}\.ui\.localhost(?::\d{1,5})?$/;
 
+// A remote viewer's page path (pages.go remotePageURL).
+const REMOTE_PAGE_PATH = /^\/p\/[0-9a-f]{32}(?:[/?#]|$)/;
+
 export const isPageId = (id) => typeof id === 'string' && PAGE_ID.test(id);
 
 export const pagePaneKey = (id) => `page:${id}`;
@@ -42,9 +45,15 @@ export function findLivePage(snapshotValue, id) {
 // pageFrameSrc is the URL the frame may load: the page's own, on its own stage
 // origin. Anything else (no dashboard listener, a malformed answer) loads
 // nothing.
+//
+// A dashboard on another machine (a LAN address, a VPN name, remote access)
+// gets no origin and a path instead: /p/<remote token>/..., served by this
+// dashboard's own listener (remote_stage.go), so the browser supplies its own
+// scheme and host.
 export function pageFrameSrc(page) {
   const origin = String(page?.origin || '');
   const url = String(page?.url || '');
+  if (!origin) return REMOTE_PAGE_PATH.test(url) ? url : '';
   if (!PAGE_ORIGIN.test(origin)) return '';
   if (url !== origin && !url.startsWith(`${origin}/`)) return '';
   return url;
@@ -71,11 +80,19 @@ export function pageSender(snapshotValue, page) {
 // page's only key, and goes nowhere but the frame's src.
 export const pageOriginShown = (origin) => String(origin || '').replace(/^(http:\/\/f-)[0-9a-f]{32}(\.ui\.localhost)/, '$1‹token›$2');
 
+// pageWhereShown says where the page runs, its key masked: its own origin,
+// or, for a remote viewer, its path on this dashboard's host.
+export function pageWhereShown(page) {
+  if (page?.origin) return `its own origin: ${pageOriginShown(page.origin)}`;
+  if (REMOTE_PAGE_PATH.test(String(page?.url || ''))) return 'this host, under /p/‹token›/ (its address is its key: share it with no one)';
+  return '(none)';
+}
+
 // pageSandboxRules is what the 🔒 chip says on hover: where the page runs and
 // what it can and cannot do. Plain text, rendered as text.
 export function pageSandboxRules(page) {
   const lines = [
-    `Sandboxed frame on its own origin: ${pageOriginShown(page?.origin) || '(none)'}`,
+    `Sandboxed frame on ${pageWhereShown(page)}`,
     'No dashboard cookies, storage or API reach it; it can fetch only its own origin.',
     'It cannot open pop-ups or windows, navigate the dashboard, or download files.',
     'The agent that showed this page can read what you type in it.',

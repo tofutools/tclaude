@@ -114,6 +114,15 @@ test('the page model keeps the token in the frame src and nowhere else', async (
   assert.equal(model.pageFrameSrc(PAGE), PAGE.url);
   assert.equal(model.pageFrameSrc({ ...PAGE, origin: 'http://127.0.0.1:7777', url: 'http://127.0.0.1:7777/api/snapshot' }), '', 'the dashboard origin never loads in the frame');
   assert.equal(model.pageFrameSrc({ ...PAGE, url: `http://evil.example/${TOKEN}` }), '', 'a URL off the page origin loads nothing');
+  // A dashboard on another machine gets a path on its own host (tcl-balzk0).
+  const remote = { ...PAGE, origin: '', url: `/p/${TOKEN}/checkout?x=1` };
+  assert.equal(model.pageFrameSrc(remote), remote.url);
+  assert.equal(model.pageFrameSrc({ ...remote, url: `/p/${TOKEN}` }), `/p/${TOKEN}`);
+  for (const url of ['/api/snapshot', `//evil.example/p/${TOKEN}/`, `https://evil.example/p/${TOKEN}/`, '/p/short/', `/p/${TOKEN}x/`, 'javascript:alert(1)']) {
+    assert.equal(model.pageFrameSrc({ ...remote, url }), '', `${url} loads nothing`);
+  }
+  assert.match(model.pageSandboxRules(remote)[0], /\/p\/‹token›\//, 'the chip names the path, its token masked');
+  assert.doesNotMatch(model.pageSandboxRules(remote).join(' '), new RegExp(TOKEN));
   assert.equal(model.PAGE_FRAME_SANDBOX, 'allow-scripts allow-forms allow-modals');
 
   const first = model.pageShowEvents(null, [PAGE]);

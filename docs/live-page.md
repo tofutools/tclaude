@@ -144,6 +144,57 @@ it is never read back unless the stage serves exactly what the agent's own
 sandbox shows (see Page sources), so it gains nothing it could not read. Keeping the token from it also keeps it out of the agent's
 transcript, and out of a clone's.
 
+A page has a second token for dashboards on other machines (see [Viewing
+pages from another machine](#viewing-pages-from-another-machine)). The agent
+is shown it only for a dev server page, which needs it as its `--base`. A dev
+server is the agent's own process, so the token lets the agent read nothing it
+could not already read. A static page's remote token is never shown to the
+agent.
+
+### Viewing pages from another machine
+
+`*.ui.localhost` names resolve only on the machine running the daemon. A
+dashboard opened from anywhere else gets each page at a path on the host it
+used instead: `/p/<remote token>/`. That covers the dashboard listener reached
+by a LAN address or a VPN name, a TLS-terminating proxy in front of it (such
+as `tailscale serve`), and the remote-access listener on `:8443`. There are no
+new ports or settings. Which address a dashboard gets depends on the `Host` it
+was reached at. `127.0.0.1`, `localhost` and `[::1]` keep the page's own
+origin. Any other name gets the path. The frame's address is a relative path,
+so the browser supplies its own scheme and host.
+
+- **The page's address is a capability URL** on the regular dashboard
+  listener. The frame is credentialless and sends no cookie, so the remote
+  token in the path is the only key there. Anyone who can reach the listener
+  and holds the link sees the page until it closes. The link goes only to
+  dashboards that reach this daemon, never to a linked instance. On the
+  `:8443` remote-access listener, the client certificate is also required.
+- **Isolation rests on CSP path matching and on the dashboard API's own
+  checks.** On another machine every page shares the dashboard's origin, so a
+  page cannot have an origin of its own:
+  - Its CSP names only its own path, for `http` and `https` alike, and never
+    `'self'`. A page cannot load or fetch another page's documents or the
+    dashboard's `/api`.
+  - The stage refuses an upstream redirect that leaves the page's path,
+    because browsers stop applying a source's path after a redirect.
+  - A request the frame makes to `/api` has no session behind it. The
+    dashboard cookie is `SameSite=Strict` and not sent from the frame. The
+    frame's `Origin: null`, or a no-cors load with neither `Origin` nor
+    `Referer`, fails the dashboard's Origin check either way.
+- **A dev server needs `--base`:** it writes absolute paths. `tclaude agent
+  show` prints the step for a port target. Start the dev server with
+  `--base /p/<remote token>/` (Vite: `vite --base /p/<remote token>/`), then
+  show it again at `:<port>/p/<remote token>/`, so the local view loads the
+  same path. The remote token lasts as long as the page's origin, so it does
+  not change when the page is re-shown with the same kind of source. A static
+  page needs nothing; its files are served with the prefix taken off.
+- A page the operator let load other hosts is not served this way: its wider
+  sources would reach every other page on the shared origin.
+- A proxy that rewrites `Host` to the backend's address makes each page's CSP
+  name the wrong host, so the page fails closed: it is blocked, not opened.
+  `tailscale serve` keeps the client's `Host`. tclaude never trusts
+  `X-Forwarded-*`.
+
 ## Page sources
 
 A page comes from one of two sources, and the stage reaches nothing else. It

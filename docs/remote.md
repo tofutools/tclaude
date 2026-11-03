@@ -85,6 +85,20 @@ The same hardened build fits three deployment shapes:
 - **Public tunnel** — bind loopback and let the tunnel terminate its own TLS;
   mTLS and the passphrase still apply underneath.
 
+### Live pages from another machine
+
+Pages agents show in the dashboard work from another machine too: over the
+remote-access listener, over a plain dashboard bind, and behind `tailscale
+serve` or another TLS-terminating proxy. Each page is served under
+`/p/<remote token>/` on the host you reached the dashboard at. No new ports
+or settings are needed. On the regular dashboard listener a page's link is a
+capability URL: anyone who can reach the listener and holds it sees the page
+until it closes. On the remote-access listener the client certificate is also
+required. Pages there share the dashboard's origin, so their isolation rests
+on CSP path matching and on the dashboard API's Origin and cookie checks. A
+dev server needs `--base /p/<remote token>/`, which `tclaude agent show`
+prints. See [Live pages](live-page.md#viewing-pages-from-another-machine).
+
 ### What is and isn't exposed
 
 The full browser dashboard is served — every tab works, and human approvals

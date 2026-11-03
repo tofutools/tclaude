@@ -234,3 +234,49 @@ func SetPageFSViewRecheckForTest(d time.Duration) (restore func()) {
 	pageFSViewRecheck = d
 	return func() { pageFSViewRecheck = prev }
 }
+
+// BuildStrictPopupHandlerForTest is the dashboard listener's handler as
+// production builds it: no test wrapper adding the session cookie or an
+// Origin, so a request is judged by exactly what it carries.
+func BuildStrictPopupHandlerForTest() http.Handler {
+	initDashboardToken()
+	mux := http.NewServeMux()
+	registerDashboardRoutes(mux)
+	return buildPopupHandler(auditRequests(mux))
+}
+
+// SetDashboardBindHostForTest sets the dashboard listener's bind host (a
+// non-loopback bind checks Origin against the request's Host).
+func SetDashboardBindHostForTest(host string) func() {
+	prev := dashboardBindHost
+	dashboardBindHost = host
+	return func() { dashboardBindHost = prev }
+}
+
+// PageRemoteTokenForTest is a page's remote token, by page id.
+func PageRemoteTokenForTest(id string) string {
+	livePages.mu.Lock()
+	defer livePages.mu.Unlock()
+	if p := livePages.byID[id]; p != nil {
+		return p.stage.remoteToken
+	}
+	return ""
+}
+
+// SetPageOtherHostsForTest flips a live page's "allow other hosts" toggle,
+// by page id.
+func SetPageOtherHostsForTest(id string, on bool) bool {
+	livePages.mu.Lock()
+	p := livePages.byID[id]
+	livePages.mu.Unlock()
+	if p == nil {
+		return false
+	}
+	p.stage.mu.Lock()
+	p.stage.allowOtherHosts = on
+	p.stage.mu.Unlock()
+	return true
+}
+
+// DashboardCookieNameForTest is the dashboard session cookie's name.
+func DashboardCookieNameForTest() string { return dashboardCookieName }

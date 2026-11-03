@@ -45,6 +45,10 @@ as a tab in the operator's dashboard.
   (some `localhost` setups) is refused: start it with `--host 127.0.0.1`. The
   port is checked to be yours (inside your sandbox network, or held by your
   process tree), and `show` fails with a reason when nothing is listening.
+- **The operator on another machine** (a VPN, the LAN, remote access) sees a
+  page at `/p/<token>/` on the dashboard's host. A static page needs nothing.
+  A dev server writes absolute paths: `show` prints the `--base /p/<token>/`
+  to start it with, and you show it again at `:<port>/p/<token>/`.
 - **Update in place:** show again with the same `--name` to change the path or
   port; open views reload on the same origin. Without `--name` the name comes
   from the target (`:5173` → `port-5173`, `site/` → `site`). Switching between a
