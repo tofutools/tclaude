@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import {
   ENFORCE_STATES, FLEET_PRESETS, MEMBER_STATES, barTone, blankRule, draftToRule, fleetTargetOptions, fmtAmount,
   nodeGrants, ruleSummary, ruleToDraft, worstLimit,
@@ -167,8 +167,8 @@ export function FleetLimitEditor({ limit, fleet, busy, RuleEditor, onSave, onDel
   return html`<div class="usage-rules-tab usage-editor" id="usage-fleet-limit-editor">
     <h4>${limit.id ? `Edit fleet limit "${limit.rule.name}"` : 'New fleet limit'}</h4>
     <div class="usage-rule-fields">
-      <label>Covers <select aria-label="Fleet limit target" value=${target} disabled=${busy}
-        onChange=${(e) => touch(setTarget)(e.currentTarget.value)}>${options.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}</select></label>
+      <label>Covers <${Select} size="sm" aria-label="Fleet limit target" value=${target} disabled=${busy}
+        onChange=${(e) => touch(setTarget)(e.currentTarget.value)}>${options.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}<//></label>
       <label title="Add this node's own spend, and let agent steps reach its agents"><input type="checkbox" checked=${includeSelf} disabled=${busy}
         aria-label="Count this node" onChange=${(e) => touch(setIncludeSelf)(e.currentTarget.checked)}/> count this node</label>
       <label><input type="checkbox" checked=${enabled} disabled=${busy} onChange=${(e) => touch(setEnabled)(e.currentTarget.checked)}/> enabled</label>

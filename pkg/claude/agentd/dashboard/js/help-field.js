@@ -2,6 +2,7 @@ import { h, Fragment } from 'preact';
 import { useRef } from 'preact/hooks';
 import htm from 'htm';
 import { useDismissablePopover } from './hover-popover.js';
+import { Select } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -24,7 +25,7 @@ export function helpCaveat(help) {
 }
 
 /* The [?] trigger and its popover on their own, for controls that are not the
-   labelled <select> HelpField wraps — checkbox rows, section legends. The two
+   labelled Select HelpField wraps — checkbox rows, section legends. The two
    nodes stay DOM siblings because the open state is expressed purely in CSS as
    `trigger[aria-expanded="true"] + description`.
 
@@ -81,13 +82,13 @@ export function HelpDisclosure({
   <//>`;
 }
 
-/* A labelled <select> whose help copy is reachable three ways: the native title
+/* A labelled Select whose help copy is reachable three ways: the native title
    tooltip on hover, the [?] button for keyboard and touch, and — only when the
    help carries a ⚠ — a persistent caveat line under the control.
 
    `open`/`setOpen` are lifted so only one field's disclosure shows at a time;
    the caller keys them by field id. onChange receives the raw event, matching
-   the plain <select> rows these replaced.
+   the plain select rows these replaced.
 
    The caveat renders as a sibling of .spawn-field-with-help rather than inside
    it: that element is the containing block for the absolutely-positioned
@@ -110,10 +111,10 @@ export function HelpField({
     <label class="cron-create-label" for=${id}>${label}</label>
     <div class="cron-create-target spawn-field-help-column">
       <div class="spawn-field-with-help">
-        <select id=${id} value=${value} title=${help} aria-describedby=${help ? descriptionID : null} disabled=${busy}
+        <${Select} id=${id} value=${value} title=${help} aria-describedby=${help ? descriptionID : null} disabled=${busy}
           onChange=${onChange}>
           ${options.map((option) => html`<option key=${option.value} value=${option.value} data-no-fill=${option.noFill}>${option.label}</option>`)}
-        </select>
+        <//>
         <${HelpDisclosure} id=${id} descriptionID=${descriptionID} label=${label} help=${help}
           open=${open} setOpen=${setOpen} />
       </div>

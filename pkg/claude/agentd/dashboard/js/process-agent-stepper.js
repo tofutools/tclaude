@@ -177,6 +177,8 @@ function StepRow({ row }) {
 
 // ProcessAgentStepper is mock T3. actions: { promote(run, groupName),
 // pause(run), resume(run) } — each optional; onGraph switches the popover to its graph view.
+// The group select is data-ui-exempt: the stepper paints in the process kit's
+// --pk-* palette, not the dashboard field skin.
 export function ProcessAgentStepper({ run, agentId, bounds = null, actions = {}, onGraph = null, onClose = null }) {
   const view = runIconView(run, agentId);
   const rows = stepperRows(run, agentId);
@@ -212,7 +214,7 @@ export function ProcessAgentStepper({ run, agentId, bounds = null, actions = {},
       <div class="pk-run-popover-actions">
         <${ProcessPauseControl} run=${run} actions=${actions} />
         <${Button} size="sm" disabled=${!onGraph} onClick=${() => onGraph?.()}>⧉ graph view<//>
-        ${groups.length > 1 ? html`<select class="pk-stepper-group" aria-label="Group to promote the run to"
+        ${groups.length > 1 ? html`<select data-ui-exempt class="pk-stepper-group" aria-label="Group to promote the run to"
           value=${group} onChange=${(event) => setTarget(event.currentTarget.value)}>
           ${groups.map((entry) => html`<option key=${entry.id} value=${entry.name}>${entry.name}</option>`)}</select>` : null}
         <${Button} size="sm" disabled=${busy || !actions.promote || !groups.length}

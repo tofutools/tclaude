@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import {
   loadSavedPrompts, saveSavedPrompt, deleteSavedPrompt,
@@ -132,7 +132,7 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
       ${incoming ? html`<${SavedPromptImport} incoming=${incoming} prompts=${prompts} busy=${busy}
         onImport=${(writes) => void importPrompts(writes)} onCancel=${() => setIncoming(null)}/>` : null}
       <label class="cron-create-row"><span class="cron-create-label">Edit prompt</span>
-        <select aria-label="Edit saved prompt" disabled=${busy} value=${original?.name || ''}
+        <${Select} aria-label="Edit saved prompt" disabled=${busy} value=${original?.name || ''}
           onChange=${(event) => {
             const name = event.currentTarget.value;
             event.currentTarget.value = original?.name || '';
@@ -140,7 +140,7 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
           }}>
           <option value="">New prompt</option>
           ${prompts.map((prompt) => html`<option key=${prompt.name} value=${prompt.name}>${prompt.name}</option>`)}
-        </select></label>
+        <//></label>
       <label class="cron-create-row"><span class="cron-create-label">Name</span>
         <input ref=${nameRef} aria-label="Prompt name" value=${draft.name} disabled=${busy}
           placeholder="e.g. cold-review" autocomplete="off"
@@ -199,7 +199,8 @@ export function SavedPromptsDialog({ descriptor, onClose, confirmDiscard }) {
 }
 
 // SavedPromptChips selects an ordered set of saved prompts with the same chip
-// + "Add…" control the role pickers use. value/onChange carry prompt names.
+// + "Add…" control the role pickers use (that chip-styled select stays
+// data-ui-exempt, as theirs does). value/onChange carry prompt names.
 //
 // node names the node whose library the chips pick from and Manage… edits
 // (node-api.js; blank: the page's). library replaces it with a given list (a remote
@@ -244,7 +245,7 @@ export function SavedPromptChips({
             onChange(value.filter((name) => name !== prompt.name));
           }}>×</button>
       </span>`)}
-      <select class="saved-prompt-chip-add" value="" disabled=${disabled || !available.length} data-remote-spawn-field="prompts"
+      <select data-ui-exempt class="saved-prompt-chip-add" value="" disabled=${disabled || !available.length} data-remote-spawn-field="prompts"
         aria-label="Add saved prompt" onChange=${(event) => {
           const next = event.currentTarget.value;
           event.currentTarget.value = '';
@@ -293,10 +294,10 @@ export function SavedPromptPicker({ value, onChange, textareaRef, disabled = fal
     <span class="cron-create-label">Saved prompts</span>
     <div class="cron-create-target">
       <div class="cron-target-input-row saved-prompts-controls">
-        <select aria-label="Insert saved prompt" disabled=${disabled || !prompts.length} value="" onChange=${insert}>
+        <${Select} aria-label="Insert saved prompt" disabled=${disabled || !prompts.length} value="" onChange=${insert}>
           <option value="">${prompts.length ? 'Insert prompt…' : 'No saved prompts'}</option>
           ${prompts.map((prompt) => html`<option key=${prompt.name} value=${prompt.name}>${prompt.name}</option>`)}
-        </select>
+        <//>
         <${Button} size="sm" disabled=${disabled} onClick=${() => setManaging(true)}>Manage prompts…<//>
       </div>
       ${error ? html`<div class="cron-create-error" role="alert">${error} <${Button} size="sm" onClick=${() => void reload().catch((cause) => setError(cause.message))}>Retry<//></div>` : null}

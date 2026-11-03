@@ -16605,9 +16605,9 @@ body.wizard .process-node-readonly-badge { color: #d4af37; border-color: #d4af37
 .spawn-harness-matrix th { text-align: left; vertical-align: top; background: #0d1117; }
 .spawn-harness-matrix thead th:first-child { white-space: normal; line-height: 1.3; }
 .spawn-harness-matrix td { vertical-align: top; }
-.spawn-harness-cell select,
+.spawn-harness-cell :is(select, textarea) { width: 100%; min-width: 0; box-sizing: border-box; }
+.spawn-harness-cell select:where(:not(.ui-select)),
 .spawn-harness-cell textarea {
-  width: 100%; min-width: 0; box-sizing: border-box;
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
   padding: 6px 10px; color: #c9d1d9; font-size: 13px; font-family: inherit;
 }
@@ -16616,9 +16616,9 @@ body.wizard .process-node-readonly-badge { color: #d4af37; border-color: #d4af37
   margin-top: .45rem; min-height: 64px; resize: vertical;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.spawn-harness-cell select:focus,
+.spawn-harness-cell select:where(:not(.ui-select)):focus,
 .spawn-harness-cell textarea:focus { outline: none; border-color: #58a6ff; }
-.spawn-harness-cell select:disabled,
+.spawn-harness-cell select:where(:not(.ui-select)):disabled,
 .spawn-harness-cell textarea:disabled { cursor: default; opacity: .65; }
 .spawn-harness-cell textarea::placeholder { color: #8b949e; }
 .spawn-harness-cell.deny { background: rgba(248, 81, 73, 0.08); }
@@ -16639,13 +16639,13 @@ body.wizard #spawn-harness-policy-modal .spawn-harness-matrix th {
 body.wizard #spawn-harness-policy-modal .spawn-harness-matrix td {
   border-bottom-color: rgba(122, 93, 176, 0.35);
 }
-body.wizard #spawn-harness-policy-modal .spawn-harness-cell select,
+body.wizard #spawn-harness-policy-modal .spawn-harness-cell select:where(:not(.ui-select)),
 body.wizard #spawn-harness-policy-modal .spawn-harness-cell textarea {
   background: #140f28; border-color: rgba(122, 93, 176, 0.55); color: #f3e6c0;
 }
-body.wizard #spawn-harness-policy-modal .spawn-harness-cell select:focus,
+body.wizard #spawn-harness-policy-modal .spawn-harness-cell select:where(:not(.ui-select)):focus,
 body.wizard #spawn-harness-policy-modal .spawn-harness-cell textarea:focus { border-color: #a97bd6; }
-body.wizard #spawn-harness-policy-modal .spawn-harness-cell select option {
+body.wizard #spawn-harness-policy-modal .spawn-harness-cell select:where(:not(.ui-select)) option {
   color: #1a1330; background: #e7d9f5;
 }
 body.wizard #spawn-harness-policy-modal .spawn-harness-cell textarea::placeholder { color: #b39ddb; }
@@ -16800,7 +16800,7 @@ body.wizard .usage-history-note {
 .groups-route-map-surface { margin: 0 0 14px; }
 .route-map-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; }
 .route-map-toolbar label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted, #8b949e); font-size: 12px; }
-.route-map-toolbar select { border: 1px solid var(--border, #30363d); background: var(--panel, #161b22); color: var(--text, #e6edf3); border-radius: 5px; padding: 5px 8px; }
+.route-map-toolbar select:where(:not(.ui-select)) { border: 1px solid var(--border, #30363d); background: var(--panel, #161b22); color: var(--text, #e6edf3); border-radius: 5px; padding: 5px 8px; }
 .route-map-count { color: var(--muted, #8b949e); font-size: 12px; }
 .route-map-disclosure { margin: 0 0 10px; padding: 8px 10px; border: 1px solid #8b6b2e; border-radius: 5px; color: #e3b341; background: rgba(187, 128, 9, .10); font-size: 12px; }
 .route-map-content { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 330px); gap: 12px; align-items: start; }
@@ -16937,10 +16937,11 @@ body.wizard .git-repos-options small.git-repos-warning { color: #e6bd89; }
 body.wizard .git-repos-list:focus-visible { outline-color: #c39ee8; }
 
 .git-repos-options .git-repos-concurrency { align-items: center; justify-content: space-between; }
-.git-repos-concurrency select { background: #101720; color: #d4d4d4; border: 1px solid #354356; border-radius: 5px; padding: 6px 10px; min-width: 76px; }
-.git-repos-concurrency select:focus-visible { outline: 2px solid #6ba5ff; outline-offset: 2px; }
-body.wizard .git-repos-concurrency select { background: #140f28; border-color: #51406b; color: #e7d9f5; }
-body.wizard .git-repos-concurrency select:focus-visible { outline-color: #bb86fc; }
+.git-repos-concurrency select { min-width: 76px; }
+.git-repos-concurrency select:where(:not(.ui-select)) { background: #101720; color: #d4d4d4; border: 1px solid #354356; border-radius: 5px; padding: 6px 10px; }
+.git-repos-concurrency select:where(:not(.ui-select)):focus-visible { outline: 2px solid #6ba5ff; outline-offset: 2px; }
+body.wizard .git-repos-concurrency select:where(:not(.ui-select)) { background: #140f28; border-color: #51406b; color: #e7d9f5; }
+body.wizard .git-repos-concurrency select:where(:not(.ui-select)):focus-visible { outline-color: #bb86fc; }
 
 /* A shared grid keeps every multiplier input aligned, including inherited rows
    whose reset button is absent. Resets stay LEFT of the numeric column. */
@@ -18404,7 +18405,8 @@ button.gpi-graph:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px
 .grf-graph.grf-drop-armed { outline: 1px dashed #a371f7; outline-offset: -4px; }
 .grf-reassign { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .grf-reassign .grf-section { flex-basis: 100%; }
-.grf-reassign select { font: inherit; font-size: 12px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; max-width: 200px; }
+.grf-reassign select { max-width: 200px; }
+.grf-reassign select:where(:not(.ui-select)) { font: inherit; font-size: 12px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; }
 .grf-dock-agent.busy { border-color: #1f6feb; }
 .grf-dock-agent .pk-avatar { width: 18px; height: 18px; font-size: 10px; }
 .grf-dock-note { margin-left: auto; color: #6e7681; }

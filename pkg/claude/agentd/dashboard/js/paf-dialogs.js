@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button } from './ui-components.js';
+import { Button, Select } from './ui-components.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { dashboardState } from './snapshot-store.js';
 import { WorkflowImportButton } from './process-workflow-share.js';
@@ -208,14 +208,14 @@ function LandingSelects({ harness, model, onChange, idPrefix, sameLabel = '(own 
   const harnesses = spawnableHarnesses(snapshot);
   const models = harness ? modelsFor(snapshot, harness) : [];
   return html`<span class="paf-landing-selects">
-    <select id=${`${idPrefix}-harness`} value=${harness} onChange=${(event) => onChange({ harness: event.currentTarget.value, model: '' })}>
+    <${Select} id=${`${idPrefix}-harness`} value=${harness} onChange=${(event) => onChange({ harness: event.currentTarget.value, model: '' })}>
       <option value="">${sameLabel}</option>
       ${harnesses.map((item) => html`<option key=${item.name} value=${item.name}>${item.display_name || item.name}</option>`)}
-    </select>
-    <select id=${`${idPrefix}-model`} value=${model} onChange=${(event) => onChange({ harness, model: event.currentTarget.value })}>
+    <//>
+    <${Select} id=${`${idPrefix}-model`} value=${model} onChange=${(event) => onChange({ harness, model: event.currentTarget.value })}>
       <option value="">(model: default)</option>
       ${models.map((name) => html`<option key=${name} value=${name}>${name}</option>`)}
-    </select>
+    <//>
   </span>`;
 }
 
@@ -307,10 +307,10 @@ export function AgentImportPreview({ preview, choices, setChoices, overrides, se
     <label class="cron-create-row"><span class="cron-create-label">Name</span>
       <input id="agent-import-name" value=${choices.name} placeholder=${agent.name || ''} onInput=${(event) => set('name')(event.currentTarget.value)} /></label>
     <label class="cron-create-row"><span class="cron-create-label">Group</span>
-      <select id="agent-import-group" value=${choices.group} onChange=${(event) => set('group')(event.currentTarget.value)}>
+      <${Select} id="agent-import-group" value=${choices.group} onChange=${(event) => set('group')(event.currentTarget.value)}>
         <option value="">(pick a group)</option>
         ${groups.map((name) => html`<option key=${name} value=${name}>${name}</option>`)}
-      </select></label>
+      <//></label>
     <label class="cron-create-row"><span class="cron-create-label">Working dir</span>
       <input id="agent-import-cwd" value=${choices.cwd} placeholder=${agent.paths?.cwd || 'absolute path on this machine'} disabled=${choices.keepPaths}
         onInput=${(event) => set('cwd')(event.currentTarget.value)} /></label>
