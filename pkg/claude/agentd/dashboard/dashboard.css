@@ -6824,11 +6824,10 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 .operator-message-modal .modal-buttons { flex: 0 0 auto; }
 .cron-create-modal h3 { margin: 0; font-size: 14px; }
 .cron-create-modal .modal-meta {
-  font-size: 11px; color: #7d8590;
+  font-size: 11px; color: var(--ui-muted-text);
   padding: 4px 8px; background: var(--ui-card-inset-bg);
   border-left: 2px solid var(--ui-note-edge); margin-top: -4px;
 }
-body.wizard .cron-create-modal .modal-meta { color: var(--ui-muted-text); }
 /* Shared hint paragraph inside dialogs — the styles the group-context /
    group-clone hints used to carry inline; a class so theme re-skins can
    recolor them (an inline style would always win). */

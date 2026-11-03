@@ -1,9 +1,9 @@
 // Dialog meta lines (.modal-meta) come in two shapes: a boxed line in .modal
 // dialogs and a left-edged note in .cron-create-modal dialogs. Both paint from
 // tokens (ui.css): --ui-card-inset-bg and --ui-card-line for the surface,
-// --ui-meta-text for the boxed text, --ui-note-edge for the note's edge. The
-// wizard skin used to repeat that paint once per dialog id, and dialogs it
-// missed stayed grey. A skin rule may not paint a .modal-meta surface again;
+// --ui-meta-text for the boxed text, --ui-muted-text for the note text and
+// --ui-note-edge for the note's edge. The wizard skin used to repeat that
+// paint once per dialog id, and dialogs it missed stayed grey. A skin rule may not paint a .modal-meta surface again;
 // the few deliberate variants below keep their own look.
 
 import test from 'node:test';
@@ -49,7 +49,7 @@ test('both meta line shapes paint from the tokens', () => {
   const boxed = body('.modal .modal-meta');
   for (const want of ['background: var(--ui-card-inset-bg)', 'border: 1px solid var(--ui-card-line)', 'color: var(--ui-meta-text)']) assert.ok(boxed.includes(want), `.modal .modal-meta: ${want}`);
   const note = body('.cron-create-modal .modal-meta');
-  for (const want of ['background: var(--ui-card-inset-bg)', 'border-left: 2px solid var(--ui-note-edge)']) assert.ok(note.includes(want), `.cron-create-modal .modal-meta: ${want}`);
+  for (const want of ['color: var(--ui-muted-text)', 'background: var(--ui-card-inset-bg)', 'border-left: 2px solid var(--ui-note-edge)']) assert.ok(note.includes(want), `.cron-create-modal .modal-meta: ${want}`);
   const ui = readFileSync(new URL('ui.css', DASHBOARD), 'utf8');
   for (const token of ['--ui-meta-text', '--ui-note-edge']) {
     assert.match(ui, new RegExp(`:root \\{[^}]*${token}:`));
