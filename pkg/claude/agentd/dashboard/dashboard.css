@@ -9298,7 +9298,8 @@ label.cfg-label { cursor: pointer; }
 .cfg-row-wide > .cfg-row-ctl { justify-content: flex-start; }
 .cfg-tool-list { width: 100%; border-collapse: collapse; font-size: 13px; }
 .cfg-tool-list th { text-align: left; font-weight: 600; color: #8b949e; }
-.cfg-tool-list th, .cfg-tool-list td { padding: 6px 12px 6px 0; vertical-align: top; border-bottom: 1px solid var(--border); }
+/* .ui-compact sets the cell padding and the row lines. */
+.cfg-tool-list :is(th, td) { vertical-align: top; }
 .cfg-tool-list td:first-child code { white-space: nowrap; }
 @media (max-width: 640px) { .cfg-tool-list td:first-child code { white-space: normal; overflow-wrap: anywhere; } }
 /* A shortcut written as key chips (shortcut-keys.js): Ctrl , → [Ctrl] [,]. */
@@ -9312,7 +9313,7 @@ label.cfg-label { cursor: pointer; }
 .cfg-shortcut-list th.is-here, .cfg-shortcut-list td.is-here { background: rgba(88, 166, 255, 0.06); }
 .cfg-shortcut-list { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
 .cfg-shortcut-list th { text-align: left; font-weight: 600; color: #8b949e; white-space: normal; overflow-wrap: anywhere; }
-.cfg-shortcut-list th, .cfg-shortcut-list td { padding: 6px 12px 6px 0; vertical-align: top; border-bottom: 1px solid var(--border); }
+.cfg-shortcut-list :is(th, td) { vertical-align: top; }
 .cfg-shortcut-list th:first-child { width: 38%; }
 .cfg-shortcut-list th:nth-child(2), .cfg-shortcut-list th:nth-child(3) { width: 24%; }
 @media (max-width: 640px) { .cfg-shortcut-list { table-layout: auto; } .cfg-shortcut-list th { width: auto; } }
