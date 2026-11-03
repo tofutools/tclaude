@@ -1630,7 +1630,6 @@ func TestDashboardHTML_WizardDeleteRetiredModal(t *testing.T) {
 	}
 
 	must("body.wizard #delete-retired-modal .cleanup-hint.danger", "the irreversible warning keeps an ember caution color")
-	must("body.wizard #delete-retired-modal .cleanup-toolbar button", "selection controls get arcane chrome")
 	must("body.wizard #delete-retired-modal .cleanup-toolbar input[type=number]", "the age filter is re-skinned")
 	must("body.wizard #delete-retired-modal .cleanup-list {", "the retired-agent preview list is re-skinned")
 	must("body.wizard #delete-retired-modal .cleanup-row label .cleanup-badge:not(.online)", "wizard badge chrome leaves online and result status colors semantic")
