@@ -303,7 +303,7 @@ export function SkillInstallDialog({ row, actions, confirm, onClose, onDone }) {
     <h3 id="fleet-cb-install-title">Install ${row.name} <span class="muted">v ${short(row.version)}</span></h3>
     <div class="muted">From ${row.board.name}, posted by ${row.by} <${TrustBadge} trust=${row.trust} /></div>
     <div class="fa-cb-steps">${['Target', 'Preview', 'Install'].map((s, i) => html`<span key=${s} class=${i < step ? 'done' : i === step ? 'on' : ''}>${i + 1} · ${s}</span>`)}</div>
-    ${TARGETS.map((t) => html`<label key=${t.id} class=${`fa-cb-opt${opts.target === t.id ? ' on' : ''}`} data-target=${t.id}>
+    ${TARGETS.map((t) => html`<label key=${t.id} class=${`fa-cb-opt ui-card ui-inset${opts.target === t.id ? ' on' : ''}`} data-target=${t.id}>
       <input type="radio" name="fleet-cb-target" checked=${opts.target === t.id} onChange=${() => change({ target: t.id })} />
       <span class="fa-cb-opt-body"><span><b>${t.label}</b>${t.id === 'custom' && html` <span class="fa-badge">human only</span>`}</span><span class="muted">${t.note}</span>
         ${opts.target === t.id && t.id === 'harness' && (!roots ? html`<span class="muted">Loading…</span>` : html`${harness.map((r) => html`<label key=${r.id} class="fa-cb-sub"><input type="checkbox" data-skill-target=${r.id} checked=${opts.harness.includes(r.id)}
@@ -361,7 +361,7 @@ function Facets({ rows, query, setQuery, boards }) {
 }
 
 function Card({ row, selected, onSelect }) {
-  return html`<button type="button" data-ui-exempt class=${`fa-cb-card${selected ? ' sel' : ''}`} data-card=${row.key} onClick=${() => onSelect(row)}>
+  return html`<button type="button" data-ui-exempt class=${`fa-cb-card ui-card${selected ? ' sel' : ''}`} data-card=${row.key} onClick=${() => onSelect(row)}>
     <span class="fa-cb-card-meta">${row.invalid ? html`<span class="fa-danger">invalid</span>` : html`<${KindChip} kind=${row.kind} />`}<span class="muted">v ${short(row.version)} · ${row.board.name}</span></span>
     <b>${row.name}</b>
     ${row.description && html`<span class="muted fa-cb-desc">${row.description}</span>`}

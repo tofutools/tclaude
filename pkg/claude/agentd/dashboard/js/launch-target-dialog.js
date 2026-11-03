@@ -208,7 +208,7 @@ export function createLaunchTargetApi({ fetchImpl = (...a) => globalThis.fetch(.
 
 function Carries({ rows, title }) {
   if (!rows.length) return null;
-  return html`<div class="lt-carries" data-lt-carries="">
+  return html`<div class="lt-carries ui-card ui-inset" data-lt-carries="">
     <div class="lt-carries-title">${title}</div>
     ${rows.map(([mark, label, text]) => html`<div key=${label} class="lt-carry"><span class=${`lt-mark lt-mark-${mark === '✓' ? 'ok' : mark === '✗' ? 'no' : 'chg'}`}>${mark}</span><span class="lt-carry-k">${label}</span><span class="lt-carry-v">${text}</span></div>`)}
   </div>`;

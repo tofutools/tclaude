@@ -113,7 +113,7 @@ export function SubscriptionCard({ actions, confirm, toast }) {
   return html`<div class="fa-subscription" id="fleet-claude-subscription">
     <h4 class="fa-h">My Claude subscription <span class="muted">— run agents on your other nodes as yourself</span></h4>
     <p class="muted">Agents you spawn on another node can run Claude Code on your own subscription instead of that node's login: pick <b>Your Claude subscription</b> under Claude login in the spawn dialog. The token travels in the encrypted spawn request, stays in memory on that node, and reaches Claude Code through a pipe, never its disk or environment. Only you can use it, and only Claude Code; a model gateway cannot.</p>
-    ${!state ? html`<div class="empty">Loading…</div>` : html`<div class="fa-run-settings">
+    ${!state ? html`<div class="empty">Loading…</div>` : html`<div class="fa-run-settings ui-card ui-inset">
       <span class="fa-k">Token</span>
       <span class=${set ? '' : 'muted'} id="fleet-claude-subscription-state">${set ? `stored${state.set_at ? ` ${new Date(state.set_at).toLocaleDateString()}` : ''}` : 'not set up'}</span>
       ${!editing && html`<${Button} size="sm" id="fleet-claude-subscription-edit" onClick=${() => { setEditing(true); setError(''); }}>${set ? 'Replace…' : 'Set up…'}<//>`}
@@ -221,7 +221,7 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
   return html`<div class="fa-models">
     ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
     ${!control && !error && html`<div class="empty">Loading…</div>`}
-    ${control && html`<div class="fa-run-settings" id="fleet-models-master">
+    ${control && html`<div class="fa-run-settings ui-card ui-inset" id="fleet-models-master">
       <span class="fa-k">Model gateways</span>
       <span class=${control.disabled ? 'fa-warn' : 'muted'}>${control.disabled ? 'all off: no peer model requests are served' : `on (${gws.filter(([, p]) => p.enabled).length} of ${gws.length} enabled)`}</span>
       <${Button} size="sm" id="fleet-models-master-toggle" variant=${control.disabled ? '' : 'danger'} onClick=${master}>${control.disabled ? 'Turn on…' : 'Turn off all…'}<//>

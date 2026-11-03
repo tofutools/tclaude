@@ -171,7 +171,7 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
         ${!target?.pool && html`<label class="fa-gd-row"><span class="fa-k">For</span><${Select} size="sm" id="fleet-grant-lifetime" value=${lifetime} onChange=${(e) => setLifetime(e.currentTarget.value)}>
           ${GRANT_LIFETIMES.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}<//></label>`}
         ${!target?.pool && !lifetime && rows?.some((r) => !r.pool && r.expiresAt && picked.includes(r.slug)) && html`<div class="muted fa-gd-note">A timed grant you update keeps its time limit.</div>`}
-        <div class="fa-gd-plan" id="fleet-grant-plan">
+        <div class="fa-gd-plan ui-card ui-inset" id="fleet-grant-plan">
           ${rowsError ? html`<span class="fa-danger" role="alert">Could not read ${target?.label}'s grants: ${rowsError}</span>` : !picked.length ? html`<span class="muted">Tick permissions on the left.</span>` : !target ? html`<span class="muted">Pick who gets them.</span>` : !rows ? html`<span class="muted">Loading ${target.label}'s grants…</span>` : html`
             <b>${todo.length ? `${target.label} gets ${todo.length} grant${todo.length === 1 ? '' : 's'}:` : 'Nothing new to grant.'}</b>
             <ul>${plan.grants.map((g) => html`<li key=${g.key} data-plan=${g.key} class=${g.skip ? 'muted' : ''}><code class=${slugInfo(g.slug).sensitive ? 'fa-sensitive' : ''}>${g.slug}</code> ${where(g)}${g.body.spawn_policy ? ` (cap ${g.body.spawn_policy.max_live})` : ''}${g.body.expires_at ? html` <span class="muted">${grantExpiryText(g.body.expires_at)}</span>` : ''}${g.skip ? ' — already granted' : g.existing ? ' — updates the existing grant' : ''}</li>`)}</ul>

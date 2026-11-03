@@ -354,7 +354,7 @@ function HubStep({ view, actions, confirm, toast, copy, reload, onSettings }) {
     </details>
     <div class="fs-actions"><${Button} size="sm" id="fleet-setup-join" variant=${JOIN_CODE.test(code) ? '' : 'primary'} disabled=${busy || !form.hubURL.trim()} onClick=${() => save(form)}>Join with this address…<//></div>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
-    <div class="fs-aside">
+    <div class="fs-aside ui-card">
       <b>No invite?</b> The admin can admit this node by its instance ID and fingerprint instead (<code>tclaude hub admit</code>). Send them these:
       <${IdentityCard} self=${self} copy=${copy} toast=${toast} />
     </div>
@@ -368,7 +368,7 @@ function TrustStep({ view, copy, toast, onTrust, onPeers }) {
   return html`<div class="fs-body" data-setup-step="trust">
     <h3>Trust your peers</h3>
     <p>Trust is each operator's own decision, made on both sides. Before you trust a node, compare its fingerprint with its operator over another channel (a call, a chat you trust); they compare yours the same way.</p>
-    <div class="fs-aside"><b>Your fingerprint</b> <${Copyable} value=${self.fingerprint} what="Fingerprint" copy=${copy} toast=${toast} /></div>
+    <div class="fs-aside ui-card"><b>Your fingerprint</b> <${Copyable} value=${self.fingerprint} what="Fingerprint" copy=${copy} toast=${toast} /></div>
     ${!connected && html`<p class="fs-warn">Join a hub first: other nodes show up here once this node is connected.</p>`}
     ${connected && (view.waiting.length === 0
       ? html`<div class="empty">No other nodes in your space yet. Each node joins the same space with its own invite; it shows up here once it connects.</div>`
@@ -639,7 +639,7 @@ export function SetupGuide({ view, groups = [], agents = [], actions, confirm, t
   useEffect(() => { onSeen?.(); }, []);
   const shown = progress.steps.find((s) => s.id === step) || progress.steps[0];
   const next = shown.done ? progress.steps[progress.steps.indexOf(shown) + 1] : null;
-  return html`<div class="fleet-setup" id="fleet-setup">
+  return html`<div class="fleet-setup ui-card ui-inset" id="fleet-setup">
     <ol class="fs-steps" aria-label="Setup steps">
       ${progress.steps.map((s, i) => html`<li key=${s.id}>
         <button type="button" data-ui-exempt class=${`fs-step${s.done ? ' done' : ''}${s.id === shown.id ? ' on' : ''}`} data-step=${s.id} aria-current=${s.id === shown.id ? 'step' : undefined} onClick=${() => setStep(s.id)}>
