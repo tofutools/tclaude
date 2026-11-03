@@ -34,6 +34,7 @@ import { processScribeSessions } from './process-scribe.js';
 import { viewToStepList } from './process-step-list.js';
 import { shellConfirm } from './shell-state.js';
 import { SavedProcesses } from './groups-saved-processes.js';
+import { AddResource, GroupResources } from './groups-resources.js';
 import { MiniGraphEditor } from './groups-mini-editor.js';
 import { groupRoster } from './process-quickstart.js';
 import { handOffProcessDraft } from './process-draft-handoff.js';
@@ -593,6 +594,8 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         setStarting(false);
         setQuick(edit.mode === 'graph' ? { ...edit, stored: edit.view, key: Date.now() } : { ...edit, key: Date.now() });
       }} />`}
+    ${fused && html`<${GroupResources} group=${group} boards=${entry?.boards || []} pages=${entry?.pages || []} api=${api} source=${source}
+      notify=${notify || defaultNotify} nameOf=${nameOf} />`}
     ${starting && html`<${StartRunForm} key=${starting.scope || 'group'} group=${group} api=${api} source=${source} wizard=${wizard}
       members=${starting.scope === 'agent' ? members : null} onBuild=${() => { setStarting(false); setQuick('pick'); }}
       initialTemplateId=${starting?.templateId || ''} scribes=${scribes} onClose=${() => setStarting(false)}
@@ -609,15 +612,18 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
       ? (wizard ? 'No rites in this party yet.' : 'No processes in this group yet.')
       : `No ${label} ${wizard ? 'rites' : 'processes'}.`}</div>`}`;
   if (fused) {
-    const shown = runs.length > 0 || planned.length > 0 || memberRuns.length > 0;
+    const shown = runs.length > 0 || planned.length > 0 || memberRuns.length > 0
+      || (entry?.boards || []).length > 0 || (entry?.pages || []).length > 0;
     // The run controls head the open section's content on their own title
     // row, where the Agents half has its table header; folded, they ride
     // the section line.
     return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Heroes' : 'Agents'} count=${fused.count}
         actions=${fused.actions} closedActions=${fused.closedActions}>${fused.agents}<//>
-      <${FusedSection} group=${group.name} section="processes" label=${wizard ? 'Rites' : 'Processes'}
+      <${FusedSection} group=${group.name} section="processes" label="Resources"
         count=${runs.length + planned.length + memberRuns.length}
-        actions=${quick === 'pick' && html`<${Button} size="sm" class="gp-start" onClick=${() => setQuick(null)}>close<//>`}
+        actions=${html`${quick === 'pick' && html`<${Button} size="sm" class="gp-start" onClick=${() => setQuick(null)}>close<//>`}<${AddResource}
+          group=${group} boards=${entry?.boards || []} api=${api} source=${source} wizard=${wizard} notify=${notify || defaultNotify}
+          onAddProcess=${() => { setStarting(false); setQuick('pick'); }} />`}
         closedActions=${controls(true)}
         auto=${shown} force=${!!starting || !!quick} attrs=${{ 'data-fused-processes': group.name }}>
         <div class=${`gp-group${pwfOver ? ' gp-pwf-over' : ''}`} data-process-group=${group.name} ...${pwfDrop}><div class="group-header-actions gf-title-row">${controls(true)}</div>${body}</div>

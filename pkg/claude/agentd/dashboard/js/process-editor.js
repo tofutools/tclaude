@@ -399,6 +399,8 @@ export class ProcessTemplateEditor {
       status: { ...this.statusState },
       paletteHidden: this.paletteHidden,
       helper: this.helper,
+      // The operator's lock on the stored template (tcl-dwzsq0), as last read.
+      agentsLocked: !!this.loadedView?.agentsLocked,
       // Stored templates the palette offers as ▣ references (never this one:
       // a template cannot run itself).
       templateRefs: (this.options.templateRefs?.() || [])
@@ -840,6 +842,12 @@ export class ProcessTemplateEditor {
       void this.loadExternalReview();
     }
     return this.externalChange;
+  }
+
+  // setAgentsLocked records a lock toggled from the header until the next read.
+  setAgentsLocked(locked) {
+    if (this.loadedView) this.loadedView.agentsLocked = !!locked;
+    this.refresh();
   }
 
   toggleExternalReview() {

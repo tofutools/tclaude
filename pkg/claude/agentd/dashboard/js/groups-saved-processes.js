@@ -20,6 +20,7 @@ import { bindSavedProcessDnd, registerSavedProcessRemover } from './groups-saved
 import { WorkflowExportButton } from './process-workflow-share.js';
 import { shellConfirm } from './shell-state.js';
 import { Button } from './ui-components.js';
+import { LockChip } from './resource-lock.js';
 
 const html = htm.bind(h);
 
@@ -218,6 +219,7 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
         title=${`Drag onto the bin to remove ${process.name} from ${group.name}`}>
         <span class="gq-saved-name" title=${process.listed ? 'Also in the template library' : `Saved to ${group.name} only`}>${process.name}</span>
         <span class="gq-dim">${plural(process.steps || 0, 'step')}</span>
+        <${LockChip} kind="process" id=${process.templateId} name=${process.name} locked=${!!process.agentsLocked} api=${api} source=${source} notify=${notify} />
         ${editing === process.templateId
     ? html`<span class="gq-saved-editing" data-saved-editing=${process.templateId}>✎ editing</span>`
     : html`<button data-ui-exempt type="button" class="gq-saved-edit" data-saved-edit-graph=${process.templateId} disabled=${!!loading || !!editing}

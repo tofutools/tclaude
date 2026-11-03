@@ -23,7 +23,7 @@ which half is which.
 
 1. Turn on **Processes** under [Config › Experimental](dashboard-config.md#experimental).
 2. Create a template under **Automations › Processes**, or let **Edit with agent** draft it.
-3. Start a run with the **Group process** button on a group's Processes section.
+3. Start a run with the **Group process** button on a group's Resources section.
 4. Follow it in [Groups](dashboard-groups.md#agents-and-processes).
 
 [In the dashboard](#in-the-dashboard) covers all of this. The next sections are
@@ -462,7 +462,7 @@ things there are specific to processes:
   *⇲ unwrap* inlines a body again.
 
 **Starting a run.** In Groups, in the **Both** or **Processes** focus, use
-the **Group process** button on a group's Processes section, or **Agent process**
+the **Group process** button on a group's Resources section, or **Agent process**
 for a run bound to one agent: pick a template, fill its params, and tick the
 program profiles you authorize it to run under (never pre-ticked). A group process
 is group-scoped (⌂) and an agent process is agent-scoped (◉). The CLI equivalent

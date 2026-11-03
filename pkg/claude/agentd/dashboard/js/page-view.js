@@ -13,6 +13,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
+import { LockChip } from './resource-lock.js';
 import {
   PAGE_FRAME_SANDBOX, PAGE_WINDOW_KIND, findLivePage, isPageId, pageFrameSrc, pageLabel, pagePaneSeed, pageSandboxRules, pageSender,
 } from './page-pane-model.js';
@@ -216,6 +217,10 @@ export function PageView({ pageId, snapshot, tools = null, onOpenSender = null, 
   const [note, setNote] = useState('');
   const [sending, setSending] = useState(false);
   const marks = usePageMarks(probe);
+  // The lock as just toggled here, until the snapshot carries it.
+  const [lockSet, setLockSet] = useState(null);
+  const snapLocked = !!page?.agents_locked;
+  useEffect(() => setLockSet(null), [snapLocked]);
   useEffect(() => { if (probe.scroll) live.report(probe.scroll); }, [probe.scroll]);
   if (!page) {
     return html`<div class="page-view page-view-closed" data-page=${pageId}>
@@ -254,6 +259,7 @@ export function PageView({ pageId, snapshot, tools = null, onOpenSender = null, 
         : html`<b class="page-head-sender">${sender.name}</b>`}</span>
       <code class="page-head-target" title=${`Target: ${page.target}`}>${page.target}</code>
       ${page.worktree ? html`<span class="page-head-worktree" title=${`Worktree: ${page.worktree}`}>${baseName(page.worktree)}</span>` : null}
+      <${LockChip} kind="page" id=${page.id} name=${label} locked=${lockSet ?? snapLocked} notify=${notify || (() => {})} onChanged=${setLockSet} />
       <span class="ui-tag page-sandbox-chip" tabIndex="0" role="note" title=${rules.join('\n')} aria-label=${`Sandboxed. ${rules.join(' ')}`}>🔒 sandboxed</span>
       <span class="spacer"></span>
       ${chip ? html`<span class=${`ui-tag page-patch-chip${chip.live ? ' live' : ''}`} role="status"

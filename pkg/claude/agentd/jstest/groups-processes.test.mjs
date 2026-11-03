@@ -560,3 +560,44 @@ test('Both links an agent to its steps, a step to its performers, and a run card
   assert.equal(root.querySelector('.gf-links'), null, 'leaving the frame clears the links');
   assert.equal(fe.querySelectorAll('.gf-link-hot, .gf-link-dim').length, 0);
 });
+
+// tcl-dwzsq0: in Both, the group's section is Resources: its processes, then
+// the boards and pages attached to it, a kind only when it has any, each with
+// the operator's agent lock chip; one ＋▾ adds a process or a board.
+test('Both\'s Resources section lists the group\'s boards and pages with lock chips, hiding empty kinds', async (t) => {
+  const context = structuredClone(FIXTURE);
+  const fe = context.groups.find((g) => g.group === 'frontend-squad');
+  fe.processes = [{ templateId: 'ship', name: 'Ship', ref: 'r1', listed: true, steps: 3, params: [], programProfiles: [], agentsLocked: true }];
+  fe.boards = [{ id: 'sprint', title: 'Sprint board', editing: 2 }];
+  const infra = context.groups.find((g) => g.group === 'infra-crew');
+  infra.pages = [{ id: 'pg1', name: 'landing', title: 'Landing page', owner: 'agt_infra_lead', kind: 'port', agentsLocked: true }];
+  const calls = [];
+  const api = { setResourceLock: async (...args) => { calls.push(args); return {}; } };
+  const { harness, details, source } = await mountFocus(t, { fused: true, api, sourceOptions: { context } });
+  const section = (el) => el.querySelector('[data-fused-section="processes"]');
+
+  const feSection = section(details('frontend-squad'));
+  assert.equal(feSection.querySelector('.gf-label').textContent, 'Resources');
+  assert.ok(feSection.querySelector('[data-resource-add="frontend-squad"]'), 'one ＋▾ add');
+  const feRes = feSection.querySelector('[data-group-resources="frontend-squad"]');
+  assert.ok(feRes.querySelector('[data-resource-kind="boards"]'));
+  assert.equal(feRes.querySelector('[data-resource-kind="pages"]'), null, 'a kind with nothing in it is hidden');
+  const board = feRes.querySelector('[data-resource-board="sprint"]');
+  assert.match(board.textContent, /Sprint board/);
+  assert.match(board.textContent, /2 editing/);
+  assert.equal(board.querySelector('[data-resource-lock="board:sprint"]').textContent, '✎ agents can edit');
+  assert.equal(feSection.querySelector('[data-resource-lock="process:ship"]').textContent, '🔒 agents: read-only');
+
+  const infraSection = section(details('infra-crew'));
+  assert.ok(infraSection.classList.contains('open'), 'a group with a resource opens its section');
+  const page = section(details('infra-crew')).querySelector('[data-resource-page="pg1"]');
+  assert.ok(page, 'a group with only a page lists it');
+  assert.equal(section(details('infra-crew')).querySelector('[data-resource-kind="boards"]'), null);
+  assert.match(page.textContent, /infra-lead · live/, 'the page names its shower');
+
+  const before = source.refreshes;
+  await harness.act(() => harness.fireEvent(page.querySelector('[data-resource-lock="page:pg1"]'), 'click'));
+  await settle(harness);
+  assert.deepEqual(calls, [['page', 'pg1', false]], 'the chip unlocks a locked page');
+  assert.ok(source.refreshes > before, 'and reloads the context');
+});

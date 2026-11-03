@@ -126,8 +126,11 @@ type processTemplateEditView struct {
 	// content (tcl-8o4rjj). On a save, Listed (when present) sets whether the
 	// template lists in the library, and PinGroup pins it to that group's
 	// saved processes. A read reports Listed.
-	Listed        *bool  `json:"listed,omitempty"`
-	PinGroup      string `json:"pinGroup,omitempty"`
+	Listed   *bool  `json:"listed,omitempty"`
+	PinGroup string `json:"pinGroup,omitempty"`
+	// AgentsLocked is, on a read, the operator's lock on the template
+	// (group_resource_locks.go); a save ignores it.
+	AgentsLocked  bool `json:"agentsLocked,omitempty"`
 	layoutPresent bool
 }
 
@@ -378,6 +381,7 @@ func handleProcessTemplateGet(w http.ResponseWriter, r *http.Request, fs *store.
 		view.Actor = exactHead.Actor
 		view.AuthoredAt = exactHead.AuthoredAt
 	}
+	view.AgentsLocked = db.GroupResourceLocked(resourceKindProcess, r.PathValue("id"))
 	writeProcessJSON(w, http.StatusOK, view)
 }
 

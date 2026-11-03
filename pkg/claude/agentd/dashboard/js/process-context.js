@@ -323,6 +323,21 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
         method: 'DELETE',
       }, fetchImpl);
     },
+    // setResourceLock locks or unlocks a group resource against agent
+    // changes (POST /api/resource-locks, the operator's alone): kind is
+    // process (a template id), board (a board id) or page (a page id).
+    async setResourceLock(kind, id, locked) {
+      return processRequest('/api/resource-locks', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, id, locked }),
+      }, fetchImpl);
+    },
+    // createGroupBoard creates a board and links it to a group.
+    async createGroupBoard(group, title, id) {
+      const json = { 'Content-Type': 'application/json' };
+      const board = await processRequest('/api/boards', { method: 'POST', headers: json, body: JSON.stringify({ title, id: id || undefined }) }, fetchImpl);
+      await processRequest(`/api/boards/${encodeURIComponent(board.id)}/group`, { method: 'POST', headers: json, body: JSON.stringify({ group }) }, fetchImpl);
+      return board;
+    },
     // deleteTemplate removes a template with its history, pins and listing.
     async deleteTemplate(templateId) {
       return processRequest(`/v1/process/templates/${encodeURIComponent(templateId)}`, { method: 'DELETE' }, fetchImpl);

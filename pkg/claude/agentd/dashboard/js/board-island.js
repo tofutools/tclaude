@@ -35,6 +35,7 @@ import { useDismissablePopover } from './hover-popover.js';
 import { shortcutText, withShortcut } from './keybindings.js';
 import { Button, Select } from './ui-components.js';
 import { onPeerPage } from './node-api.js';
+import { LockChip } from './resource-lock.js';
 
 const html = htm.bind(h);
 
@@ -337,6 +338,7 @@ export function BoardEditor({
         setMeta({
           title: board.title || boardId, participants: Array.isArray(board.participants) ? board.participants : [],
           group: board.group || '', groupMembers: Array.isArray(board.group_members) ? board.group_members : [],
+          agentsLocked: !!board.agents_locked,
         });
         if (board.title) onTitleRef.current?.(board.title);
         setPresence(new Map((board.presence?.agents || []).map((a) => [a.agent_id, a.state])));
@@ -1744,6 +1746,8 @@ export function BoardEditor({
   return html`<div ref=${rootRef} class="board-editor" onPointerDownCapture=${() => { lastEditor = editorToken; }} onWheel=${onWheel}>
     <header class="board-head">
       <h2 class="board-title">${meta.title}</h2>
+      <${LockChip} kind="board" id=${boardId} name=${meta.title} locked=${!!meta.agentsLocked} notify=${notify}
+        onChanged=${(agentsLocked) => setMeta((m) => ({ ...m, agentsLocked }))} />
       <span class=${`board-sync ${status}`} title="Sync with the daemon">${status === 'ready' ? (pending.current.size ? (refused.current ? 'not saved' : 'saving…') : 'synced') : status}</span>
       <div class="board-people" aria-label="Agents on this board">
         ${meta.participants.map((id) => {
