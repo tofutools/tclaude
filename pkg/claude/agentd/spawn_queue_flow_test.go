@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func setCapacity(t *testing.T, k config.CapacityConfig) {
@@ -265,4 +267,131 @@ func TestSpawnQueue_QueuedAgentSpawnKeepsDirProof(t *testing.T) {
 	got, ok := f.World.SpawnTrustDir(a.CurrentConvID)
 	require.True(t, ok)
 	assert.True(t, got, "the queued launch still threads --trust-dir")
+}
+
+// Scenario: the queue's head check sees room, but capacity is gone by the
+// time the spawner's own gate runs (node_busy). The entry keeps its place in
+// the queue instead of failing, and launches once room is back.
+func TestSpawnQueue_CapacityRaceAtTheGateRequeues(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("team")
+	setCapacity(t, config.CapacityConfig{MaxLiveAgents: 1, WhenFull: config.CapacityWhenFullQueue})
+	f.AsHuman().Spawn("team", "first")
+	queued := queuedResp(t, f.AsHuman().SpawnWith("team", map[string]any{"name": "second"}))
+
+	// Room appears for the head check, and is taken back just before the gate.
+	setCapacity(t, config.CapacityConfig{MaxLiveAgents: 2, WhenFull: config.CapacityWhenFullQueue})
+	restore := agentd.SetBeforeExecuteSpawnForTest(func() {
+		setCapacity(t, config.CapacityConfig{MaxLiveAgents: 1, WhenFull: config.CapacityWhenFullQueue})
+	})
+	t.Cleanup(restore)
+	agentd.RunSpawnQueueForTest()
+	restore()
+
+	entry, err := db.GetSpawnQueueEntry(queued.QueueID)
+	require.NoError(t, err)
+	assert.Equal(t, db.SpawnQueueQueued, entry.State, "a capacity race keeps the entry queued; reason=%q", entry.Reason)
+	list, _ := spawnQueueList(t, f, "")
+	require.Len(t, list.Entries, 1)
+	assert.Equal(t, "second", list.Entries[0].Name)
+
+	// Room is back for good: the requeued entry launches.
+	setCapacity(t, config.CapacityConfig{MaxLiveAgents: 2, WhenFull: config.CapacityWhenFullQueue})
+	agentd.RunSpawnQueueForTest()
+	entry, err = db.GetSpawnQueueEntry(queued.QueueID)
+	require.NoError(t, err)
+	assert.Equal(t, db.SpawnQueueLaunched, entry.State, "reason=%q", entry.Reason)
+	launched, err := db.GetAgent(entry.ReservedAgent)
+	require.NoError(t, err)
+	require.NotNil(t, launched, "the second attempt used its own reserved agent id")
+	f.AssertGroupMember("team", launched.CurrentConvID, "second", 5*time.Second)
+}
+
+// Scenario: the queued launch starts but the child is not seen to come up
+// (spawn_unconfirmed). It may still be running, so the entry is recorded as
+// launched and tracked, not failed as refused.
+func TestSpawnQueue_UnconfirmedLaunchIsNotRecordedAsRefused(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("team")
+	setCapacity(t, config.CapacityConfig{MaxLiveAgents: 1, WhenFull: config.CapacityWhenFullQueue})
+	first := f.AsHuman().Spawn("team", "first")
+	queued := queuedResp(t, f.AsHuman().SpawnWith("team", map[string]any{"name": "second"}))
+
+	t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(50 * time.Millisecond))
+	f.World.SkipSpawnRow = true
+	f.MarkOffline(first.TmuxSession)
+	agentd.RunSpawnQueueForTest()
+
+	entry, err := db.GetSpawnQueueEntry(queued.QueueID)
+	require.NoError(t, err)
+	assert.Equal(t, db.SpawnQueueLaunched, entry.State, "reason=%q", entry.Reason)
+	assert.Contains(t, entry.Reason, "launch unconfirmed")
+}
+
+// Scenario: the request and the group leave cwd blank, so the spawner falls
+// back to where the CLI ran (caller_cwd), and that disk is the full one. The
+// queue's head check probes that same directory, so the entry waits in the
+// queue without ever reaching the spawner's gate, and launches there once the
+// disk frees up.
+func TestSpawnQueue_HeadCheckProbesTheCallerCwdTheGateWill(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("team")
+	full := testutil.CanonicalTempDir(t)
+	freeMB := atomic.Int64{}
+	freeMB.Store(10)
+	t.Cleanup(agentd.SetCapacityDiskForTest(1<<20, func(dir string) int64 {
+		if dir == full {
+			return freeMB.Load()
+		}
+		return 1 << 20
+	}))
+	setCapacity(t, config.CapacityConfig{MaxLiveAgents: 1, MinFreeDiskMB: 100, WhenFull: config.CapacityWhenFullQueue})
+	first := f.AsHuman().Spawn("team", "first")
+	queued := queuedResp(t, f.AsHuman().SpawnWith("team", map[string]any{"name": "second", "caller_cwd": full}))
+
+	var gateRuns atomic.Int32
+	t.Cleanup(agentd.SetBeforeExecuteSpawnForTest(func() { gateRuns.Add(1) }))
+	f.MarkOffline(first.TmuxSession)
+	agentd.RunSpawnQueueForTest()
+
+	entry, err := db.GetSpawnQueueEntry(queued.QueueID)
+	require.NoError(t, err)
+	assert.Equal(t, db.SpawnQueueQueued, entry.State, "reason=%q", entry.Reason)
+	assert.Zero(t, gateRuns.Load(), "the head check saw the full caller_cwd disk; the launch was never attempted")
+
+	freeMB.Store(1 << 20)
+	agentd.RunSpawnQueueForTest()
+	entry, err = db.GetSpawnQueueEntry(queued.QueueID)
+	require.NoError(t, err)
+	assert.Equal(t, db.SpawnQueueLaunched, entry.State, "reason=%q", entry.Reason)
+}
+
+// Scenario: the spawner's gate refuses for capacity that the queue's own
+// head check does not see. Requeueing would hold the head of the queue, and
+// every entry behind it, without a word; the entry fails visibly with the
+// gate's reason instead.
+func TestSpawnQueue_GateRefusalTheHeadCheckCannotSeeFailsVisibly(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("team")
+	var armed atomic.Bool
+	t.Cleanup(agentd.SetCapacityDiskForTest(1<<20, func(string) int64 {
+		if armed.CompareAndSwap(true, false) {
+			return 10 // the gate's probe only
+		}
+		return 1 << 20
+	}))
+	setCapacity(t, config.CapacityConfig{MaxLiveAgents: 1, MinFreeDiskMB: 100, WhenFull: config.CapacityWhenFullQueue})
+	first := f.AsHuman().Spawn("team", "first")
+	queued := queuedResp(t, f.AsHuman().SpawnWith("team", map[string]any{"name": "second"}))
+
+	t.Cleanup(agentd.SetBeforeExecuteSpawnForTest(func() { armed.Store(true) }))
+	f.MarkOffline(first.TmuxSession)
+	agentd.RunSpawnQueueForTest()
+
+	entry, err := db.GetSpawnQueueEntry(queued.QueueID)
+	require.NoError(t, err)
+	assert.Equal(t, db.SpawnQueueFailed, entry.State, "reason=%q", entry.Reason)
+	assert.Contains(t, entry.Reason, "capacity.min_free_disk_mb")
+	list, _ := spawnQueueList(t, f, "")
+	assert.Empty(t, list.Entries, "nothing is left holding the head of the queue")
 }

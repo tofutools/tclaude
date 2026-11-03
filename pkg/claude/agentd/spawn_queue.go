@@ -389,18 +389,8 @@ func launchSpawnQueueHead(e *db.SpawnQueueEntry) bool {
 		finishSpawnQueueEntry(e, db.SpawnQueueFailed, "the target group no longer exists or is archived", "")
 		return true
 	}
-	if limits.Limited() {
-		// The directory this launch will use: the request's own, else the group's.
-		var requested struct {
-			Cwd string `json:"cwd"`
-		}
-		if body, err := db.SpawnQueueBody(e.ID); err == nil {
-			_ = json.Unmarshal([]byte(body), &requested)
-		}
-		cwd := cmp.Or(strings.TrimSpace(requested.Cwd), g.DefaultCwd)
-		if reason, err := nodeCapacityFull(limits, []string{cwd}); err != nil || reason != "" {
-			return false
-		}
+	if spawnQueueHeadFull(e, g, limits) {
+		return false
 	}
 	req, fail := spawnQueueReplayRequest(e, g)
 	if fail != "" {
@@ -429,14 +419,23 @@ func launchSpawnQueueHead(e *db.SpawnQueueEntry) bool {
 		finishSpawnQueueEntry(e, db.SpawnQueueLaunched, "launched as "+cmp.Or(out.AgentID, reserved), cmp.Or(out.AgentID, reserved))
 		return true
 	}
+	// writeError's shape: the spawnFailure Kind travels as "code".
 	var refusal struct {
 		Error string `json:"error"`
-		Kind  string `json:"kind"`
+		Code  string `json:"code"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &refusal)
-	if refusal.Kind == fedCodeNodeBusy || refusal.Kind == "node_capacity_unknown" {
-		// Capacity went between the check and the gate: keep its place.
-		if started, _ := spawnQueueLaunchStarted(reserved); !started {
+	if refusal.Code == fedCodeNodeBusy || refusal.Code == "node_capacity_unknown" {
+		// Capacity went between the check and the gate: keep its place, but
+		// only while the queue's own check agrees there is no room. A gate
+		// refusal the head check cannot see would otherwise hold the head of
+		// the queue, and every entry behind it, without saying why; that one
+		// fails visibly with the gate's reason instead. Accepted trade-off: a
+		// condition that flips twice within one replay (free RAM at the
+		// threshold, a transient capacity read error) fails the entry rather
+		// than keeping its place; failing is visible, a stalled head is not.
+		limits, err := nodeCapacityLimits()
+		if started, _ := spawnQueueLaunchStarted(reserved); !started && (err != nil || spawnQueueHeadFull(e, g, limits)) {
 			_, _ = db.RequeueSpawnQueueEntry(e.ID)
 			return false
 		}
@@ -445,13 +444,36 @@ func launchSpawnQueueHead(e *db.SpawnQueueEntry) bool {
 	if msg == "" {
 		msg = "HTTP " + strconv.Itoa(rec.Code)
 	}
-	if refusal.Kind == spawnUnconfirmedKind {
+	if refusal.Code == spawnUnconfirmedKind {
 		// The child may still come up; the pending spawn row now tracks it.
 		finishSpawnQueueEntry(e, db.SpawnQueueLaunched, "launch unconfirmed, tracked as a pending spawn: "+msg, reserved)
 		return true
 	}
 	finishSpawnQueueEntry(e, db.SpawnQueueFailed, "launch refused: "+msg, "")
 	return true
+}
+
+// spawnQueueHeadFull reports whether node capacity has no room for the queued
+// launch, probing the directory the spawner's own gate will: the request's
+// cwd resolved exactly as handleGroupSpawn resolves it. A cwd that does not
+// resolve is left to the launch, which refuses it visibly as invalid_cwd.
+func spawnQueueHeadFull(e *db.SpawnQueueEntry, g *db.AgentGroup, limits config.CapacityLimits) bool {
+	if !limits.Limited() {
+		return false
+	}
+	var requested struct {
+		Cwd       string `json:"cwd"`
+		CallerCwd string `json:"caller_cwd"`
+	}
+	if body, err := db.SpawnQueueBody(e.ID); err == nil {
+		_ = json.Unmarshal([]byte(body), &requested)
+	}
+	cwd, err := resolveSpawnCwd(spawnRequestCwd(requested.Cwd, requested.CallerCwd, g))
+	if err != nil {
+		cwd = ""
+	}
+	reason, err := nodeCapacityFull(limits, []string{cwd})
+	return err != nil || reason != ""
 }
 
 // spawnQueueReplayRequest rebuilds the queued request as its original

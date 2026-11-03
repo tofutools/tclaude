@@ -1,7 +1,6 @@
 package agentd
 
 import (
-	"cmp"
 	"bytes"
 	"crypto/rand"
 	"database/sql"
@@ -3887,9 +3886,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// dashboard's client-side prefill. Past an empty default_cwd comes
 	// the directory the CLI ran in; with neither, cwd stays blank and
 	// resolveSpawnCwd inherits the daemon's own cwd as before.
-	if body.Cwd == "" {
-		body.Cwd = cmp.Or(g.DefaultCwd, body.CallerCwd)
-	}
+	body.Cwd = spawnRequestCwd(body.Cwd, body.CallerCwd, g)
 
 	// Resolve the harness independently through the complete chain. Other launch
 	// fields never pin it: explicit request > named CLI profile > group default
