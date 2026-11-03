@@ -43,6 +43,7 @@ import { SnapAssist } from './overlay-snap-assist.js';
 import { activeTabOf, windowHolding } from './overlay-tab-model.js';
 import { BOARD_WINDOW_KIND } from './board-overlay-state.js';
 import { PROCESS_WINDOW_KIND } from './process-editor-place.js';
+import { PAGE_WINDOW_KIND } from './page-pane-model.js';
 import { TERMINAL_WINDOW_KIND } from './terminal-window-model.js';
 import { viewportOf } from './overlay-window-model.js';
 import { CompanionViewChannel } from './companion-view-channel.js';
@@ -1248,6 +1249,7 @@ export function CompanionApp({
     [TERMINAL_WINDOW_KIND]: { ...shownTerminal, notify },
     [BOARD_WINDOW_KIND]: { snapshot, fetchImpl, notify, win },
     [PROCESS_WINDOW_KIND]: { snapshot, fetchImpl, notify, win },
+    [PAGE_WINDOW_KIND]: { snapshot, fetchImpl, notify, win },
     [START_WINDOW_KIND]: { Body: StartTab, view: () => ({ label: customName || 'Steward', lead: html`<span class="companion-avatar steward" aria-hidden="true">✦</span>`, title: customName || 'Steward' }), ...stewardHome, onResume: resumeSteward, onSummon: summonSteward },
     [DECIDE_WINDOW_KIND]: { Body: DecideTab, view: () => ({ label: `${queue.length} to decide`, lead: html`<span class="companion-decide-mark" aria-hidden="true">◆</span>`, title: 'Decisions agents are waiting on' }), snapshot, queue, askerName, fetchImpl, notify, DecisionCard },
   };

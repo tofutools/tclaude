@@ -6,10 +6,10 @@ tclaude does not build the page. It renders what the agent serves, in a
 sandboxed frame.
 
 !!! note "In progress"
-    So far the daemon's stage listener, its page sources and the agent commands
-    exist: an agent can show, update, list and close pages, and the dashboard
-    snapshot carries them. The dashboard's Page tab, drawing and live patches come
-    in later releases.
+    So far the daemon's stage listener, its page sources, the agent commands and
+    the dashboard's Page tab exist: an agent can show, update, list and close
+    pages, and the operator uses them live in the Collab view. Drawing and live
+    patches come in later releases.
 
 ## Showing a page
 
@@ -61,6 +61,41 @@ rules.
 
 The dashboard snapshot lists the open pages (`live_pages`), each with a revision
 that changes whenever the page is shown or updated. The Page tab uses it.
+
+## In the dashboard
+
+![A live page in a Collab tab: the header names the agent, the target and the worktree, with the sandboxed chip, Reload, Open in overlay, Pop out and Close](assets/live-page-tab.png)
+
+A page an agent shows opens as a **Page** tab (◧) in the Collab strip, behind
+the tab you are on, so it never takes your focus. The tab has a dot until you
+look at it, and a toast says `<agent> showed <title> · Open`. A page shown
+again with the same name gets the dot again, and its open views reload. Pages
+that were already open when the dashboard loaded open quietly, with no toast.
+
+The header above the page says who showed it (a link to that agent's
+terminal), its target and worktree, and carries a **🔒 sandboxed** chip. Hover
+the chip for the page's origin and its rules, including that the agent that
+showed the page can read what you type in it. Then:
+
+- **Reload** loads the page again. Saved files under a static target and a
+  re-show reload it on their own.
+- **Open in overlay** floats it in an overlay window, and **Pop out** moves it
+  to a browser window of its own. Like a board, a page tab can be reordered,
+  grouped, dragged off the strip or onto an overlay window. A separate window
+  is the dashboard's own page with the same frame in it: the page's origin
+  never loads as a top-level page.
+- **Close**, or the tab's ×, closes the page for good. The agent is told in
+  its inbox. Moving a page between places does not close it.
+
+When nothing answers for the page (the dev server stopped, say), the view says
+so and offers **Retry**. A page the agent closes leaves the dashboard. With
+Collab off, the Page tabs go away.
+
+The frame is `<iframe sandbox="allow-scripts allow-forms allow-modals" allow=""
+referrerpolicy="no-referrer" credentialless>`: no same-origin, pop-ups,
+downloads or top-level navigation, and no browser permissions. Titles and
+targets the agent wrote are shown as text. The page's URL, which carries its
+token, goes only into the frame.
 
 ### The page token is the key
 

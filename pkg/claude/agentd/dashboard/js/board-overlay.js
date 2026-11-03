@@ -15,6 +15,8 @@ import { onBoardDeleted } from './board-manage.js';
 import { BOARD_WINDOW_KIND, returnBoardToTab, setBoardOverlayLabel } from './board-overlay-state.js';
 import { PROCESS_WINDOW_KIND } from './process-editor-place.js';
 import { validProcessTab } from './process-overlay.js';
+import { PAGE_WINDOW_KIND } from './page-pane-model.js';
+import { validPageTab } from './page-view.js';
 import { boardPaneSeed, isBoardId } from './board-model.js';
 import { OVERLAY_FOOTER_ROOM, clampPlacement, parsePlacement } from './overlay-window-model.js';
 import { isAgentId } from './companion-model.js';
@@ -119,6 +121,7 @@ function FooterOverlayDock({ snapshot, win }) {
 function validWindow(window) {
   if (window.kind === BOARD_WINDOW_KIND) return isBoardId(window.board);
   if (window.kind === PROCESS_WINDOW_KIND) return validProcessTab(window);
+  if (window.kind === PAGE_WINDOW_KIND) return validPageTab(window);
   if (window.kind === TERMINAL_WINDOW_KIND) return validTerminalWindow(window);
   if (window.kind === START_WINDOW_KIND || window.kind === DECIDE_WINDOW_KIND) return true;
   return window.kind === CHAT_WINDOW_KIND && isAgentId(window.agent);

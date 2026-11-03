@@ -16,6 +16,7 @@ import { restartWatcher as sharedRestartWatcher } from './instance-watch.js';
 import { terminalThemeFor } from './terminal-theme.js';
 import { boardPaneKey, isBoardId } from './board-model.js';
 import { isProcessTemplateId, processPaneKey } from './process-pane-model.js';
+import { isPageId, pagePaneKey } from './page-pane-model.js';
 
 // A newly-created browser terminal can briefly lose an attach race with the
 // client it is replacing (pop-out / reattach), or arrive while a freshly
@@ -182,15 +183,22 @@ export const TERMINAL_EXIT = Object.freeze({
 // collides with another pane.
 export function normalizeSeed(seed) {
   if (seed?.board !== undefined) {
-    if (!isBoardId(seed.board) || seed.process !== undefined) return null;
+    if (!isBoardId(seed.board) || seed.process !== undefined || seed.page !== undefined) return null;
     const { ws: _ws, ...rest } = seed;
     return { ...rest, key: boardPaneKey(seed.board) };
   }
   // A process seed (seed.process) is the same: a template id and nothing to dial.
   if (seed?.process !== undefined) {
-    if (!isProcessTemplateId(seed.process)) return null;
+    if (!isProcessTemplateId(seed.process) || seed.page !== undefined) return null;
     const { ws: _ws, ...rest } = seed;
     return { ...rest, key: processPaneKey(seed.process) };
+  }
+  // A live page's seed (seed.page) names the page and nothing else: its URL
+  // comes from the snapshot, never from a seed.
+  if (seed?.page !== undefined) {
+    if (!isPageId(seed.page)) return null;
+    const { ws: _ws, url: _url, origin: _origin, ...rest } = seed;
+    return { ...rest, key: pagePaneKey(seed.page) };
   }
   return (seed && typeof seed.ws === 'string' && seed.ws.startsWith('/')) ? seed : null;
 }

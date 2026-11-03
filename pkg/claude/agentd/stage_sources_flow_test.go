@@ -189,6 +189,24 @@ func TestStageAgentPortProxiesWebsocketUpgrade(t *testing.T) {
 	_, msg, err := conn.ReadMessage()
 	require.NoError(t, err)
 	assert.Equal(t, "echo:hi", string(msg))
+
+	// Chrome sends no fetch metadata on a WebSocket handshake: the HMR socket
+	// of a page in the operator's browser looks like this.
+	chrome, res, err := dialer.Dial("ws://"+e.host()+"/@vite/hmr", http.Header{"Origin": {"null"}})
+	if err != nil && res != nil {
+		b, _ := io.ReadAll(res.Body)
+		t.Fatalf("handshake without Sec-Fetch-Dest: %v: %d %s", err, res.StatusCode, b)
+	}
+	require.NoError(t, err)
+	_ = chrome.Close()
+
+	// That is no way in for a document, or for another site's socket.
+	assert.Equal(t, http.StatusForbidden, e.do(t, http.MethodGet, e.host(), "/", map[string]string{"Sec-Fetch-Dest": "", "Upgrade": "websocket"}).StatusCode,
+		"a request with no Sec-Fetch-Dest and no handshake is still refused")
+	_, res, err = dialer.Dial("ws://"+e.host()+"/@vite/hmr", http.Header{"Origin": {"http://evil.example"}})
+	require.Error(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, http.StatusForbidden, res.StatusCode, "another site's handshake is refused")
 }
 
 func TestStageAgentPortPrivateNetworkDialsInsideTheNamespaceOnly(t *testing.T) {

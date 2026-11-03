@@ -21,6 +21,7 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -132,7 +133,7 @@ func TestDocShotsServe(t *testing.T) {
 		prs  map[string]docPR
 	)
 	switch fixture := os.Getenv("TCLAUDE_DOCSHOTS_FIXTURE"); fixture {
-	case "fleet", "collab", "steward":
+	case "fleet", "collab", "steward", "page":
 		repo = docRepo
 		prs = map[string]docPR{
 			"checkout-redesign": {1482, "open", docChecks(14, 0)},
@@ -173,9 +174,16 @@ func TestDocShotsServe(t *testing.T) {
 	case "steward":
 		enableCollab(t)
 		seedDocSteward(t, f)
+	case "page":
+		enableCollab(t)
+		seedDocPage(t)
 	}
 
 	mux := agentd.BuildDashboardHandlerForTest()
+	if os.Getenv("TCLAUDE_DOCSHOTS_FIXTURE") == "page" {
+		// The page's origin is a *.ui.localhost host on this same listener.
+		mux = agentd.BuildPopupHandlerForTest()
+	}
 	// Warm the branch-link and CI caches before the browser's first poll so
 	// every badge is drawn on the first frame. The in-process fetches need the
 	// popup base URL set; it is cleared again before the browser connects.
@@ -188,6 +196,10 @@ func TestDocShotsServe(t *testing.T) {
 
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
+	if os.Getenv("TCLAUDE_DOCSHOTS_FIXTURE") == "page" {
+		// A page's origin names the dashboard's port.
+		t.Cleanup(agentd.SetPopupBaseURLForTest(srv.URL))
+	}
 	tmp := filepath.Join(dir, "url.tmp")
 	if err := os.WriteFile(tmp, []byte(srv.URL), 0o600); err != nil {
 		t.Fatal(err)
@@ -824,3 +836,50 @@ func backdateAgent(t *testing.T, conv string, age time.Duration) {
 		t.Fatalf("age %s: %v", conv, err)
 	}
 }
+
+// seedDocPage has checkout-ui showing its checkout mock as a live page, served
+// from memory as a dev server would serve it.
+func seedDocPage(t *testing.T) {
+	t.Helper()
+	agentID, err := db.AgentIDForConv("d0c00000-0000-4000-8000-000000000002")
+	if err != nil || agentID == "" {
+		t.Fatalf("checkout-ui agent: %v", err)
+	}
+	site := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = io.WriteString(w, docPageHTML)
+	})
+	agentd.OpenLivePageForTest(agentID, "checkout", "Checkout redesign", ":5173", "port",
+		docHome+"/git/webshop-checkout-redesign", "/checkout", agentd.HandlerTransport{Handler: site})
+	t.Cleanup(agentd.CloseAllLivePagesForTest)
+}
+
+const docPageHTML = `<!doctype html><html><head><meta charset="utf-8"><title>Checkout</title>
+<style>
+body{margin:0;font:15px/1.5 "Noto Sans",sans-serif;background:#f6f7f9;color:#1d2433}
+header{display:flex;align-items:center;gap:12px;padding:14px 28px;background:#fff;border-bottom:1px solid #e3e6eb}
+header b{font-size:18px}header span{color:#6b7385}
+main{display:grid;grid-template-columns:1.3fr 1fr;gap:24px;max-width:980px;margin:28px auto;padding:0 28px}
+section{background:#fff;border:1px solid #e3e6eb;border-radius:10px;padding:20px 22px}
+h2{margin:0 0 14px;font-size:16px}
+label{display:block;margin:10px 0 4px;font-size:13px;color:#4a5263}
+input{width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid #cfd4dc;border-radius:7px;font:inherit}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.item{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed #e3e6eb}
+.total{display:flex;justify-content:space-between;margin-top:12px;font-weight:700;font-size:17px}
+button{margin-top:18px;width:100%;padding:12px;border:0;border-radius:8px;background:#2f6fed;color:#fff;font:600 15px "Noto Sans",sans-serif}
+</style></head><body>
+<header><b>Webshop</b><span>Checkout · step 2 of 3</span></header>
+<main>
+<section><h2>Shipping</h2>
+<label>Full name</label><input value="Robin Svensson">
+<label>Street address</label><input value="Storgatan 12">
+<div class="row"><div><label>Postcode</label><input value="114 51"></div><div><label>City</label><input value="Stockholm"></div></div>
+<label>Email</label><input value="robin@example.com">
+<button>Continue to payment</button></section>
+<section><h2>Your order</h2>
+<div class="item"><span>Trail runner, size 42</span><span>1 290 kr</span></div>
+<div class="item"><span>Merino socks ×2</span><span>238 kr</span></div>
+<div class="item"><span>Shipping</span><span>49 kr</span></div>
+<div class="total"><span>Total</span><span>1 577 kr</span></div></section>
+</main></body></html>`

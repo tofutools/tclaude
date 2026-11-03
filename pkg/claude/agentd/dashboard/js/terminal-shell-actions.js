@@ -9,6 +9,7 @@ import { moveOverlayTab, openOverlayWindow, overlayTabs } from './overlay-instan
 import { agentSessionSeed, overlayablePane, terminalWindowOf } from './terminal-window-model.js';
 import { companionAvailable, floatInCompanion } from './companion-facade.js';
 import { confirmProcessTabClose, floatProcessTab, floatingProcessEditor, processTabToWindow } from './process-editor-place.js';
+import { closeLivePage, notePageWindow, openPageOverlay, pageWindowId } from './page-place.js';
 
 export function createTerminalShellActions({
   state,
@@ -66,8 +67,8 @@ export function createTerminalShellActions({
     return new Promise((resolve) => {
       const poll = () => {
         const pane = state.panes.value.find((candidate) => candidate.key === key);
-        // A board or a process has no attach to wait for.
-        if (pane?.seed.board || pane?.seed.process) { resolve(true); return; }
+        // A board, a process or a page has no attach to wait for.
+        if (pane?.seed.board || pane?.seed.process || pane?.seed.page) { resolve(true); return; }
         const widget = pane && widgets.get(pane.id);
         const remaining = timeoutMs - (Date.now() - started);
         if (widget?.settled) {
@@ -90,7 +91,7 @@ export function createTerminalShellActions({
       // The same terminal may have been reopened in the dashboard while its
       // pop-out was alive. Replace that widget after the pop-out's detach has
       // landed so reattach never acknowledges a stale/disconnected instance.
-      await closePane(key, { skipDetach: true });
+      await closePane(key, { skipDetach: true, moving: true });
     }
     if (overlay && await floatPane({ key, label: seed.label, seed })) return true;
     return openPane(seed);
@@ -159,7 +160,8 @@ export function createTerminalShellActions({
 
   // moving says the panes' contents went somewhere else, so a process tab's
   // unsaved edits went with them; otherwise a close asks before dropping them,
-  // and a tab whose edits the operator keeps stays.
+  // and a tab whose edits the operator keeps stays. A live page's tab closed
+  // (not moved) closes the page, and its agent is told.
   async function closePanes(keys, { skipDetach = false, moving = false } = {}) {
     if (disposed) return;
     const wanted = new Set(keys || []);
@@ -173,6 +175,7 @@ export function createTerminalShellActions({
       panes = state.panes.value.filter((candidate) => wanted.has(candidate.key) && !kept.has(candidate.key));
     }
     if (!panes.length) return;
+    if (!moving) for (const pane of panes) if (pane.seed.page) void closeLivePage(pane.seed.page, { fetchImpl, notify });
     for (const pane of panes) widgetFor(pane.id)?.dispose();
     state.removePanes(panes.map((pane) => pane.key));
     if (!skipDetach) await Promise.all(panes.map((pane) => hideSeed(pane.seed)));
@@ -251,7 +254,7 @@ export function createTerminalShellActions({
       return false;
     }
     const seed = {
-      ...(pane.seed.board ? { board: pane.seed.board } : { ws: pane.seed.ws }),
+      ...(pane.seed.board ? { board: pane.seed.board } : pane.seed.page ? { page: pane.seed.page } : { ws: pane.seed.ws }),
       label: pane.label,
       key: pane.seed.key,
       hideConv: pane.seed.hideConv,
@@ -263,7 +266,8 @@ export function createTerminalShellActions({
       wizard: documentRef.body.classList.contains('wizard'),
       terminalAttach: terminalAttachConfig(),
     };
-    await closePane(key);
+    await closePane(key, { moving: true });
+    if (pane.seed.page) notePageWindow(pane.seed.page, target);
     try { target.location.replace(`/terminals?solo=1${encodeTerminalOpenHash(seed)}`); }
     catch (_) { /* target closed while detach was landing */ }
     return true;
@@ -292,6 +296,11 @@ export function createTerminalShellActions({
       return boardWindowId(pane.seed.board);
     }
     if (pane.seed.process) return floatProcessTab(pane.seed.process, pane.label, at);
+    if (pane.seed.page) {
+      await closePane(key, { moving: true });
+      openPageOverlay(pane.seed.page, pane.label, at);
+      return pageWindowId(pane.seed.page);
+    }
     if (overlayablePane(pane)) {
       await closePane(key, { skipDetach: true });
       const tab = terminalWindowOf(pane);

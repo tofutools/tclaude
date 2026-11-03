@@ -12,7 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
@@ -486,4 +488,77 @@ func TestPageStaticRootIsTheStartupDirNotTheReportedEditDir(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "outside your worktree")
 	assert.Empty(t, e.ls(t, a))
+}
+
+// The dashboard's live socket for a page: a saved file and a re-show in place
+// each say reload, carrying nothing from the page; closing the page says gone.
+func TestPageLiveSocketSignalsReloadsAndTheEnd(t *testing.T) {
+	e := newPageEnv(t)
+	a := e.agent(t, "live", true)
+	site := filepath.Join(a.cwd, "site")
+	require.NoError(t, os.MkdirAll(site, 0o755))
+	index := filepath.Join(site, "index.html")
+	require.NoError(t, os.WriteFile(index, []byte("<html><head></head><body>v1</body></html>"), 0o644))
+	p, rec := e.show(t, a, site, "live", "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	wsURL := "ws" + strings.TrimPrefix(e.srv.URL, "http")
+	header := http.Header{"Origin": {e.srv.URL}}
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL+"/api/pages/pg_nope/live", header)
+	require.Error(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL+"/api/pages/"+p.ID+"/live", header)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	next := func() string {
+		t.Helper()
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+		_, raw, err := conn.ReadMessage()
+		require.NoError(t, err)
+		return string(raw)
+	}
+	assert.Equal(t, `{"type":"reachable"}`, next(), "the view first hears whether the source answers")
+
+	require.NoError(t, os.WriteFile(index, []byte("<html><head></head><body>v2</body></html>"), 0o644))
+	assert.Equal(t, `{"type":"reload"}`, next(), "a saved file reloads the view")
+
+	_, rec = e.show(t, a, site, "live", "retitled")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	// A save's watcher may have coalesced a second event; the re-show is one
+	// more reload either way.
+	assert.Equal(t, `{"type":"reload"}`, next(), "a re-show in place reloads the view")
+
+	require.Equal(t, http.StatusOK, e.dash(t, http.MethodDelete, "/api/pages/"+p.ID).Code)
+	for {
+		msg := next()
+		if msg == `{"type":"reload"}` {
+			continue
+		}
+		assert.Equal(t, `{"type":"gone"}`, msg, "a closed page ends its views")
+		break
+	}
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+	_, _, err = conn.ReadMessage()
+	assert.Error(t, err, "and the socket closes")
+}
+
+func TestPageLiveSocketSaysWhenTheSourceIsUnreachable(t *testing.T) {
+	e := newPageEnv(t)
+	a := e.agent(t, "down", true)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "<html></html>") }))
+	port := listenerPort(t, srv)
+	p, rec := e.show(t, a, ":"+strconv.Itoa(port), "down", "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(e.srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL+"/api/pages/"+p.ID+"/live", http.Header{"Origin": {e.srv.URL}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
+	_, raw, err := conn.ReadMessage()
+	require.NoError(t, err)
+	assert.Equal(t, `{"type":"unreachable"}`, string(raw))
 }
