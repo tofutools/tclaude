@@ -63,7 +63,7 @@ export function AccessPanel({ snapshot, fetchImpl, notify, openInMessages = () =
     <div class="access-panel-list">
       ${ordered.map((request) => html`<${ApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify} from=${nameOf(request)}
         onMore=${() => { close(); openInMessages(request.id); }} />`)}
-      ${!ordered.length && !elsewhere && html`<p class="access-panel-empty">Nothing is waiting for your OK.</p>`}
+      ${!ordered.length && !elsewhere && html`<p class="access-panel-empty ui-empty">Nothing is waiting for your OK.</p>`}
       ${elsewhere > 0 && html`<${Button} variant="link" class="access-panel-more" onClick=${() => { close(); openInMessages(); }}>
         ${elsewhere === 1 ? '1 request needs' : `${elsewhere} requests need`} a closer look in Messages<//>`}
     </div>

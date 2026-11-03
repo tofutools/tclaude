@@ -132,7 +132,7 @@ export function UsageHistoryChart({
   // focus that produced it will produce it again in the new voice.
   useEffect(() => { setTooltip(null); }, [wizard]);
   const points = (series.points || []).map((point) => ({ ...point, time: finiteDate(point.at) })).filter((point) => point.time !== null);
-  if (!points.length) return html`<div class="usage-chart-empty">${w('No samples in this range.', 'No readings in this span of the scrying.')}</div>`;
+  if (!points.length) return html`<div class="usage-chart-empty ui-empty">${w('No samples in this range.', 'No readings in this span of the scrying.')}</div>`;
   const now = finiteDate(generatedAt) ?? points[points.length - 1].time;
   const start = usageAxisStart(finiteDate(from), points[0].time, now);
   // The selected algorithm's forecast, falling back to the server's default

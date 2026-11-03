@@ -167,7 +167,7 @@ button.pk-run-icon { cursor: pointer; }
 
 /* Read-only mini-graph */
 .pk-mini-graph { position: relative; flex: none; }
-.pk-mini-graph.empty { color: var(--pk-muted); font-size: 11px; padding: 8px; }
+.pk-mini-graph.empty { padding: 8px; }
 .pk-mini-graph .pk-edges { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
 .pk-edge { fill: none; stroke: var(--pk-planned); stroke-width: 1.5; stroke-dasharray: 4 4; }
 .pk-edge.done { stroke: var(--pk-done); stroke-dasharray: none; }

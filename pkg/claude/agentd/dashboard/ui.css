@@ -474,6 +474,9 @@ label:has(> input:disabled) { cursor: not-allowed !important; }
 :where(.ui-empty-block) { display: block; padding: 14px 12px; }
 .ui-empty, .ui-empty-block { color: var(--ui-muted); font-size: 12px; font-style: italic; }
 .ui-empty-block { text-align: center; }
+/* The older table-row placeholder .empty (some 200 uses) takes the same muted
+   italic; its size and padding stay with its row (dashboard.css). */
+.empty { color: var(--ui-muted); font-style: italic; }
 
 /* Help and error text around fields and dialogs.
      .ui-hint       the muted help line under or beside a field or option
