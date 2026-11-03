@@ -67,7 +67,7 @@ function RedactPanel({ actions, source, filename, onDone }) {
           <${Check} id="paf-redact-ack" checked=${ack} onChange=${setAck}>Download anyway; I have checked the remaining findings</${Check}>`
         : html`<div class="paf-ok">✓ No suspected credentials remain.</div>`}
     </div>`}
-    <div class="cron-create-error" role="alert">${error}</div>
+    <div class="cron-create-error ui-error-box" role="alert">${error}</div>
     <div class="paf-row-buttons">
       <${Button} id="paf-redact-preview" disabled=${!!busy} onClick=${() => run(true)}>${busy === 'preview' ? 'Previewing…' : 'Preview redaction'}<//>
       <${Button} variant="primary" id="paf-redact-download" disabled=${!!busy || !report || (stillFlagged && !ack)} title=${report ? '' : 'Preview the redaction first'}
@@ -128,14 +128,14 @@ export function AgentExportDialog({ descriptor, state, actions, confirmDiscard }
     </div>
     ${processesOn() && html`<${Check} id="paf-export-workflows" checked=${workflows} disabled=${busy} onChange=${reset(setWorkflows)}
       hint="The templates of its active runs. An older tclaude cannot import a file that carries workflows.">Carry its workflows</${Check}>`}
-    ${history && !native && !neutral && html`<div class="cron-create-error">Keep at least one copy of the conversation, or untick Conversation history.</div>`}
+    ${history && !native && !neutral && html`<div class="cron-create-error ui-error-box">Keep at least one copy of the conversation, or untick Conversation history.</div>`}
     ${findings && html`<${FindingsPanel} findings=${findings} />
       ${!redacting && html`<div class="paf-flagged-actions">
         <${Check} id="paf-export-ack" checked=${ack} onChange=${setAck}>Export anyway; I have checked the findings</${Check}>
         <${Button} id="paf-export-redact" onClick=${() => setRedacting(true)}>Redact…<//>
       </div>`}
       ${redacting && html`<${RedactPanel} actions=${actions} source=${unredacted} filename=${safeFilename(label, '.redacted.paf')} onDone=${state.closeDialog} />`}`}
-    <div class="cron-create-error" role="alert">${error}</div>
+    <div class="cron-create-error ui-error-box" role="alert">${error}</div>
     <div class="modal-buttons">
       <${Button} id="paf-export-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
       <span class="spacer"></span>
@@ -181,7 +181,7 @@ export function GroupExportDialog({ descriptor, state, actions, confirmDiscard }
       hint="Its saved processes. An older tclaude cannot import a file that carries workflows.">Carry its workflows</${Check}>`}
     ${findings && html`<${FindingsPanel} findings=${findings} />
       <${Check} id="group-export-ack" checked=${ack} onChange=${setAck}>Export anyway; I have checked the findings</${Check}>`}
-    <div class="cron-create-error" role="alert">${error}</div>
+    <div class="cron-create-error ui-error-box" role="alert">${error}</div>
     <div class="modal-buttons">
       <${Button} disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
       <span class="spacer"></span>

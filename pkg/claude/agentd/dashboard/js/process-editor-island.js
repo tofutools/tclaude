@@ -511,7 +511,7 @@ export function SnippetNameDialog({ descriptor, complete }) {
         onInput=${(event) => { setName(event.currentTarget.value); setError(''); }}
         onKeyDown=${(event) => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); submit(); } }} />
       <div id="process-snippet-name-help" class="muted">Up to ${PROCESS_SNIPPET_NAME_MAX_RUNES} characters and ${PROCESS_SNIPPET_NAME_MAX_BYTES} UTF-8 bytes.</div>
-      <div id="process-snippet-name-error" class="cron-create-error" role="alert">${error}</div>
+      <div id="process-snippet-name-error" class="cron-create-error ui-error-box" role="alert">${error}</div>
     </div>
     <div class="modal-buttons"><${Button} class="process-editor-modal-btn" onClick=${() => complete(null)}>Cancel</${Button}><${Button} variant="primary" class="process-editor-modal-btn"
       disabled=${!trimmed} onClick=${submit}>${descriptor.submitLabel}</${Button}></div>

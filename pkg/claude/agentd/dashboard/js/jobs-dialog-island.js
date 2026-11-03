@@ -360,7 +360,7 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
         <input id="cron-create-queue-when-offline" type="checkbox" checked=${draft.queueWhenOffline}
           onChange=${(event) => update({ queueWhenOffline: event.currentTarget.checked })} /> Queue while offline
       </label>`}
-      <div class="cron-create-error" id="cron-create-error" role="alert">${error}</div>
+      <div class="cron-create-error ui-error-box" id="cron-create-error" role="alert">${error}</div>
       <div class="modal-buttons"><${Button} id="cron-create-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
         <span class="spacer"></span>${!editing && html`<${Button} variant="ghost" id="cron-create-save-another" disabled=${busy}
           title="Save and reset the form so you can create another in the same sitting" onClick=${() => submit(true)}>Save & create another</${Button}>`}

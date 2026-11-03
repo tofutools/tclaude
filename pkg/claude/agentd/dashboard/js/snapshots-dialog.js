@@ -340,7 +340,7 @@ export function SnapshotsDialog({ descriptor, state, actions, confirm, confirmDi
     ${p?.kind === 'share' && html`<${SharePanel} key=${p.snap.name} actions=${actions} snap=${p.snap} onDone=${done} onError=${fail} fleet=${fleet} />`}
     ${p?.kind === 'publish' && html`<${PublishPanel} key=${p.snap.name} actions=${actions} snap=${p.snap} onDone=${done} onError=${fail} />`}
     ${notice && html`<div class="paf-ok" id="snapshots-notice">✓ ${notice}</div>`}
-    <div class="cron-create-error" role="alert" id="snapshots-error">${error}</div>
+    <div class="cron-create-error ui-error-box" role="alert" id="snapshots-error">${error}</div>
     <${PolicyStatus} policies=${policies} />
     <div class="modal-buttons"><span class="spacer"></span><${Button} id="snapshots-close" onClick=${() => { void requestClose(); }}>Close</${Button}></div>
   </${Dialog}>`;

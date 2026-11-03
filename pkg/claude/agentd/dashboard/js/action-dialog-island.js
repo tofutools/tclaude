@@ -48,9 +48,9 @@ function ErrorBanner({ id, error, onDismiss }) {
     const timer = setTimeout(() => element.classList.remove('flash'), 900);
     return () => clearTimeout(timer);
   }, [error]);
-  if (!error) return html`<div ref=${ref} class="cron-create-error" id=${id} role="alert"></div>`;
+  if (!error) return html`<div ref=${ref} class="cron-create-error ui-error-box" id=${id} role="alert"></div>`;
   return html`
-    <div ref=${ref} class="cron-create-error dismissible" id=${id} role="alert">
+    <div ref=${ref} class="cron-create-error ui-error-box dismissible" id=${id} role="alert">
       <span class="cron-create-error-msg">${error}</span>
       <button data-ui-exempt type="button" class="cron-create-error-x" aria-label="Dismiss error" onClick=${onDismiss}>×</button>
     </div>

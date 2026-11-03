@@ -148,7 +148,7 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
       <label class="cron-create-row"><span class="cron-create-label">Body</span>
         <textarea aria-label="Prompt body" rows="8" maxlength="16384" value=${draft.body} disabled=${busy}
           onInput=${(event) => setDraft({ ...draft, body: event.currentTarget.value })}/></label>
-      <div role="alert" class="cron-create-error">${error}</div>
+      <div role="alert" class="cron-create-error ui-error-box">${error}</div>
       <div class="modal-buttons">
         <${Button} disabled=${busy} onClick=${() => void requestClose()}>Close</${Button}>
         ${original ? html`<${Button} disabled=${busy} onClick=${() => {
@@ -263,7 +263,7 @@ export function SavedPromptChips({
     ${shown && html`<div class=${`agent-spawn-role-inspect${shown.missing ? ' missing' : ''}`}>
       ${shown.missing ? '⚠ This prompt is no longer in the library.' : shown.unknown ? lockedReason : html`<div class="saved-prompt-inspect-body">${shown.body}</div>`}
     </div>`}
-    ${error ? html`<div class="cron-create-error" role="alert">${error} <${Button} size="sm" onClick=${() => void reload().catch((cause) => setError(cause.message))}>Retry<//></div>` : null}
+    ${error ? html`<div class="cron-create-error ui-error-box" role="alert">${error} <${Button} size="sm" onClick=${() => void reload().catch((cause) => setError(cause.message))}>Retry<//></div>` : null}
     ${managing ? html`<${SavedPromptManager} prompts=${prompts} node=${node} onClose=${() => setManaging(false)}
       onChanged=${reload} confirmDiscard=${confirmDiscard}/>` : null}
   </div>`;
@@ -300,7 +300,7 @@ export function SavedPromptPicker({ value, onChange, textareaRef, disabled = fal
         <//>
         <${Button} size="sm" disabled=${disabled} onClick=${() => setManaging(true)}>Manage prompts…<//>
       </div>
-      ${error ? html`<div class="cron-create-error" role="alert">${error} <${Button} size="sm" onClick=${() => void reload().catch((cause) => setError(cause.message))}>Retry<//></div>` : null}
+      ${error ? html`<div class="cron-create-error ui-error-box" role="alert">${error} <${Button} size="sm" onClick=${() => void reload().catch((cause) => setError(cause.message))}>Retry<//></div>` : null}
     </div>
     ${managing ? html`<${SavedPromptManager} prompts=${prompts} onClose=${() => setManaging(false)}
       onChanged=${reload} confirmDiscard=${confirmDiscard}/>` : null}

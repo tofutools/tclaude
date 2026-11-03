@@ -68,8 +68,8 @@ export function LocalSpeechRow({ win = globalThis.window }) {
   return html`<div class="cfg-voice-local">
     <span class="cfg-inline" data-voice-local=${state}>${status} ${usingLine(state, win)}</span>
     ${state === 'downloadable' && html`<${Button} size="sm" class="cfg-inline" onClick=${download}>Download on-device speech<//>`}
-    ${lost && html`<span class="cfg-hint" style="padding-left:0">On-device speech was here and is gone, so the wake listener stays stopped. Download it again if you can, or
+    ${lost && html`<span class="cfg-hint ui-hint" style="padding-left:0">On-device speech was here and is gone, so the wake listener stays stopped. Download it again if you can, or
       <${Button} size="sm" class="cfg-inline" onClick=${() => { forgetOnDevice(win); setChosen(false); }}>use ${speechServiceName(win)}<//></span>`}
-    ${error && html`<span class="cfg-hint" role="alert" style="padding-left:0">${error}</span>`}
+    ${error && html`<span class="cfg-hint ui-hint" role="alert" style="padding-left:0">${error}</span>`}
   </div>`;
 }

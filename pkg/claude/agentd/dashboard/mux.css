@@ -307,9 +307,7 @@ body.hide-costs .mux-cost-toggle { display: none; }
   font-size: 11px; color: #7d8590; flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.terminal-interaction-hint {
-  color: #7d8590; font-size: 11px; white-space: nowrap;
-}
+.terminal-interaction-hint { white-space: nowrap; }
 
 @media (max-width: 850px) {
   .terminal-interaction-hint { display: none; }
@@ -524,8 +522,7 @@ body.wizard .mux-pane-header.drag-out-armed { outline-color: var(--ui-wizard-gol
 body.wizard .mux-drag-out-hint {
   color: #f0a868; background: #171024; border-bottom-color: #4a3a6b;
 }
-body.wizard .mux-pane-status,
-body.wizard .terminal-interaction-hint { color: #a997ca; }
+body.wizard .mux-pane-status { color: #a997ca; }
 body.wizard .mux-btn:where(:not(.ui-btn)) {
   background: #2a1c43; border-color: #7a5db0; color: #e7d9f5;
 }

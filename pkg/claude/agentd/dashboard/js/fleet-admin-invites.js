@@ -88,7 +88,7 @@ export function JoinDialog({ masters, actions, onClose, onDone }) {
     ${preview.consent && html`<div class="muted">${preview.consent}</div>`}
     <label class="fa-ack"><input id="fleet-join-ack" type="checkbox" checked=${checked} onChange=${(e) => setChecked(e.currentTarget.checked)} />
       <span>I compared the master fingerprint with its operator over another channel</span></label>`}
-    <div class="cron-create-error" role="alert">${error}</div>
+    <div class="cron-create-error ui-error-box" role="alert">${error}</div>
     <div class="modal-buttons">
       <${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <span class="spacer"></span>
@@ -162,7 +162,7 @@ export function InvitesPage({ view, actions, confirm, toast, copy, now }) {
 
   const masters = [...view.waiting, ...view.trusted].filter((r) => r.online);
   return html`<div class="fa-invites">
-    ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+    ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     <h4>Invite a node</h4>
     <div class="muted">An invite lets a node already on the hub enroll here with a profile, and trust this node back. It is not a hub invite.</div>
     ${profiles && !list.length

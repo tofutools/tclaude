@@ -103,7 +103,7 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		t.Error("terminal Copy action must expose guidance accessibly without a native title tooltip")
 	}
 	for _, needle := range []string{
-		"class=\"terminal-interaction-hint\"",
+		"class=\"terminal-interaction-hint ui-hint\"",
 		"Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: ${shortcutText('terminal-copy')}",
 		">✉ Message<//>",
 		"onComposeMessage=${composeMessage}",

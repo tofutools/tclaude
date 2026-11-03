@@ -86,7 +86,7 @@ test('Dialog derives its ids, labels itself and always announces errors', async 
   assert.equal(host.querySelector('#thing-title').textContent, 'Make a thing');
   const error = host.querySelector('#thing-error');
   assert.equal(error.getAttribute('role'), 'alert', 'the slot is a live region before any error arrives');
-  assert.equal(error.className, 'cron-create-error');
+  assert.equal(error.className, 'cron-create-error ui-error-box', 'the slot is the standard error banner');
   const footer = host.querySelector('.modal-buttons');
   assert.deepEqual([...footer.children].map((el) => el.id || el.className), ['thing-cancel', 'spacer', 'thing-submit']);
   assert.ok(error.compareDocumentPosition(footer) & 4, 'the error sits above the footer');

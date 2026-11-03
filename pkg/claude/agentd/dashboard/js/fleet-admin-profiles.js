@@ -51,13 +51,13 @@ export function ApplyDialog({ profile, peers, actions, poolNames = new Map(), on
       <div>${changes.length ? `${changes.length} change(s), ${plan.security_changes || 0} security-relevant${plan.future_workers_only ? ' (worker defaults apply to future workers only)' : ''}:` : 'No changes: the peer already matches this profile.'}</div>
       ${changes.length > 0 && html`<ul id="fleet-apply-changes">${changes.map((c, i) => html`<li key=${i} class=${c.security ? 'fa-sensitive' : ''}>${changeText(c, poolNames)}</li>`)}</ul>`}
       ${(plan.pools || []).filter((p) => (p.live_grants || []).length).map((p) => html`<div key=${p.id} class="fa-pool-grants">Via pool <b>${p.name}</b> it gets: ${p.live_grants.map((g, i) => html`${i ? ', ' : ''}<span class=${!g.scope && !g.group_name ? 'fa-warn' : ''}>${grantText(g)}</span>`)}</div>`)}
-      ${conflicts.length > 0 && html`<div class="cron-create-error">Conflicts — resolve before applying: ${conflicts.join('; ')}</div>`}
+      ${conflicts.length > 0 && html`<div class="cron-create-error ui-error-box">Conflicts — resolve before applying: ${conflicts.join('; ')}</div>`}
     </div>`}
     ${widens && html`<div class="fa-consequence" role="note"><b>${row.label} becomes unrestricted.</b> ${UNRESTRICTED_CONSEQUENCE}</div>
       <div class="fa-dl"><span class="fa-k">Fingerprint</span><code class="fa-wrap fa-fp-full">${row.fingerprint || '—'}</code></div>
       <label class="fa-ack"><input id="fleet-apply-ack" type="checkbox" checked=${checked} onChange=${(e) => setChecked(e.currentTarget.checked)} />
         <span>I understand, and this is ${row.label}'s fingerprint</span></label>`}
-    <div class="cron-create-error" role="alert">${error}</div>
+    <div class="cron-create-error ui-error-box" role="alert">${error}</div>
     <div class="modal-buttons">
       <${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <span class="spacer"></span>
@@ -158,7 +158,7 @@ export function ProfilesPage({ view, pools, groups = [], actions, confirm, toast
   }).then((ok) => { if (ok) done(`Deleted profile ${p.name}`); }).catch(fail('Delete profile'));
 
   return html`<div class="fa-profiles">
-    ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+    ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     <h4>Node pools <span class="muted">${pools.length}</span></h4>
     <div class="muted">A pool's grants apply to every member node — peer grants for a pool are edited on the Peer grants page.</div>
     ${pools.length > 0 && html`<table class="fa-table ui-compact" id="fleet-pools">

@@ -97,7 +97,7 @@ function Settings({ actions, confirm, toast }) {
     setPids(s?.resource_limits?.pids != null ? String(s.resource_limits.pids) : '');
   };
   useEffect(() => { actions.settings().then(fill).catch((e) => setError(errText(e))); }, []);
-  if (error) return html`<div class="cron-create-error" role="alert">Script settings: ${error}</div>`;
+  if (error) return html`<div class="cron-create-error ui-error-box" role="alert">Script settings: ${error}</div>`;
   if (!settings) return html`<div class="muted">Loading script settings…</div>`;
   const on = !!settings.accept_remote_scripts;
   const toggle = () => confirm({

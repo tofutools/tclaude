@@ -6900,11 +6900,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
 }
 .sbx-network-pack-visibility-error {
   align-items: center;
-  border: 1px solid #f85149;
-  border-radius: .35rem;
-  color: #ff7b72;
   display: flex;
-  font-size: .82rem;
   justify-content: space-between;
   padding: .45rem .55rem;
 }
@@ -8456,15 +8452,9 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
    tall modal's scroll fold (the controlled spawn/action ErrorBanner also
    scrolls into view and flashes). Server errors can carry JSON / newlines / long
    worktree paths, so wrap rather than overflow the dialog. */
+/* .ui-error-box paints the banner (edge, wash, text); this keeps its spacing. */
 .cron-create-error {
-  color: #ffa198;
-  font-size: 13px;
-  line-height: 1.45;
   padding: 8px 10px;
-  border: 1px solid #5c2b29;
-  border-left: 3px solid #f85149;
-  border-radius: 5px;
-  background: #2d1413;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -8494,7 +8484,7 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
 .cron-create-error.flash { animation: cron-error-flash .9s ease-out; }
 @keyframes cron-error-flash {
   0%   { background: #5a201d; box-shadow: 0 0 0 1px #f85149; }
-  100% { background: #2d1413; box-shadow: none; }
+  100% { box-shadow: none; }
 }
 .cron-create-modal .modal-buttons {
   display: flex; justify-content: flex-end; gap: 8px;
@@ -9304,8 +9294,8 @@ label.cfg-label { cursor: pointer; }
 .cfg-more > summary::-webkit-details-marker { display: none; }
 .cfg-more[open] > summary { color: #7d8590; }
 .cfg-more .cfg-hint {
-  display: block; padding: 8px 10px !important; margin-top: 6px; line-height: 1.5;
-  background: #0b0f14; border: 1px solid #21262d; border-radius: 6px; font-size: 11.5px;
+  display: block; padding: 8px 10px !important; margin-top: 6px;
+  background: #0b0f14; border: 1px solid #21262d; border-radius: 6px;
 }
 .cfg-row-ctl {
   display: flex; align-items: center; justify-content: flex-end; gap: 8px 12px;
@@ -9475,7 +9465,7 @@ label.cfg-label { cursor: pointer; }
 /* The raw transition-rule editor folded behind an Advanced disclosure. */
 .cfg-field details.cfg-advanced { flex-basis: 100%; margin: 0; }
 .cfg-field details.cfg-advanced > summary { font-size: 12px; color: #9da7b3; }
-.cfg-hint { font-size: 11px; color: var(--ui-muted-text); flex-basis: 100%; padding-left: 177px; }
+.cfg-hint { flex-basis: 100%; padding-left: 177px; }
 /* Amber heads-up callout for the spawn/clone worktree picker when it
    lands on a repo with no commits yet — informational ("this is what
    will happen"), not an error, so amber rather than the red danger box. */
@@ -12794,7 +12784,6 @@ body.wizard #edit-member-modal .modal .field input:focus,
 body.wizard #edit-member-modal .modal .field textarea:focus { border-color: var(--ui-wizard-gold); }
 body.wizard #edit-member-modal .modal .field input::placeholder,
 body.wizard #edit-member-modal .modal .field textarea::placeholder { color: #7a6ba0; }
-body.wizard #edit-member-modal .cron-create-error { color: #f0b7a6; }
 
 /* Secondary buttons (Grimoire… / Dispel) — the same tarnished-gold
    treatment the spawn / retire dialogs give their non-primary buttons.
@@ -12851,7 +12840,6 @@ body.wizard #task-link-modal .field input {
 }
 body.wizard #task-link-modal .field input:focus { border-color: var(--ui-wizard-gold); }
 body.wizard #task-link-modal .field input::placeholder { color: #7a6ba0; }
-body.wizard #task-link-modal .cron-create-error { color: #f0b7a6; }
 body.wizard #task-link-modal #task-link-cancel {
   background: #241b3d; border: 1px solid var(--ui-wizard-gold); color: #f3e6c0;
 }

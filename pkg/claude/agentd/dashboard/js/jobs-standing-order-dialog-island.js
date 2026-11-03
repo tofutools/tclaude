@@ -337,7 +337,7 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
     <label class="cron-create-enabled"><input id="standing-order-enabled" type="checkbox"
       checked=${draft.enabled} onChange=${(event) => update({ enabled: event.currentTarget.checked })} />
       Enabled</label>
-    <div class="cron-create-error" id="standing-order-error" role="alert">${error}</div>
+    <div class="cron-create-error ui-error-box" id="standing-order-error" role="alert">${error}</div>
     <div class="modal-buttons">
       <${Button} id="standing-order-cancel" disabled=${busy}
         onClick=${() => { void requestClose(); }}>Cancel</${Button}>

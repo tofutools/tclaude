@@ -56,7 +56,7 @@ function KnowledgeSourceSetting() {
 function BrowserNotifyPermissionButton() {
   const [state, setState] = useState(() => browserNotifyPermission());
   if (state === 'unsupported') {
-    return html`<span class="cfg-hint" style="padding-left:0">${notificationsUnsupportedNote()}</span>`;
+    return html`<span class="cfg-hint ui-hint" style="padding-left:0">${notificationsUnsupportedNote()}</span>`;
   }
   if (state === 'granted') return html`<span class="cfg-inline">✓ browser permission granted</span>`;
   const denied = state === 'denied';
@@ -211,7 +211,7 @@ function Setting({ title, summary, more, k, badges = [], forId, wide = false, ch
       ${summary && html`<div class="cfg-row-summary">${summary}</div>`}
       ${(more || k) && html`<div class="cfg-row-meta">
         ${k && html`<code class="cfg-key">${k}</code>`}
-        ${more && html`<details class="cfg-more"><summary>More…</summary><div class="cfg-hint">${more}</div></details>`}
+        ${more && html`<details class="cfg-more"><summary>More…</summary><div class="cfg-hint ui-hint">${more}</div></details>`}
       </div>`}
     </div>
     <div class="cfg-row-ctl">${children}</div>
@@ -562,7 +562,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
             <div class="cfg-row-meta">
               <code class="cfg-key">dashboard.terminal_attach</code>
               <details class="cfg-more"><summary>More…</summary>
-                <div class="cfg-hint cfg-terminal-attach-hint"><strong>Repair after attach</strong> preserves today's three-step sequence. <strong>Initial resize only</strong> skips the visible nudge and restore. <strong>Resize before attach</strong> waits between sending the fitted grid and starting the tmux attachment. Stored under <code>dashboard.terminal_attach</code>.</div>
+                <div class="cfg-hint ui-hint cfg-terminal-attach-hint"><strong>Repair after attach</strong> preserves today's three-step sequence. <strong>Initial resize only</strong> skips the visible nudge and restore. <strong>Resize before attach</strong> waits between sending the fitted grid and starting the tmux attachment. Stored under <code>dashboard.terminal_attach</code>.</div>
               </details>
             </div>
           </div>
@@ -607,7 +607,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           <${ConfigInput} type="checkbox" id=${`cfg-voice-on-${action}`} aria-label=${`${title} on`} onChange=${() => syncVoiceSection()} />
           <${ConfigInput} type="text" id=${`cfg-voice-phrase-${action}`} data-voice-action=${action} maxLength="60" aria-label=${title} style="width:14em" />
         </${Setting}>`)}
-        <div class="cfg-hint" id="cfg-voice-wake-no-listener" style="padding-left:0" hidden>A wake phrase won't start anything until the wake phrase listener below is on too.</div>
+        <div class="cfg-hint ui-hint" id="cfg-voice-wake-no-listener" style="padding-left:0" hidden>A wake phrase won't start anything until the wake phrase listener below is on too.</div>
       </${Group}>
       <${Group} title="Dictation">
         <${Setting} title="Mark dictated messages" forId="cfg-voice-mark" k="dashboard.voice.mark_dictated"
@@ -627,7 +627,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           more="It dictates into the terminal or chat window with focus, or the only one showing; otherwise it stays idle and says so. An indicator shows whenever it is on, with a Pause button. It stops while the tab is hidden, runs in one tab at a time, and waits while a reply is read aloud. Plain HTTP pages can't use it, because browsers refuse the microphone there.">
           <${Toggle} id="cfg-voice-wake" onChange=${() => syncVoiceSection()} />
         </${Setting}>
-        <div class="cfg-hint" id="cfg-voice-wake-no-phrase" style="padding-left:0" hidden>The listener has nothing to listen for until a wake phrase above is on too.</div>
+        <div class="cfg-hint ui-hint" id="cfg-voice-wake-no-phrase" style="padding-left:0" hidden>The listener has nothing to listen for until a wake phrase above is on too.</div>
         <${Setting} title="On-device speech" summary="Recognition that stays on this machine, for dictation and the wake listener. It's a language pack Chrome downloads and manages, not part of tclaude. Its size isn't known here. Nothing downloads without your click, and accuracy may differ."
           more="Once installed it is used automatically. If it later stops working, the wake listener stops and says why rather than switching to a speech service; a dictation carries on through the service and says so. This row is about this browser, so it isn't saved with the settings below.">
           <${LocalSpeechRow} />
@@ -644,7 +644,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           <${Toggle} id="cfg-voice-continuous" />
           <label class="cfg-inline">stop after <${ConfigInput} type="number" id="cfg-voice-continuous-idle" min=${CONTINUOUS_IDLE_MIN} max=${CONTINUOUS_IDLE_MAX} step="1" placeholder=${String(CONTINUOUS_IDLE_DEFAULT)} aria-label="Seconds of silence before continuous mode stops" style="width:6em" /> seconds of silence</label>
         </${Setting}>
-        <div class="cfg-hint" id="cfg-voice-hands-free-warning" style="padding-left:0" role="alert" hidden>⚠ With both on, <strong>sound in the room can send mail to an agent</strong>: anything that says the wake phrase starts a dictation, and silence sends it.</div>
+        <div class="cfg-hint ui-hint" id="cfg-voice-hands-free-warning" style="padding-left:0" role="alert" hidden>⚠ With both on, <strong>sound in the room can send mail to an agent</strong>: anything that says the wake phrase starts a dictation, and silence sends it.</div>
       </${Group}>
     </${Panel}>
     <${Panel} id="notifications" active=${active}>
@@ -883,7 +883,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           summary="Run fresh tclaude ask questions on a saved spawn profile's harness, model and effort."
           more=${html`Optional. Pick a saved <strong>spawn profile</strong> (from the Groups tab) to run fresh <code>tclaude ask</code> questions on its harness — the harness-independent way to ask <strong>Codex</strong> as well as Claude. When set, the profile's harness / model / effort are used and the Model / Effort below are ignored. Leave as <em>(none)</em> to use Claude with the Model / Effort below.`}>
           <${ConfigSelect} id="ask-profile" aria-label="Ask default profile" style="min-width:160px"></${ConfigSelect}>
-          <span id="ask-profile-state" class="cfg-hint"></span>
+          <span id="ask-profile-state" class="cfg-hint ui-hint"></span>
         </${Setting}>
         <${Setting} title="Ask — sandbox" forId="ask-sandbox" k="ask.sandbox"
           summary="Apply the current sandbox policy to each ask turn. Dashboard global default is the default."

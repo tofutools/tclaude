@@ -236,7 +236,7 @@ export function AddMemberDialog({ descriptor, state, actions, confirmDiscard }) 
         ${!candidates.length && poolLoading ? html`<div class="ui-empty-block" role="status">Loading conversations…</div>` : null}
         ${!candidates.length && !poolLoading ? html`<div class="ui-empty-block"><span class="theme-copy-regular">No matching conversations. ${emptyRetry}</span><span class="theme-copy-wizard">No matching conversations. ${wizardEmptyRetry}</span></div>` : null}
       </div>
-      ${addError ? html`<div class="cron-create-error" id="add-member-error" role="alert">${addError}${failedCandidate ? html` <${Button} size="sm" id="add-member-retry" disabled=${busy} onClick=${() => addOne(failedCandidate)}>Retry<//>` : null}</div>` : null}
+      ${addError ? html`<div class="cron-create-error ui-error-box" id="add-member-error" role="alert">${addError}${failedCandidate ? html` <${Button} size="sm" id="add-member-retry" disabled=${busy} onClick=${() => addOne(failedCandidate)}>Retry<//>` : null}</div>` : null}
       <div class="add-member-foot">
         <label title="Include archived / never-online conversations in the candidate list">
           <input id="add-member-all" type="checkbox" checked=${includeOffline} disabled=${busy}

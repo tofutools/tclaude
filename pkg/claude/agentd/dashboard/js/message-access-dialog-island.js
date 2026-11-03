@@ -39,7 +39,7 @@ function memberIsSelected(selection, member) {
   return memberSelectionKeys(member).some((key) => selection.has(key));
 }
 
-function ErrorLine({ id, value, className = 'cron-create-error' }) {
+function ErrorLine({ id, value, className = 'cron-create-error ui-error-box' }) {
   return html`<div id=${id} class=${className} role="alert">${value || ''}</div>`;
 }
 

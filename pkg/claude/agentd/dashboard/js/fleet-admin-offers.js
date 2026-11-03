@@ -380,7 +380,7 @@ export function OffersPage({ view, agents, actions, confirm, toast }) {
       <${Button} size="sm" id="fleet-offers-refresh" onClick=${() => setTick((n) => n + 1)}>Refresh<//>
       <span class="muted">${noPeers ? 'Trust a peer first. ' : ''}CLI: <code>tclaude federation offers [--outgoing]</code></span>
     </div>
-    ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+    ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     <h4>Offered to this node</h4>
     ${incoming == null ? (error ? '' : html`<div class="empty">Loading…</div>`) : !incoming.length ? html`<div class="empty">No offers from peers.</div>` : html`
     <table class="fa-table ui-compact" id="fleet-offers-in">

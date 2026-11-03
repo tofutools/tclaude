@@ -71,7 +71,7 @@ export function FleetTab({ api, busy, reloadKey = 0, onEdit, onToggle, onManageN
   useEffect(() => () => { live.current = false; }, []);
   if (!fleet) {
     return error
-      ? html`<div class="cron-create-error" role="alert">${error} <${Button} size="sm" onClick=${() => void load()}>Retry<//></div>`
+      ? html`<div class="cron-create-error ui-error-box" role="alert">${error} <${Button} size="sm" onClick=${() => void load()}>Retry<//></div>`
       : html`<div class="empty">Reading the fleet…</div>`;
   }
   const statusFor = (limit) => (fleet.statuses || []).find((s) => s.fleet_id === limit.id);
@@ -175,7 +175,7 @@ export function FleetLimitEditor({ limit, fleet, busy, RuleEditor, onSave, onDel
     </div>
     <${RuleEditor} draft=${draft} scope="fleet" windows=${[]} disabled=${busy} onChange=${touch(setDraft)}/>
     <p class="modal-hint ui-hint">Agent steps (notify agents, wrap up, hard stop, block spawns) reach this node's agents when it is counted, and each member's agents in the groups its <code>usage-rules.enforce</code> grant covers. Elsewhere they only alert you.</p>
-    <div role="alert" class="cron-create-error">${error}</div>
+    <div role="alert" class="cron-create-error ui-error-box">${error}</div>
     <div class="modal-buttons">
       <${Button} disabled=${busy} onClick=${onCancel}>Back</${Button}>
       ${limit.id ? html`<${Button} disabled=${busy} onClick=${() => onDelete(limit)}>Delete fleet limit</${Button}>` : null}
