@@ -66,7 +66,7 @@ function AccumulatedTip({ description, chart, onLeave }) {
   const style = position
     ? `left:${position.left}px;top:${position.top}px`
     : `left:${description.anchor.x}px;top:${description.anchor.y}px;visibility:hidden`;
-  return html`<div ref=${panel} class=${`cost-accumulated-tip-panel${projected ? ' projected' : ''}`}
+  return html`<div ref=${panel} class=${`cost-accumulated-tip-panel ui-popover${projected ? ' projected' : ''}`}
     style=${style} onmouseleave=${onLeave}>
     <strong>${point.day} · ${projected ? 'projection' : 'recorded'}</strong>
     ${chart.stackByProvider && chart.stackByModel

@@ -4042,11 +4042,9 @@ details.cost-filter-menu[open] > summary::before { content: none; }
 .cost-accumulated-tip-panel {
   position: fixed; z-index: var(--z-popover); box-sizing: border-box;
   width: min(288px, calc(100vw - 8px)); max-height: calc(100vh - 8px); overflow: auto;
-  padding: 8px 10px;
-  background: rgba(22, 27, 34, .97); border: 1px solid #536275; border-radius: 5px;
-  color: #c9d1d9; font-size: 10px; box-shadow: 0 8px 20px rgba(0,0,0,.55);
+  padding: 8px 10px; font-size: 10px;
 }
-.cost-accumulated-tip-panel.projected { border-color: #9c7823; }
+.cost-accumulated-tip-panel.ui-popover.projected { border-color: #9c7823; }
 .cost-accumulated-tip-panel > strong { display: block; margin-bottom: 5px; }
 .cost-accumulated-tip-row, .cost-accumulated-tip-group-head, .cost-accumulated-tip-total {
   display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; gap: 4px 7px;
@@ -7520,17 +7518,15 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   flex-direction: column;
   gap: .65rem;
 }
+/* .ui-card paints the surface; the accent edge is a state edge on top. */
+.sbx-prelaunch-card.ui-card { border-left: 3px solid #58a6ff; }
 .sbx-prelaunch-card {
-  background: rgba(110, 118, 129, .045);
-  border: 1px solid #30363d;
-  border-left: 3px solid #58a6ff;
-  border-radius: .35rem;
   display: flex;
   flex-direction: column;
   gap: .4rem;
   padding: .6rem;
 }
-.sbx-prelaunch-card.is-invalid { border-left-color: #f85149; }
+.sbx-prelaunch-card.ui-card.is-invalid { border-left-color: #f85149; }
 .sbx-prelaunch-head {
   align-items: end;
   display: grid;
@@ -7818,7 +7814,7 @@ button.perm-scope-twisty[aria-expanded="true"] .perm-scope-chevron { transform: 
   align-items: baseline; padding: 5px 6px; border: 1px solid transparent; border-radius: 5px;
 }
 .sbx-common-rule-entry:hover,
-.sbx-access-template-entry:hover { border-color: var(--border); }
+.sbx-access-template-entry:hover { border-color: var(--ui-line); }
 .sbx-common-rule-add,
 .sbx-access-template-add {
   grid-row: 1 / span 3; align-self: start; white-space: nowrap;
@@ -9333,7 +9329,7 @@ label.cfg-label { cursor: pointer; }
 .shortcut-problems .is-warning { color: #d29922; }
 .shortcut-reset-all { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; padding: 8px 12px; border: 1px solid rgba(88, 166, 255, 0.4); border-radius: 6px; }
 .cfg-steward-manager { display: flex; flex-direction: column; gap: 10px; width: 100%; min-width: 0; }
-.cfg-steward-issued { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
+.cfg-steward-issued { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--ui-line); border-radius: 6px; }
 .cfg-steward-secret { display: block; padding: 6px 8px; font-size: 12px; overflow-wrap: anywhere; user-select: all; }
 .cfg-steward-row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .cfg-steward-add { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -16941,7 +16937,8 @@ nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active)
 .fleet-link-act { background: none; border: 0; padding: 0; color: #58a6ff; font: inherit; cursor: pointer; }
 .fleet-link-act:hover { text-decoration: underline; }
 .fleet-edge.untrusted { stroke: #484f58; stroke-dasharray: 2 5; }
-.fleet-card { box-sizing: border-box; background: #161b22; border: 1px solid #2a3340; border-top: 3px solid var(--nc); border-radius: 8px; color: #c9d1d9; font-size: 12px; line-height: 1.45; box-shadow: 0 6px 18px rgba(0,0,0,.35); }
+.fleet-card { box-sizing: border-box; color: #c9d1d9; font-size: 12px; line-height: 1.45; box-shadow: 0 6px 18px rgba(0,0,0,.35); }
+.fleet-card.ui-card { border-top: 3px solid var(--nc); }
 .fleet-card.stale { border-style: dashed; border-top-style: solid; opacity: .85; }
 /* An untrusted instance on the hub: no node colour, a dotted outline, and its
    self-reported name in plain weight. */

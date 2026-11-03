@@ -1536,7 +1536,7 @@ function SandboxPreLaunchEditor({ blocks, setDraft, validation }) {
     const exportsErrorID = `sandbox-profile-editor-pre-launch-exports-error-${index}`;
     return html`<div key=${block._editor_id || index} role="group"
       aria-label=${`Block ${index + 1}: ${(block.name || '').trim() || 'unnamed'}`}
-      class=${`sbx-prelaunch-card${[...errors.name, ...errors.script, ...errors.exports].length ? ' is-invalid' : ''}`}>
+      class=${`sbx-prelaunch-card ui-card${[...errors.name, ...errors.script, ...errors.exports].length ? ' is-invalid' : ''}`}>
       <div class="sbx-prelaunch-head">
         <span class="sbx-prelaunch-order" aria-label=${`Execution position ${index + 1}`}>${index + 1}</span>
         <label class="sbx-prelaunch-name">Block name
