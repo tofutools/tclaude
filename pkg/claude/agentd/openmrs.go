@@ -157,10 +157,19 @@ var authoredOpenMRState struct {
 	// everyone is each instance's last successful project-wide answer, kept
 	// the same way.
 	everyone map[string]authoredOpenMREveryone
-	// recent is each instance's last recently closed list, read every
-	// authoredRecentMREvery polls and kept the same way; polls counts them.
-	recent map[string]authoredRecentMRs
-	polls  int
+	// recent is each instance's last recently closed list, kept the same
+	// way. recentTried is each instance's last attempt at it, failed or not,
+	// which paces the next one; polls counts the polls.
+	recent      map[string]authoredRecentMRs
+	recentTried map[string]recentMRAttempt
+	polls       int
+}
+
+// recentMRAttempt is when (by poll number) and under which window an
+// instance's recently closed list was last asked for.
+type recentMRAttempt struct {
+	poll       int
+	windowDays int
 }
 
 // authoredRecentMRs is one instance's recently closed list and the window it
@@ -312,6 +321,7 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 	good := map[string]authoredOpenMRAnswer{}
 	everyone := map[string]authoredOpenMREveryone{}
 	recent := map[string]authoredRecentMRs{}
+	recentTried := map[string]recentMRAttempt{}
 	polls := 0
 	if authoredOpenMRState.key == key && authoredOpenMRState.tokenDigest == digest {
 		for base, answer := range authoredOpenMRState.good {
@@ -322,6 +332,9 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 		}
 		for base, answer := range authoredOpenMRState.recent {
 			recent[base] = answer
+		}
+		for base, attempt := range authoredOpenMRState.recentTried {
+			recentTried[base] = attempt
 		}
 		polls = authoredOpenMRState.polls
 	}
@@ -345,7 +358,7 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 			lastErr = fmt.Errorf("%s: %w", inst.Host, err)
 		} else {
 			answered++
-			shareAuthoredOpenMRReviews(ctx, base, token, answer.items, time.Now())
+			wait = max(wait, shareAuthoredOpenMRReviews(ctx, base, token, answer.items, time.Now()))
 			good[base] = answer
 			inst.Username = username
 			inst.URL = base + "/dashboard/merge_requests?state=opened&author_username=" + url.QueryEscape(username)
@@ -358,14 +371,17 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 			} else {
 				everyone[base] = all
 			}
-			// The recently closed list, every authoredRecentMREvery polls, or
-			// at once when the window changed under it. A failure keeps the
-			// last list; the next due poll asks again.
-			last, have := recent[base]
+			// The recently closed list, authoredRecentMREvery polls after the
+			// last attempt, or at once when the window changed under it. A
+			// failed attempt counts, so a failing read waits as long as a
+			// good one; the last good list stays meanwhile.
+			tried, have := recentTried[base]
 			switch {
 			case windowDays <= 0:
 				delete(recent, base)
-			case !have || last.windowDays != windowDays || polls%authoredRecentMREvery == 0:
+				delete(recentTried, base)
+			case !have || tried.windowDays != windowDays || polls-tried.poll >= authoredRecentMREvery:
+				recentTried[base] = recentMRAttempt{poll: polls, windowDays: windowDays}
 				got, retry, err := fetchRecentMRs(ctx, base, token, windowDays, time.Now())
 				switch {
 				case errors.Is(err, errGLUnknownField):
@@ -390,6 +406,7 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 	authoredOpenMRState.good = good
 	authoredOpenMRState.everyone = everyone
 	authoredOpenMRState.recent = recent
+	authoredOpenMRState.recentTried = recentTried
 	authoredOpenMRState.polls = polls + 1
 	authoredOpenMRState.instances = instances
 	if answered > 0 {
@@ -408,8 +425,9 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 // request read the same answer as the footer. The list query gave the decision
 // and the approvals; the reviewer read adds change requests where the
 // instance has reviewer states. When that read fails for any other reason,
-// only the decision is written and the cached reviewer list stands.
-func shareAuthoredOpenMRReviews(ctx context.Context, base, token string, items []dashboardAuthoredOpenPR, now time.Time) {
+// only the decision is written and the cached reviewer list stands. It
+// returns the wait a 429 on the reviewer read asked for.
+func shareAuthoredOpenMRReviews(ctx context.Context, base, token string, items []dashboardAuthoredOpenPR, now time.Time) time.Duration {
 	readCtx, cancel := context.WithTimeout(ctx, authoredOpenMRTimeout)
 	reviewers, err := fetchAuthoredMRReviewers(readCtx, base, token)
 	cancel()
@@ -433,6 +451,7 @@ func shareAuthoredOpenMRReviews(ctx context.Context, base, token string, items [
 		}
 		savePRReviewObservation(items[i].URL, obs, now)
 	}
+	return glRetryFrom(err)
 }
 
 // authoredOpenMRTokenDigest identifies a token without keeping it: lists are
@@ -449,6 +468,7 @@ func resetAuthoredOpenMRs(key string) {
 	authoredOpenMRState.good = nil
 	authoredOpenMRState.everyone = nil
 	authoredOpenMRState.recent = nil
+	authoredOpenMRState.recentTried = nil
 	authoredOpenMRState.polls = 0
 	authoredOpenMRState.instances = nil
 	authoredOpenMRState.updatedAt = time.Time{}
@@ -812,7 +832,7 @@ func fetchRecentMRs(ctx context.Context, base, token string, windowDays int, now
 		glRecentMRsMissing.Store(strings.ToLower(base), true)
 	}
 	if err != nil {
-		return authoredRecentMRs{}, 0, err
+		return authoredRecentMRs{}, glRetryFrom(err), err
 	}
 	if data.CurrentUser == nil {
 		return authoredRecentMRs{}, 0, errors.New("GitLab did not resolve the token to a user")

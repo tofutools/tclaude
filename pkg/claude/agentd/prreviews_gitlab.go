@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // prreviews_gitlab.go feeds a merge request's approvals and reviewers into the
@@ -195,8 +196,28 @@ func glReviewObservation(base string, node glMRReviewNode) prReviewObservation {
 	}
 }
 
+// glRateLimited is a 429 from a GraphQL read: GitLab's words, and the wait it
+// named (glRetryAfter), so a poller can honour it as it does for its list
+// reads.
+type glRateLimited struct {
+	text  string
+	retry time.Duration
+}
+
+func (e *glRateLimited) Error() string { return e.text }
+
+// glRetryFrom is the wait an error asks for: a 429's, else none.
+func glRetryFrom(err error) time.Duration {
+	var limited *glRateLimited
+	if errors.As(err, &limited) {
+		return limited.retry
+	}
+	return 0
+}
+
 // glGraphQL posts one query and decodes its data. It reports an unknown-field
-// refusal as errGLUnknownField and every other failure as an error.
+// refusal as errGLUnknownField, a 429 as a *glRateLimited, and every other
+// failure as an error.
 func glGraphQL(ctx context.Context, base, token, query string, variables map[string]any, data any) error {
 	res, err := glDo(ctx, base, token, glAPIRequest{
 		Method:  http.MethodPost,
@@ -207,7 +228,7 @@ func glGraphQL(ctx context.Context, base, token, query string, variables map[str
 		return err
 	}
 	if res.Status == http.StatusTooManyRequests {
-		return errors.New(glRateLimitText(res))
+		return &glRateLimited{text: glRateLimitText(res), retry: glRetryAfter(res, time.Now())}
 	}
 	if res.Status != http.StatusOK {
 		return errors.New(glErrorText(res))
