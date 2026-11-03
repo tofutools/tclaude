@@ -9896,11 +9896,11 @@ body.slop header h1 {
   letter-spacing: 0.5px;
 }
 body.slop header .meta { color: #ffe88c; opacity: 0.85; }
-body.slop header button {
+body.slop header button:where(:not(.ui-btn, .ui-menu-item)) {
   background: #2a0808; border: 1px solid #ffd700; color: #ffe88c;
   border-radius: 4px; padding: 4px 10px;
 }
-body.slop header button:hover { background: #4a0a0a; }
+body.slop header button:where(:not(.ui-btn, .ui-menu-item)):hover { background: #4a0a0a; }
 /* Keep the product-mark button compact; the broad rule above styles the
    full-size header actions, whose padding would squeeze this 28px control. */
 body.slop header h1 .slop-icon {
@@ -11368,11 +11368,11 @@ body.wizard header h1 {
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
 body.wizard header .meta { color: #e7d9f5; opacity: 0.85; }
-body.wizard header button {
+body.wizard header button:where(:not(.ui-btn, .ui-menu-item)) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
   border-radius: 4px; padding: 4px 10px;
 }
-body.wizard header button:hover { background: #3a2a63; }
+body.wizard header button:where(:not(.ui-btn, .ui-menu-item)):hover { background: #3a2a63; }
 /* The product-mark button keeps its compact icon geometry; the broad themed
    header-button rule above is for the full-size action controls beside it. */
 body.wizard header h1 .slop-icon {
