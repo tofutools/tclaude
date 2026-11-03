@@ -94,7 +94,7 @@ func NewStageAgentPortForTest(agentID string, port int) (http.RoundTripper, erro
 // UseStaticSource points the page at a static directory or file and wires
 // its watcher to the page's reload signal.
 func (p *StagePageForTest) UseStaticSource(worktree, target string) error {
-	s, err := newStageStatic(worktree, target, p.page.notifyReload)
+	s, err := newStageStatic(worktree, target, p.page.notifyReload, nil)
 	if err != nil {
 		return err
 	}

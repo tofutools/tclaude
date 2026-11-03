@@ -83,9 +83,10 @@ tclaude agent page dom landing 'button.pay' --styles      # read-only: --text (d
   says so.
 - A snapshot renders only your page's own origin: a page that redirects or
   navigates elsewhere gets an error, not a picture.
-- Static pages (a directory or `.html` target) are not read back yet: `snapshot`
-  and `dom` refuse them and their marks come without the page text. Serve the
-  page from your own dev server to use them.
+- A static page (a directory or `.html` target) serves only what your sandbox
+  lets you read; anything else is a 404. If your launch recorded no sandbox
+  profile, `snapshot` and `dom` refuse a static page and its marks come without
+  the page text: serve it from your own dev server instead.
 
 ## What the page can and cannot do
 

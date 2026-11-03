@@ -13,6 +13,12 @@ package agentd
 //     served: a hardlink to a file outside the worktree is refused.
 //   - Dot-named components (.git, .env) are refused, in the declared target as
 //     well as in request paths.
+//   - A path the agent's own sandbox hides (a deny rule, a tmpfs overlay, a
+//     remapped mount, a path a constructed root leaves out) is not served:
+//     the guard (pages_fsview.go) checks the path a walk ends at, so a page
+//     cannot serve what its agent cannot read. The last mount entry covering
+//     that path decides, so a hidden ancestor hides it and a directory a
+//     constructed root only passes through does not.
 //   - Changes are found by polling the same no-follow walk, not by inotify: an
 //     inotify watch follows a symlink swapped in between check and add (so it
 //     could be steered at directories outside the worktree), and every watched
@@ -60,9 +66,17 @@ const (
 	stageStaticPollDepth   = 32
 )
 
+// stageStaticGuard says which canonical host paths the page's agent cannot
+// read; the stage serves none of them.
+type stageStaticGuard interface {
+	hidden(abs string) bool
+}
+
 // stageStatic serves a worktree directory or file.
 type stageStatic struct {
-	rootFD int      // the worktree root, held open
+	rootFD   int    // the worktree root, held open
+	rootPath string // its canonical path, for the guard
+	guard    stageStaticGuard
 	target []string // path components from root to the source
 	isFile bool
 
@@ -82,7 +96,7 @@ func stageStaticBadComponent(part string) bool {
 // newStageStatic opens a static source. worktree is the agent's worktree and
 // target a path inside it (absolute or relative to the worktree). onChange is
 // called when a served file changes.
-func newStageStatic(worktree, target string, onChange func()) (*stageStatic, error) {
+func newStageStatic(worktree, target string, onChange func(), guard stageStaticGuard) (*stageStatic, error) {
 	root, err := filepath.EvalSymlinks(worktree)
 	if err != nil || !filepath.IsAbs(root) {
 		return nil, stageSourceErrorf("the worktree cannot be resolved")
@@ -111,8 +125,12 @@ func newStageStatic(worktree, target string, onChange func()) (*stageStatic, err
 	if err != nil {
 		return nil, stageSourceErrorf("the worktree cannot be opened")
 	}
-	s := &stageStatic{rootFD: rootFD, target: parts, stop: make(chan struct{})}
+	s := &stageStatic{rootFD: rootFD, rootPath: root, guard: guard, target: parts, stop: make(chan struct{})}
 	fd, err := s.openAt(parts)
+	if errors.Is(err, errStageStaticHidden) {
+		_ = s.Close()
+		return nil, stageSourceErrorf("your sandbox hides the target, so the page cannot serve it")
+	}
 	if err != nil {
 		_ = s.Close()
 		return nil, stageSourceErrorf("the target cannot be served")
@@ -142,9 +160,41 @@ func newStageStatic(worktree, target string, onChange func()) (*stageStatic, err
 	return s, nil
 }
 
+var errStageStaticHidden = errors.New("hidden from the page's agent")
+
+// stageStaticReadBack says whether a static source's content may go back to
+// its agent: it is served through the agent's known view of the file system.
+func stageStaticReadBack(up http.RoundTripper) bool {
+	s, ok := up.(*stageStatic)
+	if !ok {
+		return false
+	}
+	v, ok := s.guard.(*pageFSViewer)
+	return ok && v.known()
+}
+
+// hiddenAt reports whether the guard hides root/parts.
+func (s *stageStatic) hiddenAt(parts []string) bool {
+	if s.guard == nil {
+		return false
+	}
+	return s.guard.hidden(filepath.Join(append([]string{s.rootPath}, parts...)...))
+}
+
 // openAt walks parts from the root fd without following any symlink and
-// returns the final component's fd, opened read-only.
+// returns the final component's fd, opened read-only. A path the guard hides
+// is refused before anything is opened.
 func (s *stageStatic) openAt(parts []string) (int, error) {
+	if s.hiddenAt(parts) {
+		return -1, errStageStaticHidden
+	}
+	return s.walkAt(parts)
+}
+
+// walkAt is openAt without the guard. Only the change poll uses it, to walk
+// directories (never to read a file), so a path bound below a hidden one is
+// still watched.
+func (s *stageStatic) walkAt(parts []string) (int, error) {
 	s.mu.RLock()
 	if s.closed {
 		s.mu.RUnlock()
@@ -305,7 +355,10 @@ func (s *stageStatic) signature() uint64 {
 	h := fnv.New64a()
 	if s.isFile {
 		dir, name := s.target[:len(s.target)-1], s.target[len(s.target)-1]
-		fd, err := s.openAt(dir)
+		if s.hiddenAt(s.target) {
+			return 0
+		}
+		fd, err := s.walkAt(dir)
 		if err != nil {
 			return 0
 		}
@@ -318,7 +371,7 @@ func (s *stageStatic) signature() uint64 {
 	for len(queue) > 0 && budget > 0 {
 		rel := queue[0]
 		queue = queue[1:]
-		fd, err := s.openAt(append(append([]string{}, s.target...), rel...))
+		fd, err := s.walkAt(append(append([]string{}, s.target...), rel...))
 		if err != nil {
 			continue
 		}
@@ -335,13 +388,19 @@ func (s *stageStatic) signature() uint64 {
 				if stageStaticBadComponent(name) || name == "node_modules" {
 					continue
 				}
+				// A hidden entry's changes would reload the page: a one-bit
+				// signal about a file the agent cannot read. A hidden
+				// directory is still walked, for any path bound below it.
+				hidden := s.hiddenAt(append(append(append([]string{}, s.target...), rel...), name))
 				switch {
 				case e.Type().IsDir():
-					_, _ = io.WriteString(h, prefix+"/"+name+"/\x00")
+					if !hidden {
+						_, _ = io.WriteString(h, prefix+"/"+name+"/\x00")
+					}
 					if len(rel) < stageStaticPollDepth {
 						queue = append(queue, append(append([]string{}, rel...), name))
 					}
-				case e.Type().IsRegular():
+				case e.Type().IsRegular() && !hidden:
 					if _, ok := stageStaticTypes[strings.ToLower(path.Ext(name))]; ok {
 						_, _ = io.WriteString(h, prefix+"/")
 						stageStaticHashEntry(h, fd, name)

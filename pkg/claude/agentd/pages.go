@@ -540,7 +540,7 @@ func pageSource(ctx context.Context, convID, agentID string, t pageTarget, onCha
 			}
 			start = "/" + path.Base(filepath.ToSlash(abs))
 		}
-		src, err := newStageStatic(root, abs, onChange)
+		src, err := newStageStatic(root, abs, onChange, newPageFSViewer(agentID, convID))
 		if err != nil {
 			return nil, "", "", err
 		}

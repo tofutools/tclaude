@@ -130,9 +130,10 @@ one, and not to any agent, including the one that showed the page. That agent
 sees its page's origin with the token masked and acts on it by name. This keeps
 the token from being handed out; it does not make it unlearnable. The page's
 own code can read its host name and write it into what the agent reads back. An agent
-holding the token could fetch its page itself, and so read files through the
-daemon's view of the file system (see the known limits below). Keeping the
-token from it also keeps it out of the agent's transcript, and out of a clone's.
+holding the token could fetch its page itself, but a static page serves only
+what the agent's own sandbox shows (see Page sources), so it gains nothing it
+could not read. Keeping the token from it also keeps it out of the agent's
+transcript, and out of a clone's.
 
 ## Page sources
 
@@ -169,7 +170,17 @@ not the daemon's own.
   inside the worktree. Names that start with a dot (`.git`, `.env`) are refused,
   and only common web file types are served. A directory serves its
   `index.html`. A single-file page serves only that file. The target itself may
-  not be a hidden path. The daemon watches the
+  not be a hidden path.
+
+  A static page serves only what its agent can read. The stage follows the
+  sandbox plan the agent's launch recorded: a path the profile denies, a tmpfs
+  overlay (the stage would see the host's files beneath it), a remapped mount,
+  and a path a constructed root leaves out are all not served, with the same 404
+  as a missing file. So are tclaude's protected directories, for every agent.
+  A launch is re-read when the agent reincarnates. When a sandboxed launch
+  recorded no profile, tclaude cannot tell what the agent may read: the page is
+  served to the operator as before, but nothing of it is read back to the agent
+  (see below). The daemon watches the
   source and asks open views to reload when a file is saved. It finds saves by
   walking the source a few times a second with the same no-follow rules, not with
   inotify, so a symbolic link cannot point the watcher outside the worktree.
@@ -238,10 +249,10 @@ Known limits of the boundary:
 - The frame may open `alert`, `confirm` and `prompt` dialogs (`allow-modals`). A
   dialog comes from the page, not from tclaude. Never type the operator token
   into one.
-- A static source is read through the daemon's view of the file system, not
-  the agent sandbox's. A file inside the worktree that the agent's sandbox
-  profile hides with a deny rule can still be served. This is to be fixed before
-  pages can be read back by the agent.
+- A static page follows the agent's tclaude sandbox profiles. Deny rules a
+  harness reads from its own settings instead (a `denyRead` in Claude Code's
+  `settings.json`, say) are not known to the stage, so a file only such a rule
+  hides can still be served and read back. Put deny rules in a sandbox profile.
 - Browsers resolve `*.localhost` to loopback themselves. A browser that hands
   these names to the system resolver instead trusts that resolver for them.
 
@@ -275,9 +286,10 @@ tclaude agent page dom <name> <selector> [--text|--html|--styles]
   read-only, and needs the page open in the dashboard (it is read through that
   view's frame). Otherwise it says no view is open. A large answer keeps the
   first elements that fit and says it was cut.
-- **Static pages are not read back yet.** A static source is served through the
-  daemon's view of the file system (see the known limits), so `page snapshot` and
-  `page dom` refuse static pages, and their marks arrive without the page text
-  under them. Serve the page from your own dev server to use them.
+- **Static pages are read back when the agent's view is known.** A static page
+  serves only what its agent can read, so it is read back like a dev server's.
+  When a sandboxed launch recorded no sandbox profile, `page snapshot` and
+  `page dom` refuse the page and its marks arrive without the page text under
+  them. Serve the page from your own dev server to use them then.
 
 There are no MCP tools for live pages; the CLI is the agent's surface.

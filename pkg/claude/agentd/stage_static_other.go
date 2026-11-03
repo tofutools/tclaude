@@ -6,6 +6,10 @@ import "net/http"
 
 type stageStatic struct{ http.RoundTripper }
 
-func newStageStatic(string, string, func()) (*stageStatic, error) {
+type stageStaticGuard interface{ hidden(abs string) bool }
+
+func newStageStatic(string, string, func(), stageStaticGuard) (*stageStatic, error) {
 	return nil, stageSourceErrorf("static live pages need a Unix host")
 }
+
+func stageStaticReadBack(http.RoundTripper) bool { return false }
