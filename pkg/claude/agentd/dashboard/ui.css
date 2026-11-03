@@ -254,6 +254,27 @@ body.slop {
 .ui-seg > .ui-btn[aria-pressed="true"]:hover:not(:disabled) { background: var(--ui-pressed-bg); border-color: transparent; color: var(--ui-text-strong); }
 .ui-seg > .ui-btn:focus-visible { position: relative; }
 
+/* Tabs (js/ui-tabs.js): a section's sub-navigation is one framed bar of pill
+   tabs under the top nav (operator pick C: pills for section sub-nav, the
+   joined bar for a mode inside a dialog, underline only for the top nav).
+   The selected tab carries aria-selected (or .active, from static markup)
+   and a subtle fill. */
+.ui-tabs {
+  display: inline-flex; flex-wrap: wrap; gap: 2px; margin: 0 0 12px; padding: 2px;
+  background: var(--ui-card-bg); border: 1px solid var(--ui-card-line); border-radius: 6px;
+}
+.ui-tab {
+  background: none; border: 0; border-radius: 4px; color: var(--ui-muted-text); cursor: pointer;
+  font-family: inherit; font-size: 13px; padding: 6px 14px; text-decoration: none; white-space: nowrap;
+}
+.ui-tab:hover { color: #d4d4d4; }
+.ui-tab:is(.active, [aria-selected="true"]) { background: #21262d; color: #d4d4d4; font-weight: 500; }
+.ui-tab:disabled { cursor: not-allowed; opacity: .5; }
+body.wizard .ui-tab:hover { color: #f3e6c0; }
+body.wizard .ui-tab:is(.active, [aria-selected="true"]) {
+  background: #3a2a63; color: #f3e6c0; text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
+}
+
 /* Fields */
 .ui-input, .ui-select, .ui-textarea {
   min-width: 0; margin: 0; padding: 6px 10px;

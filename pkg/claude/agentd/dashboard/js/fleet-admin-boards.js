@@ -4,6 +4,7 @@ import htm from 'htm';
 import { BoardItems } from './fleet-admin-board-items.js';
 import { ContentBrowser } from './fleet-admin-board-browser.js';
 import { Button, Select } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
 
 const html = htm.bind(h);
 
@@ -274,8 +275,8 @@ export function BoardsPage({ view, actions, confirm, toast, copy, updates = null
   // With no boards there is nothing to browse: joining or creating comes first.
   const browsing = mode === 'browse' && list.length > 0;
   return html`<div class="fa-boards" id="fleet-boards">
-    ${list.length > 0 && html`<div class="fa-subtabs" role="tablist" id="fleet-boards-mode">${[['browse', 'Browse content'], ['manage', 'Manage boards']].map(([id, label]) => html`<button type="button" data-ui-exempt role="tab" key=${id} data-boards-mode=${id}
-      aria-selected=${(browsing ? 'browse' : 'manage') === id ? 'true' : 'false'} class=${`fa-subtab${(browsing ? 'browse' : 'manage') === id ? ' on' : ''}`} onClick=${() => setMode(id)}>${label}</button>`)}</div>`}
+    ${list.length > 0 && html`<${Tabs} class="fa-subnav" id="fleet-boards-mode" label="Boards views" value=${browsing ? 'browse' : 'manage'} onSelect=${setMode}
+      items=${[['browse', 'Browse content'], ['manage', 'Manage boards']].map(([id, label]) => ({ key: id, label, class: 'fa-subtab', attrs: { 'data-boards-mode': id } }))} />`}
     ${browsing ? html`${updates?.updates?.length > 0 && html`<${BoardUpdates} updates=${updates} actions=${actions} toast=${toast} loadUpdates=${loadUpdates} onOpen=${(id) => { setOpen(id); setMode('manage'); }} />`}<${ContentBrowser} boards=${list} view=${view} actions=${actions} confirm=${confirm} toast=${toast} onOpenBoard=${(id) => { setOpen(id); setMode('manage'); }} />` : html`
     <div class="muted fa-wrap">Boards share content with other nodes through the hub, without linking the nodes or giving anyone access to this machine. ${HUB_TRUST}</div>
     <div class="fa-row" id="fleet-board-join">

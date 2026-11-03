@@ -4,6 +4,7 @@ import htm from 'htm';
 import { ACCESS_SUBTABS, SUDO_COLUMNS, fmtRemaining } from './access-model.js';
 import { idTooltip, relTime, shortAgentId } from './helpers.js';
 import { Button, Input, SortTh } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
 
 const html = htm.bind(h);
 
@@ -141,25 +142,16 @@ function AccessSubnav({ state, current }) {
   const notifyNavigation = (subtab) => document.dispatchEvent(new CustomEvent('tclaude:navigated', {
     detail: { location: { tab: 'access', subtab } },
   }));
-  const navigate = (event, subtab) => {
-    if (event.button > 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    event.preventDefault();
+  const select = (subtab) => {
     state.setSubtab(subtab);
     notifyNavigation(subtab);
   };
-  const keyDown = (event, subtab) => {
-    if (event.key !== ' ' && event.key !== 'Spacebar') return;
-    event.preventDefault();
-    state.setSubtab(subtab);
-    notifyNavigation(subtab);
-  };
-  return html`<div class="access-subnav" role="tablist" aria-label="Access control views">
-    ${ACCESS_SUBTABS.map((subtab) => html`<a key=${subtab} class=${`access-subtab${current.subtab === subtab ? ' active' : ''}`}
-      data-subtab=${subtab} href=${`/access/${subtab}`} role="tab" aria-selected=${current.subtab === subtab ? 'true' : 'false'}
-      aria-controls=${`access-${subtab}`} onClick=${(event) => navigate(event, subtab)} onKeyDown=${(event) => keyDown(event, subtab)}>
-      ${{ permissions: 'Permissions', slugs: 'Slug registry', sudo: 'Sudo' }[subtab]}
-    </a>`)}
-  </div>`;
+  const labels = { permissions: 'Permissions', slugs: 'Slug registry', sudo: 'Sudo' };
+  return html`<${Tabs} class="access-subnav" label="Access control views" value=${current.subtab} onSelect=${select}
+    items=${ACCESS_SUBTABS.map((subtab) => ({
+      key: subtab, label: labels[subtab], href: `/access/${subtab}`, class: 'access-subtab',
+      attrs: { 'data-subtab': subtab, 'aria-controls': `access-${subtab}` },
+    }))} />`;
 }
 
 export function AccessApp({ state, actions }) {

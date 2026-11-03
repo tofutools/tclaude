@@ -2,6 +2,7 @@ import { h, render } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { GrantsPage } from './fleet-admin-grants.js';
 import { InvitesPage } from './fleet-admin-invites.js';
@@ -484,11 +485,12 @@ export function FleetAdmin({
   const sub = SUB_PAGES.find((p) => p.id === (page || landing.current)) || SUB_PAGES[1];
   return html`<div class="fleet-admin">
     <${Identity} self=${view.self} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload} onUpdate=${() => setDialog({ kind: 'update' })} onSettings=${() => setDialog({ kind: 'settings' })} />
-    <div class="fa-subtabs" role="tablist">${SUB_PAGES.map((p) => html`<button type="button" data-ui-exempt role="tab" key=${p.id} aria-selected=${p.id === sub.id ? 'true' : 'false'}
-      class=${`fa-subtab${p.id === sub.id ? ' on' : ''}`} onClick=${() => { if (p.id !== sub.id) { setRunPreselect(''); setPage(p.id); } }}>${p.label}${p.id === 'setup' && !progress.complete
+    <${Tabs} class="fa-subnav" label="Fleet administration views" value=${sub.id}
+      onSelect=${(id) => { if (id !== sub.id) { setRunPreselect(''); setPage(id); } }}
+      items=${SUB_PAGES.map((p) => ({ key: p.id, class: 'fa-subtab', label: html`${p.label}${p.id === 'setup' && !progress.complete
         ? html` <span class="fa-badge fa-badge-setup" id="fleet-setup-progress" title="Setup steps done">${progress.done}/${progress.total}</span>` : ''}${p.id === 'spawns' && pendingSpawns > 0
         ? html` <span class="fa-badge" id="fleet-spawns-pending-count" title="Spawn requests from peers waiting for your decision">${pendingSpawns}</span>` : ''}${p.id === 'boards' && boardUpdates?.updates?.length > 0
-        ? html` <span class="fa-badge" id="fleet-boards-update-count" title="Items you keep have a newer version">${boardUpdates.updates.length}</span>` : ''}</button>`)}</div>
+        ? html` <span class="fa-badge" id="fleet-boards-update-count" title="Items you keep have a newer version">${boardUpdates.updates.length}</span>` : ''}` }))} />
     ${sub.id === 'setup'
       ? html`<${SetupGuide} onSeen=${state.markSetupSeen} onHub=${() => setPage('hub')} view=${view} groups=${localGroups(snapshot.value)} agents=${localAgents(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload}
           onTrust=${(r) => setDialog({ kind: 'trust', row: r })} onSettings=${() => setDialog({ kind: 'settings' })} onPeers=${() => setPage('peers')}
