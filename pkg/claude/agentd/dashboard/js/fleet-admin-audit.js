@@ -65,7 +65,7 @@ export function AuditPage({ view, actions, now }) {
       <${Button} size="sm" id="fleet-audit-refresh" onClick=${() => setTick((n) => n + 1)}>Refresh<//>
       <span class="muted">Metadata of remote activity only. ${peer ? 'Operator audit rows that cannot be tied to one peer show only under all peers. ' : ''}CLI: <code>tclaude federation audit</code></span>
     </div>
-    ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+    ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     ${rows == null ? (error ? '' : html`<div class="empty">Loading…</div>`) : list.length === 0 ? html`<div class="empty">No federation activity in this window.</div>` : html`
     <table class="fa-table ui-compact" id="fleet-audit">
       <thead><tr><th>When</th><th></th><th>Peer</th><th>Kind</th><th>Actor</th><th>Target</th><th>Group</th><th>Outcome</th></tr></thead>

@@ -409,7 +409,7 @@ function TerminalPane({
         <${RemoteBadge} seed=${pane.seed} remote=${remote} node=${scope?.node} />
         ${!pane.seed.remote && pane.seed.agent ? html`<${ViewersBadge} agentId=${pane.seed.agent} className="term-viewers-badge" />` : null}
         <span class="mux-pane-status" role="status" aria-live="polite" aria-atomic="true">${status}</span>
-        <span class="terminal-interaction-hint">${interactionHint()}</span>
+        <span class="terminal-interaction-hint ui-hint">${interactionHint()}</span>
         ${reconnect ? html`<${Button} size="sm" class="mux-btn" onClick=${reconnectPane}>Reconnect<//>` : null}
         ${filesOK ? html`<${Button} size="sm" class="mux-btn" data-term-files aria-pressed=${files ? 'true' : 'false'} title="Browse the agent's project files on the peer: preview or download" onClick=${() => setFiles(!files)}>Files<//>` : null}
         <${CopyButton} className="mux-btn" hasSelection=${hasSelection} actions=${actions} runtimeID=${pane.id} />

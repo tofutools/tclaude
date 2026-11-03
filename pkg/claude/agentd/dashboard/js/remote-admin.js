@@ -57,7 +57,7 @@ function stateText(info, error) {
 
 // Fields stay raw <input>s, like every Config field (ConfigInput): the
 // .cfg-field / .ra-form-grid skin paints them as one form.
-const hint = (text) => html`<span class="cfg-hint" style="padding-left:0">${text}</span>`;
+const hint = (text) => html`<span class="cfg-hint ui-hint" style="padding-left:0">${text}</span>`;
 const EMPTY_SETUP = { bind: '', hosts: '', passphrase: '', p12_password: '', client_name: '', enable: true, regenerate: false };
 
 // RemoteAdminPanel reloads /api/remote-access/info each time the Config tab
@@ -132,7 +132,7 @@ export function RemoteAdminPanel({ activeTab = dashboardState.activeTab }) {
   const clients = info?.clients || [];
   return html`<div class="cfg-section" id="cfg-remote-admin">
     <h3 class="ui-eyebrow ui-eyebrow-section">Remote access — certificate management</h3>
-    <p class="cfg-hint" style="padding-left:0">
+    <p class="cfg-hint ui-hint" style="padding-left:0">
       Generate and manage the remote-access secret material (CA, device
       <code>.p12</code> bundles, the login passphrase) without dropping to the
       <code>tclaude remote-access</code> CLI.
@@ -141,7 +141,7 @@ export function RemoteAdminPanel({ activeTab = dashboardState.activeTab }) {
 
     <div class="cfg-field">
       <span class="cfg-label">Material</span>
-      <span class="cfg-hint" id="ra-admin-state" style="padding-left:0">${stateText(info, loadError)}</span>
+      <span class="cfg-hint ui-hint" id="ra-admin-state" style="padding-left:0">${stateText(info, loadError)}</span>
     </div>
 
     <div class="cfg-field">
@@ -156,7 +156,7 @@ export function RemoteAdminPanel({ activeTab = dashboardState.activeTab }) {
             value=${hosts} onInput=${(e) => setHosts(e.currentTarget.value)} />
           <${Button} id="ra-addhosts-btn" onClick=${addHosts}>Add host name(s)<//>
         </div>
-        <span class="cfg-hint" style="padding-left:0">Adds SANs to the <strong>server</strong> cert (keeps the existing CA), so a public URL / new name verifies — <em>installed devices keep working</em>, no reinstall. Restart agentd to serve the updated cert.</span>
+        <span class="cfg-hint ui-hint" style="padding-left:0">Adds SANs to the <strong>server</strong> cert (keeps the existing CA), so a public URL / new name verifies — <em>installed devices keep working</em>, no reinstall. Restart agentd to serve the updated cert.</span>
       </div>
     </div>
 
@@ -178,7 +178,7 @@ export function RemoteAdminPanel({ activeTab = dashboardState.activeTab }) {
             value=${device.pw} onInput=${(e) => { const value = e.currentTarget.value; setDevice((d) => ({ ...d, pw: value })); }} />
           <${Button} id="ra-addclient-btn" onClick=${addClient}>Add device<//>
         </div>
-        <span class="cfg-hint" style="padding-left:0">Issues a new <code>.p12</code> from the existing CA, then download it to install on the device.${' '}
+        <span class="cfg-hint ui-hint" style="padding-left:0">Issues a new <code>.p12</code> from the existing CA, then download it to install on the device.${' '}
           <a id="ra-ca-btn" class="ui-btn ui-btn-link ui-sm ra-link" href="/api/remote-access/ca.crt" download>Download CA cert</a></span>
       </div>
     </div>
@@ -186,7 +186,7 @@ export function RemoteAdminPanel({ activeTab = dashboardState.activeTab }) {
     <details class="cfg-advanced" id="ra-setup-details" open=${setupOpen} onToggle=${(e) => setSetupOpen(e.currentTarget.open)}>
       <summary>First-time setup / regenerate material</summary>
       <div class="cfg-advanced-body">
-        <p class="cfg-hint">Generate the CA + server cert + first device, set the login passphrase, and (optionally) enable the listener. If material already exists, <strong>regenerate</strong> rotates everything including the CA — this <strong>invalidates every installed device</strong> and they must reinstall.</p>
+        <p class="cfg-hint ui-hint">Generate the CA + server cert + first device, set the login passphrase, and (optionally) enable the listener. If material already exists, <strong>regenerate</strong> rotates everything including the CA — this <strong>invalidates every installed device</strong> and they must reinstall.</p>
         <div class="ra-form-grid">
           <label>Bind <input type="text" id="ra-setup-bind" placeholder="0.0.0.0:8443" autocomplete="off" spellcheck="false" ...${field('bind')} /></label>
           <label>Extra host names <input type="text" id="ra-setup-hosts" placeholder="myhost.tailnet.ts.net (optional)" autocomplete="off" spellcheck="false" ...${field('hosts')} /></label>

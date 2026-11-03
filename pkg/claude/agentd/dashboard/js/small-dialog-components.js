@@ -89,7 +89,7 @@ export function PresetCloneDialog({ descriptor, actions, confirmDiscard }) {
           }}
         />
       </label>
-      <div class="cron-create-error" id="clone-modal-error" role="alert">${error}</div>
+      <div class="cron-create-error ui-error-box" id="clone-modal-error" role="alert">${error}</div>
       <div class="modal-buttons">
         <${Button} id="clone-modal-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
         <span class="spacer"></span>
@@ -318,7 +318,7 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
         </div>
       `}
       <${ExportHistory} jobs=${history} actions=${actions} conv=${descriptor.conv} refreshHistory=${() => setHistoryVersion((value) => value + 1)} />
-      <div class="cron-create-error" id="export-agent-error" role="alert">${error}</div>
+      <div class="cron-create-error ui-error-box" id="export-agent-error" role="alert">${error}</div>
       <div class="modal-buttons">
         <${Button} id="export-agent-cancel" disabled=${submitting} onClick=${() => { void requestClose(); }}>${phase === 'form' ? 'Cancel' : 'Close'}</${Button}>
         <span class="spacer"></span>
@@ -557,7 +557,7 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
         wizard="Which layer holds the ward around this hero. Bound now, taking effect the next time it is summoned."
       /></p>
       ${request.phase === 'loading' && html`<p class="sandbox-impl-loading" id="sandbox-impl-loading">loading the recorded posture…</p>`}
-      ${request.phase === 'error' && html`<div class="cron-create-error" id="sandbox-impl-load-error" role="alert">${request.error}</div>`}
+      ${request.phase === 'error' && html`<div class="cron-create-error ui-error-box" id="sandbox-impl-load-error" role="alert">${request.error}</div>`}
       ${request.phase === 'ready' && html`
         <div id="sandbox-impl-options" role="radiogroup" aria-labelledby="sandbox-impl-title">
           ${options.map((option, index) => {
@@ -615,7 +615,7 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
           <p class="sandbox-impl-hint ui-hint sandbox-impl-warn" id="sandbox-impl-move-out" role="alert">⚠ ${moveOut}</p>
         `}
       `}
-      <div class="cron-create-error" id="sandbox-impl-error" role="alert">${error}</div>
+      <div class="cron-create-error ui-error-box" id="sandbox-impl-error" role="alert">${error}</div>
       <div class="modal-buttons">
         <${Button} id="sandbox-impl-cancel" disabled=${busy}
           onClick=${() => { void requestClose(); }}>Cancel</${Button}>

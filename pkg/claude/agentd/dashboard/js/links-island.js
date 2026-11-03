@@ -20,8 +20,8 @@ function Words({ plain, wizard }) {
 function errorMessage(error) { return error?.message || String(error); }
 
 function ErrorBanner({ error }) {
-  if (!error) return html`<div class="cron-create-error" id="link-modal-error" role="alert"></div>`;
-  return html`<div class="cron-create-error" id="link-modal-error" role="alert">${error}</div>`;
+  if (!error) return html`<div class="cron-create-error ui-error-box" id="link-modal-error" role="alert"></div>`;
+  return html`<div class="cron-create-error ui-error-box" id="link-modal-error" role="alert">${error}</div>`;
 }
 
 function SortHeader({ column, state }) {

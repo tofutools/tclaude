@@ -316,7 +316,7 @@ function LimitEditor({ limit, overview, busy, onSave, onDelete, onCancel, onDirt
     </div>
     <${RuleEditor} draft=${draft} scope=${scope} windows=${overview.windows || []} disabled=${busy}
       onChange=${touch(setDraft)}/>
-    <div role="alert" class="cron-create-error">${error}</div>
+    <div role="alert" class="cron-create-error ui-error-box">${error}</div>
     <div class="modal-buttons">
       <${Button} disabled=${busy} onClick=${onCancel}>Back</${Button}>
       ${limit.id ? html`<${Button} disabled=${busy} onClick=${() => onDelete(limit)}>Delete limit</${Button}>` : null}
@@ -354,7 +354,7 @@ function ProfileEditor({ profile, busy, onSave, onDelete, onCancel, onDirty }) {
     </div>`)}
     <${PresetButtons} presets=${PROFILE_PRESETS} disabled=${busy} blankLabel="＋ Blank rule"
       onPick=${(preset) => touch(setRules)([...rules, ruleToDraft(preset ? preset.rule : blankRule('agent'))])}/>
-    <div role="alert" class="cron-create-error">${error}</div>
+    <div role="alert" class="cron-create-error ui-error-box">${error}</div>
     <div class="modal-buttons">
       <${Button} disabled=${busy} onClick=${onCancel}>Back</${Button}>
       ${profile.id ? html`<${Button} disabled=${busy} onClick=${() => onDelete(profile)}>Delete profile</${Button}>` : null}
@@ -502,7 +502,7 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api: api
   let body;
   if (!overview) {
     body = loadError
-      ? html`<div class="cron-create-error" role="alert">${loadError} <${Button} size="sm" onClick=${() => void reload()}>Retry<//></div>`
+      ? html`<div class="cron-create-error ui-error-box" role="alert">${loadError} <${Button} size="sm" onClick=${() => void reload()}>Retry<//></div>`
       : html`<div class="empty">Loading…</div>`;
   } else if (editing?.kind === 'limit') {
     body = html`<${LimitEditor} limit=${editing.item} overview=${overview} busy=${busy} onDirty=${markDirty}

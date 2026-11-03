@@ -233,7 +233,7 @@ export function TrustDialog({ row, actions, onClose, onDone }) {
       <input id="fleet-trust-label" type="text" value=${label} placeholder="optional, a-z 0-9 - _ ." autocomplete="off" spellcheck="false"
         onInput=${(e) => setLabel(e.currentTarget.value)} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!busy && preview && checked && labelOK) submit(); } }} />
     </label>
-    ${!labelOK && html`<div class="cron-create-error">Labels are 1–32 characters of a-z, 0-9, - _ .</div>`}
+    ${!labelOK && html`<div class="cron-create-error ui-error-box">Labels are 1–32 characters of a-z, 0-9, - _ .</div>`}
     ${profile
       ? html`<div class="fa-profile">Default profile <b>${profile.name}</b> applies: level <b>${preview.level}</b>${plan ? `, ${plan.changes?.length || 0} change(s), ${plan.security_changes || 0} security-relevant` : ''}.
           <label><input type="checkbox" checked=${noDefault} onChange=${(e) => setNoDefault(e.currentTarget.checked)} /> Don't apply the default profile</label></div>`
@@ -242,11 +242,11 @@ export function TrustDialog({ row, actions, onClose, onDone }) {
           <label><input type="radio" name="fa-level" checked=${level === 'restricted'} onChange=${() => setLevel('restricted')} /> <b>Restricted</b> — the peer gets only the grants you give it</label>
           <label><input type="radio" name="fa-level" checked=${level === 'unrestricted'} onChange=${() => setLevel('unrestricted')} /> <b>Unrestricted</b></label>
         </div>`}
-    ${plan?.conflicts?.length > 0 && html`<div class="cron-create-error">Profile conflicts: ${plan.conflicts.join('; ')}</div>`}
+    ${plan?.conflicts?.length > 0 && html`<div class="cron-create-error ui-error-box">Profile conflicts: ${plan.conflicts.join('; ')}</div>`}
     ${effective === 'unrestricted' && html`<${ConsequenceNote} />`}
     <label class="fa-ack"><input id="fleet-trust-ack" type="checkbox" checked=${checked} onChange=${(e) => setChecked(e.currentTarget.checked)} />
       <span>I compared this fingerprint with ${row.label}'s operator over another channel (e.g. <code>tclaude federation identity</code> on their node)</span></label>
-    <div class="cron-create-error" role="alert">${error}</div>
+    <div class="cron-create-error ui-error-box" role="alert">${error}</div>
     <div class="modal-buttons">
       <${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <span class="spacer"></span>
@@ -279,7 +279,7 @@ export function UnrestrictDialog({ row, actions, onClose, onDone }) {
     <${ConsequenceNote} />
     <label class="fa-ack"><input id="fleet-level-ack" type="checkbox" checked=${checked} onChange=${(e) => setChecked(e.currentTarget.checked)} />
       <span>I understand, and this is ${row.label}'s fingerprint</span></label>
-    <div class="cron-create-error" role="alert">${error}</div>
+    <div class="cron-create-error ui-error-box" role="alert">${error}</div>
     <div class="modal-buttons">
       <${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <span class="spacer"></span>

@@ -2,10 +2,8 @@
   "board-empty-hint",
   "board-error",
   "board-hint",
-  "cfg-hint",
   "companion-cog-hint",
   "companion-send-hint",
-  "cron-create-error",
   "doctor-error",
   "ej-error",
   "fleet-map-hint",
@@ -31,12 +29,10 @@
   "pwf-inline-error",
   "queued-spawns-popover-hint",
   "sbx-common-rule-feed-error",
-  "sbx-network-pack-visibility-error",
   "sbx-preview-error",
   "state-error",
   "status-dot-error",
   "sudo-limits-hint",
-  "terminal-interaction-hint",
   "vegas-error",
   "vegas-hint"
 ]

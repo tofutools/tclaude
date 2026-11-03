@@ -127,7 +127,7 @@ export function SubscriptionCard({ actions, confirm, toast }) {
         onKeyDown=${(e) => { if (e.key === 'Enter') save(); }} />
       <${Button} size="sm" id="fleet-claude-subscription-save" onClick=${save} disabled=${busy || !token.trim()}>${busy ? 'Saving…' : 'Save'}<//>
       <${Button} size="sm" variant="link" class="fa-link" disabled=${busy} onClick=${() => { setEditing(false); setToken(''); setError(''); }}>cancel<//>
-      ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+      ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     </div>`}
   </div>`;
 }
@@ -219,7 +219,7 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
   const leaseList = Array.isArray(leases) ? [...leases].sort((a, b) => Number(a.revoked) - Number(b.revoked) || String(b.touched_at).localeCompare(String(a.touched_at))) : [];
   const used = Array.isArray(usage) ? usageRows(usage) : [];
   return html`<div class="fa-models">
-    ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+    ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     ${!control && !error && html`<div class="empty">Loading…</div>`}
     ${control && html`<div class="fa-run-settings ui-card ui-inset" id="fleet-models-master">
       <span class="fa-k">Model gateways</span>

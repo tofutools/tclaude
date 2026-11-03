@@ -40,10 +40,10 @@ export function StewardDefaultPermissions({ fetchImpl = (...args) => globalThis.
       });
     } catch (cause) { setError(`Could not open the editor: ${cause.message}`); }
   };
-  if (!access) return html`<span class="cfg-hint" id="cfg-steward-permissions-summary">Needs Collab</span>`;
+  if (!access) return html`<span class="cfg-hint ui-hint" id="cfg-steward-permissions-summary">Needs Collab</span>`;
   return html`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end">
-    <span class="cfg-hint" id="cfg-steward-permissions-summary">${stewardPermissionSummary(access)}</span>
+    <span class="cfg-hint ui-hint" id="cfg-steward-permissions-summary">${stewardPermissionSummary(access)}</span>
     <${Button} size="sm" class="cfg-inline" id="cfg-steward-permissions-edit" onClick=${open}>Edit…<//>
-    ${error && html`<span class="cfg-hint" role="alert">${error}</span>`}
+    ${error && html`<span class="cfg-hint ui-hint" role="alert">${error}</span>`}
   </div>`;
 }

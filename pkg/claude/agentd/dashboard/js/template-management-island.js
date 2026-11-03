@@ -388,7 +388,7 @@ export function TemplateDuplicateDialog({
           autofocus
           data-select-on-focus
       /></label>
-      <div class="cron-create-error" id="template-duplicate-error" role="alert">
+      <div class="cron-create-error ui-error-box" id="template-duplicate-error" role="alert">
         ${error}
       </div>
       <div class="modal-buttons">
@@ -500,7 +500,7 @@ export function TemplateImportDialog({ initialRaw = '', state, actions, confirmD
           >Overwrite if it already exists</span
         ></label
       >
-      <div class="cron-create-error" id="template-import-error" role="alert">
+      <div class="cron-create-error ui-error-box" id="template-import-error" role="alert">
         ${error}
       </div>
       <div class="modal-buttons">
@@ -619,7 +619,7 @@ export function TemplateFromGroupDialog({
         />
       </div>`}
       <div
-        class="cron-create-error"
+        class="cron-create-error ui-error-box"
         id="template-from-group-error"
         role="alert"
       >
@@ -747,7 +747,7 @@ export function TemplateStartersDialog({
                 />
               </div>`}
       </div>
-      <div class="cron-create-error" id="starters-error" role="alert">
+      <div class="cron-create-error ui-error-box" id="starters-error" role="alert">
         ${visibleError}
       </div>
       <div class="modal-buttons">
@@ -1077,7 +1077,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
         <${MemberLandings} landings=${inspection.landings} landing=${landing} setLanding=${setLanding} confirmCut=${confirmCut} setConfirmCut=${setConfirmCut} />`}${kind === 'agent' && agentPreview &&
       html`<${AgentImportPreview} preview=${agentPreview} choices=${choices} setChoices=${setChoices} overrides=${overrides} setOverrides=${setOverrides} reveal=${reveal} />
         <${CarriedWorkflows} workflows=${agentPreview.carried_workflows} file=${file} />`}
-      <div class="cron-create-error" id="group-import-error" role="alert">
+      <div class="cron-create-error ui-error-box" id="group-import-error" role="alert">
         ${phase === 'error' ? '' : error}
       </div>
       <div class="modal-buttons">
@@ -1167,7 +1167,7 @@ export function GroupContextDialog({
           autofocus
         />
       </label>
-      <div class="cron-create-error" id="group-context-error" role="alert">
+      <div class="cron-create-error ui-error-box" id="group-context-error" role="alert">
         ${error}
       </div>
       <div class="modal-buttons">
@@ -1926,7 +1926,7 @@ export function TemplateDeployDialog({
           />
         </div>
       </div>
-      <div class="cron-create-error" id="template-deploy-error" role="alert">
+      <div class="cron-create-error ui-error-box" id="template-deploy-error" role="alert">
         ${error}
       </div>
       <div class="modal-buttons">
@@ -2974,7 +2974,7 @@ export function TemplateEditor({
               wave_max_wait: event.currentTarget.value,
             }))}
       /></label>
-      <div class="cron-create-error" id="template-editor-error" role="alert">
+      <div class="cron-create-error ui-error-box" id="template-editor-error" role="alert">
         ${current.error}
       </div>
       <div class="modal-buttons">

@@ -347,7 +347,7 @@ export function JobsPage({ view, pools, groups, actions, confirm, toast, timers,
       <${Button} size="sm" id="fleet-jobs-refresh" onClick=${reload}>Refresh<//>
       <span class="muted">${pending ? html`<span class="fa-warn">${pending} waiting for your approval. </span>` : ''}CLI: <code>tclaude federation job ls</code></span>
     </div>
-    ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+    ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     ${jobs == null ? (error ? '' : html`<div class="empty">Loading…</div>`) : !list.length ? html`<div class="empty">No remote jobs.</div>` : html`
     <table class="fa-table ui-compact" id="fleet-jobs">
       <thead><tr><th></th><th>Peer</th><th>Repo</th><th>Group</th><th>Command</th><th>Created</th><th>State</th><th></th></tr></thead>

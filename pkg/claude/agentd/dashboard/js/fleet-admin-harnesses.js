@@ -132,7 +132,7 @@ export function HarnessDialog({ node, row, actions, confirm, toast, onJob, onClo
                   <td class="fa-acts"><${Button} size="sm" data-fa="restore" onClick=${() => restore(b)}>Restore…<//></td></tr>`)}</tbody></table>`
               : html`<div class="muted">No backups yet.</div>`)}`}`
       : html`<div class="muted">${label} keeps its login outside copyable files (keychain or environment): log in on ${node.label} itself.</div>`}
-    <div class="cron-create-error" role="alert">${error}</div>
+    <div class="cron-create-error ui-error-box" role="alert">${error}</div>
     <div class="modal-buttons"><span class="spacer"></span><${Button} disabled=${busy} onClick=${onClose}>Close</${Button}></div>
   </${Dialog}>`;
 }

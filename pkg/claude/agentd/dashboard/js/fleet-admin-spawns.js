@@ -262,7 +262,7 @@ export function SpawnRequestsPage({ view, pools, actions, confirm, toast, now = 
       <span class="grow"></span>
       <${Button} size="sm" id="fleet-spawn-new" onClick=${() => setDialog({ kind: 'send' })}>Request a worker on a peer…<//>
     </div>
-    ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+    ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     ${!rows && !error ? html`<div class="empty">Loading…</div>` : list.length === 0 && !error ? html`<div class="empty">No ${all ? '' : 'open '}spawn requests from peers.</div>` : html`
     <table class="fa-table ui-compact" id="fleet-spawn-requests">
       <thead><tr><th>#</th><th>From</th><th>Group</th><th>Worker</th><th>Brief</th><th>State</th><th>Expires</th><th></th></tr></thead>

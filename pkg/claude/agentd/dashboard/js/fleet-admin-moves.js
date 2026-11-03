@@ -144,7 +144,7 @@ export function MovesPage({ view, agents = [], actions, confirm, toast, now = Da
       <${Button} size="sm" variant="link" class="fa-link" onClick=${() => setTick((n) => n + 1)}>refresh<//>
       <${Button} size="sm" id="fleet-move-open" onClick=${() => setMoving(true)}>Move an agent to a peer…<//>
     </div>
-    ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+    ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     ${!moves && !error ? html`<div class="empty">Loading…</div>` : list.length === 0 && !error ? html`<div class="empty">No agent moves or teleports.</div>` : html`
     <table class="fa-table ui-compact" id="fleet-moves">
       <thead><tr><th></th><th>Kind</th><th>Agent</th><th>Peer</th><th>Group</th><th>State</th><th>Expires</th><th></th></tr></thead>

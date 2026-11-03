@@ -75,7 +75,7 @@ export function Dialog({
     ${title != null && html`<h3 id=${titleId || `${stem}-title`}>${title}</h3>`}
     ${children}
     ${error !== undefined && html`<div
-      class=${errorClass ? `cron-create-error ${errorClass}` : 'cron-create-error'}
+      class=${errorClass ? `cron-create-error ui-error-box ${errorClass}` : 'cron-create-error ui-error-box'}
       id=${errorId || `${stem}-error`}
       role="alert"
     >${error}</div>`}

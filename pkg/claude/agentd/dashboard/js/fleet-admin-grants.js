@@ -156,7 +156,7 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
     const shown = rows.filter((r) => matches(current, r, q));
     if (grants && q) count = `${shown.length} of ${rows.length} grants`;
     body = html`
-      ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+      ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
       ${!grants && !error ? html`<div class="empty">Loading…</div>` : rows.length === 0 ? html`<div class="empty">No grants: ${current.label} can do nothing on this node beyond being trusted.</div>` : shown.length === 0 ? html`<div class="empty">No grants match.</div>` : html`
       <table class="fa-table ui-compact" id="fleet-grants">
         <thead><tr><th>Permission</th><th>Where</th><th>Allows</th><th></th></tr></thead>
