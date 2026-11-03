@@ -137,12 +137,12 @@ test('shutting a Steward down asks first, retires it, and offers a new one', asy
   assert.equal(calls.at(-1)[1], `/api/agents/${encodeURIComponent(S)}/resume`, 'Resume is the same agent');
 });
 
-test('a Steward tab × only minimizes, and the tab stays pinned', async (t) => {
+test('a Steward tab – only minimizes, and the tab stays pinned', async (t) => {
   const prefs = memoryPrefs();
   const { view, harness, controller } = await setup(t, { prefs, snapshot: snapshotWith({ steward: true }) });
   await harness.act(() => controller().open(S));
-  const tab = view.container.querySelector('.companion-tab-close');
-  assert.match(tab.title, /Minimize/);
+  const tab = view.container.querySelector('.companion-tab-minimize');
+  assert.match(tab.title, /Minimize to dock/);
   await harness.act(() => tab.click());
   await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   assert.ok(!view.container.querySelector(SHOWN_WINDOW), 'the window went away');
@@ -297,15 +297,57 @@ test('the window ✕ on several agents takes them all off the dock, still runnin
   assert.ok(view.container.querySelector(`${SHOWN_WINDOW} [data-chat-agent="${A}"]`), 'it opens again from where agents open');
 });
 
-test('a tab × still sends that agent to the dock', async (t) => {
-  const { view, harness, controller } = await setup(t);
+test('a tab – sends that agent to the dock, still running', async (t) => {
+  const { view, harness, controller, requests } = await setup(t);
   const overlays = await harness.importDashboardModule('js/overlay-instances.js');
   await harness.act(() => controller().open(A));
   await harness.act(() => controller().open(B));
-  const tabClose = [...view.container.querySelectorAll('.companion-tab')].find((tab) => tab.textContent.includes('bravo')).querySelector('.companion-tab-close');
-  await harness.act(() => tabClose.click());
+  const tabMinimize = [...view.container.querySelectorAll('.companion-tab')].find((tab) => tab.textContent.includes('bravo')).querySelector('.companion-tab-minimize');
+  assert.equal(tabMinimize.textContent, '–');
+  await harness.act(() => tabMinimize.click());
   assert.deepEqual(overlays.minimizedOverlayTabs.peek().map(({ tab }) => tab.id), [`chat:${B}`]);
   assert.deepEqual(overlays.overlayWindows.peek().map((window) => window.tabs.map((tab) => tab.id)), [[`chat:${A}`]]);
+  assert.deepEqual(requests.filter(({ url }) => /\/(stop|retire)$/.test(url)), [], 'nothing stopped');
+});
+
+test('a tab × is the window ✕ for that tab: it leaves window and dock, still running, and stays gone on reload', async (t) => {
+  const prefs = memoryPrefs();
+  const { view, harness, controller, requests } = await setup(t, { prefs });
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  await harness.act(() => controller().open(A));
+  await harness.act(() => controller().open(B));
+  const bravo = [...view.container.querySelectorAll('.companion-tab')].find((tab) => tab.textContent.includes('bravo'));
+  const buttons = [...bravo.querySelectorAll('button:not([role="tab"])')];
+  assert.deepEqual(buttons.map((button) => button.className), ['companion-tab-minimize', 'companion-tab-close'], 'the title bar\'s order: – then ×');
+  const tabClose = bravo.querySelector('.companion-tab-close');
+  assert.match(tabClose.title, /Detach to background/);
+  assert.match(tabClose.getAttribute('aria-label'), /Detach .*to background/);
+  await harness.act(async () => { tabClose.click(); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(overlays.overlayWindows.peek().map((window) => window.tabs.map((tab) => tab.id)), [[`chat:${A}`]], 'the other tab stays');
+  assert.deepEqual(overlays.minimizedOverlayTabs.peek(), [], 'no pill is left on the dock');
+  assert.ok(!view.container.querySelector('.steward-shutdown-confirm'), 'nothing asked');
+  assert.deepEqual(requests.filter(({ url }) => /\/(stop|retire)$/.test(url)), [], 'nothing stopped');
+  assert.ok(!JSON.parse(prefs.store.get('tclaude.dash.companion.tabs') || '[]').includes(B), 'not brought back by a reload');
+});
+
+test('a Steward tab × asks what the window ✕ asks, and the others stay', async (t) => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => { calls.push([options.method, url]); return { ok: true, text: async () => '', json: async () => ({}) }; };
+  const { view, harness, controller } = await setup(t, { fetchImpl, snapshot: snapshotWith({ steward: true }) });
+  const overlays = await harness.importDashboardModule('js/overlay-instances.js');
+  await harness.act(() => controller().open(S));
+  await harness.act(() => controller().open(A));
+  const tabsOf = () => overlays.overlayWindows.peek().map((window) => window.tabs.map((tab) => tab.id));
+  const stewardTab = view.container.querySelector(`.companion-tab[data-tab-id="chat:${S}"]`);
+  const tabClose = stewardTab.querySelector('.companion-tab-close');
+  assert.match(tabClose.title, /shut it down, after asking/);
+  await harness.act(() => tabClose.click());
+  assert.match(view.container.querySelector('.steward-shutdown-confirm').textContent, /keeps its conversation/, 'the Steward asks, as the window ✕ does');
+  assert.deepEqual(tabsOf(), [[`chat:${S}`, `chat:${A}`]], 'nothing left while it asks');
+  assert.deepEqual(calls.filter(([, url]) => url.endsWith('/stop')), []);
+  await harness.act(async () => { view.container.querySelector('.steward-shutdown-actions .ui-btn-danger').click(); await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(calls.filter(([, url]) => url.endsWith('/stop')), [['POST', `/api/agents/${encodeURIComponent(S)}/stop`]]);
+  assert.deepEqual(tabsOf(), [[`chat:${A}`]], 'the worker stays in its window');
 });
 
 test('the window ✕ beside a running Steward takes the others off, and the Steward still asks', async (t) => {
@@ -530,7 +572,7 @@ test('Ctrl+. toggles the window, and a tab × sends it to the dock', async (t) =
   assert.ok(!view.container.querySelector(SHOWN_WINDOW), 'window minimized');
   assert.equal(mounted[0].disposed, false, 'a minimized window keeps its terminal attached');
   await key();
-  await harness.act(() => view.container.querySelector('.companion-tab-close').click());
+  await harness.act(() => view.container.querySelector('.companion-tab-minimize').click());
   assert.ok(!view.container.querySelector(SHOWN_WINDOW));
   assert.deepEqual(JSON.parse(prefs.store.get('tclaude.dash.companion.tabs')), [A], 'a tab × stops nothing, and the agent waits on the dock');
   const overlays = await harness.importDashboardModule('js/overlay-instances.js');
@@ -1811,7 +1853,7 @@ test('an unknown or missing look follows the browser OS', async (t) => {
 test('minimize and close are their own actions, and close leaves the agent running', async (t) => {
   const { view, harness, requests } = await openLook(t, 'windows');
   const bar = () => view.container.querySelector('.board-overlay-titlebar');
-  await harness.act(() => bar().querySelector('.companion-tab-close').click());
+  await harness.act(() => bar().querySelector('.companion-tab-minimize').click());
   assert.deepEqual([...bar().querySelectorAll('[role="tab"]')].map((tab) => tab.title.split(':')[0]), ['bravo'], 'the tab went to the dock');
   assert.ok(!view.container.querySelector('.companion-window-warm'), 'the window stays for the other tab');
   await harness.act(async () => { bar().querySelector('.overlay-wc-minimize').click(); await new Promise((r) => setTimeout(r, 0)); });

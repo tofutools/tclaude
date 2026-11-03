@@ -144,8 +144,24 @@ body:has(.open-prs.is-open) .companion-chips.compact:not(.dragging) { z-index: c
 .companion-tab.selected > button[role="tab"] { color: var(--cmp-text); }
 .companion-tab > button[role="tab"] span:not(.companion-avatar):not(.companion-dot) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .companion-tab .companion-avatar { width: 16px; height: 16px; font-size: 9px; }
-.companion-tab-close { background: none; border: 0; color: var(--cmp-muted); cursor: pointer; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
-.companion-tab-close:hover { color: var(--cmp-text); background: #21262d; }
+/* A tab's − and ×: small icon buttons inside the tab, as a browser tab's are
+   (data-ui-exempt, borderless on purpose: a bordered pair would crowd every tab).
+   The showing tab always has them. On the others they come up with hover or focus,
+   over the end of the label, so a narrow tab keeps its name readable and nothing
+   beside it moves. */
+.companion-tab { position: relative; }
+.companion-tab-buttons { display: flex; align-items: center; gap: 1px; padding-right: 2px; }
+.companion-tab:not(.selected) .companion-tab-buttons {
+  position: absolute; right: 0; top: 0; bottom: 0; display: none; border-radius: 0 6px 6px 0;
+  background: var(--board-bar, var(--cmp-bar)); box-shadow: -6px 0 6px var(--board-bar, var(--cmp-bar));
+}
+.companion-tab:not(.selected):is(:hover, :focus-within) .companion-tab-buttons { display: flex; }
+.companion-tab-minimize, .companion-tab-close {
+  background: none; border: 0; color: var(--cmp-muted); cursor: pointer; padding: 2px 5px; border-radius: 4px;
+  font: inherit; font-size: 13px; line-height: 1;
+}
+.companion-tab-minimize:hover, .companion-tab-close:hover, .companion-tab-minimize:focus-visible, .companion-tab-close:focus-visible { color: var(--cmp-text); background: #21262d; }
+.companion-tab-close:hover { color: var(--cmp-red); }
 .companion-add, .companion-controls button:where(:not(.ui-btn, .ui-menu-item)) {
   flex: none; width: 26px; height: 26px; border-radius: 6px; background: none; border: 0;
   color: var(--cmp-muted); cursor: pointer; font-size: 14px; display: inline-grid; place-items: center;
