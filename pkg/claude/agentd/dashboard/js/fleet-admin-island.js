@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { GrantsPage } from './fleet-admin-grants.js';
 import { InvitesPage } from './fleet-admin-invites.js';
 import { ProfilesPage } from './fleet-admin-profiles.js';
@@ -223,8 +223,7 @@ export function TrustDialog({ row, actions, onClose, onDone }) {
     } finally { setBusy(false); }
   };
   const plan = preview?.plan;
-  return html`<${Overlay} id="fleet-trust-modal" labelledby="fleet-trust-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="fleet-trust-title">Trust ${row.label}?</h3>
+  return html`<${Dialog} id="fleet-trust-modal" onClose=${onClose} blocked=${busy} title=${html`Trust ${row.label}?`}>
     <div class="fa-dl">
       <span class="fa-k">Instance</span><code class="fa-wrap">${row.id}</code>
       <span class="fa-k">Fingerprint</span><code class="fa-wrap fa-fp-full">${preview?.fingerprint || row.fingerprint || '…'}</code>
@@ -255,7 +254,7 @@ export function TrustDialog({ row, actions, onClose, onDone }) {
         ${busy ? 'Trusting…' : effective === 'unrestricted' ? 'Trust unrestricted' : 'Trust'}
       </${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // UnrestrictDialog widens a trusted peer to unrestricted: the consequence and
@@ -272,8 +271,7 @@ export function UnrestrictDialog({ row, actions, onClose, onDone }) {
       onDone(`${row.label} is now unrestricted`);
     } catch (e) { setError(errText(e)); } finally { setBusy(false); }
   };
-  return html`<${Overlay} id="fleet-level-modal" labelledby="fleet-level-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="fleet-level-title">Make ${row.label} unrestricted?</h3>
+  return html`<${Dialog} id="fleet-level-modal" onClose=${onClose} blocked=${busy} title=${html`Make ${row.label} unrestricted?`}>
     <div class="fa-dl">
       <span class="fa-k">Instance</span><code class="fa-wrap">${row.id}</code>
       <span class="fa-k">Fingerprint</span><code class="fa-wrap fa-fp-full">${row.fingerprint || '—'}</code>
@@ -287,7 +285,7 @@ export function UnrestrictDialog({ row, actions, onClose, onDone }) {
       <span class="spacer"></span>
       <${Button} variant="danger" id="fleet-level-submit" disabled=${busy || !checked || !row.fingerprint} onClick=${submit}>${busy ? 'Saving…' : 'Make unrestricted'}</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function grantsCell(g) {

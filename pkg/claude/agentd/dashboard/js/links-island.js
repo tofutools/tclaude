@@ -3,10 +3,8 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Input, Select, SortTh } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { registerLinksController } from './links-controller.js';
 import { nodeSnapshot } from './node-api.js';
 import { relTime } from './helpers.js';
@@ -170,14 +168,11 @@ export function LinksList({ state, actions }) {
 
 function LinksManager({ state, actions, confirmDiscard }) {
   return html`
-    <${Overlay}
+    <${Dialog}
       id="links-manage-modal"
       manage=${true}
-      labelledby="links-manage-title"
       onClose=${actions.closeManager}
-      confirmDiscard=${confirmDiscard}
-    >
-      <h3 id="links-manage-title"><${Words} plain="Inter-group links" wizard="Arcane channels between parties" /></h3>
+      confirmDiscard=${confirmDiscard} title=${html`<${Words} plain="Inter-group links" wizard="Arcane channels between parties" />`}>
       <p class="manage-intro"><${Words}
         plain="Communication edges between groups: members of FROM may message members of TO. Direction matters — add a reverse edge for two-way reach."
         wizard="Missive channels between parties: heroes of FROM may whisper to heroes of TO. Direction matters — weave a reverse channel for two-way reach."
@@ -188,7 +183,7 @@ function LinksManager({ state, actions, confirmDiscard }) {
         <span class="spacer"></span>
         <${Button} id="links-manage-close" onClick=${actions.closeManager}><${Words} plain="Close" wizard="Dispel" /></${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 

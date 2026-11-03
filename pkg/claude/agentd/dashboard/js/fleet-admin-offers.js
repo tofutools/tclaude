@@ -2,7 +2,6 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
 import { shortID } from './fleet-admin-model.js';
 import { BundleInspectDialog } from './fleet-admin-bundle.js';
@@ -180,8 +179,7 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
       setError(errText(e));
     });
 
-  return html`<${Overlay} id="fleet-offer-import" labelledby="fleet-offer-import-title" onClose=${onClose} onSubmitEnter=${() => { if (!blocked) apply(); }}>
-    <h3 id="fleet-offer-import-title">${offerKind(offer)} offer from ${peer}</h3>
+  return html`<${Dialog} id="fleet-offer-import" onClose=${onClose} onSubmitEnter=${() => { if (!blocked) apply(); }} title=${html`${offerKind(offer)} offer from ${peer}`}>
     <div class="muted">${offer.offer?.summary || ''} · ${size(offer.offer?.bytes)} · expires ${when(offer.offer?.expires_at)}${offer.sender_agent ? ` · sent by ${offer.sender_agent}` : ''}</div>
     <div class="muted fa-wrap">sha256 <code>${offer.offer?.sha256 || '—'}</code></div>
     ${agent ? html`
@@ -226,7 +224,7 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
       <${Button} variant="primary" id="fleet-offer-apply" disabled=${blocked} title=${stale && preview ? 'Preview again after changing options' : ''} onClick=${apply}>${agent ? 'Start agent…' : 'Apply…'}</${Button}>
       <${Button} onClick=${onClose}>Close</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function SendConfigDialog({ peers, actions, confirm, onClose, onDone }) {

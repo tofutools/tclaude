@@ -4,10 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { TransferTray } from './transfer-card.js';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { registerMessageAccessDialogController } from './message-access-dialog-controller.js';
 import { isPageNode, nodeSnapshot } from './node-api.js';
 import { LockReason, NodeChip } from './lock-reason.js';
@@ -120,11 +118,10 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
     }
   };
 
-  return html`<${Overlay}
+  return html`<${Dialog}
     id="operator-message-modal"
     overlayClass="operator-message-overlay"
     dialogClass="cron-create-modal operator-message-modal"
-    labelledby="operator-message-title"
     describedby="operator-message-desc"
     onClose=${state.close}
     onSubmitHotkey=${submit}
@@ -133,7 +130,7 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
     confirmDiscard=${confirmDiscard}
     resizeKey="tclaude.dash.modalSize.operator-message"
     initialFocusRef=${bodyRef}
-    registerClose=${registerClose}
+    guard=${{ requestClose, registerClose }}
     guardBackdropDrag=${true}
     onPaste=${(event) => {
       if (textOnly) return;
@@ -152,10 +149,9 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
       if (!dropped.length) return;
       event.preventDefault();
       addFiles(dropped);
-    }}>
-    <h3 id="operator-message-title"><${Words}
+    }} title=${html`<${Words}
       plain=${allLive ? 'Announce to all live agents' : 'Send message to agent'}
-      wizard=${allLive ? '📯 Proclaim to all channeling heroes' : '✒ Send a missive to the hero'}/><${NodeChip} name=${descriptor.node ? descriptor.nodeName || descriptor.node.slice(0, 13) : ''}/></h3>
+      wizard=${allLive ? '📯 Proclaim to all channeling heroes' : '✒ Send a missive to the hero'}/><${NodeChip} name=${descriptor.node ? descriptor.nodeName || descriptor.node.slice(0, 13) : ''}/>`}>
     <p class="modal-hint ui-hint" id="operator-message-desc"><${Words}
       plain=${allLive
         ? 'Sent once to every agent that is live when you submit. Offline agents are not queued.'
@@ -186,7 +182,7 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
     <div class="modal-buttons"><${Button} id="operator-message-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></${Button}>
       <span class="spacer"></span><${Button} variant="primary" class="operator-message-submit" id="operator-message-submit" disabled=${busy} onClick=${submit}>
         <${Words} plain=${busy ? 'Queueing…' : allLive ? 'Announce' : 'Send'} wizard=${busy ? '✒ Sending missive…' : allLive ? '📯 Proclaim' : '✒ Send missive'}/></${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function useLiveTheme() {
@@ -266,10 +262,8 @@ function AgentPicker({ descriptor, state, snapshot, confirmDiscard }) {
     else if (event.key === 'ArrowUp') { event.preventDefault(); setHighlight(Math.max(bounded - 1, 0)); }
     else if (event.key === 'Enter' && candidates[bounded]) { event.preventDefault(); choose(candidates[bounded]); }
   };
-  return html`<${Overlay} id="cron-pick-target-modal" dialogClass="add-member-modal"
-    labelledby="cron-pick-target-title" onClose=${() => state.finishPicker('')}
-    dirty=${false} blocked=${false} confirmDiscard=${confirmDiscard}>
-    <h3 id="cron-pick-target-title">${descriptor.title} <span class="muted"><${Words} plain="— pick agent" wizard="— pick hero"/></span></h3>
+  return html`<${Dialog} id="cron-pick-target-modal" dialogClass="add-member-modal" onClose=${() => state.finishPicker('')}
+    dirty=${false} blocked=${false} confirmDiscard=${confirmDiscard} title=${html`${descriptor.title} <span class="muted"><${Words} plain="— pick agent" wizard="— pick hero"/></span>`}>
     <input ref=${searchRef} id="cron-pick-target-search" class="add-member-search" type="text"
       value=${query} placeholder="Filter by title / role / descr / conv-id / group…" autocomplete="off" spellcheck="false"
       role="combobox" aria-label="Filter agents" aria-controls="cron-pick-target-list" aria-expanded="true"
@@ -297,7 +291,7 @@ function AgentPicker({ descriptor, state, snapshot, confirmDiscard }) {
       </label>
       <span class="spacer"></span><span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> pick · <kbd>Esc</kbd> close</span>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard }) {
@@ -426,12 +420,11 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     } catch (cause) { setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };
-  return html`<${Overlay} id="message-create-modal" labelledby="message-create-title"
+  return html`<${Dialog} id="message-create-modal"
     onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
-    initialFocusRef=${bodyRef} registerClose=${registerClose}>
-    <h3 id="message-create-title"><${Words}
+    initialFocusRef=${bodyRef} guard=${{ requestClose, registerClose }} title=${html`<${Words}
       plain=${scopedGroup ? `Send a message to group “${scopedGroup}”` : 'Send a message'}
-      wizard=${scopedGroup ? `Send a missive to party “${scopedGroup}”` : 'Send a missive'}/><${NodeChip} name=${nodeName}/></h3>
+      wizard=${scopedGroup ? `Send a missive to party “${scopedGroup}”` : 'Send a missive'}/><${NodeChip} name=${nodeName}/>`}>
     <p id="message-create-desc" class="modal-hint ui-hint"><${Words}
       plain=${scopedGroup ? `Delivers one immediate message to the members of “${scopedGroup}” ticked below. Leave From blank to send it as you, the operator.` : 'Delivers one immediate message to a single agent, or multicasts it to every member of a group. Leave From blank on a group send to multicast as you, the operator.'}
       wizard=${scopedGroup ? `Delivers one immediate missive to the heroes of “${scopedGroup}” ticked below. Leave the sender blank to send it as yourself.` : 'Delivers one immediate missive to a hero, or multicasts it to every hero in a party. Leave the sender blank on a party send to multicast as yourself.'}/></p>
@@ -476,7 +469,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     <div class="modal-buttons"><${Button} id="message-create-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></${Button}>
       <span class="spacer"></span><${Button} variant="primary" id="message-create-submit" disabled=${busy || (scopedGroup && (!groupExists || !selectedMembers.length))} onClick=${submit}>
         <${Words} plain=${busy ? 'Sending…' : 'Send'} wizard=${busy ? 'Sending…' : '✒ Send missive'}/></${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard }) {
@@ -520,9 +513,9 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
     catch (cause) { if (cause?.code === 'offline') setServerOffline(true); setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };
-  return html`<${Overlay} id="human-reply-modal" labelledby="human-reply-title"
+  return html`<${Dialog} id="human-reply-modal"
     onClose=${state.close} dirty=${!!body || files.length > 0} blocked=${busy} confirmDiscard=${confirmDiscard}
-    initialFocusRef=${bodyRef} registerClose=${registerClose} guardBackdropDrag=${true}
+    initialFocusRef=${bodyRef} guard=${{ requestClose, registerClose }} guardBackdropDrag=${true}
     onPaste=${(event) => {
       const pasted = Array.from(event.clipboardData?.files || []);
       if (!pasted.length) return;
@@ -537,8 +530,7 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
       if (!dropped.length) return;
       event.preventDefault();
       addFiles(dropped);
-    }}>
-    <h3 id="human-reply-title"><span class="human-reply-title-regular">Reply to agent</span><span class="human-reply-title-wizard">✒ Answer the hero</span></h3>
+    }} title=${html`<span class="human-reply-title-regular">Reply to agent</span><span class="human-reply-title-wizard">✒ Answer the hero</span>`}>
     <p id="human-reply-desc" class="modal-hint ui-hint">${remote
       ? `Sent through ${context.nodeName || 'its node'}, which queues your answer in this agent's inbox for delivery when its pane is ready. The agent sees it comes from this node's operator.`
       : "Queues your answer in this agent's inbox for delivery when its pane is ready. Delivered as a message from you, the operator."}</p>
@@ -561,7 +553,7 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
       <${Button} id="human-reply-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}><span class="spacer"></span>
       <${Button} variant="primary" id="human-reply-submit" disabled=${busy || !online} onClick=${submit}>${busy ? 'Sending…' : 'Send reply'}</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // ScopeSummary is the row's read-at-a-glance scope: one chip per constrained
@@ -1056,11 +1048,10 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
     : descriptor.mode === 'agent' ? `Hero: ${descriptor.label || shortConv} · ${shortConv}`
     : roleMode ? `Class${descriptor.label ? `: ${descriptor.label}` : ''} · bestowed when the class is assigned`
     : `New hero${descriptor.label ? ` “${descriptor.label}”` : ''}${descriptor.group ? ` → ${descriptor.group}` : ''} · bestowed when summoned`;
-  return html`<${Overlay} id="perm-edit-modal" dialogClass=${`perm-edit-modal${sudoMode ? ' sudo-edit-modal' : ''}`} labelledby="perm-edit-title"
+  return html`<${Dialog} id="perm-edit-modal" dialogClass=${`perm-edit-modal${sudoMode ? ' sudo-edit-modal' : ''}`}
     onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
-    registerClose=${registerClose}>
-    <h3 id="perm-edit-title"><span class="perm-edit-title-regular">${futureStewards ? 'Permissions for future Stewards' : sudoMode ? 'Grant sudo' : groupMode ? 'Edit group permissions' : roleMode ? 'Edit role permissions' : 'Edit permanent permissions'}</span>
-      <span class="perm-edit-title-wizard">${futureStewards ? '📕 The Stewards’ Grimoire' : sudoMode ? '⏳ Bounded Boon' : groupMode ? '✨ Party Boons' : roleMode ? '📕 Class Boons' : '📕 The Grimoire'}</span></h3>
+    guard=${{ requestClose, registerClose }} title=${html`<span class="perm-edit-title-regular">${futureStewards ? 'Permissions for future Stewards' : sudoMode ? 'Grant sudo' : groupMode ? 'Edit group permissions' : roleMode ? 'Edit role permissions' : 'Edit permanent permissions'}</span>
+      <span class="perm-edit-title-wizard">${futureStewards ? '📕 The Stewards’ Grimoire' : sudoMode ? '⏳ Bounded Boon' : groupMode ? '✨ Party Boons' : roleMode ? '📕 Class Boons' : '📕 The Grimoire'}</span>`}>
     <div class="perm-edit-banner" id="perm-edit-banner">${futureStewards
       ? html`<strong>STORED</strong> — given to each new Steward. <strong>Grant</strong> adds a slug, <strong>Deny</strong> takes one away even if Reads or Writes give it, and <strong>Default</strong> leaves it to them.`
       : sudoMode
@@ -1166,7 +1157,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
       <${Button} id="perm-edit-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><span class="pe-btn-regular">Cancel</span><span class="pe-btn-wizard">Dispel</span></${Button}>
       <${Button} variant="primary" id="perm-edit-submit" disabled=${busy || (sudoMode && !sudoReady)} onClick=${submit}>${busy ? 'Saving…' : sudoMode ? sudoLabel : 'Save'}</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // ContextFeaturesDialog edits which parts of Claude Code's startup context an
@@ -1203,11 +1194,9 @@ function ContextFeaturesDialog({ descriptor, state, confirmDiscard }) {
     descriptor.onSave?.({ ...selection });
     state.close();
   };
-  return html`<${Overlay} id="context-features-modal" dialogClass="perm-edit-modal context-features-modal"
-    labelledby="context-features-title" onClose=${state.close} dirty=${dirty} confirmDiscard=${confirmDiscard}
-    registerClose=${registerClose}>
-    <h3 id="context-features-title"><span class="perm-edit-title-regular">Startup context</span>
-      <span class="perm-edit-title-wizard">🧹 Trim the Tome</span></h3>
+  return html`<${Dialog} id="context-features-modal" dialogClass="perm-edit-modal context-features-modal" onClose=${state.close} dirty=${dirty} confirmDiscard=${confirmDiscard}
+    guard=${{ requestClose, registerClose }} title=${html`<span class="perm-edit-title-regular">Startup context</span>
+      <span class="perm-edit-title-wizard">🧹 Trim the Tome</span>`}>
     <div class="perm-edit-banner" id="context-features-banner"><${Words}
       plain=${html`<strong>FOCUS</strong> — every capability the harness advertises is context the agent reads past before it reaches your brief. <strong>Trim</strong> what this agent will not use; <strong>Keep</strong> overrides a profile that trimmed it; <strong>Default</strong> leaves the harness alone.`}
       wizard=${html`<strong>FOCUS</strong> — every spell in the tome is a page the hero must turn before it finds your task. <strong>Tear out</strong> what it will not cast; <strong>Keep</strong> restores a page a profile removed; <strong>Default</strong> leaves the tome untouched.`}/></div>
@@ -1254,7 +1243,7 @@ function ContextFeaturesDialog({ descriptor, state, confirmDiscard }) {
       <span class="spacer"></span>
       <${Button} variant="primary" id="context-features-submit" onClick=${submit}>Save</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 export function MessageAccessDialogApp({ state, actions, snapshot: pageSnapshot, confirmDiscard }) {

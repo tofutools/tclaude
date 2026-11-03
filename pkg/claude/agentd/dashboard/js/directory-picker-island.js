@@ -4,7 +4,7 @@ import htm from 'htm';
 import { Button } from './ui-components.js';
 import { configureDirectoryPickerBridge } from './helpers.js';
 import { visiblePageSize } from './list-viewport.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 
 const html = htm.bind(h);
 function withTrailingSlash(path) {
@@ -81,18 +81,15 @@ function DirectoryOperationDialog({ operation, currentPath, actions, browse, onC
     }
   }, [actions, browse, busy, creating, currentPath, directory, onClose, renaming, trimmed, valid, value]);
 
-  return html`<${Overlay}
+  return html`<${Dialog}
     id="directory-picker-action-modal"
     dialogClass=${`directory-picker-action-modal${deleting ? ' danger' : ''}`}
     overlayClass="directory-picker-action-overlay"
-    labelledby="directory-picker-action-title"
     describedby=${deleting ? 'directory-picker-delete-warning' : undefined}
     onClose=${onClose}
     onSubmitEnter=${submit}
     initialFocusRef=${inputRef}
-    blocked=${busy}
-  >
-    <h3 id="directory-picker-action-title">${title}</h3>
+    blocked=${busy} title=${title}>
     ${creating && html`<p>The folder will be created inside the directory currently open in the picker.</p>`}
     ${renaming && html`<p>Only the folder name changes; it stays inside the current directory.</p>`}
     ${deleting && html`<div id="directory-picker-delete-warning" class="directory-picker-delete-warning">
@@ -112,7 +109,7 @@ function DirectoryOperationDialog({ operation, currentPath, actions, browse, onC
         onClick=${submit}>${busy ? (deleting ? 'Deleting…' : renaming ? 'Renaming…' : 'Creating…')
           : deleting ? 'Delete folder' : renaming ? 'Rename' : 'Create'}</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 export function DirectoryPickerApp({ state, actions }) {
@@ -193,16 +190,13 @@ export function DirectoryPickerApp({ state, actions }) {
   const choose = () => {
     if (validated && !busy) state.finish({ path: view.path });
   };
-  return html`<${Fragment}><${Overlay}
+  return html`<${Fragment}><${Dialog}
     id="directory-picker-modal"
     dialogClass="directory-picker-modal"
-    labelledby="directory-picker-title"
     onClose=${close}
     onSubmitHotkey=${choose}
     blocked=${!!operation}
-    suspended=${!!operation}
-  >
-    <h3 id="directory-picker-title">${request.title}</h3>
+    suspended=${!!operation} title=${request.title}>
     <form class="directory-picker-path" onSubmit=${(event) => {
       event.preventDefault();
       void browse(activeDirectory?.path || path, true);
@@ -290,7 +284,7 @@ export function DirectoryPickerApp({ state, actions }) {
       <${Button} variant="primary" disabled=${busy || !validated}
         onClick=${choose}>Use this folder</${Button}>
     </div>
-  </${Overlay}>
+  </${Dialog}>
   ${operation && html`<${DirectoryOperationDialog}
     operation=${operation} currentPath=${view?.path || ''} actions=${actions}
     browse=${browse} onClose=${() => setOperation(null)}

@@ -2,7 +2,8 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { dashboardState } from './snapshot-store.js';
 import { createFleetAdminActions } from './fleet-admin-actions.js';
 import { relTime } from './helpers.js';
@@ -306,9 +307,8 @@ export function SnapshotsDialog({ descriptor, state, actions, confirm, confirmDi
     try { downloadBlob(await actions.snapshots.exportBlob(snap.name), `${snap.name}.paf`); } catch (e) { fail(message(e)); }
   };
   const p = panel;
-  return html`<${Overlay} id="snapshots-modal" labelledby="snapshots-title" onClose=${state.closeDialog}
-    dirty=${false} blocked=${false} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
-    <h3 id="snapshots-title">📸 Snapshots</h3>
+  return html`<${Dialog} id="snapshots-modal" onClose=${state.closeDialog}
+    dirty=${false} blocked=${false} confirmDiscard=${confirmDiscard} guard=${{ requestClose, registerClose }} title="📸 Snapshots">
     <div class="modal-meta">Named, point-in-time copies of agents, kept on this node. A snapshot is a fork point: spawning from it creates new agents and leaves the original untouched.</div>
     <div class="snap-toolbar">
       <${Button} size="sm" id="snapshots-create-open" onClick=${() => open('create')}>+ take snapshot…<//>
@@ -342,5 +342,5 @@ export function SnapshotsDialog({ descriptor, state, actions, confirm, confirmDi
     <div class="cron-create-error" role="alert" id="snapshots-error">${error}</div>
     <${PolicyStatus} policies=${policies} />
     <div class="modal-buttons"><span class="spacer"></span><${Button} id="snapshots-close" onClick=${() => { void requestClose(); }}>Close</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }

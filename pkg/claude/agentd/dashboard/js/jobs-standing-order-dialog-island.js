@@ -2,10 +2,8 @@ import { Fragment, h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { agentCandidates, groupMembers, groupsForPicker } from './message-access-dialog-model.js';
 import { nodeSnapshot } from './node-api.js';
 import { idTooltip, shortAgentId } from './helpers.js';
@@ -177,13 +175,11 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
   };
   const cancel = () => actions.closeStandingOrderDialog({ cancelled: true });
 
-  return html`<${Overlay} id="standing-order-modal"
-    overlayClass=${editing ? 'standing-order-editing' : ''}
-    labelledby="standing-order-title" onClose=${cancel}
+  return html`<${Dialog} id="standing-order-modal"
+    overlayClass=${editing ? 'standing-order-editing' : ''} onClose=${cancel}
     onSubmitHotkey=${busy ? null : submit} dirty=${dirty} blocked=${busy}
-    confirmDiscard=${confirmDiscard} registerClose=${registerClose}
-    resizeKey="tclaude.dash.modalSize.standing-order">
-    <h3 id="standing-order-title">${editing ? 'Edit standing order' : 'Create standing order'}</h3>
+    confirmDiscard=${confirmDiscard} guard=${{ requestClose, registerClose }}
+    resizeKey="tclaude.dash.modalSize.standing-order" title=${html`${editing ? 'Edit standing order' : 'Create standing order'}`}>
     ${editing && html`<div class="modal-meta">#${descriptor.id} · delivery revision ${draft.revision}</div>`}
     ${descriptor.order?.disabled_reason && html`<div class="jobs-error ui-error-box standing-order-retirement-warning">
       This order was disabled automatically: ${descriptor.order.disabled_reason}.
@@ -349,7 +345,7 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
       <${Button} variant="primary" id="standing-order-submit" disabled=${busy}
         onClick=${submit}>${busy ? 'Saving…' : editing ? 'Save' : 'Create'}</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 export function JobsStandingOrderDialogRoot({ state, actions, confirmDiscard }) {
