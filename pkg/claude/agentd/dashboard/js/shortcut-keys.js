@@ -110,7 +110,7 @@ export function KeyboardShortcutList({ Setting, drafts = [], onChange = () => {}
             </tr></thead>
             <tbody>${rows.map(entry => html`
               <tr key=${entry.id} data-shortcut=${entry.id} class=${draft[entry.id] ? 'is-changed' : ''}>
-                <td>${entry.label}${draft[entry.id] && html` <span class="shortcut-changed" title=${`Default: ${chordText(shortcutDefault(entry.id).chord)}`}>changed</span>`}</td>
+                <td>${entry.label}${draft[entry.id] && html` <span class="ui-tag ui-tag-accent shortcut-changed" title=${`Default: ${chordText(shortcutDefault(entry.id).chord)}`}>changed</span>`}</td>
                 <td class=${here === 'pc' ? 'is-here' : ''}><${ChordList} chords=${chordsOf(entry.id)} os="linux" /></td>
                 <td class=${here === 'macos' ? 'is-here' : ''}><${ChordList} chords=${chordsOf(entry.id)} os="macos" /></td>
                 ${terminalColumn && html`<td>${TERMINAL_COPY[String(entry.terminal)]}</td>`}
@@ -119,7 +119,7 @@ export function KeyboardShortcutList({ Setting, drafts = [], onChange = () => {}
                     aria-label=${`Change the keys for ${entry.label}`} onClick=${() => setRecording(entry.id)}>Change</button>
                   ${draft[entry.id] && html`<button type="button" class="ui-btn ui-btn-ghost" data-shortcut-reset=${entry.id}
                     aria-label=${`Reset ${entry.label} to ${chordText(shortcutDefault(entry.id).chord)}`}
-                    onClick=${() => setDraft(entry.id, null)}>Reset</button>`}` : html`<span class="shortcut-fixed" title="Owned by the browser or the editor it belongs to">fixed</span>`}</td>`}
+                    onClick=${() => setDraft(entry.id, null)}>Reset</button>`}` : html`<span class="ui-tag shortcut-fixed" title="Owned by the browser or the editor it belongs to">fixed</span>`}</td>`}
               </tr>
               ${recording === entry.id && html`<tr key=${`${entry.id}-rec`} class="shortcut-recording-row"><td colspan=${columns}>
                 <${Recorder} entry=${entry} drafts=${drafts}

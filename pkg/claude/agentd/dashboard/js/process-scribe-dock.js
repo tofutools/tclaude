@@ -275,7 +275,7 @@ export function ScribeDock({ controller, view }) {
     <div class="psd-head">
       <div class="psd-title-row">
         <strong class="psd-title">${scribe ? scribe.name : 'Process scribe'}</strong>
-        ${scribe && html`<span class=${`psd-state ${live ? 'is-live' : 'is-stopped'}`}>${live ? 'live' : 'stopped'}</span>`}
+        ${scribe && html`<span class=${`ui-tag psd-state ${live ? 'is-live' : 'is-stopped'}`}>${live ? 'live' : 'stopped'}</span>`}
         <span class="spacer"></span>
         <button data-ui-exempt type="button" class="psd-close" aria-label="Close scribe panel" title="Close the scribe panel"
           onClick=${() => controller.toggleScribeDock(false)}>✕</button>
@@ -310,8 +310,8 @@ export function ScribeDock({ controller, view }) {
 
     ${live && html`<div class="psd-context" aria-label="Editor context">
       <div class="psd-chips">
-        <span class=${`psd-chip${context.selection ? '' : ' is-empty'}`}>selection: ${context.selection ? (context.singleNode || `${context.selection} items`) : 'none'}</span>
-        <span class=${`psd-chip${context.errors ? ' is-error' : ' is-empty'}`}>validation errors (${context.errors})</span>
+        <span class=${`ui-tag psd-chip${context.selection ? '' : ' is-empty'}`}>selection: ${context.selection ? (context.singleNode || `${context.selection} items`) : 'none'}</span>
+        <span class=${`ui-tag psd-chip${context.errors ? ' is-error' : ' is-empty'}`}>validation errors (${context.errors})</span>
       </div>
       <div class="psd-actions">
         <${Button} size="sm" class="process-action" disabled=${sending || !context.selection || !context.saved} data-scribe-action="selection"

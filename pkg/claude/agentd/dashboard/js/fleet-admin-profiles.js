@@ -188,7 +188,7 @@ export function ProfilesPage({ view, pools, groups = [], actions, confirm, toast
     ${summaries && summaries.length > 0 && html`<table class="fa-table ui-compact" id="fleet-profiles">
       <thead><tr><th>Profile</th><th>Level</th><th>Pools</th><th>Grants</th><th>Labels</th><th></th></tr></thead>
       <tbody>${summaries.map((p) => html`<tr key=${p.id} data-profile=${p.name}>
-        <td><b>${p.name}</b> <span class="muted">rev ${p.revision}</span>${p.id === defaultID ? html` <span class="fa-badge">default</span>` : ''}</td>
+        <td><b>${p.name}</b> <span class="muted">rev ${p.revision}</span>${p.id === defaultID ? html` <span class="ui-tag ui-tag-accent fa-badge">default</span>` : ''}</td>
         <td><span class=${`fa-level ${p.level}`}>${p.level}</span></td>
         <td>${p.pools.join(', ') || html`<span class="muted">—</span>`}</td>
         <td>${p.grants}</td>

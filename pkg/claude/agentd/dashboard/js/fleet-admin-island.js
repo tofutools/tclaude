@@ -488,9 +488,9 @@ export function FleetAdmin({
     <${Tabs} class="fa-subnav" label="Fleet administration views" value=${sub.id}
       onSelect=${(id) => { if (id !== sub.id) { setRunPreselect(''); setPage(id); } }}
       items=${SUB_PAGES.map((p) => ({ key: p.id, class: 'fa-subtab', label: html`${p.label}${p.id === 'setup' && !progress.complete
-        ? html` <span class="fa-badge fa-badge-setup" id="fleet-setup-progress" title="Setup steps done">${progress.done}/${progress.total}</span>` : ''}${p.id === 'spawns' && pendingSpawns > 0
-        ? html` <span class="fa-badge" id="fleet-spawns-pending-count" title="Spawn requests from peers waiting for your decision">${pendingSpawns}</span>` : ''}${p.id === 'boards' && boardUpdates?.updates?.length > 0
-        ? html` <span class="fa-badge" id="fleet-boards-update-count" title="Items you keep have a newer version">${boardUpdates.updates.length}</span>` : ''}` }))} />
+        ? html` <span class="ui-tag ui-tag-accent fa-badge fa-badge-setup" id="fleet-setup-progress" title="Setup steps done">${progress.done}/${progress.total}</span>` : ''}${p.id === 'spawns' && pendingSpawns > 0
+        ? html` <span class="ui-tag ui-tag-accent fa-badge" id="fleet-spawns-pending-count" title="Spawn requests from peers waiting for your decision">${pendingSpawns}</span>` : ''}${p.id === 'boards' && boardUpdates?.updates?.length > 0
+        ? html` <span class="ui-tag ui-tag-accent fa-badge" id="fleet-boards-update-count" title="Items you keep have a newer version">${boardUpdates.updates.length}</span>` : ''}` }))} />
     ${sub.id === 'setup'
       ? html`<${SetupGuide} onSeen=${state.markSetupSeen} onHub=${() => setPage('hub')} view=${view} groups=${localGroups(snapshot.value)} agents=${localAgents(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload}
           onTrust=${(r) => setDialog({ kind: 'trust', row: r })} onSettings=${() => setDialog({ kind: 'settings' })} onPeers=${() => setPage('peers')}

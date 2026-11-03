@@ -502,7 +502,7 @@ function NodeCard({ node, card, selfName, focused, onOpen, onUpdate, onSilence, 
   return html`<article ref=${cardRef} data-node-id=${node.id} class=${`fleet-card${node.local ? ' local' : ''}${card.stale || card.presence === 'offline' ? ' stale' : ''}${node.partTime ? ' part-time' : ''}${focused ? ' focused' : ''}`}
     style=${`--nc:${node.color}`} aria-label=${`${node.name} node`}>
     <div class="fleet-card-head"><span class="fleet-card-name">${node.local ? '⌂ ' : ''}${node.name}</span>
-      <span class="fleet-card-kind">${kind}</span>${node.partTime && html`<span class="fleet-card-kind part-time" title="Often off on purpose: no offline or back-online messages">part-time</span>`}
+      <span class="ui-tag fleet-card-kind">${kind}</span>${node.partTime && html`<span class="ui-tag fleet-card-kind part-time" title="Often off on purpose: no offline or back-online messages">part-time</span>`}
       <span class=${`fleet-card-presence ${asleep ? 'asleep' : card.presence}`}><i aria-hidden="true"></i>${presence}${card.stale && card.ageMs != null ? html` <span class="muted">· data ${fmtAge(card.ageMs)} old</span>` : ''}</span>
       ${onConfigure && html`<a class="fleet-card-cfg" data-fleet="node-config" href=${configHref(node.local ? '' : 'peers')} aria-label=${node.local ? 'This node in Fleet config' : `${node.name} in Fleet config`} title=${node.local ? 'Fleet config' : `${node.name} in Fleet config → Peers`} onClick=${onConfigure(node.local ? '' : 'peers')}>⚙</a>`}</div>
     <${CardRows} card=${card} node=${node} onUpdate=${onUpdate} />
@@ -522,7 +522,7 @@ function HubCard({ hub, now, admin, onConfigure }) {
   const connected = hub.state === 'connected';
   const shortID = hub.id.length > 16 ? `${hub.id.slice(0, 16)}…` : hub.id;
   return html`<article class=${`fleet-card hub${connected ? '' : ' stale'}`} data-node-id=":hub" aria-label="federation hub">
-    <div class="fleet-card-head"><span class="fleet-card-name">hub</span><span class="fleet-card-kind">relay</span>
+    <div class="fleet-card-head"><span class="fleet-card-name">hub</span><span class="ui-tag fleet-card-kind">relay</span>
       <span class=${`fleet-card-presence ${connected ? 'online' : 'offline'}`}><i aria-hidden="true"></i>${hub.state}</span></div>
     <dl class="fleet-card-body">
       ${hub.url && html`<dt>Address</dt><dd class="fleet-card-hub-url" title=${hub.url}>${hub.url}</dd>`}
@@ -603,7 +603,7 @@ function StrangerCard({ row, now, onTrust, onAsk, onDismiss }) {
   const seen = row.online ? 'online' : row.lastSeen ? `seen ${fmtAge(Math.max(0, now - Date.parse(row.lastSeen)))} ago` : 'offline';
   return html`<article data-node-id=${row.id} class=${`fleet-card untrusted${row.online ? '' : ' stale'}${row.request ? ' asks' : ''}`} aria-label=${`${row.label} untrusted instance`}>
     <div class="fleet-card-head"><span class="fleet-card-name" title="Name reported by the instance itself">${row.name || html`<span class="muted">unnamed</span>`}</span>
-      <span class="fleet-card-kind">not trusted</span>
+      <span class="ui-tag fleet-card-kind">not trusted</span>
       <span class=${`fleet-card-presence ${row.online ? 'online' : 'offline'}`}><i aria-hidden="true"></i>${seen}</span></div>
     <dl class="fleet-card-body">
       <dt>Instance</dt><dd title=${row.id}><code>${shortID(row.id)}</code></dd>

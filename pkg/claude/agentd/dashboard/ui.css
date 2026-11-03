@@ -280,6 +280,26 @@ body.wizard .ui-tab:is(.active, [aria-selected="true"]) {
   background: #3a2a63; color: #f3e6c0; text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
 }
 
+/* Tags: an outlined label chip (operator pick B: one round pill, coloured by
+   variant). An area class keeps placement; a state modifier on it may still
+   set color / border-color.
+     .ui-tag          neutral label (kind, scope, state)
+     .ui-tag-accent   informational (fleet counts, enabled)
+     .ui-tag-warn     needs attention
+     .ui-tag-own      ownership / authority */
+.ui-tag {
+  display: inline-block; padding: 0 7px; border: 1px solid #30363d; border-radius: 999px;
+  background: transparent; color: #8b949e; font-size: 11px; font-weight: normal; line-height: 16px;
+  white-space: nowrap;
+}
+.ui-tag-accent { border-color: #1f6feb; color: #58a6ff; }
+.ui-tag-warn { border-color: #9e6a03; color: #d29922; }
+.ui-tag-own { border-color: #4d3a1d; background: #1d2a3a; color: #d29922; }
+body.wizard .ui-tag { border-color: rgba(122, 93, 176, 0.5); color: #b39ddb; }
+body.wizard .ui-tag-accent { border-color: #a97bd6; color: #d2b8ff; }
+body.wizard .ui-tag-warn { border-color: #9e6a03; color: #d9b45a; }
+body.wizard .ui-tag-own { border-color: #d9b45a; background: #241b3d; color: #f3e6c0; }
+
 /* Fields */
 .ui-input, .ui-select, .ui-textarea {
   min-width: 0; margin: 0; padding: 6px 10px;

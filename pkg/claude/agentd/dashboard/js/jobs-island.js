@@ -77,11 +77,11 @@ function CronStatus({ status }) {
 }
 
 function CronActionSummary({ job }) {
-  if (job.action_kind !== 'spawn') return html`<span class="cron-action-kind message">✉ message</span>`;
+  if (job.action_kind !== 'spawn') return html`<span class="ui-tag cron-action-kind message">✉ message</span>`;
   const roles = (job.spawn_roles || []).join(', ');
   const policy = job.spawn_concurrency_policy || 'Forbid';
   return html`<${Fragment}>
-    <span class="cron-action-kind spawn">⚡ spawn</span>
+    <span class="ui-tag cron-action-kind spawn">⚡ spawn</span>
     <div class="muted cron-spawn-summary">${job.spawn_profile || 'profile missing'}
       ${roles ? ` · roles ${roles}` : ''} · ${policy}
       ${policy === 'Allow' ? ` up to ${job.spawn_max_live_workers || 1}` : ''}

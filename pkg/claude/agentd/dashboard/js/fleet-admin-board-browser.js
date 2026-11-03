@@ -133,7 +133,7 @@ function TrustBadge({ trust, compact = false }) {
 }
 
 function KindChip({ kind }) {
-  return html`<span class=${`fa-cb-kind fa-cb-k-${kind}`}>${kind}</span>`;
+  return html`<span class=${`ui-tag fa-cb-kind fa-cb-k-${kind}`}>${kind}</span>`;
 }
 
 // fingerprint shortens a base64 public key for display.
@@ -305,7 +305,7 @@ export function SkillInstallDialog({ row, actions, confirm, onClose, onDone }) {
     <div class="fa-cb-steps">${['Target', 'Preview', 'Install'].map((s, i) => html`<span key=${s} class=${i < step ? 'done' : i === step ? 'on' : ''}>${i + 1} · ${s}</span>`)}</div>
     ${TARGETS.map((t) => html`<label key=${t.id} class=${`fa-cb-opt ui-card ui-inset${opts.target === t.id ? ' on' : ''}`} data-target=${t.id}>
       <input type="radio" name="fleet-cb-target" checked=${opts.target === t.id} onChange=${() => change({ target: t.id })} />
-      <span class="fa-cb-opt-body"><span><b>${t.label}</b>${t.id === 'custom' && html` <span class="fa-badge">human only</span>`}</span><span class="muted">${t.note}</span>
+      <span class="fa-cb-opt-body"><span><b>${t.label}</b>${t.id === 'custom' && html` <span class="ui-tag ui-tag-accent fa-badge">human only</span>`}</span><span class="muted">${t.note}</span>
         ${opts.target === t.id && t.id === 'harness' && (!roots ? html`<span class="muted">Loading…</span>` : html`${harness.map((r) => html`<label key=${r.id} class="fa-cb-sub"><input type="checkbox" data-skill-target=${r.id} checked=${opts.harness.includes(r.id)}
             onChange=${(e) => change({ harness: e.currentTarget.checked ? [...opts.harness, r.id] : opts.harness.filter((x) => x !== r.id) })} /> ${r.label} <code>${r.path}</code></label>`)}`)}
         ${opts.target === t.id && t.id === 'group' && (!roots ? html`<span class="muted">Loading…</span>` : groups.length ? html`<${Select} size="sm" id="fleet-cb-group" value=${opts.group} onChange=${(e) => change({ group: e.currentTarget.value })}>

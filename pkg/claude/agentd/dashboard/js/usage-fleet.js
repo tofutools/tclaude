@@ -18,7 +18,7 @@ function money(v) { return fmtAmount('total_usd', v || 0); }
 
 function GrantChips({ node }) {
   const g = nodeGrants(node);
-  const chip = (on, label, title) => html`<span class=${`usage-grant-chip${on ? ' on' : ''}`} title=${title}>${on ? '✓' : '·'} ${label}</span>`;
+  const chip = (on, label, title) => html`<span class=${`ui-tag usage-grant-chip${on ? ' on' : ''}`} title=${title}>${on ? '✓' : '·'} ${label}</span>`;
   return html`<span class="usage-grant-chips">
     ${chip(g.read, 'usage', 'usage.read: its totals count towards your fleet limits')}
     ${chip(g.manage, 'rules', 'usage-rules.manage: you can manage its usage rules from here')}
