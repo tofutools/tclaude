@@ -252,7 +252,7 @@ local address is reachable.
 Enforcement is claimed only where a real harness/platform smoke has proven it.
 The current activation record: **Linux — Claude Code, Codex, OpenCode, Gemini
 CLI, pi; macOS — Claude Code, Codex, OpenCode** (pinned against Claude Code
-2.1.220, Codex 0.145.0, OpenCode 1.18.6, Gemini CLI 0.62.0, pi 1.1.0). Selecting the proxy engine for a non-activated cell
+2.1.220, Codex 0.145.0, OpenCode 1.18.6, Gemini CLI 0.62.0, pi 1.5.0). Selecting the proxy engine for a non-activated cell
 leaves the rules unenforced with a notice. Engine defaults do not flip: unset
 means the packet engine on Linux and historical behavior on macOS.
 
