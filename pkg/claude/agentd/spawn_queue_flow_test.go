@@ -266,3 +266,49 @@ func TestSpawnQueue_QueuedAgentSpawnKeepsDirProof(t *testing.T) {
 	require.True(t, ok)
 	assert.True(t, got, "the queued launch still threads --trust-dir")
 }
+
+// Scenario: the queue's head check sees room, but capacity is gone by the
+// time the spawner's own gate runs (node_busy). The entry keeps its place in
+// the queue instead of failing, and launches once room is back.
+func TestSpawnQueue_CapacityRaceAtTheGateRequeues(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("team")
+	setCapacity(t, config.CapacityConfig{MaxLiveAgents: 1, WhenFull: config.CapacityWhenFullQueue})
+	f.AsHuman().Spawn("team", "first")
+	queued := queuedResp(t, f.AsHuman().SpawnWith("team", map[string]any{"name": "second"}))
+
+	// Room appears for the head check, and is taken back just before the gate.
+	setCapacity(t, config.CapacityConfig{MaxLiveAgents: 2, WhenFull: config.CapacityWhenFullQueue})
+	t.Cleanup(agentd.SetBeforeExecuteSpawnForTest(func() {
+		setCapacity(t, config.CapacityConfig{MaxLiveAgents: 1, WhenFull: config.CapacityWhenFullQueue})
+	}))
+	agentd.RunSpawnQueueForTest()
+
+	entry, err := db.GetSpawnQueueEntry(queued.QueueID)
+	require.NoError(t, err)
+	assert.Equal(t, db.SpawnQueueQueued, entry.State, "a capacity race keeps the entry queued; reason=%q", entry.Reason)
+	list, _ := spawnQueueList(t, f, "")
+	require.Len(t, list.Entries, 1)
+	assert.Equal(t, "second", list.Entries[0].Name)
+}
+
+// Scenario: the queued launch starts but the child is not seen to come up
+// (spawn_unconfirmed). It may still be running, so the entry is recorded as
+// launched and tracked, not failed as refused.
+func TestSpawnQueue_UnconfirmedLaunchIsNotRecordedAsRefused(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("team")
+	setCapacity(t, config.CapacityConfig{MaxLiveAgents: 1, WhenFull: config.CapacityWhenFullQueue})
+	first := f.AsHuman().Spawn("team", "first")
+	queued := queuedResp(t, f.AsHuman().SpawnWith("team", map[string]any{"name": "second"}))
+
+	t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(50 * time.Millisecond))
+	f.World.SkipSpawnRow = true
+	f.MarkOffline(first.TmuxSession)
+	agentd.RunSpawnQueueForTest()
+
+	entry, err := db.GetSpawnQueueEntry(queued.QueueID)
+	require.NoError(t, err)
+	assert.Equal(t, db.SpawnQueueLaunched, entry.State, "reason=%q", entry.Reason)
+	assert.Contains(t, entry.Reason, "launch unconfirmed")
+}

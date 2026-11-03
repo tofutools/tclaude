@@ -429,12 +429,13 @@ func launchSpawnQueueHead(e *db.SpawnQueueEntry) bool {
 		finishSpawnQueueEntry(e, db.SpawnQueueLaunched, "launched as "+cmp.Or(out.AgentID, reserved), cmp.Or(out.AgentID, reserved))
 		return true
 	}
+	// writeError's shape: the spawnFailure Kind travels as "code".
 	var refusal struct {
 		Error string `json:"error"`
-		Kind  string `json:"kind"`
+		Code  string `json:"code"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &refusal)
-	if refusal.Kind == fedCodeNodeBusy || refusal.Kind == "node_capacity_unknown" {
+	if refusal.Code == fedCodeNodeBusy || refusal.Code == "node_capacity_unknown" {
 		// Capacity went between the check and the gate: keep its place.
 		if started, _ := spawnQueueLaunchStarted(reserved); !started {
 			_, _ = db.RequeueSpawnQueueEntry(e.ID)
@@ -445,7 +446,7 @@ func launchSpawnQueueHead(e *db.SpawnQueueEntry) bool {
 	if msg == "" {
 		msg = "HTTP " + strconv.Itoa(rec.Code)
 	}
-	if refusal.Kind == spawnUnconfirmedKind {
+	if refusal.Code == spawnUnconfirmedKind {
 		// The child may still come up; the pending spawn row now tracks it.
 		finishSpawnQueueEntry(e, db.SpawnQueueLaunched, "launch unconfirmed, tracked as a pending spawn: "+msg, reserved)
 		return true
