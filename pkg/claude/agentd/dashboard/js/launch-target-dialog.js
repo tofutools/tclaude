@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { MovePanel, dropPlan, moveProgress, MOVE_POLL_MS, openFleetPage } from './fleet-move-drop.js';
 import { shellToast } from './shell-state.js';
 import { missingPullGrants, needsSuffix } from './peer-view-limits.js';
@@ -553,8 +553,7 @@ export function LaunchTargetDialog({
     <div class="modal-buttons"><span class="spacer"></span><${Button} domRef=${okRef} id="lt-cancel" onClick=${onClose}>Cancel</${Button}></div>`;
 
   const enter = () => { const b = okRef.current; if (b && !b.disabled) b.click(); };
-  return html`<${Overlay} id="launch-target" labelledby="launch-target-title" onClose=${onClose} initialFocusRef=${okRef} onSubmitEnter=${enter}>
-    <h3 id="launch-target-title">${title}</h3>
+  return html`<${Dialog} id="launch-target" onClose=${onClose} initialFocusRef=${okRef} onSubmitEnter=${enter} title=${title}>
     <${Tabs} variant="seg" class="lt-modes" label="What to do" value=${mode} onSelect=${switchMode}
       items=${MODES.map((m) => { const st = modeState(m.key, ctx); return { key: m.key, label: m.label, disabled: !st.ok || (locked && m.key !== mode), title: st.ok ? m.hint : st.why, attrs: { 'data-lt-mode': m.key } }; })} />
     <div class="muted lt-mode-hint" data-lt-hint="">${MODES.find((m) => m.key === mode)?.hint}</div>
@@ -568,7 +567,7 @@ export function LaunchTargetDialog({
       <${Carries} title=${`What carries over${picked ? ` to ${picked.plain}` : ''}`} rows=${carries(mode, { node: picked?.plain, home: agent.homeName, morph: carry, local: cloneHere || mode !== 'clone' })} />
     </div>
     <div class="muted fa-cli-note">Enter confirms · Esc cancels · CLI: <code>${cliHint(mode)}</code></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function cliHint(mode) {

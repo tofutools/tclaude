@@ -2,7 +2,8 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { dashboardState } from './snapshot-store.js';
 import { WorkflowImportButton } from './process-workflow-share.js';
 import {
@@ -113,9 +114,8 @@ export function AgentExportDialog({ descriptor, state, actions, confirmDiscard }
     if (!flaggedBlob.current) flaggedBlob.current = await actions.exportAgentPAF(choices(true));
     return flaggedBlob.current;
   };
-  return html`<${Overlay} id="paf-export-modal" labelledby="paf-export-title" onClose=${state.closeDialog}
-    dirty=${false} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
-    <h3 id="paf-export-title">Export ${label} as PAF</h3>
+  return html`<${Dialog} id="paf-export-modal" onClose=${state.closeDialog}
+    dirty=${false} blocked=${busy} confirmDiscard=${confirmDiscard} guard=${{ requestClose, registerClose }} title=${html`Export ${label} as PAF`}>
     <div class="modal-meta">A portable file you can import anywhere or read with <code>tclaude paf render</code>. It is a fork point: importing it creates a new agent.</div>
     <${Check} id="paf-export-history" checked=${history} disabled=${busy} onChange=${reset(setHistory)}
       hint="Without it only the definition and environment travel.">Conversation history</${Check}>
@@ -142,7 +142,7 @@ export function AgentExportDialog({ descriptor, state, actions, confirmDiscard }
         disabled=${busy || (history && !native && !neutral) || (!!findings && !ack)} onClick=${download}>
         ${busy ? 'Exporting…' : '⤓ Download .paf'}</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // GroupExportDialog picks the group archive format: a group PAF, the
@@ -169,9 +169,8 @@ export function GroupExportDialog({ descriptor, state, actions, confirmDiscard }
     } finally { setBusy(false); }
   };
   const pick = (value) => { setFormat(value); setFindings(null); setAck(false); };
-  return html`<${Overlay} id="group-export-modal" labelledby="group-export-title" onClose=${state.closeDialog}
-    dirty=${false} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
-    <h3 id="group-export-title">Export group ${descriptor.group}</h3>
+  return html`<${Dialog} id="group-export-modal" onClose=${state.closeDialog}
+    dirty=${false} blocked=${busy} confirmDiscard=${confirmDiscard} guard=${{ requestClose, registerClose }} title=${html`Export group ${descriptor.group}`}>
     <div class="modal-meta">Members, roles, permissions, messages and every conversation, in one file.</div>
     <label class="paf-check"><input type="radio" name="group-export-format" id="group-export-paf" checked=${format === 'paf'} onChange=${() => pick('paf')} />
       <span>.paf<span class="paf-hint ui-hint">Group PAF: every member with its own harness's history; other tools can read it.</span></span></label>
@@ -188,7 +187,7 @@ export function GroupExportDialog({ descriptor, state, actions, confirmDiscard }
       <${Button} variant="primary" id="group-export-download" disabled=${busy || (!!findings && !ack)} onClick=${download}>
         ${busy ? 'Exporting…' : `⤓ Download .${format}`}</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // LandingPosture says how a landed agent launches. A refused posture blocks the

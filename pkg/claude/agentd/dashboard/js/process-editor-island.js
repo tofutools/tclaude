@@ -8,6 +8,7 @@ import { selectionItems } from './process-selection.js';
 import { severityGlyph } from './process-validation.js';
 import { LOOP_DEFAULT_ROUNDS } from './process-loops.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { PROCESS_SCRIBE_PROMPT_MAX } from './process-scribe.js';
 import { NodeInspector } from './process-node-inspector.js';
 import { ScribeDock } from './process-scribe-dock.js';
@@ -436,17 +437,14 @@ export function ChoiceDialog({ descriptor, complete }) {
 export function ScribeDialog({ descriptor, complete }) {
   const [prompt, setPrompt] = useState(descriptor.prompt);
   const input = useRef(null);
-  return html`<${Overlay}
+  return html`<${Dialog}
     id="process-scribe-preview-modal"
     dialogClass="modal process-scribe-preview"
     overlayClass="process-editor-modal process-scribe-preview-overlay"
-    labelledby="process-scribe-preview-title"
     onClose=${() => complete(null)}
     dirty=${false}
     confirmDiscard=${async () => false}
-    initialFocusRef=${input}
-  >
-    <h3 id="process-scribe-preview-title">Share editor context with process scribe</h3>
+    initialFocusRef=${input} title="Share editor context with process scribe">
     <p>${descriptor.scribeKind === 'selection' ? 'The selected graph identities below will be shared.'
       : descriptor.scribeKind === 'diagnostic' ? 'The current diagnostic identity below will be shared.'
         : 'A bounded whole-template summary will be shared.'}</p>
@@ -466,7 +464,7 @@ export function ScribeDialog({ descriptor, complete }) {
       <${Button} class="process-editor-modal-btn" onClick=${() => complete(null)}>Cancel</${Button}>
       <${Button} variant="primary" class="process-editor-modal-btn" onClick=${() => complete(prompt.trim())}>Send & open scribe</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 export function SnippetNameDialog({ descriptor, complete }) {
@@ -482,17 +480,14 @@ export function SnippetNameDialog({ descriptor, complete }) {
     }
     complete(validation.name);
   };
-  return html`<${Overlay}
+  return html`<${Dialog}
     id="process-snippet-name-modal"
     dialogClass="modal process-snippet-name-dialog"
     overlayClass="process-editor-modal"
-    labelledby="process-snippet-name-title"
     onClose=${() => complete(null)}
     dirty=${false}
     confirmDiscard=${async () => false}
-    initialFocusRef=${input}
-  >
-    <h3 id="process-snippet-name-title">${descriptor.title}</h3>
+    initialFocusRef=${input} title=${descriptor.title}>
     <p>Only the selected nodes, their internal edges, and relative layout are saved. Template identity and crossing edges are excluded.</p>
     <div class="field process-editor-field process-snippet-name-field">
       <label for="process-snippet-name-input">Snippet name</label>
@@ -506,7 +501,7 @@ export function SnippetNameDialog({ descriptor, complete }) {
     </div>
     <div class="modal-buttons"><${Button} class="process-editor-modal-btn" onClick=${() => complete(null)}>Cancel</${Button}><${Button} variant="primary" class="process-editor-modal-btn"
       disabled=${!trimmed} onClick=${submit}>${descriptor.submitLabel}</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function EditorModal({ controller, descriptor }) {

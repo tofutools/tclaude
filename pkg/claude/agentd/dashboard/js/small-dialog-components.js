@@ -2,10 +2,8 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { exportChecklistSteps, fmtBytes } from './export-progress.js';
 import { relTime, shortId } from './helpers.js';
 
@@ -267,17 +265,14 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
   };
 
   return html`
-    <${Overlay}
+    <${Dialog}
       id="export-agent-modal"
-      labelledby="export-agent-title"
       onClose=${close}
       onSubmitHotkey=${submit}
       dirty=${dirty}
       blocked=${submitting}
       confirmDiscard=${confirmDiscard}
-      registerClose=${registerClose}
-    >
-      <h3 id="export-agent-title"><${Words} plain="Export conversation" wizard="Inscribe conversation scroll"/></h3>
+      guard=${{ requestClose, registerClose }} title=${html`<${Words} plain="Export conversation" wizard="Inscribe conversation scroll"/>`}>
       <div class="modal-meta" id="export-agent-meta">target: ${descriptor.label || shortId(descriptor.conv)}</div>
       ${phase === 'form' ? html`
         <div id="export-agent-form">
@@ -331,21 +326,18 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
         ${phase === 'failed' && html`<${Button} variant="primary" id="export-agent-retry" onClick=${retry}>Retry</${Button}>`}
         ${phase === 'form' && html`<${Button} variant="primary" id="export-agent-submit" disabled=${submitting} onClick=${submit}>${submitting ? 'Requesting…' : 'Export'}</${Button}>`}
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 
 export function TerminalDirectoryDialog({ descriptor, actions, confirmDiscard }) {
   const choose = (value) => actions.finishChoice(descriptor, value);
   return html`
-    <${Overlay}
+    <${Dialog}
       id="term-modal"
       dialogClass="modal"
-      labelledby="term-title"
       onClose=${() => choose(null)}
-      confirmDiscard=${confirmDiscard}
-    >
-      <h3 id="term-title"><span class="term-title-regular">Open a terminal</span><span class="term-title-wizard">🔮 Open a scrying portal</span></h3>
+      confirmDiscard=${confirmDiscard} title=${html`<span class="term-title-regular">Open a terminal</span><span class="term-title-wizard">🔮 Open a scrying portal</span>`}>
       <p><${Words}
         plain=${html`Spawn a terminal window for this agent. <strong>Current</strong> is where it has most recently been editing files; <strong>Worktree</strong> is the git worktree/repo root around that; <strong>Launch</strong> is where Claude Code was started.`}
         wizard=${html`Open a scrying portal for this hero. <strong>Current</strong> is where it most recently worked its craft; <strong>Worktree</strong> is the surrounding git worktree/repo root; <strong>Launch</strong> is where it was summoned.`}
@@ -357,7 +349,7 @@ export function TerminalDirectoryDialog({ descriptor, actions, confirmDiscard })
         <${Button} id="term-worktree" onClick=${() => choose('worktree')}>Worktree dir</${Button}>
         <${Button} id="term-current" autofocus onClick=${() => choose('current')}>Current dir</${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 
@@ -546,22 +538,19 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
   };
 
   return html`
-    <${Overlay}
+    <${Dialog}
       id="sandbox-impl-modal"
       dialogClass="modal"
-      labelledby="sandbox-impl-title"
       initialFocusRef=${firstOptionRef}
       onClose=${() => actions.close(descriptor)}
       onSubmitHotkey=${moveOut ? undefined : submit}
       dirty=${dirty}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
-      registerClose=${registerClose}
-    >
-      <h3 id="sandbox-impl-title"><${Words}
+      guard=${{ requestClose, registerClose }} title=${html`<${Words}
         plain="Sandbox implementation"
         wizard="Ward implementation"
-      /></h3>
+      />`}>
       <div class="modal-meta" id="sandbox-impl-meta">${descriptor.label || shortId(descriptor.conv)}</div>
       <p><${Words}
         plain="Which layer owns OS-level confinement for this agent's launches. Recorded now and applied by the next launch — wake the agent to run under it."
@@ -638,6 +627,6 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
               ? `Move conversations & ${restart ? 'restart' : 'assign'}`
               : (restart ? 'Assign & restart' : 'Assign')}</${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }

@@ -454,7 +454,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	mustContain("process-params-dialog.js", params,
 		"export function ParamsDialog(",
 		"export function openProcessParamsDialog(",
-		"<${Overlay}",
+		"<${Dialog}",
 		"registered?.({ isDirty, requestClose })",
 		"dispose.isDirty = () => !!handle?.isDirty?.()",
 		"dispose.requestClose = () => handle?.requestClose?.()",

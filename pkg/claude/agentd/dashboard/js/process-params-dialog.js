@@ -5,7 +5,8 @@ import { h, render } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 
 const html = htm.bind(h);
 
@@ -121,13 +122,10 @@ export function ParamsDialog({ model, onMutated, complete, confirmDiscard, regis
     redraw((value) => value + 1);
     queueMicrotask(() => list.current?.lastElementChild?.querySelector('.process-param-name')?.focus());
   };
-  return html`<${Overlay}
-    id="process-param-modal" dialogClass="modal process-param-dialog" overlayClass="process-param-modal"
-    labelledby="process-param-title" onClose=${complete} dirty=${isDirty} blocked=${false}
+  return html`<${Dialog}
+    id="process-param-modal" dialogClass="modal process-param-dialog" overlayClass="process-param-modal" onClose=${complete} dirty=${isDirty} blocked=${false}
     confirmDiscard=${confirmDiscard} onCloseError=${(closeError) => setError(`Discard confirmation failed: ${closeError?.message || String(closeError)}`)}
-    registerClose=${registerClose}
-  >
-    <h3 id="process-param-title">Template parameters</h3>
+    guard=${{ requestClose, registerClose }} title="Template parameters">
     <p class="muted">Declare values referenced as {{ params.name }}. Renamed or deleted references are reported by live validation.</p>
     <datalist id="process-param-types"><option value="string"></option><option value="number"></option><option value="boolean"></option></datalist>
     <div ref=${list} class="process-param-list">
@@ -143,7 +141,7 @@ export function ParamsDialog({ model, onMutated, complete, confirmDiscard, regis
     </div>
     <div class="process-param-toolbar"><${Button} size="sm" domRef=${addButton} class="process-action" onClick=${add}>+ add param<//><span class="spacer"></span><div class="process-param-error" role="alert">${error}</div></div>
     <div class="modal-buttons"><${Button} onClick=${requestClose}>Cancel</${Button}><${Button} variant="primary" onClick=${apply}>Apply</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 export function openProcessParamsDialog({ model, onMutated, onClosed, confirmDiscard = async () => false } = {}) {

@@ -11,10 +11,8 @@ import { TransferTray } from './transfer-card.js';
 import { LockReason } from './lock-reason.js';
 import { isPageNode } from './node-api.js';
 import { profileSaveNodes } from './profile-save-nodes.js';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { relTime, shortCwd } from './helpers.js';
 import {
   CODEX_NATIVE_REGISTRY_SETUP_DOC,
@@ -1328,16 +1326,15 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     worktreeEmptyLabel = '(not a git repo — pick a sub-repo in "Worktree repo" above)';
   } else if (!worktrees.isRepo) worktreeEmptyLabel = '(not a git repo — worktrees unavailable)';
 
-  return html`<${Overlay}
+  return html`<${Dialog}
     id="agent-spawn-modal"
-    labelledby="agent-spawn-title"
     onClose=${state.close}
     onSubmitHotkey=${queued ? saveQueued : submit}
     onSubmitShiftHotkey=${remote ? noQueueHotkey : saveQueued}
     dirty=${dirty}
     blocked=${busy}
     confirmDiscard=${confirmDiscard}
-    registerClose=${registerClose}
+    guard=${{ requestClose, registerClose }}
     resizeKey="tclaude.dash.modalSize.agent-spawn"
     persistHeight=${false}
     guardBackdropDrag=${true}
@@ -1347,13 +1344,11 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     onDragOver=${dragOverEvent}
     onDragLeave=${dragLeave}
     onDrop=${drop}
-    onPaste=${paste}
-  >
-    <h3 id="agent-spawn-title">${queued
+    onPaste=${paste} title=${html`${queued
       ? html`<${Words} prefix="spawn-title" plain="Queued agent" wizard="Dormant summoning" />`
       : requestOnly
         ? html`<${Words} prefix="spawn-title" plain="Request an agent" wizard="Petition for a hero" />`
-        : html`<${Words} prefix="spawn-title" plain="Spawn a new agent" wizard="Summon a new hero" />`}${remote ? ` on ${remote.node}` : target?.name ? ` on ${target.name}` : ''}</h3>
+        : html`<${Words} prefix="spawn-title" plain="Spawn a new agent" wizard="Summon a new hero" />`}${remote ? ` on ${remote.node}` : target?.name ? ` on ${target.name}` : ''}`}>
     ${queued && html`<div class="agent-spawn-queued-banner" id="agent-spawn-queued-banner">
       ⏸ ${wizard ? 'Prepared' : 'Queued'}${queued.createdAt ? ` ${relTime(queued.createdAt)}` : ''} · not running yet
     </div>`}
@@ -1969,7 +1964,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
         ${busy && !queueing ? (requestOnly ? 'Sending…' : 'Spawning…') : (queued ? '▶ Spawn now' : requestOnly ? 'Send request' : 'Spawn')}
       </${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 export function AgentSpawnApp(props) {

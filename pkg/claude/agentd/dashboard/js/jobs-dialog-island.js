@@ -2,10 +2,8 @@ import { Fragment, h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { agentCandidates, groupMembers, groupsForPicker } from './message-access-dialog-model.js';
 import { idTooltip, shortAgentId } from './helpers.js';
 import { wizWord } from './slop.js';
@@ -101,10 +99,8 @@ function AgentPicker({ descriptor, snapshot, onChoose, onClose, confirmDiscard }
       event.preventDefault(); choose(candidates[bounded]);
     }
   };
-  return html`<${Overlay} id="cron-pick-target-modal" dialogClass="add-member-modal"
-    labelledby="cron-pick-target-title" onClose=${onClose} dirty=${false} blocked=${false}
-    confirmDiscard=${confirmDiscard}>
-    <h3 id="cron-pick-target-title">${descriptor.title} <span class="muted"><${Words} plain="— pick agent" wizard="— pick hero"/></span></h3>
+  return html`<${Dialog} id="cron-pick-target-modal" dialogClass="add-member-modal" onClose=${onClose} dirty=${false} blocked=${false}
+    confirmDiscard=${confirmDiscard} title=${html`${descriptor.title} <span class="muted"><${Words} plain="— pick agent" wizard="— pick hero"/></span>`}>
     <input id="cron-pick-target-search" class="add-member-search" type="text" value=${query}
       placeholder="Filter by title / role / descr / conv-id / group…" autocomplete="off" spellcheck=${false}
       role="combobox" aria-label="Filter agents" aria-controls="cron-pick-target-list" aria-expanded="true"
@@ -128,7 +124,7 @@ function AgentPicker({ descriptor, snapshot, onChoose, onClose, confirmDiscard }
       <input id="cron-pick-target-all" type="checkbox" checked=${includeOffline}
         onChange=${(event) => { setIncludeOffline(event.currentTarget.checked); setHighlight(0); }} />Include offline / archived
       </label><span class="spacer"></span><span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> pick · <kbd>Esc</kbd> close</span></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function CronExplanation({ result, loading, onRetry }) {
@@ -258,13 +254,11 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
       ? `copy of #${descriptor.sourceID} · ${descriptor.job?.name || '(unnamed)'}` : '';
 
   return html`<${Fragment}>
-    <${Overlay} id="cron-create-modal"
-      overlayClass=${editing ? 'cron-editing' : descriptor.kind === 'duplicate' ? 'cron-duplicating' : ''}
-      labelledby="cron-create-title" onClose=${actions.closeCronDialog}
+    <${Dialog} id="cron-create-modal"
+      overlayClass=${editing ? 'cron-editing' : descriptor.kind === 'duplicate' ? 'cron-duplicating' : ''} onClose=${actions.closeCronDialog}
       onSubmitHotkey=${busy ? null : () => submit(false)} dirty=${dirty} blocked=${busy}
-      confirmDiscard=${confirmDiscard} registerClose=${registerClose}
-      resizeKey="tclaude.dash.modalSize.cron-create">
-      <h3 id="cron-create-title">${title}</h3>
+      confirmDiscard=${confirmDiscard} guard=${{ requestClose, registerClose }}
+      resizeKey="tclaude.dash.modalSize.cron-create" title=${title}>
       ${meta && html`<div class="modal-meta" id="cron-create-meta">${meta}</div>`}
       <label class="cron-create-row"><span class="cron-create-label">Name</span>
         <input ref=${nameRef} id="cron-create-name" type="text" value=${draft.name}
@@ -372,7 +366,7 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
           title="Save and reset the form so you can create another in the same sitting" onClick=${() => submit(true)}>Save & create another</${Button}>`}
         <${Button} variant="primary" id="cron-create-submit" disabled=${busy} onClick=${() => submit(false)}>
           ${busy ? (editing ? 'Saving…' : 'Creating…') : (editing ? 'Save' : 'Create')}</${Button}></div>
-    </${Overlay}>
+    </${Dialog}>
     ${picker && html`<${AgentPicker} descriptor=${picker} snapshot=${snapshot} onChoose=${choose}
       onClose=${() => setPicker(null)} confirmDiscard=${confirmDiscard}/>`}
   </${Fragment}>`;

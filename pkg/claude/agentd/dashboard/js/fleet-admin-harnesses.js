@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { UpdateScriptsSection } from './fleet-admin-update-scripts.js';
 import { CREDENTIAL_FILE_HARNESSES, SHARE_WARNING, accessHint, cellView, harnessColumns, jobActive } from './fleet-harness-model.js';
 
@@ -97,8 +97,7 @@ export function HarnessDialog({ node, row, actions, confirm, toast, onJob, onClo
     .catch((e) => toast(`Push failed: ${errText(e)}`, true));
 
   const cell = cellView(row);
-  return html`<${Overlay} id="fleet-harness-modal" labelledby="fleet-harness-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="fleet-harness-title">${label} on ${node.label}</h3>
+  return html`<${Dialog} id="fleet-harness-modal" onClose=${onClose} blocked=${busy} title=${html`${label} on ${node.label}`}>
     <div class="fa-dl">
       <span class="fa-k">Installed</span><span>${row?.installed ? `${row.version || 'version unknown'}${row.path ? ` · ${row.path}` : ''}` : 'no'}</span>
       ${row?.latest_version && html`<span class="fa-k">Latest</span><span>${row.latest_version}${row.update_available === true ? ' — update available' : ''}</span>`}
@@ -135,7 +134,7 @@ export function HarnessDialog({ node, row, actions, confirm, toast, onJob, onClo
       : html`<div class="muted">${label} keeps its login outside copyable files (keychain or environment): log in on ${node.label} itself.</div>`}
     <div class="cron-create-error" role="alert">${error}</div>
     <div class="modal-buttons"><span class="spacer"></span><${Button} disabled=${busy} onClick=${onClose}>Close</${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function JobRow({ entry, copy, toast, onDismiss }) {

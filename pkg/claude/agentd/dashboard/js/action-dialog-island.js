@@ -2,10 +2,8 @@ import { h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { normaliseFollowUp } from './action-dialog-actions.js';
 import { registerActionDialogController } from './action-dialog-controller.js';
 import { shortCwd } from './helpers.js';
@@ -205,18 +203,15 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
   };
 
   return html`
-    <${Overlay}
+    <${Dialog}
       id="clone-agent-modal"
-      labelledby="clone-agent-title"
       onClose=${() => actions.close(descriptor)}
       onSubmitHotkey=${submit}
       dirty=${dirty}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
-      registerClose=${registerClose}
-      resizeKey="tclaude.dash.modalSize.clone-agent"
-    >
-      <h3 id="clone-agent-title"><${Words} plain="Clone agent" wizard="⧉ Mirror hero"/></h3>
+      guard=${{ requestClose, registerClose }}
+      resizeKey="tclaude.dash.modalSize.clone-agent" title=${html`<${Words} plain="Clone agent" wizard="⧉ Mirror hero"/>`}>
       <div class="modal-meta" id="clone-agent-meta">
         source: ${source}${descriptor.cwd ? `  ·  ${descriptor.cwd}` : ''}${descriptor.group ? `  ·  joins group: ${descriptor.group}` : ''}
       </div>
@@ -289,7 +284,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
           <${Words} plain=${busy ? 'Cloning…' : 'Clone'} wizard=${busy ? 'Mirroring…' : 'Mirror hero'}/>
         </${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 
@@ -320,17 +315,14 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
   };
 
   return html`
-    <${Overlay}
+    <${Dialog}
       id="reincarnate-agent-modal"
-      labelledby="reincarnate-agent-title"
       onClose=${() => actions.close(descriptor)}
       onSubmitHotkey=${submit}
       dirty=${dirty}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
-      registerClose=${registerClose}
-    >
-      <h3 id="reincarnate-agent-title"><${Words} plain="Reincarnate agent" wizard="Reincarnate hero"/></h3>
+      guard=${{ requestClose, registerClose }} title=${html`<${Words} plain="Reincarnate agent" wizard="Reincarnate hero"/>`}>
       <div class="modal-meta" id="reincarnate-agent-meta">target: ${target}</div>
       <div class="reincarnate-mode ui-card" id="reincarnate-mode" role="radiogroup" aria-label="Reincarnate mode">
         <label>
@@ -393,7 +385,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
           />
         </${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 
@@ -413,8 +405,7 @@ function NestGroupDialog({ descriptor, actions, confirmDiscard }) {
     finally { setBusy(false); }
   };
   return html`
-    <${Overlay} id="group-nest-modal" labelledby="group-nest-title" onClose=${() => actions.close(descriptor)} onSubmitHotkey=${submit} onSubmitEnter=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
-      <h3 id="group-nest-title"><${Words} plain=${`Nest group: ${descriptor.group}`} wizard=${`Nest party: ${descriptor.group}`}/></h3>
+    <${Dialog} id="group-nest-modal" onClose=${() => actions.close(descriptor)} onSubmitHotkey=${submit} onSubmitEnter=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} guard=${{ requestClose, registerClose }} title=${html`<${Words} plain=${`Nest group: ${descriptor.group}`} wizard=${`Nest party: ${descriptor.group}`}/>`}>
       <div class="modal-meta"><${Words}
         plain="Nest this group under another so it draws inside it on the board — collapse the parent to tuck the whole subgroup away, expand it to bring it back. Board layout only: nesting doesn't change messaging, permissions or spawns. A group can't nest under itself or one of its own descendants."
         wizard="Nest this party under another so it draws inside it on the board — collapse the parent to tuck the whole subparty away, expand it to bring it back. Board layout only: nesting changes neither missives, boons, nor summons. A party cannot nest under itself or one of its descendants."
@@ -432,7 +423,7 @@ function NestGroupDialog({ descriptor, actions, confirmDiscard }) {
         <span class="spacer"></span>
         <${Button} variant="primary" id="group-nest-submit" disabled=${busy} onClick=${submit}><${Words} plain=${busy ? 'Saving…' : 'Save'} wizard=${busy ? 'Nesting…' : 'Nest party'}/></${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 
@@ -514,17 +505,14 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
   };
 
   return html`
-    <${Overlay}
+    <${Dialog}
       id="task-link-modal"
       dialogClass="modal"
-      labelledby="task-link-title"
       onClose=${() => actions.close(descriptor)}
       dirty=${dirty}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
-      registerClose=${registerClose}
-    >
-      <h3 id="task-link-title"><${Words} plain=${groupAttachment ? 'Group attachment' : 'Task link'} wizard=${groupAttachment ? 'Bind a party portal' : 'Bind a quest link'}/></h3>
+      guard=${{ requestClose, registerClose }} title=${html`<${Words} plain=${groupAttachment ? 'Group attachment' : 'Task link'} wizard=${groupAttachment ? 'Bind a party portal' : 'Bind a quest link'}/>`}>
       ${subjectLabel && html`<div class="modal-meta" id="task-link-meta">${subjectLabel}</div>`}
       <div class="field">
         <label for="task-link-url"><${Words} plain="URL" wizard="Portal URL"/></label>
@@ -570,7 +558,7 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
           <${Words} plain=${busy ? 'Saving…' : 'Save'} wizard=${busy ? 'Binding…' : '✒ Bind quest!'}/>
         </${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 
@@ -640,8 +628,7 @@ function GroupSettingsDialog({ descriptor, snapshot, actions, confirmDiscard }) 
     } catch (cause) { setError(errorMessage(cause)); }
     finally { setBrowseBusy(false); }
   };
-  return html`<${Overlay} id="group-settings-modal" labelledby="group-settings-title" onClose=${() => actions.close(descriptor)} onSubmitHotkey=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.group-settings">
-    <h3 id="group-settings-title"><${Words} plain=${`Group settings: ${descriptor.group}`} wizard=${`Enchant party: ${descriptor.group}`} /></h3>
+  return html`<${Dialog} id="group-settings-modal" onClose=${() => actions.close(descriptor)} onSubmitHotkey=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} guard=${{ requestClose, registerClose }} resizeKey="tclaude.dash.modalSize.group-settings" title=${html`<${Words} plain=${`Group settings: ${descriptor.group}`} wizard=${`Enchant party: ${descriptor.group}`} />`}>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Name" wizard="Party name" /></span><input id="group-settings-name" ...${off('rename-group')} value=${values.name} spellcheck="false" onInput=${(event) => set('name', event.currentTarget.value)}/></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Description" wizard="Lore" /></span><input ...${off('set-group-descr')} value=${values.descr} onInput=${(event) => set('descr', event.currentTarget.value)}/></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Default dir" wizard="Sanctum" /></span><input id="group-settings-default-cwd" ...${off('set-group-dir')} value=${values.defaultCwd} placeholder="absolute path" spellcheck="false" onInput=${(event) => set('defaultCwd', event.currentTarget.value)}/><${Button} id="group-settings-default-cwd-browse" class="dir-browse-btn" disabled=${busy || browseBusy || !!browseLock || !can('set-group-dir')} title=${browseLock ? undefined : 'Browse for a directory'} onClick=${() => { void browseDefaultCwd(); }}><${Words} plain=${browseBusy ? 'Opening…' : 'Browse…'} wizard=${browseBusy ? 'Scrying…' : 'Scry…'} /><//><${LockReason} id="group-settings-default-cwd-browse-lock" why=${browseLock}/></label>
@@ -658,7 +645,7 @@ function GroupSettingsDialog({ descriptor, snapshot, actions, confirmDiscard }) 
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Link label" wizard="Portal name" /></span><input ...${off('group-attachment')} placeholder="optional display label" value=${values.attachmentLabel} onInput=${(event) => set('attachmentLabel', event.currentTarget.value)}/></label>
     <${ErrorBanner} id="group-settings-error" error=${error} onDismiss=${() => setError('')} />
     <div class="modal-buttons"><${Button} id="group-settings-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel" /></${Button}><span class="spacer"></span><${Button} variant="primary" id="group-settings-submit" disabled=${busy || !dirty} onClick=${submit}><${Words} plain=${busy ? 'Saving…' : 'Save settings'} wizard=${busy ? 'Enchanting…' : '✦ Enchant party'} /></${Button}></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // LaunchTargetGate opens the launch-target dialog (Move / Teleport / Clone /

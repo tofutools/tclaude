@@ -59,7 +59,7 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 		"component mode controls only the overlay presentation class")
 	must("onSubmitHotkey=${busy ? null : () => submit(false)} dirty=${dirty} blocked=${busy}",
 		"the cron editor confirms dirty dismissal and blocks close while saving")
-	must(`id="human-reply-modal" labelledby="human-reply-title"`, "the human-reply dialog uses the shared Preact overlay")
+	must("<${Dialog} id=\"human-reply-modal\"", "the human-reply dialog uses the shared Dialog overlay")
 	must("onClose=${state.close} dirty=${!!body || files.length > 0} blocked=${busy} confirmDiscard=${confirmDiscard}", "the Preact human-reply dialog confirms before discarding")
 	must(`id="operator-message-modal"`, "the terminal operator composer is rendered by the Preact dialog owner")
 	must("dirty=${dirty}", "the operator composer derives dismissal state from its controlled draft")

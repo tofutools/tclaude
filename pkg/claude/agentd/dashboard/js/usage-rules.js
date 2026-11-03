@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
-import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { usageRulesApi, usageRulesApiFor } from './usage-rules-actions.js';
 import { FleetLimitEditor, FleetTab } from './usage-fleet.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
@@ -528,9 +529,8 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api: api
     body = html`<${AgentsTab} overview=${overview} busy=${busy} onAdjust=${adjust} onAssign=${assign}
       focus=${focusAgent} onClearFocus=${() => setFocusAgent('')}/>`;
   }
-  return html`<${Overlay} id="usage-rules-modal" labelledby="usage-rules-title" dialogClass="cron-create-modal usage-rules-modal"
-    onClose=${onClose} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
-    <h3 id="usage-rules-title">Usage limits & budgets${node ? html` <span class="usage-rules-node">on ${nodeLabel}</span>` : null}</h3>
+  return html`<${Dialog} id="usage-rules-modal" dialogClass="cron-create-modal usage-rules-modal"
+    onClose=${onClose} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} guard=${{ requestClose, registerClose }} title=${html`Usage limits & budgets${node ? html` <span class="usage-rules-node">on ${nodeLabel}</span>` : null}`}>
     ${node ? html`<p class="modal-hint ui-hint usage-rules-node-hint">You manage ${nodeLabel}'s usage rules through the <code>usage-rules.manage</code> grant it gave you; changes apply on that node.</p>` : null}
     <${Tabs} variant="seg" class="usage-rules-tabs" label="Usage rule kinds" value=${tab} onSelect=${(id) => void switchTab(id)}
       items=${tabs.map((t) => ({ key: t.id, label: t.label, attrs: { 'data-usage-rules-tab': t.id } }))} />
@@ -540,5 +540,5 @@ export function UsageRulesDialog({ descriptor, onClose, confirmDiscard, api: api
       <span class="spacer"></span>
       <${Button} disabled=${busy} onClick=${() => void requestClose()}>Close</${Button}>
     </div>`}
-  </${Overlay}>`;
+  </${Dialog}>`;
 }

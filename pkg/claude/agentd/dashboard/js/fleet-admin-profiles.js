@@ -3,7 +3,7 @@ import { ProfileEditor } from './fleet-admin-profile-editor.js';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { POOL_NAME_RE, UNRESTRICTED_CONSEQUENCE, changeText, grantText, profileSummary } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
@@ -42,8 +42,7 @@ export function ApplyDialog({ profile, peers, actions, poolNames = new Map(), on
       onDone(`Applied ${profile.name} to ${row.label}`);
     } catch (e) { setError(errText(e)); } finally { setBusy(false); }
   };
-  return html`<${Overlay} id="fleet-apply-modal" labelledby="fleet-apply-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="fleet-apply-title">Apply profile ${profile.name}</h3>
+  return html`<${Dialog} id="fleet-apply-modal" onClose=${onClose} blocked=${busy} title=${html`Apply profile ${profile.name}`}>
     <label class="cron-create-row"><span class="cron-create-label">To peer</span>
       <${Select} size="sm" id="fleet-apply-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
         ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label} (${p.level})</option>`)}
@@ -64,7 +63,7 @@ export function ApplyDialog({ profile, peers, actions, poolNames = new Map(), on
       <span class="spacer"></span>
       <${Button} id="fleet-apply-submit" variant=${widens ? 'danger' : 'primary'} disabled=${busy || !ready || !changes.length} onClick=${apply}>${busy ? 'Applying…' : 'Apply'}</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // ProfilesPage manages node pools (membership carries the pool's grants) and
