@@ -11986,8 +11986,7 @@ body.wizard #confirm-modal #confirm-ok:active {
    span swap (the .cron-open-label-regular / .cron-open-label-wizard pair),
    same idiom as "+ new group" → "⚔ Form a party". The swap rules are unscoped
    so the "No cron jobs yet…" empty-state hint that names the button swaps too;
-   the gilded re-skin is scoped to the #cron-create-open id, which out-specifies
-   the base .filter-bar button.primary rule. */
+   the gilded re-skin is scoped to the #cron-create-open id. */
 .cron-open-label-wizard { display: none; }
 body.wizard .cron-open-label-regular { display: none; }
 body.wizard .cron-open-label-wizard { display: inline; }
@@ -12261,8 +12260,7 @@ body.wizard #cron-pick-target-modal .add-member-foot kbd {
    rules are unscoped, not tied to #group-create-open. The button itself becomes
    a small gilded-arcane action — violet gradient, candle-gold frame, mystic
    glow + fantasy serif — matching the header chrome without shouting like the
-   modal's 🔮 Summon lever. The #group-create-open id out-specifies the base
-   .filter-bar button.primary rule, so it wins without !important. */
+   modal's 🔮 Summon lever. */
 .group-create-label-wizard { display: none; }
 body.wizard .group-create-label-regular { display: none; }
 body.wizard .group-create-label-wizard { display: inline; }
