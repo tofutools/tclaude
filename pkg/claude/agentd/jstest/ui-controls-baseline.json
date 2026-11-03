@@ -8,8 +8,6 @@
   "js/jobs-dialog-island.js": 4,
   "js/jobs-standing-order-dialog-island.js": 4,
   "js/jobs-triggers.js": 6,
-  "js/launch-target-dialog.js": 3,
-  "js/links-island.js": 10,
   "js/paf-dialogs.js": 3,
   "js/process-agent-stepper.js": 1,
   "js/process-node-fields.js": 1,
@@ -19,6 +17,5 @@
   "js/snapshots-dialog.js": 6,
   "js/spawn-harness-policy-island.js": 1,
   "js/usage-fleet.js": 1,
-  "js/usage-rules.js": 7,
   "js/vegas.js": 3
 }
