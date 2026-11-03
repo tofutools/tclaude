@@ -98,7 +98,7 @@ func TestRootShowsTheSandboxsOwnViewAfterARename(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "SECRET", string(host), "on the host the renamed path holds the secret")
 
-	ns, pids := ForeignCandidates(subtree(bwrapPID))
+	ns, pids := SandboxCandidates(subtree(bwrapPID))
 	require.NotEmpty(t, pids, "the sandbox runs in its own mount namespace")
 	var root *Root
 	for _, pid := range pids {
@@ -129,6 +129,17 @@ func TestRootShowsTheSandboxsOwnViewAfterARename(t *testing.T) {
 
 	_, err = root.OpenDir(filepath.Join(dir, "site"))
 	assert.Error(t, err, "the old name is gone inside the sandbox")
+}
+
+func TestSandboxCandidatesTrustOnlyWhatBwrapRuns(t *testing.T) {
+	// This test's own tree: not under a bwrap, not in another namespace.
+	ns, pids := SandboxCandidates(subtree(os.Getpid()))
+	assert.Empty(t, ns)
+	assert.Empty(t, pids)
+	comm, ppid, ok := procStat(os.Getpid())
+	require.True(t, ok)
+	assert.Equal(t, os.Getppid(), ppid)
+	assert.NotEmpty(t, comm)
 }
 
 func TestOpenRefusesAProcessOutsideTheNamespace(t *testing.T) {

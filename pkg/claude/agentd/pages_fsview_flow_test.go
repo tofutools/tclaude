@@ -180,6 +180,19 @@ func TestPageStaticOfATclaudeLayerAgentIsServedFromItsOwnSandbox(t *testing.T) {
 	require.Equal(t, http.StatusOK, code)
 	e.assertLiveReadBack(t, a, p, "site", true)
 
+	// The relaunch may leave a gap with no sandbox at all: the next one is
+	// still another sandbox.
+	fake.Fail(errors.New("the agent's sandbox is not running"))
+	code, _ = e.frame(t, p.Origin, "/public/app.css")
+	require.Equal(t, http.StatusServiceUnavailable, code)
+	fake.Fail(nil)
+	fake.Relaunch()
+	code, _ = e.frame(t, p.Origin, "/public/app.css")
+	require.Equal(t, http.StatusOK, code)
+	e.assertLiveReadBack(t, a, p, "site", false)
+	code, _ = e.frame(t, p.Origin, "/")
+	require.Equal(t, http.StatusOK, code)
+
 	// A sandbox that cannot be opened serves nothing: never the host's view.
 	fake.Fail(errors.New("permission denied"))
 	code, body = e.frame(t, p.Origin, "/")

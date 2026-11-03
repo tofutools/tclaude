@@ -8,8 +8,8 @@ import "errors"
 // Root is never opened off Linux.
 type Root struct{}
 
-// ForeignCandidates finds nothing off Linux.
-func ForeignCandidates([]int) (string, []int) { return "", nil }
+// SandboxCandidates finds nothing off Linux.
+func SandboxCandidates([]int) (string, []int) { return "", nil }
 
 // Open always fails off Linux.
 func Open(int, string) (*Root, error) { return nil, errors.New("mount namespaces are Linux-only") }

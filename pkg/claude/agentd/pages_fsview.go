@@ -222,7 +222,7 @@ var pageFSOpenSandboxRoot = func(agentID string) (pageFSRoot, error) {
 	if err != nil {
 		return nil, err
 	}
-	ns, pids := nsroot.ForeignCandidates(portowner.ProcessSubtree(proc.root))
+	ns, pids := nsroot.SandboxCandidates(portowner.ProcessSubtree(proc.root))
 	if len(pids) == 0 {
 		return nil, errPageFSNoSandbox
 	}
@@ -251,7 +251,9 @@ type pageFSViewer struct {
 	gen     uint64
 	shown   uint64 // the gen the page's last document was served under
 	root    pageFSRoot
-	dir     int // the worktree inside root, or -1
+	dir     int    // the worktree inside root, or -1
+	lastNS  string // the namespace last held, kept across a failed reopen
+	closed  bool
 }
 
 func newPageFSViewer(agentID, convID, worktree string) *pageFSViewer {
@@ -280,11 +282,15 @@ func (r *pageFSViewer) dropRootLocked() {
 	}
 }
 
-// refreshLocked rechecks the agent's generation every few seconds and, for a
-// sandbox-root view, that the sandbox it holds still runs (reopening it when
-// not). It returns a reload to run once the lock is released.
-func (r *pageFSViewer) refreshLocked() (reload func(), err error) {
-	if time.Since(r.checked) >= pageFSViewRecheck {
+// refreshLocked rechecks the agent's generation every few seconds (always,
+// when force) and, for a sandbox-root view, that the sandbox it holds still
+// runs (reopening it when not). It returns a reload to run once the lock is
+// released.
+func (r *pageFSViewer) refreshLocked(force bool) (reload func(), err error) {
+	if r.closed {
+		return nil, errors.New("this page's source has closed")
+	}
+	if force || time.Since(r.checked) >= pageFSViewRecheck {
 		r.checked = time.Now()
 		if cur, err := db.CurrentConvForAgent(r.agentID); err == nil && cur != "" && cur != r.conv {
 			r.conv = cur
@@ -294,10 +300,6 @@ func (r *pageFSViewer) refreshLocked() (reload func(), err error) {
 	}
 	if r.view.class != pageFSSandboxRoot || (r.root != nil && r.root.Alive()) {
 		return reload, nil
-	}
-	prevNS := ""
-	if r.root != nil {
-		prevNS = r.root.NS()
 	}
 	r.dropRootLocked()
 	root, err := pageFSOpenSandboxRoot(r.agentID)
@@ -314,18 +316,18 @@ func (r *pageFSViewer) refreshLocked() (reload func(), err error) {
 		root.Close()
 		return reload, errors.New("the agent's sandbox does not show its worktree")
 	}
-	if prevNS != "" && prevNS != root.NS() {
+	if r.lastNS != "" && r.lastNS != root.NS() {
 		// Another sandbox (a relaunch): what the page shows came from the
 		// old one.
 		reload = r.changedLocked()
 	}
-	r.root, r.dir = root, dir
+	r.root, r.dir, r.lastNS = root, dir, root.NS()
 	return reload, nil
 }
 
-func (r *pageFSViewer) refresh() (*pageFSView, uint64, int, error) {
+func (r *pageFSViewer) refresh(force bool) (*pageFSView, uint64, int, error) {
 	r.mu.Lock()
-	reload, err := r.refreshLocked()
+	reload, err := r.refreshLocked(force)
 	v, gen := r.view, r.gen
 	dir := -1
 	if err == nil && v.class == pageFSSandboxRoot {
@@ -342,11 +344,11 @@ func (r *pageFSViewer) refresh() (*pageFSView, uint64, int, error) {
 }
 
 // hidden is the stage's check for one canonical path.
+// It uses the view as last refreshed: every walk refreshes it first (base).
 func (r *pageFSViewer) hidden(abs string) bool {
-	v, _, dir, _ := r.refresh()
-	if dir >= 0 {
-		_ = unix.Close(dir)
-	}
+	r.mu.Lock()
+	v := r.view
+	r.mu.Unlock()
 	return v.hidden(abs)
 }
 
@@ -354,7 +356,7 @@ func (r *pageFSViewer) hidden(abs string) bool {
 // it (a directory fd the caller closes), or -1 for the daemon's view. An
 // error means the agent's view is required but unreachable.
 func (r *pageFSViewer) base() (fd int, gen uint64, err error) {
-	_, gen, fd, err = r.refresh()
+	_, gen, fd, err = r.refresh(false)
 	if err != nil {
 		return -1, gen, err
 	}
@@ -374,7 +376,9 @@ func (r *pageFSViewer) served(gen uint64) {
 // asks about what the operator's browser shows now, which must have been
 // served under the current view; a snapshot renders afresh and need not.
 func (r *pageFSViewer) readBack(live bool) bool {
-	v, gen, dir, err := r.refresh()
+	// The agent's generation is read now, not as last rechecked: a launch
+	// that has just become confined must not be read back as before.
+	v, gen, dir, err := r.refresh(true)
 	if dir >= 0 {
 		_ = unix.Close(dir)
 	}
@@ -395,6 +399,7 @@ func (r *pageFSViewer) close() {
 		return
 	}
 	r.mu.Lock()
+	r.closed = true
 	r.dropRootLocked()
 	r.mu.Unlock()
 }

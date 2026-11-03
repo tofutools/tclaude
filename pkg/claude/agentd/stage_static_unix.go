@@ -201,12 +201,18 @@ func (s *stageStatic) hiddenAt(parts []string) bool {
 
 // openAt walks parts from the root fd without following any symlink and
 // returns the final component's fd, opened read-only. A path the guard hides
-// is refused before anything is opened.
+// is refused (its fd closed unread).
 func (s *stageStatic) openAt(parts []string) (int, uint64, error) {
+	// The walk refreshes the guard's view, so the check after it uses the
+	// view the file was reached through.
+	fd, gen, err := s.walkAt(parts)
 	if s.hiddenAt(parts) {
-		return -1, 0, errStageStaticHidden
+		if err == nil {
+			_ = unix.Close(fd)
+		}
+		return -1, gen, errStageStaticHidden
 	}
-	return s.walkAt(parts)
+	return fd, gen, err
 }
 
 // walkAt is openAt without the guard. Only the change poll uses it, to walk

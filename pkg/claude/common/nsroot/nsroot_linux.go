@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
@@ -34,16 +35,52 @@ func MountNS(pid int) (string, error) {
 	return os.Readlink("/proc/" + strconv.Itoa(pid) + "/ns/mnt")
 }
 
-// ForeignCandidates picks, from pids in breadth-first order, those that share
-// the first mount namespace other than the caller's: the shallowest sandbox.
-// The first is its entry; the rest are fallbacks when that one cannot be
-// opened (a process that is not dumpable).
-func ForeignCandidates(pids []int) (ns string, out []int) {
+// SandboxCandidates picks, from pids in breadth-first order, the processes
+// a bubblewrap sandbox runs: each lives in a mount namespace other than the
+// caller's, is not bwrap itself, and descends from a bwrap within pids. Only
+// those are trusted to show the sandbox's settled root. A bwrap child joins
+// its new namespace before it pivots into the sandbox's root, so until it
+// execs it still sees the host's; and a helper started beside bwrap (pasta)
+// has a namespace of its own that is not the agent's. All candidates share
+// the first such namespace; the rest are fallbacks when the first cannot be
+// opened.
+func SandboxCandidates(pids []int) (ns string, out []int) {
 	self, err := os.Readlink("/proc/self/ns/mnt")
 	if err != nil {
 		return "", nil
 	}
+	type proc struct {
+		comm string
+		ppid int
+	}
+	procs := make(map[int]proc, len(pids))
 	for _, pid := range pids {
+		if comm, ppid, ok := procStat(pid); ok {
+			procs[pid] = proc{comm, ppid}
+		}
+	}
+	underBwrap := func(pid int) bool {
+		for seen := 0; seen < len(procs); seen++ {
+			p, ok := procs[pid]
+			if !ok {
+				return false
+			}
+			parent, ok := procs[p.ppid]
+			if !ok {
+				return false
+			}
+			if parent.comm == "bwrap" {
+				return true
+			}
+			pid = p.ppid
+		}
+		return false
+	}
+	for _, pid := range pids {
+		p, ok := procs[pid]
+		if !ok || p.comm == "bwrap" || !underBwrap(pid) {
+			continue
+		}
 		got, err := MountNS(pid)
 		if err != nil || got == self {
 			continue
@@ -56,6 +93,28 @@ func ForeignCandidates(pids []int) (ns string, out []int) {
 		}
 	}
 	return ns, out
+}
+
+// procStat reads a process's command name and parent pid.
+func procStat(pid int) (comm string, ppid int, ok bool) {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return "", 0, false
+	}
+	s := string(b)
+	open, closing := strings.IndexByte(s, '('), strings.LastIndexByte(s, ')')
+	if open < 0 || closing < open {
+		return "", 0, false
+	}
+	fields := strings.Fields(s[closing+1:])
+	if len(fields) < 2 {
+		return "", 0, false
+	}
+	ppid, err = strconv.Atoi(fields[1])
+	if err != nil {
+		return "", 0, false
+	}
+	return s[open+1 : closing], ppid, true
 }
 
 // Open opens pid's root. wantNS is the mount namespace pid was found in; a
