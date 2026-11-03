@@ -398,7 +398,7 @@ var peerViewOwnNodeRoutes = []string{
 	// (group_resource_locks.go): never a peer.
 	"POST /api/resource-locks",
 	// Live pages are this node's own agents' stage origins.
-	"DELETE /api/pages/{id}", "GET /api/pages/{id}/live", "POST /api/pages/{id}/marks",
+	"POST /api/pages", "DELETE /api/pages/{id}", "GET /api/pages/{id}/live", "POST /api/pages/{id}/marks",
 	// The operator's own Claude subscription token never serves a peer.
 	"GET /api/federation/claude-subscription",
 	"PUT /api/federation/claude-subscription",

@@ -114,6 +114,29 @@ tclaude agent page css agt_1234…/app 'button { color: red }'
   when it would be to the shower: when the shower's view of its files is exact
   (see [Page sources](#page-sources)).
 
+### A page the operator creates in a group
+
+The operator can create a page in a group from the dashboard, as they create
+a board (`POST /api/pages` with the group and a name). No agent shows it, so
+the group owns it:
+
+- **It serves a blank scratch sheet.** This is tclaude's own fixed page, with
+  no script. The operator draws on it and sends the marks to show what to
+  build. No agent is told; the group's members read the marks.
+- **Members address it as `<group>/<name>`.** For example,
+  `tclaude agent page marks crew/sketch`. The same `groups.pages.*` slugs
+  apply as for a page another member shared, and a non-member reaches
+  nothing.
+- **A member takes it over with `--adopt`.** For example,
+  `tclaude agent show :5173 --adopt crew/sketch` takes it over, which needs
+  `groups.pages.patch` in the group. The page becomes that member's, still
+  shared in the group, and keeps its name, its id and the marks drawn on it.
+  - Its source changes kind, so it gets a fresh origin, as any re-show with
+    another kind of source does.
+  - An adopter that already has a page by that name closes that page first.
+  - The operator's lock on the page refuses a takeover, as it refuses a
+    re-show.
+
 ## In the dashboard
 
 ![A live page in a Collab tab: the header names the agent, the target and the worktree, with the sandboxed chip, Reload, Open in overlay, Pop out and Close](assets/live-page-tab.png)

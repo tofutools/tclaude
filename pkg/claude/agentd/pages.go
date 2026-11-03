@@ -128,6 +128,13 @@ func (r *livePageRegistry) count() int {
 
 // remove forgets a page and closes its stage origin. Caller holds r.mu.
 func (r *livePageRegistry) removeLocked(p *livePage) {
+	r.detachLocked(p)
+	forgetPageCollab(p.id)
+}
+
+// detachLocked is removeLocked keeping the page's marks: a takeover's new
+// page takes the same id (pages_group.go). Caller holds r.mu.
+func (r *livePageRegistry) detachLocked(p *livePage) {
 	if m := r.byOwner[p.owner]; m != nil && m[p.name] == p {
 		delete(m, p.name)
 		if len(m) == 0 {
@@ -136,7 +143,6 @@ func (r *livePageRegistry) removeLocked(p *livePage) {
 	}
 	delete(r.byID, p.id)
 	stagePages.close(p.stage.token)
-	forgetPageCollab(p.id)
 }
 
 func (r *livePageRegistry) list(owner string) []*livePage {
@@ -379,6 +385,9 @@ type pageShowRequest struct {
 	// group. Private shares it with no one.
 	Group   string `json:"group,omitempty"`
 	Private bool   `json:"private,omitempty"`
+	// Adopt takes over a page its group owns, as <group>/<name>
+	// (pages_group.go). The page keeps its name and group.
+	Adopt string `json:"adopt,omitempty"`
 }
 
 // pageView is a page as the dashboard sees it (its origin carries the token)
@@ -404,6 +413,10 @@ type pageView struct {
 	// current name (pages_share.go).
 	GroupID int64  `json:"group_id,omitempty"`
 	Group   string `json:"group,omitempty"`
+	// GroupOwned marks a page the operator created in a group that no agent
+	// has taken over: Owner is empty, and members address it as
+	// <group>/<name> (pages_group.go).
+	GroupOwned bool `json:"group_owned,omitempty"`
 	// AgentsLocked is the operator's lock on the page (group_resource_locks.go).
 	AgentsLocked bool `json:"agents_locked,omitempty"`
 	// ShareNote says, in show's answer, why a page is not shared.
@@ -436,8 +449,12 @@ func (p *livePage) view() pageView {
 	if origin != "" {
 		u = origin + p.path
 	}
+	owner, groupOwned := p.owner, isGroupPageOwner(p.owner)
+	if groupOwned {
+		owner = ""
+	}
 	return pageView{
-		ID: p.id, Name: p.name, Title: p.title, Owner: p.owner, Target: p.target, Kind: p.kind,
+		ID: p.id, Name: p.name, Title: p.title, Owner: owner, GroupOwned: groupOwned, Target: p.target, Kind: p.kind,
 		Worktree: p.worktree, State: p.state, Origin: origin, URL: u, Rev: p.rev,
 		ShownAt: p.shownAt, Updated: p.updated, GroupID: p.groupID,
 		AgentsLocked: p.agentsLocked,
@@ -606,6 +623,10 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimSpace(req.Name)
+	adopt, ok := pageAdoptTarget(w, r, agentID, req, &name)
+	if !ok {
+		return
+	}
 	if name == "" {
 		name = pageDefaultName(t)
 	}
@@ -614,6 +635,9 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	groupID, shareNote, err := pageShareGroup(agentID, req.Group, req.Private)
+	if adopt != nil {
+		groupID, shareNote, err = adopt.ID, "", nil
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_group", err.Error())
 		return
@@ -638,6 +662,16 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 	reg := livePages
 	reg.mu.Lock()
 	existing := reg.byOwner[agentID][name]
+	if adopt != nil {
+		var refused func()
+		existing, refused = adoptGroupPageLocked(w, reg, adopt, agentID, name, existing)
+		if refused != nil {
+			reg.mu.Unlock()
+			closeStageUpstream(up)
+			refused()
+			return
+		}
+	}
 	if existing != nil && existing.agentsLocked {
 		reg.mu.Unlock()
 		closeStageUpstream(up)
@@ -677,7 +711,12 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 			// Another kind of source: a fresh origin (and token), so nothing
 			// the old origin's code holds can reach the new source.
 			p.id, p.shownAt = existing.id, existing.shownAt
-			reg.removeLocked(existing)
+			if adopt != nil {
+				// A takeover keeps what the operator drew on the page.
+				reg.detachLocked(existing)
+			} else {
+				reg.removeLocked(existing)
+			}
 			resp.NewOrigin = true
 		}
 		p.stage = stagePages.open(agentID, name, up)
