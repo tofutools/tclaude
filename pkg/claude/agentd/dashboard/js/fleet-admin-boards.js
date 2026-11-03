@@ -204,7 +204,7 @@ function BoardUpdates({ updates, actions, toast, loadUpdates, onOpen }) {
       .catch((e) => toast(`Saving failed: ${errText(e)}`, true)).finally(() => setBusy(false));
   };
   return html`<div class="fa-board-updates" id="fleet-board-updates">
-    ${list.length > 0 && html`<h4>Newer versions of items you keep <span class="fa-badge">${list.length}</span></h4>
+    ${list.length > 0 && html`<h4>Newer versions of items you keep <span class="ui-tag ui-tag-accent fa-badge">${list.length}</span></h4>
       <table class="fa-table ui-compact" id="fleet-board-updates-list"><tbody>${list.map((u) => html`<tr key=${`${u.board}/${u.item}`} data-board-update=${u.item}>
         <td>${u.name}</td><td class="muted">on ${u.board_name || u.board}</td>
         <td class="muted">you keep <code title=${u.pinned_version}>${short(u.pinned_version)}</code> · latest <code title=${u.latest_version}>${short(u.latest_version)}</code></td>
@@ -291,7 +291,7 @@ export function BoardsPage({ view, actions, confirm, toast, copy, updates = null
     ${boards?.error ? html`<div class="fa-danger">${boards.error}</div>` : !boards ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted" id="fleet-boards-empty">No boards yet. Paste an invite above, or create one.</div>` : html`<table class="fa-table ui-compact" id="fleet-boards-list">
       <thead><tr><th>Board</th><th>You</th><th>Limits</th><th></th></tr></thead>
       <tbody>${list.flatMap((b) => [html`<tr key=${b.id} data-board-id=${b.id} class=${open === b.id ? 'on' : ''}>
-        <td><${Button} size="sm" variant="link" class="fa-link" data-board="open" onClick=${() => setOpen(open === b.id ? '' : b.id)}>${b.name || b.id}<//>${b.frozen ? html` <span class="fa-warn-chip" title="The hub froze this board: no posting or joining until it is unfrozen">frozen</span>` : ''}</td>
+        <td><${Button} size="sm" variant="link" class="fa-link" data-board="open" onClick=${() => setOpen(open === b.id ? '' : b.id)}>${b.name || b.id}<//>${b.frozen ? html` <span class="ui-tag ui-tag-warn fa-warn-chip" title="The hub froze this board: no posting or joining until it is unfrozen">frozen</span>` : ''}</td>
         <td>${roleText(b.role)}</td>
         <td class="muted">${limits(b)}</td>
         <td class="fa-acts"><${Button} size="sm" data-board="leave" onClick=${() => leave(b)}>Leave…<//>${b.role === 'owner' && html` <${Button} size="sm" variant="ghost danger" data-board="delete" onClick=${() => remove(b)}>Delete…<//>`}</td>
@@ -346,7 +346,7 @@ export function HubBoards({ actions, confirm, toast }) {
     ${boards?.error ? html`<div class="fa-danger">${boards.error}</div>` : !boards ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted">No boards.</div>` : html`<table class="fa-table ui-compact">
       <thead><tr><th>Board</th><th>ID</th><th>Limits</th><th></th></tr></thead>
       <tbody>${list.map((b) => html`<tr key=${b.id} data-hub-board=${b.id}>
-        <td>${b.name || '—'}${b.frozen ? html` <span class="fa-warn-chip">frozen</span>` : ''}</td><td><code>${b.id}</code></td>
+        <td>${b.name || '—'}${b.frozen ? html` <span class="ui-tag ui-tag-warn fa-warn-chip">frozen</span>` : ''}</td><td><code>${b.id}</code></td>
         <td>${edit?.board.id === b.id ? html`<span class="fa-row">
             <input class="fa-num" aria-label="members" value=${edit.members} onInput=${(e) => setEdit({ ...edit, members: e.currentTarget.value })} /> members
             <input class="fa-num" aria-label="MiB" value=${edit.mib} onInput=${(e) => setEdit({ ...edit, mib: e.currentTarget.value })} /> MiB

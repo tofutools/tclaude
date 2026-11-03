@@ -75,8 +75,8 @@ function SlugsView({ state, current }) {
         <td><span class="slug">${slug.slug}</span></td>
         <td>${slug.owner_implied || slug.member_implied
           ? html`<${Fragment}>
-              ${slug.owner_implied ? html`<span class="owner-badge" title=${ownerGrantTitle(slug.scope_dims)}>👑 ${ownerGrantLabel(slug.scope_dims)}</span>` : ''}
-              ${slug.member_implied ? html` <span class="owner-badge" title="Conferred by membership — only for the group the agent belongs to">👥 group</span>` : ''}
+              ${slug.owner_implied ? html`<span class="ui-tag ui-tag-own owner-badge" title=${ownerGrantTitle(slug.scope_dims)}>👑 ${ownerGrantLabel(slug.scope_dims)}</span>` : ''}
+              ${slug.member_implied ? html` <span class="ui-tag ui-tag-own owner-badge" title="Conferred by membership — only for the group the agent belongs to">👥 group</span>` : ''}
             </${Fragment}>`
           : html`<span class="muted">—</span>`}</td>
         <td>${slug.description || ''}</td>

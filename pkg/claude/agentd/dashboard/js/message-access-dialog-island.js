@@ -1115,7 +1115,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
       ? html`<div class="perm-area-head">${row.area}</div>` : null}<div class=${`perm-row${row.risky ? ' risky' : ''}`} data-slug=${row.slug}>
       ${anyScopable && html`<${ScopeTwisty} scopable=${scopable} slug=${row.slug} open=${openScope === row.slug}
         toggle=${() => setOpenScope(openScope === row.slug ? '' : row.slug)} />`}
-      <div class="perm-row-info"><span class="perm-row-slug">${row.slug}${row.risky ? html` <span class="perm-risk-badge" title="Reaches the host or credentials, destroys work, or widens what an agent can hand itself">⚠ risky</span>` : null}${row.owner_implied ? html` <span class="owner-badge" title="Group ownership can confer this slug">👑 owner</span>` : null}</span>
+      <div class="perm-row-info"><span class="perm-row-slug">${row.slug}${row.risky ? html` <span class="perm-risk-badge" title="Reaches the host or credentials, destroys work, or widens what an agent can hand itself">⚠ risky</span>` : null}${row.owner_implied ? html` <span class="ui-tag ui-tag-own owner-badge" title="Group ownership can confer this slug">👑 owner</span>` : null}</span>
         <span class="perm-row-desc" title=${row.description || row.descr || ''}>${row.description || row.descr || ''}</span>
         ${refusedWhy ? html`<span class="perm-row-desc perm-refused-why">${refusedWhy}</span>` : null}
         ${heldNote ? html`<span class="perm-row-desc perm-narrows-held">${heldNote}</span>` : null}</div>
@@ -1230,7 +1230,7 @@ function ContextFeaturesDialog({ descriptor, state, confirmDiscard }) {
       <div class="perm-row" key=${row.slug} data-slug=${row.slug}>
         <div class="perm-row-info">
           <span class="perm-row-slug">${row.label || row.slug}${row.heavy
-    ? html` <span class="owner-badge" title="One of the largest startup-context wins">★ heavy</span>` : null}</span>
+    ? html` <span class="ui-tag ui-tag-own owner-badge" title="One of the largest startup-context wins">★ heavy</span>` : null}</span>
           <span class="perm-row-desc" title=${row.descr || ''}>${row.descr || ''}</span>
           ${row.caution ? html`<span class="perm-row-desc context-features-caution" title=${row.caution}>⚠ ${row.caution}</span>` : null}
         </div>

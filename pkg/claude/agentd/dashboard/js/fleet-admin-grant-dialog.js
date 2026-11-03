@@ -136,7 +136,7 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
             return html`${head}<label key=${s.slug} class=${`fa-gd-item${on ? ' on' : ''}`} data-grant-slug=${s.slug}>
               <input type="checkbox" checked=${on} onChange=${() => toggle(s.slug)} />
               <code class=${s.sensitive ? 'fa-sensitive' : ''}>${s.slug}</code>
-              <span class="fa-gd-badges">${held && html`<span class="fa-gd-badge held">${held}</span>`}${s.sensitive && html`<span class="fa-gd-badge sens">sensitive</span>`}<span class="fa-gd-badge">${s.gateway ? 'gateway' : s.kind === 'node' ? 'node-wide' : 'group'}</span></span>
+              <span class="fa-gd-badges">${held && html`<span class="ui-tag fa-gd-badge held">${held}</span>`}${s.sensitive && html`<span class="ui-tag fa-gd-badge sens">sensitive</span>`}<span class="ui-tag fa-gd-badge">${s.gateway ? 'gateway' : s.kind === 'node' ? 'node-wide' : 'group'}</span></span>
               <span class="fa-gd-what muted">${s.what}</span>
               ${s.warning && html`<span class="fa-gd-what fa-warn">${s.warning}</span>`}
             </label>`;

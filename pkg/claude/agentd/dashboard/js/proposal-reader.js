@@ -16,8 +16,8 @@ function HeaderRow({ label, children }) {
 }
 
 function ItemStatus({ item }) {
-  if (item.status === 'accepted') return html`<span class="proposal-pill ok">accepted</span>`;
-  if (item.status === 'declined') return html`<span class="proposal-pill off">declined</span>`;
+  if (item.status === 'accepted') return html`<span class="ui-tag proposal-pill ok">accepted</span>`;
+  if (item.status === 'declined') return html`<span class="ui-tag proposal-pill off">declined</span>`;
   return null;
 }
 

@@ -96,7 +96,7 @@ function StagesBlock({ node, commit, readOnly }) {
     <span>${label}</span>
   </label>`;
   return html`<div class="process-node-stages">
-    <div class="pni-stage-chips" aria-label="Work pipeline">${stageSummary(node).map((stage, i) => html`${i > 0 && html`<span class="pni-stage-arrow" aria-hidden="true">→</span>`}<span key=${stage.key} class=${`pni-stage-chip pni-stage-${stage.key.split(':')[0]}`} title=${stage.detail}>${stage.label}</span>`)}</div>
+    <div class="pni-stage-chips" aria-label="Work pipeline">${stageSummary(node).map((stage, i) => html`${i > 0 && html`<span class="pni-stage-arrow" aria-hidden="true">→</span>`}<span key=${stage.key} class=${`ui-tag pni-stage-chip pni-stage-${stage.key.split(':')[0]}`} title=${stage.detail}>${stage.label}</span>`)}</div>
     ${toggle('plan.enabled', 'plan before work', 'plan')}
     ${node.plan && html`<${NodeSelect} fieldKey="plan.approval" label="plan approval" options=${PLAN_APPROVAL_MODES}
         value=${node.plan.approval || 'auto'} readOnly=${readOnly}

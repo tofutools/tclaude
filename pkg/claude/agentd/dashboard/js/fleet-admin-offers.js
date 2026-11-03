@@ -209,7 +209,7 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
           <td><input type="checkbox" aria-label=${`include ${c.item}`} checked=${!opts.skip.includes(c.item)} disabled=${c.action === 'unchanged'} onChange=${toggleItem(c.item)} /></td>
           <td><code>${c.item}</code></td>
           <td class=${c.action === 'replace' ? 'fa-warn' : c.action === 'unchanged' ? 'muted' : ''}>${c.action === 'replace' ? 'overwrites yours' : c.action === 'create' ? 'new' : 'unchanged'}</td>
-          <td>${c.security && c.action !== 'unchanged' ? html`<span class="fa-badge fa-sensitive" title="decides what this node's agents may do">security</span>` : ''}</td>
+          <td>${c.security && c.action !== 'unchanged' ? html`<span class="ui-tag ui-tag-accent fa-badge fa-sensitive" title="decides what this node's agents may do">security</span>` : ''}</td>
         </tr>`)}</tbody></table>`}
       ${preview && !changes.length && html`<div class="muted">The offer has no items.</div>`}
       ${(preview?.warnings || []).map((w) => html`<div class="fa-warn">${w}</div>`)}

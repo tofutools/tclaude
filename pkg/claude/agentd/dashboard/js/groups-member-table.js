@@ -1209,7 +1209,7 @@ function editableMemberCellAttrs(member, group, actions, act, focus) {
 
 function RoleCell({ member, group, actions }) {
   const hasRole = member.role && member.role !== 'owner';
-  const owner = member.owner ? html`<span class="owner-badge">owner</span>` : null;
+  const owner = member.owner ? html`<span class="ui-tag ui-tag-own owner-badge">owner</span>` : null;
   const pureOwner = member.owner && member.role === 'owner';
   if (!group || pureOwner) return member.owner ? html`${hasRole ? member.role : null}${hasRole ? ' ' : null}${owner}` : (member.role || '');
   return html`<span class="role-edit" ...${editableMemberCellAttrs(member, group, actions, 'edit-role', 'role')} title="Edit role, ownership and permissions">${hasRole ? member.role : null}${hasRole && member.owner ? ' ' : null}${owner || (!hasRole ? html`<span class="role-add">+ role</span>` : null)}</span>`;

@@ -124,8 +124,8 @@ function CapacityLine({ queue }) {
     ${s.max > 0 ? html`<span class=${`spawn-queue-meter${s.full ? ' full' : ''}`} role="meter" aria-valuemin="0" aria-valuemax=${s.max} aria-valuenow=${s.used ?? 0}
       aria-label="Agents counted toward capacity"><i style=${{ width: `${Math.round(s.ratio * 100)}%` }}></i></span>
       <span>${s.used ?? '?'} / ${s.max} agents</span>` : null}
-    <span class=${`spawn-queue-chip ${s.full ? 'full' : 'room'}`}>${s.full ? 'full' : 'room'}</span>
-    ${s.waiting ? html`<span class="spawn-queue-chip waiting">⌛ ${s.waiting} waiting</span>` : null}
+    <span class=${`ui-tag spawn-queue-chip ${s.full ? 'full' : 'room'}`}>${s.full ? 'full' : 'room'}</span>
+    ${s.waiting ? html`<span class="ui-tag spawn-queue-chip waiting">⌛ ${s.waiting} waiting</span>` : null}
     <span class="muted spawn-queue-limits">${limitsText(cap)}</span>
   </div>`;
 }
