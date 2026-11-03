@@ -1494,12 +1494,11 @@ func receiverApprovalDrops(p spawnProfileJSON, h *harness.Harness, group, profil
 	if landingApproval, err = harness.ResolveApprovalPolicy(h, landingApproval); err != nil {
 		return unjudged()
 	}
-	landingReview, _, _, _, fail := resolveBoolLaunchField("auto_review", false, false, h.Name, landing.tiers,
-		func(tier *db.SpawnProfile) *bool { return tier.AutoReview },
-		func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
-	if fail != nil {
+	var landingBools launchBoolResolution
+	if _, fail := resolveLaunchBoolFields(h, landing.tiers, &landingBools, launchBoolAutoReview); fail != nil {
 		return unjudged()
 	}
+	landingReview := landingBools.Value[launchBoolAutoReview]
 	landingTools, _, fail := resolveLaunchValueField(h, landing.tiers, launchValueTools)
 	if fail != nil {
 		return unjudged()

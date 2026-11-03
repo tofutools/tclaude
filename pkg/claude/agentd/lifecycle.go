@@ -4076,13 +4076,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			}
 		}
 	} else {
-		fastMode, fastModeSet, fastModeSource, fastModeNote, fieldFail = resolveBoolLaunchField(
-			"fast_mode", false, false, h.Name, profileTiers,
-			func(p *db.SpawnProfile) *bool { return p.FastMode },
-			func(v bool) (bool, error) {
-				_, err := harness.ResolveFastMode(h, &v)
-				return v, err
-			})
+		var fastModeBools launchBoolResolution
+		_, fieldFail = resolveLaunchBoolFields(h, profileTiers, &fastModeBools, launchBoolFastMode)
+		fastMode, fastModeSet = fastModeBools.Value[launchBoolFastMode], fastModeBools.Set[launchBoolFastMode]
+		fastModeSource, fastModeNote = fastModeBools.Source[launchBoolFastMode], fastModeBools.Note[launchBoolFastMode]
 	}
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
@@ -4121,33 +4118,31 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
-	var autoReviewSet, trustDirSet, sshWorkaroundSet bool
-	var autoReviewNote, trustDirNote, autoMemoryNote, peerMessagingNote, sshWorkaroundNote, contextFeaturesNote string
-	body.AutoReview, autoReviewSet, _, autoReviewNote, fieldFail = resolveBoolLaunchField(
-		"auto_review", body.AutoReview, body.AutoReviewSpecified(), h.Name, profileTiers,
-		func(p *db.SpawnProfile) *bool { return p.AutoReview }, func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+	var autoMemoryNote, peerMessagingNote, contextFeaturesNote string
+	// The shared bool fields ride launchBoolFieldSpecs, in this boundary's
+	// own order (fast mode was resolved above, with its explicit flag parsed).
+	var launchBools launchBoolResolution
+	launchBools.Value[launchBoolAutoReview], launchBools.Set[launchBoolAutoReview] = body.AutoReview, body.AutoReviewSpecified()
+	launchBools.Value[launchBoolSSHWorkaround], launchBools.Set[launchBoolSSHWorkaround] = body.SSHWorkaround != nil && *body.SSHWorkaround, body.SSHWorkaround != nil
+	launchBools.Value[launchBoolTrustDir], launchBools.Set[launchBoolTrustDir] = body.TrustDir, body.TrustDirSpecified()
+	launchBools.Value[launchBoolCopilotAPI], launchBools.Set[launchBoolCopilotAPI] = body.CopilotAPI != nil && *body.CopilotAPI, body.CopilotAPI != nil
+	launchBools.Value[launchBoolCodexAppServer], launchBools.Set[launchBoolCodexAppServer] = body.CodexAppServer != nil && *body.CodexAppServer, body.CodexAppServer != nil
+	if _, fail := resolveLaunchBoolFields(h, profileTiers, &launchBools,
+		launchBoolAutoReview, launchBoolSSHWorkaround, launchBoolTrustDir); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
-	sshWorkaround, sshWorkaroundSet, sshWorkaroundSource, sshWorkaroundNote, fieldFail := resolveBoolLaunchField(
-		"ssh_workaround", body.SSHWorkaround != nil && *body.SSHWorkaround, body.SSHWorkaround != nil, h.Name, profileTiers,
-		func(p *db.SpawnProfile) *bool { return p.SSHWorkaround },
-		func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) })
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
-		return
-	}
+	body.AutoReview = launchBools.Value[launchBoolAutoReview]
+	autoReviewSet := launchBools.Set[launchBoolAutoReview]
+	autoReviewNote := launchBools.Note[launchBoolAutoReview]
+	sshWorkaround, sshWorkaroundSet := launchBools.Value[launchBoolSSHWorkaround], launchBools.Set[launchBoolSSHWorkaround]
+	sshWorkaroundSource, sshWorkaroundNote := launchBools.Source[launchBoolSSHWorkaround], launchBools.Note[launchBoolSSHWorkaround]
 	if !sshWorkaroundSet {
 		sshWorkaround, _ = harness.ResolveSSHWorkaround(h, nil)
 	}
-	body.TrustDir, trustDirSet, _, trustDirNote, fieldFail = resolveBoolLaunchField(
-		"trust_dir", body.TrustDir, body.TrustDirSpecified(), h.Name, profileTiers,
-		func(p *db.SpawnProfile) *bool { return p.TrustDir }, func(v bool) (bool, error) { return harness.ResolveTrustDir(h, v) })
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
-		return
-	}
+	body.TrustDir = launchBools.Value[launchBoolTrustDir]
+	trustDirSet := launchBools.Set[launchBoolTrustDir]
+	trustDirNote := launchBools.Note[launchBoolTrustDir]
 	// auto_memory rides the same tier stack, but note the default it falls back
 	// to: unset everywhere resolves to FALSE, and false here means tclaude
 	// injects CLAUDE_CODE_DISABLE_AUTO_MEMORY=1. That is deliberate — Claude
@@ -4183,16 +4178,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// opt-in (spawn body or a matching Copilot profile) selects the API drive, so
 	// a launch nobody steered is byte-for-byte the launch it was before this
 	// field existed. See TCL-1053.
-	var copilotAPI, copilotAPISet bool
-	var copilotAPINote, copilotAPISource string
-	copilotAPI, copilotAPISet, copilotAPISource, copilotAPINote, fieldFail = resolveBoolLaunchField(
-		"copilot_api", body.CopilotAPI != nil && *body.CopilotAPI, body.CopilotAPI != nil, h.Name, profileTiers,
-		func(p *db.SpawnProfile) *bool { return p.CopilotAPI },
-		func(v bool) (bool, error) { return harness.ResolveCopilotAPI(h, &v) })
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+	if _, fail := resolveLaunchBoolFields(h, profileTiers, &launchBools, launchBoolCopilotAPI); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	copilotAPI, copilotAPISet := launchBools.Value[launchBoolCopilotAPI], launchBools.Set[launchBoolCopilotAPI]
+	copilotAPISource, copilotAPINote := launchBools.Source[launchBoolCopilotAPI], launchBools.Note[launchBoolCopilotAPI]
 	// The pi extension drive is an explicit per-launch opt-in, never a profile
 	// default: it changes how every delivery reaches the agent, so only the
 	// spawn that asks for it gets it.
@@ -4202,17 +4193,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			fmt.Sprintf("pi_drive is a pi-only drive; harness %q has none", h.Name))
 		return
 	}
-	var codexAppServer, codexAppServerSet bool
-	var codexAppServerNote, codexAppServerSource string
-	codexAppServer, codexAppServerSet, codexAppServerSource, codexAppServerNote, fieldFail = resolveBoolLaunchField(
-		"codex_app_server", body.CodexAppServer != nil && *body.CodexAppServer,
-		body.CodexAppServer != nil, h.Name, profileTiers,
-		func(p *db.SpawnProfile) *bool { return p.CodexAppServer },
-		func(v bool) (bool, error) { return harness.ResolveCodexAppServer(h, &v) })
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+	if _, fail := resolveLaunchBoolFields(h, profileTiers, &launchBools, launchBoolCodexAppServer); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	codexAppServer, codexAppServerSet := launchBools.Value[launchBoolCodexAppServer], launchBools.Set[launchBoolCodexAppServer]
+	codexAppServerSource, codexAppServerNote := launchBools.Source[launchBoolCodexAppServer], launchBools.Note[launchBoolCodexAppServer]
 	// Group-context inclusion rides the same tier stack, minus the harness gate:
 	// it decides what the new agent is TOLD, not how its harness runs, so a
 	// profile authored for another vendor still speaks (harnessAgnosticLaunchField).
@@ -6782,60 +6768,33 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 		sandboxImplementationPostureFailure(h.Name, p.SandboxImplementation), p.SandboxImplementationSource); fail != nil {
 		return fail
 	}
-	p.AutoReview, p.AutoReviewSet, _, fieldNote, fail = resolveBoolLaunchField("auto_review", p.AutoReview,
-		p.AutoReviewSet || p.AutoReview, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.AutoReview },
-		func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
+	// The shared bool fields ride launchBoolFieldSpecs. An already-true value
+	// counts as requested for the four opt-in toggles, as it always has here;
+	// fast mode and the SSH workaround go by their Set bits alone.
+	var launchBools launchBoolResolution
+	launchBools.Value[launchBoolAutoReview], launchBools.Set[launchBoolAutoReview] = p.AutoReview, p.AutoReviewSet || p.AutoReview
+	launchBools.Value[launchBoolTrustDir], launchBools.Set[launchBoolTrustDir] = p.TrustDir, p.TrustDirSet || p.TrustDir
+	launchBools.Value[launchBoolCopilotAPI], launchBools.Set[launchBoolCopilotAPI] = p.CopilotAPI, p.CopilotAPISet || p.CopilotAPI
+	launchBools.Value[launchBoolCodexAppServer], launchBools.Set[launchBoolCodexAppServer] = p.CodexAppServer, p.CodexAppServerSet || p.CodexAppServer
+	launchBools.Value[launchBoolFastMode], launchBools.Set[launchBoolFastMode] = p.FastMode, p.FastModeSet
+	launchBools.Value[launchBoolSSHWorkaround], launchBools.Set[launchBoolSSHWorkaround] = p.SSHWorkaround, p.SSHWorkaroundSet
+	boolNotes, fail := resolveLaunchBoolFields(h, tiers, &launchBools,
+		launchBoolAutoReview, launchBoolTrustDir, launchBoolCopilotAPI, launchBoolCodexAppServer,
+		launchBoolFastMode, launchBoolSSHWorkaround)
 	if fail != nil {
 		return fail
 	}
-	noteLaunch()
-	p.TrustDir, p.TrustDirSet, _, fieldNote, fail = resolveBoolLaunchField("trust_dir", p.TrustDir,
-		p.TrustDirSet || p.TrustDir, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.TrustDir },
-		func(v bool) (bool, error) { return harness.ResolveTrustDir(h, v) })
-	if fail != nil {
-		return fail
-	}
-	noteLaunch()
-	var copilotAPISource string
-	p.CopilotAPI, p.CopilotAPISet, copilotAPISource, fieldNote, fail = resolveBoolLaunchField("copilot_api", p.CopilotAPI,
-		p.CopilotAPISet || p.CopilotAPI, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.CopilotAPI },
-		func(v bool) (bool, error) { return harness.ResolveCopilotAPI(h, &v) })
-	if fail != nil {
-		return fail
-	}
-	noteLaunch()
-	p.CopilotAPISource = preferResolvedSource(p.CopilotAPISource, copilotAPISource)
-	var codexAppServerSource string
-	p.CodexAppServer, p.CodexAppServerSet, codexAppServerSource, fieldNote, fail = resolveBoolLaunchField(
-		"codex_app_server", p.CodexAppServer, p.CodexAppServerSet || p.CodexAppServer,
-		h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.CodexAppServer },
-		func(v bool) (bool, error) { return harness.ResolveCodexAppServer(h, &v) })
-	if fail != nil {
-		return fail
-	}
-	noteLaunch()
-	p.CodexAppServerSource = preferResolvedSource(p.CodexAppServerSource, codexAppServerSource)
-	p.FastMode, p.FastModeSet, fieldSource, fieldNote, fail = resolveBoolLaunchField("fast_mode", p.FastMode,
-		p.FastModeSet, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.FastMode },
-		func(v bool) (bool, error) {
-			_, err := harness.ResolveFastMode(h, &v)
-			return v, err
-		})
-	if fail != nil {
-		return fail
-	}
-	noteLaunch()
-	p.FastModeSource = preferResolvedSource(p.FastModeSource, fieldSource)
-	var sshWorkaroundSource string
-	p.SSHWorkaround, p.SSHWorkaroundSet, sshWorkaroundSource, fieldNote, fail = resolveBoolLaunchField(
-		"ssh_workaround", p.SSHWorkaround, p.SSHWorkaroundSet, h.Name, tiers,
-		func(prof *db.SpawnProfile) *bool { return prof.SSHWorkaround },
-		func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) })
-	if fail != nil {
-		return fail
-	}
-	noteLaunch()
-	p.SSHWorkaroundSource = preferResolvedSource(p.SSHWorkaroundSource, sshWorkaroundSource)
+	p.LaunchNotes = append(p.LaunchNotes, boolNotes...)
+	p.AutoReview, p.AutoReviewSet = launchBools.Value[launchBoolAutoReview], launchBools.Set[launchBoolAutoReview]
+	p.TrustDir, p.TrustDirSet = launchBools.Value[launchBoolTrustDir], launchBools.Set[launchBoolTrustDir]
+	p.CopilotAPI, p.CopilotAPISet = launchBools.Value[launchBoolCopilotAPI], launchBools.Set[launchBoolCopilotAPI]
+	p.CopilotAPISource = preferResolvedSource(p.CopilotAPISource, launchBools.Source[launchBoolCopilotAPI])
+	p.CodexAppServer, p.CodexAppServerSet = launchBools.Value[launchBoolCodexAppServer], launchBools.Set[launchBoolCodexAppServer]
+	p.CodexAppServerSource = preferResolvedSource(p.CodexAppServerSource, launchBools.Source[launchBoolCodexAppServer])
+	p.FastMode, p.FastModeSet = launchBools.Value[launchBoolFastMode], launchBools.Set[launchBoolFastMode]
+	p.FastModeSource = preferResolvedSource(p.FastModeSource, launchBools.Source[launchBoolFastMode])
+	p.SSHWorkaround, p.SSHWorkaroundSet = launchBools.Value[launchBoolSSHWorkaround], launchBools.Set[launchBoolSSHWorkaround]
+	p.SSHWorkaroundSource = preferResolvedSource(p.SSHWorkaroundSource, launchBools.Source[launchBoolSSHWorkaround])
 	// NB: the block below force-sets SSHWorkaroundSet for the harness default, so
 	// that bit says "this launch has a posture" and not "someone chose one" — the
 	// same conflation this ticket is about. The attribution above is captured

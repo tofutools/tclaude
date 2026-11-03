@@ -1291,22 +1291,16 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 	// profile carrying either is validated at save and only adopted above when
 	// the harness matched, so this won't fire — but a mismatch is a clean
 	// per-agent 400, not a silent drop.
-	trustDir, trustDirSet, _, note, fail := resolveBoolLaunchField("trust_dir", false, false, h.Name, tiers,
-		func(p *db.SpawnProfile) *bool { return p.TrustDir }, func(v bool) (bool, error) { return harness.ResolveTrustDir(h, v) })
+	// The shared bool fields ride launchBoolFieldSpecs; a template has no
+	// explicit spelling for any of them, so the tiers alone decide.
+	var launchBools launchBoolResolution
+	boolNotes, fail := resolveLaunchBoolFields(h, tiers, &launchBools, launchBoolTrustDir, launchBoolAutoReview)
+	notes = append(notes, boolNotes...)
 	if fail != nil {
 		return failed(fail)
 	}
-	if note != "" {
-		notes = append(notes, note)
-	}
-	autoReview, autoReviewSet, _, note, fail := resolveBoolLaunchField("auto_review", false, false, h.Name, tiers,
-		func(p *db.SpawnProfile) *bool { return p.AutoReview }, func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
-	if fail != nil {
-		return failed(fail)
-	}
-	if note != "" {
-		notes = append(notes, note)
-	}
+	trustDir, trustDirSet := launchBools.Value[launchBoolTrustDir], launchBools.Set[launchBoolTrustDir]
+	autoReview, autoReviewSet := launchBools.Value[launchBoolAutoReview], launchBools.Set[launchBoolAutoReview]
 	// Remote control + AskUserQuestion timeout resolve on the same pattern —
 	// harness-gated, off/"" unless a profile tier explicitly set them — so a
 	// template-local or referenced profile's value actually reaches the spawn
@@ -1348,46 +1342,21 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 	// unless a profile tier explicitly asked for the API. There is no
 	// template-LOCAL spelling — a template selects the drive by referencing a
 	// Copilot spawn profile that carries one. See TCL-1053.
-	copilotAPI, copilotAPISet, copilotAPISource, copilotAPINote, fail := resolveBoolLaunchField(
-		"copilot_api", false, false, h.Name, tiers,
-		func(p *db.SpawnProfile) *bool { return p.CopilotAPI },
-		func(v bool) (bool, error) { return harness.ResolveCopilotAPI(h, &v) })
+	boolNotes, fail = resolveLaunchBoolFields(h, tiers, &launchBools,
+		launchBoolCopilotAPI, launchBoolCodexAppServer, launchBoolFastMode)
+	notes = append(notes, boolNotes...)
 	if fail != nil {
 		return failed(fail)
 	}
-	if copilotAPINote != "" {
-		notes = append(notes, copilotAPINote)
-	}
-	codexAppServer, codexAppServerSet, codexAppServerSource, codexAppServerNote, fail := resolveBoolLaunchField(
-		"codex_app_server", false, false, h.Name, tiers,
-		func(p *db.SpawnProfile) *bool { return p.CodexAppServer },
-		func(v bool) (bool, error) { return harness.ResolveCodexAppServer(h, &v) })
+	// The SSH note is reported after the eligibility note below, as before.
+	sshNotes, fail := resolveLaunchBoolFields(h, tiers, &launchBools, launchBoolSSHWorkaround)
 	if fail != nil {
 		return failed(fail)
 	}
-	if codexAppServerNote != "" {
-		notes = append(notes, codexAppServerNote)
-	}
-	fastMode, fastModeSet, fastModeSource, fastModeNote, fail := resolveBoolLaunchField(
-		"fast_mode", false, false, h.Name, tiers,
-		func(p *db.SpawnProfile) *bool { return p.FastMode },
-		func(v bool) (bool, error) {
-			_, err := harness.ResolveFastMode(h, &v)
-			return v, err
-		})
-	if fail != nil {
-		return failed(fail)
-	}
-	if fastModeNote != "" {
-		notes = append(notes, fastModeNote)
-	}
-	sshWorkaround, sshWorkaroundSet, sshWorkaroundSource, sshNote, fail := resolveBoolLaunchField(
-		"ssh_workaround", false, false, h.Name, tiers,
-		func(p *db.SpawnProfile) *bool { return p.SSHWorkaround },
-		func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) })
-	if fail != nil {
-		return failed(fail)
-	}
+	copilotAPI, copilotAPISet, copilotAPISource := launchBools.Value[launchBoolCopilotAPI], launchBools.Set[launchBoolCopilotAPI], launchBools.Source[launchBoolCopilotAPI]
+	codexAppServer, codexAppServerSet, codexAppServerSource := launchBools.Value[launchBoolCodexAppServer], launchBools.Set[launchBoolCodexAppServer], launchBools.Source[launchBoolCodexAppServer]
+	fastMode, fastModeSet, fastModeSource := launchBools.Value[launchBoolFastMode], launchBools.Set[launchBoolFastMode], launchBools.Source[launchBoolFastMode]
+	sshWorkaround, sshWorkaroundSet, sshWorkaroundSource := launchBools.Value[launchBoolSSHWorkaround], launchBools.Set[launchBoolSSHWorkaround], launchBools.Source[launchBoolSSHWorkaround]
 	if !sshWorkaroundSet {
 		sshWorkaround, _ = harness.ResolveSSHWorkaround(h, nil)
 		sshWorkaroundSet = true
@@ -1405,9 +1374,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 		}
 		sshWorkaround = false
 	}
-	if sshNote != "" {
-		notes = append(notes, sshNote)
-	}
+	notes = append(notes, sshNotes...)
 	// Startup-context trims: no explicit per-deploy request exists, so the tiers
 	// alone decide. Resolved whole rather than merged, like every other consumer.
 	contextFeatures, cfNote, fail := resolveContextFeaturesLaunchField(nil, false, h, tiers)
