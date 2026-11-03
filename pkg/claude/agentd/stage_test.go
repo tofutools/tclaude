@@ -60,4 +60,6 @@ func TestStageLoopbackPortRefusesNetworkConnections(t *testing.T) {
 
 func TestStageProbeHasNoScriptClose(t *testing.T) {
 	assert.NotContains(t, strings.ToLower(string(stageProbeJS)), "</script")
+	assert.NotContains(t, strings.ToLower(string(stagePatchJS)), "</script")
+	assert.Equal(t, 1, strings.Count(strings.ToLower(string(stageProbeTag)), "</script"), "the tag closes once, at its end")
 }

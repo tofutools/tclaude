@@ -619,8 +619,15 @@ func stageInjectable(res *http.Response) bool {
 	return err == nil && mt == "text/html"
 }
 
-// stageProbeTag is the inline script inserted into every served document.
-var stageProbeTag = append(append([]byte("<script data-tclaude-probe>"), stageProbeJS...), "</script>"...)
+// stagePatchJS applies one live patch (tcl-14z3fq); the probe and a page
+// snapshot both run it.
+//
+//go:embed stage_patch.js
+var stagePatchJS []byte
+
+// stageProbeTag is the inline script inserted into every served document:
+// the patch applier and the probe, in one scope of their own.
+var stageProbeTag = []byte("<script data-tclaude-probe>(function(){\n" + string(stagePatchJS) + "\n" + string(stageProbeJS) + "\n})();</script>")
 
 // stageInjector streams an HTML body with the probe inserted after the
 // document's <head> tag (or, failing that, after <html>, after the doctype,

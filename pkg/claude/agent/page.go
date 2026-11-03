@@ -2,12 +2,14 @@ package agent
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -129,13 +131,54 @@ func pageCmd() *cobra.Command {
 			}.ToCobra(),
 			boa.CmdT[pageDOMParams]{
 				Use:   "dom <name> <selector>",
-				Short: "Read the DOM of one of your pages as the operator sees it",
+				Short: "Read the DOM of one of your pages as the operator sees it, or patch it live",
 				Long: "Reads the elements matching a CSS selector in the operator's open view of the page: their text (default), " +
-					"--html or computed --styles, up to 10 elements. Read-only. Needs the page open in the dashboard.",
+					"--html or computed --styles, up to 10 elements. Needs the page open in the dashboard.\n\n" +
+					"With --set-text, --set-attr NAME=VALUE, --remove or --insert-html, changes every matching element instead: a live " +
+					"patch, applied in every open view and replayed after each reload until `page patches --reset`. It never writes " +
+					"your files: port what the operator approves into source.",
 				Args:        cobra.ExactArgs(2),
 				ParamEnrich: common.DefaultParamEnricher(),
-				RunFunc: func(p *pageDOMParams, _ *cobra.Command, args []string) {
+				RunFunc: func(p *pageDOMParams, cmd *cobra.Command, args []string) {
+					p.setText = cmd.Flags().Changed("set-text")
+					p.setAttr = cmd.Flags().Changed("set-attr")
+					p.insertHTML = cmd.Flags().Changed("insert-html")
 					os.Exit(runPageDOM(p, args[0], args[1], os.Stdout, os.Stderr))
+				},
+			}.ToCobra(),
+			boa.CmdT[pagePatchParams]{
+				Use:   "css <name> <rules>...",
+				Short: "Add CSS rules to one of your pages live, without a source change",
+				Long: "Adds the rules (each argument, one after the other) to the page as a live patch: applied in every open view, " +
+					"after the page's own styles, and replayed after each reload until `page patches --reset`. It never writes " +
+					"your files: port what the operator approves into source.",
+				Args:        cobra.MinimumNArgs(2),
+				ParamEnrich: common.DefaultParamEnricher(),
+				RunFunc: func(p *pagePatchParams, _ *cobra.Command, args []string) {
+					os.Exit(runPagePatch(p, args[0], map[string]any{"kind": "css", "css": strings.Join(args[1:], "\n")}, os.Stdout, os.Stderr))
+				},
+			}.ToCobra(),
+			boa.CmdT[pagePatchParams]{
+				Use:   "eval <name> <js>",
+				Short: "Run a script once in the operator's open view of one of your pages",
+				Long: "Runs the script in the page (in one open view), awaits it if it returns a promise, and prints its value as JSON " +
+					"(at most 16 KiB). It runs once: it is listed in `page patches` but not replayed after a reload. Use `-` to read " +
+					"the script from stdin. Not for a static page that is not read back.",
+				Args:        cobra.ExactArgs(2),
+				ParamEnrich: common.DefaultParamEnricher(),
+				RunFunc: func(p *pagePatchParams, _ *cobra.Command, args []string) {
+					os.Exit(runPageEval(p, args[0], args[1], os.Stdin, os.Stdout, os.Stderr))
+				},
+			}.ToCobra(),
+			boa.CmdT[pagePatchesParams]{
+				Use:   "patches <name> [N]",
+				Short: "List the live patches of one of your pages, or drop them",
+				Long: "Prints the page's journal of live patches: each css and dom patch, replayed after every reload, and each eval, " +
+					"which ran once (the last 20 are listed). --reset drops every patch, or only patch N (`--reset 3`); open views reload without them.",
+				Args:        cobra.RangeArgs(1, 2),
+				ParamEnrich: common.DefaultParamEnricher(),
+				RunFunc: func(p *pagePatchesParams, _ *cobra.Command, args []string) {
+					os.Exit(runPagePatches(p, args, os.Stdout, os.Stderr))
 				},
 			}.ToCobra(),
 		},
@@ -270,10 +313,26 @@ type pageSnapshotParams struct {
 }
 
 type pageDOMParams struct {
-	HTML   bool `long:"html" help:"Read the elements' outer HTML"`
-	Styles bool `long:"styles" help:"Read the elements' computed styles"`
-	Text   bool `long:"text" help:"Read the elements' text (the default)"`
-	JSON   bool `long:"json" help:"Output JSON"`
+	HTML       bool   `long:"html" help:"Read the elements' outer HTML"`
+	Styles     bool   `long:"styles" help:"Read the elements' computed styles"`
+	Text       bool   `long:"text" help:"Read the elements' text (the default)"`
+	SetText    string `long:"set-text" optional:"true" help:"Live patch: set the elements' text"`
+	SetAttr    string `long:"set-attr" optional:"true" help:"Live patch: set an attribute, NAME=VALUE"`
+	Remove     bool   `long:"remove" help:"Live patch: remove the elements"`
+	InsertHTML string `long:"insert-html" optional:"true" help:"Live patch: insert HTML at the end of each element"`
+	JSON       bool   `long:"json" help:"Output JSON"`
+	setText    bool   // --set-text was given (it may set empty text)
+	setAttr    bool   // --set-attr was given
+	insertHTML bool   // --insert-html was given
+}
+
+type pagePatchParams struct {
+	JSON bool `long:"json" help:"Output JSON"`
+}
+
+type pagePatchesParams struct {
+	Reset bool `long:"reset" help:"Drop every live patch, or only patch N"`
+	JSON  bool `long:"json" help:"Output JSON"`
 }
 
 type pageAnchorWire struct {
@@ -408,6 +467,40 @@ func runPageSnapshot(p *pageSnapshotParams, name string, stdout, stderr io.Write
 }
 
 func runPageDOM(p *pageDOMParams, name, selector string, stdout, stderr io.Writer) int {
+	var ops []string
+	if p.setText {
+		ops = append(ops, "set-text")
+	}
+	if p.setAttr || p.SetAttr != "" {
+		ops = append(ops, "set-attr")
+	}
+	if p.Remove {
+		ops = append(ops, "remove")
+	}
+	if p.insertHTML || p.InsertHTML != "" {
+		ops = append(ops, "insert-html")
+	}
+	if len(ops) > 1 || (len(ops) == 1 && (p.HTML || p.Styles || p.Text)) {
+		fmt.Fprintln(stderr, "error: a DOM patch is one of --set-text, --set-attr, --remove and --insert-html, and reads nothing")
+		return rcInvalidArg
+	}
+	if len(ops) == 1 {
+		body := map[string]any{"kind": "dom", "selector": selector, "op": ops[0]}
+		switch ops[0] {
+		case "set-text":
+			body["value"] = p.SetText
+		case "set-attr":
+			attr, value, ok := strings.Cut(p.SetAttr, "=")
+			if !ok || attr == "" {
+				fmt.Fprintln(stderr, "error: --set-attr takes NAME=VALUE")
+				return rcInvalidArg
+			}
+			body["name"], body["value"] = attr, value
+		case "insert-html":
+			body["value"] = p.InsertHTML
+		}
+		return runPagePatch(&pagePatchParams{JSON: p.JSON}, name, body, stdout, stderr)
+	}
 	mode := "text"
 	switch {
 	case p.HTML && p.Styles, (p.HTML || p.Styles) && p.Text:
@@ -458,4 +551,196 @@ func runPageDOM(p *pageDOMParams, name, selector string, stdout, stderr io.Write
 		}
 	}
 	return rcOK
+}
+
+type pagePatchResultWire struct {
+	Applied int    `json:"applied"`
+	State   string `json:"state,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// runPagePatch adds one live patch and says where it applied.
+func runPagePatch(p *pagePatchParams, name string, body map[string]any, stdout, stderr io.Writer) int {
+	var resp struct {
+		Page     string                `json:"page"`
+		Patch    int64                 `json:"patch"`
+		Views    int                   `json:"views"`
+		Results  []pagePatchResultWire `json:"results,omitempty"`
+		Withheld bool                  `json:"withheld,omitempty"`
+	}
+	if err := DaemonRequest(http.MethodPost, "/v1/pages/"+url.PathEscape(name)+"/patches", body, &resp, DaemonOpts{Timeout: 20 * time.Second}); err != nil {
+		return boardErr(stderr, err)
+	}
+	if p.JSON {
+		return writeBoardJSON(stdout, resp)
+	}
+	fmt.Fprintf(stdout, "Live patch #%d on %s: %s.\n", resp.Patch, resp.Page, pagePatchWhere(resp.Views, resp.Results, resp.Withheld))
+	fmt.Fprintln(stdout, "It is not in your source: port what the operator approves, then `tclaude agent page patches "+resp.Page+" --reset`.")
+	for _, r := range resp.Results {
+		if r.Error != "" {
+			return rcIOFailure
+		}
+	}
+	return rcOK
+}
+
+func pagePatchWhere(views int, results []pagePatchResultWire, withheld bool) string {
+	if views == 0 {
+		return "not open (no dashboard view of the page is open; it applies when the operator opens it)"
+	}
+	plural := func(n int, one, many string) string {
+		if n == 1 {
+			return fmt.Sprintf("%d %s", n, one)
+		}
+		return fmt.Sprintf("%d %s", n, many)
+	}
+	if withheld {
+		return "sent to " + plural(views, "open view", "open views") + " (this static page is not read back, so what it did is not shown)"
+	}
+	var parts []string
+	for _, r := range results {
+		switch {
+		case r.Error != "":
+			parts = append(parts, "failed: "+r.Error)
+		case r.State == "loading":
+			parts = append(parts, "the page is loading; it applies when it has loaded")
+		case r.State == "without":
+			parts = append(parts, "the operator is viewing the page without live patches")
+		default:
+			parts = append(parts, "applied to "+plural(r.Applied, "element", "elements"))
+		}
+	}
+	return "in " + plural(views, "open view", "open views") + ": " + strings.Join(parts, "; ")
+}
+
+func runPageEval(p *pagePatchParams, name, js string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if js == "-" {
+		data, err := io.ReadAll(io.LimitReader(stdin, 64<<10))
+		if err != nil {
+			fmt.Fprintf(stderr, "error: reading the script: %v\n", err)
+			return rcIOFailure
+		}
+		js = string(data)
+	}
+	var resp struct {
+		Page  string          `json:"page"`
+		Patch int64           `json:"patch"`
+		JSON  json.RawMessage `json:"json"`
+		Error string          `json:"error,omitempty"`
+	}
+	if err := DaemonRequest(http.MethodPost, "/v1/pages/"+url.PathEscape(name)+"/eval", map[string]any{"js": js}, &resp, DaemonOpts{Timeout: 20 * time.Second}); err != nil {
+		return boardErr(stderr, err)
+	}
+	if p.JSON {
+		if rc := writeBoardJSON(stdout, resp); rc != rcOK || resp.Error == "" {
+			return rc
+		}
+		return rcIOFailure
+	}
+	if resp.Error != "" {
+		fmt.Fprintf(stderr, "error: the page (eval #%d): %s\n", resp.Patch, resp.Error)
+		return rcIOFailure
+	}
+	fmt.Fprintln(stdout, string(resp.JSON))
+	return rcOK
+}
+
+type pagePatchWire struct {
+	N        int64     `json:"n"`
+	Kind     string    `json:"kind"`
+	At       time.Time `json:"at"`
+	Replay   bool      `json:"replay"`
+	CSS      string    `json:"css,omitempty"`
+	Selector string    `json:"selector,omitempty"`
+	Op       string    `json:"op,omitempty"`
+	Name     string    `json:"name,omitempty"`
+	Value    string    `json:"value,omitempty"`
+	JS       string    `json:"js,omitempty"`
+}
+
+func runPagePatches(p *pagePatchesParams, args []string, stdout, stderr io.Writer) int {
+	name := args[0]
+	if len(args) == 2 && !p.Reset {
+		fmt.Fprintln(stderr, "error: a patch number goes with --reset")
+		return rcInvalidArg
+	}
+	if p.Reset {
+		path := "/v1/pages/" + url.PathEscape(name) + "/patches"
+		if len(args) == 2 {
+			n := strings.TrimPrefix(args[1], "#")
+			if _, err := strconv.ParseInt(n, 10, 64); err != nil {
+				fmt.Fprintln(stderr, "error: N is a patch number")
+				return rcInvalidArg
+			}
+			path += "?n=" + n
+		}
+		var resp struct {
+			Page    string  `json:"page"`
+			Dropped []int64 `json:"dropped"`
+			Left    int     `json:"left"`
+		}
+		if err := DaemonRequest(http.MethodDelete, path, nil, &resp, DaemonOpts{}); err != nil {
+			return boardErr(stderr, err)
+		}
+		if p.JSON {
+			return writeBoardJSON(stdout, resp)
+		}
+		if len(resp.Dropped) == 0 {
+			fmt.Fprintf(stdout, "%s has no live patches.\n", resp.Page)
+			return rcOK
+		}
+		fmt.Fprintf(stdout, "Dropped %d live patch(es) from %s; %d left. Open views reload without them.\n", len(resp.Dropped), resp.Page, resp.Left)
+		return rcOK
+	}
+	var resp struct {
+		Page    string          `json:"page"`
+		Seq     int64           `json:"seq"`
+		Views   int             `json:"views"`
+		Patches []pagePatchWire `json:"patches"`
+	}
+	if err := DaemonRequest(http.MethodGet, "/v1/pages/"+url.PathEscape(name)+"/patches", nil, &resp, DaemonOpts{}); err != nil {
+		return boardErr(stderr, err)
+	}
+	if p.JSON {
+		return writeBoardJSON(stdout, resp)
+	}
+	if len(resp.Patches) == 0 {
+		fmt.Fprintf(stdout, "%s has no live patches: it shows its source.\n", resp.Page)
+		return rcOK
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "#\tKIND\tAT\tREPLAY\tPATCH")
+	for _, pt := range resp.Patches {
+		replay := "replayed"
+		if !pt.Replay {
+			replay = "not replayed"
+		}
+		fmt.Fprintf(tw, "#%d\t%s\t%s\t%s\t%s\n", pt.N, pt.Kind, pt.At.Local().Format("15:04:05"), replay, pagePatchSummary(pt))
+	}
+	_ = tw.Flush()
+	return rcOK
+}
+
+// pagePatchSummary is one line of a patch, clipped.
+func pagePatchSummary(p pagePatchWire) string {
+	var s string
+	switch p.Kind {
+	case "css":
+		s = p.CSS
+	case "eval":
+		s = p.JS
+	default:
+		s = p.Selector + " " + p.Op
+		switch p.Op {
+		case "set-attr":
+			s += " " + p.Name + "=" + p.Value
+		case "set-text", "insert-html":
+			s += " " + p.Value
+		}
+	}
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > 80 {
+		s = string(r[:79]) + "…"
+	}
+	return s
 }

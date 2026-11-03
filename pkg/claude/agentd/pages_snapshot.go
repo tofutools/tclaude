@@ -67,6 +67,7 @@ type pageSnapshotJob struct {
 	ScrollX   int
 	ScrollY   int
 	OverlaySV string // an SVG of the marks, in document coordinates ("" for none)
+	Patches   string // the page's replayed live patches, a JSON array (tcl-14z3fq)
 }
 
 // pageSnapshotRender renders a job to PNG bytes. A var so flow tests can
@@ -86,6 +87,8 @@ type pageSnapshotResponse struct {
 	ScrollY  int    `json:"scroll_y"`
 	Path     string `json:"path"`
 	MarksSeq int64  `json:"marks_seq,omitempty"`
+	// Patches is how many live patches the page was rendered with.
+	Patches int `json:"patches,omitempty"`
 }
 
 // POST /v1/pages/{name}/snapshot — {seq?, no_marks?}: the page as a PNG with
@@ -154,6 +157,8 @@ func handlePageSnapshot(w http.ResponseWriter, r *http.Request) {
 		job.OverlaySV = pageMarksSVG(batch.Marks)
 		resp.MarksSeq = batch.Seq
 	}
+	// The page as the operator sees it: with its live patches.
+	job.Patches, resp.Patches = pagePatchesForSnapshot(p.id)
 
 	pageSnapshotBusy.mu.Lock()
 	if pageSnapshotBusy.by[owner] {
@@ -694,7 +699,16 @@ func (c *cdpConn) screenshot(ctx context.Context, job pageSnapshotJob) ([]byte, 
 	}
 
 	overlay, _ := json.Marshal(job.OverlaySV)
+	patches := job.Patches
+	if patches == "" {
+		patches = "[]"
+	}
 	expr := fmt.Sprintf(`(function(){
+  %s
+  var patches = %s;
+  for (var i = 0; i < patches.length; i++) {
+    try { tclaudeApplyPatch(document, patches[i]); } catch (e) { /* as in the operator's view: a patch that fails is skipped */ }
+  }
   window.scrollTo(%d, %d);
   var svg = %s;
   if (svg) {
@@ -705,7 +719,7 @@ func (c *cdpConn) screenshot(ctx context.Context, job pageSnapshotJob) ([]byte, 
     document.documentElement.appendChild(host);
   }
   return new Promise(function(r){ requestAnimationFrame(function(){ requestAnimationFrame(function(){ r(true); }); }); });
-})()`, job.ScrollX, job.ScrollY, overlay)
+})()`, stagePatchJS, patches, job.ScrollX, job.ScrollY, overlay)
 	var evaluated struct {
 		ExceptionDetails *struct {
 			Text      string `json:"text"`

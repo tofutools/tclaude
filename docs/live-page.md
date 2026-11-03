@@ -110,6 +110,17 @@ page (the last 50) and end with it.
 The element paths and snippets come from the page, so they are treated as the
 page's content: checked, shown only as text, and kept out of the inbox message.
 
+### Live patches
+
+An agent can change its open page without touching its source, to ask "like
+this?" (see [Live patches for the agent](#live-patches-for-the-agent)). While
+a page has live patches, its header says **⚡ live patch #N · not in source**,
+and **Show without** reloads the page as its source is; press it again to see
+the patches. After the agent drops them the header says **No live patches ·
+source**. Patches apply in every open view of the page and come back after
+each reload, until the agent drops them or the page closes. They never change
+files.
+
 When nothing answers for the page (the dev server stopped, say), the view says
 so and offers **Retry**. A page the agent closes leaves the dashboard. With
 Collab off, the Page tabs go away.
@@ -307,5 +318,40 @@ tclaude agent page dom <name> <selector> [--text|--html|--styles]
   marks and note still arrive. After the agent comes back in a new sandbox,
   `page dom` and the text under marks wait until the page has loaded again.
   Serve the page from your own dev server to use them otherwise.
+
+## Live patches for the agent
+
+```bash
+tclaude agent page css <name> 'button.pay { background: #1971c2 }' ...
+tclaude agent page dom <name> <selector> --set-text T | --set-attr NAME=VALUE | --remove | --insert-html H
+tclaude agent page eval <name> '<js>'              # once, in one open view; prints JSON
+tclaude agent page patches <name>                  # the journal
+tclaude agent page patches <name> --reset [N]      # drop all, or only patch N
+```
+
+- **`page css`** and the **`page dom`** patch flags each add a patch, numbered,
+  to the page's journal. The daemon keeps the journal in memory with the page
+  (at most 100 patches, 256 KiB), sends it to every open view, and each view
+  replays it after every load, a full HMR reload included. A css patch is a
+  `<style>` after everything else in the document. A dom patch changes every
+  element matching the selector once the document has parsed. An app that
+  renders its elements later (most client-rendered apps) misses the replay
+  after a reload, and one that renders them again undoes it; use css for
+  those.
+  `page snapshot` renders the page with the patches too.
+- **`page eval`** runs a script once, in the open view `page dom` reads from,
+  and prints its value as JSON (a promise is awaited; at most 16 KiB). It is
+  listed in the journal as not replayed (the last 20, scripts clipped; they
+  do not count toward the patch limits). With no view open it is refused,
+  where a css or dom patch is kept and reported as not open.
+- Patches never write files. Port what the operator approves into source,
+  then `--reset`. Open views reload without the dropped patches.
+- **The channel:** the daemon takes patches only from the agent that showed the
+  page; the dashboard view relays to its frame only what its socket delivered;
+  the probe in the frame takes a command only from its parent window with the
+  nonce of the frame's current load, so another frame cannot drive it. What a
+  view answers comes from the page and is checked. For a static page that is
+  not read back, the agent learns only how many views a patch went to, and
+  `page eval` is refused.
 
 There are no MCP tools for live pages; the CLI is the agent's surface.

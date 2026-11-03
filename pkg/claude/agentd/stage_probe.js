@@ -21,6 +21,17 @@
 //   probe → parent  {..., nonce, id, kind:'result', elements:[...]} or
 //                   {..., nonce, id, kind:'result', count, items:[...], error?}
 //
+// Live patches (tcl-14z3fq), relayed by the parent from the daemon:
+//
+//   parent → probe  {..., nonce, id, kind:'patch', patch:{kind:'css'|'dom',...}}
+//                    applied with tclaudeApplyPatch (stage_patch.js) once the
+//                    document has parsed.
+//   probe → parent  {..., nonce, id, kind:'result', applied, error?}
+//   parent → probe  {..., nonce, id, kind:'eval', js}
+//                    the agent's script, run once with an indirect eval; a
+//                    promise is awaited.
+//   probe → parent  {..., nonce, id, kind:'result', json} or {..., error}
+//
 // Only messages from window.parent are read. The parent's target origin is '*'
 // (the frame's origin is opaque), so nothing it sends is a secret.
 //
@@ -47,6 +58,9 @@
   // under this, or says it is too large.
   var MAX_RESULT_JSON = 60 * 1024;
   var MAX_SELECTOR = 500;
+  var MAX_ERROR = 200;
+  // The daemon refuses an eval result over 16 KiB of JSON.
+  var MAX_EVAL_JSON = 16 * 1024;
   var STYLE_PROPS = [
     'display', 'position', 'top', 'right', 'bottom', 'left', 'width', 'height', 'box-sizing',
     'margin', 'padding', 'border', 'border-radius', 'color', 'background-color', 'background-image',
@@ -219,6 +233,76 @@
     return out;
   }
 
+  // whenParsed runs fn once the document has parsed: a patch sent while the
+  // head is still loading (the replay after a reload) finds the body.
+  var parsedQueue = null;
+  function whenParsed(fn) {
+    if (document.readyState !== 'loading') { fn(); return; }
+    if (!parsedQueue) {
+      parsedQueue = [];
+      document.addEventListener('DOMContentLoaded', function () {
+        var q = parsedQueue;
+        parsedQueue = null;
+        for (var i = 0; i < q.length; i++) q[i]();
+      });
+    }
+    parsedQueue.push(fn);
+  }
+
+  function errorText(e) {
+    return clip(e && e.message ? e.message : e, MAX_ERROR) || 'error';
+  }
+
+  function applyPatch(id, patch) {
+    var out = { kind: 'result', id: id, applied: 0 };
+    try {
+      out.applied = num(tclaudeApplyPatch(document, patch));
+    } catch (e) {
+      out.error = errorText(e);
+    }
+    send(out);
+  }
+
+  // utf8Length is a string's length in UTF-8 bytes, the unit the daemon caps.
+  function utf8Length(s) {
+    if (typeof TextEncoder === 'function') return new TextEncoder().encode(s).length;
+    return unescape(encodeURIComponent(s)).length;
+  }
+
+  function evalResult(id, value) {
+    var json;
+    try {
+      json = JSON.stringify(value);
+    } catch (e) {
+      send({ kind: 'result', id: id, error: clip('the result has no JSON form: ' + errorText(e), MAX_ERROR) });
+      return;
+    }
+    if (json === undefined) json = 'null';
+    var bytes = utf8Length(json);
+    if (bytes > MAX_EVAL_JSON) {
+      send({ kind: 'result', id: id, error: 'the result is ' + bytes + ' bytes of JSON; the most is ' + MAX_EVAL_JSON });
+      return;
+    }
+    send({ kind: 'result', id: id, json: json });
+  }
+
+  function runEval(id, js) {
+    var value;
+    try {
+      value = (0, eval)(String(js));
+    } catch (e) {
+      send({ kind: 'result', id: id, error: errorText(e) });
+      return;
+    }
+    if (value && typeof value.then === 'function') {
+      Promise.resolve(value).then(function (v) { evalResult(id, v); }, function (e) {
+        send({ kind: 'result', id: id, error: errorText(e) });
+      });
+      return;
+    }
+    evalResult(id, value);
+  }
+
   window.addEventListener('message', function (event) {
     if (event.source !== parentWin) return;
     var d = event.data;
@@ -241,6 +325,12 @@
       out.kind = 'result';
       out.id = id;
       send(out);
+    } else if (d.kind === 'patch') {
+      var patch = d.patch;
+      whenParsed(function () { applyPatch(id, patch); });
+    } else if (d.kind === 'eval') {
+      var js = d.js;
+      whenParsed(function () { runEval(id, js); });
     }
   });
   window.addEventListener('scroll', scheduleScroll, { passive: true });

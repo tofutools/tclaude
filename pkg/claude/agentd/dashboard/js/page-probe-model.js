@@ -19,6 +19,7 @@ export const PROBE_LIMITS = Object.freeze({
   points: 400,
   selector: 500,
   pagePath: 512,
+  evalJSON: 16 * 1024,
 });
 
 const NONCE = /^[0-9a-f]{32}$/;
@@ -52,6 +53,38 @@ export function probeDom(nonce, id, selector, mode) {
   return parentMessage(nonce, 'dom', {
     id, selector: String(selector || '').slice(0, PROBE_LIMITS.selector), mode: PROBE_DOM_MODES.includes(mode) ? mode : 'text',
   });
+}
+
+// probePatch relays one live patch (tcl-14z3fq) of the daemon's journal; the
+// probe applies it with stage_patch.js. Only the fields a patch has go.
+export function probePatch(nonce, id, patch) {
+  const p = {};
+  for (const key of ['n', 'kind', 'css', 'selector', 'op', 'name', 'value']) {
+    if (patch?.[key] !== undefined) p[key] = patch[key];
+  }
+  return parentMessage(nonce, 'patch', { id, patch: p });
+}
+
+export const probeEval = (nonce, id, js) => parentMessage(nonce, 'eval', { id, js: String(js || '') });
+
+// planPatchSync compares the patches applied in the frame's current load
+// (their numbers) with the daemon's journal: a load holding a patch the
+// journal dropped reloads (the replay brings the rest back); otherwise the
+// journal's patches not applied yet are applied, in order.
+export function planPatchSync(applied, journal) {
+  const inJournal = new Set((journal || []).map((p) => p.n));
+  if ((applied || []).some((n) => !inJournal.has(n))) return { reload: true, apply: [] };
+  const done = new Set(applied || []);
+  return { reload: false, apply: (journal || []).filter((p) => !done.has(p.n)) };
+}
+
+// patchChip is the header's word on the page's live patches: the journal's
+// replayed patches and its last number (seq). None before any patch.
+export function patchChip(journal) {
+  const patches = journal?.patches || [];
+  if (patches.length) return { live: true, text: `⚡ live patch #${Math.max(...patches.map((p) => p.n))} · not in source` };
+  if ((journal?.seq || 0) > 0) return { live: false, text: 'No live patches · source' };
+  return null;
 }
 
 // Control characters (C0, DEL, C1) in page text become spaces: the daemon
@@ -120,6 +153,14 @@ function checkItems(list) {
   return out;
 }
 
+function checkError(d, out) {
+  if (d.error === undefined) return out;
+  const error = str(d.error, PROBE_LIMITS.text);
+  if (error === null) return null;
+  out.error = cleanText(error);
+  return out;
+}
+
 function checkResult(d) {
   const id = typeof d.id === 'string' && REQUEST_ID.test(d.id) ? d.id : null;
   if (!id) return null;
@@ -127,17 +168,25 @@ function checkResult(d) {
     const elements = checkElements(d.elements);
     return elements ? { kind: 'result', id, elements } : null;
   }
+  // A live patch's answer: how many elements it touched.
+  if (d.applied !== undefined) {
+    const applied = int(d.applied, 0, 1e7);
+    return applied === null ? null : checkError(d, { kind: 'result', id, applied });
+  }
+  // An eval's answer: its value as JSON text, or an error alone.
+  if (d.json !== undefined) {
+    const json = str(d.json, PROBE_LIMITS.evalJSON);
+    return json === null || d.error !== undefined ? null : { kind: 'result', id, json };
+  }
+  if (d.count === undefined && d.items === undefined) {
+    return typeof d.error === 'string' ? checkError(d, { kind: 'result', id }) : null;
+  }
   const count = int(d.count, 0, 1e7);
   const items = checkItems(d.items);
   if (count === null || !items) return null;
   const out = { kind: 'result', id, count, items };
   if (d.truncated === true) out.truncated = true;
-  if (d.error !== undefined) {
-    const error = str(d.error, PROBE_LIMITS.text);
-    if (error === null) return null;
-    out.error = cleanText(error);
-  }
-  return out;
+  return checkError(d, out);
 }
 
 // acceptProbeMessage checks one message event against the frame's window and

@@ -149,6 +149,7 @@ type PageSnapshotJobForTest struct {
 	Width, Height      int
 	ScrollX, ScrollY   int
 	Overlay            string
+	Patches            string
 }
 
 // SetPageSnapshotRenderForTest stands in for headless Chrome: render gets
@@ -158,7 +159,7 @@ func SetPageSnapshotRenderForTest(render func(PageSnapshotJobForTest) ([]byte, e
 	prev := pageSnapshotRender
 	pageSnapshotRender = func(_ context.Context, j pageSnapshotJob) ([]byte, error) {
 		return render(PageSnapshotJobForTest{URL: j.URL, Origin: j.Origin, Token: j.Token, Width: j.Width, Height: j.Height,
-			ScrollX: j.ScrollX, ScrollY: j.ScrollY, Overlay: j.OverlaySV})
+			ScrollX: j.ScrollX, ScrollY: j.ScrollY, Overlay: j.OverlaySV, Patches: j.Patches})
 	}
 	return func() { pageSnapshotRender = prev }
 }
@@ -189,7 +190,12 @@ type FakeSandboxRootForTest struct {
 func (f *FakeSandboxRootForTest) Relaunch() { f.mu.Lock(); f.ns++; f.dead = false; f.mu.Unlock() }
 
 // Fail makes opening the sandbox fail (nil restores it).
-func (f *FakeSandboxRootForTest) Fail(err error) { f.mu.Lock(); f.err = err; f.dead = err != nil; f.mu.Unlock() }
+func (f *FakeSandboxRootForTest) Fail(err error) {
+	f.mu.Lock()
+	f.err = err
+	f.dead = err != nil
+	f.mu.Unlock()
+}
 
 type fakeSandboxRoot struct {
 	f  *FakeSandboxRootForTest
