@@ -72,6 +72,8 @@ func TestDashboardProcessNodeInspectorAssets(t *testing.T) {
 	inspector := read("js/process-node-inspector.js")
 	mustContain("process-node-inspector.js", inspector,
 		"export function NodeInspector(",
+		// A read-only node says so with the standard warn tag (ui.css).
+		`<span class="process-node-readonly-badge ui-tag ui-tag-warn">read-only</span>`,
 		// Every edit is one undoable, validated step through the editor gate.
 		"controller.editNode(nodeId, mutate)",
 		// The editability seam renders locked nodes read-only.
@@ -121,7 +123,6 @@ func TestDashboardProcessNodeInspectorAssets(t *testing.T) {
 		".pni-add {",
 		".process-node-section",
 		".process-performer-editor",
-		".process-node-readonly-badge",
 		".process-node-security-note",
 		// Inline controls are explicitly themed in both skins (UA-white trap).
 		".process-node-close",

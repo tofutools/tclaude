@@ -129,7 +129,7 @@ export function ParamsDialog({ model, onMutated, complete, confirmDiscard, regis
     <p class="muted">Declare values referenced as {{ params.name }}. Renamed or deleted references are reported by live validation.</p>
     <datalist id="process-param-types"><option value="string"></option><option value="number"></option><option value="boolean"></option></datalist>
     <div ref=${list} class="process-param-list">
-      ${!rowsRef.current.length && html`<div class="process-param-empty">No parameters declared.</div>`}
+      ${!rowsRef.current.length && html`<div class="process-param-empty ui-empty-block">No parameters declared.</div>`}
       ${rowsRef.current.map((row, index) => html`<div key=${row.key} class="process-param-row" data-process-param=${row.name}>
         <label><span>Name</span><input class="process-param-name" type="text" spellcheck="false" aria-label=${`Parameter ${index + 1} name`} value=${row.rawName} onInput=${(event) => update(index, { rawName: event.currentTarget.value, name: event.currentTarget.value.trim() })} /></label>
         <label><span>Type</span><input class="process-param-type" type="text" spellcheck="false" list="process-param-types" aria-label=${`Parameter ${row.name || index + 1} type`} value=${row.rawType} onInput=${(event) => update(index, { rawType: event.currentTarget.value, type: event.currentTarget.value.trim(), defaultChanged: true })} /></label>
@@ -139,7 +139,7 @@ export function ParamsDialog({ model, onMutated, complete, confirmDiscard, regis
         <${Button} size="sm" variant="ghost danger" class="process-action" aria-label=${`Remove parameter ${row.name || index + 1}`} onClick=${() => remove(index)}>remove<//>
       </div>`)}
     </div>
-    <div class="process-param-toolbar"><${Button} size="sm" domRef=${addButton} class="process-action" onClick=${add}>+ add param<//><span class="spacer"></span><div class="process-param-error" role="alert">${error}</div></div>
+    <div class="process-param-toolbar"><${Button} size="sm" domRef=${addButton} class="process-action" onClick=${add}>+ add param<//><span class="spacer"></span><div class="process-param-error ui-error" role="alert">${error}</div></div>
     <div class="modal-buttons"><${Button} onClick=${requestClose}>Cancel</${Button}><${Button} variant="primary" onClick=${apply}>Apply</${Button}></div>
   </${Dialog}>`;
 }

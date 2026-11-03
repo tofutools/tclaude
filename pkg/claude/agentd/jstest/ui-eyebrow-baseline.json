@@ -17,8 +17,6 @@
     ".loc-tag",
     ".mailbox-section",
     ".pdr-verdict",
-    ".process-inspector-kind",
-    ".process-scribe-state",
     ".queued-spawns-popover-head",
     ".role-inspect-key",
     ".sbx-network-control-kind",
@@ -30,8 +28,5 @@
   ],
   "mux.css": [
     ".mux-bg-sec-head"
-  ],
-  "process-terminal-overlay.css": [
-    ".pk-run-popover-kicker"
   ]
 }

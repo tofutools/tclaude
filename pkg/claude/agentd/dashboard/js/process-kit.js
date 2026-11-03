@@ -527,7 +527,7 @@ export function ProcessNodeChip({ node, compact = false, wizard = false }) {
 
 export function ProcessStateChip({ state, label = '' }) {
   const key = normalizeNodeState(state);
-  return html`<span class=${`pk-chip pk-state-${key}`}><span class="pk-dot" aria-hidden="true"></span>${label || stateLabel(key)}</span>`;
+  return html`<span class=${`pk-chip ui-tag pk-state-${key}`}><span class="pk-dot" aria-hidden="true"></span>${label || stateLabel(key)}</span>`;
 }
 
 export function ProcessScopeChip({ scope, wizard = false }) {
@@ -535,14 +535,14 @@ export function ProcessScopeChip({ scope, wizard = false }) {
   if (!kind) return null;
   const entry = PROCESS_SCOPES[kind];
   const text = `${entry.glyph} ${wizard ? entry.wizardLabel : entry.label}${name ? ` · ${name}` : ''}`;
-  return html`<span class=${`pk-chip pk-scope pk-scope-${kind}`} data-process-scope=${kind}>${text}</span>`;
+  return html`<span class=${`pk-chip ui-tag pk-scope pk-scope-${kind}`} data-process-scope=${kind}>${text}</span>`;
 }
 
 // ProcessPausedChip marks a run an operator paused.
 export function ProcessPausedChip({ run }) {
   if (!run?.paused) return null;
   const by = run.paused.by ? ` by ${run.paused.by}` : '';
-  return html`<span class="pk-chip pk-paused" data-process-paused title=${`Paused${by}: nothing new is dispatched until it is resumed`}>⏸ paused</span>`;
+  return html`<span class="pk-chip ui-tag pk-paused" data-process-paused title=${`Paused${by}: nothing new is dispatched until it is resumed`}>⏸ paused</span>`;
 }
 
 // ProcessPauseControl is the run-level Pause / Resume button. actions:
@@ -568,7 +568,7 @@ export function ProcessPauseControl({ run, actions = {} }) {
   return html`<span class="pk-pause" data-process-pause=${state.paused ? 'paused' : 'live'}>
     <${Button} size="sm" disabled=${busy || !state.ok || !act} title=${title}
       onClick=${() => void click()}>${state.paused ? '▶ resume run' : '⏸ pause run'}<//>
-    ${error ? html`<span class="pk-pause-error" role="alert">${error}</span>` : null}
+    ${error ? html`<span class="pk-pause-error ui-error" role="alert">${error}</span>` : null}
   </span>`;
 }
 
@@ -596,7 +596,7 @@ export function ProcessRunBadge({ run, performerId = '', nodeId = '', onOpen = n
 export function ProcessRunIcon({ run, performerId = '', onOpen = null, active = false, small = false }) {
   const view = runIconView(run, performerId);
   const cls = `pk-run-icon pk-state-${view.state}${view.scope ? ` pk-scope-${view.scope}` : ''}${active ? ' on' : ''}${small ? ' small' : ''}`;
-  const body = html`<span class="pk-run-icon-glyph" aria-hidden="true">${view.glyph}</span>${!small && view.badge && html`<span class="pk-run-icon-badge">${view.badge}</span>`}`;
+  const body = html`<span class="pk-run-icon-glyph" aria-hidden="true">${view.glyph}</span>${!small && view.badge && html`<span class="pk-run-icon-badge ui-badge ui-badge-corner">${view.badge}</span>`}`;
   if (typeof onOpen === 'function') {
     return html`<button data-ui-exempt type="button" class=${cls} title=${view.title} aria-label=${view.title} aria-pressed=${active ? 'true' : 'false'} data-process-run=${runID(run)} onClick=${(event) => { event.stopPropagation(); onOpen(run, view.node); }}>${body}</button>`;
   }

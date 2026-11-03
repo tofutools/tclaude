@@ -88,7 +88,7 @@ export function PerformerEditor({
     ${showKind && html`<${NodeSelect} fieldKey=${`${path}.kind`} label="kind"
       options=${known ? PERFORMER_KINDS : [...PERFORMER_KINDS, kind]} value=${kind} readOnly=${readOnly}
       apply=${(key, value) => mutate('kind', value, setPerformerKind)} />`}
-    ${showKind && !known && html`<p class="process-node-empty">Unknown performer kind ${kind}: validation rejects it — pick a supported kind.</p>`}
+    ${showKind && !known && html`<p class="process-node-empty ui-empty">Unknown performer kind ${kind}: validation rejects it — pick a supported kind.</p>`}
     ${fields.map((field) => {
       if (field.outcomeMap) {
         if (!choiceRouting || !(performer?.choices || []).length) return null;

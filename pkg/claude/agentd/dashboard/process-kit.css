@@ -62,11 +62,11 @@ body.wizard {
 }
 
 /* State and scope chips */
-.pk-chip {
-  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
-  border: 1px solid var(--pk-line); border-radius: 12px; padding: 1px 8px;
-  font-size: 11px; color: var(--pk-muted); background: var(--pk-chip-bg);
-}
+/* .ui-tag draws the pill in its neutral tone (the --pk-line / --pk-muted
+   pair it matches in both skins); the run-state variants below recolour it. */
+/* Two classes: .ui-tag (ui.css loads last) is inline-block, and the state
+   dot needs the flex row. */
+.pk-chip.ui-tag { display: inline-flex; align-items: center; gap: 5px; }
 .pk-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
 .pk-chip.pk-state-running { border-color: color-mix(in srgb, var(--pk-running) 55%, transparent); color: var(--pk-running-text); }
 .pk-chip.pk-state-waiting { border-color: color-mix(in srgb, var(--pk-waiting) 60%, transparent); color: var(--pk-waiting-text); background: color-mix(in srgb, var(--pk-waiting) 13%, transparent); }
@@ -76,7 +76,6 @@ body.wizard {
 .pk-chip.pk-scope-group { color: var(--pk-muted); }
 .pk-chip.pk-paused { border-color: color-mix(in srgb, var(--pk-waiting) 60%, transparent); color: var(--pk-waiting-text); }
 .pk-pause { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.pk-pause-error { color: var(--pk-failed-text); font-size: 12px; }
 .pk-chip.pk-scope-agent { color: var(--pk-agent-text); border-color: color-mix(in srgb, var(--pk-agent) 40%, transparent); }
 
 /* Node chip (state-styled node pill) */
@@ -149,10 +148,8 @@ button.pk-run-icon { cursor: pointer; }
 .pk-run-icon.pk-scope-agent.pk-state-running { border-color: var(--pk-agent); border-right-color: var(--pk-line); }
 .pk-run-icon.pk-scope-agent .pk-run-icon-glyph { color: var(--pk-agent-text); }
 .pk-run-icon.on { box-shadow: 0 0 0 3px color-mix(in srgb, var(--pk-text) 20%, transparent); }
-.pk-run-icon-badge {
-  position: absolute; right: -6px; bottom: -6px; font-size: 9px; font-weight: 700; line-height: 13px;
-  background: var(--pk-glyph-bg); border: 1px solid var(--pk-line); border-radius: 8px; padding: 0 4px; color: var(--pk-text);
-}
+/* The step position ("2/5") is a .ui-badge-corner; this pins it. */
+.pk-run-icon-badge { right: -6px; bottom: -6px; }
 
 /* Performer avatars */
 .pk-avatars { display: inline-flex; }

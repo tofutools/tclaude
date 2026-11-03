@@ -448,7 +448,7 @@ export function GroupsRunFocus({
         <button data-ui-exempt type="button" class="grf-back" ref=${backRef} data-run-focus-close onClick=${onClose}
           title=${wizard ? 'Back to every rite' : 'Back to every run (Esc)'}>← ${wizard ? 'all rites' : 'all runs'}</button>
         <span>${group.name} › <b>${run ? runName(run) : runId}</b>${template && html` · ${wizard ? 'grimoire' : 'template'} <code>${template}</code>`}</span>
-        ${run && runNeedsYou(run, entry) && html`<span class="pk-chip pk-state-waiting">👤 ${wizard ? 'awaits your word' : 'waiting on you'}</span>`}
+        ${run && runNeedsYou(run, entry) && html`<span class="pk-chip ui-tag pk-state-waiting">👤 ${wizard ? 'awaits your word' : 'waiting on you'}</span>`}
         ${run && html`<${ProcessPausedChip} run=${run} />`}
         ${run && html`<span class="grf-run-actions"><${ProcessPauseControl} run=${run} actions=${runActions} /></span>`}
         ${detail.error && html`<span class="grf-error" role="status">${detail.error}</span>`}

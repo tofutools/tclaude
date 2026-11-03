@@ -10,8 +10,6 @@
   ".knowledge-source-card",
   ".mux-terminal-disconnect-card",
   ".overlay-expose-card",
-  ".process-issues-panel",
-  ".process-palette-card",
   ".sbx-mount-panel",
   ".sbx-prelaunch-card",
   ".snap-assist-card",
@@ -30,7 +28,5 @@
   "body.wizard .mail-list",
   "body.wizard .mail-reader",
   "body.wizard .mail-sidebar",
-  "body.wizard .process-issues-panel",
-  "body.wizard .process-palette-card",
   "body.wizard .vegas-card"
 ]
