@@ -1109,7 +1109,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       <${Group} title="Stewards">
         <${Setting} title="Stewards" forId="cfg-steward-enabled" k="steward.disabled" badges=${['refresh']}
           summary=${html`a Steward in the companion window, and external stewards if allowed below`}
-          more="On by default. Turning it on spawns nothing and grants nothing: a Steward exists only once you summon one. Uncheck to opt out: no Steward can be summoned or made, the companion window is not shown, and external stewards are refused. Boards, live pages, decisions and the rest of Collab stay on. A Steward already running is not stopped; retire it from its row.">
+          more="On by default. Turning it on spawns nothing and grants nothing: a Steward exists only once you summon one. Uncheck to opt out: no Steward can be summoned or made, the companion offers no Steward (no chips, no summon, no Ctrl+.), and external stewards are refused. Boards, live pages, decisions and the rest of Collab stay on. A Steward already running is not stopped; retire it from its row.">
           <${Toggle} id="cfg-steward-enabled" />
         </${Setting}>
       </${Group}>

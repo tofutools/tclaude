@@ -1145,7 +1145,7 @@ test('an agent moved to Terminals before a reload stays there', async (t) => {
   assert.equal(closed.some((selectors) => selectors.includes(B)), false);
 });
 
-test('the companion stays out of the page while stewards are opted out', async (t) => {
+test('with stewards opted out the companion keeps its windows but has no Steward chips', async (t) => {
   const harness = await createPreactHarness(t);
   const { CompanionGate } = await harness.importDashboardModule('js/companion-island.js');
   const snap = harness.signals.signal({ ...snapshotWith(), stewards_disabled: true });
@@ -1155,7 +1155,7 @@ test('the companion stays out of the page while stewards are opted out', async (
     fetchImpl=${async () => ({ ok: true, status: 200, json: async () => ({}) })} widgetFactory=${fakeWidgetFactory([])} closeTerminalPanes=${() => {}}
     registerController=${(c) => { controllers.push(c); return () => {}; }} />`);
   assert.ok(!view.container.querySelector('.companion-chips'));
-  assert.equal(controllers.length, 0, 'no controller, so callers take their usual path');
+  assert.equal(controllers.length, 1, 'still the overlay host: boards, pages and terminals can float');
   await harness.act(async () => { snap.value = snapshotWith(); });
   assert.ok(view.container.querySelector('.companion-chips'), 'turning it on needs no reload');
   await harness.act(async () => { snap.value = { ...snapshotWith(), stewards_disabled: true }; });

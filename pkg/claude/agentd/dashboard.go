@@ -1088,7 +1088,7 @@ type snapshotPayload struct {
 	// without restarting agentd, matching processRoute.
 	ProcessesEnabled bool `json:"processes_enabled"`
 	// StewardsDisabled is the steward opt-out (steward.disabled): the
-	// companion window, which holds the Steward, is not shown. Re-read on
+	// companion offers no Steward, though its windows stay. Re-read on
 	// every snapshot so a Config-tab change takes effect without a restart.
 	StewardsDisabled bool `json:"stewards_disabled,omitempty"`
 	// Voice is the resolved dashboard.voice: spoken phrases and the opt-in

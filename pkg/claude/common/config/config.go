@@ -1377,7 +1377,7 @@ type StewardConfig struct {
 	// lives here, where only the operator can set it.
 	SourceDownload string `json:"source_download,omitempty"`
 	// Disabled opts this instance out of stewards: no companion Steward can be
-	// summoned or handed the role, its window is not shown, and external
+	// summoned or handed the role, the companion offers none, and external
 	// stewards are refused whatever ExternalEnabled says. Every other Collab
 	// surface stays on. Off by default.
 	Disabled bool `json:"disabled,omitempty"`

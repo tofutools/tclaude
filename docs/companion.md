@@ -16,8 +16,9 @@ To opt out of stewards, uncheck **Stewards** at the top of
 
 - No Steward can be summoned or handed the role. Summon and handover answer
   404 `stewards_disabled`.
-- The companion window, its chips and its shortcuts (Ctrl+. and the rest) are not
-  shown.
+- The companion shows no Steward: no chips, no summon or resume in its ＋ menu,
+  and Ctrl+. and the Steward's spoken phrase do nothing. Its windows stay, so
+  boards, pages, terminals and agents' chats still float over the dashboard.
 - [External stewards](external-steward.md) are refused, whatever
   `steward.external_enabled` says.
 
