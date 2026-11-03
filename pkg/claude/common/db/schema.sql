@@ -2293,3 +2293,10 @@ CREATE TABLE spawn_queue (
 	, fed_request_id INTEGER NOT NULL DEFAULT 0) STRICT;
 
 CREATE INDEX idx_spawn_queue_state ON spawn_queue (state, id);
+
+CREATE TABLE group_resource_locks (
+		kind        TEXT NOT NULL,
+		resource_id TEXT NOT NULL,
+		locked_at   INTEGER NOT NULL,
+		PRIMARY KEY (kind, resource_id)
+	) STRICT;

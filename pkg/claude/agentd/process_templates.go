@@ -312,6 +312,9 @@ func handleProcessTemplateDelete(w http.ResponseWriter, r *http.Request, fs *sto
 		writeError(w, http.StatusBadRequest, "process_template_id", err.Error())
 		return
 	}
+	if refuseLockedForAgent(w, r, resourceKindProcess, id, "process template "+id) {
+		return
+	}
 	err := fs.DeleteTemplate(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
@@ -496,6 +499,9 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 		return
 	}
 	id := r.PathValue("id")
+	if refuseLockedForAgent(w, r, resourceKindProcess, id, "process template "+id) {
+		return
+	}
 	if body.Template != nil && body.Template.ID == "" {
 		// Preserve the dashboard edit-wire convenience: the path supplies an
 		// omitted id before canonicalization/validation. Raw YAML is a complete

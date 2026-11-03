@@ -644,6 +644,9 @@ func planConfigBundleItem(r *http.Request, section string, item configbundle.Ite
 		if hash != "" && !replace {
 			return func() error { return errors.New("process template already exists") }, nil
 		}
+		if !callerIsHuman(r) && db.GroupResourceLocked(resourceKindProcess, parsed.Template.ID) {
+			return nil, errors.New("process template " + parsed.Template.ID + " is locked by the operator")
+		}
 		return func() error { _, err := fs.PutTemplateEditorSource(r.Context(), parsed.Template, hash); return err }, nil
 	case "default-permissions":
 		if item.Name != "defaults" {

@@ -135,6 +135,9 @@ func handleProcessTemplateListing(w http.ResponseWriter, r *http.Request) {
 	if !processTemplateExists(w, r, id) {
 		return
 	}
+	if refuseLockedForAgent(w, r, resourceKindProcess, id, "process template "+id) {
+		return
+	}
 	if err := db.SetProcessTemplateListed(id, *body.Listed); err != nil {
 		writeError(w, http.StatusInternalServerError, "process_template_listing", err.Error())
 		return
@@ -178,6 +181,9 @@ func handleProcessGroupUnpin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("templateId")
+	if refuseLockedForAgent(w, r, resourceKindProcess, id, "process template "+id) {
+		return
+	}
 	removed, err := db.UnpinProcessFromGroup(group.ID, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_group_pin", err.Error())
@@ -225,6 +231,9 @@ type processGroupProcess struct {
 	Steps           int                        `json:"steps"`
 	Params          []processGroupProcessParam `json:"params"`
 	ProgramProfiles []string                   `json:"programProfiles"`
+	// AgentsLocked is the operator's lock on the template
+	// (group_resource_locks.go).
+	AgentsLocked bool `json:"agentsLocked,omitempty"`
 }
 
 type processGroupProcessParam struct {
@@ -240,6 +249,7 @@ type processGroupProcessParam struct {
 type processSavedTemplateStore struct {
 	fs       *store.FS
 	unlisted map[string]bool
+	locked   map[string]bool
 	// read memoizes each template read in this build: a template pinned to
 	// several groups is read once.
 	read map[string]*processGroupProcess
@@ -259,7 +269,12 @@ func processSavedTemplates() processSavedTemplateStore {
 		slog.Warn("process context: template listing unavailable", "error", err)
 		return processSavedTemplateStore{}
 	}
-	return processSavedTemplateStore{fs: fs, unlisted: unlisted, read: map[string]*processGroupProcess{}}
+	locked, err := db.GroupResourceLocks(db.GroupResourceProcess)
+	if err != nil {
+		slog.Warn("process context: template locks unavailable", "error", err)
+		locked = map[string]bool{}
+	}
+	return processSavedTemplateStore{fs: fs, unlisted: unlisted, locked: locked, read: map[string]*processGroupProcess{}}
 }
 
 // groupProcesses lists a group's saved processes in pin order. A pin whose
@@ -297,6 +312,7 @@ func (s processSavedTemplateStore) load(ctx context.Context, id string) *process
 		return nil
 	}
 	view := processGroupProcessOf(tmpl, head.Ref, !s.unlisted[id])
+	view.AgentsLocked = s.locked[id]
 	return &view
 }
 
