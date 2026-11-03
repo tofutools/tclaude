@@ -83,10 +83,12 @@ test('no stylesheet hand-paints a new dialog box', () => {
 
 // Dialog headings take the skin's title face from `:where(.ui-dialog) h3`
 // (ui.css). The wizard skin used to copy its gilded serif onto each dialog's
-// h3 by id; a new copy fails here. The process editors render outside
-// .ui-dialog, and so does the config diff dialog (its own panel), so their
-// rules stay.
+// h3 by id; a new copy fails here. The processes-island rename/create forms
+// are bare .modal boxes outside .ui-dialog, and the config diff dialog paints
+// its own panel, so their rules stay. The standing-orders heading is a
+// deliberate variant (smaller, softer glow).
 const TITLE_EXEMPT = new Set([
+  'body.wizard #group-standing-orders-modal .group-standing-orders-heading h3',
   'body.wizard .process-editor-modal .modal h3',
   'body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .config-diff-modal h3',
 ]);
@@ -99,7 +101,7 @@ export function handRolledTitles(css) {
     for (const part of selector.split(/,(?![^()]*\))/)) {
       const tokens = part.trim().split(/\s*[\s>+~]\s*/);
       if (tokens.at(-1) !== 'h3') continue;
-      if (!tokens.slice(0, -1).some((t) => /\.[\w-]*(?:modal|dialog)\b/.test(t))) continue;
+      if (!tokens.slice(0, -1).some((t) => /[.#][\w-]*(?:modal|dialog)\b/.test(t))) continue;
       const key = part.trim().replace(/\s+/g, ' ');
       if (!TITLE_EXEMPT.has(key)) found.add(key);
     }
@@ -109,6 +111,7 @@ export function handRolledTitles(css) {
 
 test('dialog titles take the skin title face from ui.css, not per-dialog copies', () => {
   assert.deepEqual([...handRolledTitles("body.wizard #x .cron-create-modal h3, .y { font-family: Papyrus, serif; }")], ['body.wizard #x .cron-create-modal h3']);
+  assert.deepEqual([...handRolledTitles("body.wizard #foo-modal h3 { font-family: Papyrus, serif; }")], ['body.wizard #foo-modal h3']);
   const ui = readFileSync(new URL('ui.css', DASHBOARD), 'utf8');
   assert.match(ui, /:where\(\.ui-dialog\) h3 \{[^}]*font-family: var\(--ui-dialog-title-font\)/);
   assert.match(ui, /body\.wizard \{[^}]*--ui-dialog-title-font: Papyrus/);
