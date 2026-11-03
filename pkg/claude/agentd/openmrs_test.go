@@ -53,13 +53,7 @@ func TestAuthoredOpenMRItem_MapsAMergeRequestOntoAFooterRow(t *testing.T) {
 		n.Conflicts = true
 		n.DetailedMergeStatus = "REQUESTED_CHANGES"
 		n.HeadPipeline = pipelineStatus("SUCCESS")
-		n.ApprovedBy.Nodes = append(n.ApprovedBy.Nodes,
-			struct {
-				Username string `json:"username"`
-			}{"ann"},
-			struct {
-				Username string `json:"username"`
-			}{"bob"})
+		n.ApprovedBy.Nodes = append(n.ApprovedBy.Nodes, glReviewUser{Username: "ann"}, glReviewUser{Username: "bob"})
 	})
 	item, ok := authoredOpenMRItem(testMRBase, node, "2026-11-02T10:05:00Z")
 	require.True(t, ok)
@@ -72,8 +66,11 @@ func TestAuthoredOpenMRItem_MapsAMergeRequestOntoAFooterRow(t *testing.T) {
 	assert.Equal(t, "passing", item.Checks.State)
 	require.NotNil(t, item.Reviews)
 	assert.Equal(t, 2, item.Reviews.Approved, "real approvals, counted")
-	assert.Equal(t, 1, item.Reviews.ChangesRequested)
+	assert.Equal(t, "changes_requested", item.Reviews.Decision,
+		"the list query names no reviewer states, so the change request is GitLab's verdict alone")
 	assert.True(t, item.Reviews.ReviewersKnown)
+	require.Len(t, item.Reviews.Reviewers, 2, "the approvers are the reviewer rows")
+	assert.Equal(t, prReviewer{Login: "ann", State: "approved", URL: testMRBase + "/ann"}, item.Reviews.Reviewers[0])
 	assert.Equal(t, "2026-11-02T10:00:00Z", item.UpdatedAt)
 
 	t.Run("no approvals is zero, whatever the project requires", func(t *testing.T) {
@@ -517,9 +514,7 @@ func TestAuthoredOpenMRItem_RequiredApprovalsStillMissing(t *testing.T) {
 	item, ok := authoredOpenMRItem(testMRBase, testMRNode(7, func(n *glOpenMRNode) {
 		n.DetailedMergeStatus = "NOT_APPROVED"
 		n.HeadPipeline = pipelineStatus("SUCCESS")
-		n.ApprovedBy.Nodes = append(n.ApprovedBy.Nodes, struct {
-			Username string `json:"username"`
-		}{"ann"})
+		n.ApprovedBy.Nodes = append(n.ApprovedBy.Nodes, glReviewUser{Username: "ann"})
 	}), "")
 	require.True(t, ok)
 	assert.Equal(t, 1, item.Reviews.Approved, "the real approval is still counted")

@@ -15,10 +15,12 @@ package agentd
 //
 //   - checks carry the head pipeline's status as ONE pipeline-level entry
 //     (passing, failing or pending), not per-job counts;
-//   - reviews count real approvals (approvedBy), and one change request when
-//     GitLab reports the merge request blocked on requested changes. GitLab's
-//     own "approved" flag is deliberately not used: it is true with zero
-//     approvals on a project that requires none;
+//   - reviews list real approvals (approvedBy), and the merge decision comes
+//     from detailedMergeStatus (prreviews_gitlab.go). GitLab's own "approved"
+//     flag is deliberately not used: it is true with zero approvals on a
+//     project that requires none. A second query reads the reviewers' states
+//     for the user's own merge requests, where the instance has them, and
+//     both go into the review cache every other PR surface reads;
 //   - conflicts flags a merge conflict, which always needs attention.
 //
 // It shows only when gitlab_hosts names an instance and the token resolves a
@@ -296,6 +298,7 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 			lastErr = fmt.Errorf("%s: %w", inst.Host, err)
 		} else {
 			answered++
+			shareAuthoredOpenMRReviews(ctx, base, token, answer.items, time.Now())
 			good[base] = answer
 			inst.Username = username
 			inst.URL = base + "/dashboard/merge_requests?state=opened&author_username=" + url.QueryEscape(username)
@@ -327,6 +330,38 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 		return wait, lastErr
 	}
 	return wait, nil
+}
+
+// shareAuthoredOpenMRReviews writes the user's merge requests' reviews into the
+// review cache, so the Branch column and presented badges for the same merge
+// request read the same answer as the footer. The list query gave the decision
+// and the approvals; the reviewer read adds change requests where the
+// instance has reviewer states. When that read fails for any other reason,
+// only the decision is written and the cached reviewer list stands.
+func shareAuthoredOpenMRReviews(ctx context.Context, base, token string, items []dashboardAuthoredOpenPR, now time.Time) {
+	readCtx, cancel := context.WithTimeout(ctx, authoredOpenMRTimeout)
+	reviewers, err := fetchAuthoredMRReviewers(readCtx, base, token)
+	cancel()
+	if err != nil && !errors.Is(err, errGLNoReviewStates) {
+		slog.Debug("open-mrs: GitLab reviewer read failed; keeping cached reviewers",
+			"host", gitlabBaseHost(base), "error", err, "module", "agentd")
+	}
+	for i := range items {
+		if items[i].reviewObs == nil {
+			continue
+		}
+		obs := *items[i].reviewObs
+		switch node, ok := reviewers[prStateKey(items[i].URL)]; {
+		case ok:
+			obs.Reviewers = glReviewers(base, node.ApprovedBy.Nodes, node.Reviewers.Nodes)
+		case !errors.Is(err, errGLNoReviewStates):
+			// Read and missing (opened between the two reads), or not read:
+			// the decision alone, so a list with change requests is not
+			// replaced by one without.
+			obs.Reviewers, obs.ReviewersFetched = nil, false
+		}
+		savePRReviewObservation(items[i].URL, obs, now)
+	}
 }
 
 // authoredOpenMRTokenDigest identifies a token without keeping it: lists are
@@ -370,11 +405,7 @@ type glOpenMRNode struct {
 	HeadPipeline        *struct {
 		Status string `json:"status"`
 	} `json:"headPipeline"`
-	ApprovedBy struct {
-		Nodes []struct {
-			Username string `json:"username"`
-		} `json:"nodes"`
-	} `json:"approvedBy"`
+	ApprovedBy glReviewUsers `json:"approvedBy"`
 	// Author is asked for by the project-wide query only.
 	Author struct {
 		Username string `json:"username"`
@@ -453,6 +484,18 @@ func authoredOpenMRItem(base string, node glOpenMRNode, fetchedAt string) (dashb
 	if iid, err := strconv.Atoi(node.IID); err != nil || iid != ref.number {
 		return dashboardAuthoredOpenPR{}, false
 	}
+	// Approvals only: this query asks for no reviewer states, and a
+	// NOT_APPROVED status (the project's approval rules still want more,
+	// however many people approved) reads as review required.
+	obs := glReviewObservation(base, glMRReviewNode{
+		DetailedMergeStatus: node.DetailedMergeStatus,
+		ApprovedBy:          node.ApprovedBy,
+	})
+	at, err := time.Parse(time.RFC3339, fetchedAt)
+	if err != nil {
+		at = time.Now()
+	}
+	reviews := mergePRReviewObservation(nil, obs, at)
 	item := dashboardAuthoredOpenPR{
 		Number:     ref.number,
 		URL:        ref.base + "/" + ref.project + "/-/merge_requests/" + strconv.Itoa(ref.number),
@@ -461,19 +504,8 @@ func authoredOpenMRItem(base string, node glOpenMRNode, fetchedAt string) (dashb
 		Draft:      node.Draft,
 		Conflicts:  node.Conflicts,
 		Checks:     glPipelineChecks(node.HeadPipeline, fetchedAt),
-		Reviews: &prReviewSummary{
-			Approved:       len(node.ApprovedBy.Nodes),
-			ReviewersKnown: true,
-			FetchedAt:      fetchedAt,
-		},
-	}
-	switch strings.ToUpper(node.DetailedMergeStatus) {
-	case "REQUESTED_CHANGES":
-		item.Reviews.ChangesRequested = 1
-	case "NOT_APPROVED":
-		// The project's own approval rules still want approvals, however
-		// many people have approved: never ready to merge.
-		item.Reviews.Decision = "review_required"
+		Reviews:    &reviews,
+		reviewObs:  &obs,
 	}
 	if t, err := time.Parse(time.RFC3339, node.UpdatedAt); err == nil {
 		item.UpdatedAt = t.UTC().Format(time.RFC3339)
@@ -724,8 +756,19 @@ func glRetryAfter(res glAPIResult, now time.Time) time.Duration {
 
 // authoredOpenMRsSnapshot is the snapshot's view: nil (the indicator hidden)
 // unless the poller's last result was read under the current configuration
-// and at least one instance has answered.
+// and at least one instance has answered. The cached reviews are stamped on
+// after the poller's state is released, so its cache read never holds up a
+// poll.
 func authoredOpenMRsSnapshot(cfg *config.Config, agents []dashboardAgent) *dashboardAuthoredOpenMRs {
+	view := authoredOpenMRsFromState(cfg, agents)
+	if view != nil {
+		stampOpenMRReviews(view, agents)
+	}
+	return view
+}
+
+// authoredOpenMRsFromState copies the poller's last result into a view.
+func authoredOpenMRsFromState(cfg *config.Config, agents []dashboardAgent) *dashboardAuthoredOpenMRs {
 	policy := cfg.ResolvedGitProxy()
 	key := authoredOpenMRConfigKey(authoredOpenMRBases(policy), policy.GitLabTokenFile)
 	if key == "" {
@@ -766,6 +809,43 @@ func authoredOpenMRsSnapshot(cfg *config.Config, agents []dashboardAgent) *dashb
 	view.dashboardAuthoredOpenPRs = associateAuthoredOpenPRs(view.dashboardAuthoredOpenPRs, agents)
 	view.Projects, view.EveryoneTotal, view.EveryoneTruncated = openMRProjectsSnapshot(authoredOpenMRState.everyone, agents)
 	return &view
+}
+
+// stampOpenMRReviews puts the cached reviews (prreviews.go) on the footer's
+// rows, so a row reads what the Branch column reads for the same merge
+// request. The user's own merge requests cost one batched cache read; a
+// project tab's row takes reviews only where they are already in hand, from
+// that read or from an agent's badges, so everyone's merge requests add no
+// read. A row with nothing cached keeps the approvals its list query gave.
+func stampOpenMRReviews(view *dashboardAuthoredOpenMRs, agents []dashboardAgent) {
+	urls := make([]string, 0, len(view.Items))
+	for _, item := range view.Items {
+		urls = append(urls, item.URL)
+	}
+	idx := prReviewsIndexFor(urls)
+	for _, agent := range agents {
+		add := func(url string, reviews *prReviewSummary) {
+			if key := prStateKey(url); reviews != nil && key != "" && idx[key] == nil {
+				idx[key] = reviews
+			}
+		}
+		add(agent.BranchPRURL, agent.BranchReviews)
+		add(agent.StartupPRURL, agent.StartupReviews)
+		for _, presented := range agent.PresentedPRs {
+			add(presented.URL, presented.Reviews)
+		}
+	}
+	stamp := func(items []dashboardAuthoredOpenPR) {
+		for i := range items {
+			if cached := idx[prStateKey(items[i].URL)]; cached != nil {
+				items[i].Reviews = cached
+			}
+		}
+	}
+	stamp(view.Items)
+	for i := range view.Projects {
+		stamp(view.Projects[i].Items)
+	}
 }
 
 // openMRProjectsSnapshot is the project tabs: a copy of every instance's

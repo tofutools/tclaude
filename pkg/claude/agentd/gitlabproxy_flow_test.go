@@ -155,6 +155,8 @@ func glWorld(t *testing.T, allowed []string) (*testharness.Flow, *gitProxyRecord
 	gl := newGLRecorder()
 	t.Cleanup(agentd.SetGitLabTransportForTestJSON(gl.do))
 	t.Cleanup(agentd.SetGitLabStreamForTestBytes(gl.stream))
+	agentd.ResetGitLabReviewStatesForTest()
+	t.Cleanup(agentd.ResetGitLabReviewStatesForTest)
 	return f, git, gl
 }
 

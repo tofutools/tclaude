@@ -34,6 +34,8 @@ func TestOpenMRs_SnapshotCarriesTheTokenUsersMergeRequests(t *testing.T) {
 		switch {
 		case !req.GraphQL && req.Path == "merge_requests":
 			return glCanned{Status: http.StatusOK, Body: glEveryoneDiscovery}, true
+		case req.GraphQL && strings.Contains(string(req.Body), "mergeRequestInteraction"):
+			return glCanned{Status: http.StatusOK, Body: glOpenMRReviewersAnswer}, true
 		case req.GraphQL && strings.Contains(string(req.Body), "authoredMergeRequests"):
 			return glCanned{Status: http.StatusOK, Body: glOpenMRsAnswer}, true
 		case req.GraphQL:
@@ -50,16 +52,19 @@ func TestOpenMRs_SnapshotCarriesTheTokenUsersMergeRequests(t *testing.T) {
 	require.NoError(t, err)
 
 	calls := gl.requests()
-	require.Len(t, calls, 3, "mine, discovery, and one query for the project")
+	require.Len(t, calls, 4, "mine, its reviewers, discovery, and one query for the project")
 	for _, call := range calls {
 		assert.Equal(t, glTestBase, call.Base, "the self-hosted instance, port included")
 	}
 	assert.True(t, calls[0].GraphQL)
 	assert.Equal(t, "POST", calls[0].Method)
-	assert.Equal(t, "merge_requests", calls[1].Path)
-	assert.Equal(t, "all", calls[1].Query.Get("scope"))
-	assert.Contains(t, string(calls[2].Body), `"p0":"contoso/sub/player"`)
-	assert.Equal(t, []string{glTestToken, glTestToken, glTestToken}, gl.tokens)
+	assert.NotContains(t, string(calls[0].Body), "mergeRequestInteraction",
+		"the list query never asks for a field an older instance lacks")
+	assert.Contains(t, string(calls[1].Body), "mergeRequestInteraction", "a separate query does")
+	assert.Equal(t, "merge_requests", calls[2].Path)
+	assert.Equal(t, "all", calls[2].Query.Get("scope"))
+	assert.Contains(t, string(calls[3].Body), `"p0":"contoso/sub/player"`)
+	assert.Equal(t, []string{glTestToken, glTestToken, glTestToken, glTestToken}, gl.tokens)
 
 	snap = snapshotJSON(t, agentd.BuildDashboardHandlerForTest(), "/api/snapshot")
 	mrs, ok := snap["authored_open_mrs"].(map[string]any)
@@ -74,7 +79,10 @@ func TestOpenMRs_SnapshotCarriesTheTokenUsersMergeRequests(t *testing.T) {
 	assert.EqualValues(t, 7, ready["number"])
 	assert.Equal(t, "contoso/sub/player", ready["repository"])
 	assert.Equal(t, "passing", ready["checks"].(map[string]any)["state"])
-	assert.EqualValues(t, 1, ready["reviews"].(map[string]any)["approved"])
+	readyReviews := ready["reviews"].(map[string]any)
+	assert.EqualValues(t, 1, readyReviews["approved"])
+	assert.EqualValues(t, 1, readyReviews["changes_requested"], "the reviewer query's change request")
+	require.Len(t, readyReviews["reviewers"], 2)
 	draft := items[1].(map[string]any)
 	assert.Equal(t, true, draft["draft"])
 	assert.Equal(t, true, draft["conflicts"])
@@ -98,6 +106,61 @@ func TestOpenMRs_SnapshotCarriesTheTokenUsersMergeRequests(t *testing.T) {
 	rows := project["items"].([]any)
 	require.Len(t, rows, 3)
 	assert.Equal(t, "martin", rows[2].(map[string]any)["author"])
+	mine := rows[0].(map[string]any)
+	require.EqualValues(t, 7, mine["number"])
+	assert.EqualValues(t, 1, mine["reviews"].(map[string]any)["changes_requested"],
+		"a project tab shows the reviews already read for the user's own merge request")
+}
+
+const glOpenMRReviewersAnswer = `{"data":{"currentUser":{"authoredMergeRequests":{"nodes":[
+{"webUrl":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/7",
+ "approvedBy":{"nodes":[{"username":"ann","bot":false}]},
+ "reviewers":{"nodes":[{"username":"martin","bot":false,"mergeRequestInteraction":{"reviewState":"REQUESTED_CHANGES"}}]}},
+{"webUrl":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/8",
+ "approvedBy":{"nodes":[]},"reviewers":{"nodes":[]}}
+]}}}}`
+
+// TestOpenMRs_AnInstanceWithoutReviewerStatesShowsApprovals: the reviewer
+// query fails on an older instance; the list still shows, with approvals, and
+// the query is not sent again.
+func TestOpenMRs_AnInstanceWithoutReviewerStatesShowsApprovals(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	_, _, gl := glWorld(t, []string{"gitlab.contoso.test/contoso"})
+	t.Cleanup(agentd.ResetAuthoredOpenMRsForTest)
+	reviewerReads := 0
+	gl.route = func(req agentd.GitLabRequestForTest) (glCanned, bool) {
+		switch {
+		case !req.GraphQL && req.Path == "merge_requests":
+			return glCanned{Status: http.StatusOK, Body: glEveryoneDiscovery}, true
+		case req.GraphQL && strings.Contains(string(req.Body), "mergeRequestInteraction"):
+			reviewerReads++
+			return glCanned{Status: http.StatusOK, Body: `{"errors":[{"message":"Field 'mergeRequestInteraction' doesn't exist on type 'MergeRequestReviewer'",
+				"extensions":{"code":"undefinedField"}}]}`}, true
+		case req.GraphQL && strings.Contains(string(req.Body), "authoredMergeRequests"):
+			return glCanned{Status: http.StatusOK, Body: glOpenMRsAnswer}, true
+		case req.GraphQL:
+			return glCanned{Status: http.StatusOK, Body: glEveryoneProjects}, true
+		}
+		return glCanned{}, false
+	}
+
+	_, err := agentd.PollAuthoredOpenMRsForTest()
+	require.NoError(t, err, "a missing reviewer field is not a failed poll")
+	_, err = agentd.PollAuthoredOpenMRsForTest()
+	require.NoError(t, err)
+	assert.Equal(t, 1, reviewerReads, "the instance's missing fields are remembered")
+
+	snap := snapshotJSON(t, agentd.BuildDashboardHandlerForTest(), "/api/snapshot")
+	mrs, ok := snap["authored_open_mrs"].(map[string]any)
+	require.True(t, ok, "snapshot=%v", snap["authored_open_mrs"])
+	items := mrs["items"].([]any)
+	require.Len(t, items, 2)
+	reviews := items[0].(map[string]any)["reviews"].(map[string]any)
+	assert.EqualValues(t, 1, reviews["approved"])
+	reviewers := reviews["reviewers"].([]any)
+	require.Len(t, reviewers, 1)
+	assert.Equal(t, "ann", reviewers[0].(map[string]any)["login"])
+	assert.Equal(t, glTestBase+"/ann", reviewers[0].(map[string]any)["url"])
 }
 
 const glEveryoneDiscovery = `[

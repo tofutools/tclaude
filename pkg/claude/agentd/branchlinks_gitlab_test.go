@@ -262,3 +262,36 @@ func TestHardenedGitInfoLooksPastForksForTheProjectsOwnMergeRequest(t *testing.T
 	assert.Equal(t, 8, info.PRNumber, "the project's own merge request, past newer ones from forks")
 	assert.Equal(t, "100", perPage, "one generous page, so forks cannot push it off")
 }
+
+// TestHardenedGitInfoCarriesTheMergeRequestsReviews: the Branch column's merge
+// request brings its reviewers, read by the separate reviewer query.
+func TestHardenedGitInfoCarriesTheMergeRequestsReviews(t *testing.T) {
+	gitPath, root := gitlabBranchLinkFixture(t, "gitlab.contoso.test/contoso")
+	repoDir := branchLinkGitRepo(t, gitPath, filepath.Join(root, "work"),
+		"git@gitlab.contoso.test:contoso/sub/player.git")
+	t.Cleanup(glReviewStatesMissing.Clear)
+	t.Cleanup(SetGitLabTransportForTest(func(_ context.Context, _, _ string, req glAPIRequest) (glAPIResult, error) {
+		if req.GraphQL {
+			vars := req.Body.(map[string]any)["variables"].(map[string]any)
+			assert.Equal(t, "contoso/sub/player", vars["project"])
+			assert.Equal(t, "8", vars["iid"])
+			return glAPIResult{Status: http.StatusOK, Header: http.Header{}, Body: []byte(`{"data":{"project":{"mergeRequest":{
+				"detailedMergeStatus":"MERGEABLE","approvedBy":{"nodes":[{"username":"ann","bot":false}]},
+				"reviewers":{"nodes":[{"username":"martin","bot":false,"mergeRequestInteraction":{"reviewState":"REQUESTED_CHANGES"}}]}}}}}`)}, nil
+		}
+		if req.Path == "projects/contoso%2Fsub%2Fplayer/merge_requests" {
+			return glAPIResult{Status: http.StatusOK, Header: http.Header{}, Body: []byte(`[{"iid":8,"state":"opened",
+				"web_url":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/8"}]`)}, nil
+		}
+		return glAPIResult{Status: http.StatusOK, Header: http.Header{}, Body: []byte(`{"iid":8,"state":"opened",
+			"web_url":"https://gitlab.contoso.test:8929/contoso/sub/player/-/merge_requests/8"}`)}, nil
+	}))
+	info, ok := hardenedGitInfo(branchLinkPolicy(t), repoDir, "feat")
+	require.True(t, ok)
+	require.NotNil(t, info.Reviews)
+	assert.True(t, info.Reviews.ReviewersFetched)
+	require.Len(t, info.Reviews.Reviewers, 2)
+	assert.Equal(t, "ann", info.Reviews.Reviewers[0].Login)
+	assert.Equal(t, "changes_requested", info.Reviews.Reviewers[1].State)
+	assert.Equal(t, "https://gitlab.contoso.test:8929/martin", info.Reviews.Reviewers[1].URL)
+}

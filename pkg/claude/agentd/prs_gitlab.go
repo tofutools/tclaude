@@ -183,13 +183,24 @@ func gitlabPresentedPRInfo(rawURL string) (presentedPRInfo, bool) {
 		return presentedPRInfo{}, false
 	}
 	checks := gitlabPipelineChecks(ctx, base, token, ref, mr.HeadPipeline, time.Now())
+	state := prStateFromGitLab(mr.State, mr.Draft)
 	return presentedPRInfo{
-		Title:  truncateAuthoredPRTitle(glStripDraftPrefix(mr.Title)),
-		Number: mr.IID,
-		URL:    mr.WebURL,
-		State:  prStateFromGitLab(mr.State, mr.Draft),
-		Checks: &checks,
+		Title:   truncateAuthoredPRTitle(glStripDraftPrefix(mr.Title)),
+		Number:  mr.IID,
+		URL:     mr.WebURL,
+		State:   state,
+		Checks:  &checks,
+		Reviews: gitlabOpenMRReviews(ctx, base, token, ref, state),
 	}, true
+}
+
+// gitlabOpenMRReviews reads the reviews of a merge request still open for
+// them. A merged or closed one shows no review pill, so it costs no read.
+func gitlabOpenMRReviews(ctx context.Context, base, token string, ref gitlabMRRef, state string) *prReviewObservation {
+	if state != "open" && state != "draft" {
+		return nil
+	}
+	return gitlabMRReviews(ctx, base, token, ref)
 }
 
 // gitlabPRChecks is the hover-driven resolver's GitLab half: the head
@@ -390,15 +401,15 @@ func prStateFromGitLab(state string, draft bool) string {
 
 // gitlabMRForBranch is ghPRForBranch for a GitLab project: the merge request
 // opened FROM branch, preferring an open one, with its head pipeline's jobs
-// as the checks. The branch has passed validateBranchName on its way here and
-// travels as a query value, never in a path.
-func gitlabMRForBranch(policy config.GitProxyConfig, repo branchLinkRepo, branch string) (int, string, string, string, *prChecksInfo) {
+// as the checks and its reviews. The branch has passed validateBranchName on
+// its way here and travels as a query value, never in a path.
+func gitlabMRForBranch(policy config.GitProxyConfig, repo branchLinkRepo, branch string) (int, string, string, string, *prChecksInfo, *prReviewObservation) {
 	if !safeBranchForGH("", branch) || repo.Base == "" || repo.OwnerRepo == "" {
-		return 0, "", "", "", nil
+		return 0, "", "", "", nil, nil
 	}
 	token, fault := gitlabToken(policy)
 	if fault != nil {
-		return 0, "", "", "", nil
+		return 0, "", "", "", nil, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), gitlabPresentedPRTimeout)
 	defer cancel()
@@ -450,20 +461,22 @@ func gitlabMRForBranch(policy config.GitProxyConfig, repo branchLinkRepo, branch
 		}
 	}
 	if pick < 0 {
-		return 0, "", "", "", nil
+		return 0, "", "", "", nil, nil
 	}
 	mr := mrs[pick]
 	// The listing carries no head pipeline; one more read fetches it, and the
 	// jobs follow. A merge request with no pipeline parses to zero checks.
 	ref := gitlabMRRef{base: repo.Base, host: strings.ToLower(strings.TrimSpace(hostOf(repo.Base))), project: repo.OwnerRepo, number: mr.IID}
+	state := prStateFromGitLab(mr.State, mr.Draft)
+	reviews := gitlabOpenMRReviews(ctx, repo.Base, token, ref, state)
 	full, ok := gitlabReadMR(ctx, repo.Base, token, ref)
 	if !ok {
 		// No checks rather than zero checks: the caller keeps the cached CI
 		// summary instead of blanking it on one failed read.
-		return mr.IID, mr.WebURL, prStateFromGitLab(mr.State, mr.Draft), truncateAuthoredPRTitle(mr.Title), nil
+		return mr.IID, mr.WebURL, state, truncateAuthoredPRTitle(mr.Title), nil, reviews
 	}
 	checks := gitlabPipelineChecks(ctx, repo.Base, token, ref, full.HeadPipeline, time.Now())
-	return mr.IID, mr.WebURL, prStateFromGitLab(mr.State, mr.Draft), truncateAuthoredPRTitle(mr.Title), &checks
+	return mr.IID, mr.WebURL, state, truncateAuthoredPRTitle(mr.Title), &checks, reviews
 }
 
 // hostOf returns the host (without port) of a base URL, or "" when it does

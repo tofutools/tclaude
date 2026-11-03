@@ -161,3 +161,58 @@ func TestPresentPR_GitLabMergeRequestRefreshesThroughTheAPI(t *testing.T) {
 		assert.Equal(t, glTestToken, tok)
 	}
 }
+
+// TestPresentPR_GitLabMergeRequestCarriesItsReviewers: an open presented merge
+// request's badge gets the review pill's data, approvals and change requests,
+// from the same refresh that reads its pipeline.
+func TestPresentPR_GitLabMergeRequestCarriesItsReviewers(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	gl := newGLRecorder()
+	t.Cleanup(agentd.SetGitLabTransportForTestJSON(gl.do))
+	t.Cleanup(agentd.ResetGitLabReviewStatesForTest)
+	gl.route = func(req agentd.GitLabRequestForTest) (glCanned, bool) {
+		if req.GraphQL {
+			return glCanned{Status: 200, Body: `{"data":{"project":{"mergeRequest":{"detailedMergeStatus":"REQUESTED_CHANGES",
+				"approvedBy":{"nodes":[{"username":"ann","bot":false}]},
+				"reviewers":{"nodes":[{"username":"martin","bot":false,"mergeRequestInteraction":{"reviewState":"REQUESTED_CHANGES"}}]}}}}}`}, true
+		}
+		if req.Path == "projects/"+glTestProjectID+"/merge_requests/157" {
+			return glCanned{Status: 200, Body: `{"iid":157,"title":"Manual CTAD","state":"opened","draft":false,
+				"web_url":"` + presentMRTestURL + `"}`}, true
+		}
+		return glCanned{}, false
+	}
+	const worker = "ppgv-aaaa-bbbb-cccc-dddd"
+	f.HaveGroup("alpha")
+	f.HaveConvWithTitle(worker, "worker")
+	repo := presentedPRTestRepo(t, f, "ppgv", presentMRTestRemote, "gitlab.contoso.test/contoso")
+	saveGitLabPresentedPRPolicy(t, "gitlab.contoso.test/contoso")
+	f.HaveAliveSession(worker, "lbl-ppgv", "tmux-ppgv", repo)
+	f.HaveMember("alpha", worker)
+	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
+
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
+		testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/prs",
+			map[string]any{"url": presentMRTestURL, "summary": "manual CTAD", "state": "open"}), worker))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	agentID, err := db.AgentIDForConv(worker)
+	require.NoError(t, err)
+	agePresentedPR(t, agentID, presentMRTestURL, 5*time.Minute)
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	_ = fetchDashSnapshot(t, mux)
+	agentd.WaitForBackgroundForTest()
+
+	m := findDashMember(fetchDashSnapshot(t, mux), "alpha", worker)
+	require.NotNil(t, m)
+	require.Len(t, m.PresentedPRs, 1)
+	reviews := m.PresentedPRs[0].Reviews
+	require.NotNil(t, reviews, "the presented merge request carries its reviews")
+	assert.Equal(t, "changes_requested", reviews.Decision)
+	assert.Equal(t, 1, reviews.Approved)
+	assert.Equal(t, 1, reviews.ChangesRequested)
+	require.Len(t, reviews.Reviewers, 2)
+	assert.Equal(t, "martin", reviews.Reviewers[0].Login, "a change request sorts first")
+	assert.Equal(t, glTestBase+"/martin", reviews.Reviewers[0].URL, "a reviewer links to their page on the instance")
+}

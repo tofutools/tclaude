@@ -647,7 +647,7 @@ func hardenedGitInfo(policy config.GitProxyConfig, repoDir, branch string) (repo
 			// The merge request is read through the GitLab API with the proxy's
 			// token; the project is the one the gate resolved, never the
 			// directory's. See prs_gitlab.go.
-			info.PRNumber, info.PRURL, info.PRState, info.PRTitle, info.Checks = gitlabMRForBranch(policy, repo, branch)
+			info.PRNumber, info.PRURL, info.PRState, info.PRTitle, info.Checks, info.Reviews = gitlabMRForBranch(policy, repo, branch)
 			return info, true
 		}
 		// An explicit --repo, and a working directory that is not the agent's.
