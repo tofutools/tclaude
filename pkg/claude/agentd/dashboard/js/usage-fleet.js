@@ -81,7 +81,7 @@ export function FleetTab({ api, busy, reloadKey = 0, onEdit, onToggle, onManageN
     <${FleetPresets} disabled=${busy} onPick=${(preset) => onEdit({ id: 0, target: 'all', include_self: true, enabled: true, rule: preset ? preset.rule : blankRule('global') }, fleet)}/>
     ${(fleet.limits || []).length ? html`<div class="usage-rule-cards">${fleet.limits.map((limit) => {
       const status = statusFor(limit);
-      return html`<div key=${limit.id} class=${`usage-rule-card${limit.enabled ? '' : ' disabled'}`} data-fleet-limit-id=${limit.id}>
+      return html`<div key=${limit.id} class=${`usage-rule-card ui-card ui-inset${limit.enabled ? '' : ' disabled'}`} data-fleet-limit-id=${limit.id}>
         <div class="usage-rule-card-head">
           <span class="usage-rule-name">${limit.rule.name}</span>
           <span class="usage-rule-scope">${limit.target_label}${limit.include_self ? ' + this node' : ''}</span>

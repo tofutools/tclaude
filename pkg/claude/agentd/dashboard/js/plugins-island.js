@@ -74,7 +74,7 @@ function PluginCard({ plugin, state, actions, busy }) {
   const lamp = pluginLamp(plugin);
   const toggleKey = pluginBusyKey('plugin-toggle', plugin.name);
   const checkKey = pluginBusyKey('plugin-check', plugin.name);
-  return html`<div class="plugin-card" data-key=${`plugin-${plugin.name}`}>
+  return html`<div class="plugin-card ui-card" data-key=${`plugin-${plugin.name}`}>
     <div class="plugin-head">
       <button type="button" class=${`status-dot ${lamp.cls}`} disabled=${busy.has(toggleKey)}
         title=${lamp.tip} aria-label=${lamp.tip}
@@ -106,7 +106,7 @@ function Catalog({ plugins, actions, busy }) {
     <h3 class="plugins-section-head">Available from catalog</h3>
     ${plugins.map((plugin) => {
       const key = pluginBusyKey('plugin-install', plugin.name);
-      return html`<div class="plugin-card plugin-catalog-card" data-key=${`catalog-${plugin.name}`} key=${plugin.name}>
+      return html`<div class="plugin-card plugin-catalog-card ui-card" data-key=${`catalog-${plugin.name}`} key=${plugin.name}>
         <div class="plugin-head">
           <span class="tag">catalog</span><span class="rowname">${plugin.name}</span>
           ${plugin.descr && html`<span class="muted">${plugin.descr}</span>`}
