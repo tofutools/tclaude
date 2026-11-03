@@ -172,7 +172,7 @@ function NodeDropdown({ state, fleet, pageNode, fused, onPick }) {
       onClick=${() => setOpen(!open)}>
       ${shown.local && html`<span class="node-chip-home" aria-hidden="true">⌂</span>`}<span class="node-chip-name">${shown.name}</span><span class="node-pick-caret" aria-hidden="true">▾</span><span class="node-chip-dot"></span>
     </button>
-    ${open && html`<div class=${`node-pop${closing ? ' closing' : ''}`} role="dialog" aria-label="Choose a node" style=${popStyle}>
+    ${open && html`<div class=${`node-pop ui-popover${closing ? ' closing' : ''}`} role="dialog" aria-label="Choose a node" style=${popStyle}>
       <label class="node-pop-filter"><input ref=${inputRef} type="text" value=${query} placeholder="type to filter" aria-label="Filter nodes"
         onInput=${(e) => { setQuery(e.currentTarget.value); setHl(0); }} onKeyDown=${onKey} /></label>
       <div role="listbox" aria-label="Nodes">
@@ -217,7 +217,7 @@ function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
       <span class="node-fuse-stack" aria-hidden="true">${nodes.slice(0, 4).map((n) => html`<b key=${n.id} class=${isTicked(fused || 'all', n.id) ? '' : 'off'} style=${`--c:${n.color}`}></b>`)}</span>
       <span class="node-chip-name">${fused ? `${ticked.length}/${nodes.length}` : 'nodes'}</span><span class="node-pick-caret" aria-hidden="true">▾</span>
     </button>
-    ${open && html`<div class=${`node-pop node-fuse-pop${closing ? ' closing' : ''}`} role="dialog" aria-label="Fuse nodes" style=${popStyle}>
+    ${open && html`<div class=${`node-pop ui-popover node-fuse-pop${closing ? ' closing' : ''}`} role="dialog" aria-label="Fuse nodes" style=${popStyle}>
       <div class="node-pop-head"><span>Fuse nodes</span>${!alone && fused !== 'all' && html`<button type="button" class="node-pop-link" data-fuse="all" onClick=${() => onFuse('all')}>all</button>`}</div>
       ${list !== nodes && html`<label class="node-pop-filter"><input type="text" value=${query} placeholder="type to filter" aria-label="Filter nodes" onInput=${(e) => setQuery(e.currentTarget.value)} /></label>`}
       ${list.map((node) => html`<div key=${node.id} class=${`node-pop-row${node.online || node.local ? '' : ' offline'}`} style=${`--nc:${node.color}`}>
@@ -553,7 +553,7 @@ function LinkBadge({ link, at, open, onToggle, onConfigure }) {
       <span class=${`fleet-link-row ${link.out.level || 'unknown'}`} title=${`${link.out.from} → ${link.out.to}: ${link.out.short}`}><span class="fleet-link-dir">→</span>${link.out.level === 'unrestricted' ? '⚠ ' : ''}${terse(link.out.short)}</span>
       <span class=${`fleet-link-row ${link.in.level}`} title=${`${link.in.from} → ${link.in.to}: ${link.in.short}`}><span class="fleet-link-dir">←</span>${link.in.level === 'unrestricted' ? '⚠ ' : ''}${terse(link.in.short)}</span>
     </button>
-    ${open && html`<div class="fleet-link-pop" role="dialog" aria-label=${`Trust between ${link.in.from} and ${link.in.to}`}>
+    ${open && html`<div class="fleet-link-pop ui-popover" role="dialog" aria-label=${`Trust between ${link.in.from} and ${link.in.to}`}>
       <div class="fleet-link-pop-head">${link.asymmetric ? '⇄ Asymmetric link: each side trusts the other differently' : `Trust between ${link.in.from} and ${link.in.to}`}</div>
       <p>${tag(link.in.level)} ${sentence(link.in, true)} You set this. <a class="fleet-link-act" href=${configHref('peers')} onClick=${onConfigure}>Change in Fleet config…</a></p>
       <p>${tag(link.out.level)} ${sentence(link.out, false)}${link.out.level ? ` ${link.out.to}'s operator set this.` : ''}${link.out.hidden.length > 0 ? html` <span class="muted">Hidden from you: ${link.out.hidden.join(', ')}.</span>` : ''}</p>
@@ -1023,7 +1023,7 @@ export function RemoteMarker({ state, remote = remoteNodeID(), snapshot = dashbo
       onClick=${() => setOpen(!open)} title="What this peer shares with you">
       peer view${hv.label ? html` <span class="remote-node-health">· ${hv.label}</span>` : ''}
     </button>
-    ${open && html`<div class="remote-node-pop" role="dialog" aria-label=${`Peer view of ${name}`}>
+    ${open && html`<div class="remote-node-pop ui-popover" role="dialog" aria-label=${`Peer view of ${name}`}>
       <div class="rnp-head">Peer view of <b>${name}</b></div>
       ${level && html`<div class="rnp-row"><span class="rnp-k">You trust it</span> ${level === 'unrestricted' ? '⚠ unrestricted' : 'restricted'} · <span class="rnp-k">It trusts you</span> ${pv?.level || 'not reported'}</div>`}
       <div class="rnp-row">${hv.state === 'live' ? 'Live: the peer answers through this node.' : `The peer is ${hv.label}. The data on screen is what it last shared.`}</div>

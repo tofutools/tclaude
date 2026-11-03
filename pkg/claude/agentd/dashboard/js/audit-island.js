@@ -49,7 +49,7 @@ function SpawnDetails({ entry }) {
       aria-label="Show spawn request, resolved parameters, and response"
       aria-controls=${open ? panelID : undefined} aria-expanded=${open ? 'true' : 'false'} title="Show spawn request, resolved parameters, and response"
       onClick=${() => open ? dismiss() : setOpen(true)}>?</button>
-    ${open && html`<div id=${panelID} ref=${popoverRef} class="audit-spawn-popover" role="dialog" aria-label="Spawn details" tabIndex="-1">
+    ${open && html`<div id=${panelID} ref=${popoverRef} class="audit-spawn-popover ui-popover" role="dialog" aria-label="Spawn details" tabIndex="-1">
       <div class="audit-spawn-popover-head"><strong>Spawn details</strong><button ref=${closeRef} type="button" class="audit-spawn-popover-close" aria-label="Close spawn details" title="Close" onClick=${() => dismiss()}>×</button></div>
       ${details.snapshot_truncated && html`<div class="audit-spawn-popover-note">The request snapshot exceeded the audit size limit; the resolved values and response are retained where possible.</div>`}
       <section><h4>Request input</h4><pre data-capture-mask>${prettyAuditValue(details.input, details.input_raw)}</pre></section>

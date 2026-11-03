@@ -39,7 +39,7 @@ export function QueuedSpawnsChip({ snapshot }) {
       ⏸ <span class="theme-copy-regular">queued</span><span class="theme-copy-wizard">dormant</span>
       <span class="queued-spawns-count ui-badge ui-badge-warn">${rows.length}</span>
     </button>
-    ${open && html`<div class="queued-spawns-popover" role="dialog" aria-label="Queued agents"
+    ${open && html`<div class="queued-spawns-popover ui-popover" role="dialog" aria-label="Queued agents"
       style=${anchor ? { top: `${anchor.top}px`, right: `${anchor.right}px` } : undefined}
       onClick=${(event) => { if (event.target.closest('.queued-spawn-row')) setOpen(false); }}>
       <div class="queued-spawns-popover-head">

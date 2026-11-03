@@ -51,7 +51,7 @@ func TestDashboardHTML_AuditTabWired(t *testing.T) {
 	must("statusView", "the outcome pill model")
 	must("SpawnDetails", "spawn rows expose a structured details disclosure")
 	must("audit-spawn-popover", "spawn request/resolution/response overlay")
-	must("body.wizard .audit-spawn-popover {", "the wizard spawn-details surface leaves the default dark chrome")
+	must(`class="audit-spawn-popover ui-popover"`, "the spawn-details overlay is a .ui-popover, so the wizard skin paints it too")
 	must("body.wizard .audit-spawn-popover pre {", "wizard spawn-details JSON bodies take the violet-tinted dark")
 	must("response_truncated", "large captured responses disclose truncation")
 	must("closeRef.current?.focus()", "opening the spawn disclosure transfers focus to its close control")

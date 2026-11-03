@@ -99,7 +99,7 @@ export function NodeSelect({
       ${total ? html`<span class="mailbox-unread ui-badge ui-badge-accent">${total > 99 ? '99+' : total}</span>` : null}
       <span class="node-pick-caret" aria-hidden="true">▾</span>
     </button>
-    ${open && html`<div class="node-select-menu" role="group" aria-label=${menuLabel || label}>
+    ${open && html`<div class="node-select-menu ui-popover" role="group" aria-label=${menuLabel || label}>
       ${nodes.length >= NODE_SELECT_FILTER_AT && html`<label class="node-pop-filter"><input type="text" value=${query} placeholder="type to filter"
         aria-label="Filter nodes" onInput=${(e) => setQuery(e.currentTarget.value)} /></label>`}
       ${(multiple || allowAll) && html`<div class=${`node-pop-row node-select-row node-select-all${all ? ' sel' : ''}`} data-node-option="">

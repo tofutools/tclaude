@@ -87,7 +87,7 @@ function FactorEditor({ state, actions }) {
   };
   return html`<details ref=${menu} class="cost-filter-menu cost-factor-menu" id="costs-factor-label" onToggle=${toggleCostFilter}>
     <summary onClick=${closeSiblingFilters}><strong>Multipliers</strong><span>${count ? `${count} override${count === 1 ? '' : 's'}` : `×${defaultFactor}`}</span></summary>
-    <div class="cost-filter-popover cost-factor-popover" role="group" aria-label="Cost display multipliers">
+    <div class="cost-filter-popover ui-popover cost-factor-popover" role="group" aria-label="Cost display multipliers">
       <div class="cost-filter-popover-head"><strong>Cost display multipliers</strong><span>1 = no adjustment</span></div>
       <p>Overrides replace the default. Leave a harness blank to use the default.</p>
       ${row('', 'Default')}${COST_FACTOR_HARNESSES.map(({ key, label }) => row(key, label))}
@@ -226,7 +226,7 @@ function ProviderFilter({ state, current }) {
     + (current.selectedProviders.has(entry.provider) ? entry.cost : 0), 0);
   return html`<details ref=${menu} id="filter-costs-providers" class="cost-filter-menu" onToggle=${toggleCostFilter}>
     <summary onClick=${closeSiblingFilters}><strong>Providers</strong><span>${current.selectedProviders.size} of ${current.providers.length} · ${fmtUSD(selectedCost)}</span></summary>
-    <div class="cost-filter-popover provider" role="group" aria-label="Cost providers">
+    <div class="cost-filter-popover ui-popover provider" role="group" aria-label="Cost providers">
       <div class="cost-filter-popover-head"><strong>Providers</strong><span>cost share · agents</span></div>
       ${current.providerStats.map((entry) => {
         const share = Math.round(entry.share * 100);
@@ -257,7 +257,7 @@ function ModelFilter({ state, current }) {
   const filtered = current.modelStats.filter((entry) => entry.model.toLowerCase().includes(query.trim().toLowerCase()));
   return html`<details ref=${menu} id="filter-costs-models" class="cost-filter-menu models" onToggle=${toggleCostFilter}>
     <summary onClick=${closeSiblingFilters}><strong>Models</strong><span>${selectedCount} of ${available.length} · ${Math.round(current.modelCoverage * 100)}% spend</span></summary>
-    <div class="cost-filter-popover model" role="group" aria-label="Cost models"
+    <div class="cost-filter-popover ui-popover model" role="group" aria-label="Cost models"
       title="Cost is grouped by the last model recorded for each agent-day slice.">
       <div class="cost-filter-popover-head"><strong>Models in selected providers</strong>
         <input type="search" aria-label="Filter cost models" placeholder="Filter models…" value=${query}
@@ -290,7 +290,7 @@ function BreakdownFilter({ state, current }) {
   const label = modes.length ? modes.join(' + ') : 'Total';
   return html`<details ref=${menu} id="filter-costs-breakdown" class="cost-filter-menu breakdown" onToggle=${toggleCostFilter}>
     <summary onClick=${closeSiblingFilters}><strong>Breakdown</strong><span>${label}</span></summary>
-    <div class="cost-filter-popover breakdown" role="group" aria-label="Cost chart breakdown">
+    <div class="cost-filter-popover ui-popover breakdown" role="group" aria-label="Cost chart breakdown">
       <div class="cost-filter-popover-head"><strong>Chart breakdown</strong><span>affects both graphs</span></div>
       <label class="cost-breakdown-option">
         <input id="costs-stack-provider" type="checkbox" checked=${current.stackByProvider}

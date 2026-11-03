@@ -66,7 +66,7 @@ export function GroupFederationMarker({ group, openNode = openNodeView }) {
       onClick=${(event) => { swallow(event); setOpen(!open); }}
       onKeyDown=${(event) => { if (event.key === ' ') event.stopPropagation(); }}
     >🌐<span class="gfm-dot" aria-hidden="true"></span></button>
-    ${open ? html`<div class="group-federation-pop" role="dialog" aria-label=${`Federation links of ${group.name}`}>
+    ${open ? html`<div class="group-federation-pop ui-popover" role="dialog" aria-label=${`Federation links of ${group.name}`}>
       <div class="gfm-head">Federation links · ${group.name}</div>
       ${group.federation_links.map((link, i) => {
         const v = linkView(link);

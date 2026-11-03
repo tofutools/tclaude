@@ -106,7 +106,7 @@ export function StewardRoster({ roster, agents, fetchImpl, notify, openHandover,
   return html`<span ref=${rootRef} class="steward-roster">
     ${trigger && html`<button type="button" class="companion-steward-roster" aria-label="Steward roster" aria-expanded=${open ? 'true' : 'false'}
       title="Steward roster: switch or make another agent the Steward" onClick=${() => setOpen((value) => !value)}>✦ ${roster.length || ''}</button>`}
-    ${open && html`<div class="steward-roster-menu" role="dialog" aria-label="Steward roster">
+    ${open && html`<div class="steward-roster-menu ui-popover" role="dialog" aria-label="Steward roster">
       ${roster.length === 0 && html`<p class="steward-roster-note">No Steward yet.</p>`}
       ${roster.map((entry) => html`<div key=${entry.agent_id} class=${`steward-roster-row ${entry.seat}`}>
         <span class="steward-roster-who"><b>${entry.name}</b><small>${SEAT_LABEL[entry.seat] || entry.seat}${entry.online ? '' : ', offline'}</small></span>

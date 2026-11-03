@@ -559,7 +559,7 @@ function OpenPRs({ state }) {
         <span class="open-prs-chevron" aria-hidden="true">⌃</span>
       </button>
       ${open ? html`
-        <div id="open-prs-popover" class="open-prs-popover" role="dialog" aria-label=${heading}>
+        <div id="open-prs-popover" class="open-prs-popover ui-popover" role="dialog" aria-label=${heading}>
           <div class="open-prs-head"><strong>${heading}</strong><span class=${`open-prs-count ui-badge${view.attention > 0 ? ' ui-badge-accent' : ''}`}>${panel.total}</span>${panelAge ? html`<span class="open-prs-age">updated ${panelAge}</span>` : null}</div>
           <${PeopleTabs} active=${personEntry ? personEntry.login : ''} mine=${view.total} people=${people}
             onSelect=${setPerson} onAdd=${addPerson} onRemove=${removePerson} />
