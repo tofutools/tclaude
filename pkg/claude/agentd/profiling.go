@@ -136,6 +136,9 @@ func startProfilingServer(socket bool, addr string, out io.Writer) (func(), erro
 		if err != nil {
 			return fail(fmt.Errorf("listen %s: %w", addr, err))
 		}
+		if tcp, ok := ln.Addr().(*net.TCPAddr); ok {
+			registerStageDaemonPort(tcp.Port)
+		}
 		listeners = append(listeners, ln)
 	}
 

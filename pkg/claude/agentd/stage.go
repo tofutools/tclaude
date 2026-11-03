@@ -82,8 +82,9 @@ type stagePage struct {
 	// off by default; nothing an agent sends can set it.
 	allowOtherHosts bool
 
-	mu       sync.RWMutex
-	upstream http.RoundTripper
+	mu         sync.RWMutex
+	upstream   http.RoundTripper
+	reloadSubs map[chan struct{}]struct{}
 }
 
 func (p *stagePage) transport() http.RoundTripper {
@@ -92,10 +93,15 @@ func (p *stagePage) transport() http.RoundTripper {
 	return p.upstream
 }
 
+// setUpstream swaps the page's source in place, releasing the old one.
 func (p *stagePage) setUpstream(up http.RoundTripper) {
 	p.mu.Lock()
+	old := p.upstream
 	p.upstream = up
 	p.mu.Unlock()
+	if old != nil && old != up {
+		closeStageUpstream(old)
+	}
 }
 
 func (p *stagePage) otherHostsAllowed() bool {
@@ -141,8 +147,12 @@ func (s *stageRegistry) open(owner, name string, up http.RoundTripper) *stagePag
 // reused: a page shown again gets a fresh one.
 func (s *stageRegistry) close(token string) {
 	s.mu.Lock()
+	p := s.byToken[token]
 	delete(s.byToken, token)
 	s.mu.Unlock()
+	if p != nil {
+		p.setUpstream(nil)
+	}
 }
 
 func (s *stageRegistry) lookup(token string) *stagePage {
@@ -289,7 +299,11 @@ func (stageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			eh.Set("X-Content-Type-Options", "nosniff")
 			eh.Set("Referrer-Policy", "no-referrer")
 			eh.Set("Content-Security-Policy", stageRefusalCSP)
-			http.Error(ew, "nothing is answering for this page", http.StatusBadGateway)
+			msg := stageSourceMessage(err)
+			if msg == "" {
+				msg = "nothing is answering for this page"
+			}
+			http.Error(ew, msg, http.StatusBadGateway)
 		},
 	}
 	clear(h)

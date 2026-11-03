@@ -57,3 +57,37 @@ func (t HandlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	res.Request = r
 	return res, nil
 }
+
+// SetStageRootPIDForTest swaps how an agent's process-tree root is resolved.
+func SetStageRootPIDForTest(fn func(agentID string) (int, error)) func() {
+	prev := stageRootPID
+	stageRootPID = fn
+	return func() { stageRootPID = prev }
+}
+
+// RegisterStageDaemonPortForTest marks a port as the daemon's own.
+func RegisterStageDaemonPortForTest(port int) func() {
+	registerStageDaemonPort(port)
+	return func() { stageDaemonPorts.Delete(port) }
+}
+
+// NewStageAgentPortForTest builds the agent-port source.
+func NewStageAgentPortForTest(agentID string, port int) (http.RoundTripper, error) {
+	return newStageAgentPort(agentID, port)
+}
+
+// UseStaticSource points the page at a static directory or file and wires
+// its watcher to the page's reload signal.
+func (p *StagePageForTest) UseStaticSource(worktree, target string) error {
+	s, err := newStageStatic(worktree, target, p.page.notifyReload)
+	if err != nil {
+		return err
+	}
+	p.page.setUpstream(s)
+	return nil
+}
+
+// SubscribeReload exposes the page's reload signal.
+func (p *StagePageForTest) SubscribeReload() (<-chan struct{}, func()) {
+	return p.page.subscribeReload()
+}
