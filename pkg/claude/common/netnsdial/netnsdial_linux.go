@@ -100,7 +100,7 @@ func Dial(ctx context.Context, nsenterPath string, pid, port int) (net.Conn, err
 	}
 	_ = child.Close()
 
-	conn, recvErr := receiveConn(ctx, parent)
+	conn, recvErr := receiveConn(ctx, parent, port)
 	waitErr := cmd.Wait()
 	if recvErr != nil {
 		if errors.Is(recvErr, ErrRefused) {
@@ -116,7 +116,7 @@ func Dial(ctx context.Context, nsenterPath string, pid, port int) (net.Conn, err
 
 // receiveConn reads the helper's answer: one byte plus the socket on
 // success, or a short error text.
-func receiveConn(ctx context.Context, parent *os.File) (net.Conn, error) {
+func receiveConn(ctx context.Context, parent *os.File, wantPort int) (net.Conn, error) {
 	if dl, ok := ctx.Deadline(); ok {
 		_ = parent.SetReadDeadline(dl)
 	}
@@ -126,10 +126,10 @@ func receiveConn(ctx context.Context, parent *os.File) (net.Conn, error) {
 	}
 	buf := make([]byte, 256)
 	oob := make([]byte, unix.CmsgSpace(4))
-	var n, oobn int
+	var n, oobn, flags int
 	var rerr error
 	if err := raw.Read(func(fd uintptr) bool {
-		n, oobn, _, _, rerr = unix.Recvmsg(int(fd), buf, oob, unix.MSG_CMSG_CLOEXEC)
+		n, oobn, flags, _, rerr = unix.Recvmsg(int(fd), buf, oob, unix.MSG_CMSG_CLOEXEC)
 		return rerr != unix.EAGAIN
 	}); err != nil {
 		return nil, fmt.Errorf("netns dial: read helper answer: %w", err)
@@ -148,11 +148,13 @@ func receiveConn(ctx context.Context, parent *os.File) (net.Conn, error) {
 		return nil, fmt.Errorf("netns dial: %s", msg)
 	}
 	cmsgs, err := unix.ParseSocketControlMessage(oob[:oobn])
-	if err != nil || len(cmsgs) != 1 {
-		return nil, errors.New("netns dial: malformed helper answer")
+	var fds []int
+	for i := range cmsgs {
+		if got, err := unix.ParseUnixRights(&cmsgs[i]); err == nil {
+			fds = append(fds, got...)
+		}
 	}
-	fds, err := unix.ParseUnixRights(&cmsgs[0])
-	if err != nil || len(fds) != 1 {
+	if err != nil || len(cmsgs) != 1 || len(fds) != 1 || flags&unix.MSG_CTRUNC != 0 || msg != "ok" {
 		for _, fd := range fds {
 			_ = unix.Close(fd)
 		}
@@ -171,6 +173,11 @@ func receiveConn(ctx context.Context, parent *os.File) (net.Conn, error) {
 	if _, ok := conn.(*net.TCPConn); !ok {
 		_ = conn.Close()
 		return nil, errors.New("netns dial: helper returned a non-TCP socket")
+	}
+	// The socket must be connected to exactly what was asked for.
+	if peer, ok := conn.RemoteAddr().(*net.TCPAddr); !ok || !peer.IP.Equal(net.IPv4(127, 0, 0, 1)) || peer.Port != wantPort {
+		_ = conn.Close()
+		return nil, errors.New("netns dial: helper returned a socket to the wrong peer")
 	}
 	return conn, nil
 }

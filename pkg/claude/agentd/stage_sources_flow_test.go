@@ -322,6 +322,13 @@ func TestStageStaticServesTheWorktreeWithoutFollowingLinks(t *testing.T) {
 		assert.NotContains(t, body, "SIBLING", p)
 	}
 	assert.Equal(t, http.StatusMethodNotAllowed, e.do(t, http.MethodPost, e.host(), "/", nil).StatusCode)
+
+	// A hardlink to a file outside the worktree is not served.
+	writeFile(t, filepath.Join(outside, "hard.html"), "OUTSIDE")
+	require.NoError(t, os.Link(filepath.Join(outside, "hard.html"), filepath.Join(wt, "site", "hard.html")))
+	code, body = get("/hard.html")
+	assert.Equal(t, http.StatusNotFound, code)
+	assert.NotContains(t, body, "OUTSIDE")
 }
 
 func TestStageStaticRefusesTargetsOutsideTheWorktree(t *testing.T) {
@@ -332,7 +339,12 @@ func TestStageStaticRefusesTargetsOutsideTheWorktree(t *testing.T) {
 	require.NoError(t, os.Symlink(outside, filepath.Join(wt, "linked")))
 	writeFile(t, filepath.Join(wt, "run.sh"), "x")
 
-	for _, target := range []string{"..", filepath.Join(outside, "x.html"), "linked", "linked/x.html", "run.sh", "missing"} {
+	writeFile(t, filepath.Join(wt, ".secret", "creds.json"), "{}")
+	writeFile(t, filepath.Join(wt, ".env.json"), "{}")
+	writeFile(t, filepath.Join(outside, "hard.html"), "OUTSIDE")
+	require.NoError(t, os.Link(filepath.Join(outside, "hard.html"), filepath.Join(wt, "hard.html")))
+	for _, target := range []string{"..", filepath.Join(outside, "x.html"), "linked", "linked/x.html", "run.sh", "missing",
+		".secret", ".secret/creds.json", ".env.json", "hard.html"} {
 		err := e.page.UseStaticSource(wt, target)
 		assert.Error(t, err, target)
 	}

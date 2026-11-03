@@ -263,6 +263,16 @@ func (stageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A frame's requests carry Origin: null (opaque origin) or none (no-cors
+	// loads and navigations). Any other origin is some other site holding
+	// the page token, and is refused before the dev server can treat it as a
+	// same-origin request (the upstream sees Origin rewritten to localhost).
+	if o := r.Header.Get("Origin"); o != "" && o != "null" &&
+		o != "http://"+net.JoinHostPort(stageHost(page.token), strconv.Itoa(port)) {
+		http.Error(w, "stage pages answer only their own frame", http.StatusForbidden)
+		return
+	}
+
 	// The page's own headers are built once and stamped on the final
 	// response in ModifyResponse, after the upstream's are filtered. They are
 	// not pre-set on w: ReverseProxy clears w's header map after relaying a

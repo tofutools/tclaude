@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"runtime"
@@ -106,7 +107,8 @@ var stageForeignNetns = stageForeignNetnsPID
 var stageNetnsDial = func(ctx context.Context, pid, port int) (net.Conn, error) {
 	nsenter, err := session.TrustedNsenterPath()
 	if err != nil {
-		return nil, stageSourceErrorf("cannot reach the agent's sandbox network: %v", err)
+		slog.Warn("stage: no trusted nsenter for a sandboxed page", "err", err)
+		return nil, stageSourceErrorf("cannot reach the agent's sandbox network: nsenter is unavailable")
 	}
 	return netnsdial.Dial(ctx, nsenter, pid, port)
 }
@@ -123,9 +125,12 @@ func newStageAgentPort(agentID string, port int) (*stageAgentPort, error) {
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return s.dial(ctx, agentID)
 		},
-		Proxy:                 nil,
-		DisableCompression:    true,
-		MaxIdleConnsPerHost:   8,
+		Proxy:               nil,
+		DisableCompression:  true,
+		MaxIdleConnsPerHost: 8,
+		// Each new connection costs an ownership proof (and, sandboxed, an
+		// nsenter); bound how many a page can drive at once.
+		MaxConnsPerHost:       32,
 		IdleConnTimeout:       30 * time.Second,
 		ResponseHeaderTimeout: 0, // dev servers may hold long-poll requests
 		TLSHandshakeTimeout:   0,

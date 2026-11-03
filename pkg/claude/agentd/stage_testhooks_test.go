@@ -8,14 +8,14 @@ import (
 )
 
 // BuildPopupHandlerForTest returns the production dashboard-listener handler:
-// the Host split between live-page origins (stage) and the dashboard mux, the
-// latter wrapped in the cookie/Origin-injecting dashTestHandler so a stage
-// test can prove the dashboard credential never crosses over.
+// the Host split between live-page origins (stage) and the dashboard mux. Only
+// the dashboard branch gets the cookie/Origin-injecting dashTestHandler; stage
+// requests arrive exactly as the test sent them, as a frame's would.
 func BuildPopupHandlerForTest() http.Handler {
 	initDashboardToken()
 	mux := http.NewServeMux()
 	registerDashboardRoutes(mux)
-	return &dashTestHandler{inner: buildPopupHandler(auditRequests(mux))}
+	return buildPopupHandler(&dashTestHandler{inner: auditRequests(mux)})
 }
 
 // DashboardSessionCookieForTest is the live dashboard session cookie value.

@@ -513,3 +513,17 @@ func TestStageProxiesWebsocketUpgrades(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "echo:hi", string(msg))
 }
+
+func TestStageRefusesForeignOrigins(t *testing.T) {
+	e := newStageEnv(t)
+	for _, o := range []string{"http://evil.example", "http://127.0.0.1:" + e.port, "http://f-" + strings.Repeat("b", 32) + ".ui.localhost:" + e.port} {
+		res := e.do(t, http.MethodGet, e.host(), "/", map[string]string{"Origin": o})
+		assert.Equal(t, http.StatusForbidden, res.StatusCode, o)
+		assertStageCSP(t, res)
+	}
+	assert.Zero(t, e.fake.count())
+	for _, o := range []string{"", "null", "http://" + e.host()} {
+		res := e.do(t, http.MethodGet, e.host(), "/", map[string]string{"Origin": o})
+		assert.Equal(t, http.StatusOK, res.StatusCode, o)
+	}
+}

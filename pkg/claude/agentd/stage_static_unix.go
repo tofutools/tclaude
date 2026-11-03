@@ -1,19 +1,27 @@
-//go:build unix
+//go:build linux || darwin
 
 package agentd
 
 // Static live-page source: a directory or one file inside the agent's
-// worktree, served read-only. Every request walks from the worktree root one
-// component at a time with O_NOFOLLOW, so no symlink is ever followed (not
-// even one that points back inside), and serves only regular files with an
-// allowlisted extension. Dot-named components (.git, .env) are refused. The
-// daemon watches the source and asks open views to reload on a save.
+// worktree, served read-only.
+//
+//   - The worktree root is opened once and held as a directory fd; every
+//     request walks from it one component at a time with O_NOFOLLOW, so no
+//     symlink is ever followed (not even one that points back inside) and a
+//     swapped parent directory cannot redirect it.
+//   - Only regular files with an allowlisted extension and a single link are
+//     served: a hardlink to a file outside the worktree is refused.
+//   - Dot-named components (.git, .env) are refused, in the declared target as
+//     well as in request paths.
+//   - Changes are found by polling the same no-follow walk, not by inotify: an
+//     inotify watch follows a symlink swapped in between check and add (so it
+//     could be steered at directories outside the worktree), and every watched
+//     page would spend one of the user's few inotify instances.
 
 import (
 	"errors"
-	"fmt"
+	"hash/fnv"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
 	"path"
@@ -23,7 +31,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"golang.org/x/sys/unix"
 )
 
@@ -45,34 +52,39 @@ var stageStaticTypes = map[string]string{
 
 const (
 	stageStaticMaxFile   = 64 << 20
-	// Each watched page costs one inotify instance (the per-user default
-	// limit is 128, shared with editors and dev servers) and a watch per
-	// directory, so both are capped. A page past either cap is still served;
-	// it just does not reload on save.
-	stageStaticMaxWatch    = 500
-	stageStaticMaxWatchers = 16
-	stageStaticDebounce  = 150 * time.Millisecond
 	stageStaticIndexName = "index.html"
+	// The change poll walks at most this many directory entries per pass; a
+	// larger tree is watched only up to the limit.
+	stageStaticPollEntries = 20000
+	stageStaticPollEvery   = 400 * time.Millisecond
 )
 
 // stageStatic serves a worktree directory or file.
 type stageStatic struct {
-	root   string   // canonical worktree root
+	rootFD int      // the worktree root, held open
 	target []string // path components from root to the source
 	isFile bool
 
-	watcher *fsnotify.Watcher
-	stop    chan struct{}
-	once    sync.Once
+	// mu guards rootFD against Close: a closed fd number can be reused by an
+	// unrelated file, and an openat against it would resolve somewhere else.
+	mu     sync.RWMutex
+	closed bool
+	stop   chan struct{}
+}
+
+// stageStaticBadComponent reports a path component the static source never
+// opens.
+func stageStaticBadComponent(part string) bool {
+	return part == "" || strings.HasPrefix(part, ".") || strings.ContainsAny(part, "/\\\x00")
 }
 
 // newStageStatic opens a static source. worktree is the agent's worktree and
 // target a path inside it (absolute or relative to the worktree). onChange is
-// called (debounced) when a watched file changes.
+// called when a served file changes.
 func newStageStatic(worktree, target string, onChange func()) (*stageStatic, error) {
 	root, err := filepath.EvalSymlinks(worktree)
 	if err != nil || !filepath.IsAbs(root) {
-		return nil, stageSourceErrorf("the worktree %s cannot be resolved", worktree)
+		return nil, stageSourceErrorf("the worktree cannot be resolved")
 	}
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(worktree, target)
@@ -82,51 +94,70 @@ func newStageStatic(worktree, target string, onChange func()) (*stageStatic, err
 		// Allow a target spelled through the canonical root too.
 		rel, err = filepath.Rel(root, filepath.Clean(target))
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return nil, stageSourceErrorf("%s is outside the worktree", target)
+			return nil, stageSourceErrorf("the target is outside the worktree")
 		}
 	}
 	var parts []string
 	if rel != "." {
 		parts = strings.Split(rel, string(filepath.Separator))
 	}
-	s := &stageStatic{root: root, target: parts, stop: make(chan struct{})}
-	f, err := s.open(parts)
+	for _, part := range parts {
+		if stageStaticBadComponent(part) {
+			return nil, stageSourceErrorf("the target names a hidden or invalid path")
+		}
+	}
+	rootFD, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, stageSourceErrorf("%s cannot be served: %v", target, err)
+		return nil, stageSourceErrorf("the worktree cannot be opened")
+	}
+	s := &stageStatic{rootFD: rootFD, target: parts, stop: make(chan struct{})}
+	fd, err := s.openAt(parts)
+	if err != nil {
+		_ = s.Close()
+		return nil, stageSourceErrorf("the target cannot be served")
 	}
 	var st unix.Stat_t
-	err = unix.Fstat(int(f.Fd()), &st)
-	_ = f.Close()
+	err = unix.Fstat(fd, &st)
+	_ = unix.Close(fd)
 	if err != nil {
-		return nil, stageSourceErrorf("%s cannot be served: %v", target, err)
+		_ = s.Close()
+		return nil, stageSourceErrorf("the target cannot be served")
 	}
 	switch st.Mode & unix.S_IFMT {
 	case unix.S_IFDIR:
 	case unix.S_IFREG:
 		s.isFile = true
-		if _, ok := stageStaticTypes[strings.ToLower(path.Ext(parts[len(parts)-1]))]; !ok {
-			return nil, stageSourceErrorf("%s is not a servable file type", target)
+		if _, ok := stageStaticTypes[strings.ToLower(path.Ext(parts[len(parts)-1]))]; !ok || st.Nlink != 1 {
+			_ = s.Close()
+			return nil, stageSourceErrorf("the target is not a servable file")
 		}
 	default:
-		return nil, stageSourceErrorf("%s is not a file or directory", target)
+		_ = s.Close()
+		return nil, stageSourceErrorf("the target is not a file or directory")
 	}
 	if onChange != nil {
-		s.watch(onChange)
+		go s.poll(onChange)
 	}
 	return s, nil
 }
 
-// open walks parts from the root without following any symlink and returns
-// the final component opened read-only.
-func (s *stageStatic) open(parts []string) (*os.File, error) {
-	fd, err := unix.Open(s.root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+// openAt walks parts from the root fd without following any symlink and
+// returns the final component's fd, opened read-only.
+func (s *stageStatic) openAt(parts []string) (int, error) {
+	s.mu.RLock()
+	if s.closed {
+		s.mu.RUnlock()
+		return -1, errors.New("closed")
+	}
+	fd, err := unix.Openat(s.rootFD, ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	s.mu.RUnlock()
 	if err != nil {
-		return nil, err
+		return -1, err
 	}
 	for i, part := range parts {
 		if part == "" || part == "." || part == ".." || strings.ContainsAny(part, "/\x00") {
 			_ = unix.Close(fd)
-			return nil, errors.New("invalid path")
+			return -1, errors.New("invalid path")
 		}
 		flags := unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC | unix.O_NONBLOCK
 		if i < len(parts)-1 {
@@ -135,11 +166,11 @@ func (s *stageStatic) open(parts []string) (*os.File, error) {
 		next, err := unix.Openat(fd, part, flags, 0)
 		_ = unix.Close(fd)
 		if err != nil {
-			return nil, err
+			return -1, err
 		}
 		fd = next
 	}
-	return os.NewFile(uintptr(fd), path.Join(parts...)), nil
+	return fd, nil
 }
 
 // resolve maps a request path to components under the root, or nil.
@@ -150,7 +181,7 @@ func (s *stageStatic) resolve(urlPath string) []string {
 		req = strings.Split(strings.TrimPrefix(clean, "/"), "/")
 	}
 	for _, part := range req {
-		if part == "" || strings.HasPrefix(part, ".") || strings.ContainsAny(part, "\\\x00") {
+		if stageStaticBadComponent(part) {
 			return nil
 		}
 	}
@@ -175,6 +206,10 @@ func stageStaticResponse(req *http.Request, code int, msg string) *http.Response
 	}
 }
 
+func stageStaticNotFound(req *http.Request) *http.Response {
+	return stageStaticResponse(req, http.StatusNotFound, "404 page not found\n")
+}
+
 func (s *stageStatic) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.Body != nil {
 		_ = req.Body.Close()
@@ -186,38 +221,39 @@ func (s *stageStatic) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	parts := s.resolve(req.URL.Path)
 	if parts == nil {
-		return stageStaticResponse(req, http.StatusNotFound, "404 page not found\n"), nil
+		return stageStaticNotFound(req), nil
 	}
-	f, err := s.open(parts)
+	fd, err := s.openAt(parts)
 	if err != nil {
-		return stageStaticResponse(req, http.StatusNotFound, "404 page not found\n"), nil
+		return stageStaticNotFound(req), nil
 	}
 	var st unix.Stat_t
-	if err := unix.Fstat(int(f.Fd()), &st); err != nil {
-		_ = f.Close()
-		return stageStaticResponse(req, http.StatusNotFound, "404 page not found\n"), nil
+	if err := unix.Fstat(fd, &st); err != nil {
+		_ = unix.Close(fd)
+		return stageStaticNotFound(req), nil
 	}
 	if st.Mode&unix.S_IFMT == unix.S_IFDIR {
-		_ = f.Close()
+		_ = unix.Close(fd)
 		if !strings.HasSuffix(req.URL.Path, "/") {
 			res := stageStaticResponse(req, http.StatusMovedPermanently, "")
 			res.Header.Set("Location", path.Base(req.URL.Path)+"/")
 			return res, nil
 		}
 		parts = append(parts, stageStaticIndexName)
-		if f, err = s.open(parts); err != nil {
-			return stageStaticResponse(req, http.StatusNotFound, "404 page not found\n"), nil
+		if fd, err = s.openAt(parts); err != nil {
+			return stageStaticNotFound(req), nil
 		}
-		if err := unix.Fstat(int(f.Fd()), &st); err != nil {
-			_ = f.Close()
-			return stageStaticResponse(req, http.StatusNotFound, "404 page not found\n"), nil
+		if err := unix.Fstat(fd, &st); err != nil {
+			_ = unix.Close(fd)
+			return stageStaticNotFound(req), nil
 		}
 	}
 	ctype, ok := stageStaticTypes[strings.ToLower(path.Ext(parts[len(parts)-1]))]
-	if st.Mode&unix.S_IFMT != unix.S_IFREG || !ok || st.Size > stageStaticMaxFile {
-		_ = f.Close()
-		return stageStaticResponse(req, http.StatusNotFound, "404 page not found\n"), nil
+	if st.Mode&unix.S_IFMT != unix.S_IFREG || !ok || st.Nlink != 1 || st.Size > stageStaticMaxFile {
+		_ = unix.Close(fd)
+		return stageStaticNotFound(req), nil
 	}
+	f := os.NewFile(uintptr(fd), path.Join(parts...))
 	res := &http.Response{
 		StatusCode: http.StatusOK, Status: "200 OK",
 		Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1,
@@ -241,122 +277,97 @@ func (s *stageStatic) RoundTrip(req *http.Request) (*http.Response, error) {
 	return res, nil
 }
 
-// watch watches the source (recursively for a directory, skipping dot and
-// node_modules directories and never following a symlink) and calls
-// onChange, debounced, on any change.
-var stageStaticWatchers struct {
-	sync.Mutex
-	n int
-}
-
-func (s *stageStatic) watch(onChange func()) {
-	stageStaticWatchers.Lock()
-	if stageStaticWatchers.n >= stageStaticMaxWatchers {
-		stageStaticWatchers.Unlock()
-		slog.Warn("stage: too many watched static pages; this one will not reload on save")
-		return
-	}
-	stageStaticWatchers.n++
-	stageStaticWatchers.Unlock()
-	w, err := fsnotify.NewWatcher()
-	if err != nil {
-		stageStaticWatchers.Lock()
-		stageStaticWatchers.n--
-		stageStaticWatchers.Unlock()
-		slog.Warn("stage: static watch unavailable", "err", err)
-		return
-	}
-	s.watcher = w
-	dir := filepath.Join(append([]string{s.root}, s.target...)...)
-	var fileName string
-	if s.isFile {
-		fileName = filepath.Base(dir)
-		dir = filepath.Dir(dir)
-		if err := w.Add(dir); err != nil {
-			slog.Warn("stage: static watch", "dir", dir, "err", err)
-		}
-	} else {
-		s.addTree(dir)
-	}
-	go func() {
-		var timer *time.Timer
-		fire := make(chan struct{}, 1)
-		for {
-			select {
-			case <-s.stop:
-				if timer != nil {
-					timer.Stop()
-				}
-				return
-			case ev, ok := <-w.Events:
-				if !ok {
-					return
-				}
-				if fileName != "" && filepath.Base(ev.Name) != fileName {
-					continue
-				}
-				if !s.isFile && ev.Has(fsnotify.Create) {
-					if fi, err := os.Lstat(ev.Name); err == nil && fi.IsDir() {
-						s.addTree(ev.Name)
-					}
-				}
-				if timer == nil {
-					timer = time.AfterFunc(stageStaticDebounce, func() {
-						select {
-						case fire <- struct{}{}:
-						default:
-						}
-					})
-				} else {
-					timer.Reset(stageStaticDebounce)
-				}
-			case <-fire:
+// poll calls onChange whenever the signature of the served files changes.
+func (s *stageStatic) poll(onChange func()) {
+	last := s.signature()
+	tick := time.NewTicker(stageStaticPollEvery)
+	defer tick.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-tick.C:
+			if sig := s.signature(); sig != last {
+				last = sig
 				onChange()
-			case _, ok := <-w.Errors:
-				if !ok {
-					return
-				}
 			}
 		}
-	}()
+	}
 }
 
-func (s *stageStatic) addTree(dir string) {
-	count := len(s.watcher.WatchList())
-	_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+// signature hashes the name, size, mtime and inode of every servable file
+// under the source, walked with the same no-follow rules as serving.
+func (s *stageStatic) signature() uint64 {
+	h := fnv.New64a()
+	if s.isFile {
+		dir, name := s.target[:len(s.target)-1], s.target[len(s.target)-1]
+		fd, err := s.openAt(dir)
 		if err != nil {
-			return nil
+			return 0
 		}
-		if !d.IsDir() {
-			return nil // WalkDir reports symlinks as non-dirs: never followed
+		stageStaticHashEntry(h, fd, name)
+		_ = unix.Close(fd)
+		return h.Sum64()
+	}
+	fd, err := s.openAt(s.target)
+	if err != nil {
+		return 0
+	}
+	budget := stageStaticPollEntries
+	stageStaticHashDir(h, fd, "", &budget)
+	return h.Sum64()
+}
+
+func stageStaticHashEntry(h io.Writer, dirFD int, name string) {
+	var st unix.Stat_t
+	if unix.Fstatat(dirFD, name, &st, unix.AT_SYMLINK_NOFOLLOW) != nil {
+		_, _ = io.WriteString(h, name+"\x00missing\x00")
+		return
+	}
+	_, _ = io.WriteString(h, name+"\x00"+strconv.FormatInt(st.Size, 10)+"\x00"+
+		strconv.FormatInt(st.Mtim.Nano(), 10)+"\x00"+strconv.FormatUint(st.Ino, 10)+"\x00")
+}
+
+// stageStaticHashDir hashes dirFD's tree and closes dirFD.
+func stageStaticHashDir(h io.Writer, dirFD int, prefix string, budget *int) {
+	dir := os.NewFile(uintptr(dirFD), prefix)
+	defer func() { _ = dir.Close() }()
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if *budget <= 0 {
+			return
 		}
-		if p != dir && (strings.HasPrefix(d.Name(), ".") || d.Name() == "node_modules") {
-			return filepath.SkipDir
+		*budget--
+		name := e.Name()
+		if stageStaticBadComponent(name) || name == "node_modules" {
+			continue
 		}
-		if count >= stageStaticMaxWatch {
-			return filepath.SkipAll
+		switch {
+		case e.Type().IsDir():
+			sub, err := unix.Openat(dirFD, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+			if err != nil {
+				continue
+			}
+			_, _ = io.WriteString(h, prefix+name+"/\x00")
+			stageStaticHashDir(h, sub, prefix+name+"/", budget)
+		case e.Type().IsRegular():
+			if _, ok := stageStaticTypes[strings.ToLower(path.Ext(name))]; ok {
+				stageStaticHashEntry(h, dirFD, name)
+			}
 		}
-		if err := s.watcher.Add(p); err == nil {
-			count++
-		}
-		return nil
-	})
+	}
 }
 
 func (s *stageStatic) Close() error {
-	s.once.Do(func() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.closed {
+		s.closed = true
 		close(s.stop)
-		if s.watcher != nil {
-			_ = s.watcher.Close()
-			stageStaticWatchers.Lock()
-			stageStaticWatchers.n--
-			stageStaticWatchers.Unlock()
-		}
-	})
+		_ = unix.Close(s.rootFD)
+	}
 	return nil
-}
-
-// Describe is for errors and logs.
-func (s *stageStatic) String() string {
-	return fmt.Sprintf("static %s", filepath.Join(append([]string{s.root}, s.target...)...))
 }

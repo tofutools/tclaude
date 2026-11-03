@@ -45,11 +45,12 @@ not the daemon's own.
   read-only. No symbolic link is ever followed, not even one that points back
   inside the worktree. Names that start with a dot (`.git`, `.env`) are refused,
   and only common web file types are served. A directory serves its
-  `index.html`. A single-file page serves only that file. The daemon watches the
-  source and asks open views to reload when a file is saved. At most 16 static
-  pages are watched at a time, each up to 500 directories, so watching cannot
-  exhaust the operator's inotify limits. A page beyond either limit is still
-  served, but it does not reload on save.
+  `index.html`. A single-file page serves only that file. The target itself may
+  not be a hidden path. The daemon watches the
+  source and asks open views to reload when a file is saved. It finds saves by
+  walking the source a few times a second with the same no-follow rules, not with
+  inotify, so a symbolic link cannot point the watcher outside the worktree.
+  Hard links are not served either.
 
 ## The stage: how a page is kept away from the dashboard
 
@@ -83,6 +84,9 @@ never runs with the dashboard's origin, cookies or API.
   (`connect-src`). Only the dashboard may frame the page (`frame-ancestors`), and
   `sandbox` keeps the document sandboxed even outside the frame. Other hosts are
   allowed only by a per-page operator toggle, off by default.
+- **Its own frame only.** A request whose `Origin` is neither `null` (the
+  sandboxed frame) nor the page's own origin is refused, so another site that
+  learned a token cannot drive the dev server.
 - **Opaque origin and CORS.** In the sandboxed frame, the page's origin is opaque,
   so its own fetches and module scripts are CORS requests with `Origin: null`. The
   stage answers those, preflights included, with `Access-Control-Allow-Origin: null`
