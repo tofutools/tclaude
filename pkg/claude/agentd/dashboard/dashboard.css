@@ -9064,7 +9064,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .ta-profile-summary { font-size: 11px; color: #7d8590; min-height: 0; }
 .ta-profile-summary:empty { display: none; }
 .ta-profile-summary-missing { color: #d29922; }
-.profile-card-disabled { border-color: rgba(248, 81, 73, .8); background: rgba(248, 81, 73, .09); box-shadow: inset 3px 0 0 #f85149; }
+.template-card.profile-card-disabled { border-color: rgba(248, 81, 73, .8); background: rgba(248, 81, 73, .09); box-shadow: inset 3px 0 0 #f85149; }
 /* Card-head status pills. They are LABELS, not prose: a pill that wraps mid-
    phrase ("OPERATOR" over "ONLY") doubles the head's height and knocks the
    name, summary and buttons of that one row out of line with every other row,

@@ -77,3 +77,18 @@ test('no stylesheet hand-paints a new card', () => {
   assert.deepEqual([...baseline].filter((c) => !found.has(c)).sort(), [],
     'these are migrated: remove them from jstest/ui-card-baseline.json');
 });
+
+test('migrated card classes keep .ui-card in their markup', () => {
+  const classes = [...MIGRATED, 'template-card', 'plugin-card', 'usage-rule-card'];
+  const JS = new URL('js/', DASHBOARD);
+  const bare = [];
+  for (const file of readdirSync(JS).filter((f) => f.endsWith('.js'))) {
+    const source = readFileSync(new URL(file, JS), 'utf8');
+    for (const m of source.matchAll(/class=(?:"([^"]*)"|\$\{`([^`]*)`\})/g)) {
+      const value = m[1] ?? m[2];
+      const tokens = value.split(/[\s${}'?:]+/);
+      for (const cls of classes) if (tokens.includes(cls) && !tokens.includes('ui-card')) bare.push(`${file}: ${value}`);
+    }
+  }
+  assert.deepEqual(bare, [], 'card markup carries ui-card so every skin paints it');
+});
