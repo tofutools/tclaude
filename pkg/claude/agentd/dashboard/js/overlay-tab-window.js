@@ -21,7 +21,7 @@ import { askOverlayClose, closeWindowTabs, useDropPoint } from './overlay-instan
 import { tabJoin } from './overlay-tab-drag.js';
 import { activeTabOf } from './overlay-tab-model.js';
 import { tabMoves } from './overlay-tab-moves.js';
-import { OverlayTabStrip } from './overlay-tab-strip.js';
+import { OverlayTabMore, OverlayTabStrip } from './overlay-tab-strip.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { OverlayWindow, useOverlayWindow } from './overlay-window.js';
 import { TerminalWindow } from './terminal-window.js';
@@ -100,6 +100,8 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = n
   };
   const viewOf = tabViewOf(kinds);
   const strip = html`<${OverlayTabStrip} window=${window} overlay=${overlay} win=${win} viewOf=${viewOf} tabClose=${tabClose} />${add?.(window)}`;
+  // The ⋯ a body puts beside its − ⇄ ×: the active tab's menu, moves and all.
+  const more = html`<${OverlayTabMore} tab=${tab} label=${viewOf(tab).label} />`;
   const Body = kinds[tab.kind]?.Body || TAB_BODIES[tab.kind];
   const minimize = home?.shrinks?.(window, overlay);
   const fallback = (retry) => {
@@ -112,6 +114,6 @@ export function OverlayTabWindow({ window, snapshot, prefs, win, kinds, home = n
     <//>`;
   };
   return html`<${TabBoundary} key=${tab.id} fallback=${fallback}>
-    <${Body} instance=${tab} overlay=${overlay} focusRef=${focusRef} strip=${strip} close=${close} minimize=${minimize} tabCount=${window.tabs.length} ...${kinds[tab.kind]} />
+    <${Body} instance=${tab} overlay=${overlay} focusRef=${focusRef} strip=${strip} more=${more} close=${close} minimize=${minimize} tabCount=${window.tabs.length} ...${kinds[tab.kind]} />
   <//>`;
 }
