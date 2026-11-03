@@ -279,10 +279,12 @@ func TestSpawnQueue_CapacityRaceAtTheGateRequeues(t *testing.T) {
 
 	// Room appears for the head check, and is taken back just before the gate.
 	setCapacity(t, config.CapacityConfig{MaxLiveAgents: 2, WhenFull: config.CapacityWhenFullQueue})
-	t.Cleanup(agentd.SetBeforeExecuteSpawnForTest(func() {
+	restore := agentd.SetBeforeExecuteSpawnForTest(func() {
 		setCapacity(t, config.CapacityConfig{MaxLiveAgents: 1, WhenFull: config.CapacityWhenFullQueue})
-	}))
+	})
+	t.Cleanup(restore)
 	agentd.RunSpawnQueueForTest()
+	restore()
 
 	entry, err := db.GetSpawnQueueEntry(queued.QueueID)
 	require.NoError(t, err)
@@ -290,6 +292,17 @@ func TestSpawnQueue_CapacityRaceAtTheGateRequeues(t *testing.T) {
 	list, _ := spawnQueueList(t, f, "")
 	require.Len(t, list.Entries, 1)
 	assert.Equal(t, "second", list.Entries[0].Name)
+
+	// Room is back for good: the requeued entry launches.
+	setCapacity(t, config.CapacityConfig{MaxLiveAgents: 2, WhenFull: config.CapacityWhenFullQueue})
+	agentd.RunSpawnQueueForTest()
+	entry, err = db.GetSpawnQueueEntry(queued.QueueID)
+	require.NoError(t, err)
+	assert.Equal(t, db.SpawnQueueLaunched, entry.State, "reason=%q", entry.Reason)
+	launched, err := db.GetAgent(entry.ReservedAgent)
+	require.NoError(t, err)
+	require.NotNil(t, launched, "the second attempt used its own reserved agent id")
+	f.AssertGroupMember("team", launched.CurrentConvID, "second", 5*time.Second)
 }
 
 // Scenario: the queued launch starts but the child is not seen to come up
