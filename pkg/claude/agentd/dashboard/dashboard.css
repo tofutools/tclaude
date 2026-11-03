@@ -15945,9 +15945,6 @@ body.wizard .process-list .process-actions .process-delete-btn:focus-visible .tr
   max-height: 88vh;
   display: flex;
   flex-direction: column;
-  color: #c9d1d9;
-  background: #161b22;
-  border: 1px solid #30363d;
 }
 .process-param-list { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 80px; }
 .process-param-empty { padding: 20px; border: 1px dashed #30363d; border-radius: 8px; }
@@ -16118,7 +16115,6 @@ body.wizard .process-scribe-context-preview { color: #f3e6c0; background: #18122
 body.wizard .process-scribe-prompt:focus { border-color: #d4af37; }
 body.wizard .process-scribe-context-end { color: #a99bc0; background: #211832; border-color: #6d5695; }
 body.wizard .process-scribe-context-end.is-truncated { color: #f3d58b; }
-body.wizard .process-param-dialog { background: #211832; border-color: #6d5695; color: #f3e6c0; }
 body.wizard .process-unnamed { color: #a99bc0; }
 body.wizard .process-editor-title,
 body.wizard .process-name-edit { color: #f3e6c0; }
@@ -16661,7 +16657,6 @@ body.wizard .usage-history-note {
 .git-repos-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid #2d3947; padding-top: 12px; }
 .git-repos-footer > span { font-size: 12px; color: #91a0b3; }
 .git-repos-footer > div { display: flex; gap: 8px; }
-body.wizard .git-repositories-modal { background: #1c162c; border-color: #51406b; color: #e7d9f5; }
 body.wizard .git-repos-heading h3 { color: #f0e3c9; font-family: Georgia, serif; }
 body.wizard .git-repos-options, body.wizard .git-repos-toolbar input { background: #140f28; border-color: #51406b; color: #e7d9f5; }
 body.wizard .git-repos-list { border-color: #483758; }
@@ -18298,7 +18293,7 @@ body.wizard #saved-prompts-manage-modal .modal-buttons { border-top-color: rgba(
 .pwf-import-entry { display: inline-flex; align-items: center; gap: 8px; }
 .pwf-inline-error { font-size: 12px; }
 .pwf-land { margin-left: 6px; }
-.pwf-import-dialog { width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow: auto; color: #c9d1d9; background: #161b22; border: 1px solid #30363d; }
+.pwf-import-dialog { width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow: auto; }
 .pwf-import-dialog h4 { margin: 0 0 4px; }
 .pwf-import-dialog ul { margin: 0; padding-left: 18px; }
 .pwf-import-dialog li { margin: 2px 0; }
@@ -18321,7 +18316,6 @@ body.wizard #saved-prompts-manage-modal .modal-buttons { border-top-color: rgba(
 .pwf-role-map select, .pwf-group select { width: auto; max-width: 260px; }
 .pwf-role-map select:where(:not(.ui-select)), .pwf-group select:where(:not(.ui-select)) { padding: 2px 6px; font-size: 12.5px; }
 .pwf-role-unknown { font-size: 11.5px; color: #f2cc60; }
-body.wizard .pwf-import-dialog { background: #211832; border-color: #6d5695; color: #f3e6c0; }
 
 /* Dock › Processes: the process template library (tcl-rzik1e). It reuses the
    dock card skin; the card body opens a preview popover beside the dock. */

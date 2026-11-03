@@ -516,8 +516,9 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		".process-issues-panel",
 		".process-issue:hover, .process-issue:focus-visible",
 		"body.wizard .process-issues-panel",
-		".process-param-dialog",
-		"body.wizard .process-param-dialog",
+		// The parameters dialog is a Dialog: .ui-dialog paints its box in
+		// every skin (jstest/ui-dialog.test.mjs), so it keeps only its size.
+		".process-param-dialog {",
 		`.process-editor-modal .process-editor-field input:hover:not(:disabled):not(:focus):not([aria-invalid="true"])`,
 		`.process-editor-modal .process-editor-field input[aria-invalid="true"]`,
 		".process-editor-modal .process-editor-field input:disabled",
