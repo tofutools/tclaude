@@ -8,6 +8,7 @@
 import { buildProcessNodeTypeCommands } from './process-command-registry.js';
 import { rankCommands } from './palette-score.js';
 import { isWizardActive } from './slop.js';
+import { watchPopover } from './hover-popover.js';
 
 let nextChooserID = 1;
 
@@ -70,6 +71,7 @@ export function openProcessNodeTypeChooser({
   let filtered = commands.slice();
   let selected = 0;
   let closed = false;
+  let unwatch = null;
 
   const place = () => {
     const x = Number.isFinite(anchor?.x) ? anchor.x : 0;
@@ -89,7 +91,7 @@ export function openProcessNodeTypeChooser({
   const close = (reason, { focus = true } = {}) => {
     if (closed) return false;
     closed = true;
-    documentRef.removeEventListener('pointerdown', onOutsidePointerDown, true);
+    unwatch?.();
     chooser.remove();
     onClose?.(reason);
     if (focus) restoreFocus?.();
@@ -145,10 +147,6 @@ export function openProcessNodeTypeChooser({
     render();
   };
 
-  function onOutsidePointerDown(event) {
-    if (!chooser.contains(event.target)) close('outside');
-  }
-
   input.addEventListener('input', () => {
     filtered = rankCommands(commands, input.value);
     selected = 0;
@@ -167,12 +165,6 @@ export function openProcessNodeTypeChooser({
       choose(selected);
     }
   });
-  chooser.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape') return;
-    event.preventDefault();
-    event.stopPropagation();
-    close('escape');
-  });
   cancel.addEventListener('click', () => close('cancel'));
 
   host.append(chooser);
@@ -183,7 +175,8 @@ export function openProcessNodeTypeChooser({
     place();
     input.focus({ preventScroll: true });
   });
-  documentRef.addEventListener('pointerdown', onOutsidePointerDown, true);
+  // A press outside or Escape closes it; the pointer wandering off does not.
+  unwatch = watchPopover({ roots: () => chooser, close: (why) => close(why), hold: () => true, doc: documentRef });
 
   const dispose = ({ focus = false } = {}) => close('dispose', { focus });
   dispose.close = () => close('cancel');

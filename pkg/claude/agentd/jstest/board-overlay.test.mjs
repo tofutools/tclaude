@@ -952,6 +952,12 @@ scenario('the dock\'s ☰ menu opens beside the dock, and minimize all and resto
   await harness.act(async () => { overlayHost.querySelector('.overlay-dock-menu-button').click(); await wait(); });
   await harness.act(async () => { harness.window.document.dispatchEvent(Object.assign(new harness.window.Event('keydown', { bubbles: true }), { key: 'Escape' })); await wait(); });
   assert.equal(menu(), null, 'Escape closes it');
+  const press = (el) => el.dispatchEvent(new harness.window.Event('pointerdown', { bubbles: true }));
+  await harness.act(async () => { overlayHost.querySelector('.overlay-dock-menu-button').click(); await wait(); });
+  await harness.act(async () => { press(menu()); await wait(); });
+  assert.ok(menu(), 'a press on the menu keeps it');
+  await harness.act(async () => { press(harness.window.document.body); await wait(); });
+  assert.equal(menu(), null, 'a press outside closes it');
 });
 
 scenario('a minimized window of several tabs is one pill, with a count and no way to lose them all', async ({ harness, overlayHost, overlayState, windows }) => {
