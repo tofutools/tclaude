@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
-import { downloadBlob } from './paf-model.js';
+import { downloadBlob } from './download.js';
 import { shellConfirm } from './shell-state.js';
 import { managementController } from './management-controller.js';
 

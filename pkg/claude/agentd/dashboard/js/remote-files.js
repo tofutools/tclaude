@@ -1,8 +1,10 @@
 // remote-files.js — files on a peer's agent terminal: the refusal wording,
 // one-level directory listing, a small text preview and the download, all
 // through this node's daemon and the live terminal view's pinned viewer.
-// DOM-free apart from the download anchor; the browser UI is
+// DOM-free (the download goes through download.js); the browser UI is
 // remote-files-panel.js.
+
+import { downloadURL } from './download.js';
 
 // REMOTE_FILE_ERRORS explain the stable refusals of a remote terminal file
 // download or listing (the peer's or this node's), in the operator's terms.
@@ -89,7 +91,6 @@ export async function previewRemoteFile({ terminal, viewer, path, fetchImpl = gl
 // is read once more with an aborted GET for its stable code; other statuses
 // name their refusal and are never retried as a GET, which would transfer the
 // file in full if it had become available.
-// dashboard-imperative-boundary: browser-io
 export async function downloadRemoteFile({ terminal, viewer, path, fetchImpl = globalThis.fetch, documentRef = globalThis.document }) {
   if (!viewer) throw new Error(REMOTE_FILE_ERRORS.not_shared);
   const href = remoteFileHref({ terminal, viewer, path });
@@ -103,11 +104,5 @@ export async function downloadRemoteFile({ terminal, viewer, path, fetchImpl = g
     ctl.abort();
     throw new Error(remoteFileError(code, res?.status || head?.status));
   }
-  const anchor = documentRef.createElement('a');
-  anchor.href = href;
-  anchor.download = '';
-  anchor.style.display = 'none';
-  documentRef.body.append(anchor);
-  anchor.click();
-  anchor.remove();
+  downloadURL(href, { documentRef });
 }

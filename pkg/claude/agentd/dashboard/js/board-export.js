@@ -56,14 +56,3 @@ export async function blobToBase64(blob) {
   return globalThis.btoa(binary);
 }
 
-// downloadText offers a text file to the operator (the .excalidraw export).
-export function downloadText(name, text, { documentRef = globalThis.document, windowRef = globalThis.window } = {}) {
-  const url = windowRef.URL.createObjectURL(new windowRef.Blob([text], { type: 'application/json' }));
-  const a = documentRef.createElement('a');
-  a.href = url;
-  a.download = name;
-  documentRef.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => windowRef.URL.revokeObjectURL(url), 1000);
-}

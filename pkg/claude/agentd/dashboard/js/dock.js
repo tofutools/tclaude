@@ -62,7 +62,7 @@ import { openUsageRulesManager } from './modal-usage-rules.js';
 import { usageRulesApi } from './usage-rules-actions.js';
 import { fmtAmount, periodLabel, ruleSummary } from './usage-rules-model.js';
 import { loadSandboxProfiles, sandboxProfileForWire, sandboxProfileSummary } from './sandbox-profiles-data.js';
-import { downloadBlob } from './paf-model.js';
+import { downloadJSON } from './download.js';
 import { announceNodeChanged, selfNodeID } from './node-api.js';
 import { nodeHref } from './fleet-model.js';
 import { withFused } from './fleet-scope.js';
@@ -115,10 +115,6 @@ export function openRename(section, name, { label = name, node = null } = {}) {
       await refresh();
     },
   });
-}
-
-function downloadJSON(fileName, value) {
-  downloadBlob(new Blob([`${JSON.stringify(value, null, 2)}\n`], { type: 'application/json' }), fileName);
 }
 
 // exportItems downloads a config bundle of one item (name) or the section.

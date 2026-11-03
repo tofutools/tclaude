@@ -8,7 +8,7 @@ import {
   savedPromptsExportBlob, parseSavedPromptsImport,
 } from './saved-prompts-actions.js';
 import { shellConfirmDiscard, shellToast } from './shell-state.js';
-import { downloadBlob } from './paf-model.js';
+import { downloadBlob } from './download.js';
 import { announceNodeChanged, nodeFetch } from './node-api.js';
 
 const html = htm.bind(h);

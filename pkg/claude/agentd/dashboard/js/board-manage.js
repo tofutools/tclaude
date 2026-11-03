@@ -12,6 +12,7 @@ import { Button } from './ui-components.js';
 import { boardIdFromTitle, cleanText, drawnElements, fromExcalidraw, toExcalidraw } from './board-model.js';
 import { companionAgents } from './companion-model.js';
 import { useDialogFocus } from './dialog-focus.js';
+import { downloadText } from './download.js';
 
 const html = htm.bind(h);
 
@@ -42,7 +43,6 @@ function deleteRequest(id, fetchImpl) {
 // exportBoard downloads a board as an .excalidraw file.
 export async function exportBoard(id, fetchImpl) {
   const board = await readBoard(id, fetchImpl);
-  const { downloadText } = await import('./board-export.js');
   downloadText(`${id}.excalidraw`, toExcalidraw(drawnElements(new Map((board.elements || []).map((el) => [el.id, el])))));
 }
 
