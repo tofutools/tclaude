@@ -13,12 +13,13 @@ package agentd
 //     served: a hardlink to a file outside the worktree is refused.
 //   - Dot-named components (.git, .env) are refused, in the declared target as
 //     well as in request paths.
-//   - A path the agent's own sandbox hides (a deny rule, a tmpfs overlay, a
-//     remapped mount, a path a constructed root leaves out) is not served:
-//     the guard (pages_fsview.go) checks the path a walk ends at, so a page
-//     cannot serve what its agent cannot read. The last mount entry covering
-//     that path decides, so a hidden ancestor hides it and a directory a
-//     constructed root only passes through does not.
+//   - The guard (pages_fsview.go) says where a walk starts: for a Linux
+//     tclaude-layer agent, the worktree as the agent's own mount namespace
+//     shows it, so the page serves exactly what the agent can read; when
+//     that view cannot be opened nothing is served. Otherwise the walk starts
+//     from the daemon's view and the guard leaves out by path what the
+//     agent's recorded profile hides (the last mount entry covering the path
+//     a walk ends at decides).
 //   - Changes are found by polling the same no-follow walk, not by inotify: an
 //     inotify watch follows a symlink swapped in between check and add (so it
 //     could be steered at directories outside the worktree), and every watched
@@ -66,10 +67,17 @@ const (
 	stageStaticPollDepth   = 32
 )
 
-// stageStaticGuard says which canonical host paths the page's agent cannot
-// read; the stage serves none of them.
+// stageStaticGuard is the page agent's view of its files (pageFSViewer).
 type stageStaticGuard interface {
+	// hidden says the stage leaves a canonical host path out.
 	hidden(abs string) bool
+	// base is a directory fd for the worktree as the agent sees it (the
+	// caller closes it), or -1 to walk the daemon's view; gen is the view's
+	// generation. An error means the agent's view is unreachable.
+	base() (fd int, gen uint64, err error)
+	// served records a page document served under gen.
+	served(gen uint64)
+	close()
 }
 
 // stageStatic serves a worktree directory or file.
@@ -126,10 +134,19 @@ func newStageStatic(worktree, target string, onChange func(), guard stageStaticG
 		return nil, stageSourceErrorf("the worktree cannot be opened")
 	}
 	s := &stageStatic{rootFD: rootFD, rootPath: root, guard: guard, target: parts, stop: make(chan struct{})}
-	fd, err := s.openAt(parts)
+	fd, _, err := s.openAt(parts)
+	var unreachable *stageStaticUnreachable
 	if errors.Is(err, errStageStaticHidden) {
 		_ = s.Close()
 		return nil, stageSourceErrorf("your sandbox hides the target, so the page cannot serve it")
+	}
+	if errors.As(err, &unreachable) {
+		_ = s.Close()
+		return nil, stageSourceErrorf("the page is served from your sandbox's own view of its files, which cannot be opened: %v", unreachable.err)
+	}
+	if errors.Is(err, unix.ENOENT) && s.guard != nil {
+		_ = s.Close()
+		return nil, stageSourceErrorf("your sandbox does not show the target")
 	}
 	if err != nil {
 		_ = s.Close()
@@ -163,14 +180,15 @@ func newStageStatic(worktree, target string, onChange func(), guard stageStaticG
 var errStageStaticHidden = errors.New("hidden from the page's agent")
 
 // stageStaticReadBack says whether a static source's content may go back to
-// its agent: it is served through the agent's known view of the file system.
-func stageStaticReadBack(up http.RoundTripper) bool {
+// its agent: it is served exactly as the agent sees its files. live asks
+// about what the operator's browser shows now (see pageFSViewer.readBack).
+func stageStaticReadBack(up http.RoundTripper, live bool) bool {
 	s, ok := up.(*stageStatic)
 	if !ok {
 		return false
 	}
 	v, ok := s.guard.(*pageFSViewer)
-	return ok && v.known()
+	return ok && v.readBack(live)
 }
 
 // hiddenAt reports whether the guard hides root/parts.
@@ -184,9 +202,9 @@ func (s *stageStatic) hiddenAt(parts []string) bool {
 // openAt walks parts from the root fd without following any symlink and
 // returns the final component's fd, opened read-only. A path the guard hides
 // is refused before anything is opened.
-func (s *stageStatic) openAt(parts []string) (int, error) {
+func (s *stageStatic) openAt(parts []string) (int, uint64, error) {
 	if s.hiddenAt(parts) {
-		return -1, errStageStaticHidden
+		return -1, 0, errStageStaticHidden
 	}
 	return s.walkAt(parts)
 }
@@ -194,21 +212,31 @@ func (s *stageStatic) openAt(parts []string) (int, error) {
 // walkAt is openAt without the guard. Only the change poll uses it, to walk
 // directories (never to read a file), so a path bound below a hidden one is
 // still watched.
-func (s *stageStatic) walkAt(parts []string) (int, error) {
+func (s *stageStatic) walkAt(parts []string) (int, uint64, error) {
 	s.mu.RLock()
 	if s.closed {
 		s.mu.RUnlock()
-		return -1, errors.New("closed")
+		return -1, 0, errors.New("closed")
 	}
-	fd, err := unix.Openat(s.rootFD, ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	fd, gen := -1, uint64(0)
+	var err error
+	if s.guard != nil {
+		if fd, gen, err = s.guard.base(); err != nil {
+			s.mu.RUnlock()
+			return -1, gen, &stageStaticUnreachable{err}
+		}
+	}
+	if fd < 0 {
+		fd, err = unix.Openat(s.rootFD, ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	}
 	s.mu.RUnlock()
 	if err != nil {
-		return -1, err
+		return -1, gen, err
 	}
 	for i, part := range parts {
 		if part == "" || part == "." || part == ".." || strings.ContainsAny(part, "/\x00") {
 			_ = unix.Close(fd)
-			return -1, errors.New("invalid path")
+			return -1, gen, errors.New("invalid path")
 		}
 		flags := unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC | unix.O_NONBLOCK
 		if i < len(parts)-1 {
@@ -217,12 +245,18 @@ func (s *stageStatic) walkAt(parts []string) (int, error) {
 		next, err := unix.Openat(fd, part, flags, 0)
 		_ = unix.Close(fd)
 		if err != nil {
-			return -1, err
+			return -1, gen, err
 		}
 		fd = next
 	}
-	return fd, nil
+	return fd, gen, nil
 }
+
+// stageStaticUnreachable is the agent's own view failing to open: the page
+// serves nothing rather than fall back to the daemon's.
+type stageStaticUnreachable struct{ err error }
+
+func (e *stageStaticUnreachable) Error() string { return e.err.Error() }
 
 // resolve maps a request path to components under the root, or nil.
 func (s *stageStatic) resolve(urlPath string) []string {
@@ -274,7 +308,12 @@ func (s *stageStatic) RoundTrip(req *http.Request) (*http.Response, error) {
 	if parts == nil {
 		return stageStaticNotFound(req), nil
 	}
-	fd, err := s.openAt(parts)
+	fd, gen, err := s.openAt(parts)
+	var unreachable *stageStaticUnreachable
+	if errors.As(err, &unreachable) {
+		return stageStaticResponse(req, http.StatusServiceUnavailable,
+			"this page is served from its agent's sandbox, which cannot be reached: "+unreachable.err.Error()+"\n"), nil
+	}
 	if err != nil {
 		return stageStaticNotFound(req), nil
 	}
@@ -291,7 +330,7 @@ func (s *stageStatic) RoundTrip(req *http.Request) (*http.Response, error) {
 			return res, nil
 		}
 		parts = append(parts, stageStaticIndexName)
-		if fd, err = s.openAt(parts); err != nil {
+		if fd, gen, err = s.openAt(parts); err != nil {
 			return stageStaticNotFound(req), nil
 		}
 		if err := unix.Fstat(fd, &st); err != nil {
@@ -303,6 +342,12 @@ func (s *stageStatic) RoundTrip(req *http.Request) (*http.Response, error) {
 	if st.Mode&unix.S_IFMT != unix.S_IFREG || !ok || st.Nlink != 1 || st.Size > stageStaticMaxFile {
 		_ = unix.Close(fd)
 		return stageStaticNotFound(req), nil
+	}
+	if s.guard != nil && strings.HasPrefix(ctype, "text/html") &&
+		strings.EqualFold(strings.TrimSpace(req.Header.Get("Sec-Fetch-Dest")), "iframe") {
+		// The operator's frame loaded a document: what it shows now came
+		// from this view.
+		s.guard.served(gen)
 	}
 	f := os.NewFile(uintptr(fd), path.Join(parts...))
 	res := &http.Response{
@@ -358,7 +403,7 @@ func (s *stageStatic) signature() uint64 {
 		if s.hiddenAt(s.target) {
 			return 0
 		}
-		fd, err := s.walkAt(dir)
+		fd, _, err := s.walkAt(dir)
 		if err != nil {
 			return 0
 		}
@@ -371,7 +416,7 @@ func (s *stageStatic) signature() uint64 {
 	for len(queue) > 0 && budget > 0 {
 		rel := queue[0]
 		queue = queue[1:]
-		fd, err := s.walkAt(append(append([]string{}, s.target...), rel...))
+		fd, _, err := s.walkAt(append(append([]string{}, s.target...), rel...))
 		if err != nil {
 			continue
 		}
@@ -433,6 +478,9 @@ func (s *stageStatic) Close() error {
 		s.closed = true
 		close(s.stop)
 		_ = unix.Close(s.rootFD)
+		if s.guard != nil {
+			s.guard.close()
+		}
 	}
 	return nil
 }

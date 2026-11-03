@@ -14,7 +14,7 @@ func TestPageFSViewTheLastCoveringEntryDecides(t *testing.T) {
 	root := testutil.CanonicalTempDir(t)
 	j := func(parts ...string) string { return filepath.Join(append([]string{root}, parts...)...) }
 	entry := func(p string, hidden bool) pageFSEntry { return pageFSEntry{paths: pageFSSpellings(p), hidden: hidden} }
-	v := &pageFSView{known: true, entries: []pageFSEntry{
+	v := &pageFSView{class: pageFSGuarded, entries: []pageFSEntry{
 		entry(j("wt"), false),
 		entry(j("wt", "secret"), true),
 		entry(j("wt", "secret", "shared"), false), // bound again on top of the hide
@@ -37,6 +37,14 @@ func TestPageFSViewTheLastCoveringEntryDecides(t *testing.T) {
 	unknown := &pageFSView{always: []string{j("wt", "protected")}}
 	assert.False(t, unknown.hidden(j("wt", "secret", "x")), "an unknown view hides only the protected roots")
 	assert.True(t, unknown.hidden(j("wt", "protected", "x")))
+	assert.False(t, unknown.readBack())
+
+	// An exact view leaves path rules to the sandbox itself.
+	exact := &pageFSView{class: pageFSSandboxRoot, entries: v.entries, always: v.always}
+	assert.False(t, exact.hidden(j("wt", "secret", "x")))
+	assert.True(t, exact.hidden(j("wt", "protected", "x")))
+	assert.True(t, exact.readBack())
+	assert.False(t, v.readBack(), "a guarded view is never read back")
 }
 
 func TestPageFSViewMatchesAPlanSpelledThroughASymlink(t *testing.T) {
@@ -44,7 +52,7 @@ func TestPageFSViewMatchesAPlanSpelledThroughASymlink(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(real, "wt", "secret"), 0o755))
 	alias := filepath.Join(testutil.CanonicalTempDir(t), "home-link")
 	require.NoError(t, os.Symlink(real, alias))
-	v := &pageFSView{known: true, entries: []pageFSEntry{
+	v := &pageFSView{class: pageFSGuarded, entries: []pageFSEntry{
 		{paths: pageFSSpellings(filepath.Join(alias, "wt")), hidden: false},
 		{paths: pageFSSpellings(filepath.Join(alias, "wt", "secret")), hidden: true},
 	}}

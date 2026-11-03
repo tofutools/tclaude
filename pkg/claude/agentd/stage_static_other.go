@@ -12,4 +12,4 @@ func newStageStatic(string, string, func(), stageStaticGuard) (*stageStatic, err
 	return nil, stageSourceErrorf("static live pages need a Unix host")
 }
 
-func stageStaticReadBack(http.RoundTripper) bool { return false }
+func stageStaticReadBack(http.RoundTripper, bool) bool { return false }

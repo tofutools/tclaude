@@ -1,9 +1,11 @@
 package agentd_test
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,13 +15,14 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
-// Static live pages serve only what the page's agent can read (tcl-kxiqqd):
-// the stage follows the agent's recorded sandbox plan, and a page whose plan
-// is unknown is served but never read back.
+// Static live pages go back to their agent only when the stage serves them
+// exactly as the agent sees its files (tcl-kxiqqd): through a Linux
+// tclaude-layer agent's own mount namespace, or for an unconfined agent.
+// Anything else is served to the operator but never read back.
 
-// sandboxAgent records a launch for a's session: the implementation and, when
-// eff is non-nil, the effective profile it ran under.
-func (e *pageEnv) sandboxAgent(t *testing.T, a pageAgent, implementation string, eff *sandboxpolicy.EffectiveProfile) {
+// sandboxAgent records a launch for a's session: the implementation, the
+// effective profile it ran under when eff is non-nil, and any further fields.
+func (e *pageEnv) sandboxAgent(t *testing.T, a pageAgent, implementation string, eff *sandboxpolicy.EffectiveProfile, more ...func(*db.SessionRow)) {
 	t.Helper()
 	row, err := db.FindSessionByConvID(a.conv)
 	require.NoError(t, err)
@@ -30,7 +33,19 @@ func (e *pageEnv) sandboxAgent(t *testing.T, a pageAgent, implementation string,
 		snap := sandboxpolicy.NewSnapshot(*eff, nil)
 		row.EffectiveSandbox = &snap
 	}
+	for _, f := range more {
+		f(row)
+	}
 	require.NoError(t, db.SaveSession(row))
+}
+
+func writeTree(t *testing.T, root string, files map[string]string) {
+	t.Helper()
+	for rel, body := range files {
+		p := filepath.Join(root, rel)
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
+	}
 }
 
 // staticSite writes a site under the agent's startup directory with a public
@@ -38,17 +53,13 @@ func (e *pageEnv) sandboxAgent(t *testing.T, a pageAgent, implementation string,
 func staticSite(t *testing.T, cwd string) string {
 	t.Helper()
 	site := filepath.Join(cwd, "site")
-	for rel, body := range map[string]string{
+	writeTree(t, site, map[string]string{
 		"index.html":        "<html><head></head><body>home</body></html>",
 		"public/ok.html":    "<html><head></head><body>public</body></html>",
 		"secret/key.html":   "<html><head></head><body>SECRET</body></html>",
 		"secret/notes.txt":  "SECRET NOTES",
 		"scratch/host.html": "<html><head></head><body>HOST UNDER TMPFS</body></html>",
-	} {
-		p := filepath.Join(site, rel)
-		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
-		require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
-	}
+	})
 	return site
 }
 
@@ -63,10 +74,81 @@ func siteProfile(cwd string) *sandboxpolicy.EffectiveProfile {
 	}
 }
 
-func TestPageStaticServesOnlyWhatTheAgentsSandboxShows(t *testing.T) {
+// claudeSandbox records Claude Code's own OS sandbox verdict.
+func claudeSandbox(state string, unverified bool) func(*db.SessionRow) {
+	return func(row *db.SessionRow) {
+		row.Harness = "claude"
+		row.OSSandboxState = state
+		row.OSSandboxUnverified = unverified
+	}
+}
+
+func (e *pageEnv) stubSnapshot(t *testing.T) {
+	t.Cleanup(agentd.SetPageSnapshotRenderForTest(func(agentd.PageSnapshotJobForTest) ([]byte, error) {
+		return []byte("png"), nil
+	}))
+}
+
+// assertReadBack checks snapshot, dom and the text under marks.
+func (e *pageEnv) assertReadBack(t *testing.T, a pageAgent, p pageOut, name string, want bool) {
+	t.Helper()
+	rec := e.call(t, a, http.MethodPost, "/v1/pages/"+name+"/snapshot", nil)
+	if want {
+		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	} else {
+		assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), "cannot be read back")
+	}
+	e.assertLiveReadBack(t, a, p, name, want)
+}
+
+// assertLiveReadBack checks what comes from the operator's browser: dom and
+// the page's own data on a sent batch.
+func (e *pageEnv) assertLiveReadBack(t *testing.T, a pageAgent, p pageOut, name string, want bool) {
+	t.Helper()
+	rec := e.call(t, a, http.MethodPost, "/v1/pages/"+name+"/dom", map[string]any{"selector": "body"})
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	if want {
+		assert.Contains(t, rec.Body.String(), "no dashboard view", "refused for want of a view, not for being static")
+	} else {
+		assert.Contains(t, rec.Body.String(), "cannot be read back")
+	}
+	rec = e.dashJSON(t, http.MethodPost, "/api/pages/"+p.ID+"/marks", sampleMarks())
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	got := e.marks(t, a, name, "")
+	require.NotEmpty(t, got.Batches)
+	b := got.Batches[len(got.Batches)-1]
+	if want {
+		assert.NotEmpty(t, b.Marks[0].Anchors, "the text under marks arrives")
+		assert.Equal(t, "/checkout?step=2", b.Path)
+	} else {
+		for _, m := range b.Marks {
+			assert.Empty(t, m.Anchors)
+		}
+		assert.Empty(t, b.Path, "the path the page's script reports is dropped too")
+		assert.Equal(t, "Make the pay button blue", b.Note, "the operator's own note still arrives")
+		assert.Len(t, b.Marks, 2, "and so do the marks")
+	}
+}
+
+func TestPageStaticOfATclaudeLayerAgentIsServedFromItsOwnSandbox(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("only Linux serves through the agent's mount namespace")
+	}
 	e := newPageEnv(t)
-	a := e.agent(t, "fsview", true)
+	a := e.agent(t, "fsns", true)
 	site := staticSite(t, a.cwd)
+	// The sandbox shows the site differently from the host: its secret is
+	// gone (a tmpfs, wherever it was renamed to) and its home page is the
+	// agent's own.
+	fake := &agentd.FakeSandboxRootForTest{Dir: t.TempDir()}
+	t.Cleanup(agentd.SetPageSandboxRootForTest(fake))
+	writeTree(t, filepath.Join(fake.Dir, site), map[string]string{
+		"index.html":     "<html><head></head><body>sandbox home</body></html>",
+		"public/ok.html": "<html><head></head><body>public</body></html>",
+		"public/app.css": "body{}",
+	})
+	writeTree(t, site, map[string]string{"public/app.css": "body{}"})
 	e.sandboxAgent(t, a, "tclaude-layer", siteProfile(a.cwd))
 
 	p, rec := e.show(t, a, site, "site", "")
@@ -74,98 +156,181 @@ func TestPageStaticServesOnlyWhatTheAgentsSandboxShows(t *testing.T) {
 	for path, want := range map[string]int{
 		"/":                  http.StatusOK,
 		"/public/ok.html":    http.StatusOK,
-		"/secret/key.html":   http.StatusNotFound, // a deny rule
-		"/secret/notes.txt":  http.StatusNotFound,
-		"/secret/":           http.StatusNotFound,
-		"/secret":            http.StatusNotFound, // no redirect: its existence does not show
-		"/scratch/host.html": http.StatusNotFound, // the host file under the agent's tmpfs
+		"/secret/key.html":   http.StatusNotFound,
+		"/scratch/host.html": http.StatusNotFound,
 	} {
 		code, body := e.frame(t, p.Origin, path)
 		assert.Equal(t, want, code, "%s: %s", path, body)
 		assert.NotContains(t, body, "SECRET", path)
 		assert.NotContains(t, body, "HOST UNDER TMPFS", path)
 	}
+	_, body := e.frame(t, p.Origin, "/")
+	assert.Contains(t, body, "sandbox home", "the sandbox's file, not the host's")
 
-	// A target the sandbox hides is refused outright.
+	e.stubSnapshot(t)
+	e.assertReadBack(t, a, p, "site", true)
+
+	// A relaunch into another sandbox: what the browser shows came from the
+	// old one, so it is not read back until the page loads again.
+	fake.Relaunch()
+	code, _ := e.frame(t, p.Origin, "/public/app.css")
+	require.Equal(t, http.StatusOK, code)
+	e.assertLiveReadBack(t, a, p, "site", false)
+	code, _ = e.frame(t, p.Origin, "/")
+	require.Equal(t, http.StatusOK, code)
+	e.assertLiveReadBack(t, a, p, "site", true)
+
+	// A sandbox that cannot be opened serves nothing: never the host's view.
+	fake.Fail(errors.New("permission denied"))
+	code, body = e.frame(t, p.Origin, "/")
+	assert.Equal(t, http.StatusServiceUnavailable, code, body)
+	assert.NotContains(t, body, "home")
+	rec = e.call(t, a, http.MethodPost, "/v1/pages/site/snapshot", nil)
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+}
+
+func TestPageStaticOfATclaudeLayerAgentWhoseSandboxIsNotRunningIsRefused(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("only Linux serves through the agent's mount namespace")
+	}
+	e := newPageEnv(t)
+	a := e.agent(t, "fsnone", true)
+	site := staticSite(t, a.cwd)
+	fake := &agentd.FakeSandboxRootForTest{Dir: t.TempDir()}
+	fake.Fail(errors.New("the agent's sandbox is not running"))
+	t.Cleanup(agentd.SetPageSandboxRootForTest(fake))
+	e.sandboxAgent(t, a, "tclaude-layer", nil)
+	_, rec := e.show(t, a, site, "site", "")
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "sandbox")
+}
+
+func TestPageStaticUnderAHarnessSandboxIsServedButNotReadBack(t *testing.T) {
+	e := newPageEnv(t)
+	a := e.agent(t, "fsharness", true)
+	site := staticSite(t, a.cwd)
+	// Claude Code's own sandbox is on: its rules are invisible to the stage.
+	e.sandboxAgent(t, a, "harness-builtin", siteProfile(a.cwd), claudeSandbox("on", false))
+
+	p, rec := e.show(t, a, site, "site", "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	for path, want := range map[string]int{
+		"/":                  http.StatusOK,
+		"/public/ok.html":    http.StatusOK,
+		"/secret/key.html":   http.StatusNotFound, // the recorded profile's rules still apply, by path
+		"/secret":            http.StatusNotFound, // no redirect: its existence does not show
+		"/scratch/host.html": http.StatusNotFound,
+	} {
+		code, body := e.frame(t, p.Origin, path)
+		assert.Equal(t, want, code, "%s: %s", path, body)
+		assert.NotContains(t, body, "SECRET", path)
+	}
 	_, rec = e.show(t, a, filepath.Join(site, "secret"), "secret", "")
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "sandbox hides")
 
-	// With the agent's view known, the page is read back like a dev server's.
 	t.Cleanup(agentd.SetPageSnapshotRenderForTest(func(agentd.PageSnapshotJobForTest) ([]byte, error) {
-		return []byte("png"), nil
+		t.Fatal("a page served through a view the stage cannot verify is never rendered for its agent")
+		return nil, nil
 	}))
-	rec = e.call(t, a, http.MethodPost, "/v1/pages/site/snapshot", nil)
-	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	rec = e.call(t, a, http.MethodPost, "/v1/pages/site/dom", map[string]any{"selector": "body"})
-	assert.Equal(t, http.StatusConflict, rec.Code)
-	assert.Contains(t, rec.Body.String(), "no dashboard view", "refused for want of a view, not for being static")
-	rec = e.dashJSON(t, http.MethodPost, "/api/pages/"+p.ID+"/marks", sampleMarks())
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	got := e.marks(t, a, "site", "")
-	require.Len(t, got.Batches, 1)
-	assert.NotEmpty(t, got.Batches[0].Marks[0].Anchors, "the text under marks arrives")
+	e.assertReadBack(t, a, p, "site", false)
 }
 
-func TestPageStaticConstructedRootServesOnlyBoundPaths(t *testing.T) {
-	e := newPageEnv(t)
-	a := e.agent(t, "fsroot", true)
-	site := staticSite(t, a.cwd)
-	e.sandboxAgent(t, a, "tclaude-layer", &sandboxpolicy.EffectiveProfile{
-		FilesystemRoot: sandboxpolicy.FilesystemRootSeparate,
-		Filesystem: []sandboxpolicy.FilesystemGrant{
-			{Path: filepath.Join(site, "public"), Access: sandboxpolicy.AccessRead},
-		},
-	})
-	// The site's root is not bound: showing it is refused; its bound part is served.
-	_, rec := e.show(t, a, site, "site", "")
-	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
-	p, rec := e.show(t, a, filepath.Join(site, "public"), "public", "")
-	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	code, body := e.frame(t, p.Origin, "/ok.html")
-	assert.Equal(t, http.StatusOK, code, body)
-}
-
-func TestPageStaticWithAnUnknownSandboxIsServedButNotReadBack(t *testing.T) {
+func TestPageStaticWithNothingRecordedIsServedButNotReadBack(t *testing.T) {
 	e := newPageEnv(t)
 	a := e.agent(t, "fsunknown", true)
 	site := staticSite(t, a.cwd)
-	// Sandboxed, but the launch recorded no profile.
-	e.sandboxAgent(t, a, "tclaude-layer", nil)
+	e.sandboxAgent(t, a, "harness-builtin", nil)
 	p, rec := e.show(t, a, site, "site", "")
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	code, _ := e.frame(t, p.Origin, "/")
 	assert.Equal(t, http.StatusOK, code, "the operator still sees the page")
+	e.assertReadBack(t, a, p, "site", false)
+}
 
-	t.Cleanup(agentd.SetPageSnapshotRenderForTest(func(agentd.PageSnapshotJobForTest) ([]byte, error) {
-		t.Fatal("a page whose agent's view is unknown is never rendered for it")
-		return nil, nil
-	}))
-	rec = e.call(t, a, http.MethodPost, "/v1/pages/site/snapshot", nil)
-	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "recorded no sandbox profile")
-	rec = e.call(t, a, http.MethodPost, "/v1/pages/site/dom", map[string]any{"selector": "body"})
-	assert.Equal(t, http.StatusConflict, rec.Code)
-	assert.Contains(t, rec.Body.String(), "recorded no sandbox profile")
-	rec = e.dashJSON(t, http.MethodPost, "/api/pages/"+p.ID+"/marks", sampleMarks())
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	got := e.marks(t, a, "site", "")
-	require.Len(t, got.Batches, 1)
-	for _, m := range got.Batches[0].Marks {
-		assert.Empty(t, m.Anchors)
-	}
+func TestPageStaticConstructedRootStillShowsTheStartupDir(t *testing.T) {
+	e := newPageEnv(t)
+	a := e.agent(t, "fsroot", true)
+	site := staticSite(t, a.cwd)
+	e.sandboxAgent(t, a, "harness-builtin", &sandboxpolicy.EffectiveProfile{
+		FilesystemRoot: sandboxpolicy.FilesystemRootSeparate,
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: filepath.Join(site, "secret"), Access: sandboxpolicy.AccessDeny},
+		},
+	}, claudeSandbox("on", false))
+	// The launch contract binds the startup directory into a constructed root.
+	p, rec := e.show(t, a, site, "site", "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	code, body := e.frame(t, p.Origin, "/public/ok.html")
+	assert.Equal(t, http.StatusOK, code, body)
+	code, _ = e.frame(t, p.Origin, "/secret/key.html")
+	assert.Equal(t, http.StatusNotFound, code)
 }
 
 func TestPageStaticForAnUnconfinedAgentIsReadBack(t *testing.T) {
+	for name, launch := range map[string]func(e *pageEnv, a pageAgent){
+		"off": func(e *pageEnv, a pageAgent) { e.sandboxAgent(t, a, "off", nil) },
+		"harness sandbox off": func(e *pageEnv, a pageAgent) {
+			e.sandboxAgent(t, a, "harness-builtin", siteProfile(a.cwd), claudeSandbox("off", false))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newPageEnv(t)
+			a := e.agent(t, "fsoff", true)
+			site := staticSite(t, a.cwd)
+			launch(e, a)
+			p, rec := e.show(t, a, site, "site", "")
+			require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+			code, _ := e.frame(t, p.Origin, "/")
+			require.Equal(t, http.StatusOK, code)
+			e.stubSnapshot(t)
+			e.assertReadBack(t, a, p, "site", true)
+		})
+	}
+
+	// An unverified "off" verdict is not proof the harness's wall is down.
 	e := newPageEnv(t)
-	a := e.agent(t, "fsoff", true)
+	a := e.agent(t, "fsunverified", true)
+	site := staticSite(t, a.cwd)
+	e.sandboxAgent(t, a, "harness-builtin", nil, claudeSandbox("off", true))
+	p, rec := e.show(t, a, site, "site", "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	e.assertReadBack(t, a, p, "site", false)
+}
+
+func TestPageStaticFollowsTheAgentsNextGeneration(t *testing.T) {
+	t.Cleanup(agentd.SetPageFSViewRecheckForTest(0))
+	e := newPageEnv(t)
+	a := e.agent(t, "fsgen", true)
 	site := staticSite(t, a.cwd)
 	e.sandboxAgent(t, a, "off", nil)
-	_, rec := e.show(t, a, site, "site", "")
+	p, rec := e.show(t, a, site, "site", "")
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	t.Cleanup(agentd.SetPageSnapshotRenderForTest(func(agentd.PageSnapshotJobForTest) ([]byte, error) {
-		return []byte("png"), nil
-	}))
+	code, _ := e.frame(t, p.Origin, "/")
+	require.Equal(t, http.StatusOK, code)
+	e.stubSnapshot(t)
+	e.assertReadBack(t, a, p, "site", true)
+
+	// The agent comes back confined by its harness: the page stops being
+	// read back, and the hidden part stops being served.
+	next := a.conv + "-next"
+	e.f.HaveAliveSession(next, "fsgen-next", "tmux-page-fsgen-next", a.cwd)
+	require.NoError(t, db.LinkConvToAgent(next, a.id, db.ConvRoleHead, "reincarnate"))
+	moved, err := db.SetAgentCurrentConv(a.id, a.conv, next)
+	require.NoError(t, err)
+	require.True(t, moved)
+	require.NoError(t, db.GrantAgentPermission(next, agentd.PermSelfPage, "test"))
+	a = pageAgent{conv: next, id: a.id, cwd: a.cwd}
+	row, err := db.FindSessionByConvID(next)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	row.SandboxImplementation = "harness-builtin"
+	snap := sandboxpolicy.NewSnapshot(*siteProfile(a.cwd), nil)
+	row.EffectiveSandbox = &snap
+	claudeSandbox("on", false)(row)
+	require.NoError(t, db.SaveSession(row))
+	code, _ = e.frame(t, p.Origin, "/secret/key.html")
+	assert.Equal(t, http.StatusNotFound, code)
 	rec = e.call(t, a, http.MethodPost, "/v1/pages/site/snapshot", nil)
-	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 }

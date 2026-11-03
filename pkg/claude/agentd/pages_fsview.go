@@ -1,49 +1,67 @@
 package agentd
 
 import (
+	"errors"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/nsroot"
+	"github.com/tofutools/tclaude/pkg/claude/common/portowner"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"golang.org/x/sys/unix"
 )
 
 // An agent's view of the file system, for static live pages (tcl-kxiqqd).
 //
-// The stage opens a static source with the daemon's view of the file system.
-// A sandboxed agent may see less: its profile can hide paths inside its own
-// worktree (a deny rule, a tmpfs overlay), project another directory onto one
-// (a remapped mount), or build a root with only some paths bound. A static
-// page must not serve what the agent itself cannot read, because what a page
-// serves can come back to the agent (`page marks`, `page snapshot`, `page
-// dom`). So the stage serves a path only when the agent's recorded sandbox
-// plan shows that path as the host's own file.
+// What a page serves can come back to its agent (`page marks`, `page
+// snapshot`, `page dom`), so a static page's content goes back only when the
+// stage serves exactly what the agent itself can read:
 //
-// The plan is the launch's recorded effective profile (the session row's
-// EffectiveSandbox), rendered as tclaude's sandbox renders it. Every
-// implementation starts from that profile, so its hidden paths are the
-// operator's intent whichever boundary enforces them; reading a
-// harness-builtin launch's plan this way can only hide more, never less. The
-// protected roots and the tmux socket directory are hidden for every agent.
+//   - A Linux tclaude-layer agent's page is served through the agent's own
+//     mount namespace (/proc/<pid>/root, see nsroot): its deny rules, tmpfs
+//     overlays, binds and constructed root apply by construction, wherever
+//     the agent has since renamed things. If that view cannot be opened the
+//     page serves nothing (it fails closed).
+//   - An unconfined agent (an "off" or "resource-only" launch, or a
+//     harness-builtin launch whose harness sandbox is recorded off) reads
+//     what the daemon reads.
 //
-// A sandboxed launch without a recorded profile has an unknown view: its
-// pages are served as before, but nothing of them is read back.
+// Everything else is served to the operator, never read back: a
+// harness-builtin launch whose harness enforces its own rules (which the
+// stage cannot see), a macOS Seatbelt launch (whose path rules a name check
+// can only approximate), or a launch with nothing recorded. Those pages still
+// leave out what the recorded profile hides, by path, as defence in depth.
+// The protected roots and the tmux socket directory are left out for every
+// agent.
 
-const pageFSViewRecheck = 5 * time.Second
+var pageFSViewRecheck = 5 * time.Second // a var for tests
+
+// pageFSClass is how a page's files reach the stage.
+type pageFSClass int
+
+const (
+	// pageFSGuarded: the daemon's view, minus what the recorded profile
+	// hides by path. Not read back.
+	pageFSGuarded pageFSClass = iota
+	// pageFSUnconfined: the daemon's view, which is the agent's.
+	pageFSUnconfined
+	// pageFSSandboxRoot: the agent's own mount namespace.
+	pageFSSandboxRoot
+)
 
 // pageFSView is one generation's view.
 type pageFSView struct {
-	// known says the view is the agent's: an unconfined agent, or a sandboxed
-	// one with a recorded plan. An unknown view hides nothing (the page is
-	// served as it always was) and is not read back.
-	known bool
+	class pageFSClass
 	// constructed says paths no entry binds are absent (a constructed root).
 	constructed bool
 	entries     []pageFSEntry
-	// always are hidden whatever the entries say, in a known view or not.
+	// always are hidden whatever the class.
 	always []string
 }
 
@@ -66,15 +84,30 @@ func pageFSSpellings(p string) []string {
 	return out
 }
 
+// pageFSFold is how paths compare: case-insensitively on macOS, whose file
+// systems usually are, so a differently-cased request still meets its rule.
+func pageFSFold(p string) string {
+	if runtime.GOOS == "darwin" {
+		return strings.ToLower(p)
+	}
+	return p
+}
+
 func pageFSUnder(p, root string) bool {
+	p, root = pageFSFold(p), pageFSFold(root)
 	if root == "/" {
 		return true
 	}
 	return p == root || strings.HasPrefix(p, root+string(filepath.Separator))
 }
 
-// hidden reports whether the agent cannot read abs (a canonical host path) as
-// the host's own file. The last entry that covers abs decides, as the later
+// readBack says whether the view's content may go back to the agent.
+func (v *pageFSView) readBack() bool {
+	return v != nil && v.class != pageFSGuarded
+}
+
+// hidden reports whether the stage leaves abs (a canonical host path) out.
+// In a guarded view the last entry that covers abs decides, as the later
 // mount does.
 func (v *pageFSView) hidden(abs string) bool {
 	if v == nil {
@@ -85,7 +118,7 @@ func (v *pageFSView) hidden(abs string) bool {
 			return true
 		}
 	}
-	if !v.known {
+	if v.class != pageFSGuarded {
 		return false
 	}
 	decided, hide := false, false
@@ -103,12 +136,29 @@ func (v *pageFSView) hidden(abs string) bool {
 	return hide
 }
 
-// pageFSViewFor builds the view of the session behind convID.
-func pageFSViewFor(convID string) *pageFSView {
+// pageFSHarnessWallOff says a harness-builtin launch recorded its harness's
+// own sandbox as off, so nothing but the daemon's view confines it.
+func pageFSHarnessWallOff(row *db.SessionRow) bool {
+	h, ok := harness.Get(row.Harness)
+	if !ok {
+		return false
+	}
+	if h.Name == harness.DefaultName {
+		// Claude Code's launch request ("inherit") says nothing; the
+		// launch-time verdict does.
+		return row.OSSandboxState == harness.ClaudeSandboxOff && !row.OSSandboxUnverified
+	}
+	off, err := harness.SandboxOffMode(h)
+	return err == nil && row.HarnessBuiltinMode == off
+}
+
+// pageFSViewFor builds the view of the session behind convID, whose startup
+// directory is worktree (in each spelling).
+func pageFSViewFor(convID string, worktree []string) *pageFSView {
 	v := &pageFSView{}
 	protected, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
-		return v // unknown: nothing is read back
+		return v
 	}
 	for _, p := range protected {
 		v.always = append(v.always, pageFSSpellings(p)...)
@@ -124,8 +174,15 @@ func pageFSViewFor(convID string) *pageFSView {
 	if err != nil {
 		return v
 	}
-	if implementation.OmitsOSConfinement() {
-		v.known = true
+	switch {
+	case implementation.OmitsOSConfinement():
+		v.class = pageFSUnconfined
+		return v
+	case implementation == sandboxpolicy.ImplementationTclaudeLayer && runtime.GOOS == "linux":
+		v.class = pageFSSandboxRoot
+		return v
+	case implementation == sandboxpolicy.ImplementationHarnessBuiltin && pageFSHarnessWallOff(row):
+		v.class = pageFSUnconfined
 		return v
 	}
 	if row.EffectiveSandbox == nil {
@@ -135,8 +192,11 @@ func pageFSViewFor(convID string) *pageFSView {
 	if err != nil {
 		return v
 	}
-	v.known = true
 	v.constructed = plan.EffectiveRootPosture() == sandboxpolicy.RootConstructed
+	if v.constructed {
+		// The launch contract always binds the startup directory.
+		v.entries = append(v.entries, pageFSEntry{paths: worktree})
+	}
 	for _, e := range plan.Entries {
 		hidden := e.Mode == sandboxpolicy.MountHide || e.Mode == sandboxpolicy.MountTmpfs || e.IsRemapped()
 		v.entries = append(v.entries, pageFSEntry{paths: pageFSSpellings(e.Path), hidden: hidden})
@@ -144,44 +204,197 @@ func pageFSViewFor(convID string) *pageFSView {
 	return v
 }
 
-// pageFSViewer follows an agent's current generation: a reincarnation with
-// another profile gets its own view.
+// pageFSRoot is an agent's mount namespace, held open (nsroot.Root; a seam
+// for tests).
+type pageFSRoot interface {
+	Alive() bool
+	NS() string
+	OpenDir(abs string) (int, error)
+	Close()
+}
+
+var errPageFSNoSandbox = errors.New("the agent's sandbox is not running")
+
+// pageFSOpenSandboxRoot opens the root of the agent's sandbox: the
+// shallowest process in its tree that lives in another mount namespace.
+var pageFSOpenSandboxRoot = func(agentID string) (pageFSRoot, error) {
+	proc, err := stageResolveAgent(agentID)
+	if err != nil {
+		return nil, err
+	}
+	ns, pids := nsroot.ForeignCandidates(portowner.ProcessSubtree(proc.root))
+	if len(pids) == 0 {
+		return nil, errPageFSNoSandbox
+	}
+	err = errPageFSNoSandbox
+	for _, pid := range pids {
+		var root *nsroot.Root
+		if root, err = nsroot.Open(pid, ns); err == nil {
+			return root, nil
+		}
+	}
+	return nil, err
+}
+
+// pageFSViewer follows an agent's current generation and, for a sandbox-root
+// view, holds the agent's mount namespace open. gen counts views: it moves
+// when the agent's conversation or sandbox changes, and the page reloads.
 type pageFSViewer struct {
-	agentID string
+	agentID  string
+	worktree []string // the worktree's spellings, as the sandbox may show it
+	onChange func()   // reloads the page; set before first use
 
 	mu      sync.Mutex
 	conv    string
 	view    *pageFSView
 	checked time.Time
+	gen     uint64
+	shown   uint64 // the gen the page's last document was served under
+	root    pageFSRoot
+	dir     int // the worktree inside root, or -1
 }
 
-func newPageFSViewer(agentID, convID string) *pageFSViewer {
-	return &pageFSViewer{agentID: agentID, conv: convID, view: pageFSViewFor(convID), checked: time.Now()}
-}
-
-// current is the view of the agent's current generation, rechecked every
-// few seconds.
-func (r *pageFSViewer) current() *pageFSView {
-	if r == nil {
-		return nil
+func newPageFSViewer(agentID, convID, worktree string) *pageFSViewer {
+	spellings := pageFSSpellings(worktree)
+	return &pageFSViewer{
+		agentID: agentID, worktree: spellings, conv: convID,
+		view: pageFSViewFor(convID, spellings), checked: time.Now(), gen: 1, dir: -1,
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
+}
+
+// changedLocked moves to a new generation; the caller reloads the page.
+func (r *pageFSViewer) changedLocked() func() {
+	r.gen++
+	r.dropRootLocked()
+	return r.onChange
+}
+
+func (r *pageFSViewer) dropRootLocked() {
+	if r.dir >= 0 {
+		_ = unix.Close(r.dir)
+		r.dir = -1
+	}
+	if r.root != nil {
+		r.root.Close()
+		r.root = nil
+	}
+}
+
+// refreshLocked rechecks the agent's generation every few seconds and, for a
+// sandbox-root view, that the sandbox it holds still runs (reopening it when
+// not). It returns a reload to run once the lock is released.
+func (r *pageFSViewer) refreshLocked() (reload func(), err error) {
 	if time.Since(r.checked) >= pageFSViewRecheck {
 		r.checked = time.Now()
 		if cur, err := db.CurrentConvForAgent(r.agentID); err == nil && cur != "" && cur != r.conv {
 			r.conv = cur
-			r.view = pageFSViewFor(cur)
+			r.view = pageFSViewFor(cur, r.worktree)
+			reload = r.changedLocked()
 		}
 	}
-	return r.view
+	if r.view.class != pageFSSandboxRoot || (r.root != nil && r.root.Alive()) {
+		return reload, nil
+	}
+	prevNS := ""
+	if r.root != nil {
+		prevNS = r.root.NS()
+	}
+	r.dropRootLocked()
+	root, err := pageFSOpenSandboxRoot(r.agentID)
+	if err != nil {
+		return reload, err
+	}
+	dir := -1
+	for _, p := range r.worktree {
+		if dir, err = root.OpenDir(p); err == nil {
+			break
+		}
+	}
+	if dir < 0 {
+		root.Close()
+		return reload, errors.New("the agent's sandbox does not show its worktree")
+	}
+	if prevNS != "" && prevNS != root.NS() {
+		// Another sandbox (a relaunch): what the page shows came from the
+		// old one.
+		reload = r.changedLocked()
+	}
+	r.root, r.dir = root, dir
+	return reload, nil
+}
+
+func (r *pageFSViewer) refresh() (*pageFSView, uint64, int, error) {
+	r.mu.Lock()
+	reload, err := r.refreshLocked()
+	v, gen := r.view, r.gen
+	dir := -1
+	if err == nil && v.class == pageFSSandboxRoot {
+		dir, err = unix.Dup(r.dir)
+		if err == nil {
+			unix.CloseOnExec(dir)
+		}
+	}
+	r.mu.Unlock()
+	if reload != nil {
+		reload()
+	}
+	return v, gen, dir, err
 }
 
 // hidden is the stage's check for one canonical path.
-func (r *pageFSViewer) hidden(abs string) bool { return r.current().hidden(abs) }
+func (r *pageFSViewer) hidden(abs string) bool {
+	v, _, dir, _ := r.refresh()
+	if dir >= 0 {
+		_ = unix.Close(dir)
+	}
+	return v.hidden(abs)
+}
 
-// known says the page's content may be read back to the agent.
-func (r *pageFSViewer) known() bool {
-	v := r.current()
-	return v != nil && v.known
+// base is where the stage walks the worktree from: the agent's own view of
+// it (a directory fd the caller closes), or -1 for the daemon's view. An
+// error means the agent's view is required but unreachable.
+func (r *pageFSViewer) base() (fd int, gen uint64, err error) {
+	_, gen, fd, err = r.refresh()
+	if err != nil {
+		return -1, gen, err
+	}
+	return fd, gen, nil
+}
+
+// served records that a page document went out under gen.
+func (r *pageFSViewer) served(gen uint64) {
+	r.mu.Lock()
+	if gen == r.gen {
+		r.shown = gen
+	}
+	r.mu.Unlock()
+}
+
+// readBack says whether the page's content may go back to the agent. live
+// asks about what the operator's browser shows now, which must have been
+// served under the current view; a snapshot renders afresh and need not.
+func (r *pageFSViewer) readBack(live bool) bool {
+	v, gen, dir, err := r.refresh()
+	if dir >= 0 {
+		_ = unix.Close(dir)
+	}
+	if err != nil || !v.readBack() {
+		return false
+	}
+	if !live {
+		return true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.shown == gen && r.gen == gen
+}
+
+// close releases the held sandbox root.
+func (r *pageFSViewer) close() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.dropRootLocked()
+	r.mu.Unlock()
 }

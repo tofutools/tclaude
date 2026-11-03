@@ -83,10 +83,13 @@ tclaude agent page dom landing 'button.pay' --styles      # read-only: --text (d
   says so.
 - A snapshot renders only your page's own origin: a page that redirects or
   navigates elsewhere gets an error, not a picture.
-- A static page (a directory or `.html` target) serves only what your sandbox
-  lets you read; anything else is a 404. If your launch recorded no sandbox
-  profile, `snapshot` and `dom` refuse a static page and its marks come without
-  the page text: serve it from your own dev server instead.
+- A static page (a directory or `.html` target) is read back only when tclaude
+  serves it exactly as you see your files: under tclaude's sandbox on Linux
+  (it reads through your own sandbox's view), or with no OS sandbox. Under a
+  harness's own sandbox, macOS Seatbelt, or nothing recorded, `snapshot` and
+  `dom` refuse it and its marks come without the page text, path or scroll:
+  serve it from your own dev server instead. Under tclaude's sandbox the page
+  serves nothing (503) while your sandbox is not running.
 
 ## What the page can and cannot do
 

@@ -104,7 +104,7 @@ func handlePageSnapshot(w http.ResponseWriter, r *http.Request) {
 	livePages.mu.Lock()
 	stage, startPath, kind, owner := p.stage, p.path, p.kind, p.owner
 	livePages.mu.Unlock()
-	if err := pageReadBackAllowed(kind, stage); err != nil {
+	if err := pageReadBackAllowed(kind, stage, false); err != nil {
 		writeError(w, http.StatusConflict, "static_source", err.Error())
 		return
 	}

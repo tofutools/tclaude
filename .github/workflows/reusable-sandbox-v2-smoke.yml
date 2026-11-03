@@ -267,6 +267,27 @@ jobs:
             exit 1
           fi
 
+      # Static live pages of a tclaude-layer agent are served through the
+      # sandbox's own mount view (/proc/<pid>/root, pkg/claude/common/nsroot).
+      # Here it must pass: a detached bwrap sandbox renames a directory whose
+      # child is hidden by a tmpfs, and the view must still hide it.
+      - name: Run live-page sandbox root view
+        env:
+          TCLAUDE_REQUIRE_USERNS: "1"
+        run: |
+          nsroot_log="$RUNNER_TEMP/nsroot.log"
+          go test ./pkg/claude/common/nsroot -run '^TestRootShowsTheSandboxsOwnViewAfterARename$' -count=1 -v -timeout=120s |
+            tee "$nsroot_log"
+          if ! grep -q '^--- PASS: TestRootShowsTheSandboxsOwnViewAfterARename ' "$nsroot_log"; then
+            {
+              echo "### Live-page sandbox root view did not pass"
+              echo
+              echo "Opening a bubblewrap sandbox's own mount view through /proc/<pid>/root did not report an explicit pass."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestRootShowsTheSandboxsOwnViewAfterARename did not report an explicit pass"
+            exit 1
+          fi
+
       - name: Run sandbox v2 bubblewrap smoke
         env:
           TCLAUDE_SANDBOX_V2_SMOKE: "1"

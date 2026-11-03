@@ -302,12 +302,11 @@ func handleDashboardPageMarks(w http.ResponseWriter, r *http.Request) {
 		kind, stage = p.kind, p.stage
 	}
 	livePages.mu.Unlock()
-	if pageReadBackAllowed(kind, stage) != nil {
-		// The anchors are the page's text, which may come from files the
-		// agent cannot read (see pageReadBackAllowed).
-		for i := range req.Marks {
-			req.Marks[i].Anchors = []pageAnchor{}
-		}
+	if pageReadBackAllowed(kind, stage, true) != nil {
+		// The anchors are the page's text, and the path and scroll its
+		// script reports, which may come from files the agent cannot read
+		// (see pageReadBackAllowed).
+		pageMarksStripPage(&req)
 	}
 	// The page is looked up again and its state made under both locks (in
 	// the registry's order), so a page closing meanwhile cannot leave state
@@ -322,9 +321,7 @@ func handleDashboardPageMarks(w http.ResponseWriter, r *http.Request) {
 	owner, name := p.owner, p.name
 	if p.stage != stage {
 		// Re-shown with another source meanwhile: decided for the old one.
-		for i := range req.Marks {
-			req.Marks[i].Anchors = []pageAnchor{}
-		}
+		pageMarksStripPage(&req)
 	}
 	pageCollab.mu.Lock()
 	livePages.mu.Unlock()
@@ -520,15 +517,15 @@ func pageDOMRead(ctx context.Context, id, selector, mode string) (pageDOMResult,
 // page may hold files the agent cannot read, so it is not read back. A dev
 // server is the agent's own process, so it serves only what the agent can
 // read. Callers hold livePages.mu or have copied kind and stage under it.
-func pageReadBackAllowed(kind string, stage *stagePage) error {
+func pageReadBackAllowed(kind string, stage *stagePage, live bool) error {
 	if kind != pageKindStatic {
 		return nil
 	}
-	if stage != nil && stageStaticReadBack(stage.transport()) {
+	if stage != nil && stageStaticReadBack(stage.transport(), live) {
 		return nil
 	}
-	return errors.New("this static page cannot be read back: your launch recorded no sandbox profile, so tclaude cannot tell " +
-		"which of its files you may read. Serve it from a dev server on your own port to use snapshot and dom")
+	return errors.New("this static page cannot be read back: tclaude cannot serve it exactly as your sandbox shows its files " +
+		"(or it changed since the page last loaded). Serve it from a dev server on your own port to use snapshot and dom")
 }
 
 // ownPage finds one of the caller's pages by name.
@@ -615,7 +612,7 @@ func handlePageDOM(w http.ResponseWriter, r *http.Request) {
 	livePages.mu.Lock()
 	kind, stage := p.kind, p.stage
 	livePages.mu.Unlock()
-	if err := pageReadBackAllowed(kind, stage); err != nil {
+	if err := pageReadBackAllowed(kind, stage, true); err != nil {
 		writeError(w, http.StatusConflict, "static_source", err.Error())
 		return
 	}
@@ -651,4 +648,16 @@ func latestPageView(id string) (view pageViewReport, batch *pageMarkBatch) {
 		return pageViewReport{VW: batch.Viewport.W, VH: batch.Viewport.H, X: batch.Scroll.X, Y: batch.Scroll.Y, Path: batch.Path}, batch
 	}
 	return pageViewReport{}, nil
+}
+
+// pageMarksStripPage drops what a batch carries from the page itself (its
+// text under marks, and the path and scroll its script reports) for a page
+// that is not read back. The marks, the note and the frame's size are the
+// operator's.
+func pageMarksStripPage(req *pageMarksRequest) {
+	for i := range req.Marks {
+		req.Marks[i].Anchors = []pageAnchor{}
+	}
+	req.Path = ""
+	req.Scroll = pageXY{}
 }
