@@ -31,7 +31,6 @@ import { CODEX_BUILTIN_FILTERED_NETWORK_DETAIL } from './sandbox-network-disclos
 import { pickDirectory } from './helpers.js';
 import { DiffLines } from './diff-lines.js';
 import { lineDiff } from './line-diff.js';
-import { useDialogFocus } from './dialog-focus.js';
 import { wizWord } from './slop.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
 import { Dialog } from './ui-dialog.js';
@@ -2196,7 +2195,6 @@ function parseEnvironment(raw) {
 
 function SandboxDiffModal({ model, close }) {
   const confirmRef = useRef(null);
-  const { dialogRef } = useDialogFocus({ open: !!model, initialFocusRef: confirmRef, onEscape: () => close(false) });
   useEffect(() => {
     if (!model) return undefined;
     const editor = document.querySelector('#sandbox-profile-editor-modal');
@@ -2218,19 +2216,16 @@ function SandboxDiffModal({ model, close }) {
   const adds = diff.filter((line) => line.t === 'add').length;
   const dels = diff.filter((line) => line.t === 'del').length;
   const sign = { add: '+', del: '\u2212', ctx: ' ' };
-  const cancelOutside = (event) => { if (event.target === event.currentTarget) close(false); };
-  return html`<div ref=${dialogRef} id="sandbox-profile-diff-modal" class="modal-overlay show" role="dialog" aria-modal="true" aria-labelledby="sandbox-profile-diff-title" onClick=${cancelOutside}>
-    <div class="config-diff-modal">
-      <h3 id="sandbox-profile-diff-title">Confirm sandbox profile changes</h3>
-      <p id="sandbox-profile-diff-sub" class="cfg-diff-sub">${model.before ? `${adds} line(s) added, ${dels} removed — server-normalized preview` : `${adds} line(s) added — new server-normalized profile`}</p>
-      <div id="sandbox-profile-diff-body" class="config-diff"><${DiffLines} diff=${diff} sign=${sign} /></div>
-      ${(model.notices || []).length > 0 && html`<section id="sandbox-profile-diff-evaluation" class="sbx-diff-evaluation" aria-labelledby="sandbox-profile-diff-evaluation-title">
-        <h4 id="sandbox-profile-diff-evaluation-title">Evaluation warnings</h4>
-        ${(model.notices || []).map((notice, index) => html`<div key=${index} class="sbx-composition-warning" role="alert">⚠ ${notice.detail}</div>`)}
-      </section>`}
-      <div class="modal-buttons"><${Button} id="sandbox-profile-diff-cancel" onClick=${() => close(false)}>Cancel</${Button}><span class="spacer"></span><${Button} variant="primary" domRef=${confirmRef} id="sandbox-profile-diff-confirm" onClick=${() => close(true)}>Save sandbox profile</${Button}></div>
-    </div>
-  </div>`;
+  return html`<${Dialog} id="sandbox-profile-diff-modal" dialogClass="config-diff-modal" title="Confirm sandbox profile changes"
+    initialFocusRef=${confirmRef} onClose=${() => close(false)} cancel="Cancel"
+    footer=${html`<${Button} variant="primary" domRef=${confirmRef} id="sandbox-profile-diff-confirm" onClick=${() => close(true)}>Save sandbox profile<//>`}>
+    <p id="sandbox-profile-diff-sub" class="cfg-diff-sub">${model.before ? `${adds} line(s) added, ${dels} removed — server-normalized preview` : `${adds} line(s) added — new server-normalized profile`}</p>
+    <div id="sandbox-profile-diff-body" class="config-diff"><${DiffLines} diff=${diff} sign=${sign} /></div>
+    ${(model.notices || []).length > 0 && html`<section id="sandbox-profile-diff-evaluation" class="sbx-diff-evaluation" aria-labelledby="sandbox-profile-diff-evaluation-title">
+      <h4 id="sandbox-profile-diff-evaluation-title">Evaluation warnings</h4>
+      ${(model.notices || []).map((notice, index) => html`<div key=${index} class="sbx-composition-warning" role="alert">⚠ ${notice.detail}</div>`)}
+    </section>`}
+  <//>`;
 }
 
 // Keep signal subscriptions at the overlay that consumes them. The dashboard

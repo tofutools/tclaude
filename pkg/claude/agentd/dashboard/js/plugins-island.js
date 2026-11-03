@@ -2,7 +2,7 @@ import { Fragment, h, render } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Input } from './ui-components.js';
-import { useDialogFocus } from './dialog-focus.js';
+import { Dialog } from './ui-dialog.js';
 import { AsyncLoadState } from './async-load-state.js';
 import { relTime } from './helpers.js';
 import { signal } from '@preact/signals';
@@ -249,29 +249,22 @@ export function PluginsModal({ state, actions }) {
   const draft = state.view.value.modal;
   const nameRef = useRef(null);
   const close = () => { state.closeModal(); void actions.refresh(); };
-  const { dialogRef } = useDialogFocus({ open: !!draft, initialFocusRef: nameRef, onEscape: close });
   if (!draft) return null;
-  return html`<div ref=${dialogRef} class="modal-overlay show" id="plugin-modal"
-    onClick=${(event) => { if (event.target === event.currentTarget) close(); }}>
-    <div class="cron-create-modal ui-dialog" role="dialog" aria-modal="true" aria-labelledby="plugin-modal-title">
-      <h3 id="plugin-modal-title">${draft.mode === 'edit' ? 'Edit plugin' : 'New plugin'}</h3>
-      <label class="cron-create-row"><span class="cron-create-label">Name</span>
-        <input ref=${nameRef} id="plugin-modal-name" type="text" placeholder="e.g. excalidraw-mcp" autocomplete="off" spellcheck=${false}
-          value=${draft.name} onInput=${(event) => state.updateModal({ name: event.currentTarget.value })} /></label>
-      <label class="cron-create-row"><span class="cron-create-label">Descr</span>
-        <textarea id="plugin-modal-descr" rows="2" placeholder="optional — what this plugin provides" spellcheck=${false}
-          value=${draft.descr} onInput=${(event) => state.updateModal({ descr: event.currentTarget.value })}></textarea></label>
-      <div id="plugin-modal-steps">${draft.steps.map((step, index) => html`<${StepEditor} key=${step._key} step=${step} index=${index} state=${state} />`)}</div>
-      <div class="modal-buttons"><${Button} id="plugin-modal-add-step" onClick=${() => state.addStep()}
-        title="Append another check/run step">+ add step</${Button}></div>
-      <div class="cron-create-error" id="plugin-modal-error" role=${draft.error ? 'alert' : undefined}>${draft.error}</div>
-      <div class="modal-buttons">
-        <${Button} id="plugin-modal-cancel" onClick=${close}>Cancel</${Button}><span class="spacer"></span>
-        <${Button} variant="primary" id="plugin-modal-submit" disabled=${draft.submitting}
-          onClick=${() => actions.save(draft)}>${draft.submitting ? 'Saving…' : draft.mode === 'edit' ? 'Save changes' : 'Create plugin'}</${Button}>
-      </div>
-    </div>
-  </div>`;
+  return html`<${Dialog} id="plugin-modal" titleId="plugin-modal-title" title=${draft.mode === 'edit' ? 'Edit plugin' : 'New plugin'}
+    initialFocusRef=${nameRef} onClose=${close} busy=${draft.submitting}
+    error=${draft.error} errorId="plugin-modal-error" cancel="Cancel" cancelId="plugin-modal-cancel"
+    footer=${html`<${Button} variant="primary" id="plugin-modal-submit" disabled=${draft.submitting}
+      onClick=${() => actions.save(draft)}>${draft.submitting ? 'Saving…' : draft.mode === 'edit' ? 'Save changes' : 'Create plugin'}<//>`}>
+    <label class="cron-create-row"><span class="cron-create-label">Name</span>
+      <input ref=${nameRef} id="plugin-modal-name" type="text" placeholder="e.g. excalidraw-mcp" autocomplete="off" spellcheck=${false}
+        value=${draft.name} onInput=${(event) => state.updateModal({ name: event.currentTarget.value })} /></label>
+    <label class="cron-create-row"><span class="cron-create-label">Descr</span>
+      <textarea id="plugin-modal-descr" rows="2" placeholder="optional — what this plugin provides" spellcheck=${false}
+        value=${draft.descr} onInput=${(event) => state.updateModal({ descr: event.currentTarget.value })}></textarea></label>
+    <div id="plugin-modal-steps">${draft.steps.map((step, index) => html`<${StepEditor} key=${step._key} step=${step} index=${index} state=${state} />`)}</div>
+    <div class="modal-buttons"><${Button} id="plugin-modal-add-step" onClick=${() => state.addStep()}
+      title="Append another check/run step">+ add step</${Button}></div>
+  <//>`;
 }
 
 export function mountPluginsIsland({ host, badgeHost, modalHost, state, actions, registerCleanup }) {

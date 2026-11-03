@@ -3,7 +3,7 @@ import { effect } from '@preact/signals';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import { useDialogFocus } from './dialog-focus.js';
+import { Dialog } from './ui-dialog.js';
 import { AutomationsSubnav, PROCESSES_SUBTAB, automationsSubnavEntries, openAutomationsEntry } from './automations-subnav.js';
 import { registerCommandProvider } from './command-registry.js';
 import { buildProcessEditorCommands } from './process-command-registry.js';
@@ -152,25 +152,33 @@ export function ProcessEditorBoundary({ spec, state, actions, confirmDiscard, op
   return html`<div ref=${slotRef} class="process-editor-slot"></div>`;
 }
 
-export function fieldSubmitHotkey(submit) {
-  return (event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); submit(); } };
-}
-
 function RenameDialog({ spec, busy, actions }) {
   const nameRef = useRef(null); const [name, setName] = useState(spec.name || '');
-  const close = () => { if (!busy) actions.closeRename(); };
-  const { dialogRef } = useDialogFocus({ open: true, initialFocusRef: nameRef, onEscape: close });
-  const submit = (event) => { event?.preventDefault(); void actions.submitRename(name); };
-  return html`<div class="modal-overlay show process-editor-modal process-rename-modal" onClick=${(event) => { if (event.target === event.currentTarget) close(); }}><form ref=${dialogRef} class="modal process-rename-dialog" role="dialog" aria-modal="true" aria-labelledby="process-rename-title" onSubmit=${submit}><h3 id="process-rename-title">Rename template</h3><div class="field process-editor-field process-rename-field"><label for="process-rename-input">Display name</label><input ref=${nameRef} id="process-rename-input" data-process-rename-input type="text" autocomplete="off" spellcheck="false" placeholder="display name" value=${name} data-select-on-focus onInput=${(event) => setName(event.currentTarget.value)} onKeyDown=${fieldSubmitHotkey(() => { if (!busy) submit(); })} /></div><p class="muted">Shown wherever this template is listed. The id <code>${spec.id}</code> is permanent.</p>${spec.error && html`<div class="island-error" role="alert">${spec.error}</div>`}<div class="modal-buttons"><${Button} disabled=${busy} onClick=${close}>Cancel</${Button}><${Button} variant="primary" type="submit" disabled=${busy}>${busy ? 'Saving…' : 'Save name'}</${Button}></div></form></div>`;
+  const submit = (event) => { event?.preventDefault(); if (!busy) void actions.submitRename(name); };
+  return html`<${Dialog} id="process-rename-modal" overlayClass="process-editor-modal process-rename-modal" dialogClass="modal process-rename-dialog"
+    title="Rename template" initialFocusRef=${nameRef} onClose=${() => actions.closeRename()} busy=${busy} onSubmitHotkey=${submit}
+    error=${spec.error || ''} cancel="Cancel"
+    footer=${html`<${Button} variant="primary" type="submit" form="process-rename-form" disabled=${busy}>${busy ? 'Saving…' : 'Save name'}<//>`}>
+    <form id="process-rename-form" onSubmit=${submit}>
+      <div class="field process-editor-field process-rename-field"><label for="process-rename-input">Display name</label><input ref=${nameRef} id="process-rename-input" data-process-rename-input type="text" autocomplete="off" spellcheck="false" placeholder="display name" value=${name} data-select-on-focus onInput=${(event) => setName(event.currentTarget.value)} /></div>
+      <p class="muted">Shown wherever this template is listed. The id <code>${spec.id}</code> is permanent.</p>
+    </form>
+  <//>`;
 }
 
 function CreateDialog({ spec, busy, actions }) {
   const nameRef = useRef(null); const [name, setName] = useState(spec.name || '');
   const outcomeUnknown = !!spec.attempt?.blocked && name.trim() === spec.attempt.name;
-  const close = () => { if (!busy) actions.closeCreate(); };
-  const { dialogRef } = useDialogFocus({ open: true, initialFocusRef: nameRef, onEscape: close });
   const submit = (event) => { event?.preventDefault(); if (!busy && !outcomeUnknown) void actions.submitCreate(name); };
-  return html`<div class="modal-overlay show process-editor-modal process-rename-modal" onClick=${(event) => { if (event.target === event.currentTarget) close(); }}><form ref=${dialogRef} class="modal process-rename-dialog" role="dialog" aria-modal="true" aria-labelledby="process-create-title" onSubmit=${submit}><h3 id="process-create-title">New process template</h3><div class="field process-editor-field process-rename-field"><label for="process-create-input">Display name</label><input ref=${nameRef} id="process-create-input" data-process-create-input type="text" autocomplete="off" spellcheck="false" placeholder="e.g. Release train" value=${name} disabled=${busy} onInput=${(event) => setName(event.currentTarget.value)} onKeyDown=${fieldSubmitHotkey(submit)} /></div><p class="muted">Creating the template assigns its permanent id automatically.</p>${spec.error && html`<div class="island-error" role="alert">${spec.error}</div>`}<div class="modal-buttons"><${Button} disabled=${busy} onClick=${close}>Cancel</${Button}><${Button} variant="primary" type="submit" disabled=${busy || !name.trim() || outcomeUnknown}>${busy ? 'Creating…' : 'Create'}</${Button}></div></form></div>`;
+  return html`<${Dialog} id="process-create-modal" overlayClass="process-editor-modal process-rename-modal" dialogClass="modal process-rename-dialog"
+    title="New process template" initialFocusRef=${nameRef} onClose=${() => actions.closeCreate()} busy=${busy} onSubmitHotkey=${submit}
+    error=${spec.error || ''} cancel="Cancel"
+    footer=${html`<${Button} variant="primary" type="submit" form="process-create-form" disabled=${busy || !name.trim() || outcomeUnknown}>${busy ? 'Creating…' : 'Create'}<//>`}>
+    <form id="process-create-form" onSubmit=${submit}>
+      <div class="field process-editor-field process-rename-field"><label for="process-create-input">Display name</label><input ref=${nameRef} id="process-create-input" data-process-create-input type="text" autocomplete="off" spellcheck="false" placeholder="e.g. Release train" value=${name} disabled=${busy} onInput=${(event) => setName(event.currentTarget.value)} /></div>
+      <p class="muted">Creating the template assigns its permanent id automatically.</p>
+    </form>
+  <//>`;
 }
 
 // FusedPeerProcesses is a section per ticked peer after this node's

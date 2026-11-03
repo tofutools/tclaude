@@ -60,11 +60,9 @@ test('ui.css defines the standard dialog box and ManagementOverlay applies it', 
   assert.match(css, /body\.wizard \{[^}]*--ui-dialog-bg:/, 'the wizard skin has its own dialog box');
   const overlay = readFileSync(new URL('js/management-overlay.js', DASHBOARD), 'utf8');
   assert.match(overlay, / ui-dialog`/, 'ManagementOverlay renders every dialog as a .ui-dialog');
-  // The dialogs built without ManagementOverlay take the box themselves.
+  // The dialog built without ManagementOverlay takes the box itself.
   for (const [file, needle] of [
     ['shell-island.js', '<div class="modal ui-dialog" role="dialog"'],
-    ['plugins-island.js', '<div class="cron-create-modal ui-dialog" role="dialog"'],
-    ['profiles-island.js', '<form class="cron-create-modal ui-dialog" role="dialog"'],
   ]) assert.ok(readFileSync(new URL(`js/${file}`, DASHBOARD), 'utf8').includes(needle), `${file} renders its dialog as a .ui-dialog`);
 });
 
@@ -83,14 +81,10 @@ test('no stylesheet hand-paints a new dialog box', () => {
 
 // Dialog headings take the skin's title face from `:where(.ui-dialog) h3`
 // (ui.css). The wizard skin used to copy its gilded serif onto each dialog's
-// h3 by id; a new copy fails here. The processes-island rename/create forms
-// are bare .modal boxes outside .ui-dialog, and the config diff dialog paints
-// its own panel, so their rules stay. The standing-orders heading is a
+// h3 by id; a new copy fails here. The standing-orders heading is a
 // deliberate variant (smaller, softer glow).
 const TITLE_EXEMPT = new Set([
   'body.wizard #group-standing-orders-modal .group-standing-orders-heading h3',
-  'body.wizard .process-editor-modal .modal h3',
-  'body.wizard :is(#config-diff-modal, #sandbox-profile-diff-modal) .config-diff-modal h3',
 ]);
 
 export function handRolledTitles(css) {

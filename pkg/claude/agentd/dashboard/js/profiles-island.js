@@ -2,7 +2,7 @@ import { Fragment, h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import { useDialogFocus } from './dialog-focus.js';
+import { Dialog } from './ui-dialog.js';
 import { relTime } from './helpers.js';
 
 const html = htm.bind(h);
@@ -105,15 +105,15 @@ function ProfileModal({ state, actions }) {
   const draft = state.view.value.modal;
   const secondsRef = useRef(null);
   const close = () => state.closeModal();
-  const { dialogRef } = useDialogFocus({ open: !!draft, initialFocusRef: secondsRef, onEscape: close });
   if (!draft) return null;
   const max = state.view.value.defaults.max_seconds;
   const field = (key) => (event) => state.updateModal({ [key]: event.currentTarget.value, error: '' });
-  return html`<div ref=${dialogRef} class="modal-overlay show" id="profile-modal"
-    onClick=${(event) => { if (event.target === event.currentTarget) close(); }}>
-    <form class="cron-create-modal ui-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-modal-title"
-      onSubmit=${(event) => { event.preventDefault(); void actions.start(); }}>
-      <h3 id="profile-modal-title">Profile the daemon</h3>
+  return html`<${Dialog} id="profile-modal" titleId="profile-modal-title" title="Profile the daemon"
+    initialFocusRef=${secondsRef} onClose=${close} busy=${draft.submitting}
+    error=${draft.error} errorId="profile-modal-error" cancel="Cancel" cancelId="profile-modal-cancel"
+    footer=${html`<${Button} variant="primary" id="profile-modal-submit" type="submit" form="profile-modal-form" disabled=${draft.submitting}>
+      ${draft.submitting ? 'Starting…' : 'Start profiling'}<//>`}>
+    <form id="profile-modal-form" onSubmit=${(event) => { event.preventDefault(); void actions.start(); }}>
       <p class="muted">Captures a CPU profile of this agentd process while it keeps running normally, plus heap,
         goroutine, block and mutex profiles and an execution trace. Run it while the CPU usage you want to explain is happening.
         Press Enter to start with these settings.</p>
@@ -126,14 +126,8 @@ function ProfileModal({ state, actions }) {
       <label class="cron-create-row"><span class="cron-create-label">Label</span>
         <input id="profile-modal-label" type="text" maxlength="80" placeholder="optional — e.g. 12 agents idle" autocomplete="off"
           value=${draft.label} onInput=${field('label')} /></label>
-      <div class="cron-create-error" id="profile-modal-error" role=${draft.error ? 'alert' : undefined}>${draft.error}</div>
-      <div class="modal-buttons">
-        <${Button} id="profile-modal-cancel" onClick=${close}>Cancel</${Button}><span class="spacer"></span>
-        <${Button} variant="primary" id="profile-modal-submit" type="submit" disabled=${draft.submitting}>
-          ${draft.submitting ? 'Starting…' : 'Start profiling'}</${Button}>
-      </div>
     </form>
-  </div>`;
+  <//>`;
 }
 
 function CaptureList({ current, actions, now }) {

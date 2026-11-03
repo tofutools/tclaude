@@ -3,7 +3,7 @@ import { useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { DiffLines } from './diff-lines.js';
-import { useDialogFocus } from './dialog-focus.js';
+import { Dialog } from './ui-dialog.js';
 import { ConfigFormMarkup } from './config-form-markup.js';
 import { bindConfigActivation, configLineDiff, configureConfigAdapter, configureConfigLifecycle, followSourceChoice, handleConfigEvent } from './config-form-adapter.js';
 import { SOURCE_CHOICE_EVENT } from './knowledge-source-island.js';
@@ -12,30 +12,19 @@ const html = htm.bind(h);
 
 function ConfigDiffModal({ model, close }) {
   const confirmRef = useRef(null);
-  const { dialogRef } = useDialogFocus({
-    open: !!model, initialFocusRef: confirmRef, onEscape: () => close(false),
-  });
   if (!model) return null;
   const diff = configLineDiff(model.beforeRaw, model.afterRaw);
   const adds = diff.filter(line => line.t === 'add').length;
   const dels = diff.filter(line => line.t === 'del').length;
   const sign = { add: '+', del: '-', ctx: ' ' };
-  const cancelOutside = (event) => { if (event.target === event.currentTarget) close(false); };
-  return html`<div ref=${dialogRef} id="config-diff-modal" class="modal-overlay show" role="dialog" aria-modal="true"
-    aria-labelledby="config-diff-title" onClick=${cancelOutside}>
-    <div class="config-diff-modal">
-      <h3 id="config-diff-title">Confirm config changes</h3>
-      ${model.malformed && html`<div id="config-diff-warn" class="config-diff-warn" style="display:block">⚠ config.json on disk is corrupt and could not be parsed. The form shows DEFAULT values, not your previous settings. Saving replaces the corrupt file entirely — anything it contained is lost. The diff below is against defaults.</div>`}
-      <p id="config-diff-sub" class="cfg-diff-sub">${adds} line(s) added, ${dels} removed — writing to ${model.path}</p>
-      <div id="config-diff-body" class="config-diff"><${DiffLines} diff=${diff} sign=${sign} unreadable=${!!model.malformed} /></div>
-      <div class="modal-buttons">
-        <${Button} id="config-diff-cancel" onClick=${() => close(false)}>Cancel</${Button}>
-        <span class="spacer"></span>
-        <${Button} variant="primary" domRef=${confirmRef} id="config-diff-confirm"
-          onClick=${() => close(true)}>${model.malformed ? 'Replace corrupt config.json' : 'Save to config.json'}</${Button}>
-      </div>
-    </div>
-  </div>`;
+  return html`<${Dialog} id="config-diff-modal" dialogClass="config-diff-modal" title="Confirm config changes"
+    initialFocusRef=${confirmRef} onClose=${() => close(false)} cancel="Cancel"
+    footer=${html`<${Button} variant="primary" domRef=${confirmRef} id="config-diff-confirm"
+      onClick=${() => close(true)}>${model.malformed ? 'Replace corrupt config.json' : 'Save to config.json'}<//>`}>
+    ${model.malformed && html`<div id="config-diff-warn" class="config-diff-warn" style="display:block">⚠ config.json on disk is corrupt and could not be parsed. The form shows DEFAULT values, not your previous settings. Saving replaces the corrupt file entirely — anything it contained is lost. The diff below is against defaults.</div>`}
+    <p id="config-diff-sub" class="cfg-diff-sub">${adds} line(s) added, ${dels} removed — writing to ${model.path}</p>
+    <div id="config-diff-body" class="config-diff"><${DiffLines} diff=${diff} sign=${sign} unreadable=${!!model.malformed} /></div>
+  <//>`;
 }
 
 // The large form deliberately uses uncontrolled browser inputs. Config loads

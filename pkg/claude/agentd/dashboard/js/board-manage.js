@@ -11,7 +11,7 @@ import htm from 'htm';
 import { Button } from './ui-components.js';
 import { boardIdFromTitle, cleanText, drawnElements, fromExcalidraw, toExcalidraw } from './board-model.js';
 import { companionAgents } from './companion-model.js';
-import { useDialogFocus } from './dialog-focus.js';
+import { Dialog, DialogClose } from './ui-dialog.js';
 import { downloadText } from './download.js';
 
 const html = htm.bind(h);
@@ -125,7 +125,6 @@ function BoardDeleteDialog({ request, snapshot, fetchImpl, notify, close }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState('');
   const cancelRef = useRef(null);
-  const { dialogRef } = useDialogFocus({ open: true, initialFocusRef: cancelRef, onEscape: close });
   useEffect(() => {
     let current = true;
     readBoard(request.id, fetchImpl).then((read) => {
@@ -174,26 +173,21 @@ function BoardDeleteDialog({ request, snapshot, fetchImpl, notify, close }) {
     request.onDeleted?.();
     close();
   }
-  return html`<div ref=${dialogRef} class="modal-overlay show board-delete-overlay">
-    <div class="modal board-delete" role="alertdialog" aria-modal="true" aria-label=${`Delete ${title}`}>
-      <h3>Delete “${title}”?</h3>
-      ${board ? html`<p>
-        ${count} element${count === 1 ? '' : 's'}${board.group ? `, in group ${board.group}` : ''}.
-        This cannot be undone.${people.length ? ' Agents on it are told.' : ''}
-      </p>
-      ${people.length ? html`<ul class="board-delete-people" aria-label="Agents on this board">
-        ${people.map(({ id, via }) => html`<li key=${id}>
-          ${agents.get(id)?.name || id.slice(0, 12)}${via ? html` <small>through the group</small>` : ''}
-        </li>`)}
-      </ul>` : html`<p class="board-muted">No agents are on it.</p>`}` : !problem && html`<p class="board-muted">Loading…</p>`}
-      ${problem && html`<p class="board-error" role="alert">${problem}</p>`}
-      <div class="modal-buttons">
-        <${Button} class="board-delete-export" disabled=${!board} onClick=${exportFirst}>${exported ? '✓ Exported' : '⤓ Export first'}</${Button}>
-        <${Button} domRef=${cancelRef} onClick=${close}>Cancel</${Button}>
-        <${Button} variant="danger" class="board-delete-confirm" disabled=${!board || busy} onClick=${confirm}>Delete board</${Button}>
-      </div>
-    </div>
-  </div>`;
+  return html`<${Dialog} id="board-delete-modal" overlayClass="board-delete-overlay" dialogClass="modal board-delete"
+    title=${`Delete “${title}”?`} initialFocusRef=${cancelRef} onClose=${close} busy=${busy} error=${problem}
+    footerStart=${html`<${Button} class="board-delete-export" disabled=${!board} onClick=${exportFirst}>${exported ? '✓ Exported' : '⤓ Export first'}<//>`}
+    footer=${html`<${DialogClose} domRef=${cancelRef} disabled=${busy}>Cancel<//>
+      <${Button} variant="danger" class="board-delete-confirm" disabled=${!board || busy} onClick=${confirm}>Delete board<//>`}>
+    ${board ? html`<p>
+      ${count} element${count === 1 ? '' : 's'}${board.group ? `, in group ${board.group}` : ''}.
+      This cannot be undone.${people.length ? ' Agents on it are told.' : ''}
+    </p>
+    ${people.length ? html`<ul class="board-delete-people" aria-label="Agents on this board">
+      ${people.map(({ id, via }) => html`<li key=${id}>
+        ${agents.get(id)?.name || id.slice(0, 12)}${via ? html` <small>through the group</small>` : ''}
+      </li>`)}
+    </ul>` : html`<p class="board-muted">No agents are on it.</p>`}` : !problem && html`<p class="board-muted">Loading…</p>`}
+  <//>`;
 }
 
 // BoardDeleteHost shows the dialog a list or a tab asked for.

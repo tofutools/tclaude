@@ -621,7 +621,7 @@ test('renaming a template round-trips the head edit view and changes only the di
 
   input.value = 'New name';
   await harness.act(() => harness.fireEvent(input, 'input'));
-  await harness.act(() => harness.fireEvent(mounted.container.querySelector('.process-rename-dialog'), 'submit'));
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('.process-rename-dialog form'), 'submit'));
   for (let i = 0; i < 10 && state.rename.value; i++) await harness.act(() => Promise.resolve());
 
   const post = requests.find((request) => request.options.method === 'POST');
@@ -1169,7 +1169,7 @@ test('creating a template persists the named scaffold and prepopulates the edito
 
   input.value = 'Release train';
   await harness.act(() => harness.fireEvent(input, 'input'));
-  await harness.act(() => harness.fireEvent(mounted.container.querySelector('.process-rename-dialog'), 'submit'));
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('.process-rename-dialog form'), 'submit'));
   for (let i = 0; i < 10 && !state.canvas.value; i++) await harness.act(() => Promise.resolve());
 
   assert.equal(state.canvas.value?.kind, 'editor');
