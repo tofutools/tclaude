@@ -849,24 +849,31 @@ test('sandbox clone suggestions stay within the UTF-8 server limit across collis
   assert.notEqual(second, first);
 });
 
-test('sandbox scribe return reopens clone drafts in explicit create mode', async (t) => {
+test('the sandbox scribe opens in its chat window, and its draft reopens clones in explicit create mode', async (t) => {
   const harness = await createPreactHarness(t);
   await harness.replaceDashboardModule('js/refresh.js', 'export function toast() {}');
-  await harness.replaceDashboardModule('js/terminals-tab.js', 'export function openTerminalPane() {}');
-  const [{ registerManagementController }, { summonSandboxScribe }, { createManagementState }, { mountManagementIsland }] = await Promise.all([
+  const [{ registerManagementController }, { summonSandboxScribe }, { createManagementState }, { mountManagementIsland }, { registerCompanionController }] = await Promise.all([
     harness.importDashboardModule('js/management-controller.js'),
     harness.importDashboardModule('js/sandbox-profiles.js'),
     harness.importDashboardModule('js/management-state.js'),
     harness.importDashboardModule('js/management-island.js'),
+    harness.importDashboardModule('js/companion-facade.js'),
   ]);
+  const windows = [];
+  t.after(registerCompanionController({ open: (agentId, options) => { windows.push({ agentId, ...options }); return true; } }));
   let opened = null;
   const unregister = registerManagementController({
     openSandboxProfileEditor(seed, options) { opened = { seed, options }; },
   });
   t.after(unregister);
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (path) => {
-    if (path === '/api/scribe') return { ok: true, json: async () => ({ name: 'sandbox-scribe' }) };
+  const summons = [];
+  globalThis.fetch = async (path, init) => {
+    if (path === '/api/scribe') {
+      summons.push(JSON.parse(init.body));
+      const body = { agent_id: 'agt_sandbox', conv_id: 'conv-sandbox', name: 'sandbox-scribe-1' };
+      return { ok: true, status: 200, text: async () => JSON.stringify(body) };
+    }
     if (String(path).startsWith('/api/sandbox-profile-drafts/')) {
       return { ok: true, json: async () => ({ profile: { name: 'restricted-copy', filesystem: [] } }) };
     }
@@ -874,13 +881,24 @@ test('sandbox scribe return reopens clone drafts in explicit create mode', async
   };
   t.after(() => { globalThis.fetch = originalFetch; });
 
-  await summonSandboxScribe(
+  const asked = [];
+  assert.equal(await summonSandboxScribe({ name: 'x', filesystem: [] }, '', null, {}, { confirm: async (request) => { asked.push(request); return false; } }), null);
+  assert.deepEqual(summons, [], 'a declined grant starts nothing');
+  assert.equal(asked[0].title, 'Grant sandbox-scribe access?');
+  assert.match(asked[0].body, /sandbox-profiles\.draft/);
+  const result = await summonSandboxScribe(
     { name: 'restricted-copy', filesystem: [] },
     '',
     null,
     { editExisting: false, cloneSourceName: 'restricted' },
+    { confirm: async () => true },
   );
-  await harness.act(() => Promise.resolve());
+  assert.equal(result.opened, 'chat');
+  assert.deepEqual(windows, [{ agentId: 'agt_sandbox', starting: true }], 'a regular chat window');
+  assert.deepEqual(summons[0].slugs, ['sandbox-profiles.draft']);
+  assert.equal(summons[0].background, true);
+  for (let i = 0; i < 3; i++) await harness.act(() => Promise.resolve());
+  assert.ok(opened, 'the draft it hands back still reaches the review queue');
   assert.equal(opened.seed.name, 'restricted-copy');
   assert.equal(opened.options.targetName, '');
   assert.equal(opened.options.editExisting, false, 'the returned named draft remains a create');
@@ -1376,7 +1394,7 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
   ]);
   const state = createManagementState(); state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [{ name: 'base' }, { name: 'dev' }]); state.openDialog({ kind: 'sandbox-editor', seed: { name: 'dev', filesystem: [], environment: [], includes: [], agent_directories: [], network_access: 'internet' }, options: {} });
-  let saved = null; let scribe = null; const actions = { saveSandbox(value) { saved = value; }, configureSandboxWithAgent(value, options) { scribe = { value, options }; }, async inspectDirectories() { return { missing: ['/cache'], creatable: ['/cache'] }; }, async createDirectories() { return { created: ['/cache'] }; } };
+  let saved = null; let scribe = null; const actions = { saveSandbox(value) { saved = value; }, configureSandboxWithAgent(value, options) { scribe = { value, options }; return scribe.value.filesystem?.[0]?.path === '/raw' ? { opened: 'chat' } : null; }, async inspectDirectories() { return { missing: ['/cache'], creatable: ['/cache'] }; }, async createDirectories() { return { created: ['/cache'] }; } };
   const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   mountManagementIsland({ host, state, actions, confirmDiscard: async () => false, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } }); await harness.act(() => Promise.resolve());
   assert.match(host.querySelector('#sandbox-profile-editor-modal .cron-create-row input').placeholder, /shared-build-caches/);
@@ -1396,7 +1414,7 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   assert.match(host.querySelector('[role="alert"]').textContent, /JSON|position|property/i); assert.equal(saved, null);
   host.querySelector('#sandbox-profile-editor-scribe').click(); await harness.act(() => Promise.resolve()); assert.equal(scribe, null); assert.ok(host.querySelector('#sandbox-profile-editor-modal'), 'invalid raw JSON blocks scribe handoff');
   raw.value = '[{"path":"/raw","access":"read"}]'; raw.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve()); host.querySelector('#sandbox-profile-editor-scribe').click(); await harness.act(() => Promise.resolve());
-  assert.equal(scribe.value.filesystem[0].path, '/raw'); assert.equal(scribe.value.network.baseline, 'deny'); assert.equal(scribe.value.network_access, ''); assert.equal(scribe.options.targetName, 'dev'); assertAbsent(host.querySelector('#sandbox-profile-editor-modal'), 'scribe handoff closes the editor so its returned draft can be delivered');
+  assert.equal(scribe.value.filesystem[0].path, '/raw'); assert.equal(scribe.value.network.baseline, 'deny'); assert.equal(scribe.value.network_access, ''); assert.equal(scribe.options.targetName, 'dev'); assertAbsent(host.querySelector('#sandbox-profile-editor-modal'), 'once the scribe window opened, the editor closes so its returned draft can be delivered');
   cleanups.reverse().forEach((fn) => fn());
 });
 
@@ -4959,7 +4977,7 @@ test('a scribe that opened its window dismisses the manager, whose dialog would 
   ]);
   const state = createManagementState();
   const summoned = [];
-  let result = { focus_mode: 'browser', focus_ws: '/api/open-window-ws/scribe' };
+  let result = { agentId: 'agt_sandbox', opened: 'chat' };
   const actions = createManagementActions({ state, summonTemplateScribe: async (request) => { summoned.push(request); return { agentId: 'agt_circle', opened: 'chat' }; }, summonSandboxScribe: async () => result });
   state.openTemplateManager();
   await actions.editTemplatesWithAgent();

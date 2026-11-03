@@ -1,7 +1,7 @@
 // Sandbox-profile loading and scribe integration. The management DOM is owned
 // by management-island.js; the spawn policy preview is plain model/actions code.
 import { toast } from './refresh.js';
-import { openTerminalPane } from './terminals-tab.js';
+import { summonHelper } from './get-help.js';
 import { createSandboxDraftQueue } from './sandbox-draft-queue.js';
 import { managementController } from './management-controller.js';
 import { randomUUID } from './insecure-origin.js';
@@ -70,15 +70,34 @@ async function pollSandboxScribeDraft(token, targetName, onCreate, editorOptions
   }
 }
 
-async function summonSandboxScribe(seed, targetName = '', onCreate = null, editorOptions = {}) {
+// summonSandboxScribe starts the sandbox scribe through Get help's shared
+// summon (tcl-3xsqgz): the operator confirms its draft-only grant, and it opens
+// in its regular overlay chat window (a terminal tab without the companion).
+// The draft it hands back still comes through the review queue. It answers
+// the summon's result, or null when declined or failed; helperOptions are
+// summonHelper's (confirm, fetchImpl) for tests.
+async function summonSandboxScribe(seed, targetName = '', onCreate = null, editorOptions = {}, helperOptions = {}) {
   const token = sandboxScribeToken();
   try {
-    const response = await fetch('/api/scribe', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: SANDBOX_SCRIBE_NAME, slugs: SANDBOX_SCRIBE_SLUGS, brief: sandboxScribeBrief(token, targetName, seed) }) });
-    if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`);
-    const result = await response.json().catch(() => ({})); const name = result.name || SANDBOX_SCRIBE_NAME;
-    if (result.focus_mode === 'browser' && result.focus_ws) openTerminalPane({ ws: result.focus_ws, label: name, hideConv: result.conv_id || null, agent: result.agent_id || result.conv_id || null });
-    toast(`summoned ${name}${result.focus_mode === 'browser' ? ' — opened in-browser terminal' : ' — opening its terminal'}`); void pollSandboxScribeDraft(token, targetName, onCreate, editorOptions); return result;
-  } catch (error) { openSandboxProfileEditor(seed, { ...editorOptions, targetName, onCreate, notice: `Could not summon sandbox scribe: ${error.message || String(error)}` }); toast(error.message || String(error), true); }
+    const result = await summonHelper({
+      name: SANDBOX_SCRIBE_NAME, slugs: SANDBOX_SCRIBE_SLUGS, brief: sandboxScribeBrief(token, targetName, seed),
+      confirmation: {
+        title: 'Grant sandbox-scribe access?',
+        body: `This starts a scribe agent to design ${targetName ? `a replacement for the sandbox profile "${targetName}"` : 'a sandbox profile'} with you by chat. It is granted ${SANDBOX_SCRIBE_SLUGS.join(', ')}: it can hand a draft back here for you to review and save, and cannot save, apply or assign a profile.`,
+        meta: SANDBOX_SCRIBE_SLUGS.join(', '),
+        okLabel: 'Grant & summon',
+      },
+      ...helperOptions,
+    });
+    if (!result) return null;
+    toast(`summoned ${result.name}`);
+    void pollSandboxScribeDraft(token, targetName, onCreate, editorOptions);
+    return result;
+  } catch (error) {
+    openSandboxProfileEditor(seed, { ...editorOptions, targetName, onCreate, notice: `Could not summon sandbox scribe: ${error.message || String(error)}` });
+    toast(error.message || String(error), true);
+    return null;
+  }
 }
 
 function bindSandboxProfilesUI() {
