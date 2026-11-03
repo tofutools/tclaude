@@ -137,6 +137,9 @@ func TestTool_ArgumentsReachTheRoute(t *testing.T) {
 	callTool(t, session, stewardtools.ReadBoard, map[string]any{"id": "plan"})
 	callTool(t, session, stewardtools.UpdateBoard, map[string]any{"id": "plan", "elements": []map[string]any{{"id": "e"}}})
 	callTool(t, session, stewardtools.SetTaskLink, map[string]any{"agent": "a/b", "url": "https://e.example"})
+	callTool(t, session, stewardtools.ShowPage, map[string]any{"target": ":5173/app", "name": "landing"})
+	callTool(t, session, stewardtools.ListPages, map[string]any{})
+	callTool(t, session, stewardtools.ClosePage, map[string]any{"name": "a/b"})
 	assert.Equal(t, []string{
 		"GET /v1/peers?group=a+b%26c",
 		"GET /v1/inbox?limit=100&unread=1",
@@ -149,13 +152,17 @@ func TestTool_ArgumentsReachTheRoute(t *testing.T) {
 		"GET /v1/boards/plan",
 		"PATCH /v1/boards/plan",
 		"POST /v1/agent/a%2Fb/task",
+		"POST /v1/pages",
+		"GET /v1/pages",
+		"DELETE /v1/pages/a%2Fb",
 	}, paths)
-	require.Len(t, bodies, 5)
+	require.Len(t, bodies, 6)
 	assert.Equal(t, "worker", bodies[0]["to"])
 	assert.Equal(t, "ok", bodies[1]["body"])
 	assert.Equal(t, "b", bodies[2]["body"])
 	assert.Equal(t, []any{map[string]any{"id": "e"}}, bodies[3]["elements"])
 	assert.Equal(t, "https://e.example", bodies[4]["url"])
+	assert.Equal(t, ":5173/app", bodies[5]["target"])
 }
 
 type activityDaemon struct {

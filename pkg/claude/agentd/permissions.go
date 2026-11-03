@@ -218,6 +218,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Start an agent-scoped process run bound to self (tclaude process run start --agent <self>). Default-granted, mirroring the self-lifecycle slugs. Authorizing program profiles still needs process.runs.manage.",
 	},
 	{
+		Slug:        PermSelfPage,
+		Description: "Show the operator a live page of own port or worktree files, and list or close own pages (tclaude agent show / agent page). Acts only on pages this agent showed; needs Collab on. Default-granted, mirroring the self-lifecycle slugs.",
+	},
+	{
 		Slug: PermAgentProcess, GroupSibling: PermGroupsMembersProcess,
 		Description: "Start a process run scoped to ANOTHER agent globally (tclaude process run start --agent <agent>). Group-scoped authority uses groups.members.process.",
 	},

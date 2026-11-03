@@ -105,3 +105,11 @@ func (p *StagePageForTest) UseStaticSource(worktree, target string) error {
 func (p *StagePageForTest) SubscribeReload() (<-chan struct{}, func()) {
 	return p.page.subscribeReload()
 }
+
+// CloseAllLivePagesForTest closes every live page, so tests do not see each
+// other's pages in the process-wide registry.
+func CloseAllLivePagesForTest() {
+	for _, p := range livePages.list("") {
+		livePages.closeByID(p.id)
+	}
+}

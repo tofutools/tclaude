@@ -303,6 +303,7 @@ func completePermissionSlugs(_ *cobra.Command, _ []string, toComplete string) []
 			{"self.tags", "Set own agent tags"},
 			{"self.dir-repair", "Recreate own recorded startup directory"},
 			{"self.process", "Start a process run bound to self"},
+			{"self.page", "Show the operator a live page of own port or files"},
 			{"auto-permit.enter-worktree", "Let tclaude answer Claude Code's EnterWorktree prompt"},
 			{"agent.reincarnate", "Reincarnate ANOTHER agent"},
 			{"agent.compact", "Compact ANOTHER agent"},

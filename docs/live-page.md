@@ -6,10 +6,68 @@ tclaude does not build the page. It renders what the agent serves, in a
 sandboxed frame.
 
 !!! note "In progress"
-    So far the daemon's stage listener and its page sources exist: the parts that
-    serve a page on its own origin from the agent's port or files. The
-    `tclaude agent show` command, the dashboard tab, drawing and live patches come
+    So far the daemon's stage listener, its page sources and the agent commands
+    exist: an agent can show, update, list and close pages, and the dashboard
+    snapshot carries them. The dashboard's Page tab, drawing and live patches come
     in later releases.
+
+## Showing a page
+
+An agent shows a page with `tclaude agent show <target>`, short for
+`tclaude agent page show`:
+
+```bash
+tclaude agent show :5173/app --name landing --title "Fernwood landing"
+tclaude agent show ./site            # a static directory, serves its index.html
+tclaude agent show ./mock.html       # one HTML file
+tclaude agent page ls
+tclaude agent page close landing
+```
+
+The target is `:PORT[/path]`, `http://localhost:PORT/path`, a directory, or an
+`.html` file. A file target must be inside the agent's worktree or its startup
+directory. The command prints the source, the page's origin and the rules.
+The same commands exist as MCP tools (`show_page`, `list_pages`, `close_page`)
+for an [external steward](external-steward.md).
+
+- **Validation happens before anything is dialled.** A host name or IP is
+  refused, and so is `::1`, `https:`, a URL with credentials, a port of the
+  daemon's own, a path outside the worktree and a dot-named path. A port target
+  is proved once at show time, with the same checks the stage makes for every
+  connection. A dev server that is not running, or not the agent's, is refused
+  with the reason. The stage connects only to `127.0.0.1`, so a server bound only
+  to `::1` is refused too, with a hint to start it with `--host 127.0.0.1`.
+- **Update in place.** Showing again with the same `--name` updates that page:
+  a new path or port, the same origin, and open views reload. Without `--name`
+  the name comes from the target (`:5173` gives `port-5173`, `site/` gives `site`).
+- **A new kind of source gets a new origin.** Re-showing a name with the other
+  kind of source (a port where it was static files, or the reverse) closes the
+  old origin and mints a new one. Page code that read the static files keeps
+  them in memory, and it must not keep an origin that now reaches the agent's
+  dev server.
+- **Own pages only.** Every command resolves the page by name among the
+  caller's own pages, so an agent cannot list, update or close another agent's
+  page. The permission is `self.page`, default-granted with the other `self.*`
+  slugs. The commands are hidden, and the routes answer 404, while
+  [Collab is off](companion.md#turning-collab-off).
+- **Lifecycle.** A page belongs to the agent ID, so it survives a
+  reincarnation. Retiring the agent closes its pages. When the operator closes a
+  page in the dashboard, the agent gets an inbox message `[page <name>] closed`.
+  Pages live in the daemon's memory only: restarting the daemon closes them, and
+  page tokens are never written to disk.
+- **Limits.** An agent may have 8 pages open, and the daemon 64.
+
+The dashboard snapshot lists the open pages (`live_pages`), each with a revision
+that changes whenever the page is shown or updated. The Page tab uses it.
+
+### The page token is the key
+
+The stage admits a frame's `Origin: null` requests, because a sandboxed frame
+has no other origin to send. So the 128-bit token in the page's host name is
+what decides who reaches the page. The token goes only to the agent that showed
+the page (in its `show` and `page ls` output) and to the local dashboard. It is
+never sent to another agent or to a linked instance's view. An agent should
+never pass its page's origin on, or put it in a commit, PR or ticket.
 
 ## Page sources
 
@@ -109,5 +167,9 @@ Known limits of the boundary:
 - The frame may open `alert`, `confirm` and `prompt` dialogs (`allow-modals`). A
   dialog comes from the page, not from tclaude. Never type the operator token
   into one.
+- A static source is read through the daemon's view of the file system, not
+  the agent sandbox's. A file inside the worktree that the agent's sandbox
+  profile hides with a deny rule can still be served. This is to be fixed before
+  pages can be read back by the agent.
 - Browsers resolve `*.localhost` to loopback themselves. A browser that hands
   these names to the system resolver instead trusts that resolver for them.
