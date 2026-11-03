@@ -1,7 +1,7 @@
 // Sandbox-profile loading and scribe integration. The management DOM is owned
 // by management-island.js; the spawn policy preview is plain model/actions code.
 import { toast } from './refresh.js';
-import { openTerminalPane } from './terminals-tab.js';
+import { summonHelper } from './get-help.js';
 import { createSandboxDraftQueue } from './sandbox-draft-queue.js';
 import { managementController } from './management-controller.js';
 import { randomUUID } from './insecure-origin.js';
@@ -50,35 +50,71 @@ function sandboxScribeBrief(token, targetName, seed) {
 function openSandboxProfileEditor(seed = null, options = {}) { return managementController().openSandboxProfileEditor(seed, options); }
 function openSandboxProfilesManageModal() { return managementController().openSandboxProfilesManageModal(); }
 
+const sandboxEditorOpen = () => !!document.querySelector('#sandbox-profile-editor-modal');
+
 const sandboxDraftQueue = createSandboxDraftQueue({
-  canDeliver: () => !document.querySelector('#sandbox-profile-editor-modal'),
+  canDeliver: () => !sandboxEditorOpen(),
   deliver: ({ draft, targetName, onCreate, editorOptions }) => {
     openSandboxProfileEditor(draft.profile, { ...editorOptions, targetName, onCreate, notice: 'Agent draft loaded. Review every field, then explicitly save.' });
     toast('sandbox scribe draft ready — review and explicitly save');
+    awaitSandboxEditorClose();
   },
 });
+
+// awaitSandboxEditorClose frees the review once the editor closes: a delivered
+// draft holds the queue until then, and a draft that arrived while any editor
+// was open waits for it. It watches only while something waits on it.
+let editorWatch = null;
+function awaitSandboxEditorClose() {
+  if (editorWatch) return;
+  editorWatch = setInterval(() => {
+    if (sandboxEditorOpen()) return;
+    clearInterval(editorWatch);
+    editorWatch = null;
+    sandboxDraftQueue.release();
+  }, 500);
+}
 
 async function pollSandboxScribeDraft(token, targetName, onCreate, editorOptions) {
   const deadline = Date.now() + 30 * 60 * 1000;
   while (Date.now() < deadline) {
     try {
       const response = await fetch(`/api/sandbox-profile-drafts/${encodeURIComponent(token)}`, { credentials: 'same-origin' });
-      if (response.ok) { const draft = await response.json(); const opened = sandboxDraftQueue.enqueue({ draft, targetName, onCreate, editorOptions }); if (!opened) toast(`sandbox scribe draft ready — queued for review (${sandboxDraftQueue.pendingCount()} waiting)`); return; }
+      if (response.ok) { const draft = await response.json(); const opened = sandboxDraftQueue.enqueue({ draft, targetName, onCreate, editorOptions }); if (!opened) awaitSandboxEditorClose(); if (!opened) toast(`sandbox scribe draft ready — queued for review (${sandboxDraftQueue.pendingCount()} waiting)`); return; }
       if (response.status !== 404) throw new Error((await response.text()) || `HTTP ${response.status}`);
     } catch (error) { toast(`sandbox draft handoff failed: ${error.message || String(error)}`, true); return; }
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
 }
 
-async function summonSandboxScribe(seed, targetName = '', onCreate = null, editorOptions = {}) {
+// summonSandboxScribe starts the sandbox scribe through Get help's shared
+// summon (tcl-3xsqgz): the operator confirms its draft-only grant, and it opens
+// in its regular overlay chat window (a terminal tab without the companion).
+// The draft it hands back still comes through the review queue. It answers
+// the summon's result, or null when declined or failed; helperOptions are
+// summonHelper's (confirm, fetchImpl) for tests.
+async function summonSandboxScribe(seed, targetName = '', onCreate = null, editorOptions = {}, helperOptions = {}) {
   const token = sandboxScribeToken();
   try {
-    const response = await fetch('/api/scribe', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: SANDBOX_SCRIBE_NAME, slugs: SANDBOX_SCRIBE_SLUGS, brief: sandboxScribeBrief(token, targetName, seed) }) });
-    if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`);
-    const result = await response.json().catch(() => ({})); const name = result.name || SANDBOX_SCRIBE_NAME;
-    if (result.focus_mode === 'browser' && result.focus_ws) openTerminalPane({ ws: result.focus_ws, label: name, hideConv: result.conv_id || null, agent: result.agent_id || result.conv_id || null });
-    toast(`summoned ${name}${result.focus_mode === 'browser' ? ' — opened in-browser terminal' : ' — opening its terminal'}`); void pollSandboxScribeDraft(token, targetName, onCreate, editorOptions); return result;
-  } catch (error) { openSandboxProfileEditor(seed, { ...editorOptions, targetName, onCreate, notice: `Could not summon sandbox scribe: ${error.message || String(error)}` }); toast(error.message || String(error), true); }
+    const result = await summonHelper({
+      name: SANDBOX_SCRIBE_NAME, slugs: SANDBOX_SCRIBE_SLUGS, brief: sandboxScribeBrief(token, targetName, seed),
+      confirmation: {
+        title: 'Grant sandbox-scribe access?',
+        body: `This starts a scribe agent to design ${targetName ? `a replacement for the sandbox profile "${targetName}"` : 'a sandbox profile'} with you by chat. It is granted ${SANDBOX_SCRIBE_SLUGS.join(', ')}: it can hand a draft back here for you to review and save, and cannot save, apply or assign a profile.`,
+        meta: SANDBOX_SCRIBE_SLUGS.join(', '),
+        okLabel: 'Grant & summon',
+      },
+      ...helperOptions,
+    });
+    if (!result) return null;
+    toast(`summoned ${result.name}`);
+    void pollSandboxScribeDraft(token, targetName, onCreate, editorOptions);
+    return result;
+  } catch (error) {
+    openSandboxProfileEditor(seed, { ...editorOptions, targetName, onCreate, notice: `Could not summon sandbox scribe: ${error.message || String(error)}` });
+    toast(error.message || String(error), true);
+    return null;
+  }
 }
 
 function bindSandboxProfilesUI() {

@@ -1220,7 +1220,9 @@ export function createManagementActions(deps) {
       options.onCreate || null,
       { editExisting, cloneSourceName: options.cloneSourceName || '' },
     );
-    if (result?.focus_mode === 'browser' && result.focus_ws) state.closeManager();
+    // Its chat window sits below the manager's dialog layer: the manager
+    // steps aside once it opened, and stays on a declined or failed summon.
+    if (result?.opened) state.closeManager();
     return result;
   }
   function inspectDirectories(filesystem) {

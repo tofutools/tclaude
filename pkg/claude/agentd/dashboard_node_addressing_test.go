@@ -31,7 +31,7 @@ var bareAPIFetchBaseline = map[string]int{
 	"refresh.js":            1,
 	"remote-admin.js":       1,
 	"row-action-handler.js": 12,
-	"sandbox-profiles.js":   2,
+	"sandbox-profiles.js":   1,
 	"slop-volume.js":        2,
 	"vegas.js":              3,
 }
