@@ -349,8 +349,11 @@ not marked as failed. That needs a GitLab recent enough to have
 instead of a list. A rate-limited instance is retried after the wait GitLab
 names, up to 5 minutes, and keeps showing its last list meanwhile. Hovering a
 title opens the merge request's details card, under the same **Hover details**
-setting as Open PRs. Ignoring, the people tabs and the recently closed list are
-Open PRs only.
+setting as Open PRs. **⊘** ignores a merge request for 1 day, 1 week, 30 days
+or permanently, as in Open PRs and in the same store. It leaves Mine, every
+project tab and both footer numbers, and waits under **Ignored** with a
+**Restore** button. The people tabs and the recently closed list are Open PRs
+only.
 
 ## Starting agents
 

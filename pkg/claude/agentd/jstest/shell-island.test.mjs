@@ -613,6 +613,60 @@ test('footer open PRs ignores a PR after confirming, and brings it back', async 
   await mounted.unmount();
 });
 
+test('footer open MRs ignores a merge request in the store Open PRs uses, and brings it back', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { dashPrefs }, { OpenPRs, OpenMRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/prefs.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const pref = 'tclaude.dash.open-prs.ignored';
+  dashPrefs.removeItem(pref);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<div><${OpenPRs} state=${state} /><${OpenMRs} state=${state} /></div>`);
+  const mr = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/';
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, {
+    authored_open_prs: { available: true, total: 1, items: [
+      { number: 1, url: 'https://github.com/acme/app/pull/1', title: 'A PR', repository: 'acme/app' },
+    ] },
+    authored_open_mrs: { available: true, total: 2, items: [
+      { number: 7, url: `${mr}7`, title: 'Keep', repository: 'acme/app' },
+      { number: 8, url: `${mr}8`, title: 'Stale idea', repository: 'acme/app' },
+    ] },
+  }));
+  const prs = mounted.container.querySelector('.open-prs:not(.open-mrs)');
+  const mrs = mounted.container.querySelector('.open-mrs');
+  const titles = () => [...mrs.querySelectorAll('.open-pr-title')].map((node) => node.textContent);
+
+  // A pull request ignored first must survive the merge request's save.
+  await harness.act(() => getByRole(prs, 'button', { name: /Open PRs/ }).click());
+  await harness.act(() => getByRole(prs, 'button', { name: /Ignore pull request #1/ }).click());
+  await harness.act(() => getByRole(prs, 'button', { name: /^Ignore$/ }).click());
+
+  await harness.act(() => getByRole(mrs, 'button', { name: /Open MRs/ }).click());
+  await harness.act(() => getByRole(mrs, 'button', { name: /Ignore merge request !8/ }).click());
+  const dialog = mrs.querySelector('[role="alertdialog"]');
+  assert.match(dialog.querySelector('h4').textContent, /^Ignore merge request !8\?$/);
+  await harness.act(() => getByRole(mrs, 'button', { name: /^Ignore$/ }).click());
+  assert.deepEqual(titles(), ['Keep']);
+  assert.match(mrs.querySelector('.open-mrs-scope + .open-prs-count').textContent, /^1$/, 'the footer count leaves it out');
+
+  const stored = JSON.parse(dashPrefs.getItem(pref));
+  assert.deepEqual(Object.keys(stored).sort(), ['acme/app#1', 'mr:gitlab.example.test:8929/acme/app!8'],
+    'one store, both kinds, neither save dropping the other');
+
+  await harness.act(() => getByRole(mrs, 'button', { name: /Ignored 1/ }).click());
+  assert.deepEqual(titles(), ['Stale idea']);
+  await harness.act(() => getByRole(mrs, 'button', { name: /Bring back merge request !8/ }).click());
+  assert.deepEqual(Object.keys(JSON.parse(dashPrefs.getItem(pref))), ['acme/app#1'], 'the pull request stays ignored');
+
+  if (!prs.querySelector('#open-prs-popover')) await harness.act(() => getByRole(prs, 'button', { name: /Open PRs/ }).click());
+  assert.ok(getByRole(prs, 'button', { name: /Ignored 1/ }), 'Open PRs counts only its own kind');
+  dashPrefs.removeItem(pref);
+  await mounted.unmount();
+});
+
 test('footer open PR titles open the PR details card unless turned off', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, { dashPrefs }, { OpenPRs }] = await Promise.all([

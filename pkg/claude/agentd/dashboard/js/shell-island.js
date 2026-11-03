@@ -11,6 +11,7 @@ import {
   authoredOpenMRsView,
   authoredOpenPRsView,
   ignorePR,
+  ignoresOfKind,
   OPEN_PR_IGNORE_DURATIONS,
   parseIgnoredPRs,
   serializeIgnoredPRs,
@@ -38,6 +39,9 @@ import { useDismissablePopover, useExclusivePopover, useLeaveGrace } from './hov
 const html = htm.bind(h);
 const OPEN_PRS_INCLUDE_DRAFTS_PREF = 'tclaude.dash.open-prs.include-drafts-attention';
 const OPEN_PRS_IGNORED_PREF = 'tclaude.dash.open-prs.ignored';
+// Merge request ignores share the pull request store, their kinds kept apart
+// by key (ignoresOfKind). Give this its own key to store them separately.
+const OPEN_MRS_IGNORED_PREF = OPEN_PRS_IGNORED_PREF;
 // Title hover cards are on unless the operator turns them off: a card can
 // cover a good part of the list, so the popover keeps a checkbox for it.
 const OPEN_PRS_TITLE_DETAILS_PREF = 'tclaude.dash.open-prs.title-details';
@@ -352,12 +356,12 @@ function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = nu
       </span>
       <span class="open-pr-badges">
         ${ignored ? html`<button type="button" class="open-pr-restore"
-            aria-label=${`Bring back pull request #${pr.number}`} onClick=${() => onRestore?.(pr)}>Restore</button>` : html`
+            aria-label=${`Bring back ${mr ? 'merge' : 'pull'} request ${ref}`} onClick=${() => onRestore?.(pr)}>Restore</button>` : html`
           <${PRChecksBadge} url=${pr.url} prNumber=${pr.number}
             summary=${terminal && !showFinalCI ? null : pr.checks} countText=${mr ? 'pipeline' : ''} />
           ${terminal || draft ? null : html`<${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} />`}
           ${onIgnore && !terminal ? html`<button type="button" class="open-pr-ignore"
-            aria-label=${`Ignore pull request #${pr.number}…`} title="Ignore…"
+            aria-label=${`Ignore ${mr ? 'merge' : 'pull'} request ${ref}…`} title="Ignore…"
             onClick=${() => onIgnore(pr)}>⊘</button>` : null}
         `}
       </span>
@@ -368,7 +372,8 @@ function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = nu
 // IgnorePRDialog confirms an ignore and picks how long it lasts. It is drawn
 // inside the popover rather than as the page's modal, so the popover's own
 // hover and outside-click handling keep treating it as part of the popover.
-function IgnorePRDialog({ pr, onCancel, onConfirm }) {
+function IgnorePRDialog({ pr, onCancel, onConfirm, kind = 'pr' }) {
+  const what = kind === 'mr' ? `merge request !${pr.number}` : `pull request #${pr.number}`;
   const [duration, setDuration] = useState('7d');
   const okRef = useRef(null);
   useLayoutEffect(() => { okRef.current?.focus(); }, []);
@@ -394,7 +399,7 @@ function IgnorePRDialog({ pr, onCancel, onConfirm }) {
           event.stopPropagation();
           onCancel();
         }}>
-        <h4 id="open-prs-confirm-title">Ignore pull request #${pr.number}?</h4>
+        <h4 id="open-prs-confirm-title">Ignore ${what}?</h4>
         <p id="open-prs-confirm-body">
           <span class="open-prs-confirm-pr">${pr.title || pr.url}</span>
           It leaves these lists and counts and waits under Ignored, where you can bring it back.
@@ -432,6 +437,30 @@ function useIncludeDrafts() {
     for (const listener of includeDraftsListeners) listener(checked);
   };
   return [value, update];
+}
+
+// useIgnoredPRs is the ignore store behind a pref, shared by every popover
+// that reads it: Open PRs and Open MRs hold one live copy, so a save from
+// either never writes back a set missing the other's ignores.
+const ignoredListeners = new Map();
+function useIgnoredPRs(pref) {
+  const [value, setValue] = useState(() => parseIgnoredPRs(dashPrefs.getItem(pref)));
+  useEffect(() => {
+    if (!ignoredListeners.has(pref)) ignoredListeners.set(pref, new Set());
+    const listeners = ignoredListeners.get(pref);
+    listeners.add(setValue);
+    return () => { listeners.delete(setValue); };
+  }, [pref]);
+  const save = (next) => {
+    const serialized = serializeIgnoredPRs(next);
+    if (serialized) dashPrefs.setItem(pref, serialized);
+    else dashPrefs.removeItem(pref);
+    // Re-read what was stored: serialization may have evicted old entries.
+    const stored = parseIgnoredPRs(serialized);
+    setValue(stored);
+    for (const listener of ignoredListeners.get(pref) || []) listener(stored);
+  };
+  return [value, save];
 }
 
 // useTitleDetails is the one "Hover details" setting the two popovers share:
@@ -495,7 +524,8 @@ function OpenPRs({ state }) {
   // state: enabling it reveals the cached snapshot summary but changes no
   // daemon setting and triggers no terminal-PR refresh on its own.
   const [showFinalCI, setShowFinalCI] = useState(false);
-  const [ignored, setIgnored] = useState(() => parseIgnoredPRs(dashPrefs.getItem(OPEN_PRS_IGNORED_PREF)));
+  const [ignored, saveIgnored] = useIgnoredPRs(OPEN_PRS_IGNORED_PREF);
+  const prIgnores = ignoresOfKind(ignored, 'pr');
   const [confirmIgnore, setConfirmIgnore] = useState(null);
   // Where focus goes back to once the ignore dialog closes or a Restore
   // removes its own row: the ⊘ button that opened the dialog while it is
@@ -516,7 +546,7 @@ function OpenPRs({ state }) {
   const dock = fusedDock.value;
   const peers = dock ? (dock.nodes || []).filter((n) => n.id !== dock.page)
     .map((n) => ({ name: n.name, snapshot: dock.snapshots?.[n.id] })) : [];
-  const view = authoredOpenPRsView(state.snapshot.value, filter, includeDraftsInAttention, peers, ignored);
+  const view = authoredOpenPRsView(state.snapshot.value, filter, includeDraftsInAttention, peers, prIgnores);
   const snapshotAuthors = Array.isArray(state.snapshot.value?.tracked_pr_authors)
     ? state.snapshot.value.tracked_pr_authors.filter((entry) => GITHUB_LOGIN_RE.test(entry?.login || '')) : [];
   const editedAuthors = edited && edited.snapshot === state.snapshot.value ? edited.authors : null;
@@ -529,7 +559,7 @@ function OpenPRs({ state }) {
   // Unattached filter; the operator's own view keeps driving the trigger.
   const panelFilter = personEntry && filter === 'unattached' ? 'all' : filter;
   const colleagueView = (entry, which = 'all') => authoredOpenPRsView(
-    { authored_open_prs: { ...entry, available: true } }, which, includeDraftsInAttention, peers, ignored,
+    { authored_open_prs: { ...entry, available: true } }, which, includeDraftsInAttention, peers, prIgnores,
     Date.now(), entry.login);
   const panel = personEntry ? colleagueView(personEntry, panelFilter) : view;
   const people = tracked.map((entry) => ({ login: entry.login, total: entry.available ? colleagueView(entry).total : null }));
@@ -545,13 +575,6 @@ function OpenPRs({ state }) {
     } catch (_) {
       // The tab stays; the next snapshot shows the daemon's list either way.
     }
-  };
-  const saveIgnored = (next) => {
-    const value = serializeIgnoredPRs(next);
-    // Re-read what was stored: serialization may have evicted old entries.
-    setIgnored(parseIgnoredPRs(value));
-    if (value) dashPrefs.setItem(OPEN_PRS_IGNORED_PREF, value);
-    else dashPrefs.removeItem(OPEN_PRS_IGNORED_PREF);
   };
   const askIgnore = (pr) => {
     returnFocus.current = document.activeElement;
@@ -700,21 +723,35 @@ function OpenPRs({ state }) {
 // requests on every configured instance (authored_open_mrs). It shows only
 // once the daemon has read a list, so it is absent without gitlab_hosts or a
 // token. It keeps Open PRs' look and its Open / Needs attention / Ready to
-// merge / Unattached filters; ignoring, colleagues' tabs, the recently closed
-// list and the details card are GitHub's and are not offered here.
+// merge / Unattached filters, and its Ignored filter, whose ignores share
+// Open PRs' store. Colleagues' tabs and the recently closed list are
+// GitHub's and are not offered here.
 function OpenMRs({ state }) {
   const [filter, setFilter] = useState('all');
   // '' is your own list; otherwise a project tab's key.
   const [project, setProject] = useState('');
   const [includeDraftsInAttention, setIncludeDraftsInAttention] = useIncludeDrafts();
   const [titleDetails, setTitleDetails] = useTitleDetails();
+  const [ignored, saveIgnored] = useIgnoredPRs(OPEN_MRS_IGNORED_PREF);
+  const [confirmIgnore, setConfirmIgnore] = useState(null);
+  const returnFocus = useRef(null);
+  const [focusBack, setFocusBack] = useState(0);
   const [hovered, setHovered] = useState(false);
   const [pinned, setPinned] = useState(false);
   const rootRef = useRef(null);
-  const view = authoredOpenMRsView(state.snapshot.value, filter, includeDraftsInAttention, project);
+  const view = authoredOpenMRsView(state.snapshot.value, filter, includeDraftsInAttention, project, ignored);
   const panel = view.panel;
-  const visible = view.available && (view.total > 0 || view.everyoneTotal > 0 || view.alwaysShow);
-  const open = visible && (hovered || pinned);
+  // Ignored merge requests keep it reachable: they come back only from here.
+  const visible = view.available && (view.total > 0 || view.everyoneTotal > 0 || view.alwaysShow || view.ignoredCount > 0);
+  const open = visible && (hovered || pinned || !!confirmIgnore);
+  const askIgnore = (mr) => {
+    returnFocus.current = document.activeElement;
+    setConfirmIgnore({ pr: mr, owner: view.ignoreOwner });
+  };
+  const closeIgnoreDialog = () => {
+    setConfirmIgnore(null);
+    setFocusBack((n) => n + 1);
+  };
 
   const hoverClose = useLeaveGrace(() => setHovered(false));
   const cancelHoverClose = hoverClose.cancel;
@@ -722,24 +759,36 @@ function OpenMRs({ state }) {
     cancelHoverClose();
     setHovered(true);
   };
-  useExclusivePopover(rootRef, open, () => { cancelHoverClose(); setHovered(false); }, pinned);
-  useDismissablePopover(rootRef, pinned, () => {
+  useExclusivePopover(rootRef, open, () => { cancelHoverClose(); setHovered(false); }, pinned || !!confirmIgnore);
+  useEffect(() => {
+    if (!focusBack) return;
+    const target = returnFocus.current;
+    returnFocus.current = null;
+    if (target?.isConnected && rootRef.current?.contains(target)) target.focus();
+    else rootRef.current?.querySelector('.open-prs-trigger')?.focus();
+  }, [focusBack]);
+  useDismissablePopover(rootRef, pinned || !!confirmIgnore, () => {
     cancelHoverClose();
     setPinned(false);
     setHovered(false);
-  }, { escape: false });
+    setConfirmIgnore(null);
+  }, { escape: false, hold: () => !!confirmIgnore });
   useEffect(() => {
     if (!open) return undefined;
     const escape = (event) => {
       if (event.key !== 'Escape') return;
       event.preventDefault();
+      if (confirmIgnore) {
+        closeIgnoreDialog();
+        return;
+      }
       setPinned(false);
       setHovered(false);
       rootRef.current?.querySelector('.open-prs-trigger')?.focus();
     };
     document.addEventListener('keydown', escape);
     return () => document.removeEventListener('keydown', escape);
-  }, [open]);
+  }, [open, confirmIgnore]);
 
   if (!visible) return null;
   const age = view.updatedAt ? new Date(view.updatedAt).toLocaleTimeString() : '';
@@ -780,15 +829,22 @@ function OpenMRs({ state }) {
           ${!where && everyoneUnread ? staleEveryone.map((entry) => html`<p key=${`${entry.host}-everyone`}
             class="open-prs-stale" role="status">Everyone's merge requests on ${entry.host} could not be read: ${entry.everyoneError}</p>`) : null}
           ${panel.items.length
-            ? html`<ul class="open-pr-list">${panel.items.map((mr) => html`<${OpenPRRow} key=${mr.url} pr=${mr} kind="mr" titleDetails=${titleDetails} />`)}</ul>`
-            : html`<p class="open-prs-empty">${view.filter === 'all' ? 'No open merge requests.' : 'No merge requests match this filter.'}</p>`}
+            ? html`<ul class="open-pr-list">${panel.items.map((mr) => html`<${OpenPRRow} key=${mr.url} pr=${mr} kind="mr"
+                titleDetails=${titleDetails} onIgnore=${view.canIgnore ? askIgnore : null} onRestore=${(target) => {
+                  saveIgnored(unignorePR(ignored, target.url));
+                  setFocusBack((n) => n + 1);
+                }} />`)}</ul>`
+            : html`<p class="open-prs-empty">${panel.showingIgnored ? 'No ignored merge requests.'
+              : view.filter === 'all' ? 'No open merge requests.' : 'No merge requests match this filter.'}</p>`}
           <${FooterListFilters} label="Filter merge requests" filters=${[
             { key: 'all', text: `Open ${panel.total}`, active: view.filter === 'all', onClick: () => setFilter('all') },
             { key: 'attention', text: `Needs attention ${panel.attention}`, active: view.filter === 'attention', onClick: () => setFilter('attention') },
             { key: 'ready', text: `Ready to merge ${panel.ready}`, active: view.filter === 'ready',
               title: 'At least one approval and a passing head pipeline', onClick: () => setFilter('ready') },
             { key: 'unattached', text: `Unattached ${panel.unattached}`, active: view.filter === 'unattached', onClick: () => setFilter('unattached') },
-          ]} />
+            panel.ignoredCount > 0 || panel.showingIgnored ? { key: 'ignored', text: `Ignored ${panel.ignoredCount}`, active: panel.showingIgnored,
+              title: 'Merge requests you set aside; bring them back from here', onClick: () => setFilter('ignored') } : null,
+          ].filter(Boolean)} />
           <div class="open-prs-foot">
             <span class="open-mrs-links">${panel.truncated ? html`<span>Showing the first ${panel.items.length} · </span>` : null}${where
               ? (where.url ? html`<a href=${where.url} target="_blank" rel="noopener noreferrer">Open in GitLab ↗</a>` : null)
@@ -806,6 +862,12 @@ function OpenMRs({ state }) {
             </label>` : null}
             <${TitleDetailsToggle} checked=${titleDetails} onChange=${setTitleDetails} noun="merge request" />
           </div>
+          ${confirmIgnore ? html`<${IgnorePRDialog} pr=${confirmIgnore.pr} kind="mr"
+            onCancel=${closeIgnoreDialog}
+            onConfirm=${(ms) => {
+              saveIgnored(ignorePR(ignored, confirmIgnore.pr, ms, Date.now(), confirmIgnore.owner));
+              closeIgnoreDialog();
+            }} />` : null}
         </div>
       ` : null}
     </span>

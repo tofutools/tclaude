@@ -218,11 +218,31 @@ export function footerMetaView(snapshot) {
 // instance before the URL reached a snapshot.
 const PR_URL_RE = /^https:\/\/(?:github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*|[A-Za-z0-9.-]+(?::[0-9]+)?\/(?:[A-Za-z0-9_.-]+\/){2,}-\/merge_requests\/[1-9][0-9]*)(?:\/.*)?$/;
 
+// MR_KEY_PREFIX marks a GitLab merge request's key, so pull and merge
+// requests can share one ignore store and neither list ever reads the other's
+// entries. A pull request's key has no prefix, as it always had, so ignores
+// stored before merge requests existed still apply.
+const MR_KEY_PREFIX = 'mr:';
+
 // prKey folds a GitHub PR URL to owner/repo#number, case-insensitively, so a
-// /files suffix or a differently-cased owner still names the same PR.
+// /files suffix or a differently-cased owner still names the same PR. A
+// GitLab merge request folds to mr:host[:port]/project!number the same way.
 export function prKey(raw) {
-  const m = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/([1-9][0-9]*)(?:[/?#].*)?$/i.exec(String(raw || '').trim());
-  return m ? `${m[1]}/${m[2]}#${m[3]}`.toLowerCase() : '';
+  const text = String(raw || '').trim();
+  const m = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/([1-9][0-9]*)(?:[/?#].*)?$/i.exec(text);
+  if (m) return `${m[1]}/${m[2]}#${m[3]}`.toLowerCase();
+  const mr = /^https:\/\/([^/?#]+)\/((?:[^/?#]+\/)+)-\/merge_requests\/([1-9][0-9]*)(?:[/?#].*)?$/i.exec(text);
+  return mr ? `${MR_KEY_PREFIX}${mr[1]}/${mr[2].slice(0, -1)}!${mr[3]}`.toLowerCase() : '';
+}
+
+// ignoresOfKind keeps the ignores of one kind ('pr' or 'mr') from the shared
+// store, so each popover counts and lists only its own.
+export function ignoresOfKind(ignored, kind) {
+  const out = Object.create(null);
+  for (const [key, entry] of Object.entries(ignored || {})) {
+    if (key.startsWith(MR_KEY_PREFIX) === (kind === 'mr')) out[key] = entry;
+  }
+  return out;
 }
 
 // peerPRAgents indexes the PRs the fused view's peer nodes show next to their
@@ -432,10 +452,18 @@ export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAtt
 // shows: the selected project's, or your own when project is '' or gone.
 const MR_LIST_URL_RE = /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?\/dashboard\/merge_requests\?[A-Za-z0-9_.=&%-]*$/;
 const MR_PROJECT_URL_RE = /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?\/(?:[A-Za-z0-9_.-]+\/)+-\/merge_requests$/;
-export function authoredOpenMRsView(snapshot, filter = 'all', includeDraftsInAttention = false, project = '') {
+//
+// An ignored merge request is hidden from every list and count, Mine and the
+// project tabs alike (MR_IGNORES_HIDE_IN_PROJECT_TABS), and waits under its
+// list's Ignored filter. One it is no longer listed in is kept under Mine if
+// it was ignored there, or under its project's tab (MR_PROJECT_TAB_OWNER).
+const MR_IGNORES_HIDE_IN_PROJECT_TABS = true;
+export const MR_PROJECT_TAB_OWNER = '-project';
+export function authoredOpenMRsView(snapshot, filter = 'all', includeDraftsInAttention = false, project = '', ignored = null, now = Date.now()) {
   const source = snapshot?.authored_open_mrs;
-  const known = filter === 'attention' || filter === 'ready' || filter === 'unattached' ? filter : 'all';
-  const view = authoredOpenPRsView({ authored_open_prs: source }, known, includeDraftsInAttention);
+  const known = ['attention', 'ready', 'unattached', 'ignored'].includes(filter) ? filter : 'all';
+  const mrIgnores = ignoresOfKind(ignored, 'mr');
+  const view = authoredOpenPRsView({ authored_open_prs: source }, known, includeDraftsInAttention, [], mrIgnores, now, '');
   const instances = (Array.isArray(source?.instances) ? source.instances : [])
     .map((entry) => ({
       host: String(entry?.host || '').slice(0, 255),
@@ -462,6 +490,20 @@ export function authoredOpenMRsView(snapshot, filter = 'all', includeDraftsInAtt
         items: Array.isArray(entry.items) ? entry.items : [],
       };
     });
+  // Each tab sees only its own project's ignores, and its counts leave out
+  // the ignored merge requests it lists.
+  let ignoredEverywhere = 0;
+  for (const entry of projects) {
+    const prefix = `${MR_KEY_PREFIX}${entry.host}/${entry.project}!`.toLowerCase();
+    entry.ignores = Object.create(null);
+    if (!MR_IGNORES_HIDE_IN_PROJECT_TABS) continue;
+    for (const [key, value] of Object.entries(mrIgnores)) {
+      if (key.startsWith(prefix) && (value.until === 0 || value.until > now)) entry.ignores[key] = value;
+    }
+    const hidden = entry.items.filter((pr) => prKey(pr?.url) in entry.ignores).length;
+    entry.total = Math.max(0, entry.total - hidden);
+    ignoredEverywhere += hidden;
+  }
   // A tab's short name is the project's last path segment. Two projects that
   // share it (team-a/api, team-b/api) show their full paths instead, and the
   // same path on two instances adds its host.
@@ -471,20 +513,26 @@ export function authoredOpenMRsView(snapshot, filter = 'all', includeDraftsInAtt
     for (const entry of projects) if (seen.get(entry.label) > 1) entry.label = longer(entry);
   }
   const selected = project ? projects.find((entry) => entry.key === project) || null : null;
+  // The tab's total already leaves its ignored rows out; the panel's own
+  // count must not take them off a second time.
   const panel = selected
     ? authoredOpenPRsView({ authored_open_prs: {
-      available: true, total: selected.total, truncated: selected.truncated,
-      updated_at: source?.updated_at, items: selected.items,
-    } }, known, includeDraftsInAttention)
+      available: true, truncated: selected.truncated, updated_at: source?.updated_at, items: selected.items,
+      total: selected.total + selected.items.filter((pr) => prKey(pr?.url) in selected.ignores).length,
+    } }, known, includeDraftsInAttention, [], selected.ignores, now, MR_PROJECT_TAB_OWNER)
     : view;
   return {
     ...view,
     filter: known,
     instances,
-    projects: projects.map(({ items, ...entry }) => entry),
+    projects: projects.map(({ items, ignores, ...entry }) => entry),
     project: selected ? selected.key : '',
     projectEntry: selected ? { key: selected.key, project: selected.project, host: selected.host, url: selected.url } : null,
-    everyoneTotal: Math.max(0, Number(source?.everyone_total || 0)),
+    // Whose list an ignore made here belongs to (see MR_PROJECT_TAB_OWNER),
+    // and whether this list offers ignoring at all.
+    ignoreOwner: selected ? MR_PROJECT_TAB_OWNER : '',
+    canIgnore: !selected || MR_IGNORES_HIDE_IN_PROJECT_TABS,
+    everyoneTotal: Math.max(0, Number(source?.everyone_total || 0) - ignoredEverywhere),
     everyoneTruncated: !!source?.everyone_truncated,
     panel,
   };

@@ -696,3 +696,51 @@ test('a merge request still missing required approvals is not ready, whatever it
   assert.deepEqual(authoredOpenMRsView({ authored_open_mrs: { available: true, total: 2, items: view.items } }, 'ready')
     .items.map((mr) => mr.number), [1]);
 });
+
+test('merge requests share the ignore store under their own key, and leave every list', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { prKey, ignoresOfKind, ignorePR, authoredOpenMRsView, authoredOpenPRsView, MR_PROJECT_TAB_OWNER } =
+    await harness.importDashboardModule('js/shell-model.js');
+  const base = 'https://gitlab.example.test:8929/contoso/player/-/merge_requests/';
+  assert.equal(prKey(`${base}7/diffs?view=inline`), 'mr:gitlab.example.test:8929/contoso/player!7', 'the kind prefix, sub-page dropped');
+  assert.equal(prKey('https://GitLab.Example.test:8929/Contoso/Player/-/merge_requests/7'), prKey(`${base}7`), 'case folds');
+  assert.equal(prKey('https://github.com/Acme/App/pull/3/files'), 'acme/app#3', 'a pull request keeps its unprefixed key');
+
+  const now = Date.parse('2026-11-03T10:00:00Z');
+  let ignored = ignorePR({}, { url: 'https://github.com/acme/app/pull/3', number: 3, title: 'A PR' }, 0, now);
+  ignored = ignorePR(ignored, { url: `${base}7`, number: 7, title: 'Mine, ignored', repository: 'contoso/player' }, 0, now);
+  ignored = ignorePR(ignored, { url: `${base}9`, number: 9, title: 'Someone else\'s', repository: 'contoso/player' },
+    0, now, MR_PROJECT_TAB_OWNER);
+  ignored = ignorePR(ignored, { url: `${base}5`, number: 5, title: 'Gone from every list', repository: 'contoso/player' }, 0, now);
+  assert.deepEqual(Object.keys(ignoresOfKind(ignored, 'pr')), ['acme/app#3']);
+  assert.equal(Object.keys(ignoresOfKind(ignored, 'mr')).length, 3);
+
+  const mr = (n, extra = {}) => ({ number: n, url: `${base}${n}`, title: `MR ${n}`, repository: 'contoso/player',
+    checks: { total: 1, passed: 1, state: 'passing' }, ...extra });
+  const snapshot = { authored_open_mrs: {
+    available: true, total: 2, items: [mr(7), mr(8)], everyone_total: 3,
+    projects: [{ host: 'gitlab.example.test:8929', project: 'contoso/player', url: `${base.slice(0, -1)}`,
+      total: 3, items: [mr(7), mr(8), mr(9, { author: 'martin' })] }],
+  } };
+
+  const mine = authoredOpenMRsView(snapshot, 'all', false, '', ignored, now);
+  assert.deepEqual(mine.items.map((pr) => pr.number), [8], 'ignored merge requests leave Mine');
+  assert.equal(mine.total, 1);
+  assert.equal(mine.ignoredCount, 2, 'Mine keeps its own ignore, and the one it no longer lists');
+  assert.equal(mine.everyoneTotal, 1, 'the footer\'s second number leaves both ignored rows out');
+  const tabKey = mine.projects[0].key;
+  assert.equal(mine.projects[0].total, 1, 'and so does the tab');
+  assert.deepEqual(authoredOpenMRsView(snapshot, 'ignored', false, '', ignored, now).items.map((pr) => pr.number), [7, 5]);
+
+  const tab = authoredOpenMRsView(snapshot, 'all', false, tabKey, ignored, now);
+  assert.deepEqual(tab.panel.items.map((pr) => pr.number), [8], 'hidden in the project tab too');
+  assert.equal(tab.panel.total, 1);
+  assert.equal(tab.ignoreOwner, MR_PROJECT_TAB_OWNER);
+  assert.ok(tab.canIgnore);
+  assert.deepEqual(authoredOpenMRsView(snapshot, 'ignored', false, tabKey, ignored, now).panel.items.map((pr) => pr.number),
+    [7, 9], 'the tab lists what it would show, and not what was ignored from Mine and is gone');
+
+  const prs = authoredOpenPRsView({ authored_open_prs: { available: true, total: 0, items: [] } },
+    'ignored', false, [], ignoresOfKind(ignored, 'pr'), now);
+  assert.deepEqual(prs.items.map((pr) => pr.number), [3], 'Open PRs never lists a merge request ignore');
+});
