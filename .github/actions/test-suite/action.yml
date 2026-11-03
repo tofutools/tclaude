@@ -121,11 +121,18 @@ runs:
             # This shard owns its runner, so let Node use every core; the
             # in-test default (NumCPU-2, sized for sharing a runner with the
             # Go packages) would leave the 3-core macOS runner near-serial.
+            # Half again as many suites as cores: about a quarter of suite
+            # time is spent waiting on real-time timers (debounces, retry
+            # delays), and a waiting suite still holds its slot, so a few
+            # extra suites keep the cores busy meanwhile.
             # Assign before export: `export VAR=$(cmd)` discards cmd's exit
             # status, and a silently empty value would fall back to the
             # near-serial default — the regression this variable prevents.
             cores="$(getconf _NPROCESSORS_ONLN)"
-            export TCLAUDE_JS_TEST_CONCURRENCY="$cores"
+            export TCLAUDE_JS_TEST_CONCURRENCY="$(( cores + cores / 2 ))"
+            # Each suite file's wall time; the step after this prints the
+            # slowest (file-timings-reporter.mjs).
+            export TCLAUDE_JS_TEST_TIMINGS="$RUNNER_TEMP/jstest-file-timings.tsv"
             ;;
           process) pkgs="./pkg/claude/process/..." ;;
           sandbox)
@@ -198,6 +205,29 @@ runs:
         else
           go test $race $timeout $pkgs
         fi
+
+    - name: Slowest jstest suites
+      if: always() && inputs.shard == 'jstest'
+      shell: bash
+      run: |
+        timings="$RUNNER_TEMP/jstest-file-timings.tsv"
+        if [ ! -s "$timings" ]; then
+          echo "No suite timings were written (the suite did not run, or go test reused a cached result)."
+          exit 0
+        fi
+        total="$(grep '^# total' "$timings" | cut -f2-)"
+        echo "Suite files: $total"
+        echo "Slowest 25 (seconds, tests, file):"
+        awk '!/^#/ && n++ < 25' "$timings"
+        {
+          echo "### Slowest jstest suites"
+          echo
+          echo "$total" | sed 's/\t/, /g'
+          echo
+          echo '| seconds | tests | file |'
+          echo '|---:|---:|---|'
+          awk -F'\t' '!/^#/ && n++ < 25 { printf "| %s | %s | %s |\n", $1, $2, $3 }' "$timings"
+        } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload agentd test timings
       if: always() && inputs.shard == 'agentd'
