@@ -21,7 +21,7 @@ def caches(repo):
 
 
 def can_save(entries, size):
-    # Account conservatively for all four parallel savers before any pruning.
+    # Account conservatively for every parallel saver before any pruning.
     return size <= MAX_SNAPSHOT and sum(e["size_in_bytes"] for e in entries) + SAVERS * MAX_SNAPSHOT <= LIMIT - HEADROOM
 
 

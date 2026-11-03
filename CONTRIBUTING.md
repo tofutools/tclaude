@@ -117,7 +117,9 @@ anything having been tested. So:
    Also add the `run_sandbox_v2_seatbelt_smoke` output to the `changes` job,
    and add the job to `ci-complete`'s `needs`. The `WorkflowConsistency` tests
    in `test_classify_changes.py` fail until the classifier's `JOBS` and the
-   ci.yml wiring agree.
+   ci.yml wiring agree. Delete `test_pr_ci_runs_no_macos` there, and the
+   Linux-only assertion in `Decisions.check_shape` (a restore from the parent
+   drops both).
 3. `CI complete` itself needs no edit. It compares each job with the
    classifier's `expected` verdict, so once `JOBS` lists the Seatbelt smoke
    again, the gate requires it to succeed when the classifier asks for it and
@@ -131,8 +133,10 @@ anything having been tested. So:
 #### Restoring the per-shard macOS split on main
 
 Find the commit with
-`git log --oneline --diff-filter=D -- .github/workflows/reusable-sandbox-v2-seatbelt-smoke.yml`
-and restore from its parent. That parent has `macos-latest` in the test matrix
+`git log --oneline -S 'os: [ubuntu-latest, macos-latest]' -- .github/workflows/release.yml`
+(the newest hit) and restore `release.yml`, `manual-release.yml` and
+`.github/workflows/reusable-sandbox-v2-seatbelt-smoke.yml` from its parent
+(`git show <sha>^:<path>`). That parent has `macos-latest` in the test matrix
 `os` list (every shard, `jstest` included) and in the `build` matrix, plus the
 Seatbelt smoke as its own reusable workflow. If you do this, put the `release`
 job's `needs` and the `homebrew` job's `if` back on those jobs. Also set

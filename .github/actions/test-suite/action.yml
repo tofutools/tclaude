@@ -145,7 +145,8 @@ runs:
             ;;
           rest-all)
             # rest + process + sandbox in one job, for runners where a job
-            # slot costs more than the extra packages do (PR CI on macOS).
+            # slot costs more than the extra packages do (release.yml's
+            # macOS job).
             # Derived by subtraction, like rest.
             all_pkgs="$(go list ./...)"
             sharded_pkgs="$(go list ./pkg/claude/agentd ./pkg/claude/agentd/jstest)"

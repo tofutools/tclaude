@@ -202,6 +202,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TCLAUDE_RELEASE_VERSION: ${{ needs.version.outputs.new_version }}
           TCLAUDE_INSTALL_METHOD: release
+          # Keep the release build out of the default GOCACHE, which the
+          # agentd step below restores, measures and saves as its bounded
+          # build snapshot.
+          GOCACHE: ${{ runner.temp }}/gocache-release-build
 
       # Same assertion as the Linux build job.
       - name: Verify every binary was built and version stamped
