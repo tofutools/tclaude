@@ -114,7 +114,7 @@ func TestPinnedProxyHarnessCooperation(t *testing.T) {
 	claude := requirePinnedFilteredHarness(t, "claude", filteredClaudePinnedVersion)
 	codex := requirePinnedFilteredHarness(t, "codex", filteredCodexPinnedVersion)
 	gemini := requirePinnedFilteredHarness(t, "gemini", filteredGeminiPinnedVersion)
-	pi := requirePinnedFilteredHarness(t, "pi", harness.PiMinimumVersion)
+	pi := requirePinnedFilteredHarness(t, "pi", filteredPiPinnedVersion)
 
 	carriageByHarness := map[string][]string{}
 	for _, scenario := range []proxyCooperationScenario{
@@ -189,7 +189,7 @@ func TestPinnedProxyHarnessCooperation(t *testing.T) {
 			// is undeclared and must be refused.
 			name:    "pi",
 			binary:  pi,
-			version: harness.PiMinimumVersion,
+			version: filteredPiPinnedVersion,
 			args: []string{
 				"--print", "--model", "anthropic/claude-sonnet-4-5", "Reply with exactly ok.",
 			},

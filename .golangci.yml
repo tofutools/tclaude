@@ -9,6 +9,15 @@ linters:
       - path: _test\.go
         linters:
           - errcheck
+      # errcheck (golangci-lint v2.15+) flags a bare receive from an error
+      # channel. Waiting on such a channel with `<-done` or `case <-errs:`
+      # is a deliberate wait that discards the value, and staticcheck S1005
+      # rejects the `_ = <-ch` spelling that would satisfy errcheck. Only a
+      # line holding nothing but the receive matches; a receive used as a
+      # call argument is still checked.
+      - linters:
+          - errcheck
+        source: '^\s*(case\s+)?<-[\w.]+\s*:?\s*(//.*)?$'
   settings:
     errcheck:
       exclude-functions:
