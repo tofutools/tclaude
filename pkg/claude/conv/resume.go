@@ -8,7 +8,6 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -260,37 +259,14 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 	if notice := describeResumedApproval(h, approvalState); notice != "" {
 		fmt.Fprintln(stdout, notice)
 	}
-	// Read the auto-memory posture BEFORE this resume writes its own session
-	// row: AutoMemoryForConv resolves the conv's most-recently-updated row, so
-	// reading after the write would just echo the new row's column default and
-	// decay an opt-in to off on the next resume. resumeLaunchCmd already
-	// applied this same recorded posture to the launch env; re-recording it
-	// below keeps the value alive across repeated resumes.
-	autoMemory, err := db.AutoMemoryForConv(rc.ConvID)
-	if err != nil {
-		fmt.Fprintf(stderr, "%v\n", err)
-		return 1
-	}
-	// Same read-before-write ordering for the peer-messaging posture, for
-	// exactly the same reason: reading after this resume's own row exists would
-	// echo the new row's column default and decay an opt-in to off.
-	peerMessaging, err := db.PeerMessagingForConv(rc.ConvID)
-	if err != nil {
-		fmt.Fprintf(stderr, "%v\n", err)
-		return 1
-	}
-	// Same read-before-write ordering for the startup-context trims, for exactly
-	// the same reason: reading after this resume's own row exists would echo the
-	// new row's empty default and quietly un-trim the agent on the next resume.
-	contextFeatures, err := db.ContextFeaturesForConv(rc.ConvID)
-	if err != nil {
-		fmt.Fprintf(stderr, "%v\n", err)
-		return 1
-	}
-	// Same read-before-write ordering for the auto-compaction window: reading
-	// after this resume's own row exists would echo the new row's empty default
-	// and hand the next resume the model's full window back.
-	autoCompactWindow, err := db.AutoCompactWindowForConv(rc.ConvID)
+	// Read the recorded launch posture (auto memory, peer messaging,
+	// startup-context trims, auto-compaction window) BEFORE this resume writes
+	// its own session row: the *ForConv readers resolve the conv's
+	// most-recently-updated row, so reading after the write would just echo
+	// the new row's column defaults and decay an opt-in on the next resume.
+	// resumeLaunchCmd already applied this same posture to the launch env;
+	// re-recording it below keeps it alive across repeated resumes.
+	autoMemory, peerMessaging, contextFeatures, autoCompactWindow, err := resumeContextPosture(rc.ConvID)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1

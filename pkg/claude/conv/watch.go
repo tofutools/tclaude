@@ -2482,60 +2482,22 @@ func resumeLaunchCmdWithEffectiveSandbox(
 			shellEnvironment[agentipc.SocketEnv] = selected
 		}
 	}
-	// Mirror the spawn seam: every tclaude-launched Claude pane reads its
-	// config from the state root, so the resumed pane must do the same or it
-	// would come back on the legacy top-level file — invisible under a
-	// constructed root, and forked state everywhere else. See
-	// session.ApplyClaudeConfigDirEnv.
-	if err := session.ApplyClaudeConfigDirEnv(h.Name, resumeEnv); err != nil {
+	// Rebuild the launch-posture environment the spawn path applied, from the
+	// conversation's own record rather than today's defaults: a session that
+	// opted INTO auto memory, a deliberately lean (context-trimmed) agent and
+	// an agent pinned to compact early must all come back the same. A conv
+	// with nothing recorded reads the zero posture, which is what such a
+	// session originally ran with. Peer messaging rides the --settings payload
+	// built below, not the env. See session.ApplyLaunchPostureEnv.
+	autoMemory, peerMessaging, contextFeatures, autoCompactWindow, err := resumeContextPosture(convID)
+	if err != nil {
 		return "", "", nil, err
 	}
-	// Mirror the spawn path: keep Claude Code's "Resume from summary" chooser
-	// from interrupting this resume. No-op for non-Claude harnesses. See
-	// session.ApplyClaudeResumeEnv.
-	session.ApplyClaudeResumeEnv(h, resumeEnv)
-	// Mirror the spawn path's auto-memory posture. Reading it back off the
-	// session row (rather than re-defaulting) keeps a session that explicitly
-	// opted INTO Claude Code's auto memory from silently losing it on resume;
-	// a conv with no recorded posture reads false, which is tclaude's
-	// recommended default anyway. No-op for non-Claude harnesses.
-	autoMemory, err := db.AutoMemoryForConv(convID)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("load auto-memory posture for conversation %s: %w", convID, err)
+	if err := session.ApplyLaunchPostureEnv(h, session.LaunchPostureEnv{
+		AutoMemory: autoMemory, ContextFeatures: contextFeatures, AutoCompactWindow: autoCompactWindow,
+	}, resumeEnv); err != nil {
+		return "", "", nil, err
 	}
-	session.ApplyAutoMemoryEnv(h, autoMemory, resumeEnv)
-	// Same as the spawn path: the agent view defaults off, and this must stay
-	// before ApplyContextFeaturesEnv so agent-view=on can opt back in. See
-	// session.ApplyAgentViewEnv.
-	session.ApplyAgentViewEnv(h, resumeEnv)
-	// Mirror the spawn path's peer-messaging posture for the same reason, though
-	// this one rides the `--settings` payload the spec builds rather than the
-	// env: a session that explicitly opted INTO Claude Code's own messaging mesh
-	// must not silently lose it on resume, and a conv with nothing recorded
-	// reads false — tclaude's default, and the posture such a session already
-	// ran with.
-	peerMessaging, err := db.PeerMessagingForConv(convID)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("load peer-messaging posture for conversation %s: %w", convID, err)
-	}
-	// Likewise for the startup-context trims: a deliberately lean agent must come
-	// back lean. Reading the recorded map back (rather than re-resolving from a
-	// profile that may since have changed) is what makes the resumed pane the same
-	// agent. A conv with nothing recorded reads nil and injects nothing — the
-	// untrimmed posture such a session originally ran with.
-	contextFeatures, err := db.ContextFeaturesForConv(convID)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("load startup-context trims for conversation %s: %w", convID, err)
-	}
-	session.ApplyContextFeaturesEnv(h, contextFeatures, resumeEnv)
-	// Likewise for the auto-compaction window: an agent pinned to compact early
-	// must come back pinned, or the resumed pane silently runs to the model's
-	// full window. A conv with nothing recorded reads "" and injects nothing.
-	autoCompactWindow, err := db.AutoCompactWindowForConv(convID)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("load auto-compaction window for conversation %s: %w", convID, err)
-	}
-	session.ApplyAutoCompactWindowEnv(h, autoCompactWindow, resumeEnv)
 	harnessBuiltinMode, resumeCwd := resumeSandboxState(convID)
 	// An implementation that confines nothing has nothing to reassert. The block
 	// below plans enforcement, and PlanAccessEnforcement correctly refuses a
