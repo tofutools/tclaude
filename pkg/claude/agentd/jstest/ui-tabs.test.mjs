@@ -146,3 +146,17 @@ test('Tabs: arrow keys move focus and selection, wrapping and skipping disabled 
   assert.deepEqual(picked, ['c', 'c'], 'Right skips the disabled tab, Left wraps, Home on the first selects nothing new');
   assert.equal(harness.document.activeElement, a);
 });
+
+test('Tabs: variant="seg" kind="radio" is a joined radiogroup', async (t) => {
+  const { harness, Tabs, host } = await setup(t);
+  const picked = [];
+  const items = [{ key: 'local', label: 'Here' }, { key: 'peer', label: 'Peer', disabled: true }];
+  await harness.mount(harness.html`<${Tabs} variant="seg" kind="radio" label="Target" value="local" items=${items} onSelect=${(key) => picked.push(key)} />`, host);
+  const group = host.querySelector('[role="radiogroup"]');
+  assert.equal(group.className, 'ui-tabs ui-tabs-seg');
+  const radios = [...group.querySelectorAll('[role="radio"]')];
+  assert.deepEqual(radios.map((r) => r.getAttribute('aria-checked')), ['true', 'false']);
+  await harness.act(() => harness.fireEvent(radios[0], 'keydown', { key: 'ArrowRight' }));
+  await harness.act(() => harness.fireEvent(radios[1], 'click', { button: 0 }));
+  assert.deepEqual(picked, [], 'the disabled radio is skipped and not pickable');
+});

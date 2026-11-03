@@ -3332,13 +3332,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 /* Cross-node group links (tcl-2ksi0k): the link dialog's This node | Peer
    node switch, its auto-vs-request note, and the links table's per-side
    state pills. An offline peer's half is "stale" (dashed), never ok or bad. */
-.link-target-seg { display: inline-flex; border: 1px solid #30363d; border-radius: 4px; overflow: hidden; }
-.link-target-seg button {
-  background: #0d1117; color: #8b949e; border: 0; padding: 4px 12px; font: inherit; font-size: 12px; cursor: pointer;
-}
-.link-target-seg button + button { border-left: 1px solid #30363d; }
-.link-target-seg button.on { background: #1f2a37; color: #58a6ff; }
-.link-target-seg button:disabled { opacity: .45; cursor: not-allowed; }
 .link-peer-note { border-radius: 5px; padding: 8px 10px; font-size: 12px; line-height: 1.4; margin: 6px 0; }
 .link-peer-note.auto { background: #0f2418; border: 1px solid #238636; }
 .link-peer-note.request { background: #2a210b; border: 1px solid #9e6a03; }
@@ -16383,10 +16376,7 @@ body.wizard .pdr-current { background: #181226; border-color: #4a3d6b; }
 .psd-state.is-stopped { color: #8b949e; }
 .psd-close { background: transparent; border: 1px solid transparent; border-radius: 4px; color: #8b949e; font: inherit; cursor: pointer; }
 .psd-close:hover, .psd-close:focus-visible { border-color: #30363d; color: #e6edf3; }
-.psd-modes { display: inline-flex; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; align-self: flex-start; }
-.psd-mode { background: transparent; border: 0; color: #8b949e; font: inherit; font-size: 12px; padding: 3px 12px; cursor: pointer; }
-.psd-mode + .psd-mode { border-left: 1px solid #30363d; }
-.psd-mode.is-active { background: #1f6feb; color: #fff; }
+.psd-modes { align-self: flex-start; }
 .psd-scope { color: #8b949e; font-size: 11.5px; overflow-wrap: anywhere; }
 .psd-summon, .psd-terminal, .psd-proposal {
   display: flex; flex-direction: column; gap: 8px; align-items: flex-start;
@@ -16438,7 +16428,6 @@ body.wizard .psd-log { border-color: #4a3d6b; background: #120d1f; }
 body.wizard .process-scribe-dock { background: #140f28; border-left-color: #4a3d6b; }
 body.wizard .psd-msg-body { background: #181226; border-color: #4a3d6b; }
 body.wizard .psd-msg.is-human .psd-msg-body { background: #2a1f4f; border-color: #7c5cff; }
-body.wizard .psd-mode.is-active { background: #7c5cff; }
 @media (max-width: 900px) { .process-scribe-dock { width: 280px; } }
 /* A remembered width never squeezes the canvas: the same 60% share the
    drag clamps to also holds at render time and when the window shrinks. */
@@ -17372,11 +17361,8 @@ tr.away-placeholder .away-recall { font-style: normal; margin-left: 8px; }
 /* Launch-target dialog (launch-target-dialog.js): a mode segment, the fields
    on the left and what carries over on the right. */
 #launch-target { min-width: min(760px, 94vw); }
-.lt-modes { display: flex; margin: 6px 0 10px; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
-.lt-mode { flex: 1; padding: 5px 8px; border: 0; border-right: 1px solid #30363d; background: #161b22; color: #c9d1d9; cursor: pointer; font: inherit; font-size: 12px; }
-.lt-mode:last-child { border-right: 0; }
-.lt-mode.sel { background: #1f6feb33; color: #58a6ff; box-shadow: inset 0 -2px 0 #58a6ff; }
-.lt-mode:disabled { color: #484f58; cursor: not-allowed; }
+.ui-tabs.lt-modes { display: flex; margin: 6px 0 10px; }
+.lt-modes > .ui-tab { flex: 1; }
 .lt-mode-hint { margin: -4px 0 8px; font-size: 12px; }
 .lt-drop-note { margin-bottom: 8px; font-size: 12px; }
 .lt-body { display: flex; gap: 14px; align-items: flex-start; }
@@ -17401,10 +17387,7 @@ tr.away-placeholder .away-recall { font-style: normal; margin-left: 8px; }
 .lt-check { display: block; margin: 6px 0; font-size: 12px; color: #8b949e; }
 .lt-hint { margin: 8px 0; }
 @media (max-width: 720px) { .lt-body { flex-direction: column; } .lt-carries { width: 100%; box-sizing: border-box; } }
-body.wizard #launch-target :is(.lt-modes, .lt-nodes, .lt-carries) { border-color: rgba(122, 93, 176, 0.5); }
-body.wizard #launch-target .lt-mode { background: #140f28; border-right-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
-body.wizard #launch-target .lt-mode.sel { background: #3a2a63; color: #f3e6c0; box-shadow: inset 0 -2px 0 var(--ui-wizard-gold); }
-body.wizard #launch-target .lt-mode:disabled { color: #6b5a8a; }
+body.wizard #launch-target :is(.lt-nodes, .lt-carries) { border-color: rgba(122, 93, 176, 0.5); }
 body.wizard #launch-target .lt-node { color: #e7d9f5; border-bottom-color: rgba(122, 93, 176, 0.3); }
 body.wizard #launch-target .lt-node.sel { background: #3a2a63; }
 body.wizard #launch-target .lt-node:disabled { color: #6b5a8a; }
@@ -17438,9 +17421,6 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-link { border: 0; background: none; padding: 0; color: #58a6ff; cursor: pointer; font: inherit; font-size: 12px; }
 /* Narrow windows wrap whole tabs onto a second row, never their labels. */
 .ui-tabs.fa-subnav { margin: 12px 0 8px; }
-.fa-subtabs { display: flex; flex-wrap: wrap; gap: 2px; margin: 12px 0 8px; border-bottom: 1px solid #30363d; }
-.fa-subtabs > .fa-subtab { border: 0; border-bottom: 2px solid transparent; background: none; color: #8b949e; padding: 6px 10px; font: inherit; cursor: pointer; white-space: nowrap; }
-.fa-subtabs > .fa-subtab.on { color: #f0f6fc; border-bottom-color: #1f6feb; }
 .fleet-admin h4 { margin: 14px 0 6px; font-size: 13px; }
 .fa-table { width: 100%; border-collapse: collapse; }
 .fa-table td { vertical-align: middle; }
@@ -17732,9 +17712,6 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-cb-list .fa-table tbody tr.on td { background: rgba(56, 139, 253, 0.14); }
 .fa-cb-list .fa-table td { white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .fa-cb-list .fa-table:focus-visible { outline: 1px solid #1f6feb; outline-offset: -1px; }
-.fa-cb-tabs { display: flex; gap: 2px; padding: 0 6px; border-bottom: 1px solid #30363d; }
-.fa-cb-tabs button { border: 0; border-bottom: 2px solid transparent; background: none; color: #8b949e; padding: 6px 10px; font: inherit; font-size: 13px; cursor: pointer; }
-.fa-cb-tabs button.on { color: #f0f6fc; border-bottom-color: var(--ui-wizard-gold); }
 .fa-cb-pane { min-width: 0; padding: 10px 12px; overflow: auto; max-height: 70vh; }
 .fa-cb-title { font-size: 15px; color: #f0f6fc; }
 .fa-cb-banner { margin: 8px 0; padding: 7px 10px; background: #161b22; border: 1px solid #30363d; border-left: 3px solid #e3b341; border-radius: 4px; font-size: 12px; }
@@ -18443,7 +18420,7 @@ body.wizard .spend-limit-banner.over-limit { border-left-color: #f85149; color: 
 
 /* ─── Usage limits & budgets (usage-rules.js) ─────────────────────── */
 .cron-create-modal.usage-rules-modal { min-width: 0; width: min(880px, calc(100vw - 32px)); }
-.usage-rules-tabs { margin: 0 0 4px; }
+.ui-tabs.usage-rules-tabs { margin: 0 0 8px; }
 .usage-rules-tab { display: flex; flex-direction: column; gap: 8px; }
 .usage-rules-tab h4 { margin: 10px 0 2px; font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: .06em; }
 .usage-presets { display: flex; flex-wrap: wrap; gap: 6px; }

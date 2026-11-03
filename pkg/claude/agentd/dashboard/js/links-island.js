@@ -2,6 +2,7 @@ import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Input, Select, SortTh } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
 import {
   ManagementOverlay as Overlay,
   useGuardedOverlayClose,
@@ -332,14 +333,11 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
       ${!edit && targets && html`
         <div class="cron-create-row" id="link-modal-target-row">
           <span class="cron-create-label">To</span>
-          <span class="link-target-seg" role="radiogroup" aria-label="Link target">
-            <button data-ui-exempt type="button" role="radio" aria-checked=${target === 'local'} id="link-modal-target-local"
-              class=${target === 'local' ? 'on' : ''} disabled=${busy} onClick=${() => setTarget('local')}>This node</button>
-            <button data-ui-exempt type="button" role="radio" aria-checked=${target === 'peer'} id="link-modal-target-peer"
-              class=${target === 'peer' ? 'on' : ''} disabled=${busy || !connected}
-              title=${connected ? 'Link to a group a peer node shares with you' : (targets.reason || 'Not connected to the hub')}
-              onClick=${() => setTarget('peer')}>Peer node 🌐</button>
-          </span>
+          <${Tabs} variant="seg" kind="radio" label="Link target" value=${target} onSelect=${setTarget} items=${[
+            { key: 'local', label: 'This node', disabled: busy, attrs: { id: 'link-modal-target-local' } },
+            { key: 'peer', label: 'Peer node 🌐', disabled: busy || !connected, attrs: { id: 'link-modal-target-peer' },
+              title: connected ? 'Link to a group a peer node shares with you' : (targets.reason || 'Not connected to the hub') },
+          ]} />
         </div>`}
       ${remote ? html`
         <label class="cron-create-row">

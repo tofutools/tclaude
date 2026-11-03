@@ -279,6 +279,13 @@ body.wizard .ui-tab:hover { color: #f3e6c0; }
 body.wizard .ui-tab:is(.active, [aria-selected="true"]) {
   background: #3a2a63; color: #f3e6c0; text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
 }
+/* .ui-tabs-seg: a mode switch inside a dialog or panel, one joined bar with
+   dividers; the chosen mode takes an accent fill. */
+.ui-tabs.ui-tabs-seg { gap: 0; padding: 0; margin: 0; overflow: hidden; background: var(--ui-card-inset-bg); border-color: var(--ui-line); }
+.ui-tabs-seg > .ui-tab { border-radius: 0; padding: 5px 12px; font-size: 12px; color: var(--ui-muted); }
+.ui-tabs-seg > .ui-tab + .ui-tab { border-left: 1px solid var(--ui-line); }
+.ui-tabs-seg > .ui-tab:is(.active, [aria-selected="true"], [aria-checked="true"]) { background: rgba(31, 111, 235, 0.2); color: var(--ui-text-strong); font-weight: normal; }
+body.wizard .ui-tabs-seg > .ui-tab:is(.active, [aria-selected="true"], [aria-checked="true"]) { background: #3a2a63; color: #f3e6c0; text-shadow: none; }
 
 /* Tags: an outlined label chip (operator pick B: one round pill, coloured by
    variant). An area class keeps placement; a state modifier on it may still
