@@ -406,3 +406,33 @@ func drain(ch <-chan struct{}) {
 		}
 	}
 }
+
+// A very deep tree is walked only to a bounded depth, and a save near the
+// top is still noticed.
+func TestStageStaticDeepTreeStaysBounded(t *testing.T) {
+	e := newStageEnv(t)
+	wt := testutil.CanonicalTempDir(t)
+	writeFile(t, filepath.Join(wt, "index.html"), "<p>x</p>")
+	deep := wt
+	for range 200 {
+		deep = filepath.Join(deep, "d")
+	}
+	require.NoError(t, os.MkdirAll(deep, 0o755))
+	require.NoError(t, e.page.UseStaticSource(wt, "."))
+	reloads, cancel := e.page.SubscribeReload()
+	t.Cleanup(cancel)
+	drain(reloads)
+
+	writeFile(t, filepath.Join(deep, "deep.css"), "x") // beyond the walk: no reload
+	select {
+	case <-reloads:
+		t.Fatal("a change beyond the depth limit was seen")
+	case <-time.After(1200 * time.Millisecond):
+	}
+	writeFile(t, filepath.Join(wt, "index.html"), "<p>y</p>")
+	select {
+	case <-reloads:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a top-level save did not produce a reload event")
+	}
+}

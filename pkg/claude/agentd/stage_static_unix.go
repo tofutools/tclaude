@@ -57,6 +57,7 @@ const (
 	// larger tree is watched only up to the limit.
 	stageStaticPollEntries = 20000
 	stageStaticPollEvery   = 400 * time.Millisecond
+	stageStaticPollDepth   = 32
 )
 
 // stageStatic serves a worktree directory or file.
@@ -296,7 +297,10 @@ func (s *stageStatic) poll(onChange func()) {
 }
 
 // signature hashes the name, size, mtime and inode of every servable file
-// under the source, walked with the same no-follow rules as serving.
+// under the source, walked with the same no-follow rules as serving. The walk
+// is breadth-first and holds at most one directory open at a time; it stops
+// at stageStaticPollDepth levels and stageStaticPollEntries entries, so a
+// hostile tree (very deep, or one huge directory) costs bounded fds and CPU.
 func (s *stageStatic) signature() uint64 {
 	h := fnv.New64a()
 	if s.isFile {
@@ -309,12 +313,47 @@ func (s *stageStatic) signature() uint64 {
 		_ = unix.Close(fd)
 		return h.Sum64()
 	}
-	fd, err := s.openAt(s.target)
-	if err != nil {
-		return 0
-	}
 	budget := stageStaticPollEntries
-	stageStaticHashDir(h, fd, "", &budget)
+	queue := [][]string{nil}
+	for len(queue) > 0 && budget > 0 {
+		rel := queue[0]
+		queue = queue[1:]
+		fd, err := s.openAt(append(append([]string{}, s.target...), rel...))
+		if err != nil {
+			continue
+		}
+		prefix := strings.Join(rel, "/")
+		dir := os.NewFile(uintptr(fd), prefix)
+		for budget > 0 {
+			entries, err := dir.ReadDir(256)
+			for _, e := range entries {
+				if budget <= 0 {
+					break
+				}
+				budget--
+				name := e.Name()
+				if stageStaticBadComponent(name) || name == "node_modules" {
+					continue
+				}
+				switch {
+				case e.Type().IsDir():
+					_, _ = io.WriteString(h, prefix+"/"+name+"/\x00")
+					if len(rel) < stageStaticPollDepth {
+						queue = append(queue, append(append([]string{}, rel...), name))
+					}
+				case e.Type().IsRegular():
+					if _, ok := stageStaticTypes[strings.ToLower(path.Ext(name))]; ok {
+						_, _ = io.WriteString(h, prefix+"/")
+						stageStaticHashEntry(h, fd, name)
+					}
+				}
+			}
+			if err != nil {
+				break
+			}
+		}
+		_ = dir.Close()
+	}
 	return h.Sum64()
 }
 
@@ -326,39 +365,6 @@ func stageStaticHashEntry(h io.Writer, dirFD int, name string) {
 	}
 	_, _ = io.WriteString(h, name+"\x00"+strconv.FormatInt(st.Size, 10)+"\x00"+
 		strconv.FormatInt(st.Mtim.Nano(), 10)+"\x00"+strconv.FormatUint(st.Ino, 10)+"\x00")
-}
-
-// stageStaticHashDir hashes dirFD's tree and closes dirFD.
-func stageStaticHashDir(h io.Writer, dirFD int, prefix string, budget *int) {
-	dir := os.NewFile(uintptr(dirFD), prefix)
-	defer func() { _ = dir.Close() }()
-	entries, err := dir.ReadDir(-1)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		if *budget <= 0 {
-			return
-		}
-		*budget--
-		name := e.Name()
-		if stageStaticBadComponent(name) || name == "node_modules" {
-			continue
-		}
-		switch {
-		case e.Type().IsDir():
-			sub, err := unix.Openat(dirFD, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-			if err != nil {
-				continue
-			}
-			_, _ = io.WriteString(h, prefix+name+"/\x00")
-			stageStaticHashDir(h, sub, prefix+name+"/", budget)
-		case e.Type().IsRegular():
-			if _, ok := stageStaticTypes[strings.ToLower(path.Ext(name))]; ok {
-				stageStaticHashEntry(h, dirFD, name)
-			}
-		}
-	}
 }
 
 func (s *stageStatic) Close() error {
