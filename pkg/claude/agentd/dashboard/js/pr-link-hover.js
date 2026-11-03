@@ -1,27 +1,30 @@
 import { h } from 'preact';
 import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { safeCheckURL, useHoverPopover, usePanelPlacement } from './pr-checks-hover.js';
+import { isGitLabMRURL, safeCheckURL, useHoverPopover, usePanelPlacement } from './pr-checks-hover.js';
 import { relativeAge } from './pr-review-model.js';
 
 const html = htm.bind(h);
 
 // The PR link itself (#1234 in the Groups tab's Branch column), plus a hover
 // card answering "what is this PR": repo, title, state, author, branches, diffstat
-// and the opening of its description. The CI pill and the review pill that
-// follow the link keep their own panels; this one shares their placement,
-// hover-root and bridge mechanics and their .ci-panel styling.
+// and the opening of its description. A GitLab merge request (!7) gets the
+// same card, naming its project and GitLab's Overview and Changes tabs. The
+// CI pill and the review pill that follow the link keep their own panels;
+// this one shares their placement, hover-root and bridge mechanics and their
+// .ci-panel styling.
 //
 // The card opens at once with the title and state the snapshot already
 // carries (a background read that happens anyway fetches the title). The rest
 // comes from /api/pr-details, and only once the pointer has rested on the link
 // for PR_DETAILS_HOVER_MS — so sweeping across a column of PR links reads the
-// titles without spending a GitHub read per link. Keyboard focus and a tap
+// titles without spending a forge read per link. Keyboard focus and a tap
 // fetch at once. Unlike the CI panel there is nothing to watch move, so it
 // re-polls only while the daemon reports a read in flight.
 //
-// Only GitHub pull request URLs get a card — that is all the endpoint can
-// describe. A presented PR on another forge keeps the plain link.
+// Only GitHub pull request and GitLab merge request URLs get a card — that is
+// all the endpoint can describe. A presented PR on another forge keeps the
+// plain link.
 //
 // The trigger is styled as the compact #1234 badge link (.pr-link) by
 // default; another surface, such as the footer PR list's titles, passes its
@@ -105,6 +108,28 @@ export function githubPRRepo(url) {
 
 const GITHUB_PR_URL = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)(?:[/?#]|$)/i;
 
+// GITLAB_MR_URL splits a merge request URL into the instance origin, the full
+// project path and the number.
+const GITLAB_MR_URL = /^(https:\/\/[^/?#]+)\/((?:[^/?#]+\/)*[^/?#]+)\/-\/merge_requests\/([0-9]+)(?:[/?#].*)?$/;
+
+// gitlabMRParts returns { origin, project, number } for a GitLab merge request
+// URL, or null.
+export function gitlabMRParts(url) {
+  const trimmed = String(url || '').trim();
+  if (!isGitLabMRURL(trimmed)) return null;
+  const match = GITLAB_MR_URL.exec(trimmed);
+  return match ? { origin: match[1], project: match[2], number: match[3] } : null;
+}
+
+// prCardBase is the canonical URL the card is keyed and fetched by: a GitHub
+// pull request, or a GitLab merge request without its sub-page, query or
+// fragment. '' for anything else.
+export function prCardBase(url) {
+  const mr = gitlabMRParts(url);
+  if (mr) return `${mr.origin}/${mr.project}/-/merge_requests/${mr.number}`;
+  return githubPRBase(url);
+}
+
 const STATE_LABELS = { open: 'Open', draft: 'Draft', merged: 'Merged', closed: 'Closed' };
 
 // diffBlocks splits five blocks between additions and deletions the way
@@ -134,6 +159,9 @@ function ageLine(details, now) {
   return [details.author, age ? `${when[0]} ${age}` : ''].filter(Boolean).join(' · ');
 }
 
+// A GitLab instance whose API lacks the diffstat leaves the counts unknown
+// (no_diffstat); the card then leaves them out rather than show an empty
+// change.
 function PRDetailsBody({ details, now }) {
   const blocks = diffBlocks(details.additions, details.deletions);
   const commits = details.commits >= 100 ? '100+ commits' : plural(details.commits || 0, 'commit');
@@ -145,14 +173,14 @@ function PRDetailsBody({ details, now }) {
     ${details.head_ref ? html`
       <div class="prd-branches">${details.head_ref}${details.base_ref ? ` → ${details.base_ref}` : ''}</div>
     ` : null}
-    <div class="prd-stat">
+    ${details.no_diffstat ? null : html`<div class="prd-stat">
       <span class="prd-add">+${(details.additions || 0).toLocaleString('en-US')}</span>
       <span class="prd-del">−${(details.deletions || 0).toLocaleString('en-US')}</span>
       <span class="prd-bar" aria-hidden="true">
         ${[0, 1, 2, 3, 4].map((i) => html`<i key=${i} class=${i < blocks.add ? 'a' : i < blocks.add + blocks.del ? 'd' : ''}></i>`)}
       </span>
       <span class="prd-counts">${plural(details.changed_files || 0, 'file')} · ${commits}</span>
-    </div>
+    </div>`}
     ${details.excerpt
       ? html`<p class="prd-excerpt">${details.excerpt}</p>`
       : html`<p class="prd-excerpt prd-excerpt-empty">No description provided.</p>`}
@@ -169,19 +197,23 @@ function PRDetailsPanel({ prURL, prNumber, title, prState, state, panelID, headi
       (placement.placement === 'above' ? 'transform:translateY(-100%)' : '')
     : 'visibility:hidden';
   const updated = details ? relativeAge(details.fetched_at, now) : '';
-  const repo = githubPRRepo(prURL);
+  const mr = gitlabMRParts(prURL);
+  const repo = mr ? mr.project : githubPRRepo(prURL);
+  const repoURL = mr ? `${mr.origin}/${mr.project}` : `https://github.com/${repo}`;
+  const kind = mr ? 'Merge request' : 'Pull request';
+  const ref = prNumber ? `${mr ? '!' : '#'}${prNumber}` : '';
   return html`
     <div ref=${panelRef} class="ci-panel prd-panel" style=${style}
       id=${panelID} role="dialog" aria-labelledby=${headingID}>
       ${repo ? html`
         <div class="prd-repo">
-          <a href=${`https://github.com/${repo}`} target="_blank" rel="noopener noreferrer">${repo}</a>
+          <a href=${repoURL} target="_blank" rel="noopener noreferrer">${repo}</a>
         </div>
       ` : null}
       <div class="prd-title" id=${headingID}>
         <a href=${prURL} target="_blank" rel="noopener noreferrer">
-          ${shownTitle || (prNumber ? `Pull request #${prNumber}` : 'Pull request')}
-          ${shownTitle && prNumber ? html` <span class="prd-num">#${prNumber}</span>` : null}
+          ${shownTitle || (ref ? `${kind} ${ref}` : kind)}
+          ${shownTitle && ref ? html` <span class="prd-num">${ref}</span>` : null}
         </a>
       </div>
       ${details ? html`<${PRDetailsBody} details=${details} now=${now} />` : html`
@@ -192,9 +224,9 @@ function PRDetailsPanel({ prURL, prNumber, title, prState, state, panelID, headi
           : pending ? html`<p class="ci-panel-empty prd-loading">Fetching details…</p>` : null}
       `}
       <p class="ci-panel-note">
-        <a href=${prURL} target="_blank" rel="noopener noreferrer">Conversation ↗</a>
+        <a href=${prURL} target="_blank" rel="noopener noreferrer">${mr ? 'Overview' : 'Conversation'} ↗</a>
         <span class="rv-note-sep"> · </span>
-        <a href=${`${prURL}/files`} target="_blank" rel="noopener noreferrer">Files changed ↗</a>
+        <a href=${`${prURL}/${mr ? 'diffs' : 'files'}`} target="_blank" rel="noopener noreferrer">${mr ? 'Changes' : 'Files changed'} ↗</a>
         ${updated ? html`<span class="rv-note-age">updated ${updated}</span>` : null}
       </p>
     </div>
@@ -203,9 +235,9 @@ function PRDetailsPanel({ prURL, prNumber, title, prState, state, panelID, headi
 
 // PRLinkHover renders the PR link with its hover card. On a hoverless device
 // a tap opens the card instead of navigating; the card's title and footer
-// links then lead to GitHub.
+// links then lead to the forge.
 export function PRLinkHover(props) {
-  if (!githubPRBase(props.url)) {
+  if (!prCardBase(props.url)) {
     const href = safeCheckURL(props.url);
     if (!href) return null;
     return html`<a class=${`${props.linkClass || 'pr-link'} ${props.className || ''}`.trim()} href=${href} target="_blank"
@@ -220,7 +252,8 @@ function PRLinkCard({ url, prNumber, title = '', prState = '', className = '', l
   const instanceID = useId();
   const { open, hovered, focused, tapped, close, rootProps, onTriggerClick } = useHoverPopover(rootRef);
   const [dwelled, setDwelled] = useState(false);
-  const prURL = githubPRBase(url);
+  const prURL = prCardBase(url);
+  const gitlab = !!gitlabMRParts(prURL);
   const state = usePRDetails(prURL, dwelled || focused || tapped);
   const { placement } = usePanelPlacement(rootRef, panelRef, open);
 
@@ -251,7 +284,7 @@ function PRLinkCard({ url, prNumber, title = '', prState = '', className = '', l
         draggable=${false}
         aria-expanded=${open ? 'true' : 'false'}
         aria-controls=${panelID}
-        aria-label=${`${describe || 'Pull request'} — opens it on GitHub.`}
+        aria-label=${`${describe || (gitlab ? 'Merge request' : 'Pull request')} — opens it on ${gitlab ? 'GitLab' : 'GitHub'}.`}
         onClick=${onTriggerClick}
         onKeyDown=${(event) => {
           // A closed card leaves Escape to whatever surrounds the link, e.g.

@@ -258,7 +258,11 @@ Subscription quota is not on the row; see
 
 ### PR, CI and review pills
 
-- **PR pill** (`#1234`): colored by open, draft, merged or closed.
+- **PR pill** (`#1234`, or `!7` for a merge request): colored by open, draft,
+  merged or closed. Rest the pointer on it for a details card: title, author,
+  branches, diffstat and the start of the description. A merge request's card
+  is read from the GitLab API and names its project; on an instance without
+  the diffstat fields it leaves the counts out.
 - **CI pill** (`✓ 12/14`): glyphs ✓ ✕ ◐ ·, not counting skipped checks. Hover or
   focus it for a checks panel, failures first, with live timers and a link to
   GitHub (the pipelines tab, for a GitLab merge request). On merged and closed PRs it only shows when the final run failed,
@@ -286,7 +290,7 @@ request, cached for 90 seconds.
   drafts** there. **Ready to merge** is approved PRs with passing CI. Requested
   changes count toward **Needs attention**.
 - **Hover a title** for the PR details card. Untick **Hover details** in the
-  popover's footer if it gets in the way.
+  popover's footer if it gets in the way. It is one setting with Open MRs.
 - **⊘** ignores a PR for 1 day, 1 week, 30 days or permanently. **Restore** under
   **Ignored** brings it back.
 - **＋ Add person** adds a tab for someone else's PRs, up to eight people. ✕ on
@@ -343,9 +347,10 @@ answers, the project tabs keep their last lists and say so. The instance is
 not marked as failed. That needs a GitLab recent enough to have
 `detailedMergeStatus` (16.x is safe); an older one reports the missing field
 instead of a list. A rate-limited instance is retried after the wait GitLab
-names, up to 5 minutes, and keeps showing its last list meanwhile. Ignoring,
-the people tabs, the recently closed list and the details card are Open PRs
-only.
+names, up to 5 minutes, and keeps showing its last list meanwhile. Hovering a
+title opens the merge request's details card, under the same **Hover details**
+setting as Open PRs. Ignoring, the people tabs and the recently closed list are
+Open PRs only.
 
 ## Starting agents
 

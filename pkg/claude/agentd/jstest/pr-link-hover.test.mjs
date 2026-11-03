@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const PR = 'https://github.com/tofutools/tclaude/pull/3090';
+const MR = 'https://gitlab.example.test:8929/acme/sub/app/-/merge_requests/7';
 
 
 // leave moves the pointer off a PR popover and waits out its close grace.
@@ -111,24 +112,74 @@ test('hovering the PR link opens a details card', async (t) => {
   }
 });
 
-test('only GitHub pull requests get a card; other forges keep the plain link', async (t) => {
+test('pull and merge requests get a card; any other link stays plain', async (t) => {
   const harness = await createPreactHarness(t);
-  const { PRLinkHover, githubPRBase, githubPRRepo } = await harness.importDashboardModule('js/pr-link-hover.js');
+  const { PRLinkHover, githubPRBase, githubPRRepo, prCardBase, gitlabMRParts } = await harness.importDashboardModule('js/pr-link-hover.js');
   assert.equal(githubPRBase(`${PR}/files?w=1#diff`), PR);
   assert.equal(githubPRBase('https://gitlab.com/a/b/-/merge_requests/3'), '');
   assert.equal(githubPRBase('javascript:alert(1)'), '');
   assert.equal(githubPRRepo(`${PR}/files`), 'tofutools/tclaude');
   assert.equal(githubPRRepo('https://gitlab.com/a/b/-/merge_requests/3'), '');
+  assert.equal(prCardBase(`${PR}/files`), PR);
+  assert.equal(prCardBase(`${MR}/diffs?view=inline#note_4`), MR, 'a merge request without its sub-page');
+  assert.deepEqual(gitlabMRParts(MR), { origin: 'https://gitlab.example.test:8929', project: 'acme/sub/app', number: '7' });
+  assert.equal(prCardBase('https://example.com/review/3'), '');
+  assert.equal(prCardBase('javascript:alert(1)'), '');
 
-  const other = 'https://gitlab.com/a/b/-/merge_requests/3';
+  const other = 'https://example.com/review/3';
   const mounted = await harness.mount(harness.html`
-    <span><${PRLinkHover} url=${other} prNumber=${3} className="pr-state-open" label="#3" describe="MR" /></span>
+    <span><${PRLinkHover} url=${other} prNumber=${3} className="pr-state-open" label="#3" describe="A review" /></span>
   `);
   try {
     assert.equal(mounted.container.querySelector('.prd-hover'), null, 'no hover root, so no card');
     const link = mounted.container.querySelector('a.pr-link');
     assert.equal(link.getAttribute('href'), other);
-    assert.equal(link.getAttribute('title'), 'MR');
+    assert.equal(link.getAttribute('title'), 'A review');
+  } finally {
+    await mounted.unmount();
+  }
+});
+
+test('a merge request\'s card names its project and GitLab\'s tabs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { PRLinkHover } = await harness.importDashboardModule('js/pr-link-hover.js');
+  const saved = globalThis.fetch;
+  const calls = [];
+  const details = {
+    title: 'Manual CTAD', state: 'open', author: 'jdoe', head_ref: 'feat/ctad', base_ref: 'main',
+    excerpt: 'Template deduction picked the wrong overload.', no_diffstat: true,
+    created_at: new Date(Date.now() - 2 * 3600e3).toISOString(), fetched_at: new Date().toISOString(),
+  };
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return { ok: true, json: async () => ({ url: MR, resolved: true, refreshing: false, details }) };
+  };
+  t.after(() => { globalThis.fetch = saved; });
+  const mounted = await harness.mount(harness.html`
+    <span><${PRLinkHover} url=${`${MR}/diffs`} prNumber=${7} className="pr-state-open" label="!7"
+      title="Manual CTAD" prState="open" /></span>
+  `);
+  try {
+    const link = mounted.container.querySelector('a.pr-link');
+    assert.equal(link.getAttribute('aria-label'), 'Merge request — opens it on GitLab.');
+    const root = mounted.container.querySelector('.prd-hover');
+    await harness.act(() => { harness.fireEvent(root, 'mouseenter'); });
+    await harness.act(async () => {});
+    let panel = mounted.container.querySelector('.prd-panel');
+    assert.equal(panel.querySelector('.prd-repo').textContent.trim(), 'acme/sub/app', 'the full project path');
+    assert.equal(panel.querySelector('.prd-repo a').getAttribute('href'), 'https://gitlab.example.test:8929/acme/sub/app');
+    assert.match(panel.querySelector('.prd-title').textContent, /Manual CTAD\s+!7/);
+
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 550)));
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    panel = mounted.container.querySelector('.prd-panel');
+    assert.equal(calls[0], `/api/pr-details?url=${encodeURIComponent(MR)}`, 'asked for by its canonical URL');
+    assert.match(panel.querySelector('.prd-meta').textContent, /jdoe · opened 2h ago/);
+    assert.equal(panel.querySelector('.prd-branches').textContent, 'feat/ctad → main');
+    assert.equal(panel.querySelector('.prd-stat'), null, 'an unknown diffstat is left out, not shown as zero');
+    const links = [...panel.querySelectorAll('.ci-panel-note a')].map((a) => [a.textContent, a.getAttribute('href')]);
+    assert.deepEqual(links, [['Overview ↗', MR], ['Changes ↗', `${MR}/diffs`]]);
+    await leave(harness, root);
   } finally {
     await mounted.unmount();
   }

@@ -319,8 +319,8 @@ function ignoredUntilLabel(ignored) {
 // ignored row says until when instead, and offers only its way back.
 //
 // kind 'mr' is a GitLab merge request in the Open MRs list: numbered !N, its
-// CI pill one head pipeline, its reviews in the same pill a pull request has,
-// and a conflict written into the meta line (the details card is GitHub's).
+// CI pill one head pipeline, its reviews and details card the same as a pull
+// request's, and a conflict written into the meta line.
 function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = null, onRestore = null, kind = 'pr' }) {
   const mr = kind === 'mr';
   const terminal = pr.state === 'merged' || pr.state === 'closed';
@@ -334,7 +334,7 @@ function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = nu
     <li class=${`open-pr-row${draft ? ' is-draft' : ''}${ignored ? ' is-ignored' : ''}`}>
       <span class=${`open-pr-state open-pr-state-${dot}`} aria-hidden="true"></span>
       <span class="open-pr-main">
-        ${titleDetails && !mr
+        ${titleDetails
           ? html`<${PRLinkHover} url=${pr.url} prNumber=${pr.number} title=${pr.title || ''} prState=${prState}
               linkClass="open-pr-title" label=${titleText} describe=${titleText} />`
           : html`<a class="open-pr-title" href=${pr.url} target="_blank" rel="noopener noreferrer">${titleText}</a>`}
@@ -434,6 +434,32 @@ function useIncludeDrafts() {
   return [value, update];
 }
 
+// useTitleDetails is the one "Hover details" setting the two popovers share:
+// whether a row's title opens its details card. On unless turned off.
+const titleDetailsListeners = new Set();
+function useTitleDetails() {
+  const [value, setValue] = useState(() => dashPrefs.getItem(OPEN_PRS_TITLE_DETAILS_PREF) !== '0');
+  useEffect(() => {
+    titleDetailsListeners.add(setValue);
+    return () => { titleDetailsListeners.delete(setValue); };
+  }, []);
+  const update = (checked) => {
+    dashPrefs.setItem(OPEN_PRS_TITLE_DETAILS_PREF, checked ? '1' : '0');
+    for (const listener of titleDetailsListeners) listener(checked);
+  };
+  return [value, update];
+}
+
+// TitleDetailsToggle is that setting's checkbox, in each popover's footer.
+function TitleDetailsToggle({ checked, onChange, noun }) {
+  return html`<label class="open-prs-title-details"
+    title=${`Show a ${noun}'s details card when hovering its title`}>
+    <input type="checkbox" checked=${checked}
+      onChange=${(event) => onChange(event.currentTarget.checked)} />
+    <span>Hover details</span>
+  </label>`;
+}
+
 // FooterListTrigger and FooterListFilters are the parts the Open PRs and Open
 // MRs popovers share: the footer button that opens a list, and its row of
 // filter chips (each { key, text, active, onClick, title? }).
@@ -476,9 +502,7 @@ function OpenPRs({ state }) {
   // still mounted, the popover trigger otherwise.
   const returnFocus = useRef(null);
   const [focusBack, setFocusBack] = useState(0);
-  const [titleDetails, setTitleDetails] = useState(
-    () => dashPrefs.getItem(OPEN_PRS_TITLE_DETAILS_PREF) !== '0',
-  );
+  const [titleDetails, setTitleDetails] = useTitleDetails();
   const [person, setPerson] = useState('');
   // The tracked list as the daemon last answered an edit, held until the
   // next snapshot (which the daemon builds from the saved list): a new tab
@@ -658,16 +682,7 @@ function OpenPRs({ state }) {
                 }} />
               <span>Include drafts</span>
             </label>` : null}
-            <label class="open-prs-title-details"
-              title="Show a pull request's details card when hovering its title">
-              <input type="checkbox" checked=${titleDetails}
-                onChange=${(event) => {
-                  const checked = event.currentTarget.checked;
-                  setTitleDetails(checked);
-                  dashPrefs.setItem(OPEN_PRS_TITLE_DETAILS_PREF, checked ? '1' : '0');
-                }} />
-              <span>Hover details</span>
-            </label>
+            <${TitleDetailsToggle} checked=${titleDetails} onChange=${setTitleDetails} noun="pull request" />
           </div>
           ${confirmIgnore ? html`<${IgnorePRDialog} pr=${confirmIgnore.pr}
             onCancel=${closeIgnoreDialog}
@@ -692,6 +707,7 @@ function OpenMRs({ state }) {
   // '' is your own list; otherwise a project tab's key.
   const [project, setProject] = useState('');
   const [includeDraftsInAttention, setIncludeDraftsInAttention] = useIncludeDrafts();
+  const [titleDetails, setTitleDetails] = useTitleDetails();
   const [hovered, setHovered] = useState(false);
   const [pinned, setPinned] = useState(false);
   const rootRef = useRef(null);
@@ -764,7 +780,7 @@ function OpenMRs({ state }) {
           ${!where && everyoneUnread ? staleEveryone.map((entry) => html`<p key=${`${entry.host}-everyone`}
             class="open-prs-stale" role="status">Everyone's merge requests on ${entry.host} could not be read: ${entry.everyoneError}</p>`) : null}
           ${panel.items.length
-            ? html`<ul class="open-pr-list">${panel.items.map((mr) => html`<${OpenPRRow} key=${mr.url} pr=${mr} kind="mr" titleDetails=${false} />`)}</ul>`
+            ? html`<ul class="open-pr-list">${panel.items.map((mr) => html`<${OpenPRRow} key=${mr.url} pr=${mr} kind="mr" titleDetails=${titleDetails} />`)}</ul>`
             : html`<p class="open-prs-empty">${view.filter === 'all' ? 'No open merge requests.' : 'No merge requests match this filter.'}</p>`}
           <${FooterListFilters} label="Filter merge requests" filters=${[
             { key: 'all', text: `Open ${panel.total}`, active: view.filter === 'all', onClick: () => setFilter('all') },
@@ -788,6 +804,7 @@ function OpenMRs({ state }) {
                 }} />
               <span>Include drafts</span>
             </label>` : null}
+            <${TitleDetailsToggle} checked=${titleDetails} onChange=${setTitleDetails} noun="merge request" />
           </div>
         </div>
       ` : null}

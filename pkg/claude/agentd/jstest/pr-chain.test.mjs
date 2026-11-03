@@ -10,7 +10,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 const MR = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/7';
 const PR = 'https://github.com/acme/app/pull/42';
 
-test('a merge request is !N, coloured by state, with its title in the tooltip', async (t) => {
+test('a merge request is !N, coloured by state, with its title in the card\'s label', async (t) => {
   const harness = await createPreactHarness(t);
   const { PRChain } = await harness.importDashboardModule('js/pr-chain.js');
   for (const state of ['open', 'draft', 'merged', 'closed']) {
@@ -23,7 +23,9 @@ test('a merge request is !N, coloured by state, with its title in the tooltip', 
       assert.equal(link.textContent, '!7', `${state}: GitLab's own numbering`);
       assert.ok(link.classList.contains(`pr-state-${state}`), `${state}: the same state colour as a pull request`);
       assert.equal(link.getAttribute('href'), MR);
-      assert.equal(link.title, `${state[0].toUpperCase()}${state.slice(1)} merge request !7 — Speed up the importer`);
+      assert.ok(mounted.container.querySelector('.prd-hover'), `${state}: the link opens the details card`);
+      assert.equal(link.getAttribute('aria-label'),
+        `${state[0].toUpperCase()}${state.slice(1)} merge request !7 — Speed up the importer — opens it on GitLab.`);
     } finally {
       await mounted.unmount();
     }
@@ -38,7 +40,7 @@ test('a merge request without a known state or title still says what it is', asy
     const link = mounted.container.querySelector('a.pr-link');
     assert.equal(link.textContent, '!7');
     assert.ok(link.classList.contains('pr-state-unknown'));
-    assert.equal(link.title, 'Merge request !7');
+    assert.equal(link.getAttribute('aria-label'), 'Merge request !7 — opens it on GitLab.');
   } finally {
     await mounted.unmount();
   }

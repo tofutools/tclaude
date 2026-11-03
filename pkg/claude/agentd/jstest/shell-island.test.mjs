@@ -809,6 +809,7 @@ test('footer open MRs lists GitLab merge requests next to open PRs', async (t) =
   assert.ok(pill?.classList.contains('rv-approved'), 'a merge request has the same review pill as a pull request');
   assert.equal(pill.textContent.trim(), '2');
   assert.match(pill.getAttribute('aria-label'), /Reviews for !7 .*Opens the merge request on GitLab/);
+  assert.ok(rows[0].querySelector('.prd-hover .open-pr-title'), 'the title opens the merge request\'s details card');
   const link = getByRole(mounted.container, 'link', { name: /Open all on gitlab\.example\.test:8929/ });
   assert.equal(link.getAttribute('href'), 'https://gitlab.example.test:8929/dashboard/merge_requests?state=opened&author_username=jdoe');
   assert.match(mounted.container.querySelector('.open-prs-stale').textContent, /other\.example\.test: GitLab applied a rate limit/);
@@ -871,6 +872,38 @@ test('footer open MRs shows mine and all, and a tab per project for everyone\'s'
   assert.equal(link.getAttribute('href'), `${base}/contoso/player/-/merge_requests`);
   await harness.act(() => getByRole(mounted.container, 'button', { name: /Ready to merge 1/ }).click());
   assert.deepEqual([...mounted.container.querySelectorAll('.open-pr-title')].map((node) => node.textContent), ['Merge 1st']);
+  await mounted.unmount();
+});
+
+test('hover details is one setting across Open PRs and Open MRs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenMRs, OpenPRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<div><${OpenPRs} state=${state} /><${OpenMRs} state=${state} /></div>`);
+  const mr = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/';
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, {
+    authored_open_prs: { available: true, total: 1, items: [
+      { number: 1, url: 'https://github.com/acme/app/pull/1', title: 'A PR', repository: 'acme/app', checks: { total: 1, passed: 1, state: 'passing' } },
+    ] },
+    authored_open_mrs: { available: true, total: 1, items: [
+      { number: 2, url: `${mr}2`, title: 'An MR', repository: 'acme/app', checks: { total: 1, passed: 1, state: 'passing' } },
+    ] },
+  }));
+  const prs = mounted.container.querySelector('.open-prs:not(.open-mrs)');
+  const mrs = mounted.container.querySelector('.open-mrs');
+  await harness.act(() => getByRole(mrs, 'button', { name: /Open MRs/ }).click());
+  assert.ok(mrs.querySelector('.open-pr-row .prd-hover'), 'on by default');
+  const box = getByLabelText(mrs, 'Hover details');
+  box.checked = false;
+  await harness.act(() => harness.fireEvent(box, 'change'));
+  assert.equal(mrs.querySelector('.open-pr-row .prd-hover'), null, 'off: the title is a plain link');
+  await harness.act(() => getByRole(prs, 'button', { name: /Open PRs/ }).click());
+  assert.ok(!getByLabelText(prs, 'Hover details').checked, 'turning it off in Open MRs turns it off in Open PRs');
+  assert.equal(prs.querySelector('.open-pr-row .prd-hover'), null);
   await mounted.unmount();
 });
 
