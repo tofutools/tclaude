@@ -10,6 +10,7 @@ import { FormFillBar } from './form-fill-bar.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { KnowledgeSourceRow } from './knowledge-source-island.js';
 import { ExternalStewardManager } from './config-external-stewards.js';
+import { RemoteAdminPanel } from './remote-admin.js';
 import { StewardDefaultPermissions } from './steward-default-permissions.js';
 import { dashboardState } from './snapshot-store.js';
 import { DICTATED_MARKER } from './companion-model.js';
@@ -971,7 +972,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           <span class="cfg-remote-status" id="cfg-remote-status"></span>
         </${Setting}>
       </${Group}>
-      <div id="cfg-remote-admin-slot"></div>
+      <${RemoteAdminPanel} />
     </${Panel}>
 
     <${Panel} id="logs" active=${active}>

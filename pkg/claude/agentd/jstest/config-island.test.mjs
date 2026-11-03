@@ -884,23 +884,17 @@ test('Config search filters individual settings across panels', async (t) => {
   await mounted.unmount();
 });
 
-test('Config moves the static remote-access certificate panel into Daemon & network and back', async (t) => {
+test('Config renders the remote-access certificate panel in Daemon & network', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }] = await Promise.all([
     harness.importDashboardModule('js/config-state.js'), harness.importDashboardModule('js/config-island.js'),
   ]);
-  const tab = harness.document.body.appendChild(harness.document.createElement('section'));
-  tab.id = 'tab-config';
-  const host = tab.appendChild(harness.document.createElement('div'));
-  const admin = tab.appendChild(harness.document.createElement('div'));
-  admin.id = 'cfg-remote-admin';
-  admin.className = 'cfg-section';
   const state = createConfigState({ activeTab: harness.signals.signal('groups') });
-  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`, host);
-  assert.equal(admin.parentElement.id, 'cfg-remote-admin-slot');
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`);
+  const admin = mounted.container.querySelector('#cfg-remote-admin');
+  assert.ok(admin, 'the panel renders inside the Config form');
   assert.equal(admin.closest('[data-cfg-panel]').getAttribute('data-cfg-panel'), 'daemon');
   await mounted.unmount();
-  assert.equal(admin.parentElement, tab);
 });
 
 test('Config auto-close terminal tabs matrix shows defaults and persists only overrides', async (t) => {

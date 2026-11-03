@@ -60,7 +60,6 @@ import { bindRolesUI } from './modal-roles.js';
 import { refreshAgentSpawnSandboxPolicy } from './agent-spawn-controller.js';
 import { configureQueuedSpawns } from './queued-spawns.js';
 import { configureSpawnQueue } from './spawn-queue-block.js';
-import { bindRemoteAdmin, loadRemoteAdmin } from './remote-admin.js';
 import { bindCostDisplayToggle } from './cost-display-toggle.js';
 import { focusAccessRequest } from './mail-bridge.js';
 import { dashPrefs, initDashPrefs } from './prefs.js';
@@ -379,8 +378,6 @@ async function settleInitialLayout() {
   bindSandboxProfilesUI();
   bindRolesUI();
   bindGroupImportModal();
-  bindRemoteAdmin();
-  document.querySelector('nav [data-tab="config"]')?.addEventListener('click', () => { void loadRemoteAdmin(); });
   bindCostDisplayToggle();
   // Slop-mode flair — each binder installs a delegated listener (or
   // starts an interval) once. They no-op while slop is off and the

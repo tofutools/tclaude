@@ -54,17 +54,8 @@ export function ConfigApp({ state, dependencies = {} }) {
     configureConfigLifecycle(state.lifecycle);
     const unbind = bindConfigActivation();
     document.addEventListener(SOURCE_CHOICE_EVENT, followSourceChoice);
-    // The remote-access certificate panel is static dashboard HTML wired by
-    // remote-admin.js; move it (listeners intact) into the Daemon & network
-    // panel, and back to its original host on unmount.
-    const remoteAdmin = document.getElementById('cfg-remote-admin');
-    const remoteAdminHome = remoteAdmin?.parentElement;
-    const remoteAdminNext = remoteAdmin?.nextSibling;
-    const remoteAdminSlot = root.current?.querySelector('#cfg-remote-admin-slot');
-    if (remoteAdmin && remoteAdminSlot) remoteAdminSlot.appendChild(remoteAdmin);
     return () => {
       document.removeEventListener(SOURCE_CHOICE_EVENT, followSourceChoice);
-      if (remoteAdmin && remoteAdminHome) remoteAdminHome.insertBefore(remoteAdmin, remoteAdminNext?.parentNode === remoteAdminHome ? remoteAdminNext : null);
       unbind?.();
       state.cancelDiff(false);
     };
