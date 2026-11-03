@@ -8958,7 +8958,7 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   background: #21262d; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9;
   cursor: pointer; font-family: inherit; font-size: 11px; padding: 1px 7px; margin-left: 22px;
 }
-.import-confirm-reveal:hover { border-color: #58a6ff; }
+.import-confirm-reveal:hover { background: var(--ui-bg-hover); }
 .import-confirm-value { display: block; margin-left: 22px; overflow-wrap: anywhere; }
 .paf-landing-selects { display: inline-flex; gap: 6px; }
 .paf-rung { display: inline-block; font-size: 11px; padding: 0 7px; border-radius: 10px; border: 1px solid #30363d; white-space: nowrap; }
@@ -13610,6 +13610,7 @@ body.wizard :is(#paf-export-modal, #group-export-modal) button:is(.primary, .ui-
 body.wizard :is(#paf-export-modal, #group-export-modal) button:where(:not(.ui-btn)):disabled {
   opacity: 0.5; cursor: default; box-shadow: none;
 }
+body.wizard :is(#paf-export-modal, #group-export-modal) .ui-btn-primary:disabled { box-shadow: none; }
 
 /* ─── Wizard edit-agent modal — "Enchant this hero" ─────────────
    The third of the arcane dialog re-skins (Summon a hero / Banish a
