@@ -222,6 +222,14 @@ func TestPageRemoteViewerFramesItsPageOverPlainHTTPWithoutFetchMetadata(t *testi
 		require.NotEmpty(t, got.Batches)
 		return got.Batches[len(got.Batches)-1].Path
 	}
+	// The page's script can send the header on a cors request: its preflight
+	// is answered (pages need their own headers), but the request carries
+	// Origin: null, which never counts.
+	res = remoteGet(t, e.srv, http.MethodOptions, "brain:8123", prefix+"/public/ok.html", map[string]string{
+		"Origin": "null", "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "upgrade-insecure-requests",
+	}, nil)
+	require.Less(t, res.StatusCode, 300, "the preflight is answered")
+	assert.Equal(t, "upgrade-insecure-requests", res.Header.Get("Access-Control-Allow-Headers"))
 	for _, fetch := range []map[string]string{{"Origin": "null"}, {"Accept": "text/html"}, {"Origin": "null", "Upgrade-Insecure-Requests": "1"}} {
 		res = remoteGet(t, e.srv, http.MethodGet, "brain:8123", prefix+"/public/ok.html", fetch, nil)
 		require.Equal(t, http.StatusOK, res.StatusCode)

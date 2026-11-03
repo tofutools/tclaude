@@ -348,11 +348,15 @@ func serveStagePage(w http.ResponseWriter, r *http.Request, page *stagePage, sit
 	}
 	// What the static source counts as the operator's frame loading a
 	// document (for a page's read-back, pages_fsview.go): one that says so,
-	// or, with no fetch metadata to say, a navigation. Browsers send
-	// Upgrade-Insecure-Requests only on a navigation, and a page's script
-	// cannot add it: not to a no-cors request (it is not a safelisted
-	// header), and a cors request carries Origin: null. So the page's own
-	// fetch of an HTML file never counts as its frame having reloaded.
+	// or, with no fetch metadata to say, a navigation: no Origin, and
+	// Upgrade-Insecure-Requests, which browsers send only on a navigation.
+	// A page's script can set that header, but only on a cors request (it is
+	// not safelisted, so a no-cors request cannot carry it), and every cors
+	// request from the page carries Origin: null, as its origin is opaque.
+	// The guard rests on that Origin, not on the preflight: the stage
+	// answers a null-origin preflight for any header (stageAnswerPreflight),
+	// as a page's own cors requests need. So the page's own fetch of an HTML
+	// file never counts as its frame having reloaded.
 	navigation := r.Header.Get("Origin") == "" && strings.TrimSpace(r.Header.Get("Upgrade-Insecure-Requests")) == "1"
 	if dest == "iframe" || (noMetadata && navigation) {
 		r = r.WithContext(context.WithValue(r.Context(), stageFrameLoadKey{}, true))
