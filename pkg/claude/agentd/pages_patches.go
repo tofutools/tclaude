@@ -56,8 +56,6 @@ const (
 
 var pagePatchAttrName = regexp.MustCompile(`^[A-Za-z_:][-A-Za-z0-9_:.]*$`)
 
-var pagePatchOps = map[string]bool{"set-text": true, "set-attr": true, "remove": true, "insert-html": true}
-
 // pagePatch is one entry of a page's journal.
 type pagePatch struct {
 	N    int64     `json:"n"`
