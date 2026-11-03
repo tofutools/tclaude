@@ -14,7 +14,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { markQuickStart, scribeDraftName, scribeDraftRequest } from './groups-quickstart.js';
-import { handOffProcessDraft } from './process-draft-handoff.js';
+import { openProcessDraft } from './process-draft-handoff.js';
 import { dashPrefs } from './prefs.js';
 import { openHelperWindow } from './get-help.js';
 import {
@@ -274,7 +274,7 @@ export function ScribeDraft({ group, draft, api, scribes = [], wizard = false, n
       setBusy('');
     }
   };
-  const graph = () => handOffProcessDraft({ id: draft.templateId, name: draft.name, view: ready || draft.view });
+  const graph = () => void openProcessDraft({ id: draft.templateId, name: draft.name, view: ready || draft.view });
   return html`<section class="gq-draft" aria-label=${`Draft of ${draft.name}`} data-scribe-draft=${draft.templateId}>
     <div class="gq-start-head">
       <h3>${wizard ? `A scribe sets down ${draft.name}` : `A scribe is drafting ${draft.name}`}</h3>

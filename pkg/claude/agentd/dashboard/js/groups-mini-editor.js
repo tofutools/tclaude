@@ -22,7 +22,7 @@ import {
 } from './process-mini-edit.js';
 import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopBound, normalizeRounds } from './process-loops.js';
 import { collapseParamShorthand, setStepName, setStepText, setStepWho, stepText, stepWho, viewToStepList } from './process-step-list.js';
-import { handOffProcessDraft } from './process-draft-handoff.js';
+import { openProcessDraft } from './process-draft-handoff.js';
 import { FallbackPicker, WhoPicker, defaultNotify, inheritLabel, markQuickStart, useSpawnProfiles } from './groups-quickstart.js';
 import { fallbackNote, setStepFallback, stepFallbackValue } from './process-quickstart.js';
 import { withShortcut } from './keybindings.js';
@@ -255,7 +255,7 @@ export function MiniGraphEditor({
   };
   const fullEditor = async () => {
     if (dirty && !(await save())) return;
-    handOffProcessDraft({ id: process.templateId, name });
+    await openProcessDraft({ id: process.templateId, name });
     onClose();
   };
   // pointAt is a pointer position in the graph's own coordinates, where the

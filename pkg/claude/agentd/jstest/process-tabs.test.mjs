@@ -61,8 +61,8 @@ function fakeDaemon(t, templates = TEMPLATES) {
 function fakeProcessesHost(place) {
   const host = {
     opened: [], docked: [], held: null, discard: true, asked: 0,
-    open: async (mount, id) => {
-      const editor = { mount, model: { dirty: false, template: { id } }, destroyed: 0, destroy() { this.destroyed += 1; } };
+    open: async (mount, id, _name, _handoff, seed = {}) => {
+      const editor = { mount, seed, model: { dirty: false, template: { id } }, destroyed: 0, destroy() { this.destroyed += 1; } };
       mount.textContent = `editor ${id}`;
       host.opened.push(editor);
       return editor;
@@ -282,5 +282,44 @@ test('with Processes off the ＋ menu is boards only; with Collab off a process 
   assert.equal(processes.docked.length, 1, 'the editor goes back to the Processes tab');
   assert.equal(processes.docked[0].live.editor, editor);
   assert.equal(editor.destroyed, 0);
+  env.stop();
+});
+
+test('the Groups full editor opens in an overlay window over the tab, on the version it was handed', async (t) => {
+  fakeDaemon(t);
+  const env = await mountShell(t);
+  const { harness, place, processes, processTabs, instances } = env;
+  const { openProcessDraft, takeProcessDraft } = await harness.importDashboardModule('js/process-draft-handoff.js');
+  const nav = harness.document.querySelector('nav [data-tab="groups"]');
+  harness.fireEvent(nav, 'click');
+  // The companion's overlay host, as when Collab is on.
+  instances.overlayHostUp.value = true;
+  t.after(() => { instances.overlayHostUp.value = false; });
+  const view = { template: { id: 'triage', name: 'Triage' }, currentRef: 'triage@sha256:1', sourceHash: 's1' };
+  let where;
+  await harness.act(async () => { where = await openProcessDraft({ id: 'triage', name: 'Triage', view }); await wait(10); });
+  assert.equal(where, 'overlay');
+  assert.deepEqual(processTabs().map((tab) => [tab.template, tab.label]), [['triage', 'Triage']]);
+  // The overlay window, shown, opens its editor.
+  const slot = harness.document.body.appendChild(harness.document.createElement('div'));
+  await harness.act(async () => { await place.openFloatingEditor('triage', 'Triage', slot); });
+  assert.equal(processes.opened.length, 1);
+  assert.deepEqual(processes.opened[0].seed, { view, readable: true }, 'the editor opens on the handed-off version');
+  assert.ok(nav.classList.contains('active'), 'the operator stays on Groups');
+  assert.equal(takeProcessDraft(), null, 'nothing is queued for the Processes tab');
+
+  // The one in the Processes tab moves to the overlay as it is.
+  const mount = place.processEditorMount(harness.document);
+  const docked = { mount, model: { dirty: true, template: { id: 'release-train' } }, destroyed: 0, destroy() { this.destroyed += 1; } };
+  processes.held = { mount, editor: docked, label: 'Release train' };
+  await harness.act(async () => { await openProcessDraft({ id: 'release-train', name: 'Release train' }); await wait(10); });
+  assert.equal(place.floatingProcessEditor('release-train').editor, docked);
+  assert.equal(processes.opened.length, 1, 'no second editor opens');
+
+  // Without overlay windows it goes to the Processes tab as before.
+  instances.overlayHostUp.value = false;
+  await harness.act(async () => { where = await openProcessDraft({ id: 'review', name: 'Code review', view }); await wait(); });
+  assert.equal(where, 'processes');
+  assert.deepEqual(takeProcessDraft(), { id: 'review', name: 'Code review', view });
   env.stop();
 });

@@ -1,6 +1,7 @@
-// process-draft-handoff.js -- hands a process from another tab (the Groups ›
-// Processes quick start, tcl-7p6bgt) to the Processes tab's full graph
-// editor: a just-created template ({id, name, view}) to open, or {create:
+// process-draft-handoff.js -- opens a process from another tab (the Groups ›
+// Processes quick start, tcl-7p6bgt) in the full graph editor: in an overlay
+// window over that tab when there is one (openProcessDraft), else in the
+// Processes tab's editor, handed over as a just-created template ({id, name, view}) to open, or {create:
 // true} for the tab's own new-template dialog. It waits here until the
 // Processes island takes it: at once when the island is mounted (the
 // tclaude:process-draft event), or when it mounts.
@@ -12,6 +13,20 @@ export function handOffProcessDraft(draft, { doc = document } = {}) {
   pending = draft;
   doc.querySelector('nav [data-tab="processes"]')?.click();
   doc.dispatchEvent(new CustomEvent('tclaude:process-draft'));
+}
+
+// openProcessDraft opens a saved process's full editor in an overlay window over
+// this tab (tcl-kqiiv0), so the operator stays where they are; without overlay
+// windows it hands the draft to the Processes tab as before. {create: true}
+// always goes there, to its new-template dialog. It answers where it opened:
+// 'overlay' or 'processes'.
+export async function openProcessDraft(draft, { doc = document } = {}) {
+  if (draft?.id) {
+    const { openProcessOverlay } = await import('./process-editor-place.js');
+    if (openProcessOverlay(draft.id, draft.name || '', { view: draft.view || null, readable: true })) return 'overlay';
+  }
+  handOffProcessDraft(draft, { doc });
+  return 'processes';
 }
 
 // takeProcessDraft returns the queued draft, once.
