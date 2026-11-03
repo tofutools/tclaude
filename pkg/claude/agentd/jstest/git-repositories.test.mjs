@@ -25,11 +25,11 @@ test('100-repository dialog retains hidden selections and freezes the submitted 
   assert.equal(host.querySelectorAll('.git-repo-row').length, 1);
   await harness.act(() => harness.fireEvent(host.querySelector('.git-repos-toolbar button'), 'click'));
   assert.match(host.querySelector('.git-repos-footer').textContent, /99 of 100 selected/);
-  await harness.act(() => harness.fireEvent(host.querySelector('.git-repos-footer .primary'), 'click'));
+  await harness.act(() => harness.fireEvent(host.querySelector('.git-repos-footer .git-repos-submit'), 'click'));
   assert.equal(submitted.length, 99);
   assert.equal(submitted.some((r) => r.path === '/repo-99'), false);
   assert.equal(submitted.every((r) => r.switch_default === true && r.discard === false && r.group === 'team'), true);
-  assert.equal(host.querySelector('.git-repos-footer .primary').disabled, true);
+  assert.equal(host.querySelector('.git-repos-footer .git-repos-submit').disabled, true);
   assert.ok(host.querySelector('.theme-copy-wizard').textContent.includes('Summon'));
   await harness.act(async () => { finish(); await pending; });
 });
@@ -196,7 +196,7 @@ for (const wizard of [false, true]) {
     await mount(2);
     // LinkeDOM does not reflect controlled select.value on option.selected.
     // Submitting the remounted dialog verifies its restored state instead.
-    await harness.act(() => harness.fireEvent(host.querySelector('.primary'), 'click'));
+    await harness.act(() => harness.fireEvent(host.querySelector('.git-repos-submit'), 'click'));
     assert.equal(submitted, 100);
     assert.equal(host.querySelector('select').disabled, true);
     await harness.act(async () => { finish(); await pending; });

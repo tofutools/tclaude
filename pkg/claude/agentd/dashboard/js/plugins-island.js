@@ -57,7 +57,7 @@ function StepRow({ plugin, step, index, actions, busy }) {
   const tip = lamp.verb ? `${lamp.state} — click to ${lamp.verb}:\n${command}` : lamp.state;
   return html`<tr>
     <td>${lamp.verb
-      ? html`<button type="button" class=${`status-dot ${lamp.cls}`} disabled=${isBusy}
+      ? html`<button data-ui-exempt type="button" class=${`status-dot ${lamp.cls}`} disabled=${isBusy}
           title=${tip} aria-label=${tip}
           onClick=${() => actions.toggleStep(plugin, index, lamp.verb, key)}>${isBusy ? '◐' : lamp.glyph}</button>`
       : html`<span class=${lamp.cls} title=${tip}>${lamp.glyph}</span>`}</td>
@@ -76,7 +76,7 @@ function PluginCard({ plugin, state, actions, busy }) {
   const checkKey = pluginBusyKey('plugin-check', plugin.name);
   return html`<div class="plugin-card ui-card" data-key=${`plugin-${plugin.name}`}>
     <div class="plugin-head">
-      <button type="button" class=${`status-dot ${lamp.cls}`} disabled=${busy.has(toggleKey)}
+      <button data-ui-exempt type="button" class=${`status-dot ${lamp.cls}`} disabled=${busy.has(toggleKey)}
         title=${lamp.tip} aria-label=${lamp.tip}
         onClick=${() => actions.togglePlugin(plugin, lamp.verb, toggleKey)}>${busy.has(toggleKey) ? '◐' : lamp.glyph}</button>
       <span class=${`state-pill ${pill.cls}`} title=${pill.title}>${pill.text}</span>
@@ -111,8 +111,8 @@ function Catalog({ plugins, actions, busy }) {
           <span class="tag">catalog</span><span class="rowname">${plugin.name}</span>
           ${plugin.descr && html`<span class="muted">${plugin.descr}</span>`}
           <span class="spacer"></span>
-          <button class="primary" disabled=${busy.has(key)} onClick=${() => actions.install(plugin, key)}
-            title="Add this plugin to your installed set (you can edit it afterwards)">${busy.has(key) ? 'installing…' : '+ install'}</button>
+          <${Button} size="sm" variant="primary" disabled=${busy.has(key)} onClick=${() => actions.install(plugin, key)}
+            title="Add this plugin to your installed set (you can edit it afterwards)">${busy.has(key) ? 'installing…' : '+ install'}<//>
         </div>
         <ul class="plugin-catalog-steps">${(plugin.steps || []).map((step, index) => html`
           <li key=${`${plugin.name}:${index}`}><span class="rowname">${step.name}</span> <${Command} value=${step.run || step.check} /></li>
@@ -192,7 +192,7 @@ export function PluginsApp({ state, actions, fleet = fleetState, confirm = shell
         placeholder="Filter (name / descr / step name / command)" autocomplete="off" spellcheck=${false}
         value=${current.query} onInput=${(event) => state.setQuery(event.currentTarget.value)} />
       <span class="filter-count" id="filter-plugins-count" aria-live="polite">${count}</span>
-      <button class="clear-filter" id="filter-plugins-clear" title="Clear filter" aria-label="Clear plugin filter"
+      <button data-ui-exempt class="clear-filter" id="filter-plugins-clear" title="Clear filter" aria-label="Clear plugin filter"
         onClick=${() => { state.setQuery(''); inputRef.current?.focus(); }}>×</button>
       <span class="spacer"></span>
       <${Button} id="plugins-check-now" disabled=${current.busy.has(checkKey)}
@@ -237,7 +237,7 @@ function StepEditor({ step, index, state }) {
   </label>`;
   return html`<fieldset class="plugin-step-edit">
     <div class="plugin-step-edit-head"><span class="muted plugin-step-edit-n">step ${index + 1}</span><span class="spacer"></span>
-      <button type="button" class="danger" data-step-remove title="Remove this step" onClick=${() => state.removeStep(index)}>remove</button></div>
+      <${Button} size="sm" variant="ghost danger" data-step-remove title="Remove this step" onClick=${() => state.removeStep(index)}>remove<//></div>
     ${field('name', 'Name', 0, 'e.g. canvas server (docker)')}
     ${field('check', 'Check', 2, 'shell command — exit 0 means this step is satisfied (optional)')}
     ${field('run', 'Run', 2, 'shell command that performs the step (optional)')}

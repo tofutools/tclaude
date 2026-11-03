@@ -24,6 +24,7 @@
 import { h } from 'preact';
 import { useId, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { layoutProcessGraph } from './process-layout.js';
 import { loopEdgeSuffix } from './process-loops.js';
 
@@ -565,8 +566,8 @@ export function ProcessPauseControl({ run, actions = {} }) {
     }
   };
   return html`<span class="pk-pause" data-process-pause=${state.paused ? 'paused' : 'live'}>
-    <button type="button" class="mux-btn" disabled=${busy || !state.ok || !act} title=${title}
-      onClick=${() => void click()}>${state.paused ? '▶ resume run' : '⏸ pause run'}</button>
+    <${Button} size="sm" disabled=${busy || !state.ok || !act} title=${title}
+      onClick=${() => void click()}>${state.paused ? '▶ resume run' : '⏸ pause run'}<//>
     ${error ? html`<span class="pk-pause-error" role="alert">${error}</span>` : null}
   </span>`;
 }
@@ -584,7 +585,7 @@ export function ProcessRunBadge({ run, performerId = '', nodeId = '', onOpen = n
   const cls = `pk-run-badge pk-state-${view.state}${view.scope ? ` pk-scope-${view.scope}` : ''}`;
   const body = html`<span class="pk-run-glyph" aria-hidden="true">${view.glyph}</span><span class="pk-run-name">${runName(run)}</span>${view.node && html`<span class="pk-sep" aria-hidden="true">›</span><b class="pk-run-node">${view.node.label}</b>`}<${ProcessStepStrip} run=${run} />`;
   if (typeof onOpen === 'function') {
-    return html`<button type="button" class=${cls} title=${view.title} aria-label=${view.title} data-process-run=${runID(run)} onClick=${(event) => { event.stopPropagation(); onOpen(run, view.node); }}>${body}</button>`;
+    return html`<button data-ui-exempt type="button" class=${cls} title=${view.title} aria-label=${view.title} data-process-run=${runID(run)} onClick=${(event) => { event.stopPropagation(); onOpen(run, view.node); }}>${body}</button>`;
   }
   return html`<span class=${cls} title=${view.title} data-process-run=${runID(run)}>${body}</span>`;
 }
@@ -597,7 +598,7 @@ export function ProcessRunIcon({ run, performerId = '', onOpen = null, active = 
   const cls = `pk-run-icon pk-state-${view.state}${view.scope ? ` pk-scope-${view.scope}` : ''}${active ? ' on' : ''}${small ? ' small' : ''}`;
   const body = html`<span class="pk-run-icon-glyph" aria-hidden="true">${view.glyph}</span>${!small && view.badge && html`<span class="pk-run-icon-badge">${view.badge}</span>`}`;
   if (typeof onOpen === 'function') {
-    return html`<button type="button" class=${cls} title=${view.title} aria-label=${view.title} aria-pressed=${active ? 'true' : 'false'} data-process-run=${runID(run)} onClick=${(event) => { event.stopPropagation(); onOpen(run, view.node); }}>${body}</button>`;
+    return html`<button data-ui-exempt type="button" class=${cls} title=${view.title} aria-label=${view.title} aria-pressed=${active ? 'true' : 'false'} data-process-run=${runID(run)} onClick=${(event) => { event.stopPropagation(); onOpen(run, view.node); }}>${body}</button>`;
   }
   return html`<span class=${cls} role="img" title=${view.title} aria-label=${view.title} data-process-run=${runID(run)}>${body}</span>`;
 }
@@ -642,7 +643,7 @@ export function ProcessMiniGraph({
       ...(typeof onNodeHover === 'function' ? { onMouseEnter: () => onNodeHover(node.id), onFocus: () => onNodeHover(node.id) } : {}),
     };
     if (typeof onNodeClick === 'function') {
-      return html`<button type="button" key=${node.id} class=${cls} style=${style} title=${title} aria-label=${title} data-process-node=${node.id} data-performers=${performerIds} aria-pressed=${selected ? 'true' : 'false'} onClick=${() => onNodeClick(node)} ...${extra}>${inner}</button>`;
+      return html`<button data-ui-exempt type="button" key=${node.id} class=${cls} style=${style} title=${title} aria-label=${title} data-process-node=${node.id} data-performers=${performerIds} aria-pressed=${selected ? 'true' : 'false'} onClick=${() => onNodeClick(node)} ...${extra}>${inner}</button>`;
     }
     return html`<div key=${node.id} class=${cls} style=${style} title=${title} data-process-node=${node.id} data-performers=${performerIds}>${inner}</div>`;
   });

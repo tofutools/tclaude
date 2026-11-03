@@ -6,6 +6,7 @@
 import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { claimField, FILL_FORMS, filledIn, fillSummary, onFillsChange, undoFill, watchForm } from './form-fill.js';
 
 const html = htm.bind(h);
@@ -52,7 +53,7 @@ export function FormFillBar({ form, generation, keepValues = false, fillable = t
   return html`<div ref=${ref} id=${`form-fill-${form}`} class="form-fill-bar" role="status">
     <div class="form-fill-line">
       <span>${filled}: ${fields.map((field) => field.label).join(', ')}</span>
-      <button type="button" class="form-fill-undo" onClick=${() => { void undoFill(form, { win }); }}>Undo all</button>
+      <${Button} size="sm" class="form-fill-undo" onClick=${() => { void undoFill(form, { win }); }}>Undo all<//>
     </div>
     ${widened.map((line) => html`<div key=${line} class="form-fill-warn" role="alert">⚠ ${line}</div>`)}
   </div>`;

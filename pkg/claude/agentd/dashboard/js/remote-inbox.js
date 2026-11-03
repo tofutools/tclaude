@@ -244,9 +244,9 @@ export function RemoteInboxSection({ inbox = remoteInbox.value, actions = defaul
     <div class="mailbox-section">Other nodes</div>
     ${nodes.map(([id, n]) => html`<div class="remote-inbox-node" key=${id} data-node=${id}>
       ${n.error && html`<div class="mailbox-row nested muted" title=${n.error}>@${n.label}: unreachable</div>`}
-      ${(n.access_requests || []).map((r) => html`<button type="button" class="mailbox-row remote-inbox-item pending" key=${`r${r.id}`} data-request=${r.id}
+      ${(n.access_requests || []).map((r) => html`<button data-ui-exempt type="button" class="mailbox-row remote-inbox-item pending" key=${`r${r.id}`} data-request=${r.id}
         title=${`${r.perm} for ${r.title || r.agent_id} on ${n.label}`} onClick=${() => setOpen({ node: id, label: n.label, kind: 'request', data: r })}>🔐 ${r.perm} <span class="muted">@${n.label}</span></button>`)}
-      ${(n.messages || []).map((m) => html`<button type="button" class="mailbox-row remote-inbox-item" key=${`m${m.id}`} data-message=${m.id}
+      ${(n.messages || []).map((m) => html`<button data-ui-exempt type="button" class="mailbox-row remote-inbox-item" key=${`m${m.id}`} data-message=${m.id}
         title=${`${m.subject || ''} — from ${m.from_title || m.from_agent || ''} on ${n.label}`} onClick=${() => setOpen({ node: id, label: n.label, kind: 'message', data: m, markable: n.markable !== false })}>✉ ${m.subject || m.from_title || 'notification'} <span class="muted">@${n.label}</span></button>`)}
     </div>`)}
     ${open && html`<${InboxReader} item=${open} actions=${actions} confirm=${confirm} toast=${toast} onClose=${() => setOpen(null)} />`}

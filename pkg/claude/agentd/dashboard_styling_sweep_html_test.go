@@ -57,9 +57,8 @@ func TestDashboardCSS_StylingSweep(t *testing.T) {
 	// plain <button>s with no .tool class, so they needed a base rule.
 	must(".mail-reader-actions button:where(:not(.ui-btn, .ui-menu-item)) {", "the mail-reader action bar has a base button skin")
 
-	// Group 5 — B1/B2/B3 buttons that sit outside a .row-actions wrapper.
-	must(".plugin-step-edit-head button,", "the plugin step-editor remove button is themed")
-	must(".plugin-head > button.primary,", "the catalog +install button is themed (direct child only)")
+	// Group 5 — B3, a button that sits outside a .row-actions wrapper. The
+	// plugin step-editor remove and catalog install are standard ui-btns now.
 	must("#sudo-list td > button:where(:not(.ui-btn)) {", "the sudo-grants revoke button is themed (raw skin fenced off the standard button)")
 
 	// Group 6 — B5/B6 remote-access fields (plain + the wizard twin). The

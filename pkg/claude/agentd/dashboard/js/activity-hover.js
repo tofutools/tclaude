@@ -115,7 +115,7 @@ export function ActivityHover({
       onFocusOut=${onBlur}
     >
       ${badge}
-      <button
+      <button data-ui-exempt
         id=${id}
         type="button"
         class="activity-hover-trigger"

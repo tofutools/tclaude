@@ -8,6 +8,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { nodeFetch } from './node-api.js';
 import { nodeHref } from './fleet-model.js';
 import { tickedNodes, withFused } from './fleet-scope.js';
@@ -102,7 +103,7 @@ export function NodeSection({ node, entry, summary, onOpen, openLabel, children 
       ${!entry ? html`<span class="muted">loading…</span>`
         : refused ? html`<span class="muted">not shared</span><${LockReason} why=${entry.why} />`
         : html`<span class="muted">${summary}</span>`}
-      ${onOpen && !refused ? html`<span class="spacer"></span><button type="button" class="tool fused-section-open" onClick=${(event) => { event.preventDefault(); onOpen(); }}>${openLabel || `open on ${node.name}`} ↗</button>` : null}
+      ${onOpen && !refused ? html`<span class="spacer"></span><${Button} size="sm" class="fused-section-open" onClick=${(event) => { event.preventDefault(); onOpen(); }}>${openLabel || `open on ${node.name}`} ↗<//>` : null}
     </summary>
     ${entry && !refused ? children : null}
   </details>`;

@@ -5,6 +5,7 @@
 import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { dictationBlock } from './insecure-origin.js';
 import { speechRecognitionCtor } from './companion-voice.js';
 import { voicePhrase, voiceWakeOn } from './voice-config.js';
@@ -120,10 +121,10 @@ export function VoiceWake({ snapshot, win = globalThis.window, listenerImpl = cr
   return html`<div class=${`voice-wake ${view.state}`} role="status" data-capture-skip>
     <span aria-hidden="true">👂</span>
     <span>${notice || text}</span>
-    ${view.state === 'paused' ? html`<button type="button" onClick=${() => setPaused(false)}>Resume</button>`
-      : view.state === 'failed' ? html`<button type="button" onClick=${() => listener.current?.retry()}>Retry</button>`
+    ${view.state === 'paused' ? html`<${Button} size="sm" onClick=${() => setPaused(false)}>Resume<//>`
+      : view.state === 'failed' ? html`<${Button} size="sm" onClick=${() => listener.current?.retry()}>Retry<//>`
       : view.state === 'elsewhere' ? null
-      : html`<button type="button" onClick=${() => setPaused(true)}>Pause</button>`}
+      : html`<${Button} size="sm" onClick=${() => setPaused(true)}>Pause<//>`}
   </div>`;
 }
 
