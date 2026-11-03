@@ -293,8 +293,24 @@ func handleDashboardPageMarks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := r.PathValue("id")
-	// The page is looked up and its state made under both locks (in the
-	// registry's order), so a page closing meanwhile cannot leave state behind.
+	// Whether the page's text may go to the agent is decided first, outside
+	// the registry lock (it can read the agent's session row).
+	livePages.mu.Lock()
+	var kind string
+	var stage *stagePage
+	if p := livePages.byID[id]; p != nil {
+		kind, stage = p.kind, p.stage
+	}
+	livePages.mu.Unlock()
+	if pageReadBackAllowed(kind, stage, true) != nil {
+		// The anchors are the page's text, and the path and scroll its
+		// script reports, which may come from files the agent cannot read
+		// (see pageReadBackAllowed).
+		pageMarksStripPage(&req)
+	}
+	// The page is looked up again and its state made under both locks (in
+	// the registry's order), so a page closing meanwhile cannot leave state
+	// behind.
 	livePages.mu.Lock()
 	p := livePages.byID[id]
 	if p == nil {
@@ -303,12 +319,9 @@ func handleDashboardPageMarks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	owner, name := p.owner, p.name
-	if p.kind == pageKindStatic {
-		// The anchors are the page's text, which for a static source may come
-		// from files the agent's sandbox hides (see pageReadBackAllowed).
-		for i := range req.Marks {
-			req.Marks[i].Anchors = []pageAnchor{}
-		}
+	if p.stage != stage {
+		// Re-shown with another source meanwhile: decided for the old one.
+		pageMarksStripPage(&req)
 	}
 	pageCollab.mu.Lock()
 	livePages.mu.Unlock()
@@ -498,16 +511,21 @@ func pageDOMRead(ctx context.Context, id, selector, mode string) (pageDOMResult,
 // ---- agent routes ----
 
 // pageReadBackAllowed says whether the agent may read a page back (its
-// rendering or its DOM). A static source is served through the daemon's view
-// of the file system, which can include files the agent's sandbox hides
-// (docs/live-page.md, known limits), so its pages are not read back until
-// the stage serves them through the sandbox's view.
-func pageReadBackAllowed(kind string) error {
-	if kind == pageKindStatic {
-		return errors.New("this page is static files, which the stage serves through the daemon's view of the file system, " +
-			"not your sandbox's; reading it back is not available yet. Serve it from a dev server on your own port to use snapshot and dom")
+// rendering, its DOM, the text under marks). A static page is served only
+// through the agent's own view of the file system (pages_fsview.go); when
+// that view is unknown (a sandboxed launch that recorded no profile), the
+// page may hold files the agent cannot read, so it is not read back. A dev
+// server is the agent's own process, so it serves only what the agent can
+// read. Callers hold livePages.mu or have copied kind and stage under it.
+func pageReadBackAllowed(kind string, stage *stagePage, live bool) error {
+	if kind != pageKindStatic {
+		return nil
 	}
-	return nil
+	if stage != nil && stageStaticReadBack(stage.transport(), live) {
+		return nil
+	}
+	return errors.New("this static page cannot be read back: tclaude cannot serve it exactly as your sandbox shows its files " +
+		"(or it changed since the page last loaded). Serve it from a dev server on your own port to use snapshot and dom")
 }
 
 // ownPage finds one of the caller's pages by name.
@@ -592,9 +610,9 @@ func handlePageDOM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	livePages.mu.Lock()
-	kind := p.kind
+	kind, stage := p.kind, p.stage
 	livePages.mu.Unlock()
-	if err := pageReadBackAllowed(kind); err != nil {
+	if err := pageReadBackAllowed(kind, stage, true); err != nil {
 		writeError(w, http.StatusConflict, "static_source", err.Error())
 		return
 	}
@@ -630,4 +648,22 @@ func latestPageView(id string) (view pageViewReport, batch *pageMarkBatch) {
 		return pageViewReport{VW: batch.Viewport.W, VH: batch.Viewport.H, X: batch.Scroll.X, Y: batch.Scroll.Y, Path: batch.Path}, batch
 	}
 	return pageViewReport{}, nil
+}
+
+// pageMarksStripPage drops what a batch carries from the page itself for a
+// page that is not read back: the text under marks, and the path, scroll and
+// viewport its script reports. Mark points are kept in page coordinates
+// (the drawing plus the reported scroll), so they are moved back to where the
+// operator drew them in the frame. The marks and the note are the operator's.
+func pageMarksStripPage(req *pageMarksRequest) {
+	for i := range req.Marks {
+		req.Marks[i].Anchors = []pageAnchor{}
+		for j := range req.Marks[i].Points {
+			req.Marks[i].Points[j][0] -= req.Scroll.X
+			req.Marks[i].Points[j][1] -= req.Scroll.Y
+		}
+	}
+	req.Path = ""
+	req.Scroll = pageXY{}
+	req.Viewport = pageWH{}
 }

@@ -5,7 +5,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"strconv"
+	"sync"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // BuildPopupHandlerForTest returns the production dashboard-listener handler:
@@ -94,7 +99,7 @@ func NewStageAgentPortForTest(agentID string, port int) (http.RoundTripper, erro
 // UseStaticSource points the page at a static directory or file and wires
 // its watcher to the page's reload signal.
 func (p *StagePageForTest) UseStaticSource(worktree, target string) error {
-	s, err := newStageStatic(worktree, target, p.page.notifyReload)
+	s, err := newStageStatic(worktree, target, p.page.notifyReload, nil)
 	if err != nil {
 		return err
 	}
@@ -166,4 +171,60 @@ func PageSnapshotTokenForTest(id string) string {
 		return p.stage.snapshotToken
 	}
 	return ""
+}
+
+// FakeSandboxRootForTest stands in for an agent's mount namespace: a host
+// path P is what the sandbox shows at Dir+P. Bump NS to model a relaunch
+// into another sandbox; set Dead to model the sandbox exiting; set Err to
+// model a sandbox that cannot be opened.
+type FakeSandboxRootForTest struct {
+	mu   sync.Mutex
+	Dir  string
+	ns   int
+	dead bool
+	err  error
+}
+
+// Relaunch models the agent coming back in another sandbox.
+func (f *FakeSandboxRootForTest) Relaunch() { f.mu.Lock(); f.ns++; f.dead = false; f.mu.Unlock() }
+
+// Fail makes opening the sandbox fail (nil restores it).
+func (f *FakeSandboxRootForTest) Fail(err error) { f.mu.Lock(); f.err = err; f.dead = err != nil; f.mu.Unlock() }
+
+type fakeSandboxRoot struct {
+	f  *FakeSandboxRootForTest
+	ns int
+}
+
+func (r *fakeSandboxRoot) Alive() bool {
+	r.f.mu.Lock()
+	defer r.f.mu.Unlock()
+	return !r.f.dead && r.f.ns == r.ns
+}
+func (r *fakeSandboxRoot) NS() string { return "mnt:" + strconv.Itoa(r.ns) }
+func (r *fakeSandboxRoot) OpenDir(abs string) (int, error) {
+	return unix.Open(filepath.Join(r.f.Dir, abs), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+}
+func (r *fakeSandboxRoot) Close() {}
+
+// SetPageSandboxRootForTest makes every agent's sandbox the fake.
+func SetPageSandboxRootForTest(f *FakeSandboxRootForTest) (restore func()) {
+	prev := pageFSOpenSandboxRoot
+	pageFSOpenSandboxRoot = func(string) (pageFSRoot, error) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if f.err != nil {
+			return nil, f.err
+		}
+		return &fakeSandboxRoot{f: f, ns: f.ns}, nil
+	}
+	return func() { pageFSOpenSandboxRoot = prev }
+}
+
+// SetPageFSViewRecheckForTest shortens how often a page rechecks its agent's
+// generation.
+func SetPageFSViewRecheckForTest(d time.Duration) (restore func()) {
+	prev := pageFSViewRecheck
+	pageFSViewRecheck = d
+	return func() { pageFSViewRecheck = prev }
 }

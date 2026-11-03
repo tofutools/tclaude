@@ -130,9 +130,10 @@ one, and not to any agent, including the one that showed the page. That agent
 sees its page's origin with the token masked and acts on it by name. This keeps
 the token from being handed out; it does not make it unlearnable. The page's
 own code can read its host name and write it into what the agent reads back. An agent
-holding the token could fetch its page itself, and so read files through the
-daemon's view of the file system (see the known limits below). Keeping the
-token from it also keeps it out of the agent's transcript, and out of a clone's.
+holding the token could fetch its page itself, but what a static page serves
+it is never read back unless the stage serves exactly what the agent's own
+sandbox shows (see Page sources), so it gains nothing it could not read. Keeping the token from it also keeps it out of the agent's
+transcript, and out of a clone's.
 
 ## Page sources
 
@@ -169,7 +170,30 @@ not the daemon's own.
   inside the worktree. Names that start with a dot (`.git`, `.env`) are refused,
   and only common web file types are served. A directory serves its
   `index.html`. A single-file page serves only that file. The target itself may
-  not be a hidden path. The daemon watches the
+  not be a hidden path.
+
+  How the files are reached depends on the agent's sandbox:
+
+  - *tclaude's sandbox on Linux:* the page is served through the agent's own
+    view of the file system (its mount namespace, through `/proc/<pid>/root`).
+    What the sandbox hides, overlays or binds applies exactly as it does for
+    the agent, even after the agent renames a directory. If that view cannot be
+    opened, for example because the agent is not running, the page serves
+    nothing (503) rather than the host's files.
+  - *No OS sandbox* (`off`, `resource-only`, or a harness whose own sandbox is
+    recorded off; for Claude Code, its launch-time verdict must say off, since
+    a managed policy can keep its sandbox on): the agent reads what the daemon
+    reads, so the page is served from the host. The launch is re-read, so a
+    sandbox restored on the same conversation stops the read-back at once.
+  - *Anything else* (a harness's own sandbox, macOS Seatbelt, or a launch with
+    nothing recorded): the page is served from the host, leaving out by path
+    what the recorded profile hides, with the same 404 as a missing file. The
+    stage cannot see the harness's own rules, or match Seatbelt's exactly, so
+    nothing of such a page is read back to the agent (see below).
+
+  tclaude's protected directories are never served. The view is re-read when the
+  agent reincarnates or comes back in a new sandbox, and the open views reload.
+  The daemon watches the
   source and asks open views to reload when a file is saved. It finds saves by
   walking the source a few times a second with the same no-follow rules, not with
   inotify, so a symbolic link cannot point the watcher outside the worktree.
@@ -238,10 +262,10 @@ Known limits of the boundary:
 - The frame may open `alert`, `confirm` and `prompt` dialogs (`allow-modals`). A
   dialog comes from the page, not from tclaude. Never type the operator token
   into one.
-- A static source is read through the daemon's view of the file system, not
-  the agent sandbox's. A file inside the worktree that the agent's sandbox
-  profile hides with a deny rule can still be served. This is to be fixed before
-  pages can be read back by the agent.
+- Under a harness's own sandbox, a static page may show the operator a file
+  only the harness's rules hide (a `denyRead` in Claude Code's `settings.json`,
+  say). It is not read back to the agent, but the page's own script runs with
+  it. Put deny rules in a sandbox profile, or use tclaude's sandbox.
 - Browsers resolve `*.localhost` to loopback themselves. A browser that hands
   these names to the system resolver instead trusts that resolver for them.
 
@@ -275,9 +299,13 @@ tclaude agent page dom <name> <selector> [--text|--html|--styles]
   read-only, and needs the page open in the dashboard (it is read through that
   view's frame). Otherwise it says no view is open. A large answer keeps the
   first elements that fit and says it was cut.
-- **Static pages are not read back yet.** A static source is served through the
-  daemon's view of the file system (see the known limits), so `page snapshot` and
-  `page dom` refuse static pages, and their marks arrive without the page text
-  under them. Serve the page from your own dev server to use them.
+- **Static pages are read back when they are served exactly as the agent sees
+  them:** under tclaude's sandbox on Linux, or with no OS sandbox. Otherwise
+  `page snapshot` and `page dom` refuse the page, and its marks arrive without
+  the page's own data: no text under them, no path, scroll or viewport, and
+  points relative to the frame. The operator's
+  marks and note still arrive. After the agent comes back in a new sandbox,
+  `page dom` and the text under marks wait until the page has loaded again.
+  Serve the page from your own dev server to use them otherwise.
 
 There are no MCP tools for live pages; the CLI is the agent's surface.
