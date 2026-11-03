@@ -66,8 +66,11 @@ blocking it, and comes back when you reload the tab.
   marker on each free edge of a tiled window. A window snaps, fills or splits only when
   you let go over one of them, and the one under the pointer lights up with a preview.
   Let go anywhere else and it floats where it is, so a window moves freely over a
-  split. A box fills its whole cell, and an edge or corner strip over an empty half
-  takes that half's part of it. A marker splits its window on that side, so two
+  split. Boxes and markers come first: one under the pointer takes the drop even
+  where it sits on a title bar's tabs or the Collab strip. Over a split, the edge and
+  corner strips are cut where they cross its cells, and each piece acts on the cell
+  under it: over an empty cell it takes that cell's part, over a window it splits that
+  window on the strip's side. A box fills its whole cell. A marker splits its window on that side, so two
   windows, 2+1 and four are all possible, and four around one crossing drag together
   at the crossing. Bring the pointer near the centre of a line for a detach button,
   which unlocks that line: the windows stay snapped where they are, the line goes, and
