@@ -73,7 +73,7 @@ var pageNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,47}$`)
 // pageIPv4Hint is the remedy for a dev server the stage cannot find on
 // 127.0.0.1: the ownership proof and the dial are IPv4-only by design.
 const pageIPv4Hint = "The stage connects only to 127.0.0.1. If your dev server listens on ::1 only " +
-	"(some `localhost` setups), start it with `--host 127.0.0.1` or the equivalent."
+	"(some `localhost` setups), start it with `--host 127.0.0.1` or the equivalent"
 
 // livePage is one page an agent showed.
 type livePage struct {
@@ -236,7 +236,7 @@ func parsePageTarget(raw string) (pageTarget, error) {
 			return pageTarget{}, fmt.Errorf("the target is not a valid URL: %v", err)
 		}
 		if u.Scheme != "http" {
-			return pageTarget{}, errors.New("a URL target must be http://localhost:PORT/...")
+			return pageTarget{}, errors.New("a URL target must be http://localhost:PORT/path")
 		}
 		if u.User != nil {
 			return pageTarget{}, errors.New("a URL target cannot carry credentials")
@@ -250,7 +250,7 @@ func parsePageTarget(raw string) (pageTarget, error) {
 			return pageTarget{}, errors.New("a page shows only your own port or files, never a host name or IP: use :PORT or http://localhost:PORT")
 		}
 		if u.Port() == "" {
-			return pageTarget{}, errors.New("a URL target needs an explicit port: http://localhost:PORT/...")
+			return pageTarget{}, errors.New("a URL target needs an explicit port: http://localhost:PORT/path")
 		}
 		start := u.EscapedPath()
 		if start == "" {
