@@ -23,8 +23,11 @@ HARNESS_OPENCODE_VERSION="1.18.6"
 # The Gemini CLI version the adapter in pkg/claude/harness is pinned to
 # (GeminiPinnedVersion), so the cooperation record is about the same CLI.
 HARNESS_GEMINI_VERSION="0.62.0"
-# harness.PiMinimumVersion, the same pi the pi fixture and sandbox smokes install.
-HARNESS_PI_VERSION="1.1.0"
+# The pi that scripts/ci/pi pins (and so the pi fixture and sandbox smokes
+# install). Keep in step with filteredPiPinnedVersion in
+# pkg/claude/session/filtered_network_model_endpoint_smoke_test.go. This is
+# the CI-tested pi, not harness.PiMinimumVersion (the oldest pi tclaude accepts).
+HARNESS_PI_VERSION="1.5.0"
 
 # Where a CI cache may keep pinned harness artifacts between runs. The workflow
 # keys its cache on a hash of THIS FILE, which is where the pins live — a

@@ -241,7 +241,7 @@ jobs:
       - name: Set up Node for the Copilot CLI
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
 
       # Pinned HERE and nowhere else, the same way opencode-ai, @openai/codex
       # and @anthropic-ai/claude-code are pinned in the sandbox jobs above: a
@@ -344,7 +344,7 @@ jobs:
       - name: Set up Node for the Gemini CLI
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
 
       # Keep in step with harness.GeminiPinnedVersion and the filtered proxy
       # smoke's HARNESS_GEMINI_VERSION.
@@ -383,7 +383,7 @@ jobs:
             exit 1
           fi
 
-  # Runs the real pi binary at harness.PiMinimumVersion against a local mock
+  # Runs the real pi binary pinned by scripts/ci/pi against a local mock
   # provider, credential-free: tclaude's status extension must emit exactly the
   # payloads PiSim feeds the flow tests, and pi's session flags must behave as
   # the spawner assumes.
@@ -407,10 +407,10 @@ jobs:
       - name: Set up Node for pi
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
 
       # scripts/ci/pi pins pi and its whole dependency tree; keep it in step
-      # with harness.PiMinimumVersion.
+      # with HARNESS_PI_VERSION in scripts/filtered-proxy-smoke/lib/harnesses.sh.
       - name: Install pi
         shell: bash
         run: scripts/ci/install-pi.sh

@@ -258,7 +258,7 @@ var proxyEngineActivatedSmokes = map[string]map[string][]string{
 			"TestPinnedProxyHarnessCooperation",
 			"TestPinnedProxyToolEgress",
 		},
-		// pi's arm of the same smoke launches the pinned PiMinimumVersion behind
+		// pi's arm of the same smoke launches the CI-pinned pi (scripts/ci/pi) behind
 		// the real floor with its filtered-network environment. Unlike Gemini it
 		// honours the proxy variables without NODE_USE_ENV_PROXY, so neither the
 		// launch nor the smoke sets it.
