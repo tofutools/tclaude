@@ -505,6 +505,11 @@ func stageModifyResponse(res *http.Response) error {
 	// run, so the body's Close, which ReverseProxy calls just before relaying
 	// trailers, drops whatever arrived.
 	res.Trailer = nil
+	if res.StatusCode == http.StatusSwitchingProtocols {
+		// The body of an upgrade is the raw connection (an io.ReadWriteCloser
+		// ReverseProxy splices); it has no trailers and must not be wrapped.
+		return nil
+	}
 	res.Body = &stageNoTrailerBody{ReadCloser: res.Body, res: res}
 	// Browsers take the last Content-Type; decide (and serve) on that one so
 	// a leading text/plain cannot hide an HTML document from the probe.

@@ -14,7 +14,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
@@ -475,4 +477,39 @@ func TestStageDuplicateContentTypeUsesTheLast(t *testing.T) {
 	assert.Equal(t, []string{"text/html"}, res.Header.Values("Content-Type"))
 	assert.Contains(t, readBody(t, res), stageProbeMarker)
 	assert.Equal(t, http.StatusBadGateway, e.do(t, http.MethodGet, e.host(), "/enc", nil).StatusCode)
+}
+
+func TestStageProxiesWebsocketUpgrades(t *testing.T) {
+	e := newStageEnv(t)
+	var sawCookie string
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	e.page.SetUpstream(realUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+		sawCookie = r.Header.Get("Cookie")
+		c, err := upgrader.Upgrade(w, r, http.Header{"Set-Cookie": {"ws=1"}})
+		if err != nil {
+			return
+		}
+		defer func() { _ = c.Close() }()
+		mt, msg, err := c.ReadMessage()
+		if err == nil {
+			_ = c.WriteMessage(mt, append([]byte("echo:"), msg...))
+		}
+	}))
+	dialer := websocket.Dialer{
+		NetDial:          func(string, string) (net.Conn, error) { return net.Dial("tcp", e.srv.Listener.Addr().String()) },
+		HandshakeTimeout: 5 * time.Second,
+	}
+	conn, res, err := dialer.Dial("ws://"+e.host()+"/hmr", http.Header{
+		"Origin": {"null"}, "Sec-Fetch-Dest": {"websocket"}, "Cookie": {"tclaude_dashboard=x"},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	assert.Equal(t, http.StatusSwitchingProtocols, res.StatusCode)
+	assert.Empty(t, res.Header.Values("Set-Cookie"))
+	assertStageCSP(t, res)
+	assert.Empty(t, sawCookie)
+	require.NoError(t, conn.WriteMessage(websocket.TextMessage, []byte("hi")))
+	_, msg, err := conn.ReadMessage()
+	require.NoError(t, err)
+	assert.Equal(t, "echo:hi", string(msg))
 }
