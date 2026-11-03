@@ -63,6 +63,7 @@
   --ui-text: #c9d1d9;
   --ui-text-strong: #e6edf3;
   --ui-muted: #7d8590;
+  --ui-muted-text: #7d8590;
   --ui-placeholder: #6e7681;
   --ui-focus: #58a6ff;
   --ui-pressed-bg: #30363d;
@@ -105,7 +106,8 @@ body.wizard {
   --ui-btn-line: #d9b45a;
   --ui-text: #e7d9f5;
   --ui-text-strong: #f3e6c0;
-  --ui-muted: #ad9abb;
+  --ui-muted: #b39ddb;
+  --ui-muted-text: #b39ddb;
   --ui-focus: #a97bd6;
   --ui-pressed-bg: #3b2a63;
   --ui-field-bg: #100c17;
