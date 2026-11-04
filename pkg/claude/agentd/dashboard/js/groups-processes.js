@@ -615,7 +615,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   if (fused) {
     const shell = groupShellOf(dashboardState.snapshot.value, group) ? 1 : 0;
     const shown = runs.length > 0 || planned.length > 0 || memberRuns.length > 0
-      || (entry?.boards || []).length > 0 || (entry?.pages || []).length > 0;
+      || (entry?.boards || []).length > 0 || (entry?.pages || []).length > 0 || shell > 0;
     // The run controls head the open section's content on their own title
     // row, where the Agents half has its table header; folded, they ride
     // the section line.

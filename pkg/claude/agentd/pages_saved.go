@@ -309,7 +309,6 @@ func savedClosedPages() map[int64][]processGroupPage {
 	return out
 }
 
-
 // POST /api/pages/{id}/reload — the operator reloads a live page in every
 // view of it, as a saved source file does.
 func handleDashboardPageReload(w http.ResponseWriter, r *http.Request) {

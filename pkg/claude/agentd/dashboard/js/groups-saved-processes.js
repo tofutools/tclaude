@@ -236,7 +236,7 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
           aria-label=${`Remove ${process.name} from ${group.name}`} title=${`Remove ${process.name} from ${group.name}'s processes`}
           onClick=${() => { setRemoving(true); setOpen(process.templateId); }}>×</button>
         <span class="gr-spacer"></span>
-        <${ResourcePill} view=${resourceView(dashboardState.snapshot.value, 'process', process.templateId)} />
+        <${ResourcePill} view=${resourceView(dashboardState.snapshot.value, group.id, 'process', process.templateId)} />
         <${LockChip} kind="process" id=${process.templateId} name=${process.name} locked=${!!process.agentsLocked} api=${api} source=${source} notify=${notify} />
       </span>`)}
     </div>

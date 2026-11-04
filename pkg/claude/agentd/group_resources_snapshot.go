@@ -23,7 +23,6 @@ const (
 	resourceStateClosed  = "closed"
 
 	resourceKindShell = "shell"
-
 )
 
 type groupResource struct {

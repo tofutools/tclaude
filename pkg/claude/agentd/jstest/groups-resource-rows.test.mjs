@@ -72,6 +72,22 @@ test('resource rows: pill, primary action by state, per-kind action, delete behi
   await harness.act(() => { places.stripPaneKeys.value = []; });
   assert.equal(state(row('[data-resource-board="plan"]')), 'closed');
   assert.equal(primary(row('[data-resource-board="plan"]')), 'Open');
+
+  // A shell open here is attached: no kill, only Focus.
+  await harness.act(() => { places.stripPaneKeys.value = ['groupterm:crew']; });
+  assert.equal(state(row('[data-resource-shell="crew"]')), 'open-tab');
+  assert.equal(row('[data-shell-kill]'), null, 'an attached shell is not killed from here');
+});
+
+test('a process pill reads its own group\'s entry: one template pinned in two groups', async (t) => {
+  const harness = await createPreactHarness(t);
+  const pill = await harness.importDashboardModule('js/resource-pill.js');
+  const snap = { group_resources: [
+    { kind: 'process', id: 'deploy', group_id: 3, state: 'closed' },
+    { kind: 'process', id: 'deploy', group_id: 9, state: 'running' },
+  ] };
+  assert.equal(pill.resourceView(snap, 3, 'process', 'deploy'), 'closed');
+  assert.equal(pill.resourceView(snap, 9, 'process', 'deploy'), 'running');
 });
 
 test('＋ New lists Process, Board, Live page and Shell with a line each; Shell needs the group\'s directory', async (t) => {

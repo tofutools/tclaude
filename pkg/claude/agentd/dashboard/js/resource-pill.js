@@ -20,9 +20,10 @@ export function ResourcePill({ view }) {
 
 // resourceView is a resource's state here: the snapshot's group_resources
 // say whether it runs, this browser's places what it has open. Without a
-// snapshot entry, fallback is the server state the row's own data gives.
-export function resourceView(snapshotValue, kind, id, fallback = 'closed') {
-  const entry = (snapshotValue?.group_resources || []).find((r) => r.kind === kind && r.id === id);
+// snapshot entry, fallback is the server state the row's own data gives. A
+// process is listed once per group it is pinned to, so the group picks one.
+export function resourceView(snapshotValue, groupId, kind, id, fallback = 'closed') {
+  const entry = (snapshotValue?.group_resources || []).find((r) => r.kind === kind && r.id === id && r.group_id === groupId);
   return resourceState(entry || { kind, id, state: fallback }, resourcePlaces.value);
 }
 

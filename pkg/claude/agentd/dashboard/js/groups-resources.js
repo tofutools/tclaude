@@ -102,9 +102,9 @@ async function reopenPage(page, api, source, notify) {
 // focusOr brings a resource's overlay forward, or runs open when it has none.
 const focusOr = (key, open) => () => { if (!revealResourceOverlay(key)) void open(); };
 
-function PageRow({ page, api, source, notify, confirm, nameOf, snapshotValue }) {
+function PageRow({ page, api, source, notify, confirm, nameOf, snapshotValue, groupId }) {
   const label = page.title || page.name;
-  const view = resourceView(snapshotValue, 'page', page.id, page.state === 'closed' ? 'closed' : 'running');
+  const view = resourceView(snapshotValue, groupId, 'page', page.id, page.state === 'closed' ? 'closed' : 'running');
   const run = view === 'closed' ? () => reopenPage(page, api, source, notify) : focusOr(`page:${page.id}`, () => openPagePane(page.id, label));
   const remove = async () => {
     const ok = await confirm({
@@ -138,9 +138,9 @@ function PageRow({ page, api, source, notify, confirm, nameOf, snapshotValue }) 
     lock=${html`<${LockChip} kind="page" id=${page.id} name=${label} locked=${!!page.agentsLocked} api=${api} source=${source} notify=${notify} />`} />`;
 }
 
-function BoardRow({ board, api, source, notify, confirm, snapshotValue }) {
+function BoardRow({ board, api, source, notify, confirm, snapshotValue, groupId }) {
   const label = board.title || board.id;
-  const view = resourceView(snapshotValue, 'board', board.id);
+  const view = resourceView(snapshotValue, groupId, 'board', board.id);
   const remove = async () => {
     const ok = await confirm({ title: `Delete board ${label}?`, body: 'The board and everything drawn on it are deleted for everyone.', okLabel: 'Delete' });
     if (!ok) return;
@@ -160,7 +160,7 @@ function BoardRow({ board, api, source, notify, confirm, snapshotValue }) {
 }
 
 function ShellRow({ group, shell, notify, confirm, snapshotValue }) {
-  const view = resourceView(snapshotValue, 'shell', shell.id, shell.state);
+  const view = resourceView(snapshotValue, group.id, 'shell', shell.id, shell.state);
   const label = `${group.name} shell`;
   const open = focusOr(`shell:${group.name}`, () => openGroupWebTermPane(group.name, label));
   const kill = async () => {
@@ -172,7 +172,7 @@ function ShellRow({ group, shell, notify, confirm, snapshotValue }) {
   return html`<${ResourceRow} attrs=${{ 'data-resource-shell': group.name }} closed=${view === 'closed'} glyph="▭" label="Group shell"
     meta=${shell.detail ? `terminal · ${shell.detail}` : 'terminal'} view=${view}
     primary=${{ label: primaryLabel('shell', view), run: open }}
-    action=${shell.state === 'running' && shell.session && { glyph: '×', title: `Kill ${label}`, attrs: { 'data-shell-kill': group.name }, run: kill }}
+    action=${view === 'background' && shell.session && { glyph: '×', title: `Kill ${label}`, attrs: { 'data-shell-kill': group.name }, run: kill }}
     menu=${[]} lock=${null} />`;
 }
 
@@ -188,7 +188,7 @@ export function GroupResources({ group, boards = [], pages = [], api, source, no
   const snapshotValue = snapshot?.value;
   const shell = groupShellOf(snapshotValue, group);
   if (!boards.length && !pages.length && !shell) return null;
-  const props = { api, source, notify, confirm, snapshotValue };
+  const props = { api, source, notify, confirm, snapshotValue, groupId: group.id };
   return html`<div class="gr-resources" data-group-resources=${group.name}>
     ${boards.length > 0 && html`<div class="gr-kind" data-resource-kind="boards">
       <span class="ui-eyebrow gr-kind-label">Boards</span>
