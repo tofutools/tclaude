@@ -82,8 +82,8 @@ carries the conversation's recorded launch posture; see
 
 For an agent's conversation, `conv resume` and watch mode first ask agentd to
 prepare the agent's sandbox the way an ordinary resume does. That means the
-sandbox profiles are re-read, the group's current environment applies, and the
-relaunch policy is followed. Only the operator can ask for this. If agentd
+sandbox profiles are re-read, the group's current environment and
+remote-control policy apply, and the relaunch policy is followed. Only the operator can ask for this. If agentd
 cannot prepare the sandbox, the conversation still resumes, under the sandbox
 policy stored at its last launch, with a one-line warning saying what to do.
 That happens when agentd is not running, when it cannot confirm the terminal

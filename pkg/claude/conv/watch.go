@@ -2271,16 +2271,18 @@ func resumeLaunchCmd(
 	extraArgs []string,
 ) (string, string, *harness.Harness, error) {
 	return resumeLaunchCmdWithEffectiveSandbox(
-		harnessName, sessionID, convID, extraArgs, nil)
+		harnessName, sessionID, convID, extraArgs, nil, nil)
 }
 
 // resumeLaunchCmdWithEffectiveSandbox is resumeLaunchCmd that also hands back
 // the effective sandbox snapshot the launch was rendered from, so a caller can
-// disclose its access notices.
+// disclose its access notices, and launches with what agentd prepared for the
+// relaunch (relaunch, nil when nothing was prepared).
 func resumeLaunchCmdWithEffectiveSandbox(
 	harnessName, sessionID, convID string,
 	extraArgs []string,
 	effectiveSandboxOut **sandboxpolicy.Snapshot,
+	relaunch *standaloneRelaunch,
 ) (string, string, *harness.Harness, error) {
 	h, err := harness.ResolveSpawnable(harnessName)
 	if err != nil {
@@ -2722,7 +2724,7 @@ func resumeLaunchCmdWithEffectiveSandbox(
 	if err != nil {
 		return "", "", nil, err
 	}
-	remoteControl, err := resumeRemoteControl(h, convID)
+	remoteControl, err := relaunch.remoteControl(h, convID)
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -3398,6 +3400,7 @@ func createSessionForConv(conv *SessionEntry) error {
 		conv.SessionID,
 		clcommon.ExtractClaudeExtraArgs(),
 		&launchEffectiveSandbox,
+		relaunch,
 	)
 	if err != nil {
 		return err
@@ -3437,7 +3440,7 @@ func createSessionForConv(conv *SessionEntry) error {
 	if err != nil {
 		return err
 	}
-	remoteControl, err := resumeRemoteControl(h, conv.SessionID)
+	remoteControl, err := relaunch.remoteControl(h, conv.SessionID)
 	if err != nil {
 		return err
 	}

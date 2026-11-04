@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // A standalone relaunch (`tclaude conv resume`, the conversation watch TUI)
@@ -20,13 +22,23 @@ import (
 // ahead under the stored policy, with a warning: a human is never kept out of
 // a pane because agentd is down.
 
+// StandaloneRelaunchPrepared is what agentd prepared for a standalone
+// relaunch: what it changes and the warnings to show, and the relaunch
+// decisions the pane launches with.
+type StandaloneRelaunchPrepared struct {
+	Changes, Warnings []string
+	// RemoteControl is agentd's Remote Access decision (relaunchRemoteControl,
+	// as on resume); nil leaves the launch on the recorded posture.
+	RemoteControl *bool
+}
+
 // StandaloneRelaunchPrepare asks agentd to prepare convID's relaunch sandbox,
-// and returns what the relaunch changes and the warnings to show. It returns a
+// and returns what agentd prepared. It returns a
 // *StandaloneRelaunchUnavailable when agentd could not do it (not reachable,
 // not confirming the caller as the operator, too old for the route): the
 // launch then goes ahead under the stored policy. Any other error is agentd
 // refusing the relaunch.
-var StandaloneRelaunchPrepare func(convID string) (changes, warnings []string, err error)
+var StandaloneRelaunchPrepare func(convID string) (*StandaloneRelaunchPrepared, error)
 
 // StandaloneRelaunchSettle reports to agentd whether the prepared launch
 // started, and returns the warnings to show.
@@ -51,6 +63,8 @@ type standaloneRelaunch struct {
 	convID  string
 	pending bool
 	out     io.Writer
+	// remoteControlDecision is agentd's Remote Access decision, or nil.
+	remoteControlDecision *bool
 }
 
 // prepareStandaloneRelaunch prepares convID's relaunch sandbox when it belongs
@@ -65,7 +79,7 @@ func prepareStandaloneRelaunch(convID string, out io.Writer) (*standaloneRelaunc
 		r.warn(AgentdNotRunning)
 		return r, nil
 	}
-	changes, warnings, err := StandaloneRelaunchPrepare(convID)
+	prepared, err := StandaloneRelaunchPrepare(convID)
 	var unavailable *StandaloneRelaunchUnavailable
 	if errors.As(err, &unavailable) {
 		r.warn(unavailable.Warning)
@@ -75,13 +89,35 @@ func prepareStandaloneRelaunch(convID string, out io.Writer) (*standaloneRelaunc
 		return nil, fmt.Errorf("prepare the agent's sandbox: %w", err)
 	}
 	r.pending = true
-	for _, line := range changes {
+	if prepared == nil {
+		return r, nil
+	}
+	r.remoteControlDecision = prepared.RemoteControl
+	for _, line := range prepared.Changes {
 		if line != "" && out != nil {
 			_, _ = fmt.Fprintln(out, line)
 		}
 	}
-	r.warn(warnings...)
+	r.warn(prepared.Warnings...)
 	return r, nil
+}
+
+// remoteControl is whether the pane arms Remote Access: agentd's decision
+// when it made one, else the recorded posture (resumeRemoteControl), as
+// before agentd prepared standalone relaunches. Either way it goes through
+// the harness's own resolution, so a harness without Remote Access never
+// gets it.
+func (r *standaloneRelaunch) remoteControl(h *harness.Harness, convID string) (bool, error) {
+	if r == nil || r.remoteControlDecision == nil {
+		return resumeRemoteControl(h, convID)
+	}
+	remoteControl, err := harness.ResolveRemoteControl(h, *r.remoteControlDecision)
+	if err != nil {
+		slog.Warn("agentd's remote-access decision does not apply to this harness; resuming without it",
+			"conv_id", convID, "harness", h.Name, "error", err)
+		return false, nil
+	}
+	return remoteControl, nil
 }
 
 // settle reports the launch's outcome to agentd, once.

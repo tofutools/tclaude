@@ -222,7 +222,7 @@ var Fields = []Field{
 		Why: "Group settings are kept current: a policy the group sets applies on relaunch, unless the spawn gave remote control explicitly " +
 			"(a dashboard spawn always does: its checkbox is sent as set); with no group policy the agent keeps its last state, " +
 			"live toggles included. Still clamped to what the harness supports.",
-		Gap: "Watch mode, conv resume and clone keep the remote-control state stored at the last launch, whatever the policy says (only resume and reincarnate read this row)."},
+		Gap: "Clone keeps the remote-control state stored at the last launch, whatever the policy says; so do watch mode and conv resume while agentd is not running."},
 	{Key: "group_startup_context", Label: "Group startup context and mission", Layer: LayerLive,
 		GroupFields: []string{"DefaultContext", "Mission", "MissionHeader"},
 		Why: "Delivered in the opening brief; a resume keeps the conversation that holds it, so there is nothing to relaunch. " +
