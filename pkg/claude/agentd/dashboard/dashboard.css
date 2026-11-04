@@ -3893,7 +3893,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-chart-tooltip .usage-tooltip-title { fill: #f0f3f6; font-weight: 600; }
 .usage-reset-mark line { stroke: #a371f7; stroke-width: 1; stroke-dasharray: 3 4; opacity: .8; }
 .usage-reset-mark circle { fill: #a371f7; }
-.usage-chart-empty { height: 180px; display: grid; place-items: center; color: #6e7681; }
+.usage-chart-empty { height: 180px; display: grid; place-items: center; }
 .usage-card-footer.usage-forecast {
   padding: 9px 10px 0; margin-top: 2px;
   display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline;
@@ -4013,7 +4013,7 @@ details.cost-filter-menu[open] > summary::before { content: none; }
 .cost-chart-heading span { color: #8b949e; font-size: 11px; }
 .cost-daily-heading { margin-top: 12px; }
 .cost-accumulated { position: relative; padding: 10px 12px 5px; }
-.cost-accumulated.empty { min-height: 100px; display: grid; place-items: center; color: #8b949e; }
+.cost-accumulated.empty { min-height: 100px; display: grid; place-items: center; }
 .cost-accumulated-svg { display: block; width: 100%; height: 190px; }
 .cost-accumulated-svg:focus { outline: 1px solid #58a6ff; outline-offset: 2px; }
 .cost-accumulated-status {
@@ -4320,7 +4320,7 @@ details.cost-filter-menu[open] > summary::before { content: none; }
 .cost-ignored td { white-space: nowrap; width: 1%; }
 .cost-ignored td:first-child { width: auto; max-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .cost-ignored .rowname { color: #8b949e; text-decoration: line-through; }
-.empty { color: #7d8590; font-style: italic; padding: 24px; text-align: center; }
+.empty { padding: 24px; text-align: center; }
 .row-actions {
   display: inline-flex; gap: 4px; opacity: 0.4; position: relative;
 }
@@ -12947,7 +12947,6 @@ body.wizard #links-manage-modal #links-list tr:hover { background: #241b3d; }
 body.wizard #links-manage-modal #links-list .rowname { color: #f3e6c0; }
 body.wizard #links-manage-modal #links-list .id,
 body.wizard #links-manage-modal #links-list .muted,
-body.wizard #links-manage-modal #links-list .empty { color: #b39ddb; }
 
 /* The compact add-link action lives inside each expanded party card rather
    than either links modal, so it needs its own group-section hook. It keeps
@@ -13728,7 +13727,6 @@ body.wizard #activity-performance .debug-table td {
   color: #e7d9f5;
   border-bottom-color: rgba(122, 93, 176, 0.22);
 }
-body.wizard #activity-performance .empty { color: #8f7bbf; }
 
 /* Wizard Access tab: a light violet tint on the intro copy (the sub-nav
    takes the wizard tab paint from ui.css). */
@@ -14072,10 +14070,6 @@ body.wizard .audit-spawn-popover pre {
    parchment + ink palette that only the scroll/broadsheet surfaces use. */
 
 /* ─── The panes: arcane void bodies ──────────────────────────────── */
-/* Empty-state prompts across the three panes read as muted arcane. */
-body.wizard .mail-sidebar .empty,
-body.wizard .mail-list .empty,
-body.wizard .mail-reader .empty { color: #8f7bbf; }
 
 /* ─── Filters, gutters ───────────────────────────────────────────── */
 body.wizard .mail-sidebar-filter,
@@ -14607,9 +14601,6 @@ body.wizard .cost-tip-name { color: #c9b8e6; }
 body.wizard .cost-tip-amt { color: #f3e6c0; }
 body.wizard .cost-tip-total { border-top-color: rgba(217, 180, 90, 0.4); }
 
-/* Empty-state prompts (no span / no cost) read as muted arcane. */
-body.wizard #costs-chart .empty,
-body.wizard #costs-table .empty { color: #8f7bbf; }
 
 /* ─── Summary line: gold treasure, violet prophecy ────────────────────
    The recorded total is minted gold; the projected total is a prophecy, so
@@ -16378,7 +16369,6 @@ body.wizard .process-performer-editor { border-left-color: #4a3d6b; }
 /* Wizard cross-realm ward book. Keep the skin scoped to this overlay: it uses
    the generic cron modal shell shared by unrelated operational dialogs. */
 
-body.wizard #spawn-harness-policy-modal .empty { color: #b39ddb; }
 body.wizard #spawn-harness-policy-modal .spawn-harness-matrix-wrap {
   border-color: rgba(122, 93, 176, 0.55);
 }
@@ -16525,7 +16515,6 @@ body.wizard .usage-chart-tooltip.reset rect { stroke: var(--ui-wizard-gold); }
 body.wizard .usage-chart-tooltip.now rect { stroke: #8f7bb5; }
 body.wizard .usage-chart-tooltip text { fill: #e7d9f5; }
 body.wizard .usage-chart-tooltip .usage-tooltip-title { fill: #f3e6c0; }
-body.wizard .usage-chart-empty { color: #8f7bb5; }
 /* Legend swatches track the strokes they key. */
 body.wizard .usage-chart-legend { color: #b39ddb; }
 body.wizard .usage-legend-swatch.observed { border-color: #4dd0e1; }
