@@ -57,39 +57,63 @@ func profileRelaunchRow(field string, tiers []*db.SpawnProfile) (mode, profile s
 	return "", "", false
 }
 
-// gateSpawnRelaunchOverrides enforces who may set a spawn's explicit rows.
-// A human may set any. An agent caller may set, freely, any row that applies
-// the operator's current settings (inherit, re-resolve, tighten-only,
-// chain-wins) or that the agent would inherit anyway; a row that keeps old
-// settings (reuse, explicit-wins) where the agent would otherwise get
-// something else needs relaunch-policy.manage, since a later tightening of a
-// group or profile would then not reach the agent.
-func gateSpawnRelaunchOverrides(w http.ResponseWriter, r *http.Request, explicit map[string]string, tiers []*db.SpawnProfile) bool {
+// gateSpawnRelaunchOverrides enforces who may set a spawn's explicit rows,
+// and returns the rows to record. A human may set any. An agent caller may
+// set, freely, any row that applies the operator's current settings
+// (inherit, re-resolve, tighten-only, chain-wins) or that the agent would
+// inherit anyway; a row that keeps old settings (reuse, explicit-wins) where
+// the agent would otherwise get something else needs relaunch-policy.manage,
+// since a later tightening of a group or profile would then not reach the
+// agent.
+//
+// A keeps-old-settings row an agent without relaunch-policy.manage sets only
+// because the agent would inherit it anyway is not recorded as its own: it
+// stays with its source (inherit, for the global table; left out, for a
+// profile), so a later tightening of the global table still reaches the
+// agent, as the free rule assumes.
+func gateSpawnRelaunchOverrides(w http.ResponseWriter, r *http.Request, explicit map[string]string, tiers []*db.SpawnProfile) (map[string]string, bool) {
 	if len(explicit) == 0 || classify(peerFromContext(r.Context())) == classHuman {
-		return true
+		return explicit, true
 	}
 	global := currentRelaunchPolicy()
 	var widened []string
+	inheritedOnly := map[string]bool{} // field → inherited from the global table
 	for _, f := range launchspec.Fields {
 		mode, ok := explicit[f.Key]
 		if !ok || !launchspec.KeepsOldSettings(launchspec.RelaunchMode(mode)) {
 			continue
 		}
-		inherited := string(global.Mode(f.Key))
+		inherited, fromGlobal := string(global.Mode(f.Key)), true
 		if m, _, ok := profileRelaunchRow(f.Key, tiers); ok {
-			inherited = m
+			inherited, fromGlobal = m, false
 		}
 		if mode != inherited {
 			widened = append(widened, fmt.Sprintf("%s=%s", f.Key, mode))
+		} else {
+			inheritedOnly[f.Key] = fromGlobal
 		}
 	}
-	if len(widened) == 0 {
-		return true
+	if len(widened) > 0 {
+		if _, ok := requirePermissionEx(w, r, PermRelaunchPolicyManage); !ok {
+			return nil, false
+		}
+		return explicit, true
 	}
-	if _, ok := requirePermissionEx(w, r, PermRelaunchPolicyManage); !ok {
-		return false
+	p := peerFromContext(r.Context())
+	if len(inheritedOnly) == 0 || (p != nil && p.ConvID != "" && standingPermissionAllows(p.ConvID, PermRelaunchPolicyManage, ActionContext{})) {
+		return explicit, true
 	}
-	return true
+	out := map[string]string{}
+	for field, mode := range explicit {
+		fromGlobal, inherited := inheritedOnly[field]
+		switch {
+		case !inherited:
+			out[field] = mode
+		case fromGlobal:
+			out[field] = string(launchspec.ModeInherit)
+		}
+	}
+	return out, true
 }
 
 // relaunchPolicySource names where one agent's row comes from: "this

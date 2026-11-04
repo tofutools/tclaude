@@ -280,7 +280,17 @@ something else needs `relaunch-policy.manage`: with it, an operator who later
 tightens a group or a sandbox profile would not reach that agent. The same
 applies to an agent writing such a row into a spawn profile, so a profile
 cannot pass on what the spawn itself could not set; a row the profile already
-carried stays free to keep.
+carried stays free to keep. Making a profile that carries such a row a group's
+or the global default profile is gated the same way, since a default reaches
+every spawn into the group, automations included.
+
+An agent without `relaunch-policy.manage` that sets a `reuse` or
+`explicit-wins` row the agent would inherit anyway does not pin it: the row
+stays with its source. A row inherited from the global table is recorded as
+`inherit`, so a later change to the global table still reaches the agent, and
+one inherited from a profile is the profile's copy. Trigger, process and
+template workers take their profiles' rows the same way as a spawn from the
+dialog.
 
 ## Fields
 

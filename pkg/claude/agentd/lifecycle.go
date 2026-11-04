@@ -3853,7 +3853,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		namedProfileSource = fmt.Sprintf(`profile %q via alias %q`, namedProfile.Name, namedProfileHandle)
 	}
 	relaunchTiers := []*db.SpawnProfile{namedProfile, groupProfile, globalProfile}
-	if !gateSpawnRelaunchOverrides(w, r, body.RelaunchPolicy, relaunchTiers) {
+	relaunchExplicit, relaunchOK := gateSpawnRelaunchOverrides(w, r, body.RelaunchPolicy, relaunchTiers)
+	if !relaunchOK {
 		return
 	}
 	profileTiers := []launchProfileTier{
@@ -5044,7 +5045,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		spawnCopyTier(db.SpawnCopyTierGlobalDefault, globalProfile))
 	p.spawnCopyResolved = true
 	p.explicitLaunch = explicitLaunch
-	p.relaunchOverrides = resolveRelaunchOverrides(body.RelaunchPolicy, relaunchTiers)
+	p.relaunchOverrides = resolveRelaunchOverrides(relaunchExplicit, relaunchTiers)
 	// Taken last: a used-up grant drops out of the permission sources, and every
 	// check above must see the grant as it stood at the gate.
 	spawnUse, ok := takeSudoUse(w, spawnSudoGrant)
@@ -6481,6 +6482,11 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 			spawnCopyTier(db.SpawnCopyTierGroupDefault, groupProfile),
 			spawnCopyTier(db.SpawnCopyTierGlobalDefault, globalProfile))
 		p.spawnCopyResolved = true
+		// The profile tiers' relaunch rows too (launch slice 11): a trigger,
+		// process or template worker has no explicit rows of its own.
+		if p.relaunchOverrides == nil {
+			p.relaunchOverrides = resolveRelaunchOverrides(nil, []*db.SpawnProfile{p.managedProfile, groupProfile, globalProfile})
+		}
 	}
 	tiers := make([]launchProfileTier, 0, len(profiles))
 	for _, tier := range profiles {

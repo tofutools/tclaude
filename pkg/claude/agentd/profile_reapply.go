@@ -46,7 +46,10 @@ const (
 // profileReapplyNotYet are spawn-copy fields the re-apply operation does not
 // carry yet: the model proxy needs the models.proxy gate a first spawn runs.
 // Marked so that a change to one is never silently dropped.
-var profileReapplyNotYet = map[string]bool{"model_proxy": true}
+var profileReapplyNotYet = map[string]bool{"model_proxy": true,
+	// Per-agent relaunch rows live in the launch layers' RelaunchOverrides,
+	// which a re-apply does not rewrite yet (launch slice 11).
+	"relaunch_overrides": true}
 
 // reapplyMergesExplicit are fields whose explicit entries are laid over the
 // profile's rather than replacing them, so a profile edit still changes them.

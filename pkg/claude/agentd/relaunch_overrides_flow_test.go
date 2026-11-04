@@ -193,3 +193,52 @@ func TestRelaunchOverrides_ProfileWriteGate(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, write(http.MethodPost, "/v1/spawn-profiles",
 		map[string]any{"name": "agent-reuse", "relaunch_policy": map[string]string{"group_env": "reuse"}}))
 }
+
+// A worker launched without the spawn dialog (a trigger, a template deploy)
+// takes its profile tiers' relaunch rows as well.
+func TestRelaunchOverrides_ManagedLaunchesTakeTheProfileRows(t *testing.T) {
+	want := []db.RelaunchPolicyOverride{{Field: "group_env", Mode: "reuse", Source: "profile:reviewer"}}
+
+	f := uniformTriggerGroup(t)
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "reviewer", Harness: "claude", RelaunchPolicy: map[string]string{"group_env": "reuse"}})
+	require.NoError(t, err)
+	conv := fireUniformTrigger(t, f, "reviewer")
+	assert.Equal(t, want, launchLayers(t, conv).RelaunchOverrides, "a trigger worker")
+
+	f = newFlow(t)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "reviewer", Harness: "claude", RelaunchPolicy: map[string]string{"group_env": "reuse"}})
+	require.NoError(t, err)
+	conv = deployUniformTemplate(t, f, map[string]any{"spawn_profile": "reviewer"})
+	assert.Equal(t, want, launchLayers(t, conv).RelaunchOverrides, "a template-deployed member")
+}
+
+// A keeps-old-settings row an agent sets only because it would inherit it
+// anyway stays with its source, so a later tightening still reaches the
+// child: Follow global for the global table, and the profile's own row.
+func TestRelaunchOverrides_FreeInheritedRowStaysWithItsSource(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	parent := spawnWithRelaunch(t, f, f.AsHuman(), "lead", nil)
+	require.Equalf(t, http.StatusOK, parent.Code, "spawn body=%s", parent.Raw)
+	require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsMembersSpawn, "test"))
+	rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{
+		"name": "pinned", "relaunch_policy": map[string]string{"group_env": "reuse"}})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	child := spawnWithRelaunch(t, f, f.AsAgent(parent.ConvID), "child", map[string]any{
+		"profile": "pinned", "relaunch_policy": map[string]string{"harness_config": "explicit-wins", "group_env": "reuse"}})
+	require.Equalf(t, http.StatusOK, child.Code, "spawn body=%s", child.Raw)
+	assert.ElementsMatch(t, []db.RelaunchPolicyOverride{
+		{Field: "group_env", Mode: "reuse", Source: "profile:pinned"},
+		{Field: "harness_config", Mode: "inherit", Source: "explicit"},
+	}, launchLayers(t, child.ConvID).RelaunchOverrides)
+
+	setRelaunchPolicy(t, f, "harness_config", "tighten-only")
+	note := agentd.RelaunchOverridesNoteForTest(child.ConvID)
+	assert.NotContains(t, note, "harness_config", "the global tightening reaches the child: %s", note)
+
+	human := spawnWithRelaunch(t, f, f.AsHuman(), "human", map[string]any{"relaunch_policy": map[string]string{"harness_config": "explicit-wins"}})
+	require.Equalf(t, http.StatusOK, human.Code, "spawn body=%s", human.Raw)
+	assert.Equal(t, []db.RelaunchPolicyOverride{{Field: "harness_config", Mode: "explicit-wins", Source: "explicit"}},
+		launchLayers(t, human.ConvID).RelaunchOverrides, "a human's row is a deliberate pin")
+}

@@ -119,3 +119,7 @@ func ServePeerMailboxForTest(r *http.Request) *httptest.ResponseRecorder {
 	servePeerMailbox(rec, r, nil, peerViewRule{})
 	return rec
 }
+
+// RelaunchOverridesNoteForTest is the resume echo of an agent's overridden
+// relaunch rows ("" when it follows the global table throughout).
+func RelaunchOverridesNoteForTest(convID string) string { return relaunchOverridesNote(convID) }
