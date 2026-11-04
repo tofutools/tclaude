@@ -172,3 +172,59 @@ func TestProfileReapplyGrants_AgentReapplierConferral(t *testing.T) {
 	got, _ = agentGrants(t, a.ConvID)
 	assert.Equal(t, map[string]string{agentd.PermHumanNotify: db.PermEffectDeny}, got)
 }
+
+// Conferral is judged over the parts a re-apply can write: a slug the old
+// copy names only in a part that never took effect is not taken as already
+// given (cold review of #3860).
+func TestProfileReapplyGrants_ConferralIgnoresAPartThatNeverApplied(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	for name, slug := range map[string]string{"copier": agentd.PermHumanClipboard, "notifier": agentd.PermHumanNotify} {
+		require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/roles",
+			map[string]any{"name": name, "permissions": []string{slug}}).Code)
+	}
+	require.Equal(t, http.StatusCreated, createProfile(t, f, profileBody("worker", map[string]any{
+		"role_refs":            []string{"copier"},
+		"permission_overrides": map[string]string{agentd.PermHumanNotify: "grant"},
+	})).Code)
+	// The request's own overrides replace the profile's, so its notify grant
+	// never applied; only the role's clipboard grant did.
+	a := spawnStopped(t, f, "alpha", map[string]any{"name": "a", "profile": "worker",
+		"permission_overrides": map[string]string{agentd.PermRolesManage: "grant"}})
+	got, _ := agentGrants(t, a.ConvID)
+	require.NotContains(t, got, agentd.PermHumanNotify)
+
+	const caller = "regr-1111-2222-3333-5555"
+	f.HaveMember("alpha", caller)
+	for _, slug := range []string{agentd.PermProfilesManage, agentd.PermAgentMorph} {
+		require.NoError(t, db.GrantAgentPermission(caller, slug, "test"))
+	}
+	patchProfile(t, f, "worker", map[string]any{
+		"role_refs":            []string{"copier", "notifier"},
+		"permission_overrides": map[string]string{agentd.PermHumanNotify: "grant"},
+	})
+	rec := agentReq(t, f, caller, http.MethodPost, "/v1/spawn-profiles/worker/reapply", map[string]any{"agent_id": a.AgentID})
+	assert.Equal(t, http.StatusForbidden, rec.Code, "the role's notify grant is new to the agent: %s", rec.Body.String())
+	got, _ = agentGrants(t, a.ConvID)
+	assert.NotContains(t, got, agentd.PermHumanNotify)
+}
+
+// A row a role gave at the spawn goes when the profile drops the role, even
+// though the role has been edited since (cold review of #3860).
+func TestProfileReapplyGrants_DroppedRoleRemovesItsRowsAfterARoleEdit(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/roles",
+		map[string]any{"name": "notifier", "permissions": []string{agentd.PermHumanNotify}}).Code)
+	require.Equal(t, http.StatusCreated, createProfile(t, f, profileBody("worker", map[string]any{"role_refs": []string{"notifier"}})).Code)
+	a := spawnStopped(t, f, "alpha", map[string]any{"name": "a", "profile": "worker"})
+
+	rec := humanReq(t, f, http.MethodPatch, "/v1/roles/notifier",
+		map[string]any{"name": "notifier", "permissions": []string{agentd.PermHumanClipboard}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	patchProfile(t, f, "worker", map[string]any{"role_refs": []string{}})
+	code, _, raw := postReapply(t, f, "worker", a.AgentID)
+	require.Equal(t, http.StatusOK, code, raw)
+	got, _ := agentGrants(t, a.ConvID)
+	assert.Empty(t, got, "the dropped role's row goes, and the role's new grant is not added")
+}

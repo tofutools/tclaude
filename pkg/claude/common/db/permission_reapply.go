@@ -182,36 +182,31 @@ func overrideWord(o *PermissionOverride) string {
 	return o.Effect
 }
 
-// AgentBirthPermissionParts reports which parts of profileID's birth access
-// took effect on agentID: hasOverrides when a row the profile's own
-// permission overrides wrote still carries its source, hasRoles when a row
-// one of its roles granted does. A re-apply adds new slugs only to a part
-// that took effect, because a part a higher tier or the spawn request
-// replaced never applied.
-func AgentBirthPermissionParts(agentID string, profileID int64) (hasOverrides, hasRoles bool, err error) {
+// AgentBirthPermissionRows lists agentID's rows that still carry
+// profileID's birth record, slug → the role it came from ("" for the
+// profile's own permission overrides). Which parts of the profile took effect
+// at the spawn follows from it: a re-apply adds new slugs only to a part
+// that did, because a part a higher tier or the spawn request replaced never
+// applied.
+func AgentBirthPermissionRows(agentID string, profileID int64) (map[string]string, error) {
 	d, err := Open()
 	if err != nil {
-		return false, false, err
+		return nil, err
 	}
-	rows, err := d.Query(`SELECT birth_source FROM agent_permissions WHERE agent_id = ? AND birth_source <> ''`, strings.TrimSpace(agentID))
+	rows, err := d.Query(`SELECT slug, birth_source FROM agent_permissions WHERE agent_id = ? AND birth_source <> ''`, strings.TrimSpace(agentID))
 	if err != nil {
-		return false, false, err
+		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
+	out := map[string]string{}
 	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
-			return false, false, err
+		var slug, raw string
+		if err := rows.Scan(&slug, &raw); err != nil {
+			return nil, err
 		}
-		src := decodePermissionBirthSource(raw)
-		if src == nil || src.ProfileID != profileID {
-			continue
-		}
-		if src.Role == "" {
-			hasOverrides = true
-		} else {
-			hasRoles = true
+		if src := decodePermissionBirthSource(raw); src != nil && src.ProfileID == profileID {
+			out[slug] = src.Role
 		}
 	}
-	return hasOverrides, hasRoles, rows.Err()
+	return out, rows.Err()
 }

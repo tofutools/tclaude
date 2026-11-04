@@ -240,7 +240,11 @@ const reapplyGrantNotApplied = "not applied (not in effect at spawn)"
 func profileReapplyGrants(agentID string, copied, prof *db.SpawnProfile) ([]profileReapplyGrant, error) {
 	before := *copied
 	before.Name = prof.Name
-	plan, err := reapplyGrantPlan(agentID, prof.ID, &before, prof, "preview")
+	parts, err := readReapplyGrantParts(agentID, prof.ID)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := reapplyGrantPlan(prof.ID, parts, &before, prof, "preview")
 	if err != nil {
 		return nil, err
 	}

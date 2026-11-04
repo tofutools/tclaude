@@ -254,10 +254,16 @@ func reapplyCopyFor(r *http.Request, caller, agentID string, prof *db.SpawnProfi
 			return db.AgentSpawnCopy{}, nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 		}
 		before.Name, after.Name = prof.Name, prof.Name
-		if fail := profileConferralFailure(r, caller, before, after, reapplyGroupName(agentID), "re-applying it to "+agentID); fail != nil {
+		parts, err := readReapplyGrantParts(agentID, prof.ID)
+		if err != nil {
+			return db.AgentSpawnCopy{}, nil, &spawnFailure{http.StatusInternalServerError, "io", "read birth grants: " + err.Error()}
+		}
+		// Conferral is judged over the parts a re-apply can write, so a grant
+		// in a part that never took effect is not taken as already given.
+		if fail := profileConferralFailure(r, caller, parts.inEffect(before), parts.inEffect(after), reapplyGroupName(agentID), "re-applying it to "+agentID); fail != nil {
 			return db.AgentSpawnCopy{}, nil, fail
 		}
-		if plan, err = reapplyGrantPlan(agentID, prof.ID, before, after, reapplyGrantsGranter(caller, prof.Name)); err != nil {
+		if plan, err = reapplyGrantPlan(prof.ID, parts, before, after, reapplyGrantsGranter(caller, prof.Name)); err != nil {
 			return db.AgentSpawnCopy{}, nil, &spawnFailure{http.StatusConflict, "invalid_profile", "the profile's grants cannot be re-applied: " + err.Error()}
 		}
 		next.Tiers[i] = fresh
