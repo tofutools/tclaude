@@ -183,7 +183,10 @@ Four profile toggles — `remote_control`, `auto_memory`, `peer_messaging` and
 a direct spawn, a template or task-force deploy, a scribe or Steward summon, a
 trigger worker and a process worker. Highest first:
 
-1. the explicit flag (direct spawn only)
+1. the explicit flag (direct spawn only). The dashboard's spawn dialog
+   pre-fills the remote-control, auto-memory and peer-messaging checkboxes
+   from the tiers below and sends one only when you change it, so a box left
+   as pre-filled is not an explicit choice
 2. the group's remote-control policy (`groups set-remote-control`; remote
    control only)
 3. the named profile (`--profile`, a template agent's inline or referenced
