@@ -766,6 +766,11 @@ type templateAgentLaunch struct {
 	// template-deployed agent. Resolved from the profile tiers like AutoMemory;
 	// defaults off, which makes the launch inject the refusal.
 	PeerMessaging bool
+	// UsageSpawnProfile is the referenced registry profile, whose linked usage
+	// profiles the deployed agent inherits exactly as a direct spawn naming it
+	// would. Nil for an inline-only or profile-less member (an inline profile
+	// has no registry row, so nothing can be linked to it).
+	UsageSpawnProfile *db.SpawnProfile
 	// IncludeGroupContext is whether the deploy folds the group's (template's)
 	// shared context into this agent's brief. On unless a profile tier — the
 	// referenced profile, or the group/global default — turns it off (TCL-1107).
@@ -1131,8 +1136,8 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 	// between one launch through handleGroupSpawn and one through the executeSpawn
 	// safety net — same group, same default profile, neither pinning anything —
 	// disagreed about SEVEN fields. TCL-1107 closed remote_control,
-	// auto_memory, peer_messaging and include_group_context: they resolve over
-	// these default tiers too, below. context_features still does not, and for
+	// auto_memory, peer_messaging, include_group_context and context_features:
+	// they resolve over these default tiers too, below. For
 	// sandbox/approval this resolver has already applied the harness secure
 	// default further down, so the ambient tier is dead before the safety net
 	// looks; those change CONTAINMENT and want their own decision.
@@ -1379,8 +1384,10 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 	}
 	notes = append(notes, sshNotes...)
 	// Startup-context trims: no explicit per-deploy request exists, so the tiers
-	// alone decide. Resolved whole rather than merged, like every other consumer.
-	contextFeatures, cfNote, fail := resolveContextFeaturesLaunchField(nil, false, h, tiers)
+	// alone decide — the template's own, then the group and global defaults, as
+	// on every other path. Resolved whole rather than merged, like every other
+	// consumer.
+	contextFeatures, cfNote, fail := resolveContextFeaturesLaunchField(nil, false, h, toggleTiers)
 	if fail != nil {
 		return failed(fail)
 	}
@@ -1424,6 +1431,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 		AutoMemory:             autoMemory,
 		PeerMessaging:          peerMessaging,
 		IncludeGroupContext:    includeGroupContext,
+		UsageSpawnProfile:      refProfile,
 		SSHWorkaround:          sshWorkaround,
 		SSHWorkaroundSet:       sshWorkaroundSet,
 		ContextFeatures:        contextFeatures,

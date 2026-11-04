@@ -1817,9 +1817,10 @@ func resumeOneConvUnderLaunchLockForTeleport(convID string, recreateMissingDir b
 		effectiveSandbox = &validated
 	}
 	stableEffectiveSandbox := effectiveSandbox
-	// Relaunch never re-engages the experimental guardian (auto-review is an
-	// explicit fresh-spawn opt-in, not persisted per-conv), so AutoReview stays false.
-	// Preserve the mode this conversation was launched under; the harness
+	// Auto-review rides the durable relaunch profile with the approval it
+	// belongs to (relaunchProfileForSpawn records it; reconstructApproval
+	// re-validates it against the harness), so a relaunch keeps the guardian the
+	// agent was launched with. Preserve the mode this conversation was launched under; the harness
 	// default would silently drop an enforced `sandbox on` posture on resume.
 	relaunchSandbox := launchConfig.Sandbox
 	harnessName := launchConfig.Harness
@@ -5534,12 +5535,13 @@ type spawnParams struct {
 	// harness.ResolvePeerMessaging); a harness with no cross-session messaging
 	// system (Codex) rejects a true value.
 	PeerMessaging bool
-	// launchTogglesResolved says RemoteControl, AutoMemory, PeerMessaging and
-	// GroupContext were already decided by a caller that resolved them over its
-	// own tier stack (the direct spawn boundary, the template deploy), so
-	// applyDefaultProfile leaves them alone. Unset, applyDefaultProfile resolves
-	// all four over the tiers it sees (TCL-1107) and sets this, so the second
-	// pass a trigger worker or a deferred continuation makes is a no-op.
+	// launchTogglesResolved says RemoteControl, AutoMemory, PeerMessaging,
+	// GroupContext and ContextFeatures were already decided by a caller that
+	// resolved them over its own tier stack (the direct spawn boundary, the
+	// template deploy), so applyDefaultProfile leaves them alone. Unset,
+	// applyDefaultProfile resolves them over the tiers it sees (TCL-1107) and
+	// sets this, so the second pass a trigger worker or a deferred continuation
+	// makes is a no-op.
 	launchTogglesResolved bool
 	// IncludeGroupContextDefault is what include_group_context falls back to on
 	// the applyDefaultProfile path when no profile tier sets it: on for a
@@ -6840,6 +6842,16 @@ func applyDefaultLaunchToggles(g *db.AgentGroup, h *harness.Harness, tiers []lau
 			launchBools.Source[launchBoolIncludeGroupContext], includeGroupContext))
 	}
 	p.GroupContext = groupStartupContext(g, includeGroupContext)
+	if p.ContextFeatures == nil {
+		features, cfNote, fail := resolveContextFeaturesLaunchField(nil, false, h, tiers)
+		if cfNote != "" {
+			p.LaunchNotes = append(p.LaunchNotes, cfNote)
+		}
+		if fail != nil {
+			return fail
+		}
+		p.ContextFeatures = features
+	}
 	p.launchTogglesResolved = true
 	return nil
 }
