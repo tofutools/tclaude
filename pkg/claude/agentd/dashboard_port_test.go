@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"strconv"
+	"syscall"
 	"testing"
 	"time"
 
@@ -176,4 +178,52 @@ func TestStartPopupServer_OutOfRangeIsFatal(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, srv)
 	assert.Empty(t, url)
+}
+
+// A random port on a concrete non-loopback bind is free on that address only;
+// loopback may already hold it. The pair is tried again on a fresh port
+// rather than failing startup (tcl-yfch9s), and a fixed port still fails at
+// once: it is the operator's choice.
+func TestBindDashboardListeners_RetriesALoopbackClashOnARandomPort(t *testing.T) {
+	// A fake non-loopback listener: its address says 192.0.2.1, a test-net
+	// address no host has, so the pair logic needs its loopback twin.
+	clashes := 0
+	prev := dashboardListen
+	t.Cleanup(func() { dashboardListen = prev })
+	dashboardListen = func(network, address string) (net.Listener, error) {
+		host, _, err := net.SplitHostPort(address)
+		require.NoError(t, err)
+		if host == defaultDashboardBind {
+			if clashes < 2 {
+				clashes++
+				return nil, &net.OpError{Op: "listen", Net: network, Err: os.NewSyscallError("bind", syscall.EADDRINUSE)}
+			}
+			return net.Listen(network, "127.0.0.1:0")
+		}
+		ln, err := net.Listen(network, "127.0.0.1:0")
+		require.NoError(t, err)
+		return fakeNonLoopback{Listener: ln}, nil
+	}
+
+	listeners, addr, err := bindDashboardListeners("192.0.2.1:0", true)
+	require.NoError(t, err, "a loopback clash on a random port is retried")
+	require.Len(t, listeners, 2)
+	assert.Equal(t, 2, clashes, "both clashes were retried")
+	assert.Equal(t, "192.0.2.1", addr.IP.String())
+	for _, ln := range listeners {
+		require.NoError(t, ln.Close())
+	}
+
+	clashes = 0
+	_, _, err = bindDashboardListeners("192.0.2.1:4000", false)
+	require.Error(t, err, "a fixed port clash is fatal")
+	assert.Contains(t, err.Error(), "bind mandatory loopback dashboard listener")
+	assert.Equal(t, 1, clashes, "and not retried")
+}
+
+// fakeNonLoopback reports a non-loopback address for a real listener.
+type fakeNonLoopback struct{ net.Listener }
+
+func (l fakeNonLoopback) Addr() net.Addr {
+	return &net.TCPAddr{IP: net.ParseIP("192.0.2.1"), Port: l.Listener.Addr().(*net.TCPAddr).Port}
 }
