@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -88,7 +89,19 @@ func resolveDerivedOmissionChain(convID string, previous *sandboxpolicy.Snapshot
 	if err != nil {
 		return nil, err
 	}
-	return resolveSandboxChainWith(convID, previous, 0, explicitProfileName)
+	resolved, err := resolveSandboxChainWith(convID, previous, 0, explicitProfileName)
+	if explicitProfileName != "" && isRelaunchChainUnusable(err) {
+		if prof, lookupErr := db.GetSandboxProfile(explicitProfileName); lookupErr != nil || prof != nil {
+			return resolved, err
+		}
+		// The omission meant the name was never resolved, so it may never
+		// have existed. A profile the agent never ran under must not make it
+		// unresumable: the ambient tiers still apply.
+		slog.Warn("relaunch: the sandbox profile named at spawn does not exist; applying the group and global profiles only",
+			"conv", convID, "profile", explicitProfileName)
+		return resolveSandboxChainWith(convID, previous, 0, "")
+	}
+	return resolved, err
 }
 
 // explicitSandboxProfileAtSpawn is the sandbox profile the agent's spawn

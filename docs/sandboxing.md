@@ -707,7 +707,8 @@ A launch mode that cannot carry tclaude sandbox profiles (Codex's
 mode's, not the agent's choice. While the agent keeps that mode, its relaunches
 keep omitting the profiles. Once its mode can carry them again, the next resume
 or reincarnation applies the global and group assignments as they are then,
-plus the profile its spawn named with `--sandbox-profile`.
+plus the profile its spawn named with `--sandbox-profile` when its launch
+recorded one and that profile exists.
 
 Scribe and Steward summons, and trigger and process workers, get the global
 and group tiers like any other spawn into their group, along with the group's

@@ -117,3 +117,19 @@ func TestSandboxOmission_AnExplicitOmissionIsKept(t *testing.T) {
 	assert.False(t, resumed.ProfilesOmittedDerived)
 	assert.Empty(t, resumed.Applied)
 }
+
+// The omission meant a profile named at spawn was never resolved, so it may
+// not exist. It does not make the agent unresumable once its mode changes:
+// the group's profile still applies.
+func TestSandboxOmission_AMissingNamedProfileDoesNotBlockTheResume(t *testing.T) {
+	f := omissionFixture(t)
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "worker", "harness": "codex", "sandbox": "danger-full-access", "sandbox_profile": "never-made",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+
+	setRelaunchMode(t, spawn.ConvID, "tclaude-agent")
+	resumed := resumedSandbox(t, f, spawn)
+	assert.False(t, resumed.ProfilesOmitted)
+	assert.Equal(t, []string{"group-env"}, appliedNames(resumed))
+}
