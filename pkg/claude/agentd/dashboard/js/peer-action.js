@@ -6,16 +6,11 @@ import { openRemoteAgentSpawn } from './agent-spawn-controller.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { openMessageCreateModal } from './message-access-dialog-controller.js';
 import { isPageNode } from './node-api.js';
+import { RequestError, requestJSON } from './request-json.js';
 
 const html = htm.bind(h);
 
-export class PeerActionError extends Error {
-  constructor(status, body) {
-    super(body?.error || `HTTP ${status}`);
-    this.status = status;
-    this.code = body?.code || '';
-  }
-}
+export class PeerActionError extends RequestError {}
 
 // createPeerActionActions sends the peer action routes. On a peer view
 // remote-node.js forwards /api/* to /api/peer/{id}/*, so these are the
@@ -23,18 +18,7 @@ export class PeerActionError extends Error {
 // /api/peer/{node}/* itself.
 export function createPeerActionActions({ fetchImpl = (...a) => globalThis.fetch(...a), node = '' } = {}) {
   const api = node ? `/api/peer/${encodeURIComponent(node)}/` : '/api/';
-  async function call(method, url, body) {
-    const init = { method, credentials: 'same-origin', headers: {} };
-    if (body !== undefined) {
-      init.headers['Content-Type'] = 'application/json';
-      init.body = JSON.stringify(body);
-    }
-    const res = await fetchImpl(url, init);
-    let data = null;
-    try { data = await res.json(); } catch (_) { data = null; }
-    if (!res.ok) throw new PeerActionError(res.status, data);
-    return data;
-  }
+  const call = (method, url, body) => requestJSON(url, { method, body, fetchImpl, ErrorClass: PeerActionError });
   const agent = (id, tail) => `${api}agents/${encodeURIComponent(id)}/${tail}`;
   return Object.freeze({
     move: (id, group) => call('POST', agent(id, 'move'), { group }),

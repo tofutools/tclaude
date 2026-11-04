@@ -4,6 +4,7 @@ import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Dialog, DialogClose } from './ui-dialog.js';
 import { slugInfo } from './fleet-admin-model.js';
+import { requestJSON } from './request-json.js';
 
 const html = htm.bind(h);
 
@@ -46,18 +47,7 @@ function errText(error) { return error?.message || String(error); }
 // base is the API root: '/api' on a peer view, or /api/peer/{id} from this
 // node's own dashboard (the local peer proxy).
 export function createPeerAccessActions({ fetchImpl = (...a) => globalThis.fetch(...a), base = '/api' } = {}) {
-  async function call(method, url, body) {
-    const init = { method, credentials: 'same-origin', headers: {} };
-    if (body !== undefined) {
-      init.headers['Content-Type'] = 'application/json';
-      init.body = JSON.stringify(body);
-    }
-    const res = await fetchImpl(url, init);
-    let data = null;
-    try { data = await res.json(); } catch (_) { data = null; }
-    if (!res.ok) { const e = new Error(data?.error || `HTTP ${res.status}`); e.status = res.status; e.code = data?.code || ''; throw e; }
-    return data;
-  }
+  const call = (method, url, body) => requestJSON(url, { method, body, fetchImpl });
   return Object.freeze({
     request: ({ permission, groupID = 0, reason = '', ttl = 3600, proxy = '', maxUSD = 0 }) => call('POST', `${base}/peer-access-requests`, {
       permission, ...(groupID ? { group_id: groupID } : {}), ...(reason ? { reason } : {}), grant_ttl_seconds: ttl,

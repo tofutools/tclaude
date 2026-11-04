@@ -19,6 +19,7 @@ import { senderOnline } from './message-access-dialog-model.js';
 import { MessageDownloadMenu } from './message-download-menu.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { Button } from './ui-components.js';
+import { requestJSON } from './request-json.js';
 
 const html = htm.bind(h);
 const readWrites = new Map();
@@ -55,12 +56,7 @@ function remoteNodeName(remote) {
 }
 
 async function postPeerJSON(url, body, fetchFn = fetch) {
-  const res = await fetchFn(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (!res.ok) {
-    let data = null;
-    try { data = await res.json(); } catch (_) { data = null; }
-    throw Object.assign(new Error(data?.error || `HTTP ${res.status}`), { status: res.status });
-  }
+  await requestJSON(url, { method: 'POST', body, fetchImpl: fetchFn });
 }
 
 function attachmentSize(bytes) {

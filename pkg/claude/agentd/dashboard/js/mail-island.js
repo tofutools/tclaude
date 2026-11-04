@@ -38,6 +38,7 @@ import { RemoteInboxSection } from './remote-inbox.js';
 import { openFleetPage } from './fleet-move-drop.js';
 import { createFleetAdminActions } from './fleet-admin-actions.js';
 import { Button, Select } from './ui-components.js';
+import { requestJSON } from './request-json.js';
 
 const html = htm.bind(h);
 
@@ -551,12 +552,8 @@ function remoteNodeName(remote) {
   return document.documentElement.dataset.remoteNodeName || remote.slice(0, 13);
 }
 
-async function postPeerJSON(url, body) {
-  const res = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  let data = null;
-  try { data = await res.json(); } catch (_) { data = null; }
-  if (!res.ok) { const e = new Error(data?.error || `HTTP ${res.status}`); e.status = res.status; throw e; }
-  return data;
+function postPeerJSON(url, body) {
+  return requestJSON(url, { method: 'POST', body });
 }
 
 // peerHumanActions answer a notification on the peer this page shows: the

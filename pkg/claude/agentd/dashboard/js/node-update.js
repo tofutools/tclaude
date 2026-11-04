@@ -3,6 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { Dialog, DialogClose } from './ui-dialog.js';
+import { RequestError, requestJSON } from './request-json.js';
 
 const html = htm.bind(h);
 
@@ -34,30 +35,13 @@ export function versionView(s) {
   return { current, latest, update: s?.update_available === true && !!latest };
 }
 
-export class NodeUpdateError extends Error {
-  constructor(status, body) {
-    super(body?.error || `HTTP ${status}`);
-    this.status = status;
-    this.code = body?.code || '';
-  }
-}
+export class NodeUpdateError extends RequestError {}
 
 // createNodeUpdateActions wraps GET/POST /api/node/update (and the peer-proxied
 // form). Jobs are followed through the status read, which survives the
 // daemon's restart.
 export function createNodeUpdateActions({ fetchImpl = (...a) => globalThis.fetch(...a) } = {}) {
-  async function call(method, url, body) {
-    const init = { method, credentials: 'same-origin', headers: {} };
-    if (body !== undefined) {
-      init.headers['Content-Type'] = 'application/json';
-      init.body = JSON.stringify(body);
-    }
-    const res = await fetchImpl(url, init);
-    let data = null;
-    try { data = await res.json(); } catch (_) { data = null; }
-    if (!res.ok) throw new NodeUpdateError(res.status, data);
-    return data;
-  }
+  const call = (method, url, body) => requestJSON(url, { method, body, fetchImpl, ErrorClass: NodeUpdateError });
   return Object.freeze({
     status: (node) => call('GET', updateBase(node)),
     start: (node, action, version) => call('POST', updateBase(node), version ? { action, version } : { action }),

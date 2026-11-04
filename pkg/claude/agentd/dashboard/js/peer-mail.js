@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
 import { Dialog, DialogClose } from './ui-dialog.js';
+import { requestJSON } from './request-json.js';
 
 const html = htm.bind(h);
 
@@ -53,15 +54,7 @@ export function replySubject(s) {
 // and away routes (the cookie mirrors of tclaude federation send / notify /
 // outbox / away / return / answer).
 export function createPeerMailActions({ fetchImpl = (...a) => globalThis.fetch(...a) } = {}) {
-  async function call(method, path, body) {
-    const init = { method, credentials: 'same-origin', headers: {} };
-    if (body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body); }
-    const res = await fetchImpl(`/api/federation/${path}`, init);
-    let data = null;
-    try { data = await res.json(); } catch (_) { data = null; }
-    if (!res.ok) { const e = new Error(data?.error || `HTTP ${res.status}`); e.status = res.status; throw e; }
-    return data;
-  }
+  const call = (method, path, body) => requestJSON(`/api/federation/${path}`, { method, body, fetchImpl });
   return Object.freeze({
     peers: async () => ((await call('GET', 'status'))?.peers || []).filter((p) => p.trusted)
       .map((p) => ({ id: p.instance_id, label: p.label || p.name || p.instance_id, online: !!p.online })),

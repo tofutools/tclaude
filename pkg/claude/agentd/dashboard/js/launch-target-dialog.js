@@ -18,6 +18,7 @@ import { nodeFetch } from './node-api.js';
 import { unrestrictedOn } from './node-trust.js';
 import { markInTransit } from './drop-landing.js';
 import { modelAccessOptions, ownGateways } from './teleport-model-access.js';
+import { requestJSON } from './request-json.js';
 
 const html = htm.bind(h);
 
@@ -172,19 +173,7 @@ function nodeApi(node) { return createLaunchTargetApi({ fetchImpl: nodeFetch(nod
 // createLaunchTargetApi is the dialog's I/O. Errors carry status, code and
 // the parsed body, as the federation actions' errors do.
 export function createLaunchTargetApi({ fetchImpl = (...a) => globalThis.fetch(...a) } = {}) {
-  async function call(method, url, body) {
-    const init = { method, credentials: 'same-origin', headers: {} };
-    if (body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body); }
-    const res = await fetchImpl(url, init);
-    let data = null;
-    try { data = await res.json(); } catch (_) { data = null; }
-    if (!res.ok) {
-      const e = new Error(data?.error || `${res.status}`);
-      e.status = res.status; e.code = data?.code || ''; e.body = data;
-      throw e;
-    }
-    return data;
-  }
+  const call = (method, url, body) => requestJSON(url, { method, body, fetchImpl });
   const agent = (id, tail) => `/api/agents/${encodeURIComponent(id)}/${tail}`;
   return Object.freeze({
     status: () => call('GET', '/api/federation/status'),

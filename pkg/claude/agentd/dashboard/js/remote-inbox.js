@@ -9,6 +9,7 @@ import { fleetState } from './fleet-state.js';
 import { nodeSnapshot } from './node-api.js';
 import { featureState, humanReadShared } from './peer-view-limits.js';
 import { shellConfirm, shellToast } from './shell-state.js';
+import { requestJSON } from './request-json.js';
 
 const html = htm.bind(h);
 
@@ -90,18 +91,9 @@ export function claimRemoteInboxRead(now = Date.now(), { remote = remoteNodeID()
 
 const peerURL = (id, tail) => `/api/peer/${encodeURIComponent(id)}/${tail}`;
 
-async function call(fetchImpl, url, body) {
-  const init = { credentials: 'same-origin', cache: 'no-store' };
-  if (body !== undefined) Object.assign(init, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const res = await fetchImpl(url, init);
-  let data = null;
-  try { data = await res.json(); } catch (_) { data = null; }
-  if (!res.ok) {
-    const err = new Error(data?.error || `HTTP ${res.status}`);
-    err.status = res.status; err.code = data?.code || '';
-    throw err;
-  }
-  return data;
+// call reads url, or posts body to it.
+function call(fetchImpl, url, body) {
+  return requestJSON(url, { method: body === undefined ? 'GET' : 'POST', body, cache: 'no-store', fetchImpl });
 }
 
 // mailboxNotification is a Messages-folder row as the inbox lists it: its
