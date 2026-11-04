@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -24,9 +25,10 @@ func TestCrossAgentHelp_EveryVerbUsesTheSharedSentence(t *testing.T) {
 			assert.Equal(t, "groups.members."+verb, agentd.GroupSiblingForSlug("agent."+verb),
 				"the help names groups.members.%s; the daemon must pair it with agent.%s", verb, verb)
 
-			cmd, _, err := root.Find(strings.Fields(path))
+			cmd, rest, err := root.Find(strings.Fields(path))
 			require.NoError(t, err)
 			require.NotEqual(t, root, cmd, "no `agent %s` command", path)
+			require.Empty(t, rest, "no `agent %s` command (Find stopped at %q)", path, cmd.CommandPath())
 			want := agent.CrossAgentAuth(verb)
 
 			f := cmd.Flags().Lookup("target")
@@ -47,15 +49,31 @@ func TestCrossAgentHelp_EveryVerbUsesTheSharedSentence(t *testing.T) {
 		})
 	}
 
-	// A command that offers to act on ANOTHER agent through --target, or
-	// spells out an agent.* requirement there, must be in the table.
+	// A command outside the table must not hand-write a cross-agent auth
+	// rule: neither a --target that offers to act on another agent or names
+	// an agent.* slug, nor help that names a manager-pattern slug (one with a
+	// group sibling) next to group ownership. Positional-selector verbs are
+	// caught by the second check.
+	slugRef := regexp.MustCompile(`\bagent\.[a-z][a-z-]*[a-z]`)
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
 		path := strings.TrimPrefix(c.CommandPath(), root.CommandPath()+" ")
-		if f := c.Flags().Lookup("target"); f != nil && c != root {
-			if _, ok := verbs[path]; !ok {
-				assert.False(t, strings.Contains(f.Usage, "ANOTHER agent") || strings.Contains(f.Usage, "Requires agent."),
-					"`agent %s --target` reads as a cross-agent verb; add it to crossAgentAuthVerbs: %q", path, f.Usage)
+		_, listed := verbs[path]
+		if f := c.Flags().Lookup("target"); f != nil && c != root && !listed {
+			u := strings.ToLower(f.Usage)
+			assert.False(t, strings.Contains(u, "another agent") || slugRef.MatchString(u),
+				"`agent %s --target` reads as a cross-agent verb; add it to crossAgentAuthVerbs: %q", path, f.Usage)
+		}
+		if c != root && !listed && !crossAgentHelpExempt[path] {
+			long := strings.ToLower(c.Long)
+			if strings.Contains(long, "owner") || strings.Contains(long, "ownership") || strings.Contains(long, "owning") {
+				for _, slug := range slugRef.FindAllString(long, -1) {
+					if strings.Contains(c.Long, agent.CrossAgentAuth(strings.TrimPrefix(slug, "agent."))) {
+						continue // a parent group's Long built from the shared sentence
+					}
+					assert.Empty(t, agentd.GroupSiblingForSlug(slug),
+						"`agent %s` hand-writes the cross-agent rule for %s; add it to crossAgentAuthVerbs", path, slug)
+				}
 			}
 		}
 		for _, sub := range c.Commands() {
@@ -63,4 +81,12 @@ func TestCrossAgentHelp_EveryVerbUsesTheSharedSentence(t *testing.T) {
 		}
 	}
 	walk(root)
+}
+
+// crossAgentHelpExempt lists commands whose help names a manager-pattern
+// slug next to group ownership but describes a different gate.
+var crossAgentHelpExempt = map[string]bool{
+	// Cron job auth (authCronJob): a conv-target job takes the cross-agent
+	// path, but a group-target job is gated on groups.messages.schedule.
+	"cron rm": true,
 }

@@ -32,11 +32,13 @@ var crossAgentAuthVerbs = map[string]string{
 	"codex-app-server status": "context-info",
 	"compact":                 "compact",
 	"context-info":            "context-info",
+	"debug-export":            "debug-export",
 	"delete":                  "delete",
 	"inbox ls":                "inbox-watch",
 	"inbox read":              "inbox-watch",
 	"inbox watch":             "inbox-watch",
 	"interrupt":               "interrupt",
+	"morph":                   "morph",
 	"present-pr":              "pr",
 	"promote":                 "promote",
 	"reincarnate":             "reincarnate",
@@ -71,8 +73,10 @@ func CrossAgentAuthVerbs() map[string]string {
 // silently leaving a verb's help without its auth sentence.
 func applyCrossAgentTargetHelp(root *cobra.Command) {
 	for path, verb := range crossAgentAuthVerbs {
-		cmd, _, err := root.Find(strings.Fields(path))
-		if err != nil || cmd == nil || cmd == root {
+		// Find returns the deepest match with the rest as leftover args, so a
+		// renamed subcommand shows up as a non-empty rest, not an error.
+		cmd, rest, err := root.Find(strings.Fields(path))
+		if err != nil || cmd == nil || cmd == root || len(rest) > 0 {
 			panic(fmt.Sprintf("cross-agent help: no `agent %s` command", path))
 		}
 		if f := cmd.Flags().Lookup("target"); f != nil {
