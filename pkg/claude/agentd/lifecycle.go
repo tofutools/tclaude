@@ -5380,6 +5380,11 @@ type spawnParams struct {
 	spawnCopyCallerTiers  []db.SpawnCopyTier
 	spawnCopyDefaultTiers []db.SpawnCopyTier
 	spawnCopyResolved     bool
+	// defaultProfiles, when set, are the group and global default profiles
+	// the caller already resolved from; applyDefaultProfile and the usage
+	// binding use them instead of reading the defaults again, so one launch
+	// sees one version of each.
+	defaultProfiles *pinnedDefaultProfiles
 	explicitLaunch        map[string]db.ExplicitLaunchValue
 	Arrival               *arrivalContext
 	RemoteJob             *federationJobLaunch // trusted internal remote job boundary
@@ -6010,6 +6015,21 @@ const dashboardDefaultProfileIDPrefKey = "tclaude.dash.default_profile_id"
 // globalDefaultProfile loads the dashboard/global default spawn profile. A
 // stale preference (the profile was subsequently renamed or deleted) is a
 // graceful no-op: log it and let the spawn continue to the harness default.
+// pinnedDefaultProfiles are the group and global default spawn profiles one
+// launch resolved from (either may be nil: none set).
+type pinnedDefaultProfiles struct {
+	group, global *db.SpawnProfile
+}
+
+// launchDefaultProfiles returns the group and global default profiles p's
+// launch resolves from: the ones its caller pinned, else the current ones.
+func launchDefaultProfiles(g *db.AgentGroup, p *spawnParams) (group, global *db.SpawnProfile) {
+	if p.defaultProfiles != nil {
+		return p.defaultProfiles.group, p.defaultProfiles.global
+	}
+	return groupDefaultProfile(g), globalDefaultProfile()
+}
+
 func globalDefaultProfile() *db.SpawnProfile {
 	idText, idOK, err := db.GetDashboardPref(dashboardDefaultProfileIDPrefKey)
 	if err != nil {
@@ -6622,7 +6642,7 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	// profile a managed launch (a trigger or process worker) carries in
 	// managedProfile. Each carries the provenance wording handleGroupSpawn
 	// uses, keeping any skip note readable if it is surfaced on this path.
-	groupProfile, globalProfile := groupDefaultProfile(g), globalDefaultProfile()
+	groupProfile, globalProfile := launchDefaultProfiles(g, p)
 	profiles := []struct {
 		profile     *db.SpawnProfile
 		source      func(string) string
@@ -6941,8 +6961,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		// process worker launched through a spawn profile carries its budget
 		// just like a dashboard spawn.
 		if outcome != nil {
+			groupProfile, globalProfile := launchDefaultProfiles(g, &p)
 			applySpawnUsageProfiles(outcome.AgentID, outcome.ConvID, p.UsageProfileIDs,
-				p.UsageSpawnProfile, groupDefaultProfile(g), globalDefaultProfile())
+				p.UsageSpawnProfile, groupProfile, globalProfile)
 		}
 	}()
 	// A usage limit's block_spawn step refuses every fresh spawn it covers,

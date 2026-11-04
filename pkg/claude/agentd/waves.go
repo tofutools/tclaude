@@ -296,6 +296,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			launchTogglesResolved:       true,
 			UsageSpawnProfile:           launch.UsageSpawnProfile,
 			spawnCopyCallerTiers:        launch.SpawnCopyTiers,
+			defaultProfiles:             launch.DefaultProfiles,
 			SSHWorkaround:               launch.SSHWorkaround,
 			SSHWorkaroundSet:            launch.SSHWorkaroundSet,
 			SSHWorkaroundSource:         launch.SSHWorkaroundSource,
@@ -335,7 +336,9 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			// resolution order. Copied rather than appended in place, because
 			// templateNotes is the slice inside launch and append could otherwise
 			// write through its spare capacity.
-			res.Resolved.Notes = append(append([]string(nil), templateNotes...), res.Resolved.Notes...)
+			// Deduplicated: a default-tier value the template walk skipped is
+			// skipped again by the spawn's own pass over the same pinned tiers.
+			res.Resolved.Notes = uniqueNotes(append(append([]string(nil), templateNotes...), res.Resolved.Notes...))
 			res.Resolved.Info = append(append([]string(nil), templateInfo...), res.Resolved.Info...)
 			res.Resolved.Warnings = append(append([]string(nil), templateWarnings...), res.Resolved.Warnings...)
 		} else {
