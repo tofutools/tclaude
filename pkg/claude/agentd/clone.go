@@ -328,10 +328,14 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		refreshGeneratedProfile = true
 	}
 	// Either way the clone gets what a relaunch of the source lays over its
-	// chain (composeRelaunchSandbox): the group's current environment, and
-	// the source's explicit --harness-config as the relaunch policy weighs it
-	// (tcl-bmhpir). Without a generated profile the clone keeps the
-	// profile contents stored at the source's last launch.
+	// chain (composeRelaunchSandboxEnv): the group's environment as the
+	// relaunch policy's group_env row decides, and the source's explicit
+	// --harness-config as the policy weighs it (tcl-bmhpir). Without a
+	// generated profile the clone keeps the profile contents stored at the
+	// source's last launch. A clone that joins another group for its sandbox
+	// (SandboxGroupID) takes that group's environment, whatever the policy:
+	// that is where it is being placed, not a relaunch of the source.
+	reuseGroupEnv := p.SandboxGroupID == 0 && relaunchReuses(currentRelaunchPolicy(), groupEnvField)
 	var previous *sandboxpolicy.Snapshot
 	if refreshGeneratedProfile {
 		effectiveSandbox, previous, err = resolveCurrentSandboxChainForConv(sourceConv)
@@ -341,7 +345,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	}
 	if err == nil && effectiveSandbox != nil {
 		var composed sandboxpolicy.Snapshot
-		if composed, err = composeRelaunchSandbox(sourceConv, *effectiveSandbox, previous, !refreshGeneratedProfile); err == nil {
+		if composed, err = composeRelaunchSandboxEnv(sourceConv, *effectiveSandbox, previous, !refreshGeneratedProfile, reuseGroupEnv); err == nil {
 			effectiveSandbox = &composed
 		}
 	}
@@ -382,8 +386,18 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// Carry the source's armed Remote Access to the sibling (JOH-261). A clone
 	// becoming a SECOND phone-reachable session alongside the still-running
 	// original is the operator-decided semantics — drive either from the phone.
-	// False (and so omitted) for an unarmed source or a Codex source.
+	// False (and so omitted) for an unarmed source or a Codex source. A clone
+	// in the source's groups follows the relaunch policy's
+	// group_remote_control row, as the source's own resume would
+	// (relaunchRemoteControl).
 	remoteControl := relaunch.RemoteControl
+	if p.SandboxGroupID == 0 {
+		var change, note string
+		remoteControl, change, note = relaunchRemoteControl(sourceConv, relaunch.Harness, relaunch.RemoteControl)
+		if change != "" || note != "" {
+			slog.Info("clone: remote control by the relaunch policy", "source", short8(sourceConv), "change", change, "note", note)
+		}
+	}
 	autoMemory := relaunch.AutoMemory
 	// Same reasoning again: a clone of an agent that opted into Claude Code's own
 	// messaging mesh keeps it, and a clone of a default agent stays closed.
