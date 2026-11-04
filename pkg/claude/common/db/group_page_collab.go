@@ -66,16 +66,36 @@ func ClearGroupPageMarks(pageID string) error {
 }
 
 // SaveGroupPagePatches saves a page's patch journal (a JSON array) as it is
-// now, and the patch sequence. A page with no saved row saves nothing.
-func SaveGroupPagePatches(pageID string, patchSeq int64, patches string) error {
+// now, with both sequences. A page with no saved row saves nothing.
+func SaveGroupPagePatches(pageID string, markSeq, patchSeq int64, patches string) error {
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`INSERT INTO group_page_patches (page_id, patch_seq, patches) SELECT ?, ?, ? WHERE `+groupPageExists+`
-		ON CONFLICT(page_id) DO UPDATE SET patch_seq = excluded.patch_seq, patches = excluded.patches`,
-		pageID, patchSeq, patches, pageID)
+	_, err = d.Exec(`INSERT INTO group_page_patches (page_id, mark_seq, patch_seq, patches) SELECT ?, ?, ?, ? WHERE `+groupPageExists+`
+		ON CONFLICT(page_id) DO UPDATE SET mark_seq = MAX(mark_seq, excluded.mark_seq), patch_seq = excluded.patch_seq, patches = excluded.patches`,
+		pageID, markSeq, patchSeq, patches, pageID)
 	return err
+}
+
+// ClearGroupPageCollab drops everything a page kept, sequences and all: the
+// page starts again from another source.
+func ClearGroupPageCollab(pageID string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, stmt := range []string{`DELETE FROM group_page_marks WHERE page_id = ?`, `DELETE FROM group_page_patches WHERE page_id = ?`} {
+		if _, err := tx.Exec(stmt, pageID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // LoadGroupPageCollab returns what a saved page has kept, nil when nothing.

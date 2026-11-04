@@ -43,10 +43,19 @@ func savePatchesLocked(id string, s *pageCollabState) {
 	}
 	raw, err := json.Marshal(patches)
 	if err == nil {
-		err = db.SaveGroupPagePatches(id, s.patchSeq, string(raw))
+		err = db.SaveGroupPagePatches(id, s.seq, s.patchSeq, string(raw))
 	}
 	if err != nil {
 		slog.Warn("pages: could not save a page's live patches", "page", id, "error", err)
+	}
+}
+
+// clearSavedCollabLocked drops everything a page kept: shown again from
+// another kind of source, it starts again, as its memory does. Caller holds
+// pageCollab.mu, or the registry's lock that orders it.
+func clearSavedCollabLocked(id string) {
+	if err := db.ClearGroupPageCollab(id); err != nil {
+		slog.Warn("pages: could not drop a page's saved marks and patches", "page", id, "error", err)
 	}
 }
 

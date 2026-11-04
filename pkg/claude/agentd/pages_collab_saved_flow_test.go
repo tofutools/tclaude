@@ -3,6 +3,8 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -88,6 +90,51 @@ func TestPageSavedKeepsMarksAndPatchesAcrossReopen(t *testing.T) {
 	kept, err = db.LoadGroupPageCollab(p.ID)
 	require.NoError(t, err)
 	assert.Nil(t, kept)
+}
+
+// Shown again from another kind of source, a page starts again, whether it
+// was open or closed: the old source's marks and patches do not come back.
+func TestPageSavedStartsAgainFromAnotherKindOfSource(t *testing.T) {
+	e := newPageEnv(t)
+	require.NoError(t, config.Save(&config.Config{
+		Agent:    &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfPage, agentd.PermGroupsPagesPatch}},
+		Features: &config.FeaturesConfig{Processes: true},
+	}))
+	shower := e.agent(t, "switcher", true)
+	e.f.HaveGroup("crew")
+	e.f.HaveMember("crew", shower.conv)
+	port := ":" + strconv.Itoa(devServer(t, "first"))
+	site := filepath.Join(shower.cwd, "site")
+	require.NoError(t, os.MkdirAll(site, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(site, "index.html"), []byte("<html><body>static</body></html>"), 0o644))
+	mark := func(id string) {
+		require.Equal(t, http.StatusOK, e.dashJSON(t, http.MethodPost, "/api/pages/"+id+"/marks", sampleMarks()).Code)
+		rec := e.call(t, shower, http.MethodPost, "/v1/pages/app/patches", map[string]any{"kind": "css", "css": "a { color: red }"})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	}
+	reopen := func(id string) {
+		require.Equal(t, http.StatusOK, e.dash(t, http.MethodDelete, "/api/pages/"+id).Code)
+		require.Equal(t, http.StatusOK, e.dashJSON(t, http.MethodPost, "/api/pages/"+id+"/reopen", nil).Code)
+	}
+
+	// Open: re-shown from static files, then closed and reopened.
+	p, rec := e.show(t, shower, port, "app", "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	mark(p.ID)
+	_, rec = e.show(t, shower, site, "app", "")
+	require.Less(t, rec.Code, 300, rec.Body.String())
+	reopen(p.ID)
+	assert.Empty(t, e.marks(t, shower, "app", "").Batches)
+	assert.Empty(t, e.patchNumbers(t, shower, "app"))
+
+	// Closed: shown again from the port.
+	mark(p.ID)
+	require.Equal(t, http.StatusNoContent, e.call(t, shower, http.MethodDelete, "/v1/pages/app", nil).Code)
+	again, rec := e.show(t, shower, port, "app", "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	require.Equal(t, p.ID, again.ID)
+	assert.Empty(t, e.marks(t, shower, "app", "").Batches)
+	assert.Empty(t, e.patchNumbers(t, shower, "app"))
 }
 
 func TestPagePrivateSavesNoMarks(t *testing.T) {

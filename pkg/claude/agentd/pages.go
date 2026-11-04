@@ -666,7 +666,13 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 	savedID, savedLocked := savedPageFor(groupID, agentID, name)
 	var kept *db.GroupPageCollab
 	if savedID != "" {
-		kept = loadSavedCollab(savedID)
+		// Another kind of source starts again, as a live page re-shown
+		// from one does: what the old source's page kept is not its.
+		if row, err := db.GetGroupPage(savedID); err == nil && row != nil && row.Kind != t.kind {
+			clearSavedCollabLocked(savedID)
+		} else {
+			kept = loadSavedCollab(savedID)
+		}
 	}
 
 	now := time.Now().UTC()
@@ -744,6 +750,7 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 				forgetPageCollabExceptMarks(existing.id)
 			} else {
 				reg.removeLocked(existing)
+				clearSavedCollabLocked(existing.id)
 			}
 			resp.NewOrigin = true
 		}

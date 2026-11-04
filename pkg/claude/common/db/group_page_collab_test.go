@@ -19,7 +19,7 @@ func TestGroupPageCollabKeepsNewestMarks(t *testing.T) {
 	for seq := int64(1); seq <= 5; seq++ {
 		require.NoError(t, AddGroupPageMarks("pg_a", seq, fmt.Sprintf(`{"seq":%d}`, seq), 3))
 	}
-	require.NoError(t, SaveGroupPagePatches("pg_a", 7, `[{"n":7}]`))
+	require.NoError(t, SaveGroupPagePatches("pg_a", 2, 7, `[{"n":7}]`))
 	c, err := LoadGroupPageCollab("pg_a")
 	require.NoError(t, err)
 	assert.Equal(t, &GroupPageCollab{MarkSeq: 5, PatchSeq: 7, Batches: []string{`{"seq":3}`, `{"seq":4}`, `{"seq":5}`}, Patches: `[{"n":7}]`}, c)
@@ -30,8 +30,13 @@ func TestGroupPageCollabKeepsNewestMarks(t *testing.T) {
 	assert.Empty(t, c.Batches)
 	assert.Equal(t, int64(5), c.MarkSeq, "the sequence stays")
 
+	require.NoError(t, ClearGroupPageCollab("pg_a"))
+	c, err = LoadGroupPageCollab("pg_a")
+	require.NoError(t, err)
+	assert.Nil(t, c, "a page shown from another source starts again")
+
 	require.NoError(t, AddGroupPageMarks("pg_private", 1, `{}`, 3))
-	require.NoError(t, SaveGroupPagePatches("pg_private", 1, `[]`))
+	require.NoError(t, SaveGroupPagePatches("pg_private", 1, 1, `[]`))
 	c, err = LoadGroupPageCollab("pg_private")
 	require.NoError(t, err)
 	assert.Nil(t, c, "a page with no saved row keeps nothing")
