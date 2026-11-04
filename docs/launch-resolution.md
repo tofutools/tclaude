@@ -111,7 +111,10 @@ compaction reads the group's current text.
 
 **Explicit values stay explicit.** A value given as a flag at spawn wins over
 every profile and stays the agent's value on every relaunch. A flag given at
-resume becomes the agent's new explicit value from then on.
+resume becomes the agent's new explicit value from then on. So does each
+field a morph changes, and a morph back makes explicit only what the morph
+it undoes changed: re-applying the agent's spawn profile afterwards keeps the
+morphed values, and the fields no morph changed follow the profile.
 
 **Harness, model, effort and directory are fixed.** They are chosen at first
 spawn and only change by an explicit action: a morph, an explicit resume flag,

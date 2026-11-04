@@ -33,6 +33,12 @@ func ExplicitAtResume(at time.Time) string {
 	return "explicit (resume, " + at.UTC().Format("2006-01-02") + ")"
 }
 
+// ExplicitAtMorph is the provenance of a value a morph set: the morphed form
+// is the agent's explicit choice from then on.
+func ExplicitAtMorph(at time.Time) string {
+	return "explicit (morph, " + at.UTC().Format("2006-01-02") + ")"
+}
+
 // AgentLaunchLayers is what a relaunch resolves an agent's launch from, kept
 // in layers so each can follow its own rule (docs/launch-resolution.md):
 //
@@ -286,6 +292,51 @@ func SetAgentLaunchLayersIfUnset(agentID string, layers *AgentLaunchLayers) (boo
 	}
 	n, err := res.RowsAffected()
 	return n > 0, err
+}
+
+// recordExplicitLaunchValuesTx merges values into an agent's explicit layer.
+// A value's request fields are merged into the field's existing entry, so a
+// field set alongside it earlier (context_window's ContextWindowMax) stays
+// recorded, and its provenance and time become the new value's. An agent
+// without layers (spawned before they existed) is left without them: what
+// its spawn gave explicitly is not known, and its spawn copy cannot be
+// re-applied anyway.
+func recordExplicitLaunchValuesTx(tx *sql.Tx, agentID string, values map[string]ExplicitLaunchValue) error {
+	if len(values) == 0 {
+		return nil
+	}
+	var raw string
+	err := tx.QueryRow(`SELECT launch_layers FROM agents WHERE agent_id = ?`, agentID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	layers, err := decodeAgentLaunchLayers(raw)
+	if err != nil || layers == nil {
+		return err
+	}
+	if layers.Explicit == nil {
+		layers.Explicit = map[string]ExplicitLaunchValue{}
+	}
+	for key, value := range values {
+		fields := map[string]json.RawMessage{}
+		for name, v := range layers.Explicit[key].Fields {
+			fields[name] = v
+		}
+		for name, v := range value.Fields {
+			fields[name] = v
+		}
+		value.Fields = fields
+		layers.Explicit[key] = value
+	}
+	encoded, err := encodeAgentLaunchLayers(layers)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`UPDATE agents SET launch_layers = ? WHERE agent_id = ?`, encoded, agentID)
+	return err
 }
 
 // AgentLaunchLayersFor loads an agent's launch layers. nil with no error is
