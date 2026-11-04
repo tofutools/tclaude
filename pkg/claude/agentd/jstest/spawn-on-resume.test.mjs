@@ -100,6 +100,15 @@ test('relaunch policy dialog for a profile: no Follow global, sources are this p
   assert.match(effect('group_env'), /Re-resolve · global/);
 });
 
+test('relaunch policy dialog: all default keeps rows the editor does not show', async (t) => {
+  const saved = [];
+  const { view, harness } = await mountDialog(t, { scope: 'profile', rows: ROWS, fields: [],
+    selection: { group_env: 'reuse', future_row: 'reuse' }, onSave: (kept) => saved.push(kept) });
+  await harness.act(async () => { view.container.querySelector('#relaunch-policy-reset').click(); });
+  await harness.act(async () => { view.container.querySelector('#relaunch-policy-submit').click(); });
+  assert.deepEqual(saved, [{ future_row: 'reuse' }]);
+});
+
 test('agent-spawn model sends this spawn\'s relaunch rows, and Save as profile leaves Follow global out', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/agent-spawn-model.js');
@@ -113,4 +122,11 @@ test('agent-spawn model sends this spawn\'s relaunch rows, and Save as profile l
   assert.deepEqual(model.buildSpawnRequest(draft, context, null, []).body.relaunch_policy, { group_env: 'inherit', harness_config: 'tighten-only' });
   assert.equal(model.spawnDraftIsDirty(draft, base), true);
   assert.deepEqual(model.spawnProfileSeed(draft, context).relaunch_policy, { harness_config: 'tighten-only' });
+  const fromProfile = { ...draft, profileRelaunchPolicy: { group_env: 'reuse', sandbox_profile_contents: 'reuse' } };
+  assert.deepEqual(model.spawnProfileSeed(fromProfile, context).relaunch_policy, { sandbox_profile_contents: 'reuse', harness_config: 'tighten-only' },
+    'the selected profile\'s rows are carried too, under this spawn\'s own; Follow global drops the profile\'s row');
+  const profile = { name: 'pinned', relaunch_policy: { group_env: 'reuse' } };
+  const applied = model.applySpawnProfile({ ...base, profile: 'pinned' }, profile, context);
+  assert.deepEqual(applied.profileRelaunchPolicy, { group_env: 'reuse' });
+  assert.equal('relaunch_policy' in model.buildSpawnRequest(applied, context, null, []).body, false, 'the daemon reads the profile\'s rows itself');
 });

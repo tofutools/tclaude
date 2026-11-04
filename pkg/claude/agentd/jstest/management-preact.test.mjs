@@ -75,6 +75,8 @@ test('management model preserves full-replace profile and role semantics', async
   assert.equal(payload.operator_only, true);
   assert.deepEqual(payload.role_refs, ['reviewer', 'go-maintainer']);
   assert.deepEqual(payload.relaunch_policy, { group_env: 'reuse' }, 'an edit carries the relaunch rows through');
+  assert.equal('relaunch_policy' in model.profilePayload(draft, original, catalog, { local: true }), false,
+    'a template-local profile cannot carry relaunch rows');
   draft.approval_reviewer = 'human'; assert.equal(model.profilePayload(draft, original, catalog).auto_review, false);
   assert.deepEqual(payload.aliases, ['codex-reviewer', 'cold-reviewer']);
   draft.harness = 'claude'; draft.approval = 'plan'; draft.sandbox = 'on';

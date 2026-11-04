@@ -89,7 +89,11 @@ export function RelaunchPolicyDialog({ descriptor, state, confirmDiscard }) {
     <p class="perm-edit-subtitle" id="relaunch-policy-subtitle">${
       descriptor.label ? `${forProfile ? 'Profile' : 'New agent'} “${descriptor.label}”` : (forProfile ? 'Profile' : 'New agent')} · copied at spawn</p>
     <div class="perm-edit-toolbar">
-      <${Button} id="relaunch-policy-reset" title="Set every row back to Default" onClick=${() => setSelection({})}>all default<//>
+      <${Button} id="relaunch-policy-reset" title="Set every row back to Default" onClick=${() => setSelection((before) => {
+        const draft = { ...before };
+        for (const row of rows) delete draft[row.field]; // rows the editor does not show are kept
+        return draft;
+      })}>all default<//>
     </div>
     <div id="relaunch-policy-list" class="perm-edit-list">${rows.map((row) => {
       const effect = relaunchRowEffect(row, selection, descriptor.inherited, ownSource);

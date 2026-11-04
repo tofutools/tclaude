@@ -944,6 +944,10 @@ export function applySpawnProfile(
   // The profile's trims REPLACE the form's rather than merging, matching the
   // daemon's whole-tier resolution: one profile always tells the whole story of
   // what its agents load. A profile that trims nothing clears the form.
+  // The selected profile's own relaunch rows, kept so Save as profile carries
+  // them as it carries the profile's other fields. Not sent: the daemon reads
+  // the profile's rows itself.
+  next.profileRelaunchPolicy = { ...(profile.relaunch_policy || {}) };
   next.contextFeatures = view.showContextFeatures && profile.context_features
     ? { ...profile.context_features } : {};
   return syncSpawnWorktree(next, pickerUsable);
@@ -981,6 +985,7 @@ export function clearSpawnProfileFields(draft, context, {
   return syncSpawnWorktree({
     ...draft,
     profile: '',
+    profileRelaunchPolicy: {},
     name: '', role: '', roleRefs: [], descr: '', task: '', initialMessage: '',
     ...spawnUserText(draft, previousProfile, prefill),
     promptRefs: groupDefaultPrompts(context.groups, draft.group),
@@ -1156,7 +1161,9 @@ export function spawnProfileSeed(draft, context) {
   // Save as profile carries this spawn's relaunch rows (operator Q10). A
   // profile follows the global table by leaving a row out, so "Follow
   // global" is not saved.
-  const relaunchRows = Object.fromEntries(Object.entries(draft.relaunchPolicy || {})
+  // The selected profile's rows, under this spawn's own: Follow global drops
+  // the profile's row for that field.
+  const relaunchRows = Object.fromEntries(Object.entries({ ...(draft.profileRelaunchPolicy || {}), ...(draft.relaunchPolicy || {}) })
     .filter(([, mode]) => mode && mode !== 'inherit'));
   if (Object.keys(relaunchRows).length) seed.relaunch_policy = relaunchRows;
   if (view.sandbox.visible) seed.sandbox = draft.sandbox;
