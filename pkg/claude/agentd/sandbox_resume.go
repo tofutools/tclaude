@@ -3,9 +3,11 @@ package agentd
 import (
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 type resumeSandboxPolicy struct {
@@ -106,11 +108,40 @@ func resolveResumeSandboxPolicy(
 	sshWorkaround bool,
 	sshLaunchKey, harnessName, harnessBuiltinMode, sandboxImplementation string,
 ) (*resumeSandboxPolicy, error) {
-	resolved, previous, err := resolveCurrentSandboxChainForConv(convID)
+	return resolveResumeSandboxPolicyFrom(convID, sshWorkaround, sshLaunchKey,
+		harnessName, harnessBuiltinMode, sandboxImplementation, false)
+}
+
+// resolveResumeSandboxPolicyFrom is resolveResumeSandboxPolicy that, with
+// useStored, keeps the sandbox-profile contents stored at the last launch
+// instead of re-reading the registry. Everything else a relaunch refreshes
+// (the group environment, the explicit harness config, the SSH workaround and
+// the agent's private directories) is refreshed either way. It is the
+// fallback a relaunch takes when the re-read chain cannot be used
+// (prepareRelaunchSandbox).
+func resolveResumeSandboxPolicyFrom(
+	convID string,
+	sshWorkaround bool,
+	sshLaunchKey, harnessName, harnessBuiltinMode, sandboxImplementation string,
+	useStored bool,
+) (*resumeSandboxPolicy, error) {
+	var resolved, previous *sandboxpolicy.Snapshot
+	var err error
+	if useStored {
+		previous, err = db.AgentEffectiveSandboxConfigForConv(convID)
+		resolved = previous
+	} else {
+		resolved, previous, err = resolveCurrentSandboxChainForConv(convID)
+	}
 	if err != nil || previous == nil {
 		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
 	}
 	current, err := refreshResumeGroupEnvironment(convID, *resolved, previous)
+	if err != nil && useStored {
+		// The fallback keeps the stored group environment too: the same
+		// unreadable group that failed the re-read chain fails this.
+		current, err = *resolved, nil
+	}
 	if err != nil {
 		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
 	}
@@ -312,4 +343,111 @@ func reapplyExplicitHarnessConfig(current sandboxpolicy.Snapshot, previous *sand
 		return current, fmt.Errorf("reapply the launch's harness_config %q: %s", explicit, fail.Msg)
 	}
 	return applied, nil
+}
+
+// relaunchSandboxRequest is what a resume or reincarnation prepares its
+// sandbox for.
+type relaunchSandboxRequest struct {
+	convID, sshLaunchKey                 string
+	sshWorkaround, copilotAPI            bool
+	harness, builtinMode, implementation string
+	temporaryBuiltinMode                 bool
+	transport                            session.ModelTransportLaunchContext
+	// revalidate re-checks the composed snapshot against the current host.
+	revalidate bool
+}
+
+// relaunchSandbox is a prepared relaunch sandbox: the policy to commit, the
+// snapshot to launch under, and the warnings to show.
+type relaunchSandbox struct {
+	policy    *resumeSandboxPolicy
+	effective *sandboxpolicy.Snapshot
+	warnings  []string
+}
+
+// prepareRelaunchSandbox resolves, validates and checks the sandbox a resume
+// or reincarnation launches under. It re-reads the agent's sandbox profiles
+// first. When that chain cannot be used (an explicit profile was deleted,
+// the agent's groups now assign different profiles, the registry no longer
+// composes or validates, or its rules are ones this launch cannot enforce),
+// it prepares the same relaunch under the profile contents stored at the
+// last launch and says so in a warning: a resume always works. It fails only
+// when the stored policy cannot be launched either, and then reports the
+// re-read chain's failure.
+func prepareRelaunchSandbox(req relaunchSandboxRequest) (*relaunchSandbox, *spawnFailure) {
+	prepared, fail := prepareRelaunchSandboxFrom(req, false)
+	if fail == nil {
+		return prepared, nil
+	}
+	stored, err := db.AgentEffectiveSandboxConfigForConv(req.convID)
+	if err != nil || stored == nil || stored.ProfilesOmitted {
+		// Nothing was re-read, so there is nothing to fall back from.
+		return nil, fail
+	}
+	fallback, storedFail := prepareRelaunchSandboxFrom(req, true)
+	if storedFail != nil {
+		return nil, fail
+	}
+	fallback.warnings = append([]string{fmt.Sprintf(
+		"the agent's sandbox profiles could not be applied (%s); relaunched under the sandbox policy stored at its last launch",
+		fail.Msg)}, fallback.warnings...)
+	return fallback, nil
+}
+
+func prepareRelaunchSandboxFrom(req relaunchSandboxRequest, useStored bool) (*relaunchSandbox, *spawnFailure) {
+	policy, err := resolveResumeSandboxPolicyFrom(req.convID, req.sshWorkaround, req.sshLaunchKey,
+		req.harness, req.builtinMode, req.implementation, useStored)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusConflict, "sandbox_profile_changed", err.Error()}
+	}
+	cleanup := func(fail *spawnFailure) *spawnFailure {
+		if cleanupErr := cleanupUncommittedResumeSandboxPolicy(policy); cleanupErr != nil {
+			fail.Msg += "; remove unused agent-owned directories: " + cleanupErr.Error()
+		}
+		return fail
+	}
+	if policy != nil && policy.Snapshot != nil {
+		refreshed, refreshErr := finalizeCodexSSHWorkaroundForRelaunch(*policy.Snapshot, policy.SSHWorkaround)
+		if refreshErr != nil {
+			return nil, cleanup(&spawnFailure{http.StatusInternalServerError, "spawn",
+				"prepare SSH workaround: " + refreshErr.Error()})
+		}
+		policy.Snapshot = &refreshed
+	}
+	var effective *sandboxpolicy.Snapshot
+	if policy != nil {
+		effective = policy.Snapshot
+	}
+	if effective != nil && req.revalidate {
+		validated, err := sandboxpolicy.RevalidateSnapshot(*effective)
+		if err != nil {
+			return nil, cleanup(&spawnFailure{http.StatusConflict, "sandbox_profile_changed", err.Error()})
+		}
+		effective = &validated
+		policy.Snapshot = effective
+	}
+	if req.temporaryBuiltinMode {
+		effective = temporarySandboxLaunchSnapshot(req.harness, effective)
+	}
+	if fail := sandboxProfileCapabilityFailure(req.harness, req.builtinMode, effective, req.implementation); fail != nil {
+		return nil, cleanup(fail)
+	}
+	// Re-asked on every relaunch rather than trusted from the spawn that
+	// admitted it: an operator can close network access between two
+	// launches, and an API-driven agent resumed into a private network
+	// namespace would come back with a channel that can never connect.
+	if fail := copilotAPILoopbackFailure(req.copilotAPI, effective, req.implementation); fail != nil {
+		return nil, cleanup(fail)
+	}
+	if _, fail := planSandboxProfileAccessForLaunch(req.harness, req.builtinMode, effective,
+		req.implementation, req.transport, false); fail != nil {
+		return nil, cleanup(fail)
+	}
+	out := &relaunchSandbox{policy: policy, effective: effective}
+	if effective != nil {
+		for _, notice := range effective.Effective.AccessNotices {
+			out.warnings = append(out.warnings, notice.Detail)
+		}
+	}
+	return out, nil
 }

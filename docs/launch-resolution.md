@@ -158,11 +158,10 @@ The rules above are the specification. These rows do not follow it yet:
 - **Model** (`model`): No resume path takes a model flag yet; only a morph changes it.
 - **Reasoning effort** (`effort`): No resume path takes an effort flag yet; only a morph changes it.
 - **Model proxy** (`model_proxy`): Reincarnate and clone drop the model proxy.
-- **Sandbox profile named at spawn** (`explicit_sandbox_profile`): A deleted named profile fails the resume instead of falling back with a warning.
 - **Group environment** (`group_env`): Watch mode and conv resume reuse the stored group environment.
 - **Group remote-control policy** (`group_remote_control`): Resume reuses the remote-control setting stored at the last launch.
-- **Group and workspace sandbox-profile assignment** (`group_sandbox_assignment`): Watch mode and conv resume reuse the stored sandbox policy, and an agent in several groups whose assignments now differ fails the resume.
-- **Sandbox profile contents** (`sandbox_profile_contents`): Watch mode and conv resume reuse the stored contents, and a profile that no longer validates fails the resume instead of falling back with a warning.
+- **Group and workspace sandbox-profile assignment** (`group_sandbox_assignment`): Watch mode and conv resume reuse the stored sandbox policy.
+- **Sandbox profile contents** (`sandbox_profile_contents`): Watch mode and conv resume reuse the stored contents.
 - **Role definitions (text)** (`role_contents`): Re-injection after compaction still uses the role text resolved at spawn.
 - **Harness config posture** (`harness_config`): Only explicit wins is implemented; the policy setting is not read yet.
 
