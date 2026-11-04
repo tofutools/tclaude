@@ -734,3 +734,27 @@ test('a node\'s group cards read it one at a time', async (t) => {
   await Promise.all([read(), read(), read(), failing.catch(() => {}), read()]);
   assert.equal(most, 1, 'one read in flight per node, a failed one included');
 });
+
+test('a peer group card reads again on the dashboard\'s snapshot tick once due, never on its own timer', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-resources.js');
+  const tick = harness.signals.signal(null);
+  const peer = peerFetch(PEER_RESOURCES);
+  const reads = () => peer.calls.filter((c) => c.path === '/api/groups/crew/resources').length;
+  await harness.mount(harness.html`<${mod.PeerGroupResources} group=${PEER_GROUP} fetchImpl=${peer.fetchImpl} pollMs=${1000} tick=${tick} />`);
+  await settle(harness);
+  assert.equal(reads(), 1, 'read once on mount');
+  await harness.act(() => { tick.value = Date.now(); });
+  await settle(harness);
+  assert.equal(reads(), 1, 'a tick before the card is due reads nothing');
+  const later = Date.now() + 5000;
+  await harness.act(() => { tick.value = later; });
+  await settle(harness);
+  assert.equal(reads(), 2, 'the first tick after it is due reads again');
+  await harness.act(() => { tick.value = later + 10; });
+  await settle(harness);
+  assert.equal(reads(), 2, 'and then waits a full period');
+  await harness.act(() => { tick.value = later + 1000; });
+  await settle(harness);
+  assert.equal(reads(), 3);
+});

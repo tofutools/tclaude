@@ -18,6 +18,8 @@ import { defaultNotify } from './groups-quickstart.js';
 import { Button, Menu, MenuItem } from './ui-components.js';
 import { LockChip } from './resource-lock.js';
 import { nodeFetch } from './node-api.js';
+import { effect } from '@preact/signals';
+import { dashboardState } from './snapshot-store.js';
 
 export { LockChip };
 
@@ -139,8 +141,11 @@ function peerRows(resources) {
   ].filter(([, , , , rows]) => rows.length > 0);
 }
 
-// peerResourcesPollMs is how often a peer's group card reads its resources
-// again, so a lock changed on that node (or a new board) shows here too.
+// peerResourcesPollMs is how often, at most, a peer's group card reads its
+// resources again, so a lock changed on that node (or a new board) shows
+// here too. It rides the dashboard's one snapshot poll (snapshot-poll.js):
+// each accepted snapshot (dashboardState.lastRefreshAt) is a tick, and a
+// card reads again on the first tick after it is due.
 export const peerResourcesPollMs = 20000;
 
 // A node's group cards read it one at a time: the peer view holds a few
@@ -165,7 +170,7 @@ const tabHidden = () => typeof document !== 'undefined' && document.visibilitySt
 // groups.resources.lock, and otherwise says so. A refusal is a toast. A node
 // that does not show the group's roster (403), or has no such read (404),
 // shows no section; any other failure says so.
-export function PeerGroupResources({ group, notify = defaultNotify, fetchImpl = null, pollMs = peerResourcesPollMs }) {
+export function PeerGroupResources({ group, notify = defaultNotify, fetchImpl = null, pollMs = peerResourcesPollMs, tick = dashboardState.lastRefreshAt }) {
   const node = group.fleet_node;
   const name = peerGroupName(group);
   const [state, setState] = useState({ resources: null, error: null });
@@ -182,14 +187,17 @@ export function PeerGroupResources({ group, notify = defaultNotify, fetchImpl = 
   };
   useEffect(() => {
     void refresh();
-    // Cards start their polls at staggered times, and a hidden tab skips them.
-    let timer = null;
-    const start = pollMs > 0 ? setTimeout(() => {
-      timer = setInterval(() => { if (!tabHidden()) void refresh(); }, pollMs);
-    }, Math.floor(Math.random() * pollMs)) : null;
+    // Cards fall due at staggered times, and a hidden tab skips the tick.
+    let due = Date.now() + pollMs + Math.floor(Math.random() * pollMs);
+    const stop = pollMs > 0 && tick ? effect(() => {
+      const at = tick.value;
+      if (at == null || at < due || tabHidden()) return;
+      due = at + pollMs;
+      void refresh();
+    }) : null;
     // A late answer for a previous node or group is dropped.
-    return () => { current.current++; if (start) clearTimeout(start); if (timer) clearInterval(timer); };
-  }, [node?.id, name, pollMs]);
+    return () => { current.current++; stop?.(); };
+  }, [node?.id, name, pollMs, tick]);
   const { resources, error } = state;
   if (!resources) {
     if (!error || error.status === 403 || error.status === 404) return null;
