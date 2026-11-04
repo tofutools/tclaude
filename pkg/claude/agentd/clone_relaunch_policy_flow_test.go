@@ -115,3 +115,46 @@ func TestCloneRelaunchPolicy_UnusableProfilesFallBackToTheStoredPolicy(t *testin
 	assert.Equal(t, "kept", profileEnvValue(t, policy), "the stored policy")
 	assert.Contains(t, string(clone.Raw), "launched under the sandbox policy stored at the source's last launch")
 }
+
+// Under reuse, which profiles apply is still read again, as on resume: a
+// changed assignment brings the new profile's current contents, and says so.
+func TestCloneRelaunchPolicy_ReuseFollowsAChangedAssignment(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	for name, value := range map[string]string{"shared": "v1", "other": "other"} {
+		_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: name,
+			Environment: []db.SandboxEnvironmentEntry{{Name: "PROFILE_ENV", Value: value}}})
+		require.NoError(t, err)
+	}
+	require.NoError(t, db.SetGlobalSandboxProfile("shared"))
+	conv, _ := spawnPinned(t, f, "assigned-source", "")
+	setRelaunchPolicy(t, f, "sandbox_profile_contents", "reuse")
+	require.NoError(t, db.SetGlobalSandboxProfile("other"))
+
+	clone := f.AsHuman().CloneFresh(conv)
+	policy, ok := f.World.SpawnSandboxPolicy(clone.NewConv)
+	require.True(t, ok)
+	assert.Equal(t, "other", profileEnvValue(t, policy))
+	assert.Contains(t, string(clone.Raw), "so their current contents apply")
+}
+
+// A clone that joins the group its source already takes its sandbox from is
+// no new placement: under re-resolve it gets the group's current profile
+// contents, as a plain clone does.
+func TestCloneRelaunchPolicy_JoiningTheSourcesOwnGroupReReads(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "crew-profile",
+		Environment: []db.SandboxEnvironmentEntry{{Name: "PROFILE_ENV", Value: "v1"}}})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupSandboxProfile("crew", "crew-profile")
+	require.NoError(t, err)
+	conv, _ := spawnPinned(t, f, "group-source", "")
+	editProfileEnv(t, "crew-profile", "v2")
+
+	clone := f.AsHuman().CloneWith(conv, map[string]any{"no_copy_conv": true, "group": "crew"})
+	require.Equalf(t, http.StatusOK, clone.Code, "clone body=%s", clone.Raw)
+	policy, ok := f.World.SpawnSandboxPolicy(clone.NewConv)
+	require.True(t, ok)
+	assert.Equal(t, "v2", profileEnvValue(t, policy), "the group's current profile")
+}

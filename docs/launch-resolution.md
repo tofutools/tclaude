@@ -166,8 +166,10 @@ on resume, reincarnation, and watch mode and `conv resume` while agentd runs.
 All three rows also act on a clone in its source's groups, as on the
 source's own resume, and a clone that keeps its source's environment or
 sandbox follows the matching row. A clone that joins another group otherwise
-takes that group's settings. Like a resume, a clone whose re-read profiles
-cannot be applied launches under the stored policy and says so.
+takes that group's settings. Like a resume, a clone whose sandbox cannot be
+applied one way (re-read or stored contents) launches under the other and
+says so; a Codex clone with a generated profile always re-reads and has no
+fallback.
 
 The harness-config posture has three settings, because an explicit
 `--harness-config` choice can disagree with the posture the re-read sandbox

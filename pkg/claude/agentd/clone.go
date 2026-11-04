@@ -236,15 +236,19 @@ func refreshCloneLaunchEnvironment(convID string, current, previous *sandboxpoli
 // Extracted from runCloneOrchestration so groups-clone and the export clone can
 // reuse the same race handling without duplicating it.
 func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSpawnError) {
-	// sandboxWarn says the clone fell back to its source's stored sandbox
-	// policy; it rides the result's warning.
-	var sandboxWarn string
+	// sandboxWarn is what the relaunch policy did that the caller should
+	// know (a sandbox fallback, a changed profile assignment, a kept
+	// remote-control state); it rides the result's warning.
+	var sandboxWarn []string
 	defer func() {
-		if cerr == nil && sandboxWarn != "" {
-			if spawned.Warn != "" {
-				sandboxWarn += "; " + spawned.Warn
+		if cerr == nil && len(sandboxWarn) > 0 {
+			for _, w := range sandboxWarn {
+				slog.Warn("clone: "+w, "source", short8(p.SourceConv))
 			}
-			spawned.Warn = sandboxWarn
+			if spawned.Warn != "" {
+				sandboxWarn = append(sandboxWarn, spawned.Warn)
+			}
+			spawned.Warn = strings.Join(sandboxWarn, "; ")
 		}
 	}()
 	sourceConv, cwd, noCopyConv := p.SourceConv, p.Cwd, p.NoCopyConv
@@ -354,12 +358,41 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// takes that group's settings, whatever the policy: that is where it is
 	// being placed, not a relaunch of the source.
 	policy := currentRelaunchPolicy()
-	sameGroups := p.SandboxGroupID == 0
+	stored, err := db.AgentEffectiveSandboxConfigForConv(sourceConv)
+	if err != nil {
+		return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io", Msg: "read the source's stored sandbox policy: " + err.Error()}
+	}
+	// A group the clone joins that is the one its source already resolves
+	// its sandbox (or environment) from is no new placement.
+	sameSandbox, sameEnv := p.SandboxGroupID == 0, p.SandboxGroupID == 0
+	if stored != nil && p.SandboxGroupID != 0 {
+		envGroup, _ := stored.EnvironmentGroupID()
+		sameSandbox = p.SandboxGroupID == stored.ResolutionGroupID
+		sameEnv = p.SandboxGroupID == envGroup
+	}
 	// A clone that keeps its source's environment (KeepEnvironment) keeps
-	// it as the source's resume would, under the group_env row.
-	reuseGroupEnv := (sameGroups || p.KeepEnvironment) && relaunchReuses(policy, groupEnvField)
-	useStored := !refreshGeneratedProfile && (sameGroups || p.KeepSandbox) && relaunchReuses(policy, sandboxProfileContentsField)
-	composeFrom := func(stored bool) (*sandboxpolicy.Snapshot, error) {
+	// it as the source's resume would, under the group_env row; one that
+	// keeps its source's sandbox (KeepSandbox) follows the contents row.
+	reuseGroupEnv := (sameEnv || p.KeepEnvironment) && relaunchReuses(policy, groupEnvField)
+	followsContents := !refreshGeneratedProfile && (sameSandbox || p.KeepSandbox)
+	// A clone placed in another group's sandbox starts from the stored
+	// snapshot, as it always has: the new group's chain replaces its
+	// profiles (cloneSandboxForGroup).
+	useStored := !refreshGeneratedProfile && !followsContents
+	if followsContents && relaunchReuses(policy, sandboxProfileContentsField) {
+		// As on resume: which profiles apply is still read again, so a
+		// changed assignment brings the new profiles' current contents.
+		reuse, note := reuseStoredProfileContents(sourceConv, stored)
+		useStored = reuse
+		if note != "" {
+			sandboxWarn = append(sandboxWarn, note)
+		}
+	}
+	// buildSandbox prepares the clone's sandbox from the stored snapshot or
+	// the re-read chain, through the checks a launch needs. unusable says the
+	// failure is one a resume falls back from: a chain that cannot be used,
+	// or a launch gate it does not pass.
+	buildSandbox := func(stored bool) (sb *sandboxpolicy.Snapshot, fail *cloneSpawnError, unusable bool) {
 		var launch, previous *sandboxpolicy.Snapshot
 		var err error
 		if stored {
@@ -368,47 +401,65 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		} else {
 			launch, previous, err = resolveCurrentSandboxChainForConv(sourceConv)
 		}
-		if err != nil || launch == nil {
-			return launch, err
-		}
-		composed, err := composeRelaunchSandbox(sourceConv, *launch, previous, stored, reuseGroupEnv)
-		if err != nil {
-			return nil, err
-		}
-		return &composed, nil
-	}
-	effectiveSandbox, err = composeFrom(useStored)
-	freshChain := !useStored
-	if err != nil && !useStored && !refreshGeneratedProfile {
-		if fallback, fallbackErr := composeFrom(true); fallbackErr == nil {
-			sandboxWarn = "the source's current sandbox profiles could not be applied (" + err.Error() +
-				"); the clone launched under the sandbox policy stored at the source's last launch"
-			slog.Warn("clone: "+sandboxWarn, "source", short8(sourceConv))
-			effectiveSandbox, freshChain, err = fallback, false, nil
-		}
-	}
-	if err == nil {
-		effectiveSandbox, freshChain, err = cloneSandboxForGroup(sourceConv, effectiveSandbox,
-			p.SandboxGroupID, p.KeepSandbox, p.KeepEnvironment, reuseGroupEnv, freshChain)
-	}
-	if err != nil {
-		return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}
-	}
-	if effectiveSandbox != nil {
-		if !freshChain {
-			validated, err := ensureAgentDirectoriesForRelaunch(*effectiveSandbox)
-			if err != nil {
-				return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}
+		if err == nil && launch != nil {
+			var composed sandboxpolicy.Snapshot
+			if composed, err = composeRelaunchSandbox(sourceConv, *launch, previous, stored, reuseGroupEnv); err == nil {
+				launch = &composed
 			}
-			effectiveSandbox = &validated
 		}
-		// A freshly resolved chain deliberately has declarations but no private
-		// directory paths yet. Both clone branches materialize those paths under
-		// the clone's new launch label below; validating them as predecessor
-		// bindings here would reject every managed cache directory.
-		if _, launchErr := sandboxpolicy.FilesystemForLaunch(effectiveSandbox.Effective); launchErr != nil {
-			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: launchErr.Error()}
+		fresh := !stored
+		if err == nil {
+			launch, fresh, err = cloneSandboxForGroup(sourceConv, launch,
+				p.SandboxGroupID, p.KeepSandbox, p.KeepEnvironment, reuseGroupEnv, fresh)
 		}
+		if err != nil {
+			return nil, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()},
+				isRelaunchChainUnusable(err)
+		}
+		if launch != nil {
+			if !fresh {
+				validated, err := ensureAgentDirectoriesForRelaunch(*launch)
+				if err != nil {
+					return nil, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}, false
+				}
+				launch = &validated
+			}
+			// A freshly resolved chain deliberately has declarations but no
+			// private directory paths yet. Both clone branches materialize
+			// those paths under the clone's new launch label below;
+			// validating them as predecessor bindings here would reject
+			// every managed cache directory.
+			if _, launchErr := sandboxpolicy.FilesystemForLaunch(launch.Effective); launchErr != nil {
+				return nil, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: launchErr.Error()}, true
+			}
+		}
+		// The clone inherits the source's drive and sandbox, so it is checked
+		// as any relaunch is: the profile may have been narrowed since the
+		// source was admitted.
+		if gate := relaunchSandboxGateFailure(relaunch.Harness, cloneSandbox, relaunch.SandboxImplementation,
+			launch, relaunch.CopilotAPI, session.ModelTransportLaunchContext{Model: model, Cwd: cwd},
+		); gate != nil {
+			return nil, &cloneSpawnError{Status: gate.Status, Code: gate.Kind, Msg: gate.Msg}, true
+		}
+		return launch, nil, false
+	}
+	effectiveSandbox, fail, unusable := buildSandbox(useStored)
+	// As on resume, a re-read with nothing stored to fall back to (no
+	// snapshot, or omitted profiles) does not fall back.
+	canFallBack := useStored || (stored != nil && !stored.ProfilesOmitted)
+	if fail != nil && unusable && followsContents && canFallBack {
+		// A clone always works, as a resume does: the other source is tried.
+		if fallback, fallbackFail, _ := buildSandbox(!useStored); fallbackFail == nil {
+			from, to := "current sandbox profiles", "sandbox policy stored at the source's last launch"
+			if useStored {
+				from, to = "sandbox profile contents stored at the source's last launch", "source's current sandbox profiles"
+			}
+			sandboxWarn = append(sandboxWarn, "the "+from+" could not be applied ("+fail.Msg+"); the clone launched under the "+to)
+			effectiveSandbox, fail = fallback, nil
+		}
+	}
+	if fail != nil {
+		return cloneSpawnResult{}, fail
 	}
 	reassertFail := func() *cloneSpawnError {
 		if fail := reassertDirWriteProof(proofDirs); fail != nil {
@@ -431,8 +482,11 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	if p.SandboxGroupID == 0 {
 		var change, note string
 		remoteControl, change, note = relaunchRemoteControl(sourceConv, relaunch.Harness, relaunch.RemoteControl)
-		if change != "" || note != "" {
-			slog.Info("clone: remote control by the relaunch policy", "source", short8(sourceConv), "change", change, "note", note)
+		if change != "" {
+			slog.Info("clone: remote control by the relaunch policy", "source", short8(sourceConv), "change", change)
+		}
+		if note != "" {
+			sandboxWarn = append(sandboxWarn, note)
 		}
 	}
 	autoMemory := relaunch.AutoMemory
@@ -461,16 +515,8 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			Status: fail.Status, Code: fail.Kind, Msg: fail.Msg,
 		}
 	}
-	// The clone inherits the source's drive and sandbox, so it is checked as
-	// any relaunch is: the profile may have been narrowed since the source was
-	// admitted.
-	if fail := relaunchSandboxGateFailure(srcHarness, cloneSandbox, relaunch.SandboxImplementation,
-		effectiveSandbox, relaunch.CopilotAPI, session.ModelTransportLaunchContext{Model: model, Cwd: cwd},
-	); fail != nil {
-		return cloneSpawnResult{}, &cloneSpawnError{
-			Status: fail.Status, Code: fail.Kind, Msg: fail.Msg,
-		}
-	}
+	// The relaunch gate ran with the sandbox above (buildSandbox), so a
+	// gate the re-read profiles fail falls back as a resume does.
 	cloneSSH = cloneSSH && codexSSHWorkaroundApplies(
 		srcHarness, cloneSandbox, relaunch.SandboxImplementation, effectiveSandbox)
 	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(
