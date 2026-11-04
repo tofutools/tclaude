@@ -1,8 +1,9 @@
-// collab-rail-actions.js -- what the Collab rail and its tile home do with an
-// item (tcl-lx7nb7, tcl-u58qst): open it, or bring it forward where it already
-// is; and, for an item dragged out of either, open it as a strip tab where it
-// is dropped on the strip, or float it in a window where it is dropped
-// anywhere else. The rail lists come from collab-rail-model.js.
+// collab-rail-actions.js -- what the Collab side panel and its home do with an
+// item (tcl-lx7nb7, tcl-u58qst, tcl-8nfzbb): open it, or bring it forward
+// where it already is; and, for an item dragged out of the panel, open it as a
+// strip tab where it is dropped on the strip or the home, or float it in a
+// window where it is dropped anywhere else. The lists come from
+// collab-rail-model.js.
 
 import { signal } from '@preact/signals';
 import { railItems } from './collab-rail-model.js';
@@ -157,7 +158,7 @@ export const RAIL_ITEM_DRAG_MIME = 'application/x-tclaude-rail-item';
 export const railDrag = signal(null);
 
 // railDropZone is what a drop on target does: 'strip' (a tab there), 'home'
-// (the empty strip's tiles, also a tab), 'rail' (nothing: the panel), else
+// (the empty strip's home, also a tab), 'rail' (nothing: the panel), else
 // 'float'.
 const elementOf = (target) => (target?.closest ? target : target?.parentElement) || null;
 
@@ -179,7 +180,7 @@ function landingAt(event, zone) {
 
 const sameLanding = (a, b) => a?.beside === b?.beside && a?.after === b?.after;
 
-// startRailDrag begins dragging an item out of the rail or the home. Until the
+// startRailDrag begins dragging an item out of the side panel. Until the
 // drag ends, the page takes the drop: the strip and the home open the item as a
 // tab there, the rest of the page floats it where it lands; the rail itself
 // does nothing. The strip shows where it would land. ctx is what openRailItem

@@ -128,6 +128,12 @@ test('the home: nothing open, a button to the panel, and the agents that need yo
     'only the agent waiting on approval is listed');
   assert.equal(root.querySelector('.ch-quiet'), null);
 
+  // A click focuses the agent: its background session attaches as a tab, as a
+  // click on it in the panel does (openRailItem).
+  const used = await harness.importDashboardModule('js/collab-rail-actions.js');
+  await harness.act(async () => { harness.fireEvent(root.querySelector('[data-home-agent="bg::tc-y"]'), 'click'); await wait(); });
+  assert.ok(used.railUsed.value?.has('bg::tc-y'), 'the click opened that agent\'s item');
+
   await harness.act(() => { bg.backgroundTerminals.value = [bg.backgroundTerminals.value[1]]; });
   assert.equal(container.querySelector('[data-collab-home] .ch-quiet').textContent, 'No agents need you.');
 });

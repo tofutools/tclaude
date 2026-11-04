@@ -1901,7 +1901,7 @@ function TerminalTabs({
         closeMenu=${closeTabMenu} focusAfterAction=${focusAfterTabMenuAction}
         focusAfterDismiss=${focusAfterTabMenuDismiss} onRenameGroup=${setRenamingGroup} />` : null}
       ${!solo && !hasPanes ? html`<${HomeOrHint} rail=${rail} panes=${current.panes} actions=${actions} snapshot=${snapshot}
-        notify=${shellToast} floatsOf=${floatsOf}>
+        notify=${shellToast}>
         <div class="mux-bg-empty">
           <div class="mux-empty-title">No terminals open</div>
           ${hasBackground
@@ -1977,8 +1977,8 @@ function TerminalTabs({
   `;
 }
 
-// HomeOrHint is the empty strip's body: the Collab home's tiles beside the
-// rail (collab-home.js), or the hint children give.
+// HomeOrHint is the empty strip's body: the Collab home (collab-home.js), or
+// the hint children give.
 function HomeOrHint({ rail, children, ...props }) {
   return rail ? html`<${CollabHome} ...${props} fallback=${children} />` : children;
 }
