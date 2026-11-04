@@ -1,0 +1,242 @@
+[
+  {
+    "in": "",
+    "valid": true,
+    "normalized": ""
+  },
+  {
+    "in": "abc123",
+    "valid": true,
+    "normalized": "abc123"
+  },
+  {
+    "in": "code-reviewer",
+    "valid": true,
+    "normalized": "code-reviewer"
+  },
+  {
+    "in": "code_reviewer",
+    "valid": true,
+    "normalized": "code_reviewer"
+  },
+  {
+    "in": "code-reviewer_2",
+    "valid": true,
+    "normalized": "code-reviewer_2"
+  },
+  {
+    "in": "A-Z_a-z_0-9",
+    "valid": true,
+    "normalized": "A-Z_a-z_0-9"
+  },
+  {
+    "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": true,
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": false,
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": false,
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!b",
+    "valid": false,
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-b",
+    "valid": false,
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!!bc",
+    "valid": false,
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-b"
+  },
+  {
+    "in": "code reviewer",
+    "valid": false,
+    "normalized": "code-reviewer"
+  },
+  {
+    "in": "code   reviewer",
+    "valid": false,
+    "normalized": "code-reviewer"
+  },
+  {
+    "in": "code @#! reviewer",
+    "valid": false,
+    "normalized": "code-reviewer"
+  },
+  {
+    "in": "a - b",
+    "valid": false,
+    "normalized": "a---b"
+  },
+  {
+    "in": "a--b",
+    "valid": true,
+    "normalized": "a--b"
+  },
+  {
+    "in": "--a--",
+    "valid": true,
+    "normalized": "a"
+  },
+  {
+    "in": "-",
+    "valid": true,
+    "normalized": ""
+  },
+  {
+    "in": "---",
+    "valid": true,
+    "normalized": ""
+  },
+  {
+    "in": "[reviewer]",
+    "valid": false,
+    "normalized": "reviewer"
+  },
+  {
+    "in": "{x}",
+    "valid": false,
+    "normalized": "x"
+  },
+  {
+    "in": "(x)",
+    "valid": false,
+    "normalized": "x"
+  },
+  {
+    "in": "!foo",
+    "valid": false,
+    "normalized": "foo"
+  },
+  {
+    "in": "foo!",
+    "valid": false,
+    "normalized": "foo"
+  },
+  {
+    "in": "  *foo*  ",
+    "valid": false,
+    "normalized": "foo"
+  },
+  {
+    "in": "code.reviewer",
+    "valid": false,
+    "normalized": "code-reviewer"
+  },
+  {
+    "in": "code/reviewer",
+    "valid": false,
+    "normalized": "code-reviewer"
+  },
+  {
+    "in": "code\\reviewer",
+    "valid": false,
+    "normalized": "code-reviewer"
+  },
+  {
+    "in": "code:reviewer",
+    "valid": false,
+    "normalized": "code-reviewer"
+  },
+  {
+    "in": "code\treviewer",
+    "valid": false,
+    "normalized": "code-reviewer"
+  },
+  {
+    "in": "code\nreviewer",
+    "valid": false,
+    "normalized": "code-reviewer"
+  },
+  {
+    "in": "code\u0000reviewer",
+    "valid": false,
+    "normalized": "code-reviewer"
+  },
+  {
+    "in": "codereviewer",
+    "valid": false,
+    "normalized": "code-reviewer"
+  },
+  {
+    "in": "café",
+    "valid": false,
+    "normalized": "caf"
+  },
+  {
+    "in": "🎉",
+    "valid": false,
+    "normalized": ""
+  },
+  {
+    "in": "reviewer😀",
+    "valid": false,
+    "normalized": "reviewer"
+  },
+  {
+    "in": "😀😀",
+    "valid": false,
+    "normalized": ""
+  },
+  {
+    "in": "é",
+    "valid": false,
+    "normalized": "e"
+  },
+  {
+    "in": "日本語",
+    "valid": false,
+    "normalized": ""
+  },
+  {
+    "in": "ab cd",
+    "valid": false,
+    "normalized": "ab-cd"
+  },
+  {
+    "in": "x​y",
+    "valid": false,
+    "normalized": "x-y"
+  },
+  {
+    "in": "Ａｂｃ",
+    "valid": false,
+    "normalized": ""
+  },
+  {
+    "in": "..",
+    "valid": false,
+    "normalized": ""
+  },
+  {
+    "in": "a.b.c",
+    "valid": false,
+    "normalized": "a-b-c"
+  },
+  {
+    "in": " ",
+    "valid": false,
+    "normalized": ""
+  },
+  {
+    "in": "_",
+    "valid": true,
+    "normalized": "_"
+  },
+  {
+    "in": "__init__",
+    "valid": true,
+    "normalized": "__init__"
+  }
+]
