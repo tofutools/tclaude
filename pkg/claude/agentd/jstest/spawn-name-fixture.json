@@ -238,5 +238,15 @@
     "in": "__init__",
     "valid": true,
     "normalized": "__init__"
+  },
+  {
+    "in": "!aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": false,
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "in": "abc\n",
+    "valid": false,
+    "normalized": "abc"
   }
 ]

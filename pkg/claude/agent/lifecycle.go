@@ -180,7 +180,7 @@ const MaxSpawnNameLen = 64
 
 // IsValidSpawnName is the one spawn-name gate, used by this CLI and by the
 // daemon (agentd), and mirrored by the dashboard's SPAWN_NAME_VALID; all three
-// are pinned to testdata/spawn_names.json. It enforces the agent-name charset
+// are pinned to agentd/jstest/spawn-name-fixture.json. It enforces the agent-name charset
 // at the spawn boundary: ASCII letters, digits, '_' and '-' only — no spaces,
 // punctuation, or unicode — and at most MaxSpawnNameLen bytes. An empty name
 // is valid (the name is optional; the agent gets an auto-generated label).

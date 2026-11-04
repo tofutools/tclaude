@@ -11,7 +11,7 @@ export const WT_NEW = '__new__';
 export const SANDBOX_PROFILE_NONE = '/omit-all-tclaude-sandbox-profiles';
 // Mirrors Go's agent.IsValidSpawnName / agent.NormalizeSpawnName; the
 // browser cannot call them, so jstest/spawn-name-fixture pins this copy to
-// the same fixture (pkg/claude/agent/testdata/spawn_names.json).
+// the same fixture (pkg/claude/agentd/jstest/spawn-name-fixture.json).
 export const MAX_SPAWN_NAME_LEN = 64;
 export const SPAWN_NAME_VALID = /^[A-Za-z0-9_-]{1,64}$/;
 

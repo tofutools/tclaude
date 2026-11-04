@@ -12,9 +12,9 @@ import (
 )
 
 // The daemon's spawn-name gate agrees with the shared fixture the CLI and the
-// dashboard JS are pinned to (pkg/claude/agent/testdata/spawn_names.json).
+// dashboard JS are pinned to (jstest/spawn-name-fixture.json).
 func TestSpawnName_DaemonMatchesSharedFixture(t *testing.T) {
-	data, err := os.ReadFile("../agent/testdata/spawn_names.json")
+	data, err := os.ReadFile("jstest/spawn-name-fixture.json")
 	require.NoError(t, err)
 	var rows []struct {
 		In         string `json:"in"`

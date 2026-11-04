@@ -2648,7 +2648,7 @@ func isValidInitialMessage(s string) bool {
 
 // isValidSpawnName is the daemon's name for the one spawn-name gate,
 // agent.IsValidSpawnName; the CLI calls the same function, and the dashboard
-// JS mirror is pinned to the same fixture (agent/testdata/spawn_names.json).
+// JS mirror is pinned to the same fixture (agentd/jstest/spawn-name-fixture.json).
 func isValidSpawnName(name string) bool { return agent.IsValidSpawnName(name) }
 
 // maxSpawnAttachments caps how many attachment paths a single spawn may carry.

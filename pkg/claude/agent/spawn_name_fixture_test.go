@@ -9,9 +9,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// SpawnNameFixtureRow is one row of testdata/spawn_names.json, the one table
-// the spawn-name gate and normalizer are pinned to at every site: this CLI,
-// the daemon (agentd) and the dashboard JS (jstest/spawn-name-fixture).
+// spawnNameFixtureRow is one row of agentd/jstest/spawn-name-fixture.json, the
+// one table the spawn-name gate and normalizer are pinned to at every site:
+// this CLI, the daemon (agentd) and the dashboard JS
+// (jstest/spawn-name-fixture.test.mjs). It lives in jstest so that a change to
+// it, which a Go change here forces, also selects and reruns the JS suite.
 type spawnNameFixtureRow struct {
 	In         string `json:"in"`
 	Valid      bool   `json:"valid"`
@@ -20,7 +22,7 @@ type spawnNameFixtureRow struct {
 
 func loadSpawnNameFixture(t *testing.T) []spawnNameFixtureRow {
 	t.Helper()
-	data, err := os.ReadFile("testdata/spawn_names.json")
+	data, err := os.ReadFile("../agentd/jstest/spawn-name-fixture.json")
 	require.NoError(t, err)
 	var rows []spawnNameFixtureRow
 	require.NoError(t, json.Unmarshal(data, &rows))

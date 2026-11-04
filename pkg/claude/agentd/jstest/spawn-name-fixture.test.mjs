@@ -6,7 +6,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 // The dashboard's spawn-name gate and normalizer agree with the one fixture
 // the Go CLI and daemon are pinned to, so a name the dialog accepts (or
 // rewrites) is exactly what the daemon accepts (or rewrites).
-const rows = JSON.parse(readFileSync(new URL('../../agent/testdata/spawn_names.json', import.meta.url), 'utf8'));
+const rows = JSON.parse(readFileSync(new URL('./spawn-name-fixture.json', import.meta.url), 'utf8'));
 
 test('dashboard spawn-name gate and normalizer match the shared Go fixture', async (t) => {
   const harness = await createPreactHarness(t);
