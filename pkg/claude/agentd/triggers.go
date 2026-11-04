@@ -824,7 +824,7 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 		return nil, "invalid_cwd", fmt.Sprintf("launch directory %q is unavailable", cwd)
 	}
 
-	p := spawnParams{UsageSpawnProfile: profile, Name: name, Role: roleLabel, Descr: profile.Descr, InitialMessage: initialMessage,
+	p := spawnParams{UsageSpawnProfile: profile, spawnCopyCallerTiers: spawnCopyTiers(spawnCopyTier(db.SpawnCopyTierNamed, profile)), Name: name, Role: roleLabel, Descr: profile.Descr, InitialMessage: initialMessage,
 		ProfileContext: profileContext, Cwd: cwd, ReplyToConv: ownerConv, SpawnedByConv: ownerConv, IsOwner: isOwner, PermissionOverrides: overrides, Async: true,
 		// The worker's profile (in the group-default slot below) and the global
 		// default decide remote_control, auto_memory, peer_messaging and the group

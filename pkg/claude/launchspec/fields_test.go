@@ -141,7 +141,17 @@ func renderFieldTables() string {
 				continue
 			}
 			relaunch := f.Layer.Relaunch()
-			if f.Configurable {
+			if len(f.Modes) > 0 {
+				var modes []string
+				for i, m := range f.Modes {
+					s := string(m)
+					if i == 0 {
+						s += " (default)"
+					}
+					modes = append(modes, s)
+				}
+				relaunch = "configurable: " + strings.Join(modes, ", ")
+			} else if f.Configurable {
 				relaunch += ", configurable"
 			}
 			flag := "no"

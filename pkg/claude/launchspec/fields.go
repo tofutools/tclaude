@@ -64,11 +64,14 @@ type Field struct {
 	Key   string
 	Label string
 	Layer Layer
-	// Configurable marks the rows the operator may switch between
-	// re-resolve and reuse in the relaunch policy (operator decision Q9:
-	// group env, group remote-control policy, group startup context and
-	// mission, referenced sandbox profile and role contents).
+	// Configurable marks the rows the relaunch policy can set (operator
+	// decisions Q9 and Q11): group env, group remote-control policy, group
+	// startup context and mission, referenced sandbox profile and role
+	// contents, and the harness-config posture.
 	Configurable bool
+	// Modes are the relaunch modes a configurable row offers, the default
+	// first. Empty means re-resolve (default) or reuse.
+	Modes []RelaunchMode
 	// ProfileFields, GroupFields and RequestFields name the Go struct fields
 	// of db.SpawnProfile, db.AgentGroup and agent.SpawnRequest that feed this
 	// row. A non-empty RequestFields means the value can be set explicitly
@@ -171,10 +174,10 @@ var Fields = []Field{
 	{Key: "roles", Label: "Roles", Layer: LayerSpawnCopy,
 		ProfileFields: []string{"Role", "RoleRef", "RoleRefs"}, RequestFields: []string{"Role", "RoleRef", "RoleRefs"},
 		Why: "Which roles an agent has is part of the copy; their text is a referenced definition."},
-	{Key: "explicit_sandbox_profile", Label: "Sandbox profile and harness-config posture named at spawn", Layer: LayerSpawnCopy,
-		RequestFields: []string{"SandboxProfile", "OmitSandboxProfiles", "HarnessConfig"},
+	{Key: "explicit_sandbox_profile", Label: "Sandbox profile named at spawn", Layer: LayerSpawnCopy,
+		RequestFields: []string{"SandboxProfile", "OmitSandboxProfiles"},
 		Why:           "An explicit choice stays; the named profile's contents are re-read.",
-		Gap:           "An explicit harness-config posture is not re-applied when resume rebuilds the sandbox policy, and a deleted named profile fails the resume."},
+		Gap:           "A deleted named profile fails the resume instead of falling back with a warning."},
 	{Key: "usage_profile_links", Label: "Usage profiles named by the spawn or linked from its spawn profile", Layer: LayerSpawnCopy,
 		RequestFields: []string{"UsageProfiles"},
 		Why:           "Which profiles is part of the copy; their rules are read live."},
@@ -234,6 +237,12 @@ var Fields = []Field{
 	{Key: "role_contents", Label: "Role definitions (text)", Layer: LayerReferenced, Configurable: true,
 		Why: "A role is a named entry in the shared registry; edits to it take effect on relaunch and re-injection.",
 		Gap: "Re-injection after compaction still uses the role text resolved at spawn."},
+	{Key: "harness_config", Label: "Harness config posture", Layer: LayerReferenced, Configurable: true,
+		Modes:         []RelaunchMode{ModeExplicitWins, ModeTightenOnly, ModeChainWins},
+		RequestFields: []string{"HarnessConfig"},
+		Why: "Default chosen for least surprise, not maximum security: an explicit posture stays like any explicit flag. " +
+			"Tighten-only, where a narrower sandbox-profile posture always applies, is the security option.",
+		Gap: "Only explicit wins is implemented; the policy setting is not read yet."},
 	{Key: "usage_assignment", Label: "Group and workspace usage-profile assignment", Layer: LayerLive,
 		Why: "Usage rules are evaluated live against the current assignments."},
 	{Key: "usage_profile_contents", Label: "Usage profile rules", Layer: LayerReferenced,

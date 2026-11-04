@@ -48,8 +48,22 @@ members at once, without a relaunch.
 Five rows can be switched between *re-resolve* (read the current value, the
 default) and *reuse* (keep the value stored at the last launch): group
 environment, group remote-control policy, group startup context and mission,
-sandbox profile contents, and role definitions. The answer is one global
-setting per row. Every other row follows its layer and has no setting.
+sandbox profile contents, and role definitions.
+
+The harness-config posture has three settings, because an explicit
+`--harness-config` choice can disagree with the posture the re-read sandbox
+profiles give:
+
+- *explicit wins* (the default) keeps the explicit posture, as every other
+  explicit flag is kept. It is chosen for least surprise, not maximum
+  security.
+- *tighten-only* keeps the explicit posture unless the profiles' posture is
+  narrower (the read-only floor is on, or fewer paths are reopened). This is
+  the security option.
+- *chain wins* always takes the profiles' posture.
+
+The answer is one global setting per row. Every other row follows its layer
+and has no setting.
 
 ## Fields
 
@@ -90,7 +104,7 @@ setting per row. Every other row follows its layer and has no setting.
 | Profile and explicit environment | `profile_env` | kept (copy) | yes | Part of the spawn profile copy; explicit entries stay explicit. |
 | Profile startup context | `profile_startup_context` | kept (copy) | no | Part of the spawn profile copy; re-injection after compaction uses it. |
 | Roles | `roles` | kept (copy) | yes | Which roles an agent has is part of the copy; their text is a referenced definition. |
-| Sandbox profile and harness-config posture named at spawn | `explicit_sandbox_profile` | kept (copy) | yes | An explicit choice stays; the named profile's contents are re-read. |
+| Sandbox profile named at spawn | `explicit_sandbox_profile` | kept (copy) | yes | An explicit choice stays; the named profile's contents are re-read. |
 | Usage profiles named by the spawn or linked from its spawn profile | `usage_profile_links` | kept (copy) | yes | Which profiles is part of the copy; their rules are read live. |
 
 ### Used by the first spawn only
@@ -122,6 +136,7 @@ setting per row. Every other row follows its layer and has no setting.
 |---|---|---|---|---|
 | Sandbox profile contents | `sandbox_profile_contents` | re-read, configurable | no | Edits to a sandbox profile take effect on the next relaunch (operator decision). |
 | Role definitions (text) | `role_contents` | re-read, configurable | no | A role is a named entry in the shared registry; edits to it take effect on relaunch and re-injection. |
+| Harness config posture | `harness_config` | configurable: explicit-wins (default), tighten-only, chain-wins | yes | Default chosen for least surprise, not maximum security: an explicit posture stays like any explicit flag. Tighten-only, where a narrower sandbox-profile posture always applies, is the security option. |
 | Usage profile rules | `usage_profile_contents` | re-read | no | Usage rules are evaluated live, every few minutes. |
 
 ### Live, not a launch input
@@ -143,12 +158,13 @@ The rules above are the specification. These rows do not follow it yet:
 - **Model** (`model`): No resume path takes a model flag yet; only a morph changes it.
 - **Reasoning effort** (`effort`): No resume path takes an effort flag yet; only a morph changes it.
 - **Model proxy** (`model_proxy`): Reincarnate and clone drop the model proxy.
-- **Sandbox profile and harness-config posture named at spawn** (`explicit_sandbox_profile`): An explicit harness-config posture is not re-applied when resume rebuilds the sandbox policy, and a deleted named profile fails the resume.
+- **Sandbox profile named at spawn** (`explicit_sandbox_profile`): A deleted named profile fails the resume instead of falling back with a warning.
 - **Group environment** (`group_env`): Watch mode and conv resume reuse the stored group environment.
 - **Group remote-control policy** (`group_remote_control`): Resume reuses the remote-control setting stored at the last launch.
 - **Group and workspace sandbox-profile assignment** (`group_sandbox_assignment`): Watch mode and conv resume reuse the stored sandbox policy, and an agent in several groups whose assignments now differ fails the resume.
 - **Sandbox profile contents** (`sandbox_profile_contents`): Watch mode and conv resume reuse the stored contents, and a profile that no longer validates fails the resume instead of falling back with a warning.
 - **Role definitions (text)** (`role_contents`): Re-injection after compaction still uses the role text resolved at spawn.
+- **Harness config posture** (`harness_config`): Only explicit wins is implemented; the policy setting is not read yet.
 
 <!-- launch-gaps:end -->
 
