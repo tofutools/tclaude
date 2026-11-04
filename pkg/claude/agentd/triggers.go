@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -665,6 +666,9 @@ type managedSpawn struct {
 	// else the group's defaults). Kept so a caller that replaces the brief
 	// after planning recomposes it rather than dropping them.
 	promptRefs []string
+	// notes disclose the identity and access decisions a tier other than the
+	// rule made, such as a default profile's grant the owner could not confer.
+	notes []string
 }
 
 // setInitialMessage replaces the planned brief, composing the plan's saved
@@ -753,67 +757,28 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 		return nil, "rate_limited", rateFail.Msg
 	}
 
-	roles := roleRefs
-	if len(roles) == 0 {
-		roles = profile.RoleRefs
+	// Roles, role label, description, saved prompts, startup context, owner
+	// flag and permission overrides resolve over the worker's profile, the
+	// group's default and the global default, with the owner's authority
+	// checked exactly as a direct spawn checks its caller's
+	// (resolveLaunchIdentity). The rule's own roles are the explicit tier.
+	var request agent.SpawnRequest
+	if len(roleRefs) > 0 {
+		request.StateRoleRefs(roleRefs)
 	}
-	profileContext := profile.StartupContext
-	overrides := map[string]db.PermissionOverride{}
-	for slug, v := range profile.PermissionOverrides {
-		overrides[slug] = v
+	identity, fail := resolveLaunchIdentity(launchIdentityRequest{body: request, group: g,
+		harness: harnessOrDefault(profile.Harness), spawner: ownerConv,
+		tiers: defaultLaunchTiers(g, profile, profileSource(profile, agent.ProvCLIProfileSource))})
+	if fail != nil {
+		return nil, managedIdentityFailureKind(fail.Kind), fail.Msg
 	}
-	roleLabel := profile.Role
-	for _, ref := range roles {
-		role, roleErr := db.GetRole(ref)
-		if roleErr != nil {
-			return nil, "io", roleErr.Error()
-		}
-		if role == nil {
-			return nil, "invalid_role", fmt.Sprintf("role %q does not exist", ref)
-		}
-		if roleLabel == "" {
-			roleLabel = role.Name
-		}
-		profileContext = appendRoleBlock(profileContext, role.Brief)
-		for _, grant := range role.Permissions {
-			candidate := db.PermissionOverride{Effect: db.PermEffectGrant, Scope: grant.Scope}
-			if prior, ok := overrides[grant.Slug]; ok && prior != candidate {
-				return nil, "invalid_role", "roles grant incompatible scopes for " + grant.Slug
-			}
-			overrides[grant.Slug] = candidate
-		}
-	}
-	// Saved prompts open the worker's brief the way they do a direct spawn's:
-	// the profile's set, else the group's own default prompts.
-	promptRefs := cleanRoleRefs(profile.PromptRefs)
-	if len(promptRefs) == 0 {
-		promptRefs = cleanRoleRefs(g.DefaultPrompts)
-	}
-	if harnessOrDefault(profile.Harness) == harness.ShellName {
-		promptRefs = nil
-	}
+	promptRefs := identity.promptRefs
 	if len(promptRefs) > 0 {
 		composed, fail := composeSavedPrompts(promptRefs, initialMessage)
 		if fail != nil {
 			return nil, fail.Kind, fail.Msg
 		}
 		initialMessage = composed
-	}
-	if ownerConv != "" && len(overrides) > 0 {
-		if resolvePermission(ownerConv, PermPermissionsGrant) != permAllow {
-			return nil, "permission_denied", "spawn profile/roles confer permissions but owner lacks " + PermPermissionsGrant
-		}
-		if err := checkGrantAttenuation(ownerConv, grantConferee{descendantByConstruction: true}, conferredGrantsFromOverrides(overrides)); err != nil {
-			return nil, "permission_denied", err.Error()
-		}
-	}
-	isOwner := profile.IsOwner != nil && *profile.IsOwner
-	if ownerConv != "" && isOwner {
-		allowed, _ := durableOwnerAllows("trigger", ownerConv, PermGroupsOwnersManage,
-			ActionContext{Group: g.Name, structuralGroup: g.Name})
-		if !allowed {
-			return nil, "permission_denied", "spawn profile confers group ownership but owner lacks " + PermGroupsOwnersManage
-		}
 	}
 	cwd := strings.TrimSpace(g.DefaultCwd)
 	if cwd == "" && ownerConv != "" {
@@ -828,16 +793,14 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 		return nil, "invalid_cwd", fmt.Sprintf("launch directory %q is unavailable", cwd)
 	}
 
-	p := spawnParams{UsageSpawnProfile: profile, managedProfile: profile, spawnCopyCallerTiers: spawnCopyTiers(spawnCopyTier(db.SpawnCopyTierNamed, profile)), Name: name, Role: roleLabel, Descr: profile.Descr, InitialMessage: initialMessage,
-		ProfileContext: profileContext, Cwd: cwd, ReplyToConv: ownerConv, SpawnedByConv: ownerConv, IsOwner: isOwner, PermissionOverrides: overrides, Async: true,
+	p := spawnParams{UsageSpawnProfile: profile, managedProfile: profile, spawnCopyCallerTiers: spawnCopyTiers(spawnCopyTier(db.SpawnCopyTierNamed, profile)), Name: name, Role: identity.role, Descr: identity.descr, InitialMessage: initialMessage,
+		ProfileContext: identity.startupContext, Cwd: cwd, ReplyToConv: ownerConv, SpawnedByConv: ownerConv,
+		IsOwner: identity.isOwner, PermissionOverrides: identity.overrides, Async: true,
+		LaunchNotes: identity.launchNotes(),
 		// The worker's profile is the named tier, above the group's and the
-		// global default profile (tcl-vciikv), for the launch fields
-		// applyDefaultProfile resolves. Roles, role label, descr, permission
-		// overrides, ownership, saved prompts and (when the worker has roles
-		// or its own context) startup context are still composed above from
-		// the worker's profile alone; a default profile never confers
-		// permissions or ownership on a worker. With no tier speaking, the
-		// group context is included, as it always was for these workers.
+		// global default profile, for every launch field: identity above, the
+		// rest in applyDefaultProfile. With no tier speaking, the group context
+		// is included, as it always was for these workers.
 		IncludeGroupContextDefault: true}
 	if fail := resolveManagedLaunch(g, &p, ownerConv, false); fail != nil {
 		if fail.Kind == "io" || fail.Kind == "permission_denied" || isManagedProfileRefusal(fail.Kind) {
@@ -856,7 +819,21 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 			"this firing is authorized by a grant scoped to sandbox profile %s, and its launch (spawn profile %s over the group's and the global default profiles) resolves a mode that would not enforce it",
 			sandboxProfileForScope, profile.Name)
 	}
-	return &managedSpawn{group: g, params: p, promptRefs: promptRefs}, "", ""
+	return &managedSpawn{group: g, params: p, promptRefs: promptRefs, notes: identity.notes}, "", ""
+}
+
+// managedIdentityFailureKind maps a refused identity resolution onto the
+// outcome kinds a managed worker's run records.
+func managedIdentityFailureKind(kind string) string {
+	switch kind {
+	case "io", "invalid_role":
+		return kind
+	case "role_scope_conflict":
+		return "invalid_role"
+	case "forbidden", "scope_not_attenuated":
+		return "permission_denied"
+	}
+	return "spawn_failed"
 }
 
 type managedWorkerSource struct {
@@ -955,7 +932,7 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 	}
 	_ = db.AddAgentTags(agentID, source.Tag)
 	rearmManagedProfileRefusal(source.Tag)
-	return "spawned", "", agentID
+	return "spawned", strings.Join(plan.notes, "; "), agentID
 }
 
 // managedSourceLabel names a managed worker's automation for a notice.

@@ -816,6 +816,10 @@ func (r SpawnRequest) RoleRefsSpecified() bool { return r.roleRefsSpecified }
 // PromptRefsSpecified reports whether prompt_refs appeared in decoded JSON.
 func (r SpawnRequest) PromptRefsSpecified() bool { return r.promptRefsSpecified }
 
+// StateRoleRefs records an explicit role set, so it wins over the profiles'
+// roles the way a role_refs key on the wire does.
+func (r *SpawnRequest) StateRoleRefs(v []string) { r.RoleRefs, r.roleRefsSpecified = v, true }
+
 // StatePromptRefs records an explicit saved-prompt set, so an empty set still
 // overrides the profile and group defaults.
 func (r *SpawnRequest) StatePromptRefs(v []string) { r.PromptRefs, r.promptRefsSpecified = v, true }
