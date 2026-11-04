@@ -795,7 +795,7 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 
 	p := spawnParams{UsageSpawnProfile: profile, managedProfile: profile, spawnCopyCallerTiers: spawnCopyTiers(spawnCopyTier(db.SpawnCopyTierNamed, profile)), Name: name, Role: identity.role, Descr: identity.descr, InitialMessage: initialMessage,
 		ProfileContext: identity.startupContext, Cwd: cwd, ReplyToConv: ownerConv, SpawnedByConv: ownerConv,
-		IsOwner: identity.isOwner, PermissionOverrides: identity.overrides, Async: true,
+		IsOwner: identity.isOwner, PermissionOverrides: identity.overrides, PermissionSources: identity.overrideSources, Async: true,
 		LaunchNotes: identity.launchNotes(),
 		// The worker's profile is the named tier, above the group's and the
 		// global default profile, for every launch field: identity above, the

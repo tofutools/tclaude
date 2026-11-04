@@ -64,7 +64,8 @@ func CopyCloneIdentity(agentID string, identity CloneIdentity, grantedBy string)
 				effect     = excluded.effect,
 				granted_at = excluded.granted_at,
 				granted_by = excluded.granted_by,
-				scope_json = excluded.scope_json`,
+				scope_json = excluded.scope_json,
+				birth_source = ''`,
 			agentID, p.Slug, p.Effect, now, grantedBy, p.ScopeJSON); err != nil {
 			return fmt.Errorf("copy permission %s: %w", p.Slug, err)
 		}

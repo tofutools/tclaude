@@ -121,6 +121,46 @@ type AgentPermission struct {
 	ScopeJSON string
 	GrantedAt time.Time
 	GrantedBy string
+	// BirthSource is the spawn profile (and role) a birth write took this row
+	// from, nil when it was not written at birth from a profile or has been
+	// written since.
+	BirthSource *PermissionBirthSource
+}
+
+// PermissionBirthSource names where a birth-time permission row came from:
+// the spawn profile whose tier won the slug, and the role when the profile
+// conferred it through a role. Stored as JSON in agent_permissions.birth_source.
+//
+// Only a birth write records one, and every other write of the row resets it,
+// so a row carrying one is exactly what that profile wrote and nobody changed
+// since. Re-applying the profile may touch such rows and no others: explicit,
+// operator, generator, imported and cloned rows never carry one, and sudo
+// grants live in agent_sudo_grants.
+type PermissionBirthSource struct {
+	ProfileID int64  `json:"profile_id"`
+	Role      string `json:"role,omitempty"`
+}
+
+func encodePermissionBirthSource(src *PermissionBirthSource) (string, error) {
+	if src == nil || src.ProfileID <= 0 {
+		return "", nil
+	}
+	raw, err := json.Marshal(src)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func decodePermissionBirthSource(raw string) *PermissionBirthSource {
+	if raw == "" {
+		return nil
+	}
+	var src PermissionBirthSource
+	if json.Unmarshal([]byte(raw), &src) != nil || src.ProfileID <= 0 {
+		return nil
+	}
+	return &src
 }
 
 // AgentGroupPermission is one live group grant. ScopeJSON is empty for an
@@ -572,7 +612,7 @@ func ListAgentPermissionOverrideRowsForConv(convID string) ([]AgentPermission, e
 	if agentID == "" {
 		return []AgentPermission{}, nil
 	}
-	rows, err := db.Query(`SELECT slug, effect, scope_json, granted_at, granted_by
+	rows, err := db.Query(`SELECT slug, effect, scope_json, granted_at, granted_by, birth_source
 		FROM agent_permissions WHERE agent_id = ? ORDER BY slug`, agentID)
 	if err != nil {
 		return nil, err
@@ -582,11 +622,13 @@ func ListAgentPermissionOverrideRowsForConv(convID string) ([]AgentPermission, e
 	for rows.Next() {
 		var row AgentPermission
 		var grantedAt dbTimestamp
-		if err := rows.Scan(&row.Slug, &row.Effect, &row.ScopeJSON, &grantedAt, &row.GrantedBy); err != nil {
+		var birthSource string
+		if err := rows.Scan(&row.Slug, &row.Effect, &row.ScopeJSON, &grantedAt, &row.GrantedBy, &birthSource); err != nil {
 			return nil, err
 		}
 		row.ConvID = convID
 		row.GrantedAt = grantedAt.Time()
+		row.BirthSource = decodePermissionBirthSource(birthSource)
 		out = append(out, row)
 	}
 	return out, rows.Err()
@@ -708,6 +750,18 @@ func SetAgentPermissionOverride(convID, slug, effect, grantedBy string) error {
 // SetAgentPermissionOverrideWithScope is the scoped storage twin. Callers are
 // responsible for validating and canonicalizing scopeJSON before this layer.
 func SetAgentPermissionOverrideWithScope(convID, slug, effect, scopeJSON, grantedBy string) error {
+	return setAgentPermissionOverrideForConv(convID, slug, effect, scopeJSON, grantedBy, nil)
+}
+
+// SetAgentBirthPermissionOverride is the birth-time write: the same row as
+// SetAgentPermissionOverrideWithScope, recording the spawn profile it came
+// from (nil when the request, a role the request named, or worker defaults
+// set it).
+func SetAgentBirthPermissionOverride(convID, slug, effect, scopeJSON, grantedBy string, source *PermissionBirthSource) error {
+	return setAgentPermissionOverrideForConv(convID, slug, effect, scopeJSON, grantedBy, source)
+}
+
+func setAgentPermissionOverrideForConv(convID, slug, effect, scopeJSON, grantedBy string, source *PermissionBirthSource) error {
 	if effect != PermEffectGrant && effect != PermEffectDeny {
 		return fmt.Errorf("invalid permission effect %q (want %q or %q)", effect, PermEffectGrant, PermEffectDeny)
 	}
@@ -725,7 +779,7 @@ func SetAgentPermissionOverrideWithScope(convID, slug, effect, scopeJSON, grante
 	if agentID == "" {
 		return fmt.Errorf("SetAgentPermissionOverride: no actor for conv %s", convID)
 	}
-	return SetAgentPermissionOverrideByAgentIDWithScope(agentID, slug, effect, scopeJSON, grantedBy)
+	return setAgentPermissionOverrideByAgentID(agentID, slug, effect, scopeJSON, grantedBy, source)
 }
 
 // SetAgentPermissionOverrideByAgentID writes a permission override directly
@@ -738,6 +792,14 @@ func SetAgentPermissionOverrideByAgentID(agentID, slug, effect, grantedBy string
 }
 
 func SetAgentPermissionOverrideByAgentIDWithScope(agentID, slug, effect, scopeJSON, grantedBy string) error {
+	return setAgentPermissionOverrideByAgentID(agentID, slug, effect, scopeJSON, grantedBy, nil)
+}
+
+func setAgentPermissionOverrideByAgentID(agentID, slug, effect, scopeJSON, grantedBy string, source *PermissionBirthSource) error {
+	birthSource, err := encodePermissionBirthSource(source)
+	if err != nil {
+		return err
+	}
 	if effect != PermEffectGrant && effect != PermEffectDeny {
 		return fmt.Errorf("invalid permission effect %q (want %q or %q)", effect, PermEffectGrant, PermEffectDeny)
 	}
@@ -752,14 +814,15 @@ func SetAgentPermissionOverrideByAgentIDWithScope(agentID, slug, effect, scopeJS
 		return err
 	}
 	res, err := db.Exec(`INSERT INTO agent_permissions
-		(agent_id, slug, effect, granted_at, granted_by, scope_json)
-		SELECT ?, ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL
+		(agent_id, slug, effect, granted_at, granted_by, scope_json, birth_source)
+		SELECT ?, ?, ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL
 		ON CONFLICT(agent_id, slug) DO UPDATE SET
-			effect     = excluded.effect,
-			granted_at = excluded.granted_at,
-			granted_by = excluded.granted_by,
-			scope_json = excluded.scope_json`,
-		agentID, slug, effect, dbTime(time.Now()), grantedBy, scopeJSON, agentID)
+			effect       = excluded.effect,
+			granted_at   = excluded.granted_at,
+			granted_by   = excluded.granted_by,
+			scope_json   = excluded.scope_json,
+			birth_source = excluded.birth_source`,
+		agentID, slug, effect, dbTime(time.Now()), grantedBy, scopeJSON, birthSource, agentID)
 	if err != nil {
 		return err
 	}
@@ -860,7 +923,10 @@ func ApplyAgentPermissionOverrides(convID string, overrides map[string]Permissio
 			effect = excluded.effect,
 			granted_at = excluded.granted_at,
 			granted_by = excluded.granted_by,
-			scope_json = excluded.scope_json`
+			scope_json = excluded.scope_json,
+			birth_source = ''`
+	// Either arm resets birth_source: a row written here is no longer only
+	// what a spawn profile put there, so a profile re-apply must leave it.
 	if preserveSameEffectProvenance {
 		upsert = `INSERT INTO agent_permissions
 			(agent_id, slug, effect, granted_at, granted_by, scope_json)
@@ -875,7 +941,8 @@ func ApplyAgentPermissionOverrides(convID string, overrides map[string]Permissio
 				granted_by = CASE
 					WHEN agent_permissions.effect = excluded.effect THEN agent_permissions.granted_by
 					ELSE excluded.granted_by
-				END`
+				END,
+				birth_source = ''`
 	}
 	for slug, override := range overrides {
 		res, err := tx.Exec(upsert, agentID, slug, override.Effect, now, grantedBy, override.Scope, agentID)

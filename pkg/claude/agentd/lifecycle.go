@@ -4867,6 +4867,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		externalStewardGated:        externalSpawn,
 		IsOwner:                     identity.isOwner,
 		PermissionOverrides:         identity.overrides,
+		PermissionSources:           identity.overrideSources,
 		Timeout:                     timeout,
 		// Verbatim decoded request captured at the HTTP boundary, before the
 		// working body was resolved or normalized. enrollSpawnedConv persists it
@@ -5498,6 +5499,11 @@ type spawnParams struct {
 	// (§ checkGrantAttenuation). nil/empty = inherit the group's default
 	// permissions.
 	PermissionOverrides map[string]db.PermissionOverride
+	// PermissionSources names the spawn profile each override came from
+	// (launchIdentity.overrideSources), recorded as the row's birth_source.
+	// A path that does not resolve identity (the pending-spawn sweeper, the
+	// group-template instantiator) leaves it nil, so those rows record none.
+	PermissionSources map[string]db.PermissionBirthSource
 	// PermissionGranter overrides the ordinary spawn-actor audit label for
 	// birth-time permission rows. It is reserved for trusted server-minted
 	// correlation such as scribe summon approvals; ordinary spawn requests
@@ -8951,7 +8957,11 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 	}
 	for _, slug := range db.SortedOverrideSlugs(p.PermissionOverrides) {
 		override := p.PermissionOverrides[slug]
-		if err := db.SetAgentPermissionOverrideWithScope(convID, slug, override.Effect, override.Scope, permissionGranter); err != nil {
+		var source *db.PermissionBirthSource
+		if src, ok := p.PermissionSources[slug]; ok {
+			source = &src
+		}
+		if err := db.SetAgentBirthPermissionOverride(convID, slug, override.Effect, override.Scope, permissionGranter, source); err != nil {
 			slog.Warn("spawn: failed to apply birth permission override",
 				"conv", convID, "slug", slug, "effect", override.Effect, "scope", override.Scope, "error", err)
 		}
