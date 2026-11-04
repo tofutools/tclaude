@@ -299,6 +299,28 @@ func SetAgentLaunchLayersIfUnset(agentID string, layers *AgentLaunchLayers) (boo
 	return n > 0, err
 }
 
+// morphUndoKeysTx is the launchspec keys an agent's last morph recorded (its
+// MorphUndo), or none.
+func morphUndoKeysTx(tx *sql.Tx, agentID string) (map[string]bool, error) {
+	var raw string
+	err := tx.QueryRow(`SELECT launch_layers FROM agents WHERE agent_id = ?`, agentID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	layers, err := decodeAgentLaunchLayers(raw)
+	if err != nil || layers == nil {
+		return nil, err
+	}
+	keys := map[string]bool{}
+	for key := range layers.MorphUndo {
+		keys[key] = true
+	}
+	return keys, nil
+}
+
 // applyMorphExplicitTx records a morph in an agent's explicit layer. A
 // morph writes values: each one's request fields are merged into the
 // field's existing entry, so a field set alongside it earlier

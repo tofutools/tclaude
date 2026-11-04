@@ -114,8 +114,10 @@ every profile and stays the agent's value on every relaunch. A flag given at
 resume becomes the agent's new explicit value from then on. So does each
 field a morph changes, across harnesses too: re-applying the agent's spawn
 profile afterwards keeps the morphed values, and the fields no morph changed
-follow the profile. A morph back undoes this, so after a morph and a morph
-back the agent's explicit values are what they were before the morph.
+follow the profile. A morph back undoes this: it restores only the fields its
+morph changed, and afterwards the agent's explicit values are what they were
+before the morph. A field a re-applied profile set in between keeps the
+profile's value.
 
 **Harness, model, effort and directory are fixed.** They are chosen at first
 spawn and only change by an explicit action: a morph, an explicit resume flag,

@@ -16,9 +16,10 @@ import (
 // The morph's explicit entries use launchspec's field keys and request field
 // names, which the relaunch resolver and the re-apply preview read.
 func TestMorphExplicitValuesUseLaunchspecNames(t *testing.T) {
-	values := morphExplicitValues(AgentMorphForm{Model: morphStr("opus"), Effort: morphStr("high"), Approval: morphStr("plan"),
+	values := morphExplicitValues(AgentMorphForm{Harness: "codex", HarnessBuiltinMode: morphStr("tclaude-agent"),
+		Model: morphStr("opus"), Effort: morphStr("high"), Approval: morphStr("plan"),
 		Tools: morphStr("strict"), AskTimeout: morphStr("5m"), AutoCompactWindow: morphStr("200k")}, AgentMorphForm{}, time.Now())
-	require.Len(t, values, 6)
+	require.Len(t, values, 8)
 	for key, value := range values {
 		field, ok := launchspec.Lookup(key)
 		require.Truef(t, ok, "%s is not a launchspec key", key)

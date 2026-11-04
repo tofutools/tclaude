@@ -207,6 +207,34 @@ func morphExplicitValues(f, previous AgentMorphForm, at time.Time) map[string]Ex
 	return out
 }
 
+// morphFormForKeys is f with only the fields of the given launchspec keys.
+// The model's context window goes with the model.
+func morphFormForKeys(f AgentMorphForm, keys map[string]bool) AgentMorphForm {
+	out := AgentMorphForm{Profile: f.Profile, Harness: f.Harness}
+	if keys["model"] {
+		out.Model, out.ContextWindowSize = f.Model, f.ContextWindowSize
+	}
+	if keys["effort"] {
+		out.Effort = f.Effort
+	}
+	if keys["approval"] {
+		out.Approval = f.Approval
+	}
+	if keys["tools"] {
+		out.Tools = f.Tools
+	}
+	if keys["ask_timeout"] {
+		out.AskTimeout = f.AskTimeout
+	}
+	if keys["context_window"] {
+		out.AutoCompactWindow = f.AutoCompactWindow
+	}
+	if keys["sandbox_mode"] {
+		out.HarnessBuiltinMode = f.HarnessBuiltinMode
+	}
+	return out
+}
+
 // CurrentMorphForm returns the agent's current morphable launch form plus the
 // previous form recorded by its last morph (nil when it was never morphed).
 func CurrentMorphForm(convID string) (current AgentMorphForm, previous *AgentMorphForm, err error) {
@@ -307,6 +335,18 @@ func ApplyAgentMorphForConv(convID string, target AgentMorphForm, back bool) (Ag
 			base = ComposeAgentRelaunchProfile(conversation.FallbackRelaunch, p)
 		}
 		previous = morphFormOf(base, p.MorphProfile)
+		if back {
+			// A back with an undo record restores only the fields its morph
+			// changed: a field a spawn-copy re-apply set since keeps that
+			// value rather than the one recorded at morph time.
+			keys, err := morphUndoKeysTx(tx, agentID)
+			if err != nil {
+				return err
+			}
+			if len(keys) > 0 {
+				target = morphFormForKeys(target, keys)
+			}
+		}
 		if err := applyMorphExplicitTx(tx, agentID, morphExplicitValues(target, previous, time.Now()), back); err != nil {
 			return err
 		}

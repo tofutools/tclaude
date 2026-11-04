@@ -97,3 +97,38 @@ func TestMorph_BackUndoesTheExplicitValues(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "acceptEdits", approval, "the approval follows the re-applied profile again")
 }
+
+// Morph, re-apply, back: the back restores only what the morph changed, so a
+// field the re-applied profile set in between keeps the profile's value.
+func TestMorph_BackAfterAReapplyKeepsTheReappliedFields(t *testing.T) {
+	t.Setenv(session.ResourceDelegationDirEnv, "")
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	rec := createProfile(t, f, map[string]any{"name": "agentic", "ask_user_question_timeout": "5m", "approval": "auto"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create profile body=%s", rec.Body.String())
+	spawn := spawnStopped(t, f, "crew", map[string]any{"name": "worker", "profile": "agentic"})
+	before, err := db.AgentLaunchLayersForConv(spawn.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, before)
+
+	rec = f.AsHuman().Morph(spawn.AgentID, map[string]any{"approval": "plan"})
+	require.Equal(t, "morphed", decodeMorph(t, rec.Code, rec.Body.Bytes()).Result)
+	newCopy := editedCopy(t, "agentic", func(p *db.SpawnProfile) { p.AskUserQuestionTimeout = "10m" })
+	kind, msg := agentd.ApplySpawnCopyForTest(agentIDFor(t, spawn.ConvID), newCopy)
+	require.Empty(t, kind, msg)
+	rec = f.AsHuman().Morph(spawn.AgentID, map[string]any{"back": true})
+	require.Equal(t, "morphed", decodeMorph(t, rec.Code, rec.Body.Bytes()).Result)
+
+	layers, err := db.AgentLaunchLayersForConv(spawn.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, layers)
+	assert.Equal(t, before.Explicit, layers.Explicit, "the back undoes the morph's explicit values")
+	resumeAgain(t, f, spawn.ConvID)
+	approval, ok := f.World.SpawnApproval(spawn.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, "auto", approval, "the morphed field is back")
+	askTimeout, ok := f.World.SpawnAskTimeout(spawn.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, "10m", askTimeout, "the re-applied field keeps the profile's value")
+}
