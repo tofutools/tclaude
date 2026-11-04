@@ -804,11 +804,13 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 	}
 
 	p := spawnParams{UsageSpawnProfile: profile, Name: name, Role: roleLabel, Descr: profile.Descr, InitialMessage: initialMessage,
-		ProfileContext: profileContext, Cwd: cwd, ReplyToConv: ownerConv, SpawnedByConv: ownerConv, IsOwner: isOwner, PermissionOverrides: overrides, Async: true}
-	includeGroup := profile.IncludeGroupDefaultContext == nil || *profile.IncludeGroupDefaultContext
-	if includeGroup {
-		p.GroupContext = g.DefaultContext
-	}
+		ProfileContext: profileContext, Cwd: cwd, ReplyToConv: ownerConv, SpawnedByConv: ownerConv, IsOwner: isOwner, PermissionOverrides: overrides, Async: true,
+		// The worker's profile (in the group-default slot below) and the global
+		// default decide remote_control, auto_memory, peer_messaging and the group
+		// context in applyDefaultProfile, as on every other spawn path
+		// (TCL-1107); with no tier speaking, the group context is included, as it
+		// always was for these workers.
+		IncludeGroupContextDefault: true}
 	profileGroup := *g
 	profileGroup.DefaultProfile = profile.Name
 	if fail := applyDefaultProfile(&profileGroup, &p); fail != nil {

@@ -172,6 +172,35 @@ up current group environment settings while retaining the original higher-tier
 overrides. A process that is already running keeps its existing environment
 until one of those lifecycle actions.
 
+#### Remote control, auto memory, peer messaging and group context
+
+Four profile toggles — `remote_control`, `auto_memory`, `peer_messaging` and
+`include_group_default_context` — resolve the same way on every spawn path:
+a direct spawn, a template or task-force deploy, a scribe or Steward summon, a
+trigger worker and a process worker. Highest first:
+
+1. the explicit flag (direct spawn only)
+2. the group's remote-control policy (`groups set-remote-control`; remote
+   control only)
+3. the named profile (`--profile`, a template agent's inline or referenced
+   profile, a trigger action's or process node's profile)
+4. the group's default spawn profile
+5. the global default spawn profile
+6. off — except the group context, which falls back to the path's own
+   default: included for direct spawns, deploys, trigger and process workers;
+   left out for scribes and `--non-interactive` one-shots
+
+Remote control is honoured for unattended trigger and process workers too, so
+a profile or group policy that turns it on makes those workers reachable from
+the Claude app. A `--non-interactive` one-shot never gets remote control: it
+has no session to control. A value derived from a policy or profile is dropped
+for a harness with no Remote Access instead of failing the spawn.
+
+!!! note
+    A trigger or process worker's profile currently takes the group default
+    profile's place for every launch field, so the group default profile is not
+    consulted for those workers (tiers 3 and 5 only).
+
 The harness resolves through the full chain *first*; the other fields then
 validate against it. An incompatible explicit flag is a loud error; an
 incompatible value from a lower profile tier is skipped, falls through, and

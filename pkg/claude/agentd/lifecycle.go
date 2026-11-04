@@ -4108,36 +4108,17 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	body.TrustDir = launchBools.Value[launchBoolTrustDir]
 	trustDirSet := launchBools.Set[launchBoolTrustDir]
 	trustDirNote := launchBools.Note[launchBoolTrustDir]
-	// auto_memory rides the same tier stack, but note the default it falls back
-	// to: unset everywhere resolves to FALSE, and false here means tclaude
-	// injects CLAUDE_CODE_DISABLE_AUTO_MEMORY=1. That is deliberate — Claude
-	// Code's per-project memory store is shared by every agent on the repo, so
-	// leaving it on cross-pollutes their notes. Only an explicit opt-in (spawn
-	// body or a matching profile) turns it back on.
-	var autoMemory bool
-	autoMemory, _, _, autoMemoryNote, fieldFail = resolveBoolLaunchField(
-		"auto_memory", body.AutoMemory != nil && *body.AutoMemory, body.AutoMemory != nil, h.Name, profileTiers,
-		func(p *db.SpawnProfile) *bool { return p.AutoMemory },
-		func(v bool) (bool, error) { return harness.ResolveAutoMemory(h, &v) })
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+	// auto_memory and peer_messaging ride the shared table (TCL-1107). Unset
+	// everywhere resolves to FALSE — see launchBoolFieldSpecs for why the
+	// load-bearing default is off for both.
+	launchBools.Value[launchBoolAutoMemory], launchBools.Set[launchBoolAutoMemory] = body.AutoMemory != nil && *body.AutoMemory, body.AutoMemory != nil
+	launchBools.Value[launchBoolPeerMessaging], launchBools.Set[launchBoolPeerMessaging] = body.PeerMessaging != nil && *body.PeerMessaging, body.PeerMessaging != nil
+	if _, fail := resolveLaunchBoolFields(h, profileTiers, &launchBools, launchBoolAutoMemory, launchBoolPeerMessaging); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
-	// peer_messaging rides the same tier stack with the same fallback, and for a
-	// closely related reason: unset everywhere resolves to FALSE, and false here
-	// means tclaude injects the refusal. Claude Code's own cross-session
-	// messaging is a second coordination channel with none of tclaude's group
-	// membership, permission slugs or audit trail, so only an explicit opt-in
-	// (spawn body or a matching profile) reopens it.
-	var peerMessaging bool
-	peerMessaging, _, _, peerMessagingNote, fieldFail = resolveBoolLaunchField(
-		"peer_messaging", body.PeerMessaging != nil && *body.PeerMessaging, body.PeerMessaging != nil, h.Name, profileTiers,
-		func(p *db.SpawnProfile) *bool { return p.PeerMessaging },
-		func(v bool) (bool, error) { return harness.ResolvePeerMessaging(h, &v) })
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
-		return
-	}
+	autoMemory, autoMemoryNote := launchBools.Value[launchBoolAutoMemory], launchBools.Note[launchBoolAutoMemory]
+	peerMessaging, peerMessagingNote := launchBools.Value[launchBoolPeerMessaging], launchBools.Note[launchBoolPeerMessaging]
 	// The Copilot drive rides the same tier stack, with the same fallback the
 	// send-keys path has always had: unset everywhere is FALSE. Only an explicit
 	// opt-in (spawn body or a matching Copilot profile) selects the API drive, so
@@ -4171,15 +4152,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// merely NAMES a profile honour its toggle — the agentd TUI does exactly that,
 	// while `tclaude agent spawn` and the dashboard both send an explicit flag.
 	// Unset at every tier keeps the long-standing default: include.
-	includeGroupContext, includeGroupContextSet, includeGroupContextSource, _, fieldFail := resolveBoolLaunchField(
-		includeGroupContextField, body.IncludeGroupContext != nil && *body.IncludeGroupContext,
-		body.IncludeGroupContext != nil, h.Name, profileTiers,
-		func(p *db.SpawnProfile) *bool { return p.IncludeGroupDefaultContext },
-		func(v bool) (bool, error) { return v, nil })
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+	launchBools.Value[launchBoolIncludeGroupContext] = body.IncludeGroupContext != nil && *body.IncludeGroupContext
+	launchBools.Set[launchBoolIncludeGroupContext] = body.IncludeGroupContext != nil
+	if _, fail := resolveLaunchBoolFields(h, profileTiers, &launchBools, launchBoolIncludeGroupContext); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	includeGroupContext := launchBools.Value[launchBoolIncludeGroupContext]
+	includeGroupContextSet := launchBools.Set[launchBoolIncludeGroupContext]
+	includeGroupContextSource := launchBools.Source[launchBoolIncludeGroupContext]
 	if !includeGroupContextSet {
 		includeGroupContext = true
 	}
@@ -4950,13 +4931,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// flag silently dropped. body.RemoteControl is tri-state (*bool): only a
 	// non-nil request is validated here (the dashboard form always sends one for a
 	// Remote-Access-capable harness; the CLI sets &true on opt-in). nil = caller
-	// said nothing → the policy stack below fills it. See JOH-258.
-	if body.RemoteControl != nil {
-		if _, rcErr := harness.ResolveRemoteControl(h, *body.RemoteControl); rcErr != nil {
-			writeError(w, http.StatusBadRequest, "invalid_remote_control", rcErr.Error())
-			return
-		}
-	}
+	// said nothing → the policy stack below fills it. See JOH-258. The
+	// validation runs first inside resolveRemoteControlLaunch.
 	// Layer the spawn-time policy stack (JOH-262, revised): an explicit per-spawn
 	// value (the dashboard form / CLI flag) is AUTHORITATIVE — it overrides BOTH
 	// the group's remote-control policy AND the group default profile's default,
@@ -4975,31 +4951,17 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// remote-control policy, which must win — but the daemon can and does, so a
 	// caller that merely names a profile gets its default under that policy
 	// rather than losing it. That is what makes the toggle real for the agentd
-	// TUI, which names a profile and sends no flag of its own.
-	var profileRemoteControl *bool
-	for _, tier := range profileTiers {
-		prof := tier.profile
-		if prof == nil || prof.RemoteControl == nil {
-			continue
-		}
-		if !profileMatchesHarness(prof, h.Name) {
-			resolvedLaunch.Notes = append(resolvedLaunch.Notes,
-				fmt.Sprintf("%s remote_control ignored (not valid for %s)", tier.source, h.Name))
-			continue
-		}
-		if _, err := harness.ResolveRemoteControl(h, *prof.RemoteControl); err == nil {
-			profileRemoteControl = prof.RemoteControl
-			break
-		} else {
-			writeError(w, http.StatusBadRequest, "invalid_remote_control", fmt.Sprintf("profile %q: %v", prof.Name, err))
-			return
-		}
+	// TUI, which names a profile and sends no flag of its own. The same
+	// resolver serves every other spawn path (TCL-1107).
+	remoteControl, remoteControlNote, rcFail := resolveRemoteControlLaunch(h, profileTiers, g.RemoteControl, body.RemoteControl)
+	if remoteControlNote != "" {
+		resolvedLaunch.Notes = append(resolvedLaunch.Notes, remoteControlNote)
 	}
-	remoteControl := resolveRemoteControlIntent(g.RemoteControl, profileRemoteControl, body.RemoteControl)
+	if rcFail != nil {
+		writeError(w, rcFail.Status, rcFail.Kind, rcFail.Msg)
+		return
+	}
 	if body.NonInteractive {
-		remoteControl = false
-	}
-	if remoteControl && !h.CanRemoteControl() {
 		remoteControl = false
 	}
 
@@ -5111,6 +5073,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		RemoteControl:               remoteControl,
 		AutoMemory:                  autoMemory,
 		PeerMessaging:               peerMessaging,
+		launchTogglesResolved:       true, // resolved above over the full tier stack
 		ContextFeatures:             contextFeatures,
 		AutoCompactWindow:           autoCompactWindow,
 		ContextWindowMax:            body.ContextWindowMax,
@@ -5568,6 +5531,18 @@ type spawnParams struct {
 	// harness.ResolvePeerMessaging); a harness with no cross-session messaging
 	// system (Codex) rejects a true value.
 	PeerMessaging bool
+	// launchTogglesResolved says RemoteControl, AutoMemory, PeerMessaging and
+	// GroupContext were already decided by a caller that resolved them over its
+	// own tier stack (the direct spawn boundary, the template deploy), so
+	// applyDefaultProfile leaves them alone. Unset, applyDefaultProfile resolves
+	// all four over the tiers it sees (TCL-1107) and sets this, so the second
+	// pass a trigger worker or a deferred continuation makes is a no-op.
+	launchTogglesResolved bool
+	// IncludeGroupContextDefault is what include_group_context falls back to on
+	// the applyDefaultProfile path when no profile tier sets it: on for a
+	// trigger or process worker, off (the zero value) for a scribe, matching
+	// what each path did before any tier was consulted.
+	IncludeGroupContextDefault bool
 	// ContextFeatures is the resolved per-agent startup-context trim map (slug →
 	// "on" | "off"), forwarding `--context-features <slug>=<state>,…` to `tclaude
 	// session new`; nil/empty omits the flag so the agent keeps Claude Code's own
@@ -6064,9 +6039,9 @@ func globalDefaultProfile() *db.SpawnProfile {
 // the SERVER fallback for callers that reach handleGroupSpawn with no explicit
 // value (CLI `tclaude agent spawn` without the flag, or `tclaude --join-group`):
 // with requested nil, the group policy wins, then the profile default, then off.
-// (The group-template instantiator does NOT route through here — it builds its
-// spawnParams directly and leaves remote-control off; see instantiate in
-// templates.go.)
+// Every spawn path reaches this through resolveRemoteControlLaunch (TCL-1107):
+// the direct spawn, the template deploy, and — via applyDefaultProfile — the
+// scribe, trigger and process workers.
 //
 // requested is the already-validated explicit per-spawn value, tri-state (*bool):
 // non-nil = the form/flag stated an intent (true OR false); nil = unspecified, so
@@ -6764,6 +6739,9 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	p.FastModeSource = preferResolvedSource(p.FastModeSource, launchBools.Source[launchBoolFastMode])
 	p.SSHWorkaround, p.SSHWorkaroundSet = launchBools.Value[launchBoolSSHWorkaround], launchBools.Set[launchBoolSSHWorkaround]
 	p.SSHWorkaroundSource = preferResolvedSource(p.SSHWorkaroundSource, launchBools.Source[launchBoolSSHWorkaround])
+	if fail := applyDefaultLaunchToggles(g, h, tiers, p); fail != nil {
+		return fail
+	}
 	// NB: the block below force-sets SSHWorkaroundSet for the harness default, so
 	// that bit says "this launch has a posture" and not "someone chose one" — the
 	// same conflation this ticket is about. The attribution above is captured
@@ -6811,6 +6789,58 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if p.TrustDir, err = harness.ResolveTrustDir(h, p.TrustDir); err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_trust_dir", err.Error()}
 	}
+	return nil
+}
+
+// applyDefaultLaunchToggles resolves remote_control, auto_memory,
+// peer_messaging and include_group_context for a caller that reached
+// executeSpawn without resolving them itself — a scribe, a trigger worker, a
+// process worker — over the same resolver the direct spawn uses (TCL-1107):
+// group remote-control policy > profile tiers > off, and for the group context
+// profile tiers > the caller's IncludeGroupContextDefault. A value already
+// true counts as requested, as it does for the other opt-in toggles here.
+func applyDefaultLaunchToggles(g *db.AgentGroup, h *harness.Harness, tiers []launchProfileTier, p *spawnParams) *spawnFailure {
+	if p.launchTogglesResolved {
+		return nil
+	}
+	var groupPolicy *bool
+	if g != nil {
+		groupPolicy = g.RemoteControl
+	}
+	var explicitRC *bool
+	if p.RemoteControl {
+		explicitRC = &p.RemoteControl
+	}
+	remoteControl, note, fail := resolveRemoteControlLaunch(h, tiers, groupPolicy, explicitRC)
+	if note != "" {
+		p.LaunchNotes = append(p.LaunchNotes, note)
+	}
+	if fail != nil {
+		return fail
+	}
+	var launchBools launchBoolResolution
+	launchBools.Value[launchBoolAutoMemory], launchBools.Set[launchBoolAutoMemory] = p.AutoMemory, p.AutoMemory
+	launchBools.Value[launchBoolPeerMessaging], launchBools.Set[launchBoolPeerMessaging] = p.PeerMessaging, p.PeerMessaging
+	notes, fail := resolveLaunchBoolFields(h, tiers, &launchBools,
+		launchBoolAutoMemory, launchBoolPeerMessaging, launchBoolIncludeGroupContext)
+	p.LaunchNotes = append(p.LaunchNotes, notes...)
+	if fail != nil {
+		return fail
+	}
+	p.RemoteControl = remoteControl
+	p.AutoMemory = launchBools.Value[launchBoolAutoMemory]
+	p.PeerMessaging = launchBools.Value[launchBoolPeerMessaging]
+	includeGroupContext := p.IncludeGroupContextDefault
+	if launchBools.Set[launchBoolIncludeGroupContext] {
+		includeGroupContext = launchBools.Value[launchBoolIncludeGroupContext]
+		p.LaunchNotes = append(p.LaunchNotes, fmt.Sprintf("%s include_group_context = %v",
+			launchBools.Source[launchBoolIncludeGroupContext], includeGroupContext))
+	}
+	p.GroupContext = ""
+	if includeGroupContext && g != nil {
+		p.GroupContext = g.DefaultContext
+	}
+	p.launchTogglesResolved = true
 	return nil
 }
 

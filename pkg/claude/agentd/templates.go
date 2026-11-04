@@ -766,6 +766,11 @@ type templateAgentLaunch struct {
 	// template-deployed agent. Resolved from the profile tiers like AutoMemory;
 	// defaults off, which makes the launch inject the refusal.
 	PeerMessaging bool
+	// IncludeGroupContext is whether the deploy folds the group's (template's)
+	// shared context into this agent's brief. On unless a profile tier — the
+	// referenced profile, or the group/global default — turns it off (TCL-1107).
+	// Role and process blocks are added either way.
+	IncludeGroupContext bool
 	// SSHWorkaround is the resolved Git-over-SSH compatibility posture.
 	// It defaults on for a managed Codex launch or any tclaude-layer launch,
 	// then the effective sandbox clamps it to shapes that need it. A referenced
@@ -1125,12 +1130,12 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 	// not, and this is measured rather than assumed (TCL-1107): a differential
 	// between one launch through handleGroupSpawn and one through the executeSpawn
 	// safety net — same group, same default profile, neither pinning anything —
-	// disagrees about SEVEN fields. applyDefaultProfile does not resolve
-	// remote_control, auto_memory or context_features at all, and for
+	// disagreed about SEVEN fields. TCL-1107 closed remote_control,
+	// auto_memory, peer_messaging and include_group_context: they resolve over
+	// these default tiers too, below. context_features still does not, and for
 	// sandbox/approval this resolver has already applied the harness secure
 	// default further down, so the ambient tier is dead before the safety net
-	// looks. Closing those is TCL-1107; they change CONTAINMENT rather than
-	// vendor, so they want their own decision rather than a ride on this one.
+	// looks; those change CONTAINMENT and want their own decision.
 	//
 	// Gated up front on BOTH profiles rather than only the one that wins, so a
 	// deploy blocked by a profile the caller may not use fails with that reason
@@ -1301,41 +1306,39 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 	}
 	trustDir, trustDirSet := launchBools.Value[launchBoolTrustDir], launchBools.Set[launchBoolTrustDir]
 	autoReview, autoReviewSet := launchBools.Value[launchBoolAutoReview], launchBools.Set[launchBoolAutoReview]
-	// Remote control + AskUserQuestion timeout resolve on the same pattern —
-	// harness-gated, off/"" unless a profile tier explicitly set them — so a
-	// template-local or referenced profile's value actually reaches the spawn
-	// (pre-profile_inline these two never made it past the profile row).
-	remoteControl, _, _, note, fail := resolveBoolLaunchField("remote_control", false, false, h.Name, tiers,
-		func(p *db.SpawnProfile) *bool { return p.RemoteControl }, func(v bool) (bool, error) { return harness.ResolveRemoteControl(h, v) })
-	if fail != nil {
-		return failed(fail)
+	// remote_control, auto_memory, peer_messaging and include_group_context
+	// resolve over the FULL stack — the template's own tiers, then the group's
+	// and the workspace's default profiles — with the group's remote-control
+	// policy above the profiles, through the resolver every spawn path shares
+	// (TCL-1107). Before it, only the template tiers spoke here, and the
+	// group policy never did. A template has no explicit spelling for any of
+	// them. Unset everywhere keeps the old answers: the three toggles off, the
+	// group context included.
+	toggleTiers := append(append([]launchProfileTier(nil), tiers...), defaultTiers...)
+	var groupRemoteControl *bool
+	if g != nil {
+		groupRemoteControl = g.RemoteControl
 	}
+	remoteControl, note, fail := resolveRemoteControlLaunch(h, toggleTiers, groupRemoteControl, nil)
 	if note != "" {
 		notes = append(notes, note)
 	}
-	// Auto memory rides the same pattern, but its default is the load-bearing
-	// one: unset resolves to off, i.e. tclaude disables Claude Code's shared
-	// per-project memory store for template-deployed agents too.
-	autoMemory, _, _, memNote, fail := resolveBoolLaunchField("auto_memory", false, false, h.Name, tiers,
-		func(p *db.SpawnProfile) *bool { return p.AutoMemory },
-		func(v bool) (bool, error) { return harness.ResolveAutoMemory(h, &v) })
 	if fail != nil {
 		return failed(fail)
 	}
-	if memNote != "" {
-		notes = append(notes, memNote)
-	}
-	// Peer messaging rides the same pattern with the same load-bearing default:
-	// unset resolves to off, i.e. tclaude closes Claude Code's own messaging
-	// mesh for template-deployed agents too.
-	peerMessaging, _, _, peerNote, fail := resolveBoolLaunchField("peer_messaging", false, false, h.Name, tiers,
-		func(p *db.SpawnProfile) *bool { return p.PeerMessaging },
-		func(v bool) (bool, error) { return harness.ResolvePeerMessaging(h, &v) })
+	boolNotes, fail = resolveLaunchBoolFields(h, toggleTiers, &launchBools,
+		launchBoolAutoMemory, launchBoolPeerMessaging, launchBoolIncludeGroupContext)
+	notes = append(notes, boolNotes...)
 	if fail != nil {
 		return failed(fail)
 	}
-	if peerNote != "" {
-		notes = append(notes, peerNote)
+	autoMemory := launchBools.Value[launchBoolAutoMemory]
+	peerMessaging := launchBools.Value[launchBoolPeerMessaging]
+	includeGroupContext := true
+	if launchBools.Set[launchBoolIncludeGroupContext] {
+		includeGroupContext = launchBools.Value[launchBoolIncludeGroupContext]
+		notes = append(notes, fmt.Sprintf("%s include_group_context = %v",
+			launchBools.Source[launchBoolIncludeGroupContext], includeGroupContext))
 	}
 	// The Copilot drive rides the same pattern, with the same default: unset
 	// resolves to off, i.e. a template-deployed Copilot agent stays on send-keys
@@ -1420,6 +1423,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 		RemoteControl:          remoteControl,
 		AutoMemory:             autoMemory,
 		PeerMessaging:          peerMessaging,
+		IncludeGroupContext:    includeGroupContext,
 		SSHWorkaround:          sshWorkaround,
 		SSHWorkaroundSet:       sshWorkaroundSet,
 		ContextFeatures:        contextFeatures,

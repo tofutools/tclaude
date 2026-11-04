@@ -201,6 +201,9 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		// Fold the role brief ("## Role") + the template process ("## Process")
 		// into THIS agent's startup context — no-ops when absent.
 		agentContext := groupContext
+		if !launch.IncludeGroupContext {
+			agentContext = ""
+		}
 		for _, role := range roles {
 			agentContext = appendRoleBlock(agentContext, role.Brief)
 		}
@@ -287,6 +290,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			RemoteControl:               launch.RemoteControl,
 			AutoMemory:                  launch.AutoMemory,
 			PeerMessaging:               launch.PeerMessaging,
+			launchTogglesResolved:       true,
 			SSHWorkaround:               launch.SSHWorkaround,
 			SSHWorkaroundSet:            launch.SSHWorkaroundSet,
 			SSHWorkaroundSource:         launch.SSHWorkaroundSource,

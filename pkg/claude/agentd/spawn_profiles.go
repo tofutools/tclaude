@@ -444,8 +444,8 @@ func buildInlineProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawn
 		return &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf(
 			"profile_inline: %q is not supported on a template-local profile — identity fields "+
 				"(agent_name/role/descr/initial_message) belong on the template agent itself, and the "+
-				"spawn-dialog toggles (sync_worktree/fetch_latest_worktree/auto_focus/include_group_default_context) do not "+
-				"apply to a template deploy", field)}
+				"spawn-dialog toggles (sync_worktree/fetch_latest_worktree/auto_focus) do not apply to a template "+
+				"deploy; include_group_default_context is honoured from a referenced or default profile only", field)}
 	}
 	if strings.TrimSpace(body.Name) != "" {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",

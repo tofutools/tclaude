@@ -293,7 +293,8 @@ default; your own configuration rules.
 - **Auto memory is off by default.** tclaude launches Claude Code with
   `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` so agents sharing a checkout do not
   cross-pollute the per-project memory store. Opt back in per launch with
-  `--auto-memory`. `CLAUDE.md` is unaffected. See
+  `--auto-memory` or a spawn profile's `auto_memory`. `CLAUDE.md` is
+  unaffected. See
   [memory-files](utilities.md#tclaude-memory-files) for inspecting the store.
 - **The agent view is off by default.** tclaude launches Claude Code with
   `CLAUDE_CODE_DISABLE_AGENT_VIEW=1`, so left arrow in a managed pane is a plain
@@ -308,7 +309,8 @@ default; your own configuration rules.
   per-session socket). That is a second coordination channel with none of
   tclaude's group membership, permission slugs, or audit trail, so tclaude
   closes it and leaves `tclaude agent send` as the way agents coordinate. Opt
-  back in per launch with `--peer-messaging`. **In-harness subagents are
+  back in per launch with `--peer-messaging` or a spawn profile's
+  `peer_messaging`. **In-harness subagents are
   unaffected either way** — the deny names `ListAgents`, never `SendMessage`.
   See [Peer messaging](utilities.md#claude-code-peer-messaging).
 - **Startup-context trimming** (`--context-features`) removes bundled skills,
@@ -324,7 +326,10 @@ default; your own configuration rules.
   instead of stalling forever on a clarifying question.
 - **Remote control** (`--remote-control`, or toggled later) arms Claude Code's
   built-in Remote Access so the session is reachable from claude.ai/code and
-  the Claude mobile app. Claude Code only. See [Remote](remote.md).
+  the Claude mobile app. Claude Code only. See [Remote](remote.md). The
+  three profile toggles resolve the same way on every spawn path, trigger and
+  process workers included; see
+  [Default resolution](spawning-and-lifecycle.md#default-resolution).
 - **Background shells and monitors** are tracked per task, so an agent waiting
   on one shows `⚙+N` / `👁+N` instead of `idle` in the
   [dashboard](dashboard.md).

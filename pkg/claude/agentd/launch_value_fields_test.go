@@ -221,6 +221,8 @@ func TestLaunchBoolFieldSpecs_ProfileColumns(t *testing.T) {
 	columns := map[string]string{
 		"auto_review": "AutoReview", "trust_dir": "TrustDir", "copilot_api": "CopilotAPI",
 		"codex_app_server": "CodexAppServer", "fast_mode": "FastMode", "ssh_workaround": "SSHWorkaround",
+		"auto_memory": "AutoMemory", "peer_messaging": "PeerMessaging", "remote_control": "RemoteControl",
+		"include_group_context": "IncludeGroupDefaultContext",
 	}
 	require.Len(t, columns, int(launchBoolFieldCount))
 	names := map[string]bool{}
@@ -316,6 +318,14 @@ func TestLaunchBoolFieldSpecs_Validators(t *testing.T) {
 		launchBoolSSHWorkaround: func(h *harness.Harness, v bool) (bool, error) {
 			return harness.ResolveSSHWorkaround(h, &v)
 		},
+		launchBoolAutoMemory: func(h *harness.Harness, v bool) (bool, error) {
+			return harness.ResolveAutoMemory(h, &v)
+		},
+		launchBoolPeerMessaging: func(h *harness.Harness, v bool) (bool, error) {
+			return harness.ResolvePeerMessaging(h, &v)
+		},
+		launchBoolRemoteControl:       harness.ResolveRemoteControl,
+		launchBoolIncludeGroupContext: func(_ *harness.Harness, v bool) (bool, error) { return v, nil },
 	}
 	require.Len(t, want, int(launchBoolFieldCount))
 	for _, name := range []string{"claude", "codex", "opencode", "copilot", "gemini", "pi"} {
