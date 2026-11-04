@@ -217,7 +217,7 @@ var Fields = []Field{
 	{Key: "group_env", Label: "Group environment", Layer: LayerGroup, Configurable: true,
 		GroupFields: []string{"Environment"},
 		Why:         "Group settings are kept current, for agents spawned before this table too (operator decision).",
-		Gap:         "Watch mode and conv resume reuse the stored group environment."},
+		Gap:         "With agentd down, watch mode and conv resume reuse the stored group environment, and say so."},
 	{Key: "group_remote_control", Label: "Group remote-control policy", Layer: LayerGroup, Configurable: true,
 		GroupFields: []string{"RemoteControl"},
 		Why:         "Group settings are kept current; still clamped to what the harness supports.",
@@ -228,12 +228,12 @@ var Fields = []Field{
 	{Key: "group_sandbox_assignment", Label: "Group and workspace sandbox-profile assignment", Layer: LayerGroup,
 		GroupFields: []string{"SandboxProfile", "SandboxProfileID"},
 		Why:         "Which profile a group or the workspace assigns is a setting, kept current.",
-		Gap:         "Watch mode and conv resume reuse the stored sandbox policy."},
+		Gap:         "With agentd down, watch mode and conv resume reuse the stored sandbox policy, and say so."},
 
 	// --- contents of referenced profiles ---
 	{Key: "sandbox_profile_contents", Label: "Sandbox profile contents", Layer: LayerReferenced, Configurable: true,
 		Why: "Edits to a sandbox profile take effect on the next relaunch (operator decision).",
-		Gap: "Watch mode and conv resume reuse the stored contents."},
+		Gap: "With agentd down, watch mode and conv resume reuse the stored contents, and say so."},
 	{Key: "role_contents", Label: "Role definitions (text)", Layer: LayerReferenced, Configurable: true,
 		Why: "A role is a named entry in the shared registry; edits to it take effect on relaunch and re-injection.",
 		Gap: "Re-injection after compaction still uses the role text resolved at spawn."},
@@ -242,7 +242,7 @@ var Fields = []Field{
 		RequestFields: []string{"HarnessConfig"},
 		Why: "Default chosen for least surprise, not maximum security: an explicit posture stays like any explicit flag. " +
 			"Tighten-only, where a narrower sandbox-profile posture always applies, is the security option.",
-		Gap: "Watch mode and conv resume keep the stored posture, as does a resume that falls back to the stored policy when the profiles cannot be read at all; the setting applies on the agent's next ordinary resume."},
+		Gap: "With agentd down, watch mode and conv resume keep the stored posture, as does a resume that falls back to the stored policy when the profiles cannot be read at all; the setting applies on the agent's next ordinary resume."},
 	{Key: "usage_assignment", Label: "Group and workspace usage-profile assignment", Layer: LayerLive,
 		Why: "Usage rules are evaluated live against the current assignments."},
 	{Key: "usage_profile_contents", Label: "Usage profile rules", Layer: LayerReferenced,

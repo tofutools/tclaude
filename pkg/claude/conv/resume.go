@@ -216,6 +216,15 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 
 	tmuxSession := session.UniqueTmuxSessionName(session.TmuxNameBase(sessionID, "", rc.ProjectPath))
 
+	// The agent's sandbox, prepared as an ordinary resume prepares it.
+	relaunch, err := prepareStandaloneRelaunch(rc.ConvID, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
+	}
+	launched := false
+	defer func() { relaunch.settle(launched) }()
+
 	// Build the in-tmux launch command via the conv's own harness, mirroring
 	// the watch-mode resume (createSessionForConv): a Codex conv relaunches
 	// with `codex resume <id>`, Claude Code with `claude --resume <id>`.
@@ -304,6 +313,7 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 		fmt.Fprintf(stderr, "Failed to create tmux session: %v\n", err)
 		return 1
 	}
+	launched = true
 
 	// Get PID and save state (starts as idle, waiting for user input).
 	// Carry the resolved harness onto the saved row so a non-claude tag is

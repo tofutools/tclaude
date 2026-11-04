@@ -1501,6 +1501,8 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/sandbox-profiles", handleSandboxProfiles)
 	mux.HandleFunc("/v1/harness-config-repairs", handleHarnessConfigRepairs)
 	mux.HandleFunc("/v1/relaunch-policy", serveRelaunchPolicy)
+	mux.HandleFunc("/v1/relaunch-sandbox/prepare", handleStandaloneRelaunchPrepare)
+	mux.HandleFunc("/v1/relaunch-sandbox/settle", handleStandaloneRelaunchSettle)
 	mux.HandleFunc("/v1/sandbox-profile-read-exclusions", handleSandboxCommonRuleCatalog)
 	mux.HandleFunc("/v1/sandbox-profile-default", handleGlobalSandboxProfile)
 	mux.HandleFunc("/v1/sandbox-impl-default", handleSandboxDefaultImplementation)
