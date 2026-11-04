@@ -25,6 +25,9 @@ type launchIdentityRequest struct {
 	// spawner is the agent the birth-time access is checked against. "" is the
 	// human or an operator-authored automation, which passes.
 	spawner string
+	// request is the spawner's request, when there is one, so the owner check
+	// sees the same sudo state the spawn gate did.
+	request *http.Request
 	// oneShot is a non-interactive spawn with no enrolled identity: it takes no
 	// roles, owner flag or grants.
 	oneShot bool
@@ -66,7 +69,8 @@ func (id launchIdentity) launchNotes() []string {
 // winning profile's permission overrides.
 //
 // The access gate runs on the RESOLVED values. A spawner must hold the slug
-// the dedicated endpoints require: groups.owners.manage to mint an owner and
+// the dedicated endpoints require: groups.owners.manage, scoped to cover the
+// target group, to mint an owner (spawnerGrantCoversGroup) and
 // permissions.grant to set overrides, and it may never confer a grant wider
 // than its own (checkGrantAttenuation). Group ownership is deliberately not
 // enough: owner-state confers only the owner-implied lifecycle slugs, so
@@ -188,7 +192,14 @@ func resolveLaunchIdentity(in launchIdentityRequest) (launchIdentity, *spawnFail
 	}
 
 	if in.spawner != "" {
-		if isOwner && resolvePermission(in.spawner, PermGroupsOwnersManage) != permAllow {
+		mayMint := false
+		if isOwner {
+			var err error
+			if mayMint, err = spawnerGrantCoversGroup(in.request, in.spawner, PermGroupsOwnersManage, in.group); err != nil {
+				return out, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+			}
+		}
+		if isOwner && !mayMint {
 			if !launchTierIsDefault(tiers, isOwnerSource) {
 				return out, &spawnFailure{http.StatusForbidden, "forbidden",
 					"making the spawned agent a group owner requires the " + PermGroupsOwnersManage + " permission"}
@@ -234,6 +245,29 @@ func resolveLaunchIdentity(in launchIdentityRequest) (launchIdentity, *spawnFail
 	}
 	out.isOwner, out.overrides = isOwner, overrides
 	return out, nil
+}
+
+// spawnerGrantCoversGroup reports whether spawner holds slug as a grant whose
+// scope covers group g, the group the spawn lands in. It is the scope-aware
+// check the owners-add endpoint makes, so a groups.owners.manage grant scoped
+// to group X mints an owner in X and nowhere else, through either door. Only
+// GRANTS count: group ownership's structural share of the slug does not, so an
+// owner cannot mint a child owner at spawn without holding the slug.
+func spawnerGrantCoversGroup(r *http.Request, spawner, slug string, g *db.AgentGroup) (bool, error) {
+	if g == nil {
+		return false, nil
+	}
+	if r == nil {
+		var err error
+		if r, err = http.NewRequest(http.MethodPost, "http://spawn.invalid", nil); err != nil {
+			return false, err
+		}
+	}
+	v := resolvePermissionVerdictForRequest(r, spawner, slug)
+	if v.Resolution != permAllow {
+		return false, nil
+	}
+	return evalPermissionScope(v, spawner, ActionContext{Group: g.Name, structuralGroup: g.Name}).Satisfied, nil
 }
 
 // defaultLaunchTiers is the tier stack beneath a named profile: the group's

@@ -43,8 +43,9 @@ The flags that matter most:
   display and routing label), `--role-ref` (a saved role — brief plus
   baseline permissions, see below), `--descr` (one-line dashboard label),
   `--task <url>` and `--task-label` (the dashboard Task column link),
-  `--owner` / `--no-owner` (owner spawns need `groups.owners.manage`
-  authority).
+  `--owner` / `--no-owner` (owner spawns need a `groups.owners.manage`
+  grant covering the target group: one scoped to a group mints owners in
+  that group only, and owning the group is not enough).
 - **Brief**: `--initial-message`, or `--file <path>` (`-` reads stdin;
   16384-byte cap) for anything long, multi-line, or containing backticks.
   `--reply-to` picks who the agent's first reply reaches; it defaults to

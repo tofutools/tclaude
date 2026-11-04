@@ -4235,7 +4235,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// a trigger, schedule or process worker gets (resolveLaunchIdentity).
 	identity, identityFail := resolveLaunchIdentity(launchIdentityRequest{
 		body: body, overrides: permOverrides, group: g, harness: h.Name, tiers: profileTiers,
-		spawner: spawnerConvID, oneShot: body.NonInteractive && !federationJob,
+		spawner: spawnerConvID, request: r, oneShot: body.NonInteractive && !federationJob,
 		nonInteractive: body.NonInteractive, workerDefaults: workerDefaults})
 	if identityFail != nil {
 		writeError(w, identityFail.Status, identityFail.Kind, identityFail.Msg)
