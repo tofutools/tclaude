@@ -163,7 +163,11 @@ applied; its resume says so.
 
 The group environment, sandbox profile contents and remote-control rows act
 on resume, reincarnation, and watch mode and `conv resume` while agentd runs.
-Clones do not read these rows yet (see below).
+All three rows also act on a clone in its source's groups, as on the
+source's own resume, and a clone that keeps its source's environment or
+sandbox follows the matching row. A clone that joins another group otherwise
+takes that group's settings. Like a resume, a clone whose re-read profiles
+cannot be applied launches under the stored policy and says so.
 
 The harness-config posture has three settings, because an explicit
 `--harness-config` choice can disagree with the posture the re-read sandbox
@@ -204,7 +208,7 @@ and editing the table in the Config tab, need `relaunch-policy.manage`, which
 is not granted by default. Without it the Config tab shows the table
 read-only. Treat it like `sandbox-profiles.manage`: one answer can widen what
 a relaunch gives every agent. A change takes effect on each agent's next
-resume or reincarnation (and, for harness_config, clone). The API is `GET`
+resume, reincarnation or clone. The API is `GET`
 and `PUT /v1/relaunch-policy` (`{"field", "mode"}`; an empty mode resets the
 row to its default).
 
@@ -302,10 +306,10 @@ The rules above are the specification. These rows do not follow it yet:
 - **Reasoning effort** (`effort`): No resume path takes an effort flag yet; only a morph changes it.
 - **Model proxy** (`model_proxy`): Reincarnate and clone drop the model proxy. A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
 - **Roles** (`roles`): A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
-- **Group environment** (`group_env`): With agentd down, watch mode and conv resume reuse the stored group environment, and say so; a clone re-reads it whatever the policy says.
-- **Group remote-control policy** (`group_remote_control`): Clone keeps the remote-control state stored at the last launch, whatever the policy says; so do watch mode and conv resume while agentd is not running.
+- **Group environment** (`group_env`): With agentd down, watch mode and conv resume reuse the stored group environment, and say so. A clone that joins another group takes that group's environment, unless it keeps its source's.
+- **Group remote-control policy** (`group_remote_control`): Watch mode and conv resume keep the remote-control state stored at the last launch while agentd is not running, and so does a clone that joins another group for its sandbox.
 - **Group and workspace sandbox-profile assignment** (`group_sandbox_assignment`): With agentd down, watch mode and conv resume reuse the stored sandbox policy, and say so.
-- **Sandbox profile contents** (`sandbox_profile_contents`): With agentd down, watch mode and conv resume reuse the stored contents, and say so; a clone re-reads them whatever the policy says.
+- **Sandbox profile contents** (`sandbox_profile_contents`): With agentd down, watch mode and conv resume reuse the stored contents, and say so. A Codex clone with a generated profile always re-reads them, and a clone that joins another group for its sandbox takes that group's current profiles.
 - **Harness config posture** (`harness_config`): With agentd down, watch mode and conv resume keep the stored posture, as does a resume that falls back to the stored policy when the profiles cannot be read at all; the setting applies on the agent's next ordinary resume.
 
 <!-- launch-gaps:end -->
