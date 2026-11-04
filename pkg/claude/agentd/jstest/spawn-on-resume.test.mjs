@@ -78,6 +78,13 @@ test('relaunch policy dialog: Default, Follow global and the modes, with what ea
   assert.match(row('group_env').querySelector('[data-mode="default"]').getAttribute('title'), /Reuse \(profile pinned\)/);
   assert.ok(row('group_env').querySelector('[data-mode="inherit"]'), 'a spawn can follow the global table');
   assert.equal(row('harness_config').querySelectorAll('[data-mode]').length, 5, 'Default, Follow global and three modes');
+  assert.equal(view.container.querySelector('#relaunch-policy-banner'), null, 'no intro banner: it is behind the title\'s [?]');
+  assert.match(view.container.querySelector('#relaunch-policy-help-hint').textContent, /Follow global takes the global table/);
+  assert.equal(row('group_env').querySelector('.perm-row-desc'), null, 'no row description under the label');
+  assert.equal(row('group_env').querySelector('#relaunch-policy-help-group_env-hint').textContent, 'Group settings are kept current.');
+  assert.equal(row('group_env').querySelector('.perm-row-slug').getAttribute('title'), 'Group settings are kept current.');
+  assert.equal(view.container.querySelector('#relaunch-policy-layers').hasAttribute('open'), false, 'the other inputs start collapsed');
+  assert.equal(view.container.querySelector('[data-relaunch-layers-summary]').textContent, '1 copied at spawn · 1 fixed');
 
   await pick('group_env', 'inherit');
   assert.match(effect('group_env'), /Re-resolve · global/, 'Follow global shows what that resolves to');

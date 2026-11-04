@@ -18,6 +18,7 @@ import { useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { Dialog } from './ui-dialog.js';
+import { HelpDisclosure } from './help-field.js';
 import { useGuardedOverlayClose } from './management-overlay.js';
 import { MODE_LABELS, READONLY_SECTIONS } from './relaunch-policy-table.js';
 
@@ -51,6 +52,11 @@ function sectionList(members) {
   return members.map((f) => f.label).join(' · ');
 }
 
+// InlineHelp is a heading-sized [?] (help-field.js) whose copy opens below it.
+function InlineHelp(props) {
+  return html`<span class="sbx-section-help sbx-section-legend"><${HelpDisclosure} ...${props} /></span>`;
+}
+
 export function RelaunchPolicyDialog({ descriptor, state, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const rows = (descriptor.rows || []).filter((row) => row.settable !== false);
@@ -59,6 +65,9 @@ export function RelaunchPolicyDialog({ descriptor, state, confirmDiscard }) {
   const ownSource = forProfile ? 'this profile' : 'this spawn';
   const [baseline] = useState(() => ({ ...(descriptor.selection || {}) }));
   const [selection, setSelection] = useState(() => ({ ...baseline }));
+  // One help popover open at a time, keyed by its id.
+  const [helpOpen, setHelpOpen] = useState('');
+  const helpProps = (id) => ({ id, open: helpOpen === id, setOpen: setHelpOpen });
   const current = (field) => selection[field] || '';
   const dirty = JSON.stringify(Object.entries(selection).sort()) !== JSON.stringify(Object.entries(baseline).sort());
   const choose = (field, next) => setSelection((before) => {
@@ -79,13 +88,23 @@ export function RelaunchPolicyDialog({ descriptor, state, confirmDiscard }) {
     const effect = descriptor.inherited?.[row.field] || { value: row.mode, source: 'global' };
     return `Leave it to ${forProfile ? 'the global table' : 'the spawn profiles, then the global table'}: ${modeLabel(effect.value)} (${effect.source})`;
   };
+  // The intro is behind the title's [?]: the controls and what each row comes
+  // to carry the dialog on their own.
+  const subject = forProfile ? 'an agent spawned from this profile' : 'this agent';
+  const below = forProfile ? 'the global table' : 'the spawn profiles, then the global table';
+  const introText = `What a later resume or reincarnation of ${subject} re-reads, and what it keeps. `
+    + `Default leaves a row to ${below}${forProfile ? '' : '; Follow global takes the global table even where a profile sets the row'}. `
+    + 'The global table is in Config › Launch.';
+  const intro = html`What a later resume or reincarnation of ${subject} re-reads, and what it keeps.${' '}
+    <strong>Default</strong> leaves a row to ${below}${forProfile ? '' : html`; <strong>Follow global</strong> takes the global table even where a profile sets the row`}.${' '}
+    The global table is in Config › Launch.`;
+  const title = html`<span id="relaunch-policy-title-text">On resume</span>${' '}<${InlineHelp}
+    ...${helpProps('relaunch-policy-help')} label="On resume" help=${introText} content=${intro} />`;
+  const layerSections = READONLY_SECTIONS.filter((s) => s.kind !== 'once')
+    .map((section) => ({ section, members: fields.filter((f) => !f.configurable && section.layers.includes(f.layer)) }))
+    .filter(({ members }) => members.length);
   return html`<${Dialog} id="relaunch-policy-modal" dialogClass="perm-edit-modal relaunch-policy-modal" onClose=${state.close} dirty=${dirty} confirmDiscard=${confirmDiscard}
-    guard=${{ requestClose, registerClose }} title="On resume">
-    <div class="perm-edit-banner" id="relaunch-policy-banner">
-      What a later resume or reincarnation of ${forProfile ? 'an agent spawned from this profile' : 'this agent'} re-reads, and what it keeps.${' '}
-      <strong>Default</strong> leaves a row to ${forProfile ? 'the global table' : 'the spawn profiles, then the global table'}${forProfile ? '' : html`; <strong>Follow global</strong> takes the global table even where a profile sets the row`}.${' '}
-      The global table is in Config › Launch.
-    </div>
+    guard=${{ requestClose, registerClose }} title=${title} labelledby="relaunch-policy-title-text">
     <p class="perm-edit-subtitle" id="relaunch-policy-subtitle">${
       descriptor.label ? `${forProfile ? 'Profile' : 'New agent'} “${descriptor.label}”` : (forProfile ? 'Profile' : 'New agent')} · copied at spawn</p>
     <div class="perm-edit-toolbar">
@@ -99,8 +118,8 @@ export function RelaunchPolicyDialog({ descriptor, state, confirmDiscard }) {
       const effect = relaunchRowEffect(row, selection, descriptor.inherited, ownSource);
       return html`<div class="perm-row" key=${row.field} data-relaunch-field=${row.field}>
         <div class="perm-row-info">
-          <span class="perm-row-slug">${row.label}</span>
-          <span class="perm-row-desc" title=${row.why || ''}>${row.why || ''}</span>
+          <span class="perm-row-slug" title=${row.why || ''}>${row.label}${row.why ? html`${' '}<${InlineHelp}
+            ...${helpProps(`relaunch-policy-help-${row.field}`)} label=${row.label} help=${row.why} />` : ''}</span>
         </div>
         <div class="ui-seg perm-tristate">
           ${segment(row, '', 'Default', defaultTitle(row))}
@@ -110,13 +129,11 @@ export function RelaunchPolicyDialog({ descriptor, state, confirmDiscard }) {
         <span class="perm-row-eff" data-relaunch-effect title=${row.gap || ''}>${modeLabel(effect.value)} · ${effect.source}</span>
       </div>`;
     })}</div>
-    ${fields.length > 0 && html`<details class="relaunch-policy-layers" id="relaunch-policy-layers">
-      <summary>Every other input follows its layer</summary>
-      <ul>${READONLY_SECTIONS.filter((s) => s.kind !== 'once').map((section) => {
-        const members = fields.filter((f) => !f.configurable && section.layers.includes(f.layer));
-        return members.length ? html`<li key=${section.kind} data-relaunch-layer=${section.kind}>
-          <span class=${`ui-tag rlp-pill rlp-pill-${section.kind}`}>${section.pill}</span> ${sectionList(members)}</li>` : null;
-      })}</ul>
+    ${layerSections.length > 0 && html`<details class="relaunch-policy-layers" id="relaunch-policy-layers">
+      <summary>Every other input follows its layer: <span data-relaunch-layers-summary>${
+        layerSections.map(({ section, members }) => `${members.length} ${section.pill.toLowerCase()}`).join(' · ')}</span></summary>
+      <ul>${layerSections.map(({ section, members }) => html`<li key=${section.kind} data-relaunch-layer=${section.kind}>
+          <span class=${`ui-tag rlp-pill rlp-pill-${section.kind}`}>${section.pill}</span> ${sectionList(members)}</li>`)}</ul>
     </details>`}
     <div class="modal-buttons">
       <${Button} id="relaunch-policy-cancel" onClick=${() => { void requestClose(); }}>Cancel<//>
