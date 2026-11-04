@@ -180,3 +180,42 @@ test('side panel: each tab has its own panel and state; Collab is folded by defa
   assert.equal(side.isSidePanelOpen('collab'), false);
   assert.equal(side.isSidePanelOpen('groups'), true, 'each panel keeps its own state');
 });
+
+test('the Collab panel renders into the shared side panel while mounted, and the whole panel takes a drop as the rail', async (t) => {
+  const harness = await createPreactHarness(t);
+  const doc = harness.document;
+  doc.body.appendChild(doc.createElement('section')).id = 'tab-terminals';
+  doc.getElementById('tab-terminals').classList.add('active');
+  const shell = doc.body.appendChild(doc.createElement('aside'));
+  shell.id = 'agent-dock';
+  shell.appendChild(doc.createElement('button')).id = 'dock-toggle';
+  const host = shell.appendChild(doc.createElement('div'));
+  host.id = 'dock-collab-body';
+  const [rail, actions] = await Promise.all([
+    harness.importDashboardModule('js/collab-rail.js'),
+    harness.importDashboardModule('js/collab-rail-actions.js'),
+  ]);
+  const mounted = await harness.mount(harness.html`<${rail.CollabRail} panes=${[]} actions=${{}} snapshot=${{ value: SNAPSHOT }} />`);
+  assert.equal(mounted.container.querySelector('[data-collab-rail]'), null, 'nothing renders in place');
+  assert.ok(host.querySelector('[data-collab-rail]'), 'the list renders into the panel body');
+  assert.ok(doc.body.classList.contains('dock-tab'), 'the Collab tab offers its panel');
+  assert.ok(!doc.body.classList.contains('dock-open'), 'folded by default');
+  assert.equal(actions.railDropZone(host), 'rail', 'the panel body around the list is the rail\'s');
+  assert.equal(actions.railDropZone(doc.getElementById('dock-toggle')), 'rail', 'so is the edge handle');
+  await mounted.unmount();
+  assert.ok(!doc.body.classList.contains('dock-tab'), 'unmounted, the panel is withdrawn');
+  assert.equal(host.childNodes.length, 0, 'and its body is emptied');
+});
+
+test('opening a live item does not reorder the panel', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/collab-rail-model.js');
+  const resources = [
+    { kind: 'page', id: 'a', group_id: 1, title: 'A', state: 'running' },
+    { kind: 'page', id: 'b', group_id: 2, title: 'B', state: 'running' },
+  ];
+  const groups = [{ id: 1, name: 'one' }, { id: 2, name: 'two' }];
+  const before = m.railItems({ resources, groups }).sections.map((s) => s.name);
+  const after = m.railItems({ resources, groups, used: new Map([['page:b', 99]]) }).sections.map((s) => s.name);
+  assert.deepEqual(after, before);
+});

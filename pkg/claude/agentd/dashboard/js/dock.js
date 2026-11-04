@@ -40,7 +40,7 @@ import { lastSnapshot } from './dashboard.js';
 import { featureState } from './feature-state-registry.js';
 import { syncFullBleedBars } from './hscroll.js';
 import { syncChromeTopInset } from './chrome-inset.js';
-import { bindSidePanel, onSidePanelApply, registerSidePanel, setSidePanelOpen } from './side-panel.js';
+import { activeSidePanel, bindSidePanel, onSidePanelApply, registerSidePanel, setSidePanelOpen } from './side-panel.js';
 // The compact one-line summaries live in the DATA modules (profiles.js /
 // roles.js); the editor/manager openers live in the MODAL modules. Importing
 // each from the module that actually exports it — a bad named import would
@@ -718,15 +718,14 @@ registerSidePanel('groups', {
   titles: [['Collapse the palette', 'Furl the grimoire'], ['Expand the palette', 'Unfurl the grimoire']],
 });
 
-// setDockOpen persists the Groups palette's open/collapsed pref and reflects
-// it — the mutation point the Ctrl/Cmd-K command palette's "Show / Hide right
-// panel" command uses (js/palette.js imports it); the edge tab and the in-dock
-// collapse button go through side-panel.js, which flips whichever tab's panel
-// is showing. Setting it open off the Groups tab persists the intent but
-// paints nothing until the tab is active; the palette's show command switches
-// to the Groups tab first so the panel is actually visible.
+// setDockOpen is what the Ctrl/Cmd-K command palette's "Show / Hide right
+// panel" commands call (js/palette.js imports it); the edge tab and the in-dock
+// collapse button go through side-panel.js directly. Show opens the Groups
+// palette (the palette's show command switches to the Groups tab first so the
+// panel is actually visible). Hide folds whichever tab's panel is showing, the
+// Groups palette when none is.
 export function setDockOpen(open) {
-  setSidePanelOpen(open, 'groups');
+  setSidePanelOpen(open, open ? 'groups' : activeSidePanel()?.name || 'groups');
 }
 
 // applyDockOpen follows every paint of the shared shell: it re-homes the

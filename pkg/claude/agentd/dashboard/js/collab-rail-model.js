@@ -45,12 +45,15 @@ const agentRank = (item) => AGENT_RANK[item.status?.key] ?? 3;
 export const needsYou = (item) => isAgentItem(item) && agentRank(item) === 0;
 
 // compareItems orders a group's items: agents (by agentRank, then name), then
-// live resources (open here first, then the most recently used), then closed.
+// live resources (open here first, then the snapshot's order), then closed
+// ones, the most recently used first. Opening a live item never moves it, so
+// the row under the pointer stays the one clicked.
 function compareItems(a, b) {
   const tier = itemTier(a) - itemTier(b);
   if (tier) return tier;
   if (isAgentItem(a)) return agentRank(a) - agentRank(b) || a.title.localeCompare(b.title);
-  return BUCKET_RANK[a.bucket] - BUCKET_RANK[b.bucket] || b.usedAt - a.usedAt;
+  if (a.bucket === 'closed') return b.usedAt - a.usedAt;
+  return BUCKET_RANK[a.bucket] - BUCKET_RANK[b.bucket];
 }
 
 // itemState is the word or two an item's row ends with: what an agent is
@@ -178,15 +181,15 @@ export function railItems({
 
 // sortSections puts a group with an agent that needs the operator first, then
 // one with something open here, then one with a live agent, then one with
-// anything active, then the rest; within each, the most recently used, then
-// the snapshot's group order. Not in a group goes last among its peers.
+// anything active, then the rest; within each, the snapshot's group order
+// (Not in a group last). Recent use does not move a group, so a click never
+// shifts the list under the pointer.
 function sortSections(sections, order) {
   const live = (i) => i.bucket !== 'closed';
   const tier = (s) => (s.items.some(needsYou) ? 0 : s.items.some((i) => i.bucket === 'open') ? 1
     : s.items.some((i) => live(i) && isAgentItem(i)) ? 2 : s.items.some(live) ? 3 : 4);
-  const recent = (s) => Math.max(0, ...s.items.map((i) => i.usedAt));
   const rank = (s) => (s.id === UNGROUPED.id ? Infinity : order.get(s.id) ?? Infinity);
-  return [...sections].sort((a, b) => tier(a) - tier(b) || recent(b) - recent(a) || rank(a) - rank(b));
+  return [...sections].sort((a, b) => tier(a) - tier(b) || rank(a) - rank(b));
 }
 
 // matchesQuery is whether an item's title or group holds the query.

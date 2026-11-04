@@ -49,7 +49,9 @@ func docGroupShellSession(group string) string {
 	return fmt.Sprintf("tclaude-groupterm-%x", sum[:8])
 }
 
-func seedCollabFleet(t *testing.T, f *testharness.Flow) {
+// seedCollabFleet seeds the fleet; quiet leaves out everything running (the
+// agents and the group shells), for the home's quiet state.
+func seedCollabFleet(t *testing.T, f *testharness.Flow, quiet bool) {
 	t.Helper()
 	if err := config.Save(&config.Config{Federation: &config.FederationConfig{Name: "dev@box"}}); err != nil {
 		t.Fatalf("config: %v", err)
@@ -63,9 +65,15 @@ func seedCollabFleet(t *testing.T, f *testharness.Flow) {
 		}
 	}
 	for _, name := range []string{"tclaude", "home-lab"} {
+		if quiet {
+			break
+		}
 		f.World.Tmux.Register(docGroupShellSession(name), docHome+"/git/"+name, docShellPane{})
 	}
 	for _, a := range collabFleetAgents {
+		if quiet {
+			break
+		}
 		label, tmux := "lbl-"+a.title, "tmux-"+a.title
 		f.HaveAliveSession(a.conv, label, tmux, docHome+"/git/tclaude")
 		f.HaveConvWithTitle(a.conv, a.title)

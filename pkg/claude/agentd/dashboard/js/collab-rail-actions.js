@@ -157,14 +157,17 @@ export const RAIL_ITEM_DRAG_MIME = 'application/x-tclaude-rail-item';
 export const railDrag = signal(null);
 
 // railDropZone is what a drop on target does: 'strip' (a tab there), 'home'
-// (the empty strip's tiles, also a tab), 'rail' (nothing), else 'float'.
+// (the empty strip's tiles, also a tab), 'rail' (nothing: the panel), else
+// 'float'.
 const elementOf = (target) => (target?.closest ? target : target?.parentElement) || null;
 
 export function railDropZone(target) {
   const element = elementOf(target);
   if (element?.closest?.('[data-collab-strip]')) return 'strip';
   if (element?.closest?.('[data-collab-home]')) return 'home';
-  if (element?.closest?.('[data-collab-rail]')) return 'rail';
+  // The whole side panel is the rail's: its padding, the space below a short
+  // list and its edge handle too (collab-rail.js renders into #agent-dock).
+  if (element?.closest?.('[data-collab-rail], #agent-dock')) return 'rail';
   return 'float';
 }
 

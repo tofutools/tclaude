@@ -133,7 +133,7 @@ func TestDocShotsServe(t *testing.T) {
 		prs  map[string]docPR
 	)
 	switch fixture := os.Getenv("TCLAUDE_DOCSHOTS_FIXTURE"); fixture {
-	case "fleet", "collab", "steward", "page", "collab-fleet":
+	case "fleet", "collab", "steward", "page", "collab-fleet", "collab-quiet":
 		repo = docRepo
 		prs = map[string]docPR{
 			"checkout-redesign": {1482, "open", docChecks(14, 0)},
@@ -159,8 +159,8 @@ func TestDocShotsServe(t *testing.T) {
 			}
 			return repo, "main", pr.number, repo + "/pull/" + itoa(pr.number), pr.state, pr.checks, true
 		}))
-	if os.Getenv("TCLAUDE_DOCSHOTS_FIXTURE") == "collab-fleet" {
-		seedCollabFleet(t, f)
+	if fixture := os.Getenv("TCLAUDE_DOCSHOTS_FIXTURE"); fixture == "collab-fleet" || fixture == "collab-quiet" {
+		seedCollabFleet(t, f, fixture == "collab-quiet")
 	} else if repo == docRepo {
 		seedDocFleet(t, f)
 	} else {
