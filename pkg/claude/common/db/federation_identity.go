@@ -328,7 +328,13 @@ func rebindIdentityScopesTx(tx *sql.Tx, old, next string) error {
 			return err
 		}
 		for _, e := range edits {
-			if _, err = tx.Exec(`UPDATE "`+r.Table+`" SET "`+r.Column+`"=? WHERE rowid=?`, e.raw, e.id); err != nil {
+			set := `"` + r.Column + `"=?`
+			if r.Table == "agent_permissions" {
+				// A rewritten scope is no longer what a spawn profile wrote at
+				// birth, so a profile re-apply must leave the row alone.
+				set += `, birth_source=''`
+			}
+			if _, err = tx.Exec(`UPDATE "`+r.Table+`" SET `+set+` WHERE rowid=?`, e.raw, e.id); err != nil {
 				return err
 			}
 		}

@@ -135,7 +135,10 @@ type AgentPermission struct {
 // so a row carrying one is exactly what that profile wrote and nobody changed
 // since. Re-applying the profile may touch such rows and no others: explicit,
 // operator, generator, imported and cloned rows never carry one, and sudo
-// grants live in agent_sudo_grants.
+// grants live in agent_sudo_grants. A federation identity rotation that
+// rewrites a scope clears it too. The one move that keeps it is a teleport
+// re-mint (RemintFederationClone), which carries the same conversation, rows
+// and launch layers to a new agent ID unchanged.
 type PermissionBirthSource struct {
 	ProfileID int64  `json:"profile_id"`
 	Role      string `json:"role,omitempty"`
