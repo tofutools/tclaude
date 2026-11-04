@@ -461,7 +461,7 @@ CREATE INDEX idx_human_messages_unread
 			ON human_messages(id) WHERE read_at IS NULL;
 
 CREATE INDEX idx_human_messages_undecided
-			ON human_messages(id) WHERE options != '' AND decision = '';
+			ON human_messages(id) WHERE options != '' AND decision = '' AND dismissed_at IS NULL;
 
 CREATE TABLE "conv_branch_history" (
 			conv_id    TEXT NOT NULL,

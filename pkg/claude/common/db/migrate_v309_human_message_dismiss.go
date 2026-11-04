@@ -11,7 +11,8 @@ import (
 // the "to decide" queue but stays in Messages, marked dismissed.
 //
 // Additive and idempotent: each column is probed. dismissed_at is NULL on
-// every existing row, so nothing already in the queue changes.
+// every existing row, so nothing already in the queue changes. The open-decisions
+// index is rebuilt to exclude dismissed rows.
 func migrateV308toV309(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -38,6 +39,15 @@ func migrateV308toV309(db *sql.DB) error {
 					return fmt.Errorf("migrate v308→v309 (add %s): %w", col.name, err)
 				}
 			}
+		}
+		// The open-decisions index now leaves dismissed rows out too, so the
+		// snapshot's query does not scan past them.
+		if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_human_messages_undecided`); err != nil {
+			return fmt.Errorf("migrate v308→v309 (drop index): %w", err)
+		}
+		if _, err := tx.Exec(`CREATE INDEX idx_human_messages_undecided
+			ON human_messages(id) WHERE options != '' AND decision = '' AND dismissed_at IS NULL`); err != nil {
+			return fmt.Errorf("migrate v308→v309 (index): %w", err)
 		}
 	}
 	if _, err := tx.Exec(`UPDATE schema_version SET version = 309`); err != nil {

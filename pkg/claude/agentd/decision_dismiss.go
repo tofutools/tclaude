@@ -230,7 +230,7 @@ func handleNotifyHumanDismiss(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.All == (len(body.IDs) > 0) {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "give decision ids or all, not both")
+		writeError(w, http.StatusBadRequest, "invalid_arg", "give either decision ids or all, exactly one")
 		return
 	}
 	callerAgent, err := db.AgentIDForConv(callerConv)

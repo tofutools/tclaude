@@ -47,7 +47,7 @@ type dismissResultJSON struct {
 
 func runNotifyHumanDismiss(p *notifyHumanDismissParams, stdout, stderr io.Writer) int {
 	if p.All == (len(p.IDs) > 0) {
-		fmt.Fprintln(stderr, "Error: give decision ids or --all, not both")
+		fmt.Fprintln(stderr, "Error: give either decision ids or --all, exactly one")
 		return rcInvalidArg
 	}
 	ids := make([]int64, 0, len(p.IDs))
