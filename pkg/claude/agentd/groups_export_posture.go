@@ -134,7 +134,7 @@ func resolveLandingPosture(
 			h.Name, cwd, nativeMode)})
 	}
 
-	snapshot := sandboxpolicy.OmittedProfilesSnapshot()
+	snapshot := sandboxpolicy.DerivedOmittedProfilesSnapshot()
 	if !sandboxProfilesDisabled(h.Name, nativeMode, implementation) {
 		if snapshot, err = db.ResolveEffectiveSandboxSnapshot(groupID, ""); err != nil {
 			return refuse(&spawnFailure{http.StatusBadRequest, "invalid_sandbox_profile", err.Error()})

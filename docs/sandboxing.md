@@ -702,6 +702,14 @@ and an **explicit per-spawn profile** (`--sandbox-profile` on
 tiers, and the omission is recorded in the launch snapshot so a resume or
 reincarnation cannot resurrect the ambient tiers.
 
+A launch mode that cannot carry tclaude sandbox profiles (Codex's
+`danger-full-access`, for example) omits them too, but that omission is the
+mode's, not the agent's choice. While the agent keeps that mode, its relaunches
+keep omitting the profiles. Once its mode can carry them again, the next resume
+or reincarnation applies the global and group assignments as they are then,
+plus the profile its spawn named with `--sandbox-profile` when its launch
+recorded one and that profile exists.
+
 Scribe and Steward summons, and trigger and process workers, get the global
 and group tiers like any other spawn into their group, along with the group's
 environment. A scribe or Steward with no profile and no environment configured

@@ -1,9 +1,12 @@
 package agentd
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -64,7 +67,6 @@ func resolveSandboxChainFrom(convID string, previous *sandboxpolicy.Snapshot) (*
 	if previous.ProfilesOmitted {
 		return previous, nil
 	}
-	var err error
 	var explicitProfileID int64
 	var explicitProfileName string
 	for _, applied := range previous.Applied {
@@ -74,6 +76,57 @@ func resolveSandboxChainFrom(convID string, previous *sandboxpolicy.Snapshot) (*
 			explicitProfileName = applied.Name
 		}
 	}
+	return resolveSandboxChainWith(convID, previous, explicitProfileID, explicitProfileName)
+}
+
+// resolveDerivedOmissionChain re-resolves the sandbox-profile tiers of an
+// agent whose last launch omitted them only because its mode could not carry
+// them (ProfilesOmittedDerived), for a relaunch whose mode can: the source
+// group's and the global assignment as they are now, and the profile the
+// spawn named explicitly, which the omission did not record.
+func resolveDerivedOmissionChain(convID string, previous *sandboxpolicy.Snapshot) (*sandboxpolicy.Snapshot, error) {
+	explicitProfileName, err := explicitSandboxProfileAtSpawn(convID)
+	if err != nil {
+		return nil, err
+	}
+	resolved, err := resolveSandboxChainWith(convID, previous, 0, explicitProfileName)
+	if explicitProfileName != "" && isRelaunchChainUnusable(err) {
+		if prof, lookupErr := db.GetSandboxProfile(explicitProfileName); lookupErr != nil || prof != nil {
+			return resolved, err
+		}
+		// The omission meant the name was never resolved, so it may never
+		// have existed. A profile the agent never ran under must not make it
+		// unresumable: the ambient tiers still apply.
+		slog.Warn("relaunch: the sandbox profile named at spawn does not exist; applying the group and global profiles only",
+			"conv", convID, "profile", explicitProfileName)
+		return resolveSandboxChainWith(convID, previous, 0, "")
+	}
+	return resolved, err
+}
+
+// explicitSandboxProfileAtSpawn is the sandbox profile the agent's spawn
+// request named, from its launch layers; "" when none, or when the agent
+// predates them.
+func explicitSandboxProfileAtSpawn(convID string) (string, error) {
+	layers, err := db.AgentLaunchLayersForConv(convID)
+	if err != nil || layers == nil {
+		return "", err
+	}
+	raw, ok := layers.Explicit["explicit_sandbox_profile"].Fields["SandboxProfile"]
+	if !ok {
+		return "", nil
+	}
+	var name string
+	if err := json.Unmarshal(raw, &name); err != nil {
+		return "", fmt.Errorf("read the sandbox profile named at spawn: %w", err)
+	}
+	return strings.TrimSpace(name), nil
+}
+
+// resolveSandboxChainWith composes the current registry chain for previous's
+// source group and the given explicit profile, by stable ID, else by name.
+func resolveSandboxChainWith(convID string, previous *sandboxpolicy.Snapshot, explicitProfileID int64, explicitProfileName string) (*sandboxpolicy.Snapshot, error) {
+	var err error
 	groupID := previous.ResolutionGroupID
 	if groupID == 0 {
 		groupID, err = resumeSandboxGroupID(convID)
@@ -81,7 +134,12 @@ func resolveSandboxChainFrom(convID string, previous *sandboxpolicy.Snapshot) (*
 			return nil, err
 		}
 	}
-	resolved, err := db.ResolveEffectiveSandboxSnapshotByID(groupID, explicitProfileID)
+	var resolved sandboxpolicy.Snapshot
+	if explicitProfileID != 0 || explicitProfileName == "" {
+		resolved, err = db.ResolveEffectiveSandboxSnapshotByID(groupID, explicitProfileID)
+	} else {
+		err = db.ErrSandboxProfileNotFound
+	}
 	if errors.Is(err, db.ErrSandboxProfileNotFound) && explicitProfileName != "" {
 		// A deleted explicit profile can be recovered by recreating it under its
 		// recorded name. Ordinary renames still follow the stable ID above.
@@ -138,6 +196,12 @@ func resolveResumeSandboxPolicyFrom(
 		}
 	} else {
 		resolved, previous, err = resolveCurrentSandboxChainForConv(convID)
+		if err == nil && previous != nil && previous.ProfilesOmittedDerived && previous.ProfilesOmitted &&
+			!sandboxProfilesDisabled(harnessName, harnessBuiltinMode, sandboxImplementation) {
+			// The omission was the old mode's; this launch's mode can carry
+			// the profiles, so they apply again.
+			resolved, err = resolveDerivedOmissionChain(convID, previous)
+		}
 	}
 	if err != nil || previous == nil {
 		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
@@ -152,10 +216,10 @@ func resolveResumeSandboxPolicyFrom(
 	if err != nil {
 		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
 	}
-	if previous.ProfilesOmitted {
-		// This is a durable per-agent launch choice, not an empty ambient
-		// resolution. Do not let later global/group assignments reappear on
-		// resume or reincarnation.
+	if current.ProfilesOmitted {
+		// Either a durable per-agent launch choice, or a mode that still
+		// cannot carry profiles; not an empty ambient resolution. Do not let
+		// later global/group assignments reappear on resume or reincarnation.
 		return &resumeSandboxPolicy{Snapshot: &current, Previous: previous}, nil
 	}
 	if current, err = reapplyExplicitHarnessConfig(convID, current, previous); err != nil {
