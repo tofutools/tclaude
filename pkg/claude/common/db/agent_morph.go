@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -154,6 +155,39 @@ func applyMorphForm(p *AgentRelaunchProfile, f AgentMorphForm) {
 	}
 }
 
+// morphExplicitValues is the explicit layer entries for the fields a morph
+// form sets, keyed by launchspec field key and spawn request field name (a
+// test pins both against launchspec). The model is recorded bare: its context
+// window lives in the relaunch profile, as the form keeps it.
+func morphExplicitValues(f AgentMorphForm, at time.Time) map[string]ExplicitLaunchValue {
+	out := map[string]ExplicitLaunchValue{}
+	for _, v := range []struct {
+		key, field string
+		value      *string
+	}{
+		{"model", "Model", f.Model},
+		{"effort", "Effort", f.Effort},
+		{"approval", "ApprovalPolicy", f.Approval},
+		{"tools", "ToolGovernance", f.Tools},
+		{"ask_timeout", "AskUserQuestionTimeout", f.AskTimeout},
+		{"context_window", "AutoCompactWindow", f.AutoCompactWindow},
+	} {
+		if v.value == nil {
+			continue
+		}
+		raw, err := json.Marshal(*v.value)
+		if err != nil {
+			continue
+		}
+		out[v.key] = ExplicitLaunchValue{
+			Fields:     map[string]json.RawMessage{v.field: raw},
+			Provenance: ExplicitAtMorph(at),
+			SetAt:      at,
+		}
+	}
+	return out
+}
+
 // CurrentMorphForm returns the agent's current morphable launch form plus the
 // previous form recorded by its last morph (nil when it was never morphed).
 func CurrentMorphForm(convID string) (current AgentMorphForm, previous *AgentMorphForm, err error) {
@@ -181,6 +215,15 @@ func effectiveMorphBase(convID string, p *AgentRelaunchProfile) *AgentRelaunchPr
 // updateAgentRelaunchProfileForConvTx runs a read/modify/write of the current
 // generation's profile in one transaction so unrelated launch intent is kept.
 func updateAgentRelaunchProfileForConv(convID string, apply func(agentID string, p *AgentRelaunchProfile) error) error {
+	return updateAgentRelaunchProfileForConvTx(convID, func(_ *sql.Tx, agentID string, p *AgentRelaunchProfile) error {
+		return apply(agentID, p)
+	})
+}
+
+// updateAgentRelaunchProfileForConvTx is updateAgentRelaunchProfileForConv
+// with the transaction passed to apply, for a change that writes another of
+// the agent's columns with the profile.
+func updateAgentRelaunchProfileForConvTx(convID string, apply func(tx *sql.Tx, agentID string, p *AgentRelaunchProfile) error) error {
 	convID = strings.TrimSpace(convID)
 	if convID == "" {
 		return errors.New("conversation required")
@@ -212,7 +255,7 @@ func updateAgentRelaunchProfileForConv(convID string, apply func(agentID string,
 	if profile == nil {
 		return fmt.Errorf("agent %s has no durable launch profile", agentID)
 	}
-	if err := apply(agentID, profile); err != nil {
+	if err := apply(tx, agentID, profile); err != nil {
 		return err
 	}
 	encoded, err := encodeRelaunchProfile(*profile)
@@ -228,13 +271,20 @@ func updateAgentRelaunchProfileForConv(convID string, apply func(agentID string,
 // ApplyAgentMorphForConv writes target into the durable relaunch profile,
 // records the form it replaced for a later morph-back, and clears any pending
 // morph. It returns the replaced form.
+//
+// The fields the form sets are also recorded as the agent's explicit launch
+// values, in the same transaction, so re-applying its spawn profile keeps the
+// morphed form instead of putting the profile's values back.
 func ApplyAgentMorphForConv(convID string, target AgentMorphForm) (AgentMorphForm, error) {
 	var previous AgentMorphForm
 	conversation, err := ConversationResumeProfileForConv(convID)
 	if err != nil {
 		return previous, err
 	}
-	err = updateAgentRelaunchProfileForConv(convID, func(_ string, p *AgentRelaunchProfile) error {
+	err = updateAgentRelaunchProfileForConvTx(convID, func(tx *sql.Tx, agentID string, p *AgentRelaunchProfile) error {
+		if err := recordExplicitLaunchValuesTx(tx, agentID, morphExplicitValues(target, time.Now())); err != nil {
+			return err
+		}
 		base := p
 		if conversation != nil {
 			base = ComposeAgentRelaunchProfile(conversation.FallbackRelaunch, p)
