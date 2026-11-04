@@ -2,10 +2,10 @@ package db
 
 import "database/sql"
 
-// migrateV310toV311 saves a group page's marks and live patches with it
+// migrateV311toV312 saves a group page's marks and live patches with it
 // (tcl-01arix): one row per mark batch the operator sent, and one row per
 // page holding its patch journal. Both go with the page's group_pages row.
-func migrateV310toV311(d *sql.DB) error {
+func migrateV311toV312(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -24,7 +24,7 @@ func migrateV310toV311(d *sql.DB) error {
 			patch_seq INTEGER NOT NULL DEFAULT 0,
 			patches   TEXT NOT NULL DEFAULT '[]'
 		) STRICT`,
-		`UPDATE schema_version SET version = 311`,
+		`UPDATE schema_version SET version = 312`,
 	} {
 		if _, err := tx.Exec(stmt); err != nil {
 			return err
