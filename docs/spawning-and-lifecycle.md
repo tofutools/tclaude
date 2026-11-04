@@ -202,11 +202,6 @@ the Claude app. A `--non-interactive` one-shot never gets remote control: it
 has no session to control. A value derived from a policy or profile is dropped
 for a harness with no Remote Access instead of failing the spawn.
 
-!!! note
-    A trigger or process worker's profile currently takes the group default
-    profile's place for every launch field, so the group default profile is not
-    consulted for those workers (tiers 3 and 5 only).
-
 The harness resolves through the full chain *first*; the other fields then
 validate against it. An incompatible explicit flag is a loud error; an
 incompatible value from a lower profile tier is skipped, falls through, and

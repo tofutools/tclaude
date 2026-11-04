@@ -823,17 +823,14 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 		return nil, "invalid_cwd", fmt.Sprintf("launch directory %q is unavailable", cwd)
 	}
 
-	p := spawnParams{UsageSpawnProfile: profile, spawnCopyCallerTiers: spawnCopyTiers(spawnCopyTier(db.SpawnCopyTierNamed, profile)), Name: name, Role: roleLabel, Descr: profile.Descr, InitialMessage: initialMessage,
+	p := spawnParams{UsageSpawnProfile: profile, managedProfile: profile, spawnCopyCallerTiers: spawnCopyTiers(spawnCopyTier(db.SpawnCopyTierNamed, profile)), Name: name, Role: roleLabel, Descr: profile.Descr, InitialMessage: initialMessage,
 		ProfileContext: profileContext, Cwd: cwd, ReplyToConv: ownerConv, SpawnedByConv: ownerConv, IsOwner: isOwner, PermissionOverrides: overrides, Async: true,
-		// The worker's profile (in the group-default slot below) and the global
-		// default decide remote_control, auto_memory, peer_messaging and the group
-		// context in applyDefaultProfile, as on every other spawn path
-		// (TCL-1107); with no tier speaking, the group context is included, as it
-		// always was for these workers.
+		// The worker's profile is the named tier, above the group's and the
+		// global default profile, for every launch field (tcl-vciikv), as on a
+		// direct spawn naming it; with no tier speaking, the group context is
+		// included, as it always was for these workers.
 		IncludeGroupContextDefault: true}
-	profileGroup := *g
-	profileGroup.DefaultProfile = profile.Name
-	if fail := resolveManagedLaunch(&profileGroup, &p, ownerConv, false); fail != nil {
+	if fail := resolveManagedLaunch(g, &p, ownerConv, false); fail != nil {
 		switch fail.Kind {
 		case "io", "permission_denied":
 			return nil, fail.Kind, fail.Msg
@@ -851,7 +848,7 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 			"this firing is authorized by a grant scoped to sandbox profile %s, and spawn profile %s resolves a launch mode that would not enforce it",
 			sandboxProfileForScope, profile.Name)
 	}
-	return &managedSpawn{group: &profileGroup, params: p, promptRefs: promptRefs}, "", ""
+	return &managedSpawn{group: g, params: p, promptRefs: promptRefs}, "", ""
 }
 
 type managedWorkerSource struct {

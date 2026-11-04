@@ -114,7 +114,7 @@ func TestLaunchLayers_Trigger_RecordsItsProfileOnce(t *testing.T) {
 	require.NoError(t, err)
 	conv := fireUniformTrigger(t, f, "reviewer")
 	assert.Equal(t, []copyTier{{db.SpawnCopyTierNamed, profileID(t, "reviewer"), "reviewer"}}, copyTiers(t, conv),
-		"the worker's profile also fills the group-default slot today; it is recorded once")
+		"the worker's profile is the named tier; the group has no default profile")
 }
 
 func TestLaunchLayers_Scribe_RecordsGlobalDefault(t *testing.T) {

@@ -258,15 +258,16 @@ func TestLaunchUniform_Trigger_GroupDenyBeatsNamedProfile(t *testing.T) {
 func spawnUniformPerformer(t *testing.T, profile *db.SpawnProfile, setup ...func()) (*testharness.Flow, string) {
 	t.Helper()
 	f, root := processRuntimeFlow(t)
-	for _, fn := range setup {
-		fn()
-	}
 	g := f.HaveGroup("crew")
 	_, err := db.SetAgentGroupDefaultCwd("crew", t.TempDir())
 	require.NoError(t, err)
 	setGroupContext(t, f, "crew", uniformGroupGuidance)
 	_, err = db.CreateSpawnProfile(profile)
 	require.NoError(t, err)
+	// Setup runs once the "crew" group and the worker's profile exist.
+	for _, fn := range setup {
+		fn()
+	}
 	performer := devPerformer()
 	performer.Spawn = model.SpawnAllowed
 	view := startPerformerRun(t, f, root, "run_uniform", performerTemplate("uniform", performer, nil),
