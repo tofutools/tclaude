@@ -5399,6 +5399,9 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
    same escape-correctness treatment: strictly above #profile-editor-modal (+50),
    or Escape would rank the editor BENEATH it topmost and close the wrong one. */
 #context-features-modal { z-index: calc(var(--z-dialog) + 60); }
+/* The relaunch policy editor (relaunch-policy-dialog.js) opens from the same
+   two places, so it sits at the same layer. */
+#relaunch-policy-modal { z-index: calc(var(--z-dialog) + 60); }
 /* The profile editor opens standalone (the profiles-manage overlay's edit / +
    new) AND on top of the spawn modal ("Save as profile") and the inline
    default-profile pickers ("＋ new profile…"). The spawn modal is a plain
