@@ -3,6 +3,7 @@
 // rows, headings and separators. The Groups tab's "▾ view" and the Collab
 // panel's "Filter" share it, so the two look and behave the same. Escape
 // closes the menu and returns focus to the button; a press outside closes it.
+// A closed menu is hidden and drops its menu role.
 
 import { h } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
@@ -51,7 +52,7 @@ export function ViewMenu({ open, onOpenChange, label, badge = 0, ids = {}, varia
       ${label}
       <span id=${ids.badge} class="view-badge ui-badge" hidden=${!badge}>${badge || ''}</span>
     <//>
-    <div ref=${menuRef} id=${ids.menu} class=${`view-menu${open ? ' open' : ''}`} role="menu">${children}</div>
+    <div ref=${menuRef} id=${ids.menu} class=${`view-menu${open ? ' open' : ''}`} role=${open ? 'menu' : undefined} hidden=${!open}>${children}</div>
   </div>`;
 }
 
