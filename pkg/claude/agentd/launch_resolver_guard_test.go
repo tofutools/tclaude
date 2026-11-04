@@ -30,6 +30,7 @@ var launchTierWalkFiles = map[string]bool{
 	"awb_ready_poller.go":                  true, // readiness check walks [named, group, global] itself
 	"federation_placement_requirements.go": true, // placement walks [group, global] itself
 	"launch_value_fields.go":               true, // the resolver itself
+	"launch_identity.go":                   true, // the identity and birth-time access resolver
 	"managed_launch.go":                    true, // the pipeline for daemon-composed launches
 	"lifecycle.go":                         true,
 	"sandbox_default_implementation.go":    true,

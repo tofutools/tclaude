@@ -4212,60 +4212,52 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if profileNameNote != "" {
 		identityNotes = append(identityNotes, profileNameNote)
 	}
-	roleRefs, roleRefsSource := resolveRoleRefsLaunchField(body, profileTiers)
-	if body.NonInteractive && r.Context().Value(federationJobContextKey{}) == nil {
-		roleRefs = nil
-	}
-	selectedRoles := make([]*db.Role, 0, len(roleRefs))
-	for _, roleRef := range roleRefs {
-		selectedRole, roleErr := db.GetRole(roleRef)
-		if roleErr != nil {
-			writeError(w, http.StatusInternalServerError, "io", roleErr.Error())
+	// Receiver-owned worker defaults override role and launch-profile grants.
+	// This server-side snapshot cannot be supplied by a remote requester.
+	federationJob := r.Context().Value(federationJobContextKey{}) != nil
+	var workerDefaults map[string]db.PermissionOverride
+	if reservedID, ok := r.Context().Value(reservedAgentIDContextKey{}).(string); ok {
+		defaults, err := db.GetFederationWorkerDefaults(reservedID)
+		if err != nil {
+			writeError(w, 500, "worker_defaults", err.Error())
 			return
 		}
-		if selectedRole == nil {
-			writeError(w, http.StatusBadRequest, "invalid_role",
-				fmt.Sprintf("role %q does not name a role in the role library", roleRef))
-			return
+		if defaults != nil && len(defaults.Permissions) > 0 {
+			if body.NonInteractive && !federationJob {
+				writeError(w, 400, "worker_defaults", "profile worker defaults require an enrolled agent")
+				return
+			}
+			workerDefaults = defaults.Permissions
 		}
-		selectedRoles = append(selectedRoles, selectedRole)
 	}
-	body.RoleRefs = make([]string, 0, len(selectedRoles))
-	for _, selectedRole := range selectedRoles {
-		body.RoleRefs = append(body.RoleRefs, selectedRole.Name)
+	// Roles, role label, description, saved prompts, startup context and the
+	// birth-time access controls, with their access gate: the same resolution
+	// a trigger, schedule or process worker gets (resolveLaunchIdentity).
+	identity, identityFail := resolveLaunchIdentity(launchIdentityRequest{
+		body: body, overrides: permOverrides, group: g, harness: h.Name, tiers: profileTiers,
+		spawner: spawnerConvID, request: r, oneShot: body.NonInteractive && !federationJob,
+		nonInteractive: body.NonInteractive, workerDefaults: workerDefaults})
+	if identityFail != nil {
+		writeError(w, identityFail.Status, identityFail.Kind, identityFail.Msg)
+		return
+	}
+	identityNotes = append(identityNotes, identity.notes...)
+	body.RoleRefs = identity.roleRefs
+	if body.RoleRefs == nil {
+		body.RoleRefs = []string{}
 	}
 	body.RoleRef = ""
 	if len(body.RoleRefs) > 0 {
 		body.RoleRef = body.RoleRefs[0]
 	}
-	var roleSource string
-	body.Role, roleSource, _ = resolveIdentityLaunchField(
-		roleField, body.Role, body.RoleSpecified(), profileTiers,
-		func(p *db.SpawnProfile) string { return p.Role }, nil)
-	if body.Role == "" && roleSource == "" && len(selectedRoles) > 0 {
-		body.Role = selectedRoles[0].Name
-	}
-	body.Descr, _, _ = resolveIdentityLaunchField(
-		descrField, body.Descr, body.DescrSpecified(), profileTiers,
-		func(p *db.SpawnProfile) string { return p.Descr }, nil)
+	body.Role, body.Descr = identity.role, identity.descr
 	// A profile's initial_message is a replaceable task default: it fills the
 	// brief only when the caller sent none. Durable per-profile guidance is
 	// startup_context, resolved separately above and never overridden by a task.
 	body.InitialMessage, _, _ = resolveIdentityLaunchField(
 		initialMessageField, body.InitialMessage, body.InitialMessageSpecified(), profileTiers,
 		func(p *db.SpawnProfile) string { return p.InitialMessage }, nil)
-	// Saved prompts compose ahead of the brief. A one-shot takes only the
-	// prompts its caller named: an ambient profile/group default must never
-	// rewrite a non-interactive prompt or shell command.
-	promptRefs := resolvePromptRefsLaunchField(body, g, profileTiers)
-	if body.NonInteractive && !body.PromptRefsSpecified() {
-		promptRefs = nil
-	}
-	// An interactive shell takes no brief at all, so a group or profile's
-	// prompts (which the dashboard pre-fills explicitly) must not refuse it.
-	if h.Name == harness.ShellName && !body.NonInteractive {
-		promptRefs = nil
-	}
+	promptRefs := identity.promptRefs
 	if len(promptRefs) > 0 {
 		composed, fail := composeSavedPrompts(promptRefs, body.InitialMessage)
 		if fail != nil {
@@ -4298,165 +4290,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
 	}
-	isOwner, _, isOwnerSource, _, fieldFail := resolveBoolLaunchField(
-		isOwnerField, body.IsOwner, body.IsOwnerSpecified(), h.Name, profileTiers,
-		func(p *db.SpawnProfile) *bool { return p.IsOwner },
-		func(v bool) (bool, error) { return v, nil })
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
-		return
-	}
-	overridesSource := ""
-	permOverrides, overridesSource = resolveOverridesLaunchField(
-		permOverrides, body.PermissionOverridesSpecified(), profileTiers)
-	if overridesSource != "" && overridesSource != agent.ProvExplicit {
-		// The profile write path validated this map, but a slug can be retired
-		// between the write and the launch. Re-run the boundary check rather
-		// than trusting stored state, and drop-with-disclosure instead of
-		// failing a spawn over a profile field nobody typed here.
-		normalized, novErr := normalizeSpawnPermissionOverrides(permOverrides)
-		if novErr != "" {
-			identityNotes = append(identityNotes, fmt.Sprintf(
-				"%s %s ignored (%s)", overridesSource, permissionOverridesField, novErr))
-			permOverrides, overridesSource = nil, ""
-		} else {
-			permOverrides = normalized
-		}
-	}
-	// Role grants form the lowest access tier. A spawn profile or explicit
-	// per-spawn override can still narrow or replace an individual slug.
-	if len(selectedRoles) > 0 {
-		merged := make(map[string]db.PermissionOverride, len(permOverrides))
-		for _, selectedRole := range selectedRoles {
-			for _, grant := range selectedRole.Permissions {
-				candidate := db.PermissionOverride{Effect: db.PermEffectGrant, Scope: grant.Scope}
-				if existing, ok := merged[grant.Slug]; ok && existing != candidate {
-					writeError(w, http.StatusBadRequest, "role_scope_conflict",
-						fmt.Sprintf("roles grant %s with incompatible scopes; make the scopes identical or keep that grant on one role", grant.Slug))
-					return
-				}
-				merged[grant.Slug] = candidate
-			}
-		}
-		for slug, override := range permOverrides {
-			merged[slug] = override
-		}
-		// Preserve the strongest intent source for the privilege gate below. An
-		// explicitly selected role must not become an ambient/default grant just
-		// because a lower-intent default profile also contributes overrides.
-		if len(permOverrides) == 0 ||
-			(!launchTierIsDefault(profileTiers, roleRefsSource) && launchTierIsDefault(profileTiers, overridesSource)) {
-			overridesSource = roleRefsSource
-		}
-		permOverrides = merged
-	}
-	// Receiver-owned worker defaults override role and launch-profile grants.
-	// This server-side snapshot cannot be supplied by a remote requester.
-	if reservedID, ok := r.Context().Value(reservedAgentIDContextKey{}).(string); ok {
-		workerDefaults, err := db.GetFederationWorkerDefaults(reservedID)
-		if err != nil {
-			writeError(w, 500, "worker_defaults", err.Error())
-			return
-		}
-		if workerDefaults != nil && len(workerDefaults.Permissions) > 0 {
-			if body.NonInteractive && r.Context().Value(federationJobContextKey{}) == nil {
-				writeError(w, 400, "worker_defaults", "profile worker defaults require an enrolled agent")
-				return
-			}
-			if permOverrides == nil {
-				permOverrides = map[string]db.PermissionOverride{}
-			}
-			for slug, override := range workerDefaults.Permissions {
-				permOverrides[slug] = override
-			}
-		}
-	}
-	if body.NonInteractive && r.Context().Value(federationJobContextKey{}) == nil {
-		// A one-shot has no identity to receive role or birth-time grants.
-		isOwner = false
-		permOverrides = nil
-	}
-	// Birth-time access privilege gate, on the RESOLVED values. A human
-	// (dashboard) caller always passes; an agent caller must hold the SAME slug
-	// the dedicated post-spawn endpoints require — groups.owners.manage to mint an owner
-	// (handleGroupOwnersAdd) and permissions.grant to set per-slug overrides
-	// (handlePermissionsGrant). Group ownership is deliberately NOT sufficient:
-	// owner-state confers only the owner-implied lifecycle slugs
-	// (groups.members.spawn/stop/…), NOT groups.owners.manage or permissions.grant — so keying on
-	// ownership would let an owner mint a child holding permissions.grant and
-	// escalate globally. resolvePermission (no owner bypass) is the same
-	// evaluation those endpoints run.
-	//
-	// Direct intent — an explicit request field, or a profile the caller NAMED
-	// — is refused loudly, exactly as it was before the tier stack reached these
-	// two fields. A group or global DEFAULT profile is ambient configuration
-	// nobody typed at this launch, so an unauthorized caller has it skipped and
-	// disclosed instead: an operator's house default must not start refusing
-	// every spawn its own agents make.
-	if spawnerConvID != "" {
-		if isOwner && resolvePermission(spawnerConvID, PermGroupsOwnersManage) != permAllow {
-			if !launchTierIsDefault(profileTiers, isOwnerSource) {
-				writeError(w, http.StatusForbidden, "forbidden",
-					"making the spawned agent a group owner requires the "+PermGroupsOwnersManage+" permission")
-				return
-			}
-			identityNotes = append(identityNotes, fmt.Sprintf(
-				"%s is_owner ignored (caller lacks %s)", isOwnerSource, PermGroupsOwnersManage))
-			isOwner, isOwnerSource = false, ""
-		}
-		if len(permOverrides) > 0 && resolvePermission(spawnerConvID, PermPermissionsGrant) != permAllow {
-			if !launchTierIsDefault(profileTiers, overridesSource) {
-				writeError(w, http.StatusForbidden, "forbidden",
-					"setting the spawned agent's permission overrides requires the "+PermPermissionsGrant+" permission")
-				return
-			}
-			identityNotes = append(identityNotes, fmt.Sprintf(
-				"%s %s ignored (caller lacks %s)", overridesSource, permissionOverridesField, PermPermissionsGrant))
-			permOverrides, overridesSource = nil, ""
-		}
-		// Attenuation-only delegation: holding permissions.grant lets the
-		// spawner mint overrides, but never WIDER ones than it holds itself.
-		// Without this an agent whose own grant is pinned to one profile or one
-		// group could mint a child holding the same slug unscoped and act
-		// through it. On the RESOLVED map, so a profile tier cannot smuggle in
-		// a grant the request never named. See permission_attenuation.go.
-		//
-		// Same direct-intent split the gate above draws: an explicit request
-		// field or a profile the caller NAMED is refused loudly, while an
-		// operator's house DEFAULT profile is skipped and disclosed. Dropping
-		// the overrides only ever NARROWS what the child is born with, and a
-		// default nobody typed at this launch must not start refusing every
-		// spawn a scoped agent makes.
-		// The child has no stable id yet. Its lineage edge is mandatory during
-		// enrollment, before these overrides are written, so it is a descendant
-		// by construction rather than by a lookup that cannot succeed yet.
-		conferee := grantConferee{descendantByConstruction: true}
-		if err := checkGrantAttenuation(spawnerConvID, conferee, conferredGrantsFromOverrides(permOverrides)); err != nil {
-			if !launchTierIsDefault(profileTiers, overridesSource) {
-				writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
-				return
-			}
-			identityNotes = append(identityNotes, fmt.Sprintf(
-				"%s %s ignored (%v)", overridesSource, permissionOverridesField, err))
-			permOverrides, overridesSource = nil, ""
-		}
-	}
-	// Disclose the two access decisions whenever a tier other than the request
-	// made them. An agent that silently comes up owning its group, or holding
-	// grants nobody asked for at this launch, is exactly the action-at-a-distance
-	// the launch echo exists to surface.
-	if isOwnerSource != "" && isOwnerSource != agent.ProvExplicit && isOwner {
-		identityNotes = append(identityNotes,
-			fmt.Sprintf("%s is_owner = true", isOwnerSource))
-	}
-	if overridesSource != "" && overridesSource != agent.ProvExplicit && len(permOverrides) > 0 {
-		identityNotes = append(identityNotes, fmt.Sprintf(
-			"%s %s (%d)", overridesSource, permissionOverridesField, len(permOverrides)))
-	}
-	// Fold both back onto the working body for subsequent resolution. The
-	// original request was captured before this mutation; resolved launch state
-	// is persisted separately.
-	body.IsOwner, body.PermissionOverrides = isOwner, permOverrides
+	// Fold the access decisions back onto the working body for subsequent
+	// resolution. The original request was captured before this mutation;
+	// resolved launch state is persisted separately.
+	body.IsOwner, body.PermissionOverrides = identity.isOwner, identity.overrides
 	// Startup-context trims ride the tier stack whole rather than merging — see
 	// resolveContextFeaturesLaunchField. Unset everywhere means "trim nothing",
 	// so an agent's startup context only shrinks when someone asked for it.
@@ -4474,10 +4311,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// Profile guidance resolves as one whole text block from the highest
 	// compatible tier. It has no per-spawn override: unlike initial_message this
 	// is policy attached to the selected model/profile, not a task default.
-	profileContext, profileContextNote := resolveProfileStartupContext(h.Name, profileTiers)
-	for _, selectedRole := range selectedRoles {
-		profileContext = appendRoleBlock(profileContext, selectedRole.Brief)
-	}
+	profileContext, profileContextNote := identity.startupContext, identity.startupContextNote
 	contextWindowMaxValue := ""
 	if body.ContextWindowMax > 0 {
 		contextWindowMaxValue = strconv.FormatInt(body.ContextWindowMax, 10)
@@ -5092,8 +4926,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		ReplyToConv:                 replyToConv,
 		SpawnedByConv:               spawnerConvID,
 		externalStewardGated:        externalSpawn,
-		IsOwner:                     isOwner,
-		PermissionOverrides:         permOverrides,
+		IsOwner:                     identity.isOwner,
+		PermissionOverrides:         identity.overrides,
 		Timeout:                     timeout,
 		// Verbatim decoded request captured at the HTTP boundary, before the
 		// working body was resolved or normalized. enrollSpawnedConv persists it
@@ -5385,11 +5219,11 @@ type spawnParams struct {
 	// binding use them instead of reading the defaults again, so one launch
 	// sees one version of each.
 	defaultProfiles *pinnedDefaultProfiles
-	explicitLaunch        map[string]db.ExplicitLaunchValue
-	Arrival               *arrivalContext
-	RemoteJob             *federationJobLaunch // trusted internal remote job boundary
-	launchAuthority       func() error
-	BundleHistory         *bundleHistoryLaunch // trusted internal bundle route only
+	explicitLaunch  map[string]db.ExplicitLaunchValue
+	Arrival         *arrivalContext
+	RemoteJob       *federationJobLaunch // trusted internal remote job boundary
+	launchAuthority func() error
+	BundleHistory   *bundleHistoryLaunch // trusted internal bundle route only
 	// NoLaunch enrolls the agent and installs its history without starting a
 	// session: it lands offline and starts on resume. Trusted internal bundle
 	// route only, and only with BundleHistory.

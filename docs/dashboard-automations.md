@@ -49,6 +49,12 @@ scoped globally or to a group. Each is armed, cooling or disabled.
 
 A worker launches from its spawn profile, then the group's default profile,
 then the global default profile, as a direct spawn naming that profile would.
+That covers its roles, role label, description, saved prompts and startup
+context, and the ownership and permission overrides it is born with. A rule
+owned by an agent confers only what that agent may grant: a default profile's
+grant or ownership the owner lacks the authority for is skipped, and the
+firing's detail says so, while the same on the worker's own profile refuses
+the firing (`permission_denied`).
 If any of those profiles is disabled, or is operator-only and an agent owns
 the job or rule, the run is refused: it shows as failed in the job's recent
 runs or the trigger's firing history (`profile_disabled` or

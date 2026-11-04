@@ -167,12 +167,3 @@ The rules above are the specification. These rows do not follow it yet:
 - **Harness config posture** (`harness_config`): Only explicit wins is implemented; the policy setting is not read yet.
 
 <!-- launch-gaps:end -->
-
-The spawn paths also differ in which profile tiers they consult:
-
-- A trigger, schedule or process worker resolves its launch fields over its
-  own profile, the group's default and the global default, but composes its
-  roles, role label, description, permission overrides, ownership and saved
-  prompts from its own profile alone. When the worker has roles or a startup
-  context of its own, that also decides its startup context. A default profile
-  therefore never confers permissions or ownership on a worker.

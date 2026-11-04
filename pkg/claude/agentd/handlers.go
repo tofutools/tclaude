@@ -3643,6 +3643,10 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_profile", err.Error())
 			return
 		}
+		if fail := defaultProfileConferralFailure(r, creator, body.Name, groupProfile); fail != nil {
+			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			return
+		}
 		// Validate the optional remote-control policy up front (JOH-262); a bad
 		// token fails cleanly before any DB write. "" / "inherit" → nil (no
 		// override, the column default).
@@ -4221,6 +4225,10 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		var err error
 		if profile, err = resolveGroupDefaultProfileName(*body.DefaultProfile); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_profile", err.Error())
+			return
+		}
+		if fail := defaultProfileConferralFailure(r, caller, g.Name, profile); fail != nil {
+			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
 	}
