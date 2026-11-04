@@ -301,6 +301,7 @@ var peerViewLocalRoutes = []string{
 	"GET /api/groups/{name}/worktrees",
 	"GET /api/sandbox-profiles/export",
 	"GET /api/spawn-profiles/export",
+	"GET /api/spawn-profiles/{name}/running-agents",
 	"GET /api/starters",
 	"GET /api/starters/{name}",
 	"GET /api/templates/{name}/export",

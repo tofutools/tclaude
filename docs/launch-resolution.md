@@ -17,6 +17,28 @@ first launch. Those contributions are copied into the agent, and later edits
 to the profile, or a change of a group's default profile, apply to new spawns
 only. Running and stopped agents keep their copy.
 
+Saving an edit to a profile in the dashboard says how many running agents
+keep their copy. The profile editor's **Running agents** row lists them, with
+what re-applying the edited profile would change for each:
+
+- a field the edit changes and the agent took from its copy is marked
+  **changes**;
+- harness, model, effort and directory are **kept (fixed)**;
+- a value the spawn request set is **kept (explicit)**;
+- spawn-only values, such as the agent name or the initial message, are
+  **not reapplied**: they were used once, at the first spawn.
+
+Grant changes (permission overrides, group owner and role grants) are listed,
+but a re-apply would not apply them. tclaude does not yet record which of an
+agent's grants came from the profile, so a re-apply could not change those
+without touching grants from elsewhere.
+
+The preview is read-only for now. **Apply** is shown but disabled, because a
+relaunch does not yet read the copy, so replacing it would change nothing.
+The preview needs `profiles.manage`, and is also available as
+`GET /v1/spawn-profiles/{name}/running-agents`. Retired agents are not
+listed.
+
 **What an agent references is read again.** A spawn can name a sandbox
 profile, a spawn profile can link usage profiles, and an agent can have roles.
 Which ones is kept. Their contents are not: an edit to a sandbox profile or a
