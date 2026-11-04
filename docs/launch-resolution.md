@@ -1,0 +1,159 @@
+# Launch resolution
+
+Every agent launch, whether a first spawn or a later resume, reincarnate,
+clone or morph, is built from the same set of launch fields. This page lists
+each field, where its value comes from, and what a relaunch does with it.
+
+How a first spawn picks each value (explicit flag, named profile, group
+default profile, global default profile, harness default) is described in
+[Default resolution](spawning-and-lifecycle.md#default-resolution). This page
+covers what happens to those values after the agent exists.
+
+## The rules
+
+**A spawn profile is copied at first spawn.** The named profile, the group's
+default profile and the global default profile each contribute values to the
+first launch. Those contributions are copied into the agent, and later edits
+to the profile, or a change of a group's default profile, apply to new spawns
+only. Running and stopped agents keep their copy.
+
+**What a profile references is read again.** A spawn profile can name
+sandbox profiles and usage profiles, and an agent can have roles. Which ones
+is part of the copy. Their contents are not: an edit to a sandbox profile or
+a role takes effect on the agent's next relaunch, and usage rules are
+evaluated live.
+
+**Group and workspace settings are kept current.** The group's environment,
+remote-control policy, startup context and mission, and the group or workspace
+sandbox-profile assignment are read again on every relaunch. This holds for
+agents spawned before this table existed too.
+
+**Explicit values stay explicit.** A value given as a flag at spawn wins over
+every profile and stays the agent's value on every relaunch. A flag given at
+resume becomes the agent's new explicit value from then on.
+
+**Harness, model, effort and directory are fixed.** They are chosen at first
+spawn and only change by an explicit action: a morph, an explicit resume flag,
+or moving the agent.
+
+**A resume always works.** If a value that is read again is no longer valid
+(a profile was deleted, or no longer suits the harness), the relaunch falls
+back to the value stored at the last launch and says so.
+
+**Group permissions and owners are not launch inputs.** They apply to
+members at once, without a relaunch.
+
+## Relaunch policy
+
+Five rows can be switched between *re-resolve* (read the current value, the
+default) and *reuse* (keep the value stored at the last launch): group
+environment, group remote-control policy, group startup context and mission,
+sandbox profile contents, and role definitions. The answer is one global
+setting per row. Every other row follows its layer and has no setting.
+
+## Fields
+
+"Spawn flag" says whether a spawn request can set the field explicitly.
+
+<!-- launch-fields:begin -->
+
+### Fixed at first spawn
+
+| Field | Key | On relaunch | Spawn flag | Why |
+|---|---|---|---|---|
+| Harness | `harness` | kept | yes | The conversation belongs to one harness; switching it is a morph. |
+| Model | `model` | kept | yes | Kept as launched; a morph or an explicit resume flag changes it. |
+| Reasoning effort | `effort` | kept | yes | Kept as launched; a morph or an explicit resume flag changes it. |
+| Directory and worktree | `directory` | kept | yes | The harness keys the conversation to its directory; only an explicit move changes it. |
+
+### Copied from the spawn profile at first spawn
+
+| Field | Key | On relaunch | Spawn flag | Why |
+|---|---|---|---|---|
+| Spawn profiles used (named, group default, global default) | `spawn_profile` | kept (copy) | yes | A spawn profile is copied at spawn; editing it, or changing a group's default, affects new spawns only. |
+| Model proxy | `model_proxy` | kept (copy) | yes | Part of the spawn profile copy. |
+| Sandbox mode | `sandbox_mode` | kept (copy) | yes | Part of the spawn profile copy. |
+| Sandbox implementation | `sandbox_implementation` | kept (copy) | yes | Part of the spawn profile copy; the host must still support it. |
+| Approval policy | `approval` | kept (copy) | yes | Part of the spawn profile copy. |
+| Tool governance | `tools` | kept (copy) | yes | Part of the spawn profile copy. |
+| Ask-user timeout | `ask_timeout` | kept (copy) | yes | Part of the spawn profile copy. |
+| Auto-compact window and context window cap | `context_window` | kept (copy) | yes | Part of the spawn profile copy. |
+| Context features (trims) | `context_features` | kept (copy) | yes | Part of the spawn profile copy; features the harness lacks are dropped. |
+| Harness drives (Copilot API, Codex app-server, pi drive) | `harness_drives` | kept (copy) | yes | Part of the spawn profile copy; only harnesses with that drive accept it. |
+| Fast mode | `fast_mode` | kept (copy) | yes | Part of the spawn profile copy. |
+| Auto-review | `auto_review` | kept (copy) | yes | Part of the spawn profile copy. |
+| Remote control (profile default) | `remote_control` | kept (copy) | yes | Part of the spawn profile copy; the group policy can still force it. |
+| Auto memory | `auto_memory` | kept (copy) | yes | Part of the spawn profile copy. |
+| Peer messaging | `peer_messaging` | kept (copy) | yes | Part of the spawn profile copy. |
+| Include group startup context | `include_group_context` | kept (copy) | yes | Part of the spawn profile copy; the group context itself is a group setting. |
+| SSH workaround | `ssh_workaround` | kept (copy) | yes | Part of the spawn profile copy. |
+| Profile and explicit environment | `profile_env` | kept (copy) | yes | Part of the spawn profile copy; explicit entries stay explicit. |
+| Profile startup context | `profile_startup_context` | kept (copy) | no | Part of the spawn profile copy; re-injection after compaction uses it. |
+| Roles | `roles` | kept (copy) | yes | Which roles an agent has is part of the copy; their text is a referenced definition. |
+| Sandbox profiles named by the spawn or its profile | `sandbox_profile_links` | kept (copy) | yes | Which profiles is part of the copy; their contents are re-read. |
+| Usage profiles named by the spawn or its profile | `usage_profile_links` | kept (copy) | yes | Which profiles is part of the copy; their rules are read live. |
+
+### Used by the first spawn only
+
+| Field | Key | On relaunch | Spawn flag | Why |
+|---|---|---|---|---|
+| Agent name and description | `identity` | not reapplied | yes | Set at spawn; a rename acts on the agent itself. |
+| Initial message, saved prompts, attachments | `initial_brief` | not reapplied | yes | Delivered once, as the opening brief. |
+| Task link | `task_link` | not reapplied | yes | Set at spawn; later changes act on the agent itself. |
+| Directory trust seeding | `trust_dir` | not reapplied | yes | Seeded once for the launch directory, which does not move. |
+| Worktree sync and fetch | `worktree_setup` | not reapplied | no | Prepares the worktree before the first launch. |
+| Auto-focus | `focus` | not reapplied | yes | Where the new agent is shown when it starts. |
+| Group owner and permission overrides | `access` | not reapplied | yes | Granted to the agent at spawn; after that they are the agent's own and edited directly. |
+| One-shot run, timeouts and queueing | `run_mode` | not reapplied | yes | Shape of the spawn call itself. |
+| Unenforced-sandbox and break-glass acknowledgements | `launch_acknowledgements` | not reapplied | yes | A human's consent for one fresh spawn; never replayed. |
+
+### Group and workspace settings
+
+| Field | Key | On relaunch | Spawn flag | Why |
+|---|---|---|---|---|
+| Group environment | `group_env` | re-resolved, configurable | no | Group settings are kept current, for agents spawned before this table too (operator decision). |
+| Group remote-control policy | `group_remote_control` | re-resolved, configurable | no | Group settings are kept current; still clamped to what the harness supports. |
+| Group startup context and mission | `group_startup_context` | re-resolved, configurable | no | Group settings are kept current; re-injection after compaction reads them live. |
+| Group and workspace sandbox-profile assignment | `group_sandbox_assignment` | re-resolved | no | Which profile a group or the workspace assigns is a setting, kept current. |
+
+### Contents of referenced profiles and roles
+
+| Field | Key | On relaunch | Spawn flag | Why |
+|---|---|---|---|---|
+| Sandbox profile contents | `sandbox_profile_contents` | re-read, configurable | no | Edits to a sandbox profile take effect on the next relaunch (operator decision). |
+| Role definitions (text) | `role_contents` | re-read, configurable | no | A role is a named entry in the shared registry; edits to it take effect on relaunch and re-injection. |
+| Usage profile rules | `usage_profile_contents` | re-read | no | Usage rules are evaluated live, every few minutes. |
+
+### Live, not a launch input
+
+| Field | Key | On relaunch | Spawn flag | Why |
+|---|---|---|---|---|
+| Group permissions and owners | `group_access` | live | no | Applied to members at once; no relaunch needed. |
+| Member cap, notifications, re-injection after compaction | `group_runtime` | live | no | Read when used; not part of a launch. |
+
+<!-- launch-fields:end -->
+
+## Where the code still differs
+
+The rules above are the specification. These rows do not follow it yet:
+
+<!-- launch-gaps:begin -->
+
+- **Model proxy** (`model_proxy`): Reincarnate and clone drop the model proxy.
+- **Sandbox profiles named by the spawn or its profile** (`sandbox_profile_links`): Resume re-picks the sandbox profiles from the current assignments instead of keeping the spawn's own.
+- **Group environment** (`group_env`): Watch mode and conv resume reuse the stored group environment.
+- **Group remote-control policy** (`group_remote_control`): Resume reuses the remote-control setting stored at the last launch.
+- **Sandbox profile contents** (`sandbox_profile_contents`): A profile that no longer validates fails the resume instead of falling back to the stored one with a warning.
+- **Role definitions (text)** (`role_contents`): Re-injection after compaction still uses the role text resolved at spawn.
+
+<!-- launch-gaps:end -->
+
+The spawn paths also differ in which profile tiers they consult:
+
+- A template or task-force deploy applies the harness default for sandbox
+  mode, approval, tool governance and the SSH workaround before the group and
+  global default profiles are consulted, so those profiles cannot set them.
+- A trigger or process worker's profile takes the group default profile's
+  place, so the group default profile is not consulted for those workers.
+- A scribe or Steward summon launches without the group's sandbox profiles
+  and environment.

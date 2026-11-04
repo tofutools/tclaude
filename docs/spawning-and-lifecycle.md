@@ -172,6 +172,9 @@ up current group environment settings while retaining the original higher-tier
 overrides. A process that is already running keeps its existing environment
 until one of those lifecycle actions.
 
+What every relaunch (resume, reincarnate, clone, morph) does with each launch
+field, and why, is listed in [Launch resolution](launch-resolution.md).
+
 #### Remote control, auto memory, peer messaging and group context
 
 Four profile toggles — `remote_control`, `auto_memory`, `peer_messaging` and
