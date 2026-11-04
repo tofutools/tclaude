@@ -5404,6 +5404,17 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 #relaunch-policy-modal { z-index: calc(var(--z-dialog) + 60); }
 /* Its intro sits in the title's [?] popover: body text, not the heading's bold. */
 #relaunch-policy-modal h3 .spawn-field-description { font-weight: 400; }
+/* A row's [?] opens inside the scrolling row list, so its popover spans the
+   row it explains rather than running 32rem past the list's right edge; the
+   last row's opens upward so it does not grow the list's scroll area. */
+#relaunch-policy-modal .perm-row { position: relative; }
+#relaunch-policy-modal .perm-row .sbx-section-help { position: static; }
+#relaunch-policy-modal .perm-row .spawn-field-help-trigger[aria-expanded="true"] + .spawn-field-description {
+  left: 8px; right: 8px; width: auto;
+}
+#relaunch-policy-modal .perm-row:last-child .spawn-field-help-trigger[aria-expanded="true"] + .spawn-field-description {
+  top: auto; bottom: calc(100% - 4px);
+}
 /* The profile editor opens standalone (the profiles-manage overlay's edit / +
    new) AND on top of the spawn modal ("Save as profile") and the inline
    default-profile pickers ("＋ new profile…"). The spawn modal is a plain

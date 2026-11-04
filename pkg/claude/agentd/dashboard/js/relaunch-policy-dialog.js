@@ -111,7 +111,7 @@ export function RelaunchPolicyDialog({ descriptor, state, confirmDiscard }) {
       const effect = relaunchRowEffect(row, selection, descriptor.inherited, ownSource);
       return html`<div class="perm-row" key=${row.field} data-relaunch-field=${row.field}>
         <div class="perm-row-info">
-          <span class="perm-row-slug" title=${row.why || ''}>${row.label}${row.why ? html`${' '}<${InlineHelp}
+          <span class="perm-row-slug"><span title=${row.why || ''}>${row.label}</span>${row.why ? html`${' '}<${InlineHelp}
             ...${helpProps(`relaunch-policy-help-${row.field}`)} label=${row.label} help=${row.why} />` : ''}</span>
         </div>
         <div class="ui-seg perm-tristate">

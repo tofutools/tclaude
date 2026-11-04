@@ -82,7 +82,7 @@ test('relaunch policy dialog: Default, Follow global and the modes, with what ea
   assert.match(view.container.querySelector('#relaunch-policy-help-hint').textContent, /Follow global takes the global table/);
   assert.equal(row('group_env').querySelector('.perm-row-desc'), null, 'no row description under the label');
   assert.equal(row('group_env').querySelector('#relaunch-policy-help-group_env-hint').textContent, 'Group settings are kept current.');
-  assert.equal(row('group_env').querySelector('.perm-row-slug').getAttribute('title'), 'Group settings are kept current.');
+  assert.equal(row('group_env').querySelector('.perm-row-slug > span[title]').getAttribute('title'), 'Group settings are kept current.');
   assert.equal(view.container.querySelector('#relaunch-policy-layers').hasAttribute('open'), false, 'the other inputs start collapsed');
   assert.equal(view.container.querySelector('[data-relaunch-layers-summary]').textContent, '1 copied at spawn · 1 fixed');
 
