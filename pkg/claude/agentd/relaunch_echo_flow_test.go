@@ -1,14 +1,18 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -85,7 +89,11 @@ func TestRelaunchEcho_NothingChangedEchoesNothing(t *testing.T) {
 	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "steady",
 		Environment: []db.SandboxEnvironmentEntry{{Name: "KEEP", Value: "1"}}, AgentDirectories: []string{"GOCACHE"}})
 	require.NoError(t, err)
-	for _, body := range []map[string]any{{"name": "plain"}, {"name": "profiled", "sandbox_profile": "steady"}} {
+	for _, body := range []map[string]any{
+		{"name": "plain"},
+		{"name": "profiled", "sandbox_profile": "steady"},
+		{"name": "codex", "sandbox_profile": "steady", "harness": "codex", "sandbox": "tclaude-agent"},
+	} {
 		spawn := f.AsHuman().SpawnWith("crew", body)
 		require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
 		f.MarkOffline(spawn.TmuxSession)
@@ -99,4 +107,53 @@ func TestRelaunchEcho_NothingChangedEchoesNothing(t *testing.T) {
 		testharness.DecodeJSON(t, rec, &response)
 		assert.Emptyf(t, response.Changes, "%v", body)
 	}
+}
+
+// A filtered-network profile under the tclaude layer regenerates the Codex SSH
+// workaround (its config directory and command) on every launch; none of that
+// is a change.
+func TestRelaunchEcho_FilteredNetworkRelaunchEchoesNothing(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Cleanup(session.SetCodexEffectiveConfigProbeForTest(
+		func(string, []sandboxpolicy.EnvironmentEntry, string) (json.RawMessage, error) {
+			return json.RawMessage(`{"config": {"model_provider": "test",
+				"model_providers": {"test": {"base_url": "https://example.test/v1"}}}, "origins": {}}`), nil
+		}))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	t.Cleanup(agentd.SetTclaudeLayerHostAvailabilityForTest(func() error { return nil }))
+	t.Cleanup(agentd.SetFilteredNetworkPrerequisiteForTest(func() session.FilteredNetworkPrerequisite {
+		return session.FilteredNetworkPrerequisite{Detected: true, Detail: "test packet gateway"}
+	}))
+	verdict := func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
+		_ sandboxpolicy.NetworkEngine) (harness.LaunchOSSandbox, error) {
+		return harness.LaunchOSSandbox{State: "on", Source: "test tclaude-layer",
+			FilteredNetwork: posture == sandboxpolicy.NetworkFiltered}, nil
+	}
+	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(verdict))
+	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictWithIdentityForTest(func(name string,
+		posture sandboxpolicy.NetworkPosture, root sandboxpolicy.RootPosture,
+		engine sandboxpolicy.NetworkEngine, _ bool) (harness.LaunchOSSandbox, error) {
+		return verdict(name, posture, root, engine)
+	}))
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "filtered",
+		Network: &sandboxpolicy.NetworkRules{Baseline: sandboxpolicy.NetworkBaselineDeny,
+			Engine: sandboxpolicy.NetworkEnginePacket,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{Domain: "example.test"},
+				{Domain: "chatgpt.com", Ports: []int{443}}, {Domain: "auth.openai.com", Ports: []int{443}}}}})
+	require.NoError(t, err)
+
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{"name": "filtered", "harness": harness.CodexName,
+		"cwd": t.TempDir(), "sandbox_implementation": "tclaude-layer", "sandbox_profile": "filtered"})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	f.MarkOffline(spawn.TmuxSession)
+	resume := f.AsHuman().Resume(spawn.ConvID)
+	f.AssertResumeSpawned(resume)
+	assert.Empty(t, resume.Changes)
+
+	rec := agentReq(t, f, spawn.ConvID, http.MethodPost, "/v1/whoami/reincarnate", map[string]any{"follow_up": "carry on"})
+	require.Equalf(t, http.StatusOK, rec.Code, "reincarnate body=%s", rec.Body.String())
+	var response testharness.ReincarnateResp
+	testharness.DecodeJSON(t, rec, &response)
+	assert.Empty(t, response.Changes)
 }

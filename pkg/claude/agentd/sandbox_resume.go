@@ -406,10 +406,15 @@ func prepareRelaunchSandbox(req relaunchSandboxRequest) (*relaunchSandbox, *spaw
 		return nil, fail
 	}
 	fallback.warnings = append([]string{fmt.Sprintf(
-		"the agent's sandbox profiles could not be applied (%s); relaunched under the sandbox policy stored at its last launch",
+		"the agent's sandbox profiles could not be applied (%s); "+relaunchFallbackNote,
 		fail.Msg)}, fallback.warnings...)
 	return fallback, nil
 }
+
+// relaunchFallbackNote ends the warning of a relaunch that fell back to its
+// stored sandbox policy. The dashboard's wake toast matches on it to show
+// that warning, and only it, as an error.
+const relaunchFallbackNote = "relaunched under the sandbox policy stored at its last launch"
 
 // prepareRelaunchSandboxFrom reports, with a failure, whether it means the
 // sandbox profiles cannot be used for this launch (unusable), which is what

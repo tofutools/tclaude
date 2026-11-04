@@ -1820,7 +1820,6 @@ func resumeOneConvUnderLaunchLockForTeleport(convID string, recreateMissingDir b
 	}
 	resumePolicy, effectiveSandbox := prepared.policy, prepared.effective
 	res.Warnings = append(res.Warnings, prepared.warnings...)
-	res.Changes = prepared.changes
 	// This is a continuation of authority admitted at the initial spawn. The
 	// session launcher derives any repository grants from the current cwd and
 	// applies the current operator-authored sandbox profile; resume does not
@@ -1948,6 +1947,12 @@ func resumeOneConvUnderLaunchLockForTeleport(convID string, recreateMissingDir b
 		}
 	} else {
 		res.Action = "resumed"
+		// The echo describes what this launch changed, so only a launch that
+		// happened and was recorded reports it: the temporary built-in mode
+		// never persists its policy, and would repeat the same lines.
+		if !launchConfig.TemporaryHarnessBuiltinMode {
+			res.Changes = prepared.changes
+		}
 		if managedParams.ManagedInstructionsBody != "" {
 			if _, err := db.InsertAgentMessage(&db.AgentMessage{ToConv: convID, Subject: "Managed instructions (launch)", Body: managedParams.ManagedInstructionsBody}); err != nil {
 				res.Warnings = append(res.Warnings, "Managed instructions inbox copy could not be saved: "+err.Error())

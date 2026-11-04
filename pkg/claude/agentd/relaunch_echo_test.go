@@ -34,3 +34,30 @@ func TestRelaunchChangesNamesWithoutValues(t *testing.T) {
 	}
 	assert.Nil(t, relaunchChanges(nil, &after))
 }
+
+func TestRelaunchChangesNamesEachAxis(t *testing.T) {
+	before, after := sandboxpolicy.EmptySnapshot(), sandboxpolicy.EmptySnapshot()
+	before.Applied = []sandboxpolicy.AppliedProfile{{Scope: sandboxpolicy.ScopeExplicit, ID: 1, Name: "a"}}
+	after.Applied = []sandboxpolicy.AppliedProfile{{Scope: sandboxpolicy.ScopeExplicit, ID: 2, Name: "b"}}
+	before.Effective.Filesystem = []sandboxpolicy.FilesystemGrant{{Path: "/keep", Access: "read"}, {Path: "/gone", Access: "read"}}
+	after.Effective.Filesystem = []sandboxpolicy.FilesystemGrant{{Path: "/keep", Access: "read"}, {Path: "/new", Access: "write"}, {Path: "/new2", Access: "read"}}
+	before.Effective.Network = &sandboxpolicy.NetworkRules{Packs: []string{"github"}}
+	after.Effective.Network = &sandboxpolicy.NetworkRules{Packs: []string{"github", "npm"}}
+	after.Effective.UnixSockets = &sandboxpolicy.UnixSocketRules{Mode: "allow"}
+	after.Effective.Tmpfs = []sandboxpolicy.TmpfsMount{{Path: "/scratch"}}
+	assert.Equal(t, []string{
+		`sandbox profiles: explicit "a" → explicit "b"`,
+		"filesystem rules: 2 added, 1 removed",
+		"network rules changed",
+		"temporary filesystems changed",
+		"unix sockets changed",
+	}, relaunchChanges(&before, &after))
+}
+
+// A stored snapshot drops empty axes from its JSON; that is not a change.
+func TestRelaunchChangesTreatsEmptyAndMissingAxesAlike(t *testing.T) {
+	before, after := sandboxpolicy.EmptySnapshot(), sandboxpolicy.EmptySnapshot()
+	before.Effective.Tmpfs, after.Effective.Tmpfs = nil, []sandboxpolicy.TmpfsMount{}
+	before.Effective.PreLaunch, after.Effective.PreLaunch = []sandboxpolicy.PreLaunchBlock{}, nil
+	assert.Empty(t, relaunchChanges(&before, &after))
+}

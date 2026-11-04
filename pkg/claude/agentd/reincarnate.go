@@ -990,7 +990,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	if len(relaunchWarnings) > 0 {
 		resp["warnings"] = relaunchWarnings
 	}
-	if len(relaunchChanged) > 0 {
+	if len(relaunchChanged) > 0 && !relaunch.TemporaryHarnessBuiltinMode {
 		resp["changes"] = relaunchChanged
 	}
 	if caller != target {

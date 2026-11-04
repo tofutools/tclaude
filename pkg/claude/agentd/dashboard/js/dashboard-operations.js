@@ -532,12 +532,16 @@ export async function resumeAgentReq(conv, label, recreate, node = '', retried =
     clearPendingWake(conv);
     return false;
   }
-  // A relaunch's warnings (a fallback to the stored sandbox policy) and its
-  // changed-since-last-launch echo ride the same toast.
-  const notes = [...(out.warnings || []).map((w) => `⚠ ${w}`),
+  // A relaunch that fell back to its stored sandbox policy says so as an
+  // error; its changed-since-last-launch echo rides the same toast. Other
+  // warnings are standing access notices repeated on every wake, so the
+  // toast leaves them to the CLI and the agent's detail.
+  const fallbacks = (out.warnings || []).filter((w) =>
+    w.includes('relaunched under the sandbox policy stored at its last launch'));
+  const notes = [...fallbacks.map((w) => `⚠ ${w}`),
     ...(out.changes || []).map((c) => `changed: ${c}`)];
   toast(`wake ${label}: ${action || 'ok'}${notes.length ? ` — ${notes.join('; ')}` : ''}`,
-    (out.warnings || []).length > 0);
+    fallbacks.length > 0);
   announceNodeChanged(node);
   refresh();
   return true;

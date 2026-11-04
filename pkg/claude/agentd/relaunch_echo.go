@@ -48,6 +48,24 @@ func relaunchChanges(previous, current *sandboxpolicy.Snapshot) []string {
 	} else if !reflect.DeepEqual(before.Effective.Network, after.Effective.Network) {
 		add("network rules changed")
 	}
+	// The remaining axes are named, not detailed: an edit to an included
+	// profile does not move the applied profile's edit time, so each axis
+	// is compared on its own.
+	for _, axis := range []struct {
+		name          string
+		before, after any
+	}{
+		{"temporary filesystems", before.Effective.Tmpfs, after.Effective.Tmpfs},
+		{"unix sockets", before.Effective.UnixSockets, after.Effective.UnixSockets},
+		{"resource limits", before.Effective.ResourceLimits, after.Effective.ResourceLimits},
+		{"pre-launch blocks", before.Effective.PreLaunch, after.Effective.PreLaunch},
+		{"macOS mach register", before.Effective.DarwinAllowMachRegister, after.Effective.DarwinAllowMachRegister},
+		{"macOS keychain write", before.Effective.DarwinDisableKeychainWrite, after.Effective.DarwinDisableKeychainWrite},
+	} {
+		if !sameAxis(axis.before, axis.after) {
+			add("%s changed", axis.name)
+		}
+	}
 	if before.Effective.FilesystemRoot != after.Effective.FilesystemRoot {
 		add("filesystem root: %s → %s", orDefault(string(before.Effective.FilesystemRoot)), orDefault(string(after.Effective.FilesystemRoot)))
 	}
@@ -154,6 +172,16 @@ func environmentDiff(label string, before, after []sandboxpolicy.EnvironmentEntr
 		return ""
 	}
 	return label + ": " + strings.Join(parts, "; ")
+}
+
+// sameAxis compares one policy axis, treating an empty slice and a missing
+// one as the same, since a stored snapshot's JSON drops empty axes.
+func sameAxis(a, b any) bool {
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if va.Kind() == reflect.Slice && vb.Kind() == reflect.Slice && va.Len() == 0 && vb.Len() == 0 {
+		return true
+	}
+	return reflect.DeepEqual(a, b)
 }
 
 func orNone(s string) string {
