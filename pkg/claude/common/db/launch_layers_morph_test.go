@@ -2,6 +2,7 @@ package db
 
 import (
 	"encoding/json"
+	"maps"
 	"slices"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ import (
 // names, which the relaunch resolver and the re-apply preview read.
 func TestMorphExplicitValuesUseLaunchspecNames(t *testing.T) {
 	values := morphExplicitValues(AgentMorphForm{Model: morphStr("opus"), Effort: morphStr("high"), Approval: morphStr("plan"),
-		Tools: morphStr("strict"), AskTimeout: morphStr("5m"), AutoCompactWindow: morphStr("200k")}, time.Now())
+		Tools: morphStr("strict"), AskTimeout: morphStr("5m"), AutoCompactWindow: morphStr("200k")}, AgentMorphForm{}, time.Now())
 	require.Len(t, values, 6)
 	for key, value := range values {
 		field, ok := launchspec.Lookup(key)
@@ -25,7 +26,10 @@ func TestMorphExplicitValuesUseLaunchspecNames(t *testing.T) {
 			assert.Truef(t, slices.Contains(field.RequestFields, name), "%s: %s is not one of its request fields", key, name)
 		}
 	}
-	assert.Empty(t, morphExplicitValues(AgentMorphForm{}, time.Now()), "an unset field is not recorded")
+	assert.Empty(t, morphExplicitValues(AgentMorphForm{}, AgentMorphForm{}, time.Now()), "an unset field is not recorded")
+	unchanged := morphExplicitValues(AgentMorphForm{Approval: morphStr("plan"), Tools: morphStr("")},
+		AgentMorphForm{Approval: morphStr("auto"), Tools: morphStr("")}, time.Now())
+	assert.Equal(t, []string{"approval"}, slices.Collect(maps.Keys(unchanged)), "a field set to its current value is not recorded")
 }
 
 func morphStr(v string) *string { return &v }
@@ -56,7 +60,7 @@ func TestRecordExplicitLaunchValuesMerges(t *testing.T) {
 			Provenance: ExplicitAtSpawn, SetAt: at}},
 	}))
 	later := at.Add(time.Hour)
-	recordExplicit(t, agentID, morphExplicitValues(AgentMorphForm{AutoCompactWindow: morphStr("200k")}, later))
+	recordExplicit(t, agentID, morphExplicitValues(AgentMorphForm{AutoCompactWindow: morphStr("200k")}, AgentMorphForm{}, later))
 
 	got, err := AgentLaunchLayersFor(agentID)
 	require.NoError(t, err)
@@ -69,7 +73,7 @@ func TestRecordExplicitLaunchValuesMerges(t *testing.T) {
 
 	old, err := AllocateAgent("conv-old", "spawn")
 	require.NoError(t, err)
-	recordExplicit(t, old, morphExplicitValues(AgentMorphForm{AutoCompactWindow: morphStr("200k")}, later))
+	recordExplicit(t, old, morphExplicitValues(AgentMorphForm{AutoCompactWindow: morphStr("200k")}, AgentMorphForm{}, later))
 	layers, err := AgentLaunchLayersFor(old)
 	require.NoError(t, err)
 	assert.Nil(t, layers, "a pre-change agent stays pre-change")

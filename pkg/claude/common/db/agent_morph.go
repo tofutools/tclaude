@@ -156,23 +156,31 @@ func applyMorphForm(p *AgentRelaunchProfile, f AgentMorphForm) {
 }
 
 // morphExplicitValues is the explicit layer entries for the fields a morph
-// form sets, keyed by launchspec field key and spawn request field name (a
-// test pins both against launchspec). The model is recorded bare: its context
-// window lives in the relaunch profile, as the form keeps it.
-func morphExplicitValues(f AgentMorphForm, at time.Time) map[string]ExplicitLaunchValue {
+// form changes from the form it replaces, keyed by launchspec field key and
+// spawn request field name (a test pins both against launchspec). A field
+// the form sets to the value it already had is not the morph's choice: a
+// morph back, whose form sets every field, makes explicit only what the
+// morph it undoes changed. The model is recorded bare: its context window
+// lives in the relaunch profile, as the form keeps it.
+//
+// The auto-compact window shares launchspec's context_window key with the
+// Copilot-only ContextWindowMax, which the resolver treats as one unit. A
+// same-harness morph cannot set both on one agent: the auto-compact window
+// is Claude Code's and pi's only (harness.SupportsAutoCompactWindow).
+func morphExplicitValues(f, previous AgentMorphForm, at time.Time) map[string]ExplicitLaunchValue {
 	out := map[string]ExplicitLaunchValue{}
 	for _, v := range []struct {
-		key, field string
-		value      *string
+		key, field      string
+		value, previous *string
 	}{
-		{"model", "Model", f.Model},
-		{"effort", "Effort", f.Effort},
-		{"approval", "ApprovalPolicy", f.Approval},
-		{"tools", "ToolGovernance", f.Tools},
-		{"ask_timeout", "AskUserQuestionTimeout", f.AskTimeout},
-		{"context_window", "AutoCompactWindow", f.AutoCompactWindow},
+		{"model", "Model", f.Model, previous.Model},
+		{"effort", "Effort", f.Effort, previous.Effort},
+		{"approval", "ApprovalPolicy", f.Approval, previous.Approval},
+		{"tools", "ToolGovernance", f.Tools, previous.Tools},
+		{"ask_timeout", "AskUserQuestionTimeout", f.AskTimeout, previous.AskTimeout},
+		{"context_window", "AutoCompactWindow", f.AutoCompactWindow, previous.AutoCompactWindow},
 	} {
-		if v.value == nil {
+		if v.value == nil || (v.previous != nil && *v.previous == *v.value) {
 			continue
 		}
 		raw, err := json.Marshal(*v.value)
@@ -272,9 +280,9 @@ func updateAgentRelaunchProfileForConvTx(convID string, apply func(tx *sql.Tx, a
 // records the form it replaced for a later morph-back, and clears any pending
 // morph. It returns the replaced form.
 //
-// The fields the form sets are also recorded as the agent's explicit launch
-// values, in the same transaction, so re-applying its spawn profile keeps the
-// morphed form instead of putting the profile's values back.
+// The fields the form changes are also recorded as the agent's explicit
+// launch values, in the same transaction, so re-applying its spawn profile
+// keeps the morphed form instead of putting the profile's values back.
 func ApplyAgentMorphForConv(convID string, target AgentMorphForm) (AgentMorphForm, error) {
 	var previous AgentMorphForm
 	conversation, err := ConversationResumeProfileForConv(convID)
@@ -282,14 +290,14 @@ func ApplyAgentMorphForConv(convID string, target AgentMorphForm) (AgentMorphFor
 		return previous, err
 	}
 	err = updateAgentRelaunchProfileForConvTx(convID, func(tx *sql.Tx, agentID string, p *AgentRelaunchProfile) error {
-		if err := recordExplicitLaunchValuesTx(tx, agentID, morphExplicitValues(target, time.Now())); err != nil {
-			return err
-		}
 		base := p
 		if conversation != nil {
 			base = ComposeAgentRelaunchProfile(conversation.FallbackRelaunch, p)
 		}
 		previous = morphFormOf(base, p.MorphProfile)
+		if err := recordExplicitLaunchValuesTx(tx, agentID, morphExplicitValues(target, previous, time.Now())); err != nil {
+			return err
+		}
 		applyMorphForm(p, target)
 		p.MorphProfile = target.Profile
 		p.PreviousMorphForm = &previous

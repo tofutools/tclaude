@@ -64,3 +64,37 @@ func TestMorph_RecordsTheFormAsExplicitLaunchValues(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "high", effort)
 }
+
+// A morph back sets every field of the form it restores, but makes explicit
+// only what the morph it undoes changed: the fields no morph chose still
+// follow a re-applied spawn profile.
+func TestMorph_BackMakesExplicitOnlyWhatChanged(t *testing.T) {
+	t.Setenv(session.ResourceDelegationDirEnv, "")
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	rec := createProfile(t, f, map[string]any{"name": "agentic", "ask_user_question_timeout": "5m", "approval": "auto"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create profile body=%s", rec.Body.String())
+	spawn := spawnStopped(t, f, "crew", map[string]any{"name": "worker", "profile": "agentic"})
+
+	rec = f.AsHuman().Morph(spawn.AgentID, map[string]any{"approval": "plan"})
+	require.Equal(t, "morphed", decodeMorph(t, rec.Code, rec.Body.Bytes()).Result)
+	rec = f.AsHuman().Morph(spawn.AgentID, map[string]any{"back": true})
+	require.Equal(t, "morphed", decodeMorph(t, rec.Code, rec.Body.Bytes()).Result)
+
+	layers, err := db.AgentLaunchLayersForConv(spawn.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, layers)
+	assert.JSONEq(t, `"auto"`, string(layers.Explicit["approval"].Fields["ApprovalPolicy"]), "the morph back restored the approval explicitly")
+	for _, key := range []string{"model", "effort", "tools", "ask_timeout", "context_window"} {
+		assert.NotContainsf(t, layers.Explicit, key, "no morph changed %s", key)
+	}
+
+	newCopy := editedCopy(t, "agentic", func(p *db.SpawnProfile) { p.AskUserQuestionTimeout = "10m" })
+	kind, msg := agentd.ApplySpawnCopyForTest(agentIDFor(t, spawn.ConvID), newCopy)
+	require.Empty(t, kind, msg)
+	resumeAgain(t, f, spawn.ConvID)
+	askTimeout, ok := f.World.SpawnAskTimeout(spawn.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, "10m", askTimeout, "a field no morph changed follows the re-applied profile")
+}
