@@ -4318,7 +4318,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		CodexAppServer: agent.ResolvedField{Value: codexAppServerValue, Source: codexAppServerSource},
 		FastMode:       agent.ResolvedField{Value: fastModeValue, Source: fastModeSource},
 	}
-	resolvedLaunch.RelaunchPolicy = resolveSpawnRelaunchRows(relaunchExplicit, relaunchTiers)
+	// A one-shot is never resumed and records no rows, so it shows none.
+	if !body.NonInteractive {
+		resolvedLaunch.RelaunchPolicy = resolveSpawnRelaunchRows(relaunchExplicit, relaunchTiers)
+	}
 	resolvedLaunch.SandboxImpl = agent.ResolvedField{
 		Value: body.SandboxImplementation, Source: sandboxImplSource, Note: sandboxImplNote}
 	// The note rides the echoed field, like Harness/Model/Effort. It ALSO enters

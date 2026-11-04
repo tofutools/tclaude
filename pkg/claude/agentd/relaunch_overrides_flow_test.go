@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -233,6 +234,14 @@ func TestRelaunchOverrides_FreeInheritedRowStaysWithItsSource(t *testing.T) {
 		{Field: "group_env", Mode: "reuse", Source: "profile:pinned"},
 		{Field: "harness_config", Mode: "inherit", Source: "explicit"},
 	}, launchLayers(t, child.ConvID).RelaunchOverrides)
+	// The spawn's echo shows the rows it recorded, after the gate: the agent's
+	// explicit-wins became inherit, so it follows the global table.
+	var echo struct {
+		Resolved agent.ResolvedLaunch `json:"resolved"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(child.Raw), &echo))
+	assert.Equal(t, "global", echo.Resolved.RelaunchPolicy["harness_config"].Kind)
+	assert.Equal(t, agent.ResolvedField{Value: "reuse", Source: "profile pinned", Kind: "profile"}, echo.Resolved.RelaunchPolicy["group_env"])
 
 	setRelaunchPolicy(t, f, "harness_config", "tighten-only")
 	note := agentd.RelaunchOverridesNoteForTest(child.ConvID)
