@@ -37,13 +37,13 @@ export function BatchPreview({
   const all = selectionOf(rows, rowKey);
   const count = selectedRows(rows, rowKey, selected).length;
   return html`<div class="batch-preview">
-    ${rows.length === 0 ? html`<p class="batch-preview-empty">${empty}</p>` : html`
+    ${rows.length === 0 ? html`<p class="ui-empty-block">${empty}</p>` : html`
       <div class="batch-preview-head">
         <span class="batch-preview-count">${count} of ${rows.length} ${label} selected</span>
         <${Button} size="sm" variant="link" disabled=${disabled || count === rows.length} onClick=${() => onChange(all)}>Select all<//>
         <${Button} size="sm" variant="link" disabled=${disabled || count === 0} onClick=${() => onChange(new Set())}>Select none<//>
       </div>
-      <table class="batch-preview-table">
+      <table class="batch-preview-table ui-compact">
         <thead><tr><th></th>${columns.map((c) => html`<th key=${c.key}>${c.label}</th>`)}</tr></thead>
         <tbody>${rows.map((row) => {
           const key = rowKey(row);
