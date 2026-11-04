@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/launchspec"
 )
@@ -219,36 +220,35 @@ func profileRelaunchRowsFailure(caller string, before, after *db.SpawnProfile, w
 		after.Name, strings.Join(added, ", "), PermRelaunchPolicyManage, why)}
 }
 
-// relaunchRowResolution is one configurable row as a spawn with given inputs
-// would get it: the mode its relaunches use, and where it comes from ("this
-// spawn", "profile <name>" or "global"). The per-field {value, source} shape
-// is the one a general spawn preview (tcl-ezvrww) will use for every field.
-type relaunchRowResolution struct {
-	Value  string `json:"value"`
-	Source string `json:"source"`
-}
+// Kinds of a resolved relaunch row's source (agent.ResolvedField.Kind).
+const (
+	relaunchRowKindExplicit = "explicit"
+	relaunchRowKindProfile  = "profile"
+	relaunchRowKindGlobal   = "global"
+)
 
 // resolveSpawnRelaunchRows is every configurable row a spawn with these
 // explicit rows and profile tiers would give its agent. It reads the same
-// walk the spawn records (resolveRelaunchOverrides), so the dashboard's
-// preview cannot disagree with what the spawn stores.
-func resolveSpawnRelaunchRows(explicit map[string]string, tiers []*db.SpawnProfile) map[string]relaunchRowResolution {
+// walk the spawn records (resolveRelaunchOverrides), so neither the spawn's
+// echo (and the spawn preview) nor the dashboard's live read can disagree
+// with what the spawn stores.
+func resolveSpawnRelaunchRows(explicit map[string]string, tiers []*db.SpawnProfile) map[string]agent.ResolvedField {
 	global := currentRelaunchPolicy()
-	out := map[string]relaunchRowResolution{}
+	out := map[string]agent.ResolvedField{}
 	for _, f := range launchspec.Fields {
 		if f.Configurable {
-			out[f.Key] = relaunchRowResolution{Value: string(global.Mode(f.Key)), Source: "global"}
+			out[f.Key] = agent.ResolvedField{Value: string(global.Mode(f.Key)), Source: "global", Kind: relaunchRowKindGlobal}
 		}
 	}
 	for _, o := range resolveRelaunchOverrides(explicit, tiers) {
 		if o.Mode == string(launchspec.ModeInherit) {
 			continue // follows the global table, as above
 		}
-		source := "this spawn"
+		row := agent.ResolvedField{Value: o.Mode, Source: "this spawn", Kind: relaunchRowKindExplicit}
 		if name, ok := strings.CutPrefix(o.Source, relaunchSourceProfilePrefix); ok {
-			source = "profile " + name
+			row.Source, row.Kind = "profile "+name, relaunchRowKindProfile
 		}
-		out[o.Field] = relaunchRowResolution{Value: o.Mode, Source: source}
+		out[o.Field] = row
 	}
 	return out
 }
@@ -258,7 +258,7 @@ func resolveSpawnRelaunchRows(explicit map[string]string, tiers []*db.SpawnProfi
 // explicit rows (field=mode, comma-separated) would give its agent, resolved
 // with the spawn's own tiers: the named profile, the group's default
 // profile, the global default profile.
-func spawnRelaunchPreview(group, profile, explicitParam string) (map[string]relaunchRowResolution, *spawnFailure) {
+func spawnRelaunchPreview(group, profile, explicitParam string) (map[string]agent.ResolvedField, *spawnFailure) {
 	explicit := map[string]string{}
 	for _, pair := range strings.Split(explicitParam, ",") {
 		if pair = strings.TrimSpace(pair); pair == "" {

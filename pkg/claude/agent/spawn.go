@@ -139,6 +139,10 @@ type ResolvedLaunch struct {
 	RemoteControl *ResolvedField `json:"remote_control,omitempty"`
 	AutoMemory    *ResolvedField `json:"auto_memory,omitempty"`
 	PeerMessaging *ResolvedField `json:"peer_messaging,omitempty"`
+	// RelaunchPolicy is each configurable relaunch-policy row the agent would
+	// get (re-resolve or reuse), with where it comes from: this spawn, a
+	// profile tier, or the global table (tcl-ezvrww).
+	RelaunchPolicy map[string]ResolvedField `json:"relaunch_policy,omitempty"`
 	// SandboxPolicy exposes the frozen profile chain, canonical grants, and
 	// environment names. Environment values remain private in the snapshot.
 	SandboxPolicy *ResolvedSandboxPolicy `json:"sandbox_policy,omitempty"`
@@ -200,6 +204,10 @@ type ResolvedField struct {
 	// incompatible with the resolved harness. The value still falls through to
 	// the next profile tier / harness default; the skip is never silent.
 	Note string `json:"note,omitempty"`
+	// Kind is a stable machine name for the source, where a field has one
+	// (the relaunch-policy rows: explicit, profile, global); Source stays the
+	// readable text.
+	Kind string `json:"kind,omitempty"`
 }
 
 // Provenance source labels for ResolvedField.Source. The profile-name tiers are

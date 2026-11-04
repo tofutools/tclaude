@@ -164,3 +164,34 @@ func TestSpawnPreview_RestrictedPeerIsRefused(t *testing.T) {
 	assert.NotEqual(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.NotContains(t, rec.Body.String(), `"resolved"`)
 }
+
+// The spawn preview's relaunch rows are the dashboard's live relaunch read for
+// the same inputs: one walk (resolveSpawnRelaunchRows) over the spawn's own
+// tiers serves both, with a stable kind beside the readable source.
+func TestSpawnPreview_RelaunchRowsMatchTheLiveRead(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{
+		"name": "pinned-env", "relaunch_policy": map[string]string{"group_env": "reuse"}})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	rec = profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{
+		"name": "crew-default", "relaunch_policy": map[string]string{"harness_config": "chain-wins"}})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	_, err := db.SetAgentGroupDefaultProfile("crew", "crew-default")
+	require.NoError(t, err)
+	h := agentd.BuildDashboardHandlerForTest()
+
+	code, got, raw := spawnPreview(t, h, "crew", map[string]any{"name": "w", "profile": "pinned-env",
+		"relaunch_policy": map[string]string{"sandbox_profile_contents": "reuse"}})
+	require.Equal(t, http.StatusOK, code, raw)
+	live := previewRelaunch(t, f, "group=crew&profile=pinned-env&explicit=sandbox_profile_contents=reuse")
+	require.NotEmpty(t, got.RelaunchPolicy)
+	require.Len(t, got.RelaunchPolicy, len(live))
+	for key, row := range got.RelaunchPolicy {
+		assert.Equal(t, map[string]string{"value": row.Value, "source": row.Source, "kind": row.Kind}, live[key], key)
+	}
+	assert.Equal(t, agent.ResolvedField{Value: "reuse", Source: "this spawn", Kind: "explicit"}, got.RelaunchPolicy["sandbox_profile_contents"])
+	assert.Equal(t, "profile", got.RelaunchPolicy["group_env"].Kind)
+	assert.Equal(t, "profile crew-default", got.RelaunchPolicy["harness_config"].Source)
+}

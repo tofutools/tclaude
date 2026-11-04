@@ -271,13 +271,13 @@ func TestRelaunchOverrides_Preview(t *testing.T) {
 	setRelaunchPolicy(t, f, "group_remote_control", "reuse")
 
 	got := previewRelaunch(t, f, "group=crew&profile=pinned-env&explicit=sandbox_profile_contents=inherit")
-	assert.Equal(t, map[string]string{"value": "reuse", "source": "profile pinned-env"}, got["group_env"])
-	assert.Equal(t, map[string]string{"value": "re-resolve", "source": "global"}, got["sandbox_profile_contents"], "inherit follows the global table")
-	assert.Equal(t, map[string]string{"value": "chain-wins", "source": "profile crew-default"}, got["harness_config"], "the group's default profile")
-	assert.Equal(t, map[string]string{"value": "reuse", "source": "global"}, got["group_remote_control"])
+	assert.Equal(t, map[string]string{"value": "reuse", "source": "profile pinned-env", "kind": "profile"}, got["group_env"])
+	assert.Equal(t, map[string]string{"value": "re-resolve", "source": "global", "kind": "global"}, got["sandbox_profile_contents"], "inherit follows the global table")
+	assert.Equal(t, map[string]string{"value": "chain-wins", "source": "profile crew-default", "kind": "profile"}, got["harness_config"], "the group's default profile")
+	assert.Equal(t, map[string]string{"value": "reuse", "source": "global", "kind": "global"}, got["group_remote_control"])
 
 	got = previewRelaunch(t, f, "group=crew&explicit=group_env=re-resolve")
-	assert.Equal(t, map[string]string{"value": "re-resolve", "source": "this spawn"}, got["group_env"])
+	assert.Equal(t, map[string]string{"value": "re-resolve", "source": "this spawn", "kind": "explicit"}, got["group_env"])
 
 	rec = humanReq(t, f, http.MethodGet, "/v1/relaunch-policy?preview=1&explicit=group_env=chain-wins", nil)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
