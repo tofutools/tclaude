@@ -1157,10 +1157,12 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       }
       if (!state.isCurrent(current.generation)) return;
       markTiming('attachments_ready_ms');
-      // A local spawn sends a pre-filled toggle only when the operator set it;
-      // a remote one is filtered by remoteExplicit below.
+      // A local spawn leaves out a pre-filled toggle the operator did not set
+      // when the daemon resolves the same value; a remote one is filtered by
+      // remoteExplicit below, and one on another node sends what it shows
+      // (that node's default profile is not known here).
       const request = buildSpawnRequest(next, context, worktreeSelection, attachmentPaths,
-        remote ? null : operatorSet.current);
+        remote || away ? null : { operatorSet: operatorSet.current, profiles, dashboardDefault: actions.dashboardDefaultProfile() });
       if (policyDrifted()) throw new Error(STALE_POLICY_ERROR);
       setProgress('Launching agent…');
       markTiming('request_sent_ms');

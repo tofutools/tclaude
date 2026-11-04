@@ -185,8 +185,10 @@ trigger worker and a process worker. Highest first:
 
 1. the explicit flag (direct spawn only). The dashboard's spawn dialog
    pre-fills the remote-control, auto-memory and peer-messaging checkboxes
-   from the tiers below and sends one only when you change it, so a box left
-   as pre-filled is not an explicit choice
+   from the tiers below and leaves one out of the request when you did not
+   change it and the daemon resolves the same value, so a box left as
+   pre-filled is not an explicit choice. A box the daemon would not resolve
+   the same way (a profile the dialog cannot see, say) is sent as shown
 2. the group's remote-control policy (`groups set-remote-control`; remote
    control only)
 3. the named profile (`--profile`, a template agent's inline or referenced
