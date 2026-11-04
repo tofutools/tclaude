@@ -1249,47 +1249,32 @@ export function prepareSpawnDraft(
 }
 
 // PREFILLED_TOGGLES are the launch toggles the form pre-fills from the group
-// policy and the profiles, keyed draft field → request and profile field.
-// Given omission ({ operatorSet, profiles, dashboardDefault }),
+// policy and the profiles, keyed draft field → request field (and the key of
+// the daemon's resolved echo). Given omission ({ operatorSet, resolved }),
 // buildSpawnRequest leaves one out when the operator did not set it and the
 // daemon resolves the same value without it, as the CLI does: a pre-filled
 // value is not an explicit choice, so it is not recorded as one, and a later
-// group policy can still reach the agent on relaunch. A value the daemon would
-// not land on (the pre-fill read fewer tiers than it walks, or the profiles
-// are not visible here) is sent. Without omission every shown toggle is sent.
+// group policy can still reach the agent on relaunch. resolved is the spawn
+// preview's echo (POST .../spawn-preview, tcl-ezvrww) for the request with
+// those toggles left out; resolved null leaves every untouched toggle out (the
+// request to preview), and a toggle the echo does not carry is sent. Without
+// omission every shown toggle is sent.
 export const PREFILLED_TOGGLES = Object.freeze({
   remoteControl: 'remote_control', autoMemory: 'auto_memory', peerMessaging: 'peer_messaging',
 });
 
-const DEFAULT_HARNESS = 'claude';
-
-// daemonToggleDefault is the value the daemon resolves for a toggle the
-// request leaves out: for remote control a set group policy, then the first
-// of the named, group default and global default profiles that sets it for
-// this harness, else off. It is null when a tier profile is not visible here.
-export function daemonToggleDefault(key, draft, context, profiles, dashboardDefault = '') {
-  const field = PREFILLED_TOGGLES[key];
-  const group = findSpawnGroup(context.groups, draft.group);
-  if (key === 'remoteControl') {
-    const policy = text(group?.remote_control_policy);
-    if (policy === 'optin') return true;
-    if (policy === 'deny') return false;
-  }
-  const harnessName = text(draft.harness).trim() || DEFAULT_HARNESS;
-  const handles = [draft.profile, group?.default_profile, dashboardDefault].map((h) => text(h).trim()).filter(Boolean);
-  for (const handle of handles) {
-    const profile = findSpawnProfile(profiles, handle);
-    if (!profile) return null;
-    if (profile[field] == null) continue;
-    if ((text(profile.harness).trim() || DEFAULT_HARNESS) !== harnessName) continue;
-    return !!profile[field];
-  }
-  return false;
+// spawnPreviewURL is the preview twin of a spawn request's URL.
+export function spawnPreviewURL(url) {
+  return String(url).replace(/\/spawn(\?|$)/, '/spawn-preview$1');
 }
 
 export function buildSpawnRequest(draft, context, worktreeSelection, attachmentPaths = [], omission = null) {
-  const sendToggle = (key) => !omission || omission.operatorSet?.has(key)
-    || daemonToggleDefault(key, draft, context, omission.profiles, omission.dashboardDefault) !== !!draft[key];
+  const sendToggle = (key) => {
+    if (!omission || omission.operatorSet?.has(key)) return true;
+    if (!omission.resolved) return false;
+    const resolved = omission.resolved[PREFILLED_TOGGLES[key]];
+    return !resolved || resolved.value !== String(!!draft[key]);
+  };
   const view = spawnCapabilityView(draft, context);
   const body = {
     name: text(draft.name).trim(),

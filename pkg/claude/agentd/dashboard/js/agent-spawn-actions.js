@@ -1,6 +1,6 @@
 import { composeSandboxProfilePolicy } from './sandbox-profile-preview.js';
 import { sandboxPredictionWarnings, sandboxProfileForWire } from './sandbox-profiles-data.js';
-import { SANDBOX_PROFILE_NONE, WT_NEW } from './agent-spawn-model.js';
+import { SANDBOX_PROFILE_NONE, WT_NEW, spawnPreviewURL } from './agent-spawn-model.js';
 import { revealGroupPath, setFusedSectionOpen } from './groups-fused-sections.js';
 import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
 import { announceNodeChanged, nodeFetch, nodeSnapshot, nodeUpload } from './node-api.js';
@@ -389,6 +389,18 @@ export function createAgentSpawnActions(dependencies = {}) {
 
     notifyError(message) {
       notify(message, true);
+    },
+
+    // previewSpawn resolves a spawn request without spawning (tcl-ezvrww):
+    // the resolved launch, each field's value and source.
+    async previewSpawn(request) {
+      const response = await fetchImpl(spawnPreviewURL(request.url), {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request.body),
+      });
+      if (!response.ok) throw await responseError(response);
+      return (await response.json())?.resolved || null;
     },
 
     async spawn(request) {
