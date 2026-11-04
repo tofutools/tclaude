@@ -884,6 +884,12 @@ exact socket deny, and the overlay is skipped in mode `off`.
   so an empty `~/.gemini/.env` would hide the operator's `~/.env`. To close
   the hole, create the files you care about yourself; once present, they are
   bound read-only.
+- **Codex's project layer lives in the workspace.** In a project Codex
+  trusts, it also loads `<repo>/.codex/config.toml` and
+  `<repo>/.codex/rules/*.rules`. Both sit in the writable workspace, outside the
+  floor's state-root catalog, so an agent can still add allow rules that your
+  next unsandboxed Codex in that repo honors. Review `.codex/` changes the way
+  you review code.
 - **MCP bypasses both layers entirely.** MCP servers run in the harness host
   process over their own transport, outside the Bash sandbox and the permission
   rules. An agent that cannot see `~/.config/gh` may still file a GitHub issue
