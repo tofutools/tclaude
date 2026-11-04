@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,12 +35,16 @@ type scopedProxy struct {
 	disabled   string
 	scopeEmpty string
 	outOfScope string
+	// The refusal wording's per-proxy parts.
+	perm, product, request, example, listKey string
 }
 
 func scopedProxies() []scopedProxy {
 	return []scopedProxy{
 		{
-			name: "awb", dim: "awb_workspace", noun: "workspace",
+			name: "awb", dim: "awb_workspace", noun: "workspace", perm: agentd.PermAWBRead,
+			product: "AWB", request: "an AWB request", example: "awb_workspace=awb",
+			listKey:  "agent.awb_proxy.allowed_workspaces",
 			disabled: "awb_proxy_disabled", scopeEmpty: "workspace_scope_empty", outOfScope: "workspace_out_of_scope",
 			keyFor: func(k string) string { return k },
 			setup: func(t *testing.T, allowed []string, scopeJSON string) func(string) *httptest.ResponseRecorder {
@@ -58,7 +63,9 @@ func scopedProxies() []scopedProxy {
 			},
 		},
 		{
-			name: "linear", dim: "linear_team", noun: "team",
+			name: "linear", dim: "linear_team", noun: "team", perm: agentd.PermLinearRead,
+			product: "Linear", request: "a Linear request", example: "linear_team=TCL",
+			listKey:  "agent.linear_proxy.allowed_teams",
 			disabled: "linear_proxy_disabled", scopeEmpty: "team_scope_empty", outOfScope: "team_out_of_scope",
 			keyFor: strings.ToUpper,
 			setup: func(t *testing.T, allowed []string, scopeJSON string) func(string) *httptest.ResponseRecorder {
@@ -89,6 +96,8 @@ func TestProxyScopedGrant_ResolvesAlikeOnAWBAndLinear(t *testing.T) {
 		status   int
 		code     func(p scopedProxy) string
 		contains []string
+		// message is the full refusal text, byte for byte.
+		message func(p scopedProxy) string
 	}
 	rows := []row{
 		{
@@ -117,6 +126,10 @@ func TestProxyScopedGrant_ResolvesAlikeOnAWBAndLinear(t *testing.T) {
 			request: "aaa", status: http.StatusForbidden,
 			code:     func(p scopedProxy) string { return p.scopeEmpty },
 			contains: []string{"must overlap"},
+			message: func(p scopedProxy) string {
+				return "the " + p.perm + " grant is scoped to " + p.noun + "(s) bbb, none of which is on the operator's " +
+					p.listKey + " list (allowed: aaa); the two must overlap"
+			},
 		},
 		{
 			name: "scope names only another dimension", allowed: []string{"aaa"},
@@ -124,15 +137,26 @@ func TestProxyScopedGrant_ResolvesAlikeOnAWBAndLinear(t *testing.T) {
 			request: "aaa", status: http.StatusForbidden,
 			code:     func(p scopedProxy) string { return p.scopeEmpty },
 			contains: []string{"names no"},
+			message: func(p scopedProxy) string {
+				return "the " + p.perm + " grant is scoped, but names no " + p.product + " " + p.noun +
+					" this daemon can act on; the scope must carry " + p.dim + " (e.g. --scope " + p.example + ")"
+			},
 		},
 		{
 			name: "scope names this dimension and constrains another", allowed: []string{"aaa"},
+			// A duplicate, in each proxy's own spelling (Linear's is upper
+			// case): the refusal names each key once, lower-cased the way the
+			// operator's list is.
 			scope: func(d string, k func(string) string) string {
-				return `{"` + d + `":["` + k("aaa") + `"],"group":["g1"]}`
+				return `{"` + d + `":["` + k("aaa") + `","` + k("aaa") + `","` + k("bbb") + `"],"group":["g1"]}`
 			},
 			request: "aaa", status: http.StatusForbidden,
 			code:     func(p scopedProxy) string { return p.scopeEmpty },
 			contains: []string{"authorizes nothing"},
+			message: func(p scopedProxy) string {
+				return "the " + p.perm + " grant names " + p.noun + "(s) aaa, bbb, but its scope also constrains a dimension " +
+					p.request + " does not describe, so it authorizes nothing; the scope must constrain " + p.dim + " alone"
+			},
 		},
 	}
 	for _, p := range scopedProxies() {
@@ -153,6 +177,9 @@ func TestProxyScopedGrant_ResolvesAlikeOnAWBAndLinear(t *testing.T) {
 				if r.code != nil {
 					assert.Contains(t, body, `"`+r.code(p)+`"`, "body=%s", body)
 				}
+				if r.message != nil {
+					assert.Equal(t, r.message(p), faultMessage(t, body), "the refusal text is pinned byte for byte")
+				}
 				for _, s := range r.contains {
 					assert.Contains(t, body, s, "body=%s", body)
 				}
@@ -162,4 +189,18 @@ func TestProxyScopedGrant_ResolvesAlikeOnAWBAndLinear(t *testing.T) {
 			})
 		}
 	}
+}
+
+// faultMessage decodes the refusal's human message from the error envelope.
+func faultMessage(t *testing.T, body string) string {
+	t.Helper()
+	var env map[string]any
+	require.NoError(t, json.Unmarshal([]byte(body), &env), "body=%s", body)
+	for _, k := range []string{"message", "error", "msg"} {
+		if v, ok := env[k].(string); ok && strings.Contains(v, " grant ") {
+			return v
+		}
+	}
+	t.Fatalf("no refusal message in body=%s", body)
+	return ""
 }
