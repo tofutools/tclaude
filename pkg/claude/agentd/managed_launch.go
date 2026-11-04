@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -186,34 +187,11 @@ func isManagedProfileRefusal(kind string) bool {
 // and implementation) resolve against what the agent really has.
 func resolveSpawnCopyRelaunch(g *db.AgentGroup, spawnerConv, harnessName string, stored *db.AgentRelaunchProfile,
 	spawnCopy db.AgentSpawnCopy, explicit map[string]db.ExplicitLaunchValue) (*db.AgentRelaunchProfile, *spawnFailure) {
-	var profiles []*db.SpawnProfile
-	slots := &pinnedDefaultProfiles{}
-	var caller *db.SpawnProfile
-	for _, tier := range spawnCopy.Tiers {
-		prof, fail := spawnCopyProfile(tier)
-		if fail != nil {
-			return nil, fail
-		}
-		var slot **db.SpawnProfile
-		switch tier.Tier {
-		case db.SpawnCopyTierInline, db.SpawnCopyTierNamed:
-			slot = &caller
-		case db.SpawnCopyTierGroupDefault:
-			slot = &slots.group
-		case db.SpawnCopyTierGlobalDefault:
-			slot = &slots.global
-		default:
-			return nil, &spawnFailure{http.StatusBadRequest, "invalid_spawn_copy",
-				fmt.Sprintf("spawn copy tier %q is not known", tier.Tier)}
-		}
-		if *slot != nil {
-			return nil, &spawnFailure{http.StatusBadRequest, "invalid_spawn_copy",
-				fmt.Sprintf("spawn copy has two profiles for the %s tier (%q and %q); a relaunch resolves one per tier",
-					tier.Tier, (*slot).Name, prof.Name)}
-		}
-		*slot = prof
-		profiles = append(profiles, prof)
+	decoded, fail := decodeSpawnCopyTiers(spawnCopy)
+	if fail != nil {
+		return nil, fail
 	}
+	profiles, slots, caller := decoded.profiles, &decoded.slots, decoded.caller
 	resolve := func(seed func(*spawnParams)) (db.AgentRelaunchProfile, *spawnFailure) {
 		pinned := *slots
 		p := spawnParams{Harness: harnessName, SpawnedByConv: spawnerConv, managedProfile: caller,
@@ -272,6 +250,54 @@ func resolveSpawnCopyRelaunch(g *db.AgentGroup, spawnerConv, harnessName string,
 		}
 	}
 	return out, nil
+}
+
+// decodedSpawnCopy is a spawn copy's profiles by tier: the caller's own
+// (inline or named) and the two defaults, and all of them in copy order.
+type decodedSpawnCopy struct {
+	caller   *db.SpawnProfile
+	slots    pinnedDefaultProfiles
+	profiles []*db.SpawnProfile
+}
+
+func decodeSpawnCopyTiers(spawnCopy db.AgentSpawnCopy) (decodedSpawnCopy, *spawnFailure) {
+	var out decodedSpawnCopy
+	for _, tier := range spawnCopy.Tiers {
+		prof, fail := spawnCopyProfile(tier)
+		if fail != nil {
+			return out, fail
+		}
+		var slot **db.SpawnProfile
+		switch tier.Tier {
+		case db.SpawnCopyTierInline, db.SpawnCopyTierNamed:
+			slot = &out.caller
+		case db.SpawnCopyTierGroupDefault:
+			slot = &out.slots.group
+		case db.SpawnCopyTierGlobalDefault:
+			slot = &out.slots.global
+		default:
+			return out, &spawnFailure{http.StatusBadRequest, "invalid_spawn_copy",
+				fmt.Sprintf("spawn copy tier %q is not known", tier.Tier)}
+		}
+		if *slot != nil {
+			return out, &spawnFailure{http.StatusBadRequest, "invalid_spawn_copy",
+				fmt.Sprintf("spawn copy has two profiles for the %s tier (%q and %q); a relaunch resolves one per tier",
+					tier.Tier, (*slot).Name, prof.Name)}
+		}
+		*slot = prof
+		out.profiles = append(out.profiles, prof)
+	}
+	return out, nil
+}
+
+// launchTiers are the copy's profiles as a first spawn's tier stack, highest
+// first: the caller's profile, then the group and global defaults.
+func (d decodedSpawnCopy) launchTiers() []launchProfileTier {
+	return []launchProfileTier{
+		{profile: d.caller, source: profileSource(d.caller, agent.ProvCLIProfileSource)},
+		{profile: d.slots.group, source: profileSource(d.slots.group, agent.ProvGroupProfileSource), defaultTier: true},
+		{profile: d.slots.global, source: profileSource(d.slots.global, agent.ProvGlobalProfileSource), defaultTier: true},
+	}
 }
 
 // spawnCopyProfile decodes one copied profile from its export format.
@@ -357,10 +383,10 @@ func (f spawnCopyRelaunchField) take(dst, src *db.AgentRelaunchProfile) {
 }
 
 // spawnCopyRelaunchFields are the spawn-copy fields a relaunch profile
-// carries. The other spawn-copy keys (the profile environment and startup
-// context, roles, the named sandbox profile, usage links,
-// include_group_context) live outside the relaunch profile and are not
-// re-applied from a copy yet; the pi drive stays as launched, since
+// carries. Four other spawn-copy keys (the profile environment and startup
+// context, usage links, include_group_context) live outside the relaunch
+// profile and are re-applied by resolveSpawnCopyOutside; roles and the named
+// sandbox profile are not re-applied from a copy; the pi drive stays as launched, since
 // applyDefaultProfile does not resolve it. The opt-in toggles are seeded only
 // when on, the only state a caller can request.
 var spawnCopyRelaunchFields = []spawnCopyRelaunchField{

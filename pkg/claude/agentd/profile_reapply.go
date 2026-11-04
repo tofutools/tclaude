@@ -36,16 +36,18 @@ const (
 )
 
 // profileReapplyNotYet are spawn-copy fields the re-apply operation does not
-// carry yet (launch-uniform's follow-ups to tcl-an26ed). Marked so that a
-// change to one is never silently dropped.
-var profileReapplyNotYet = map[string]bool{
-	"include_group_context": true, "profile_env": true, "profile_startup_context": true, "roles": true,
-	"model_proxy": true,
-}
+// carry yet: roles move with their grants (tcl-fg2kqk), and the model proxy
+// needs the models.proxy gate a first spawn runs. Marked so that a change to
+// one is never silently dropped.
+var profileReapplyNotYet = map[string]bool{"roles": true, "model_proxy": true}
+
+// reapplyMergesExplicit are fields whose explicit entries are laid over the
+// profile's rather than replacing them, so a profile edit still changes them.
+var reapplyMergesExplicit = map[string]bool{"profile_env": true}
 
 // profileReapplyUsageNote covers the profile's usage-profile links, which live
 // in the usage rules store rather than the profile, so no field row shows them.
-const profileReapplyUsageNote = "Usage profile links: not reapplied yet. An agent keeps the usage profiles it was spawned with."
+const profileReapplyUsageNote = "Usage profile links: re-applied from the profile's current links, unless the agent's spawn named its own usage profiles."
 
 // profileReapplyIgnored are a profile's own bookkeeping, not launch inputs.
 var profileReapplyIgnored = map[string]bool{
@@ -182,7 +184,7 @@ func profileReapplyFields(copied, current map[string]json.RawMessage, layers *db
 			switch {
 			case field.Layer == launchspec.LayerFixed:
 				row.Status = reapplyKeptFixed
-			case layers.Explicit[field.Key].Provenance != "":
+			case layers.Explicit[field.Key].Provenance != "" && !reapplyMergesExplicit[field.Key]:
 				row.Status = reapplyKeptExplict
 			case sticky[field.Key]:
 				row.Status = reapplyKeptSticky

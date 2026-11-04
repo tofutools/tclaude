@@ -20,8 +20,8 @@ import (
 //     one step under its launch lock (the same stop and resume a restart does).
 //   - A busy agent is skipped: nothing is stopped or written.
 //
-// The copy written keeps the old values of the fields a relaunch does not
-// re-apply yet (profileReapplyNotYet) and of the grant inputs, so the stored
+// The copy written keeps the old values of the fields a re-apply does not
+// carry yet (profileReapplyNotYet: roles, the model proxy) and of the grant inputs, so the stored
 // copy says what the agent really runs with and the preview keeps listing
 // those differences as not reapplied. The posture gates run inside
 // applySpawnCopy, against the agent's spawner and, for an agent caller, the

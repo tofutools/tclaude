@@ -89,7 +89,7 @@ func TestProfileReapply_PreviewShowsPerAgentDiff(t *testing.T) {
 	assert.Contains(t, preview.Apply.Reason, "a busy agent is skipped")
 	assert.Contains(t, preview.GrantsNote, "shown only, not re-applied yet")
 	require.Len(t, preview.Notes, 1)
-	assert.Contains(t, preview.Notes[0], "Usage profile links: not reapplied yet")
+	assert.Contains(t, preview.Notes[0], "Usage profile links: re-applied from the profile's current links")
 	require.Len(t, preview.Agents, 2)
 
 	statuses := map[string]map[string]string{}
@@ -111,7 +111,7 @@ func TestProfileReapply_PreviewShowsPerAgentDiff(t *testing.T) {
 		"peer_messaging":  "changes",
 		"auto_memory":     "changes",
 		"initial_message": "not reapplied (spawn only)",
-		"startup_context": "not reapplied yet",
+		"startup_context": "changes",
 	}, statuses[plain.AgentID])
 	assert.Equal(t, "kept (explicit)", statuses[pinned.AgentID]["peer_messaging"], "a value the spawn request set stays")
 	assert.Equal(t, "changes", statuses[pinned.AgentID]["auto_memory"])

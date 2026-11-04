@@ -141,8 +141,12 @@ func applySpawnCopyLocked(agentID, convID string, spawnCopy db.AgentSpawnCopy, r
 			return fail
 		}
 	}
-	if err := db.ApplyAgentSpawnCopy(agentID, convID, storedRaw, *next, spawnCopy); err != nil {
-		if errors.Is(err, db.ErrRelaunchProfileChanged) {
+	outside, fail := resolveSpawnCopyOutside(agentID, group, harnessName, layers.SpawnCopy, spawnCopy, layers.Explicit, snapshot)
+	if fail != nil {
+		return fail
+	}
+	if err := db.ApplyAgentSpawnCopy(agentID, convID, storedRaw, *next, spawnCopy, outside); err != nil {
+		if errors.Is(err, db.ErrRelaunchProfileChanged) || errors.Is(err, db.ErrAgentLaunchRecordChanged) {
 			return &spawnFailure{http.StatusConflict, "changed", err.Error()}
 		}
 		return &spawnFailure{http.StatusInternalServerError, "io", "apply spawn copy: " + err.Error()}
