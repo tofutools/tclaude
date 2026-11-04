@@ -229,6 +229,13 @@ func ReplaceAgentSpawnCopy(agentID string, spawnCopy AgentSpawnCopy) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := replaceAgentSpawnCopyTx(tx, agentID, spawnCopy); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func replaceAgentSpawnCopyTx(tx *sql.Tx, agentID string, spawnCopy AgentSpawnCopy) error {
 	var raw string
 	if err := tx.QueryRow(`SELECT launch_layers FROM agents WHERE agent_id = ?`, agentID).Scan(&raw); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -248,7 +255,64 @@ func ReplaceAgentSpawnCopy(agentID string, spawnCopy AgentSpawnCopy) error {
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE agents SET launch_layers = ? WHERE agent_id = ?`, encoded, agentID); err != nil {
+	_, err = tx.Exec(`UPDATE agents SET launch_layers = ? WHERE agent_id = ?`, encoded, agentID)
+	return err
+}
+
+// ErrRelaunchProfileChanged reports that an agent's relaunch profile changed
+// between the read a write was computed from and the write.
+var ErrRelaunchProfileChanged = errors.New("the agent's launch settings changed while the spawn copy was being applied; apply it again")
+
+// AgentRelaunchProfileRaw returns an agent's stored relaunch profile and its
+// raw encoding, which ApplyAgentSpawnCopy takes back to detect a concurrent
+// write.
+func AgentRelaunchProfileRaw(agentID string) (*AgentRelaunchProfile, string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, "", err
+	}
+	var raw string
+	err = d.QueryRow(`SELECT relaunch_profile FROM agents WHERE agent_id = ?`, strings.TrimSpace(agentID)).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, "", fmt.Errorf("unknown agent %s", agentID)
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	profile, err := decodeAgentRelaunchProfile(raw)
+	return profile, raw, err
+}
+
+// ApplyAgentSpawnCopy re-applies a spawn copy to an agent in one
+// transaction: it writes the relaunch profile resolved from the copy and
+// replaces the copy. expectRaw is the relaunch profile the resolution was
+// computed from (AgentRelaunchProfileRaw); if it changed meanwhile, nothing is
+// written and ErrRelaunchProfileChanged is returned.
+func ApplyAgentSpawnCopy(agentID, convID, expectRaw string, profile AgentRelaunchProfile, spawnCopy AgentSpawnCopy) error {
+	agentID = strings.TrimSpace(agentID)
+	encoded, err := encodeRelaunchProfile(profile)
+	if err != nil {
+		return err
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`UPDATE agents SET relaunch_profile = ?
+		WHERE agent_id = ? AND current_conv_id = ? AND relaunch_profile = ?`,
+		encoded, agentID, convID, expectRaw)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return ErrRelaunchProfileChanged
+	}
+	if err := replaceAgentSpawnCopyTx(tx, agentID, spawnCopy); err != nil {
 		return err
 	}
 	return tx.Commit()

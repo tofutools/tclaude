@@ -2,19 +2,194 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"reflect"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/launchspec"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // Recording of an agent's launch layers at first spawn (db.AgentLaunchLayers):
 // the spawn profiles that took part, copied whole with their tier and ID, and
-// the values the spawn request set explicitly. Nothing here reads them back
-// yet; the relaunch paths will (docs/launch-resolution.md).
+// the values the spawn request set explicitly. applySpawnCopy replaces the
+// copy later, and every relaunch reads the replaced copy's fields through
+// db.AgentRelaunchProfileForConv (docs/launch-resolution.md).
+
+// applySpawnCopy re-applies a spawn copy to a stopped agent: it resolves the
+// copy for relaunch and, in one transaction, writes the fields the copy owns
+// into the agent's relaunch profile and replaces the copy. The next resume,
+// reincarnation or clone launches with them; nothing about a resume changes.
+// It is the one way to re-apply a spawn copy.
+//
+// The agent must be stopped (agent_live otherwise): a running session
+// projects its own launch values into the relaunch profile on every save and
+// would undo the write. A caller that wants a running, idle agent updated
+// stops it, applies, and resumes it.
+//
+// The posture the agent ends up with passes the gates a fresh launch does
+// (launchPostureFailure) against the agent that spawned it, when it differs
+// from the stored one. The apply is refused, naming why, for an agent spawned
+// before launch layers existed (its explicit values are not known), one with
+// no startup record, and one whose spawner or spawn group can no longer be
+// read.
+func applySpawnCopy(agentID string, spawnCopy db.AgentSpawnCopy) *spawnFailure {
+	a, err := db.GetAgent(agentID)
+	if err != nil || a == nil || a.CurrentConvID == "" {
+		return &spawnFailure{http.StatusNotFound, "not_found", "unknown agent " + agentID}
+	}
+	if !a.Active() {
+		return &spawnFailure{http.StatusConflict, "agent_retired", "agent " + agentID + " is retired"}
+	}
+	convID := a.CurrentConvID
+	lock := resumeLaunchLock(convID)
+	lock.Lock()
+	defer lock.Unlock()
+	// A reincarnation or morph may have moved the agent to a new
+	// conversation while this waited for the lock; that one is not locked.
+	if err := requireCurrentAgentGeneration(agentID, convID); err != nil {
+		return &spawnFailure{http.StatusConflict, "stale_generation", err.Error() + "; apply it again"}
+	}
+	alive, err := pickAliveSessionStrict(convID)
+	if err != nil {
+		return &spawnFailure{http.StatusInternalServerError, "io", "check whether the agent is running: " + err.Error()}
+	}
+	if alive != nil {
+		return &spawnFailure{http.StatusConflict, "agent_live",
+			"the agent is running; stop it before applying a spawn copy (or stop, apply and resume it as one step)"}
+	}
+	layers, err := db.AgentLaunchLayersFor(agentID)
+	if err != nil {
+		return &spawnFailure{http.StatusInternalServerError, "io", "load launch layers: " + err.Error()}
+	}
+	if layers == nil {
+		return &spawnFailure{http.StatusConflict, "no_launch_layers",
+			"this agent was spawned before launch layers were recorded, so its explicit values are not known; respawn it to use a new spawn profile"}
+	}
+	conversation, err := db.ConversationResumeProfileForConv(convID)
+	if err != nil || conversation == nil {
+		return &spawnFailure{http.StatusConflict, "no_resume_profile", "the agent's conversation has no resume record"}
+	}
+	stored, storedRaw, err := db.AgentRelaunchProfileRaw(agentID)
+	if err != nil {
+		return &spawnFailure{http.StatusInternalServerError, "io", "load relaunch profile: " + err.Error()}
+	}
+	if stored == nil {
+		return &spawnFailure{http.StatusConflict, "no_relaunch_profile", "the agent has no stored launch settings to apply a copy to"}
+	}
+	// The spawner bounds what the copy may give the agent, and the spawn
+	// group supplies the group settings the resolver reads. Neither may be
+	// guessed: a missing record is refused, not treated as a human spawn.
+	snapshot, err := db.GetAgentStartupSnapshot(agentID)
+	if err != nil {
+		return &spawnFailure{http.StatusInternalServerError, "io", "load the agent's startup record: " + err.Error()}
+	}
+	if snapshot == nil {
+		return &spawnFailure{http.StatusConflict, "no_startup_record",
+			"the agent has no startup record, so who spawned it and into which group cannot be checked"}
+	}
+	var group *db.AgentGroup
+	if snapshot.SpawnGroupID != 0 {
+		if group, err = db.GetAgentGroupByID(snapshot.SpawnGroupID); err != nil || group == nil {
+			return &spawnFailure{http.StatusConflict, "spawn_group_gone",
+				fmt.Sprintf("the group this agent was spawned into (id %d) no longer exists, so its group settings cannot be resolved", snapshot.SpawnGroupID)}
+		}
+	}
+	spawnerConv := ""
+	if snapshot.SpawnedByAgent != "" {
+		spawner, err := db.GetAgent(snapshot.SpawnedByAgent)
+		if err != nil || spawner == nil || spawner.CurrentConvID == "" {
+			return &spawnFailure{http.StatusConflict, "spawner_gone",
+				fmt.Sprintf("the agent that spawned this one (%s) no longer exists, so what it may grant cannot be checked", snapshot.SpawnedByAgent)}
+		}
+		spawnerConv = spawner.CurrentConvID
+	}
+
+	harnessName := harnessOrDefault(conversation.Harness)
+	owned, fail := resolveSpawnCopyRelaunch(group, spawnerConv, harnessName, stored, spawnCopy, layers.Explicit)
+	if fail != nil {
+		return fail
+	}
+	next := db.ComposeAgentRelaunchProfile(stored, owned)
+	// The same launch-config validation a morph runs: a profile resume would
+	// reject is refused here, so a resume still always works.
+	cfg, err := durableRelaunchConfigForConvWith(convID, func(p *db.AgentRelaunchProfile) { *p = *next })
+	if err != nil {
+		return &spawnFailure{http.StatusConflict, "relaunch_profile", "the agent could not be launched with this copy: " + err.Error()}
+	}
+	if fail := spawnCopyPostureFailure(spawnerConv, harnessName, convID, stored, next, cfg); fail != nil {
+		return fail
+	}
+	if err := db.ApplyAgentSpawnCopy(agentID, convID, storedRaw, *next, spawnCopy); err != nil {
+		if errors.Is(err, db.ErrRelaunchProfileChanged) {
+			return &spawnFailure{http.StatusConflict, "changed", err.Error()}
+		}
+		return &spawnFailure{http.StatusInternalServerError, "io", "apply spawn copy: " + err.Error()}
+	}
+	return nil
+}
+
+// spawnCopyPostureFailure gates the posture a re-applied copy gives an agent
+// as a fresh launch is gated: the lineage guards against its spawner, the
+// confined-approval rule and the Copilot API loopback rule. A posture equal to
+// the stored one passed when the agent launched with it and is not re-judged,
+// so re-applying an unchanged copy never fails on a rule the agent's own
+// launch acknowledged.
+func spawnCopyPostureFailure(spawnerConv, harnessName, convID string, stored, next *db.AgentRelaunchProfile, cfg *durableRelaunchConfig) *spawnFailure {
+	str := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	}
+	flag := func(p *bool) bool { return p != nil && *p }
+	same := str(stored.HarnessBuiltinMode) == str(next.HarnessBuiltinMode) &&
+		str(stored.SandboxImplementation) == str(next.SandboxImplementation) &&
+		str(stored.ApprovalPolicy) == str(next.ApprovalPolicy) &&
+		flag(stored.ApprovalAutoReview) == flag(next.ApprovalAutoReview) &&
+		flag(stored.CopilotAPI) == flag(next.CopilotAPI)
+	if same {
+		return nil
+	}
+	h, err := harness.ResolveSpawnable(harnessName)
+	if err != nil {
+		return &spawnFailure{http.StatusUnprocessableEntity, "invalid_harness", err.Error()}
+	}
+	// Judge the posture the next resume will launch with: the validated
+	// config's normal mode and implementation, which can differ from the raw
+	// stored spelling (a restored layered implementation, a temporary mode).
+	mode, implementation := cfg.Sandbox, cfg.SandboxImplementation
+	if cfg.TemporaryHarnessBuiltinMode {
+		mode = cfg.NormalSandbox
+	}
+	if fail := launchPostureFailure(spawnerConv, h, harnessName, mode,
+		implementation, str(next.ApprovalPolicy), flag(next.ApprovalAutoReview), false); fail != nil {
+		return fail
+	}
+	snapshot, err := db.AgentEffectiveSandboxConfigForConv(convID)
+	if err != nil {
+		return &spawnFailure{http.StatusInternalServerError, "io", "load the agent's sandbox policy: " + err.Error()}
+	}
+	if fail := copilotAPILoopbackFailure(flag(next.CopilotAPI), snapshot, implementation); fail != nil {
+		return fail
+	}
+	// The sandbox-profile gates a resume runs (executeSpawn), so a posture the
+	// agent's sandbox profile cannot carry is refused now, with the reason,
+	// rather than at its next wake.
+	if fail := sandboxProfileCapabilityFailure(harnessName, mode, snapshot, implementation); fail != nil {
+		return fail
+	}
+	_, fail := planSandboxProfileAccessForLaunch(harnessName, mode, snapshot, implementation,
+		session.ModelTransportLaunchContext{Model: cfg.Model, ModelProxy: cfg.ModelProxy, Cwd: cfg.Cwd}, false)
+	return fail
+}
+
 
 // spawnCopyTier copies one participating profile, in the profile export
 // format so the stored copy has stable JSON names. nil is no tier.

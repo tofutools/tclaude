@@ -3113,16 +3113,23 @@ func requestTargetActionApproval(w http.ResponseWriter, r *http.Request, perm, a
 // pickAliveSession returns the most-recent session row for convID
 // whose tmux session is still alive. Same selector as queued mail delivery.
 func pickAliveSession(convID string) *db.SessionRow {
+	alive, _ := pickAliveSessionStrict(convID)
+	return alive
+}
+
+// pickAliveSessionStrict is pickAliveSession for a caller that must not read a
+// failed lookup as "stopped": the lookup error is returned.
+func pickAliveSessionStrict(convID string) (*db.SessionRow, error) {
 	candidates, err := db.FindSessionsByConvID(convID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	for _, c := range candidates {
 		if c.TmuxSession != "" && session.IsTmuxSessionAlive(c.TmuxSession) {
-			return c
+			return c, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // armRemoteControlOnNewRow tags a freshly-relaunched session row's best-known
@@ -6529,6 +6536,7 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	p.ModelSource = preferResolvedSource(p.ModelSource, launchValues.Source[launchValueModel])
 	p.EffortSource = preferResolvedSource(p.EffortSource, launchValues.Source[launchValueEffort])
 	p.ContextWindowMaxSource = preferResolvedSource(p.ContextWindowMaxSource, launchValues.Source[launchValueContextWindowMax])
+	p.HarnessBuiltinModeSource = preferResolvedSource(p.HarnessBuiltinModeSource, launchValues.Source[launchValueSandbox])
 	if strings.TrimSpace(p.ProfileContext) == "" {
 		p.ProfileContext, fieldNote = resolveProfileStartupContext(h.Name, tiers)
 		noteLaunch()
@@ -6961,24 +6969,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	if hErr != nil {
 		return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_harness", hErr.Error()}
 	}
-	childLaunchSandbox, fail := resolveLaunchHarnessBuiltinMode(
-		childHarness, p.HarnessBuiltinMode, p.SandboxImplementation)
-	if fail != nil {
+	if fail := launchPostureFailure(p.SpawnedByConv, childHarness, p.Harness, p.HarnessBuiltinMode,
+		p.SandboxImplementation, p.ApprovalPolicy, p.AutoReview, p.AllowUnenforcedSandbox); fail != nil {
 		return nil, fail
-	}
-	if fail := spawnSandboxLineageFailure(
-		p.SpawnedByConv, p.Harness, childLaunchSandbox, p.SandboxImplementation); fail != nil {
-		return nil, fail
-	}
-	if fail := spawnApprovalLineageFailure(p.SpawnedByConv, p.Harness, p.ApprovalPolicy, p.AutoReview); fail != nil {
-		return nil, fail
-	}
-	// The same rule session new enforces, refused here with an API error
-	// rather than as a forked launch that exits.
-	if err := session.RequireConfinementForApproval(childHarness, p.ApprovalPolicy,
-		sandboxpolicy.Implementation(p.SandboxImplementation).UsesTclaudeLayer(),
-		p.AllowUnenforcedSandbox, false); err != nil {
-		return nil, &spawnFailure{http.StatusForbidden, "unconfined_approval", err.Error()}
 	}
 	if strings.TrimSpace(p.DirWriteProofToken) == "" {
 		p.CodexGitCommonDir = ""

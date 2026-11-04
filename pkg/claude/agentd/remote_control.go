@@ -9,7 +9,6 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
-	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // Remote-control toggle (JOH-257). Drives Claude Code's built-in Remote
@@ -38,16 +37,8 @@ import (
 // remote-control toggle resolve their target pane through this, so a conv
 // with several stale rows still picks the one actually running.
 func aliveSessionForConv(convID string) *db.SessionRow {
-	candidates, err := db.FindSessionsByConvID(convID)
-	if err != nil {
-		return nil
-	}
-	for _, c := range candidates {
-		if c.TmuxSession != "" && session.IsTmuxSessionAlive(c.TmuxSession) {
-			return c
-		}
-	}
-	return nil
+	alive, _ := pickAliveSessionStrict(convID)
+	return alive
 }
 
 // remoteControlConfirmDelay is the pause between submitting the
