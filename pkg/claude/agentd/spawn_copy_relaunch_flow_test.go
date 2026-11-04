@@ -198,7 +198,7 @@ func TestSpawnCopyRelaunch_ALaterMorphWins(t *testing.T) {
 	}))
 	require.Empty(t, kind, msg)
 	morphed := "60s"
-	previous, err := db.ApplyAgentMorphForConv(spawn.ConvID, db.AgentMorphForm{AskTimeout: &morphed})
+	previous, err := db.ApplyAgentMorphForConv(spawn.ConvID, db.AgentMorphForm{AskTimeout: &morphed}, false)
 	require.NoError(t, err)
 	require.NotNil(t, previous.AskTimeout)
 	assert.Equal(t, "10m", *previous.AskTimeout, "morph-back records what the copy gave the agent")
@@ -210,7 +210,7 @@ func TestSpawnCopyRelaunch_ALaterMorphWins(t *testing.T) {
 	assert.Equal(t, "plan", approval, "the copy's other field still applies")
 
 	later := "never"
-	_, err = db.ApplyAgentMorphForConv(spawn.ConvID, db.AgentMorphForm{AskTimeout: &later})
+	_, err = db.ApplyAgentMorphForConv(spawn.ConvID, db.AgentMorphForm{AskTimeout: &later}, false)
 	require.NoError(t, err)
 	resumeAgain(t, f, spawn.ConvID)
 	got, _ = f.World.SpawnAskTimeout(spawn.ConvID)
@@ -275,7 +275,7 @@ func TestSpawnCopyRelaunch_FieldsTheCopyDoesNotOwnKeepTheirStoredValue(t *testin
 
 	// Something other than the copy has since moved fields the copy never set.
 	plan := "plan"
-	_, err := db.ApplyAgentMorphForConv(spawn.ConvID, db.AgentMorphForm{Approval: &plan})
+	_, err := db.ApplyAgentMorphForConv(spawn.ConvID, db.AgentMorphForm{Approval: &plan}, false)
 	require.NoError(t, err)
 	before := storedRelaunch(t, spawn.ConvID)
 

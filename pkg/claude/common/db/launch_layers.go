@@ -64,6 +64,11 @@ type AgentLaunchLayers struct {
 	SpawnCopy         *AgentSpawnCopy                `json:"spawn_copy,omitempty"`
 	Explicit          map[string]ExplicitLaunchValue `json:"explicit,omitempty"`
 	RelaunchOverrides []RelaunchPolicyOverride       `json:"relaunch_overrides,omitempty"`
+	// MorphUndo is what the last morph replaced in Explicit: for each key it
+	// wrote, the entry before it (nil: there was none). A morph back swaps it
+	// back in, so a morph and a morph back leave the explicit layer as it
+	// was, and a second morph back redoes the morph (applyMorphExplicitTx).
+	MorphUndo map[string]*ExplicitLaunchValue `json:"morph_undo,omitempty"`
 	// Unfolded marks layers written by a build whose CLI no longer folds a
 	// --profile into the spawn request, so their explicit layer is accurate
 	// and dropFoldedProfileValues must not touch it. Every write sets it: a
@@ -294,17 +299,41 @@ func SetAgentLaunchLayersIfUnset(agentID string, layers *AgentLaunchLayers) (boo
 	return n > 0, err
 }
 
-// recordExplicitLaunchValuesTx merges values into an agent's explicit layer.
-// A value's request fields are merged into the field's existing entry, so a
-// field set alongside it earlier (context_window's ContextWindowMax) stays
-// recorded, and its provenance and time become the new value's. An agent
-// without layers (spawned before they existed) is left without them: what
-// its spawn gave explicitly is not known, and its spawn copy cannot be
-// re-applied anyway.
-func recordExplicitLaunchValuesTx(tx *sql.Tx, agentID string, values map[string]ExplicitLaunchValue) error {
-	if len(values) == 0 {
-		return nil
+// morphUndoKeysTx is the launchspec keys an agent's last morph recorded (its
+// MorphUndo), or none.
+func morphUndoKeysTx(tx *sql.Tx, agentID string) (map[string]bool, error) {
+	var raw string
+	err := tx.QueryRow(`SELECT launch_layers FROM agents WHERE agent_id = ?`, agentID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
 	}
+	if err != nil {
+		return nil, err
+	}
+	layers, err := decodeAgentLaunchLayers(raw)
+	if err != nil || layers == nil {
+		return nil, err
+	}
+	keys := map[string]bool{}
+	for key := range layers.MorphUndo {
+		keys[key] = true
+	}
+	return keys, nil
+}
+
+// applyMorphExplicitTx records a morph in an agent's explicit layer. A
+// morph writes values: each one's request fields are merged into the
+// field's existing entry, so a field set alongside it earlier
+// (context_window's ContextWindowMax) stays recorded, and its provenance
+// and time become the morph's. A morph back instead puts back what the
+// morph it undoes replaced (MorphUndo); with nothing to put back (a morph
+// recorded before MorphUndo existed) it writes values like a morph. Either
+// way, what it replaced becomes the new MorphUndo.
+//
+// An agent without layers (spawned before they existed) is left without
+// them: what its spawn gave explicitly is not known, and its spawn copy
+// cannot be re-applied anyway.
+func applyMorphExplicitTx(tx *sql.Tx, agentID string, values map[string]ExplicitLaunchValue, back bool) error {
 	var raw string
 	err := tx.QueryRow(`SELECT launch_layers FROM agents WHERE agent_id = ?`, agentID).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -317,19 +346,47 @@ func recordExplicitLaunchValuesTx(tx *sql.Tx, agentID string, values map[string]
 	if err != nil || layers == nil {
 		return err
 	}
-	if layers.Explicit == nil {
-		layers.Explicit = map[string]ExplicitLaunchValue{}
+	next := map[string]*ExplicitLaunchValue{}
+	if back && len(layers.MorphUndo) > 0 {
+		next = layers.MorphUndo
+	} else {
+		for key, value := range values {
+			fields := map[string]json.RawMessage{}
+			for name, v := range layers.Explicit[key].Fields {
+				fields[name] = v
+			}
+			for name, v := range value.Fields {
+				fields[name] = v
+			}
+			value.Fields = fields
+			next[key] = &value
+		}
 	}
-	for key, value := range values {
-		fields := map[string]json.RawMessage{}
-		for name, v := range layers.Explicit[key].Fields {
-			fields[name] = v
+	if len(next) == 0 && len(layers.MorphUndo) == 0 {
+		return nil
+	}
+	undo := map[string]*ExplicitLaunchValue{}
+	for key, value := range next {
+		if current, ok := layers.Explicit[key]; ok {
+			undo[key] = &current
+		} else {
+			undo[key] = nil
 		}
-		for name, v := range value.Fields {
-			fields[name] = v
+		if value == nil {
+			delete(layers.Explicit, key)
+			continue
 		}
-		value.Fields = fields
-		layers.Explicit[key] = value
+		if layers.Explicit == nil {
+			layers.Explicit = map[string]ExplicitLaunchValue{}
+		}
+		layers.Explicit[key] = *value
+	}
+	if len(layers.Explicit) == 0 {
+		layers.Explicit = nil
+	}
+	layers.MorphUndo = nil
+	if len(undo) > 0 {
+		layers.MorphUndo = undo
 	}
 	encoded, err := encodeAgentLaunchLayers(layers)
 	if err != nil {

@@ -852,7 +852,7 @@ func applyMorphUnderLaunchLock(agentID, convID string, pending db.AgentPendingMo
 		if _, err := durableRelaunchConfigForConvWith(convID, pending.Target.ApplyTo); err != nil {
 			return fail(http.StatusConflict, "relaunch_profile", "the new form cannot be launched: "+err.Error())
 		}
-		previous, err := db.ApplyAgentMorphForConv(convID, pending.Target)
+		previous, err := db.ApplyAgentMorphForConv(convID, pending.Target, pending.Back)
 		if err != nil {
 			return fail(http.StatusInternalServerError, "io", err.Error())
 		}
@@ -884,7 +884,7 @@ func applyMorphUnderLaunchLock(agentID, convID string, pending db.AgentPendingMo
 	}
 	// Written after the stop so a late hook from the old process cannot
 	// project the old model back over the new form.
-	previous, err := db.ApplyAgentMorphForConv(convID, pending.Target)
+	previous, err := db.ApplyAgentMorphForConv(convID, pending.Target, pending.Back)
 	if err != nil {
 		return fail(http.StatusInternalServerError, "io",
 			"the agent stopped, but its new form could not be recorded: "+err.Error()+"; use the normal wake action to resume it")
