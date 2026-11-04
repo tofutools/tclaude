@@ -30,12 +30,11 @@ var launchTierWalkFiles = map[string]bool{
 	"awb_ready_poller.go":                  true, // readiness check walks [named, group, global] itself
 	"federation_placement_requirements.go": true, // placement walks [group, global] itself
 	"launch_value_fields.go":               true, // the resolver itself
+	"managed_launch.go":                    true, // the pipeline for daemon-composed launches
 	"lifecycle.go":                         true,
 	"sandbox_default_implementation.go":    true,
-	"scribe.go":                            true, // scribe profile walk; slice 3 moves it
 	"spawn_launch_defaults.go":             true,
 	"templates.go":                         true,
-	"triggers.go":                          true,
 }
 
 // launchDefaultProfileDisplayFiles read the global default profile only to

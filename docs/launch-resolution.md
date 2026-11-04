@@ -175,5 +175,3 @@ The spawn paths also differ in which profile tiers they consult:
   global default profiles are consulted, so those profiles cannot set them.
 - A trigger or process worker's profile takes the group default profile's
   place, so the group default profile is not consulted for those workers.
-- A scribe or Steward summon launches without the group's sandbox profiles
-  and environment.

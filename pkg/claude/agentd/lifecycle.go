@@ -6610,6 +6610,10 @@ func resolveContextFeaturesLaunchField(
 // resolved here — so on that path the fills are no-ops and secure-default
 // resolution is idempotent.
 func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
+	// The resolution may run more than once for one launch (a managed launch
+	// resolves before its sandbox step, then executeSpawn runs it again), and
+	// each pass appends its disclosures; keep each note once.
+	defer func() { p.LaunchNotes = uniqueNotes(p.LaunchNotes) }()
 	// Both tiers here are default tiers — this path never sees a -p profile —
 	// so each is marked as such and carries the same provenance wording
 	// handleGroupSpawn uses, keeping any skip note readable if it is ever

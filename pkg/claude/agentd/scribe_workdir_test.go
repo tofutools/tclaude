@@ -189,3 +189,17 @@ func TestSeedScribeDirTrust_UnknownHarnessSeedsNothing(t *testing.T) {
 	_, err = os.Stat(filepath.Join(home, ".copilot", "config.json"))
 	assert.True(t, os.IsNotExist(err), "unknown harness must not create the copilot trust store")
 }
+
+// scribeSpawnHarness is the harness a scribe summon resolves into group g for
+// caller: the resolution summonScribe runs before it seeds the workdir trust.
+func scribeSpawnHarnessForCaller(g *db.AgentGroup, caller string) (string, *spawnFailure) {
+	p := spawnParams{SpawnedByConv: caller}
+	if fail := resolveManagedLaunch(g, &p, "", true); fail != nil {
+		return "", fail
+	}
+	return harnessOrDefault(p.Harness), nil
+}
+
+func scribeSpawnHarness(g *db.AgentGroup) (string, *spawnFailure) {
+	return scribeSpawnHarnessForCaller(g, "")
+}

@@ -440,19 +440,14 @@ func summonScribe(name, titleBase string, overrides map[string]db.PermissionOver
 	// seeding, never CC's. Every summon is fresh, so every new scribe observes
 	// the profile currently configured by the operator.
 	stampScribeProfileFromConfig(g)
-	spawnHarness, fail := scribeSpawnHarnessForCaller(g, spawnerConvID)
-	if fail != nil {
-		return nil, false, fail
-	}
 
-	// Resolve + create the shared scribe workdir and pre-trust it for the
-	// harness this scribe will launch on, so its detached pane comes up without
-	// a folder-trust prompt (JOH-369).
-	cwd, fail := ensureScribeWorkdir()
-	if fail != nil {
-		return nil, false, fail
+	// The shared scribe workdir is fixed: a scribe always runs there. It is
+	// created only once the launch has resolved, so a refused summon leaves
+	// nothing behind.
+	cwd, ok := scribeWorkdir()
+	if !ok {
+		return nil, false, &spawnFailure{http.StatusInternalServerError, "home", "resolve home directory for scribe workdir"}
 	}
-	seedScribeDirTrust(spawnHarness, cwd)
 
 	// executeSpawn enrolls the scribe into its group, applies the birth-time
 	// grants (enrollSpawnedConv), delivers the brief to its inbox and —
@@ -472,6 +467,34 @@ func summonScribe(name, titleBase string, overrides map[string]db.PermissionOver
 		PermissionGranter:   granter,
 		SpawnedByConv:       spawnerConvID,
 	}
+	// The same launch resolution as a trigger worker: the default profile
+	// tiers, then the group's sandbox profiles and environment (Q8). With
+	// nothing configured the scribe launches with no sandbox snapshot, as it
+	// always has.
+	//
+	// It is not checked against the summoning agent's own sandbox. A scribe's
+	// sandbox is the operator's policy for the scribe group, not something
+	// the summoner hands it, and a scribe was never contained in its summoner.
+	// Containing it now would refuse summons from every agent that launched
+	// with no snapshot or with profiles omitted (a Steward started before any
+	// profile was configured) as soon as a workspace profile is added.
+	if fail := resolveManagedLaunch(g, &p, "", true); fail != nil {
+		return nil, false, fail
+	}
+	if denial := fixedWorkdirDenial(p.EffectiveSandbox, cwd); denial != "" {
+		return nil, false, &spawnFailure{http.StatusUnprocessableEntity, "sandbox_denies_workdir", fmt.Sprintf(
+			"cannot summon into group %q: %s, and a scribe always works in %s. "+
+				"Remove the deny, or change the sandbox profile assigned to the group or the workspace",
+			g.Name, denial, cwd)}
+	}
+	if _, fail := ensureScribeWorkdir(); fail != nil {
+		return nil, false, fail
+	}
+	// Pre-trust the workdir for the harness this scribe launches on, so its
+	// detached pane comes up without a folder-trust prompt (JOH-369). The
+	// harness comes from the resolution above, so the seed and the launch
+	// agree by construction.
+	seedScribeDirTrust(harnessOrDefault(p.Harness), cwd)
 	outcome, spawnFail := executeSpawn(g, p)
 	if spawnFail != nil {
 		return nil, false, spawnFail
@@ -607,38 +630,12 @@ func ensureScribeWorkdir() (string, *spawnFailure) {
 	return dir, nil
 }
 
-// scribeSpawnHarness reports the harness this scribe summon will actually
-// launch on. A scribe leaves --harness unset, so it follows the scribe-kind
-// group's default spawn profile, then the global default profile (neither →
-// the default harness). Mirrors executeSpawn → applyDefaultProfile so the dir
-// we pre-trust matches the harness that will read the trust store.
-func scribeSpawnHarness(g *db.AgentGroup) (string, *spawnFailure) {
-	return scribeSpawnHarnessForCaller(g, "")
-}
-
-func scribeSpawnHarnessForCaller(g *db.AgentGroup, caller string) (string, *spawnFailure) {
-	profiles := []*db.SpawnProfile{groupDefaultProfile(g), globalDefaultProfile()}
-	for _, prof := range profiles {
-		if fail := profileSpawnFailure(prof, caller); fail != nil {
-			return "", fail
-		}
-	}
-	for _, prof := range profiles {
-		if prof != nil {
-			return harnessOrDefault(prof.Harness), nil
-		}
-	}
-	return harness.DefaultName, nil
-}
-
 // stampScribeProfileFromConfig points the scribe group's default spawn profile
 // at config.scribe.profile (JOH-371), so the existing group-default-profile
 // resolution launches the fresh scribe on that profile with ZERO new spawn
-// logic: scribeSpawnHarness → seedScribeDirTrust picks the profile's harness
-// for the trust pre-seed, and executeSpawn → applyDefaultProfile fills the
-// launch fields from it — BOTH reading the same stamped value, so the trust
-// seed can never target a different harness than the spawn (the coupling
-// JOH-369 introduced).
+// logic: resolveManagedLaunch resolves the launch from it, and the trust
+// pre-seed takes that resolved harness, so the trust seed can never target a
+// different harness than the spawn (the coupling JOH-369 introduced).
 //
 // Re-stamped on every fresh summon so it tracks a config edit between summons;
 // "" clears the stamp (harness default). A name whose profile was
