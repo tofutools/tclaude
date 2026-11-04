@@ -224,3 +224,36 @@ func DeleteGroupPagesOwnedBy(owner string) error {
 	_, err = d.Exec(`DELETE FROM group_pages WHERE owner = ?`, owner)
 	return err
 }
+
+// SetGroupPageTitle renames a saved page. No row is not an error.
+func SetGroupPageTitle(id, title string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE group_pages SET title = ?, updated_at = ? WHERE id = ?`, title, dbTime(time.Now()), id)
+	return err
+}
+
+// ErrGroupPageNameTaken is a move into a group that already keeps a page
+// under that owner and name.
+var ErrGroupPageNameTaken = errors.New("the group already has a page of that name")
+
+// MoveGroupPage moves a saved page to another group, under owner there (an
+// agent's page keeps its agent; a group's own page takes the new group's
+// key). It reports whether the page existed.
+func MoveGroupPage(id string, groupID int64, owner string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`UPDATE group_pages SET group_id = ?, owner = ?, updated_at = ? WHERE id = ?`, groupID, owner, dbTime(time.Now()), id)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			return false, ErrGroupPageNameTaken
+		}
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}

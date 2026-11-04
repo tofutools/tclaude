@@ -108,3 +108,56 @@ test('＋ New lists Process, Board, Live page and Shell with a line each; Shell 
   await harness.act(() => harness.fireEvent(bare.querySelector('[data-resource-add]'), 'click'));
   assert.equal(bare.querySelector('[data-resource-add-shell]').disabled, true);
 });
+
+// tcl-kostyh: ⋯ renames a page or a board in place, and moves it to another
+// group; an agent's page only to groups its agent is in.
+test('⋯ renames a row in place and moves it to another group', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-resources.js');
+  const group = { id: 7, name: 'crew' };
+  const snapshot = { value: {
+    groups: [{ id: 7, name: 'crew', members: [{ agent_id: 'agt_x' }] }, { id: 8, name: 'ops', members: [{ agent_id: 'agt_x' }] },
+      { id: 9, name: 'design', members: [] }],
+    group_resources: [{ kind: 'page', id: 'pg_live', group_id: 7, title: 'App', state: 'running' }, { kind: 'board', id: 'plan', group_id: 7, title: 'Plan', state: 'closed' }],
+  } };
+  const calls = [];
+  const api = {
+    renameGroupPage: async (id, title) => { calls.push(['renamePage', id, title]); },
+    moveGroupPage: async (id, name) => { calls.push(['movePage', id, name]); },
+    renameBoard: async (id, title) => { calls.push(['renameBoard', id, title]); },
+    moveBoard: async (id, name) => { calls.push(['moveBoard', id, name]); },
+    setResourceLock: async () => ({}),
+  };
+  const notes = [];
+  const { container } = await harness.mount(harness.html`<${mod.GroupResources} group=${group}
+    boards=${[{ id: 'plan', title: 'Plan' }]} pages=${[{ id: 'pg_live', name: 'app', title: 'App', owner: 'agt_x', kind: 'port', state: 'open' }]}
+    api=${api} notify=${(msg) => notes.push(msg)} confirm=${async () => true} snapshot=${snapshot} />`);
+  const menuOf = (row) => harness.act(async () => { harness.fireEvent(row.querySelector('.gr-more'), 'click'); await wait(); });
+  const pick = (sel) => harness.act(async () => { harness.fireEvent(container.querySelector(sel), 'click'); await wait(); await wait(); });
+
+  const page = container.querySelector('[data-resource-page="pg_live"]');
+  await menuOf(page);
+  await pick('[data-resource-rename="pg_live"]');
+  const input = page.querySelector('[data-resource-rename-input]');
+  assert.ok(input, 'the name becomes a field');
+  input.value = 'Checkout';
+  await harness.act(async () => { harness.fireEvent(input, 'keydown', { key: 'Enter' }); await wait(); await wait(); });
+  assert.equal(page.querySelector('[data-resource-rename-input]'), null);
+
+  await menuOf(page);
+  await pick('[data-resource-move="pg_live"]');
+  assert.deepEqual([...container.querySelectorAll('[data-move-to]')].map((el) => el.dataset.moveTo), ['ops'], 'only the groups its agent is in');
+  await pick('[data-move-to="ops"]');
+
+  const board = container.querySelector('[data-resource-board="plan"]');
+  await menuOf(board);
+  await pick('[data-resource-move="plan"]');
+  assert.deepEqual([...container.querySelectorAll('[data-move-to]')].map((el) => el.dataset.moveTo), ['ops', 'design']);
+  await pick('[data-menu-back]');
+  await pick('[data-resource-rename="plan"]');
+  const field = board.querySelector('[data-resource-rename-input]');
+  field.value = 'Plan';
+  await harness.act(async () => { harness.fireEvent(field, 'keydown', { key: 'Enter' }); await wait(); });
+  assert.deepEqual(calls, [['renamePage', 'pg_live', 'Checkout'], ['movePage', 'pg_live', 'ops']], 'an unchanged name is not sent');
+  assert.deepEqual(notes, ['Renamed App to Checkout', 'Moved App to ops']);
+});

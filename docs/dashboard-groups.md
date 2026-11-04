@@ -477,8 +477,15 @@ yours keeps its own windows. The row's main button follows the state:
 **Focus** brings an open one forward, **Restore** takes it off the dock,
 **Open** opens it (**Attach** for a running shell, **Reopen** for a closed
 page). A live page also has **↻**, which reloads it in every view, and a
-running shell **×**, which kills it after a confirm. The row's **⋯** holds
-**Delete…**, behind a confirm, for a page or a board.
+running shell **×**, which kills it after a confirm. For a page or a board,
+the row's **⋯** holds:
+- **Rename…**: the name becomes a field; Enter saves it, Escape keeps the old
+  one. An agent showing its page again sets the page's title again.
+- **Move to group**: lists the groups it can move to. A page moves only to a
+  group its agent is a member of, and the marks sent before stay behind, as
+  when the agent shows it into another group. A group's own blank page moves
+  only while closed.
+- **Delete…**, behind a confirm.
 
 Each resource has a lock chip. Click it to switch between two states:
 - **✎ agents can edit** (the default): agents edit the resource under their
