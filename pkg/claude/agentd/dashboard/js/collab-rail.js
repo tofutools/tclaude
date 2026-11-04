@@ -16,7 +16,7 @@ import { RAIL_FILTERS, RAIL_MARK, filterRail, railGlyph } from './collab-rail-mo
 import { closeOverlayTab, minimizeOverlayTab } from './overlay-instances.js';
 import { tabMoves } from './overlay-tab-moves.js';
 import { pillLabel } from './resource-pill.js';
-import { collabItems, openRailItem, overlayOf, startRailDrag } from './collab-rail-actions.js';
+import { collabItems, openRailItem, overlayOf, pressable, startRailDrag } from './collab-rail-actions.js';
 
 export { openRailItem };
 
@@ -64,11 +64,11 @@ function RailItem({ item, collapsed, actions, snapshot, notify, floatsOf }) {
   const tools = collapsed ? [] : hoverActions(item, actions, floatsOf);
   return html`<div class=${`cr-item cr-${item.bucket}`} data-rail-item=${item.key} data-rail-bucket=${item.bucket}
     draggable="true" onDragStart=${(event) => startRailDrag(event, item, { actions, snapshot, notify, floatsOf })}>
-    <button data-ui-exempt type="button" class="cr-name" title=${item.group ? `${item.title} · ${item.group}` : item.title}
-      onClick=${() => void openRailItem(item, { actions, snapshot, notify })}>
+    <span role="button" tabIndex="0" class="cr-name" title=${item.group ? `${item.title} · ${item.group}` : item.title}
+      ...${pressable(() => void openRailItem(item, { actions, snapshot, notify }))}>
       <span class="cr-glyph" aria-hidden="true">${railGlyph(item.kind)}</span>
       ${!collapsed && html`<span class="cr-title">${item.title}</span>`}
-    </button>
+    </span>
     ${!collapsed && html`<span class="cr-tools">${tools.map(([glyph, title, run]) => html`<button data-ui-exempt type="button" key=${glyph}
       class="cr-tool" title=${title} aria-label=${`${title}: ${item.title}`} onClick=${(event) => { event.stopPropagation(); void run(); }}>${glyph}</button>`)}</span>
       <span class=${`cr-mark cr-mark-${item.bucket}`} aria-label=${item.bucket}>${mark}</span>`}

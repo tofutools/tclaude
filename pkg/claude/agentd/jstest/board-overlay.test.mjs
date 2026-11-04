@@ -1271,6 +1271,9 @@ scenario('a rail item dropped back on the rail goes nowhere', GROUP_BOARDS, asyn
   await railDrop(harness, rail.querySelector('[data-rail-item="board:plan"]'), rail.querySelector('.cr-list'));
   assert.deepEqual(tabsByWindow(overlayHost), []);
   assert.deepEqual(tabLabels(host), []);
+  assert.ok(!harness.document.body.classList.contains('rail-dragging'), 'the drag ended, and the frames take the pointer again');
+  const { railDrag } = await harness.importDashboardModule('js/collab-rail-actions.js');
+  assert.equal(railDrag.value, null);
 });
 
 scenario('a tile dropped on the home opens as a tab', GROUP_BOARDS, async ({ harness, host }) => {

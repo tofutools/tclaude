@@ -8,7 +8,7 @@
 import { h } from 'preact';
 import htm from 'htm';
 import { railGlyph } from './collab-rail-model.js';
-import { collabItems, openRailItem, startRailDrag } from './collab-rail-actions.js';
+import { collabItems, openRailItem, pressable, startRailDrag } from './collab-rail-actions.js';
 import { ResourcePill } from './resource-pill.js';
 
 const html = htm.bind(h);
@@ -18,14 +18,14 @@ const KIND_LABEL = Object.freeze({ page: 'Live page', board: 'Board', process: '
 function Tile({ item, ctx }) {
   return html`<div class=${`ui-card ui-inset ch-tile ch-is-${item.bucket}`} data-home-tile=${item.key} draggable="true"
     onDragStart=${(event) => startRailDrag(event, item, ctx)}>
-    <button data-ui-exempt type="button" class="ch-open" title=${`Open ${item.title}, or drag it onto the strip or out to float it`}
-      onClick=${() => void openRailItem(item, ctx)}>
+    <span role="button" tabIndex="0" class="ch-open" title=${`Open ${item.title}, or drag it onto the strip or out to float it`}
+      ...${pressable(() => void openRailItem(item, ctx))}>
       <span class="ch-glyph" aria-hidden="true">${railGlyph(item.kind)}</span>
       <span class="ch-text">
         <span class="ch-title">${item.title}</span>
         <span class="ch-kind">${KIND_LABEL[item.kind] || item.kind}</span>
       </span>
-    </button>
+    </span>
     <${ResourcePill} view=${item.view} kind=${item.kind} />
   </div>`;
 }

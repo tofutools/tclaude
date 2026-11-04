@@ -71,8 +71,8 @@ export async function railItemToStrip(item, landing, ctx) {
   if (item.view === 'open-tab' && item.paneKey) return place(item.paneKey);
   const tab = overlayOf(item);
   if (tab) return moveTabsToCollab([tab.id], landing || {});
-  await openRailItem(item, ctx);
-  return place(item.paneKey);
+  const opened = await openRailItem(item, ctx);
+  return place(opened?.key || item.paneKey);
 }
 
 // railItemToFloat floats an item in a window at the point at. A window already
@@ -88,8 +88,22 @@ export async function railItemToFloat(item, at, ctx) {
   if (r?.kind === 'board') return openBoardOverlay(r.id, item.title, at);
   if (r?.kind === 'process' && openProcessOverlay(r.id, item.title)) return null;
   // A shell or a terminal floats from the tab it opens in.
-  await openRailItem(item, ctx);
-  return floats(item.paneKey) ? ctx.actions?.openPaneInOverlay?.(item.paneKey, { at }) : null;
+  const key = (await openRailItem(item, ctx))?.key || item.paneKey;
+  return floats(key) ? ctx.actions?.openPaneInOverlay?.(key, { at }) : null;
+}
+
+// pressable makes a role="button" span act on a click and on Enter or Space.
+// The rail and the home use spans, not buttons, as Firefox starts no drag from
+// a button inside a draggable item.
+export function pressable(run) {
+  return {
+    onClick: run,
+    onKeyDown: (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      run(event);
+    },
+  };
 }
 
 export const RAIL_ITEM_DRAG_MIME = 'application/x-tclaude-rail-item';
@@ -99,8 +113,10 @@ export const railDrag = signal(null);
 
 // railDropZone is what a drop on target does: 'strip' (a tab there), 'home'
 // (the empty strip's tiles, also a tab), 'rail' (nothing), else 'float'.
+const elementOf = (target) => (target?.closest ? target : target?.parentElement) || null;
+
 export function railDropZone(target) {
-  const element = target?.closest ? target : target?.parentElement;
+  const element = elementOf(target);
   if (element?.closest?.('[data-collab-strip]')) return 'strip';
   if (element?.closest?.('[data-collab-home]')) return 'home';
   if (element?.closest?.('[data-collab-rail]')) return 'rail';
@@ -110,7 +126,7 @@ export function railDropZone(target) {
 function landingAt(event, zone) {
   if (zone === 'home') return { beside: '', after: false };
   if (zone !== 'strip') return null;
-  return collabStripLanding(event.target.closest('[data-collab-strip]'), event.clientX);
+  return collabStripLanding(elementOf(event.target).closest('[data-collab-strip]'), event.clientX);
 }
 
 const sameLanding = (a, b) => a?.beside === b?.beside && a?.after === b?.after;
@@ -120,8 +136,12 @@ const sameLanding = (a, b) => a?.beside === b?.beside && a?.after === b?.after;
 // tab there, the rest of the page floats it where it lands; the rail itself
 // does nothing. The strip shows where it would land. ctx is what openRailItem
 // takes, with floatsOf(paneKey).
+let endRailDrag = null;
+
 export function startRailDrag(event, item, ctx) {
-  const doc = event.currentTarget?.ownerDocument || globalThis.document;
+  endRailDrag?.();
+  const source = event.currentTarget;
+  const doc = source?.ownerDocument || globalThis.document;
   event.dataTransfer?.setData(RAIL_ITEM_DRAG_MIME, item.key);
   if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
   const aim = (next) => {
@@ -135,6 +155,8 @@ export function startRailDrag(event, item, ctx) {
     aim(zone === 'strip' ? landingAt(e, zone) : null);
   };
   const finish = () => {
+    if (endRailDrag === finish) endRailDrag = null;
+    source?.removeEventListener?.('dragend', finish);
     doc.removeEventListener('dragover', over, true);
     doc.removeEventListener('drop', drop, true);
     doc.removeEventListener('dragend', finish, true);
@@ -147,14 +169,22 @@ export function startRailDrag(event, item, ctx) {
     if (zone === 'rail') return;
     e.preventDefault();
     e.stopPropagation();
-    const landing = landingAt(e, zone);
+    let landing = null;
+    try {
+      landing = landingAt(e, zone);
+    } finally {
+      finish();
+    }
     const at = droppedAt(e);
-    finish();
     void (landing ? railItemToStrip(item, landing, ctx) : railItemToFloat(item, at, ctx));
   }
   doc.addEventListener('dragover', over, true);
   doc.addEventListener('drop', drop, true);
   doc.addEventListener('dragend', finish, true);
+  // dragend goes to the source; one the list re-rendered away never reaches
+  // the document, so it is heard on the source too, and the next drag ends this one.
+  source?.addEventListener?.('dragend', finish);
+  endRailDrag = finish;
   // A page's frame would swallow the drag; while it lasts, the frames let it through.
   doc.body?.classList?.add('rail-dragging');
   railDrag.value = { key: item.key };
