@@ -82,8 +82,8 @@ export function RelaunchPolicyDialog({ descriptor, state, confirmDiscard }) {
   return html`<${Dialog} id="relaunch-policy-modal" dialogClass="perm-edit-modal relaunch-policy-modal" onClose=${state.close} dirty=${dirty} confirmDiscard=${confirmDiscard}
     guard=${{ requestClose, registerClose }} title="On resume">
     <div class="perm-edit-banner" id="relaunch-policy-banner">
-      What a later resume or reincarnation of ${forProfile ? 'an agent spawned from this profile' : 'this agent'} re-reads, and what it keeps.
-      <strong>Default</strong> leaves a row to ${forProfile ? 'the global table' : 'the spawn profiles, then the global table'}${forProfile ? '' : html`; <strong>Follow global</strong> takes the global table even where a profile sets the row`}.
+      What a later resume or reincarnation of ${forProfile ? 'an agent spawned from this profile' : 'this agent'} re-reads, and what it keeps.${' '}
+      <strong>Default</strong> leaves a row to ${forProfile ? 'the global table' : 'the spawn profiles, then the global table'}${forProfile ? '' : html`; <strong>Follow global</strong> takes the global table even where a profile sets the row`}.${' '}
       The global table is in Config › Launch.
     </div>
     <p class="perm-edit-subtitle" id="relaunch-policy-subtitle">${
