@@ -278,7 +278,6 @@ export function PageView({ pageId, snapshot, tools = null, onOpenSender = null, 
         title=${page.group_id ? 'Close this page: the agent that showed it is told, and the page stays in its group to reopen' : 'Close this page: it ends, and the agent that showed it is told'}
         onClick=${() => void close()}>Close<//>
     </div>
-    ${drawing || chip?.live ? html`<p class="ui-hint page-not-kept" role="note">Marks and live patches are not saved with the page yet: they end when it closes${page.group_id ? ', even though the page itself reopens from its group' : ''}.</p>` : null}
     ${drawing ? html`<${PageDrawBar} tool=${tool} setTool=${setTool} color=${color} setColor=${setColor} marks=${marks.marks}
       onUndo=${marks.undo} onClear=${marks.clear} note=${note} setNote=${setNote} onSend=${() => void send()} sending=${sending} agentName=${sender.name} />` : null}
     <div class="page-body">

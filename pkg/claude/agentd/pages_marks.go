@@ -175,6 +175,7 @@ func forgetPageMarks(id string) {
 	if s := pageCollab.byID[id]; s != nil {
 		s.batches = nil
 	}
+	clearSavedMarksLocked(id)
 	pageCollab.mu.Unlock()
 }
 
@@ -187,6 +188,7 @@ func forgetPageCollabExceptMarks(id string) {
 	pageCollab.mu.Lock()
 	if s := pageCollab.byID[id]; s != nil {
 		s.patches, s.patchBytes, s.view = nil, 0, nil
+		savePatchesLocked(id, s)
 	}
 	pageCollab.mu.Unlock()
 }
@@ -364,6 +366,7 @@ func handleDashboardPageMarks(w http.ResponseWriter, r *http.Request) {
 	if len(s.batches) > pageMarksMaxBatches {
 		s.batches = append([]pageMarkBatch(nil), s.batches[len(s.batches)-pageMarksMaxBatches:]...)
 	}
+	saveMarkBatchLocked(id, batch)
 	pageCollab.mu.Unlock()
 	setAuditTargetLabel(r, "page "+name)
 

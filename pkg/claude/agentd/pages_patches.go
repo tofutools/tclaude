@@ -278,6 +278,7 @@ func pagePatchAppend(id string, p pagePatch) (pagePatch, error) {
 	s := pageCollabLocked(id)
 	if !p.Replay {
 		pagePatchKeepEvalLocked(s, &p)
+		savePatchesLocked(id, s)
 		return p, nil
 	}
 	replayed := 0
@@ -297,6 +298,7 @@ func pagePatchAppend(id string, p pagePatch) (pagePatch, error) {
 	p.At = time.Now().UTC()
 	s.patches = append(s.patches, p)
 	s.patchBytes += p.size()
+	savePatchesLocked(id, s)
 	return p, nil
 }
 
@@ -432,6 +434,7 @@ func handlePagePatchesReset(w http.ResponseWriter, r *http.Request) {
 		}
 		s.patches = keep
 		left = len(keep)
+		savePatchesLocked(p.id, s)
 	}
 	pageCollab.mu.Unlock()
 	if only != 0 && len(dropped) == 0 {
@@ -540,6 +543,7 @@ func pagePatchDrop(id string, n int64) {
 		if p.N == n {
 			s.patches = append(s.patches[:i], s.patches[i+1:]...)
 			s.patchBytes -= p.size()
+			savePatchesLocked(id, s)
 			return
 		}
 	}
