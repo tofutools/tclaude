@@ -115,3 +115,25 @@ func TestCloneRelaunchPolicy_UnusableProfilesFallBackToTheStoredPolicy(t *testin
 	assert.Equal(t, "kept", profileEnvValue(t, policy), "the stored policy")
 	assert.Contains(t, string(clone.Raw), "launched under the sandbox policy stored at the source's last launch")
 }
+
+// Under reuse, which profiles apply is still read again, as on resume: a
+// changed assignment brings the new profile's current contents, and says so.
+func TestCloneRelaunchPolicy_ReuseFollowsAChangedAssignment(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	for name, value := range map[string]string{"shared": "v1", "other": "other"} {
+		_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: name,
+			Environment: []db.SandboxEnvironmentEntry{{Name: "PROFILE_ENV", Value: value}}})
+		require.NoError(t, err)
+	}
+	require.NoError(t, db.SetGlobalSandboxProfile("shared"))
+	conv, _ := spawnPinned(t, f, "assigned-source", "")
+	setRelaunchPolicy(t, f, "sandbox_profile_contents", "reuse")
+	require.NoError(t, db.SetGlobalSandboxProfile("other"))
+
+	clone := f.AsHuman().CloneFresh(conv)
+	policy, ok := f.World.SpawnSandboxPolicy(clone.NewConv)
+	require.True(t, ok)
+	assert.Equal(t, "other", profileEnvValue(t, policy))
+	assert.Contains(t, string(clone.Raw), "so their current contents apply")
+}

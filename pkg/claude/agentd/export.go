@@ -289,9 +289,9 @@ func runExportClone(jobID int64, originalConv, cwd, effort, model string, sameGr
 	defer spawned.ReleaseLaunchClaim()
 	newConv := spawned.NewConv
 	if warn := spawned.Warn; warn != "" {
-		// The conv-id + .jsonl exist but the clone's tmux session registered
-		// slowly; waitForConvAlive below decides whether it actually came up.
-		slog.Warn("export clone: spawn registered slowly", "job", jobID, "conv", newConv, "warning", warn)
+		// A slow tmux registration (waitForConvAlive below decides whether it
+		// came up) or what the relaunch policy did to its sandbox.
+		slog.Warn("export clone: spawn warning", "job", jobID, "conv", newConv, "warning", warn)
 	}
 	// Record the clone as the job's worker ASAP — before it is nudged. This is
 	// MANDATORY, not best-effort: an unrecorded clone is rejected by the /v1
