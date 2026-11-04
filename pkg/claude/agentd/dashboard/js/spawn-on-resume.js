@@ -60,8 +60,7 @@ export function SpawnOnResumeRow({ fetchImpl = globalThis.fetch, busy = false })
     <div class="cron-create-target spawn-on-resume">
       <div class="spawn-on-resume-head">
         <div>
-          <div><strong>Global relaunch policy</strong>: group settings and referenced sandbox profiles are re-read;
-            the spawn profile's values are kept.</div>
+          <div><strong>Global relaunch policy</strong>: what a resume or reincarnation of this agent re-reads, and what it keeps.</div>
           <div class="ui-hint" data-on-resume-summary>${onResumeSummary(rows)}</div>
         </div>
         <${Button} size="sm" disabled=${busy} aria-expanded=${open ? 'true' : 'false'} aria-controls="agent-spawn-on-resume-table"
