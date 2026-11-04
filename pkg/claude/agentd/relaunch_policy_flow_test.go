@@ -87,8 +87,16 @@ func TestRelaunchPolicy_ReadOpenSetGated(t *testing.T) {
 			Settable bool   `json:"settable"`
 			Why      string `json:"why"`
 		} `json:"rows"`
+		Fields []struct {
+			Key   string `json:"key"`
+			Layer string `json:"layer"`
+			Why   string `json:"why"`
+		} `json:"fields"`
+		CanManage bool `json:"can_manage"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &view))
+	assert.False(t, view.CanManage, "no relaunch-policy.manage yet")
+	assert.NotEmpty(t, view.Fields, "every registry row, for the read-only part of the table")
 	rows := map[string]int{}
 	for i, row := range view.Rows {
 		rows[row.Field] = i
@@ -110,7 +118,9 @@ func TestRelaunchPolicy_ReadOpenSetGated(t *testing.T) {
 	body := map[string]any{"field": "harness_config", "mode": "chain-wins"}
 	assert.Equal(t, http.StatusForbidden, agentReq(t, f, caller, http.MethodPut, "/v1/relaunch-policy", body).Code)
 	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermRelaunchPolicyManage, "test"))
-	assert.Equal(t, http.StatusOK, agentReq(t, f, caller, http.MethodPut, "/v1/relaunch-policy", body).Code)
+	granted := agentReq(t, f, caller, http.MethodPut, "/v1/relaunch-policy", body)
+	assert.Equal(t, http.StatusOK, granted.Code)
+	assert.Contains(t, granted.Body.String(), `"can_manage":true`)
 
 	assert.Equal(t, http.StatusBadRequest, humanReq(t, f, http.MethodPut, "/v1/relaunch-policy",
 		map[string]any{"field": "group_startup_context", "mode": "reuse"}).Code, "a row the policy cannot set")

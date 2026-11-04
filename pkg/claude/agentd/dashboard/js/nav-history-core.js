@@ -77,7 +77,7 @@ export const KNOWN_SUBTABS = {
   usage: new Set(['quota', 'costs']),
   diagnostics: new Set(['audit', 'logs', 'performance', 'doctor']),
   config: new Set([
-    'appearance', 'terminals', 'keyboard', 'notifications', 'agents', 'context', 'costs',
+    'appearance', 'terminals', 'keyboard', 'notifications', 'agents', 'launch', 'context', 'costs',
     'assistants', 'steward', 'voice', 'git', 'daemon', 'logs', 'experimental', 'advanced',
   ]),
   'fleet-admin': new Set([

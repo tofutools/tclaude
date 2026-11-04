@@ -148,13 +148,53 @@ func relaunchPolicyView() []relaunchPolicyRowJSON {
 	return out
 }
 
+// relaunchFieldJSON is one launch-registry row as the Config tab shows it:
+// the configurable ones get a control from rows, the rest a read-only pill.
+type relaunchFieldJSON struct {
+	Key          string `json:"key"`
+	Label        string `json:"label"`
+	Layer        string `json:"layer"`
+	Relaunch     string `json:"relaunch"`
+	Configurable bool   `json:"configurable"`
+	Why          string `json:"why"`
+	Gap          string `json:"gap,omitempty"`
+}
+
+func relaunchFieldsView() []relaunchFieldJSON {
+	out := make([]relaunchFieldJSON, 0, len(launchspec.Fields))
+	for _, f := range launchspec.Fields {
+		out = append(out, relaunchFieldJSON{Key: f.Key, Label: f.Label, Layer: string(f.Layer),
+			Relaunch: f.Layer.Relaunch(), Configurable: f.Configurable, Why: f.Why, Gap: f.Gap})
+	}
+	return out
+}
+
+// relaunchPolicyCanManage reports whether the caller could change the policy,
+// so the Config tab shows the table read-only when it could not. A peer
+// node's operator always sees it read-only (the peer view never edits it).
+func relaunchPolicyCanManage(r *http.Request) bool {
+	if peerGrantFromRequest(r) != nil || peerActionFromRequest(r) != nil {
+		return false
+	}
+	if callerIsHuman(r) {
+		return true
+	}
+	p := peerFromContext(r.Context())
+	return p != nil && p.ConvID != "" && standingPermissionAllows(p.ConvID, PermRelaunchPolicyManage, ActionContext{})
+}
+
+func relaunchPolicyResponse(r *http.Request) map[string]any {
+	return map[string]any{"scope": launchspec.ScopeGlobal, "rows": relaunchPolicyView(),
+		"fields": relaunchFieldsView(), "can_manage": relaunchPolicyCanManage(r)}
+}
+
 // serveRelaunchPolicy is GET (open) and PUT {field, mode} (relaunch-policy.manage)
 // of /v1/relaunch-policy. An empty mode, or the field's default, clears the
 // stored row.
 func serveRelaunchPolicy(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, map[string]any{"scope": launchspec.ScopeGlobal, "rows": relaunchPolicyView()})
+		writeJSON(w, http.StatusOK, relaunchPolicyResponse(r))
 	case http.MethodPut:
 		caller, ok := requirePermission(w, r, PermRelaunchPolicyManage)
 		if !ok {
@@ -199,7 +239,7 @@ func serveRelaunchPolicy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		setAuditTargetLabel(r, fmt.Sprintf("relaunch policy %s: %s → %s", field, before, mode))
-		writeJSON(w, http.StatusOK, map[string]any{"scope": launchspec.ScopeGlobal, "rows": relaunchPolicyView()})
+		writeJSON(w, http.StatusOK, relaunchPolicyResponse(r))
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET or PUT")
 	}

@@ -9314,6 +9314,23 @@ label.cfg-label { cursor: pointer; }
 .cfg-tool-list :is(th, td) { vertical-align: top; }
 .cfg-tool-list td:first-child code { white-space: nowrap; }
 @media (max-width: 640px) { .cfg-tool-list td:first-child code { white-space: normal; overflow-wrap: anywhere; } }
+/* Config › Launch: the relaunch policy table (relaunch-policy-table.js). */
+.rlp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.rlp-table thead th { text-align: left; font-weight: 600; color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.rlp-table :is(th, td) { vertical-align: top; text-align: left; }
+.rlp-table tbody th[scope="row"] { font-weight: 500; color: #c9d1d9; width: 32%; text-transform: none; letter-spacing: normal; font-size: 13px; }
+.rlp-table .rlp-ctl, .rlp-table td:nth-child(2) { width: 1%; white-space: nowrap; }
+.rlp-table .rlp-section th { padding-top: 14px; font-size: 11px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: .04em; }
+.rlp-why { color: #8b949e; }
+.rlp-gap { margin-top: 2px; font-size: 12px; }
+.rlp-pill-live { border-color: #238636; color: #3fb950; }
+.rlp-pill-fixed { border-color: #6e7681; color: #c9d1d9; }
+.rlp-readonly { margin: 0 0 8px; }
+.rlp-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+@media (max-width: 640px) {
+  .rlp-table tbody th[scope="row"] { width: auto; }
+  .rlp-table .rlp-ctl, .rlp-table td:nth-child(2) { white-space: normal; }
+}
 /* A shortcut written as key chips (shortcut-keys.js): Ctrl , → [Ctrl] [,]. */
 .shortcut-keys { display: inline-flex; gap: 3px; white-space: nowrap; }
 .shortcut-keys kbd {
