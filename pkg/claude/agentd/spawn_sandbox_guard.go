@@ -1049,3 +1049,30 @@ func harnessBuiltinModeIn(builtinMode string, allowed ...string) bool {
 	}
 	return false
 }
+
+// launchPostureFailure runs the gates a launch's posture passes before a
+// fresh launch: the sandbox and approval lineage guards against the spawning
+// agent (spawnerConv; "" is a human, who is not bounded), judged on the
+// launch mode the row will carry, and the rule that a confined-only approval
+// needs a confining sandbox. A first spawn and a re-applied spawn copy run
+// it; a resume does not, since it continues a posture that already passed.
+func launchPostureFailure(spawnerConv string, h *harness.Harness, harnessName, mode, implementation, approval string,
+	autoReview, allowUnenforced bool) *spawnFailure {
+	launchMode, fail := resolveLaunchHarnessBuiltinMode(h, mode, implementation)
+	if fail != nil {
+		return fail
+	}
+	if fail := spawnSandboxLineageFailure(spawnerConv, harnessName, launchMode, implementation); fail != nil {
+		return fail
+	}
+	if fail := spawnApprovalLineageFailure(spawnerConv, harnessName, approval, autoReview); fail != nil {
+		return fail
+	}
+	// The same rule session new enforces, refused here with an API error
+	// rather than as a forked launch that exits.
+	if err := session.RequireConfinementForApproval(h, approval,
+		sandboxpolicy.Implementation(implementation).UsesTclaudeLayer(), allowUnenforced, false); err != nil {
+		return &spawnFailure{http.StatusForbidden, "unconfined_approval", err.Error()}
+	}
+	return nil
+}

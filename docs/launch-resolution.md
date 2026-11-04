@@ -198,6 +198,11 @@ The rules above are the specification. These rows do not follow it yet:
 - **Model** (`model`): No resume path takes a model flag yet; only a morph changes it.
 - **Reasoning effort** (`effort`): No resume path takes an effort flag yet; only a morph changes it.
 - **Model proxy** (`model_proxy`): Reincarnate and clone drop the model proxy.
+- **Include group startup context** (`include_group_context`): A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
+- **Profile and explicit environment** (`profile_env`): A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
+- **Profile startup context** (`profile_startup_context`): A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
+- **Roles** (`roles`): A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
+- **Usage profiles named by the spawn or linked from its spawn profile** (`usage_profile_links`): A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
 - **Group environment** (`group_env`): Watch mode and conv resume reuse the stored group environment.
 - **Group remote-control policy** (`group_remote_control`): Resume reuses the remote-control setting stored at the last launch.
 - **Group and workspace sandbox-profile assignment** (`group_sandbox_assignment`): Watch mode and conv resume reuse the stored sandbox policy.

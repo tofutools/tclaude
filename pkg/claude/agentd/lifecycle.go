@@ -6523,6 +6523,7 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	p.ModelSource = preferResolvedSource(p.ModelSource, launchValues.Source[launchValueModel])
 	p.EffortSource = preferResolvedSource(p.EffortSource, launchValues.Source[launchValueEffort])
 	p.ContextWindowMaxSource = preferResolvedSource(p.ContextWindowMaxSource, launchValues.Source[launchValueContextWindowMax])
+	p.HarnessBuiltinModeSource = preferResolvedSource(p.HarnessBuiltinModeSource, launchValues.Source[launchValueSandbox])
 	if strings.TrimSpace(p.ProfileContext) == "" {
 		p.ProfileContext, fieldNote = resolveProfileStartupContext(h.Name, tiers)
 		noteLaunch()
@@ -6955,24 +6956,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	if hErr != nil {
 		return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_harness", hErr.Error()}
 	}
-	childLaunchSandbox, fail := resolveLaunchHarnessBuiltinMode(
-		childHarness, p.HarnessBuiltinMode, p.SandboxImplementation)
-	if fail != nil {
+	if fail := launchPostureFailure(p.SpawnedByConv, childHarness, p.Harness, p.HarnessBuiltinMode,
+		p.SandboxImplementation, p.ApprovalPolicy, p.AutoReview, p.AllowUnenforcedSandbox); fail != nil {
 		return nil, fail
-	}
-	if fail := spawnSandboxLineageFailure(
-		p.SpawnedByConv, p.Harness, childLaunchSandbox, p.SandboxImplementation); fail != nil {
-		return nil, fail
-	}
-	if fail := spawnApprovalLineageFailure(p.SpawnedByConv, p.Harness, p.ApprovalPolicy, p.AutoReview); fail != nil {
-		return nil, fail
-	}
-	// The same rule session new enforces, refused here with an API error
-	// rather than as a forked launch that exits.
-	if err := session.RequireConfinementForApproval(childHarness, p.ApprovalPolicy,
-		sandboxpolicy.Implementation(p.SandboxImplementation).UsesTclaudeLayer(),
-		p.AllowUnenforcedSandbox, false); err != nil {
-		return nil, &spawnFailure{http.StatusForbidden, "unconfined_approval", err.Error()}
 	}
 	if strings.TrimSpace(p.DirWriteProofToken) == "" {
 		p.CodexGitCommonDir = ""
