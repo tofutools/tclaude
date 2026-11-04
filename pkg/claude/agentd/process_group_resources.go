@@ -25,6 +25,7 @@ type processGroupPage struct {
 	Title        string `json:"title"`
 	Owner        string `json:"owner"`
 	Kind         string `json:"kind"`
+	GroupOwned   bool   `json:"groupOwned,omitempty"`
 	AgentsLocked bool   `json:"agentsLocked,omitempty"`
 }
 
@@ -59,8 +60,12 @@ func groupResources() (map[int64][]processGroupBoard, map[int64][]processGroupPa
 		groupID := p.groupID
 		v := processGroupPage{ID: p.id, Name: p.name, Title: p.title, Owner: p.owner, Kind: p.kind, AgentsLocked: p.agentsLocked}
 		livePages.mu.Unlock()
-		if groupID == 0 || pageGroupOf(v.Owner, groupID) == nil {
+		if !pageOwnerInGroup(v.Owner, groupID) {
 			continue
+		}
+		if isGroupPageOwner(v.Owner) {
+			// The operator created it and no member has taken it over.
+			v.Owner, v.GroupOwned = "", true
 		}
 		pages[groupID] = append(pages[groupID], v)
 	}

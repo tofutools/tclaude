@@ -78,6 +78,9 @@ export const pageLabel = (page) => String(page?.title || page?.name || page?.id 
 // pageSender names the agent that showed the page from the snapshot's groups,
 // or falls back to its id.
 export function pageSender(snapshotValue, page) {
+  // A page the operator created in a group that no member has taken over
+  // (tcl-20ihu3): the group's, not an agent's.
+  if (page?.group_owned) return { agent: '', group: String(page.group || ''), name: page.group ? `group ${page.group}` : 'its group', online: false, harness: '' };
   const owner = String(page?.owner || '');
   for (const group of snapshotValue?.groups || []) {
     for (const member of group?.members || []) {

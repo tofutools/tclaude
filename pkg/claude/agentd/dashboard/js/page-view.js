@@ -240,7 +240,8 @@ export function PageView({ pageId, snapshot, tools = null, onOpenSender = null, 
       // Only what was sent goes: marks drawn or a note typed meanwhile stay.
       marks.drop(sentMarks);
       setNote((current) => (current === sentNote ? '' : current));
-      notify?.(told.told_agent === false ? `Saved; ${sender.name} is not running, so it was not told` : `Sent to ${sender.name}`, told.told_agent === false);
+      if (sender.group !== undefined) notify?.(`Sent to ${sender.name}: its members read it, and whoever takes the page over keeps it`);
+      else notify?.(told.told_agent === false ? `Saved; ${sender.name} is not running, so it was not told` : `Sent to ${sender.name}`, told.told_agent === false);
     } catch (cause) {
       notify?.(`Could not send the marks: ${cause?.message || cause}`, true);
     }

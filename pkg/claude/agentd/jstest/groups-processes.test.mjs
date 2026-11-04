@@ -570,13 +570,15 @@ test('Both\'s Resources section lists the group\'s boards and pages with lock ch
   fe.processes = [{ templateId: 'ship', name: 'Ship', ref: 'r1', listed: true, steps: 3, params: [], programProfiles: [], agentsLocked: true }];
   fe.boards = [{ id: 'sprint', title: 'Sprint board', editing: 2 }];
   const infra = context.groups.find((g) => g.group === 'infra-crew');
-  infra.pages = [{ id: 'pg1', name: 'landing', title: 'Landing page', owner: 'agt_infra_lead', kind: 'port', agentsLocked: true }];
+  infra.pages = [{ id: 'pg1', name: 'landing', title: 'Landing page', owner: 'agt_infra_lead', kind: 'port', agentsLocked: true },
+    { id: 'pg2', name: 'sketch', title: 'sketch', owner: '', kind: 'scratch', groupOwned: true }];
   const calls = [];
   const created = [];
   const api = {
     setResourceLock: async (...args) => { calls.push(args); return {}; },
     boardIds: async () => ['frontend-squad-board'],
     createGroupBoard: async (...args) => { created.push(args); return { id: args[2], title: args[1] }; },
+    createGroupPage: async (...args) => { created.push(['page', ...args]); return { id: 'pg_new', name: args[1], title: args[1] }; },
   };
   const { harness, details, source } = await mountFocus(t, { fused: true, api, sourceOptions: { context } });
   const section = (el) => el.querySelector('[data-fused-section="processes"]');
@@ -614,4 +616,12 @@ test('Both\'s Resources section lists the group\'s boards and pages with lock ch
   assert.equal(created.length, 1);
   assert.equal(created[0][0], 'frontend-squad');
   assert.notEqual(created[0][2], 'frontend-squad-board', 'a taken id elsewhere on the node is not reused');
+
+  // ＋▾ › Page creates a blank page the group owns, named free in the group.
+  const infraNow = section(details('infra-crew'));
+  assert.match(infraNow.querySelector('[data-resource-page="pg2"]').textContent, /no member has taken it over/);
+  await harness.act(() => harness.fireEvent(infraNow.querySelector('[data-resource-add="infra-crew"]'), 'click'));
+  await harness.act(() => harness.fireEvent(infraNow.querySelector('[data-resource-add-page]'), 'click'));
+  await settle(harness);
+  assert.deepEqual(created[1], ['page', 'infra-crew', 'sketch-2'], 'the group already has a sketch');
 });

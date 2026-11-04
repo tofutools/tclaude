@@ -622,7 +622,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
       <${FusedSection} group=${group.name} section="processes" label="Resources"
         count=${savedProcesses.length + (entry?.boards || []).length + (entry?.pages || []).length}
         actions=${html`${quick === 'pick' && html`<${Button} size="sm" class="gp-start" onClick=${() => setQuick(null)}>close<//>`}<${AddResource}
-          group=${group} api=${api} source=${source} wizard=${wizard} notify=${notify || defaultNotify}
+          group=${group} pages=${entry?.pages || []} api=${api} source=${source} wizard=${wizard} notify=${notify || defaultNotify}
           onAddProcess=${() => { setStarting(false); setQuick('pick'); }} />`}
         closedActions=${controls(true)}
         auto=${shown} force=${!!starting || !!quick} attrs=${{ 'data-fused-processes': group.name }}>

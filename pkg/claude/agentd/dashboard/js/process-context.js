@@ -331,6 +331,12 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, id, locked }),
       }, fetchImpl);
     },
+    // createGroupPage creates a blank page the group owns (POST /api/pages).
+    async createGroupPage(group, name) {
+      return processRequest('/api/pages', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group, name, title: name }),
+      }, fetchImpl);
+    },
     // boardIds lists every board's id: board ids are node-wide.
     async boardIds() {
       const body = await processRequest('/api/boards', {}, fetchImpl);
