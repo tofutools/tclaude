@@ -521,6 +521,42 @@ func waitHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 	}
 }
 
+// newAgentApprovalRequest is the shared core of an agent-initiated approval
+// popup: the requester, the request line (path and query projected the same
+// way the HTTP log projects them, so a sensitive route never lands in the
+// approval record), the timeout and the decision/extend channels. Each gate
+// site fills in what it alone knows: the preview, the targets, the scope and
+// whether "always allow" is offered.
+func newAgentApprovalRequest(r *http.Request, perm, callerConv, callerTitle string, timeout time.Duration) *approvalRequest {
+	path, sensitive := projectSafeHTTPLogPath(r.URL.Path)
+	query := r.URL.RawQuery
+	if sensitive {
+		query = ""
+	}
+	return &approvalRequest{
+		id:        newApprovalID(),
+		perm:      perm,
+		convID:    callerConv,
+		convTitle: callerTitle,
+		method:    r.Method,
+		path:      path,
+		rawQuery:  query,
+		createdAt: time.Now(),
+		timeout:   timeout,
+		decision:  make(chan approvalOutcome, 1),
+		extend:    make(chan time.Duration, 1),
+	}
+}
+
+// convDisplayTitle is a conversation's display title for a popup, "" when it
+// has no fresh row.
+func convDisplayTitle(convID string) string {
+	if row := agent.FreshConvRowResolved(convID); row != nil {
+		return agent.DisplayTitle(row)
+	}
+	return ""
+}
+
 // newApprovalID returns a 32-hex-char random token. Callers should
 // treat IDs as opaque; the popup URL is the only place they appear.
 func newApprovalID() string {
