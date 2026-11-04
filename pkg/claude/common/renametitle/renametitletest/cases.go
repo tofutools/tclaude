@@ -42,6 +42,7 @@ var Cases = []Case{
 	{"double space", "code  reviewer", false, true},
 	{"triple space", "code   reviewer", false, true},
 	{"leading space", " code", true, true},
+	{"trailing space", "code ", true, true},
 	{"only spaces", "   ", false, true},
 
 	// --- rejected by both: control characters / early submit ---

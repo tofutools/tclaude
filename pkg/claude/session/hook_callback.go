@@ -547,9 +547,9 @@ var clearInjectReadyDelay = 1 * time.Second
 // helper directly from session (would cycle), and the cold reviewer
 // explicitly asked us to replicate the shape rather than reinvent.
 //
-// Charset gate is isValidRenameTitle — the strict gate documented at
-// pkg/claude/agentd/handlers.go's runRenameOrchestration as "a hard
-// security gate against keystroke injection ... not bypassable". The
+// Charset gate is isValidRenameTitle — the same strict send-keys gate
+// the daemon applies (pkg/claude/common/renametitle), "a hard security
+// gate against keystroke injection ... not bypassable". The
 // carried name comes from conv_index.custom_title (parsed verbatim
 // from .jsonl files) or pending_name (stored even when invalid by
 // lifecycle.go) — neither is pre-checked by the strict gate, so the
