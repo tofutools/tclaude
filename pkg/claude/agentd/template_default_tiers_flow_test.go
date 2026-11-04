@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -117,4 +118,33 @@ func TestTemplateDefaultTiers_ReferencedProfileWins(t *testing.T) {
 	member := postureOf(t, f, deployUniformTemplate(t, f, map[string]any{"spawn_profile": "member-profile"}))
 	assert.Equal(t, "off", member.Sandbox)
 	assert.Equal(t, "default", member.Approval)
+}
+
+// A default-tier value skipped for the deploy's harness is disclosed once,
+// though both the template walk and the spawn walk the default tiers.
+func TestTemplateDefaultTiers_SkipNoteDisclosedOnce(t *testing.T) {
+	f := newFlow(t)
+	globalDefault(t, f, map[string]any{"harness": "claude", "model": "opus"})
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "notes-team", "agents": []map[string]any{{"name": "member", "role": "dev",
+			"harness": "codex", "initial_message": "Do it."}},
+	}).Code)
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/notes-team/deploy", map[string]any{"group_name": "notes-force"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "deploy: %s", rec.Body.String())
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	require.Len(t, res.Agents, 1)
+	require.NotNil(t, res.Agents[0].Resolved)
+	seen := map[string]int{}
+	for _, n := range res.Agents[0].Resolved.Notes {
+		seen[n]++
+	}
+	found := false
+	for n, c := range seen {
+		assert.Equalf(t, 1, c, "note %q repeated", n)
+		if strings.Contains(n, "model ignored") {
+			found = true
+		}
+	}
+	assert.True(t, found, "the skipped model is disclosed: %v", res.Agents[0].Resolved.Notes)
 }
