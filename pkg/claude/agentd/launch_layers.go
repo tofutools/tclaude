@@ -161,15 +161,21 @@ func spawnCopyPostureFailure(spawnerConv, harnessName, convID string, stored, ne
 	if err != nil {
 		return &spawnFailure{http.StatusUnprocessableEntity, "invalid_harness", err.Error()}
 	}
-	if fail := launchPostureFailure(spawnerConv, h, harnessName, str(next.HarnessBuiltinMode),
-		str(next.SandboxImplementation), str(next.ApprovalPolicy), flag(next.ApprovalAutoReview), false); fail != nil {
+	// Judge the posture the next resume will launch with: the validated
+	// config's normal mode and implementation, which can differ from the raw
+	// stored spelling (a restored layered implementation, a temporary mode).
+	mode, implementation := cfg.Sandbox, cfg.SandboxImplementation
+	if cfg.TemporaryHarnessBuiltinMode {
+		mode = cfg.NormalSandbox
+	}
+	if fail := launchPostureFailure(spawnerConv, h, harnessName, mode,
+		implementation, str(next.ApprovalPolicy), flag(next.ApprovalAutoReview), false); fail != nil {
 		return fail
 	}
 	snapshot, err := db.AgentEffectiveSandboxConfigForConv(convID)
 	if err != nil {
 		return &spawnFailure{http.StatusInternalServerError, "io", "load the agent's sandbox policy: " + err.Error()}
 	}
-	mode, implementation := str(next.HarnessBuiltinMode), str(next.SandboxImplementation)
 	if fail := copilotAPILoopbackFailure(flag(next.CopilotAPI), snapshot, implementation); fail != nil {
 		return fail
 	}
