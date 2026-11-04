@@ -85,8 +85,17 @@ func TestCrossAgentHelp_EveryVerbUsesTheSharedSentence(t *testing.T) {
 
 // crossAgentHelpExempt lists commands whose help names a manager-pattern
 // slug next to group ownership but describes a different gate.
-var crossAgentHelpExempt = map[string]bool{
-	// Cron job auth (authCronJob): a conv-target job takes the cross-agent
-	// path, but a group-target job is gated on groups.messages.schedule.
-	"cron rm": true,
+var crossAgentHelpExempt = map[string]bool{}
+
+// The by-id cron verbs share one auth sentence (authCronJob's two gates).
+func TestCronJobHelp_StatesTheDaemonGate(t *testing.T) {
+	root := agent.Cmd()
+	for _, path := range []string{"cron rm", "cron enable", "cron disable", "cron run-now"} {
+		cmd, rest, err := root.Find(strings.Fields(path))
+		require.NoError(t, err)
+		require.Empty(t, rest, "no `agent %s` command", path)
+		assert.Contains(t, cmd.Long, agent.CronJobAuth(), "`agent %s` help", path)
+	}
+	assert.Contains(t, agent.CronJobAuth(), agentd.PermGroupsMessagesSchedule)
+	assert.Equal(t, "groups.members.schedule", agentd.GroupSiblingForSlug(agentd.PermAgentSchedule))
 }

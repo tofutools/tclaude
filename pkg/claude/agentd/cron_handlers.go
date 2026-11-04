@@ -1738,9 +1738,10 @@ func handleCronDelete(w http.ResponseWriter, r *http.Request, id int64) {
 // authCronWrite gates create/delete. Caller passes if any of:
 //
 //   - the human operator (classHuman)
-//   - target == caller AND caller has self.schedule
-//   - caller has agent.schedule
-//   - caller owns a group containing the target
+//   - target is the caller (sameActor: any generation) AND caller has self.schedule
+//   - otherwise, requireCrossAgentPermission(agent.schedule): the global
+//     slug, or groups.members.schedule covering every current active
+//     group containing the target (ownership contributes it)
 //
 // Returns (callerConvID, ok); callerConvID is "" for the human.
 func authCronWrite(w http.ResponseWriter, r *http.Request, targetConv string) (string, bool) {

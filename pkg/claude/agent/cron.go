@@ -343,6 +343,17 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 
 // ---- rm ----
 
+// CronJobAuth says who may change an existing cron job (rm, enable, disable,
+// run-now), as the daemon enforces it in authCronJob. A conv-target job is
+// gated like scheduling on that conv; a group-target job on the group's
+// groups.messages.schedule.
+func CronJobAuth() string {
+	return "Auth for a job targeting one conv: self.schedule when that conv is the caller " +
+		"(any generation of the same agent). Otherwise, as for any cross-agent verb: " + CrossAgentAuth("schedule") +
+		" Auth for a group:NAME job: groups.messages.schedule for that group (group ownership confers it); " +
+		"if the group no longer exists, an unscoped groups.messages.schedule grant. The operator always passes."
+}
+
 type cronRmParams struct {
 	ID string `pos:"true" help:"Cron job ID (from 'tclaude agent cron ls')."`
 }
@@ -351,7 +362,7 @@ func cronRmCmd() *cobra.Command {
 	return boa.CmdT[cronRmParams]{
 		Use:         "rm",
 		Short:       "Delete a scheduled cron job",
-		Long:        "Removes a job by ID. Caller must be the job's owner_conv, hold agent.schedule, or own a group containing the job's target.",
+		Long:        "Removes a job by ID. " + CronJobAuth(),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *cronRmParams, _ *cobra.Command, _ []string) {
 			os.Exit(runCronRm(p, os.Stdout, os.Stderr))
@@ -387,7 +398,7 @@ func cronEnableCmd() *cobra.Command {
 	return boa.CmdT[cronIDOnlyParams]{
 		Use:         "enable",
 		Short:       "Re-enable a previously disabled cron job",
-		Long:        "Flips enabled=true. Does NOT touch last_run_at, so re-enabling a paused job doesn't fire immediately if it ran recently.",
+		Long:        "Flips enabled=true. Does NOT touch last_run_at, so re-enabling a paused job doesn't fire immediately if it ran recently. " + CronJobAuth(),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *cronIDOnlyParams, _ *cobra.Command, _ []string) {
 			os.Exit(runCronEnable(p, true, os.Stdout, os.Stderr))
@@ -399,7 +410,7 @@ func cronDisableCmd() *cobra.Command {
 	return boa.CmdT[cronIDOnlyParams]{
 		Use:         "disable",
 		Short:       "Pause a cron job without deleting it",
-		Long:        "Flips enabled=false. The row stays — `cron enable` reactivates it. Use to silence a noisy job temporarily.",
+		Long:        "Flips enabled=false. The row stays — `cron enable` reactivates it. Use to silence a noisy job temporarily. " + CronJobAuth(),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *cronIDOnlyParams, _ *cobra.Command, _ []string) {
 			os.Exit(runCronEnable(p, false, os.Stdout, os.Stderr))
@@ -411,7 +422,7 @@ func cronRunNowCmd() *cobra.Command {
 	return boa.CmdT[cronIDOnlyParams]{
 		Use:         "run-now",
 		Short:       "Fire a cron job immediately (without waiting for the next tick)",
-		Long:        "Manually triggers one fire. Useful for testing a freshly-added job or for a one-off nudge between regular runs. Updates last_run_at + appends a row to the run history.",
+		Long:        "Manually triggers one fire. Useful for testing a freshly-added job or for a one-off nudge between regular runs. Updates last_run_at + appends a row to the run history. " + CronJobAuth(),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *cronIDOnlyParams, _ *cobra.Command, _ []string) {
 			os.Exit(runCronRunNow(p, os.Stdout, os.Stderr))
