@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -112,6 +113,8 @@ func (r *standaloneRelaunch) remoteControl(h *harness.Harness, convID string) (b
 	}
 	remoteControl, err := harness.ResolveRemoteControl(h, *r.remoteControlDecision)
 	if err != nil {
+		slog.Warn("agentd's remote-access decision does not apply to this harness; resuming without it",
+			"conv_id", convID, "harness", h.Name, "error", err)
 		return false, nil
 	}
 	return remoteControl, nil

@@ -114,5 +114,8 @@ func TestStandaloneRelaunch_LaunchesWithAgentdsRemoteControlDecision(t *testing.
 	var none *standaloneRelaunch
 	got, err = none.remoteControl(claude, standaloneConv)
 	require.NoError(t, err)
-	assert.False(t, got, "no decision: the recorded posture, here off")
+	assert.False(t, got, "no relaunch: the recorded posture, here off")
+	got, err = (&standaloneRelaunch{convID: standaloneConv}).remoteControl(claude, standaloneConv)
+	require.NoError(t, err)
+	assert.False(t, got, "agentd made no decision (unavailable): the recorded posture")
 }
