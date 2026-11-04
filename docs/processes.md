@@ -667,8 +667,9 @@ the legacy `spawn: allowed` (spawn with its `profile`), and otherwise waits.
 A spawn fallback that a spawn profile refuses fails the attempt with the reason,
 instead of waiting for a performer that cannot come. The refusing profile can be
 the step's own, the group's default or the global default: it is disabled, or it
-is operator-only and an agent owns the run. The first refusal in a run is also
-sent to the run's owner and to the operator.
+is operator-only and an agent owns the run. The first such refusal for a run
+owner in a group is also sent to that owner and to the operator; a performer
+spawned there again re-arms the notice.
 
 | Scope | Resolution |
 | --- | --- |

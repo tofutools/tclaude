@@ -102,6 +102,13 @@ func TestManagedProfileRefusal_Trigger_OperatorOnlyNotifiesOwnerAndOperator(t *t
 	require.NoError(t, db.GrantAgentPermission(owner, agentd.PermGroupsTriggersManage, "test"))
 	ruleID := refusalTrigger(t, f, ownerAgent)
 
+	// An owner who may not spawn into the group at all is told that, not
+	// sent after a default profile it could not use anyway.
+	denied := openPR(t, ruleID, 8)
+	assert.Equal(t, "permission_denied", denied.Outcome, "%+v", denied)
+	assert.Empty(t, operatorNotices(t))
+
+	require.NoError(t, db.GrantAgentPermission(owner, agentd.PermGroupsMembersSpawn, "test"))
 	outcome := openPR(t, ruleID, 9)
 	assert.Equal(t, "profile_operator_only", outcome.Outcome)
 	assert.Contains(t, outcome.Detail, `spawn profile "group-default" is restricted to human/operator spawns`)

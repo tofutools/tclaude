@@ -701,9 +701,7 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 	if profile == nil {
 		return nil, "profile_not_found", fmt.Sprintf("spawn profile %q does not exist", profileName)
 	}
-	// Every profile tier the launch reads is checked here, before a rate
-	// slot is spent on a refusal that repeats on every firing.
-	if fail := managedProfileRefusal(g, profile, ownerConv); fail != nil {
+	if fail := managedProfileRefusal(g, profile, ownerConv, false); fail != nil {
 		return nil, fail.Kind, fail.Msg
 	}
 	allowAnyGroup := false
@@ -738,6 +736,11 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 		if status, detail := capacity(); status != "" {
 			return nil, status, detail
 		}
+	}
+	// The default tiers too, before a rate slot is spent on a refusal that
+	// repeats on every firing.
+	if fail := managedProfileRefusal(g, nil, ownerConv, true); fail != nil {
+		return nil, fail.Kind, fail.Msg
 	}
 	if fail := checkSpawnGuardrails(g, ownerConv, allowAnyGroup); fail != nil {
 		return nil, "guardrail_denied", fail.Msg
