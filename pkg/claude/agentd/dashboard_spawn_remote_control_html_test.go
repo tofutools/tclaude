@@ -43,11 +43,12 @@ func TestDashboardHTML_SpawnRemoteControlWired(t *testing.T) {
 	must("remoteControl: groupRemoteControlDefault(group)",
 		"switching the group re-derives the checkbox from the new group's policy")
 
-	// The checkbox is authoritative — the body carries its state
-	// (true OR false) whenever the harness supports Remote Access, so an explicit
-	// uncheck of an optin-pre-filled box is honoured server-side.
-	must("if (view.showRemoteControl) body.remote_control = !!draft.remoteControl",
-		"the spawn body carries the checkbox state explicitly")
+	// The body carries the checkbox state (true OR false) whenever the harness
+	// supports Remote Access and the operator set it or the daemon would resolve
+	// a different value, so an explicit uncheck of an optin-pre-filled box is
+	// honoured server-side (tcl-u3spl2; behaviour in agent-spawn-preact.test.mjs).
+	must("if (view.showRemoteControl && sendToggle('remoteControl')) body.remote_control = !!draft.remoteControl",
+		"the spawn body carries the checkbox state when it matters")
 	must("showRemoteControl: harness ? !!harness.can_remote_control",
 		"the body remote_control is gated on the harness capability")
 }
