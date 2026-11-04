@@ -105,13 +105,36 @@ profiles give:
 - *explicit wins* (the default) keeps the explicit posture, as every other
   explicit flag is kept. It is chosen for least surprise, not maximum
   security.
-- *tighten-only* keeps the explicit posture unless the profiles' posture is
-  narrower (the read-only floor is on, or fewer paths are reopened). This is
-  the security option.
-- *chain wins* always takes the profiles' posture.
+- *tighten-only* is the security option. It differs from explicit wins in
+  exactly one case: an agent spawned with `--harness-config write` whose
+  sandbox profiles keep the read-only floor gets the floor back on its next
+  relaunch. An explicit `read` pin is already the strictest posture, so it
+  always stays.
+- *chain wins* always takes the profiles' posture, so a `read` pin over
+  profiles that allow `write` is lost on the next relaunch.
+
+The explicit posture is not forgotten while another setting overrides it:
+switching back to explicit wins restores it on the agent's next relaunch.
+The harness-config repair (see [Sandboxing](sandboxing.md)) also follows the
+setting: it does not list an agent whose posture the setting gave up on
+purpose.
 
 The answer is one global setting per row. Every other row follows its layer
-and has no setting.
+and has no setting. Show and change it with:
+
+```bash
+tclaude agent relaunch-policy show
+tclaude agent relaunch-policy set harness_config tighten-only
+```
+
+`show` prints each row's mode, its default and why. Reading is open; `set`
+needs `relaunch-policy.manage`, which is not granted by default. Treat it like
+`sandbox-profiles.manage`: one answer can widen what a relaunch gives every
+agent. A change takes effect on each agent's next resume, reincarnate or
+clone. The API is `GET` and `PUT /v1/relaunch-policy` (`{"field", "mode"}`).
+The five re-resolve or reuse rows are listed but cannot be set yet: no
+relaunch reads them, so `set` refuses rather than store an answer that would
+do nothing.
 
 ## Fields
 
@@ -211,6 +234,5 @@ The rules above are the specification. These rows do not follow it yet:
 - **Group and workspace sandbox-profile assignment** (`group_sandbox_assignment`): Watch mode and conv resume reuse the stored sandbox policy.
 - **Sandbox profile contents** (`sandbox_profile_contents`): Watch mode and conv resume reuse the stored contents.
 - **Role definitions (text)** (`role_contents`): Re-injection after compaction still uses the role text resolved at spawn.
-- **Harness config posture** (`harness_config`): Only explicit wins is implemented; the policy setting is not read yet.
 
 <!-- launch-gaps:end -->

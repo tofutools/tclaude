@@ -240,8 +240,7 @@ var Fields = []Field{
 		Modes:         []RelaunchMode{ModeExplicitWins, ModeTightenOnly, ModeChainWins},
 		RequestFields: []string{"HarnessConfig"},
 		Why: "Default chosen for least surprise, not maximum security: an explicit posture stays like any explicit flag. " +
-			"Tighten-only, where a narrower sandbox-profile posture always applies, is the security option.",
-		Gap: "Only explicit wins is implemented; the policy setting is not read yet."},
+			"Tighten-only, where a narrower sandbox-profile posture always applies, is the security option."},
 	{Key: "usage_assignment", Label: "Group and workspace usage-profile assignment", Layer: LayerLive,
 		Why: "Usage rules are evaluated live against the current assignments."},
 	{Key: "usage_profile_contents", Label: "Usage profile rules", Layer: LayerReferenced,

@@ -36,7 +36,7 @@ type permissionCarryPolicy struct {
 }
 
 func carrySensitiveSlug(slug string) bool {
-	return strings.HasPrefix(slug, "permissions.") || strings.HasPrefix(slug, "human.") || strings.HasPrefix(slug, "federation.") || strings.HasPrefix(slug, "sandbox.") || slug == PermConfigImport || slug == PermAgentSandboxImplementation || slug == PermSandboxProfilesManage
+	return strings.HasPrefix(slug, "permissions.") || strings.HasPrefix(slug, "human.") || strings.HasPrefix(slug, "federation.") || strings.HasPrefix(slug, "sandbox.") || slug == PermConfigImport || slug == PermAgentSandboxImplementation || slug == PermSandboxProfilesManage || slug == PermRelaunchPolicyManage
 }
 
 // Permission seeds are historical launch configuration, not current standing

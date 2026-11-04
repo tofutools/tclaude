@@ -162,7 +162,7 @@ the editor rather than saving a grant that does nothing:
 | Acting later without a credential, because a schedule or trigger would keep firing after you revoke it | `self.schedule`, `agent.schedule`, `groups.members.schedule`, `groups.messages.schedule`, `triggers.manage`, `groups.triggers.manage` |
 | Receiving your harness credentials | `node.credentials.receive` |
 | Starting or changing a launch any other way than [below](#starting-workers) | `groups.members.spawn`, `agent.clone`, `groups.members.clone`, `groups.clone`, `agent.morph`, `groups.members.morph`, `agent.resume`, `groups.members.resume` |
-| Changing what a worker's launch means | `groups.settings.default-dir`, `groups.settings.environment`, `groups.settings.default-spawn-target`, `groups.settings.default-profile`, `sandbox-profiles.manage`, `agent.sandbox-impl`, `templates.instantiate`, `groups.import` |
+| Changing what a worker's launch means | `groups.settings.default-dir`, `groups.settings.environment`, `groups.settings.default-spawn-target`, `groups.settings.default-profile`, `sandbox-profiles.manage`, `relaunch-policy.manage`, `agent.sandbox-impl`, `templates.instantiate`, `groups.import` |
 | Moving an agent to a linked instance | `agent.move`, `agent.share` |
 
 Password fields and fields marked secret are masked in the page before a capture

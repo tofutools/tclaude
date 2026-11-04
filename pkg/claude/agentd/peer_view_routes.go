@@ -249,6 +249,7 @@ var peerViewLocalRoutes = []string{
 	"/api/queued-spawns",
 	"/api/queued-spawns/{id}",
 	"/api/queued-spawns/{id}/stage-attachments",
+	"/api/relaunch-policy",
 	"/api/replaced",
 	"/api/retired",
 	"/api/saved-prompts",

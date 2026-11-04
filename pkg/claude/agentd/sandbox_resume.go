@@ -158,7 +158,7 @@ func resolveResumeSandboxPolicyFrom(
 		// resume or reincarnation.
 		return &resumeSandboxPolicy{Snapshot: &current, Previous: previous}, nil
 	}
-	if current, err = reapplyExplicitHarnessConfig(current, previous); err != nil {
+	if current, err = reapplyExplicitHarnessConfig(convID, current, previous); err != nil {
 		// The explicit posture no longer applies to the re-read profiles.
 		return nil, relaunchChainUnusable(err)
 	}
@@ -341,8 +341,15 @@ func explicitHarnessConfig(previous *sandboxpolicy.Snapshot) string {
 // across a relaunch that rebuilt the policy from the profile chain
 // (tcl-bmhpir). Without it a read pin over a write chain widens to write, and
 // a write selection over the floor reverts to the floor.
-func reapplyExplicitHarnessConfig(current sandboxpolicy.Snapshot, previous *sandboxpolicy.Snapshot) (sandboxpolicy.Snapshot, error) {
-	explicit := explicitHarnessConfig(previous)
+//
+// The relaunch policy's harness_config row decides how the explicit posture
+// weighs against the chain's (relaunchHarnessConfig): explicit-wins, the
+// default, always keeps it; tighten-only lets a chain that keeps the floor
+// win over an explicit write; chain-wins takes the chain's. conv names the
+// agent whose spawn-time explicit posture to fall back to.
+func reapplyExplicitHarnessConfig(conv string, current sandboxpolicy.Snapshot, previous *sandboxpolicy.Snapshot) (sandboxpolicy.Snapshot, error) {
+	explicit := relaunchHarnessConfig(currentRelaunchPolicy().Mode(harnessConfigField),
+		current.Effective.HarnessConfig, explicitHarnessConfigFor(conv, previous))
 	if explicit == "" {
 		return current, nil
 	}

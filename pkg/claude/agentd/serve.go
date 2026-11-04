@@ -1499,6 +1499,7 @@ func buildMux() http.Handler {
 	// an operator can accidentally place sensitive environment data in one.
 	mux.HandleFunc("/v1/sandbox-profiles", handleSandboxProfiles)
 	mux.HandleFunc("/v1/harness-config-repairs", handleHarnessConfigRepairs)
+	mux.HandleFunc("/v1/relaunch-policy", serveRelaunchPolicy)
 	mux.HandleFunc("/v1/sandbox-profile-read-exclusions", handleSandboxCommonRuleCatalog)
 	mux.HandleFunc("/v1/sandbox-profile-default", handleGlobalSandboxProfile)
 	mux.HandleFunc("/v1/sandbox-impl-default", handleSandboxDefaultImplementation)

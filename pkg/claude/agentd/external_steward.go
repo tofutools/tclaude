@@ -81,7 +81,7 @@ var externalStewardNever = []string{
 	PermGroupsMembersSpawn, PermAgentClone, PermGroupsMembersClone, PermGroupsClone,
 	PermAgentMorph, PermGroupsMembersMorph, PermAgentResume, PermGroupsMembersResume,
 	PermGroupsSettingsDefaultDir, PermGroupsSettingsEnvironment, PermGroupsSettingsDefaultSpawnTarget,
-	PermGroupsSettingsDefaultProfile, PermSandboxProfilesManage, PermAgentSandboxImplementation,
+	PermGroupsSettingsDefaultProfile, PermSandboxProfilesManage, PermRelaunchPolicyManage, PermAgentSandboxImplementation,
 	PermAgentMove, PermAgentShare, PermTemplatesUse, PermGroupsImport,
 }
 

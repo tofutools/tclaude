@@ -2303,3 +2303,12 @@ CREATE TABLE group_resource_locks (
 		locked_at   INTEGER NOT NULL,
 		PRIMARY KEY (kind, resource_id)
 	) STRICT;
+
+CREATE TABLE relaunch_policy (
+			scope      TEXT NOT NULL CHECK(length(scope) BETWEEN 1 AND 64),
+			field      TEXT NOT NULL CHECK(length(field) BETWEEN 1 AND 64),
+			mode       TEXT NOT NULL CHECK(length(mode) BETWEEN 1 AND 64),
+			updated_at INTEGER NOT NULL,
+			updated_by TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (scope, field)
+		) STRICT;
