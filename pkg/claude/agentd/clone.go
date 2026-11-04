@@ -285,26 +285,22 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		cloneSandbox == harness.SandboxManagedProfile {
 		refreshGeneratedProfile = true
 	}
+	// Either way the clone gets what a relaunch of the source lays over its
+	// chain (composeRelaunchSandbox): the group's current environment, and
+	// the source's explicit --harness-config as the relaunch policy weighs it
+	// (tcl-bmhpir). Without a generated profile the clone keeps the
+	// profile contents stored at the source's last launch.
+	var previous *sandboxpolicy.Snapshot
 	if refreshGeneratedProfile {
-		var previous *sandboxpolicy.Snapshot
 		effectiveSandbox, previous, err = resolveCurrentSandboxChainForConv(sourceConv)
-		if err == nil {
-			effectiveSandbox, err = refreshCloneLaunchEnvironment(
-				sourceConv, effectiveSandbox, previous)
-		}
-		if err == nil && effectiveSandbox != nil {
-			// The source's explicit --harness-config is part of what it was
-			// launched with, and the clone inherits it (tcl-bmhpir).
-			var reapplied sandboxpolicy.Snapshot
-			if reapplied, err = reapplyExplicitHarnessConfig(sourceConv, *effectiveSandbox, previous); err == nil {
-				effectiveSandbox = &reapplied
-			}
-		}
 	} else {
 		effectiveSandbox, err = db.AgentEffectiveSandboxConfigForConv(sourceConv)
-		if err == nil {
-			effectiveSandbox, err = refreshCloneLaunchEnvironment(
-				sourceConv, effectiveSandbox, effectiveSandbox)
+		previous = effectiveSandbox
+	}
+	if err == nil && effectiveSandbox != nil {
+		var composed sandboxpolicy.Snapshot
+		if composed, err = composeRelaunchSandbox(sourceConv, *effectiveSandbox, previous, !refreshGeneratedProfile); err == nil {
+			effectiveSandbox = &composed
 		}
 	}
 	freshChain := refreshGeneratedProfile
@@ -372,27 +368,14 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			Status: fail.Status, Code: fail.Kind, Msg: fail.Msg,
 		}
 	}
-	// The clone inherits the source's drive, so it inherits the requirement that
-	// comes with it. Asked here for the same reason resume and reincarnate ask:
-	// the profile may have been narrowed since the source was admitted, and a
-	// clone launched into a private network namespace would come up with a
-	// channel that can never connect.
-	if fail := copilotAPILoopbackFailure(
-		relaunch.CopilotAPI, effectiveSandbox, relaunch.SandboxImplementation,
+	// The clone inherits the source's drive and sandbox, so it is checked as
+	// any relaunch is: the profile may have been narrowed since the source was
+	// admitted.
+	if fail := relaunchSandboxGateFailure(srcHarness, cloneSandbox, relaunch.SandboxImplementation,
+		effectiveSandbox, relaunch.CopilotAPI, session.ModelTransportLaunchContext{Model: model, Cwd: cwd},
 	); fail != nil {
 		return cloneSpawnResult{}, &cloneSpawnError{
 			Status: fail.Status, Code: fail.Kind, Msg: fail.Msg,
-		}
-	}
-	if _, fail := planSandboxProfileAccessForLaunch(
-		srcHarness, cloneSandbox, effectiveSandbox, relaunch.SandboxImplementation,
-		session.ModelTransportLaunchContext{Model: model, Cwd: cwd},
-		false,
-	); fail != nil {
-		return cloneSpawnResult{}, &cloneSpawnError{
-			Status: fail.Status,
-			Code:   fail.Kind,
-			Msg:    fail.Msg,
 		}
 	}
 	cloneSSH = cloneSSH && codexSSHWorkaroundApplies(

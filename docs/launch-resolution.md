@@ -267,6 +267,6 @@ The rules above are the specification. These rows do not follow it yet:
 - **Group and workspace sandbox-profile assignment** (`group_sandbox_assignment`): Watch mode and conv resume reuse the stored sandbox policy.
 - **Sandbox profile contents** (`sandbox_profile_contents`): Watch mode and conv resume reuse the stored contents.
 - **Role definitions (text)** (`role_contents`): Re-injection after compaction still uses the role text resolved at spawn.
-- **Harness config posture** (`harness_config`): Watch mode, conv resume, a clone that reuses its source's stored sandbox, and a resume that falls back to the stored policy keep the stored posture; the setting applies on the agent's next ordinary resume.
+- **Harness config posture** (`harness_config`): Watch mode and conv resume keep the stored posture, as does a resume that falls back to the stored policy when the profiles cannot be read at all; the setting applies on the agent's next ordinary resume.
 
 <!-- launch-gaps:end -->

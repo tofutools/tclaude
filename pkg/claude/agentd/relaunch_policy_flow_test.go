@@ -120,3 +120,42 @@ func TestRelaunchPolicy_ReadOpenSetGated(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, stored)
 }
+
+// A clone launches under the relaunch policy too (tcl-bepvre). A Claude
+// clone reuses the source's stored sandbox, whose posture is the explicit
+// write, so before this it inherited that write under every policy until its
+// own first resume.
+func TestRelaunchPolicy_HarnessConfigModesOnClone(t *testing.T) {
+	cloneHarnessConfig := func(t *testing.T, f *testharness.Flow, conv string) sandboxpolicy.HarnessConfigAccess {
+		t.Helper()
+		clone := f.AsHuman().CloneFresh(conv)
+		policy, ok := f.World.SpawnSandboxPolicy(clone.NewConv)
+		require.True(t, ok)
+		return policy.Effective.HarnessConfig
+	}
+
+	t.Run("chain-wins", func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("crew")
+		_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "chain", HarnessConfig: sandboxpolicy.HarnessConfigAccessWrite})
+		require.NoError(t, err)
+		require.NoError(t, db.SetGlobalSandboxProfile("chain"))
+		conv, _ := spawnPinned(t, f, "pinned", "read")
+
+		assert.Equal(t, sandboxpolicy.HarnessConfigAccessRead, cloneHarnessConfig(t, f, conv), "explicit-wins: the clone keeps the pin")
+		setRelaunchPolicy(t, f, "harness_config", "chain-wins")
+		assert.Equal(t, sandboxpolicy.HarnessConfigAccessWrite, cloneHarnessConfig(t, f, conv), "chain-wins: the clone takes the profiles' posture")
+	})
+	t.Run("tighten-only", func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("crew")
+		_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "floored", HarnessConfig: sandboxpolicy.HarnessConfigAccessDefault})
+		require.NoError(t, err)
+		require.NoError(t, db.SetGlobalSandboxProfile("floored"))
+		conv, _ := spawnPinned(t, f, "writer", "write")
+
+		setRelaunchPolicy(t, f, "harness_config", "tighten-only")
+		assert.True(t, sandboxpolicy.HarnessConfigFloorApplies(cloneHarnessConfig(t, f, conv)),
+			"tighten-only: the profiles keep the floor, so the clone gets it rather than the write")
+	})
+}

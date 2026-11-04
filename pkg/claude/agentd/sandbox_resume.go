@@ -10,6 +10,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/launchspec"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -206,25 +207,15 @@ func resolveResumeSandboxPolicyFrom(
 	if err != nil || previous == nil {
 		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
 	}
-	current, err := refreshResumeGroupEnvironment(convID, *resolved, previous)
-	if useStored && isRelaunchChainUnusable(err) {
-		// The fallback keeps the stored group environment when its group is
-		// the one that could not be determined; any other failure (a read
-		// error, a group environment that no longer merges) still fails.
-		current, err = *resolved, nil
-	}
+	current, err := composeRelaunchSandbox(convID, *resolved, previous, useStored)
 	if err != nil {
-		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
+		return nil, err
 	}
 	if current.ProfilesOmitted {
 		// Either a durable per-agent launch choice, or a mode that still
 		// cannot carry profiles; not an empty ambient resolution. Do not let
 		// later global/group assignments reappear on resume or reincarnation.
 		return &resumeSandboxPolicy{Snapshot: &current, Previous: previous}, nil
-	}
-	if current, err = reapplyExplicitHarnessConfig(convID, current, previous); err != nil {
-		// The explicit posture no longer applies to the re-read profiles.
-		return nil, relaunchChainUnusable(err)
 	}
 	sshWorkaround = sshWorkaround && codexSSHWorkaroundApplies(
 		harnessName, harnessBuiltinMode, sandboxImplementation, &current)
@@ -262,6 +253,61 @@ func resolveResumeSandboxPolicyFrom(
 	return &resumeSandboxPolicy{
 		Snapshot: &current, Previous: previous, SSHWorkaround: sshWorkaround,
 	}, nil
+}
+
+// composeRelaunchSandbox is what every relaunch (resume, reincarnation and
+// clone) lays over the sandbox-profile chain it resolved: the source group's
+// current environment, then the explicit --harness-config posture as the
+// relaunch policy weighs it (reapplyExplicitHarnessConfig). previous is the
+// snapshot the chain was resolved for. stored says resolved is that stored
+// snapshot itself rather than a re-read chain: its group environment is kept
+// when its group cannot be determined, and its posture is the explicit write,
+// so the chain's posture is read back for the policy to weigh
+// (withChainHarnessConfig). An omitted-profiles snapshot gets the environment
+// only.
+func composeRelaunchSandbox(convID string, resolved sandboxpolicy.Snapshot, previous *sandboxpolicy.Snapshot, stored bool) (sandboxpolicy.Snapshot, error) {
+	current, err := refreshResumeGroupEnvironment(convID, resolved, previous)
+	if stored && isRelaunchChainUnusable(err) {
+		// The stored policy keeps its group environment when its group is
+		// the one that could not be determined; any other failure (a read
+		// error, a group environment that no longer merges) still fails.
+		current, err = resolved, nil
+	}
+	if err != nil || current.ProfilesOmitted {
+		return current, err
+	}
+	if stored {
+		current = withChainHarnessConfig(convID, current, previous)
+	}
+	applied, err := reapplyExplicitHarnessConfig(convID, current, previous)
+	if err != nil {
+		// The explicit posture no longer applies to the profiles.
+		return sandboxpolicy.Snapshot{}, relaunchChainUnusable(err)
+	}
+	return applied, nil
+}
+
+// withChainHarnessConfig gives a stored snapshot whose harness_config is an
+// explicit write the posture the current chain composes, so a relaunch policy
+// other than explicit-wins can weigh the two as it does for a re-read chain.
+// A chain that cannot be read leaves the stored posture: the stored policy is
+// the fallback for exactly that case.
+func withChainHarnessConfig(convID string, current sandboxpolicy.Snapshot, previous *sandboxpolicy.Snapshot) sandboxpolicy.Snapshot {
+	if explicitHarnessConfig(previous) == "" ||
+		currentRelaunchPolicy().Mode(harnessConfigField) == launchspec.ModeExplicitWins {
+		return current
+	}
+	chain, err := resolveSandboxChainFrom(convID, previous)
+	if err != nil || chain == nil {
+		return current
+	}
+	current.Effective.HarnessConfig = chain.Effective.HarnessConfig
+	current.Effective.Provenance.HarnessConfig = nil
+	if source := chain.Effective.Provenance.HarnessConfig; source != nil {
+		copied := *source
+		current.Effective.Provenance.HarnessConfig = &copied
+	}
+	return current
 }
 
 // refreshResumeGroupEnvironment preserves the birth-time spawn-profile and
@@ -482,6 +528,27 @@ func prepareRelaunchSandbox(req relaunchSandboxRequest) (*relaunchSandbox, *spaw
 	return fallback, nil
 }
 
+// relaunchSandboxGateFailure is the check every relaunch (resume,
+// reincarnation, clone, an applied spawn copy) runs on the sandbox it is
+// about to launch under: that the mode and implementation can carry its
+// sandbox profiles, the Copilot API loopback rule, and that its access rules
+// can be enforced. The loopback rule is re-asked on every relaunch rather
+// than trusted from the spawn that admitted it: an operator can close network
+// access between two launches, and an API-driven agent relaunched into a
+// private network namespace would come back with a channel that can never
+// connect. A relaunch has no allow-unenforced override.
+func relaunchSandboxGateFailure(harnessName, mode, implementation string, snapshot *sandboxpolicy.Snapshot,
+	copilotAPI bool, transport session.ModelTransportLaunchContext) *spawnFailure {
+	if fail := sandboxProfileCapabilityFailure(harnessName, mode, snapshot, implementation); fail != nil {
+		return fail
+	}
+	if fail := copilotAPILoopbackFailure(copilotAPI, snapshot, implementation); fail != nil {
+		return fail
+	}
+	_, fail := planSandboxProfileAccessForLaunch(harnessName, mode, snapshot, implementation, transport, false)
+	return fail
+}
+
 // relaunchFallbackNote ends the warning of a relaunch that fell back to its
 // stored sandbox policy. The dashboard's wake toast matches on it to show
 // that warning, and only it, as an error.
@@ -526,18 +593,8 @@ func prepareRelaunchSandboxFrom(req relaunchSandboxRequest, useStored bool) (*re
 	if req.temporaryBuiltinMode {
 		effective = temporarySandboxLaunchSnapshot(req.harness, effective)
 	}
-	if fail := sandboxProfileCapabilityFailure(req.harness, req.builtinMode, effective, req.implementation); fail != nil {
-		return nil, cleanup(fail), true
-	}
-	// Re-asked on every relaunch rather than trusted from the spawn that
-	// admitted it: an operator can close network access between two
-	// launches, and an API-driven agent resumed into a private network
-	// namespace would come back with a channel that can never connect.
-	if fail := copilotAPILoopbackFailure(req.copilotAPI, effective, req.implementation); fail != nil {
-		return nil, cleanup(fail), true
-	}
-	if _, fail := planSandboxProfileAccessForLaunch(req.harness, req.builtinMode, effective,
-		req.implementation, req.transport, false); fail != nil {
+	if fail := relaunchSandboxGateFailure(req.harness, req.builtinMode, req.implementation,
+		effective, req.copilotAPI, req.transport); fail != nil {
 		return nil, cleanup(fail), true
 	}
 	out := &relaunchSandbox{policy: policy, effective: effective}
