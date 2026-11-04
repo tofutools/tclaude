@@ -26,8 +26,12 @@ import (
 // outcome per slug.
 
 const profileReapplyGrantsNote = "Grants: a re-apply changes only the grants the profile gave at spawn that nobody has changed since. " +
-	"Explicit, sudo and changed grants are kept, a revoked grant is not given back, and group ownership is shown only. " +
-	"Role text: the role label and brief follow in the next update."
+	"Explicit, sudo and changed grants are kept, a revoked grant is not given back, and group ownership is shown only."
+
+// profileReapplyRolesNote says how the role text moves with a re-apply.
+const profileReapplyRolesNote = "Roles: a re-apply rewrites the agent's role label in its spawn group (unless it was changed since) " +
+	"and the role briefs in its startup context, from the roles' current text. A running agent reads the new briefs " +
+	"at its next re-injection, after a compaction or /clear, or when it is resumed."
 
 // Field outcomes in a re-apply preview.
 const (
@@ -43,10 +47,6 @@ const (
 // carry yet: the model proxy needs the models.proxy gate a first spawn runs.
 // Marked so that a change to one is never silently dropped.
 var profileReapplyNotYet = map[string]bool{"model_proxy": true}
-
-// reapplyRolesStatus is the roles row's status: the role's grants are
-// re-applied (the grant rows), its label and brief are not yet.
-const reapplyRolesStatus = "grants reapplied; role text: next update"
 
 // reapplyMergesExplicit are fields whose explicit entries are laid over the
 // profile's rather than replacing them, so a profile edit still changes them.
@@ -204,8 +204,6 @@ func profileReapplyFields(copied, current map[string]json.RawMessage, layers *db
 				row.Status = reapplySpawnOnly
 			case profileReapplyNotYet[field.Key]:
 				row.Status = reapplyNotYet
-			case field.Key == "roles":
-				row.Status = reapplyRolesStatus
 			}
 		}
 		out = append(out, row)
@@ -371,7 +369,7 @@ func handleSpawnProfileRunningAgents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	notes := []string{profileReapplyUsageNote}
+	notes := []string{profileReapplyUsageNote, profileReapplyRolesNote}
 	if note := reapplyDefaultTierNote(agents); note != "" {
 		notes = append(notes, note)
 	}

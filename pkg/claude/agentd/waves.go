@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -296,6 +297,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			launchTogglesResolved:       true,
 			UsageSpawnProfile:           launch.UsageSpawnProfile,
 			spawnCopyCallerTiers:        launch.SpawnCopyTiers,
+			explicitLaunch:              templateRolesExplicit(a.Role, roles, time.Now()),
 			defaultProfiles:             launch.DefaultProfiles,
 			SSHWorkaround:               launch.SSHWorkaround,
 			SSHWorkaroundSet:            launch.SSHWorkaroundSet,
@@ -969,4 +971,23 @@ func materializeRhythms(g *db.AgentGroup, rhythms []db.Rhythm, ownerConv string)
 		created++
 	}
 	return created
+}
+
+// templateRolesExplicit records a template agent's roles as its own explicit
+// launch value: the template resolved them (its agent's role_ref ahead of the
+// profile's), and its role briefs went into the group context rather than the
+// profile context, so a re-applied spawn profile must not rewrite them.
+func templateRolesExplicit(label string, roles []*db.Role, at time.Time) map[string]db.ExplicitLaunchValue {
+	names := make([]string, 0, len(roles))
+	for _, role := range roles {
+		names = append(names, role.Name)
+	}
+	fields := map[string]json.RawMessage{}
+	if raw, err := json.Marshal(label); err == nil {
+		fields["Role"] = raw
+	}
+	if raw, err := json.Marshal(names); err == nil {
+		fields["RoleRefs"] = raw
+	}
+	return map[string]db.ExplicitLaunchValue{"roles": {Fields: fields, Provenance: db.ExplicitAtTemplate, SetAt: at}}
 }

@@ -32,16 +32,18 @@ what re-applying the edited profile would change for each:
   **not reapplied**: they were used once, at the first spawn.
 - the model proxy is **not reapplied yet**: a re-apply does not carry it so
   far, and the agent keeps its copy;
-- roles are marked **grants reapplied; role text: next update**: a re-apply
-  changes the grants that come with the profile's roles (below), but the role
-  label and role brief the agent is briefed with stay as they were for now.
+- roles **change** together: the grants that come with them (below), the
+  role label and the role briefs.
 
 A re-apply also changes the values a first spawn stores outside the launch
 settings:
 
 - the **group context switch** and the **profile startup context**, which the
-  agent is briefed with again after a compaction or `/clear`. Only the
-  profile's own text is replaced; the role briefs after it stay;
+  agent is briefed with again after a compaction or `/clear`, or when it is
+  resumed. The profile's text is replaced, and the role briefs after it are
+  rewritten from the roles the profile names now, with their current text;
+- the **role label**, the agent's role in its spawn group, unless someone has
+  changed it since the spawn;
 - the **profile environment**: the profile's entries are recomputed, and the
   entries the spawn set explicitly stay on top of them;
 - the **usage-profile links**: the agent gets the links the profile has now,
@@ -328,7 +330,6 @@ The rules above are the specification. These rows do not follow it yet:
 - **Model** (`model`): No resume path takes a model flag yet; only a morph changes it.
 - **Reasoning effort** (`effort`): No resume path takes an effort flag yet; only a morph changes it.
 - **Model proxy** (`model_proxy`): Reincarnate and clone drop the model proxy. A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
-- **Roles** (`roles`): A re-applied spawn copy changes the roles' grants but not yet the role label or brief; the agent keeps those from its first spawn.
 - **Group environment** (`group_env`): With agentd down, watch mode and conv resume reuse the stored group environment, and say so. A clone that joins another group takes that group's environment, unless it keeps its source's.
 - **Group remote-control policy** (`group_remote_control`): Watch mode and conv resume keep the remote-control state stored at the last launch while agentd is not running, and so does a clone that joins another group for its sandbox.
 - **Group and workspace sandbox-profile assignment** (`group_sandbox_assignment`): With agentd down, watch mode and conv resume reuse the stored sandbox policy, and say so.
