@@ -65,12 +65,15 @@ type AgentSpawnCopy struct {
 }
 
 // SpawnCopyTier is one participating profile, with its identity at the time
-// of the copy and its full content.
+// of the copy and its full content. Profile is the profile in the spawn
+// profile export format (agentd's spawnProfileJSON), which has stable JSON
+// names; db.SpawnProfile itself has none, so storing it directly would tie
+// the stored copy to Go field names.
 type SpawnCopyTier struct {
-	Tier        string       `json:"tier"`
-	ProfileID   int64        `json:"profile_id,omitempty"` // 0 for an inline (template) profile
-	ProfileName string       `json:"profile_name,omitempty"`
-	Profile     SpawnProfile `json:"profile"`
+	Tier        string          `json:"tier"`
+	ProfileID   int64           `json:"profile_id,omitempty"` // 0 for an inline (template) profile
+	ProfileName string          `json:"profile_name,omitempty"`
+	Profile     json.RawMessage `json:"profile"`
 }
 
 // ExplicitLaunchValue is one launchspec field's explicit value: the spawn
@@ -136,6 +139,35 @@ func SetAgentLaunchLayers(agentID string, layers *AgentLaunchLayers) error {
 	}
 	_, err = d.Exec(`UPDATE agents SET launch_layers = ? WHERE agent_id = ?`, raw, agentID)
 	return err
+}
+
+// SetAgentLaunchLayersIfUnset records an agent's launch layers unless it
+// already has some, and reports whether it wrote them. The layers are taken
+// once: whichever code path created the agent row (the spawn itself, a
+// reserved pending spawn, the session-start hook), the first recording wins
+// and a later one is a no-op.
+func SetAgentLaunchLayersIfUnset(agentID string, layers *AgentLaunchLayers) (bool, error) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return false, errors.New("SetAgentLaunchLayersIfUnset: agent_id required")
+	}
+	if layers == nil {
+		return false, nil
+	}
+	raw, err := encodeAgentLaunchLayers(layers)
+	if err != nil {
+		return false, err
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`UPDATE agents SET launch_layers = ? WHERE agent_id = ? AND launch_layers = ''`, raw, agentID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // AgentLaunchLayersFor loads an agent's launch layers. nil with no error is
@@ -233,7 +265,7 @@ func AgentsWithSpawnCopyOf(profileID int64) ([]string, error) {
 	rows, err := d.Query(`
 		SELECT DISTINCT a.agent_id
 		FROM agents a, json_each(a.launch_layers, '$.spawn_copy.tiers') t
-		WHERE a.launch_layers <> '' AND a.retired_at IS NULL
+		WHERE a.launch_layers <> '' AND json_valid(a.launch_layers) AND a.retired_at IS NULL
 		  AND json_extract(t.value, '$.profile_id') = ?
 		ORDER BY a.agent_id`, profileID)
 	if err != nil {

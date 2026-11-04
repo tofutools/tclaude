@@ -39,21 +39,21 @@ func TestReplaceAgentSpawnCopyKeepsOtherLayers(t *testing.T) {
 	overrides := []RelaunchPolicyOverride{{Field: "group_env", Mode: "reuse", Source: "explicit"}}
 	require.NoError(t, SetAgentLaunchLayers(agentID, &AgentLaunchLayers{
 		SpawnCopy: &AgentSpawnCopy{CopiedAt: at, Tiers: []SpawnCopyTier{
-			{Tier: SpawnCopyTierNamed, ProfileID: 7, ProfileName: "dev", Profile: SpawnProfile{ID: 7, Name: "dev", Model: "opus"}}}},
+			{Tier: SpawnCopyTierNamed, ProfileID: 7, ProfileName: "dev", Profile: json.RawMessage(`{"name":"dev","model":"opus"}`)}}},
 		Explicit:          explicit,
 		RelaunchOverrides: overrides,
 	}))
 
 	later := at.Add(time.Hour)
 	require.NoError(t, ReplaceAgentSpawnCopy(agentID, AgentSpawnCopy{CopiedAt: later, Tiers: []SpawnCopyTier{
-		{Tier: SpawnCopyTierNamed, ProfileID: 7, ProfileName: "dev", Profile: SpawnProfile{ID: 7, Name: "dev", Model: "sonnet"}}}}))
+		{Tier: SpawnCopyTierNamed, ProfileID: 7, ProfileName: "dev", Profile: json.RawMessage(`{"name":"dev","model":"sonnet"}`)}}}))
 
 	got, err := AgentLaunchLayersForConv("conv-layers")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, AgentLaunchLayersVersion, got.Version)
 	require.Len(t, got.SpawnCopy.Tiers, 1)
-	assert.Equal(t, "sonnet", got.SpawnCopy.Tiers[0].Profile.Model, "the copy is replaced whole")
+	assert.JSONEq(t, `{"name":"dev","model":"sonnet"}`, string(got.SpawnCopy.Tiers[0].Profile), "the copy is replaced whole")
 	assert.True(t, got.SpawnCopy.CopiedAt.Equal(later))
 	assert.Equal(t, explicit["model"].Fields, got.Explicit["model"].Fields, "explicit values stay")
 	assert.Equal(t, overrides, got.RelaunchOverrides, "per-agent policy overrides stay")
@@ -85,4 +85,36 @@ func TestDecodeAgentLaunchLayersRefusesNewerVersion(t *testing.T) {
 	got, err := decodeAgentLaunchLayers("")
 	require.NoError(t, err)
 	assert.Nil(t, got)
+}
+
+func TestSetAgentLaunchLayersIfUnsetRecordsOnce(t *testing.T) {
+	setupTestDB(t)
+	agentID, err := AllocateAgent("conv-once", "spawn")
+	require.NoError(t, err)
+	first := &AgentLaunchLayers{SpawnCopy: &AgentSpawnCopy{Tiers: []SpawnCopyTier{{Tier: SpawnCopyTierNamed, ProfileID: 1}}}}
+	wrote, err := SetAgentLaunchLayersIfUnset(agentID, first)
+	require.NoError(t, err)
+	assert.True(t, wrote)
+	wrote, err = SetAgentLaunchLayersIfUnset(agentID, &AgentLaunchLayers{SpawnCopy: &AgentSpawnCopy{}})
+	require.NoError(t, err)
+	assert.False(t, wrote, "a second recording is a no-op")
+	got, err := AgentLaunchLayersFor(agentID)
+	require.NoError(t, err)
+	require.Len(t, got.SpawnCopy.Tiers, 1)
+}
+
+func TestAgentsWithSpawnCopyOfSkipsMalformedRows(t *testing.T) {
+	setupTestDB(t)
+	good, err := AllocateAgent("conv-good", "spawn")
+	require.NoError(t, err)
+	bad, err := AllocateAgent("conv-bad", "spawn")
+	require.NoError(t, err)
+	require.NoError(t, SetAgentLaunchLayers(good, &AgentLaunchLayers{SpawnCopy: &AgentSpawnCopy{
+		Tiers: []SpawnCopyTier{{Tier: SpawnCopyTierNamed, ProfileID: 3}}}}))
+	d, err := Open()
+	require.NoError(t, err)
+	mustExec(t, d, `UPDATE agents SET launch_layers = '{not json' WHERE agent_id = ?`, bad)
+	ids, err := AgentsWithSpawnCopyOf(3)
+	require.NoError(t, err)
+	assert.Equal(t, []string{good}, ids)
 }

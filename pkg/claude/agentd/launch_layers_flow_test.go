@@ -157,3 +157,32 @@ func resumedEnvironment(t *testing.T, f *testharness.Flow, conv string) []db.San
 	require.NotNil(t, snapshot)
 	return snapshot.LaunchEnvironment
 }
+
+// Codex launches (and any launch whose agent row exists before enrollment: a
+// reserved pending spawn, the session-start hook) record layers too.
+func TestLaunchLayers_CodexDirectAndTriggerRecord(t *testing.T) {
+	f := uniformTriggerGroup(t)
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "codex-reviewer", Harness: "codex"})
+	require.NoError(t, err)
+	conv := fireUniformTrigger(t, f, "codex-reviewer")
+	assert.Equal(t, []copyTier{{db.SpawnCopyTierNamed, profileID(t, "codex-reviewer"), "codex-reviewer"}}, copyTiers(t, conv))
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "direct", "harness": "codex", "model": "gpt-5"})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	assert.Empty(t, copyTiers(t, spawn.ConvID))
+	assert.Contains(t, launchLayers(t, spawn.ConvID).Explicit, "harness")
+}
+
+func TestLaunchLayers_CopyUsesProfileExportNames(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{"name": "named", "harness": "claude", "model": "opus"}).Code)
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker", "profile": "named"})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	layers := launchLayers(t, spawn.ConvID)
+	require.Len(t, layers.SpawnCopy.Tiers, 1)
+	var profile map[string]any
+	require.NoError(t, json.Unmarshal(layers.SpawnCopy.Tiers[0].Profile, &profile))
+	assert.Equal(t, "named", profile["name"])
+	assert.Equal(t, "opus", profile["model"])
+}

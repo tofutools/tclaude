@@ -16,12 +16,18 @@ import (
 // the values the spawn request set explicitly. Nothing here reads them back
 // yet; the relaunch paths will (docs/launch-resolution.md).
 
-// spawnCopyTier copies one participating profile. nil is no tier.
+// spawnCopyTier copies one participating profile, in the profile export
+// format so the stored copy has stable JSON names. nil is no tier.
 func spawnCopyTier(tier string, prof *db.SpawnProfile) *db.SpawnCopyTier {
 	if prof == nil {
 		return nil
 	}
-	return &db.SpawnCopyTier{Tier: tier, ProfileID: prof.ID, ProfileName: prof.Name, Profile: *prof}
+	raw, err := json.Marshal(profileToJSON(prof))
+	if err != nil {
+		slog.Warn("spawn: failed to copy spawn profile", "profile", prof.Name, "error", err)
+		return nil
+	}
+	return &db.SpawnCopyTier{Tier: tier, ProfileID: prof.ID, ProfileName: prof.Name, Profile: raw}
 }
 
 // spawnCopyTiers keeps the non-nil tiers, in order.
@@ -74,10 +80,19 @@ func captureExplicitLaunch(req *agent.SpawnRequest, at time.Time) map[string]db.
 }
 
 // spawnLaunchLayers assembles the layers a first spawn records: the caller's
-// own tiers (inline, named) above the default tiers applyDefaultProfile
-// consulted. A profile that fills two slots (a trigger worker's profile sits
-// in the group-default slot as well) is recorded once, at its higher tier.
+// own tiers (inline, named) above the default tiers. A profile that fills two
+// slots (a trigger worker's profile sits in the group-default slot as well)
+// is recorded once, at its higher tier.
+//
+// nil means nothing is recorded, and the agent reads as pre-change: a launch
+// whose tiers this process did not resolve (an enrollment the pending-spawn
+// sweeper rebuilt from the pending row) or one that brings an existing
+// identity (a federation arrival or bundle move) has no first-spawn copy to
+// take here.
 func spawnLaunchLayers(p spawnParams, at time.Time) *db.AgentLaunchLayers {
+	if !p.spawnCopyResolved || p.Arrival != nil || p.BundleHistory != nil {
+		return nil
+	}
 	seen := map[int64]bool{}
 	tiers := []db.SpawnCopyTier{}
 	for _, group := range [][]db.SpawnCopyTier{p.spawnCopyCallerTiers, p.spawnCopyDefaultTiers} {

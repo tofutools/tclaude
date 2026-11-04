@@ -26,13 +26,25 @@ import (
 // that newly needs the tier walk should call the pipeline instead; listing it
 // here is reintroducing the copy this guard exists to stop.
 var launchTierWalkFiles = map[string]bool{
-	"agent_bundle.go":                   true,
-	"launch_value_fields.go":            true, // the resolver itself
-	"lifecycle.go":                      true,
-	"sandbox_default_implementation.go": true,
-	"spawn_launch_defaults.go":          true,
-	"templates.go":                      true,
-	"triggers.go":                       true,
+	"agent_bundle.go":                      true,
+	"awb_ready_poller.go":                  true, // readiness check walks [named, group, global] itself
+	"federation_placement_requirements.go": true, // placement walks [group, global] itself
+	"launch_value_fields.go":               true, // the resolver itself
+	"lifecycle.go":                         true,
+	"sandbox_default_implementation.go":    true,
+	"scribe.go":                            true, // scribe profile walk; slice 3 moves it
+	"spawn_launch_defaults.go":             true,
+	"templates.go":                         true,
+	"triggers.go":                          true,
+}
+
+// launchDefaultProfileDisplayFiles read the global default profile only to
+// show which one is set, not to resolve a launch. They may use the loader and
+// nothing else from the tier walk.
+var launchDefaultProfileDisplayFiles = map[string]bool{
+	"dashboard.go":      true,
+	"peer_snapshot.go":  true,
+	"spawn_profiles.go": true,
 }
 
 func TestLaunchTierWalkStaysInListedFiles(t *testing.T) {
@@ -54,18 +66,18 @@ func TestLaunchTierWalkStaysInListedFiles(t *testing.T) {
 		files[name] = f
 	}
 
-	walkers := map[string]bool{"applyDefaultProfile": true}
+	// The default-tier loaders are included: reading the group or global
+	// default profile directly is how a hand-rolled tier stack starts.
+	walkers := map[string]bool{"applyDefaultProfile": true, "groupDefaultProfile": true, "globalDefaultProfile": true}
 	for _, f := range files {
 		for _, decl := range f.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Recv != nil {
+			if !ok {
 				continue
 			}
 			for _, field := range fn.Type.Params.List {
-				if arr, ok := field.Type.(*ast.ArrayType); ok {
-					if id, ok := arr.Elt.(*ast.Ident); ok && id.Name == "launchProfileTier" {
-						walkers[fn.Name.Name] = true
-					}
+				if isTierSlice(field.Type) {
+					walkers[fn.Name.Name] = true
 				}
 			}
 		}
@@ -74,17 +86,34 @@ func TestLaunchTierWalkStaysInListedFiles(t *testing.T) {
 	using := map[string][]string{}
 	for name, f := range files {
 		seen := map[string]bool{}
+		note := func(what string) {
+			if !seen[what] {
+				seen[what] = true
+				using[name] = append(using[name], what)
+			}
+		}
+		declared := map[*ast.Ident]bool{}
+		for _, decl := range f.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				declared[fn.Name] = true
+			}
+		}
 		ast.Inspect(f, func(n ast.Node) bool {
 			switch x := n.(type) {
-			case *ast.CallExpr:
-				if id, ok := x.Fun.(*ast.Ident); ok && walkers[id.Name] && !seen[id.Name] {
-					seen[id.Name] = true
-					using[name] = append(using[name], id.Name+"()")
+			case *ast.Ident:
+				// Any reference counts, a call or a function value alike.
+				if walkers[x.Name] && !declared[x] {
+					note(x.Name)
 				}
 			case *ast.CompositeLit:
-				if id, ok := x.Type.(*ast.Ident); ok && id.Name == "launchProfileTier" && !seen["{}"] {
-					seen["{}"] = true
-					using[name] = append(using[name], "launchProfileTier{}")
+				if isTierElem(x.Type) || isTierSlice(x.Type) {
+					note("launchProfileTier literal")
+				}
+			case *ast.FuncLit:
+				for _, field := range x.Type.Params.List {
+					if isTierSlice(field.Type) {
+						note("func literal over []launchProfileTier")
+					}
 				}
 			}
 			return true
@@ -97,6 +126,9 @@ func TestLaunchTierWalkStaysInListedFiles(t *testing.T) {
 	}
 	sort.Strings(names)
 	for _, name := range names {
+		if launchDefaultProfileDisplayFiles[name] && onlyDisplayUse(using[name]) {
+			continue
+		}
 		if !launchTierWalkFiles[name] {
 			t.Errorf("%s walks launch profile tiers (%s); call the shared launch resolver instead of adding another copy",
 				name, strings.Join(using[name], ", "))
@@ -107,4 +139,39 @@ func TestLaunchTierWalkStaysInListedFiles(t *testing.T) {
 			t.Errorf("%s no longer walks launch profile tiers: remove it from launchTierWalkFiles", name)
 		}
 	}
+	for name := range launchDefaultProfileDisplayFiles {
+		if _, ok := using[name]; !ok {
+			t.Errorf("%s no longer reads the default profile: remove it from launchDefaultProfileDisplayFiles", name)
+		}
+	}
+}
+
+func onlyDisplayUse(uses []string) bool {
+	for _, u := range uses {
+		if u != "globalDefaultProfile" && u != "groupDefaultProfile" {
+			return false
+		}
+	}
+	return true
+}
+
+// isTierElem matches launchProfileTier and *launchProfileTier.
+func isTierElem(e ast.Expr) bool {
+	if star, ok := e.(*ast.StarExpr); ok {
+		e = star.X
+	}
+	id, ok := e.(*ast.Ident)
+	return ok && id.Name == "launchProfileTier"
+}
+
+// isTierSlice matches []launchProfileTier, []*launchProfileTier and the
+// variadic ...launchProfileTier.
+func isTierSlice(e ast.Expr) bool {
+	switch t := e.(type) {
+	case *ast.ArrayType:
+		return isTierElem(t.Elt)
+	case *ast.Ellipsis:
+		return isTierElem(t.Elt)
+	}
+	return false
 }
