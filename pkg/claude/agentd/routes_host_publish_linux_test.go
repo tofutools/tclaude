@@ -21,7 +21,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/routeadapter"
-	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func TestHostOnlyPublicationWithoutGroup(t *testing.T) {
@@ -76,7 +75,9 @@ func TestHostOnlyPublicationWithoutGroup(t *testing.T) {
 	listed := request("GET", "/v1/routes?host=true", "host-only-other", "")
 	require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
 	require.NotContains(t, listed.Body.String(), route.ID)
-	socket := filepath.Join(testutil.CanonicalTempDir(t), "daemon.sock")
+	// A short dir: a deep agent TMPDIR overflows sun_path (108 bytes on
+	// Linux), failing the bind before the test starts.
+	socket := filepath.Join(shortSocketDir(t), "daemon.sock")
 	listener, err := net.Listen("unix", socket)
 	require.NoError(t, err)
 	server := &http.Server{Handler: withIdentity(mux), ReadHeaderTimeout: time.Second,
