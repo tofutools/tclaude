@@ -179,8 +179,8 @@ func cloneSSHWorkaround(relaunch *durableRelaunchConfig) bool {
 // profile startup context and lineage. groupID is the group the clone was
 // placed in, when not the source's. The snapshot's briefing reference is the
 // clone's own handoff message (0 for none), since the source's briefing is in
-// the source's inbox. A source without either record leaves the clone
-// without it.
+// the source's inbox, and the source's worktree is not carried. A source
+// without either record leaves the clone without it.
 func inheritLaunchRecord(sourceConv, cloneConv string, groupID, briefMsgID int64) error {
 	sourceAgentID, err := db.AgentIDForConv(sourceConv)
 	if err != nil {
@@ -204,6 +204,10 @@ func inheritLaunchRecord(sourceConv, cloneConv string, groupID, briefMsgID int64
 	copied.AgentID = cloneAgentID
 	copied.BriefMessageID = briefMsgID
 	copied.CreatedAt = time.Time{}
+	// The source's worktree is the source's: a clone often starts in another
+	// one (--cwd), and its arrival briefing already names where it is. Kept,
+	// a compaction would send the clone to edit the source's checkout.
+	copied.WorktreePath, copied.WorktreeBranch = "", ""
 	if groupID != 0 {
 		copied.SpawnGroupID = groupID
 	}

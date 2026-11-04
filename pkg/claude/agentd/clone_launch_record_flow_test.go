@@ -65,3 +65,27 @@ func TestCloneLaunchRecord_ExplicitHarnessConfigComesBackAfterChainWins(t *testi
 	assert.Equal(t, sandboxpolicy.HarnessConfigAccessRead, resumedHarnessConfig(t, f, clone.NewConv),
 		"explicit-wins: the clone's next resume restores its source's pin")
 }
+
+// The source's git worktree is not the clone's: a clone's compaction never
+// sends it to edit its source's checkout.
+func TestCloneLaunchRecord_TheSourcesWorktreeIsNotCarried(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{"name": "worker"})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	sourceID, err := db.AgentIDForConv(spawn.ConvID)
+	require.NoError(t, err)
+	snapshot, err := db.GetAgentStartupSnapshot(sourceID)
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	snapshot.WorktreePath, snapshot.WorktreeBranch = "/work/source-tree", "source-branch"
+	require.NoError(t, db.UpsertAgentStartupSnapshot(*snapshot))
+
+	clone := f.AsHuman().CloneFresh(spawn.ConvID)
+	cloneID, err := db.AgentIDForConv(clone.NewConv)
+	require.NoError(t, err)
+	got, err := startupctx.ComposeReinjection(cloneID, startupctx.BoundaryCompact)
+	require.NoError(t, err)
+	assert.NotContains(t, got.Body, "/work/source-tree")
+	assert.NotContains(t, got.Body, "source-branch")
+}
