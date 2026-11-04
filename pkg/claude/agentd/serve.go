@@ -1493,6 +1493,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/spawn-profiles/import/inspect", handleSpawnProfilesImportInspect)
 	mux.HandleFunc("POST /v1/spawn-profiles/import", handleSpawnProfilesImport)
 	mux.HandleFunc("/v1/spawn-profiles/{name}", handleSpawnProfileByName)
+	mux.HandleFunc("GET /v1/spawn-profiles/{name}/running-agents", handleSpawnProfileRunningAgents)
 	// Sandbox profiles are additive host capability policy, separate from spawn
 	// profiles. Payload reads and mutations use sandbox-profiles.manage because
 	// an operator can accidentally place sensitive environment data in one.

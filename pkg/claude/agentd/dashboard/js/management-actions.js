@@ -32,6 +32,7 @@ import {
   sandboxVia,
 } from './sandbox-profiles-data.js';
 import { downloadJSON, downloadURL } from './download.js';
+import { savedProfileNotice } from './profile-reapply.js';
 
 const MAX_SANDBOX_PROFILE_NAME_BYTES = 200;
 
@@ -968,8 +969,8 @@ export function createManagementActions(deps) {
         options.local.onSave?.(payload);
         options.onSaved?.(draft.name.trim());
       } else if (original && options?.editExisting !== false) {
-        await profiles.updateProfile(original.name, payload);
-        notify(`profile updated: ${draft.name.trim()}`);
+        const response = await profiles.updateProfile(original.name, payload);
+        notify(savedProfileNotice(draft.name.trim(), response));
       } else if (options?.node && !isPageNode(options.node)) {
         // The spawn dialog's "Save on" another node (profile-save-nodes.js).
         const response = await nodeFetch(options.node)('/api/spawn-profiles', {

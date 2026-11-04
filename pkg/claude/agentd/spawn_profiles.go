@@ -1388,6 +1388,9 @@ func handleSpawnProfileByName(w http.ResponseWriter, r *http.Request) {
 			"name":                       p.Name,
 			"supports_explicit_disabled": true,
 			"profile":                    profileToJSON(p),
+			// The edit reaches new spawns only: these active agents keep
+			// the copy they were spawned with (see profile_reapply.go).
+			"running_agents_with_copy": runningAgentsWithCopy(p.ID),
 		})
 	case http.MethodDelete:
 		if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
