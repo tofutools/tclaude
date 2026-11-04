@@ -10,7 +10,7 @@ test('resource model: this browser\'s places win, then what the server says runs
     overlays: [
       { kind: 'board', board: 'b_float', minimized: false },
       { kind: 'board', board: 'b_both', minimized: false },
-      { kind: 'process', process: 'tpl_min', minimized: true },
+      { id: 'process:tpl_min', kind: 'process', template: 'tpl_min', minimized: true },
       { kind: 'terminal', paneKey: 'groupterm:side', minimized: false },
       { kind: 'terminal', paneKey: 'term:abc', minimized: false },
     ],

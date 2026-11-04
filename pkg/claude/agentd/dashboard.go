@@ -4035,7 +4035,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// peer's snapshot, restricted or not.
 	if !isPeerSnapshot(r) {
 		out.LivePages = livePagesSnapshotFor(r)
-		out.GroupResources = groupResourcesSnapshot(r.Context(), groups, aliveSessions, cfg.ProcessesEnabled())
+		out.GroupResources = groupResourcesSnapshot(groups, aliveSessions, cfg.ProcessesEnabled())
 	}
 	out.Templates = templates
 	out.Profiles = profiles

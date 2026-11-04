@@ -2,7 +2,6 @@ package agentd
 
 import (
 	"cmp"
-	"context"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -25,9 +24,6 @@ const (
 
 	resourceKindShell = "shell"
 
-	// groupResourceRunPages bounds the active-run read: pages of
-	// db.MaxProcessRunReadPage runs each.
-	groupResourceRunPages = 8
 )
 
 type groupResource struct {
@@ -43,7 +39,7 @@ type groupResource struct {
 // groupResourcesSnapshot lists the resources of every active group. alive is
 // the snapshot's set of live tmux sessions; processes says whether the
 // processes feature is on.
-func groupResourcesSnapshot(ctx context.Context, groups []*db.AgentGroup, alive map[string]struct{}, processes bool) []groupResource {
+func groupResourcesSnapshot(groups []*db.AgentGroup, alive map[string]struct{}, processes bool) []groupResource {
 	active := map[int64]*db.AgentGroup{}
 	for _, g := range groups {
 		if g != nil && !g.IsArchived() {
@@ -56,7 +52,7 @@ func groupResourcesSnapshot(ctx context.Context, groups []*db.AgentGroup, alive 
 	out := groupPageResources(active)
 	out = append(out, groupBoardResources(active)...)
 	if processes {
-		out = append(out, groupProcessResources(ctx, active)...)
+		out = append(out, groupProcessResources(active)...)
 	}
 	for _, g := range active {
 		if _, ok := alive[groupTermSessionName(g.Name)]; ok {
@@ -93,6 +89,8 @@ func groupPageResources(active map[int64]*db.AgentGroup) []groupResource {
 		return out
 	}
 	for _, row := range rows {
+		// A saved page lists even after its shower left the group, so the
+		// operator can still delete it (a reopen there answers not_member).
 		if live[row.ID] || active[row.GroupID] == nil {
 			continue
 		}
@@ -137,52 +135,51 @@ func groupBoardResources(active map[int64]*db.AgentGroup) []groupResource {
 	return out
 }
 
-// groupProcessResources are a group's pinned processes, running while a run
-// of that template is active in the group, and the group's other active
-// runs.
-func groupProcessResources(ctx context.Context, active map[int64]*db.AgentGroup) []groupResource {
-	runs := map[int64][]db.ProcessRunSummary{}
-	after := ""
-	for range groupResourceRunPages {
-		page, err := db.ListActiveProcessRunSummaries(after, db.MaxProcessRunReadPage)
-		if err != nil {
-			slog.Warn("group resources: process runs unavailable", "error", err)
-			break
-		}
-		for _, run := range page {
-			if active[run.Scope.GroupID] != nil {
-				runs[run.Scope.GroupID] = append(runs[run.Scope.GroupID], run)
-			}
-		}
-		if len(page) < db.MaxProcessRunReadPage {
-			break
-		}
-		after = page[len(page)-1].ID
+// groupProcessResources are a group's pinned processes and the templates
+// it has active runs of, one per template id (the key the dashboard opens a
+// process by), running while a run of it is active in the group. The title
+// is the template id: the snapshot reads no template source, and the views
+// name a process from the process context they already load.
+func groupProcessResources(active map[int64]*db.AgentGroup) []groupResource {
+	pins, err := db.ListAllProcessGroupPins()
+	if err != nil {
+		slog.Warn("group resources: process pins unavailable", "error", err)
 	}
-	saved := processSavedTemplates()
 	var out []groupResource
 	for groupID := range active {
-		claimed := map[string]bool{}
-		for _, proc := range saved.groupProcesses(ctx, groupID) {
-			r := groupResource{Kind: resourceKindProcess, ID: proc.TemplateID, GroupID: groupID, Title: proc.Name, State: resourceStateClosed}
-			n := 0
-			for _, run := range runs[groupID] {
-				if processRunTemplateID(run.TemplateRef) == proc.TemplateID {
-					claimed[run.ID] = true
-					n++
-				}
+		running := map[string]int{}
+		var order []string
+		runs, err := db.ListActiveGroupProcessRunSummaries(groupID, db.MaxProcessRunReadPage)
+		if err != nil {
+			slog.Warn("group resources: process runs unavailable", "group_id", groupID, "error", err)
+		}
+		if len(runs) == db.MaxProcessRunReadPage {
+			slog.Debug("group resources: active runs past the read cap are not counted", "group_id", groupID, "cap", len(runs))
+		}
+		for _, run := range runs {
+			id := processRunTemplateID(run.TemplateRef)
+			if running[id] == 0 {
+				order = append(order, id)
 			}
-			if n > 0 {
+			running[id]++
+		}
+		seen := map[string]bool{}
+		add := func(id string) {
+			if id == "" || seen[id] {
+				return
+			}
+			seen[id] = true
+			r := groupResource{Kind: resourceKindProcess, ID: id, GroupID: groupID, Title: id, State: resourceStateClosed}
+			if n := running[id]; n > 0 {
 				r.State, r.Detail = resourceStateRunning, pluralCount(n, "running")
 			}
 			out = append(out, r)
 		}
-		for _, run := range runs[groupID] {
-			if claimed[run.ID] {
-				continue
-			}
-			out = append(out, groupResource{Kind: resourceKindProcess, ID: run.ID, GroupID: groupID,
-				Title: processRunTemplateID(run.TemplateRef), State: resourceStateRunning, Detail: run.Status})
+		for _, id := range pins[groupID] {
+			add(id)
+		}
+		for _, id := range order {
+			add(id)
 		}
 	}
 	return out

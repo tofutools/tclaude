@@ -26,7 +26,8 @@ export function overlayResourceKey(tab) {
   if (!tab) return '';
   if (tab.kind === 'page' && tab.page) return `page:${tab.page}`;
   if (tab.kind === 'board' && tab.board) return `board:${tab.board}`;
-  if (tab.kind === 'process' && tab.process) return `process:${tab.process}`;
+  // A process editor's overlay tab names its template (process-editor-place.js).
+  if (tab.kind === 'process' && (tab.template || tab.process)) return `process:${tab.template || tab.process}`;
   const pane = String(tab.paneKey || tab.key || '');
   if (tab.kind === 'terminal' && pane.startsWith('groupterm:')) return `shell:${pane.slice('groupterm:'.length)}`;
   return '';
