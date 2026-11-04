@@ -45,12 +45,28 @@ func handleLibraryRename(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "kind is one of profiles, templates, roles, saved_prompts, sandbox_profiles")
 		return
 	}
-	if _, ok := requirePermission(w, r, perm); !ok {
+	caller, ok := requirePermission(w, r, perm)
+	if !ok {
 		return
 	}
 	if req.Name == req.To {
 		writeJSON(w, http.StatusOK, libraryRenameResp{Kind: req.Kind, Name: req.To, From: req.Name})
 		return
+	}
+	if req.Kind == "roles" {
+		// Renaming onto a name some profile already references hands that
+		// profile the role's grants (roleConferralFailure).
+		if existing, err := db.GetRole(req.Name); err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		} else if existing != nil {
+			renamed := *existing
+			renamed.Name = req.To
+			if fail := roleConferralFailure(caller, existing, &renamed); fail != nil {
+				writeError(w, fail.Status, fail.Kind, fail.Msg)
+				return
+			}
+		}
 	}
 	if fail := rename(req.Name, req.To); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)

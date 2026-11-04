@@ -549,7 +549,8 @@ func handleSpawnProfiles(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, out)
 	case http.MethodPost:
-		if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
+		caller, ok := requirePermission(w, r, PermProfilesManage)
+		if !ok {
 			return
 		}
 		var body spawnProfileJSON
@@ -559,6 +560,10 @@ func handleSpawnProfiles(w http.ResponseWriter, r *http.Request) {
 		}
 		p, fail := buildProfileFromJSON(body)
 		if fail != nil {
+			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			return
+		}
+		if fail := profileConferralFailure(r, caller, nil, p, "", libraryProfileReach); fail != nil {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
@@ -583,6 +588,11 @@ func handleSpawnProfiles(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// libraryProfileReach is why a profile write is checked for the access it
+// confers: since default profiles reach every spawn path, unattended workers
+// included, a library profile reaches spawns its writer never launches.
+const libraryProfileReach = "a library profile can be any group's default, or the global one, and reach every spawn there, automations included"
+
 // handleGlobalDefaultSpawnProfile exposes the single server-persisted default
 // profile used after a group's own default. The dashboard edits the same value
 // through its DB-backed preferences API; this endpoint gives the CLI an
@@ -597,7 +607,8 @@ func handleGlobalDefaultSpawnProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"name": name})
 	case http.MethodPut:
-		if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
+		caller, ok := requirePermission(w, r, PermProfilesManage)
+		if !ok {
 			return
 		}
 		var body struct {
@@ -619,6 +630,11 @@ func handleGlobalDefaultSpawnProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		if prof == nil {
 			writeError(w, http.StatusBadRequest, "not_found", "no such profile")
+			return
+		}
+		if fail := profileConferralFailure(r, caller, nil, prof, "",
+			"the global default profile applies to every spawn no group default or named profile overrides, automations included"); fail != nil {
+			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
 		if err := db.SetDashboardProfileRef(dashboardDefaultProfilePrefKey, dashboardDefaultProfileIDPrefKey, prof.Name, prof.ID); err != nil {
@@ -1041,7 +1057,8 @@ func handleSpawnProfilesImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST")
 		return
 	}
-	if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
+	caller, ok := requirePermission(w, r, PermProfilesManage)
+	if !ok {
 		return
 	}
 	var req profileImportRequest
@@ -1049,7 +1066,7 @@ func handleSpawnProfilesImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "not valid spawn-profile JSON: "+err.Error())
 		return
 	}
-	res, fail := importProfiles(profileImportRequestEnvelope(req), req.Decisions)
+	res, fail := importProfiles(caller, profileImportRequestEnvelope(req), req.Decisions)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -1057,7 +1074,7 @@ func handleSpawnProfilesImport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-func importProfiles(env profileExportEnvelope, decisions []profileImportDecision) (profileImportResult, *spawnFailure) {
+func importProfiles(caller string, env profileExportEnvelope, decisions []profileImportDecision) (profileImportResult, *spawnFailure) {
 	if fail := validateProfileEnvelope(env); fail != nil {
 		return profileImportResult{}, fail
 	}
@@ -1168,6 +1185,14 @@ func importProfiles(env profileExportEnvelope, decisions []profileImportDecision
 			return profileImportResult{}, &spawnFailure{http.StatusInternalServerError, "io", conflictErr.Error()}
 		} else if conflict != "" {
 			return profileImportResult{}, &spawnFailure{http.StatusConflict, "exists", conflict}
+		}
+		// An overwrite is judged against the profile it replaces.
+		var before *db.SpawnProfile
+		if plan.action == "overwrite" {
+			before = existing
+		}
+		if fail := profileConferralFailure(nil, caller, before, built, "", libraryProfileReach); fail != nil {
+			return profileImportResult{}, fail
 		}
 	}
 
@@ -1323,7 +1348,8 @@ func handleSpawnProfileByName(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, profileToJSON(p))
 	case http.MethodPatch:
-		if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
+		caller, ok := requirePermission(w, r, PermProfilesManage)
+		if !ok {
 			return
 		}
 		existing, err := db.ResolveSpawnProfile(name)
@@ -1342,6 +1368,10 @@ func handleSpawnProfileByName(w http.ResponseWriter, r *http.Request) {
 		}
 		p, fail := buildProfileFromJSON(body)
 		if fail != nil {
+			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			return
+		}
+		if fail := profileConferralFailure(r, caller, existing, p, "", libraryProfileReach); fail != nil {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}

@@ -382,6 +382,24 @@ Two libraries make spawns repeatable instead of flag soups. Reads are open
 to every agent; writes are gated (`profiles.manage`, `roles.manage`) and
 effectively human-only by default.
 
+A profile can be any group's default, or the global one, and a default
+reaches every spawn there, trigger, schedule and process workers included.
+So an agent writing a profile or role may only add access it could confer
+itself, on top of the library slug:
+
+- A permission grant, set as a profile's `permission_overrides`, or reached
+  through a role the profile names, or in a role's own permissions, takes
+  `permissions.grant`, and no wider a scope than the agent's own.
+- `is_owner` takes `groups.owners.manage` unscoped, since the profile can
+  reach any group.
+- Setting the global default profile takes the same authority over
+  everything that profile confers.
+
+Only what a write adds is checked. Editing a profile's description or model,
+or a role's brief, needs nothing more even when the profile or role already
+grants, and a deny never needs authority. Imports (profile, template and
+config bundle) are writes too. The operator is never refused.
+
 **Spawn profiles** (`tclaude agent profiles ls|show|create|edit|rm|
 disable|enable|default`) are named bundles of the whole spawn dialog:
 launch shape (harness, model, effort, sandbox, approval, per-harness
