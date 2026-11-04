@@ -20,16 +20,16 @@ import (
 // half: which running agents hold a copy of a profile, and what a re-apply
 // would change for each.
 //
-// Applying waits on two pieces of work. Relaunch must read the spawn copy
+// Applying waits on relaunch reading the spawn copy
 // (tcl-an26ed); today it reads agents.relaunch_profile, so a replaced copy
-// would change nothing. And grants need their source recorded (tcl-kdpz4l):
-// birth grants are written with the spawner as granter, merged from every
-// profile, role and the request, so the profile's own grants cannot be told
-// apart from the agent's other grants.
+// would change nothing. Grants are recorded with their source
+// (agent_permissions.birth_source, tcl-kdpz4l) for agents spawned since v307,
+// but applying them is part of the apply step (tcl-hxuwnc), so the preview
+// shows them only.
 
 const (
 	profileReapplyBlocked    = "Takes effect once relaunch reads the spawn copy (tcl-an26ed)."
-	profileReapplyGrantsNote = "Grants: shown only, not applied. tclaude does not yet record which of an agent's grants came from this profile (tcl-kdpz4l)."
+	profileReapplyGrantsNote = "Grants: shown only, not applied yet (tcl-hxuwnc)."
 )
 
 // Field outcomes in a re-apply preview.

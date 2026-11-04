@@ -50,6 +50,11 @@ type launchIdentity struct {
 	startupContextNote string
 	isOwner            bool
 	overrides          map[string]db.PermissionOverride
+	// overrideSources names, per slug of overrides, the spawn profile (and
+	// role) it came from, when a profile tier won it. A slug the request,
+	// a role the request named, an inline profile or worker defaults set has
+	// no entry. enrollSpawnedConv records it as the row's birth_source.
+	overrideSources map[string]db.PermissionBirthSource
 	// notes disclose every access decision a tier other than the request made,
 	// including a default-tier value the spawner could not confer.
 	notes []string
@@ -158,8 +163,12 @@ func resolveLaunchIdentity(in launchIdentityRequest) (launchIdentity, *spawnFail
 	// request's) overrides narrow or replace a slug, and receiver-owned
 	// federation worker defaults sit on top.
 	roleGrants := map[string]db.PermissionOverride{}
+	roleOf := map[string]string{}
 	for _, role := range out.roles {
 		for _, grant := range role.Permissions {
+			if _, seen := roleOf[grant.Slug]; !seen {
+				roleOf[grant.Slug] = role.Name
+			}
 			candidate := db.PermissionOverride{Effect: db.PermEffectGrant, Scope: grant.Scope}
 			if existing, ok := roleGrants[grant.Slug]; ok && existing != candidate {
 				return out, &spawnFailure{http.StatusBadRequest, "role_scope_conflict",
@@ -169,7 +178,7 @@ func resolveLaunchIdentity(in launchIdentityRequest) (launchIdentity, *spawnFail
 		}
 	}
 	parts := []overrideContribution{
-		{source: roleRefsSource, field: "role grants", grants: roleGrants,
+		{source: roleRefsSource, field: "role grants", grants: roleGrants, roles: roleOf,
 			ambient: launchTierIsDefault(tiers, roleRefsSource)},
 		{source: overridesSource, field: permissionOverridesField, grants: overrides,
 			ambient: launchTierIsDefault(tiers, overridesSource)},
@@ -219,6 +228,7 @@ func resolveLaunchIdentity(in launchIdentityRequest) (launchIdentity, *spawnFail
 		}
 	}
 	overrides = mergeOverrideContributions(parts)
+	out.overrideSources = birthSourcesOf(parts, tiers)
 	overridesSource = ""
 	for i := len(parts) - 1; i >= 0 && overridesSource == ""; i-- {
 		if len(parts[i].grants) > 0 {
@@ -249,7 +259,43 @@ var birthConferee = grantConferee{descendantByConstruction: true}
 type overrideContribution struct {
 	source, field string
 	grants        map[string]db.PermissionOverride
-	ambient       bool
+	// roles names the role each slug came from, for the role-grant part.
+	roles   map[string]string
+	ambient bool
+}
+
+// birthSourcesOf names, per merged slug, the spawn profile whose part won it
+// (mergeOverrideContributions: the last part that has the slug). A slug won
+// by a part that is not a stored profile tier (the request, an inline
+// profile, worker defaults) gets no entry, so a re-apply never treats it as
+// the profile's.
+func birthSourcesOf(parts []overrideContribution, tiers []launchProfileTier) map[string]db.PermissionBirthSource {
+	out := map[string]db.PermissionBirthSource{}
+	for _, part := range parts {
+		profileID := tierProfileID(tiers, part.source)
+		for slug := range part.grants {
+			if profileID <= 0 {
+				delete(out, slug)
+				continue
+			}
+			out[slug] = db.PermissionBirthSource{ProfileID: profileID, Role: part.roles[slug]}
+		}
+	}
+	return out
+}
+
+// tierProfileID is the stored profile behind a tier source, 0 for the
+// request or a profile with no row (an inline profile).
+func tierProfileID(tiers []launchProfileTier, source string) int64 {
+	if source == "" || source == agent.ProvExplicit {
+		return 0
+	}
+	for _, tier := range tiers {
+		if tier.profile != nil && tier.source == source {
+			return tier.profile.ID
+		}
+	}
+	return 0
 }
 
 func mergeOverrideContributions(parts []overrideContribution) map[string]db.PermissionOverride {

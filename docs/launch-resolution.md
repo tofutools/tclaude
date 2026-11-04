@@ -36,9 +36,17 @@ what re-applying the edited profile would change for each:
   links.
 
 Grant changes (permission overrides, group owner and role grants) are listed,
-but a re-apply would not apply them. tclaude does not yet record which of an
-agent's grants came from the profile, so a re-apply could not change those
-without touching grants from elsewhere.
+but a re-apply does not apply them yet.
+
+tclaude records which spawn profile, and which of its roles, each birth
+grant or deny came from, for agents spawned from now on. A grant has no such
+record when it came from the spawn request, from a role the request named, an
+inline profile, a group template or federation worker defaults, or when anyone
+has changed it since: an operator, a `permissions` command, a policy generator
+or a scope edit. A re-apply will only ever change grants that still carry the
+profile's record. Sudo grants are kept apart and are never involved. Agents
+spawned before this change have no records, so a re-apply will leave all of
+their grants alone. Group ownership (`is_owner`) is not recorded this way yet.
 
 The preview is read-only for now. **Apply** is shown but disabled, because a
 relaunch does not yet read the copy, so replacing it would change nothing.

@@ -22,7 +22,7 @@ func TestFederationRotationAtomicAuthorityAndBackupTransfer(t *testing.T) {
 	d, err := Open()
 	require.NoError(t, err)
 	scope, _ := json.Marshal(map[string][]string{"peer": {old.ID() + "/team", "group:workers"}, "http_proxy": {"payer"}})
-	_, err = d.Exec(`INSERT INTO agent_permissions(agent_id,slug,granted_at,scope_json) VALUES('actor','self.teleport',?,?)`, dbTime(time.Now()), string(scope))
+	_, err = d.Exec(`INSERT INTO agent_permissions(agent_id,slug,granted_at,scope_json,birth_source) VALUES('actor','self.teleport',?,?,'{"profile_id":1}')`, dbTime(time.Now()), string(scope))
 	require.NoError(t, err)
 	group, err := CreateAgentGroup("team", "")
 	require.NoError(t, err)
@@ -68,7 +68,9 @@ func TestFederationRotationAtomicAuthorityAndBackupTransfer(t *testing.T) {
 	require.True(t, paid.Revoked)
 	require.Equal(t, old.ID(), paid.Peer, "billing provenance stays historical")
 	var updated string
-	require.NoError(t, d.QueryRow(`SELECT scope_json FROM agent_permissions WHERE agent_id='actor'`).Scan(&updated))
+	var birthSource string
+	require.NoError(t, d.QueryRow(`SELECT scope_json, birth_source FROM agent_permissions WHERE agent_id='actor'`).Scan(&updated, &birthSource))
+	require.Empty(t, birthSource, "a rewritten scope is no longer the spawn profile's")
 	require.Contains(t, updated, next.ID()+"/team")
 	require.Contains(t, updated, "group:workers")
 	require.NotContains(t, updated, old.ID())

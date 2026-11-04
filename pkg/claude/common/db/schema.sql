@@ -703,7 +703,8 @@ CREATE TABLE "agent_permissions" (
 				granted_at INTEGER NOT NULL,
 				granted_by TEXT NOT NULL DEFAULT '',
 				effect     TEXT NOT NULL DEFAULT 'grant' CHECK (effect IN ('grant', 'deny')), scope_json TEXT NOT NULL DEFAULT ''
-			CHECK(length(CAST(scope_json AS BLOB)) BETWEEN 0 AND 262144),
+			CHECK(length(CAST(scope_json AS BLOB)) BETWEEN 0 AND 262144), birth_source TEXT NOT NULL DEFAULT ''
+				CHECK(length(CAST(birth_source AS BLOB)) BETWEEN 0 AND 4096),
 				PRIMARY KEY (agent_id, slug)
 			) STRICT;
 
