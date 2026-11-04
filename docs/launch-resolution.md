@@ -113,8 +113,12 @@ profiles give:
 - *chain wins* always takes the profiles' posture, so a `read` pin over
   profiles that allow `write` is lost on the next relaunch.
 
-The explicit posture is not forgotten while another setting overrides it:
-switching back to explicit wins restores it on the agent's next relaunch.
+For an agent with a recorded spawn request, the explicit posture is not
+forgotten while another setting overrides it: switching back to explicit wins
+restores it on the agent's next relaunch. Clones, agents from before launch
+layers were recorded, and agents created by the pending-spawn sweeper or a
+group template have no such record, so a relaunch under chain wins drops their
+explicit posture for good.
 The harness-config repair (see [Sandboxing](sandboxing.md)) also follows the
 setting: it does not list an agent whose posture the setting gave up on
 purpose.
@@ -234,5 +238,6 @@ The rules above are the specification. These rows do not follow it yet:
 - **Group and workspace sandbox-profile assignment** (`group_sandbox_assignment`): Watch mode and conv resume reuse the stored sandbox policy.
 - **Sandbox profile contents** (`sandbox_profile_contents`): Watch mode and conv resume reuse the stored contents.
 - **Role definitions (text)** (`role_contents`): Re-injection after compaction still uses the role text resolved at spawn.
+- **Harness config posture** (`harness_config`): Watch mode, conv resume, a clone that reuses its source's stored sandbox, and a resume that falls back to the stored policy keep the stored posture; the setting applies on the agent's next ordinary resume.
 
 <!-- launch-gaps:end -->

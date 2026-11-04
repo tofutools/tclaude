@@ -18,7 +18,8 @@ const relaunchPolicyHarnessConfigHelp = "harness_config (the --harness-config po
 	"  tighten-only             the same, except for one case: an agent spawned with --harness-config write whose " +
 	"sandbox profiles keep the read-only floor gets the floor back. An explicit read pin is already the strictest posture, so it always stays.\n" +
 	"  chain-wins               the sandbox profiles' posture always applies, so a read pin over a write chain is lost.\n" +
-	"Switching back to explicit-wins restores the explicit posture on the next relaunch."
+	"Switching back to explicit-wins restores the explicit posture on the next relaunch, for agents with a recorded spawn " +
+	"request; clones and older agents lose it for good under chain-wins."
 
 func relaunchPolicyCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{

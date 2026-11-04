@@ -21,12 +21,15 @@ import (
 
 // currentRelaunchPolicy is the stored policy. A row that no longer validates
 // (a field or mode a newer build wrote, say) is skipped and logged, so its
-// field takes its default; a read error gives the default policy.
+// field takes its default. A read error must not quietly undo a security
+// setting, so it gives tighten-only for harness_config: an explicit read pin
+// still stays, and only an explicit write over a floored chain is narrowed.
 func currentRelaunchPolicy() launchspec.RelaunchPolicy {
 	rows, err := db.ListRelaunchPolicyRows()
 	if err != nil {
-		slog.Warn("relaunch policy: read failed; using the default policy", "error", err)
-		return launchspec.RelaunchPolicy{}
+		slog.Warn("relaunch policy: read failed; harness_config falls back to tighten-only", "error", err)
+		return launchspec.RelaunchPolicy{Rows: []launchspec.PolicyRow{
+			{Scope: launchspec.ScopeGlobal, Field: harnessConfigField, Mode: launchspec.ModeTightenOnly}}}
 	}
 	var p launchspec.RelaunchPolicy
 	for _, row := range rows {
