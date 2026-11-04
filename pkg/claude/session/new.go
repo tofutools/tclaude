@@ -206,7 +206,7 @@ type NewParams struct {
 	// none of them exposes a per-invocation trust flag:
 	//
 	//   codex   → [projects."<cwd>"] trust_level = "trusted" in ~/.codex/config.toml
-	//   claude  → projects.<cwd>.hasTrustDialogAccepted = true in ~/.claude.json
+	//   claude  → projects.<cwd>.hasTrustDialogAccepted = true in ~/.claude/.claude.json
 	//   copilot → <cwd> appended to trustedFolders in $COPILOT_HOME/config.json
 	//
 	// OFF by default and NEVER auto-defaulted on this path: editing a config
@@ -214,7 +214,7 @@ type NewParams struct {
 	// (dashboard checkbox / this flag). Rejected for a harness with no
 	// dir-trust dialog. The write is atomic + idempotent
 	// (harness.EnsureDirTrustedForLaunch).
-	TrustDir bool `long:"trust-dir" help:"Pre-trust the launch directory so a detached pane doesn't freeze on the harness's trust-folder dialog: codex gets [projects.\"<cwd>\"] trust_level=\"trusted\" in ~/.codex/config.toml, claude gets projects.<cwd>.hasTrustDialogAccepted=true in ~/.claude.json, copilot gets the directory appended to trustedFolders in $COPILOT_HOME/config.json, and gemini and pi record it in their own trust stores. Off by default; edits that harness's config, so opt-in only"`
+	TrustDir bool `long:"trust-dir" help:"Pre-trust the launch directory so a detached pane doesn't freeze on the harness's trust-folder dialog: codex gets [projects.\"<cwd>\"] trust_level=\"trusted\" in ~/.codex/config.toml, claude gets projects.<cwd>.hasTrustDialogAccepted=true in ~/.claude/.claude.json, copilot gets the directory appended to trustedFolders in $COPILOT_HOME/config.json, and gemini and pi record it in their own trust stores. Off by default; edits that harness's config, so opt-in only"`
 
 	// RemoteControl arms Claude Code's built-in Remote Access at launch
 	// (`claude --remote-control`), so the session is reachable from

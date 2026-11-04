@@ -61,9 +61,34 @@ func SyncClaudeCleanupPeriod(cfg *config.Config) error {
 // the same raw-message merge shape as InstallHooks so unknown settings keys ride
 // through untouched.
 func applyClaudeCleanupPeriod(days int) error {
+	// Unlocked fast path for the common case (every session start after the
+	// first): the value is already on disk, so there is nothing to write and
+	// no reason to wait on another process's settings lock. The locked edit
+	// below re-reads and re-checks, so a stale read here only costs a lock.
+	if path := ClaudeSettingsPath(); path != "" && claudeCleanupPeriodOnDisk(path) == days {
+		return nil
+	}
 	return withClaudeSettingsLock(func(settingsTarget string) error {
 		return applyClaudeCleanupPeriodTo(settingsTarget, days)
 	})
+}
+
+// claudeCleanupPeriodOnDisk returns settings.json's cleanupPeriodDays, or -1
+// when the file, the key or a parse is missing.
+func claudeCleanupPeriodOnDisk(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return -1
+	}
+	var settings map[string]json.RawMessage
+	if json.Unmarshal(data, &settings) != nil {
+		return -1
+	}
+	var days int
+	if raw, ok := settings["cleanupPeriodDays"]; !ok || json.Unmarshal(raw, &days) != nil {
+		return -1
+	}
+	return days
 }
 
 // applyClaudeCleanupPeriodTo is the edit itself, run under
