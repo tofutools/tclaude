@@ -2648,64 +2648,16 @@ func stateForConvInSessionsBatched(
 	// hook binary — surface its raw count rather than hiding real work.
 	if alive {
 		out.StatusWarning = statusExtensionWarning(pick.Harness, pick.CreatedAt, pick.LastHook, time.Now())
-		if set := db.ParseSubagentSet(pick.SubagentsJSON); set != nil {
-			for id := range codexInterruptedSubagents {
-				delete(set, id)
-			}
-			out.SubagentCount = set.LiveCount(time.Now())
-		} else {
-			out.SubagentCount = pick.SubagentCount
-		}
-		out.SubagentCount = copilotAPISubagentCount(pick, out.SubagentCount)
-		// Background shells are children of the harness process and
-		// monitors belong to it, so a dead session has neither. For a live
-		// row this re-derives both ledgers from the agent's actual
-		// descendant processes in one pass — the badges are only
-		// trustworthy because of this step, since the hook stream announces
-		// a launch of either kind but never its end.
-		var background backgroundCounts
-		timed(rowWorkBgReconcile, func() { background = backgroundCountsOnRead(pick, alive) })
-		out.BgShellCount = background.Shells
-		out.MonitorCount = background.Monitors
-		// Keep the status consistent with the reconciled counts. The stored
-		// row's status_detail was written by whichever hook last fired, off
-		// the counts AS THEY WERE THEN — so any of the three cases below can
-		// leave it disagreeing with the badges rendered beside it.
-		//
-		// Settling DOWN: a row can be stuck at main_agent_idle / "N
-		// subagents running" when a ledger emptied without a stop event
-		// (TTL expiry, or a background shell whose process is simply gone)
-		// and no later hook re-settled it. The badges already read 0 then,
-		// so a busy detail next to them would be self-contradicting.
-		//
-		// Holding UP: background activity can outlive not just the turn but
-		// the hook that would have recorded it — Claude Code's idle_prompt
-		// Notification, for one, sets a bare idle without consulting either
-		// ledger. Rendering that agent as plain idle is self-contradicting
-		// when the adjacent badge says a sub-agent, shell, or monitor is
-		// still working.
-		//
-		// PARTIAL change: two shells reconciled down to one moves neither
-		// boundary, so without the last case the pill would keep reading
-		// "2 background shells running" next to a ⚙+1 badge. Re-rendering
-		// the detail from the reconciled counts costs nothing and cannot
-		// drift — it is the same formatter the hook uses, so a row whose
-		// counts did NOT change is rewritten to the identical string.
-		//
-		// Only the DISPLAY is adjusted in every case; the stored row
-		// converges on the session's next hook.
-		switch {
-		case out.SubagentCount == 0 && out.BgShellCount == 0 && out.MonitorCount == 0:
-			if out.Status == session.StatusMainAgentIdle {
-				out.Status = session.StatusIdle
-				out.StatusDetail = ""
-			}
-		case out.Status == session.StatusIdle:
-			out.Status = session.StatusMainAgentIdle
-			out.StatusDetail = session.BackgroundActivityDetail(out.SubagentCount, out.BgShellCount, out.MonitorCount)
-		case out.Status == session.StatusMainAgentIdle:
-			out.StatusDetail = session.BackgroundActivityDetail(out.SubagentCount, out.BgShellCount, out.MonitorCount)
-		}
+		// The reconcile itself (ledgers, background counts, and the status
+		// settle that keeps the pill consistent with the badges) is shared
+		// with the detached terminal's status; see reconcileLiveRowStatus.
+		live := reconcileLiveRowStatus(pick, codexInterruptedSubagents, func() (counts backgroundCounts) {
+			timed(rowWorkBgReconcile, func() { counts = backgroundCountsOnRead(pick, alive) })
+			return counts
+		})
+		out.Status, out.StatusDetail = live.Status, live.StatusDetail
+		out.SubagentCount = live.SubagentCount
+		out.BgShellCount, out.MonitorCount = live.BgShellCount, live.MonitorCount
 	}
 	if !pick.LastHook.IsZero() {
 		out.LastHook = pick.LastHook.Format(time.RFC3339)

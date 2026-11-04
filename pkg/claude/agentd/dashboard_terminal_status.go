@@ -70,38 +70,18 @@ func terminalStatusForSessions(
 	out := dashboardTerminalStatusState{
 		Harness:      pick.Harness,
 		Status:       pick.Status,
-		StatusDetail: pick.StatusDetail,
+		StatusDetail: session.StatusDetailForDisplay(pick.StatusDetail),
 	}
 	if online {
 		refreshCopilotContextSnapshotOnRead(pick, true)
 		refreshGeminiContextSnapshotOnRead(pick, true)
 		codexInterruptedSubagents := refreshCodexInterruptedSubagentsForStatus(pick, true)
-		if set := db.ParseSubagentSet(pick.SubagentsJSON); set != nil {
-			for id := range codexInterruptedSubagents {
-				delete(set, id)
-			}
-			out.SubagentCount = set.LiveCount(time.Now())
-		} else {
-			out.SubagentCount = pick.SubagentCount
-		}
-		out.SubagentCount = copilotAPISubagentCount(pick, out.SubagentCount)
-		background := backgroundCountsOnRead(pick, true)
-		out.BgShellCount = background.Shells
-		out.MonitorCount = background.Monitors
-		switch {
-		case out.SubagentCount == 0 && out.BgShellCount == 0 && out.MonitorCount == 0:
-			if out.Status == session.StatusMainAgentIdle {
-				out.Status = session.StatusIdle
-				out.StatusDetail = ""
-			}
-		case out.Status == session.StatusIdle:
-			out.Status = session.StatusMainAgentIdle
-			out.StatusDetail = session.BackgroundActivityDetail(
-				out.SubagentCount, out.BgShellCount, out.MonitorCount)
-		case out.Status == session.StatusMainAgentIdle:
-			out.StatusDetail = session.BackgroundActivityDetail(
-				out.SubagentCount, out.BgShellCount, out.MonitorCount)
-		}
+		live := reconcileLiveRowStatus(pick, codexInterruptedSubagents, func() backgroundCounts {
+			return backgroundCountsOnRead(pick, true)
+		})
+		out.Status, out.StatusDetail = live.Status, live.StatusDetail
+		out.SubagentCount = live.SubagentCount
+		out.BgShellCount, out.MonitorCount = live.BgShellCount, live.MonitorCount
 	} else {
 		out.Status = session.StatusExited
 		out.StatusDetail = ""
@@ -156,4 +136,95 @@ func writeDashboardTerminalAgentStatus(w http.ResponseWriter, selector string) {
 		Voice:       cfg.Voice(),
 		Keybindings: cfg.DashboardKeybindings(),
 	})
+}
+
+// liveRowStatus is the reconciled status of a live session row: what the
+// dashboard row and the detached terminal's title both show for it.
+type liveRowStatus struct {
+	Status        string
+	StatusDetail  string
+	SubagentCount int
+	BgShellCount  int
+	MonitorCount  int
+}
+
+// reconcileLiveRowStatus derives a live row's background counts and the status
+// that has to agree with them. It is the one copy used by both the dashboard
+// row (stateForConvInSessionsBatched) and the detached terminal
+// (terminalStatusForSessions); the two used to carry their own copies, and the
+// terminal's drifted away from the display filter on the detail.
+//
+// codexInterrupted holds sub-agent IDs a Codex rollout shows were interrupted
+// without a SubagentStop hook; they are dropped from the hook ledger. background
+// does the process-table reconcile, passed in so the dashboard can time it.
+func reconcileLiveRowStatus(
+	pick *db.SessionRow,
+	codexInterrupted map[string]struct{},
+	background func() backgroundCounts,
+) liveRowStatus {
+	out := liveRowStatus{
+		Status:       pick.Status,
+		StatusDetail: session.StatusDetailForDisplay(pick.StatusDetail),
+	}
+	// Prefer the TTL-filtered ledger over the raw cached count, so a phantom
+	// entry (a sub-agent whose SubagentStop was lost) stops being displayed as
+	// soon as it expires, even if no hook has fired since to sweep it from
+	// storage. An empty ledger with a non-zero count is a row last written by a
+	// pre-ledger hook binary: surface its raw count rather than hiding real work.
+	if set := db.ParseSubagentSet(pick.SubagentsJSON); set != nil {
+		for id := range codexInterrupted {
+			delete(set, id)
+		}
+		out.SubagentCount = set.LiveCount(time.Now())
+	} else {
+		out.SubagentCount = pick.SubagentCount
+	}
+	out.SubagentCount = copilotAPISubagentCount(pick, out.SubagentCount)
+	// Background shells are children of the harness process and monitors
+	// belong to it. For a live row this re-derives both ledgers from the
+	// agent's actual descendant processes in one pass. The badges are only
+	// trustworthy because of this step, since the hook stream announces a
+	// launch of either kind but never its end.
+	counts := background()
+	out.BgShellCount = counts.Shells
+	out.MonitorCount = counts.Monitors
+	// Keep the status consistent with the reconciled counts. The stored row's
+	// status_detail was written by whichever hook last fired, off the counts AS
+	// THEY WERE THEN, so any of the three cases below can leave it disagreeing
+	// with the badges rendered beside it.
+	//
+	// Settling DOWN: a row can be stuck at main_agent_idle / "N subagents
+	// running" when a ledger emptied without a stop event (TTL expiry, or a
+	// background shell whose process is simply gone) and no later hook
+	// re-settled it. The badges already read 0 then, so a busy detail next to
+	// them would be self-contradicting.
+	//
+	// Holding UP: background activity can outlive not just the turn but the
+	// hook that would have recorded it. Claude Code's idle_prompt Notification,
+	// for one, sets a bare idle without consulting either ledger. Rendering that
+	// agent as plain idle is self-contradicting when the adjacent badge says a
+	// sub-agent, shell, or monitor is still working.
+	//
+	// PARTIAL change: two shells reconciled down to one moves neither boundary,
+	// so without the last case the pill would keep reading "2 background shells
+	// running" next to a ⚙+1 badge. Re-rendering the detail from the reconciled
+	// counts costs nothing and cannot drift: it is the same formatter the hook
+	// uses, so a row whose counts did NOT change is rewritten to the identical
+	// string.
+	//
+	// Only the DISPLAY is adjusted in every case; the stored row converges on
+	// the session's next hook.
+	switch {
+	case out.SubagentCount == 0 && out.BgShellCount == 0 && out.MonitorCount == 0:
+		if out.Status == session.StatusMainAgentIdle {
+			out.Status = session.StatusIdle
+			out.StatusDetail = ""
+		}
+	case out.Status == session.StatusIdle:
+		out.Status = session.StatusMainAgentIdle
+		out.StatusDetail = session.BackgroundActivityDetail(out.SubagentCount, out.BgShellCount, out.MonitorCount)
+	case out.Status == session.StatusMainAgentIdle:
+		out.StatusDetail = session.BackgroundActivityDetail(out.SubagentCount, out.BgShellCount, out.MonitorCount)
+	}
+	return out
 }
