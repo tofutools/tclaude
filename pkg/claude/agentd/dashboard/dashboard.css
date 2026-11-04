@@ -8030,6 +8030,15 @@ body.wizard #agent-spawn-role-add { background: #140f28; color: #f3e6c0; }
 .spawn-field-help-trigger:hover, .spawn-field-help-trigger:focus {
   color: #c9d1d9; border-color: #58a6ff;
 }
+/* In a dialog, a [?] beside a field or an add-row action is a square at the
+   dialog's button height (ui.css .ui-dialog .ui-btn), not a strip stretched
+   to its field (tcl-cg7tdi). The 18px [?] inside a section legend, mount
+   title or rule row is an inline icon in a heading and keeps its size. */
+.ui-dialog .spawn-field-with-help { grid-template-columns: minmax(0, 1fr) var(--ui-dialog-btn-h, 30px); }
+.ui-dialog :is(.spawn-field-with-help, .sbx-add-row-help, .sbx-effective-environment-help) .spawn-field-help-trigger {
+  box-sizing: border-box; flex: 0 0 auto; width: var(--ui-dialog-btn-h, 30px); height: var(--ui-dialog-btn-h, 30px);
+  align-self: center; padding: 0; font-size: 13px; line-height: 1;
+}
 /* A caveat that came out of the dialog body must not become invisible on the
    way. The warn trigger keeps the same size and column as [?] — the row does
    not reflow when the selection changes — and only changes colour and glyph,
