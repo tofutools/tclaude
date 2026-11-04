@@ -30,7 +30,7 @@ func TestStandaloneRelaunchPrepare_ClassifiesTheDaemonsAnswer(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			DaemonRequestImpl = func(string, string, any, any, DaemonOpts) error { return tc.err }
-			_, _, err := conv.StandaloneRelaunchPrepare("c")
+			_, err := conv.StandaloneRelaunchPrepare("c")
 			require.Error(t, err)
 			var unavailable *conv.StandaloneRelaunchUnavailable
 			if tc.warning == "" {

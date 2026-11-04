@@ -44,10 +44,15 @@ type StandaloneRelaunchRequest struct {
 	Launched bool `json:"launched,omitempty"`
 }
 
-// StandaloneRelaunchPrepared is prepare's answer: what to tell the human.
+// StandaloneRelaunchPrepared is prepare's answer: what to tell the human,
+// and, from prepare, the relaunch decisions the pane launches with.
 type StandaloneRelaunchPrepared struct {
 	Warnings []string `json:"warnings,omitempty"`
 	Changes  []string `json:"changes,omitempty"`
+	// RemoteControl is whether the pane arms Remote Access: the posture the
+	// agent last launched with, or the group's current policy where the
+	// relaunch policy re-reads it (relaunchRemoteControl, as on resume).
+	RemoteControl *bool `json:"remote_control,omitempty"`
 }
 
 func decodeStandaloneRelaunch(w http.ResponseWriter, r *http.Request, action string, body *StandaloneRelaunchRequest) (string, bool) {
@@ -107,7 +112,11 @@ func handleStandaloneRelaunchPrepare(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
-	out := StandaloneRelaunchPrepared{Warnings: prepared.warnings}
+	remoteControl, remoteControlChange, remoteControlNote := relaunchRemoteControl(convID, cfg.Harness, cfg.RemoteControl)
+	out := StandaloneRelaunchPrepared{Warnings: prepared.warnings, RemoteControl: &remoteControl}
+	if remoteControlNote != "" {
+		out.Warnings = append(out.Warnings, remoteControlNote)
+	}
 	// A temporary built-in mode never persists its policy, as on resume.
 	if prepared.effective != nil && !cfg.TemporaryHarnessBuiltinMode {
 		agentID, err := db.AgentIDForConv(convID)
@@ -126,6 +135,9 @@ func handleStandaloneRelaunchPrepare(w http.ResponseWriter, r *http.Request) {
 			standaloneRelaunches.Unlock()
 			out.Changes = prepared.changes
 		}
+	}
+	if remoteControlChange != "" {
+		out.Changes = append(out.Changes, remoteControlChange)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

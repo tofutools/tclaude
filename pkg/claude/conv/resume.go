@@ -237,6 +237,7 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 		rc.ConvID,
 		clcommon.ExtractClaudeExtraArgs(),
 		&launchEffectiveSandbox,
+		relaunch,
 	)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
@@ -288,7 +289,7 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
 	}
-	remoteControl, err := resumeRemoteControl(h, rc.ConvID)
+	remoteControl, err := relaunch.remoteControl(h, rc.ConvID)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1

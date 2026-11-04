@@ -121,3 +121,21 @@ func TestStandaloneRelaunch_SettleLeavesALaterSnapshotAlone(t *testing.T) {
 	standaloneCall(t, f, "settle", map[string]any{"conv_id": spawn.ConvID, "launched": false})
 	assert.Equal(t, "v2", storedGroupValue(t, spawn.ConvID), "the later snapshot stands")
 }
+
+// Prepare also answers whether the pane arms Remote Access, by the relaunch
+// policy's group_remote_control row, as a resume decides it (tcl-7oauwa).
+func TestStandaloneRelaunch_PrepareDecidesRemoteControl(t *testing.T) {
+	f, spawn := standaloneFixture(t)
+	on := true
+	setGroupRemoteControl(t, &on)
+
+	setRelaunchPolicy(t, f, "group_remote_control", "reuse")
+	out := standaloneCall(t, f, "prepare", map[string]any{"conv_id": spawn.ConvID})
+	assert.Equal(t, false, out["remote_control"], "reuse keeps the state of the last launch")
+	standaloneCall(t, f, "settle", map[string]any{"conv_id": spawn.ConvID, "launched": false})
+
+	setRelaunchPolicy(t, f, "group_remote_control", "re-resolve")
+	out = standaloneCall(t, f, "prepare", map[string]any{"conv_id": spawn.ConvID})
+	assert.Equal(t, true, out["remote_control"], "re-resolve applies the group's current policy")
+	assert.Contains(t, out["changes"], "remote control: off → on (group policy)")
+}

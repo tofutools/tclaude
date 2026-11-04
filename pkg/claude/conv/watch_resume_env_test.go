@@ -446,6 +446,7 @@ func TestWatchResumeRefreshesSocketMaterializationForAdapterAndSavedState(t *tes
 		resumeConvCodex,
 		nil,
 		&launchSnapshot,
+		nil,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, launchSnapshot)
@@ -495,7 +496,7 @@ func TestStandaloneResumeDoesNotInheritUnenforcedNetworkAuthorization(t *testing
 	var launchSnapshot *sandboxpolicy.Snapshot
 	_, profilePath, _, err := resumeLaunchCmdWithEffectiveSandbox(
 		harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil,
-		&launchSnapshot)
+		&launchSnapshot, nil)
 	if runtime.GOOS == "linux" {
 		require.Error(t, err)
 		assert.Equal(t,
