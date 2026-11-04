@@ -2335,3 +2335,17 @@ CREATE TABLE group_pages (
 		) STRICT;
 
 CREATE INDEX idx_group_pages_group ON group_pages(group_id, state);
+
+CREATE TABLE group_page_marks (
+			page_id TEXT NOT NULL REFERENCES group_pages(id) ON DELETE CASCADE,
+			seq     INTEGER NOT NULL,
+			batch   TEXT NOT NULL,
+			PRIMARY KEY (page_id, seq)
+		) STRICT;
+
+CREATE TABLE group_page_patches (
+			page_id   TEXT PRIMARY KEY REFERENCES group_pages(id) ON DELETE CASCADE,
+			mark_seq  INTEGER NOT NULL DEFAULT 0,
+			patch_seq INTEGER NOT NULL DEFAULT 0,
+			patches   TEXT NOT NULL DEFAULT '[]'
+		) STRICT;

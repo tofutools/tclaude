@@ -21,7 +21,7 @@ import (
 // keeps its id. A port page reopens only while its agent's dev server
 // answers, and a static page only while its files are still inside the
 // agent's directories: the source is proved again as a show proves it.
-// Marks and live patches are not saved yet (tcl-01arix).
+// Its marks and live patches are saved with it (pages_collab_saved.go).
 
 const (
 	pageClosedByOperator = "closed by the operator"
@@ -37,7 +37,7 @@ func pageLifetimeRule(group string) string {
 		return "A private page ends when it closes or the daemon restarts; show again to bring it back."
 	}
 	return "The page is saved with group " + group + ": closed (by you, the operator or a daemon restart), it stays in the group, " +
-		"and the operator's Reopen or your show of the same name reopens it with a new origin. Marks and live patches are not kept."
+		"and the operator's Reopen or your show of the same name reopens it with a new origin, keeping its marks and live patches."
 }
 
 // pageSaveMu orders every change to the live registry that a saved row
@@ -168,7 +168,7 @@ func handleDashboardPageReopen(w http.ResponseWriter, r *http.Request) {
 	v.Group = g.Name
 	if !isGroupPageOwner(row.Owner) {
 		if convID := humanActionLiveConv(row.Owner); convID != "" {
-			body := fmt.Sprintf("The operator reopened your live page %q from group %s. It has a new origin; marks and patches from before are not kept.",
+			body := fmt.Sprintf("The operator reopened your live page %q from group %s. It has a new origin, and keeps its marks and live patches.",
 				row.Name, g.Name)
 			_, _, _ = queueRegularAgentMessage(&db.AgentMessage{
 				ToConv: convID, Subject: "[page " + row.Name + "] reopened", Body: body,
@@ -203,6 +203,7 @@ func reopenSavedPage(r *http.Request, row *db.GroupPage) (*livePage, int, string
 			return nil, http.StatusConflict, "target_unavailable", "the page's source is not available: " + err.Error()
 		}
 	}
+	kept := loadSavedCollab(row.ID)
 	now := time.Now().UTC()
 	reg := livePages
 	pageSaveMu.Lock()
@@ -238,6 +239,7 @@ func reopenSavedPage(r *http.Request, row *db.GroupPage) (*livePage, int, string
 	}
 	reg.byOwner[owner][row.Name] = p
 	reg.byID[p.id] = p
+	restoreSavedCollab(p.id, kept)
 	return p, http.StatusOK, "", ""
 }
 

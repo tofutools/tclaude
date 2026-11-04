@@ -664,6 +664,10 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 	// A closed page saved in the group under this name is reopened by the
 	// show: it keeps its id and the operator's lock.
 	savedID, savedLocked := savedPageFor(groupID, agentID, name)
+	var kept *db.GroupPageCollab
+	if savedID != "" {
+		kept = loadSavedCollab(savedID)
+	}
 
 	now := time.Now().UTC()
 	reg := livePages
@@ -726,6 +730,8 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 		p = &livePage{id: newPageID(), owner: agentID, name: name, shownAt: now}
 		if existing == nil && adopt == nil && savedID != "" && reg.byID[savedID] == nil {
 			p.id = savedID
+			// A closed saved page reopens with the marks and patches it kept.
+			restoreSavedCollab(p.id, kept)
 		}
 		if existing != nil {
 			// Another kind of source: a fresh origin (and token), so nothing
@@ -765,6 +771,15 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 	resp.ShareNote = shareNote
 	if regrouped {
 		forgetPageMarks(p.id)
+	}
+	if groupID != 0 {
+		// A page shown into its group from privately has patches nothing
+		// saved yet.
+		pageCollab.mu.Lock()
+		if s := pageCollab.byID[p.id]; s != nil {
+			savePatchesLocked(p.id, s)
+		}
+		pageCollab.mu.Unlock()
 	}
 
 	resp.Rules = pageRules(t.kind, resp.Group)
