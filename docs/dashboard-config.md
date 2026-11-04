@@ -137,6 +137,22 @@ Everything still lands in [Messages](dashboard-messages.md). See
 | Naming | Name the tmux session | `agent.spawn_label_from_name` | off |
 | Permissions | Default permissions | `agent.default_permissions` | empty |
 
+## Launch
+
+`/config/launch`: the relaunch policy, what a resume or reincarnation does with
+each launch input. It is not part of `config.json`: each change saves at once,
+with no Save step, and applies on each agent's next relaunch.
+
+The **Relaunch policy** table lists every launch input with the reason it
+behaves as it does. Group environment, group remote-control policy and sandbox
+profile contents have a **Re-resolve | Reuse** switch, and the harness-config
+posture has a three-way choice. Every other row shows its rule as a pill:
+**Copied at spawn**, **Fixed**, **Live**, **Re-read** or **Spawn only**.
+**Reset to defaults** puts every row back to its default. Changing the table
+needs `relaunch-policy.manage`. Without it, and always in a peer node's view,
+the table is read-only. What each mode means is in
+[Launch resolution](launch-resolution.md#relaunch-policy).
+
 ## Context & sessions
 
 `/config/context`: compaction, nudges, resume prompts and transcript retention.

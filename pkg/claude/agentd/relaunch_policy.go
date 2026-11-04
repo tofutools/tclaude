@@ -45,10 +45,16 @@ func currentRelaunchPolicy() launchspec.RelaunchPolicy {
 
 const harnessConfigField = "harness_config"
 
-// relaunchPolicyRead are the configurable rows a relaunch reads today. The
-// others are listed but refuse a stored answer until their slice wires them,
-// so no setting is accepted that would silently do nothing.
-var relaunchPolicyRead = map[string]bool{harnessConfigField: true}
+// relaunchPolicyRead are the configurable rows a relaunch reads today
+// (resume and reincarnate; relaunch_policy_apply.go). A configurable row not
+// listed here would refuse a stored answer until a relaunch reads it, so no
+// setting is accepted that would silently do nothing.
+var relaunchPolicyRead = map[string]bool{
+	harnessConfigField:          true,
+	groupEnvField:               true,
+	groupRemoteControlField:     true,
+	sandboxProfileContentsField: true,
+}
 
 // harnessConfigNarrower reports whether the chain's posture is narrower than
 // the explicit one: only an explicit write over a chain that keeps the
@@ -142,14 +148,68 @@ func relaunchPolicyView() []relaunchPolicyRowJSON {
 	return out
 }
 
+// relaunchFieldJSON is one launch-registry row as the Config tab shows it:
+// the configurable ones get a control from rows, the rest a read-only pill.
+type relaunchFieldJSON struct {
+	Key          string `json:"key"`
+	Label        string `json:"label"`
+	Layer        string `json:"layer"`
+	Relaunch     string `json:"relaunch"`
+	Configurable bool   `json:"configurable"`
+	Why          string `json:"why"`
+	Gap          string `json:"gap,omitempty"`
+}
+
+func relaunchFieldsView() []relaunchFieldJSON {
+	out := make([]relaunchFieldJSON, 0, len(launchspec.Fields))
+	for _, f := range launchspec.Fields {
+		out = append(out, relaunchFieldJSON{Key: f.Key, Label: f.Label, Layer: string(f.Layer),
+			Relaunch: f.Layer.Relaunch(), Configurable: f.Configurable, Why: f.Why, Gap: f.Gap})
+	}
+	return out
+}
+
+// relaunchPolicyFromPeer reports whether the request came from another
+// node's operator through federation (the peer view, a peer grant or a peer
+// action). Those mark the request remote-authed with a bare true; this
+// node's own remote-access listener stores a session instead.
+func relaunchPolicyFromPeer(r *http.Request) bool {
+	peer, _ := r.Context().Value(remoteAuthedCtxKey{}).(bool)
+	return peer || peerGrantFromRequest(r) != nil || peerActionFromRequest(r) != nil
+}
+
+// relaunchPolicyCanManage reports whether the caller could change the policy,
+// so the Config tab shows the table read-only when it could not. A peer
+// node's operator never can: the policy is this node's own (the peer view is
+// read-only, as for an unrestricted peer too).
+func relaunchPolicyCanManage(r *http.Request) bool {
+	if relaunchPolicyFromPeer(r) {
+		return false
+	}
+	if callerIsHuman(r) {
+		return true
+	}
+	p := peerFromContext(r.Context())
+	return p != nil && p.ConvID != "" && standingPermissionAllows(p.ConvID, PermRelaunchPolicyManage, ActionContext{})
+}
+
+func relaunchPolicyResponse(r *http.Request) map[string]any {
+	return map[string]any{"scope": launchspec.ScopeGlobal, "rows": relaunchPolicyView(),
+		"fields": relaunchFieldsView(), "can_manage": relaunchPolicyCanManage(r)}
+}
+
 // serveRelaunchPolicy is GET (open) and PUT {field, mode} (relaunch-policy.manage)
 // of /v1/relaunch-policy. An empty mode, or the field's default, clears the
 // stored row.
 func serveRelaunchPolicy(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, map[string]any{"scope": launchspec.ScopeGlobal, "rows": relaunchPolicyView()})
+		writeJSON(w, http.StatusOK, relaunchPolicyResponse(r))
 	case http.MethodPut:
+		if relaunchPolicyFromPeer(r) {
+			writeError(w, http.StatusForbidden, "peer_read_only", "the relaunch policy is this node's own; another node's operator can read it but not change it")
+			return
+		}
 		caller, ok := requirePermission(w, r, PermRelaunchPolicyManage)
 		if !ok {
 			return
@@ -193,7 +253,7 @@ func serveRelaunchPolicy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		setAuditTargetLabel(r, fmt.Sprintf("relaunch policy %s: %s → %s", field, before, mode))
-		writeJSON(w, http.StatusOK, map[string]any{"scope": launchspec.ScopeGlobal, "rows": relaunchPolicyView()})
+		writeJSON(w, http.StatusOK, relaunchPolicyResponse(r))
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET or PUT")
 	}

@@ -22,8 +22,8 @@ func TestDefaultRelaunchPolicyReResolvesEveryConfigurableRow(t *testing.T) {
 		assert.Equal(t, want, r.Mode, r.Field)
 		keys = append(keys, r.Field)
 	}
-	assert.ElementsMatch(t, []string{"group_env", "group_remote_control", "group_startup_context",
-		"sandbox_profile_contents", "role_contents", "harness_config"}, keys)
+	assert.ElementsMatch(t, []string{"group_env", "group_remote_control",
+		"sandbox_profile_contents", "harness_config"}, keys)
 }
 
 func TestRelaunchPolicyReResolves(t *testing.T) {
@@ -39,7 +39,7 @@ func TestRelaunchPolicyReResolves(t *testing.T) {
 	}{
 		{empty, "group_env", true},
 		{reuseEnv, "group_env", false},
-		{reuseEnv, "group_startup_context", true},
+		{reuseEnv, "group_remote_control", true},
 		{empty, "group_sandbox_assignment", true},
 		{empty, "usage_profile_contents", true},
 		{empty, "group_access", true},

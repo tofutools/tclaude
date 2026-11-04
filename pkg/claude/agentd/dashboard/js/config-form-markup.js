@@ -10,6 +10,7 @@ import { FormFillBar } from './form-fill-bar.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { KnowledgeSourceRow } from './knowledge-source-island.js';
 import { ExternalStewardManager } from './config-external-stewards.js';
+import { RelaunchPolicyTable } from './relaunch-policy-table.js';
 import { RemoteAdminPanel } from './remote-admin.js';
 import { StewardDefaultPermissions } from './steward-default-permissions.js';
 import { dashboardState } from './snapshot-store.js';
@@ -172,6 +173,7 @@ export const CONFIG_PANELS = Object.freeze([
   { id: 'voice', icon: '🎙️', title: 'Voice', lede: 'Spoken phrases and the opt-in hands-free settings for dictating to terminals and chat windows. Hands-free settings are off by default.' },
   { id: 'notifications', icon: '🔔', title: 'Notifications', lede: 'When and how tclaude tells you an agent needs attention. Everything still lands in the Messages tab.' },
   { id: 'agents', icon: '🤖', title: 'Agents & spawning', lede: 'Group joining, spawn guardrails, naming and the permissions every agent starts with.' },
+  { id: 'launch', icon: '🚀', title: 'Launch', lede: 'What a resume or reincarnation does with each launch input, and why. Explicit flags always stay, and a resume never fails: a value that no longer applies falls back to the stored one with a warning.' },
   { id: 'context', icon: '🧠', title: 'Context & sessions', lede: 'Compaction, context nudges, resume prompts and how long Claude Code keeps transcripts.' },
   { id: 'costs', icon: '💲', title: 'Usage & costs', lede: 'Cost display, WHAT-IF estimates, subscription usage bars and rate-limit gating.' },
   { id: 'assistants', icon: '💬', title: 'Ask & scribe', lede: 'Defaults for tclaude ask and for the scribe agents behind the 🤖 Edit with agent buttons.' },
@@ -764,6 +766,14 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           summary="Permission slugs granted to every agent.">
           <${StringList} id="cfg-agent-permissions" values=${lists['cfg-agent-permissions']} datalist="cfg-slug-list" placeholder="permission slug" onChange=${onListChange} />
         </${Setting}>
+      </${Group}>
+    </${Panel}>
+
+    <${Panel} id="launch" active=${active}>
+      <${Group} title="Relaunch policy" lede=${html`One answer per configurable row, for every agent. Re-resolve reads the
+        current value; Reuse keeps the one stored at the agent's last launch. The other rows follow their layer. See${' '}
+        <code>docs/launch-resolution.md</code>, or <code>tclaude agent relaunch-policy show</code>.`}>
+        <${RelaunchPolicyTable} />
       </${Group}>
     </${Panel}>
 

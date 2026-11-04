@@ -65,9 +65,8 @@ type Field struct {
 	Label string
 	Layer Layer
 	// Configurable marks the rows the relaunch policy can set (operator
-	// decisions Q9 and Q11): group env, group remote-control policy, group
-	// startup context and mission, referenced sandbox profile and role
-	// contents, and the harness-config posture.
+	// decisions Q9 and Q11): group env, group remote-control policy,
+	// referenced sandbox profile contents, and the harness-config posture.
 	Configurable bool
 	// Modes are the relaunch modes a configurable row offers, the default
 	// first. Empty means re-resolve (default) or reuse.
@@ -217,14 +216,17 @@ var Fields = []Field{
 	{Key: "group_env", Label: "Group environment", Layer: LayerGroup, Configurable: true,
 		GroupFields: []string{"Environment"},
 		Why:         "Group settings are kept current, for agents spawned before this table too (operator decision).",
-		Gap:         "With agentd down, watch mode and conv resume reuse the stored group environment, and say so."},
+		Gap:         "With agentd down, watch mode and conv resume reuse the stored group environment, and say so; a clone re-reads it whatever the policy says."},
 	{Key: "group_remote_control", Label: "Group remote-control policy", Layer: LayerGroup, Configurable: true,
 		GroupFields: []string{"RemoteControl"},
-		Why:         "Group settings are kept current; still clamped to what the harness supports.",
-		Gap:         "Resume reuses the remote-control setting stored at the last launch."},
-	{Key: "group_startup_context", Label: "Group startup context and mission", Layer: LayerGroup, Configurable: true,
+		Why: "Group settings are kept current: a policy the group sets applies on relaunch, unless the spawn gave remote control explicitly " +
+			"(a dashboard spawn always does: its checkbox is sent as set); with no group policy the agent keeps its last state, " +
+			"live toggles included. Still clamped to what the harness supports.",
+		Gap: "Watch mode, conv resume and clone keep the remote-control state stored at the last launch, whatever the policy says (only resume and reincarnate read this row)."},
+	{Key: "group_startup_context", Label: "Group startup context and mission", Layer: LayerLive,
 		GroupFields: []string{"DefaultContext", "Mission", "MissionHeader"},
-		Why:         "Group settings are kept current; re-injection after compaction reads them live."},
+		Why: "Delivered in the opening brief; a resume keeps the conversation that holds it, so there is nothing to relaunch. " +
+			"Re-injection after compaction reads the group's current text."},
 	{Key: "group_sandbox_assignment", Label: "Group and workspace sandbox-profile assignment", Layer: LayerGroup,
 		GroupFields: []string{"SandboxProfile", "SandboxProfileID"},
 		Why:         "Which profile a group or the workspace assigns is a setting, kept current.",
@@ -233,10 +235,10 @@ var Fields = []Field{
 	// --- contents of referenced profiles ---
 	{Key: "sandbox_profile_contents", Label: "Sandbox profile contents", Layer: LayerReferenced, Configurable: true,
 		Why: "Edits to a sandbox profile take effect on the next relaunch (operator decision).",
-		Gap: "With agentd down, watch mode and conv resume reuse the stored contents, and say so."},
-	{Key: "role_contents", Label: "Role definitions (text)", Layer: LayerReferenced, Configurable: true,
-		Why: "A role is a named entry in the shared registry; edits to it take effect on relaunch and re-injection.",
-		Gap: "Re-injection after compaction still uses the role text resolved at spawn."},
+		Gap: "With agentd down, watch mode and conv resume reuse the stored contents, and say so; a clone re-reads them whatever the policy says."},
+	{Key: "role_contents", Label: "Role definitions (text)", Layer: LayerSpawnCopy,
+		Why: "The role text is delivered in the opening brief, and re-injection after compaction repeats the text resolved at spawn, " +
+			"so an edit to a role reaches new spawns only."},
 	{Key: "harness_config", Label: "Harness config posture", Layer: LayerReferenced, Configurable: true,
 		Modes:         []RelaunchMode{ModeExplicitWins, ModeTightenOnly, ModeChainWins},
 		RequestFields: []string{"HarnessConfig"},
