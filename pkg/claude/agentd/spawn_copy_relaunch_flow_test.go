@@ -321,3 +321,18 @@ func TestSpawnCopyRelaunch_RefusesAnUnconfinedApproval(t *testing.T) {
 	assert.Equal(t, "unconfined_approval", kind, msg)
 	assert.JSONEq(t, before, relaunchProfileJSON(t, spawn.ConvID))
 }
+
+// A retired agent is refused: it will not launch again.
+func TestSpawnCopyRelaunch_RefusesARetiredAgent(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	spawn := spawnStopped(t, f, "alpha", map[string]any{"name": "gone"})
+	agentID := agentIDFor(t, spawn.ConvID)
+	_, err := db.RetireAgentByID(agentID, "test", "retired")
+	require.NoError(t, err)
+	before := relaunchProfileJSON(t, spawn.ConvID)
+
+	kind, _ := agentd.ApplySpawnCopyForTest(agentID, db.AgentSpawnCopy{})
+	assert.Equal(t, "agent_retired", kind)
+	assert.Equal(t, before, relaunchProfileJSON(t, spawn.ConvID))
+}

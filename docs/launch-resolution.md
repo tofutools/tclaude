@@ -197,7 +197,7 @@ The rules above are the specification. These rows do not follow it yet:
 
 - **Model** (`model`): No resume path takes a model flag yet; only a morph changes it.
 - **Reasoning effort** (`effort`): No resume path takes an effort flag yet; only a morph changes it.
-- **Model proxy** (`model_proxy`): Reincarnate and clone drop the model proxy.
+- **Model proxy** (`model_proxy`): Reincarnate and clone drop the model proxy. A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
 - **Include group startup context** (`include_group_context`): A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
 - **Profile and explicit environment** (`profile_env`): A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
 - **Profile startup context** (`profile_startup_context`): A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.

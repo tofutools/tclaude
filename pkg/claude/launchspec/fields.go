@@ -117,7 +117,7 @@ var Fields = []Field{
 	{Key: "model_proxy", Label: "Model proxy", Layer: LayerSpawnCopy,
 		ProfileFields: []string{"ModelProxy"}, RequestFields: []string{"ModelProxy"},
 		Why: "Part of the spawn profile copy.",
-		Gap: "Reincarnate and clone drop the model proxy."},
+		Gap: "Reincarnate and clone drop the model proxy. A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn."},
 	{Key: "sandbox_mode", Label: "Sandbox mode", Layer: LayerSpawnCopy,
 		ProfileFields: []string{"Sandbox"}, RequestFields: []string{"HarnessBuiltinMode"},
 		Why: "Part of the spawn profile copy."},

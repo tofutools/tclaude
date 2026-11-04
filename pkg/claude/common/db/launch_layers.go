@@ -288,7 +288,7 @@ func AgentRelaunchProfileRaw(agentID string) (*AgentRelaunchProfile, string, err
 // replaces the copy. expectRaw is the relaunch profile the resolution was
 // computed from (AgentRelaunchProfileRaw); if it changed meanwhile, nothing is
 // written and ErrRelaunchProfileChanged is returned.
-func ApplyAgentSpawnCopy(agentID, expectRaw string, profile AgentRelaunchProfile, spawnCopy AgentSpawnCopy) error {
+func ApplyAgentSpawnCopy(agentID, convID, expectRaw string, profile AgentRelaunchProfile, spawnCopy AgentSpawnCopy) error {
 	agentID = strings.TrimSpace(agentID)
 	encoded, err := encodeRelaunchProfile(profile)
 	if err != nil {
@@ -303,8 +303,9 @@ func ApplyAgentSpawnCopy(agentID, expectRaw string, profile AgentRelaunchProfile
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	res, err := tx.Exec(`UPDATE agents SET relaunch_profile = ? WHERE agent_id = ? AND relaunch_profile = ?`,
-		encoded, agentID, expectRaw)
+	res, err := tx.Exec(`UPDATE agents SET relaunch_profile = ?
+		WHERE agent_id = ? AND current_conv_id = ? AND relaunch_profile = ?`,
+		encoded, agentID, convID, expectRaw)
 	if err != nil {
 		return err
 	}

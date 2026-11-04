@@ -3113,16 +3113,23 @@ func requestTargetActionApproval(w http.ResponseWriter, r *http.Request, perm, a
 // pickAliveSession returns the most-recent session row for convID
 // whose tmux session is still alive. Same selector as queued mail delivery.
 func pickAliveSession(convID string) *db.SessionRow {
+	alive, _ := pickAliveSessionStrict(convID)
+	return alive
+}
+
+// pickAliveSessionStrict is pickAliveSession for a caller that must not read a
+// failed lookup as "stopped": the lookup error is returned.
+func pickAliveSessionStrict(convID string) (*db.SessionRow, error) {
 	candidates, err := db.FindSessionsByConvID(convID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	for _, c := range candidates {
 		if c.TmuxSession != "" && session.IsTmuxSessionAlive(c.TmuxSession) {
-			return c
+			return c, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // armRemoteControlOnNewRow tags a freshly-relaunched session row's best-known

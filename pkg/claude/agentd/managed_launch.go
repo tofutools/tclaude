@@ -249,7 +249,7 @@ func resolveSpawnCopyRelaunch(g *db.AgentGroup, spawnerConv, harnessName string,
 	// profile sets; the first pass shows which of them the copy really owns.
 	candidate := make([]bool, len(spawnCopyRelaunchFields))
 	for i, f := range spawnCopyRelaunchFields {
-		if _, ok := explicit[f.key]; !ok {
+		if _, ok := explicit[f.key]; !ok && !f.seedOnly {
 			candidate[i] = f.copySets(profiles)
 		}
 	}
@@ -307,6 +307,9 @@ type spawnCopyRelaunchField struct {
 	relaunch string
 	with     []string
 	seed     func(p *spawnParams, v any)
+	// seedOnly fields are fed back from the stored profile but never taken
+	// from a copy: applying them needs a gate this path cannot run yet.
+	seedOnly bool
 }
 
 // copySets reports whether any copied profile sets the field.
@@ -361,7 +364,10 @@ func (f spawnCopyRelaunchField) take(dst, src *db.AgentRelaunchProfile) {
 // applyDefaultProfile does not resolve it. The opt-in toggles are seeded only
 // when on, the only state a caller can request.
 var spawnCopyRelaunchFields = []spawnCopyRelaunchField{
-	{key: "model_proxy", profile: "ModelProxy", relaunch: "ModelProxy",
+	// The model proxy is not re-applied yet: a first spawn gates it on the
+	// spawner's models.proxy grant, which is judged per request and this
+	// path does not carry one. It keeps the value from the first spawn.
+	{key: "model_proxy", profile: "ModelProxy", relaunch: "ModelProxy", seedOnly: true,
 		seed: func(p *spawnParams, v any) { p.ModelProxy = v.(string) }},
 	{key: "sandbox_mode", profile: "Sandbox", relaunch: "HarnessBuiltinMode", with: []string{"HarnessBuiltinModeSource"},
 		seed: func(p *spawnParams, v any) { p.HarnessBuiltinMode = v.(string) }},
