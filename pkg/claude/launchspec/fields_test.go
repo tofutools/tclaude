@@ -1,3 +1,5 @@
+//ci:reads docs/launch-resolution.md
+
 package launchspec_test
 
 import (
