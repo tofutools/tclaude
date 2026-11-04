@@ -293,6 +293,63 @@ func TestHarnessConfigFloorCoversCodexManagedProfile(t *testing.T) {
 		filepath.Join(home, ".codex", harness.CodexAgentProfile+".config.toml"))
 }
 
+// Codex's "always allow" appends a prefix_rule to rules/default.rules, and
+// every later session loads it, unsandboxed ones included (tcl-3n3t8l). The
+// directory is floored by default, even when the host has none yet, and an
+// explicit write row at exactly that path reopens it alone.
+func TestHarnessConfigFloorCoversCodexExecPolicyRules(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
+	cwd := filepath.Join(home, "work")
+	require.NoError(t, os.MkdirAll(cwd, 0o700))
+	codexHome := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(codexHome, 0o700))
+	rules := filepath.Join(codexHome, "rules")
+	build := func(effective sandboxpolicy.EffectiveProfile) TclaudeLayerLaunchSpec {
+		t.Helper()
+		snapshot := sandboxpolicy.EmptySnapshot()
+		snapshot.Effective = effective
+		spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+			HarnessName: harness.CodexName,
+			Cwd:         cwd,
+			Snapshot:    &snapshot,
+		})
+		require.NoError(t, err)
+		return spec
+	}
+
+	t.Run("floored by default", func(t *testing.T) {
+		spec := build(sandboxpolicy.EffectiveProfile{})
+		assert.Contains(t, spec.Contract.HarnessConfigFloor, rules)
+		assert.Contains(t, spec.Contract.HarnessConfigFloorDirs, rules,
+			"an absent rules/ must be created, or the agent creates it writable")
+		require.NoError(t, PrepareTclaudeLayerHarnessState(spec))
+		assert.DirExists(t, rules)
+		access, covered := sandboxpolicy.EffectiveAccessAt(spec.Effective.Filesystem,
+			filepath.Join(rules, "default.rules"))
+		require.True(t, covered)
+		assert.Equal(t, sandboxpolicy.AccessRead, access)
+	})
+
+	t.Run("an exact write row reopens it alone", func(t *testing.T) {
+		spec := build(sandboxpolicy.EffectiveProfile{
+			Filesystem: []sandboxpolicy.FilesystemGrant{
+				{Path: rules, Access: sandboxpolicy.AccessWrite},
+			},
+		})
+		assert.NotContains(t, spec.Contract.HarnessConfigFloor, rules)
+		assert.Contains(t, spec.Contract.HarnessConfigFloor,
+			filepath.Join(codexHome, "hooks"),
+			"reopening rules/ must not disarm the rest")
+		access, covered := sandboxpolicy.EffectiveAccessAt(spec.Effective.Filesystem,
+			filepath.Join(rules, "default.rules"))
+		require.True(t, covered)
+		assert.Equal(t, sandboxpolicy.AccessWrite, access)
+	})
+}
+
 // A symlinked entry cannot be floored faithfully: binding the resolved target
 // leaves the NAME an ordinary symlink inside the writable state root, which
 // the agent can unlink and replace with a real directory. Skipping is the

@@ -426,6 +426,8 @@ history, account/onboarding data. The same tree also holds the harness's
   Codex's `harness-builtin` confinement.
 - A hook, skill, agent, or command dropped under `~/.claude/hooks` (and
   friends) runs in the human's **next, unsandboxed** session.
+- An allow rule appended to `~/.codex/rules/default.rules` pre-approves a
+  command for every later Codex session, unsandboxed ones included.
 
 So tclaude binds a closed per-harness catalog of those paths read-only by
 default, creating missing directories first — an absent `~/.claude/hooks` under a
@@ -437,7 +439,7 @@ bubblewrap and Seatbelt.
 | harness | floored |
 |---|---|
 | claude | `hooks/`, `skills/`, `agents/`, `commands/`, `output-styles/`, `plugins/`, `workflows/`, `routines/`, `rules/`, `local/`, `cowork_plugins/`, `settings.json`, `settings.local.json`, `CLAUDE.md`, `keybindings.json` |
-| codex | `hooks/`, `prompts/`, `config.toml`, `hooks.json`, `AGENTS.md`, `tclaude-agent.config.toml` |
+| codex | `hooks/`, `prompts/`, `rules/`, `config.toml`, `hooks.json`, `AGENTS.md`, `tclaude-agent.config.toml` |
 | copilot | `hooks/`, `settings.json`, `config.json`, `mcp-config.json` |
 | gemini | `extensions/`, `commands/`, `skills/`, `agents/`, `policies/`, `settings.json`, `.env`, `trustedFolders.json`, `trusted_hooks.json`, `policy_integrity.json`, `GEMINI.md` |
 | pi | nothing — a walled pi runs against tclaude's walled copy of its agent directory (`~/.tclaude/pi-agent`), and the operator's agent directory is read-only as a whole apart from its session store; see [pi](harnesses.md#pi) |
@@ -464,8 +466,10 @@ the real directory — if you want it floored.
 **What it costs.** Unlike Claude Code's Bash-only deny list, a bubblewrap
 read-only bind blocks everyone inside the wall, the harness process included.
 In-pane writes to a floored file therefore fail: Claude Code's `/config` and
-user-scope `/permissions`, Codex's `/model` persistence, Copilot's
-trust-folder record. `/model` and directory trust for Claude Code land in
+user-scope `/permissions`, Codex's `/model` persistence and its "don't ask
+again" command approvals (Codex warns that it could not save the rule and runs
+the approved command once; the next one asks again), Copilot's trust-folder
+record. `/model` and directory trust for Claude Code land in
 `.claude.json`, which stays writable.
 
 **Three escape hatches**, least blunt first:
