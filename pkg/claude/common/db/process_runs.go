@@ -1101,3 +1101,17 @@ func WipeProcessRuntimeData() (int64, error) {
 	}
 	return count, nil
 }
+
+// ListActiveGroupProcessRunSummaries returns up to limit runs scoped to
+// groupID that have not finished, as bounded metadata.
+func ListActiveGroupProcessRunSummaries(groupID int64, limit int) ([]ProcessRunSummary, error) {
+	if limit <= 0 || limit > MaxProcessRunReadPage {
+		return nil, fmt.Errorf("%w: active-run page size must be 1..%d", ErrProcessRunInvalid, MaxProcessRunReadPage)
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	return queryProcessRunSummaries(d, `WHERE scope_group_id = ? AND status NOT IN ('completed', 'failed', 'canceled') ORDER BY id LIMIT ?`,
+		limit, groupID, limit)
+}

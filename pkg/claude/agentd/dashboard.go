@@ -1302,6 +1302,10 @@ type snapshotPayload struct {
 	// stage origin, whose token is the page's key: local dashboard only. A
 	// page's rev changes whenever it is shown or updated.
 	LivePages []pageView `json:"live_pages,omitempty"`
+	// GroupResources are every active group's pages, boards, processes and
+	// shell in one shape, with whether each is running (group_resources_snapshot.go).
+	// Local dashboard only, like LivePages.
+	GroupResources []groupResource `json:"group_resources,omitempty"`
 	// RemoteAccess surfaces the optional network-exposed dashboard listener's
 	// live state so the Config tab can guide setup: whether the cert/passphrase
 	// material has been generated (run `tclaude remote-access setup` first) and
@@ -4031,6 +4035,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// peer's snapshot, restricted or not.
 	if !isPeerSnapshot(r) {
 		out.LivePages = livePagesSnapshotFor(r)
+		out.GroupResources = groupResourcesSnapshot(groups, aliveSessions, cfg.ProcessesEnabled())
 	}
 	out.Templates = templates
 	out.Profiles = profiles

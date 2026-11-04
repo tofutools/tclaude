@@ -197,3 +197,27 @@ func ProcessTemplatePinnedGroups() (map[string][]string, error) {
 	}
 	return out, rows.Err()
 }
+
+// ListAllProcessGroupPins maps each group id to its pinned template ids, in
+// pin order: one query for every group.
+func ListAllProcessGroupPins() (map[int64][]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT group_id, template_id FROM process_group_pins ORDER BY group_id, position, template_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[int64][]string{}
+	for rows.Next() {
+		var groupID int64
+		var id string
+		if err := rows.Scan(&groupID, &id); err != nil {
+			return nil, err
+		}
+		out[groupID] = append(out[groupID], id)
+	}
+	return out, rows.Err()
+}

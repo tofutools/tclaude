@@ -78,6 +78,15 @@ The dashboard snapshot lists the open pages (`live_pages`), each with a revision
 that changes whenever the page is shown or updated, and the group it is shared
 in (`group_id`, `group`). The Page tab uses it.
 
+The snapshot's `group_resources` lists every active group's pages, boards,
+processes and shell in one shape (`kind`, `id`, `group_id`, `title`,
+`state`, `owner`, `detail`), where `state` is what the daemon knows:
+`running` (a page's stage is live, a process run is active, the group's
+shell is up) or `closed`. The dashboard adds what this browser has open
+(`resource-model.js`): open as a tab, floating, minimized, or a running page
+or shell in the background. Like `live_pages`, it is never in a peer's
+snapshot.
+
 ### Sharing a page with the group
 
 A page is shared in one agent group: the shower's only group, or the one it
