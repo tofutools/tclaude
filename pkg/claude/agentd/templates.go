@@ -775,6 +775,10 @@ type templateAgentLaunch struct {
 	// referenced profile), recorded as the deployed agent's spawn copy above
 	// the group and global defaults.
 	SpawnCopyTiers []db.SpawnCopyTier
+	// DefaultProfiles are the group and global default profiles this
+	// resolution read; the spawn resolves its remaining fields from the same
+	// ones rather than reading them again.
+	DefaultProfiles *pinnedDefaultProfiles
 	// IncludeGroupContext is whether the deploy folds the group's (template's)
 	// shared context into this agent's brief. On unless a profile tier — the
 	// referenced profile, or the group/global default — turns it off (TCL-1107).
@@ -1141,10 +1145,10 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 	// safety net — same group, same default profile, neither pinning anything —
 	// disagreed about SEVEN fields. TCL-1107 closed remote_control,
 	// auto_memory, peer_messaging, include_group_context and context_features:
-	// they resolve over these default tiers too, below. For
-	// sandbox/approval this resolver has already applied the harness secure
-	// default further down, so the ambient tier is dead before the safety net
-	// looks; those change CONTAINMENT and want their own decision.
+	// they resolve over these default tiers too, below. TCL-1119 (launch
+	// slice 5) closed the containment fields: sandbox mode and implementation,
+	// approval, tool governance and the SSH workaround resolve over the full
+	// stack before the harness default applies, as on a direct spawn.
 	//
 	// Gated up front on BOTH profiles rather than only the one that wins, so a
 	// deploy blocked by a profile the caller may not use fails with that reason
@@ -1234,10 +1238,14 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 	// spawn and the executeSpawn safety net (launch_value_fields.go). A
 	// template agent can only state model, effort, sandbox and approval; the
 	// rest come from the tiers alone.
+	// They walk the template's own tiers and then the group and global default
+	// profiles, the stack a direct spawn walks, so the harness defaults below
+	// apply only where no tier spoke.
+	allTiers := append(append([]launchProfileTier(nil), tiers...), defaultTiers...)
 	launchValues := launchValueResolution{Values: launchValueFields{
 		Model: a.Model, Effort: a.Effort, Sandbox: a.Sandbox, Approval: a.Approval,
 	}}
-	if fail := resolveLaunchValueFields(h, tiers, &launchValues, launchValueOptions{}); fail != nil {
+	if fail := resolveLaunchValueFields(h, allTiers, &launchValues, launchValueOptions{}); fail != nil {
 		notes = append(notes, launchValues.Notes()...)
 		return failed(fail)
 	}
@@ -1254,7 +1262,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 	// runs here; the host-capability gate belongs to the launch, which the deploy
 	// reaches by handing this value to the spawn boundary as an explicit request.
 	sandboxImplementation, sandboxImplementationSource, note, fail := resolveSandboxImplementationLaunchField(
-		h, "", tiers)
+		h, "", allTiers)
 	if fail != nil {
 		return failed(fail)
 	}
@@ -1323,7 +1331,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 	// group policy never did. A template has no explicit spelling for any of
 	// them. Unset everywhere keeps the old answers: the three toggles off, the
 	// group context included.
-	toggleTiers := append(append([]launchProfileTier(nil), tiers...), defaultTiers...)
+	toggleTiers := allTiers
 	var groupRemoteControl *bool
 	if g != nil {
 		groupRemoteControl = g.RemoteControl
@@ -1361,7 +1369,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 		return failed(fail)
 	}
 	// The SSH note is reported after the eligibility note below, as before.
-	sshNotes, fail := resolveLaunchBoolFields(h, tiers, &launchBools, launchBoolSSHWorkaround)
+	sshNotes, fail := resolveLaunchBoolFields(h, allTiers, &launchBools, launchBoolSSHWorkaround)
 	if fail != nil {
 		return failed(fail)
 	}
@@ -1402,8 +1410,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 	if ctxNote != "" {
 		notes = append(notes, ctxNote)
 	}
-	allEnvironmentTiers := append(append([]launchProfileTier(nil), tiers...), defaultTiers...)
-	environment, environmentOverrides, envErr := resolveCommonLaunchEnvironmentParts(g, allEnvironmentTiers, nil)
+	environment, environmentOverrides, envErr := resolveCommonLaunchEnvironmentParts(g, allTiers, nil)
 	if envErr != nil {
 		return failed(&spawnFailure{http.StatusBadRequest, "invalid_environment", envErr.Error()})
 	}
@@ -1436,6 +1443,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 		PeerMessaging:          peerMessaging,
 		IncludeGroupContext:    includeGroupContext,
 		UsageSpawnProfile:      refProfile,
+		DefaultProfiles:        &pinnedDefaultProfiles{group: groupProfile, global: globalProfile},
 		SpawnCopyTiers:         spawnCopyTiers(spawnCopyTier(db.SpawnCopyTierInline, inlineProfile), spawnCopyTier(db.SpawnCopyTierNamed, refProfile)),
 		SSHWorkaround:          sshWorkaround,
 		SSHWorkaroundSet:       sshWorkaroundSet,

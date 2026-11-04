@@ -176,6 +176,3 @@ The spawn paths also differ in which profile tiers they consult:
   prompts from its own profile alone. When the worker has roles or a startup
   context of its own, that also decides its startup context. A default profile
   therefore never confers permissions or ownership on a worker.
-- A template or task-force deploy applies the harness default for sandbox
-  mode, approval, tool governance and the SSH workaround before the group and
-  global default profiles are consulted, so those profiles cannot set them.
