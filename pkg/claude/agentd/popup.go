@@ -68,7 +68,7 @@ func startPopupServer(bindHost string, port int) (*http.Server, string, error) {
 			_ = ln.Close()
 			return nil, "", fmt.Errorf("bind mandatory loopback dashboard listener %s: %w", loopbackAddr, loopbackErr)
 		}
-		listeners = append(listeners, loopback)
+		listeners = append(listeners, registerStageDaemonListener(loopback))
 	}
 	mux := http.NewServeMux()
 	// The dashboard is the one human-facing surface on this listener — a

@@ -82,6 +82,31 @@ func TestStartPopupServer_ReleasesDaemonPortOnClose(t *testing.T) {
 		"a closed listener's port is no longer the daemon's")
 }
 
+// Two daemon listeners on one port (the dashboard's loopback listener beside a
+// non-loopback bind) keep it the daemon's until the last of them closes, and a
+// listener that never bound leaves nothing behind.
+func TestStageDaemonListener_PortHeldUntilLastClose(t *testing.T) {
+	first, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := first.Addr().(*net.TCPAddr).Port
+	second, err := net.Listen("tcp", "[::1]:"+strconv.Itoa(port))
+	if err != nil {
+		_ = first.Close()
+		t.Skipf("no IPv6 loopback for a second listener on port %d: %v", port, err)
+	}
+	a, b := registerStageDaemonListener(first), registerStageDaemonListener(second)
+	assert.True(t, isStageDaemonPort(port))
+	require.NoError(t, a.Close())
+	_ = a.Close() // a second close releases nothing more
+	assert.True(t, isStageDaemonPort(port), "the other listener still holds the port")
+	require.NoError(t, b.Close())
+	assert.False(t, isStageDaemonPort(port), "released once the last listener closed")
+
+	_, _, err = startPopupServer(defaultDashboardBind, 70000)
+	require.Error(t, err)
+	assert.False(t, isStageDaemonPort(70000), "a failed bind registers nothing")
+}
+
 // A fixed port that is free binds to exactly that port — the stable URL
 // the feature exists to provide.
 func TestStartPopupServer_FixedPort(t *testing.T) {
