@@ -50,6 +50,9 @@ type memberOpResult struct {
 	Detail   string   `json:"detail,omitempty"` // human-readable note (e.g. error message)
 	TmuxSes  string   `json:"tmux_session,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
+	// Changes is a resume's per-field echo of what its sandbox differs in
+	// from the one stored at the last launch (relaunchChanges).
+	Changes []string `json:"changes,omitempty"`
 	// Worktree is the optional worktree+branch cleanup outcome attached by
 	// a bulk retire that requested it (delete_worktree). nil on every other
 	// bulk op (stop/resume) and on a retire that did not ask for cleanup,
@@ -1817,6 +1820,7 @@ func resumeOneConvUnderLaunchLockForTeleport(convID string, recreateMissingDir b
 	}
 	resumePolicy, effectiveSandbox := prepared.policy, prepared.effective
 	res.Warnings = append(res.Warnings, prepared.warnings...)
+	res.Changes = prepared.changes
 	// This is a continuation of authority admitted at the initial spawn. The
 	// session launcher derives any repository grants from the current cwd and
 	// applies the current operator-authored sandbox profile; resume does not
@@ -3020,6 +3024,9 @@ func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string
 	}
 	if len(res.Warnings) > 0 {
 		resp["warnings"] = res.Warnings
+	}
+	if len(res.Changes) > 0 {
+		resp["changes"] = res.Changes
 	}
 	if caller != "" && caller != targetConv {
 		resp["caller_conv"] = caller

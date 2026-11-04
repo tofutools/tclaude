@@ -40,6 +40,13 @@ or moving the agent.
 (a profile was deleted, or no longer suits the harness), the relaunch falls
 back to the value stored at the last launch and says so.
 
+**A relaunch says what changed.** A resume or reincarnation lists, under
+"Changed since last launch", what its sandbox differs in from the one stored
+at the last launch: which sandbox profiles apply and whether one was edited,
+filesystem rules added or removed, environment and group environment
+variables added, removed or changed, network access, the filesystem root and
+the harness-config posture. It names variables, never their values.
+
 **Group permissions and owners are not launch inputs.** They apply to
 members at once, without a relaunch.
 

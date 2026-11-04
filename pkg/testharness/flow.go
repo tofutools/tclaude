@@ -1106,6 +1106,7 @@ type ResumeResp struct {
 	Action   string   `json:"action"`
 	Detail   string   `json:"detail,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
+	Changes  []string `json:"changes,omitempty"`
 	Code     int      `json:"-"`
 	Raw      []byte   `json:"-"`
 }
@@ -1232,6 +1233,7 @@ type ReincarnateResp struct {
 	Label       string   `json:"label"`
 	TmuxSession string   `json:"tmux_session"`
 	Warnings    []string `json:"warnings,omitempty"`
+	Changes     []string `json:"changes,omitempty"`
 	Code        int      `json:"-"`
 	Raw         []byte   `json:"-"`
 }

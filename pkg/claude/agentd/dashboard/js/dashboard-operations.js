@@ -532,7 +532,12 @@ export async function resumeAgentReq(conv, label, recreate, node = '', retried =
     clearPendingWake(conv);
     return false;
   }
-  toast(`wake ${label}: ${action || 'ok'}`);
+  // A relaunch's warnings (a fallback to the stored sandbox policy) and its
+  // changed-since-last-launch echo ride the same toast.
+  const notes = [...(out.warnings || []).map((w) => `⚠ ${w}`),
+    ...(out.changes || []).map((c) => `changed: ${c}`)];
+  toast(`wake ${label}: ${action || 'ok'}${notes.length ? ` — ${notes.join('; ')}` : ''}`,
+    (out.warnings || []).length > 0);
   announceNodeChanged(node);
   refresh();
   return true;

@@ -371,6 +371,9 @@ type relaunchSandbox struct {
 	policy    *resumeSandboxPolicy
 	effective *sandboxpolicy.Snapshot
 	warnings  []string
+	// changes is the per-field echo of what differs from the policy stored
+	// at the last launch (relaunchChanges).
+	changes []string
 }
 
 // prepareRelaunchSandbox resolves, validates and checks the sandbox a resume
@@ -462,6 +465,9 @@ func prepareRelaunchSandboxFrom(req relaunchSandboxRequest, useStored bool) (*re
 		return nil, cleanup(fail), true
 	}
 	out := &relaunchSandbox{policy: policy, effective: effective}
+	if policy != nil {
+		out.changes = relaunchChanges(policy.Previous, policy.Snapshot)
+	}
 	if effective != nil {
 		for _, notice := range effective.Effective.AccessNotices {
 			out.warnings = append(out.warnings, notice.Detail)

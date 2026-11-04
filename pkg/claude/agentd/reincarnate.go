@@ -418,16 +418,16 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		convID: target, sshLaunchKey: label,
 		sshWorkaround: relaunch.SSHWorkaround, copilotAPI: relaunch.CopilotAPI,
 		harness: relaunch.Harness, builtinMode: reincarnateSandbox,
-		implementation: reincarnateSandboxImplementation,
+		implementation:       reincarnateSandboxImplementation,
 		temporaryBuiltinMode: relaunch.TemporaryHarnessBuiltinMode,
-		transport: session.ModelTransportLaunchContext{Model: model, Cwd: cwd},
+		transport:            session.ModelTransportLaunchContext{Model: model, Cwd: cwd},
 	})
 	if sandboxFail != nil {
 		writeError(w, sandboxFail.Status, sandboxFail.Kind, sandboxFail.Msg)
 		return
 	}
 	relaunchPolicy, effectiveSandbox := prepared.policy, prepared.effective
-	relaunchWarnings := prepared.warnings
+	relaunchWarnings, relaunchChanged := prepared.warnings, prepared.changes
 	// Reincarnation refreshes the target's policy through the same resolver as
 	// resume. Persist it before launch so the actor's durable snapshot and the
 	// successor's launch snapshot move together; every failure before identity
@@ -989,6 +989,9 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	}
 	if len(relaunchWarnings) > 0 {
 		resp["warnings"] = relaunchWarnings
+	}
+	if len(relaunchChanged) > 0 {
+		resp["changes"] = relaunchChanged
 	}
 	if caller != target {
 		resp["caller_conv"] = caller
