@@ -151,7 +151,9 @@ only set a default profile whose grants it could confer itself: one that sets
 permission overrides, or names roles with grants, takes `permissions.grant`
 and grants no wider than the agent's own. A profile that makes its spawns
 owners takes `groups.owners.manage` for the group. Owning the group is not
-enough for either.
+enough for either. This checks only who picks the default: anyone with
+`profiles.manage` or `roles.manage` can still change what an existing
+default profile, or a role it names, grants.
 Membership transfers are recorded in the [audit
 trail](permissions-and-audit.md).
 
