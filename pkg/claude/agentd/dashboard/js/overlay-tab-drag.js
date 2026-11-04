@@ -74,7 +74,12 @@ function collabAt(doc, { x, y }, through, ids) {
   const top = [...(doc?.elementsFromPoint?.(x, y) || [])].find((element) => !element.closest?.('.window-resize-frame') && (!through || windowOf(element) !== through));
   if (top?.closest?.(COLLAB_NAV)) return { nav: true };
   const strip = top?.closest?.('[data-collab-strip]');
-  if (!strip) return null;
+  return strip ? collabStripLanding(strip, x) : null;
+}
+
+// collabStripLanding is where on the Collab strip a drop at x lands: before the
+// tab under it, after the last, or { beside: '' } on an empty strip.
+export function collabStripLanding(strip, x) {
   const nodes = [...strip.querySelectorAll('.mux-tab[data-pane-key]')];
   if (!nodes.length) return { beside: '', after: false };
   const at = dropIndex(nodes.map((node) => node.getBoundingClientRect()), x);

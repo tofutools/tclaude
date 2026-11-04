@@ -29,11 +29,23 @@ To use the rail:
   chips: All, Open, Minimized, Background and Closed.
 - **Open it:** click it. An item that is already open comes forward; a closed
   page reopens.
+- **Drag it onto the tab strip:** it opens as a tab where you drop it. A tab
+  moves there; a window's tab joins the strip.
+- **Drag it anywhere else:** it floats in a window where you drop it. A
+  terminal that cannot float stays a tab.
 - **Hover a tab:** pop it out, or close it.
 - **Hover a window:** minimize it, or close it.
 
 Closing a tab moves the item to Closed or Background, so it stays listed.
 **«** folds the rail to its icons; this browser remembers the choice.
+
+## The home
+
+With no tab open on the strip, the Collab view shows the same items as tiles,
+by group, each with its state pill. Click a tile to open it, or drag it the
+way you drag a rail item: onto the strip (or the tiles) for a tab, anywhere
+else for a window. With nothing to list, the view says how to open a
+terminal instead.
 
 ## Opening a terminal
 

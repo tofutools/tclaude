@@ -752,3 +752,25 @@ body.wizard .mux-bg-pop { background: #1b1329; border-color: #4a3a6b; }
 .collab-rail.collapsed .cr-item.cr-open .cr-glyph { color: #58a6ff; }
 .collab-rail.collapsed .cr-item.cr-minimized .cr-glyph { color: #d29922; }
 .collab-rail.collapsed .cr-item.cr-background .cr-glyph { color: #3fb950; }
+.collab-rail .cr-item[draggable="true"] { cursor: grab; }
+
+/* The Collab home (collab-home.js): the empty strip's tiles, by group. */
+.collab-home { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 24px 28px; }
+.collab-home .ch-head { display: flex; flex-direction: column; gap: 4px; color: var(--ui-muted-text); }
+.collab-home .ch-section { display: flex; flex-direction: column; gap: 8px; }
+.collab-home .ch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.collab-home .ch-tile { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px 12px; cursor: grab; }
+.collab-home .ch-tile:hover { border-color: #58a6ff; }
+.collab-home .ch-open { display: flex; align-items: flex-start; gap: 10px; width: 100%; background: none; border: 0; padding: 0; color: var(--ui-body-text);
+  cursor: pointer; text-align: left; font: inherit; }
+.collab-home .ch-glyph { flex: none; font-size: 20px; line-height: 1; color: var(--ui-muted-text); }
+.collab-home .ch-open .ch-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.collab-home .ch-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.collab-home .ch-kind { font-size: 11px; color: var(--ui-muted-text); }
+.collab-home .ch-is-closed .ch-title { color: var(--ui-muted-text); font-weight: 400; }
+.collab-home .ch-is-open .ch-glyph { color: #58a6ff; }
+.collab-home .ch-is-closed .ch-glyph { color: var(--ui-muted-text); }
+.collab-home .ch-is-background .ch-glyph { color: #3fb950; }
+.collab-home .ch-is-minimized .ch-glyph { color: #d29922; }
+/* A frame would take a rail drag passing over it; while one lasts, frames let it through. */
+body.rail-dragging iframe { pointer-events: none; }
