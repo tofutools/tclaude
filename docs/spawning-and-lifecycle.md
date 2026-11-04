@@ -587,7 +587,11 @@ comes from. A groups clone launches every member under the new group's.
 `--cwd <dir>` starts the clone in another
 directory, typically a git worktree; an agent caller must prove it can write
 there. A clone records no spawn lineage, so `@self-spawned` and `@descendants`
-grants never reach it through the agent that cloned it.
+grants never reach it through the agent that cloned it. It does carry its
+source's launch record: what the source set explicitly at spawn stays explicit
+for the clone, a re-applied spawn profile treats both alike, and after a
+compaction the clone is re-briefed as its source would be (the same group
+context choice and profile startup context).
 
 Agent-initiated clones are rate-limited by the daemon's clone cooldown
 (default one minute).

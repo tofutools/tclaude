@@ -244,6 +244,19 @@ func SetAgentLaunchLayers(agentID string, layers *AgentLaunchLayers) error {
 	return err
 }
 
+// CopyAgentLaunchLayers gives a clone its source's launch layers whole: the
+// spawn copy, the explicit values and any relaunch overrides. A clone is the
+// source's launch as a new agent, so what was explicit for the source stays
+// explicit for it, and a re-applied spawn copy treats both alike. A source
+// without layers leaves the clone without them. It reports whether it copied.
+func CopyAgentLaunchLayers(sourceAgentID, cloneAgentID string) (bool, error) {
+	layers, err := AgentLaunchLayersFor(sourceAgentID)
+	if err != nil || layers == nil {
+		return false, err
+	}
+	return true, SetAgentLaunchLayers(cloneAgentID, layers)
+}
+
 // SetAgentLaunchLayersIfUnset records an agent's launch layers unless it
 // already has some, and reports whether it wrote them. The layers are taken
 // once: whichever code path created the agent row (the spawn itself, a

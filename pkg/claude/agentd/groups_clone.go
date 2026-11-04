@@ -382,6 +382,10 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			results = append(results, memberResult{SrcConv: m.ConvID, NewConv: newConv, Title: newTitle, Label: label, Error: "persist sandbox snapshot: " + err.Error()})
 			continue
 		}
+		if err := inheritLaunchRecord(m.ConvID, newConv, newGroupID, 0); err != nil {
+			results = append(results, memberResult{SrcConv: m.ConvID, NewConv: newConv, Title: newTitle, Label: label, Error: "persist launch record: " + err.Error()})
+			continue
+		}
 		// Rename the clone to its computed title, materialising the
 		// .jsonl — same post-init the per-conv clone path runs. A group clone
 		// carries no follow-up, so it is never launch-enrolled (a name-only
