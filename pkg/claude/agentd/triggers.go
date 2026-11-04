@@ -766,9 +766,9 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 	if len(roleRefs) > 0 {
 		request.StateRoleRefs(roleRefs)
 	}
+	tiers := defaultLaunchTiers(g, profile, profileSource(profile, agent.ProvCLIProfileSource))
 	identity, fail := resolveLaunchIdentity(launchIdentityRequest{body: request, group: g,
-		harness: harnessOrDefault(profile.Harness), spawner: ownerConv,
-		tiers: defaultLaunchTiers(g, profile, profileSource(profile, agent.ProvCLIProfileSource))})
+		harness: harnessOrDefault(profile.Harness), spawner: ownerConv, tiers: tiers})
 	if fail != nil {
 		return nil, managedIdentityFailureKind(fail.Kind), fail.Msg
 	}
@@ -801,7 +801,10 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 		// global default profile, for every launch field: identity above, the
 		// rest in applyDefaultProfile. With no tier speaking, the group context
 		// is included, as it always was for these workers.
-		IncludeGroupContextDefault: true}
+		IncludeGroupContextDefault: true,
+		// The default profiles identity resolved from, so the launch fields
+		// resolve from the same versions.
+		defaultProfiles: &pinnedDefaultProfiles{group: tiers[1].profile, global: tiers[2].profile}}
 	if fail := resolveManagedLaunch(g, &p, ownerConv, false); fail != nil {
 		if fail.Kind == "io" || fail.Kind == "permission_denied" || isManagedProfileRefusal(fail.Kind) {
 			return nil, fail.Kind, fail.Msg

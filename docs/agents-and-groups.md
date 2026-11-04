@@ -145,6 +145,13 @@ of settings verbs — `set-context`, `set-default-dir`,
 `archive`/`unarchive`, `clone`, bulk `stop`/`resume`/`retire`, `rebrief`,
 `export`/`import` (human-only by default; `groups.export` and `groups.import`), persistent `attachment` reference links,
 and `nest` (dashboard tree cosmetics only — nesting inherits nothing).
+A group's default spawn profile applies to every spawn into the group,
+including the workers of its triggers, schedules and processes. An agent may
+only set a default profile whose grants it could confer itself: one that sets
+permission overrides, or names roles with grants, takes `permissions.grant`
+and grants no wider than the agent's own. A profile that makes its spawns
+owners takes `groups.owners.manage` for the group. Owning the group is not
+enough for either.
 Membership transfers are recorded in the [audit
 trail](permissions-and-audit.md).
 

@@ -115,8 +115,8 @@ func spawnedOwner(t *testing.T, f *testharness.Flow) string {
 }
 
 // ownerTriggerOn stores a PR-opened spawn trigger on group, owned by owner's
-// agent, whose worker launches from profile "reviewer".
-func ownerTriggerOn(t *testing.T, f *testharness.Flow, group, owner string) int64 {
+// agent, whose worker launches from profile "reviewer" with roleRefs.
+func ownerTriggerOn(t *testing.T, f *testharness.Flow, group, owner string, roleRefs ...string) int64 {
 	t.Helper()
 	g, err := db.GetAgentGroupByName(group)
 	require.NoError(t, err)
@@ -128,7 +128,7 @@ func ownerTriggerOn(t *testing.T, f *testharness.Flow, group, owner string) int6
 		ScopeKind: db.TriggerScopeGroup, GroupID: g.ID, Source: db.TriggerSourcePROpened,
 		DraftFilter: db.TriggerDraftExclude, Actions: []db.TriggerAction{{Type: db.TriggerActionSpawn,
 			Spawn: &db.TriggerSpawnAction{Profile: "reviewer", NameTemplate: "review-{{pr.number}}",
-				InstructionTemplate: "Review {{pr.url}}.", MaxLiveWorkers: 5}}}})
+				InstructionTemplate: "Review {{pr.url}}.", MaxLiveWorkers: 5, RoleRefs: roleRefs}}}})
 	require.NoError(t, err)
 	return ruleID
 }

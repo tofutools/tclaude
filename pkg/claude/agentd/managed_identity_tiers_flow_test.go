@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 // A trigger, schedule or process worker takes its roles, role label,
@@ -122,7 +123,7 @@ func TestManagedIdentityTiers_OwnerAuthority(t *testing.T) {
 	f := uniformTriggerGroup(t)
 	isOwner := true
 	setGroupDefault(t, "alpha", &db.SpawnProfile{Name: "group-default", Harness: "claude",
-		IsOwner: &isOwner,
+		IsOwner:             &isOwner,
 		PermissionOverrides: map[string]db.PermissionOverride{reviewerSlug: {Effect: db.PermEffectGrant}}})
 	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "reviewer", Harness: "claude"})
 	require.NoError(t, err)
@@ -151,4 +152,102 @@ func TestManagedIdentityTiers_OwnerAuthority(t *testing.T) {
 	refused := openPR(t, ruleID, 10)
 	assert.Equal(t, "permission_denied", refused.Outcome, "the worker's own profile is direct intent: %+v", refused)
 	assert.Contains(t, refused.Detail, agentd.PermPermissionsGrant)
+}
+
+// A group default reaches every spawn into the group, including an
+// operator-authored automation's workers, which have no owner to check at
+// launch. So an agent may make a profile a group's default only when it could
+// confer what that profile carries itself; owning the group is not enough.
+func TestManagedIdentityTiers_SettingTheDefaultTakesConferralAuthority(t *testing.T) {
+	f := newFlow(t)
+	g := f.HaveGroup("alpha")
+	const setter = "setr-1111-2222-3333-4444"
+	f.HaveMember("alpha", setter)
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, setter, "test"))
+	isOwner := true
+	for _, p := range []*db.SpawnProfile{
+		{Name: "granting", Harness: "claude", PermissionOverrides: map[string]db.PermissionOverride{
+			reviewerSlug: {Effect: db.PermEffectGrant}}},
+		{Name: "owning", Harness: "claude", IsOwner: &isOwner},
+		{Name: "denying", Harness: "claude", PermissionOverrides: map[string]db.PermissionOverride{
+			reviewerSlug: {Effect: db.PermEffectDeny}}},
+	} {
+		_, err := db.CreateSpawnProfile(p)
+		require.NoError(t, err)
+	}
+	set := func(profile string) int {
+		return agentReq(t, f, setter, http.MethodPatch, "/v1/groups/alpha", map[string]any{"default_profile": profile}).Code
+	}
+	assert.Equal(t, http.StatusForbidden, set("granting"), "an owner without permissions.grant")
+	assert.Equal(t, http.StatusForbidden, set("owning"), "an owner without groups.owners.manage")
+	assert.Equal(t, http.StatusOK, set("denying"), "a deny only narrows")
+
+	require.NoError(t, db.GrantAgentPermission(setter, agentd.PermPermissionsGrant, "test"))
+	require.NoError(t, db.GrantAgentPermission(setter, reviewerSlug, "test"))
+	assert.Equal(t, http.StatusOK, set("granting"), "with the authority to confer it")
+	require.NoError(t, db.GrantAgentPermissionWithScope(setter, agentd.PermGroupsOwnersManage, `{"group":["alpha"]}`, "test"))
+	assert.Equal(t, http.StatusOK, set("owning"), "a grant scoped to the group covers it")
+
+	assert.Equal(t, http.StatusOK, humanReq(t, f, http.MethodPatch, "/v1/groups/alpha",
+		map[string]any{"default_profile": "granting"}).Code, "the operator always may")
+}
+
+// ownedRuleWithoutGrant is an agent-owned trigger on alpha whose owner may
+// spawn there but holds no permissions.grant.
+func ownedRuleWithoutGrant(t *testing.T, f *testharness.Flow, roleRefs []string) int64 {
+	t.Helper()
+	owner := spawnedOwner(t, f)
+	for _, slug := range []string{agentd.PermGroupsTriggersManage, agentd.PermGroupsMembersSpawn} {
+		require.NoError(t, db.GrantAgentPermission(owner, slug, "test"))
+	}
+	ruleID := ownerTriggerOn(t, f, "alpha", owner, roleRefs...)
+	return ruleID
+}
+
+// A role the rule names is direct intent, but a default profile's grant
+// alongside it is still ambient: it is skipped, not a refusal of every firing.
+func TestManagedIdentityTiers_DefaultGrantBesideAnExplicitRoleIsSkipped(t *testing.T) {
+	f := uniformTriggerGroup(t)
+	_, err := db.CreateRole(&db.Role{Name: "plain", Brief: "Be plain."})
+	require.NoError(t, err)
+	setGroupDefault(t, "alpha", &db.SpawnProfile{Name: "group-default", Harness: "claude",
+		PermissionOverrides: map[string]db.PermissionOverride{reviewerSlug: {Effect: db.PermEffectGrant}}})
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "reviewer", Harness: "claude"})
+	require.NoError(t, err)
+	outcome := openPR(t, ownedRuleWithoutGrant(t, f, []string{"plain"}), 9)
+	got, _ := workerIdentityOf(t, outcome)
+	assert.Equal(t, "plain", got.Role)
+	assert.Nil(t, got.Overrides)
+	assert.Contains(t, outcome.Detail, "permission_overrides ignored (caller lacks "+agentd.PermPermissionsGrant+")")
+}
+
+// A default profile's grant the owner cannot confer is dropped, but its
+// denies stay: a deny only narrows.
+func TestManagedIdentityTiers_SkippedDefaultKeepsItsDenies(t *testing.T) {
+	f := uniformTriggerGroup(t)
+	setGroupDefault(t, "alpha", &db.SpawnProfile{Name: "group-default", Harness: "claude",
+		PermissionOverrides: map[string]db.PermissionOverride{
+			reviewerSlug:  {Effect: db.PermEffectGrant},
+			"self.rename": {Effect: db.PermEffectDeny},
+		}})
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "reviewer", Harness: "claude"})
+	require.NoError(t, err)
+	got, _ := workerIdentityOf(t, openPR(t, ownedRuleWithoutGrant(t, f, nil), 9))
+	assert.Equal(t, map[string]string{"self.rename": "deny"}, got.Overrides)
+}
+
+// An owner who may confer the default's grant passes it on.
+func TestManagedIdentityTiers_OwnerWithAuthorityConfersTheDefault(t *testing.T) {
+	f := uniformTriggerGroup(t)
+	setGroupDefault(t, "alpha", &db.SpawnProfile{Name: "group-default", Harness: "claude",
+		PermissionOverrides: map[string]db.PermissionOverride{reviewerSlug: {Effect: db.PermEffectGrant}}})
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "reviewer", Harness: "claude"})
+	require.NoError(t, err)
+	owner := spawnedOwner(t, f)
+	for _, slug := range []string{agentd.PermGroupsTriggersManage, agentd.PermGroupsMembersSpawn,
+		agentd.PermPermissionsGrant, reviewerSlug} {
+		require.NoError(t, db.GrantAgentPermission(owner, slug, "test"))
+	}
+	got, _ := workerIdentityOf(t, openPR(t, ownerTriggerOn(t, f, "alpha", owner), 9))
+	assert.Equal(t, map[string]string{reviewerSlug: "grant"}, got.Overrides)
 }

@@ -3,6 +3,7 @@ package agentd
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -153,49 +154,37 @@ func resolveLaunchIdentity(in launchIdentityRequest) (launchIdentity, *spawnFail
 			overrides = normalized
 		}
 	}
-	// Role grants form the lowest access tier. A spawn profile or explicit
-	// per-spawn override can still narrow or replace an individual slug.
-	if len(out.roles) > 0 {
-		merged := make(map[string]db.PermissionOverride, len(overrides))
-		for _, role := range out.roles {
-			for _, grant := range role.Permissions {
-				candidate := db.PermissionOverride{Effect: db.PermEffectGrant, Scope: grant.Scope}
-				if existing, ok := merged[grant.Slug]; ok && existing != candidate {
-					return out, &spawnFailure{http.StatusBadRequest, "role_scope_conflict",
-						fmt.Sprintf("roles grant %s with incompatible scopes; make the scopes identical or keep that grant on one role", grant.Slug)}
-				}
-				merged[grant.Slug] = candidate
+	// Role grants form the lowest access tier. The winning profile's (or the
+	// request's) overrides narrow or replace a slug, and receiver-owned
+	// federation worker defaults sit on top.
+	roleGrants := map[string]db.PermissionOverride{}
+	for _, role := range out.roles {
+		for _, grant := range role.Permissions {
+			candidate := db.PermissionOverride{Effect: db.PermEffectGrant, Scope: grant.Scope}
+			if existing, ok := roleGrants[grant.Slug]; ok && existing != candidate {
+				return out, &spawnFailure{http.StatusBadRequest, "role_scope_conflict",
+					fmt.Sprintf("roles grant %s with incompatible scopes; make the scopes identical or keep that grant on one role", grant.Slug)}
 			}
+			roleGrants[grant.Slug] = candidate
 		}
-		for slug, override := range overrides {
-			merged[slug] = override
-		}
-		// Preserve the strongest intent source for the gate below. An explicitly
-		// selected role must not become an ambient grant just because a
-		// lower-intent default profile also contributes overrides.
-		if len(overrides) == 0 ||
-			(!launchTierIsDefault(tiers, roleRefsSource) && launchTierIsDefault(tiers, overridesSource)) {
-			overridesSource = roleRefsSource
-		}
-		overrides = merged
 	}
-	if len(in.workerDefaults) > 0 {
-		if overrides == nil {
-			overrides = map[string]db.PermissionOverride{}
-		}
-		for slug, override := range in.workerDefaults {
-			overrides[slug] = override
-		}
+	parts := []overrideContribution{
+		{source: roleRefsSource, field: "role grants", grants: roleGrants,
+			ambient: launchTierIsDefault(tiers, roleRefsSource)},
+		{source: overridesSource, field: permissionOverridesField, grants: overrides,
+			ambient: launchTierIsDefault(tiers, overridesSource)},
+		{grants: in.workerDefaults},
 	}
 	if in.oneShot {
-		isOwner, overrides = false, nil
+		// A one-shot has no identity to receive role or birth-time grants.
+		isOwner, parts = false, nil
 	}
 
 	if in.spawner != "" {
 		mayMint := false
 		if isOwner {
 			var err error
-			if mayMint, err = spawnerGrantCoversGroup(in.request, in.spawner, PermGroupsOwnersManage, in.group); err != nil {
+			if mayMint, err = spawnerGrantCoversGroup(in.request, in.spawner, PermGroupsOwnersManage, groupName(in.group)); err != nil {
 				return out, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 			}
 		}
@@ -208,29 +197,32 @@ func resolveLaunchIdentity(in launchIdentityRequest) (launchIdentity, *spawnFail
 				"%s is_owner ignored (caller lacks %s)", isOwnerSource, PermGroupsOwnersManage))
 			isOwner, isOwnerSource = false, ""
 		}
-		if len(overrides) > 0 && resolvePermission(in.spawner, PermPermissionsGrant) != permAllow {
-			if !launchTierIsDefault(tiers, overridesSource) {
-				return out, &spawnFailure{http.StatusForbidden, "forbidden",
-					"setting the spawned agent's permission overrides requires the " + PermPermissionsGrant + " permission"}
+		// Judge everything first. When that fails, an ambient part's GRANTS are
+		// dropped and disclosed (its denies stay: a deny only narrows), and
+		// what remains, the direct intent, must pass on its own or refuses.
+		if fail, reason := spawnerMayConfer(in.spawner, birthConferee, parts); fail != nil {
+			dropped := false
+			for i := range parts {
+				if parts[i].ambient && len(conferredGrantsFromOverrides(parts[i].grants)) > 0 {
+					out.notes = append(out.notes, fmt.Sprintf(
+						"%s %s ignored (%s)", parts[i].source, parts[i].field, reason))
+					parts[i].grants = deniesOf(parts[i].grants)
+					dropped = true
+				}
 			}
-			out.notes = append(out.notes, fmt.Sprintf(
-				"%s %s ignored (caller lacks %s)", overridesSource, permissionOverridesField, PermPermissionsGrant))
-			overrides, overridesSource = nil, ""
+			if !dropped {
+				return out, fail
+			}
+			if fail, _ := spawnerMayConfer(in.spawner, birthConferee, parts); fail != nil {
+				return out, fail
+			}
 		}
-		// Attenuation-only delegation, on the RESOLVED map, so a profile tier
-		// cannot smuggle in a grant the request never named. Dropping a default
-		// tier's overrides only ever narrows what the child is born with. The
-		// child has no stable id yet; its lineage edge is mandatory during
-		// enrollment, before these overrides are written, so it is a descendant
-		// by construction. See permission_attenuation.go.
-		conferee := grantConferee{descendantByConstruction: true}
-		if err := checkGrantAttenuation(in.spawner, conferee, conferredGrantsFromOverrides(overrides)); err != nil {
-			if !launchTierIsDefault(tiers, overridesSource) {
-				return out, &spawnFailure{http.StatusForbidden, "scope_not_attenuated", err.Error()}
-			}
-			out.notes = append(out.notes, fmt.Sprintf(
-				"%s %s ignored (%v)", overridesSource, permissionOverridesField, err))
-			overrides, overridesSource = nil, ""
+	}
+	overrides = mergeOverrideContributions(parts)
+	overridesSource = ""
+	for i := len(parts) - 1; i >= 0 && overridesSource == ""; i-- {
+		if len(parts[i].grants) > 0 {
+			overridesSource = parts[i].source
 		}
 	}
 	// An agent that silently comes up owning its group, or holding grants
@@ -247,14 +239,75 @@ func resolveLaunchIdentity(in launchIdentityRequest) (launchIdentity, *spawnFail
 	return out, nil
 }
 
+// birthConferee is a spawn's child: it has no stable id yet, but its lineage
+// edge is mandatory during enrollment, before its overrides are written, so
+// it is a descendant by construction.
+var birthConferee = grantConferee{descendantByConstruction: true}
+
+// overrideContribution is one source of a spawn's birth-time overrides.
+// ambient marks a default tier nobody typed at this launch.
+type overrideContribution struct {
+	source, field string
+	grants        map[string]db.PermissionOverride
+	ambient       bool
+}
+
+func mergeOverrideContributions(parts []overrideContribution) map[string]db.PermissionOverride {
+	var out map[string]db.PermissionOverride
+	for _, part := range parts {
+		for slug, override := range part.grants {
+			if out == nil {
+				out = map[string]db.PermissionOverride{}
+			}
+			out[slug] = override
+		}
+	}
+	return out
+}
+
+func deniesOf(m map[string]db.PermissionOverride) map[string]db.PermissionOverride {
+	out := map[string]db.PermissionOverride{}
+	for slug, override := range m {
+		if override.Effect != db.PermEffectGrant {
+			out[slug] = override
+		}
+	}
+	return out
+}
+
+// spawnerMayConfer is the birth-time override gate: setting overrides takes
+// permissions.grant (an ambient part made only of denies needs none, since a
+// deny only narrows), and no conferred grant may be wider than the spawner's
+// own (checkGrantAttenuation, on the merged map, so no tier can smuggle a
+// grant in). The reason is the short form for a skip note.
+func spawnerMayConfer(spawner string, conferee grantConferee, parts []overrideContribution) (*spawnFailure, string) {
+	merged := mergeOverrideContributions(parts)
+	conferred := conferredGrantsFromOverrides(merged)
+	needsGrant := len(conferred) > 0
+	for _, part := range parts {
+		if !part.ambient && len(part.grants) > 0 {
+			needsGrant = true
+		}
+	}
+	if needsGrant && resolvePermission(spawner, PermPermissionsGrant) != permAllow {
+		return &spawnFailure{http.StatusForbidden, "forbidden",
+				"setting the spawned agent's permission overrides requires the " + PermPermissionsGrant + " permission"},
+			"caller lacks " + PermPermissionsGrant
+	}
+	if err := checkGrantAttenuation(spawner, conferee, conferred); err != nil {
+		return &spawnFailure{http.StatusForbidden, "scope_not_attenuated", err.Error()}, err.Error()
+	}
+	return nil, ""
+}
+
 // spawnerGrantCoversGroup reports whether spawner holds slug as a grant whose
 // scope covers group g, the group the spawn lands in. It is the scope-aware
 // check the owners-add endpoint makes, so a groups.owners.manage grant scoped
 // to group X mints an owner in X and nowhere else, through either door. Only
 // GRANTS count: group ownership's structural share of the slug does not, so an
 // owner cannot mint a child owner at spawn without holding the slug.
-func spawnerGrantCoversGroup(r *http.Request, spawner, slug string, g *db.AgentGroup) (bool, error) {
-	if g == nil {
+func spawnerGrantCoversGroup(r *http.Request, spawner, slug, group string) (bool, error) {
+	if group == "" {
 		return false, nil
 	}
 	if r == nil {
@@ -267,7 +320,73 @@ func spawnerGrantCoversGroup(r *http.Request, spawner, slug string, g *db.AgentG
 	if v.Resolution != permAllow {
 		return false, nil
 	}
-	return evalPermissionScope(v, spawner, ActionContext{Group: g.Name, structuralGroup: g.Name}).Satisfied, nil
+	return evalPermissionScope(v, spawner, ActionContext{Group: group, structuralGroup: group}).Satisfied, nil
+}
+
+func groupName(g *db.AgentGroup) string {
+	if g == nil {
+		return ""
+	}
+	return g.Name
+}
+
+// defaultProfileConferralFailure refuses an agent making profileName the
+// default spawn profile of group when that profile carries birth-time access
+// the agent could not confer itself. A group default applies to every spawn
+// into the group, unattended automations included, and an operator-authored
+// automation has no owner of its own to check at launch, so the authority is
+// checked here, on whoever sets the default: groups.owners.manage covering
+// the group when the profile makes owners, and permissions.grant plus
+// attenuation for its overrides and its roles' grants. A human (caller "")
+// passes, as on a spawn.
+func defaultProfileConferralFailure(r *http.Request, caller, group, profileName string) *spawnFailure {
+	if caller == "" || strings.TrimSpace(profileName) == "" {
+		return nil
+	}
+	prof, err := db.ResolveSpawnProfile(profileName)
+	if err != nil {
+		return &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	}
+	if prof == nil {
+		return nil
+	}
+	const why = "a group's default spawn profile applies to every spawn into it, automations included"
+	if prof.IsOwner != nil && *prof.IsOwner {
+		ok, err := spawnerGrantCoversGroup(r, caller, PermGroupsOwnersManage, group)
+		if err != nil {
+			return &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if !ok {
+			return &spawnFailure{http.StatusForbidden, "forbidden", fmt.Sprintf(
+				"profile %q makes its spawns group owners, which requires %s for group %s (%s)",
+				prof.Name, PermGroupsOwnersManage, group, why)}
+		}
+	}
+	refs := prof.RoleRefs
+	if len(refs) == 0 && strings.TrimSpace(prof.RoleRef) != "" {
+		refs = []string{prof.RoleRef}
+	}
+	roleGrants := map[string]db.PermissionOverride{}
+	for _, ref := range cleanRoleRefs(refs) {
+		role, err := db.GetRole(ref)
+		if err != nil {
+			return &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if role == nil {
+			continue
+		}
+		for _, grant := range role.Permissions {
+			roleGrants[grant.Slug] = db.PermissionOverride{Effect: db.PermEffectGrant, Scope: grant.Scope}
+		}
+	}
+	// The workers it would reach are not the setter's descendants. Denies
+	// only narrow, so they need no authority (ambient).
+	if fail, _ := spawnerMayConfer(caller, grantConferee{}, []overrideContribution{
+		{grants: roleGrants, ambient: true}, {grants: prof.PermissionOverrides, ambient: true}}); fail != nil {
+		return &spawnFailure{fail.Status, fail.Kind, fmt.Sprintf(
+			"profile %q confers permissions on its spawns: %s (%s)", prof.Name, fail.Msg, why)}
+	}
+	return nil
 }
 
 // defaultLaunchTiers is the tier stack beneath a named profile: the group's
