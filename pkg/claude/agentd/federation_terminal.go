@@ -24,13 +24,9 @@ import (
 
 const fedTerminalOpenTimeout = 20 * time.Second
 
-type fedTerminalAnswer struct {
-	peer, request string
-	answer        proto.SessionAnswerPayload
-}
 type fedTerminalState struct {
 	views   map[string]*fedTerminalView
-	waiters map[string]chan fedTerminalAnswer
+	waiters map[string]fedAnswerWaiter[proto.SessionAnswerPayload]
 	opens   map[string][]time.Time
 	stopped bool
 }
@@ -75,7 +71,7 @@ type fedTerminalView struct {
 
 func (rt *fedRuntime) terminalsLocked() *fedTerminalState {
 	if rt.terminals == nil {
-		rt.terminals = &fedTerminalState{views: map[string]*fedTerminalView{}, waiters: map[string]chan fedTerminalAnswer{}, opens: map[string][]time.Time{}}
+		rt.terminals = &fedTerminalState{views: map[string]*fedTerminalView{}, waiters: map[string]fedAnswerWaiter[proto.SessionAnswerPayload]{}, opens: map[string][]time.Time{}}
 	}
 	return rt.terminals
 }
@@ -166,14 +162,9 @@ func (rt *fedRuntime) handleSessionAnswer(peer *db.FederationPeer, env *proto.En
 		return
 	}
 	rt.terminalsMu.Lock()
-	ch := rt.terminalsLocked().waiters[a.Stream]
+	w := rt.terminalsLocked().waiters[a.Stream]
 	rt.terminalsMu.Unlock()
-	if ch != nil {
-		select {
-		case ch <- fedTerminalAnswer{peer.InstanceID, env.InReplyTo, a}:
-		default:
-		}
-	}
+	w.offer(peer.InstanceID, env.InReplyTo, a)
 }
 func (rt *fedRuntime) openTerminalStream(v *fedTerminalView, p proto.SessionOpenPayload) (*stream.Conn, error) {
 	kp, err := stream.NewKeyPair()
@@ -181,15 +172,15 @@ func (rt *fedRuntime) openTerminalStream(v *fedTerminalView, p proto.SessionOpen
 		return nil, err
 	}
 	p.Key = kp.Pub
-	ch := make(chan fedTerminalAnswer, 1)
-	rt.terminalsMu.Lock()
-	rt.terminalsLocked().waiters[p.Stream] = ch
-	rt.terminalsMu.Unlock()
-	defer func() { rt.terminalsMu.Lock(); delete(rt.terminalsLocked().waiters, p.Stream); rt.terminalsMu.Unlock() }()
 	env, err := proto.NewEnvelope(rt.id, proto.KindSessionOpen, proto.Endpoint{Name: rt.name}, proto.Endpoint{Instance: v.Peer}, fedTerminalOpenTimeout+time.Minute, p)
 	if err != nil {
 		return nil, err
 	}
+	w := newFedAnswerWaiter[proto.SessionAnswerPayload](v.Peer, env.ID)
+	rt.terminalsMu.Lock()
+	rt.terminalsLocked().waiters[p.Stream] = w
+	rt.terminalsMu.Unlock()
+	defer func() { rt.terminalsMu.Lock(); delete(rt.terminalsLocked().waiters, p.Stream); rt.terminalsMu.Unlock() }()
 	peer, _ := db.GetFederationPeer(v.Peer)
 	if peer == nil {
 		return nil, errors.New("peer no longer trusted")
@@ -209,23 +200,18 @@ func (rt *fedRuntime) openTerminalStream(v *fedTerminalView, p proto.SessionOpen
 	if sent.Status != proto.SendDelivered {
 		return nil, errors.New("peer is offline")
 	}
-	for {
-		select {
-		case a := <-ch:
-			if a.peer != v.Peer || a.request != env.ID {
-				continue
-			}
-			if !a.answer.OK {
-				return nil, &fedTerminalRefusal{reason: proto.StripControls(a.answer.Reason)}
-			}
-			v.cols, v.rows = a.answer.Cols, a.answer.Rows
-			v.files = a.answer.Files
-			v.shared = p.ShareSize && a.answer.SharedSize
-			v.others = sanitizeFedOthers(a.answer.Others)
-			return rt.joinStream(ctx, v.Peer, p.Stream, kp, a.answer.Key, true)
-		case <-ctx.Done():
-			return nil, ctx.Err()
+	select {
+	case a := <-w.answer:
+		if !a.OK {
+			return nil, &fedTerminalRefusal{reason: proto.StripControls(a.Reason)}
 		}
+		v.cols, v.rows = a.Cols, a.Rows
+		v.files = a.Files
+		v.shared = p.ShareSize && a.SharedSize
+		v.others = sanitizeFedOthers(a.Others)
+		return rt.joinStream(ctx, v.Peer, p.Stream, kp, a.Key, true)
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 

@@ -196,7 +196,7 @@ func TestFederation_RouteFlowControlOpensRemoteRouteInBulk(t *testing.T) {
 	require.NoError(t, open.DecodePayload(&req))
 	kp, err := stream.NewKeyPair()
 	require.NoError(t, err)
-	p.send(p.envelope(proto.KindRouteAnswer, proto.Endpoint{}, proto.RouteAnswerPayload{Stream: req.Stream, OK: true, Key: kp.Pub}))
+	p.send(fedRouteAnswerTo(p, open, proto.RouteAnswerPayload{Stream: req.Stream, OK: true, Key: kp.Pub}))
 	conn := fedPeerStream(t, p, req.Stream, kp, req.Key, false)
 	uploaded := make(chan []byte, 1)
 	go func() {

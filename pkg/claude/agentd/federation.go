@@ -460,6 +460,21 @@ func (rt *fedRuntime) sendControl(to, kind, inReplyTo string, payload any) bool 
 		return false
 	}
 	env.InReplyTo = inReplyTo
+	return rt.deliverControl(to, peer, env)
+}
+
+// sendControlEnvelope is sendControl for an envelope the caller built itself,
+// for a request whose answer must be bound to that envelope's ID.
+func (rt *fedRuntime) sendControlEnvelope(to string, env *proto.Envelope) bool {
+	peer, err := db.GetFederationPeer(to)
+	if err != nil || peer == nil {
+		return false
+	}
+	return rt.deliverControl(to, peer, env)
+}
+
+func (rt *fedRuntime) deliverControl(to string, peer *db.FederationPeer, env *proto.Envelope) bool {
+	kind := env.Kind
 	sealed, err := proto.Seal(rt.id, env, ed25519.PublicKey(peer.PubKey))
 	if err != nil {
 		slog.Warn("federation: seal failed", "kind", kind, "error", err)
