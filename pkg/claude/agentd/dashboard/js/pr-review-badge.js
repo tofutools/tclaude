@@ -110,7 +110,7 @@ export function PRReviewBadge({ url, prNumber, reviews, prState = '' }) {
   const rootRef = useRef(null);
   const panelRef = useRef(null);
   const instanceID = useId();
-  const { open, close, rootProps, onTriggerClick } = useHoverPopover(rootRef);
+  const { open, rootProps, onTriggerClick, onTriggerKeyDown } = useHoverPopover(rootRef);
   const { placement } = usePanelPlacement(rootRef, panelRef, open);
 
   const prURL = safeCheckURL(url).replace(/\/+$/, '');
@@ -139,12 +139,7 @@ export function PRReviewBadge({ url, prNumber, reviews, prState = '' }) {
         aria-label=${`Reviews for ${who} — ${prReviewSummaryLine(reviews)}, ${prReviewDecisionText(reviews.decision, mr)}. ` +
           `Opens the ${mr ? 'merge request on GitLab' : 'pull request on GitHub'}.`}
         onClick=${onTriggerClick}
-        onKeyDown=${(event) => {
-          if (event.key !== 'Escape') return;
-          event.preventDefault();
-          event.stopPropagation();
-          close();
-        }}
+        onKeyDown=${onTriggerKeyDown}
       >
         <${PersonIcon} />
         ${label ? html`<span class="ci-count">${label}</span>` : null}

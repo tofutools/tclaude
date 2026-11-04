@@ -210,6 +210,38 @@ test('footer open PRs disclosure pins, filters, and closes accessibly', async (t
   await mounted.unmount();
 });
 
+test('Escape on a PR badge with no card open closes the footer open PRs popover', async (t) => {
+  // The PR link, CI and review badges share one Escape rule: it closes their
+  // own card when it is open, and is otherwise left to the popover around them.
+  for (const selector of ['.open-pr-row .prd-hover a', '.open-pr-row .ci-badge:not(.rv-badge)', '.open-pr-row .rv-badge']) {
+    const harness = await createPreactHarness(t);
+    const [{ createDashboardState }, { OpenPRs }] = await Promise.all([
+      harness.importDashboardModule('js/snapshot-store.js'),
+      harness.importDashboardModule('js/shell-island.js'),
+    ]);
+    const state = createDashboardState();
+    const mounted = await harness.mount(harness.html`<${OpenPRs} state=${state} />`);
+    state.beginRequest();
+    await harness.act(() => state.commitRequest(1, { authored_open_prs: {
+      available: true, total: 1, updated_at: '2026-08-13T08:00:00Z',
+      items: [{ number: 1, url: 'https://github.com/acme/app/pull/1', title: 'Fails', repository: 'acme/app',
+        checks: { total: 1, failed: 1, state: 'failing' }, reviews: { approved: 1, reviewers_known: true } }],
+    } }));
+    await harness.act(() => getByRole(mounted.container, 'button', { name: /Open PRs/ }).click());
+    const badge = mounted.container.querySelector(selector);
+    assert.ok(badge, `${selector} renders in the popover`);
+    assert.equal(badge.getAttribute('aria-expanded'), 'false', `${selector} has no card open`);
+    await harness.act(() => harness.fireEvent(badge.closest('.ci-hover'), 'mouseenter'));
+    assert.equal(badge.getAttribute('aria-expanded'), 'true', `hovering ${selector} opens its card`);
+    await harness.act(() => harness.fireEvent(badge, 'keydown', { key: 'Escape' }));
+    assert.equal(badge.getAttribute('aria-expanded'), 'false', `Escape on ${selector} closes its open card first`);
+    assert.ok(mounted.container.querySelector('#open-prs-popover'), `the popover stays while ${selector} closes its card`);
+    await harness.act(() => harness.fireEvent(badge, 'keydown', { key: 'Escape' }));
+    assertAbsent(mounted.container.querySelector('#open-prs-popover'), `Escape on ${selector} closes the popover`);
+    await mounted.unmount();
+  }
+});
+
 test('footer open PR counter is neutral while only clean CI is running', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, { OpenPRs }] = await Promise.all([

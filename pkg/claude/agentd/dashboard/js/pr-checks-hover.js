@@ -448,7 +448,16 @@ export function useHoverPopover(rootRef) {
     if (tapped) close(); else setTapped(true);
   };
 
-  return { open, hovered, focused, tapped, close, rootProps, onTriggerClick };
+  // Escape on the badge closes an open panel. A closed one leaves Escape to
+  // whatever surrounds the badge, e.g. the footer PR popover closing itself.
+  const onTriggerKeyDown = (event) => {
+    if (event.key !== 'Escape' || !open) return;
+    event.preventDefault();
+    event.stopPropagation();
+    close();
+  };
+
+  return { open, hovered, focused, tapped, close, rootProps, onTriggerClick, onTriggerKeyDown };
 }
 
 // usePRChecks owns the poll lifecycle: it fetches on open, re-polls while the
@@ -595,7 +604,7 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
 export function PRChecksBadge({ url, prNumber, summary, prState = '', countText = '' }) {
   const rootRef = useRef(null);
   const instanceID = useId();
-  const { open, close, rootProps, onTriggerClick } = useHoverPopover(rootRef);
+  const { open, rootProps, onTriggerClick, onTriggerKeyDown } = useHoverPopover(rootRef);
   const state = usePRChecks(open ? url : '', open);
   const panelRef = useRef(null);
   const { placement } = usePanelPlacement(rootRef, panelRef, open);
@@ -623,12 +632,7 @@ export function PRChecksBadge({ url, prNumber, summary, prState = '', countText 
         aria-controls=${panelID}
         aria-label=${badgeTitle(summary, prNumber, url)}
         onClick=${onTriggerClick}
-        onKeyDown=${(event) => {
-          if (event.key !== 'Escape') return;
-          event.preventDefault();
-          event.stopPropagation();
-          close();
-        }}
+        onKeyDown=${onTriggerKeyDown}
       >
         <span class="ci-glyph" aria-hidden="true">${checkStateGlyph(stateName)}</span>
         <span class="ci-count">${countText || `${summary.passed}/${denominator}`}</span>
