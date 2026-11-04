@@ -30,10 +30,23 @@ what re-applying the edited profile would change for each:
   default changes nothing where the agent's named profile sets the same field;
 - spawn-only values, such as the agent name or the initial message, are
   **not reapplied**: they were used once, at the first spawn.
-- the group context switch, profile environment, profile startup context,
-  roles and model proxy are **not reapplied yet**: a re-apply does not carry them so far, and
-  the agent keeps its copy. The same holds for the profile's usage-profile
-  links.
+- roles and the model proxy are **not reapplied yet**: a re-apply does not
+  carry them so far, and the agent keeps its copy. Roles will be re-applied
+  together with their grants.
+
+A re-apply also changes the values a first spawn stores outside the launch
+settings:
+
+- the **group context switch** and the **profile startup context**, which the
+  agent is briefed with again after a compaction or `/clear`. Only the
+  profile's own text is replaced; the role briefs after it stay;
+- the **profile environment**: the profile's entries are recomputed, and the
+  entries the spawn set explicitly stay on top of them;
+- the **usage-profile links**: the agent gets the links the profile has now,
+  unless its spawn named its own usage profiles. The links are read when you
+  apply, so applying an unchanged profile picks up a link edit too.
+
+A value the spawn request set explicitly is kept in each case.
 
 Grant changes (permission overrides, group owner and role grants) are listed,
 but a re-apply does not apply them yet.
@@ -257,11 +270,7 @@ The rules above are the specification. These rows do not follow it yet:
 - **Model** (`model`): No resume path takes a model flag yet; only a morph changes it.
 - **Reasoning effort** (`effort`): No resume path takes an effort flag yet; only a morph changes it.
 - **Model proxy** (`model_proxy`): Reincarnate and clone drop the model proxy. A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
-- **Include group startup context** (`include_group_context`): A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
-- **Profile and explicit environment** (`profile_env`): A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
-- **Profile startup context** (`profile_startup_context`): A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
 - **Roles** (`roles`): A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
-- **Usage profiles named by the spawn or linked from its spawn profile** (`usage_profile_links`): A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
 - **Group environment** (`group_env`): Watch mode and conv resume reuse the stored group environment.
 - **Group remote-control policy** (`group_remote_control`): Resume reuses the remote-control setting stored at the last launch.
 - **Group and workspace sandbox-profile assignment** (`group_sandbox_assignment`): Watch mode and conv resume reuse the stored sandbox policy.

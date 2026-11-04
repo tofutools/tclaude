@@ -77,7 +77,17 @@ func TestProfileReapplyApply_StoppedIdleAndBusy(t *testing.T) {
 	assert.Contains(t, res.Detail, "busy, skipped")
 	assert.JSONEq(t, busyBefore, relaunchProfileJSON(t, busy.ConvID), "a busy agent is left untouched")
 
-	// After the apply, only the not-yet field differs for the applied agents.
+	// After the apply, nothing differs for the applied agents: the startup
+	// context the agent is re-briefed with after a compaction is the new one.
+	for _, a := range []testharness.SpawnResp{stopped, idle} {
+		snap, err := db.GetAgentStartupSnapshot(a.AgentID)
+		require.NoError(t, err)
+		require.NotNil(t, snap)
+		assert.Equal(t, "Be thorough.", snap.ProfileContext)
+	}
+	snap, err := db.GetAgentStartupSnapshot(busy.AgentID)
+	require.NoError(t, err)
+	assert.Equal(t, "Be brief.", snap.ProfileContext, "the busy agent keeps its copy")
 	after := profileReapplyPreview(t, f, "worker")
 	for _, a := range after.Agents {
 		keys := map[string]string{}
@@ -88,7 +98,7 @@ func TestProfileReapplyApply_StoppedIdleAndBusy(t *testing.T) {
 			assert.Equal(t, "changes", keys["ask_user_question_timeout"])
 			continue
 		}
-		assert.Equal(t, map[string]string{"startup_context": "not reapplied yet"}, keys, a.AgentID)
+		assert.Empty(t, keys, a.AgentID)
 	}
 }
 

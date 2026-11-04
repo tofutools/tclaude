@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // AgentLaunchLayersVersion is the shape version of agents.launch_layers.
@@ -404,7 +406,7 @@ func AgentRelaunchProfileRaw(agentID string) (*AgentRelaunchProfile, string, err
 // replaces the copy. expectRaw is the relaunch profile the resolution was
 // computed from (AgentRelaunchProfileRaw); if it changed meanwhile, nothing is
 // written and ErrRelaunchProfileChanged is returned.
-func ApplyAgentSpawnCopy(agentID, convID, expectRaw string, profile AgentRelaunchProfile, spawnCopy AgentSpawnCopy) error {
+func ApplyAgentSpawnCopy(agentID, convID, expectRaw string, profile AgentRelaunchProfile, spawnCopy AgentSpawnCopy, outside SpawnCopyOutside) error {
 	agentID = strings.TrimSpace(agentID)
 	encoded, err := encodeRelaunchProfile(profile)
 	if err != nil {
@@ -431,7 +433,78 @@ func ApplyAgentSpawnCopy(agentID, convID, expectRaw string, profile AgentRelaunc
 	if err := replaceAgentSpawnCopyTx(tx, agentID, spawnCopy); err != nil {
 		return err
 	}
+	if err := applySpawnCopyOutsideTx(tx, agentID, outside); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+// SpawnCopyOutside are the re-applied spawn-copy values that live outside the
+// relaunch profile, written in the same transaction as the copy (launch slice
+// 6f). A zero value writes nothing.
+type SpawnCopyOutside struct {
+	// Startup snapshot (agent_startup_snapshots), read by re-injection after
+	// compaction or /clear. nil keeps the stored value.
+	IncludeGroupContext *bool
+	ProfileContext      *string
+	// EffectiveSandbox replaces the agent's launch snapshot, the one a resume
+	// takes the profile and explicit environment from, only while the stored
+	// text is still EffectiveSandboxRaw. nil keeps it.
+	EffectiveSandbox    *sandboxpolicy.Snapshot
+	EffectiveSandboxRaw string
+	// UsageLinked replaces the agent's usage-profile links that came from a
+	// spawn profile (source UsageLinkedSourcePrefix...), leaving the ones the
+	// spawn named itself. Empty IDs clear them.
+	UsageLinkedSet    bool
+	UsageLinkedIDs    []int64
+	UsageLinkedSource string
+}
+
+func applySpawnCopyOutsideTx(tx *sql.Tx, agentID string, o SpawnCopyOutside) error {
+	if o.IncludeGroupContext != nil {
+		if _, err := tx.Exec(`UPDATE agent_startup_snapshots SET include_group_ctx = ? WHERE agent_id = ?`,
+			boolToInt(*o.IncludeGroupContext), agentID); err != nil {
+			return fmt.Errorf("re-apply include_group_context: %w", err)
+		}
+	}
+	if o.ProfileContext != nil {
+		if _, err := tx.Exec(`UPDATE agent_startup_snapshots SET profile_context = ? WHERE agent_id = ?`,
+			strings.TrimSpace(*o.ProfileContext), agentID); err != nil {
+			return fmt.Errorf("re-apply profile startup context: %w", err)
+		}
+	}
+	if o.EffectiveSandbox != nil {
+		raw, err := marshalEffectiveSandboxSnapshot(o.EffectiveSandbox)
+		if err != nil {
+			return err
+		}
+		res, err := tx.Exec(`UPDATE agents SET effective_sandbox_config = ?
+			WHERE agent_id = ? AND effective_sandbox_config = ?`, raw, agentID, o.EffectiveSandboxRaw)
+		if err != nil {
+			return fmt.Errorf("re-apply profile environment: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			return ErrAgentLaunchRecordChanged
+		}
+	}
+	if o.UsageLinkedSet {
+		if o.UsageLinkedSource != "" && !strings.HasPrefix(o.UsageLinkedSource, UsageLinkedSourcePrefix) {
+			return fmt.Errorf("re-apply usage links: source %q is not a linked source", o.UsageLinkedSource)
+		}
+		if _, err := tx.Exec(`DELETE FROM usage_profile_assignments
+			WHERE scope = ? AND scope_id = ? AND substr(source, 1, ?) = ?`,
+			UsageScopeAgent, agentID, len(UsageLinkedSourcePrefix), UsageLinkedSourcePrefix); err != nil {
+			return fmt.Errorf("re-apply usage links: %w", err)
+		}
+		now := dbTime(time.Now())
+		for _, id := range o.UsageLinkedIDs {
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO usage_profile_assignments (scope, scope_id, profile_id, source, created_at) VALUES (?, ?, ?, ?, ?)`,
+				UsageScopeAgent, agentID, id, o.UsageLinkedSource, now); err != nil {
+				return fmt.Errorf("re-apply usage link %d: %w", id, err)
+			}
+		}
+	}
+	return nil
 }
 
 // AgentsWithSpawnCopyOf returns the non-retired agents whose spawn copy

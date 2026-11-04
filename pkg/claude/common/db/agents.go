@@ -609,6 +609,29 @@ func SetAgentEffectiveSandboxConfig(agentID string, snapshot *sandboxpolicy.Snap
 // AgentEffectiveSandboxConfigForConv loads the actor-level launch snapshot for
 // a conversation generation. A nil result is the fail-closed legacy sentinel,
 // not an explicitly resolved empty policy.
+// AgentEffectiveSandboxConfigRaw is an agent's launch snapshot and its stored
+// text, for a compare-and-swap replacement (ApplyAgentSpawnCopy). nil when the
+// agent is unknown or has none.
+func AgentEffectiveSandboxConfigRaw(agentID string) (*sandboxpolicy.Snapshot, string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, "", err
+	}
+	var raw string
+	err = d.QueryRow(`SELECT effective_sandbox_config FROM agents WHERE agent_id = ?`, strings.TrimSpace(agentID)).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	snapshot, err := unmarshalEffectiveSandboxSnapshot(raw)
+	if err != nil {
+		return nil, raw, fmt.Errorf("decode agent effective sandbox for %q: %w", agentID, err)
+	}
+	return snapshot, raw, nil
+}
+
 func AgentEffectiveSandboxConfigForConv(convID string) (*sandboxpolicy.Snapshot, error) {
 	d, err := Open()
 	if err != nil {

@@ -51,7 +51,7 @@ func applySpawnCopy(agentID string, spawnCopy db.AgentSpawnCopy) *spawnFailure {
 	lock := resumeLaunchLock(convID)
 	lock.Lock()
 	defer lock.Unlock()
-	return applySpawnCopyLocked(agentID, convID, spawnCopy, "")
+	return applySpawnCopyLocked(agentID, convID, spawnCopy, "", nil)
 }
 
 // applySpawnCopyLocked is applySpawnCopy for a caller already holding the
@@ -59,8 +59,10 @@ func applySpawnCopy(agentID string, spawnCopy db.AgentSpawnCopy) *spawnFailure {
 // and resume of a running agent holds it across all three. reapplierConv,
 // when set, is an agent applying the copy: a changed posture must also pass
 // the lineage gates against it, so an agent cannot give another agent a
-// posture it could not spawn a child with.
-func applySpawnCopyLocked(agentID, convID string, spawnCopy db.AgentSpawnCopy, reapplierConv string) *spawnFailure {
+// posture it could not spawn a child with. kept, when non-nil, receives the
+// fields the copy changes that could not be written outside the relaunch
+// profile; their old values stay in the copy written.
+func applySpawnCopyLocked(agentID, convID string, spawnCopy db.AgentSpawnCopy, reapplierConv string, kept *[]spawnCopyKept) *spawnFailure {
 	// A reincarnation or morph may have moved the agent to a new
 	// conversation while this waited for the lock; that one is not locked.
 	if err := requireCurrentAgentGeneration(agentID, convID); err != nil {
@@ -141,8 +143,31 @@ func applySpawnCopyLocked(agentID, convID string, spawnCopy db.AgentSpawnCopy, r
 			return fail
 		}
 	}
-	if err := db.ApplyAgentSpawnCopy(agentID, convID, storedRaw, *next, spawnCopy); err != nil {
-		if errors.Is(err, db.ErrRelaunchProfileChanged) {
+	outside, keptFields, fail := resolveSpawnCopyOutside(agentID, group, harnessName, layers.SpawnCopy, spawnCopy, layers.Explicit, snapshot, reapplierConv)
+	if fail != nil {
+		return fail
+	}
+	if outside.EffectiveSandbox != nil {
+		// A changed environment is judged as the next resume will judge it,
+		// so a resume still always works.
+		mode, implementation := cfg.Sandbox, cfg.SandboxImplementation
+		if cfg.TemporaryHarnessBuiltinMode {
+			mode = cfg.NormalSandbox
+		}
+		if fail := relaunchSandboxGateFailure(harnessName, mode, implementation, outside.EffectiveSandbox,
+			next.CopilotAPI != nil && *next.CopilotAPI,
+			session.ModelTransportLaunchContext{Model: cfg.Model, ModelProxy: cfg.ModelProxy, Cwd: cfg.Cwd}); fail != nil {
+			return fail
+		}
+	}
+	if len(keptFields) > 0 {
+		spawnCopy = keepCopyFields(spawnCopy, layers.SpawnCopy, keptFields)
+		if kept != nil {
+			*kept = keptFields
+		}
+	}
+	if err := db.ApplyAgentSpawnCopy(agentID, convID, storedRaw, *next, spawnCopy, outside); err != nil {
+		if errors.Is(err, db.ErrRelaunchProfileChanged) || errors.Is(err, db.ErrAgentLaunchRecordChanged) {
 			return &spawnFailure{http.StatusConflict, "changed", err.Error()}
 		}
 		return &spawnFailure{http.StatusInternalServerError, "io", "apply spawn copy: " + err.Error()}
@@ -196,7 +221,6 @@ func spawnCopyPostureFailure(spawnerConv, harnessName, convID string, stored, ne
 	return relaunchSandboxGateFailure(harnessName, mode, implementation, snapshot, flag(next.CopilotAPI),
 		session.ModelTransportLaunchContext{Model: cfg.Model, ModelProxy: cfg.ModelProxy, Cwd: cfg.Cwd})
 }
-
 
 // spawnCopyTier copies one participating profile, in the profile export
 // format so the stored copy has stable JSON names. nil is no tier.

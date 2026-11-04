@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/launchspec"
 )
 
 // Applying an edited spawn profile to one agent that holds a copy of it
@@ -20,8 +21,8 @@ import (
 //     one step under its launch lock (the same stop and resume a restart does).
 //   - A busy agent is skipped: nothing is stopped or written.
 //
-// The copy written keeps the old values of the fields a relaunch does not
-// re-apply yet (profileReapplyNotYet) and of the grant inputs, so the stored
+// The copy written keeps the old values of the fields a re-apply does not
+// carry yet (profileReapplyNotYet: roles, the model proxy) and of the grant inputs, so the stored
 // copy says what the agent really runs with and the preview keeps listing
 // those differences as not reapplied. The posture gates run inside
 // applySpawnCopy, against the agent's spawner and, for an agent caller, the
@@ -154,13 +155,14 @@ func handleSpawnProfileReapply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res := profileReapplyResult{AgentID: agentID, ConvID: convID}
+	var kept []spawnCopyKept
 	if pickAliveSession(convID) == nil {
-		if fail := applySpawnCopyLocked(agentID, convID, next, caller); fail != nil {
+		if fail := applySpawnCopyLocked(agentID, convID, next, caller, &kept); fail != nil {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
 		res.Outcome = reapplyApplied
-		res.Detail = "takes effect on the agent's next resume, reincarnation or clone"
+		res.Detail = "takes effect on the agent's next resume, reincarnation or clone" + keptNote(kept)
 		setAuditDetail(r, res.Outcome)
 		writeJSON(w, http.StatusOK, res)
 		return
@@ -173,7 +175,7 @@ func handleSpawnProfileReapply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, applyFail, restartFail := restartIdleAgentLocked(agentID, convID, func() *spawnFailure {
-		return applySpawnCopyLocked(agentID, convID, next, caller)
+		return applySpawnCopyLocked(agentID, convID, next, caller, &kept)
 	})
 	switch {
 	case restartFail != nil && applyFail == nil && restartFail.Kind != "restart_failed":
@@ -207,7 +209,7 @@ func handleSpawnProfileReapply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res.Outcome = reapplyAppliedRestarted
-	res.Detail = "stopped, applied and resumed"
+	res.Detail = "stopped, applied and resumed" + keptNote(kept)
 	setAuditDetail(r, res.Outcome)
 	writeJSON(w, http.StatusOK, res)
 }
@@ -282,4 +284,20 @@ func reapplyDefaultTierNote(agents []profileReapplyAgent) string {
 		}
 	}
 	return ""
+}
+
+// keptNote tells the re-applier which changed fields stayed as they were.
+func keptNote(kept []spawnCopyKept) string {
+	if len(kept) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(kept))
+	for _, k := range kept {
+		label := k.key
+		if f, ok := launchspec.Lookup(k.key); ok {
+			label = f.Label
+		}
+		parts = append(parts, label+" ("+k.why+")")
+	}
+	return "; kept as before: " + strings.Join(parts, "; ")
 }
