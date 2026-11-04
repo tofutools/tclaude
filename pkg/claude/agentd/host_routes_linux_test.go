@@ -18,7 +18,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/routeadapter"
-	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func TestHostRouteLeaseCannotAttachThroughHelper(t *testing.T) {
@@ -55,7 +54,9 @@ func TestHostRouteLinuxHelperDiscovery(t *testing.T) {
 	credential, generation, err := mintRouteHelperCredential(agent, "host-discovery")
 	require.NoError(t, err)
 	defer revokeRouteHelperCredentials("host-discovery", "")
-	socket := filepath.Join(testutil.CanonicalTempDir(t), "daemon.sock")
+	// A short dir: a deep agent TMPDIR overflows sun_path (108 bytes on
+	// Linux), failing the bind before the test starts.
+	socket := filepath.Join(shortSocketDir(t), "daemon.sock")
 	listener, err := net.Listen("unix", socket)
 	require.NoError(t, err)
 	server := &http.Server{
