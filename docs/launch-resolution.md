@@ -237,6 +237,51 @@ resume, reincarnation or clone. The API is `GET`
 and `PUT /v1/relaunch-policy` (`{"field", "mode"}`; an empty mode resets the
 row to its default).
 
+### Per-agent overrides
+
+A spawn, and a spawn profile, can set configurable rows for the agents they
+launch. The rows are copied into the agent's launch record at its first spawn
+and override the global table for that agent's resumes, reincarnations and
+clones. Per row, highest first:
+
+1. the spawn's own row (`--relaunch-policy field=mode`);
+2. the first spawn profile that sets the row: the named profile, then the
+   group's default profile, then the global default profile;
+3. the global table;
+4. the row's default.
+
+The rows are copied at spawn: a later edit to the profile does not reach
+agents already spawned from it, but a later edit to the global table reaches
+every row an agent has not overridden. A clone keeps its source's rows, and a
+reincarnation keeps the agent's. A resume or reincarnation of an agent with
+overridden rows lists them, with where each came from, for example
+`relaunch policy for this agent: group_env reuse (profile pinned-env); other
+rows follow the global table`.
+
+```bash
+tclaude agent spawn --name worker --relaunch-policy group_env=reuse
+tclaude agent spawn --name worker --profile pinned-env --relaunch-policy group_env=inherit
+tclaude agent spawn --name worker --relaunch-policy-file policy.json
+```
+
+`inherit` follows the global table for the row even where a spawn profile
+sets it. `--relaunch-policy-file` takes the shape `GET /v1/relaunch-policy`
+lists (`{"rows": [{"field": "group_env", "mode": "reuse"}]}`, scope optional);
+`--relaunch-policy` rows override the file's. A spawn profile carries its
+rows as `relaunch_policy` (`{"group_env": "reuse"}`) in its JSON, and
+`profiles from-agent` copies the agent's rows into the new profile.
+
+Who may set a row. A human may set any. An agent may freely set a row that
+applies the operator's current settings (`re-resolve`, `tighten-only`,
+`chain-wins`, `inherit`), and any row the agent would get anyway from its
+profiles or the global table. A row that keeps old settings (`reuse`, or
+`explicit-wins` on the harness-config row) where the agent would otherwise get
+something else needs `relaunch-policy.manage`: with it, an operator who later
+tightens a group or a sandbox profile would not reach that agent. The same
+applies to an agent writing such a row into a spawn profile, so a profile
+cannot pass on what the spawn itself could not set; a row the profile already
+carried stays free to keep.
+
 ## Fields
 
 "Spawn flag" says whether a spawn request can set the field explicitly.
@@ -257,6 +302,7 @@ row to its default).
 | Field | Key | On relaunch | Spawn flag | Why |
 |---|---|---|---|---|
 | Spawn profiles used (named, group default, global default) | `spawn_profile` | kept (copy) | yes | A spawn profile is copied at spawn; editing it, or changing a group's default, affects new spawns only. |
+| Per-agent relaunch policy | `relaunch_overrides` | kept (copy) | yes | The configurable rows a spawn or its spawn profile set for this agent are copied at spawn and override the global table for it; a row neither sets follows the global table, edits to it included. |
 | Model proxy | `model_proxy` | kept (copy) | yes | Part of the spawn profile copy. |
 | Sandbox mode | `sandbox_mode` | kept (copy) | yes | Part of the spawn profile copy. |
 | Sandbox implementation | `sandbox_implementation` | kept (copy) | yes | Part of the spawn profile copy; the host must still support it. |

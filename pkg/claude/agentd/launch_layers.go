@@ -262,7 +262,7 @@ func captureExplicitLaunch(req *agent.SpawnRequest, at time.Time) map[string]db.
 	v := reflect.ValueOf(*req)
 	out := map[string]db.ExplicitLaunchValue{}
 	for _, f := range launchspec.Fields {
-		if f.Layer == launchspec.LayerSpawnOnly {
+		if f.Layer == launchspec.LayerSpawnOnly || f.Key == "relaunch_overrides" {
 			continue
 		}
 		fields := map[string]json.RawMessage{}
@@ -318,5 +318,7 @@ func spawnLaunchLayers(p spawnParams, at time.Time) *db.AgentLaunchLayers {
 	return &db.AgentLaunchLayers{
 		SpawnCopy: &db.AgentSpawnCopy{CopiedAt: at, Tiers: tiers},
 		Explicit:  p.explicitLaunch,
+		// Recorded here, not in Explicit: the rows carry their source.
+		RelaunchOverrides: p.relaunchOverrides,
 	}
 }

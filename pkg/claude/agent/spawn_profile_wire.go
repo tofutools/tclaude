@@ -134,6 +134,13 @@ type SpawnProfileJSON struct {
 	// a Codex profile is a 400. See harness/context_features.go and TCL-597.
 	ContextFeatures map[string]string `json:"context_features,omitempty"`
 
+	// RelaunchPolicy is the profile's per-agent relaunch-policy rows (field →
+	// mode; absent = the global table), copied into each agent it spawns.
+	// Validated against the launch registry at save. Saving a row that keeps
+	// old settings (reuse, explicit-wins) needs relaunch-policy.manage for an
+	// agent caller.
+	RelaunchPolicy map[string]string `json:"relaunch_policy,omitempty"`
+
 	CreatedAt string `json:"created_at,omitempty"`
 	UpdatedAt string `json:"updated_at,omitempty"`
 }

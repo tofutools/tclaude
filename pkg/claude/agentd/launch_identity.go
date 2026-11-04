@@ -411,6 +411,9 @@ func profileConferralFailure(r *http.Request, caller string, before, after *db.S
 	if caller == "" || after == nil {
 		return nil
 	}
+	if fail := profileRelaunchRowsFailure(caller, before, after, why); fail != nil {
+		return fail
+	}
 	if isTrue(after.IsOwner) && (before == nil || !isTrue(before.IsOwner)) {
 		var ok bool
 		var err error

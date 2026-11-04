@@ -113,6 +113,10 @@ var Fields = []Field{
 	{Key: "spawn_profile", Label: "Spawn profiles used (named, group default, global default)", Layer: LayerSpawnCopy,
 		GroupFields: []string{"DefaultProfile"}, RequestFields: []string{"Profile"},
 		Why: "A spawn profile is copied at spawn; editing it, or changing a group's default, affects new spawns only."},
+	{Key: "relaunch_overrides", Label: "Per-agent relaunch policy", Layer: LayerSpawnCopy,
+		ProfileFields: []string{"RelaunchPolicy"}, RequestFields: []string{"RelaunchPolicy"},
+		Why: "The configurable rows a spawn or its spawn profile set for this agent are copied at spawn and override the global table for it; " +
+			"a row neither sets follows the global table, edits to it included."},
 	{Key: "model_proxy", Label: "Model proxy", Layer: LayerSpawnCopy,
 		ProfileFields: []string{"ModelProxy"}, RequestFields: []string{"ModelProxy"},
 		Why: "Part of the spawn profile copy.",

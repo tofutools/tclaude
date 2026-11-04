@@ -124,9 +124,8 @@ func findHarnessConfigRepairs(includeRetired bool) ([]harnessConfigRepair, error
 		return nil, err
 	}
 	out := []harnessConfigRepair{}
-	mode := currentRelaunchPolicy().Mode(harnessConfigField)
 	for _, rec := range records {
-		repair, ok := harnessConfigRepairFor(rec, mode)
+		repair, ok := harnessConfigRepairFor(rec, relaunchPolicyMode(rec.ConvID, harnessConfigField))
 		if !ok {
 			continue
 		}
@@ -171,7 +170,7 @@ func repinHarnessConfig(agentID string) (harnessConfigRepair, error) {
 	if rec == nil {
 		return harnessConfigRepair{}, errHarnessConfigNotNeeded
 	}
-	repair, ok := harnessConfigRepairFor(*rec, currentRelaunchPolicy().Mode(harnessConfigField))
+	repair, ok := harnessConfigRepairFor(*rec, relaunchPolicyMode(rec.ConvID, harnessConfigField))
 	if !ok {
 		return harnessConfigRepair{}, errHarnessConfigNotNeeded
 	}

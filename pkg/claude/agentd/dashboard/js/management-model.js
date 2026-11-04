@@ -155,6 +155,9 @@ export function profileDraft(seed = null, { editExisting = true, local = null, c
     auto_focus: triValue(seed?.auto_focus), include_group_default_context: triValue(seed?.include_group_default_context),
     is_owner: triValue(seed?.is_owner), permission_overrides: { ...(seed?.permission_overrides || {}) },
     context_features: { ...(seed?.context_features || {}) },
+    // Per-agent relaunch rows (launch slice 11), carried through an edit
+    // until the editor has its own control for them.
+    relaunch_policy: { ...(seed?.relaunch_policy || {}) },
   };
 }
 
@@ -223,6 +226,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   if ((!h || h.can_context_features) && Object.keys(draft.context_features || {}).length) {
     body.context_features = { ...draft.context_features };
   }
+  if (Object.keys(draft.relaunch_policy || {}).length) body.relaunch_policy = { ...draft.relaunch_policy };
   const norm = (name) => name || 'claude';
   if (original && norm(original.harness) === norm(draft.harness)) {
     if (!surfacesApproval && original.approval) body.approval = original.approval;

@@ -434,6 +434,9 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	if remoteControlNote != "" {
 		relaunchWarnings = append(relaunchWarnings, remoteControlNote)
 	}
+	if note := relaunchOverridesNote(target); note != "" {
+		relaunchWarnings = append(relaunchWarnings, note)
+	}
 	if remoteControlChange != "" {
 		relaunchChanged = append(relaunchChanged, remoteControlChange)
 	}

@@ -122,6 +122,7 @@ func fillSpawnProfile(t *testing.T, run int, seed string) *SpawnProfile {
 	p.RoleRef = p.RoleRefs[0] // the column is the projection of RoleRefs[0]
 	p.PromptRefs = []string{tag + "-prompt"}
 	p.ContextFeatures = map[string]string{tag + "-feature": "on"}
+	p.RelaunchPolicy = map[string]string{tag + "-field": "reuse"}
 	p.PermissionOverrides = map[string]PermissionOverride{tag + "-slug": {Effect: PermEffectGrant}}
 	p.Environment = []sandboxpolicy.EnvironmentEntry{{Name: strings.ToUpper("TCL_" + seed), Value: tag + "-env"}}
 	return p

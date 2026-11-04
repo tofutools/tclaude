@@ -58,7 +58,8 @@ func reuseStoredProfileContents(convID string, previous *sandboxpolicy.Snapshot)
 		return true, ""
 	}
 	if !sameAppliedProfiles(current.Applied, previous.Applied) {
-		return false, fmt.Sprintf("relaunch policy reuses sandbox profile contents, but the agent's sandbox profiles are now %s (were %s), so their current contents apply",
+		return false, fmt.Sprintf("relaunch policy (%s) reuses sandbox profile contents, but the agent's sandbox profiles are now %s (were %s), so their current contents apply",
+			relaunchPolicySource(convID, sandboxProfileContentsField),
 			orNone(appliedProfileNames(current.Applied)), orNone(appliedProfileNames(previous.Applied)))
 	}
 	return true, ""
@@ -87,7 +88,7 @@ func reuseStoredGroupEnvironment(current sandboxpolicy.Snapshot, previous *sandb
 // It returns the value, a "changed since last launch" line when it differs
 // from carried, and a note when the group policy was not applied.
 func relaunchRemoteControl(convID, harnessName string, carried bool) (bool, string, string) {
-	policy := currentRelaunchPolicy()
+	policy, _ := relaunchPolicyFor(convID)
 	if relaunchReuses(policy, groupRemoteControlField) {
 		return carried, "", ""
 	}

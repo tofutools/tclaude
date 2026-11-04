@@ -173,6 +173,14 @@ var spawnProfileColumns = []spawnProfileColumn{
 			p.ContextFeatures = unmarshalStringMapColumn(raw, "spawn_profiles.context_features")
 			return nil
 		}),
+	textCol("relaunch_policy", "RelaunchPolicy",
+		func(w *spawnProfileWrite) any {
+			return marshalStringMapColumn(w.p.RelaunchPolicy, "spawn_profiles.relaunch_policy")
+		},
+		func(p *SpawnProfile, raw string) error {
+			p.RelaunchPolicy = unmarshalStringMapColumn(raw, "spawn_profiles.relaunch_policy")
+			return nil
+		}),
 	textCol("environment_json", "Environment",
 		func(w *spawnProfileWrite) any { return w.environmentJSON },
 		func(p *SpawnProfile, raw string) error {

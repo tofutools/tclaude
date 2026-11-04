@@ -89,3 +89,39 @@ func TestRelaunchPolicyHarnessConfigModes(t *testing.T) {
 	assert.Equal(t, launchspec.ModeTightenOnly, tighten.Mode("harness_config"))
 	assert.Equal(t, launchspec.RelaunchMode(""), tighten.Mode("model"), "not configurable")
 }
+
+func TestValidateOverrides(t *testing.T) {
+	assert.NoError(t, launchspec.ValidateOverrides(map[string]string{"group_env": "reuse", "harness_config": "tighten-only"}, false))
+	assert.NoError(t, launchspec.ValidateOverrides(map[string]string{"group_env": "inherit"}, true), "a spawn may follow the global table")
+	assert.Error(t, launchspec.ValidateOverrides(map[string]string{"group_env": "inherit"}, false), "a profile leaves the row out instead")
+	assert.Error(t, launchspec.ValidateOverrides(map[string]string{"group_env": "chain-wins"}, true))
+	assert.Error(t, launchspec.ValidateOverrides(map[string]string{"harness": "reuse"}, true), "not configurable")
+	assert.Error(t, launchspec.ValidateOverrides(map[string]string{"nope": "reuse"}, true))
+}
+
+func TestKeepsOldSettings(t *testing.T) {
+	for mode, keeps := range map[launchspec.RelaunchMode]bool{
+		launchspec.ModeReuse: true, launchspec.ModeExplicitWins: true,
+		launchspec.ModeReResolve: false, launchspec.ModeTightenOnly: false,
+		launchspec.ModeChainWins: false, launchspec.ModeInherit: false,
+	} {
+		assert.Equalf(t, keeps, launchspec.KeepsOldSettings(mode), "%s", mode)
+	}
+}
+
+func TestWithOverrides(t *testing.T) {
+	global := launchspec.RelaunchPolicy{Rows: []launchspec.PolicyRow{
+		{Scope: launchspec.ScopeGlobal, Field: "group_env", Mode: launchspec.ModeReuse},
+		{Scope: launchspec.ScopeGlobal, Field: "harness_config", Mode: launchspec.ModeChainWins},
+	}}
+	got := global.WithOverrides(map[string]launchspec.RelaunchMode{
+		"group_env":                launchspec.ModeReResolve,
+		"sandbox_profile_contents": launchspec.ModeReuse,
+		"harness_config":           launchspec.ModeReuse, // not a mode the row offers: skipped
+	})
+	require.NoError(t, got.Validate())
+	assert.Equal(t, launchspec.ModeReResolve, got.Mode("group_env"), "the override replaces the global row")
+	assert.Equal(t, launchspec.ModeReuse, got.Mode("sandbox_profile_contents"), "an override where the table has no row")
+	assert.Equal(t, launchspec.ModeChainWins, got.Mode("harness_config"), "an invalid override leaves the global row")
+	assert.Equal(t, launchspec.ModeReResolve, got.Mode("group_remote_control"), "untouched rows keep their default")
+}
