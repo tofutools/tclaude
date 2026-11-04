@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"net/http"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -73,8 +74,9 @@ func (p launchPosture) axes() launchPosture {
 // secure defaults.
 func TestTemplateDefaultTiers_NothingConfiguredUnchanged(t *testing.T) {
 	for h, want := range map[string]launchPosture{
-		"claude":   {Sandbox: "inherit", Approval: "auto"},
-		"codex":    {Sandbox: "tclaude-agent", Approval: "never", SSHWorkaround: true},
+		"claude": {Sandbox: "inherit", Approval: "auto"},
+		// harness.CanSSHWorkaround is Linux-only, so the default is off on macOS.
+		"codex":    {Sandbox: "tclaude-agent", Approval: "never", SSHWorkaround: runtime.GOOS == "linux"},
 		"opencode": {Sandbox: "access-control", Approval: "deny", Tools: "allow"},
 	} {
 		t.Run(h, func(t *testing.T) {
