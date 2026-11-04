@@ -104,7 +104,7 @@ func TestProfileReapply_PreviewShowsPerAgentDiff(t *testing.T) {
 	assert.NotContains(t, statuses, retired.AgentID)
 	assert.Equal(t, map[string]string{
 		"model":           "kept (fixed)",
-		"peer_messaging":       "changes",
+		"peer_messaging":  "changes",
 		"auto_memory":     "changes",
 		"initial_message": "not reapplied (spawn only)",
 	}, statuses[plain.AgentID])
