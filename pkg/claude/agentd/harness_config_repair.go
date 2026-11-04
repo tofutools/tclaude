@@ -11,6 +11,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/launchspec"
 )
 
 // One-off repair for agents whose explicit --harness-config posture was lost
@@ -76,11 +77,16 @@ func requestedHarnessConfig(raw string) string {
 
 // harnessConfigRepairFor reports whether rec lost its explicit posture, and
 // how. A snapshot that omits every profile tier never carries one, and a nil
-// snapshot is the fail-closed legacy sentinel, so neither is flagged.
-func harnessConfigRepairFor(rec db.AgentLaunchRecord) (harnessConfigRepair, bool) {
+// snapshot is the fail-closed legacy sentinel, so neither is flagged. Nor is a
+// posture the relaunch policy (mode) gives up for the chain's: that is the
+// policy working, not a lost pin.
+func harnessConfigRepairFor(rec db.AgentLaunchRecord, mode launchspec.RelaunchMode) (harnessConfigRepair, bool) {
 	requested := requestedHarnessConfig(rec.InitialSpawnConfig)
 	snap := rec.EffectiveSandbox
 	if requested == "" || snap == nil || snap.ProfilesOmitted {
+		return harnessConfigRepair{}, false
+	}
+	if relaunchHarnessConfig(mode, snap.Effective.HarnessConfig, requested) == "" {
 		return harnessConfigRepair{}, false
 	}
 	if explicitHarnessConfig(snap) == requested {
@@ -118,8 +124,9 @@ func findHarnessConfigRepairs(includeRetired bool) ([]harnessConfigRepair, error
 		return nil, err
 	}
 	out := []harnessConfigRepair{}
+	mode := currentRelaunchPolicy().Mode(harnessConfigField)
 	for _, rec := range records {
-		repair, ok := harnessConfigRepairFor(rec)
+		repair, ok := harnessConfigRepairFor(rec, mode)
 		if !ok {
 			continue
 		}
@@ -164,7 +171,7 @@ func repinHarnessConfig(agentID string) (harnessConfigRepair, error) {
 	if rec == nil {
 		return harnessConfigRepair{}, errHarnessConfigNotNeeded
 	}
-	repair, ok := harnessConfigRepairFor(*rec)
+	repair, ok := harnessConfigRepairFor(*rec, currentRelaunchPolicy().Mode(harnessConfigField))
 	if !ok {
 		return harnessConfigRepair{}, errHarnessConfigNotNeeded
 	}

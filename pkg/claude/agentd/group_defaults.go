@@ -89,7 +89,7 @@ func cloneSandboxForGroup(sourceConv string, launch *sandboxpolicy.Snapshot, gro
 		}
 		// The source's explicit --harness-config is part of what it was
 		// launched with; a new group's chain does not replace it (tcl-bmhpir).
-		reapplied, err := reapplyExplicitHarnessConfig(*resolved, launch)
+		reapplied, err := reapplyExplicitHarnessConfig(sourceConv, *resolved, launch)
 		if err != nil {
 			return nil, fresh, err
 		}

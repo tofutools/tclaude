@@ -506,6 +506,9 @@ const (
 	// environment. Keep it separate from profiles.manage: permission to edit a
 	// spawn-dialog preset must not imply permission to widen a sandbox.
 	PermSandboxProfilesManage = "sandbox-profiles.manage"
+	// PermRelaunchPolicyManage changes the global relaunch policy
+	// (relaunch_policy.go). Reads are open.
+	PermRelaunchPolicyManage = "relaunch-policy.manage"
 	// Draft is intentionally separate from Manage: a dashboard-summoned scribe
 	// may propose a validated profile for human review, but cannot persist it,
 	// assign it, or use it to launch an agent.

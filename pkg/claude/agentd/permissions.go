@@ -138,7 +138,7 @@ var riskySlugs = []string{
 	PermConfigImport, PermConfigExport, PermAgentBundleImport,
 	PermAgentDelete, PermGroupsMembersDelete,
 	PermGroupsMembersSpawnPermissions, PermGroupsMembersSpawnSandbox, PermGroupsMembersSpawnAll,
-	PermGroupsOwnersManage, PermGroupsAdmin, PermSandboxProfilesManage, PermSandboxHarnessConfig,
+	PermGroupsOwnersManage, PermGroupsAdmin, PermSandboxProfilesManage, PermSandboxHarnessConfig, PermRelaunchPolicyManage,
 	PermPermissionsGrant, PermPermissionsRevoke,
 }
 
@@ -630,6 +630,10 @@ var permissionRegistry = []PermSlug{
 	{
 		Slug:        PermSandboxProfilesManage,
 		Description: "Read, create, edit, delete and assign sandbox profiles — operator policy that can add host filesystem access and launch environment to agents. This is intentionally separate from profiles.manage and is not default-granted (effectively human-only).",
+	},
+	{
+		Slug:        PermRelaunchPolicyManage,
+		Description: "Change the global relaunch policy: how every agent's resume, reincarnate and clone resolve the configurable launch fields, such as whether an explicit --harness-config posture or the sandbox profiles' posture wins. A change can widen what a relaunch gives every agent, so treat it like sandbox-profiles.manage. Reads are open; not default-granted (effectively human-only).",
 	},
 	{
 		Slug:        PermSandboxProfilesDraft,
