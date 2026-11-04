@@ -6,6 +6,7 @@ import { dashboardState } from './snapshot-store.js';
 import { Fragment, h, render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { SpawnOnResumeRow } from './spawn-on-resume.js';
 import { Button, OptionalSelect, Select } from './ui-components.js';
 import { TransferTray } from './transfer-card.js';
 import { LockReason } from './lock-reason.js';
@@ -1744,6 +1745,9 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           <div class="spawn-field-hint ui-hint info" key=${message}>ℹ ${message}</div>`)}
       </div>
     </div>
+    ${/* What a resume does with this agent's launch inputs (launch slice 10).
+          Read-only, and this node's policy, so a spawn on another node leaves it out. */
+      !remote && !away && html`<${SpawnOnResumeRow} busy=${busy} />`}
     ${/* Sits between the two selects it is about — the sandbox above and the
           permission mode right here — because the warning is a statement about
           their combination, not about either field alone. role="alert" so a
