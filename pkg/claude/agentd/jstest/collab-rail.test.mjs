@@ -29,7 +29,9 @@ test('rail model: resources by group in group order, then terminals, each in a b
     resources: SNAPSHOT.group_resources, groups: SNAPSHOT.groups, places,
     panes: [{ key: 'board:launch', seed: { board: 'launch' }, label: 'Launch' }, { key: 'agent:x', seed: { agent: 'x' }, label: 'launch-uniform' }],
     overlays: [{ id: 'term:y', kind: 'terminal', paneKey: 'agent:y', label: 'relaunch-table', minimized: false }],
-    background: [{ kind: 'agent', tmux_session: 'tc-live', label: 'live-page' }, { kind: 'group_shell', tmux_session: 'g' }],
+    background: [{ kind: 'agent', key: 'agent:live', tmux_session: 'tc-live', label: 'live-page' }, { kind: 'group_shell', key: 'groupterm:tclaude', tmux_session: 'g' },
+      { kind: 'shell', key: 'agent:y', tmux_session: 'held', label: 'held by a window' },
+      { kind: 'agent', tmux_session: 'old-gen', label: 'superseded' }],
   });
   assert.deepEqual(all.sections.map((s) => s.name), ['tclaude', 'home-lab']);
   const buckets = Object.fromEntries(all.sections.flatMap((s) => s.items).map((i) => [i.key, i.bucket]));
@@ -39,6 +41,18 @@ test('rail model: resources by group in group order, then terminals, each in a b
   });
   assert.deepEqual(all.terminals.map((i) => [i.title, i.bucket]), [['launch-uniform', 'open'], ['relaunch-table', 'open'], ['live-page', 'background']],
     'a strip agent pane, a floating terminal, a background session; a group shell is the group\'s, not a terminal');
+
+  assert.ok(!all.terminals.some((i) => i.title === 'held by a window'), 'a session an overlay window holds is listed once');
+  assert.ok(!all.terminals.some((i) => i.title === 'superseded'), 'a session that cannot be attached is not offered');
+
+  // Open here but in no group's list: it still shows, under Not in a group.
+  const loose = m.railItems({
+    resources: SNAPSHOT.group_resources, groups: SNAPSHOT.groups,
+    panes: [{ key: 'board:scratch', seed: { board: 'scratch' }, label: 'Scratch board' }],
+    overlays: [{ kind: 'page', page: 'pg_private', label: 'Private page', minimized: true }],
+  });
+  const other = loose.sections.find((s) => s.id === 'other');
+  assert.deepEqual(other.items.map((i) => [i.key, i.bucket]), [['board:scratch', 'open'], ['page:pg_private', 'minimized']]);
 
   const open = m.filterRail(all, { bucket: 'open' });
   assert.deepEqual(open.counts, { all: 10, open: 3, minimized: 2, background: 3, closed: 2 });

@@ -1779,11 +1779,12 @@ function TerminalTabs({
 
   // The rail lists everything beside the strip, on the dashboard's own
   // Collab view only (collab-rail.js).
-  const rail = !solo && !!snapshot;
+  const rail = !solo && !!snapshot && !onPeerPage();
   const rootClass = rail ? `terminal-shell-root has-rail${railCollapsed.value ? ' rail-collapsed' : ''}` : 'terminal-shell-root';
   return html`
     <div ref=${shellRef} class=${rootClass}>
-      ${rail ? html`<${CollabRail} panes=${current.panes} actions=${actions} snapshot=${snapshot} notify=${shellToast} />` : null}
+      ${rail ? html`<${CollabRail} panes=${current.panes} actions=${actions} snapshot=${snapshot} notify=${shellToast}
+        floatsOf=${(key) => paneFloats(state.panes.peek().find((pane) => pane.key === key), snapshot?.value)} />` : null}
       ${!solo ? html`
         <span id="terminal-tab-reorder-help" class="mux-tab-a11y">
           Drag tabs to reorder them, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow on a focused tab.

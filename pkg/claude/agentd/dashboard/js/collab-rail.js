@@ -14,6 +14,7 @@ import { RAIL_FILTERS, RAIL_MARK, filterRail, railGlyph, railItems } from './col
 import { overlayResourceKey } from './resource-model.js';
 import { resourcePlaces, revealResourceOverlay } from './resource-places.js';
 import { closeOverlayTab, minimizeOverlayTab, openOverlayWindow, overlayTabs } from './overlay-instances.js';
+import { tabMoves } from './overlay-tab-moves.js';
 import { attachBackgroundTerminal, backgroundTerminals, rowView, visibleBackgroundTerminals } from './background-terminals.js';
 import { openBoardPane } from './board-overlay-state.js';
 import { expectPage, openPagePane } from './page-place.js';
@@ -70,10 +71,10 @@ export async function openRailItem(item, { actions, snapshot, fetchImpl = (...ar
 
 // The hover actions of an item open here: a strip tab pops out or closes; a
 // floating one minimizes or closes.
-function hoverActions(item, actions) {
+function hoverActions(item, actions, floatsOf) {
   if (item.view === 'open-tab' && item.paneKey) {
     return [
-      ['⧉', 'Pop out into a window of its own', () => actions?.popOutPane?.(item.paneKey, { floats: true })],
+      ['⧉', 'Pop out into a window of its own', () => actions?.popOutPane?.(item.paneKey, { floats: floatsOf(item.paneKey) })],
       ['×', 'Close the tab', () => actions?.closePane?.(item.paneKey)],
     ];
   }
@@ -82,16 +83,18 @@ function hoverActions(item, actions) {
     if (!tab) return [];
     return [
       ['–', 'Minimize to the dock', () => minimizeOverlayTab(tab.id)],
-      ['×', 'Close the window', () => closeOverlayTab(tab.id)],
+      // The kind's own close: a page ends and its agent is told, an editor
+      // asks before dropping unsaved edits.
+      ['×', 'Close the window', () => { const { close } = tabMoves(tab) || {}; return close ? close() : closeOverlayTab(tab.id); }],
     ];
   }
   return [];
 }
 
-function RailItem({ item, collapsed, actions, snapshot, notify }) {
+function RailItem({ item, collapsed, actions, snapshot, notify, floatsOf }) {
   const mark = item.bucket === 'open' ? RAIL_MARK.open : item.bucket === 'minimized' ? RAIL_MARK.minimized
     : item.bucket === 'background' ? (item.kind === 'page' ? pillLabel('background', 'page') : RAIL_MARK.background) : RAIL_MARK.closed;
-  const tools = collapsed ? [] : hoverActions(item, actions);
+  const tools = collapsed ? [] : hoverActions(item, actions, floatsOf);
   return html`<div class=${`cr-item cr-${item.bucket}`} data-rail-item=${item.key} data-rail-bucket=${item.bucket}>
     <button data-ui-exempt type="button" class="cr-name" title=${item.group ? `${item.title} · ${item.group}` : item.title}
       onClick=${() => void openRailItem(item, { actions, snapshot, notify })}>
@@ -106,7 +109,7 @@ function RailItem({ item, collapsed, actions, snapshot, notify }) {
 
 // CollabRail lists every group resource and agent terminal. panes are the
 // strip's (the terminal shell's state); snapshot the dashboard's.
-export function CollabRail({ panes = [], actions, snapshot, notify = () => {} }) {
+export function CollabRail({ panes = [], actions, snapshot, notify = () => {}, floatsOf = () => false }) {
   const [query, setQuery] = useState('');
   const [bucket, setBucket] = useState('all');
   const collapsed = railCollapsed.value;
@@ -117,7 +120,7 @@ export function CollabRail({ panes = [], actions, snapshot, notify = () => {} })
     panes, overlays: overlayTabs.value, background, titleOf: (row) => rowView(row, value).label,
   });
   const { sections, terminals, counts } = filterRail(all, collapsed ? {} : { bucket, query });
-  const item = (it) => html`<${RailItem} key=${it.key} item=${it} collapsed=${collapsed} actions=${actions} snapshot=${snapshot} notify=${notify} />`;
+  const item = (it) => html`<${RailItem} key=${it.key} item=${it} collapsed=${collapsed} actions=${actions} snapshot=${snapshot} notify=${notify} floatsOf=${floatsOf} />`;
   return html`<aside class=${`collab-rail${collapsed ? ' collapsed' : ''}`} data-collab-rail="" aria-label="Resources and terminals">
     <div class="cr-head">
       ${!collapsed && html`<input class="cr-search" type="search" placeholder="Find a resource or terminal…" aria-label="Find a resource or terminal"

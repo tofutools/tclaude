@@ -4,7 +4,7 @@
 // it the snapshot, this browser's places and its open panes, overlay tabs and
 // background sessions.
 
-import { resourceKey, resourceState, stripResourceKey } from './resource-model.js';
+import { overlayResourceKey, resourceKey, resourceState, stripResourceKey } from './resource-model.js';
 
 export const RAIL_FILTERS = Object.freeze([
   ['all', 'All'], ['open', 'Open'], ['minimized', 'Minimized'], ['background', 'Background'], ['closed', 'Closed'],
@@ -50,6 +50,25 @@ export function railItems({ resources = [], groups = [], places = new Map(), pan
     .sort(([a], [b]) => order.get(a) - order.get(b))
     .map(([id, items]) => ({ id, name: names.get(id), items }));
 
+  // A resource open here that no group lists (a board linked to none, a page
+  // shown outside a group, a shell whose group was archived) still shows.
+  const listed = new Set(sections.flatMap((s) => s.items.map((item) => item.key)));
+  const others = [];
+  for (const pane of panes) {
+    const key = stripResourceKey(pane?.key);
+    if (!key || listed.has(key)) continue;
+    listed.add(key);
+    others.push({ key, kind: key.slice(0, key.indexOf(':')), title: pane.label || key, view: 'open-tab', bucket: 'open', paneKey: pane.key });
+  }
+  for (const tab of overlays) {
+    const key = overlayResourceKey(tab);
+    if (!key || listed.has(key)) continue;
+    listed.add(key);
+    const view = tab.minimized ? 'minimized' : 'floating';
+    others.push({ key, kind: key.slice(0, key.indexOf(':')), title: tab.label || key, view, bucket: bucketOf(view), overlay: tab });
+  }
+  if (others.length) sections.push({ id: 'other', name: 'Not in a group', items: others });
+
   // Terminals: the strip's agent and session panes, the overlay windows'
   // terminal tabs, then the sessions running with nothing attached here.
   const terminals = [];
@@ -62,8 +81,12 @@ export function railItems({ resources = [], groups = [], places = new Map(), pan
     const view = tab.minimized ? 'minimized' : 'floating';
     terminals.push({ key: `overlay:${tab.id}`, kind: 'terminal', title: tab.label || tab.id, view, bucket: bucketOf(view), overlay: tab });
   }
+  // A background session counts once: not when an overlay window holds it
+  // (a minimized one is detached, so the listing has it too), and only when
+  // it can be attached (a superseded generation or a stray session cannot).
+  const held = new Set(overlays.map((tab) => tab?.paneKey).filter(Boolean));
   for (const row of background) {
-    if (!row || row.kind === 'board' || row.kind === 'group_shell') continue;
+    if (!row || !row.key || held.has(row.key) || row.kind === 'board' || row.kind === 'group_shell') continue;
     terminals.push({ key: `bg:${row.node?.id || ''}:${row.tmux_session || row.key}`, kind: 'terminal', title: titleOf(row), view: 'background', bucket: 'background', row });
   }
   return { sections, terminals };
