@@ -132,7 +132,24 @@ func findHarnessConfigRepairs() ([]harnessConfigRepair, error) {
 // repinHarnessConfig writes agentID's requested posture back into its
 // recorded launch, judged afresh against what is stored now: an agent no
 // longer in need of repair is left alone and reported so.
+//
+// It holds the actor's launch lock, which resume, restart and reincarnate hold
+// across their read of the stored snapshot and every write of it (including a
+// failed launch's restore). Without it a relaunch already in flight would
+// write back the unpinned snapshot it read before the re-pin, after the
+// re-pin reported success. The compare-and-swap below guards the remaining
+// writers that do not take the lock.
 func repinHarnessConfig(agentID string) (harnessConfigRepair, error) {
+	conv, err := db.CurrentConvForAgent(agentID)
+	if err != nil {
+		return harnessConfigRepair{}, err
+	}
+	if conv == "" {
+		return harnessConfigRepair{}, errHarnessConfigNotNeeded
+	}
+	launchLock := resumeLaunchLock(conv)
+	launchLock.Lock()
+	defer launchLock.Unlock()
 	records, err := db.ListActiveAgentLaunchRecords()
 	if err != nil {
 		return harnessConfigRepair{}, err
