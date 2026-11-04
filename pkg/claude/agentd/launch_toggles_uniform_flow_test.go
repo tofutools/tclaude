@@ -289,3 +289,32 @@ func TestLaunchUniform_Process_NamedProfileHonoured(t *testing.T) {
 	assert.Equal(t, allOn, spawnedToggles(t, f, conv))
 	assert.NotContains(t, inboxBodies(t, conv), uniformGroupGuidance)
 }
+
+// A group policy that opts in must not fail a worker whose harness has no
+// Remote Access: the policy-derived value is clamped off and the spawn goes on.
+func TestLaunchUniform_Trigger_OptInPolicyClampedForCodex(t *testing.T) {
+	f := uniformTriggerGroup(t)
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "reviewer", Harness: "codex"})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, setGroupRemoteControlPolicy(t, f, "alpha", "optin").Code)
+	conv := fireUniformTrigger(t, f, "reviewer")
+	assert.Equal(t, allOff, spawnedToggles(t, f, conv))
+}
+
+// A scribe is briefed by its summon, so its group's context stays out unless a
+// profile tier asks for it.
+func TestLaunchUniform_Scribe_GroupContextFollowsProfile(t *testing.T) {
+	f := newFlow(t)
+	first := summonUniformScribe(t, f)
+	setGroupContext(t, f, "uniform-scribe", uniformGroupGuidance)
+	assert.NotContains(t, inboxBodies(t, first), uniformGroupGuidance)
+	plain := summonUniformScribe(t, f)
+	assert.NotContains(t, inboxBodies(t, plain), uniformGroupGuidance, "nothing configured: left out")
+
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "with-context", "harness": "claude", "include_group_default_context": true,
+	}).Code)
+	require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "with-context").Code)
+	briefed := summonUniformScribe(t, f)
+	assert.Contains(t, inboxBodies(t, briefed), uniformGroupGuidance, "a profile tier turns it on")
+}
