@@ -12946,7 +12946,7 @@ body.wizard #links-manage-modal #links-list th.sort-active .sort-arrow { color: 
 body.wizard #links-manage-modal #links-list tr:hover { background: #241b3d; }
 body.wizard #links-manage-modal #links-list .rowname { color: #f3e6c0; }
 body.wizard #links-manage-modal #links-list .id,
-body.wizard #links-manage-modal #links-list .muted,
+body.wizard #links-manage-modal #links-list .muted { color: #b39ddb; }
 
 /* The compact add-link action lives inside each expanded party card rather
    than either links modal, so it needs its own group-section hook. It keeps
