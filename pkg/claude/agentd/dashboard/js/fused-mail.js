@@ -47,6 +47,7 @@ import {
 } from './fused-mail-model.js';
 import { cursorKey, legacyDepth, legacyStream, mergeCursorPage, newWalk, pageCount as mergedPageCount, recordVector, walkTarget, LEGACY_MAX_DEPTH } from './fleet-pager.js';
 import { Button } from './ui-components.js';
+import { requestJSON } from './request-json.js';
 
 const html = htm.bind(h);
 
@@ -82,19 +83,13 @@ const LIST_ROWS = { rowSelector: '.mail-row', wrapSelector: '.mail-row-wrap' };
 function errText(e) { return e?.message || String(e); }
 function when(s) { const t = Date.parse(s || ''); return Number.isFinite(t) ? new Date(t).toLocaleString() : ''; }
 
-async function readJSON(fetchFn, url, init) {
-  const res = await fetchFn(url, { credentials: 'same-origin', cache: 'no-store', ...init });
-  let data = null;
-  try { data = await res.json(); } catch (_) { data = null; }
-  if (!res.ok) { const e = new Error(data?.error || `HTTP ${res.status}`); e.status = res.status; e.body = data; throw e; }
-  return data;
-}
+const readJSON = (fetchFn, url) => requestJSON(url, { cache: 'no-store', fetchImpl: fetchFn });
 
 // createFusedMailActions posts an action to the node that owns the message.
 // A peer serves deleting (deleteLocal, its own delete routes) only under
 // unrestricted trust.
 export function createFusedMailActions({ fetchImpl = (...a) => globalThis.fetch(...a), localFetch = globalThis.__tclaudeRemoteNode?.localFetch || fetchImpl } = {}) {
-  const post = (node, url, body) => readJSON(node.local ? localFetch : fetchImpl, url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const post = (node, url, body) => requestJSON(url, { method: 'POST', body, cache: 'no-store', fetchImpl: node.local ? localFetch : fetchImpl });
   return Object.freeze({
     markAgent: (node, ids, read) => post(node, ownerRoutes(node).markRead, { ids: [].concat(ids), read }),
     markFolderRead: (node, conv) => post(node, ownerRoutes(node).markRead, { conv, read: true }),

@@ -1,22 +1,14 @@
 import { FleetAdminError } from './fleet-admin-actions.js';
 import { nodeBase } from './fleet-harness-model.js';
+import { requestJSON } from './request-json.js';
 
 // createHarnessActions wraps a node's harness routes. Every call names the
 // node; a peer's go through the local peer proxy, which enforces its grants
 // and, for credential pushes, captures this operator's own login files.
 export function createHarnessActions({ fetchImpl = (...a) => globalThis.fetch(...a) } = {}) {
   async function call(node, method, path, body) { return callAt(node, method, `harnesses/${path}`, body); }
-  async function callAt(node, method, path, body) {
-    const init = { method, credentials: 'same-origin', cache: 'no-store', headers: {} };
-    if (body !== undefined) {
-      init.headers['Content-Type'] = 'application/json';
-      init.body = JSON.stringify(body);
-    }
-    const res = await fetchImpl(`${nodeBase(node)}/${path}`, init);
-    let data = null;
-    try { data = await res.json(); } catch (_) { data = null; }
-    if (!res.ok) throw new FleetAdminError(res.status, data);
-    return data;
+  function callAt(node, method, path, body) {
+    return requestJSON(`${nodeBase(node)}/${path}`, { method, body, cache: 'no-store', fetchImpl, ErrorClass: FleetAdminError });
   }
   return Object.freeze({
     availability: (node, { refresh = false } = {}) => call(node, 'GET', `availability${refresh ? '?refresh=1' : ''}`),

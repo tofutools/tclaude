@@ -1,33 +1,16 @@
 import { trustBody } from './fleet-admin-model.js';
 import { downloadURL } from './download.js';
+import { RequestError, requestJSON } from './request-json.js';
 
 // FleetAdminError carries the daemon's stable error code so dialogs can react
 // (e.g. confirmation_required, stale_preview) instead of string-matching.
-export class FleetAdminError extends Error {
-  constructor(status, body) {
-    super(body?.error || `HTTP ${status}`);
-    this.status = status;
-    this.code = body?.code || '';
-    // A refused profile apply returns its plan (conflicts) in the body.
-    this.body = body || null;
-  }
-}
+// A refused profile apply returns its plan (conflicts) in the error's body.
+export class FleetAdminError extends RequestError {}
 
 // createFleetAdminActions wraps the local-only /api/federation routes (the
 // cookie-authenticated mirrors of /v1/federation; never peer-proxied).
 export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch(...a) } = {}) {
-  async function call(method, path, body) {
-    const init = { method, credentials: 'same-origin', headers: {} };
-    if (body !== undefined) {
-      init.headers['Content-Type'] = 'application/json';
-      init.body = JSON.stringify(body);
-    }
-    const res = await fetchImpl(`/api/federation/${path}`, init);
-    let data = null;
-    try { data = await res.json(); } catch (_) { data = null; }
-    if (!res.ok) throw new FleetAdminError(res.status, data);
-    return data;
-  }
+  const call = (method, path, body) => requestJSON(`/api/federation/${path}`, { method, body, fetchImpl, ErrorClass: FleetAdminError });
   const enc = encodeURIComponent;
 // rows reads a hub list response, bare or wrapped in its named field.
 const rows = (v, key) => (Array.isArray(v) ? v : v?.[key] || []);
