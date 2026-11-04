@@ -219,8 +219,8 @@ var Fields = []Field{
 		Gap:         "With agentd down, watch mode and conv resume reuse the stored group environment, and say so; a clone re-reads it whatever the policy says."},
 	{Key: "group_remote_control", Label: "Group remote-control policy", Layer: LayerGroup, Configurable: true,
 		GroupFields: []string{"RemoteControl"},
-		Why: "Group settings are kept current: a policy the group sets applies on relaunch, unless the spawn gave remote control explicitly " +
-			"(a dashboard spawn always does: its checkbox is sent as set); with no group policy the agent keeps its last state, " +
+		Why: "Group settings are kept current: a policy the group sets applies on relaunch, unless the spawn set remote control explicitly " +
+			"(a flag, or a dashboard checkbox the operator changed); with no group policy the agent keeps its last state, " +
 			"live toggles included. Still clamped to what the harness supports.",
 		Gap: "Clone keeps the remote-control state stored at the last launch, whatever the policy says; so do watch mode and conv resume while agentd is not running."},
 	{Key: "group_startup_context", Label: "Group startup context and mission", Layer: LayerLive,

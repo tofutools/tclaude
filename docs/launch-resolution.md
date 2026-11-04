@@ -149,7 +149,7 @@ Three rows can be switched between two modes:
 | Row | Re-resolve (the default) | Reuse |
 |---|---|---|
 | Group environment | The group's current environment applies. | The group environment stored at the agent's last launch applies; later edits to the group's environment do not reach it. |
-| Group remote-control policy | A policy the group sets now applies, unless the spawn gave `--remote-control` explicitly. A spawn from the dashboard always sends its remote-control checkbox, so for those agents the spawn's value stays. | The agent keeps its remote-control state from its last launch, whatever the group's policy says now. |
+| Group remote-control policy | A policy the group sets now applies, unless the spawn gave `--remote-control` explicitly. In the dashboard's spawn dialog, a remote-control checkbox the operator changed counts as explicit; one left as pre-filled does not, unless the daemon would resolve a different value, when the shown value is sent. Agents spawned from the dashboard before this change all count as explicit. | The agent keeps its remote-control state from its last launch, whatever the group's policy says now. |
 | Sandbox profile contents | The current contents of the agent's sandbox profiles apply. | The profile contents stored at the last launch apply, even if a profile was edited or deleted since. Which profiles apply is still read again: when a group or the workspace now assigns a different profile, its current contents apply and the relaunch says so. |
 
 Re-resolve is what a relaunch did before the policy existed, except for
@@ -267,7 +267,7 @@ row to its default).
 | Field | Key | On relaunch | Spawn flag | Why |
 |---|---|---|---|---|
 | Group environment | `group_env` | re-resolved, configurable | no | Group settings are kept current, for agents spawned before this table too (operator decision). |
-| Group remote-control policy | `group_remote_control` | re-resolved, configurable | no | Group settings are kept current: a policy the group sets applies on relaunch, unless the spawn gave remote control explicitly (a dashboard spawn always does: its checkbox is sent as set); with no group policy the agent keeps its last state, live toggles included. Still clamped to what the harness supports. |
+| Group remote-control policy | `group_remote_control` | re-resolved, configurable | no | Group settings are kept current: a policy the group sets applies on relaunch, unless the spawn set remote control explicitly (a flag, or a dashboard checkbox the operator changed); with no group policy the agent keeps its last state, live toggles included. Still clamped to what the harness supports. |
 | Group and workspace sandbox-profile assignment | `group_sandbox_assignment` | re-resolved | no | Which profile a group or the workspace assigns is a setting, kept current. |
 
 ### Contents of referenced profiles and roles

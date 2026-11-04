@@ -343,6 +343,40 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   assert.equal(localToLocal.initialMessage, '');
 });
 
+test('agent-spawn model sends a pre-filled toggle only when the operator set it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = { groups, harnesses, userDefaultModel: '', normalizeNames: true };
+  const omit = (operatorSet = new Set(), profiles = [], dashboardDefault = '') => ({ operatorSet, profiles, dashboardDefault });
+  // beta's policy is opt-in, so the form pre-fills remote control on.
+  const draft = { ...model.createSpawnDraft({ groups, harnesses, groupName: 'beta' }), name: 'worker' };
+  assert.equal(draft.remoteControl, true);
+  const untouched = model.buildSpawnRequest(draft, context, null, [], omit()).body;
+  for (const key of Object.values(model.PREFILLED_TOGGLES)) {
+    assert.equal(key in untouched, false, `${key} is left to the daemon, which resolves it the same way`);
+  }
+  const set = model.buildSpawnRequest({ ...draft, remoteControl: false, autoMemory: true }, context, null, [],
+    omit(new Set(['remoteControl', 'autoMemory']))).body;
+  assert.equal(set.remote_control, false, 'an operator choice is sent, and recorded as explicit');
+  assert.equal(set.auto_memory, true);
+  assert.equal('peer_messaging' in set, false);
+  assert.equal(model.buildSpawnRequest(draft, context, null, []).body.remote_control, true,
+    'without omission every shown toggle is sent');
+
+  // The daemon walks the named, group default and global default profiles: a
+  // pre-fill that read fewer tiers is sent rather than left to diverge.
+  const alpha = { ...model.createSpawnDraft({ groups, harnesses, groupName: 'alpha' }), name: 'worker' };
+  const profiles = [{ name: 'group-default' }, { name: 'global', auto_memory: true }];
+  const tiered = model.buildSpawnRequest(alpha, context, null, [], omit(new Set(), profiles, 'global')).body;
+  assert.equal(tiered.auto_memory, false, 'the global default would turn auto-memory on: the shown off is sent');
+  assert.equal('peer_messaging' in tiered, false, 'no tier sets it: off is the daemon default too');
+  const unseen = model.buildSpawnRequest(alpha, context, null, [], omit()).body;
+  assert.equal(unseen.auto_memory, false, 'a tier profile not visible here: the shown value is sent');
+  const foreign = [{ name: 'group-default', harness: 'codex', auto_memory: true }];
+  assert.equal('auto_memory' in model.buildSpawnRequest(alpha, context, null, [], omit(new Set(), foreign)).body, false,
+    'a profile for another harness does not speak, as on the daemon');
+});
+
 test('agent-spawn model normalizes names and builds exact launch bodies', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/agent-spawn-model.js');

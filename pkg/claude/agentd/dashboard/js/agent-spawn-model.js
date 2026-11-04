@@ -1248,7 +1248,48 @@ export function prepareSpawnDraft(
   return syncSpawnWorktree({ ...draft, name }, pickerUsable);
 }
 
-export function buildSpawnRequest(draft, context, worktreeSelection, attachmentPaths = []) {
+// PREFILLED_TOGGLES are the launch toggles the form pre-fills from the group
+// policy and the profiles, keyed draft field → request and profile field.
+// Given omission ({ operatorSet, profiles, dashboardDefault }),
+// buildSpawnRequest leaves one out when the operator did not set it and the
+// daemon resolves the same value without it, as the CLI does: a pre-filled
+// value is not an explicit choice, so it is not recorded as one, and a later
+// group policy can still reach the agent on relaunch. A value the daemon would
+// not land on (the pre-fill read fewer tiers than it walks, or the profiles
+// are not visible here) is sent. Without omission every shown toggle is sent.
+export const PREFILLED_TOGGLES = Object.freeze({
+  remoteControl: 'remote_control', autoMemory: 'auto_memory', peerMessaging: 'peer_messaging',
+});
+
+const DEFAULT_HARNESS = 'claude';
+
+// daemonToggleDefault is the value the daemon resolves for a toggle the
+// request leaves out: for remote control a set group policy, then the first
+// of the named, group default and global default profiles that sets it for
+// this harness, else off. It is null when a tier profile is not visible here.
+export function daemonToggleDefault(key, draft, context, profiles, dashboardDefault = '') {
+  const field = PREFILLED_TOGGLES[key];
+  const group = findSpawnGroup(context.groups, draft.group);
+  if (key === 'remoteControl') {
+    const policy = text(group?.remote_control_policy);
+    if (policy === 'optin') return true;
+    if (policy === 'deny') return false;
+  }
+  const harnessName = text(draft.harness).trim() || DEFAULT_HARNESS;
+  const handles = [draft.profile, group?.default_profile, dashboardDefault].map((h) => text(h).trim()).filter(Boolean);
+  for (const handle of handles) {
+    const profile = findSpawnProfile(profiles, handle);
+    if (!profile) return null;
+    if (profile[field] == null) continue;
+    if ((text(profile.harness).trim() || DEFAULT_HARNESS) !== harnessName) continue;
+    return !!profile[field];
+  }
+  return false;
+}
+
+export function buildSpawnRequest(draft, context, worktreeSelection, attachmentPaths = [], omission = null) {
+  const sendToggle = (key) => !omission || omission.operatorSet?.has(key)
+    || daemonToggleDefault(key, draft, context, omission.profiles, omission.dashboardDefault) !== !!draft[key];
   const view = spawnCapabilityView(draft, context);
   const body = {
     name: text(draft.name).trim(),
@@ -1290,9 +1331,9 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   if (view.showTrustDir && draft.trustDirSpecified) {
     body.trust_dir = !!draft.trustDir;
   }
-  if (view.showRemoteControl) body.remote_control = !!draft.remoteControl;
-  if (view.showAutoMemory) body.auto_memory = !!draft.autoMemory;
-  if (view.showPeerMessaging) body.peer_messaging = !!draft.peerMessaging;
+  if (view.showRemoteControl && sendToggle('remoteControl')) body.remote_control = !!draft.remoteControl;
+  if (view.showAutoMemory && sendToggle('autoMemory')) body.auto_memory = !!draft.autoMemory;
+  if (view.showPeerMessaging && sendToggle('peerMessaging')) body.peer_messaging = !!draft.peerMessaging;
   // Sent as an explicit true/false for a Copilot launch — like auto_memory, the
   // modal is authoritative, so an unchecked box overrides a profile's opt-in.
   // Omitted entirely for every other harness, leaving the pointer nil.
