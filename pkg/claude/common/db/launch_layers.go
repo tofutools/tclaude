@@ -27,6 +27,10 @@ const (
 // ExplicitAtSpawn is the provenance of a value given explicitly on the spawn.
 const ExplicitAtSpawn = "explicit (spawn)"
 
+// ExplicitAtTemplate is the provenance of a value a group template gave its
+// agent, such as its roles: the template owns it, not the agent's profile.
+const ExplicitAtTemplate = "explicit (template)"
+
 // ExplicitAtResume is the provenance of a value given explicitly on a resume:
 // it becomes the agent's explicit value from then on.
 func ExplicitAtResume(at time.Time) string {

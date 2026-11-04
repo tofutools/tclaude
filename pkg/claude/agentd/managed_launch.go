@@ -532,20 +532,28 @@ func resolveSpawnCopyOutside(agentID string, g *db.AgentGroup, harnessName strin
 		was, _ := resolveProfileStartupContext(harnessName, prevTiers)
 		now, _ := resolveProfileStartupContext(harnessName, tiers)
 		stored := strings.TrimSpace(startup.ProfileContext)
-		var nowRoles reappliedRoleText
-		if !isExplicit("roles") {
+		rolesFromCopy := !isExplicit("roles")
+		var wasRoles, nowRoles reappliedRoleText
+		if rolesFromCopy {
+			if wasRoles, fail = resolveReappliedRoleText(prevTiers); fail != nil {
+				return out, nil, fail
+			}
 			if nowRoles, fail = resolveReappliedRoleText(tiers); fail != nil {
 				return out, nil, fail
 			}
 		}
+		briefsFollow := false
 		switch {
 		case strings.HasPrefix(stored, was):
 			// What follows the profile's text is its role briefs; they are
 			// rewritten from the roles the copy names now, with the roles'
-			// current text, unless the spawn request named its own roles.
+			// current text, unless the spawn request (or a template) named its
+			// own roles. The tail must look like what the old copy gave: its
+			// roles' briefs, or as many role blocks as it has briefed roles
+			// when a brief was edited since.
 			tail := strings.TrimSpace(stored[len(was):])
-			if !isExplicit("roles") && isRoleBlocks(tail) {
-				tail = nowRoles.briefs
+			if rolesFromCopy && rolesTailFromCopy(tail, wasRoles) {
+				tail, briefsFollow = nowRoles.briefs, true
 			}
 			if combined := joinContextParts(now, tail); combined != stored {
 				out.ProfileContext = &combined
@@ -555,12 +563,9 @@ func resolveSpawnCopyOutside(agentID string, g *db.AgentGroup, harnessName strin
 				"the agent's stored startup context does not start with the profile's old text"})
 		}
 		// The role label is the agent's role in its spawn group, rewritten only
-		// while it is still the one the old copy gave.
-		if !isExplicit("roles") && startup.SpawnGroupID > 0 {
-			wasRoles, fail := resolveReappliedRoleText(prevTiers)
-			if fail != nil {
-				return out, nil, fail
-			}
+		// while it is still the one the old copy gave, and only with the
+		// briefs, so the two never part.
+		if briefsFollow && startup.SpawnGroupID > 0 {
 			if wasRoles.label != nowRoles.label {
 				out.RoleLabel = &db.SpawnCopyRoleLabel{GroupID: startup.SpawnGroupID, From: wasRoles.label, To: nowRoles.label}
 			}
@@ -634,10 +639,17 @@ func resolveReappliedRoleText(tiers []launchProfileTier) (reappliedRoleText, *sp
 	return out, nil
 }
 
-// isRoleBlocks reports whether text is empty or role blocks (appendRoleBlock),
-// the only thing a spawn puts after the profile's text.
-func isRoleBlocks(text string) bool {
-	return text == "" || strings.HasPrefix(text, roleBlockHeading)
+// rolesTailFromCopy reports whether tail, the stored startup context after
+// the profile's text, is the role briefs the old copy's roles gave
+// (appendRoleBlock): exactly their briefs now, or, when a brief has been
+// edited since, as many role blocks. An agent whose roles did not come from
+// the copy (a template's, kept elsewhere) has a tail that matches neither.
+func rolesTailFromCopy(tail string, was reappliedRoleText) bool {
+	if tail == was.briefs {
+		return true
+	}
+	return tail != "" && strings.HasPrefix(tail, roleBlockHeading) &&
+		strings.Count(tail, roleBlockHeading) == strings.Count(was.briefs, roleBlockHeading)
 }
 
 type includeGroupContextResolution struct {

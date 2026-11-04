@@ -100,3 +100,34 @@ func TestProfileReapplyRoles_EditedRoleBriefIsReapplied(t *testing.T) {
 	assert.Equal(t, "Be brief.\n\n## Role\n\nTell the human, briefly.", profileContextOf(t, a.AgentID))
 	assert.Equal(t, "notifier", memberRole(t, "alpha", a.ConvID))
 }
+
+// A template agent's roles belong to the template (its role_ref ahead of the
+// profile's, their briefs in the group context), so re-applying its profile
+// leaves its role text and label alone (cold review of #3861).
+func TestProfileReapplyRoles_TemplateAgentKeepsItsRoles(t *testing.T) {
+	f := roleFixture(t)
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name":   "crew",
+		"agents": []map[string]any{{"name": "t1", "role": "dev", "role_ref": "copier", "spawn_profile": "worker"}},
+	}).Code)
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/crew/deploy", map[string]any{"group_name": "crew-force"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "deploy: %s", rec.Body.String())
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	require.Equal(t, 1, res.Spawned, "%+v", res.Agents)
+	agentd.WaitForBackgroundForTest()
+	conv := res.Agents[0].ConvID
+	if sess, err := db.FindSessionByConvID(conv); err == nil && sess != nil {
+		f.MarkOffline(sess.TmuxSession)
+	}
+	agentID := agentIDFor(t, conv)
+	before := profileContextOf(t, agentID)
+	label := memberRole(t, "crew-force", conv)
+
+	patchProfile(t, f, "worker", map[string]any{"role_refs": []string{"notifier"}, "role": "watcher", "startup_context": "Be brief."})
+	code, _, raw := postReapply(t, f, "worker", agentID)
+	require.Equal(t, http.StatusOK, code, raw)
+	assert.Equal(t, before, profileContextOf(t, agentID), "no role brief is written into a template agent's profile context")
+	assert.NotContains(t, profileContextOf(t, agentID), "Tell the human.")
+	assert.Equal(t, label, memberRole(t, "crew-force", conv))
+}
