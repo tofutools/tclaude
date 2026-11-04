@@ -107,13 +107,6 @@ export function RelaunchPolicyDialog({ descriptor, state, confirmDiscard }) {
     guard=${{ requestClose, registerClose }} title=${title} labelledby="relaunch-policy-title-text">
     <p class="perm-edit-subtitle" id="relaunch-policy-subtitle">${
       descriptor.label ? `${forProfile ? 'Profile' : 'New agent'} “${descriptor.label}”` : (forProfile ? 'Profile' : 'New agent')} · copied at spawn</p>
-    <div class="perm-edit-toolbar">
-      <${Button} id="relaunch-policy-reset" title="Set every row back to Default" onClick=${() => setSelection((before) => {
-        const draft = { ...before };
-        for (const row of rows) delete draft[row.field]; // rows the editor does not show are kept
-        return draft;
-      })}>all default<//>
-    </div>
     <div id="relaunch-policy-list" class="perm-edit-list">${rows.map((row) => {
       const effect = relaunchRowEffect(row, selection, descriptor.inherited, ownSource);
       return html`<div class="perm-row" key=${row.field} data-relaunch-field=${row.field}>
@@ -137,6 +130,11 @@ export function RelaunchPolicyDialog({ descriptor, state, confirmDiscard }) {
     </details>`}
     <div class="modal-buttons">
       <${Button} id="relaunch-policy-cancel" onClick=${() => { void requestClose(); }}>Cancel<//>
+      <${Button} id="relaunch-policy-reset" title="Set every row back to Default" onClick=${() => setSelection((before) => {
+        const draft = { ...before };
+        for (const row of rows) delete draft[row.field]; // rows the editor does not show are kept
+        return draft;
+      })}>Reset all<//>
       <span class="spacer"></span>
       <${Button} variant="primary" id="relaunch-policy-submit" onClick=${submit}>Save<//>
     </div>
