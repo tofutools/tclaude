@@ -216,7 +216,7 @@ func TestExternalSteward_EveryPopupIsAccountedFor(t *testing.T) {
 	want := map[string]bool{
 		"requirePermissionEx": true, "requireCrossAgentPermission": true, // the ceiling
 		"requestTargetActionApproval": true, // agent.resume's launch-dir recreation and Codex drive rollback, after its gate
-		"handleSudoRequest": true, // sudo, which refuses the principal
+		"handleSudoRequest":           true, // sudo, which refuses the principal
 	}
 	fset := token.NewFileSet()
 	got := map[string]bool{}
@@ -237,6 +237,44 @@ func TestExternalSteward_EveryPopupIsAccountedFor(t *testing.T) {
 		}
 	}
 	assert.Equal(t, want, got)
+
+	// requestTargetActionApproval stands for two former popup sites. Both
+	// still reach it, and resume still asks through both.
+	calls := map[string]map[string]bool{}
+	for _, file := range parseAgentdSources(t, fset) {
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if call, ok := n.(*ast.CallExpr); ok {
+					if id, ok := call.Fun.(*ast.Ident); ok {
+						if calls[fn.Name.Name] == nil {
+							calls[fn.Name.Name] = map[string]bool{}
+						}
+						calls[fn.Name.Name][id.Name] = true
+					}
+				}
+				return true
+			})
+		}
+	}
+	// A new caller of the shared helper is a new popup site: it has to be
+	// looked at, like a new admitApproval caller, before it joins this list.
+	callers := map[string]bool{}
+	for fn, called := range calls {
+		if called["requestTargetActionApproval"] {
+			callers[fn] = true
+		}
+	}
+	assert.Equal(t, map[string]bool{
+		"requestResumeDirectoryRecreationApproval": true, "requestCodexDriveRollbackApproval": true,
+	}, callers, "callers of requestTargetActionApproval")
+	for _, site := range []string{"requestResumeDirectoryRecreationApproval", "requestCodexDriveRollbackApproval"} {
+		assert.True(t, calls[site]["requestTargetActionApproval"], "%s must open its popup through requestTargetActionApproval", site)
+		assert.True(t, calls["handleAgentResume"][site], "handleAgentResume must still ask through %s", site)
+	}
 }
 
 // The list itself is pinned, because the tests below walk it: dropping a slug

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,9 +55,8 @@ func TestApprovalPopup_SelfPermission(t *testing.T) {
 		Method: http.MethodPost, Path: "/v1/clipboard", RawQuery: "via=test",
 		BodyPreview: "copy me", BodyLabel: "Clipboard content",
 		AutoGrantable: agentd.IsAutoGrantableSlug(agentd.PermHumanClipboard),
-		Timeout:       c.Timeout, HasChannels: true,
+		Timeout:       5 * time.Second, HasChannels: true,
 	}, c)
-	assert.Positive(t, c.Timeout)
 }
 
 func TestApprovalPopup_CrossAgentPermission(t *testing.T) {
@@ -69,10 +69,10 @@ func TestApprovalPopup_CrossAgentPermission(t *testing.T) {
 	assert.Equal(t, agentd.ApprovalPopupFields{
 		Perm: agentd.PermAgentResume, ConvID: popupCaller, ConvTitle: "popup-caller",
 		Method: http.MethodPost, Path: "/v1/agent/" + popupTarget + "/resume",
-		BodyPreview: c.BodyPreview, BodyLabel: c.BodyLabel,
+		// No request body, so nothing to preview or label.
 		TargetConvID: popupTarget, TargetConvTitle: "popup-target",
 		AutoGrantable: false, // "always allow" would grant the slug against every target
-		Timeout:       c.Timeout, HasChannels: true,
+		Timeout:       5 * time.Second, HasChannels: true,
 	}, c)
 }
 
@@ -109,7 +109,7 @@ func TestApprovalPopup_ResumeTargetActions(t *testing.T) {
 				Method: http.MethodPost, Path: "/v1/agent/" + popupTarget + "/resume", RawQuery: tc.query,
 				BodyPreview: tc.preview, BodyLabel: tc.label,
 				TargetConvID: popupTarget, TargetConvTitle: "popup-target",
-				Timeout: c.Timeout, HasChannels: true,
+				Timeout: 5 * time.Second, HasChannels: true,
 			}, c)
 
 			t.Cleanup(agentd.SetPopupBaseURLForTest(""))

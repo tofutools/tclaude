@@ -521,8 +521,6 @@ func waitHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 	}
 }
 
-// newApprovalID returns a 32-hex-char random token. Callers should
-// treat IDs as opaque; the popup URL is the only place they appear.
 // newAgentApprovalRequest is the shared core of an agent-initiated approval
 // popup: the requester, the request line (path and query projected the same
 // way the HTTP log projects them, so a sensitive route never lands in the
@@ -559,6 +557,8 @@ func convDisplayTitle(convID string) string {
 	return ""
 }
 
+// newApprovalID returns a 32-hex-char random token. Callers should
+// treat IDs as opaque; the popup URL is the only place they appear.
 func newApprovalID() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
