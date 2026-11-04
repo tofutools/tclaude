@@ -454,12 +454,30 @@ group's Resources section.
 **Resources** lists everything attached to the group, grouped by kind:
 - **Processes:** its saved processes and runs.
 - **Boards:** the collab boards linked to the group.
-- **Pages:** the live pages its members showed into it.
+- **Pages:** the live pages its members showed into it, including closed
+  ones saved with the group.
+- **Shell:** the group's terminal, in its default directory.
 
-A kind with nothing in it is hidden. **＋▾** adds a process, a new board linked
-to the group, or a blank page. Draw on the blank page to show what to build,
-and a member takes it over with its own source (see
+A kind with nothing in it is hidden. **＋ New** adds a process, a new board
+linked to the group, a blank live page, or opens the group's shell (once the
+group has a directory). Draw on the blank page to show what to build, and a
+member takes it over with its own source (see
 [Live page › A page the operator creates in a group](live-page.md#a-page-the-operator-creates-in-a-group)).
+
+Every row wears a state pill that reads the same for every kind:
+- **open in Collab**, **floating** or **minimized**: this browser shows it as
+  a Collab tab, in an overlay window, or on the dock.
+- **running**: a process with an active run.
+- **live** (a page) or **background** (a shell): it runs, open nowhere here.
+- **closed**: it exists, and nothing of it is live.
+
+Open, floating and minimized are this browser's own: another browser of
+yours keeps its own windows. The row's main button follows the state:
+**Focus** brings an open one forward, **Restore** takes it off the dock,
+**Open** opens it (**Attach** for a running shell, **Reopen** for a closed
+page). A live page also has **↻**, which reloads it in every view, and a
+running shell **×**, which kills it after a confirm. The row's **⋯** holds
+**Delete…**, behind a confirm, for a page or a board.
 
 Each resource has a lock chip. Click it to switch between two states:
 - **✎ agents can edit** (the default): agents edit the resource under their

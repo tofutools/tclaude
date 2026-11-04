@@ -23,7 +23,6 @@ const (
 	resourceStateClosed  = "closed"
 
 	resourceKindShell = "shell"
-
 )
 
 type groupResource struct {
@@ -34,6 +33,8 @@ type groupResource struct {
 	State   string `json:"state"`
 	Owner   string `json:"owner,omitempty"`
 	Detail  string `json:"detail,omitempty"`
+	// Session is a shell's tmux session, which the dashboard kills it by.
+	Session string `json:"session,omitempty"`
 }
 
 // groupResourcesSnapshot lists the resources of every active group. alive is
@@ -54,10 +55,17 @@ func groupResourcesSnapshot(groups []*db.AgentGroup, alive map[string]struct{}, 
 	if processes {
 		out = append(out, groupProcessResources(active)...)
 	}
+	// A group's shell: running while its tmux session is up, closed (opening
+	// starts it) while the group has a directory to start it in.
 	for _, g := range active {
-		if _, ok := alive[groupTermSessionName(g.Name)]; ok {
-			out = append(out, groupResource{Kind: resourceKindShell, ID: g.Name, GroupID: g.ID, Title: g.Name + " shell", State: resourceStateRunning})
+		session := groupTermSessionName(g.Name)
+		r := groupResource{Kind: resourceKindShell, ID: g.Name, GroupID: g.ID, Title: "Group shell", State: resourceStateClosed, Detail: g.DefaultCwd}
+		if _, ok := alive[session]; ok {
+			r.State, r.Session = resourceStateRunning, session
+		} else if strings.TrimSpace(g.DefaultCwd) == "" {
+			continue
 		}
+		out = append(out, r)
 	}
 	slices.SortFunc(out, func(a, b groupResource) int {
 		return cmp.Or(cmp.Compare(a.GroupID, b.GroupID), cmp.Compare(a.Kind, b.Kind), strings.Compare(a.Title, b.Title), strings.Compare(a.ID, b.ID))

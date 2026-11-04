@@ -309,3 +309,24 @@ func savedClosedPages() map[int64][]processGroupPage {
 	return out
 }
 
+// POST /api/pages/{id}/reload — the operator reloads a live page in every
+// view of it, as a saved source file does.
+func handleDashboardPageReload(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	livePages.mu.Lock()
+	p := livePages.byID[r.PathValue("id")]
+	var name string
+	if p != nil {
+		name = p.name
+		p.stage.notifyReload()
+	}
+	livePages.mu.Unlock()
+	if p == nil {
+		writeError(w, http.StatusNotFound, "not_found", "no such live page")
+		return
+	}
+	setAuditTargetLabel(r, "page "+name)
+	writeJSON(w, http.StatusOK, map[string]any{"reloaded": true})
+}

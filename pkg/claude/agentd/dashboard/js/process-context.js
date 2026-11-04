@@ -341,6 +341,14 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     async reopenGroupPage(id) {
       return processRequest(`/api/pages/${encodeURIComponent(id)}/reopen`, { method: 'POST' }, fetchImpl);
     },
+    // reloadGroupPage reloads a live page in every view of it.
+    async reloadGroupPage(id) {
+      return processRequest(`/api/pages/${encodeURIComponent(id)}/reload`, { method: 'POST' }, fetchImpl);
+    },
+    // deleteBoard deletes a board and what is drawn on it.
+    async deleteBoard(id) {
+      return processRequest(`/api/boards/${encodeURIComponent(id)}`, { method: 'DELETE' }, fetchImpl);
+    },
     // deleteGroupPage closes a page if open and removes it from its group.
     async deleteGroupPage(id) {
       return processRequest(`/api/pages/${encodeURIComponent(id)}/delete`, { method: 'POST' }, fetchImpl);
