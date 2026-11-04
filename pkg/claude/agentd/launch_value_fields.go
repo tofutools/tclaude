@@ -409,9 +409,10 @@ func resolveRemoteControlLaunch(h *harness.Harness, tiers []launchProfileTier, g
 
 // Sources of a resolved remote-control value beyond a profile tier's.
 const (
-	provRemoteControlGroupPolicy = "group remote-control policy"
-	provRemoteControlOff         = "default (off)"
-	provRemoteControlUnsupported = "harness has no Remote Access"
+	provRemoteControlGroupPolicy    = "group remote-control policy"
+	provRemoteControlOff            = "default (off)"
+	provRemoteControlUnsupported    = "harness has no Remote Access"
+	provRemoteControlNonInteractive = "non-interactive spawn (off)"
 )
 
 // resolveRemoteControlLaunchSource is resolveRemoteControlLaunch with the

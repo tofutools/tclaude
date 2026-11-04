@@ -4761,7 +4761,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 	if body.NonInteractive {
-		remoteControl = false
+		remoteControl, remoteControlSource = false, provRemoteControlNonInteractive
 	}
 	resolvedLaunch.RemoteControl = resolvedToggle(remoteControl, remoteControlSource)
 	resolvedLaunch.AutoMemory = resolvedToggle(autoMemory, launchBools.Source[launchBoolAutoMemory])
