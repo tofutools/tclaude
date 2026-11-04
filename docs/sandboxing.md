@@ -513,6 +513,36 @@ record. `/model` and directory trust for Claude Code land in
    wider than its recorded parent's — an agent holding the slug can pin the
    floor on a child, but can only pass `write` down if it already has it.
 
+   **Agents relaunched before #3817 may have lost it.** Resume, reincarnate
+   and some clones used to rebuild the policy from the profile chain without
+   the explicit posture, so a `read` pin over a `write` chain widened to
+   `write`. To find them:
+
+   ```bash
+   tclaude agent sandbox-profiles harness-config-repairs
+   ```
+
+   This lists every active agent whose recorded launch no longer carries the
+   posture its spawn request asked for, marked as follows:
+
+   - **widened**: asked for the floor, now runs without it.
+   - **narrowed**: asked for `write`, now runs under the floor.
+   - **unpinned**: same posture today, but a profile edit could change it.
+
+   The command only reads. To restore agents, use Diagnostics › Doctor in the
+   dashboard. It previews them with every agent selected, and you can deselect
+   any you want to leave as they are. Restoring writes the posture back into
+   each agent's recorded launch, and the next resume keeps it. A running agent
+   takes the posture when it next resumes, or when you restart it from the
+   preview. Both the list and the restore require `sandbox-profiles.manage`.
+
+   Some agents can't be found this way, because the finder needs the recorded
+   spawn request:
+
+   - agents created by the pending-spawn sweeper or a group template, and
+     promoted or backfilled agents, which have none;
+   - a clone whose own spawn request didn't name the posture.
+
 The floor applies with tclaude’s sandbox.
 Under `harness-builtin` the harness's own policy governs and the axis is
 inert; under `resource-only`/`off` nothing is enforced by design. Lineage

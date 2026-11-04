@@ -260,6 +260,7 @@ var peerViewLocalRoutes = []string{
 	"/api/sandbox-profile-default",
 	"/api/sandbox-impl-default",
 	"GET /api/doctor",
+	"/api/harness-config-repairs",
 	"/api/sandbox-profile-drafts/{token}",
 	"/api/sandbox-profile-read-exclusions",
 	"/api/sandbox-profiles",
