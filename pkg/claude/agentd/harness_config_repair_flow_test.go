@@ -169,9 +169,8 @@ func TestHarnessConfigRepair_SkipsRetiredAgents(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), `"repinned":false`, "a retired agent is never re-pinned")
 	stored, err := db.AgentEffectiveSandboxConfigForConv(retiredConv)
 	require.NoError(t, err)
-	if stored != nil {
-		assert.Equal(t, sandboxpolicy.HarnessConfigAccessWrite, stored.Effective.HarnessConfig)
-	}
+	require.NotNil(t, stored)
+	assert.Equal(t, sandboxpolicy.HarnessConfigAccessWrite, stored.Effective.HarnessConfig)
 }
 
 func TestHarnessConfigRepair_NeedsSandboxProfilesManage(t *testing.T) {

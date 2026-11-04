@@ -111,3 +111,16 @@ func TestActiveAgentScansUseTheActiveIndex(t *testing.T) {
 		assert.Contains(t, strings.Join(plan, "\n"), "idx_agents_active", "%s: %v", name, plan)
 	}
 }
+
+func TestMigrateV306IsIdempotent(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err)
+	require.NoError(t, migrateV305toV306(d), "a re-run is a clean no-op")
+	var ver int
+	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
+	assert.Equal(t, 306, ver)
+	var n int
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_agents_active'`).Scan(&n))
+	assert.Equal(t, 1, n)
+}

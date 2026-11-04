@@ -31,14 +31,14 @@ const agentLaunchRecordColumns = `agent_id, current_conv_id, initial_spawn_confi
 //
 // Retired agents are left out in the query, which idx_agents_active serves,
 // so the scan stays proportional to the active roster however many retired
-// agents an install holds. includeRetired adds them back for a read-only
-// listing; that scan reads every agents row.
+// agents an install holds.
 func ListActiveAgentLaunchRecords() ([]AgentLaunchRecord, error) {
 	return ListAgentLaunchRecords(false)
 }
 
 // ListAgentLaunchRecords is ListActiveAgentLaunchRecords, with retired agents
-// too when includeRetired.
+// too when includeRetired, for a read-only listing. That scan reads every
+// agents row.
 func ListAgentLaunchRecords(includeRetired bool) ([]AgentLaunchRecord, error) {
 	d, err := Open()
 	if err != nil {
