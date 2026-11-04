@@ -132,3 +132,36 @@ func uniqueNotes(notes []string) []string {
 	}
 	return out
 }
+
+// managedProfileRefusal checks every spawn profile a managed worker's launch
+// reads (its own, the group's default and the global default, the tiers
+// applyDefaultProfile walks) against ownerConv, before any rate slot is
+// spent. A disabled or operator-only profile on any tier refuses the worker
+// with kind profile_disabled or profile_operator_only and a message naming
+// the profile and the tier it sits on.
+func managedProfileRefusal(g *db.AgentGroup, profile *db.SpawnProfile, ownerConv string) *spawnFailure {
+	groupName := ""
+	if g != nil {
+		groupName = g.Name
+	}
+	for _, tier := range []struct {
+		label   string
+		profile *db.SpawnProfile
+	}{
+		{"the worker's spawn profile", profile},
+		{fmt.Sprintf("the default spawn profile of group %s", groupName), groupDefaultProfile(g)},
+		{"the global default spawn profile", globalDefaultProfile()},
+	} {
+		if fail := profileSpawnFailure(tier.profile, ownerConv); fail != nil {
+			return &spawnFailure{fail.Status, fail.Kind, fmt.Sprintf("%s (%s)", fail.Msg, tier.label)}
+		}
+	}
+	return nil
+}
+
+// isManagedProfileRefusal reports a refusal managedProfileRefusal produces.
+// It repeats on every firing until someone changes the profile, so callers
+// record it as a failure and announce the first one.
+func isManagedProfileRefusal(kind string) bool {
+	return kind == "profile_disabled" || kind == "profile_operator_only"
+}

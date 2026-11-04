@@ -701,8 +701,10 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 	if profile == nil {
 		return nil, "profile_not_found", fmt.Sprintf("spawn profile %q does not exist", profileName)
 	}
-	if fail := profileSpawnFailure(profile, ownerConv); fail != nil {
-		return nil, "permission_denied", fail.Msg
+	// Every profile tier the launch reads is checked here, before a rate
+	// slot is spent on a refusal that repeats on every firing.
+	if fail := managedProfileRefusal(g, profile, ownerConv); fail != nil {
+		return nil, fail.Kind, fail.Msg
 	}
 	allowAnyGroup := false
 	// A managed worker never selects a sandbox profile of its own, so the
@@ -826,13 +828,16 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 	p := spawnParams{UsageSpawnProfile: profile, managedProfile: profile, spawnCopyCallerTiers: spawnCopyTiers(spawnCopyTier(db.SpawnCopyTierNamed, profile)), Name: name, Role: roleLabel, Descr: profile.Descr, InitialMessage: initialMessage,
 		ProfileContext: profileContext, Cwd: cwd, ReplyToConv: ownerConv, SpawnedByConv: ownerConv, IsOwner: isOwner, PermissionOverrides: overrides, Async: true,
 		// The worker's profile is the named tier, above the group's and the
-		// global default profile, for every launch field (tcl-vciikv), as on a
-		// direct spawn naming it; with no tier speaking, the group context is
-		// included, as it always was for these workers.
+		// global default profile (tcl-vciikv), for the launch fields
+		// applyDefaultProfile resolves. Roles, role label, descr, permission
+		// overrides, ownership, saved prompts and (when the worker has roles
+		// or its own context) startup context are still composed above from
+		// the worker's profile alone; a default profile never confers
+		// permissions or ownership on a worker. With no tier speaking, the
+		// group context is included, as it always was for these workers.
 		IncludeGroupContextDefault: true}
 	if fail := resolveManagedLaunch(g, &p, ownerConv, false); fail != nil {
-		switch fail.Kind {
-		case "io", "permission_denied":
+		if fail.Kind == "io" || fail.Kind == "permission_denied" || isManagedProfileRefusal(fail.Kind) {
 			return nil, fail.Kind, fail.Msg
 		}
 		return nil, "spawn_failed", fail.Msg
@@ -845,7 +850,7 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 	if sandboxScopePinned &&
 		sandboxProfileTierInert(p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation) {
 		return nil, "permission_denied", fmt.Sprintf(
-			"this firing is authorized by a grant scoped to sandbox profile %s, and spawn profile %s resolves a launch mode that would not enforce it",
+			"this firing is authorized by a grant scoped to sandbox profile %s, and its launch (spawn profile %s over the group's and the global default profiles) resolves a mode that would not enforce it",
 			sandboxProfileForScope, profile.Name)
 	}
 	return &managedSpawn{group: g, params: p, promptRefs: promptRefs}, "", ""
@@ -895,6 +900,8 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 			return "", ""
 		})
 	if plan == nil {
+		announceManagedProfileRefusal(managedRefusalSource{Key: source.Tag,
+			Label: managedSourceLabel(rule, source), OwnerConv: ownerConv}, status, detail)
 		return status, detail, ""
 	}
 	profileGroup, p := plan.group, plan.params
@@ -944,7 +951,16 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 		return "spawned_tracking_failed", "worker reservation ended while spawn dispatch was in progress; launched worker was stopped best-effort", agentID
 	}
 	_ = db.AddAgentTags(agentID, source.Tag)
+	rearmManagedProfileRefusal(source.Tag)
 	return "spawned", "", agentID
+}
+
+// managedSourceLabel names a managed worker's automation for a notice.
+func managedSourceLabel(rule *db.TriggerRule, source managedWorkerSource) string {
+	if source.CronJobID != 0 {
+		return fmt.Sprintf("schedule %q", rule.Name)
+	}
+	return fmt.Sprintf("trigger %q", rule.Name)
 }
 
 // SetManagedWorkerBeforePromotionForTest installs a deterministic seam after

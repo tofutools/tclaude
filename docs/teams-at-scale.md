@@ -160,6 +160,10 @@ controlled Kubernetes-style with `--concurrency Forbid|Replace|Allow` plus
 `--max-live-workers`, and `--worker-deadline` bounds each worker's run. The
 job's owner is re-authorized at every firing — a job outliving its creator's
 permissions stops spawning.
+A disabled spawn profile, or an operator-only one under an agent-owned job,
+stops it the same way, whether it is the job's own profile or the group's or
+the global default profile: the run is recorded as failed with the profile's
+name, and the first such refusal is sent to the owner and to the operator.
 
 ## Triggers and standing orders
 

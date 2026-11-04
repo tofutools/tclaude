@@ -170,6 +170,12 @@ The rules above are the specification. These rows do not follow it yet:
 
 The spawn paths also differ in which profile tiers they consult:
 
+- A trigger, schedule or process worker resolves its launch fields over its
+  own profile, the group's default and the global default, but composes its
+  roles, role label, description, permission overrides, ownership and saved
+  prompts from its own profile alone. When the worker has roles or a startup
+  context of its own, that also decides its startup context. A default profile
+  therefore never confers permissions or ownership on a worker.
 - A template or task-force deploy applies the harness default for sandbox
   mode, approval, tool governance and the SSH workaround before the group and
   global default profiles are consulted, so those profiles cannot set them.

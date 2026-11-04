@@ -529,7 +529,7 @@ func resolveProcessPerformer(runID string, scope processRunScope, command engine
 			return processPerformerChoice{candidate: &matching[0], resolution: resolution}
 		}
 		action, profile := spec.Fallback()
-		waitReason := ""
+		waitReason, refusal := "", ""
 		if action == model.FallbackSpawn {
 			if profile == "" {
 				profile = group.DefaultProfile
@@ -543,10 +543,18 @@ func resolveProcessPerformer(runID string, scope processRunScope, command engine
 				}
 				waitReason = fmt.Sprintf("no member can take the node and spawning a %q performer was refused (%s): %s",
 					profile, status, detail)
+				// A spawn profile refusal repeats until someone changes the
+				// profile: fail the node with it rather than wait silently.
+				if isManagedProfileRefusal(status) {
+					refusal = waitReason
+				}
 			}
 		}
 		if reuse != nil {
 			return processPerformerChoice{candidate: reuse, resolution: resolution}
+		}
+		if refusal != "" {
+			return processPerformerChoice{failReason: refusal}
 		}
 		if action == model.FallbackFail {
 			return processPerformerChoice{failReason: processNoMemberReason(spec) + "; the step's fallback fails it"}
@@ -652,7 +660,13 @@ func planProcessPerformerSpawn(runID string, scope processRunScope, group *db.Ag
 		}
 	}
 	name := processPerformerSpawnName(command)
-	return planManagedSpawn(group, profile, nil, ownerConv, "process:"+runID, name, body, nil)
+	plan, status, detail := planManagedSpawn(group, profile, nil, ownerConv, "process:"+runID, name, body, nil)
+	if plan == nil {
+		announceManagedProfileRefusal(managedRefusalSource{Key: "process:" + runID,
+			Label: fmt.Sprintf("process run %s (node %s)", runID, command.NodeID), OwnerConv: ownerConv,
+			RunID: runID, NodeID: command.NodeID, CommandID: command.ID}, status, detail)
+	}
+	return plan, status, detail
 }
 
 // processPerformerSpawnName derives a spawn-name-charset-safe agent name from
