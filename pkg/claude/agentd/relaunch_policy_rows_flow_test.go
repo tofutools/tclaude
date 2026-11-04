@@ -9,6 +9,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/testharness"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 // Launch slice 9 (tcl-mx74na): the re-resolve | reuse rows of the relaunch
@@ -249,8 +250,10 @@ func TestRelaunchPolicy_SandboxProfileContentsReuseFallsBackToTheCurrentProfiles
 	require.NoError(t, err)
 	require.NotNil(t, stored)
 	broken := *stored
-	broken.Effective.Filesystem = append(broken.Effective.Filesystem,
-		sandboxpolicy.FilesystemGrant{Path: t.TempDir(), Access: sandboxpolicy.AccessRead, MountPath: "/mnt/elsewhere"})
+	// The only rule, so it is in normalized order whatever the host's paths.
+	broken.Effective.Filesystem = []sandboxpolicy.FilesystemGrant{{Path: testutil.CanonicalTempDir(t), Access: sandboxpolicy.AccessRead, MountPath: "/mnt/elsewhere"}}
+	_, err = sandboxpolicy.RevalidateSnapshot(broken)
+	require.NoError(t, err, "well formed: only the launch gate refuses it")
 	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &broken))
 
 	setRelaunchPolicy(t, f, "sandbox_profile_contents", "reuse")

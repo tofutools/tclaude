@@ -9320,7 +9320,7 @@ label.cfg-label { cursor: pointer; }
 .rlp-table :is(th, td) { vertical-align: top; text-align: left; }
 .rlp-table tbody th[scope="row"] { font-weight: 500; color: #c9d1d9; width: 32%; text-transform: none; letter-spacing: normal; font-size: 13px; }
 .rlp-table .rlp-ctl, .rlp-table td:nth-child(2) { width: 1%; white-space: nowrap; }
-.rlp-table .rlp-section th { padding-top: 14px; font-size: 11px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: .04em; }
+.rlp-table .rlp-section th { font-size: 11px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: .04em; }
 .rlp-why { color: #8b949e; }
 .rlp-gap { margin-top: 2px; font-size: 12px; }
 .rlp-pill-live { border-color: #238636; color: #3fb950; }
