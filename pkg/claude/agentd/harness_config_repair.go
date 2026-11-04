@@ -57,6 +57,9 @@ type harnessConfigRepair struct {
 	Source  string `json:"source,omitempty"`
 	Change  string `json:"change"`
 	Online  bool   `json:"online"`
+	// Retired is set only in an include_retired listing. A retired agent is
+	// listed, never re-pinned.
+	Retired bool `json:"retired,omitempty"`
 }
 
 // requestedHarnessConfig reads the explicit harness_config from a recorded
@@ -87,6 +90,7 @@ func harnessConfigRepairFor(rec db.AgentLaunchRecord) (harnessConfigRepair, bool
 	out := harnessConfigRepair{
 		AgentID: rec.AgentID, ConvID: rec.ConvID,
 		Requested: requested, Current: string(current), Change: harnessConfigRepairUnpinned,
+		Retired: rec.Retired,
 	}
 	if current == sandboxpolicy.HarnessConfigAccessDefault {
 		out.Current = "default"
@@ -106,9 +110,10 @@ func harnessConfigRepairFor(rec db.AgentLaunchRecord) (harnessConfigRepair, bool
 }
 
 // findHarnessConfigRepairs lists every active agent that lost its explicit
-// posture, widened ones first.
-func findHarnessConfigRepairs() ([]harnessConfigRepair, error) {
-	records, err := db.ListActiveAgentLaunchRecords()
+// posture, widened ones first. Retired agents are skipped in the query unless
+// includeRetired (the CLI's read-only --include-retired).
+func findHarnessConfigRepairs(includeRetired bool) ([]harnessConfigRepair, error) {
+	records, err := db.ListAgentLaunchRecords(includeRetired)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +126,9 @@ func findHarnessConfigRepairs() ([]harnessConfigRepair, error) {
 		if row, _ := db.GetConvIndex(rec.ConvID); row != nil {
 			repair.Title = agent.DisplayTitle(row)
 		}
-		repair.Online = isConvOnline(rec.ConvID)
+		if !rec.Retired {
+			repair.Online = isConvOnline(rec.ConvID)
+		}
 		out = append(out, repair)
 	}
 	rank := map[string]int{harnessConfigRepairWidened: 0, harnessConfigRepairNarrowed: 1, harnessConfigRepairUnpinned: 2}
@@ -150,28 +157,25 @@ func repinHarnessConfig(agentID string) (harnessConfigRepair, error) {
 	launchLock := resumeLaunchLock(conv)
 	launchLock.Lock()
 	defer launchLock.Unlock()
-	records, err := db.ListActiveAgentLaunchRecords()
+	rec, err := db.ActiveAgentLaunchRecord(agentID)
 	if err != nil {
 		return harnessConfigRepair{}, err
 	}
-	for _, rec := range records {
-		if rec.AgentID != agentID {
-			continue
-		}
-		repair, ok := harnessConfigRepairFor(rec)
-		if !ok {
-			return harnessConfigRepair{}, errHarnessConfigNotNeeded
-		}
-		applied, fail := applySpawnHarnessConfig(*rec.EffectiveSandbox, repair.Requested)
-		if fail != nil {
-			return repair, errors.New(fail.Msg)
-		}
-		if err := db.ReplaceAgentEffectiveSandboxConfig(rec.AgentID, rec.EffectiveSandboxRaw, &applied); err != nil {
-			return repair, err
-		}
-		return repair, nil
+	if rec == nil {
+		return harnessConfigRepair{}, errHarnessConfigNotNeeded
 	}
-	return harnessConfigRepair{}, errHarnessConfigNotNeeded
+	repair, ok := harnessConfigRepairFor(*rec)
+	if !ok {
+		return harnessConfigRepair{}, errHarnessConfigNotNeeded
+	}
+	applied, fail := applySpawnHarnessConfig(*rec.EffectiveSandbox, repair.Requested)
+	if fail != nil {
+		return repair, errors.New(fail.Msg)
+	}
+	if err := db.ReplaceAgentEffectiveSandboxConfig(rec.AgentID, rec.EffectiveSandboxRaw, &applied); err != nil {
+		return repair, err
+	}
+	return repair, nil
 }
 
 var errHarnessConfigNotNeeded = errors.New("no lost harness_config pin to restore (not an active agent, or already pinned)")
@@ -190,7 +194,7 @@ type harnessConfigRepairResult struct {
 func serveHarnessConfigRepairs(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		repairs, err := findHarnessConfigRepairs()
+		repairs, err := findHarnessConfigRepairs(includeRetiredParam(r))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return

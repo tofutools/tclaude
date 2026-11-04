@@ -529,6 +529,10 @@ record. `/model` and directory trust for Claude Code land in
    - **narrowed**: asked for `write`, now runs under the floor.
    - **unpinned**: same posture today, but a profile edit could change it.
 
+   Retired agents are skipped, so the check stays quick on an install with a
+   long retired history. `--include-retired` lists them too, marked
+   `retired`. They are listed only: a retired agent is never restored.
+
    The command only reads. To restore agents, use Diagnostics › Doctor in the
    dashboard. It previews them with every agent selected, and you can deselect
    any you want to leave as they are. Restoring writes the posture back into

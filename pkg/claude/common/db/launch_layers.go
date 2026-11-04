@@ -256,18 +256,22 @@ func ReplaceAgentSpawnCopy(agentID string, spawnCopy AgentSpawnCopy) error {
 
 // AgentsWithSpawnCopyOf returns the non-retired agents whose spawn copy
 // includes the spawn profile with this ID: the agents that keep their copy
-// when the profile is edited.
+// when the profile is edited. Retired agents are left out in the query, which
+// idx_agents_active serves, so the scan stays proportional to the active
+// roster.
+const agentsWithSpawnCopyOfQuery = `
+		SELECT DISTINCT a.agent_id
+		FROM agents a, json_each(a.launch_layers, '$.spawn_copy.tiers') t
+		WHERE a.retired_at IS NULL AND a.launch_layers <> '' AND json_valid(a.launch_layers)
+		  AND json_extract(t.value, '$.profile_id') = ?
+		ORDER BY a.agent_id`
+
 func AgentsWithSpawnCopyOf(profileID int64) ([]string, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`
-		SELECT DISTINCT a.agent_id
-		FROM agents a, json_each(a.launch_layers, '$.spawn_copy.tiers') t
-		WHERE a.launch_layers <> '' AND json_valid(a.launch_layers) AND a.retired_at IS NULL
-		  AND json_extract(t.value, '$.profile_id') = ?
-		ORDER BY a.agent_id`, profileID)
+	rows, err := d.Query(agentsWithSpawnCopyOfQuery, profileID)
 	if err != nil {
 		return nil, err
 	}
