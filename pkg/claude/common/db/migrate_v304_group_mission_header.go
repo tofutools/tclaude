@@ -15,6 +15,9 @@ import (
 // since no longer ends that way and is left as it is, header empty, so the
 // mission is never delivered twice.
 func migrateV303toV304(d *sql.DB) error {
+	// default_context is operator-authored text; keep the same best-effort
+	// recovery point the earlier data-rewriting migrations take.
+	vacuumBackup(d, ".pre-v304-mission.bak")
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -22,13 +25,14 @@ func migrateV303toV304(d *sql.DB) error {
 	defer func() { _ = tx.Rollback() }()
 	// Partial test fixtures (and only those) can reach here without the table
 	// or its two source columns; there is nothing to add or move out then.
-	var columns, sources int
+	var columns, sources, existing int
 	if err := tx.QueryRow(`SELECT COUNT(*),
-		COALESCE(SUM(name IN ('default_context', 'mission')), 0)
-		FROM pragma_table_info('agent_groups')`).Scan(&columns, &sources); err != nil {
+		COALESCE(SUM(name IN ('default_context', 'mission')), 0),
+		COALESCE(SUM(name = 'mission_header'), 0)
+		FROM pragma_table_info('agent_groups')`).Scan(&columns, &sources, &existing); err != nil {
 		return err
 	}
-	if columns > 0 {
+	if columns > 0 && existing == 0 {
 		if _, err := tx.Exec(`ALTER TABLE agent_groups ADD COLUMN mission_header TEXT NOT NULL DEFAULT ''`); err != nil {
 			return err
 		}

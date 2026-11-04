@@ -3128,7 +3128,8 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
-	groupContext, _ := normalizeGroupContext(baseContext)
+	// Trimmed, as the composed context always was.
+	groupContext, _ := normalizeGroupContext(strings.TrimSpace(baseContext))
 	assignmentContext, _ := normalizeGroupContext(composeInstantiationContext("", spec.assignment, spec.contextHeader))
 	if reinforce {
 		assignmentContext = joinContextBlocks(spec.intoExisting.MissionBlock(), assignmentContext)

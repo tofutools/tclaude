@@ -91,7 +91,8 @@ reaches every member (later direct spawns into the force and re-injection after
 compaction included) even when a profile turns the group context off with
 `include_group_default_context: false`; only the shared context follows that
 toggle. Forces deployed before this split keep the mission inside their shared
-context unless it could be moved out unchanged. With `--worktree <branch>` the whole force lands on its
+context unless it could be moved out unchanged. The mission is set at deploy; editing the shared
+context (`groups set-context` or the dashboard) no longer changes it. With `--worktree <branch>` the whole force lands on its
 own branch in a git [worktree](worktrees.md), which becomes the force's
 working directory.
 

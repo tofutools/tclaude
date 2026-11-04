@@ -79,15 +79,28 @@ func CollectGroupExport(name string) (*groupexport.Export, error) {
 	// dropped (JOH-220), so a v2 export omits it. exp.Group.DefaultModel
 	// stays "" and is left out of the manifest (omitempty).
 	var environmentJSON, defaultPrompts string
+	var missionRow AgentGroup
 	if err := d.QueryRow(`
 		SELECT descr, default_context, environment_json, default_prompts, attachment_url, attachment_label,
-		       max_members, created_at, archived_at
+		       max_members, created_at, archived_at, mission, mission_header
 		FROM agent_groups WHERE id = ?`, g.ID).Scan(
 		&exp.Group.Descr, &exp.Group.DefaultContext,
 		&environmentJSON, &defaultPrompts,
 		&exp.Group.AttachmentURL, &exp.Group.AttachmentLabel,
-		&exp.Group.MaxMembers, &groupCreatedAt, &groupArchivedAt); err != nil {
+		&exp.Group.MaxMembers, &groupCreatedAt, &groupArchivedAt,
+		&missionRow.Mission, &missionRow.MissionHeader); err != nil {
 		return nil, fmt.Errorf("collect group row: %w", err)
+	}
+	// The export format predates the mission split and carries no mission:
+	// fold a split group's mission block back into the exported context, so
+	// an imported force is briefed with it exactly as before the split (it
+	// imports as a legacy group, mission inside its context).
+	if block := missionRow.MissionBlock(); block != "" {
+		if standing := strings.TrimSpace(exp.Group.DefaultContext); standing != "" {
+			exp.Group.DefaultContext = standing + "\n\n" + block
+		} else {
+			exp.Group.DefaultContext = block
+		}
 	}
 	exp.Group.Environment, err = unmarshalEnvironmentColumn(environmentJSON)
 	if err != nil {
