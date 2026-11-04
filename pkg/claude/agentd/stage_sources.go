@@ -56,20 +56,62 @@ func stageSourceMessage(err error) string {
 
 // --- the daemon's own ports ---
 
-var stageDaemonPorts sync.Map // int -> struct{}
+// stageDaemonPorts counts, per TCP port, the open daemon listeners on it. A
+// page may never target one, even where the ownership proof would refuse it
+// anyway. A port can carry more than one listener (the dashboard's extra
+// loopback listener next to a non-loopback bind), so it stays the daemon's
+// until the last of them closes.
+var (
+	stageDaemonPortsMu sync.Mutex
+	stageDaemonPorts   = map[int]int{}
+)
 
-// registerStageDaemonPort records a TCP port the daemon listens on. A page
-// may never target one, even where the ownership proof would refuse it
-// anyway.
-func registerStageDaemonPort(port int) {
-	if port > 0 {
-		stageDaemonPorts.Store(port, struct{}{})
+func holdStageDaemonPort(port int) {
+	stageDaemonPortsMu.Lock()
+	defer stageDaemonPortsMu.Unlock()
+	stageDaemonPorts[port]++
+}
+
+func releaseStageDaemonPort(port int) {
+	stageDaemonPortsMu.Lock()
+	defer stageDaemonPortsMu.Unlock()
+	if stageDaemonPorts[port]--; stageDaemonPorts[port] <= 0 {
+		delete(stageDaemonPorts, port)
 	}
 }
 
+// stageDaemonListener is a daemon TCP listener that holds its port in
+// stageDaemonPorts while it is open. Once it closes the port may no longer be
+// the daemon's, and the kernel may hand it to anything else, such as the
+// agent's own dev server.
+type stageDaemonListener struct {
+	net.Listener
+	port int
+	once sync.Once
+}
+
+// registerStageDaemonListener records ln's port as the daemon's own until ln
+// is closed. Serve on the listener it returns.
+func registerStageDaemonListener(ln net.Listener) net.Listener {
+	tcp, ok := ln.Addr().(*net.TCPAddr)
+	if !ok || tcp.Port <= 0 {
+		return ln
+	}
+	holdStageDaemonPort(tcp.Port)
+	return &stageDaemonListener{Listener: ln, port: tcp.Port}
+}
+
+// Close releases the port only after the listener has stopped accepting.
+func (l *stageDaemonListener) Close() error {
+	err := l.Listener.Close()
+	l.once.Do(func() { releaseStageDaemonPort(l.port) })
+	return err
+}
+
 func isStageDaemonPort(port int) bool {
-	_, ok := stageDaemonPorts.Load(port)
-	return ok
+	stageDaemonPortsMu.Lock()
+	defer stageDaemonPortsMu.Unlock()
+	return stageDaemonPorts[port] > 0
 }
 
 // --- agent port ---

@@ -87,8 +87,8 @@ func SetStageNetnsForTest(entry func(root int) int, dial func(ctx context.Contex
 
 // RegisterStageDaemonPortForTest marks a port as the daemon's own.
 func RegisterStageDaemonPortForTest(port int) func() {
-	registerStageDaemonPort(port)
-	return func() { stageDaemonPorts.Delete(port) }
+	holdStageDaemonPort(port)
+	return func() { releaseStageDaemonPort(port) }
 }
 
 // NewStageAgentPortForTest builds the agent-port source.
