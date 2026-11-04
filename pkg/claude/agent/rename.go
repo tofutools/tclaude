@@ -10,6 +10,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/renametitle"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -49,31 +50,9 @@ type renameParams struct {
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny. Self-target only."`
 }
 
-// isValidRenameTitle mirrors the daemon-side check in handlers.go.
-// Kept in sync deliberately: the daemon is the actual security boundary,
-// but we want a fast local error before sending a doomed request.
-func isValidRenameTitle(t string) bool {
-	if t == "" || len(t) > 64 {
-		return false
-	}
-	if strings.Contains(t, "  ") {
-		return false
-	}
-	for _, r := range t {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case r == '-' || r == '_':
-		case r == '[' || r == ']' || r == '{' || r == '}':
-		case r == '(' || r == ')':
-		case r == ' ':
-		default:
-			return false
-		}
-	}
-	return true
-}
+// isValidRenameTitle is a fast local error before sending a doomed request.
+// The daemon is the security boundary; both call the same gate (renametitle).
+func isValidRenameTitle(t string) bool { return renametitle.Valid(t) }
 
 func runRename(p *renameParams, stdout, stderr io.Writer) int {
 	title := strings.TrimSpace(p.Title)

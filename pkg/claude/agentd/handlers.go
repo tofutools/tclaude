@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/paneinput"
+	"github.com/tofutools/tclaude/pkg/claude/common/renametitle"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -2810,72 +2811,12 @@ func pickWithLiveness(candidates []*db.SessionRow, isAlive func(string) bool) *d
 	return nil
 }
 
-// isValidRenameTitle enforces the rename title charset. Hard cap at 64
-// chars (CC display titles get truncated anyway, and longer is just
-// asking for keystroke-injection edge cases).
-//
-// Allowed: [A-Za-z0-9_\-\[\]{}() ]. Single ASCII spaces are allowed
-// for readability ("code reviewer"), but consecutive spaces and any
-// other whitespace (tabs, newlines, NBSP, etc.) are rejected. Caller
-// should TrimSpace before calling so leading/trailing spaces don't
-// sneak past either.
-//
-// Anything that could let `tmux send-keys` interpret a control
-// sequence — newlines, slashes, quotes, tabs — stays out.
-func isValidRenameTitle(t string) bool {
-	if t == "" || len(t) > 64 {
-		return false
-	}
-	if strings.Contains(t, "  ") {
-		return false
-	}
-	return renameTitleCharsetOK(t)
-}
+// isValidRenameTitle and isValidRenameSink are the daemon's names for the
+// shared send-keys title gate (renametitle). The hook callback and the CLI
+// call the same package, and renametitletest's table pins all three.
+func isValidRenameTitle(t string) bool { return renametitle.Valid(t) }
 
-// renameTitleCharsetOK reports whether every rune in t is in the rename
-// title's allowed charset — no length or spacing checks. It is the
-// injection-safety core shared by isValidRenameTitle (which layers on a
-// 64-char cap + no-double-space readability rule) and isValidRenameSink
-// (the length-exempt send-keys gate). Allowed: [A-Za-z0-9_\-\[\]{}() ].
-// Anything `tmux send-keys` could interpret as a control sequence —
-// newlines, tabs, slashes, quotes, NUL, unicode — is rejected, so a
-// title that passes can never carry a premature Enter into a pane.
-func renameTitleCharsetOK(t string) bool {
-	for _, r := range t {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case r == '-' || r == '_':
-		case r == '[' || r == ']' || r == '{' || r == '}':
-		case r == '(' || r == ')':
-		case r == ' ':
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-// isValidRenameSink is the charset-only rename gate used on the
-// send-keys injection path for titles that may legitimately exceed
-// isValidRenameTitle's 64-char cap. A clone carry title is
-// `<original-title>-c-<N>`, and a reincarnation archive-renames its
-// predecessor to `<predecessor-title>-x` (or `-x-<N>`) — a title already
-// at the 64-char display max would push the suffixed form past the cap,
-// so reusing isValidRenameTitle here would reject a perfectly legitimate
-// title (and, pre-JOH-177, the reincarnate path injected with NO gate at
-// all rather than over-reject). The injection-relevant
-// property is the CHARSET — reject any rune `tmux send-keys` would treat
-// as an early submit / control sequence — not the length, so this keeps
-// the charset rule and drops the cap. An empty title is rejected
-// (nothing to inject; callers fall back to leaving the pane unnamed).
-func isValidRenameSink(t string) bool {
-	if t == "" {
-		return false
-	}
-	return renameTitleCharsetOK(t)
-}
+func isValidRenameSink(t string) bool { return renametitle.ValidSink(t) }
 
 // --- /v1/messages/{id} (GET) and /v1/messages/{id}/reply (POST) ---
 

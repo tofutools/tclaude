@@ -22,6 +22,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	"github.com/tofutools/tclaude/pkg/claude/common/paneinput"
+	"github.com/tofutools/tclaude/pkg/claude/common/renametitle"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -614,38 +615,10 @@ func waitClearInjectPaneReady(tmuxSession string) bool {
 	return false
 }
 
-// isValidRenameTitle mirrors the daemon-side gate in
-// pkg/claude/agentd/handlers.go. Kept in sync deliberately: agentd is
-// the authoritative gate for cross-agent renames, but the /clear
-// title-restore injection happens from inside the hook callback (a
-// separate subprocess that can't import the daemon package without
-// cycling), and we want the SAME strict charset to govern keystrokes
-// before send-keys hits the pty — anything else would re-open the
-// injection sink the daemon path closed. The agentd unit test
-// TestIsValidRenameTitle is the authoritative spec; this mirror must
-// stay aligned.
-func isValidRenameTitle(t string) bool {
-	if t == "" || len(t) > 64 {
-		return false
-	}
-	if strings.Contains(t, "  ") {
-		return false
-	}
-	for _, r := range t {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case r == '-' || r == '_':
-		case r == '[' || r == ']' || r == '{' || r == '}':
-		case r == '(' || r == ')':
-		case r == ' ':
-		default:
-			return false
-		}
-	}
-	return true
-}
+// isValidRenameTitle gates the /clear title-restore injection, which happens
+// from inside the hook callback before send-keys reaches the pty. It is the
+// same gate the daemon applies (renametitle), not a copy of it.
+func isValidRenameTitle(t string) bool { return renametitle.Valid(t) }
 
 // DecodeHookCallbackInput parses one hook payload as the callback receives it
 // on stdin, including the translation of Gemini CLI's event vocabulary (see
