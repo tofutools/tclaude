@@ -10,13 +10,59 @@
 
 import { overlayResourceKey, resourceKey, resourceState, stripResourceKey } from './resource-model.js';
 
-// The rail's chips. Active is the default; Closed is the only way (besides a
-// search) to see what is not live. filterRail also takes a single bucket
-// (open, minimized, background).
-export const RAIL_FILTERS = Object.freeze([['active', 'Active'], ['closed', 'Closed']]);
-export const DEFAULT_RAIL_FILTER = 'active';
-const FILTER_KEYS = new Set(RAIL_FILTERS.map(([key]) => key));
-export const railFilterOK = (key) => FILTER_KEYS.has(key);
+// The panel's filter (tcl-t1onur): which states and kinds it lists. Where an
+// item is (open here, in the background, closed) applies to everything; what
+// an agent is doing (needs you, working, idle) applies to agents. An item
+// shows when its place and its kind are checked, and, for an agent, what it is
+// doing. The default is everything but Closed.
+export const FILTER_STATES = Object.freeze([
+  ['needs_you', 'Needs you'], ['working', 'Working'], ['idle', 'Idle'],
+  ['background', 'Background'], ['open', 'Open'], ['closed', 'Closed'],
+]);
+export const FILTER_KINDS = Object.freeze([
+  ['agents', 'Agents'], ['shells', 'Shells'], ['boards', 'Boards'], ['pages', 'Pages'], ['processes', 'Processes'],
+]);
+export const DEFAULT_FILTER = Object.freeze({
+  states: Object.freeze(FILTER_STATES.map(([key]) => key).filter((key) => key !== 'closed')),
+  kinds: Object.freeze(FILTER_KINDS.map(([key]) => key)),
+});
+
+// readFilter is a stored filter ({ states, kinds }), or the default for
+// anything unreadable. Unknown keys are dropped.
+export function readFilter(raw) {
+  try {
+    const value = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const keep = (list, known) => (Array.isArray(list) ? list.filter((key) => known.some(([k]) => k === key)) : null);
+    const states = keep(value?.states, FILTER_STATES);
+    const kinds = keep(value?.kinds, FILTER_KINDS);
+    if (!states || !kinds) return DEFAULT_FILTER;
+    return { states, kinds };
+  } catch {
+    return DEFAULT_FILTER;
+  }
+}
+
+// filterChanges is how many boxes differ from the default: the count on the
+// filter button.
+export function filterChanges(filter) {
+  const differs = (list, base, all) => all.filter(([key]) => list.includes(key) !== base.includes(key)).length;
+  return differs(filter.states, DEFAULT_FILTER.states, FILTER_STATES) + differs(filter.kinds, DEFAULT_FILTER.kinds, FILTER_KINDS);
+}
+
+// itemPlace, itemKind and itemActivity are the filter's view of an item.
+const itemPlace = (item) => (item.bucket === 'minimized' ? 'open' : item.bucket);
+const KIND_OF = Object.freeze({ shell: 'shells', board: 'boards', page: 'pages', process: 'processes' });
+const itemKind = (item) => (item.kind === 'terminal' ? (isAgentItem(item) ? 'agents' : 'shells') : KIND_OF[item.kind] || 'shells');
+function itemActivity(item) {
+  if (needsYou(item)) return 'needs_you';
+  return item.status?.key === 'working' ? 'working' : 'idle';
+}
+
+// matchesFilter is whether the filter lists item.
+export function matchesFilter(item, filter = DEFAULT_FILTER) {
+  if (!filter.states.includes(itemPlace(item)) || !filter.kinds.includes(itemKind(item))) return false;
+  return !isAgentItem(item) || filter.states.includes(itemActivity(item));
+}
 
 // bucketOf is the chip a state counts under: open here (a tab or a window),
 // on the dock, running out of sight, or not live.
@@ -198,20 +244,18 @@ export function matchesQuery(item, query) {
   return !q || item.title.toLowerCase().includes(q) || (item.group || '').toLowerCase().includes(q);
 }
 
-const inFilter = (item, bucket) => (bucket === 'active' ? item.bucket !== 'closed' : item.bucket === bucket);
-
-// filterRail keeps the items in the chosen chip, dropping a section left
-// empty. A search finds everything, closed items included, whatever the
-// chip. counts are after the search, per chip.
-export function filterRail({ sections }, { bucket = DEFAULT_RAIL_FILTER, query = '' } = {}) {
+// filterRail keeps the items the filter lists, dropping a section left empty.
+// A search finds everything, closed items included, whatever the filter.
+// hidden is how many matching items the filter leaves out.
+export function filterRail({ sections }, { filter = DEFAULT_FILTER, query = '' } = {}) {
   const searching = !!String(query || '').trim();
-  const counts = { active: 0, open: 0, minimized: 0, background: 0, closed: 0 };
+  let hidden = 0;
   const keep = (items) => items.filter((item) => {
     if (!matchesQuery(item, query)) return false;
-    counts[item.bucket] += 1;
-    if (item.bucket !== 'closed') counts.active += 1;
-    return searching || inFilter(item, bucket);
+    if (searching || matchesFilter(item, filter)) return true;
+    hidden += 1;
+    return false;
   });
   const shown = sections.map((s) => ({ ...s, items: keep(s.items) })).filter((s) => s.items.length);
-  return { sections: shown, counts };
+  return { sections: shown, hidden };
 }

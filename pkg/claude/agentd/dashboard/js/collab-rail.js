@@ -1,7 +1,8 @@
 // collab-rail.js -- the Collab view's side panel (tcl-lx7nb7, tcl-8nfzbb):
 // the live agents and resources, by group, in the dashboard's shared right
-// side panel (side-panel.js), folded until the operator opens it. Active
-// shows by default; Closed and a search find the rest. A group's header folds
+// side panel (side-panel.js), folded until the operator opens it. Its Filter
+// dropdown picks the states and kinds it lists (all but closed by default);
+// a search finds everything. A group's header folds
 // it. Clicking an item opens it or brings it forward. Dragging it onto the
 // strip opens it as a tab there, and dropping it anywhere else on the page
 // floats it (collab-rail-actions.js). Hovering one open here offers to
@@ -11,12 +12,15 @@ import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { signal } from '@preact/signals';
-import { DEFAULT_RAIL_FILTER, RAIL_FILTERS, filterRail, isAgentItem, itemState, needsYou, railFilterOK, railGlyph } from './collab-rail-model.js';
+import {
+  DEFAULT_FILTER, FILTER_KINDS, FILTER_STATES, filterChanges, filterRail, isAgentItem, itemState, needsYou, railGlyph, readFilter,
+} from './collab-rail-model.js';
 import { closeOverlayTab, minimizeOverlayTab } from './overlay-instances.js';
 import { tabMoves } from './overlay-tab-moves.js';
 import { dashPrefs } from './prefs.js';
 import { offerSidePanel, registerSidePanel } from './side-panel.js';
 import { collabItems, openRailItem, overlayOf, pressable, startRailDrag } from './collab-rail-actions.js';
+import { ViewMenu, ViewMenuHeading, ViewMenuSep, ViewToggle } from './view-menu.js';
 
 export { openRailItem };
 
@@ -33,9 +37,39 @@ registerSidePanel('collab', {
   titles: [['Hide the Collab panel', 'Hide the Collab panel'], ['Show the Collab panel', 'Show the Collab panel']],
 });
 
-function readFilter() {
-  const stored = dashPrefs.getItem(FILTER_PREF);
-  return railFilterOK(stored) ? stored : DEFAULT_RAIL_FILTER;
+// railFilter is the panel's filter, remembered in the dashboard prefs. null
+// until first read: the prefs load after this module does.
+const railFilter = signal(null);
+const currentFilter = () => railFilter.value || readFilter(dashPrefs.getItem(FILTER_PREF));
+
+function setFilter(next) {
+  railFilter.value = next;
+  dashPrefs.setItem(FILTER_PREF, JSON.stringify(next));
+}
+
+// toggleIn is list with key on or off.
+const toggleIn = (list, key, on) => (on ? [...new Set([...list, key])] : list.filter((k) => k !== key));
+
+// RailFilter is the panel's Filter dropdown: the states and kinds it lists,
+// and Reset (the view-menu.js dropdown the Groups tab's view uses).
+function RailFilter({ filter }) {
+  const [open, setOpen] = useState(false);
+  const changes = filterChanges(filter);
+  const box = (dimension, [key, label]) => html`<${ViewToggle} key=${key} id=${`collab-filter-${key}`}
+    checked=${filter[dimension].includes(key)}
+    onChange=${(on) => { const now = currentFilter(); setFilter({ ...now, [dimension]: toggleIn(now[dimension], key, on) }); }}>${label}<//>`;
+  return html`<${ViewMenu} open=${open} onOpenChange=${setOpen} label="Filter ▾" badge=${changes} buttonClass="cr-filter"
+    ids=${{ button: 'collab-filter-btn', menu: 'collab-filter-menu', badge: 'collab-filter-badge' }}
+    title="Choose which states and kinds the panel lists">
+    <${ViewMenuHeading}>State<//>
+    ${FILTER_STATES.map((entry) => box('states', entry))}
+    <${ViewMenuSep} />
+    <${ViewMenuHeading}>Kind<//>
+    ${FILTER_KINDS.map((entry) => box('kinds', entry))}
+    <${ViewMenuSep} />
+    <button data-ui-exempt type="button" class="view-menu-reset" data-collab-filter-reset="" disabled=${changes === 0}
+      onClick=${() => setFilter({ states: [...DEFAULT_FILTER.states], kinds: [...DEFAULT_FILTER.kinds] })}>Reset<//>
+  <//>`;
 }
 
 function readFolded() {
@@ -100,22 +134,17 @@ function RailItem({ item, actions, snapshot, notify, floatsOf }) {
 
 function RailList({ panes, actions, snapshot, notify, floatsOf }) {
   const [query, setQuery] = useState('');
-  const [bucket, setBucketState] = useState(readFilter);
-  const setBucket = (next) => { setBucketState(next); dashPrefs.setItem(FILTER_PREF, next); };
+  const filter = currentFilter();
   const folded = railFolded.value || readFolded();
   const searching = !!query.trim();
-  const { sections, counts } = filterRail(collabItems(panes, snapshot), { bucket, query });
+  const { sections, hidden } = filterRail(collabItems(panes, snapshot), { filter, query });
   const item = (it) => html`<${RailItem} key=${it.key} item=${it} actions=${actions} snapshot=${snapshot} notify=${notify} floatsOf=${floatsOf} />`;
-  const empty = searching ? 'Nothing matches.' : bucket === 'closed' ? 'Nothing closed.' : 'Nothing running.';
+  const empty = searching ? 'Nothing matches.' : hidden ? 'Nothing matches the filter.' : 'Nothing running.';
   return html`<div class="collab-rail" data-collab-rail="" aria-label="Agents and resources">
     <div class="cr-head">
       <input class="cr-search" type="search" placeholder="Find…" aria-label="Find an agent or resource"
         value=${query} onInput=${(event) => setQuery(event.currentTarget.value)} />
-      <div class="cr-chips" role="group" aria-label="Show">
-        ${RAIL_FILTERS.map(([key, label]) => html`<button data-ui-exempt type="button" key=${key}
-          class=${`cr-chip${!searching && bucket === key ? ' is-on' : ''}`} data-rail-filter=${key}
-          aria-pressed=${!searching && bucket === key ? 'true' : 'false'} onClick=${() => setBucket(key)}>${label} <span class="cr-count">${counts[key]}</span></button>`)}
-      </div>
+      <${RailFilter} filter=${filter} />
     </div>
     <div class="cr-list">
       ${sections.map((section) => {

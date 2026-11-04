@@ -24,8 +24,12 @@ The right side panel lists what you can open here, by group. It is the same
 panel and handle as the palette on the Groups tab. It starts folded: open it with the
 handle on the right edge. Each tab remembers its own panel's state.
 
-- **Active** (the default) lists what is alive. **Closed** lists the rest, and
-  a search finds everything, whatever chip is picked.
+- **Filter ▾** picks what is listed. Tick states (Needs you, Working, Idle,
+  Background, Open, Closed) and kinds (Agents, Shells, Boards, Pages,
+  Processes). By default everything but Closed is listed. The button shows a
+  count of the boxes changed from the default, and **Reset** puts them back.
+  The browser remembers the filter. A search finds everything, whatever the
+  filter is.
 - In each group, the agents come first, in a fixed order: needs you, working
   (green light), idle (amber), then by name. Closed items come last.
 - A group with an agent that needs you comes first, then groups with something

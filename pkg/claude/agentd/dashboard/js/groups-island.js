@@ -13,7 +13,7 @@ import {
 } from './groups-focus.js';
 import { GroupsProcessesFocus } from './groups-processes.js';
 import { processContext } from './process-context.js';
-import { useDismissablePopover } from './hover-popover.js';
+import { ViewMenu, ViewMenuHeading, ViewMenuSep, ViewToggle } from './view-menu.js';
 import { Button, Input } from './ui-components.js';
 
 const html = htm.bind(h);
@@ -35,21 +35,15 @@ export function useWizardTheme() {
 }
 
 function ViewOption({ option, state, queueRefresh, wizard }) {
-  const checked = state.visibility.value[option.key];
-  return html`
-    <label class="filter-toggle" title=${wizard ? (option.wizardTitle || option.title) : option.title}>
-      <input
-        id=${`filter-groups-${option.key}`}
-        type="checkbox"
-        checked=${checked}
-        onChange=${(event) => {
-          state.setVisible(option.key, event.currentTarget.checked);
-          queueRefresh();
-        }}
-      />
-      <span><span class="theme-copy-regular">${option.label}</span><span class="theme-copy-wizard">${option.wizardLabel || option.label}</span></span>
-    </label>
-  `;
+  return html`<${ViewToggle}
+    id=${`filter-groups-${option.key}`}
+    checked=${state.visibility.value[option.key]}
+    title=${wizard ? (option.wizardTitle || option.title) : option.title}
+    onChange=${(checked) => {
+      state.setVisible(option.key, checked);
+      queueRefresh();
+    }}
+  ><span class="theme-copy-regular">${option.label}</span><span class="theme-copy-wizard">${option.wizardLabel || option.label}</span><//>`;
 }
 
 function ColumnLabel({ column }) {
@@ -63,8 +57,6 @@ function ColumnLabel({ column }) {
 export function GroupsControls({ state, actions }) {
   const inputRef = useRef(null);
   const refreshTimer = useRef(null);
-  const menuRef = useRef(null);
-  const buttonRef = useRef(null);
   // While the fused Groups view is on screen these controls drive it, and
   // count what it lists.
   const listed = state.listed.value;
@@ -79,27 +71,7 @@ export function GroupsControls({ state, actions }) {
     refreshTimer.current = setTimeout(() => void actions.refresh(), 250);
   };
 
-  useEffect(() => {
-    const close = (focusButton = false) => {
-      if (!state.viewOpen.value) return;
-      state.viewOpen.value = false;
-      if (focusButton) buttonRef.current?.focus();
-    };
-    const onKeyDown = (event) => {
-      if (event.key !== 'Escape' || !state.viewOpen.value) return;
-      event.preventDefault();
-      close(true);
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      clearTimeout(refreshTimer.current);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, []);
-
-  useDismissablePopover(() => menuRef.current?.parentElement, state.viewOpen.value, () => {
-    state.viewOpen.value = false;
-  }, { escape: false });
+  useEffect(() => () => clearTimeout(refreshTimer.current), []);
 
   // The match count and × live inside the search box, shown only while
   // filtering. The count's live region stays mounted (hidden, empty) so the
@@ -152,66 +124,43 @@ export function GroupsControls({ state, actions }) {
       >${wizard ? '📜 search scrolls' : '📜 search conversations'}<//>
     `}
     <${GroupsFocusSwitch} state=${state} groups=${current.groups} wizard=${wizard} />
-    <div class="view-popover-wrap">
-      ${/* Ghost by operator exception: the view trigger stays quiet. */ ''}
-      <${Button}
-        size="sm"
-        variant="ghost"
-        domRef=${buttonRef}
-        id="filter-groups-view-btn"
-        class="view-btn"
-        aria-haspopup="menu"
-        aria-expanded=${state.viewOpen.value ? 'true' : 'false'}
-        aria-controls="filter-groups-view-menu"
-        title=${wizard
-          ? 'Choose which heroes and ethereal parties to show on this tab'
-          : 'Choose which members and virtual groups to show on this tab'}
-        onClick=${() => { state.viewOpen.value = !state.viewOpen.value; }}
-      >
-        ▾ view
-        <span id="filter-groups-view-badge" class="view-badge ui-badge" hidden=${badge === 0}>${badge || ''}</span>
-      <//>
-      <div
-        ref=${menuRef}
-        id="filter-groups-view-menu"
-        class=${`view-menu${state.viewOpen.value ? ' open' : ''}`}
-        role="menu"
-      >
-        ${GROUP_VIEW_OPTIONS.map((option) => html`
-          <${ViewOption}
-            key=${option.key}
-            option=${option}
-            state=${state}
-            queueRefresh=${queueRefresh}
-            wizard=${wizard}
-          />
+    ${/* Ghost by operator exception: the view trigger stays quiet. */ ''}
+    <${ViewMenu}
+      open=${state.viewOpen.value}
+      onOpenChange=${(open) => { state.viewOpen.value = open; }}
+      label="▾ view"
+      badge=${badge}
+      variant="ghost"
+      ids=${{ button: 'filter-groups-view-btn', menu: 'filter-groups-view-menu', badge: 'filter-groups-view-badge' }}
+      title=${wizard
+        ? 'Choose which heroes and ethereal parties to show on this tab'
+        : 'Choose which members and virtual groups to show on this tab'}
+    >
+      ${GROUP_VIEW_OPTIONS.map((option) => html`
+        <${ViewOption}
+          key=${option.key}
+          option=${option}
+          state=${state}
+          queueRefresh=${queueRefresh}
+          wizard=${wizard}
+        />
+      `)}
+      <${ViewMenuSep} />
+      <${ViewMenuHeading}
+        title="Show or hide individual columns in the member tables. The Name and controls columns always stay. Hiding the ID column moves its agent-id / conv-id hover onto the Name."
+      >Columns<//>
+      <div id="filter-groups-cols" class="view-cols">
+        ${columns.map((column) => html`
+          <${ViewToggle}
+            key=${column.key}
+            id=${`filter-groups-col-${column.key}`}
+            checked=${column.shown}
+            title=${`Show the "${wizard && column.wizardLabel ? column.wizardLabel : column.label}" column`}
+            onChange=${(checked) => state.setColumnShown(column.key, checked)}
+          ><${ColumnLabel} column=${column} /><//>
         `)}
-        <div class="view-menu-sep" role="separator"></div>
-        <div
-          class="ui-eyebrow view-menu-heading"
-          title="Show or hide individual columns in the member tables. The Name and controls columns always stay. Hiding the ID column moves its agent-id / conv-id hover onto the Name."
-        >Columns</div>
-        <div id="filter-groups-cols" class="view-cols">
-          ${columns.map((column) => html`
-            <label
-              class="filter-toggle"
-              title=${`Show the "${wizard && column.wizardLabel ? column.wizardLabel : column.label}" column`}
-              key=${column.key}
-            >
-              <input
-                id=${`filter-groups-col-${column.key}`}
-                type="checkbox"
-                checked=${column.shown}
-                onChange=${(event) => state.setColumnShown(
-                  column.key, event.currentTarget.checked,
-                )}
-              />
-              <span><${ColumnLabel} column=${column} /></span>
-            </label>
-          `)}
-        </div>
       </div>
-    </div>
+    <//>
   `;
 }
 

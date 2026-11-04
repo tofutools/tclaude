@@ -60,9 +60,9 @@ test('rail model: agents under their group first, live before closed, never-star
   assert.ok(!flat.some((i) => i.title === 'superseded'), 'a session that cannot be attached is not offered');
 
   const active = m.filterRail(all);
-  assert.deepEqual(active.counts, { active: 8, open: 3, minimized: 2, background: 3, closed: 2 });
-  assert.ok(!active.sections.flatMap((s) => s.items).some((i) => i.bucket === 'closed'), 'Active, the default, shows nothing closed');
-  const closed = m.filterRail(all, { bucket: 'closed' });
+  assert.equal(active.hidden, 2, 'the default leaves the two closed items out');
+  assert.ok(!active.sections.flatMap((s) => s.items).some((i) => i.bucket === 'closed'), 'the default shows nothing closed');
+  const closed = m.filterRail(all, { filter: { states: ['closed'], kinds: m.DEFAULT_FILTER.kinds } });
   assert.deepEqual(closed.sections.flatMap((s) => s.items).map((i) => i.key), ['board:release', 'page:pg_status']);
   const found = m.filterRail(all, { query: 'status' });
   assert.deepEqual(found.sections.flatMap((s) => s.items).map((i) => i.key), ['page:pg_status'], 'a search finds a closed item whatever the chip');
@@ -85,6 +85,27 @@ test('agents sort by what they are doing, then by name: needs you, working, idle
   assert.ok(m.needsYou(all.sections[0].items[0]));
   assert.equal(m.itemState(all.sections[0].items[0]), 'needs you');
   assert.equal(m.itemState(all.sections[0].items[1]), '', 'the light says working; no word');
+});
+
+test('filter: place and kind for every item, what it is doing for an agent; a count of changes; a stored filter is read safely', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/collab-rail-model.js');
+  const agent = (key, bucket) => ({ kind: 'terminal', bucket, status: { agent: {}, key } });
+  const all = { states: m.FILTER_STATES.map(([k]) => k), kinds: m.FILTER_KINDS.map(([k]) => k) };
+  assert.ok(m.matchesFilter(agent('working', 'background')));
+  assert.ok(!m.matchesFilter(agent('working', 'background'), { ...all, states: all.states.filter((k) => k !== 'working') }),
+    'unticking Working hides a working agent wherever it is');
+  assert.ok(!m.matchesFilter(agent('idle', 'background'), { ...all, states: all.states.filter((k) => k !== 'background') }),
+    'unticking Background hides what runs out of sight');
+  assert.ok(m.matchesFilter(agent('awaiting_input', 'minimized'), { ...all, states: ['needs_you', 'open'] }), 'a docked window counts as open');
+  assert.ok(!m.matchesFilter({ kind: 'board', bucket: 'closed' }), 'the default leaves closed items out');
+  assert.ok(!m.matchesFilter({ kind: 'shell', bucket: 'background' }, { ...all, kinds: ['agents'] }));
+  assert.ok(m.matchesFilter({ kind: 'terminal', bucket: 'open' }, { ...all, kinds: ['shells'] }), 'a terminal with no agent is a shell');
+  assert.equal(m.filterChanges(m.DEFAULT_FILTER), 0);
+  assert.equal(m.filterChanges(all), 1);
+  assert.deepEqual(m.readFilter('not json'), m.DEFAULT_FILTER);
+  assert.deepEqual(m.readFilter('closed'), m.DEFAULT_FILTER, 'an old chip value reads as the default');
+  assert.deepEqual(m.readFilter(JSON.stringify({ states: ['closed', 'bogus'], kinds: ['pages'] })), { states: ['closed'], kinds: ['pages'] });
 });
 
 test('the home: nothing open, a button to the panel, and the agents that need you', async (t) => {
@@ -138,7 +159,7 @@ test('the home: nothing open, a button to the panel, and the agents that need yo
   assert.equal(container.querySelector('[data-collab-home] .ch-quiet').textContent, 'No agents need you.');
 });
 
-test('rail: Active by default, Closed and search find the rest, a group header folds', async (t) => {
+test('rail: the Filter lists all but closed by default, ticks pick any mix, Reset goes back, a group header folds', async (t) => {
   const harness = await createPreactHarness(t);
   const [rail, places] = await Promise.all([
     harness.importDashboardModule('js/collab-rail.js'),
@@ -153,7 +174,7 @@ test('rail: Active by default, Closed and search find the rest, a group header f
   const items = () => [...root.querySelectorAll('[data-rail-item]')].map((el) => el.dataset.railItem);
   assert.deepEqual([...root.querySelectorAll('[data-rail-group]')].map((el) => el.dataset.railGroup), ['tclaude']);
   assert.deepEqual(items(), ['board:launch', 'page:pg_dash', 'process:pr-review', 'shell:tclaude']);
-  assert.equal(root.querySelector('[data-rail-filter="closed"]').textContent, 'Closed 3');
+  assert.equal(root.querySelector('#collab-filter-badge').hidden, true, 'the default filter shows no count');
   assert.equal(root.querySelector('[data-rail-item="page:pg_dash"] .cr-state').textContent, 'live', 'a page out of sight is live');
   assert.equal(root.querySelector('[data-rail-item="board:launch"] .cr-state'), null, 'an item open here needs no words');
 
@@ -163,14 +184,25 @@ test('rail: Active by default, Closed and search find the rest, a group header f
   await harness.act(async () => { harness.fireEvent(launch.querySelector('.cr-name'), 'click'); await wait(); });
   assert.deepEqual(activated, ['board:launch']);
 
-  await harness.act(() => harness.fireEvent(root.querySelector('[data-rail-filter="closed"]'), 'click'));
+  await harness.act(() => harness.fireEvent(root.querySelector('#collab-filter-btn'), 'click'));
+  assert.ok(root.querySelector('#collab-filter-menu').classList.contains('open'));
+  const tick = async (key, on) => {
+    const box = root.querySelector(`#collab-filter-${key}`);
+    box.checked = on;
+    await harness.act(() => harness.fireEvent(box, 'change'));
+  };
+  await tick('closed', true);
+  for (const key of ['open', 'background']) await tick(key, false);
+  assert.equal(root.querySelector('#collab-filter-badge').textContent, '3', 'three boxes differ from the default');
   assert.deepEqual(items(), ['board:release', 'board:net', 'page:pg_status']);
   const search = root.querySelector('.cr-search');
   await harness.act(() => { search.value = 'preview'; harness.fireEvent(search, 'input'); });
   assert.deepEqual(items(), ['page:pg_dash'], 'a search finds a live item while Closed is picked');
   await harness.act(() => { search.value = ''; harness.fireEvent(search, 'input'); });
 
-  await harness.act(() => harness.fireEvent(root.querySelector('[data-rail-filter="active"]'), 'click'));
+  await harness.act(() => harness.fireEvent(root.querySelector('[data-collab-filter-reset]'), 'click'));
+  assert.equal(root.querySelector('#collab-filter-badge').hidden, true, 'Reset goes back to the default');
+  assert.deepEqual(items(), ['board:launch', 'page:pg_dash', 'process:pr-review', 'shell:tclaude']);
   await harness.act(() => harness.fireEvent(root.querySelector('[data-rail-group="tclaude"] .cr-section-head'), 'click'));
   assert.deepEqual(items(), [], 'a folded group shows only its header');
   assert.equal(root.querySelector('[data-rail-group="tclaude"] .cr-count').textContent, '4');
