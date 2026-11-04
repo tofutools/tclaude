@@ -236,7 +236,9 @@ trusted federation peer can do it from their own dashboard only as far as
 this node's grants to that peer reach: the group-scoped peer grant
 `groups.resources.lock`, in every group the resource belongs to (each group
 a process template is pinned to). Unrestricted trust holds it; it is never
-granted by default, and an agent never holds it, on either node. A process or board
+granted by default, and an agent never holds it, on either node. Listing a
+group's resources there, with their locks, takes the separate peer grant
+`groups.resources.read` (also held by unrestricted trust, never by default). A process or board
 lock is stored and is removed when its board or template is deleted, so a new
 resource with the same id starts unlocked. A page lock lasts until the page
 is closed. A resource is unlocked by default.

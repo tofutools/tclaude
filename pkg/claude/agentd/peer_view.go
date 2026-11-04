@@ -225,9 +225,10 @@ func peerViewRules() map[string]peerViewRule {
 	rules["GET /api/pr-checks"] = peerViewRule{feature: "agents.pr", requires: PermAgentsStatusRead, unrestrictedOnly: true, serve: servePeerUnrestrictedRead(handleDashboardPRChecks)}
 	rules["GET /api/pr-details"] = peerViewRule{feature: "agents.pr", requires: PermAgentsStatusRead, unrestrictedOnly: true, serve: servePeerUnrestrictedRead(handleDashboardPRDetails)}
 	// The operator's lock on a group resource, under the peer's grants
-	// (peer_resource_locks.go); a peer's group card lists the resources.
+	// (peer_resource_locks.go); a peer's group card lists the resources under
+	// its own grant (groups.resources.read).
 	rules["POST /api/resource-locks"] = peerViewRule{feature: "groups.resources.lock", requires: PermGroupsResourcesLock, group: true, write: servePeerResourceLock}
-	rules["GET /api/groups/{name}/resources"] = peerViewRule{feature: "groups.resources", requires: PermGroupsRosterRead, group: true, serve: servePeerGroupResources}
+	rules["GET /api/groups/{name}/resources"] = peerViewRule{feature: "groups.resources", requires: PermGroupsResourcesRead, group: true, serve: servePeerGroupResources}
 	addPeerGroupSettingsRules(rules)
 	addPeerMemberRules(rules)
 	addPeerSpawnCatalogRules(rules)

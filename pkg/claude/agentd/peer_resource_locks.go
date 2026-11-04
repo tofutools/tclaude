@@ -14,8 +14,9 @@ import (
 // reach: the peer is never this node's operator. Two routes serve it:
 //
 //   - GET /api/groups/{name}/resources lists a group's processes, boards and
-//     pages with their locks, for a peer that sees the group's roster
-//     (groups.roster.read): the same exposure as its member list.
+//     pages with their locks, for a peer holding groups.resources.read in the
+//     group (tcl-cpsepi). Locally the list is one rule, not one per kind, so
+//     one peer grant guards it.
 //   - POST /api/resource-locks sets or clears one lock, for a peer holding
 //     groups.resources.lock in every group the resource belongs to. A process
 //     template's lock holds wherever it is pinned, so every one of those
@@ -29,6 +30,11 @@ import (
 // and unlock the group's resources against agent changes from the peer's
 // dashboard. Unrestricted trust holds it.
 const PermGroupsResourcesLock = "groups.resources.lock"
+
+// PermGroupsResourcesRead is the federation peer grant (group-scoped) to list
+// the group's resources (its saved processes, boards and live pages, with
+// their locks) on the peer's dashboard. Unrestricted trust holds it.
+const PermGroupsResourcesRead = "groups.resources.read"
 
 // resourceLockGroups returns the groups a resource belongs to: a board's
 // group, a page's group, or every group a process template is pinned to. It

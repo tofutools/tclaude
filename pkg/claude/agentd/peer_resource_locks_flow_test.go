@@ -156,8 +156,10 @@ func TestPeerViewResourceLockFollowsPeerGrants(t *testing.T) {
 	_, rec = e.resources(t, "crew")
 	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 
-	// The roster grant shows the group and its resources, read-only.
+	// The roster grant shows the group; listing its resources takes the read
+	// grant (TestPeerViewResourceListFollowsReadGrant).
 	e.grant(t, agentd.PermGroupsRosterRead, "crew")
+	e.grant(t, agentd.PermGroupsResourcesRead, "crew")
 	out, rec := e.resources(t, "crew")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.False(t, out.CanLock, "no lock grant yet")
@@ -260,4 +262,51 @@ func TestResourceLockNeverReachesAFederatedAgent(t *testing.T) {
 		assert.NotEqual(t, http.StatusOK, rec.Code, "%s: %s", path, rec.Body.String())
 	}
 	assert.False(t, db.GroupResourceLocked(db.GroupResourceBoard, "plan"), "no agent request locked it")
+}
+
+// tcl-cpsepi: the resource list mirrors the local rule under its own peer
+// grant, groups.resources.read. Roster read shows the group but no longer its
+// resources; the lock grant does not list them either.
+func TestPeerViewResourceListFollowsReadGrant(t *testing.T) {
+	e := newPeerLockEnv(t)
+	e.grant(t, agentd.PermGroupsRosterRead, "crew")
+
+	refused := func(msg string) {
+		t.Helper()
+		_, rec := e.resources(t, "crew")
+		require.Equal(t, http.StatusForbidden, rec.Code, "%s: %s", msg, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), agentd.PermGroupsResourcesRead, msg)
+		for _, leaked := range []string{"plan", "ship", "sketch"} {
+			assert.NotContains(t, rec.Body.String(), leaked, msg)
+		}
+	}
+	refused("roster read alone")
+	e.grant(t, agentd.PermGroupsResourcesLock, "crew")
+	refused("the lock grant alone")
+
+	e.grant(t, agentd.PermGroupsResourcesRead, "crew")
+	out, rec := e.resources(t, "crew")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "crew", out.Group)
+	require.Len(t, out.Processes, 2, "processes are listed")
+	require.Len(t, out.Boards, 1, "boards are listed")
+	require.Len(t, out.Pages, 1, "pages are listed")
+	assert.True(t, out.CanLock)
+
+	// The grant is per group: another visible group stays unlisted.
+	e.grant(t, agentd.PermGroupsRosterRead, "backstage")
+	_, rec = e.resources(t, "backstage")
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+
+	e.revoke(t, agentd.PermGroupsResourcesRead, "crew")
+	refused("revoked")
+}
+
+// Unrestricted trust lists every visible group's resources.
+func TestPeerViewResourceListUnrestrictedTrust(t *testing.T) {
+	e := newPeerLockEnv(t)
+	setFedTrustLevel(t, e.fh, db.FederationTrustUnrestricted)
+	out, rec := e.resources(t, "backstage")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, out.Processes, 1)
 }

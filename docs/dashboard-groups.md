@@ -472,7 +472,9 @@ too: the process editor, the board and the page. See
 [Permissions › The operator's lock on a resource](permissions-and-audit.md#the-operators-lock-on-a-resource).
 
 A peer's group in the fused view lists its resources too, read from that
-node, once it shows you the group's roster. Its boards and pages are named
+node, where that node grants you `groups.resources.read` for the group (the
+roster grant alone no longer shows it, nor does `groups.resources.lock`
+without the read grant). Its boards and pages are named
 but not opened here. Its lock chips toggle only where that node grants you
 `groups.resources.lock`; otherwise a chip is greyed out and its tooltip says
 so. If the node refuses a toggle, a toast says why. See

@@ -168,8 +168,8 @@ const tabHidden = () => typeof document !== 'undefined' && document.visibilitySt
 // boards and pages are that node's own, so they are named rather than opened;
 // each wears its lock chip, which toggles only where the node grants this one
 // groups.resources.lock, and otherwise says so. A refusal is a toast. A node
-// that does not show the group's roster (403), or has no such read (404),
-// shows no section; any other failure says so.
+// that does not grant this one groups.resources.read (403), or has no such
+// read (404), shows no section; any other failure says so.
 export function PeerGroupResources({ group, notify = defaultNotify, fetchImpl = null, pollMs = peerResourcesPollMs, tick = dashboardState.lastRefreshAt }) {
   const node = group.fleet_node;
   const name = peerGroupName(group);
