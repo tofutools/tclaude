@@ -1470,32 +1470,11 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 			// than leaving them clicking the same popup forever. A site that
 			// describes nothing offers only the blanket button.
 			scopeJSON, scopeDisplay := approvalScopeForSlug(perm, actionContextOf(actx))
-			observabilityPath, sensitivePath := projectSafeHTTPLogPath(r.URL.Path)
-			observabilityQuery := r.URL.RawQuery
-			if sensitivePath {
-				observabilityQuery = ""
-			}
-			req := &approvalRequest{
-				id:              newApprovalID(),
-				perm:            perm,
-				convID:          p.ConvID,
-				convTitle:       title,
-				method:          r.Method,
-				path:            observabilityPath,
-				rawQuery:        observabilityQuery,
-				bodyPreview:     bodyPreview,
-				bodyLabel:       bodyLabel,
-				targetGroup:     targetGroup,
-				targetConvID:    targetConvID,
-				targetConvTitle: targetConvTitle,
-				autoGrantable:   IsAutoGrantableSlug(perm),
-				scopeJSON:       scopeJSON,
-				scopeDisplay:    scopeDisplay,
-				createdAt:       time.Now(),
-				timeout:         timeout,
-				decision:        make(chan approvalOutcome, 1),
-				extend:          make(chan time.Duration, 1),
-			}
+			req := newAgentApprovalRequest(r, perm, p.ConvID, title, timeout)
+			req.bodyPreview, req.bodyLabel = bodyPreview, bodyLabel
+			req.targetGroup, req.targetConvID, req.targetConvTitle = targetGroup, targetConvID, targetConvTitle
+			req.autoGrantable = IsAutoGrantableSlug(perm)
+			req.scopeJSON, req.scopeDisplay = scopeJSON, scopeDisplay
 			if requestHumanApproval(req, popupBaseURL) {
 				markWriteProofHumanApproval(r, perm, p.ConvID)
 				return p.ConvID, true

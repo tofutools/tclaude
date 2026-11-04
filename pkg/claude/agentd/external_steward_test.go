@@ -215,7 +215,7 @@ func TestExternalNoTmuxPanes(t *testing.T) {
 func TestExternalSteward_EveryPopupIsAccountedFor(t *testing.T) {
 	want := map[string]bool{
 		"requirePermissionEx": true, "requireCrossAgentPermission": true, // the ceiling
-		"requestResumeDirectoryRecreationApproval": true, "requestCodexDriveRollbackApproval": true, // agent.resume, after its gate
+		"requestTargetActionApproval": true, // agent.resume's launch-dir recreation and Codex drive rollback, after its gate
 		"handleSudoRequest": true, // sudo, which refuses the principal
 	}
 	fset := token.NewFileSet()

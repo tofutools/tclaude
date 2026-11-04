@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -258,36 +257,14 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 			refuseApprovalBody(w, heldErr)
 			return "", false
 		}
-		callerTitle := ""
-		if row := agent.FreshConvRowResolved(p.ConvID); row != nil {
-			callerTitle = agent.DisplayTitle(row)
-		}
-		targetTitle := ""
-		if row := agent.FreshConvRowResolved(targetConv); row != nil {
-			targetTitle = agent.DisplayTitle(row)
-		}
-		req := &approvalRequest{
-			id:              newApprovalID(),
-			perm:            perm,
-			convID:          p.ConvID,
-			convTitle:       callerTitle,
-			method:          r.Method,
-			path:            r.URL.Path,
-			rawQuery:        r.URL.RawQuery,
-			bodyPreview:     bodyPreview,
-			bodyLabel:       bodyLabel,
-			targetConvID:    targetConv,
-			targetConvTitle: targetTitle,
-			// autoGrantable stays false on the cross-agent path: "always
-			// allow" persists the slug on the CALLER, which for a cross-agent
-			// capability would grant it against ALL targets — broader than the
-			// one-off, one-target approval the human gave. "Always allow" is
-			// intentionally scoped to the self / human-surface popup path.
-			createdAt: time.Now(),
-			timeout:   timeout,
-			decision:  make(chan approvalOutcome, 1),
-			extend:    make(chan time.Duration, 1),
-		}
+		req := newAgentApprovalRequest(r, perm, p.ConvID, convDisplayTitle(p.ConvID), timeout)
+		req.bodyPreview, req.bodyLabel = bodyPreview, bodyLabel
+		req.targetConvID, req.targetConvTitle = targetConv, convDisplayTitle(targetConv)
+		// autoGrantable stays false on the cross-agent path: "always allow"
+		// persists the slug on the CALLER, which for a cross-agent capability
+		// would grant it against ALL targets — broader than the one-off,
+		// one-target approval the human gave. "Always allow" is intentionally
+		// scoped to the self / human-surface popup path.
 		if requestHumanApproval(req, popupBaseURL) {
 			markWriteProofHumanApproval(r, perm, targetConv)
 			recordAuthorizedPermission(r, perm, 0)

@@ -3104,104 +3104,69 @@ func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string
 // request before an agent-triggered resume creates a missing directory with
 // the daemon user's filesystem authority.
 func requestResumeDirectoryRecreationApproval(w http.ResponseWriter, r *http.Request, perm, authTarget, targetConv string) bool {
-	timeout := parseAskHumanHeader(r)
-	if timeout <= 0 {
-		return false
-	}
-	if popupBaseURL == "" {
-		writeError(w, http.StatusForbidden, "permission",
-			"no popup base URL configured; launch-directory recreation cannot be approved")
-		return false
-	}
-	p := peerFromContext(r.Context())
-	if classify(p) != classAgent {
-		return false
-	}
-	callerTitle := ""
-	if row := agent.FreshConvRowResolved(p.ConvID); row != nil {
-		callerTitle = agent.DisplayTitle(row)
-	}
-	targetTitle := ""
-	if row := agent.FreshConvRowResolved(targetConv); row != nil {
-		targetTitle = agent.DisplayTitle(row)
-	}
-	slot, ok := admitApproval(w, p.ConvID)
-	if !ok {
-		return false
-	}
-	defer approvals.release(slot)
-	targetGroup, _, _ := extractApprovalTargets(r, "")
-	req := &approvalRequest{
-		id:              newApprovalID(),
-		perm:            perm,
-		convID:          p.ConvID,
-		convTitle:       callerTitle,
-		method:          r.Method,
-		path:            r.URL.Path,
-		rawQuery:        r.URL.RawQuery,
-		bodyPreview:     "Recreate the stopped target's missing launch directory for this resume.",
-		bodyLabel:       "Resume launch-directory recreation",
-		targetGroup:     targetGroup,
-		targetConvID:    targetConv,
-		targetConvTitle: targetTitle,
-		createdAt:       time.Now(),
-		timeout:         timeout,
-		decision:        make(chan approvalOutcome, 1),
-		extend:          make(chan time.Duration, 1),
-	}
-	if requestHumanApproval(req, popupBaseURL) {
-		markHumanApprovalContinuation(r, perm, authTarget)
-		return true
-	}
-	writeError(w, http.StatusForbidden, "permission",
-		fmt.Sprintf("human declined or timed out after %s while recreating the launch directory for target %s",
-			timeout, short8(targetConv)))
-	return false
+	return requestTargetActionApproval(w, r, perm, authTarget, targetConv, targetActionApproval{
+		what:    "launch-directory recreation",
+		doing:   "recreating the launch directory",
+		preview: "Recreate the stopped target's missing launch directory for this resume.",
+		label:   "Resume launch-directory recreation",
+	})
 }
 
 func requestCodexDriveRollbackApproval(w http.ResponseWriter, r *http.Request, perm, authTarget, targetConv string) bool {
+	return requestTargetActionApproval(w, r, perm, authTarget, targetConv, targetActionApproval{
+		what:    "Codex drive rollback",
+		doing:   "approving Codex drive rollback",
+		preview: "Durably change the stopped target from the Codex app-server drive to tmux send-keys, tear down its recorded app-server runtime, and resume it. Future relaunches will remain on send-keys until explicitly changed again.",
+		label:   "Codex drive rollback (app-server → send-keys)",
+	})
+}
+
+// targetActionApproval describes an extra-risk action on a target agent that
+// an agent caller may ask the human to approve.
+type targetActionApproval struct {
+	what    string // "<what> cannot be approved" without a popup URL
+	doing   string // "... after <timeout> while <doing> for target <conv>"
+	preview string
+	label   string
+}
+
+// requestTargetActionApproval asks the human, through an audited popup, to
+// approve action a on targetConv for an agent caller. It answers false
+// without writing when the caller did not ask for a popup or is not an
+// agent, and 403 when no popup can be shown or the human declines or the
+// popup times out. Approval marks the continuation for perm on authTarget.
+func requestTargetActionApproval(w http.ResponseWriter, r *http.Request, perm, authTarget, targetConv string, a targetActionApproval) bool {
 	timeout := parseAskHumanHeader(r)
 	if timeout <= 0 {
 		return false
 	}
 	if popupBaseURL == "" {
 		writeError(w, http.StatusForbidden, "permission",
-			"no popup base URL configured; Codex drive rollback cannot be approved")
+			"no popup base URL configured; "+a.what+" cannot be approved")
 		return false
 	}
 	p := peerFromContext(r.Context())
 	if classify(p) != classAgent {
 		return false
 	}
-	callerTitle := ""
-	if row := agent.FreshConvRowResolved(p.ConvID); row != nil {
-		callerTitle = agent.DisplayTitle(row)
-	}
-	targetTitle := ""
-	if row := agent.FreshConvRowResolved(targetConv); row != nil {
-		targetTitle = agent.DisplayTitle(row)
-	}
+	callerTitle := convDisplayTitle(p.ConvID)
+	targetTitle := convDisplayTitle(targetConv)
 	slot, ok := admitApproval(w, p.ConvID)
 	if !ok {
 		return false
 	}
 	defer approvals.release(slot)
 	targetGroup, _, _ := extractApprovalTargets(r, "")
-	req := &approvalRequest{
-		id: newApprovalID(), perm: perm, convID: p.ConvID, convTitle: callerTitle,
-		method: r.Method, path: r.URL.Path, rawQuery: r.URL.RawQuery,
-		bodyPreview: "Durably change the stopped target from the Codex app-server drive to tmux send-keys, tear down its recorded app-server runtime, and resume it. Future relaunches will remain on send-keys until explicitly changed again.",
-		bodyLabel:   "Codex drive rollback (app-server → send-keys)", targetGroup: targetGroup,
-		targetConvID: targetConv, targetConvTitle: targetTitle, createdAt: time.Now(), timeout: timeout,
-		decision: make(chan approvalOutcome, 1), extend: make(chan time.Duration, 1),
-	}
+	req := newAgentApprovalRequest(r, perm, p.ConvID, callerTitle, timeout)
+	req.bodyPreview, req.bodyLabel = a.preview, a.label
+	req.targetGroup, req.targetConvID, req.targetConvTitle = targetGroup, targetConv, targetTitle
 	if requestHumanApproval(req, popupBaseURL) {
 		markHumanApprovalContinuation(r, perm, authTarget)
 		return true
 	}
 	writeError(w, http.StatusForbidden, "permission",
-		fmt.Sprintf("human declined or timed out after %s while approving Codex drive rollback for target %s",
-			timeout, short8(targetConv)))
+		fmt.Sprintf("human declined or timed out after %s while %s for target %s",
+			timeout, a.doing, short8(targetConv)))
 	return false
 }
 

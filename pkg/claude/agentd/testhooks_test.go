@@ -2673,3 +2673,43 @@ func SetCreatedPRRecorderForTest(fn func(agentID, prURL, summary, state, branch 
 	recordCreatedPR = fn
 	return func() { recordCreatedPR = prev }
 }
+
+// ApprovalPopupFields is the set-once part of an approval popup request, as a
+// gate site built it.
+type ApprovalPopupFields struct {
+	Perm, ConvID, ConvTitle, Method, Path, RawQuery string
+	BodyPreview, BodyLabel                          string
+	TargetGroup, TargetConvID, TargetConvTitle      string
+	AutoGrantable                                   bool
+	ScopeJSON, ScopeDisplay                         string
+	Timeout                                         time.Duration
+	HasChannels                                     bool
+}
+
+// CaptureApprovalPopupForTest swaps the popup for a stub that records each request
+// it is shown and answers decision.
+func CaptureApprovalPopupForTest(decision bool) (func() []ApprovalPopupFields, func()) {
+	var mu sync.Mutex
+	var got []ApprovalPopupFields
+	prev := RequestHumanApprovalImpl
+	RequestHumanApprovalImpl = func(req *approvalRequest, _ string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, ApprovalPopupFields{
+			Perm: req.perm, ConvID: req.convID, ConvTitle: req.convTitle, Method: req.method,
+			Path: req.path, RawQuery: req.rawQuery, BodyPreview: req.bodyPreview, BodyLabel: req.bodyLabel,
+			TargetGroup: req.targetGroup, TargetConvID: req.targetConvID, TargetConvTitle: req.targetConvTitle,
+			AutoGrantable: req.autoGrantable, ScopeJSON: req.scopeJSON, ScopeDisplay: req.scopeDisplay,
+			Timeout:     req.timeout,
+			HasChannels: req.decision != nil && cap(req.decision) == 1 && req.extend != nil && cap(req.extend) == 1 && !req.createdAt.IsZero() && req.id != "",
+		})
+		return decision
+	}
+	return func() []ApprovalPopupFields {
+			mu.Lock()
+			defer mu.Unlock()
+			return append([]ApprovalPopupFields(nil), got...)
+		}, func() {
+			RequestHumanApprovalImpl = prev
+		}
+}
