@@ -721,16 +721,18 @@ func beginTeleportReport(w http.ResponseWriter, r *http.Request, caller, finding
 		l.ReturnID = proto.NewEnvelopeID()
 		l.Findings = findings
 		l.State = "returning"
-		// Record the shutdown evidence now, while the caller's pane is live, so
+		// Record the shutdown process now, while the caller's pane is live, so
 		// that a stop finding the agent deleted can still verify the harness
 		// exited (see stopReturningTeleport). Best effort: without it the stop
-		// captures it later, as before.
+		// captures it later, as before. ShutdownConv is deliberately left for
+		// the stop to record: a reincarnation between the report and the stop
+		// would otherwise trip prepareTeleportShutdown's generation check on
+		// every sweep.
 		if l.ShutdownPID == 0 && l.ShutdownConv == "" {
 			if sess := pickAliveSession(caller); sess != nil {
 				if target, err := captureLifecycleTarget(sess); err == nil {
 					l.ShutdownPID = target.panePID
 					l.ShutdownProcessStart = moveProcessStart(target.panePID)
-					l.ShutdownConv = caller
 				}
 			}
 		}

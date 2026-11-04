@@ -468,9 +468,6 @@ func TestFederation_TeleportBackupReturnOfDeletedAgent(t *testing.T) {
 				l.Findings = "Reported before deletion"
 				l.ShutdownPID = pid
 				l.ShutdownProcessStart = started
-				if tc.evidence {
-					l.ShutdownConv = conv
-				}
 				won, err := db.TransitionFederationTeleportLease(*l, "")
 				require.NoError(t, err)
 				return won
