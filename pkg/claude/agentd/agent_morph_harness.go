@@ -551,7 +551,7 @@ func applyCrossHarnessMorphUnderLaunchLock(agentID, convID string, pending db.Ag
 			detail: "the history could not be installed for " + dst.Name + ": " + err.Error() + restoreSource()}
 	}
 	newConv := res.ConvID
-	if err := db.ApplyCrossHarnessMorph(convID, newConv, cm.conversation, cm.profile); err != nil {
+	if err := db.ApplyCrossHarnessMorph(convID, newConv, cm.conversation, cm.profile, cm.target, cm.previous, pending.Back); err != nil {
 		res.Cleanup()
 		return morphOutcome{status: http.StatusInternalServerError, code: "io",
 			detail: "the agent could not be rebound to its translated conversation: " + err.Error() + restoreSource()}

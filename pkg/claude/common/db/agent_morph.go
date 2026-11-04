@@ -158,21 +158,32 @@ func applyMorphForm(p *AgentRelaunchProfile, f AgentMorphForm) {
 // morphExplicitValues is the explicit layer entries for the fields a morph
 // form changes from the form it replaces, keyed by launchspec field key and
 // spawn request field name (a test pins both against launchspec). A field
-// the form sets to the value it already had is not the morph's choice: a
-// morph back, whose form sets every field, makes explicit only what the
-// morph it undoes changed. The model is recorded bare: its context window
-// lives in the relaunch profile, as the form keeps it.
+// the form sets to the value it already had is not the morph's choice. (A
+// morph back normally undoes instead, see applyMorphExplicitTx; these are
+// what it records when there is nothing to undo.) The model is recorded
+// bare: its context window lives in the relaunch profile, as the form keeps
+// it.
+//
+// A cross-harness form also names its harness and built-in sandbox mode; a
+// same-harness form leaves both unset.
 //
 // The auto-compact window shares launchspec's context_window key with the
 // Copilot-only ContextWindowMax, which the resolver treats as one unit. A
-// same-harness morph cannot set both on one agent: the auto-compact window
-// is Claude Code's and pi's only (harness.SupportsAutoCompactWindow).
+// morph cannot set both on one agent: the auto-compact window is Claude
+// Code's and pi's only (harness.SupportsAutoCompactWindow), and a morph to
+// Copilot resets the cap with the rest of the drive.
 func morphExplicitValues(f, previous AgentMorphForm, at time.Time) map[string]ExplicitLaunchValue {
 	out := map[string]ExplicitLaunchValue{}
+	var harnessName, previousHarness *string
+	if f.Harness != "" {
+		harnessName, previousHarness = &f.Harness, &previous.Harness
+	}
 	for _, v := range []struct {
 		key, field      string
 		value, previous *string
 	}{
+		{"harness", "Harness", harnessName, previousHarness},
+		{"sandbox_mode", "HarnessBuiltinMode", f.HarnessBuiltinMode, previous.HarnessBuiltinMode},
 		{"model", "Model", f.Model, previous.Model},
 		{"effort", "Effort", f.Effort, previous.Effort},
 		{"approval", "ApprovalPolicy", f.Approval, previous.Approval},
@@ -282,8 +293,9 @@ func updateAgentRelaunchProfileForConvTx(convID string, apply func(tx *sql.Tx, a
 //
 // The fields the form changes are also recorded as the agent's explicit
 // launch values, in the same transaction, so re-applying its spawn profile
-// keeps the morphed form instead of putting the profile's values back.
-func ApplyAgentMorphForConv(convID string, target AgentMorphForm) (AgentMorphForm, error) {
+// keeps the morphed form instead of putting the profile's values back. A
+// morph back (back) undoes what the morph it reverses recorded.
+func ApplyAgentMorphForConv(convID string, target AgentMorphForm, back bool) (AgentMorphForm, error) {
 	var previous AgentMorphForm
 	conversation, err := ConversationResumeProfileForConv(convID)
 	if err != nil {
@@ -295,7 +307,7 @@ func ApplyAgentMorphForConv(convID string, target AgentMorphForm) (AgentMorphFor
 			base = ComposeAgentRelaunchProfile(conversation.FallbackRelaunch, p)
 		}
 		previous = morphFormOf(base, p.MorphProfile)
-		if err := recordExplicitLaunchValuesTx(tx, agentID, morphExplicitValues(target, previous, time.Now())); err != nil {
+		if err := applyMorphExplicitTx(tx, agentID, morphExplicitValues(target, previous, time.Now()), back); err != nil {
 			return err
 		}
 		applyMorphForm(p, target)
@@ -375,8 +387,11 @@ func ListAgentsWithPendingMorph() ([]AgentWithPendingMorph, error) {
 // translated conversation of another harness, in one transaction: the
 // generation rotation (succession edge and live pointer, as reincarnate
 // does), the successor's conversation resume profile, and the agent's
-// relaunch profile rebuilt for that harness. Nothing is committed on error.
-func ApplyCrossHarnessMorph(oldConv, newConv string, conversation ConversationResumeProfile, profile AgentRelaunchProfile) error {
+// relaunch profile rebuilt for that harness, and the fields the morph changes
+// (target over previous, the form it replaces) recorded as explicit launch
+// values, or undone for a morph back, as for a same-harness morph. Nothing is
+// committed on error.
+func ApplyCrossHarnessMorph(oldConv, newConv string, conversation ConversationResumeProfile, profile AgentRelaunchProfile, target, previous AgentMorphForm, back bool) error {
 	oldConv, newConv = strings.TrimSpace(oldConv), strings.TrimSpace(newConv)
 	if oldConv == "" || newConv == "" || oldConv == newConv {
 		return errors.New("ApplyCrossHarnessMorph: two distinct conversations required")
@@ -425,6 +440,9 @@ func ApplyCrossHarnessMorph(oldConv, newConv string, conversation ConversationRe
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
 		return fmt.Errorf("agent %s did not advance to %s", agentID, newConv)
+	}
+	if err := applyMorphExplicitTx(tx, agentID, morphExplicitValues(target, previous, time.Now()), back); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
