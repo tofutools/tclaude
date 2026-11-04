@@ -3840,8 +3840,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			return
 		}
 	}
-	groupProfile := groupDefaultProfile(g)
-	globalProfile := globalDefaultProfile()
+	// The spawn pipeline's default-tier loader, which the dashboard's live
+	// relaunch read (spawnRelaunchPreview) shares.
+	groupProfile, globalProfile := launchDefaultProfiles(g, &spawnParams{})
 	for _, prof := range []*db.SpawnProfile{groupProfile, globalProfile} {
 		if fail := profileSpawnFailure(prof, spawnerConvID); fail != nil {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
@@ -4316,6 +4317,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		CopilotAPI:     agent.ResolvedField{Value: copilotAPIValue, Source: copilotAPISource},
 		CodexAppServer: agent.ResolvedField{Value: codexAppServerValue, Source: codexAppServerSource},
 		FastMode:       agent.ResolvedField{Value: fastModeValue, Source: fastModeSource},
+	}
+	// A one-shot is never resumed and records no rows, so it shows none.
+	if !body.NonInteractive {
+		resolvedLaunch.RelaunchPolicy = resolveSpawnRelaunchRows(relaunchExplicit, relaunchTiers)
 	}
 	resolvedLaunch.SandboxImpl = agent.ResolvedField{
 		Value: body.SandboxImplementation, Source: sandboxImplSource, Note: sandboxImplNote}

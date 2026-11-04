@@ -196,7 +196,8 @@ trigger worker and a process worker. Highest first:
    the dialog asks it: a spawn preview (`POST /api/groups/{name}/spawn-preview`,
    the spawn request's body) runs the spawn's own resolution and validation,
    stops before anything is launched, and answers with each launch field's
-   value and the tier that decided it. A box the daemon would not resolve the
+   value and the tier that decided it, including the relaunch-policy rows the
+   agent would get (each with a `kind`: explicit, profile or global). A box the daemon would not resolve the
    same way is sent as shown, and so is every box when the preview fails
 2. the group's remote-control policy (`groups set-remote-control`; remote
    control only)
