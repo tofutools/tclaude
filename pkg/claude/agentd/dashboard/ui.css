@@ -242,16 +242,17 @@ body.slop {
    and the footer's buttons used to sit side by side in up to five heights
    (tcl-cg7tdi). Variants differ only in colour and weight; a skin may change
    the rim but not the box (border-box). A link-style action in running text
-   and an icon-only button keep their own size. */
-.ui-dialog .ui-btn:not(.ui-btn-link, .ui-btn-icon) {
+   an icon-only button and a segmented group's options (.ui-seg, a toggle
+   group rather than an action) keep their own size. */
+.ui-dialog .ui-btn:not(.ui-btn-link, .ui-btn-icon, .ui-seg > *) {
   box-sizing: border-box; height: var(--ui-dialog-btn-h, 30px);
   padding-top: 0; padding-bottom: 0; font-size: 13px; line-height: 18px;
   border-radius: var(--ui-radius);
 }
-.ui-dialog .ui-btn.ui-sm:not(.ui-btn-link, .ui-btn-icon) { padding-left: 12px; padding-right: 12px; }
+.ui-dialog .ui-btn.ui-sm:not(.ui-btn-link, .ui-btn-icon, .ui-seg > *) { padding-left: 12px; padding-right: 12px; }
 /* A button that used to stretch to the field beside it (Browse… next to a
    path, a tool button next to a select) now centres on that row instead. */
-.ui-dialog :is(.cron-create-row .dir-browse-btn, .cron-create-row > button.tool) { align-self: center; }
+.ui-dialog :is(.cron-create-row .dir-browse-btn, .cron-create-row > button.tool, .directory-picker-entry-action) { align-self: center; }
 
 /* Segmented: one quiet framed group of borderless options, the pre-migration
    look the operator asked to keep. Options read muted; hover lifts them a
