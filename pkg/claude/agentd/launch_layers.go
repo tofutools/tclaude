@@ -51,6 +51,13 @@ func applySpawnCopy(agentID string, spawnCopy db.AgentSpawnCopy) *spawnFailure {
 	lock := resumeLaunchLock(convID)
 	lock.Lock()
 	defer lock.Unlock()
+	return applySpawnCopyLocked(agentID, convID, spawnCopy)
+}
+
+// applySpawnCopyLocked is applySpawnCopy for a caller already holding the
+// agent's resume launch lock for convID: the profile re-apply's stop, apply
+// and resume of a running agent holds it across all three.
+func applySpawnCopyLocked(agentID, convID string, spawnCopy db.AgentSpawnCopy) *spawnFailure {
 	// A reincarnation or morph may have moved the agent to a new
 	// conversation while this waited for the lock; that one is not locked.
 	if err := requireCurrentAgentGeneration(agentID, convID); err != nil {

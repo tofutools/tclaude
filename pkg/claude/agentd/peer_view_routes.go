@@ -343,6 +343,7 @@ var peerViewLocalRoutes = []string{
 	"POST /api/spawn-profiles/from-agent",
 	"POST /api/spawn-profiles/import",
 	"POST /api/spawn-profiles/import/inspect",
+	"POST /api/spawn-profiles/{name}/reapply",
 	"POST /api/starters/{name}/install",
 	"POST /api/templates/from-group",
 	"POST /api/templates/import",

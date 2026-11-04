@@ -14,7 +14,8 @@ import (
 
 // tcl-sqs8sr: an edited spawn profile reaches new spawns only. Saving it says
 // how many running agents keep their copy, and the re-apply preview shows,
-// per agent, what a re-apply would change. Applying is not offered yet.
+// per agent, what a re-apply would change. profile_reapply_apply_flow_test.go
+// covers applying it.
 
 type reapplyPreview struct {
 	Profile string `json:"profile"`
@@ -84,9 +85,9 @@ func TestProfileReapply_PreviewShowsPerAgentDiff(t *testing.T) {
 	assert.Equal(t, 2, saved.RunningAgentsWithCopy, "the retired agent is not counted")
 
 	preview := profileReapplyPreview(t, f, "worker")
-	assert.False(t, preview.Apply.Enabled, "applying waits on relaunch reading the spawn copy")
-	assert.Contains(t, preview.Apply.Reason, "tcl-an26ed")
-	assert.Contains(t, preview.GrantsNote, "shown only, not applied")
+	assert.True(t, preview.Apply.Enabled, "Apply is offered (tcl-hxuwnc)")
+	assert.Contains(t, preview.Apply.Reason, "a busy agent is skipped")
+	assert.Contains(t, preview.GrantsNote, "shown only, not re-applied yet")
 	require.Len(t, preview.Notes, 1)
 	assert.Contains(t, preview.Notes[0], "Usage profile links: not reapplied yet")
 	require.Len(t, preview.Agents, 2)
