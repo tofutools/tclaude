@@ -668,6 +668,13 @@ and an **explicit per-spawn profile** (`--sandbox-profile` on
 tiers, and the omission is recorded in the launch snapshot so a resume or
 reincarnation cannot resurrect the ambient tiers.
 
+Scribe and Steward summons, and trigger and process workers, get the global
+and group tiers like any other spawn into their group, along with the group's
+environment. A scribe or Steward with no profile and no environment configured
+launches with no sandbox snapshot, as it always has. A scribe always works in
+`~/.tclaude/scribe`, so a profile that denies that directory refuses the
+summon with an error naming the profile.
+
 Cross-scope composition is **not** last-wins:
 
 - **Filesystem**: a canonical-path union where deny dominates write dominates

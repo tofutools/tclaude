@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	triggerlogic "github.com/tofutools/tclaude/pkg/claude/triggers"
@@ -834,10 +833,13 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 		IncludeGroupContextDefault: true}
 	profileGroup := *g
 	profileGroup.DefaultProfile = profile.Name
-	if fail := applyDefaultProfile(&profileGroup, &p); fail != nil {
+	if fail := resolveManagedLaunch(&profileGroup, &p, ownerConv, false); fail != nil {
+		switch fail.Kind {
+		case "io", "permission_denied":
+			return nil, fail.Kind, fail.Msg
+		}
 		return nil, "spawn_failed", fail.Msg
 	}
-	snapshot := sandboxpolicy.OmittedProfilesSnapshot()
 	// The owner's grant was conditioned on the inherited sandbox profile, so
 	// refuse when the spawn profile resolves a launch that would not enforce
 	// it. Only a scope-pinned owner is bound: an unscoped grant or group
@@ -849,31 +851,6 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 			"this firing is authorized by a grant scoped to sandbox profile %s, and spawn profile %s resolves a launch mode that would not enforce it",
 			sandboxProfileForScope, profile.Name)
 	}
-	if !sandboxProfilesDisabled(p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation) {
-		snapshot, err = db.ResolveEffectiveSandboxSnapshot(g.ID, "")
-		if err != nil {
-			return nil, "spawn_failed", err.Error()
-		}
-	}
-	if ownerConv != "" {
-		parent, readErr := db.AgentEffectiveSandboxConfigForConv(ownerConv)
-		if readErr != nil {
-			return nil, "io", readErr.Error()
-		}
-		if parent == nil && sandboxpolicy.HasCapabilities(snapshot) {
-			return nil, "permission_denied", "owning principal predates effective sandbox snapshots"
-		}
-		if parent != nil {
-			validated, valErr := ensureAgentDirectoriesForRelaunch(*parent)
-			if valErr != nil {
-				return nil, "spawn_failed", valErr.Error()
-			}
-			if containErr := sandboxpolicy.RequireContained(validated, snapshot); containErr != nil {
-				return nil, "permission_denied", containErr.Error()
-			}
-		}
-	}
-	p.EffectiveSandbox = &snapshot
 	return &managedSpawn{group: &profileGroup, params: p, promptRefs: promptRefs}, "", ""
 }
 
