@@ -120,7 +120,14 @@ func harnessConfigFloorCatalog(
 		files = under("settings.json", "settings.local.json", "CLAUDE.md",
 			"keybindings.json")
 	case harness.CodexName:
-		dirs = under("hooks", "prompts")
+		// rules/ holds Codex's execpolicy: "always allow" on an approval
+		// prompt appends a prefix_rule to rules/default.rules, and every *.rules
+		// file there is loaded by every later session, unsandboxed ones
+		// included. Inside the wall the persist fails and Codex warns ("Failed
+		// to apply execpolicy amendment") but still runs the approved command.
+		// The pre-rules ~/.codex/policy/*.codexpolicy layout is no longer read
+		// by Codex, so it is not listed.
+		dirs = under("hooks", "prompts", "rules")
 		files = under("config.toml", "hooks.json", "AGENTS.md")
 		// The setup-managed profile IS Codex's harness-builtin confinement.
 		// Per-launch tclaude-agent-<hex>.config.toml siblings are not floored:
