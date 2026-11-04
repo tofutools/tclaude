@@ -2,7 +2,6 @@ package agentd
 
 import (
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"reflect"
 	"slices"
@@ -34,40 +33,64 @@ import (
 // to the stored one is not written, so re-applying the same copy changes
 // nothing. Roles move with their grants (tcl-fg2kqk) and are not touched.
 
+// spawnCopyKept is a field the re-apply could not write outside the relaunch
+// profile, with why. Its old value stays in the copy written, so the preview
+// keeps listing the difference instead of hiding it.
+type spawnCopyKept struct {
+	key, why string
+}
+
 func resolveSpawnCopyOutside(agentID string, g *db.AgentGroup, harnessName string, oldCopy *db.AgentSpawnCopy,
-	newCopy db.AgentSpawnCopy, explicit map[string]db.ExplicitLaunchValue, startup *db.AgentStartupSnapshot) (db.SpawnCopyOutside, *spawnFailure) {
+	newCopy db.AgentSpawnCopy, explicit map[string]db.ExplicitLaunchValue, startup *db.AgentStartupSnapshot,
+	reapplierConv string) (db.SpawnCopyOutside, []spawnCopyKept, *spawnFailure) {
 	var out db.SpawnCopyOutside
+	var kept []spawnCopyKept
 	next, fail := decodeSpawnCopyTiers(newCopy)
 	if fail != nil {
-		return out, fail
+		return out, nil, fail
 	}
 	tiers := next.launchTiers()
+	var prevTiers []launchProfileTier
+	if oldCopy != nil {
+		prev, fail := decodeSpawnCopyTiers(*oldCopy)
+		if fail != nil {
+			return out, nil, fail
+		}
+		prevTiers = prev.launchTiers()
+	}
 	h, err := harness.Resolve(harnessOrDefault(harnessName))
 	if err != nil {
-		return out, &spawnFailure{http.StatusUnprocessableEntity, "invalid_harness", err.Error()}
+		return out, nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_harness", err.Error()}
 	}
 	isExplicit := func(key string) bool { return explicit[key].Provenance != "" }
 
+	// include_group_context: only a change the copy decides is written. What
+	// an unset value means depends on the spawn path (a direct spawn includes,
+	// a one-shot or scribe does not), so a copy that stops setting it keeps
+	// the stored value; so does any case the copy did not change.
 	if startup != nil && !isExplicit("include_group_context") {
-		var res launchBoolResolution
-		if _, fail := resolveLaunchBoolFields(h, tiers, &res, launchBoolIncludeGroupContext); fail != nil {
-			return out, fail
+		was, fail := resolveIncludeGroupContext(h, prevTiers)
+		if fail != nil {
+			return out, nil, fail
 		}
-		include := !res.Set[launchBoolIncludeGroupContext] || res.Value[launchBoolIncludeGroupContext]
-		// Stored as a first spawn stores it (recordStartupSnapshot): a group
-		// with no standing context counts as included.
-		include = strings.TrimSpace(g.GetDefaultContext()) == "" || include
-		if include != startup.IncludeGroupContext {
-			out.IncludeGroupContext = &include
+		now, fail := resolveIncludeGroupContext(h, tiers)
+		if fail != nil {
+			return out, nil, fail
+		}
+		switch {
+		case was == now:
+		case now.set:
+			if now.value != startup.IncludeGroupContext {
+				out.IncludeGroupContext = &now.value
+			}
+		default:
+			kept = append(kept, spawnCopyKept{"include_group_context",
+				"the profile no longer sets it, and what unset means depends on how the agent was spawned"})
 		}
 	}
 
-	if startup != nil && oldCopy != nil {
-		prev, fail := decodeSpawnCopyTiers(*oldCopy)
-		if fail != nil {
-			return out, fail
-		}
-		was, _ := resolveProfileStartupContext(harnessName, prev.launchTiers())
+	if startup != nil {
+		was, _ := resolveProfileStartupContext(harnessName, prevTiers)
 		now, _ := resolveProfileStartupContext(harnessName, tiers)
 		if was != now {
 			stored := strings.TrimSpace(startup.ProfileContext)
@@ -75,34 +98,55 @@ func resolveSpawnCopyOutside(agentID string, g *db.AgentGroup, harnessName strin
 				combined := joinContextParts(now, strings.TrimSpace(stored[len(was):]))
 				out.ProfileContext = &combined
 			} else {
-				// Something other than this copy wrote the stored text; only
-				// the profile's own part is ours to replace, and it is not
-				// there to find.
-				slog.Info("re-apply: stored startup context does not start with the copy's; keeping it", "agent", agentID)
+				kept = append(kept, spawnCopyKept{"profile_startup_context",
+					"the agent's stored startup context does not start with the profile's old text"})
 			}
 		}
+	} else {
+		kept = append(kept, spawnCopyKept{"profile_startup_context", "the agent has no startup record"})
 	}
 
 	// The explicit entries stay on top of whatever the copy's tiers now give,
 	// as they did at the first spawn.
-	env, fail := resolveSpawnCopyEnvironment(agentID, g, tiers, explicit["profile_env"])
+	env, why, fail := resolveSpawnCopyEnvironment(agentID, g, tiers, prevTiers, explicit["profile_env"])
 	if fail != nil {
-		return out, fail
+		return out, nil, fail
 	}
-	if env != nil {
+	switch {
+	case why != "":
+		kept = append(kept, spawnCopyKept{"profile_env", why})
+	case env != nil && reapplierConv != "":
+		// An environment reaches the agent's next launch: model endpoints,
+		// proxies, tool hooks. Morphing an agent cannot change it, so neither
+		// can an agent re-applying a profile to another one.
+		return out, nil, &spawnFailure{http.StatusForbidden, "environment_operator_only",
+			"this re-apply would change the agent's environment, which only the operator can re-apply; ask them to apply it"}
+	case env != nil:
 		out.EffectiveSandbox, out.EffectiveSandboxRaw = env.snapshot, env.raw
 	}
 
 	if !isExplicit("usage_profile_links") {
 		ids, source, changed, err := spawnCopyUsageLinks(agentID, next)
 		if err != nil {
-			return out, &spawnFailure{http.StatusInternalServerError, "io", "read usage profile links: " + err.Error()}
+			return out, nil, &spawnFailure{http.StatusInternalServerError, "io", "read usage profile links: " + err.Error()}
 		}
 		if changed {
 			out.UsageLinkedSet, out.UsageLinkedIDs, out.UsageLinkedSource = true, ids, source
 		}
 	}
-	return out, nil
+	return out, kept, nil
+}
+
+type includeGroupContextResolution struct {
+	value, set bool
+}
+
+func resolveIncludeGroupContext(h *harness.Harness, tiers []launchProfileTier) (includeGroupContextResolution, *spawnFailure) {
+	var res launchBoolResolution
+	if _, fail := resolveLaunchBoolFields(h, tiers, &res, launchBoolIncludeGroupContext); fail != nil {
+		return includeGroupContextResolution{}, fail
+	}
+	return includeGroupContextResolution{value: res.Value[launchBoolIncludeGroupContext], set: res.Set[launchBoolIncludeGroupContext]}, nil
 }
 
 // joinContextParts joins non-empty blocks the way appendRoleBlock does.
@@ -123,35 +167,40 @@ type spawnCopyEnvironment struct {
 
 // resolveSpawnCopyEnvironment is the agent's launch snapshot with its
 // environment overrides recomputed from the copy's tiers and the spawn's
-// explicit entries, or nil when the agent has no launch environment to
-// change or it would not change.
-func resolveSpawnCopyEnvironment(agentID string, g *db.AgentGroup, tiers []launchProfileTier, explicit db.ExplicitLaunchValue) (*spawnCopyEnvironment, *spawnFailure) {
-	rec, err := db.ActiveAgentLaunchRecord(agentID)
-	if err != nil {
-		return nil, &spawnFailure{http.StatusInternalServerError, "io", "load the agent's launch snapshot: " + err.Error()}
-	}
-	if rec == nil || rec.EffectiveSandbox == nil || !rec.EffectiveSandbox.RefreshGroupEnvironment {
-		// No resolved launch environment to replace (an agent whose spawn
-		// path recorded none keeps what it has).
-		return nil, nil
-	}
+// explicit entries, or nil when they would not change. why, when set, says
+// why a change the copy makes cannot be written (the agent has no resolved
+// launch environment to replace).
+func resolveSpawnCopyEnvironment(agentID string, g *db.AgentGroup, tiers, prevTiers []launchProfileTier,
+	explicit db.ExplicitLaunchValue) (env *spawnCopyEnvironment, why string, fail *spawnFailure) {
 	var explicitEnv []sandboxpolicy.EnvironmentEntry
 	if raw, ok := explicit.Fields["Environment"]; ok {
 		if err := json.Unmarshal(raw, &explicitEnv); err != nil {
-			return nil, &spawnFailure{http.StatusConflict, "invalid_launch_layers", "the spawn's explicit environment cannot be read: " + err.Error()}
+			return nil, "", &spawnFailure{http.StatusConflict, "invalid_launch_layers", "the spawn's explicit environment cannot be read: " + err.Error()}
 		}
 	}
 	environment, overrides, err := resolveCommonLaunchEnvironmentParts(g, tiers, explicitEnv)
 	if err != nil {
-		return nil, &spawnFailure{http.StatusBadRequest, "invalid_environment", err.Error()}
+		return nil, "", &spawnFailure{http.StatusBadRequest, "invalid_environment", err.Error()}
 	}
-	current := rec.EffectiveSandbox
+	current, raw, err := db.AgentEffectiveSandboxConfigRaw(agentID)
+	if err != nil {
+		return nil, "", &spawnFailure{http.StatusInternalServerError, "io", "load the agent's launch snapshot: " + err.Error()}
+	}
+	if current == nil || !current.RefreshGroupEnvironment {
+		// No resolved launch environment to replace. Only a change the copy
+		// makes is worth saying so for.
+		_, prevOverrides, err := resolveCommonLaunchEnvironmentParts(g, prevTiers, explicitEnv)
+		if err == nil && sameEnvironment(overrides, prevOverrides) {
+			return nil, "", nil
+		}
+		return nil, "the agent's launch record has no resolved environment to update", nil
+	}
 	if sameEnvironment(overrides, current.LaunchEnvironmentOverrides) {
-		return nil, nil
+		return nil, "", nil
 	}
 	next := *current
 	next.LaunchEnvironment, next.LaunchEnvironmentOverrides = environment, overrides
-	return &spawnCopyEnvironment{snapshot: &next, raw: rec.EffectiveSandboxRaw}, nil
+	return &spawnCopyEnvironment{snapshot: &next, raw: raw}, "", nil
 }
 
 func sameEnvironment(a, b []sandboxpolicy.EnvironmentEntry) bool {
@@ -198,4 +247,52 @@ func spawnCopyUsageLinks(agentID string, d decodedSpawnCopy) (ids []int64, sourc
 	slices.Sort(have)
 	changed = !slices.Equal(ids, have) || (len(ids) > 0 && source != haveSource)
 	return ids, source, changed, nil
+}
+
+// keepCopyFields is newCopy with the given fields' values taken back from the
+// old copy, tier by tier (matched by tier and profile ID), so the stored copy
+// says what the agent really runs with.
+func keepCopyFields(newCopy db.AgentSpawnCopy, oldCopy *db.AgentSpawnCopy, kept []spawnCopyKept) db.AgentSpawnCopy {
+	if oldCopy == nil || len(kept) == 0 {
+		return newCopy
+	}
+	keys := map[string]bool{}
+	for _, k := range kept {
+		keys[k.key] = true
+	}
+	keep := func(jsonKey string) bool {
+		f, ok := launchFieldForProfileField(spawnProfileJSONGoNames[jsonKey])
+		return ok && keys[f.Key]
+	}
+	out := db.AgentSpawnCopy{CopiedAt: newCopy.CopiedAt, Tiers: append([]db.SpawnCopyTier(nil), newCopy.Tiers...)}
+	for i, tier := range out.Tiers {
+		var old *db.SpawnCopyTier
+		for j := range oldCopy.Tiers {
+			if oldCopy.Tiers[j].Tier == tier.Tier && oldCopy.Tiers[j].ProfileID == tier.ProfileID {
+				old = &oldCopy.Tiers[j]
+				break
+			}
+		}
+		merged, copied := profileJSONMap(tier.Profile), map[string]json.RawMessage{}
+		if old != nil {
+			copied = profileJSONMap(old.Profile)
+		}
+		if merged == nil {
+			continue
+		}
+		for key := range merged {
+			if keep(key) {
+				delete(merged, key)
+			}
+		}
+		for key, raw := range copied {
+			if keep(key) {
+				merged[key] = raw
+			}
+		}
+		if raw, err := json.Marshal(merged); err == nil {
+			out.Tiers[i].Profile = raw
+		}
+	}
+	return out
 }

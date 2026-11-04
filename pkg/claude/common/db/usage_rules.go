@@ -282,9 +282,16 @@ func SetUsageProfileAssignments(scope, scopeID string, profileIDs []int64, sourc
 		return err
 	}
 	now := dbTime(time.Now())
+	insert := `INSERT OR IGNORE INTO usage_profile_assignments (scope, scope_id, profile_id, source, created_at) VALUES (?, ?, ?, ?, ?)`
+	if scope == UsageScopeAgent && !strings.HasPrefix(source, UsageLinkedSourcePrefix) {
+		// An agent's own choice takes over a row it already holds as a link,
+		// so a later change to the spawn profile's links (a re-apply) cannot
+		// remove a limit the operator chose for it.
+		insert = `INSERT INTO usage_profile_assignments (scope, scope_id, profile_id, source, created_at) VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(scope, scope_id, profile_id) DO UPDATE SET source = excluded.source`
+	}
 	for _, id := range profileIDs {
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO usage_profile_assignments (scope, scope_id, profile_id, source, created_at) VALUES (?, ?, ?, ?, ?)`,
-			scope, scopeID, id, source, now); err != nil {
+		if _, err := tx.Exec(insert, scope, scopeID, id, source, now); err != nil {
 			return fmt.Errorf("assign usage profile %d: %w", id, err)
 		}
 	}

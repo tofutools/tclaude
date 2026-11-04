@@ -147,3 +147,97 @@ func TestSpawnCopyOutside_ReappliedCopyChangesThemAndKeepsExplicit(t *testing.T)
 	require.NotNil(t, policy)
 	assert.ElementsMatch(t, []db.SandboxEnvironmentEntry{{Name: "GROUP", Value: "g"}, {Name: "PROF", Value: "two"}}, policy.LaunchEnvironment)
 }
+
+// A change that cannot be written outside the relaunch profile is reported
+// and its old value stays in the copy, so the preview keeps listing it rather
+// than showing the agent as up to date.
+func TestSpawnCopyOutside_UnwritableChangeIsKeptAndSaid(t *testing.T) {
+	fx := newOutsideFixture(t)
+	f := fx.f
+	// An agent whose launch record has no resolved environment to update.
+	rec, err := db.ActiveAgentLaunchRecord(fx.plain.AgentID)
+	require.NoError(t, err)
+	legacy := *rec.EffectiveSandbox
+	legacy.RefreshGroupEnvironment = false
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(fx.plain.AgentID, &legacy))
+
+	patch := humanReq(t, f, http.MethodPatch, "/v1/spawn-profiles/worker", map[string]any{
+		"name": "worker", "harness": "claude", "startup_context": "Be brief.", "role_ref": "copy-reviewer",
+		"environment": []map[string]string{{"name": "PROF", "value": "two"}},
+	})
+	require.Equal(t, http.StatusOK, patch.Code, patch.Body.String())
+	code, res, raw := postReapply(t, f, "worker", fx.plain.AgentID)
+	require.Equal(t, http.StatusOK, code, raw)
+	assert.Equal(t, "applied", res.Outcome)
+	assert.Contains(t, res.Detail, "kept as before: Profile and explicit environment")
+
+	preview := profileReapplyPreview(t, f, "worker")
+	for _, a := range preview.Agents {
+		if a.AgentID != fx.plain.AgentID {
+			continue
+		}
+		statuses := map[string]string{}
+		for _, field := range a.Fields {
+			statuses[field.Key] = field.Status
+		}
+		assert.Equal(t, map[string]string{"environment": "changes"}, statuses, "the environment still shows as a difference")
+	}
+}
+
+// An agent re-applying a profile to another agent cannot change that agent's
+// environment; the operator can.
+func TestSpawnCopyOutside_EnvironmentChangeIsOperatorOnly(t *testing.T) {
+	fx := newOutsideFixture(t)
+	f := fx.f
+	const caller = "reap-1111-2222-3333-7777"
+	f.HaveMember("alpha", caller)
+	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermProfilesManage, "test"))
+	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermAgentMorph, "test"))
+	patch := humanReq(t, f, http.MethodPatch, "/v1/spawn-profiles/worker", map[string]any{
+		"name": "worker", "harness": "claude", "startup_context": "Be brief.", "role_ref": "copy-reviewer",
+		"environment": []map[string]string{{"name": "ANTHROPIC_BASE_URL", "value": "http://example.invalid"}},
+	})
+	require.Equal(t, http.StatusOK, patch.Code, patch.Body.String())
+	before := readOutside(t, fx.plain.AgentID)
+	rec := agentReq(t, f, caller, http.MethodPost, "/v1/spawn-profiles/worker/reapply", map[string]any{"agent_id": fx.plain.AgentID})
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "environment_operator_only")
+	assert.Equal(t, before, readOutside(t, fx.plain.AgentID), "nothing written")
+}
+
+// A usage profile the operator chose for the agent stays when the spawn
+// profile's link to it goes, even if the agent had it as a link first.
+func TestSpawnCopyOutside_OperatorUsageChoiceSurvivesUnlink(t *testing.T) {
+	fx := newOutsideFixture(t)
+	f := fx.f
+	require.Equal(t, []int64{fx.budget}, readOutside(t, fx.plain.AgentID).usage, "linked from the profile")
+	require.NoError(t, db.SetUsageProfileAssignments(db.UsageScopeAgent, fx.plain.AgentID, []int64{fx.budget}, "operator"))
+	linkUsage(t, "worker")
+	code, _, raw := postReapply(t, f, "worker", fx.plain.AgentID)
+	require.Equal(t, http.StatusOK, code, raw)
+	assert.Equal(t, []int64{fx.budget}, readOutside(t, fx.plain.AgentID).usage, "the operator's own choice stays")
+}
+
+// A profile that stops setting include_group_context leaves the stored value:
+// what unset means depends on how the agent was spawned.
+func TestSpawnCopyOutside_IncludeGroupContextUnsetIsKept(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	_, err := db.SetAgentGroupDefaultContext("alpha", "Group rules.")
+	require.NoError(t, err)
+	rec := createProfile(t, f, map[string]any{"name": "quiet", "harness": "claude", "include_group_default_context": false})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	spawn := spawnStopped(t, f, "alpha", map[string]any{"name": "q", "profile": "quiet"})
+	snap, err := db.GetAgentStartupSnapshot(spawn.AgentID)
+	require.NoError(t, err)
+	require.False(t, snap.IncludeGroupContext)
+
+	rec = humanReq(t, f, http.MethodPatch, "/v1/spawn-profiles/quiet", map[string]any{"name": "quiet", "harness": "claude"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	code, res, raw := postReapply(t, f, "quiet", spawn.AgentID)
+	require.Equal(t, http.StatusOK, code, raw)
+	assert.Contains(t, res.Detail, "kept as before: Include group startup context")
+	snap, err = db.GetAgentStartupSnapshot(spawn.AgentID)
+	require.NoError(t, err)
+	assert.False(t, snap.IncludeGroupContext)
+}
