@@ -3,7 +3,6 @@ package agentd
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -71,41 +70,65 @@ func resolveManagedLaunch(g *db.AgentGroup, p *spawnParams, parentConv string, k
 	return nil
 }
 
-// fixedWorkdirDenial reports the sandbox rule that denies dir, for a launch
-// whose working directory the caller cannot choose (a scribe always runs in
-// its shared workdir). The most specific rule covering dir decides, a deny
-// winning a tie, as the sandbox resolves overlapping rules. "" when dir stays
-// reachable.
+// fixedWorkdirDenial reports the sandbox rule that makes dir unreachable, for
+// a launch whose working directory the caller cannot choose (a scribe always
+// runs in its shared workdir). Only a deny at exactly dir does: a deny on a
+// strict ancestor (deny ~, deny ~/.tclaude) leaves the launch directory
+// reachable, because the launch reopens its workspace under a covering deny
+// (session.sandboxDenyCoversPath and the workspace reopen beside it), as it
+// does for every agent's cwd. "" when dir stays reachable.
 func fixedWorkdirDenial(snapshot *sandboxpolicy.Snapshot, dir string) string {
 	if snapshot == nil {
 		return ""
 	}
-	home, _ := os.UserHomeDir()
-	var best *sandboxpolicy.FilesystemGrant
-	bestLen := -1
-	for i := range snapshot.Effective.Filesystem {
-		grant := &snapshot.Effective.Filesystem[i]
-		path := grant.Path
-		if home != "" && (path == "~" || strings.HasPrefix(path, "~/")) {
-			path = filepath.Join(home, strings.TrimPrefix(path, "~"))
-		}
-		if !sandboxpolicy.PathContainsOrEqual(filepath.Clean(path), dir) {
+	dir = canonicalLaunchDir(dir)
+	for _, grant := range snapshot.Effective.Filesystem {
+		if grant.Access != sandboxpolicy.AccessDeny || grant.IsRemapped() || filepath.Clean(grant.Path) != dir {
 			continue
 		}
-		if l := len(filepath.Clean(path)); l > bestLen || (l == bestLen && grant.Access == sandboxpolicy.AccessDeny) {
-			best, bestLen = grant, l
+		var names []string
+		for _, s := range snapshot.Effective.Provenance.Filesystem[grant.Path] {
+			names = append(names, fmt.Sprintf("%q", s.Profile))
+		}
+		if len(names) == 0 {
+			return fmt.Sprintf("a sandbox rule denies %s", grant.Path)
+		}
+		return fmt.Sprintf("sandbox profile %s denies %s", strings.Join(names, ", "), grant.Path)
+	}
+	return ""
+}
+
+// canonicalLaunchDir spells dir the way the snapshot spells its grant paths
+// (symlinks resolved), for a directory that may not exist yet: the nearest
+// existing ancestor is resolved and the missing tail kept.
+func canonicalLaunchDir(dir string) string {
+	dir = filepath.Clean(dir)
+	var tail []string
+	for cur := dir; ; {
+		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(append([]string{resolved}, tail...)...)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return dir
+		}
+		tail = append([]string{filepath.Base(cur)}, tail...)
+		cur = parent
+	}
+}
+
+// uniqueNotes keeps the first occurrence of each note, in order.
+func uniqueNotes(notes []string) []string {
+	if len(notes) < 2 {
+		return notes
+	}
+	seen := make(map[string]bool, len(notes))
+	out := notes[:0:0]
+	for _, n := range notes {
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
 		}
 	}
-	if best == nil || best.Access != sandboxpolicy.AccessDeny {
-		return ""
-	}
-	sources := snapshot.Effective.Provenance.Filesystem[best.Path]
-	var names []string
-	for _, s := range sources {
-		names = append(names, fmt.Sprintf("%q", s.Profile))
-	}
-	if len(names) == 0 {
-		return fmt.Sprintf("a sandbox rule denies %s", best.Path)
-	}
-	return fmt.Sprintf("sandbox profile %s denies %s", strings.Join(names, ", "), best.Path)
+	return out
 }

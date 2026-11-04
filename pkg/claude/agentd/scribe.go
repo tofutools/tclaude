@@ -468,10 +468,17 @@ func summonScribe(name, titleBase string, overrides map[string]db.PermissionOver
 		SpawnedByConv:       spawnerConvID,
 	}
 	// The same launch resolution as a trigger worker: the default profile
-	// tiers, then the group's sandbox profiles and environment, contained in
-	// the summoning agent's own sandbox (Q8). With nothing configured the
-	// scribe launches with no sandbox snapshot, as it always has.
-	if fail := resolveManagedLaunch(g, &p, spawnerConvID, true); fail != nil {
+	// tiers, then the group's sandbox profiles and environment (Q8). With
+	// nothing configured the scribe launches with no sandbox snapshot, as it
+	// always has.
+	//
+	// It is not checked against the summoning agent's own sandbox. A scribe's
+	// sandbox is the operator's policy for the scribe group, not something
+	// the summoner hands it, and a scribe was never contained in its summoner.
+	// Containing it now would refuse summons from every agent that launched
+	// with no snapshot or with profiles omitted (a Steward started before any
+	// profile was configured) as soon as a workspace profile is added.
+	if fail := resolveManagedLaunch(g, &p, "", true); fail != nil {
 		return nil, false, fail
 	}
 	if denial := fixedWorkdirDenial(p.EffectiveSandbox, cwd); denial != "" {

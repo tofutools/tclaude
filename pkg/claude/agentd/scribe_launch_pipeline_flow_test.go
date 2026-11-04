@@ -96,21 +96,68 @@ func TestScribeLaunch_GetsWorkspaceSandboxProfileAndGroupEnv(t *testing.T) {
 }
 
 // Review check 3: a sandbox profile that denies the scribe's fixed workdir
-// refuses the summon with an error naming the profile and the path, and
-// leaves no workdir behind.
+// itself refuses the summon with an error naming the profile and the path,
+// and leaves no workdir behind.
 func TestScribeLaunch_DenyingProfileGivesClearError(t *testing.T) {
 	f := newFlow(t)
 	workdir := filepath.Join(f.World.HomeDir, ".tclaude", "scribe")
-	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "no-tclaude",
-		Filesystem: []db.SandboxFilesystemGrant{{Path: filepath.Join(f.World.HomeDir, ".tclaude"), Access: "deny"}}})
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "no-scribe",
+		Filesystem: []db.SandboxFilesystemGrant{{Path: workdir, Access: "deny"}}})
 	require.NoError(t, err)
-	require.NoError(t, db.SetGlobalSandboxProfile("no-tclaude"))
+	require.NoError(t, db.SetGlobalSandboxProfile("no-scribe"))
 
 	res := summonNamedScribe(t, f, "denied-scribe", nil)
 	require.Equalf(t, http.StatusUnprocessableEntity, res.Code, "summon body=%s", res.Body)
 	assert.Contains(t, res.Body, "sandbox_denies_workdir")
-	assert.Contains(t, res.Body, `\"no-tclaude\"`)
+	assert.Contains(t, res.Body, `\"no-scribe\"`)
 	assert.Contains(t, res.Body, workdir)
 	_, statErr := os.Stat(workdir)
 	assert.True(t, os.IsNotExist(statErr), "a refused summon creates no workdir")
+}
+
+// A deny on an ancestor of the workdir (the common "deny the home directory"
+// rule) does not block a scribe: the launch reopens its workspace under a
+// covering deny, as for every agent.
+func TestScribeLaunch_AncestorDenyStillSummons(t *testing.T) {
+	for _, path := range []string{"~", "~/.tclaude"} {
+		t.Run(path, func(t *testing.T) {
+			f := newFlow(t)
+			// Deny rules need Claude's own sandbox on; "inherit" refuses them
+			// with its own clear error.
+			require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+				"name": "sandboxed", "harness": "claude", "sandbox": "on"}).Code)
+			require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "sandboxed").Code)
+			_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "deny-ancestor",
+				Filesystem: []db.SandboxFilesystemGrant{{Path: path, Access: "deny"}}})
+			require.NoError(t, err)
+			require.NoError(t, db.SetGlobalSandboxProfile("deny-ancestor"))
+			res := summonNamedScribe(t, f, "home-denied-scribe", nil)
+			require.Equalf(t, http.StatusOK, res.Code, "summon body=%s", res.Body)
+			assert.True(t, scribeLaunchSnapshotPresent(t, f, res.ConvID))
+		})
+	}
+}
+
+// A scribe summoned by an agent that launched with no sandbox snapshot still
+// gets the workspace profile: its sandbox is the operator's policy for the
+// scribe group, not checked against the summoner's.
+func TestScribeLaunch_AgentWithoutSnapshotCanSummon(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	caller := f.AsHuman().SpawnWith("crew", map[string]any{"name": "caller"})
+	require.Equalf(t, http.StatusOK, caller.Code, "spawn body=%s", caller.Raw)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(caller.AgentID, nil))
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "reader",
+		Filesystem: []db.SandboxFilesystemGrant{{Path: f.World.HomeDir, Access: "read"}}})
+	require.NoError(t, err)
+	require.NoError(t, db.SetGlobalSandboxProfile("reader"))
+	for _, slug := range []string{agentd.PermGroupsMembersSpawn, agentd.PermPermissionsGrant, agentd.PermTemplatesManage} {
+		require.NoError(t, db.GrantAgentPermission(caller.ConvID, slug, "test"))
+	}
+
+	stubScribeTerminal(t)
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
+		map[string]any{"name": "agent-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "Edit things."}),
+		caller.ConvID))
+	require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
 }

@@ -671,9 +671,12 @@ reincarnation cannot resurrect the ambient tiers.
 Scribe and Steward summons, and trigger and process workers, get the global
 and group tiers like any other spawn into their group, along with the group's
 environment. A scribe or Steward with no profile and no environment configured
-launches with no sandbox snapshot, as it always has. A scribe always works in
-`~/.tclaude/scribe`, so a profile that denies that directory refuses the
-summon with an error naming the profile.
+launches with no sandbox snapshot, as it always has. A scribe's sandbox is the
+operator's policy for its group, so it is not checked against the sandbox of
+the agent that summoned it. A scribe always works in `~/.tclaude/scribe`, so a
+profile that denies exactly that directory refuses the summon with an error
+naming the profile. A deny on an ancestor, such as the home directory, does
+not: the launch reopens its workspace, as it does for every agent.
 
 Cross-scope composition is **not** last-wins:
 
