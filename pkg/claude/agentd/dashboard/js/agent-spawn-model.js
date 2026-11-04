@@ -740,6 +740,9 @@ export function createSpawnDraft({
     // steered appear, so an untouched dialog changes nothing about what the
     // agent loads.
     contextFeatures: {},
+    // Per-agent relaunch rows this spawn sets (field → mode, or "inherit"):
+    // the operator's own, so a profile change or Clear keeps them.
+    relaunchPolicy: {},
     cwd,
     cwdOrigin: cwd ? 'group' : '',
     wtRepo: cwd,
@@ -1150,6 +1153,12 @@ export function spawnProfileSeed(draft, context) {
   if (view.showContextFeatures && Object.keys(draft.contextFeatures || {}).length) {
     seed.context_features = { ...draft.contextFeatures };
   }
+  // Save as profile carries this spawn's relaunch rows (operator Q10). A
+  // profile follows the global table by leaving a row out, so "Follow
+  // global" is not saved.
+  const relaunchRows = Object.fromEntries(Object.entries(draft.relaunchPolicy || {})
+    .filter(([, mode]) => mode && mode !== 'inherit'));
+  if (Object.keys(relaunchRows).length) seed.relaunch_policy = relaunchRows;
   if (view.sandbox.visible) seed.sandbox = draft.sandbox;
   if (view.approval.visible) seed.approval = draft.approval;
   if (view.tools.visible) seed.tools = draft.tools;
@@ -1204,6 +1213,7 @@ export function spawnDraftIsDirty(draft, baseline, attachmentCount = 0) {
     !== JSON.stringify(baseline.permissionOverrides || {})) return true;
   if (JSON.stringify(draft.roleRefs || []) !== JSON.stringify(baseline.roleRefs || [])) return true;
   if (JSON.stringify(draft.promptRefs || []) !== JSON.stringify(baseline.promptRefs || [])) return true;
+  if (JSON.stringify(draft.relaunchPolicy || {}) !== JSON.stringify(baseline.relaunchPolicy || {})) return true;
   return contextFeaturesKey(draft.contextFeatures) !== contextFeaturesKey(baseline.contextFeatures);
 }
 
@@ -1400,6 +1410,7 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   if (view.showContextFeatures) {
     body.context_features = { ...(draft.contextFeatures || {}) };
   }
+  if (Object.keys(draft.relaunchPolicy || {}).length) body.relaunch_policy = { ...draft.relaunchPolicy };
   const cwd = text(draft.cwd).trim();
   const repo = text(draft.wtRepo).trim();
   if (worktreeSelection?.path && repo && repo !== cwd) {

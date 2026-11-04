@@ -204,7 +204,16 @@ func relaunchPolicyResponse(r *http.Request) map[string]any {
 func serveRelaunchPolicy(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, relaunchPolicyResponse(r))
+		resp := relaunchPolicyResponse(r)
+		if q := r.URL.Query(); q.Get("preview") != "" {
+			resolved, fail := spawnRelaunchPreview(q.Get("group"), q.Get("profile"), q.Get("explicit"))
+			if fail != nil {
+				writeError(w, fail.Status, fail.Kind, fail.Msg)
+				return
+			}
+			resp["resolved"] = resolved
+		}
+		writeJSON(w, http.StatusOK, resp)
 	case http.MethodPut:
 		if relaunchPolicyFromPeer(r) {
 			writeError(w, http.StatusForbidden, "peer_read_only", "the relaunch policy is this node's own; another node's operator can read it but not change it")
