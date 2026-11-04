@@ -255,9 +255,12 @@ func TestLaunchUniform_Trigger_GroupDenyBeatsNamedProfile(t *testing.T) {
 
 // --- process worker ---
 
-func spawnUniformPerformer(t *testing.T, profile *db.SpawnProfile) (*testharness.Flow, string) {
+func spawnUniformPerformer(t *testing.T, profile *db.SpawnProfile, setup ...func()) (*testharness.Flow, string) {
 	t.Helper()
 	f, root := processRuntimeFlow(t)
+	for _, fn := range setup {
+		fn()
+	}
 	g := f.HaveGroup("crew")
 	_, err := db.SetAgentGroupDefaultCwd("crew", t.TempDir())
 	require.NoError(t, err)

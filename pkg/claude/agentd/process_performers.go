@@ -390,7 +390,12 @@ func resolveAndDeliverProcessDispatch(row db.ProcessAgentDispatch, command engin
 			}
 			return nil
 		case choice.spawn != nil:
-			choice.spawn.params.InitialMessage = body
+			// The final brief (feedback may have changed it since the plan) still
+			// opens with the profile's or group's saved prompts.
+			if fail := choice.spawn.setInitialMessage(body); fail != nil {
+				choice.waitReason = "composing the performer's brief failed: " + fail.Msg
+				break
+			}
 			choice.spawn.params.AgentID = db.NewAgentID()
 			out, fail := executeSpawn(choice.spawn.group, choice.spawn.params)
 			if fail != nil {

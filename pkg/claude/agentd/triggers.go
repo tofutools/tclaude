@@ -662,6 +662,24 @@ func executeTriggerSpawn(rule *db.TriggerRule, firingID int64, index int, spec *
 type managedSpawn struct {
 	group  *db.AgentGroup
 	params spawnParams
+	// promptRefs are the saved prompts the brief opens with (the profile's,
+	// else the group's defaults). Kept so a caller that replaces the brief
+	// after planning recomposes it rather than dropping them.
+	promptRefs []string
+}
+
+// setInitialMessage replaces the planned brief, composing the plan's saved
+// prompts in front of it as planManagedSpawn did.
+func (m *managedSpawn) setInitialMessage(body string) *spawnFailure {
+	if len(m.promptRefs) > 0 {
+		composed, fail := composeSavedPrompts(m.promptRefs, body)
+		if fail != nil {
+			return fail
+		}
+		body = composed
+	}
+	m.params.InitialMessage = body
+	return nil
 }
 
 // planManagedSpawn performs every authorization, guardrail, rate, role, cwd,
@@ -767,7 +785,10 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 	if len(promptRefs) == 0 {
 		promptRefs = cleanRoleRefs(g.DefaultPrompts)
 	}
-	if len(promptRefs) > 0 && harnessOrDefault(profile.Harness) != harness.ShellName {
+	if harnessOrDefault(profile.Harness) == harness.ShellName {
+		promptRefs = nil
+	}
+	if len(promptRefs) > 0 {
 		composed, fail := composeSavedPrompts(promptRefs, initialMessage)
 		if fail != nil {
 			return nil, fail.Kind, fail.Msg
@@ -853,7 +874,7 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 		}
 	}
 	p.EffectiveSandbox = &snapshot
-	return &managedSpawn{group: &profileGroup, params: p}, "", ""
+	return &managedSpawn{group: &profileGroup, params: p, promptRefs: promptRefs}, "", ""
 }
 
 type managedWorkerSource struct {
