@@ -337,6 +337,53 @@ func reconcileAgentDirectoriesForResume(
 	return sandboxpolicy.RevalidateSnapshot(resumed)
 }
 
+// unmaterializedAgentDirectories returns snapshot as a freshly composed one
+// looks: the agent-owned directory declarations kept, their materialized
+// bindings (the NAME=path environment entries and the write grants on each
+// path and its parent) removed. A relaunch that falls back to its stored
+// policy puts that policy through reconcileAgentDirectoriesForResume again,
+// which re-adds the bindings from the previous snapshot and would otherwise
+// add each one twice.
+func unmaterializedAgentDirectories(snapshot sandboxpolicy.Snapshot) sandboxpolicy.Snapshot {
+	if len(snapshot.Effective.AgentDirectories) == 0 {
+		return snapshot
+	}
+	names := make(map[string]bool, len(snapshot.Effective.AgentDirectories))
+	for _, name := range snapshot.Effective.AgentDirectories {
+		names[name] = true
+	}
+	effective := sandboxpolicy.NewSnapshot(snapshot.Effective, snapshot.Applied).Effective
+	bound := map[string]bool{}
+	env := make([]sandboxpolicy.EnvironmentEntry, 0, len(effective.Environment))
+	for _, entry := range effective.Environment {
+		if names[entry.Name] {
+			bound[entry.Value] = true
+			bound[filepath.Dir(entry.Value)] = true
+			delete(effective.Provenance.Environment, entry.Name)
+			continue
+		}
+		env = append(env, entry)
+	}
+	effective.Environment = env
+	grants := make([]sandboxpolicy.FilesystemGrant, 0, len(effective.Filesystem))
+	for _, grant := range effective.Filesystem {
+		if bound[grant.Path] {
+			delete(effective.Provenance.Filesystem, grant.Path)
+			continue
+		}
+		grants = append(grants, grant)
+	}
+	effective.Filesystem = grants
+	out := sandboxpolicy.NewSnapshot(effective, snapshot.Applied)
+	out.CopyGroupProvenance(snapshot)
+	out.ProfilesOmitted = snapshot.ProfilesOmitted
+	out.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), snapshot.LaunchEnvironment...)
+	out.RefreshGroupEnvironment = snapshot.RefreshGroupEnvironment
+	out.LaunchEnvironmentOverrides = append(
+		[]sandboxpolicy.EnvironmentEntry(nil), snapshot.LaunchEnvironmentOverrides...)
+	return out
+}
+
 // removeMaterializedAgentDirectories removes every cache root represented by
 // the frozen agent-owned directory bindings in snapshot. A single root can
 // contain several declared variables, so removing the root also sweeps stale

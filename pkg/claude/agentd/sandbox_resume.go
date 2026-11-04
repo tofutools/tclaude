@@ -88,7 +88,10 @@ func resolveSandboxChainFrom(convID string, previous *sandboxpolicy.Snapshot) (*
 		resolved, err = db.ResolveEffectiveSandboxSnapshot(groupID, explicitProfileName)
 	}
 	if errors.Is(err, db.ErrSandboxProfileNotFound) {
-		return nil, fmt.Errorf("the explicit sandbox profile %q used at launch no longer exists; recreate it under that name, then resume again", explicitProfileName)
+		return nil, relaunchChainUnusable(fmt.Errorf("the explicit sandbox profile %q used at launch no longer exists; recreate it under that name, then resume again", explicitProfileName))
+	}
+	if errors.Is(err, db.ErrSandboxProfileUnusable) {
+		return nil, relaunchChainUnusable(err)
 	}
 	if err != nil {
 		return nil, err
@@ -129,7 +132,10 @@ func resolveResumeSandboxPolicyFrom(
 	var err error
 	if useStored {
 		previous, err = db.AgentEffectiveSandboxConfigForConv(convID)
-		resolved = previous
+		if err == nil && previous != nil {
+			stored := unmaterializedAgentDirectories(*previous)
+			resolved = &stored
+		}
 	} else {
 		resolved, previous, err = resolveCurrentSandboxChainForConv(convID)
 	}
@@ -137,9 +143,10 @@ func resolveResumeSandboxPolicyFrom(
 		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
 	}
 	current, err := refreshResumeGroupEnvironment(convID, *resolved, previous)
-	if err != nil && useStored {
-		// The fallback keeps the stored group environment too: the same
-		// unreadable group that failed the re-read chain fails this.
+	if useStored && isRelaunchChainUnusable(err) {
+		// The fallback keeps the stored group environment when its group is
+		// the one that could not be determined; any other failure (a read
+		// error, a group environment that no longer merges) still fails.
 		current, err = *resolved, nil
 	}
 	if err != nil {
@@ -152,7 +159,8 @@ func resolveResumeSandboxPolicyFrom(
 		return &resumeSandboxPolicy{Snapshot: &current, Previous: previous}, nil
 	}
 	if current, err = reapplyExplicitHarnessConfig(current, previous); err != nil {
-		return nil, err
+		// The explicit posture no longer applies to the re-read profiles.
+		return nil, relaunchChainUnusable(err)
 	}
 	sshWorkaround = sshWorkaround && codexSSHWorkaroundApplies(
 		harnessName, harnessBuiltinMode, sandboxImplementation, &current)
@@ -303,7 +311,7 @@ func resumeSandboxGroupID(convID string) (int64, error) {
 	profileID := groups[0].SandboxProfileID
 	for _, group := range groups[1:] {
 		if group.SandboxProfileID != profileID {
-			return 0, fmt.Errorf("cannot determine the sandbox source group for this multi-group agent after its profile assignments changed; leave it in one launch group or restore an unambiguous assignment, then resume again")
+			return 0, relaunchChainUnusable(fmt.Errorf("cannot determine the sandbox source group for this multi-group agent after its profile assignments changed; leave it in one launch group or restore an unambiguous assignment, then resume again"))
 		}
 	}
 	if profileID == 0 {
@@ -375,16 +383,22 @@ type relaunchSandbox struct {
 // when the stored policy cannot be launched either, and then reports the
 // re-read chain's failure.
 func prepareRelaunchSandbox(req relaunchSandboxRequest) (*relaunchSandbox, *spawnFailure) {
-	prepared, fail := prepareRelaunchSandboxFrom(req, false)
+	prepared, fail, unusable := prepareRelaunchSandboxFrom(req, false)
 	if fail == nil {
 		return prepared, nil
+	}
+	if !unusable {
+		// A read, io or preparation failure says nothing about whether the
+		// re-read profiles are valid, so it must not send the agent back to
+		// an older, possibly wider policy.
+		return nil, fail
 	}
 	stored, err := db.AgentEffectiveSandboxConfigForConv(req.convID)
 	if err != nil || stored == nil || stored.ProfilesOmitted {
 		// Nothing was re-read, so there is nothing to fall back from.
 		return nil, fail
 	}
-	fallback, storedFail := prepareRelaunchSandboxFrom(req, true)
+	fallback, storedFail, _ := prepareRelaunchSandboxFrom(req, true)
 	if storedFail != nil {
 		return nil, fail
 	}
@@ -394,11 +408,15 @@ func prepareRelaunchSandbox(req relaunchSandboxRequest) (*relaunchSandbox, *spaw
 	return fallback, nil
 }
 
-func prepareRelaunchSandboxFrom(req relaunchSandboxRequest, useStored bool) (*relaunchSandbox, *spawnFailure) {
+// prepareRelaunchSandboxFrom reports, with a failure, whether it means the
+// sandbox profiles cannot be used for this launch (unusable), which is what
+// a fallback to the stored policy answers.
+func prepareRelaunchSandboxFrom(req relaunchSandboxRequest, useStored bool) (*relaunchSandbox, *spawnFailure, bool) {
 	policy, err := resolveResumeSandboxPolicyFrom(req.convID, req.sshWorkaround, req.sshLaunchKey,
 		req.harness, req.builtinMode, req.implementation, useStored)
 	if err != nil {
-		return nil, &spawnFailure{http.StatusConflict, "sandbox_profile_changed", err.Error()}
+		return nil, &spawnFailure{http.StatusConflict, "sandbox_profile_changed", err.Error()},
+			isRelaunchChainUnusable(err)
 	}
 	cleanup := func(fail *spawnFailure) *spawnFailure {
 		if cleanupErr := cleanupUncommittedResumeSandboxPolicy(policy); cleanupErr != nil {
@@ -410,7 +428,7 @@ func prepareRelaunchSandboxFrom(req relaunchSandboxRequest, useStored bool) (*re
 		refreshed, refreshErr := finalizeCodexSSHWorkaroundForRelaunch(*policy.Snapshot, policy.SSHWorkaround)
 		if refreshErr != nil {
 			return nil, cleanup(&spawnFailure{http.StatusInternalServerError, "spawn",
-				"prepare SSH workaround: " + refreshErr.Error()})
+				"prepare SSH workaround: " + refreshErr.Error()}), false
 		}
 		policy.Snapshot = &refreshed
 	}
@@ -421,7 +439,7 @@ func prepareRelaunchSandboxFrom(req relaunchSandboxRequest, useStored bool) (*re
 	if effective != nil && req.revalidate {
 		validated, err := sandboxpolicy.RevalidateSnapshot(*effective)
 		if err != nil {
-			return nil, cleanup(&spawnFailure{http.StatusConflict, "sandbox_profile_changed", err.Error()})
+			return nil, cleanup(&spawnFailure{http.StatusConflict, "sandbox_profile_changed", err.Error()}), true
 		}
 		effective = &validated
 		policy.Snapshot = effective
@@ -430,18 +448,18 @@ func prepareRelaunchSandboxFrom(req relaunchSandboxRequest, useStored bool) (*re
 		effective = temporarySandboxLaunchSnapshot(req.harness, effective)
 	}
 	if fail := sandboxProfileCapabilityFailure(req.harness, req.builtinMode, effective, req.implementation); fail != nil {
-		return nil, cleanup(fail)
+		return nil, cleanup(fail), true
 	}
 	// Re-asked on every relaunch rather than trusted from the spawn that
 	// admitted it: an operator can close network access between two
 	// launches, and an API-driven agent resumed into a private network
 	// namespace would come back with a channel that can never connect.
 	if fail := copilotAPILoopbackFailure(req.copilotAPI, effective, req.implementation); fail != nil {
-		return nil, cleanup(fail)
+		return nil, cleanup(fail), true
 	}
 	if _, fail := planSandboxProfileAccessForLaunch(req.harness, req.builtinMode, effective,
 		req.implementation, req.transport, false); fail != nil {
-		return nil, cleanup(fail)
+		return nil, cleanup(fail), true
 	}
 	out := &relaunchSandbox{policy: policy, effective: effective}
 	if effective != nil {
@@ -449,5 +467,20 @@ func prepareRelaunchSandboxFrom(req relaunchSandboxRequest, useStored bool) (*re
 			out.warnings = append(out.warnings, notice.Detail)
 		}
 	}
-	return out, nil
+	return out, nil, false
+}
+
+// relaunchChainUnusableError marks a re-read sandbox chain that cannot be
+// used for this launch (a missing or uncomposable profile, an ambiguous
+// group, an explicit posture that no longer applies), keeping its message.
+type relaunchChainUnusableError struct{ err error }
+
+func (e relaunchChainUnusableError) Error() string { return e.err.Error() }
+func (e relaunchChainUnusableError) Unwrap() error { return e.err }
+
+func relaunchChainUnusable(err error) error { return relaunchChainUnusableError{err} }
+
+func isRelaunchChainUnusable(err error) bool {
+	var unusable relaunchChainUnusableError
+	return errors.As(err, &unusable)
 }

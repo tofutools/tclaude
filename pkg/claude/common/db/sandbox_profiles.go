@@ -1259,7 +1259,7 @@ func resolveEffectiveSandboxSnapshot(groupID int64, explicitName string, explici
 			return nil, err
 		}
 		if profile == nil {
-			return nil, fmt.Errorf("sandbox profile id %d referenced by assignment was not found", id)
+			return nil, sandboxProfileUnusable(fmt.Errorf("sandbox profile id %d referenced by assignment was not found", id))
 		}
 		return profile, nil
 	}
@@ -1327,7 +1327,7 @@ func resolveEffectiveSandboxSnapshot(groupID int64, explicitName string, explici
 	lookupForFlatten := func(name string) (*sandboxpolicy.Profile, error) {
 		p, err := scanSandboxProfile(tx.QueryRow(sandboxProfileSelect+` WHERE name = ?`, name))
 		if err != nil {
-			return nil, err
+			return nil, sandboxProfileReadError{err}
 		}
 		return toPolicy(p), nil
 	}
@@ -1337,7 +1337,12 @@ func resolveEffectiveSandboxSnapshot(groupID int64, explicitName string, explici
 		}
 		flattened, notices, err := sandboxpolicy.FlattenWithNotices(*toPolicy(p), lookupForFlatten)
 		if err != nil {
-			return nil, nil, fmt.Errorf("flatten sandbox profile %q: %w", p.Name, err)
+			err = fmt.Errorf("flatten sandbox profile %q: %w", p.Name, err)
+			var readErr sandboxProfileReadError
+			if !errors.As(err, &readErr) {
+				err = sandboxProfileUnusable(err)
+			}
+			return nil, nil, err
 		}
 		return &flattened, notices, nil
 	}
@@ -1357,7 +1362,7 @@ func resolveEffectiveSandboxSnapshot(groupID int64, explicitName string, explici
 		Global: globalPolicy, Group: groupPolicy, Explicit: explicitPolicy,
 	})
 	if err != nil {
-		return sandboxpolicy.Snapshot{}, err
+		return sandboxpolicy.Snapshot{}, sandboxProfileUnusable(err)
 	}
 	resolutionNotices := effective.AccessNotices
 	effective.AccessNotices = nil
@@ -1390,3 +1395,25 @@ func resolveEffectiveSandboxSnapshot(groupID int64, explicitName string, explici
 	snapshot.ResolutionGroupID = groupID
 	return snapshot, nil
 }
+
+// ErrSandboxProfileUnusable marks a resolution that failed because the stored
+// profiles no longer flatten or compose, as opposed to a read failure. A
+// relaunch falls back to its stored policy on it.
+var ErrSandboxProfileUnusable = errors.New("sandbox profile no longer composes")
+
+// sandboxProfileUnusableError marks err as ErrSandboxProfileUnusable without
+// changing its message.
+type sandboxProfileUnusableError struct{ err error }
+
+func (e sandboxProfileUnusableError) Error() string { return e.err.Error() }
+func (e sandboxProfileUnusableError) Unwrap() []error {
+	return []error{ErrSandboxProfileUnusable, e.err}
+}
+
+func sandboxProfileUnusable(err error) error { return sandboxProfileUnusableError{err} }
+
+// sandboxProfileReadError is a read failure met while flattening includes.
+type sandboxProfileReadError struct{ err error }
+
+func (e sandboxProfileReadError) Error() string { return e.err.Error() }
+func (e sandboxProfileReadError) Unwrap() error { return e.err }

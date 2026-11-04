@@ -232,11 +232,14 @@ func TestSandboxProfileResumeRefreshesComposedPolicyAndCanSpawnChild(t *testing.
 // sandbox profile an agent was launched with is gone, the resume falls back
 // to the policy stored at its last launch and says so (tcl-a2e791 slice 6a).
 func TestSandboxProfileResumeFallsBackWhenExplicitProfileDisappears(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	stored := db.SandboxEnvironmentEntry{Name: "POLICY_VERSION", Value: "v1"}
+	// An agent-owned directory too: its binding is already materialized in
+	// the stored policy the fallback relaunches under.
 	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "explicit-policy",
-		Environment: []db.SandboxEnvironmentEntry{stored}})
+		Environment: []db.SandboxEnvironmentEntry{stored}, AgentDirectories: []string{"GOCACHE"}})
 	require.NoError(t, err)
 	parent := f.AsHuman().SpawnWith("crew", map[string]any{
 		"name": "parent", "sandbox_profile": "explicit-policy",
@@ -254,6 +257,7 @@ func TestSandboxProfileResumeFallsBackWhenExplicitProfileDisappears(t *testing.T
 	launched, ok := f.World.SpawnSandboxPolicy(parent.ConvID)
 	require.True(t, ok)
 	assert.Contains(t, launched.Effective.Environment, stored, "the stored contents still apply")
+	assertOneBinding(t, launched, "GOCACHE")
 
 	// Recreating the profile under its name makes it the agent's profile
 	// again on the next resume, with its new contents and no warning.
@@ -274,11 +278,14 @@ func TestSandboxProfileResumeFallsBackWhenExplicitProfileDisappears(t *testing.T
 }
 
 func TestSandboxProfileReincarnateFallsBackWhenExplicitProfileDisappears(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	stored := db.SandboxEnvironmentEntry{Name: "POLICY_VERSION", Value: "v1"}
+	// An agent-owned directory too: its binding is already materialized in
+	// the stored policy the fallback relaunches under.
 	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "explicit-policy",
-		Environment: []db.SandboxEnvironmentEntry{stored}})
+		Environment: []db.SandboxEnvironmentEntry{stored}, AgentDirectories: []string{"GOCACHE"}})
 	require.NoError(t, err)
 	target := f.AsHuman().SpawnWith("crew", map[string]any{
 		"name": "worker", "sandbox_profile": "explicit-policy",
@@ -297,6 +304,19 @@ func TestSandboxProfileReincarnateFallsBackWhenExplicitProfileDisappears(t *test
 	launched, ok := f.World.SpawnSandboxPolicy(response.NewConv)
 	require.True(t, ok)
 	assert.Contains(t, launched.Effective.Environment, stored)
+	assertOneBinding(t, launched, "GOCACHE")
+}
+
+// assertOneBinding checks an agent-owned directory is bound exactly once.
+func assertOneBinding(t *testing.T, snapshot *sandboxpolicy.Snapshot, name string) {
+	t.Helper()
+	n := 0
+	for _, entry := range snapshot.Effective.Environment {
+		if entry.Name == name {
+			n++
+		}
+	}
+	assert.Equalf(t, 1, n, "%s bindings in %+v", name, snapshot.Effective.Environment)
 }
 
 // Pinned: with nothing configured, a resume and a reincarnation carry no
