@@ -1521,6 +1521,23 @@ func resumeOneConvRecreate(convID string, recreateMissingDir bool) memberOpResul
 var resumeLaunchLocks sync.Map         // map[stable actor or unowned conv]*sync.Mutex
 var recoveryLaunchCommitLocks sync.Map // map[convID]*sync.Mutex
 
+// relaunchCwd is the directory a relaunch starts in: the physical launch
+// spelling captured at admission when it is available, else the durable
+// profile cwd. This is an address selection, not an authorization check: the
+// continuation neither re-captures nor compares provenance, and malformed or
+// legacy metadata simply falls back. "" when neither is absolute.
+func relaunchCwd(cfg *durableRelaunchConfig) string {
+	cwd := cfg.Cwd
+	if recorded, err := resumeprovenance.Decode(cfg.ResumeProvenance); err == nil &&
+		recorded.Cwd.Path != "" && filepath.IsAbs(recorded.Cwd.Path) {
+		cwd = recorded.Cwd.Path
+	}
+	if !filepath.IsAbs(cwd) {
+		return ""
+	}
+	return cwd
+}
+
 func resumeLaunchLock(convID string) *sync.Mutex {
 	key := strings.TrimSpace(convID)
 	// Reincarnation changes the current conversation but not the actor whose
@@ -1724,16 +1741,8 @@ func resumeOneConvUnderLaunchLockForTeleport(convID string, recreateMissingDir b
 		res.Detail = configErr.Error()
 		return res
 	}
-	cwd := launchConfig.Cwd
-	// Prefer the physical launch spelling captured at admission when it is
-	// available. This is an address selection, not an authorization check: the
-	// continuation neither re-captures nor compares provenance, and malformed or
-	// legacy metadata simply falls back to the durable profile cwd.
-	if recorded, err := resumeprovenance.Decode(launchConfig.ResumeProvenance); err == nil &&
-		recorded.Cwd.Path != "" && filepath.IsAbs(recorded.Cwd.Path) {
-		cwd = recorded.Cwd.Path
-	}
-	if cwd == "" || !filepath.IsAbs(cwd) {
+	cwd := relaunchCwd(launchConfig)
+	if cwd == "" {
 		res.Action = "error:resume_profile"
 		res.Detail = "no absolute launch directory is available; recreate this agent"
 		return res
@@ -1801,15 +1810,7 @@ func resumeOneConvUnderLaunchLockForTeleport(convID string, recreateMissingDir b
 		res.Detail = "sandbox_posture_changed: " + fail.Msg
 		return res
 	}
-	prepared, sandboxFail := prepareRelaunchSandbox(relaunchSandboxRequest{
-		convID: convID, sshLaunchKey: sshLaunchKey,
-		sshWorkaround: launchConfig.SSHWorkaround, copilotAPI: launchConfig.CopilotAPI,
-		harness: harnessName, builtinMode: relaunchSandbox, implementation: relaunchSandboxImplementation,
-		temporaryBuiltinMode: launchConfig.TemporaryHarnessBuiltinMode,
-		transport: session.ModelTransportLaunchContext{
-			Model: launchConfig.Model, ModelProxy: launchConfig.ModelProxy, Cwd: cwd},
-		revalidate: true,
-	})
+	prepared, sandboxFail := prepareRelaunchSandbox(relaunchSandboxRequestFor(convID, cwd, sshLaunchKey, launchConfig))
 	if sandboxFail != nil {
 		res.Action = "error"
 		res.Detail = "sandbox_profile_changed: " + sandboxFail.Msg

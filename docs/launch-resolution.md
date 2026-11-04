@@ -271,11 +271,11 @@ The rules above are the specification. These rows do not follow it yet:
 - **Reasoning effort** (`effort`): No resume path takes an effort flag yet; only a morph changes it.
 - **Model proxy** (`model_proxy`): Reincarnate and clone drop the model proxy. A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
 - **Roles** (`roles`): A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
-- **Group environment** (`group_env`): Watch mode and conv resume reuse the stored group environment.
+- **Group environment** (`group_env`): With agentd down, watch mode and conv resume reuse the stored group environment, and say so.
 - **Group remote-control policy** (`group_remote_control`): Resume reuses the remote-control setting stored at the last launch.
-- **Group and workspace sandbox-profile assignment** (`group_sandbox_assignment`): Watch mode and conv resume reuse the stored sandbox policy.
-- **Sandbox profile contents** (`sandbox_profile_contents`): Watch mode and conv resume reuse the stored contents.
+- **Group and workspace sandbox-profile assignment** (`group_sandbox_assignment`): With agentd down, watch mode and conv resume reuse the stored sandbox policy, and say so.
+- **Sandbox profile contents** (`sandbox_profile_contents`): With agentd down, watch mode and conv resume reuse the stored contents, and say so.
 - **Role definitions (text)** (`role_contents`): Re-injection after compaction still uses the role text resolved at spawn.
-- **Harness config posture** (`harness_config`): Watch mode and conv resume keep the stored posture, as does a resume that falls back to the stored policy when the profiles cannot be read at all; the setting applies on the agent's next ordinary resume.
+- **Harness config posture** (`harness_config`): With agentd down, watch mode and conv resume keep the stored posture, as does a resume that falls back to the stored policy when the profiles cannot be read at all; the setting applies on the agent's next ordinary resume.
 
 <!-- launch-gaps:end -->

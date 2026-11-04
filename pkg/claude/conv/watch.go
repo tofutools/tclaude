@@ -3378,6 +3378,14 @@ func createSessionForConv(conv *SessionEntry) error {
 
 	tmuxSession := session.UniqueTmuxSessionName(session.TmuxNameBase(sessionID, "", cwd))
 
+	// The agent's sandbox, prepared as an ordinary resume prepares it.
+	relaunch, err := prepareStandaloneRelaunch(sessionID, os.Stderr)
+	if err != nil {
+		return err
+	}
+	launched := false
+	defer func() { relaunch.settle(launched) }()
+
 	// Resume through the conv's recorded harness, not a hardcoded
 	// `claude --resume`: a Codex conv selected in the watch view must be
 	// relaunched with `codex resume <id>`, the way the web-dashboard / agentd
@@ -3456,6 +3464,8 @@ func createSessionForConv(conv *SessionEntry) error {
 		session.CodexProfileMarkerArgs(profilePath)...); err != nil {
 		return err
 	}
+	launched = true
+	relaunch.settle(true)
 
 	pid := session.ParsePIDFromTmux(tmuxSession)
 	// Carry the resolved harness onto the saved row so a non-claude tag is not

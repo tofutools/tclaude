@@ -493,6 +493,20 @@ type relaunchSandbox struct {
 	changes []string
 }
 
+// relaunchSandboxRequestFor is the sandbox request for relaunching convID
+// with its durable launch config from cwd.
+func relaunchSandboxRequestFor(convID, cwd, sshLaunchKey string, cfg *durableRelaunchConfig) relaunchSandboxRequest {
+	return relaunchSandboxRequest{
+		convID: convID, sshLaunchKey: sshLaunchKey,
+		sshWorkaround: cfg.SSHWorkaround, copilotAPI: cfg.CopilotAPI,
+		harness: cfg.Harness, builtinMode: cfg.Sandbox, implementation: cfg.activeSandboxImplementation(),
+		temporaryBuiltinMode: cfg.TemporaryHarnessBuiltinMode,
+		transport: session.ModelTransportLaunchContext{
+			Model: cfg.Model, ModelProxy: cfg.ModelProxy, Cwd: cwd},
+		revalidate: true,
+	}
+}
+
 // prepareRelaunchSandbox resolves, validates and checks the sandbox a resume
 // or reincarnation launches under. It re-reads the agent's sandbox profiles
 // first. When that chain cannot be used (an explicit profile was deleted,

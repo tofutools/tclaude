@@ -80,6 +80,17 @@ new tmux session — you never tell it which CLI to use. The relaunch also
 carries the conversation's recorded launch posture; see
 [Sessions](sessions.md#a-resume-keeps-its-recorded-posture).
 
+For an agent's conversation, `conv resume` and watch mode first ask agentd to
+prepare the agent's sandbox the way an ordinary resume does. That means the
+sandbox profiles are re-read, the group's current environment applies, and the
+relaunch policy is followed. Only the operator can ask for this. If agentd
+cannot prepare the sandbox, the conversation still resumes, under the sandbox
+policy stored at its last launch, with a one-line warning saying what to do.
+That happens when agentd is not running, when it cannot confirm the terminal
+as the operator (export `TCLAUDE_HUMAN_TOKEN`), or when it is older than this
+build (restart it). A refusal from agentd, such as a sandbox profile that can
+no longer be applied, stops the resume, as it stops an ordinary resume.
+
 The lower-level equivalent is `tclaude session new --resume <id>`, which
 needs `--harness` for non-Claude conversations.
 
