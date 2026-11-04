@@ -233,3 +233,30 @@ func TestRelaunchPolicy_GroupRemoteControlPreLayersAgentKeepsItsValue(t *testing
 	require.NotEmpty(t, r.Warnings)
 	assert.Contains(t, r.Warnings[len(r.Warnings)-1], "predates launch records")
 }
+
+func TestRelaunchPolicy_SandboxProfileContentsReuseFallsBackToTheCurrentProfiles(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "shared",
+		Environment: []db.SandboxEnvironmentEntry{{Name: "PROFILE_ENV", Value: "current"}}})
+	require.NoError(t, err)
+	require.NoError(t, db.SetGlobalSandboxProfile("shared"))
+	conv, agentID := spawnPinned(t, f, "reuse-fallback", "")
+
+	// The stored contents ask for something this launch cannot enforce (a
+	// mount path needs the tclaude layer's mount namespace).
+	stored, err := db.AgentEffectiveSandboxConfigForConv(conv)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	broken := *stored
+	broken.Effective.Filesystem = append(broken.Effective.Filesystem,
+		sandboxpolicy.FilesystemGrant{Path: t.TempDir(), Access: sandboxpolicy.AccessRead, MountPath: "/mnt/elsewhere"})
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &broken))
+
+	setRelaunchPolicy(t, f, "sandbox_profile_contents", "reuse")
+	r := resumeForPolicy(t, f, conv)
+	policy, _ := f.World.SpawnSandboxPolicy(conv)
+	assert.Equal(t, "current", profileEnvValue(t, policy), "a resume still works: the current profiles apply")
+	require.NotEmpty(t, r.Warnings)
+	assert.Contains(t, r.Warnings[0], "stored at the last launch could not be applied")
+}

@@ -1,6 +1,9 @@
 package agentd
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -42,4 +45,20 @@ func TestRelaunchHarnessConfigModes(t *testing.T) {
 		assert.Equalf(t, c.want, relaunchHarnessConfig(c.mode, c.chain, c.explicit),
 			"mode %s, chain %q, explicit %q", c.mode, c.chain, c.explicit)
 	}
+}
+
+// Another node's operator reads the relaunch policy but cannot change it, even
+// as an unrestricted peer served as the local operator; this node's own
+// remote-access session is the operator and can.
+func TestRelaunchPolicyFromPeer(t *testing.T) {
+	plain := httptest.NewRequest(http.MethodPut, "/api/relaunch-policy", nil)
+	assert.False(t, relaunchPolicyFromPeer(plain))
+	peer := plain.WithContext(context.WithValue(plain.Context(), remoteAuthedCtxKey{}, true))
+	assert.True(t, relaunchPolicyFromPeer(peer))
+	assert.False(t, relaunchPolicyCanManage(peer))
+	rec := httptest.NewRecorder()
+	serveRelaunchPolicy(rec, peer)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	own := plain.WithContext(context.WithValue(plain.Context(), remoteAuthedCtxKey{}, remoteAuthSession{}))
+	assert.False(t, relaunchPolicyFromPeer(own))
 }

@@ -18,10 +18,6 @@ type resumeSandboxPolicy struct {
 	Snapshot      *sandboxpolicy.Snapshot
 	Previous      *sandboxpolicy.Snapshot
 	SSHWorkaround bool
-	// Notes say where the relaunch policy could not be followed as set (a
-	// reuse row with nothing stored, or profiles that are now different
-	// ones). The relaunch shows them with its warnings.
-	Notes []string
 }
 
 // cleanupUncommittedResumeSandboxPolicy removes generation-specific roots
@@ -186,10 +182,10 @@ func resolveResumeSandboxPolicy(
 // fallback a relaunch takes when the re-read chain cannot be used
 // (prepareRelaunchSandbox).
 //
-// The relaunch policy can ask for stored values too: its
-// sandbox_profile_contents reuse row sets useStored (unless the agent's
-// profiles are now different ones), and its group_env reuse row keeps the
-// stored group environment instead of reading the group's current one.
+// The relaunch policy's group_env reuse row keeps the stored group
+// environment instead of reading the group's current one. Its
+// sandbox_profile_contents reuse row is decided by the caller
+// (prepareRelaunchSandbox), which passes useStored.
 func resolveResumeSandboxPolicyFrom(
 	convID string,
 	sshWorkaround bool,
@@ -198,21 +194,7 @@ func resolveResumeSandboxPolicyFrom(
 ) (*resumeSandboxPolicy, error) {
 	var resolved, previous *sandboxpolicy.Snapshot
 	var err error
-	var notes []string
 	relaunchPolicy := currentRelaunchPolicy()
-	if !useStored && relaunchReuses(relaunchPolicy, sandboxProfileContentsField) {
-		// The sandbox_profile_contents reuse row: keep the contents stored at
-		// the last launch, as the fallback below does.
-		stored, storedErr := db.AgentEffectiveSandboxConfigForConv(convID)
-		if storedErr != nil {
-			return nil, storedErr
-		}
-		reuse, note := reuseStoredProfileContents(convID, stored)
-		useStored = reuse
-		if note != "" {
-			notes = append(notes, note)
-		}
-	}
 	if useStored {
 		previous, err = db.AgentEffectiveSandboxConfigForConv(convID)
 		if err == nil && previous != nil {
@@ -240,7 +222,7 @@ func resolveResumeSandboxPolicyFrom(
 		// Either a durable per-agent launch choice, or a mode that still
 		// cannot carry profiles; not an empty ambient resolution. Do not let
 		// later global/group assignments reappear on resume or reincarnation.
-		return &resumeSandboxPolicy{Snapshot: &current, Previous: previous, Notes: notes}, nil
+		return &resumeSandboxPolicy{Snapshot: &current, Previous: previous}, nil
 	}
 	sshWorkaround = sshWorkaround && codexSSHWorkaroundApplies(
 		harnessName, harnessBuiltinMode, sandboxImplementation, &current)
@@ -276,7 +258,7 @@ func resolveResumeSandboxPolicyFrom(
 		previous.Effective.AccessNotices,
 	)
 	return &resumeSandboxPolicy{
-		Snapshot: &current, Previous: previous, SSHWorkaround: sshWorkaround, Notes: notes,
+		Snapshot: &current, Previous: previous, SSHWorkaround: sshWorkaround,
 	}, nil
 }
 
@@ -555,7 +537,52 @@ func relaunchSandboxRequestFor(convID, cwd, sshLaunchKey string, cfg *durableRel
 // last launch and says so in a warning: a resume always works. It fails only
 // when the stored policy cannot be launched either, and then reports the
 // re-read chain's failure.
+//
+// The relaunch policy's sandbox_profile_contents reuse row swaps the two:
+// the stored contents come first, and when they cannot be used the current
+// profiles are tried, so a resume still works (reuseStoredProfileContents
+// decides, and says when the agent's profiles are now different ones).
 func prepareRelaunchSandbox(req relaunchSandboxRequest) (*relaunchSandbox, *spawnFailure) {
+	if relaunchReuses(currentRelaunchPolicy(), sandboxProfileContentsField) {
+		stored, err := db.AgentEffectiveSandboxConfigForConv(req.convID)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", "read the stored sandbox policy: " + err.Error()}
+		}
+		reuse, note := reuseStoredProfileContents(req.convID, stored)
+		if reuse {
+			return prepareReusedRelaunchSandbox(req)
+		}
+		prepared, fail := prepareRereadRelaunchSandbox(req)
+		if prepared != nil && note != "" {
+			prepared.warnings = append([]string{note}, prepared.warnings...)
+		}
+		return prepared, fail
+	}
+	return prepareRereadRelaunchSandbox(req)
+}
+
+// prepareReusedRelaunchSandbox prepares the relaunch under the sandbox
+// profile contents stored at the last launch (the reuse row), falling back
+// to the current profiles when those cannot be used.
+func prepareReusedRelaunchSandbox(req relaunchSandboxRequest) (*relaunchSandbox, *spawnFailure) {
+	prepared, fail, unusable := prepareRelaunchSandboxFrom(req, true)
+	if fail == nil || !unusable {
+		return prepared, fail
+	}
+	fallback, chainFail, _ := prepareRelaunchSandboxFrom(req, false)
+	if chainFail != nil {
+		return nil, fail
+	}
+	fallback.warnings = append([]string{fmt.Sprintf(
+		"the sandbox profile contents stored at the last launch could not be applied (%s); "+
+			"relaunched under the agent's current sandbox profiles, although the relaunch policy reuses stored contents",
+		fail.Msg)}, fallback.warnings...)
+	return fallback, nil
+}
+
+// prepareRereadRelaunchSandbox is the default: the current profiles, falling
+// back to the stored policy.
+func prepareRereadRelaunchSandbox(req relaunchSandboxRequest) (*relaunchSandbox, *spawnFailure) {
 	prepared, fail, unusable := prepareRelaunchSandboxFrom(req, false)
 	if fail == nil {
 		return prepared, nil
@@ -653,7 +680,6 @@ func prepareRelaunchSandboxFrom(req relaunchSandboxRequest, useStored bool) (*re
 	out := &relaunchSandbox{policy: policy, effective: effective}
 	if policy != nil {
 		out.changes = relaunchChanges(policy.Previous, policy.Snapshot)
-		out.warnings = append(out.warnings, policy.Notes...)
 	}
 	if effective != nil {
 		for _, notice := range effective.Effective.AccessNotices {

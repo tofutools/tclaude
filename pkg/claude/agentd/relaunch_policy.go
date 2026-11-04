@@ -169,11 +169,21 @@ func relaunchFieldsView() []relaunchFieldJSON {
 	return out
 }
 
+// relaunchPolicyFromPeer reports whether the request came from another
+// node's operator through federation (the peer view, a peer grant or a peer
+// action). Those mark the request remote-authed with a bare true; this
+// node's own remote-access listener stores a session instead.
+func relaunchPolicyFromPeer(r *http.Request) bool {
+	peer, _ := r.Context().Value(remoteAuthedCtxKey{}).(bool)
+	return peer || peerGrantFromRequest(r) != nil || peerActionFromRequest(r) != nil
+}
+
 // relaunchPolicyCanManage reports whether the caller could change the policy,
 // so the Config tab shows the table read-only when it could not. A peer
-// node's operator always sees it read-only (the peer view never edits it).
+// node's operator never can: the policy is this node's own (the peer view is
+// read-only, as for an unrestricted peer too).
 func relaunchPolicyCanManage(r *http.Request) bool {
-	if peerGrantFromRequest(r) != nil || peerActionFromRequest(r) != nil {
+	if relaunchPolicyFromPeer(r) {
 		return false
 	}
 	if callerIsHuman(r) {
@@ -196,6 +206,10 @@ func serveRelaunchPolicy(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		writeJSON(w, http.StatusOK, relaunchPolicyResponse(r))
 	case http.MethodPut:
+		if relaunchPolicyFromPeer(r) {
+			writeError(w, http.StatusForbidden, "peer_read_only", "the relaunch policy is this node's own; another node's operator can read it but not change it")
+			return
+		}
 		caller, ok := requirePermission(w, r, PermRelaunchPolicyManage)
 		if !ok {
 			return
