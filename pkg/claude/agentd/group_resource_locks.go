@@ -18,7 +18,9 @@ import (
 //
 // Only the operator sets or clears a lock, through the dashboard API below
 // (POST /api/resource-locks), which no agent reaches: it sits behind
-// checkDashboardAuth, and the agent socket has no route to it. Process and
+// checkDashboardAuth, and the agent socket has no route to it. A trusted
+// peer's operator reaches it through the peer view, only under its
+// groups.resources.lock grants (peer_resource_locks.go). Process and
 // board locks are stored (group_resource_locks); a page's lock lives with the
 // page (livePage.agentsLocked), and ends when it is closed.
 //
@@ -83,24 +85,44 @@ func pageLockAllows(w http.ResponseWriter, p *livePage, perm string) bool {
 
 // POST /api/resource-locks {kind, id, locked} — the operator locks or
 // unlocks a resource. kind is process (a template id), board (a board id) or
-// page (a page's public id).
+// page (a page's public id). A trusted peer's operator reaches the same
+// change through the peer view, under its groups.resources.lock grant
+// (peer_resource_locks.go).
 func handleDashboardResourceLock(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
-	var req struct {
-		Kind   string `json:"kind"`
-		ID     string `json:"id"`
-		Locked *bool  `json:"locked"`
+	req, ok := decodeResourceLock(w, r)
+	if !ok {
+		return
 	}
+	applyResourceLock(w, r, req)
+}
+
+type resourceLockRequest struct {
+	Kind   string `json:"kind"`
+	ID     string `json:"id"`
+	Locked *bool  `json:"locked"`
+}
+
+// decodeResourceLock reads a lock toggle's body, answering a malformed one.
+func decodeResourceLock(w http.ResponseWriter, r *http.Request) (resourceLockRequest, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+	var req resourceLockRequest
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil || req.Locked == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", `body must be {"kind": "process"|"board"|"page", "id": "...", "locked": true|false}`)
-		return
+		return req, false
 	}
-	id := strings.TrimSpace(req.ID)
+	req.ID = strings.TrimSpace(req.ID)
+	return req, true
+}
+
+// applyResourceLock sets or clears one resource's lock for a caller already
+// authorized to.
+func applyResourceLock(w http.ResponseWriter, r *http.Request, req resourceLockRequest) {
+	id := req.ID
 	switch req.Kind {
 	case resourceKindProcess:
 		if err := store.ValidateTemplateID(id); err != nil {

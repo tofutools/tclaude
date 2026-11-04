@@ -231,7 +231,12 @@ For a board it refuses the agent's patches, and for a page it refuses
 patches, eval, close and a re-show, by the shower as well as by members.
 
 Only the operator sets or clears a lock, from the dashboard
-(`POST /api/resource-locks`). No agent route reaches it. A process or board
+(`POST /api/resource-locks`). No agent route reaches it. An operator of a
+trusted federation peer can do it from their own dashboard only as far as
+this node's grants to that peer reach: the group-scoped peer grant
+`groups.resources.lock`, in every group the resource belongs to (each group
+a process template is pinned to). Unrestricted trust holds it; it is never
+granted by default, and an agent never holds it, on either node. A process or board
 lock is stored and is removed when its board or template is deleted, so a new
 resource with the same id starts unlocked. A page lock lasts until the page
 is closed. A resource is unlocked by default.

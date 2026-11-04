@@ -152,6 +152,7 @@ export const PEER_SLUGS = Object.freeze([
   { slug: 'groups.members.spawn.all', kind: 'group', sensitive: true, what: 'every groups.members.spawn.* launch setting: directory, harness, model, effort, profile, roles, sandbox profile, permissions, environment, owner, features, prompts, worktree (with groups.members.spawn)', warning: 'Includes the directory, roles, sandbox profile, permissions and environment: about what a local spawn can do.' },
   { slug: 'groups.settings', kind: 'group', sensitive: true, what: 'change the group\'s settings from its dashboard: description, startup context, member cap, notifications, remote-control policy, attachment, name and nesting (its default directory, profile, saved prompts and sandbox profile also need the matching groups.members.spawn.* grant)' },
   { slug: 'groups.members.manage', kind: 'group', what: 'change member agents\' settings from its dashboard: name, tags, task link, notifications, and role and description in the group (an agent\'s own settings need it in every group the agent is in)' },
+  { slug: 'groups.resources.lock', kind: 'group', what: 'lock and unlock the group\'s processes, boards and pages against agent changes, from its dashboard (a process pinned to several groups needs it in each)' },
   { slug: 'groups.settings.environment', kind: 'group', sensitive: true, what: 'change the group\'s spawn environment', warning: 'Its values reach every agent spawned into the group.' },
   { slug: 'jobs.run', kind: 'group', sensitive: true, policy: true, what: 'run one-shot jobs in your allowed repositories, within the live cap' },
   { slug: 'groups.members.stop', kind: 'group', sensitive: true, what: 'stop member agents\' sessions' },
@@ -194,7 +195,7 @@ export function slugInfo(slug) {
 export const GRANT_CATEGORIES = Object.freeze(['Read & status', 'Messaging', 'Routes', 'Terminals', 'Spawn & jobs', 'Agent lifecycle', 'Group admin', 'Node admin', 'Usage', 'Models']);
 
 const LIFECYCLE = new Set(['groups.members.stop', 'groups.members.resume', 'groups.members.retire', 'groups.members.clone', 'agent.move', 'agents.receive', 'agents.teleport.receive']);
-const GROUP_ADMIN = new Set(['groups.settings', 'groups.settings.environment', 'groups.members.manage', 'node.groups.create']);
+const GROUP_ADMIN = new Set(['groups.settings', 'groups.settings.environment', 'groups.resources.lock', 'groups.members.manage', 'node.groups.create']);
 
 export function slugCategory(slug) {
   if (slug.startsWith('groups.members.spawn') || slug.startsWith('node.spawn.') || slug === 'jobs.run') return 'Spawn & jobs';
