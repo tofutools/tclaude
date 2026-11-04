@@ -224,6 +224,9 @@ var auditRoutes = []auditRoute{
 	// Spawn.
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "spawn"}, verb: "spawn", describe: describeSpawn},
 	{method: http.MethodDelete, segs: []string{"spawn-queue", "{id}"}, verb: "spawn.queue.cancel"},
+	// Re-applying an edited spawn profile can stop and resume the agent and
+	// changes what it launches with: one row per agent.
+	{method: http.MethodPost, segs: []string{"spawn-profiles", "{name}", "reapply"}, verb: "spawn-profile.reapply"},
 
 	// Group lifecycle.
 	{method: http.MethodPost, segs: []string{"groups"}, verb: "group.create", describe: describeGroupCreate},

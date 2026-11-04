@@ -30,8 +30,8 @@ what re-applying the edited profile would change for each:
   default changes nothing where the agent's named profile sets the same field;
 - spawn-only values, such as the agent name or the initial message, are
   **not reapplied**: they were used once, at the first spawn.
-- the group context switch, profile environment, profile startup context and
-  roles are **not reapplied yet**: a re-apply does not carry them so far, and
+- the group context switch, profile environment, profile startup context,
+  roles and model proxy are **not reapplied yet**: a re-apply does not carry them so far, and
   the agent keeps its copy. The same holds for the profile's usage-profile
   links.
 
@@ -48,11 +48,35 @@ profile's record. Sudo grants are kept apart and are never involved. Agents
 spawned before this change have no records, so a re-apply will leave all of
 their grants alone. Group ownership (`is_owner`) is not recorded this way yet.
 
-The preview is read-only for now. **Apply** is shown but disabled, because a
-relaunch does not yet read the copy, so replacing it would change nothing.
-The preview needs `profiles.manage`, and is also available as
-`GET /v1/spawn-profiles/{name}/running-agents`. Retired agents are not
-listed.
+**Apply to selected** re-applies the edited profile to the agents you tick,
+one at a time, after a confirm that names the count. What happens depends on
+the agent:
+
+- a **stopped** agent gets the new copy; it takes effect on its next resume,
+  reincarnation or clone;
+- a **running, fully idle** agent is stopped, given the copy and resumed, as a
+  restart does;
+- a **busy** agent (working, or with background agents, shells or monitors
+  running) is **busy, skipped**: nothing is stopped or changed. Apply again
+  once it is idle.
+
+Each agent's result shows in a **Result** column, and **Refresh** reads the
+preview again. The values marked kept or not reapplied stay as they were: the
+agent's copy keeps its old roles, grants and the other not-yet fields, so the
+preview keeps listing them as differences. A copy whose launch posture
+(sandbox, approval) the agent's spawner could not give it, or that would add
+grants the person applying it could not confer, is refused with the reason; a
+running agent refused that way is resumed with its old settings. When the
+profile is a group or global default, re-applying it reaches every agent
+spawned under that default, and the preview says so.
+
+The preview and Apply need `profiles.manage`. An agent applying it also needs
+`agent.morph` over each agent it re-applies to, cannot use an operator-only
+profile, and cannot give an agent a launch posture it could not give a child
+it spawned itself. A disabled profile cannot be re-applied. They are also available as
+`GET /v1/spawn-profiles/{name}/running-agents` and
+`POST /v1/spawn-profiles/{name}/reapply` with `{"agent_id": "..."}`; each apply
+is its own audit entry. Retired agents are not listed.
 
 **What an agent references is read again.** A spawn can name a sandbox
 profile, a spawn profile can link usage profiles, and an agent can have roles.

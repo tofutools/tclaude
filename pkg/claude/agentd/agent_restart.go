@@ -70,27 +70,43 @@ func dashboardRestartAgent(w http.ResponseWriter, _ *http.Request, convSelector 
 	launchLock := resumeLaunchLock(convID)
 	launchLock.Lock()
 	defer launchLock.Unlock()
-	if err := requireCurrentAgentGeneration(agentID, convID); err != nil {
-		writeError(w, http.StatusConflict, "stale_generation", err.Error())
+	switchedClients, _, fail := restartIdleAgentLocked(agentID, convID, nil)
+	if fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"agent_id":         agentID,
+		"conv_id":          convID,
+		"restart":          "resumed",
+		"switched_clients": switchedClients,
+	})
+}
+
+// restartIdleAgentLocked stops a fully idle agent and resumes it, for a
+// caller holding its resume launch lock. whileStopped, when set, runs between
+// the stop and the resume (the profile re-apply writes the agent's launch
+// settings there); the agent is resumed whatever it returns, and its failure
+// comes back as stoppedFail. fail is the restart's own failure: the agent was
+// not stopped, or stopped and could not be resumed.
+func restartIdleAgentLocked(agentID, convID string, whileStopped func() *spawnFailure) (switchedClients int, stoppedFail, fail *spawnFailure) {
+	if err := requireCurrentAgentGeneration(agentID, convID); err != nil {
+		return 0, nil, &spawnFailure{http.StatusConflict, "stale_generation", err.Error()}
 	}
 	liveSession := pickAliveSession(convID)
 	if failure := agentRestartIdleFailure(liveSession, time.Now()); failure != "" {
-		writeError(w, http.StatusConflict, "agent_not_idle", failure)
-		return
+		return 0, nil, &spawnFailure{http.StatusConflict, "agent_not_idle", failure}
 	}
 	// Fail before stopping when the durable launch anchor is already unusable.
 	// Mutable sandbox-profile validation still belongs to the resume path,
 	// because that is where the current policy is resolved and clamped.
 	if _, err := durableRelaunchConfigForConv(convID); err != nil {
-		writeError(w, http.StatusConflict, "relaunch_profile", err.Error())
-		return
+		return 0, nil, &spawnFailure{http.StatusConflict, "relaunch_profile", err.Error()}
 	}
 	// Nor stop an agent whose Claude subscription token is gone: it could
 	// not come back until its owner sends the token again.
 	if err := claudeSubscriptionRelaunchBlocked(agentID); err != nil {
-		writeError(w, http.StatusConflict, claudeSubscriptionLostCode, err.Error())
-		return
+		return 0, nil, &spawnFailure{http.StatusConflict, claudeSubscriptionLostCode, err.Error()}
 	}
 
 	// Preserve any attached human terminal across the stop/resume gap. The
@@ -102,30 +118,25 @@ func dashboardRestartAgent(w http.ResponseWriter, _ *http.Request, convSelector 
 
 	stopped := escalateShutdownUnderLaunchLock(convID, shutdownGrace)
 	if stopped.Outcome == shutdownFailed {
-		writeError(w, http.StatusInternalServerError, "shutdown_failed",
-			"could not stop the idle agent before restarting: "+stopped.Detail)
-		return
+		return 0, nil, &spawnFailure{http.StatusInternalServerError, "shutdown_failed",
+			"could not stop the idle agent before restarting: " + stopped.Detail}
 	}
 	if err := requireCurrentAgentGeneration(agentID, convID); err != nil {
-		writeError(w, http.StatusConflict, "stale_generation",
-			"agent generation changed while stopping; it was not restarted: "+err.Error())
-		return
+		return 0, nil, &spawnFailure{http.StatusConflict, "stale_generation",
+			"agent generation changed while stopping; it was not restarted: " + err.Error()}
+	}
+	if whileStopped != nil {
+		stoppedFail = whileStopped()
 	}
 
 	resume := resumeOneConvUnderLaunchLock(convID, false, nil)
-	switchedClients := clientHandoff.finishForConv(convID)
+	switchedClients = clientHandoff.finishForConv(convID)
 	if resume.Action != "resumed" {
-		writeError(w, http.StatusInternalServerError, "restart_failed",
-			"the agent stopped, but could not be restarted: "+resume.Detail+
-				"; use the normal wake action to retry")
-		return
+		return switchedClients, stoppedFail, &spawnFailure{http.StatusInternalServerError, "restart_failed",
+			"the agent stopped, but could not be restarted: " + resume.Detail +
+				"; use the normal wake action to retry"}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"agent_id":         agentID,
-		"conv_id":          convID,
-		"restart":          resume.Action,
-		"switched_clients": switchedClients,
-	})
+	return switchedClients, stoppedFail, nil
 }
 
 func requireCurrentAgentGeneration(agentID, convID string) error {

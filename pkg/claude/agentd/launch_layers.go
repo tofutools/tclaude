@@ -51,6 +51,16 @@ func applySpawnCopy(agentID string, spawnCopy db.AgentSpawnCopy) *spawnFailure {
 	lock := resumeLaunchLock(convID)
 	lock.Lock()
 	defer lock.Unlock()
+	return applySpawnCopyLocked(agentID, convID, spawnCopy, "")
+}
+
+// applySpawnCopyLocked is applySpawnCopy for a caller already holding the
+// agent's resume launch lock for convID: the profile re-apply's stop, apply
+// and resume of a running agent holds it across all three. reapplierConv,
+// when set, is an agent applying the copy: a changed posture must also pass
+// the lineage gates against it, so an agent cannot give another agent a
+// posture it could not spawn a child with.
+func applySpawnCopyLocked(agentID, convID string, spawnCopy db.AgentSpawnCopy, reapplierConv string) *spawnFailure {
 	// A reincarnation or morph may have moved the agent to a new
 	// conversation while this waited for the lock; that one is not locked.
 	if err := requireCurrentAgentGeneration(agentID, convID); err != nil {
@@ -125,6 +135,11 @@ func applySpawnCopy(agentID string, spawnCopy db.AgentSpawnCopy) *spawnFailure {
 	}
 	if fail := spawnCopyPostureFailure(spawnerConv, harnessName, convID, stored, next, cfg); fail != nil {
 		return fail
+	}
+	if reapplierConv != "" && reapplierConv != spawnerConv {
+		if fail := spawnCopyPostureFailure(reapplierConv, harnessName, convID, stored, next, cfg); fail != nil {
+			return fail
+		}
 	}
 	if err := db.ApplyAgentSpawnCopy(agentID, convID, storedRaw, *next, spawnCopy); err != nil {
 		if errors.Is(err, db.ErrRelaunchProfileChanged) {

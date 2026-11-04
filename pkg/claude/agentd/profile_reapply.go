@@ -18,19 +18,12 @@ import (
 // (tcl-sqs8sr). A spawn profile is copied at first spawn (launch_layers'
 // spawn copy), so an edit reaches only new spawns. This file is the read-only
 // half: which running agents hold a copy of a profile, and what a re-apply
-// would change for each.
-//
-// Applying waits on relaunch reading the spawn copy
-// (tcl-an26ed); today it reads agents.relaunch_profile, so a replaced copy
-// would change nothing. Grants are recorded with their source
+// would change for each. profile_reapply_apply.go applies it, one agent at a
+// time (tcl-hxuwnc). Grants are recorded with their source
 // (agent_permissions.birth_source, tcl-kdpz4l) for agents spawned since v307,
-// but applying them is part of the apply step (tcl-hxuwnc), so the preview
-// shows them only.
+// but re-applying them is a later step, so the preview shows them only.
 
-const (
-	profileReapplyBlocked    = "Takes effect once relaunch reads the spawn copy (tcl-an26ed)."
-	profileReapplyGrantsNote = "Grants: shown only, not applied yet (tcl-hxuwnc)."
-)
+const profileReapplyGrantsNote = "Grants: shown only, not re-applied yet. An agent keeps the permissions it was spawned with."
 
 // Field outcomes in a re-apply preview.
 const (
@@ -47,6 +40,7 @@ const (
 // change to one is never silently dropped.
 var profileReapplyNotYet = map[string]bool{
 	"include_group_context": true, "profile_env": true, "profile_startup_context": true, "roles": true,
+	"model_proxy": true,
 }
 
 // profileReapplyUsageNote covers the profile's usage-profile links, which live
@@ -326,7 +320,7 @@ func profileReapplyPreview(prof *db.SpawnProfile) (out []profileReapplyAgent, un
 }
 
 // handleSpawnProfileRunningAgents is GET /v1/spawn-profiles/{name}/running-agents:
-// the re-apply preview. Applying is not offered yet (see the file comment).
+// the re-apply preview. POST .../reapply applies it to one agent.
 func handleSpawnProfileRunningAgents(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
 		return
@@ -346,14 +340,18 @@ func handleSpawnProfileRunningAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	notes := []string{profileReapplyUsageNote}
+	if note := reapplyDefaultTierNote(agents); note != "" {
+		notes = append(notes, note)
+	}
 	if unreadable > 0 {
 		notes = append(notes, fmt.Sprintf("%d more agent(s) hold a copy of this profile, but their launch layers could not be read, so they are not listed.", unreadable))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"profile":     prof.Name,
-		"agents":      agents,
-		"unreadable":  unreadable,
-		"apply":       map[string]any{"enabled": false, "reason": profileReapplyBlocked},
+		"profile":    prof.Name,
+		"agents":     agents,
+		"unreadable": unreadable,
+		"apply": map[string]any{"enabled": true, "reason": "A stopped agent takes the new copy on its next launch; a running, fully idle " +
+			"agent is stopped, updated and resumed; a busy agent is skipped."},
 		"grants_note": profileReapplyGrantsNote,
 		"notes":       notes,
 	})
