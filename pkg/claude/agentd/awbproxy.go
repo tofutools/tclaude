@@ -546,109 +546,33 @@ func awbEffectiveWorkspaces(
 }
 
 // awbGrantWorkspaces resolves the STANDING half of the workspace set, from the
-// operator's allow-list and the caller's grant scope.
-//
-// It is awbGrantWorkspaces and linearEffectiveTeams that make the two proxies
-// behave alike, and the rules are deliberately identical:
-//
-//   - unscoped grant, operator list  → the operator's list;
-//   - scoped grant, operator list    → the intersection, so an operator can
-//     narrow one agent without touching the global list, and a grant can never
-//     widen past it;
-//   - scoped grant, no operator list → the grant's own workspaces;
-//   - unscoped grant, no operator list → nothing is reachable: the fail-closed
-//     awb_proxy_disabled answer.
-//
-// It resolves in TWO steps for the reason the Linear one does. First, which
-// workspaces the SCOPE admits on its own merits: every workspace the scope names,
-// put through the real evaluator, because permissionScopeEnumerate unions the
-// matchers across the winning tier's rows and so NAMES more than it admits.
-// Second, the operator's ceiling intersected over that. Separating the steps
-// puts the two ways an empty result arises on two different paths, so each gets
-// the refusal that names what the operator would actually have to change.
+// operator's allow-list and the caller's grant scope. The rules, shared with
+// the Linear proxy's team set, are resolveScopedGrantKeys's.
 func awbGrantWorkspaces(
 	r *http.Request, convID, perm string, policy config.AWBProxyConfig, workspaceScoped bool,
 ) (workspaces, grantWorkspaces []string, fault *proxyFault) {
-	if !workspaceScoped {
-		if len(policy.AllowedWorkspaces) == 0 {
-			return nil, nil, &proxyFault{
-				Status: http.StatusServiceUnavailable,
-				Code:   awbProxyDisabledCode,
-				Msg:    awbProxyDisabledMessage,
-			}
-		}
-		return policy.AllowedWorkspaces, nil, nil
-	}
-	// A SECOND resolution, because the preflight's verdict does not travel
-	// here. It re-reads the same request-scoped defaults, so in the ordinary
-	// case this is the same verdict the preflight saw.
-	v := resolvePermissionVerdictForRequest(r, convID, perm)
-	if v.Resolution != permAllow {
-		// The grant changed between the two reads. Name THAT rather than
-		// blaming the shape of a scope that may no longer exist — and refuse,
-		// rather than falling back on the operator's list.
-		return nil, nil, faultf(http.StatusForbidden, "permission",
-			"the %s grant was withdrawn while this request was being authorized", perm)
-	}
-	named, ok := permissionScopeEnumerate(v, ScopeDimAWBWorkspace)
-	if !ok || len(named) == 0 {
-		return nil, nil, faultf(http.StatusForbidden, awbWorkspaceScopeEmptyCode,
-			"the %s grant is scoped, but names no AWB workspace this daemon can act on; "+
-				"the scope must carry awb_workspace (e.g. --scope awb_workspace=awb)", perm)
-	}
-	for _, key := range named {
-		if evalPermissionScope(v, convID, ActionContext{AWBWorkspace: key}).Satisfied {
-			grantWorkspaces = appendWorkspaceKey(grantWorkspaces, key)
-		}
-	}
-	if len(grantWorkspaces) == 0 {
-		// The scope names workspaces but admits none of them, so something else
-		// in the same scope refused. The operator's list is not the thing to
-		// edit.
-		return nil, nil, faultf(http.StatusForbidden, awbWorkspaceScopeEmptyCode,
-			"the %s grant names workspace(s) %s, but its scope also constrains a dimension an AWB "+
-				"request does not describe, so it authorizes nothing; the scope must constrain "+
-				"awb_workspace alone", perm, strings.Join(lowerWorkspaceKeys(named), ", "))
-	}
-	if len(policy.AllowedWorkspaces) == 0 {
-		// No operator list: the scope is the whole policy.
-		return grantWorkspaces, grantWorkspaces, nil
-	}
-	for _, key := range grantWorkspaces {
-		if policy.AWBWorkspaceAllowed(key) {
-			workspaces = appendWorkspaceKey(workspaces, key)
-		}
-	}
-	if len(workspaces) == 0 {
-		return nil, grantWorkspaces, faultf(http.StatusForbidden, awbWorkspaceScopeEmptyCode,
-			"the %s grant is scoped to workspace(s) %s, none of which is on the operator's "+
-				"agent.awb_proxy.allowed_workspaces list (allowed: %s); the two must overlap",
-			perm, strings.Join(grantWorkspaces, ", "), strings.Join(policy.AllowedWorkspaces, ", "))
-	}
-	return workspaces, grantWorkspaces, nil
+	return resolveScopedGrantKeys(r, convID, perm, scopedGrantDimension{
+		dim:        ScopeDimAWBWorkspace,
+		context:    func(key string) ActionContext { return ActionContext{AWBWorkspace: key} },
+		allowed:    policy.AllowedWorkspaces,
+		allowedKey: policy.AWBWorkspaceAllowed,
+		disabled: &proxyFault{
+			Status: http.StatusServiceUnavailable,
+			Code:   awbProxyDisabledCode,
+			Msg:    awbProxyDisabledMessage,
+		},
+		emptyCode: awbWorkspaceScopeEmptyCode,
+		product:   "AWB",
+		noun:      "workspace",
+		request:   "an AWB request",
+		example:   "awb_workspace=awb",
+		listKey:   "agent.awb_proxy.allowed_workspaces",
+	}, workspaceScoped)
 }
 
-// lowerWorkspaceKeys normalizes a workspace-key list the way the operator's
-// allow-list is normalized, so the two are directly comparable and render
-// alike.
-func lowerWorkspaceKeys(keys []string) []string {
-	out := make([]string, 0, len(keys))
-	for _, key := range keys {
-		out = appendWorkspaceKey(out, key)
-	}
-	return out
-}
-
-// appendWorkspaceKey adds one normalized workspace key to a list, dropping blanks
-// and duplicates. Order is preserved: these lists are rendered to humans in
-// refusals and in `whoami`, so they keep the order the operator wrote.
-func appendWorkspaceKey(out []string, key string) []string {
-	key = strings.ToLower(strings.TrimSpace(key))
-	if key == "" || slices.Contains(out, key) {
-		return out
-	}
-	return append(out, key)
-}
+// appendWorkspaceKey adds one normalized workspace key to a list; see
+// appendScopeKey.
+func appendWorkspaceKey(out []string, key string) []string { return appendScopeKey(out, key) }
 
 // credentials resolves the AWB account the daemon authenticates as.
 //
