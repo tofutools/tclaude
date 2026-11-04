@@ -68,12 +68,6 @@ test('rail model: agents under their group first, live before closed, never-star
   assert.deepEqual(found.sections.flatMap((s) => s.items).map((i) => i.key), ['page:pg_status'], 'a search finds a closed item whatever the chip');
   assert.deepEqual(m.filterRail(all, { query: 'lab' }).sections.map((s) => s.name), ['home-lab'], 'search matches the group name too');
 
-  const home = m.homeView(all);
-  assert.deepEqual(home.groups.map((g) => g.name), ['tclaude', 'home-lab', 'Not in a group'], 'the home groups as the panel does');
-  assert.equal(home.groups[0].items[0].title, 'launch-uniform', 'agents first in their group');
-  assert.ok(home.groups.every((g) => g.items.every((i) => i.bucket !== 'closed')), 'closed items are only under Recent');
-  assert.deepEqual(home.recent.map((i) => i.key), ['board:release', 'page:pg_status']);
-  assert.equal(home.more, 0);
 });
 
 test('agents sort by what they are doing, then by name: needs you, working, idle', async (t) => {
@@ -93,16 +87,49 @@ test('agents sort by what they are doing, then by name: needs you, working, idle
   assert.equal(m.itemState(all.sections[0].items[1]), '', 'the light says working; no word');
 });
 
-test('home view: the most recently used closed items, then how many more', async (t) => {
+test('the home: nothing open, a button to the panel, and the agents that need you', async (t) => {
   const harness = await createPreactHarness(t);
-  const m = await harness.importDashboardModule('js/collab-rail-model.js');
-  const resources = Array.from({ length: 12 }, (_, i) => ({ kind: 'board', id: `b${i}`, group_id: 1, title: `Board ${i}`, state: 'closed' }));
-  const all = m.railItems({ resources, groups: [{ id: 1, name: 'g' }], used: new Map([['board:b9', 2], ['board:b4', 1]]) });
-  const view = m.homeView(all);
-  assert.equal(view.recent.length, m.HOME_RECENT);
-  assert.deepEqual(view.recent.slice(0, 2).map((i) => i.key), ['board:b9', 'board:b4'], 'the most recently used first');
-  assert.equal(view.more, 12 - m.HOME_RECENT);
-  assert.equal(m.homeView(all, { showAll: true }).recent.length, 12);
+  const doc = harness.document;
+  doc.body.appendChild(doc.createElement('section')).id = 'tab-terminals';
+  doc.getElementById('tab-terminals').classList.add('active');
+  const shell = doc.body.appendChild(doc.createElement('aside'));
+  shell.id = 'agent-dock';
+  shell.appendChild(doc.createElement('div')).id = 'dock-collab-body';
+  const [home, rail, side, places, bg] = await Promise.all([
+    harness.importDashboardModule('js/collab-home.js'),
+    harness.importDashboardModule('js/collab-rail.js'),
+    harness.importDashboardModule('js/side-panel.js'),
+    harness.importDashboardModule('js/resource-places.js'),
+    harness.importDashboardModule('js/background-terminals.js'),
+  ]);
+  const waiting = {
+    ...SNAPSHOT,
+    agents: SNAPSHOT.agents.map((a) => (a.title === 'relaunch-table' ? { ...a, state: { status: 'awaiting_permission' } } : { ...a, state: { status: 'working' } })),
+  };
+  await harness.act(() => {
+    places.stripPaneKeys.value = [];
+    bg.backgroundTerminals.value = [
+      { kind: 'agent', key: 'agent:agt_y', agent_id: 'agt_y', tmux_session: 'tc-y', label: 'relaunch-table' },
+      { kind: 'agent', key: 'agent:agt_x', agent_id: 'agt_x', tmux_session: 'tc-x', label: 'launch-uniform' },
+    ];
+  });
+  const { container } = await harness.mount(harness.html`<div>
+    <${rail.CollabRail} panes=${[]} actions=${{}} snapshot=${{ value: waiting }} />
+    <${home.CollabHome} panes=${[]} actions=${{}} snapshot=${{ value: waiting }} />
+  </div>`);
+  const root = container.querySelector('[data-collab-home]');
+  assert.equal(root.querySelector('.ch-title').textContent, 'Nothing open');
+  const open = root.querySelector('[data-home-open-panel]');
+  assert.ok(open, 'the folded panel is offered');
+  await harness.act(() => harness.fireEvent(open, 'click'));
+  assert.equal(side.isSidePanelOpen('collab'), true);
+  assert.equal(container.querySelector('[data-home-open-panel]'), null, 'an open panel needs no button');
+  assert.deepEqual([...root.querySelectorAll('[data-home-agent]')].map((el) => el.dataset.homeAgent), ['bg::tc-y'],
+    'only the agent waiting on approval is listed');
+  assert.equal(root.querySelector('.ch-quiet'), null);
+
+  await harness.act(() => { bg.backgroundTerminals.value = [bg.backgroundTerminals.value[1]]; });
+  assert.equal(container.querySelector('[data-collab-home] .ch-quiet').textContent, 'No agents need you.');
 });
 
 test('rail: Active by default, Closed and search find the rest, a group header folds', async (t) => {

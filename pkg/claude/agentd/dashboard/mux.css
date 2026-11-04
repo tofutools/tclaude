@@ -752,39 +752,19 @@ body[data-dock-panel="collab"] #agent-dock .dock-head { display: none; }
 .collab-rail .cr-quiet { margin: 4px 6px; }
 
 /* An agent's light, in the tab strip's colours. */
-:is(.collab-rail, .collab-home) :is(.cr-status-working .cr-glyph, .ch-status-working .ch-glyph) { color: #3fb950; }
-:is(.collab-rail, .collab-home) :is(.cr-status-idle, .cr-status-waking, .cr-status-restarting) .cr-glyph,
-:is(.collab-rail, .collab-home) :is(.ch-status-idle, .ch-status-waking, .ch-status-restarting) .ch-glyph { color: #d29922; }
-:is(.collab-rail, .collab-home) :is(.cr-status-awaiting .cr-glyph, .ch-status-awaiting .ch-glyph) { color: #58a6ff; }
-:is(.collab-rail, .collab-home) :is(.cr-status-error, .cr-status-crashed) .cr-glyph,
-:is(.collab-rail, .collab-home) :is(.ch-status-error, .ch-status-crashed) .ch-glyph { color: #f85149; }
+.collab-rail .cr-status-working .cr-glyph { color: #3fb950; }
+.collab-rail :is(.cr-status-idle, .cr-status-waking, .cr-status-restarting) .cr-glyph { color: #d29922; }
+.collab-rail .cr-status-awaiting .cr-glyph { color: #58a6ff; }
+.collab-rail :is(.cr-status-error, .cr-status-crashed) .cr-glyph { color: #f85149; }
 
-/* The Collab home (collab-home.js): the empty strip's few live things, by
-   group, as a dense grid of one-line tiles; then a light list of the recent
-   closed ones. */
-.collab-home { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 20px 24px; }
+/* The Collab home (collab-home.js): the empty strip's plain empty state. */
+.collab-home { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 10px; padding: 24px; text-align: center; }
+.collab-home .ch-title { margin: 0; font-size: 15px; color: var(--ui-body-text); }
 .collab-home .ch-quiet { margin: 0; }
-.collab-home .ch-section { display: flex; flex-direction: column; gap: 6px; }
-.collab-home .ch-section-name { margin: 0; }
-.collab-home .ch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px; }
-.collab-home .ch-tile { cursor: grab; }
-.collab-home .ch-tile:hover { border-color: #58a6ff; }
-.collab-home .ch-open { display: flex; align-items: center; gap: 8px; padding: 7px 10px; cursor: pointer; color: var(--ui-body-text); min-width: 0; }
-.collab-home .ch-glyph { flex: none; width: 14px; text-align: center; color: var(--ui-muted-text); }
-.collab-home .ch-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.collab-home .ch-state { flex: none; font-size: 11px; color: var(--ui-muted-text); }
-.collab-home .ch-is-open .ch-glyph { color: #58a6ff; }
-/* An agent waiting on the operator is the one thing to see first. */
-.collab-home .ch-needs-you { border-color: #1f6feb; background: rgba(31, 111, 235, .12); }
-.collab-home .ch-needs-you .ch-state { color: #58a6ff; font-weight: 600; }
-.collab-home .ch-recent { gap: 4px; }
-.collab-home .ch-recent-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 18px; }
-.collab-home .ch-recent-item { cursor: grab; }
-.collab-home .ch-recent-open { display: inline-flex; align-items: baseline; gap: 6px; cursor: pointer; font-size: 12px; color: var(--ui-muted-text); padding: 2px 0; }
-.collab-home .ch-recent-open:hover { color: var(--ui-strong-text); }
-.collab-home .ch-recent-open .ch-glyph { width: auto; }
-.collab-home .ch-recent-group { font-size: 11px; color: #6e7681; }
-.collab-home .ch-more { align-self: flex-start; background: none; border: 0; padding: 0; cursor: pointer; color: #58a6ff; font-size: 12px; }
-.collab-home .ch-more:hover { text-decoration: underline; }
+.collab-home .ch-waiting { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.collab-home .ch-agent { display: inline-flex; align-items: center; gap: 8px; border-color: #1f6feb; background: rgba(31, 111, 235, .12); color: var(--ui-strong-text); }
+.collab-home .ch-agent .ch-glyph { color: #58a6ff; }
+.collab-home .ch-agent .ch-state { font-size: 11px; color: #58a6ff; font-weight: 600; }
 /* A frame would take a rail drag passing over it; while one lasts, frames let it through. */
 body.rail-dragging iframe { pointer-events: none; }

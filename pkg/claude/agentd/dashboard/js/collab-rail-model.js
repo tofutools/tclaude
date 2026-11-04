@@ -1,11 +1,11 @@
-// collab-rail-model.js -- what the Collab rail and its tile home list
+// collab-rail-model.js -- what the Collab side panel lists
 // (tcl-lx7nb7, tcl-8nfzbb): every group's resources and its agents'
 // terminals, by group, each in one of four buckets. Active (open here, on the
 // dock, or running out of sight) is what shows by default; closed items show
 // under the Closed chip and in a search. A group shell that is not running is
 // not listed at all: the Groups tab keeps it, where New → Shell starts it.
-// Pure: the rail (collab-rail.js) and the home (collab-home.js) feed it the
-// snapshot, this browser's places, its open panes, overlay tabs and
+// Pure: the panel (collab-rail.js) and the home (collab-home.js, for the agents
+// that need the operator) feed it the snapshot, this browser's places, its open panes, overlay tabs and
 // background sessions, and when each item was last used here.
 
 import { overlayResourceKey, resourceKey, resourceState, stripResourceKey } from './resource-model.js';
@@ -214,22 +214,4 @@ export function filterRail({ sections }, { bucket = DEFAULT_RAIL_FILTER, query =
   });
   const shown = sections.map((s) => ({ ...s, items: keep(s.items) })).filter((s) => s.items.length);
   return { sections: shown, counts };
-}
-
-// HOME_RECENT is how many closed items the home shows before "show all".
-export const HOME_RECENT = 8;
-
-// homeView is what the home shows: each group with anything live, in the
-// panel's order and with its live items in the panel's order (agents first);
-// then the closed items, most recently used first (the first HOME_RECENT
-// unless all are asked for), and how many more are closed.
-export function homeView({ sections }, { showAll = false } = {}) {
-  const groups = sections.map((s) => ({ ...s, items: s.items.filter((item) => item.bucket !== 'closed') }))
-    .filter((s) => s.items.length);
-  const closed = sections.flatMap((s) => s.items).map((item, index) => ({ item, index }))
-    .filter(({ item }) => item.bucket === 'closed')
-    .sort((a, b) => b.item.usedAt - a.item.usedAt || a.index - b.index)
-    .map(({ item }) => item);
-  const recent = showAll ? closed : closed.slice(0, HOME_RECENT);
-  return { groups, recent, more: closed.length - recent.length };
 }

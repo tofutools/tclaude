@@ -10,45 +10,36 @@ no read-only mode here: what you type lands in the agent's session.
 
 ## The home
 
-With no tab open on the strip, the Collab view shows what is alive, by group
-as the side panel lists it:
-- **Agents first:** every agent with a session running, open here or in the
-  background. A light shows whether it is working (green) or idle (amber). An
-  agent waiting for you is highlighted, sorts first, and says **needs you**.
-  The order is fixed: needs you, working, idle, then by name.
-- **Then the group's other live items:** a running group shell, a page out of
-  sight, or a window on the dock.
-- **Recent:** a short list of the eight closed items you used last, with a line
-  to show the rest.
+With no tab open on the strip, the Collab view says **Nothing open**. It offers
+**Open side panel**, where everything is listed, and it names the agents that
+need you: waiting on an approval or on input. Click one to focus it. With none
+waiting, it says **No agents need you.**
 
-A group shell that was never started is not listed. Start it from its group on
-the [Groups](dashboard-groups.md#resources) tab. With nothing running, the home
-says so in one line.
-
-To use a tile:
-- **Open it:** click it. An item that is already open comes forward; a closed
-  page reopens.
-- **Drag it onto the tab strip:** it opens as a tab where you drop it.
-- **Drag it anywhere else:** it floats in a window where you drop it. A
-  terminal that cannot float stays a tab.
+A group shell that was never started is not listed in Collab. Start it from
+its group on the [Groups](dashboard-groups.md#resources) tab.
 
 ## The side panel
 
-The same list, by group, is in the right side panel. This is the same panel
-and handle as the palette on the Groups tab. It starts folded: open it with the
+The right side panel lists what you can open here, by group. It is the same
+panel and handle as the palette on the Groups tab. It starts folded: open it with the
 handle on the right edge. Each tab remembers its own panel's state.
 
 - **Active** (the default) lists what is alive. **Closed** lists the rest, and
   a search finds everything, whatever chip is picked.
-- In each group, the agents come first, in the same order as on the home, and
-  closed items come last. A group with an agent that needs you comes first,
-  then groups with something open here.
+- In each group, the agents come first, in a fixed order: needs you, working
+  (green light), idle (amber), then by name. Closed items come last.
+- A group with an agent that needs you comes first, then groups with something
+  open here.
 - Each agent goes under one group: the group it was spawned into, or else its
   first group. Agents in no group are under **Not in a group**.
 - Click a group's header to fold it. The panel remembers which groups are
   folded.
-- Click, drag and drop an item as you would a tile. Hover a tab to pop it out
-  or close it, and hover a window to minimize it or close it.
+- Click an item to open it, or bring it forward where it already is; a closed
+  page reopens. Drag it onto the tab strip or the home to open it as a tab, or
+  anywhere else to float it in a window. A terminal that cannot float stays a
+  tab.
+- Hover a tab to pop it out or close it, and hover a window to minimize it or
+  close it.
 
 ## Opening a terminal
 

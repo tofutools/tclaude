@@ -10,10 +10,15 @@
 // panel is offered, dock-open while it is open, and data-dock-panel naming
 // which one.
 
+import { signal } from '@preact/signals';
 import { wizWord } from './slop.js';
 import { dashPrefs } from './prefs.js';
 
 const PANELS = new Map();
+
+// sidePanelShown is what the shell last painted: the active panel's name ('' for
+// none) and whether it is open, for a view that offers to open it.
+export const sidePanelShown = signal({ name: '', open: false });
 
 // registerSidePanel declares a tab's panel. pane is the id of the tab's
 // <section>; pref the dashPrefs key its open state persists under; open what
@@ -89,6 +94,8 @@ export function applySidePanel(doc = globalThis.document) {
     const body = other.body && doc.querySelector(other.body);
     if (body) body.hidden = other !== panel;
   }
+  const shown = sidePanelShown.peek();
+  if (shown.name !== (panel?.name || '') || shown.open !== open) sidePanelShown.value = { name: panel?.name || '', open };
   for (const fn of listeners) fn({ panel, open });
 }
 
