@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"slices"
 	"strings"
 	"time"
 )
@@ -54,6 +56,11 @@ type AgentLaunchLayers struct {
 	SpawnCopy         *AgentSpawnCopy                `json:"spawn_copy,omitempty"`
 	Explicit          map[string]ExplicitLaunchValue `json:"explicit,omitempty"`
 	RelaunchOverrides []RelaunchPolicyOverride       `json:"relaunch_overrides,omitempty"`
+	// Unfolded marks layers written by a build whose CLI no longer folds a
+	// --profile into the spawn request, so their explicit layer is accurate
+	// and dropFoldedProfileValues must not touch it. Every write sets it: a
+	// row is either new, or was decoded (and so repaired) before the write.
+	Unfolded bool `json:"unfolded,omitempty"`
 }
 
 // AgentSpawnCopy is the shallow copy of the spawn profiles that took part in
@@ -99,6 +106,7 @@ func encodeAgentLaunchLayers(l *AgentLaunchLayers) (string, error) {
 	}
 	out := *l
 	out.Version = AgentLaunchLayersVersion
+	out.Unfolded = true
 	raw, err := json.Marshal(out)
 	if err != nil {
 		return "", err
@@ -118,7 +126,102 @@ func decodeAgentLaunchLayers(raw string) (*AgentLaunchLayers, error) {
 		return nil, fmt.Errorf("agents.launch_layers version %d is newer than this build (%d)",
 			l.Version, AgentLaunchLayersVersion)
 	}
+	if !l.Unfolded {
+		dropFoldedProfileValues(&l)
+		l.Unfolded = true
+	}
 	return &l, nil
+}
+
+// foldedProfileFields are the request fields `tclaude agent spawn --profile`
+// used to fill from the named profile before sending, by the launchspec key
+// they are recorded under and the profile export name holding the same value.
+// role_ref and role_refs are compared as one role list (foldedRoleRefs).
+var foldedProfileFields = map[string]map[string]string{
+	"roles":                 {"Role": "role", "RoleRef": "", "RoleRefs": ""},
+	"context_window":        {"ContextWindowMax": "context_window_max"},
+	"include_group_context": {"IncludeGroupContext": "include_group_default_context"},
+}
+
+// dropFoldedProfileValues repairs the explicit layer of agents spawned through
+// the CLI with --profile before it stopped folding the profile into the
+// request: such a value was recorded as explicit although the profile chose
+// it. It runs only on rows written before that (AgentLaunchLayers.Unfolded),
+// against the copy recorded at spawn: the first write after it persists the
+// result, so a later re-applied copy never decides what was explicit. An explicit value equal to the named profile's in the agent's own spawn
+// copy is dropped. The value is the same either way, so the only effect is
+// that a re-applied copy may change it, as it would for a profile value.
+func dropFoldedProfileValues(l *AgentLaunchLayers) {
+	if len(l.Explicit) == 0 || l.SpawnCopy == nil {
+		return
+	}
+	var named map[string]json.RawMessage
+	for _, tier := range l.SpawnCopy.Tiers {
+		if tier.Tier == SpawnCopyTierNamed {
+			if json.Unmarshal(tier.Profile, &named) != nil {
+				return
+			}
+			break
+		}
+	}
+	if named == nil {
+		return
+	}
+	roleRefs := foldedRoleRefs(named)
+	for key, fields := range foldedProfileFields {
+		value, ok := l.Explicit[key]
+		if !ok {
+			continue
+		}
+		for field, profileName := range fields {
+			recorded, ok := value.Fields[field]
+			if !ok {
+				continue
+			}
+			var same bool
+			switch field {
+			case "RoleRef":
+				var ref string
+				same = json.Unmarshal(recorded, &ref) == nil && len(roleRefs) > 0 && ref == roleRefs[0]
+			case "RoleRefs":
+				var refs []string
+				same = json.Unmarshal(recorded, &refs) == nil && slices.Equal(refs, roleRefs)
+			default:
+				same = sameJSONValue(recorded, named[profileName])
+			}
+			if same {
+				delete(value.Fields, field)
+			}
+		}
+		if len(value.Fields) == 0 {
+			delete(l.Explicit, key)
+		}
+	}
+	if len(l.Explicit) == 0 {
+		l.Explicit = nil
+	}
+}
+
+// foldedRoleRefs is the role list the CLI folded from a profile: role_refs,
+// else role_ref alone.
+func foldedRoleRefs(profile map[string]json.RawMessage) []string {
+	var refs []string
+	_ = json.Unmarshal(profile["role_refs"], &refs)
+	if len(refs) == 0 {
+		var ref string
+		if json.Unmarshal(profile["role_ref"], &ref) == nil && strings.TrimSpace(ref) != "" {
+			refs = []string{strings.TrimSpace(ref)}
+		}
+	}
+	return refs
+}
+
+func sameJSONValue(a, b json.RawMessage) bool {
+	if len(b) == 0 {
+		return false
+	}
+	var va, vb any
+	return json.Unmarshal(a, &va) == nil && json.Unmarshal(b, &vb) == nil && reflect.DeepEqual(va, vb)
 }
 
 // SetAgentLaunchLayers writes an agent's launch layers whole. nil clears
