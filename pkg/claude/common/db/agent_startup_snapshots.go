@@ -273,3 +273,28 @@ func ReleaseHeldContextReinjection(sessionID string) (bool, error) {
 	n, err := res.RowsAffected()
 	return n > 0, err
 }
+
+// AgentSpawnGroupIDs maps each agent with a recorded startup snapshot to the
+// group it was spawned into (0 for none), for the dashboard to place the
+// agent under one group.
+func AgentSpawnGroupIDs() (map[string]int64, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT agent_id, spawn_group_id FROM agent_startup_snapshots WHERE spawn_group_id <> 0`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]int64{}
+	for rows.Next() {
+		var id string
+		var group int64
+		if err := rows.Scan(&id, &group); err != nil {
+			return nil, err
+		}
+		out[id] = group
+	}
+	return out, rows.Err()
+}

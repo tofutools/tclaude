@@ -713,63 +713,58 @@ body.wizard .mux-bg-pop { background: #1b1329; border-color: #4a3a6b; }
   backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
 }
 
-/* The Collab rail (collab-rail.js): one list of every resource and terminal
-   down the view's left edge, folding to its icons. The strip and panes keep
-   their layout beside it. */
-.terminal-shell-root.has-rail { position: relative; padding-left: 236px; }
-.terminal-shell-root.has-rail.rail-collapsed { padding-left: 40px; }
-.collab-rail { position: absolute; left: 0; top: 0; bottom: 0; width: 228px; display: flex; flex-direction: column; gap: 6px;
-  padding: 8px 6px; box-sizing: border-box; border-right: 1px solid #30363d; background: #0d1117; overflow: hidden; z-index: 2; }
-.collab-rail.collapsed { width: 36px; padding: 8px 2px; }
-.collab-rail .cr-head { display: flex; gap: 4px; align-items: center; }
-.collab-rail .cr-search { flex: 1 1 auto; min-width: 0; font-size: 12px; padding: 4px 6px; border: 1px solid #30363d; border-radius: 6px;
+/* The Collab panel (collab-rail.js): the live agents and resources, by group,
+   in the shared right side panel (#dock-collab-body, side-panel.js). One quiet
+   line per item; a group header folds its group. */
+#dock-collab-body { padding: 8px 6px 10px; }
+/* The handle folds the Collab panel; its body needs no Hide row. */
+body[data-dock-panel="collab"] #agent-dock .dock-head { display: none; }
+.collab-rail { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.collab-rail .cr-head { display: flex; flex-direction: column; gap: 6px; }
+.collab-rail .cr-search { width: 100%; box-sizing: border-box; font-size: 12px; padding: 4px 8px; border: 1px solid #30363d; border-radius: 6px;
   background: #010409; color: var(--ui-body-text); }
-.collab-rail .cr-fold { flex: none; background: none; border: 0; color: var(--ui-muted-text); cursor: pointer; padding: 2px 6px; font-size: 13px; }
-.collab-rail.collapsed .cr-head { justify-content: center; }
-.collab-rail .cr-chips { display: flex; flex-wrap: wrap; gap: 4px; }
-.collab-rail .cr-chip { cursor: pointer; }
-.collab-rail .cr-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-.collab-rail .cr-section-name { padding: 2px 6px; }
+.collab-rail .cr-chips { display: flex; gap: 2px; padding: 2px; border: 1px solid #30363d; border-radius: 6px; align-self: flex-start; }
+.collab-rail .cr-chip { cursor: pointer; background: none; border: 0; border-radius: 4px; padding: 2px 8px; font-size: 12px; color: var(--ui-muted-text); }
+.collab-rail .cr-chip.is-on { background: #21262d; color: var(--ui-strong-text); }
+.collab-rail .cr-count { color: var(--ui-muted-text); font-size: 11px; font-variant-numeric: tabular-nums; }
+.collab-rail .cr-list { display: flex; flex-direction: column; gap: 6px; }
+.collab-rail .cr-section-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: 0; padding: 2px 4px; cursor: pointer; text-align: left; }
+.collab-rail .cr-section-head:hover { color: var(--ui-strong-text); }
+.collab-rail .cr-chevron { width: 10px; flex: none; }
+.collab-rail .cr-section-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .collab-rail .cr-item { display: flex; align-items: center; gap: 4px; border-radius: 6px; padding: 0 4px; min-height: 24px; }
-.collab-rail .cr-item:hover { background: #161b22; }
-.collab-rail .cr-name { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; background: none; border: 0; color: var(--ui-body-text);
-  cursor: pointer; font-size: 13px; text-align: left; padding: 3px 2px; }
-.collab-rail.collapsed .cr-name { justify-content: center; }
+.collab-rail .cr-item:hover, .collab-rail .cr-item.cr-open { background: #161b22; }
+.collab-rail .cr-item[draggable="true"] { cursor: grab; }
+.collab-rail .cr-name { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; color: var(--ui-body-text);
+  cursor: pointer; font-size: 13px; padding: 3px 2px; }
 .collab-rail .cr-glyph { flex: none; width: 14px; text-align: center; color: var(--ui-muted-text); }
 .collab-rail .cr-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .collab-rail .cr-closed .cr-title { color: var(--ui-muted-text); }
+.collab-rail .cr-open .cr-glyph { color: #58a6ff; }
+.collab-rail .cr-state { flex: none; font-size: 11px; color: var(--ui-muted-text); }
+.collab-rail .cr-needs-you { background: rgba(31, 111, 235, .12); }
+.collab-rail .cr-needs-you .cr-state { color: #58a6ff; font-weight: 600; }
 .collab-rail .cr-tools { display: none; gap: 2px; }
 .collab-rail .cr-item:hover .cr-tools, .collab-rail .cr-item:focus-within .cr-tools { display: inline-flex; }
+.collab-rail .cr-item:hover .cr-state, .collab-rail .cr-item:focus-within .cr-state { display: none; }
 .collab-rail .cr-tool { background: none; border: 0; color: var(--ui-muted-text); cursor: pointer; padding: 0 3px; font-size: 12px; }
 .collab-rail .cr-tool:hover { color: var(--ui-strong-text); }
-.collab-rail .cr-mark { flex: none; font-size: 11px; color: var(--ui-muted-text); }
-.collab-rail .cr-mark-open { color: #58a6ff; }
-.collab-rail .cr-mark-minimized { color: #d29922; }
-.collab-rail .cr-mark-background { color: #3fb950; }
-.collab-rail .cr-empty { margin: 4px 6px; }
-.collab-rail.collapsed .cr-name .cr-glyph { width: auto; }
-.collab-rail.collapsed .cr-item.cr-open .cr-glyph { color: #58a6ff; }
-.collab-rail.collapsed .cr-item.cr-minimized .cr-glyph { color: #d29922; }
-.collab-rail.collapsed .cr-item.cr-background .cr-glyph { color: #3fb950; }
-.collab-rail .cr-item[draggable="true"] { cursor: grab; }
+.collab-rail .cr-quiet { margin: 4px 6px; }
 
-/* The Collab home (collab-home.js): the empty strip's tiles, by group. */
-.collab-home { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 24px 28px; }
-.collab-home .ch-head { display: flex; flex-direction: column; gap: 4px; color: var(--ui-muted-text); }
-.collab-home .ch-section { display: flex; flex-direction: column; gap: 8px; }
-.collab-home .ch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
-.collab-home .ch-tile { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px 12px; cursor: grab; }
-.collab-home .ch-tile:hover { border-color: #58a6ff; }
-.collab-home .ch-open { display: flex; align-items: flex-start; gap: 10px; width: 100%; background: none; border: 0; padding: 0; color: var(--ui-body-text);
-  cursor: pointer; text-align: left; font: inherit; }
-.collab-home .ch-glyph { flex: none; font-size: 20px; line-height: 1; color: var(--ui-muted-text); }
-.collab-home .ch-open .ch-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.collab-home .ch-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.collab-home .ch-kind { font-size: 11px; color: var(--ui-muted-text); }
-.collab-home .ch-is-closed .ch-title { color: var(--ui-muted-text); font-weight: 400; }
-.collab-home .ch-is-open .ch-glyph { color: #58a6ff; }
-.collab-home .ch-is-closed .ch-glyph { color: var(--ui-muted-text); }
-.collab-home .ch-is-background .ch-glyph { color: #3fb950; }
-.collab-home .ch-is-minimized .ch-glyph { color: #d29922; }
+/* An agent's light, in the tab strip's colours. */
+.collab-rail .cr-status-working .cr-glyph { color: #3fb950; }
+.collab-rail :is(.cr-status-idle, .cr-status-waking, .cr-status-restarting) .cr-glyph { color: #d29922; }
+.collab-rail .cr-status-awaiting .cr-glyph { color: #58a6ff; }
+.collab-rail :is(.cr-status-error, .cr-status-crashed) .cr-glyph { color: #f85149; }
+
+/* The Collab home (collab-home.js): the empty strip's plain empty state. */
+.collab-home { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 10px; padding: 24px; text-align: center; }
+.collab-home .ch-title { margin: 0; font-size: 15px; color: var(--ui-body-text); }
+.collab-home .ch-quiet { margin: 0; }
+.collab-home .ch-waiting { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.collab-home .ch-agent { display: inline-flex; align-items: center; gap: 8px; border-color: #1f6feb; background: rgba(31, 111, 235, .12); color: var(--ui-strong-text); }
+.collab-home .ch-agent .ch-glyph { color: #58a6ff; }
+.collab-home .ch-agent .ch-state { font-size: 11px; color: #58a6ff; font-weight: 600; }
 /* A frame would take a rail drag passing over it; while one lasts, frames let it through. */
 body.rail-dragging iframe { pointer-events: none; }

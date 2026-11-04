@@ -1216,13 +1216,20 @@ async function railDrop(harness, source, target, { clientX = 10, clientY = 15 } 
   });
 }
 
-scenario('with nothing on the strip the Collab home tiles every resource, and a click opens one as a tab', GROUP_BOARDS, async ({ harness, host }) => {
+// showClosed picks the Collab panel's Closed chip: its list shows what is
+// live by default, and these boards are closed.
+async function showClosed(harness, host) {
+  await harness.act(() => harness.fireEvent(host.querySelector('[data-collab-rail] [data-rail-filter="closed"]'), 'click'));
+}
+
+scenario('with nothing on the strip the Collab home is a plain empty state, and a panel item opens as a tab', GROUP_BOARDS, async ({ harness, host }) => {
   const home = host.querySelector('[data-collab-home]');
   assert.ok(home, 'the empty strip shows the home');
-  assert.deepEqual([...home.querySelectorAll('[data-home-tile]')].map((tile) => tile.dataset.homeTile), ['board:plan', 'board:map']);
-  assert.deepEqual([...home.querySelectorAll('[data-resource-state]')].map((pill) => pill.textContent), ['closed', 'closed']);
-  assertAbsent(host.querySelector('.mux-bg-empty'), 'the tiles replace the hint');
-  await harness.act(async () => { harness.fireEvent(home.querySelector('[data-home-tile="board:map"] .ch-open'), 'click'); await wait(); await wait(); });
+  assert.equal(home.querySelector('.ch-title').textContent, 'Nothing open');
+  assert.equal(home.querySelector('.ch-quiet').textContent, 'No agents need you.');
+  assertAbsent(host.querySelector('.mux-bg-empty'), 'the home replaces the hint');
+  await showClosed(harness, host);
+  await harness.act(async () => { harness.fireEvent(host.querySelector('[data-rail-item="board:map"] .cr-name'), 'click'); await wait(); await wait(); });
   assert.deepEqual(tabLabels(host), ['Team map']);
   assertAbsent(host.querySelector('[data-collab-home]'), 'with a tab open the home makes way');
 });
@@ -1234,6 +1241,7 @@ scenario('with nothing to list, the empty strip keeps its hint', async ({ host }
 
 scenario('a rail item dropped on the strip opens as a tab where it lands', GROUP_BOARDS, async ({ harness, host, overlayState }) => {
   await harness.act(async () => { await overlayState.openBoardPane('map', 'Team map'); await wait(); await wait(); });
+  await showClosed(harness, host);
   const tab = host.querySelector('.mux-tab[data-pane-key="board:map"]');
   tab.getBoundingClientRect = () => ({ left: 0, width: 100, right: 100, top: 0, bottom: 30, height: 30 });
   const item = host.querySelector('[data-collab-rail] [data-rail-item="board:plan"]');
@@ -1254,19 +1262,23 @@ scenario('a rail item dropped on the strip opens as a tab where it lands', GROUP
   assert.ok(!host.querySelector('[data-collab-strip]').classList.contains('overlay-landing'));
 });
 
-scenario('a tile dropped anywhere else floats in a window, and a strip tab dragged out of the rail floats too', GROUP_BOARDS, async ({ harness, host, overlayHost }) => {
-  await railDrop(harness, host.querySelector('[data-home-tile="board:plan"]'), harness.document.body, { clientX: 400, clientY: 300 });
+scenario('a rail item dropped anywhere else floats in a window, a strip tab too', GROUP_BOARDS, async ({ harness, host, overlayHost }) => {
+  await showClosed(harness, host);
+  await railDrop(harness, host.querySelector('[data-rail-item="board:plan"]'), harness.document.body, { clientX: 400, clientY: 300 });
   assert.deepEqual(tabsByWindow(overlayHost), [['Release plan']]);
   assert.deepEqual(tabLabels(host), []);
 
-  await harness.act(async () => { harness.fireEvent(host.querySelector('[data-home-tile="board:map"] .ch-open'), 'click'); await wait(); await wait(); });
+  await harness.act(async () => { harness.fireEvent(host.querySelector('[data-rail-item="board:map"] .cr-name'), 'click'); await wait(); await wait(); });
   assert.deepEqual(tabLabels(host), ['Team map']);
+  await harness.act(() => harness.fireEvent(host.querySelector('[data-collab-rail] [data-rail-filter="active"]'), 'click'));
+  assert.equal(host.querySelector('[data-rail-item="board:map"]').dataset.railBucket, 'open', 'an open tab is active, so the panel lists it');
   await railDrop(harness, host.querySelector('[data-rail-item="board:map"]'), harness.document.body, { clientX: 400, clientY: 300 });
   assert.deepEqual(tabsByWindow(overlayHost).flat().sort(), ['Release plan', 'Team map']);
   assert.deepEqual(tabLabels(host), []);
 });
 
 scenario('a rail item dropped back on the rail goes nowhere', GROUP_BOARDS, async ({ harness, host, overlayHost }) => {
+  await showClosed(harness, host);
   const rail = host.querySelector('[data-collab-rail]');
   await railDrop(harness, rail.querySelector('[data-rail-item="board:plan"]'), rail.querySelector('.cr-list'));
   assert.deepEqual(tabsByWindow(overlayHost), []);
@@ -1276,8 +1288,9 @@ scenario('a rail item dropped back on the rail goes nowhere', GROUP_BOARDS, asyn
   assert.equal(railDrag.value, null);
 });
 
-scenario('a tile dropped on the home opens as a tab', GROUP_BOARDS, async ({ harness, host }) => {
+scenario('a rail item dropped on the home opens as a tab', GROUP_BOARDS, async ({ harness, host }) => {
+  await showClosed(harness, host);
   const home = host.querySelector('[data-collab-home]');
-  await railDrop(harness, home.querySelector('[data-home-tile="board:plan"]'), home.querySelector('.ch-head'));
+  await railDrop(harness, host.querySelector('[data-rail-item="board:plan"]'), home.querySelector('.ch-title'));
   assert.deepEqual(tabLabels(host), ['Release plan']);
 });

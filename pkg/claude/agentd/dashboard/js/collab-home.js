@@ -1,51 +1,38 @@
-// collab-home.js -- the Collab view's home (tcl-u58qst): with no tab open on
-// the strip, everything the rail lists shows as tiles, by group, then the
-// agents' terminals, each with its state pill. Clicking a tile opens it as the
-// rail does; dragging one onto the strip or the home opens it as a tab, and
-// dropping it anywhere else floats it (collab-rail-actions.js). With nothing to
-// list it shows fallback, the empty strip's own hint.
+// collab-home.js -- the Collab view's home (tcl-u58qst, tcl-bcki2c): with no
+// tab open on the strip, a plain empty state. It says nothing is open, offers
+// to open the side panel (which lists everything), and names the agents that
+// need the operator, each one click from focus. With nothing at all to list
+// it shows fallback, the empty strip's own hint.
 
 import { h } from 'preact';
 import htm from 'htm';
-import { railGlyph } from './collab-rail-model.js';
-import { collabItems, openRailItem, pressable, startRailDrag } from './collab-rail-actions.js';
-import { ResourcePill } from './resource-pill.js';
+import { needsYou } from './collab-rail-model.js';
+import { collabItems, openRailItem } from './collab-rail-actions.js';
+import { setSidePanelOpen, sidePanelShown } from './side-panel.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
-const KIND_LABEL = Object.freeze({ page: 'Live page', board: 'Board', process: 'Process', shell: 'Group shell', terminal: 'Terminal' });
-
-function Tile({ item, ctx }) {
-  return html`<div class=${`ui-card ui-inset ch-tile ch-is-${item.bucket}`} data-home-tile=${item.key} draggable="true"
-    onDragStart=${(event) => startRailDrag(event, item, ctx)}>
-    <span role="button" tabIndex="0" class="ch-open" title=${`Open ${item.title}, or drag it onto the strip or out to float it`}
-      ...${pressable(() => void openRailItem(item, ctx))}>
-      <span class="ch-glyph" aria-hidden="true">${railGlyph(item.kind)}</span>
-      <span class="ch-text">
-        <span class="ch-title">${item.title}</span>
-        <span class="ch-kind">${KIND_LABEL[item.kind] || item.kind}</span>
-      </span>
-    </span>
-    <${ResourcePill} view=${item.view} kind=${item.kind} />
-  </div>`;
-}
-
-// CollabHome shows the tiles, or fallback when there are none. ctx is what
-// openRailItem takes, with floatsOf(paneKey).
-export function CollabHome({ panes = [], actions, snapshot, notify = () => {}, floatsOf = () => false, fallback = null }) {
-  const { sections, terminals } = collabItems(panes, snapshot);
-  if (!sections.length && !terminals.length) return fallback;
-  const ctx = { actions, snapshot, notify, floatsOf };
-  const section = (key, name, items) => html`<section key=${key} class="ch-section" data-home-group=${name}>
-    <div class="ui-eyebrow ch-section-name">${name}</div>
-    <div class="ch-grid">${items.map((item) => html`<${Tile} key=${item.key} item=${item} ctx=${ctx} />`)}</div>
-  </section>`;
+// CollabHome is the empty strip's body. ctx is what openRailItem takes.
+export function CollabHome({ panes = [], actions, snapshot, notify = () => {}, fallback = null }) {
+  const { sections } = collabItems(panes, snapshot);
+  if (!sections.length) return fallback;
+  const waiting = sections.flatMap((s) => s.items).filter(needsYou);
+  const ctx = { actions, snapshot, notify };
+  const shown = sidePanelShown.value;
+  const canOpen = shown.name === 'collab' && !shown.open;
   return html`<div class="collab-home" data-collab-home="">
-    <div class="ch-head">
-      <div class="mux-empty-title">Nothing open on the strip</div>
-      <div class="ch-hint">Click a tile to open it, drag it onto the strip above to open it as a tab, or drop it anywhere else to float it.</div>
-    </div>
-    ${sections.map((s) => section(s.id, s.name, s.items))}
-    ${terminals.length > 0 && section('terminals', "Agents' terminals", terminals)}
+    <p class="ch-title">Nothing open</p>
+    ${canOpen && html`<${Button} size="sm" class="ch-open-panel" data-home-open-panel=""
+      onClick=${() => setSidePanelOpen(true, 'collab')}>Open side panel<//>`}
+    ${waiting.length ? html`<ul class="ch-waiting" aria-label="Agents that need you">
+      ${waiting.map((item) => html`<li key=${item.key}>
+        <${Button} size="sm" class="ch-agent" data-home-agent=${item.key}
+          title=${[item.group, item.status?.label].filter(Boolean).join(' · ')}
+          onClick=${() => void openRailItem(item, ctx)}>
+          <span class="ch-glyph" aria-hidden="true">${item.status.symbol}</span>${item.title}<span class="ch-state">needs you</span>
+        <//>
+      </li>`)}
+    </ul>` : html`<p class="ui-empty ch-quiet">No agents need you.</p>`}
   </div>`;
 }

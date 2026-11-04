@@ -95,7 +95,7 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	// use (see TestDashboardHTML_CommandPalette for the palette-side wiring). Both
 	// of those controls now route through the shared setDockOpen too.
 	must("export function setDockOpen(", "dock.js exports the shared open/collapse mutation for the palette")
-	must("const toggleDock = () => setDockOpen(", "the edge tab + in-dock collapse route through the shared setDockOpen")
+	must("doc.getElementById('dock-collapse')?.addEventListener('click', toggle)", "the edge tab + in-dock collapse route through the shared side panel (side-panel.js)")
 	// The open/collapsed state persists server-side via dashPrefs, NOT
 	// localStorage (the random per-start port would reset it).
 	must("tclaude.dash.dock.open", "the open state persists via a dashPrefs key")
@@ -182,19 +182,22 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	must("openTemplateEditor(t)", "the template card ⚙ opens the item's editor (JOH-390 item 6)")
 
 	// --- Groups-tab-only gate ---------------------------------------------
-	// The dock is offered ONLY on the Groups tab: its cards drag onto GROUP
-	// rows, so it's meaningless on Jobs / Access / Config / Costs / … . dock.js
-	// reads the active tab off the pane's `.active` class and mirrors it as a
-	// body.dock-tab class; CSS removes the whole shell (panel + edge toggle)
-	// off-tab, and the effective open state is forced off so no page space is
-	// reserved. One observer over the Groups pane's class re-evaluates on every
-	// tab switch, so every switch site (bindTabs, the auto-hide redirects,
-	// showAccessTab, the command palette, keyboard cycling) is covered.
+	// The shell is offered ONLY on the tabs that register a panel in it
+	// (side-panel.js): the Groups palette, whose cards drag onto GROUP rows,
+	// and the Collab view's list (tcl-8nfzbb). It is meaningless on Jobs /
+	// Access / Config / Costs / … . side-panel.js reads the active tab off the
+	// pane's `.active` class and mirrors it as a body.dock-tab class; CSS
+	// removes the whole shell (panel + edge toggle) off-tab, and the effective
+	// open state is forced off so no page space is reserved. One observer per
+	// registered pane re-evaluates on every tab switch, so every switch site
+	// (bindTabs, the auto-hide redirects, showAccessTab, the command palette,
+	// keyboard cycling) is covered.
 	must("body:not(.dock-tab) #agent-dock { display: none; }",
-		"the dock shell is hidden entirely off the Groups tab")
-	must("function isDockTab(", "dock.js reads whether Groups is the active tab")
+		"the dock shell is hidden entirely off the tabs that have a panel")
+	must("export function activeSidePanel(", "side-panel.js reads which tab's panel is active")
 	must("classList.toggle('dock-tab'", "dock.js mirrors the tab availability as a body class")
 	// The observer keys off the Groups pane's class — the source of truth every
 	// tab-switch site writes — so a new switch path is covered without a hook.
-	must(`getElementById('tab-groups')`, "dock.js gates the dock on the Groups pane's active state")
+	must(`pane: 'tab-groups'`, "dock.js gates its palette on the Groups pane's active state")
+	must(`pane: 'tab-terminals'`, "the Collab view's panel shares the shell on its own tab (tcl-8nfzbb)")
 }
