@@ -4451,7 +4451,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			"this launch can run commands without asking a human: Claude's own sandbox does, and so does OpenCode's bash; an external steward's worker can't use either")
 		return
 	}
+	// An omission the caller asked for is kept by every relaunch; one the
+	// launch mode forces is re-judged when the mode changes (derived).
 	effectiveSandbox := sandboxpolicy.OmittedProfilesSnapshot()
+	if !body.OmitSandboxProfiles {
+		effectiveSandbox = sandboxpolicy.DerivedOmittedProfilesSnapshot()
+	}
 	var policyErr error
 	if !sandboxProfilesDisabled(h.Name, harnessBuiltinMode, body.SandboxImplementation) &&
 		!body.OmitSandboxProfiles {
@@ -6870,6 +6875,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// no-sandbox mode.
 	if sandboxProfilesDisabled(p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation) {
 		omitted := sandboxpolicy.OmittedProfilesSnapshotKeepingLaunchEnvironment(p.EffectiveSandbox)
+		// The mode forced this omission, unless the launch already chose one.
+		omitted.ProfilesOmittedDerived = p.EffectiveSandbox == nil || !p.EffectiveSandbox.ProfilesOmittedByChoice()
 		p.EffectiveSandbox = &omitted
 	}
 	if spawnUsesPinnedGitCommonDir(

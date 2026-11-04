@@ -3207,7 +3207,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	if reinforce {
 		sandboxGroupID = spec.intoExisting.ID
 	}
-	effectiveSandbox := sandboxpolicy.OmittedProfilesSnapshot()
+	effectiveSandbox := sandboxpolicy.DerivedOmittedProfilesSnapshot()
 	var policyErr error
 	if !templateRosterExplicitlyDisablesSandboxProfiles(roster) {
 		effectiveSandbox, policyErr = db.ResolveEffectiveSandboxSnapshot(sandboxGroupID, "")

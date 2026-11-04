@@ -83,7 +83,7 @@ func relaunchHarnessConfig(mode launchspec.RelaunchMode, chain sandboxpolicy.Har
 // The second covers a launch the policy gave the chain's posture, which
 // records none, so switching the policy back restores the explicit one.
 func explicitHarnessConfigFor(conv string, previous *sandboxpolicy.Snapshot) string {
-	if explicit := explicitHarnessConfig(previous); explicit != "" || previous == nil || previous.ProfilesOmitted {
+	if explicit := explicitHarnessConfig(previous); explicit != "" || previous == nil || previous.ProfilesOmittedByChoice() {
 		return explicit
 	}
 	if conv == "" {

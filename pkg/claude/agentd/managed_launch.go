@@ -34,7 +34,7 @@ func resolveManagedLaunch(g *db.AgentGroup, p *spawnParams, parentConv string, k
 	if fail := applyDefaultProfile(g, p); fail != nil {
 		return fail
 	}
-	snapshot := sandboxpolicy.OmittedProfilesSnapshot()
+	snapshot := sandboxpolicy.DerivedOmittedProfilesSnapshot()
 	if !sandboxProfilesDisabled(p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation) {
 		resolved, err := db.ResolveEffectiveSandboxSnapshot(g.ID, "")
 		if err != nil {

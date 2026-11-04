@@ -466,6 +466,15 @@ type Snapshot struct {
 	// tclaude sandbox-profile tier. It keeps resume/reincarnate from later
 	// reapplying newly assigned global or group values to an opted-out agent.
 	ProfilesOmitted bool `json:"profiles_omitted,omitempty"`
+	// ProfilesOmittedDerived marks an omission the launch's sandbox posture
+	// forced (a mode that cannot carry tclaude sandbox profiles, such as
+	// Codex's raw no-sandbox mode), not one the launch asked for. A relaunch
+	// whose posture can carry profiles again re-resolves the group, global and
+	// explicit tiers instead of keeping the omission. A snapshot without it
+	// is an explicit omission, which is how every omission before it was
+	// recorded; an older binary reads a derived one as explicit, the
+	// behaviour it always had.
+	ProfilesOmittedDerived bool `json:"profiles_omitted_derived,omitempty"`
 	// ResolutionGroupID is the launch group whose sandbox assignment supplied
 	// the group tier. It is recorded even when that group had no profile, so a
 	// later resume can pick up a new assignment without guessing among an
@@ -536,6 +545,18 @@ func (s Snapshot) EnvironmentGroupID() (int64, bool) {
 
 // CopyGroupProvenance carries the group provenance (ResolutionGroupID and
 // GroupBinding) from another snapshot of the same agent.
+// ProfilesOmittedByChoice reports an omission the launch asked for, which
+// every relaunch keeps.
+func (s Snapshot) ProfilesOmittedByChoice() bool {
+	return s.ProfilesOmitted && !s.ProfilesOmittedDerived
+}
+
+// CopyOmission copies whether, and why, from omits the sandbox profiles.
+func (s *Snapshot) CopyOmission(from Snapshot) {
+	s.ProfilesOmitted = from.ProfilesOmitted
+	s.ProfilesOmittedDerived = from.ProfilesOmitted && from.ProfilesOmittedDerived
+}
+
 func (s *Snapshot) CopyGroupProvenance(from Snapshot) {
 	s.ResolutionGroupID = from.ResolutionGroupID
 	s.GroupBinding = from.GroupBinding.Clone()
@@ -582,6 +603,14 @@ func EmptySnapshot() Snapshot {
 func OmittedProfilesSnapshot() Snapshot {
 	out := EmptySnapshot()
 	out.ProfilesOmitted = true
+	return out
+}
+
+// DerivedOmittedProfilesSnapshot is OmittedProfilesSnapshot for an omission
+// the launch's sandbox posture forced (ProfilesOmittedDerived).
+func DerivedOmittedProfilesSnapshot() Snapshot {
+	out := OmittedProfilesSnapshot()
+	out.ProfilesOmittedDerived = true
 	return out
 }
 
@@ -635,7 +664,7 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective.Provenance.ResourcePIDs = nil
 	out := NewSnapshot(effective, in.Applied)
 	out.CopyGroupProvenance(in)
-	out.ProfilesOmitted = in.ProfilesOmitted
+	out.CopyOmission(in)
 	out.LaunchEnvironment = append([]EnvironmentEntry(nil), in.LaunchEnvironment...)
 	out.RefreshGroupEnvironment = in.RefreshGroupEnvironment
 	out.LaunchEnvironmentOverrides = append([]EnvironmentEntry(nil), in.LaunchEnvironmentOverrides...)
@@ -805,7 +834,7 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	}
 	out := NewSnapshot(in.Effective, in.Applied)
 	out.CopyGroupProvenance(in)
-	out.ProfilesOmitted = in.ProfilesOmitted
+	out.CopyOmission(in)
 	out.LaunchEnvironment = append([]EnvironmentEntry(nil), in.LaunchEnvironment...)
 	out.RefreshGroupEnvironment = in.RefreshGroupEnvironment
 	out.LaunchEnvironmentOverrides = append([]EnvironmentEntry(nil), in.LaunchEnvironmentOverrides...)

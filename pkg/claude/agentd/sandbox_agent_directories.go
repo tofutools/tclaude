@@ -187,7 +187,7 @@ func materializeAgentDirectories(snapshot sandboxpolicy.Snapshot, launchKey stri
 	addAgentDirectoryWriteGrants(&effective, agentDirsMountParentEnabled(), bindings)
 	materialized := sandboxpolicy.NewSnapshot(effective, snapshot.Applied)
 	materialized.CopyGroupProvenance(snapshot)
-	materialized.ProfilesOmitted = snapshot.ProfilesOmitted
+	materialized.CopyOmission(snapshot)
 	materialized.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), snapshot.LaunchEnvironment...)
 	materialized.RefreshGroupEnvironment = snapshot.RefreshGroupEnvironment
 	materialized.LaunchEnvironmentOverrides = append(
@@ -329,7 +329,7 @@ func reconcileAgentDirectoriesForResume(
 	addAgentDirectoryWriteGrants(&effective, agentDirsMountParentEnabled(), bindings)
 	resumed := sandboxpolicy.NewSnapshot(effective, current.Applied)
 	resumed.CopyGroupProvenance(current)
-	resumed.ProfilesOmitted = current.ProfilesOmitted
+	resumed.CopyOmission(current)
 	resumed.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), current.LaunchEnvironment...)
 	resumed.RefreshGroupEnvironment = current.RefreshGroupEnvironment
 	resumed.LaunchEnvironmentOverrides = append(
@@ -376,7 +376,7 @@ func unmaterializedAgentDirectories(snapshot sandboxpolicy.Snapshot) sandboxpoli
 	effective.Filesystem = grants
 	out := sandboxpolicy.NewSnapshot(effective, snapshot.Applied)
 	out.CopyGroupProvenance(snapshot)
-	out.ProfilesOmitted = snapshot.ProfilesOmitted
+	out.CopyOmission(snapshot)
 	out.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), snapshot.LaunchEnvironment...)
 	out.RefreshGroupEnvironment = snapshot.RefreshGroupEnvironment
 	out.LaunchEnvironmentOverrides = append(
