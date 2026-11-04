@@ -188,7 +188,9 @@ func TestPeerViewResourceLockFollowsPeerGrants(t *testing.T) {
 
 	// A template pinned to a group the peer is not granted (here: not even
 	// shown) stays out of reach: its lock holds in every group it is in.
-	requirePeerRefused(t, e.lock(t, "process", "shared", true), "a group this node does not show you")
+	rec = e.lock(t, "process", "shared", true)
+	requirePeerRefused(t, rec, "every group it belongs to")
+	assert.NotContains(t, rec.Body.String(), "backstage", "a group the peer is not shown is not named")
 	e.grant(t, agentd.PermGroupsRosterRead, "backstage")
 	requirePeerRefused(t, e.lock(t, "process", "shared", true), "group:backstage")
 	e.grant(t, agentd.PermGroupsResourcesLock, "backstage")

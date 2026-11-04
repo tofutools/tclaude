@@ -108,13 +108,15 @@ func servePeerResourceLock(w http.ResponseWriter, r *http.Request, v *peerView, 
 	v.groupName = visible[0].Name
 	v.auditDetail = req.Kind // one of the closed kinds checked above
 	// Every group it belongs to must grant the lock, including one the peer
-	// does not see: a template's lock reaches every group it is pinned to.
+	// does not see or one archived (it can be unarchived with the lock): a
+	// template's lock reaches every group it is pinned to.
 	for _, g := range groups {
-		if g.IsArchived() || fedPeerAllows(v.peer.InstanceID, g.ID, rule.requires) {
+		if fedPeerAllows(v.peer.InstanceID, g.ID, rule.requires) {
 			continue
 		}
-		where := "a group this node does not show you"
-		if fedPeerGroupVisible(v.peer.InstanceID, g.ID) {
+		// A group the peer is not shown is not named, nor said to be hidden.
+		where := "every group it belongs to"
+		if !g.IsArchived() && fedPeerGroupVisible(v.peer.InstanceID, g.ID) {
 			where = "group:" + g.Name
 		}
 		writeError(w, http.StatusForbidden, "permission", fmt.Sprintf("this node does not grant you %s for %s", rule.requires, where))
