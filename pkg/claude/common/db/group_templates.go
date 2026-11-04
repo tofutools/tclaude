@@ -190,8 +190,10 @@ type GroupTemplateAgent struct {
 // column, the template wire JSON and a template export envelope all agree.
 // Restricted to the fields the template deploy path honours — identity fields
 // (agent_name/role/descr/initial_message) live on the template-agent row
-// itself, and the spawn-dialog-only toggles (sync_worktree/auto_focus/
-// include_group_default_context) have no meaning for a template deploy.
+// itself, and the spawn-dialog-only toggles (sync_worktree/auto_focus) have no
+// meaning for a template deploy. include_group_default_context does apply to a
+// deploy since TCL-1107, but only from a referenced or default profile; the
+// template-local shape does not carry it.
 type templateInlineProfileJSON struct {
 	ModelProxy             string                           `json:"model_proxy,omitempty"`
 	Harness                string                           `json:"harness,omitempty"`

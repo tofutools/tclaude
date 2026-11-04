@@ -244,6 +244,15 @@ func TestLaunchUniform_Trigger_GroupRemoteControlPolicyHonoured(t *testing.T) {
 	assert.Equal(t, uniformToggles{RemoteControl: true}, spawnedToggles(t, f, conv))
 }
 
+// The group policy sits above the named profile here too.
+func TestLaunchUniform_Trigger_GroupDenyBeatsNamedProfile(t *testing.T) {
+	f := uniformTriggerGroup(t)
+	createAllOnProfile(t, f, "reviewer")
+	require.Equal(t, http.StatusOK, setGroupRemoteControlPolicy(t, f, "alpha", "deny").Code)
+	conv := fireUniformTrigger(t, f, "reviewer")
+	assert.Equal(t, uniformToggles{AutoMemory: true, PeerMessaging: true}, spawnedToggles(t, f, conv))
+}
+
 // --- process worker ---
 
 func spawnUniformPerformer(t *testing.T, profile *db.SpawnProfile) (*testharness.Flow, string) {
