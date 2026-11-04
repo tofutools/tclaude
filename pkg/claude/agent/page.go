@@ -35,7 +35,8 @@ const pageShowLong = "Shows the operator a live web page in the dashboard: a dev
 	"Showing again with the same --name updates that page in place: a new path or port reloads it on the same origin. " +
 	"Switching between a port and static files gives the page a new origin. Without --name the name comes from the target. " +
 	"A static source is watched, so saving a file reloads the page; a dev server reloads through its own HMR.\n\n" +
-	"Pages end when the daemon restarts; run show again to bring one back. " +
+	"A page shared in a group is saved with it: when it closes (or the daemon restarts) it stays in the group, closed, and reopens " +
+	"from the dashboard or when you show the same name again. A private page ends when it closes; run show again to bring it back. " +
 	"Anything the operator types into the page can be read by you. The page's token is its only key: it goes to the operator's dashboard " +
 	"and is masked in what you are shown, so you act on a page by its name. " +
 	"Needs the self.page permission."

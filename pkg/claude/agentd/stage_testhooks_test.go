@@ -280,3 +280,10 @@ func SetPageOtherHostsForTest(id string, on bool) bool {
 
 // DashboardCookieNameForTest is the dashboard session cookie's name.
 func DashboardCookieNameForTest() string { return dashboardCookieName }
+
+// RestartLivePagesForTest plays a daemon restart for pages: every stage ends
+// without its saved row hearing of it, then the start-up sweep runs.
+func RestartLivePagesForTest() {
+	CloseAllLivePagesForTest()
+	closeSavedPagesAtStart()
+}

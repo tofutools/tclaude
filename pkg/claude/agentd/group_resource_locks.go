@@ -140,15 +140,32 @@ func applyResourceLock(w http.ResponseWriter, r *http.Request, req resourceLockR
 	case resourceKindPage:
 		livePages.mu.Lock()
 		p := livePages.byID[id]
+		label := ""
 		if p != nil {
 			p.agentsLocked = *req.Locked
+			label = p.owner + "/" + p.name
 		}
 		livePages.mu.Unlock()
-		if p == nil {
+		// A page saved with its group keeps the lock while closed, too.
+		row, err := db.GetGroupPage(id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if p == nil && row == nil {
 			writeError(w, http.StatusNotFound, "not_found", "no such page")
 			return
 		}
-		setAuditTargetLabel(r, "page "+p.owner+"/"+p.name)
+		if row != nil {
+			if err := db.SetGroupPageLocked(id, *req.Locked); err != nil {
+				writeError(w, http.StatusInternalServerError, "resource_lock", err.Error())
+				return
+			}
+			if label == "" {
+				label = row.Owner + "/" + row.Name
+			}
+		}
+		setAuditTargetLabel(r, "page "+label)
 		writeJSON(w, http.StatusOK, map[string]any{"kind": req.Kind, "id": id, "locked": *req.Locked})
 		return
 	default:

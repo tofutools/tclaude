@@ -18513,5 +18513,6 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-lock:disabled { cursor: not-allowed; opacity: 0.6; }
 /* A peer's resource is named, not opened: its board or page is that node's own. */
 .gr-row .gr-name-text { color: var(--ui-strong-text); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gr-row.gr-closed .gr-name.ui-btn { color: var(--ui-muted-text); font-weight: 500; }
 .gr-add { position: relative; display: inline-flex; }
 .gr-add-menu { position: absolute; right: 0; top: 100%; z-index: var(--z-popover); min-width: 120px; }

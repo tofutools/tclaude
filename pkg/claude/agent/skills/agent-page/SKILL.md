@@ -90,8 +90,12 @@ the marks drawn on it.
 
 When the operator closes the tab, you
 get an inbox message `[page <name>] closed`. Retiring closes all your pages.
-Pages end when the daemon restarts: run `show` again to bring one back (it gets
-a new origin).
+A page shared in a group is saved with it: a closed one (closed by you or the
+operator, or by a daemon restart) stays in the group, the operator can reopen
+it, and your `show` of the same name in that group reopens it under the same
+id. A reopened page gets a new origin, and marks and live patches from before
+are gone. A private page ends when it closes or the daemon restarts: run
+`show` again to bring it back.
 
 ## When the operator draws on a page
 
