@@ -7,7 +7,8 @@ const POLICY = {
   can_manage: true,
   rows: [
     { field: 'group_env', label: 'Group environment', mode: 'reuse', default: 're-resolve', modes: ['re-resolve', 'reuse'] },
-    { field: 'sandbox_profile_contents', label: 'Sandbox profile contents', mode: 're-resolve', default: 're-resolve', modes: ['re-resolve', 'reuse'] },
+    { field: 'sandbox_profile_contents', label: 'Sandbox profile contents', mode: 're-resolve', default: 're-resolve', modes: ['re-resolve', 'reuse'], gap: 'With agentd down, the stored values are reused.' },
+    { field: 'future_row', label: 'Future row', mode: 're-resolve', default: 're-resolve', modes: ['re-resolve', 'reuse'], settable: false },
   ],
   fields: [
     { key: 'harness', label: 'Harness', layer: 'fixed', configurable: false },
@@ -32,13 +33,15 @@ const ok = (body) => async () => ({ ok: true, status: 200, json: async () => bod
 test('on resume: collapsed to a summary, Show expands the read-only table', async (t) => {
   const { view, harness, flush } = await mount(t, ok(POLICY));
   const c = view.container;
-  assert.match(c.querySelector('[data-on-resume-summary]').textContent, /2 configurable rows; changed: Group environment → Reuse/);
+  assert.match(c.querySelector('[data-on-resume-summary]').textContent, /3 configurable rows; changed: Group environment → Reuse/);
   assert.equal(c.querySelector('#agent-spawn-on-resume-table'), null, 'collapsed by default');
   const show = [...c.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Show');
   await harness.act(async () => { show.click(); });
   await flush();
   assert.ok(c.querySelector('#agent-spawn-on-resume-table'));
   assert.match(c.querySelector('[data-on-resume-field="group_env"]').textContent, /Reuse/);
+  assert.match(c.querySelector('[data-on-resume-field="sandbox_profile_contents"] .ui-tag').getAttribute('title'), /agentd down/);
+  assert.match(c.querySelector('[data-on-resume-field="future_row"]').textContent, /No relaunch reads this row yet/);
   assert.match(c.querySelector('[data-on-resume-layer="fixed"]').textContent, /Harness · Model/);
   assert.match(c.querySelector('[data-on-resume-layer="copy"]').textContent, /Copied at spawn/);
   assert.equal(c.querySelector('[data-on-resume-layer="once"]'), null, 'spawn-only inputs are not a resume question');

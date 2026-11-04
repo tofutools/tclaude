@@ -72,7 +72,8 @@ export function SpawnOnResumeRow({ fetchImpl = globalThis.fetch, busy = false })
           <tr class="rlp-section"><th colspan="2" scope="colgroup">Configurable</th></tr>
           ${rows.map((row) => html`<tr key=${row.field} data-on-resume-field=${row.field}>
             <td>${row.label}</td>
-            <td><span class=${`ui-tag${row.mode !== row.default ? ' ui-tag-accent' : ''}`}>${MODE_LABELS[row.mode] || row.mode}</span> <span class="ui-hint">global</span></td>
+            <td>${row.settable === false ? html`<span class="ui-hint">No relaunch reads this row yet</span>`
+              : html`<span class=${`ui-tag${row.mode !== row.default ? ' ui-tag-accent' : ''}`} title=${row.gap || undefined}>${MODE_LABELS[row.mode] || row.mode}</span> <span class="ui-hint">global</span>`}</td>
           </tr>`)}
           <tr class="rlp-section"><th colspan="2" scope="colgroup">Follows its layer</th></tr>
           ${READONLY_SECTIONS.filter((s) => s.kind !== 'once').map((section) => {

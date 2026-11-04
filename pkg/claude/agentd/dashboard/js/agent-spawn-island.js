@@ -1745,9 +1745,6 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
           <div class="spawn-field-hint ui-hint info" key=${message}>ℹ ${message}</div>`)}
       </div>
     </div>
-    ${/* What a resume does with this agent's launch inputs (launch slice 10).
-          Read-only, and this node's policy, so a spawn on another node leaves it out. */
-      !remote && !away && html`<${SpawnOnResumeRow} busy=${busy} />`}
     ${/* Sits between the two selects it is about — the sandbox above and the
           permission mode right here — because the warning is a statement about
           their combination, not about either field alone. role="alert" so a
@@ -1780,6 +1777,10 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       onChange=${(event) => update('askTimeout', event.currentTarget.value)}
       help=${askTimeoutHelp} open=${helpOpen === 'agent-spawn-ask-timeout'} setOpen=${setHelpOpen}
       disabled=${!view.askTimeout.visible} busy=${busy} />
+    ${/* What a resume does with this agent's launch inputs (launch slice 10).
+          Below the autonomy rows, so it never parts a select from its warning.
+          Read-only, and this node's policy, so a spawn on another node leaves it out. */
+      !remote && !away && html`<${SpawnOnResumeRow} busy=${busy} />`}
     <label class="cron-create-enabled cron-check-aligned" id="agent-spawn-trust-dir-row" hidden=${!view.showTrustDir}
       title="Pre-trust the launch directory so the new agent doesn't freeze on the harness's trust-folder dialog.">
       <input id="agent-spawn-trust-dir" type="checkbox" checked=${draft.trustDir} disabled=${busy}
