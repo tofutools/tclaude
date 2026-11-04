@@ -273,7 +273,8 @@ func spawnRelaunchPreview(group, profile, explicitParam string) (map[string]rela
 	if err := launchspec.ValidateOverrides(explicit, true); err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_relaunch_policy", err.Error()}
 	}
-	var named, groupProfile *db.SpawnProfile
+	var named *db.SpawnProfile
+	var g *db.AgentGroup
 	if handle := strings.TrimSpace(profile); handle != "" {
 		p, err := db.ResolveSpawnProfile(handle)
 		if err != nil {
@@ -285,11 +286,14 @@ func spawnRelaunchPreview(group, profile, explicitParam string) (map[string]rela
 		named = p
 	}
 	if name := strings.TrimSpace(group); name != "" {
-		g, err := db.GetAgentGroupByName(name)
+		found, err := db.GetAgentGroupByName(name)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 		}
-		groupProfile = groupDefaultProfile(g)
+		g = found
 	}
-	return resolveSpawnRelaunchRows(explicit, []*db.SpawnProfile{named, groupProfile, globalDefaultProfile()}), nil
+	// The spawn pipeline's own default-tier loader, so the preview reads the
+	// defaults exactly as a launch does (launch_resolver_guard_test.go).
+	groupProfile, globalProfile := launchDefaultProfiles(g, &spawnParams{})
+	return resolveSpawnRelaunchRows(explicit, []*db.SpawnProfile{named, groupProfile, globalProfile}), nil
 }
