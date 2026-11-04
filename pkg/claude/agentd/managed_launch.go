@@ -455,8 +455,10 @@ func seedSandboxImplementation(p *spawnParams, v any) {
 //
 //   - include_group_context: the startup snapshot's include_group_ctx, which
 //     re-injection after compaction or /clear reads;
-//   - profile_startup_context: the profile part of the startup snapshot's
-//     profile_context (the role briefs that follow it are left as they are);
+//   - profile_startup_context: the startup snapshot's profile_context, the
+//     profile's text and the role briefs that follow it;
+//   - roles: the role label (the agent's role in its spawn group), while it is
+//     still the one the old copy gave;
 //   - profile_env: the launch snapshot's environment overrides, the profile
 //     tiers then the explicit entries, which every resume merges over the
 //     group's current environment;
@@ -467,7 +469,8 @@ func seedSandboxImplementation(p *spawnParams, v any) {
 // spawn did, keeping every value the spawn request set explicitly, and says
 // what to write; db.ApplyAgentSpawnCopy writes it with the copy. A value equal
 // to the stored one is not written, so re-applying the same copy changes
-// nothing. Roles move with their grants (tcl-fg2kqk) and are not touched.
+// nothing. A role's grants are re-applied with it (profile_reapply_grants.go,
+// tcl-fg2kqk).
 
 // spawnCopyKept is a field the re-apply could not write outside the relaunch
 // profile, with why. Its old value stays in the copy written, so the preview
@@ -528,14 +531,38 @@ func resolveSpawnCopyOutside(agentID string, g *db.AgentGroup, harnessName strin
 	if startup != nil {
 		was, _ := resolveProfileStartupContext(harnessName, prevTiers)
 		now, _ := resolveProfileStartupContext(harnessName, tiers)
-		if was != now {
-			stored := strings.TrimSpace(startup.ProfileContext)
-			if strings.HasPrefix(stored, was) {
-				combined := joinContextParts(now, strings.TrimSpace(stored[len(was):]))
+		stored := strings.TrimSpace(startup.ProfileContext)
+		var nowRoles reappliedRoleText
+		if !isExplicit("roles") {
+			if nowRoles, fail = resolveReappliedRoleText(tiers); fail != nil {
+				return out, nil, fail
+			}
+		}
+		switch {
+		case strings.HasPrefix(stored, was):
+			// What follows the profile's text is its role briefs; they are
+			// rewritten from the roles the copy names now, with the roles'
+			// current text, unless the spawn request named its own roles.
+			tail := strings.TrimSpace(stored[len(was):])
+			if !isExplicit("roles") && isRoleBlocks(tail) {
+				tail = nowRoles.briefs
+			}
+			if combined := joinContextParts(now, tail); combined != stored {
 				out.ProfileContext = &combined
-			} else {
-				kept = append(kept, spawnCopyKept{"profile_startup_context",
-					"the agent's stored startup context does not start with the profile's old text"})
+			}
+		case was != now:
+			kept = append(kept, spawnCopyKept{"profile_startup_context",
+				"the agent's stored startup context does not start with the profile's old text"})
+		}
+		// The role label is the agent's role in its spawn group, rewritten only
+		// while it is still the one the old copy gave.
+		if !isExplicit("roles") && startup.SpawnGroupID > 0 {
+			wasRoles, fail := resolveReappliedRoleText(prevTiers)
+			if fail != nil {
+				return out, nil, fail
+			}
+			if wasRoles.label != nowRoles.label {
+				out.RoleLabel = &db.SpawnCopyRoleLabel{GroupID: startup.SpawnGroupID, From: wasRoles.label, To: nowRoles.label}
 			}
 		}
 	} else {
@@ -571,6 +598,46 @@ func resolveSpawnCopyOutside(agentID string, g *db.AgentGroup, harnessName strin
 		}
 	}
 	return out, kept, nil
+}
+
+// reappliedRoleText is the role identity a copy's tiers give, as a spawn
+// resolves it (resolveLaunchIdentity): the role label, and the role briefs
+// that follow the profile's text in the startup context.
+type reappliedRoleText struct {
+	label, briefs string
+}
+
+func resolveReappliedRoleText(tiers []launchProfileTier) (reappliedRoleText, *spawnFailure) {
+	var out reappliedRoleText
+	refs, _ := resolveRoleRefsLaunchField(agent.SpawnRequest{}, tiers)
+	var first string
+	for _, ref := range refs {
+		role, err := db.GetRole(ref)
+		if err != nil {
+			return out, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if role == nil {
+			// Deleted since: its brief goes, as its grants do.
+			continue
+		}
+		if first == "" {
+			first = role.Name
+		}
+		out.briefs = appendRoleBlock(out.briefs, role.Brief)
+	}
+	label, source, _ := resolveIdentityLaunchField(roleField, "", false, tiers,
+		func(p *db.SpawnProfile) string { return p.Role }, nil)
+	if label == "" && source == "" {
+		label = first
+	}
+	out.label = label
+	return out, nil
+}
+
+// isRoleBlocks reports whether text is empty or role blocks (appendRoleBlock),
+// the only thing a spawn puts after the profile's text.
+func isRoleBlocks(text string) bool {
+	return text == "" || strings.HasPrefix(text, roleBlockHeading)
 }
 
 type includeGroupContextResolution struct {

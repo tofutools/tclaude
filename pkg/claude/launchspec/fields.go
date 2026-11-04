@@ -173,7 +173,7 @@ var Fields = []Field{
 	{Key: "roles", Label: "Roles", Layer: LayerSpawnCopy,
 		ProfileFields: []string{"Role", "RoleRef", "RoleRefs"}, RequestFields: []string{"Role", "RoleRef", "RoleRefs"},
 		Why: "Which roles an agent has is part of the copy; their text is a referenced definition.",
-		Gap: "A re-applied spawn copy changes the roles' grants but not yet the role label or brief; the agent keeps those from its first spawn."},
+	},
 	{Key: "explicit_sandbox_profile", Label: "Sandbox profile named at spawn", Layer: LayerSpawnCopy,
 		RequestFields: []string{"SandboxProfile", "OmitSandboxProfiles"},
 		Why:           "An explicit choice stays; the named profile's contents are re-read."},

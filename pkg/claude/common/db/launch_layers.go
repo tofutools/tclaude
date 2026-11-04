@@ -569,11 +569,26 @@ type SpawnCopyOutside struct {
 	// BirthPermissions re-applies the profile's grants to the rows it wrote
 	// at birth (reapplyBirthPermissionsTx). nil leaves the grants alone.
 	BirthPermissions *BirthPermissionReapply
+	// RoleLabel rewrites the agent's role in its spawn group. nil keeps it.
+	RoleLabel *SpawnCopyRoleLabel
+}
+
+// SpawnCopyRoleLabel rewrites the agent's role in GroupID from From to To,
+// only while it is still From: a role set since (a rename, an edit) stays.
+type SpawnCopyRoleLabel struct {
+	GroupID  int64
+	From, To string
 }
 
 func applySpawnCopyOutsideTx(tx *sql.Tx, agentID string, o SpawnCopyOutside) error {
 	if err := reapplyBirthPermissionsTx(tx, agentID, o.BirthPermissions); err != nil {
 		return err
+	}
+	if o.RoleLabel != nil {
+		if _, err := tx.Exec(`UPDATE agent_group_members SET role = ? WHERE group_id = ? AND agent_id = ? AND role = ?`,
+			o.RoleLabel.To, o.RoleLabel.GroupID, agentID, o.RoleLabel.From); err != nil {
+			return fmt.Errorf("re-apply role label: %w", err)
+		}
 	}
 	if o.IncludeGroupContext != nil {
 		if _, err := tx.Exec(`UPDATE agent_startup_snapshots SET include_group_ctx = ? WHERE agent_id = ?`,

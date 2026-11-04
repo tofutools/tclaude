@@ -2442,12 +2442,15 @@ func groupStartupContext(g *db.AgentGroup, includeStanding bool) string {
 // context as a trailing "## Role" section (JOH-240). A blank brief is a no-op
 // (returns the context unchanged), so the block only appears when the
 // referenced role actually carries guidance.
+// roleBlockHeading starts each role block in a startup context.
+const roleBlockHeading = "## Role\n\n"
+
 func appendRoleBlock(groupContext, brief string) string {
 	brief = strings.TrimSpace(brief)
 	if brief == "" {
 		return groupContext
 	}
-	section := "## Role\n\n" + brief
+	section := roleBlockHeading + brief
 	if strings.TrimSpace(groupContext) == "" {
 		return section
 	}

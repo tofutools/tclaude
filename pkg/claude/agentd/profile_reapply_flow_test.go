@@ -89,8 +89,9 @@ func TestProfileReapply_PreviewShowsPerAgentDiff(t *testing.T) {
 	assert.True(t, preview.Apply.Enabled, "Apply is offered (tcl-hxuwnc)")
 	assert.Contains(t, preview.Apply.Reason, "a busy agent is skipped")
 	assert.Contains(t, preview.GrantsNote, "only the grants the profile gave at spawn")
-	require.Len(t, preview.Notes, 1)
+	require.Len(t, preview.Notes, 2)
 	assert.Contains(t, preview.Notes[0], "Usage profile links: re-applied from the profile's current links")
+	assert.Contains(t, preview.Notes[1], "at its next re-injection")
 	require.Len(t, preview.Agents, 2)
 
 	statuses := map[string]map[string]string{}
