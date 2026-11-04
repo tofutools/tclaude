@@ -30,8 +30,8 @@ func loadSpawnNameFixture(t *testing.T) []spawnNameFixtureRow {
 
 func TestSpawnName_MatchesSharedFixture(t *testing.T) {
 	for _, r := range loadSpawnNameFixture(t) {
-		assert.Equal(t, r.Valid, isValidSpawnName(r.In), "isValidSpawnName(%q)", r.In)
+		assert.Equal(t, r.Valid, IsValidSpawnName(r.In), "IsValidSpawnName(%q)", r.In)
 		assert.Equal(t, r.Normalized, NormalizeSpawnName(r.In), "NormalizeSpawnName(%q)", r.In)
-		assert.True(t, isValidSpawnName(NormalizeSpawnName(r.In)), "normalized %q must be valid", r.In)
+		assert.True(t, IsValidSpawnName(NormalizeSpawnName(r.In)), "normalized %q must be valid", r.In)
 	}
 }

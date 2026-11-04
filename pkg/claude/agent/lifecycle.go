@@ -176,21 +176,20 @@ func isValidInitialMessage(s string) bool {
 // title's 64-char display cap (a spawn name becomes the conversation
 // title via the post-spawn /rename injection), so a name that clears
 // this also clears the daemon's downstream isValidRenameTitle gate.
-// Both the client-side validator here and the daemon-side one
-// (agentd/handlers.go) share this constant so their caps stay identical.
 const MaxSpawnNameLen = 64
 
-// isValidSpawnName mirrors the daemon-side isValidSpawnName check
-// (agentd/handlers.go). It enforces the agent-name charset at the spawn
-// boundary: ASCII letters, digits, '_' and '-' only — no spaces,
-// punctuation, or unicode. An empty name is valid (the name is optional;
-// the agent gets an auto-generated label). This is intentionally
-// stricter than isValidRenameTitle: a spawn name doubles as a git
-// worktree branch name (the dashboard's name→branch sync), so it must be
-// a safe branch token, and the strict set is a clean subset of the
-// rename charset so a non-empty validated name always clears the
-// downstream /rename gate.
-func isValidSpawnName(name string) bool {
+// IsValidSpawnName is the one spawn-name gate, used by this CLI and by the
+// daemon (agentd), and mirrored by the dashboard's SPAWN_NAME_VALID; all three
+// are pinned to testdata/spawn_names.json. It enforces the agent-name charset
+// at the spawn boundary: ASCII letters, digits, '_' and '-' only — no spaces,
+// punctuation, or unicode — and at most MaxSpawnNameLen bytes. An empty name
+// is valid (the name is optional; the agent gets an auto-generated label).
+// This is intentionally stricter than the rename-title gate: a spawn name
+// doubles as a git worktree branch name (the dashboard's name→branch sync), so
+// it must be a safe branch token, and the strict set is a clean subset of the
+// rename charset so a non-empty validated name always clears the downstream
+// /rename gate.
+func IsValidSpawnName(name string) bool {
 	if len(name) > MaxSpawnNameLen {
 		return false
 	}
@@ -203,7 +202,7 @@ func isValidSpawnName(name string) bool {
 }
 
 // isSpawnNameRune reports whether r is in the spawn-name charset: ASCII
-// letters, digits, '-' and '_'. Factored out so isValidSpawnName (the
+// letters, digits, '-' and '_'. Factored out so IsValidSpawnName (the
 // accept set) and NormalizeSpawnName (the coerce set) read off ONE
 // definition and can't drift.
 func isSpawnNameRune(r rune) bool {
@@ -219,7 +218,7 @@ func isSpawnNameRune(r rune) bool {
 }
 
 // NormalizeSpawnName coerces an arbitrary string into a valid spawn name —
-// the safe [A-Za-z0-9_-] branch-token charset isValidSpawnName accepts —
+// the safe [A-Za-z0-9_-] branch-token charset IsValidSpawnName accepts —
 // so any name a human types "just works" instead of being rejected. It is
 // the opt-out-able auto-normalization the spawn surfaces (the dashboard
 // modal, `tclaude agent spawn`, the daemon's spawn boundary) apply when
@@ -233,7 +232,7 @@ func isSpawnNameRune(r rune) bool {
 // may leave.
 //
 // It is idempotent: normalizing its own output returns it unchanged, and
-// the output always satisfies isValidSpawnName, so a caller can
+// the output always satisfies IsValidSpawnName, so a caller can
 // normalize-then-spawn with no second rejection. An all-disallowed input
 // (e.g. "🎉") normalizes to "" — still valid, since an empty spawn name is
 // the "just give me an auto-labelled agent" case.

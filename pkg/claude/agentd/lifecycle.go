@@ -3749,7 +3749,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// dropping it downstream (executeSpawn only applies a name that clears
 	// isValidRenameTitle). An empty name stays valid — the agent gets an
 	// auto-generated label; a non-empty one must be a safe token. The CLI
-	// (agent.isValidSpawnName) and dashboard mirror this, but this is the
+	// (agent.IsValidSpawnName) and dashboard mirror this, but this is the
 	// authoritative gate for the user-facing spawn surfaces: `tclaude agent
 	// spawn`, `--join-group`, and the dashboard modal all POST through here.
 	// (The group-template instantiator builds names as group+template and

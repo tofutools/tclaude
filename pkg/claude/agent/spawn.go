@@ -1514,12 +1514,12 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		// --name applies, and it names the one-shot's tmux session.
 		name = strings.TrimSpace(p.Name)
 	}
-	if !isValidSpawnName(name) {
+	if !IsValidSpawnName(name) {
 		if cfg, _ := config.Load(); cfg.SpawnNameNormalizeEnabled() {
 			name = NormalizeSpawnName(name)
 		}
 	}
-	if !isValidSpawnName(name) {
+	if !IsValidSpawnName(name) {
 		fmt.Fprintf(stderr, "Error: REJECTED. --name must be 1-%d characters from [A-Za-z0-9_-]\n", MaxSpawnNameLen)
 		fmt.Fprintln(stderr, "(letters, digits, underscore, dash) — no spaces, punctuation, or unicode.")
 		fmt.Fprintln(stderr, "Pick a name that uses only the allowed characters.")
