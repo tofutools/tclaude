@@ -11,7 +11,7 @@ import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { signal } from '@preact/signals';
-import { DEFAULT_RAIL_FILTER, RAIL_FILTERS, filterRail, isAgentItem, itemState, railFilterOK, railGlyph } from './collab-rail-model.js';
+import { DEFAULT_RAIL_FILTER, RAIL_FILTERS, filterRail, isAgentItem, itemState, needsYou, railFilterOK, railGlyph } from './collab-rail-model.js';
 import { closeOverlayTab, minimizeOverlayTab } from './overlay-instances.js';
 import { tabMoves } from './overlay-tab-moves.js';
 import { dashPrefs } from './prefs.js';
@@ -79,7 +79,7 @@ function hoverActions(item, actions, floatsOf) {
   return [];
 }
 
-const statusClass = (item) => (isAgentItem(item) ? `cr-agent cr-status-${item.status.className || 'unknown'}` : '');
+const statusClass = (item) => (isAgentItem(item) ? `cr-agent cr-status-${item.status.className || 'unknown'}${needsYou(item) ? ' cr-needs-you' : ''}` : '');
 
 function RailItem({ item, actions, snapshot, notify, floatsOf }) {
   const tools = hoverActions(item, actions, floatsOf);
@@ -87,7 +87,7 @@ function RailItem({ item, actions, snapshot, notify, floatsOf }) {
   const glyph = isAgentItem(item) ? item.status.symbol : railGlyph(item.kind);
   return html`<div class=${`cr-item cr-${item.bucket} ${statusClass(item)}`} data-rail-item=${item.key} data-rail-bucket=${item.bucket}
     draggable="true" onDragStart=${(event) => startRailDrag(event, item, { actions, snapshot, notify, floatsOf })}>
-    <span role="button" tabIndex="0" class="cr-name" title=${[item.title, item.group, state].filter(Boolean).join(' · ')}
+    <span role="button" tabIndex="0" class="cr-name" title=${[item.title, item.group, state || item.status?.label].filter(Boolean).join(' · ')}
       ...${pressable(() => void openRailItem(item, { actions, snapshot, notify }))}>
       <span class="cr-glyph" aria-hidden="true">${glyph}</span>
       <span class="cr-title">${item.title}</span>

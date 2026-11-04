@@ -69,10 +69,28 @@ test('rail model: agents under their group first, live before closed, never-star
   assert.deepEqual(m.filterRail(all, { query: 'lab' }).sections.map((s) => s.name), ['home-lab'], 'search matches the group name too');
 
   const home = m.homeView(all);
-  assert.deepEqual(home.agents.map((i) => i.title), ['launch-uniform', 'relaunch-table', 'loner']);
-  assert.ok(home.live.length > 0 && home.live.every((i) => i.bucket !== 'closed' && !m.isAgentItem(i)));
+  assert.deepEqual(home.groups.map((g) => g.name), ['tclaude', 'home-lab', 'Not in a group'], 'the home groups as the panel does');
+  assert.equal(home.groups[0].items[0].title, 'launch-uniform', 'agents first in their group');
+  assert.ok(home.groups.every((g) => g.items.every((i) => i.bucket !== 'closed')), 'closed items are only under Recent');
   assert.deepEqual(home.recent.map((i) => i.key), ['board:release', 'page:pg_status']);
   assert.equal(home.more, 0);
+});
+
+test('agents sort by what they are doing, then by name: needs you, working, idle', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/collab-rail-model.js');
+  const states = { zed: 'idle', amy: 'working', bob: 'awaiting_permission', cal: 'idle', dan: 'working' };
+  const agents = Object.keys(states).map((title) => ({ agent_id: title, title, groups: ['g'] }));
+  const all = m.railItems({
+    groups: [{ id: 1, name: 'g' }],
+    background: Object.keys(states).map((title) => ({ kind: 'agent', key: `agent:${title}`, tmux_session: title, label: title })),
+    statusOf: (item) => ({ agent: agents.find((a) => a.title === item.title), key: states[item.title], label: states[item.title] }),
+    used: new Map([['bg::zed', 9]]),
+  });
+  assert.deepEqual(all.sections[0].items.map((i) => i.title), ['bob', 'amy', 'dan', 'cal', 'zed'], 'recent use does not move an agent');
+  assert.ok(m.needsYou(all.sections[0].items[0]));
+  assert.equal(m.itemState(all.sections[0].items[0]), 'needs you');
+  assert.equal(m.itemState(all.sections[0].items[1]), '', 'the light says working; no word');
 });
 
 test('home view: the most recently used closed items, then how many more', async (t) => {

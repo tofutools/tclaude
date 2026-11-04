@@ -35,12 +35,33 @@ const BUCKET_RANK = Object.freeze({ open: 0, minimized: 1, background: 2, closed
 export const isAgentItem = (item) => item.kind === 'terminal' && !!item.status?.agent;
 const itemTier = (item) => (item.bucket === 'closed' ? 2 : isAgentItem(item) ? 0 : 1);
 
+// AGENT_RANK orders a group's agents by what they are doing, so the order is
+// fixed: the ones that need the operator, then working, then idle, then the
+// rest; by name within each.
+const AGENT_RANK = Object.freeze({ awaiting_permission: 0, awaiting_input: 0, working: 1, idle: 2 });
+const agentRank = (item) => AGENT_RANK[item.status?.key] ?? 3;
+
+// needsYou is an agent waiting on the operator.
+export const needsYou = (item) => isAgentItem(item) && agentRank(item) === 0;
+
+// compareItems orders a group's items: agents (by agentRank, then name), then
+// live resources (open here first, then the most recently used), then closed.
+function compareItems(a, b) {
+  const tier = itemTier(a) - itemTier(b);
+  if (tier) return tier;
+  if (isAgentItem(a)) return agentRank(a) - agentRank(b) || a.title.localeCompare(b.title);
+  return BUCKET_RANK[a.bucket] - BUCKET_RANK[b.bucket] || b.usedAt - a.usedAt;
+}
+
 // itemState is the word or two an item's row ends with: what an agent is
-// doing, or where a resource is when that is not plain (a page live out of
+// doing when its light cannot say it, or where a resource is when that is not
+// plain (a page live out of
 // sight, a window on the dock). A closed item says nothing: the Closed chip
 // and the Recent heading already do.
 export function itemState(item) {
-  if (isAgentItem(item)) return AGENT_STATE[item.status.key] || item.status.label || '';
+  // An agent's light already says working or idle; only the states it cannot
+  // say get words.
+  if (isAgentItem(item)) return AGENT_STATE[item.status.key] || '';
   if (item.bucket === 'minimized') return 'docked';
   if (item.bucket === 'background') return item.kind === 'page' ? 'live' : '';
   return '';
@@ -148,21 +169,21 @@ export function railItems({
 
   const sections = [...byGroup.entries()].map(([id, items]) => {
     const sorted = items.map((item, index) => ({ item, index }))
-      .sort((a, b) => itemTier(a.item) - itemTier(b.item) || BUCKET_RANK[a.item.bucket] - BUCKET_RANK[b.item.bucket]
-        || b.item.usedAt - a.item.usedAt || a.index - b.index)
+      .sort((a, b) => compareItems(a.item, b.item) || a.index - b.index)
       .map(({ item }) => item);
     return { id, name: id === UNGROUPED.id ? UNGROUPED.name : names.get(id), items: sorted };
   });
   return { sections: sortSections(sections, order) };
 }
 
-// sortSections puts a group with something open here first, then one with a
-// live agent, then one with anything active, then the rest; within each, the most recently used, then
+// sortSections puts a group with an agent that needs the operator first, then
+// one with something open here, then one with a live agent, then one with
+// anything active, then the rest; within each, the most recently used, then
 // the snapshot's group order. Not in a group goes last among its peers.
 function sortSections(sections, order) {
   const live = (i) => i.bucket !== 'closed';
-  const tier = (s) => (s.items.some((i) => i.bucket === 'open') ? 0 : s.items.some((i) => live(i) && isAgentItem(i)) ? 1
-    : s.items.some(live) ? 2 : 3);
+  const tier = (s) => (s.items.some(needsYou) ? 0 : s.items.some((i) => i.bucket === 'open') ? 1
+    : s.items.some((i) => live(i) && isAgentItem(i)) ? 2 : s.items.some(live) ? 3 : 4);
   const recent = (s) => Math.max(0, ...s.items.map((i) => i.usedAt));
   const rank = (s) => (s.id === UNGROUPED.id ? Infinity : order.get(s.id) ?? Infinity);
   return [...sections].sort((a, b) => tier(a) - tier(b) || recent(b) - recent(a) || rank(a) - rank(b));
@@ -195,16 +216,17 @@ export function filterRail({ sections }, { bucket = DEFAULT_RAIL_FILTER, query =
 // HOME_RECENT is how many closed items the home shows before "show all".
 export const HOME_RECENT = 8;
 
-// homeView is what the home shows: the agents (most recently used first),
-// the other live items, the closed ones most recently used first (the first
-// HOME_RECENT unless all are asked for), and how many more are closed.
+// homeView is what the home shows: each group with anything live, in the
+// panel's order and with its live items in the panel's order (agents first);
+// then the closed items, most recently used first (the first HOME_RECENT
+// unless all are asked for), and how many more are closed.
 export function homeView({ sections }, { showAll = false } = {}) {
-  const flat = sections.flatMap((s) => s.items).map((item, index) => ({ item, index }));
-  const byUse = (a, b) => b.item.usedAt - a.item.usedAt || BUCKET_RANK[a.item.bucket] - BUCKET_RANK[b.item.bucket] || a.index - b.index;
-  const pick = (keep) => flat.filter(({ item }) => keep(item)).sort(byUse).map(({ item }) => item);
-  const agents = pick((item) => item.bucket !== 'closed' && isAgentItem(item));
-  const live = pick((item) => item.bucket !== 'closed' && !isAgentItem(item));
-  const closed = pick((item) => item.bucket === 'closed');
+  const groups = sections.map((s) => ({ ...s, items: s.items.filter((item) => item.bucket !== 'closed') }))
+    .filter((s) => s.items.length);
+  const closed = sections.flatMap((s) => s.items).map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.bucket === 'closed')
+    .sort((a, b) => b.item.usedAt - a.item.usedAt || a.index - b.index)
+    .map(({ item }) => item);
   const recent = showAll ? closed : closed.slice(0, HOME_RECENT);
-  return { agents, live, recent, more: closed.length - recent.length };
+  return { groups, recent, more: closed.length - recent.length };
 }

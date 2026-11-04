@@ -1224,7 +1224,7 @@ scenario('with nothing on the strip the Collab home tiles every resource, and a 
     'with nothing live, the closed boards show under Recent');
   assert.equal(home.querySelector('.ch-quiet').textContent, 'Nothing running.');
   assertAbsent(host.querySelector('.mux-bg-empty'), 'the tiles replace the hint');
-  await harness.act(async () => { harness.fireEvent(home.querySelector('[data-home-tile="board:map"] .ch-open'), 'click'); await wait(); await wait(); });
+  await harness.act(async () => { harness.fireEvent(home.querySelector('[data-home-tile="board:map"] [role="button"]'), 'click'); await wait(); await wait(); });
   assert.deepEqual(tabLabels(host), ['Team map']);
   assertAbsent(host.querySelector('[data-collab-home]'), 'with a tab open the home makes way');
 });
@@ -1268,7 +1268,7 @@ scenario('a tile dropped anywhere else floats in a window, and a strip tab dragg
   assert.deepEqual(tabsByWindow(overlayHost), [['Release plan']]);
   assert.deepEqual(tabLabels(host), []);
 
-  await harness.act(async () => { harness.fireEvent(host.querySelector('[data-home-tile="board:map"] .ch-open'), 'click'); await wait(); await wait(); });
+  await harness.act(async () => { harness.fireEvent(host.querySelector('[data-home-tile="board:map"] [role="button"]'), 'click'); await wait(); await wait(); });
   assert.deepEqual(tabLabels(host), ['Team map']);
   assert.equal(host.querySelector('[data-rail-item="board:map"]').dataset.railBucket, 'open', 'an open tab is active, so the panel lists it');
   await railDrop(harness, host.querySelector('[data-rail-item="board:map"]'), harness.document.body, { clientX: 400, clientY: 300 });

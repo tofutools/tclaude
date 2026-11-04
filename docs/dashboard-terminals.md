@@ -10,14 +10,16 @@ no read-only mode here: what you type lands in the agent's session.
 
 ## The home
 
-With no tab open on the strip, the Collab view shows what is alive:
-- **Agents**: every agent with a session running, open here or in the
-  background. Each shows its group and what it is doing: working, idle, or
-  needs you.
-- **Running**: the other live items, such as a running group shell, a page out
-  of sight, or a window on the dock.
-- **Recent**: the eight closed items you used last, with a line to show the
-  rest.
+With no tab open on the strip, the Collab view shows what is alive, by group
+as the side panel lists it:
+- **Agents first:** every agent with a session running, open here or in the
+  background. A light shows whether it is working (green) or idle (amber). An
+  agent waiting for you is highlighted, sorts first, and says **needs you**.
+  The order is fixed: needs you, working, idle, then by name.
+- **Then the group's other live items:** a running group shell, a page out of
+  sight, or a window on the dock.
+- **Recent:** a short list of the eight closed items you used last, with a line
+  to show the rest.
 
 A group shell that was never started is not listed. Start it from its group on
 the [Groups](dashboard-groups.md#resources) tab. With nothing running, the home
@@ -38,8 +40,9 @@ handle on the right edge. Each tab remembers its own panel's state.
 
 - **Active** (the default) lists what is alive. **Closed** lists the rest, and
   a search finds everything, whatever chip is picked.
-- In each group, the agents come first and closed items come last. Groups with
-  something open here come first.
+- In each group, the agents come first, in the same order as on the home, and
+  closed items come last. A group with an agent that needs you comes first,
+  then groups with something open here.
 - Each agent goes under one group: the group it was spawned into, or else its
   first group. Agents in no group are under **Not in a group**.
 - Click a group's header to fold it. The panel remembers which groups are
