@@ -731,7 +731,7 @@ body[data-dock-panel="collab"] #agent-dock .dock-head { display: none; }
 .view-menu .view-menu-reset { align-self: flex-start; margin: 2px 8px; padding: 0; background: none; border: 0; cursor: pointer;
   color: #58a6ff; font-size: 12px; }
 .view-menu .view-menu-reset:disabled { color: var(--ui-muted-text); cursor: default; }
-.view-menu label.filter-toggle { cursor: pointer; color: var(--ui-body-text); user-select: none; }
+.collab-rail .view-menu label.filter-toggle { cursor: pointer; color: var(--ui-body-text); user-select: none; }
 .collab-rail .cr-count { color: var(--ui-muted-text); font-size: 11px; font-variant-numeric: tabular-nums; }
 .collab-rail .cr-list { display: flex; flex-direction: column; gap: 6px; }
 .collab-rail .cr-section-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: 0; padding: 2px 4px; cursor: pointer; text-align: left; }
