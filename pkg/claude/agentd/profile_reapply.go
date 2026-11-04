@@ -21,9 +21,13 @@ import (
 // would change for each. profile_reapply_apply.go applies it, one agent at a
 // time (tcl-hxuwnc). Grants are recorded with their source
 // (agent_permissions.birth_source, tcl-kdpz4l) for agents spawned since v307,
-// but re-applying them is a later step, so the preview shows them only.
+// and a re-apply changes the ones that still carry the profile's record
+// (profile_reapply_grants.go, tcl-fg2kqk); the preview shows each agent's
+// outcome per slug.
 
-const profileReapplyGrantsNote = "Grants: shown only, not re-applied yet. An agent keeps the permissions it was spawned with."
+const profileReapplyGrantsNote = "Grants: a re-apply changes only the grants the profile gave at spawn that nobody has changed since. " +
+	"Explicit, sudo and changed grants are kept, a revoked grant is not given back, and group ownership is shown only. " +
+	"Role text: the role label and brief follow in the next update."
 
 // Field outcomes in a re-apply preview.
 const (
@@ -36,10 +40,13 @@ const (
 )
 
 // profileReapplyNotYet are spawn-copy fields the re-apply operation does not
-// carry yet: roles move with their grants (tcl-fg2kqk), and the model proxy
-// needs the models.proxy gate a first spawn runs. Marked so that a change to
-// one is never silently dropped.
-var profileReapplyNotYet = map[string]bool{"roles": true, "model_proxy": true}
+// carry yet: the model proxy needs the models.proxy gate a first spawn runs.
+// Marked so that a change to one is never silently dropped.
+var profileReapplyNotYet = map[string]bool{"model_proxy": true}
+
+// reapplyRolesStatus is the roles row's status: the role's grants are
+// re-applied (the grant rows), its label and brief are not yet.
+const reapplyRolesStatus = "grants reapplied; role text: next update"
 
 // reapplyMergesExplicit are fields whose explicit entries are laid over the
 // profile's rather than replacing them, so a profile edit still changes them.
@@ -98,6 +105,9 @@ type profileReapplyGrant struct {
 	Slug string `json:"slug"`
 	From string `json:"from"`
 	To   string `json:"to"`
+	// Status is what a re-apply does to the agent's row (db.BirthPermission*),
+	// or "shown only" for group ownership.
+	Status string `json:"status"`
 }
 
 type profileReapplyAgent struct {
@@ -194,6 +204,8 @@ func profileReapplyFields(copied, current map[string]json.RawMessage, layers *db
 				row.Status = reapplySpawnOnly
 			case profileReapplyNotYet[field.Key]:
 				row.Status = reapplyNotYet
+			case field.Key == "roles":
+				row.Status = reapplyRolesStatus
 			}
 		}
 		out = append(out, row)
@@ -213,42 +225,56 @@ func grantWord(o db.PermissionOverride, ok bool) string {
 	return word
 }
 
-// profileGrantsOf is what a profile confers at birth: its overrides on top of
-// its roles' grants, plus is_owner.
-func profileGrantsOf(p *db.SpawnProfile) map[string]db.PermissionOverride {
-	out, err := profileRoleGrants(p)
-	if err != nil || out == nil {
-		out = map[string]db.PermissionOverride{}
-	}
-	for slug, o := range p.PermissionOverrides {
-		out[slug] = o
-	}
-	if isTrue(p.IsOwner) {
-		out["is_owner"] = db.PermissionOverride{Effect: db.PermEffectGrant}
-	}
-	return out
-}
+// reapplyGrantShownOnly is the status of a grant change a re-apply does not
+// make: group ownership has no birth record to re-apply by.
+const reapplyGrantShownOnly = "shown only"
 
-func profileReapplyGrants(copied, current *db.SpawnProfile) []profileReapplyGrant {
-	before, after := profileGrantsOf(copied), profileGrantsOf(current)
-	slugs := map[string]bool{}
-	for s := range before {
-		slugs[s] = true
+// reapplyGrantNotApplied is the status of a grant change in a part of the
+// profile (its roles, or its overrides) that did not apply at the agent's
+// spawn, so a re-apply does not make it apply now.
+const reapplyGrantNotApplied = "not applied (not in effect at spawn)"
+
+// profileReapplyGrants is what re-applying prof to agentID would do to its
+// grants, given its copy of the profile (copied): the planned outcome per
+// slug, read from a rolled-back run of the same writes.
+func profileReapplyGrants(agentID string, copied, prof *db.SpawnProfile) ([]profileReapplyGrant, error) {
+	before := *copied
+	before.Name = prof.Name
+	plan, err := reapplyGrantPlan(agentID, prof.ID, &before, prof, "preview")
+	if err != nil {
+		return nil, err
 	}
-	for s := range after {
-		slugs[s] = true
+	results, err := db.PlanAgentBirthPermissions(agentID, *plan)
+	if err != nil {
+		return nil, err
 	}
 	out := []profileReapplyGrant{}
-	for slug := range slugs {
-		b, bok := before[slug]
-		a, aok := after[slug]
-		if bok == aok && b == a {
-			continue
+	planned := map[string]bool{}
+	for _, res := range results {
+		planned[res.Slug] = true
+		out = append(out, profileReapplyGrant{Slug: res.Slug, From: res.From, To: res.To, Status: res.Outcome})
+	}
+	// A change to a part of the profile that did not take effect at the spawn
+	// (a higher tier or the request replaced it, or it was empty) is not
+	// planned at all; list it so the edit is not silently dropped.
+	if was, _, err := profileBirthGrants(&before, true, true); err == nil {
+		if now, _, err := profileBirthGrants(prof, true, true); err == nil {
+			for _, slug := range changedGrantSlugs(was, now) {
+				if planned[slug] {
+					continue
+				}
+				b, bok := was[slug]
+				a, aok := now[slug]
+				out = append(out, profileReapplyGrant{Slug: slug, From: grantWord(b, bok), To: grantWord(a, aok), Status: reapplyGrantNotApplied})
+			}
 		}
-		out = append(out, profileReapplyGrant{Slug: slug, From: grantWord(b, bok), To: grantWord(a, aok)})
+	}
+	if was, now := isTrue(copied.IsOwner), isTrue(prof.IsOwner); was != now {
+		out = append(out, profileReapplyGrant{Slug: "is_owner", From: grantWord(db.PermissionOverride{Effect: db.PermEffectGrant}, was),
+			To: grantWord(db.PermissionOverride{Effect: db.PermEffectGrant}, now), Status: reapplyGrantShownOnly})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })
-	return out
+	return out, nil
 }
 
 // copiedGrantInputs reads the grant inputs straight from a copied profile,
@@ -313,8 +339,8 @@ func profileReapplyPreview(prof *db.SpawnProfile) (out []profileReapplyAgent, un
 		was, err := copiedGrantInputs(tier.Profile)
 		if err != nil {
 			row.GrantsError = "this agent's copy of the profile could not be read"
-		} else {
-			row.Grants = profileReapplyGrants(was, prof)
+		} else if row.Grants, err = profileReapplyGrants(id, was, prof); err != nil {
+			row.Grants, row.GrantsError = []profileReapplyGrant{}, "grants: "+err.Error()
 		}
 		out = append(out, row)
 	}

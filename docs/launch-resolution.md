@@ -30,9 +30,11 @@ what re-applying the edited profile would change for each:
   default changes nothing where the agent's named profile sets the same field;
 - spawn-only values, such as the agent name or the initial message, are
   **not reapplied**: they were used once, at the first spawn.
-- roles and the model proxy are **not reapplied yet**: a re-apply does not
-  carry them so far, and the agent keeps its copy. Roles will be re-applied
-  together with their grants.
+- the model proxy is **not reapplied yet**: a re-apply does not carry it so
+  far, and the agent keeps its copy;
+- roles are marked **grants reapplied; role text: next update**: a re-apply
+  changes the grants that come with the profile's roles (below), but the role
+  label and role brief the agent is briefed with stay as they were for now.
 
 A re-apply also changes the values a first spawn stores outside the launch
 settings:
@@ -48,17 +50,36 @@ settings:
 
 A value the spawn request set explicitly is kept in each case.
 
-Grant changes (permission overrides, group owner and role grants) are listed,
-but a re-apply does not apply them yet.
+A re-apply also re-applies the grants the profile gave at birth: its roles'
+grants, with the profile's own permission overrides on top. The preview lists
+each changed grant with what a re-apply does to the agent's row:
+
+- **changed** or **removed**: the row is still the one the profile gave at
+  spawn, so it follows the edit;
+- **added**: the profile gives a new slug, in a part of it (its roles, or its
+  overrides) that took effect at the spawn;
+- **kept**: the agent's row is not the profile's, because the spawn request
+  set it or someone has changed it since;
+- **not added**: the agent no longer has the slug (it was revoked), so the
+  re-apply does not give it back;
+- **not applied (not in effect at spawn)**: the change is in a part of the
+  profile that did not apply at the spawn, because the spawn request or a
+  higher tier set its own, or it was empty;
+- group ownership (`is_owner`) is **shown only**.
+
+An agent applying a re-apply needs the authority to confer what it widens
+(`permissions.grant` plus attenuation, as for a profile edit); narrowing
+needs none. The grant changes are written together with the new copy, and each
+is recorded in the audit log as `permissions.reapply`.
 
 tclaude records which spawn profile, and which of its roles, each birth
 grant or deny came from, for agents spawned from now on. A grant has no such
 record when it came from the spawn request, from a role the request named, an
 inline profile, a group template or federation worker defaults, or when anyone
 has changed it since: an operator, a `permissions` command, a policy generator
-or a scope edit. A re-apply will only ever change grants that still carry the
+or a scope edit. A re-apply only changes grants that still carry the
 profile's record. Sudo grants are kept apart and are never involved. Agents
-spawned before this change have no records, so a re-apply will leave all of
+spawned before these records existed have none, so a re-apply leaves all of
 their grants alone. Group ownership (`is_owner`) is not recorded this way yet.
 
 **Apply to selected** re-applies the edited profile to the agents you tick,
@@ -267,7 +288,7 @@ row to its default).
 | Directory trust seeding | `trust_dir` | not reapplied | yes | Seeded once for the launch directory, which does not move. |
 | Worktree sync and fetch | `worktree_setup` | not reapplied | no | Prepares the worktree before the first launch. |
 | Auto-focus | `focus` | not reapplied | yes | Where the new agent is shown when it starts. |
-| Group owner and permission overrides | `access` | not reapplied | yes | Granted to the agent at spawn; after that they are the agent's own and edited directly. |
+| Group owner and permission overrides | `access` | not reapplied | yes | Granted to the agent at spawn; after that they are the agent's own and edited directly. A profile re-apply changes only the grants the profile gave that nobody has changed since; group ownership is not re-applied. |
 | One-shot run, timeouts and queueing | `run_mode` | not reapplied | yes | Shape of the spawn call itself. |
 | Unenforced-sandbox and break-glass acknowledgements | `launch_acknowledgements` | not reapplied | yes | A human's consent for one fresh spawn; never replayed. |
 
@@ -307,7 +328,7 @@ The rules above are the specification. These rows do not follow it yet:
 - **Model** (`model`): No resume path takes a model flag yet; only a morph changes it.
 - **Reasoning effort** (`effort`): No resume path takes an effort flag yet; only a morph changes it.
 - **Model proxy** (`model_proxy`): Reincarnate and clone drop the model proxy. A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
-- **Roles** (`roles`): A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
+- **Roles** (`roles`): A re-applied spawn copy changes the roles' grants but not yet the role label or brief; the agent keeps those from its first spawn.
 - **Group environment** (`group_env`): With agentd down, watch mode and conv resume reuse the stored group environment, and say so. A clone that joins another group takes that group's environment, unless it keeps its source's.
 - **Group remote-control policy** (`group_remote_control`): Watch mode and conv resume keep the remote-control state stored at the last launch while agentd is not running, and so does a clone that joins another group for its sandbox.
 - **Group and workspace sandbox-profile assignment** (`group_sandbox_assignment`): With agentd down, watch mode and conv resume reuse the stored sandbox policy, and say so.

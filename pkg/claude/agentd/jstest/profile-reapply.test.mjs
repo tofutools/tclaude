@@ -10,7 +10,7 @@ const PREVIEW = {
       { key: 'model', label: 'Model', from: '"opus"', to: '"sonnet"', status: 'kept (fixed)' },
       { key: 'auto_memory', label: 'Auto memory', from: 'false', to: 'true', status: 'changes' },
     ],
-    grants: [{ slug: 'human.notify', from: '', to: 'grant' }],
+    grants: [{ slug: 'human.notify', from: '', to: 'grant', status: 'added' }],
   }],
   apply: { enabled: false, reason: 'Takes effect once relaunch reads the spawn copy (tcl-an26ed).' },
   grants_note: 'Grants: shown only, not applied.',
@@ -43,7 +43,7 @@ test('profile re-apply: review shows the per-agent diff with Apply disabled and 
   assert.match(text, /1 of 1 running agents from this profile selected/);
   assert.match(text, /Auto memory: false → true/);
   assert.match(text, /kept \(fixed\)/);
-  assert.match(text, /human\.notify: unset → grant/);
+  assert.match(text, /human\.notify: unset → grant \(added\)/);
   assert.match(text, /Grants: shown only, not applied\./);
   assert.match(text, /Usage profile links: not reapplied yet\./);
   const apply = button(view.container, 'Apply to selected');

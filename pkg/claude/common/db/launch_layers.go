@@ -566,9 +566,15 @@ type SpawnCopyOutside struct {
 	UsageLinkedSet    bool
 	UsageLinkedIDs    []int64
 	UsageLinkedSource string
+	// BirthPermissions re-applies the profile's grants to the rows it wrote
+	// at birth (reapplyBirthPermissionsTx). nil leaves the grants alone.
+	BirthPermissions *BirthPermissionReapply
 }
 
 func applySpawnCopyOutsideTx(tx *sql.Tx, agentID string, o SpawnCopyOutside) error {
+	if err := reapplyBirthPermissionsTx(tx, agentID, o.BirthPermissions); err != nil {
+		return err
+	}
 	if o.IncludeGroupContext != nil {
 		if _, err := tx.Exec(`UPDATE agent_startup_snapshots SET include_group_ctx = ? WHERE agent_id = ?`,
 			boolToInt(*o.IncludeGroupContext), agentID); err != nil {
