@@ -57,7 +57,7 @@ func sandboxProfilesCmd() *cobra.Command {
 			sandboxProfilesLsCmd(), sandboxProfilesShowCmd(), sandboxProfilesCreateCmd(),
 			sandboxProfilesEditCmd(), sandboxProfilesRmCmd(), sandboxProfilesDefaultCmd(),
 			sandboxProfilesGroupCmd(), sandboxProfilesExportCmd(), sandboxProfilesImportCmd(),
-			sandboxProfilesDraftCmd(), sandboxProfilesPlanCmd(),
+			sandboxProfilesDraftCmd(), sandboxProfilesPlanCmd(), sandboxProfilesHarnessConfigRepairsCmd(),
 		},
 	}.ToCobra()
 }
@@ -1045,6 +1045,78 @@ func writeSandboxProfileJSON(w, stderr io.Writer, value any) int {
 	if err := enc.Encode(value); err != nil {
 		fmt.Fprintf(stderr, "Error: encoding sandbox-profile JSON: %v\n", err)
 		return rcIOFailure
+	}
+	return rcOK
+}
+
+type harnessConfigRepairsParams struct {
+	JSON bool `long:"json" help:"Emit the stable JSON object instead of a table"`
+}
+
+type harnessConfigRepairJSON struct {
+	AgentID   string `json:"agent_id"`
+	ConvID    string `json:"conv_id"`
+	Title     string `json:"title,omitempty"`
+	Requested string `json:"requested"`
+	Current   string `json:"current"`
+	Source    string `json:"source,omitempty"`
+	Change    string `json:"change"`
+	Online    bool   `json:"online"`
+}
+
+type harnessConfigRepairsJSON struct {
+	Agents []harnessConfigRepairJSON `json:"agents"`
+	Limits []string                  `json:"limits"`
+}
+
+func sandboxProfilesHarnessConfigRepairsCmd() *cobra.Command {
+	return boa.CmdT[harnessConfigRepairsParams]{
+		Use:   "harness-config-repairs",
+		Short: "List agents whose explicit harness_config was lost on a relaunch",
+		Long: "Read-only. Lists agents whose recorded launch no longer carries the --harness-config posture " +
+			"their spawn request asked for, a loss relaunches made before #3817. Restore them from the dashboard " +
+			"(Diagnostics › Doctor). Requires sandbox-profiles.manage.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *harnessConfigRepairsParams, _ *cobra.Command, _ []string) {
+			os.Exit(runHarnessConfigRepairs(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runHarnessConfigRepairs(p *harnessConfigRepairsParams, stdout, stderr io.Writer) int {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	var out harnessConfigRepairsJSON
+	if err := DaemonRequest(http.MethodGet, "/v1/harness-config-repairs", nil, &out, DaemonOpts{}); err != nil {
+		return printSandboxProfileDaemonError(stderr, err)
+	}
+	if p.JSON {
+		return writeSandboxProfileJSON(stdout, stderr, out)
+	}
+	if len(out.Agents) == 0 {
+		fmt.Fprintln(stdout, "(no agent lost its harness_config posture)")
+	} else {
+		fmt.Fprintf(stdout, "%-28s  %-9s  %-9s  %-18s  %-9s  %s\n", "AGENT", "ASKED", "RUNS", "FROM", "CHANGE", "ONLINE")
+		for _, a := range out.Agents {
+			name := a.Title
+			if name == "" {
+				name = a.AgentID
+			}
+			online := "no"
+			if a.Online {
+				online = "yes"
+			}
+			source := a.Source
+			if source == "" {
+				source = "-"
+			}
+			fmt.Fprintf(stdout, "%-28s  %-9s  %-9s  %-18s  %-9s  %s\n",
+				truncate(name, 28), a.Requested, a.Current, truncate(source, 18), a.Change, online)
+		}
+	}
+	for _, limit := range out.Limits {
+		fmt.Fprintln(stdout, "note: "+limit)
 	}
 	return rcOK
 }
