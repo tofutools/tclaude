@@ -81,20 +81,20 @@ func cloneSandboxForGroup(sourceConv string, launch *sandboxpolicy.Snapshot, gro
 	if !binding.IsZero() {
 		rebound.GroupBinding = &binding
 	}
-	current := &rebound
-	if rebound.ResolutionGroupID != launch.ResolutionGroupID && !rebound.ProfilesOmitted {
-		resolved, err := resolveSandboxChainFrom(sourceConv, &rebound)
-		if err != nil {
-			return nil, fresh, err
-		}
-		// The source's explicit --harness-config is part of what it was
-		// launched with; a new group's chain does not replace it (tcl-bmhpir).
-		reapplied, err := reapplyExplicitHarnessConfig(sourceConv, *resolved, launch)
-		if err != nil {
-			return nil, fresh, err
-		}
-		current, fresh = &reapplied, true
+	if rebound.ResolutionGroupID == launch.ResolutionGroupID || rebound.ProfilesOmitted {
+		refreshed, err := refreshCloneLaunchEnvironment(sourceConv, &rebound, &rebound)
+		return refreshed, fresh, err
 	}
-	refreshed, err := refreshCloneLaunchEnvironment(sourceConv, current, &rebound)
-	return refreshed, fresh, err
+	resolved, err := resolveSandboxChainFrom(sourceConv, &rebound)
+	if err != nil {
+		return nil, fresh, err
+	}
+	// The new group's chain, under what every relaunch lays over a chain:
+	// the source's explicit --harness-config is part of what it was launched
+	// with, and a new group's chain does not replace it (tcl-bmhpir).
+	composed, err := composeRelaunchSandbox(sourceConv, *resolved, &rebound, false)
+	if err != nil {
+		return nil, fresh, err
+	}
+	return &composed, true, nil
 }

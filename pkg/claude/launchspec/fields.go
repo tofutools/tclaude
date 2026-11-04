@@ -246,7 +246,7 @@ var Fields = []Field{
 		RequestFields: []string{"HarnessConfig"},
 		Why: "Default chosen for least surprise, not maximum security: an explicit posture stays like any explicit flag. " +
 			"Tighten-only, where a narrower sandbox-profile posture always applies, is the security option.",
-		Gap: "Watch mode, conv resume, a clone that reuses its source's stored sandbox, and a resume that falls back to the stored policy keep the stored posture; the setting applies on the agent's next ordinary resume."},
+		Gap: "Watch mode and conv resume keep the stored posture, as does a resume that falls back to the stored policy when the profiles cannot be read at all; the setting applies on the agent's next ordinary resume."},
 	{Key: "usage_assignment", Label: "Group and workspace usage-profile assignment", Layer: LayerLive,
 		Why: "Usage rules are evaluated live against the current assignments."},
 	{Key: "usage_profile_contents", Label: "Usage profile rules", Layer: LayerReferenced,

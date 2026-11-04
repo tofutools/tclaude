@@ -191,18 +191,10 @@ func spawnCopyPostureFailure(spawnerConv, harnessName, convID string, stored, ne
 	if err != nil {
 		return &spawnFailure{http.StatusInternalServerError, "io", "load the agent's sandbox policy: " + err.Error()}
 	}
-	if fail := copilotAPILoopbackFailure(flag(next.CopilotAPI), snapshot, implementation); fail != nil {
-		return fail
-	}
-	// The sandbox-profile gates a resume runs (executeSpawn), so a posture the
-	// agent's sandbox profile cannot carry is refused now, with the reason,
-	// rather than at its next wake.
-	if fail := sandboxProfileCapabilityFailure(harnessName, mode, snapshot, implementation); fail != nil {
-		return fail
-	}
-	_, fail := planSandboxProfileAccessForLaunch(harnessName, mode, snapshot, implementation,
-		session.ModelTransportLaunchContext{Model: cfg.Model, ModelProxy: cfg.ModelProxy, Cwd: cfg.Cwd}, false)
-	return fail
+	// The gates a resume runs, so a posture the agent's sandbox profile cannot
+	// carry is refused now, with the reason, rather than at its next wake.
+	return relaunchSandboxGateFailure(harnessName, mode, implementation, snapshot, flag(next.CopilotAPI),
+		session.ModelTransportLaunchContext{Model: cfg.Model, ModelProxy: cfg.ModelProxy, Cwd: cfg.Cwd})
 }
 
 
