@@ -32,6 +32,12 @@ func TestSpawnHarnessConfigSurvivesRelaunch(t *testing.T) {
 		{name: "clone", run: func(f *testharness.Flow, spawn testharness.SpawnResp) string {
 			return f.AsHuman().CloneFresh(spawn.ConvID).NewConv
 		}},
+		// Into another group, whose chain the clone resolves afresh.
+		{name: "clone-into-group", run: func(f *testharness.Flow, spawn testharness.SpawnResp) string {
+			clone := f.AsHuman().CloneWith(spawn.ConvID, map[string]any{"no_copy_conv": true, "group": "elsewhere"})
+			require.Equalf(f.T, http.StatusOK, clone.Code, "clone body=%s", clone.Raw)
+			return clone.NewConv
+		}},
 	}
 	postures := []struct {
 		name     string
@@ -58,6 +64,7 @@ func TestSpawnHarnessConfigSurvivesRelaunch(t *testing.T) {
 				t.Run(h.name+"/"+posture.name+"/"+relaunch.name, func(t *testing.T) {
 					f := newFlow(t)
 					f.HaveGroup("crew")
+					f.HaveGroup("elsewhere")
 					_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "chain", HarnessConfig: posture.chain})
 					require.NoError(t, err)
 					require.NoError(t, db.SetGlobalSandboxProfile("chain"))
