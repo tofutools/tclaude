@@ -51,7 +51,7 @@ func applySpawnCopy(agentID string, spawnCopy db.AgentSpawnCopy) *spawnFailure {
 	lock := resumeLaunchLock(convID)
 	lock.Lock()
 	defer lock.Unlock()
-	return applySpawnCopyLocked(agentID, convID, spawnCopy, "", nil)
+	return applySpawnCopyLocked(agentID, convID, spawnCopy, "", nil, nil)
 }
 
 // applySpawnCopyLocked is applySpawnCopy for a caller already holding the
@@ -62,7 +62,9 @@ func applySpawnCopy(agentID string, spawnCopy db.AgentSpawnCopy) *spawnFailure {
 // posture it could not spawn a child with. kept, when non-nil, receives the
 // fields the copy changes that could not be written outside the relaunch
 // profile; their old values stay in the copy written.
-func applySpawnCopyLocked(agentID, convID string, spawnCopy db.AgentSpawnCopy, reapplierConv string, kept *[]spawnCopyKept) *spawnFailure {
+// grants, when set, re-applies the profile's birth grants in the same write
+// (profile_reapply_grants.go).
+func applySpawnCopyLocked(agentID, convID string, spawnCopy db.AgentSpawnCopy, reapplierConv string, kept *[]spawnCopyKept, grants *db.BirthPermissionReapply) *spawnFailure {
 	// A reincarnation or morph may have moved the agent to a new
 	// conversation while this waited for the lock; that one is not locked.
 	if err := requireCurrentAgentGeneration(agentID, convID); err != nil {
@@ -166,6 +168,7 @@ func applySpawnCopyLocked(agentID, convID string, spawnCopy db.AgentSpawnCopy, r
 			*kept = keptFields
 		}
 	}
+	outside.BirthPermissions = grants
 	if err := db.ApplyAgentSpawnCopy(agentID, convID, storedRaw, *next, spawnCopy, outside); err != nil {
 		if errors.Is(err, db.ErrRelaunchProfileChanged) || errors.Is(err, db.ErrAgentLaunchRecordChanged) {
 			return &spawnFailure{http.StatusConflict, "changed", err.Error()}

@@ -492,24 +492,40 @@ func isTrue(b *bool) bool { return b != nil && *b }
 // profileRoleGrants is the grants a profile's named roles confer on its
 // spawns, keyed by slug. A role the library no longer has confers nothing.
 func profileRoleGrants(prof *db.SpawnProfile) (map[string]db.PermissionOverride, error) {
+	grants, _, err := profileRoleGrantsBy(prof, false)
+	return grants, err
+}
+
+// profileRoleGrantsBy is profileRoleGrants with, per slug, the first of the
+// profile's roles that grants it, as a spawn records it (birth_source.Role).
+// strict refuses two roles granting one slug with different scopes, as a
+// spawn does (role_scope_conflict).
+func profileRoleGrantsBy(prof *db.SpawnProfile, strict bool) (map[string]db.PermissionOverride, map[string]string, error) {
 	refs := prof.RoleRefs
 	if len(refs) == 0 && strings.TrimSpace(prof.RoleRef) != "" {
 		refs = []string{prof.RoleRef}
 	}
-	out := map[string]db.PermissionOverride{}
+	out, roleOf := map[string]db.PermissionOverride{}, map[string]string{}
 	for _, ref := range cleanRoleRefs(refs) {
 		role, err := db.GetRole(ref)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if role == nil {
 			continue
 		}
 		for _, grant := range role.Permissions {
-			out[grant.Slug] = db.PermissionOverride{Effect: db.PermEffectGrant, Scope: grant.Scope}
+			candidate := db.PermissionOverride{Effect: db.PermEffectGrant, Scope: grant.Scope}
+			if existing, ok := out[grant.Slug]; strict && ok && existing != candidate {
+				return nil, nil, fmt.Errorf("roles %q and %q grant %s with different scopes", roleOf[grant.Slug], role.Name, grant.Slug)
+			}
+			out[grant.Slug] = candidate
+			if _, seen := roleOf[grant.Slug]; !seen {
+				roleOf[grant.Slug] = role.Name
+			}
 		}
 	}
-	return out, nil
+	return out, roleOf, nil
 }
 
 // defaultLaunchTiers is the tier stack beneath a named profile: the group's

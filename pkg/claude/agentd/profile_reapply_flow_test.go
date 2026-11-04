@@ -30,9 +30,10 @@ type reapplyPreview struct {
 			Status string `json:"status"`
 		} `json:"fields"`
 		Grants []struct {
-			Slug string `json:"slug"`
-			From string `json:"from"`
-			To   string `json:"to"`
+			Slug   string `json:"slug"`
+			From   string `json:"from"`
+			To     string `json:"to"`
+			Status string `json:"status"`
 		} `json:"grants"`
 	} `json:"agents"`
 	Apply struct {
@@ -87,7 +88,7 @@ func TestProfileReapply_PreviewShowsPerAgentDiff(t *testing.T) {
 	preview := profileReapplyPreview(t, f, "worker")
 	assert.True(t, preview.Apply.Enabled, "Apply is offered (tcl-hxuwnc)")
 	assert.Contains(t, preview.Apply.Reason, "a busy agent is skipped")
-	assert.Contains(t, preview.GrantsNote, "shown only, not re-applied yet")
+	assert.Contains(t, preview.GrantsNote, "only the grants the profile gave at spawn")
 	require.Len(t, preview.Notes, 1)
 	assert.Contains(t, preview.Notes[0], "Usage profile links: re-applied from the profile's current links")
 	require.Len(t, preview.Agents, 2)
@@ -104,6 +105,8 @@ func TestProfileReapply_PreviewShowsPerAgentDiff(t *testing.T) {
 		assert.Equal(t, "human.notify", a.Grants[0].Slug)
 		assert.Equal(t, "", a.Grants[0].From)
 		assert.Equal(t, "grant", a.Grants[0].To)
+		assert.Equal(t, "not applied (not in effect at spawn)", a.Grants[0].Status,
+			"the profile had no overrides at the spawn, so a re-apply does not start them now")
 	}
 	assert.NotContains(t, statuses, retired.AgentID)
 	assert.Equal(t, map[string]string{

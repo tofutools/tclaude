@@ -38,9 +38,11 @@ const (
 )
 
 // reapplyKeepsOld reports whether a profile JSON key keeps the agent's copied
-// value on re-apply: a grant input, or a field relaunch does not re-apply yet.
+// value on re-apply: is_owner, which has no birth record to re-apply by, or a
+// field relaunch does not re-apply yet. Permission overrides and roles are
+// re-applied (profile_reapply_grants.go), so the copy carries the new ones.
 func reapplyKeepsOld(key string) bool {
-	if profileReapplyGrantKeys[key] {
+	if key == "is_owner" {
 		return true
 	}
 	field, ok := launchFieldForProfileField(spawnProfileJSONGoNames[key])
@@ -149,7 +151,7 @@ func handleSpawnProfileReapply(w http.ResponseWriter, r *http.Request) {
 	}
 	// Built under the lock, so a concurrent re-apply of another tier cannot
 	// be overwritten by a copy read before it committed.
-	next, fail := reapplyCopyFor(r, caller, agentID, prof)
+	next, grants, fail := reapplyCopyFor(r, caller, agentID, prof)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -157,10 +159,11 @@ func handleSpawnProfileReapply(w http.ResponseWriter, r *http.Request) {
 	res := profileReapplyResult{AgentID: agentID, ConvID: convID}
 	var kept []spawnCopyKept
 	if pickAliveSession(convID) == nil {
-		if fail := applySpawnCopyLocked(agentID, convID, next, caller, &kept); fail != nil {
+		if fail := applySpawnCopyLocked(agentID, convID, next, caller, &kept, grants); fail != nil {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
+		auditReappliedGrants(r, agentID, convID, prof.Name, grants)
 		res.Outcome = reapplyApplied
 		res.Detail = "takes effect on the agent's next resume, reincarnation or clone" + keptNote(kept)
 		setAuditDetail(r, res.Outcome)
@@ -175,8 +178,11 @@ func handleSpawnProfileReapply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, applyFail, restartFail := restartIdleAgentLocked(agentID, convID, func() *spawnFailure {
-		return applySpawnCopyLocked(agentID, convID, next, caller, &kept)
+		return applySpawnCopyLocked(agentID, convID, next, caller, &kept, grants)
 	})
+	if applyFail == nil && (restartFail == nil || restartFail.Kind == "restart_failed") {
+		auditReappliedGrants(r, agentID, convID, prof.Name, grants)
+	}
 	switch {
 	case restartFail != nil && applyFail == nil && restartFail.Kind != "restart_failed":
 		// Nothing was written: it was not stopped (it got busy, or cannot be
@@ -218,16 +224,17 @@ func handleSpawnProfileReapply(w http.ResponseWriter, r *http.Request) {
 // the tier holding prof replaced by reappliedTier. The conferral gates a
 // profile edit runs are re-run against the caller, for the grants the new
 // copy would add over the agent's copy.
-func reapplyCopyFor(r *http.Request, caller, agentID string, prof *db.SpawnProfile) (db.AgentSpawnCopy, *spawnFailure) {
+func reapplyCopyFor(r *http.Request, caller, agentID string, prof *db.SpawnProfile) (db.AgentSpawnCopy, *db.BirthPermissionReapply, *spawnFailure) {
 	layers, err := db.AgentLaunchLayersFor(agentID)
 	if err != nil {
-		return db.AgentSpawnCopy{}, &spawnFailure{http.StatusInternalServerError, "io", "load launch layers: " + err.Error()}
+		return db.AgentSpawnCopy{}, nil, &spawnFailure{http.StatusInternalServerError, "io", "load launch layers: " + err.Error()}
 	}
 	if layers == nil || layers.SpawnCopy == nil {
-		return db.AgentSpawnCopy{}, &spawnFailure{http.StatusConflict, "no_launch_layers",
+		return db.AgentSpawnCopy{}, nil, &spawnFailure{http.StatusConflict, "no_launch_layers",
 			"this agent was spawned before launch layers were recorded, so its explicit values are not known; respawn it to use a new spawn profile"}
 	}
 	next := db.AgentSpawnCopy{CopiedAt: time.Now().UTC(), Tiers: append([]db.SpawnCopyTier(nil), layers.SpawnCopy.Tiers...)}
+	var plan *db.BirthPermissionReapply
 	found := false
 	for i, tier := range next.Tiers {
 		if tier.ProfileID != prof.ID {
@@ -236,27 +243,36 @@ func reapplyCopyFor(r *http.Request, caller, agentID string, prof *db.SpawnProfi
 		found = true
 		fresh, err := reappliedTier(tier, prof)
 		if err != nil {
-			return db.AgentSpawnCopy{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+			return db.AgentSpawnCopy{}, nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 		}
 		before, err := copiedGrantInputs(tier.Profile)
 		if err != nil {
-			return db.AgentSpawnCopy{}, &spawnFailure{http.StatusConflict, "invalid_spawn_copy", "this agent's copy of the profile could not be read"}
+			return db.AgentSpawnCopy{}, nil, &spawnFailure{http.StatusConflict, "invalid_spawn_copy", "this agent's copy of the profile could not be read"}
 		}
 		after, err := copiedGrantInputs(fresh.Profile)
 		if err != nil {
-			return db.AgentSpawnCopy{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+			return db.AgentSpawnCopy{}, nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 		}
-		after.Name = prof.Name
-		if fail := profileConferralFailure(r, caller, before, after, reapplyGroupName(agentID), "re-applying it to "+agentID); fail != nil {
-			return db.AgentSpawnCopy{}, fail
+		before.Name, after.Name = prof.Name, prof.Name
+		parts, err := readReapplyGrantParts(agentID, prof.ID)
+		if err != nil {
+			return db.AgentSpawnCopy{}, nil, &spawnFailure{http.StatusInternalServerError, "io", "read birth grants: " + err.Error()}
+		}
+		// Conferral is judged over the parts a re-apply can write, so a grant
+		// in a part that never took effect is not taken as already given.
+		if fail := profileConferralFailure(r, caller, parts.inEffect(before), parts.inEffect(after), reapplyGroupName(agentID), "re-applying it to "+agentID); fail != nil {
+			return db.AgentSpawnCopy{}, nil, fail
+		}
+		if plan, err = reapplyGrantPlan(prof.ID, parts, before, after, reapplyGrantsGranter(caller, prof.Name)); err != nil {
+			return db.AgentSpawnCopy{}, nil, &spawnFailure{http.StatusConflict, "invalid_profile", "the profile's grants cannot be re-applied: " + err.Error()}
 		}
 		next.Tiers[i] = fresh
 	}
 	if !found {
-		return db.AgentSpawnCopy{}, &spawnFailure{http.StatusConflict, "no_copy",
+		return db.AgentSpawnCopy{}, nil, &spawnFailure{http.StatusConflict, "no_copy",
 			fmt.Sprintf("agent %s holds no copy of profile %q", agentID, prof.Name)}
 	}
-	return next, nil
+	return next, plan, nil
 }
 
 // reapplyGroupName is the group the agent was spawned into, which bounds a

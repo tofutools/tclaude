@@ -9,7 +9,8 @@
 // Apply re-applies to the selected agents one at a time
 // (POST /api/spawn-profiles/{name}/reapply): a stopped agent takes the copy on
 // its next launch, an idle one is stopped, updated and resumed, a busy one is
-// skipped (tcl-hxuwnc). Grant changes are shown only.
+// skipped (tcl-hxuwnc). Each grant change shows what the re-apply does to the
+// agent's row (tcl-fg2kqk).
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import htm from 'htm';
@@ -39,7 +40,7 @@ function FieldChanges({ fields }) {
 function GrantChanges({ grants }) {
   if (!grants?.length) return html`<span class="ui-hint">none</span>`;
   return html`<ul class="profile-reapply-changes">${grants.map((g) => html`<li key=${g.slug}>
-    <code>${g.slug}</code>: ${shown(g.from)} → ${shown(g.to)}
+    <code>${g.slug}</code>: ${shown(g.from)} → ${shown(g.to)}${g.status ? html` <span class="ui-hint">(${g.status})</span>` : ''}
   </li>`)}</ul>`;
 }
 
@@ -48,7 +49,7 @@ export const reapplyColumns = Object.freeze([
   { key: 'tier', label: 'Copied as', render: (r) => (r.copied_at ? `${r.tier}, ${r.copied_at}` : r.tier) },
   { key: 'online', label: 'Running', render: (r) => (r.online ? 'yes' : 'no') },
   { key: 'fields', label: 'Re-apply would', render: (r) => html`<${FieldChanges} fields=${r.fields} />` },
-  { key: 'grants', label: 'Grants (shown only)', render: (r) => (r.grants_error ? html`<span class="ui-hint">${r.grants_error}</span>` : html`<${GrantChanges} grants=${r.grants} />`) },
+  { key: 'grants', label: 'Grants', render: (r) => (r.grants_error ? html`<span class="ui-hint">${r.grants_error}</span>` : html`<${GrantChanges} grants=${r.grants} />`) },
 ]);
 
 const rowKey = (r) => r.agent_id;
