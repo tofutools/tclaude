@@ -119,3 +119,40 @@ func TestProfileReapplyApply_Refusals(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, code, raw)
 	assert.Contains(t, raw, "agent_retired")
 }
+
+// An agent caller re-applies only what it could do by morphing the target:
+// profiles.manage alone is not enough, it needs agent.morph over the target,
+// and the profile must not be operator-only. A disabled profile is refused
+// for everyone.
+func TestProfileReapplyApply_AgentCallerGates(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{"name": "worker", "harness": "claude"}).Code)
+	spawn := spawnStopped(t, f, "alpha", map[string]any{"name": "a", "profile": "worker"})
+	const caller = "reap-1111-2222-3333-6666"
+	f.HaveMember("alpha", caller)
+	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermProfilesManage, "test"))
+	reapply := func() (int, string) {
+		rec := agentReq(t, f, caller, http.MethodPost, "/v1/spawn-profiles/worker/reapply", map[string]any{"agent_id": spawn.AgentID})
+		return rec.Code, rec.Body.String()
+	}
+	code, raw := reapply()
+	assert.Equal(t, http.StatusForbidden, code, "profiles.manage alone cannot touch another agent: %s", raw)
+
+	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermAgentMorph, "test"))
+	code, raw = reapply()
+	require.Equal(t, http.StatusOK, code, raw)
+
+	prof, err := db.GetSpawnProfile("worker")
+	require.NoError(t, err)
+	prof.OperatorOnly = true
+	require.NoError(t, db.UpdateSpawnProfile(prof))
+	code, raw = reapply()
+	assert.Equal(t, http.StatusForbidden, code, raw)
+	assert.Contains(t, raw, "operator")
+
+	prof.OperatorOnly, prof.Disabled = false, true
+	require.NoError(t, db.UpdateSpawnProfile(prof))
+	code, _, raw = postReapply(t, f, "worker", spawn.AgentID)
+	assert.NotEqual(t, http.StatusOK, code, "a disabled profile is refused, even for the operator: %s", raw)
+}

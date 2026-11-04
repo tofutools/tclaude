@@ -24,7 +24,9 @@ import (
 // re-apply yet (profileReapplyNotYet) and of the grant inputs, so the stored
 // copy says what the agent really runs with and the preview keeps listing
 // those differences as not reapplied. The posture gates run inside
-// applySpawnCopy; the conferral gates run here, against the re-applier.
+// applySpawnCopy, against the agent's spawner and, for an agent caller, the
+// re-applier too; the conferral gates run here, against the re-applier. They
+// pass trivially while grant inputs are kept (tcl-fg2kqk re-applies grants).
 
 // Outcomes of one re-apply.
 const (
@@ -123,9 +125,16 @@ func handleSpawnProfileReapply(w http.ResponseWriter, r *http.Request) {
 	convID := a.CurrentConvID
 	setAuditTargetConv(r, convID)
 	setAuditTargetLabel(r, fmt.Sprintf("re-apply profile %s to %s", prof.Name, auditConvLabel(convID)))
-
-	next, fail := reapplyCopyFor(r, caller, agentID, prof)
-	if fail != nil {
+	// An agent caller acts on another agent's launch settings and may stop
+	// and resume it, which is what morph does: it needs agent.morph over the
+	// target, and the profile must be one it could spawn with (not disabled,
+	// not operator-only). A disabled profile is refused for everyone.
+	if caller != "" {
+		if _, ok := requireCrossAgentPermission(w, r, PermAgentMorph, convID); !ok {
+			return
+		}
+	}
+	if fail := profileSpawnFailure(prof, caller); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
@@ -137,9 +146,16 @@ func handleSpawnProfileReapply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "stale_generation", err.Error()+"; apply it again")
 		return
 	}
+	// Built under the lock, so a concurrent re-apply of another tier cannot
+	// be overwritten by a copy read before it committed.
+	next, fail := reapplyCopyFor(r, caller, agentID, prof)
+	if fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
 	res := profileReapplyResult{AgentID: agentID, ConvID: convID}
 	if pickAliveSession(convID) == nil {
-		if fail := applySpawnCopyLocked(agentID, convID, next); fail != nil {
+		if fail := applySpawnCopyLocked(agentID, convID, next, caller); fail != nil {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
@@ -157,11 +173,13 @@ func handleSpawnProfileReapply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, applyFail, restartFail := restartIdleAgentLocked(agentID, convID, func() *spawnFailure {
-		return applySpawnCopyLocked(agentID, convID, next)
+		return applySpawnCopyLocked(agentID, convID, next, caller)
 	})
 	switch {
 	case restartFail != nil && applyFail == nil && restartFail.Kind != "restart_failed":
-		// Not stopped (it got busy, or cannot be relaunched): nothing written.
+		// Nothing was written: it was not stopped (it got busy, or cannot be
+		// relaunched), or its generation changed while stopping, which the
+		// restart's message says.
 		if restartFail.Kind == "agent_not_idle" {
 			res.Outcome, res.Detail = reapplyBusySkipped, "busy, skipped: "+restartFail.Msg
 			setAuditDetail(r, res.Outcome)

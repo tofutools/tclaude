@@ -70,7 +70,10 @@ running agent refused that way is resumed with its old settings. When the
 profile is a group or global default, re-applying it reaches every agent
 spawned under that default, and the preview says so.
 
-The preview and Apply need `profiles.manage`. They are also available as
+The preview and Apply need `profiles.manage`. An agent applying it also needs
+`agent.morph` over each agent it re-applies to, cannot use an operator-only
+profile, and cannot give an agent a launch posture it could not give a child
+it spawned itself. A disabled profile cannot be re-applied. They are also available as
 `GET /v1/spawn-profiles/{name}/running-agents` and
 `POST /v1/spawn-profiles/{name}/reapply` with `{"agent_id": "..."}`; each apply
 is its own audit entry. Retired agents are not listed.
