@@ -32,7 +32,7 @@ import (
 // writing one.
 //
 // Like every other harness's editor, it is reached only through
-// EnsureDirTrusted on an explicit opt-in, and it pre-answers the trust
+// EnsureDirTrustedForLaunch on an explicit opt-in, and it pre-answers the trust
 // question for exactly one directory. It never overrides an operator's
 // explicit DO_NOT_TRUST for that same directory.
 

@@ -373,7 +373,7 @@ type Harness struct {
 	//     three — it blocks before the CLI contacts the model provider at all —
 	//     and its store is the only one that MOVES with the launch environment.
 	//
-	// EnsureDirTrusted dispatches on that shape; this flag is only the "is there
+	// EnsureDirTrustedForLaunch dispatches on that shape; this flag is only the "is there
 	// anything to dispatch to" gate that ResolveTrustDir, the spawn dialog and
 	// the profile editor read.
 	//

@@ -52,7 +52,7 @@ flags beyond the basics:
 - `-d/--detached` starts the session without attaching.
 - `--trust-dir` pre-trusts the launch directory so a detached pane doesn't
   freeze on the harness's trust-folder dialog. It edits that harness's own
-  config (Claude Code's `~/.claude.json`, Codex's `~/.codex/config.toml`,
+  config (Claude Code's `~/.claude/.claude.json`, Codex's `~/.codex/config.toml`,
   Copilot's trusted-folders list, Gemini's `~/.gemini/trustedFolders.json`,
   pi's `~/.pi/agent/trust.json`), so it is opt-in. Applies to Claude Code,
   Codex, Copilot, Gemini CLI, and pi.

@@ -688,7 +688,7 @@ func seedScribeDirTrust(harnessName, dir string) {
 			slog.Warn("scribe: pre-trust codex workdir failed", "dir", dir, "error", err)
 		}
 	case harness.DefaultName: // "claude"
-		// Through the launch-aware path, not EnsureClaudeDirTrusted: every
+		// Through the launch-aware path, not the top-level ~/.claude.json: every
 		// tclaude-launched Claude pane reads its config from the state root
 		// (session.ApplyClaudeConfigDirEnv), so the trust entry must land in
 		// that relocated file — the ambient ~/.claude.json is one the scribe

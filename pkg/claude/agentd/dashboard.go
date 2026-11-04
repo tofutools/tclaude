@@ -1475,7 +1475,7 @@ type dashboardHarness struct {
 	// that have the dialog both surface the checkbox.
 	CanDirTrust bool `json:"can_dir_trust"`
 	// DirTrustStore is the config file the trust-dir opt-in would edit
-	// (~/.codex/config.toml, ~/.claude.json), so the checkbox can name the side
+	// (~/.codex/config.toml, ~/.claude/.claude.json), so the checkbox can name the side
 	// effect the operator is consenting to. "" when CanDirTrust is false.
 	DirTrustStore string `json:"dir_trust_store,omitempty"`
 	// CanAskTimeout reports whether the harness has a launch AskUserQuestion

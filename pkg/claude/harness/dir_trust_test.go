@@ -77,7 +77,7 @@ func TestDirTrustStore_NamesEachHarnessStore(t *testing.T) {
 	// edit of a file tclaude is not about to touch.
 	claude, err := Resolve(DefaultName)
 	require.NoError(t, err)
-	assert.Equal(t, "~/.claude.json", DirTrustStore(claude))
+	assert.Equal(t, "~/.claude/.claude.json", DirTrustStore(claude))
 
 	codex, err := Resolve(CodexName)
 	require.NoError(t, err)
@@ -113,8 +113,8 @@ func TestEnsureDirTrusted_NoOpForHarnessWithoutTrustDialog(t *testing.T) {
 	// file for a harness that has none. Nil is the same case.
 	h, err := Resolve(OpenCodeName)
 	require.NoError(t, err)
-	assert.NoError(t, EnsureDirTrusted(h, "/some/abs/dir"))
-	assert.NoError(t, EnsureDirTrusted(nil, "/some/abs/dir"))
+	assert.NoError(t, EnsureDirTrustedForLaunch(h, "/some/abs/dir", nil, ""))
+	assert.NoError(t, EnsureDirTrustedForLaunch(nil, "/some/abs/dir", nil, ""))
 }
 
 func TestEnsureDirTrusted_RejectsRelativeDirForBothHarnesses(t *testing.T) {
@@ -125,11 +125,22 @@ func TestEnsureDirTrusted_RejectsRelativeDirForBothHarnesses(t *testing.T) {
 	for _, name := range []string{DefaultName, CodexName, CopilotName} {
 		h, err := Resolve(name)
 		require.NoError(t, err)
-		assert.Error(t, EnsureDirTrusted(h, "relative/dir"), "%s must reject a relative dir", name)
+		assert.Error(t, EnsureDirTrustedForLaunch(h, "relative/dir", claudeConfigDirEnv(t.TempDir()), ""), "%s must reject a relative dir", name)
 	}
 }
 
-// EnsureDirTrusted dispatches to the COPILOT editor, driven against a temp HOME
+// claudeConfigDirEnv is a launch getenv carrying only CLAUDE_CONFIG_DIR, the
+// way every tclaude Claude launch carries it (session.ApplyClaudeConfigDirEnv).
+func claudeConfigDirEnv(dir string) func(string) string {
+	return func(name string) string {
+		if name == "CLAUDE_CONFIG_DIR" {
+			return dir
+		}
+		return ""
+	}
+}
+
+// EnsureDirTrustedForLaunch dispatches to the COPILOT editor, driven against a temp HOME
 // so no real Copilot config is touched.
 func TestEnsureDirTrusted_DispatchesToCopilotEditor(t *testing.T) {
 	home := t.TempDir()
@@ -139,7 +150,7 @@ func TestEnsureDirTrusted_DispatchesToCopilotEditor(t *testing.T) {
 
 	h, err := Resolve(CopilotName)
 	require.NoError(t, err)
-	require.NoError(t, EnsureDirTrusted(h, dir))
+	require.NoError(t, EnsureDirTrustedForLaunch(h, dir, nil, ""))
 
 	data, err := os.ReadFile(filepath.Join(home, ".copilot", CopilotConfigFileName))
 	require.NoError(t, err, "the copilot store was created")
@@ -176,28 +187,32 @@ func TestEnsureDirTrustedForLaunch_UsesTheLaunchCopilotHome(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(relocated, CopilotConfigFileName))
 	assert.NoError(t, statErr, "the launch's COPILOT_HOME must carry the entry")
 
-	// Claude Code's store is keyed on the operator's home, not on the launch
-	// environment, so the same call writes exactly where it always did.
+	// Claude Code's store is the launch's CLAUDE_CONFIG_DIR. A launch
+	// environment without it is refused, never resolved to the top-level
+	// ~/.claude.json.
 	claude, err := Resolve(DefaultName)
 	require.NoError(t, err)
-	require.NoError(t, EnsureDirTrustedForLaunch(claude, "/work/proj", getenv, ambient))
+	require.Error(t, EnsureDirTrustedForLaunch(claude, "/work/proj", getenv, ambient))
 	_, statErr = os.Stat(filepath.Join(ambient, ".claude.json"))
-	assert.NoError(t, statErr)
+	assert.True(t, os.IsNotExist(statErr), "the top-level ~/.claude.json must not be created")
 }
 
-// EnsureDirTrusted dispatches to the CLAUDE editor for the Claude harness —
-// driven against a temp HOME so the real ~/.claude.json is never touched.
+// EnsureDirTrustedForLaunch dispatches to the CLAUDE editor for the Claude
+// harness, writing the launch's <state root>/.claude.json — driven against a
+// temp HOME so no real config is touched — and never the top-level
+// $HOME/.claude.json.
 func TestEnsureDirTrusted_DispatchesToClaudeEditor(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	const dir = "/work/proj"
+	stateRoot := filepath.Join(home, ".claude")
 
 	h, err := Resolve(DefaultName)
 	require.NoError(t, err)
-	require.NoError(t, EnsureDirTrusted(h, dir))
+	require.NoError(t, EnsureDirTrustedForLaunch(h, dir, claudeConfigDirEnv(stateRoot), ""))
 
-	data, err := os.ReadFile(filepath.Join(home, ".claude.json"))
-	require.NoError(t, err, "the claude store was created, not the codex one")
+	data, err := os.ReadFile(filepath.Join(stateRoot, ".claude.json"))
+	require.NoError(t, err, "the claude store in the state root was created, not the codex one")
 	var root struct {
 		Projects map[string]struct {
 			HasTrustDialogAccepted bool `json:"hasTrustDialogAccepted"`
@@ -205,9 +220,15 @@ func TestEnsureDirTrusted_DispatchesToClaudeEditor(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(data, &root))
 	assert.True(t, root.Projects[dir].HasTrustDialogAccepted)
+	_, statErr := os.Stat(filepath.Join(home, ".claude.json"))
+	assert.True(t, os.IsNotExist(statErr), "the top-level ~/.claude.json must not be created")
+	_, statErr = os.Stat(filepath.Join(home, ".claude.json.tclaude.lock"))
+	assert.True(t, os.IsNotExist(statErr), "the lock sidecar must not land in $HOME")
+	_, statErr = os.Stat(filepath.Join(stateRoot, ".claude.json.tclaude.lock"))
+	assert.NoError(t, statErr, "the lock sidecar sits beside the resolved file, in the state root")
 
 	// The Codex store must be untouched — dispatch, not both.
-	_, statErr := os.Stat(filepath.Join(home, ".codex", "config.toml"))
+	_, statErr = os.Stat(filepath.Join(home, ".codex", "config.toml"))
 	assert.True(t, os.IsNotExist(statErr), "claude dispatch must not write the codex config")
 }
 
@@ -219,7 +240,7 @@ func TestEnsureDirTrusted_DispatchesToCodexEditor(t *testing.T) {
 
 	h, err := Resolve(CodexName)
 	require.NoError(t, err)
-	require.NoError(t, EnsureDirTrusted(h, dir))
+	require.NoError(t, EnsureDirTrustedForLaunch(h, dir, nil, ""))
 
 	data, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
 	require.NoError(t, err, "the codex store was created, not the claude one")
@@ -243,11 +264,11 @@ func TestEnsureDirTrustedForLaunch_SymlinkedCwd(t *testing.T) {
 			t.Setenv("HOME", home)
 			h, err := Resolve(name)
 			require.NoError(t, err)
-			require.NoError(t, EnsureDirTrustedForLaunch(h, alias, func(string) string { return "" }, home))
+			require.NoError(t, EnsureDirTrustedForLaunch(h, alias, claudeConfigDirEnv(filepath.Join(home, ".claude")), home))
 			var path string
 			switch name {
 			case DefaultName:
-				path = filepath.Join(home, ".claude.json")
+				path = filepath.Join(home, ".claude", ".claude.json")
 			case CodexName:
 				path = filepath.Join(home, ".codex", "config.toml")
 			case CopilotName:

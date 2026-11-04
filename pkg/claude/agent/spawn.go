@@ -431,7 +431,7 @@ type SpawnRequest struct {
 	// TrustDir opts the spawned agent into pre-trusting its launch directory:
 	// the daemon seeds the harness's own trust record BEFORE launch (Codex's
 	// [projects."<cwd>"] trust_level in ~/.codex/config.toml, Claude Code's
-	// projects.<cwd>.hasTrustDialogAccepted in ~/.claude.json), so a detached
+	// projects.<cwd>.hasTrustDialogAccepted in ~/.claude/.claude.json), so a detached
 	// pane doesn't freeze on the "do you trust this folder?" dialog (JOH-205,
 	// JOH-369). false (the default) leaves the dialog in place — to be cleared
 	// by focusing the pending pane. Unlike HarnessBuiltinMode/ApprovalPolicy this
