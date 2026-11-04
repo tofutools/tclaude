@@ -50,7 +50,8 @@ var pageSaveMu sync.Mutex
 // or owns p.
 func savedPageRow(p *livePage) db.GroupPage {
 	return db.GroupPage{ID: p.id, GroupID: p.groupID, Owner: p.owner, Name: p.name, Title: p.title, Kind: p.kind,
-		Target: p.target, Path: p.path, Worktree: p.worktree, Port: p.port, AgentsLocked: p.agentsLocked}
+		Target: p.target, Path: p.path, Worktree: p.worktree, Port: p.port, AgentsLocked: p.agentsLocked,
+		TitleByOperator: p.titleByOperator}
 }
 
 // savePageOpen records a page as open in its group, or forgets a saved row
@@ -230,7 +231,7 @@ func reopenSavedPage(r *http.Request, row *db.GroupPage) (*livePage, int, string
 	}
 	p := &livePage{id: row.ID, owner: owner, name: row.Name, title: row.Title, target: row.Target, kind: kind,
 		port: row.Port, path: start, worktree: worktree, state: pageStateOpen, rev: reg.rev, shownAt: now, updated: now,
-		groupID: row.GroupID, agentsLocked: row.AgentsLocked}
+		groupID: row.GroupID, agentsLocked: row.AgentsLocked, titleByOperator: row.TitleByOperator}
 	p.stage = stagePages.open(owner, row.Name, up)
 	p.stage.static.Store(kind == pageKindStatic)
 	relay.set(p.stage)

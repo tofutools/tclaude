@@ -2330,7 +2330,7 @@ CREATE TABLE group_pages (
 			closed_reason TEXT NOT NULL DEFAULT '',
 			created_at    INTEGER NOT NULL,
 			updated_at    INTEGER NOT NULL,
-			closed_at     INTEGER,
+			closed_at     INTEGER, title_by_operator INTEGER NOT NULL DEFAULT 0,
 			UNIQUE (group_id, owner, name)
 		) STRICT;
 

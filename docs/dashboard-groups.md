@@ -480,7 +480,9 @@ page). A live page also has **↻**, which reloads it in every view, and a
 running shell **×**, which kills it after a confirm. For a page or a board,
 the row's **⋯** holds:
 - **Rename…**: the name becomes a field; Enter saves it, Escape keeps the old
-  one. An agent showing its page again sets the page's title again.
+  one. Your title for a page stays when its agent shows the page again,
+  unless the agent passes a title of its own; the audit log says when one
+  replaced yours.
 - **Move to group**: lists the groups it can move to. A page moves only to a
   group its agent is a member of, and the marks sent before stay behind, as
   when the agent shows it into another group. A group's own blank page moves

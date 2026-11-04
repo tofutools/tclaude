@@ -17,9 +17,9 @@ import (
 // (tcl-kostyh): the operator renames a page or a board, and moves a page to
 // another group. A board moves through POST /api/boards/{id}/group.
 //
-// A page's title is the agent's to set too: an agent showing the page again
-// with --title, or without one (which names it after its name), replaces the
-// operator's. A page moves only to a group its agent belongs to, as its show
+// A title the operator gives a page stays through the agent's shows without
+// a title; an agent showing it with --title replaces it, and the show's
+// audit row says it replaced the operator's. A page moves only to a group its agent belongs to, as its show
 // would put it there, and like a re-show into another group it drops the
 // marks sent before. A group's own blank page moves only while closed: open,
 // it is staged under its group's key.
@@ -67,7 +67,7 @@ func handleDashboardPageTitle(w http.ResponseWriter, r *http.Request) {
 	p := livePages.byID[id]
 	if p != nil {
 		livePages.rev++
-		p.title, p.rev, p.updated = title, livePages.rev, time.Now().UTC()
+		p.title, p.titleByOperator, p.rev, p.updated = title, true, livePages.rev, time.Now().UTC()
 		saved := savedPageRow(p)
 		owner, name := p.owner, p.name
 		livePages.mu.Unlock()
@@ -76,7 +76,7 @@ func handleDashboardPageTitle(w http.ResponseWriter, r *http.Request) {
 		}
 		pageSaveMu.Unlock()
 		setAuditTargetLabel(r, "page "+name)
-		tellPageOwner(owner, name, "renamed", fmt.Sprintf("The operator renamed your live page %q to %q. Showing it again sets the title again: --title, or its name without one.", name, title))
+		tellPageOwner(owner, name, "renamed", fmt.Sprintf("The operator renamed your live page %q to %q. Showing it again keeps that title; pass --title to set your own.", name, title))
 		writeJSON(w, http.StatusOK, map[string]any{"id": id, "title": title})
 		return
 	}
