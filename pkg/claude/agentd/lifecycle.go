@@ -3589,6 +3589,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if !decoded {
 		return
 	}
+	// Taken before any profile tier fills the request in.
+	explicitLaunch := captureExplicitLaunch(&body, time.Now())
 	if body.NonInteractive && (body.ReplyTo != "" || body.Role != "" ||
 		body.RoleRef != "" || len(body.RoleRefs) > 0 || body.Descr != "" ||
 		body.TaskURL != "" || body.TaskLabel != "" || body.AutoFocus || body.AutoFocusWeb ||
@@ -5228,6 +5230,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		beforeExecuteSpawnForTest()
 	}
 	p.UsageProfileIDs, p.UsageSpawnProfile = spawnUsageProfiles, namedProfile
+	p.spawnCopyCallerTiers = spawnCopyTiers(spawnCopyTier(db.SpawnCopyTierNamed, namedProfile))
+	p.spawnCopyDefaultTiers = spawnCopyTiers(spawnCopyTier(db.SpawnCopyTierGroupDefault, groupProfile),
+		spawnCopyTier(db.SpawnCopyTierGlobalDefault, globalProfile))
+	p.spawnCopyResolved = true
+	p.explicitLaunch = explicitLaunch
 	// Taken last: a used-up grant drops out of the permission sources, and every
 	// check above must see the grant as it stood at the gate.
 	spawnUse, ok := takeSudoUse(w, spawnSudoGrant)
@@ -5359,10 +5366,21 @@ type spawnParams struct {
 	// usage profiles apply otherwise (see applySpawnUsageProfiles).
 	UsageProfileIDs   []int64
 	UsageSpawnProfile *db.SpawnProfile
-	Arrival           *arrivalContext
-	RemoteJob         *federationJobLaunch // trusted internal remote job boundary
-	launchAuthority   func() error
-	BundleHistory     *bundleHistoryLaunch // trusted internal bundle route only
+	// spawnCopyCallerTiers are the profiles the caller itself resolved above
+	// the default tiers (a template's inline profile, a named profile), and
+	// spawnCopyDefaultTiers the group and global defaults applyDefaultProfile
+	// consulted. explicitLaunch is what the request set explicitly. All three
+	// become the agent's launch layers at first spawn (spawnLaunchLayers).
+	// spawnCopyResolved marks that the default tiers were resolved for this
+	// launch (spawnCopyDefaultTiers may then be empty, meaning none took part).
+	spawnCopyCallerTiers  []db.SpawnCopyTier
+	spawnCopyDefaultTiers []db.SpawnCopyTier
+	spawnCopyResolved     bool
+	explicitLaunch        map[string]db.ExplicitLaunchValue
+	Arrival               *arrivalContext
+	RemoteJob             *federationJobLaunch // trusted internal remote job boundary
+	launchAuthority       func() error
+	BundleHistory         *bundleHistoryLaunch // trusted internal bundle route only
 	// NoLaunch enrolls the agent and installs its history without starting a
 	// session: it lands offline and starts on resume. Trusted internal bundle
 	// route only, and only with BundleHistory.
@@ -6606,6 +6624,15 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	// Captured BEFORE the tier loop can fill it: afterwards there is no way to
 	// tell a harness the caller pinned from one a default profile supplied.
 	harnessWasPinned := strings.TrimSpace(p.Harness) != ""
+	// A caller that already resolved the default tiers (handleGroupSpawn)
+	// recorded the profiles it actually launched with; keep those over this
+	// later read.
+	if !p.spawnCopyResolved {
+		p.spawnCopyDefaultTiers = spawnCopyTiers(
+			spawnCopyTier(db.SpawnCopyTierGroupDefault, profiles[0].profile),
+			spawnCopyTier(db.SpawnCopyTierGlobalDefault, profiles[1].profile))
+		p.spawnCopyResolved = true
+	}
 	tiers := make([]launchProfileTier, 0, len(profiles))
 	for _, tier := range profiles {
 		prof := tier.profile
@@ -9040,6 +9067,17 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 		if err := db.SetAgentInitialSpawnConfig(agentID, p.SpawnConfigJSON); err != nil {
 			slog.Warn("spawn: failed to record initial spawn config",
 				"agent", agentID, "error", err)
+		}
+	}
+	// The launch layers are taken once, at first spawn. The agent row may
+	// already exist (a reserved pending spawn, or the session-start hook
+	// created it), so the write is "only if none yet", not "only if this call
+	// created the row". Best-effort like the spawn config: an agent without
+	// layers relaunches from its stored launch shape, as an agent spawned
+	// before they existed does.
+	if agentID != "" {
+		if _, err := db.SetAgentLaunchLayersIfUnset(agentID, spawnLaunchLayers(p, time.Now())); err != nil {
+			slog.Warn("spawn: failed to record launch layers", "agent", agentID, "error", err)
 		}
 	}
 	if agentID != "" && p.EffectiveSandbox != nil {

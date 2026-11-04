@@ -771,6 +771,10 @@ type templateAgentLaunch struct {
 	// would. Nil for an inline-only or profile-less member (an inline profile
 	// has no registry row, so nothing can be linked to it).
 	UsageSpawnProfile *db.SpawnProfile
+	// SpawnCopyTiers are the template's own profile tiers (inline, then the
+	// referenced profile), recorded as the deployed agent's spawn copy above
+	// the group and global defaults.
+	SpawnCopyTiers []db.SpawnCopyTier
 	// IncludeGroupContext is whether the deploy folds the group's (template's)
 	// shared context into this agent's brief. On unless a profile tier — the
 	// referenced profile, or the group/global default — turns it off (TCL-1107).
@@ -1432,6 +1436,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 		PeerMessaging:          peerMessaging,
 		IncludeGroupContext:    includeGroupContext,
 		UsageSpawnProfile:      refProfile,
+		SpawnCopyTiers:         spawnCopyTiers(spawnCopyTier(db.SpawnCopyTierInline, inlineProfile), spawnCopyTier(db.SpawnCopyTierNamed, refProfile)),
 		SSHWorkaround:          sshWorkaround,
 		SSHWorkaroundSet:       sshWorkaroundSet,
 		ContextFeatures:        contextFeatures,

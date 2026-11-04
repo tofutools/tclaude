@@ -610,7 +610,7 @@ func RemintFederationClone(id, conv string) (string, error) {
 	if e = insertAgentTx(tx, clone, conv, "clone", time.Now()); e != nil {
 		return "", e
 	}
-	if _, e = tx.Exec(`UPDATE agents SET (pending_name,initial_spawn_config,relaunch_profile,effective_sandbox_config,task_ref_url,task_ref_label)=(SELECT pending_name,initial_spawn_config,relaunch_profile,effective_sandbox_config,task_ref_url,task_ref_label FROM agents WHERE agent_id=?) WHERE agent_id=?`, id, clone); e != nil {
+	if _, e = tx.Exec(`UPDATE agents SET (pending_name,initial_spawn_config,relaunch_profile,launch_layers,effective_sandbox_config,task_ref_url,task_ref_label)=(SELECT pending_name,initial_spawn_config,relaunch_profile,launch_layers,effective_sandbox_config,task_ref_url,task_ref_label FROM agents WHERE agent_id=?) WHERE agent_id=?`, id, clone); e != nil {
 		return "", e
 	}
 	if _, e = tx.Exec(`UPDATE agent_conversations SET agent_id=?,reason='teleport-superseded-clone' WHERE conv_id=? AND agent_id=?`, clone, conv, id); e != nil {

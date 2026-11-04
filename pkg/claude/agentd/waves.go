@@ -295,6 +295,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			PeerMessaging:               launch.PeerMessaging,
 			launchTogglesResolved:       true,
 			UsageSpawnProfile:           launch.UsageSpawnProfile,
+			spawnCopyCallerTiers:        launch.SpawnCopyTiers,
 			SSHWorkaround:               launch.SSHWorkaround,
 			SSHWorkaroundSet:            launch.SSHWorkaroundSet,
 			SSHWorkaroundSource:         launch.SSHWorkaroundSource,
