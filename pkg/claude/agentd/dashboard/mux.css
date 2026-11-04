@@ -720,12 +720,18 @@ body.wizard .mux-bg-pop { background: #1b1329; border-color: #4a3a6b; }
 /* The handle folds the Collab panel; its body needs no Hide row. */
 body[data-dock-panel="collab"] #agent-dock .dock-head { display: none; }
 .collab-rail { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
-.collab-rail .cr-head { display: flex; flex-direction: column; gap: 6px; }
-.collab-rail .cr-search { width: 100%; box-sizing: border-box; font-size: 12px; padding: 4px 8px; border: 1px solid #30363d; border-radius: 6px;
+.collab-rail .cr-head { display: flex; gap: 6px; align-items: center; }
+.collab-rail .cr-search { flex: 1 1 auto; min-width: 0; box-sizing: border-box; font-size: 12px; padding: 4px 8px; border: 1px solid #30363d; border-radius: 6px;
   background: #010409; color: var(--ui-body-text); }
-.collab-rail .cr-chips { display: flex; gap: 2px; padding: 2px; border: 1px solid #30363d; border-radius: 6px; align-self: flex-start; }
-.collab-rail .cr-chip { cursor: pointer; background: none; border: 0; border-radius: 4px; padding: 2px 8px; font-size: 12px; color: var(--ui-muted-text); }
-.collab-rail .cr-chip.is-on { background: #21262d; color: var(--ui-strong-text); }
+/* The Filter dropdown (view-menu.js) opens leftward: the panel is at the
+   screen's right edge. */
+.collab-rail .view-popover-wrap { position: relative; display: inline-flex; flex: none; }
+.collab-rail .view-menu { left: auto; right: 0; }
+.collab-rail .view-badge { margin-left: 5px; }
+.view-menu .view-menu-reset { align-self: flex-start; margin: 2px 8px; padding: 0; background: none; border: 0; cursor: pointer;
+  color: #58a6ff; font-size: 12px; }
+.view-menu .view-menu-reset:disabled { color: var(--ui-muted-text); cursor: default; }
+.view-menu label.filter-toggle { cursor: pointer; color: var(--ui-body-text); user-select: none; }
 .collab-rail .cr-count { color: var(--ui-muted-text); font-size: 11px; font-variant-numeric: tabular-nums; }
 .collab-rail .cr-list { display: flex; flex-direction: column; gap: 6px; }
 .collab-rail .cr-section-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: 0; padding: 2px 4px; cursor: pointer; text-align: left; }

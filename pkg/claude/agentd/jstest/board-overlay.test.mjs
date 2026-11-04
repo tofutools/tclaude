@@ -1216,10 +1216,12 @@ async function railDrop(harness, source, target, { clientX = 10, clientY = 15 } 
   });
 }
 
-// showClosed picks the Collab panel's Closed chip: its list shows what is
-// live by default, and these boards are closed.
+// showClosed ticks Closed in the Collab panel's filter: its list leaves the
+// closed ones out by default, and these boards are closed.
 async function showClosed(harness, host) {
-  await harness.act(() => harness.fireEvent(host.querySelector('[data-collab-rail] [data-rail-filter="closed"]'), 'click'));
+  const box = host.querySelector('[data-collab-rail] #collab-filter-closed');
+  box.checked = true;
+  await harness.act(() => harness.fireEvent(box, 'change'));
 }
 
 scenario('with nothing on the strip the Collab home is a plain empty state, and a panel item opens as a tab', GROUP_BOARDS, async ({ harness, host }) => {
@@ -1270,8 +1272,7 @@ scenario('a rail item dropped anywhere else floats in a window, a strip tab too'
 
   await harness.act(async () => { harness.fireEvent(host.querySelector('[data-rail-item="board:map"] .cr-name'), 'click'); await wait(); await wait(); });
   assert.deepEqual(tabLabels(host), ['Team map']);
-  await harness.act(() => harness.fireEvent(host.querySelector('[data-collab-rail] [data-rail-filter="active"]'), 'click'));
-  assert.equal(host.querySelector('[data-rail-item="board:map"]').dataset.railBucket, 'open', 'an open tab is active, so the panel lists it');
+  assert.equal(host.querySelector('[data-rail-item="board:map"]').dataset.railBucket, 'open', 'an open tab is listed as open');
   await railDrop(harness, host.querySelector('[data-rail-item="board:map"]'), harness.document.body, { clientX: 400, clientY: 300 });
   assert.deepEqual(tabsByWindow(overlayHost).flat().sort(), ['Release plan', 'Team map']);
   assert.deepEqual(tabLabels(host), []);
