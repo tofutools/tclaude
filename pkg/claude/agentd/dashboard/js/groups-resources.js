@@ -139,25 +139,42 @@ function peerRows(resources) {
   ].filter(([, , , , rows]) => rows.length > 0);
 }
 
+// peerResourcesPollMs is how often a peer's group card reads its resources
+// again, so a lock changed on that node (or a new board) shows here too.
+export const peerResourcesPollMs = 20000;
+
 // PeerGroupResources is a peer's group's Resources, read from that node. Its
 // boards and pages are that node's own, so they are named rather than opened;
 // each wears its lock chip, which toggles only where the node grants this one
-// groups.resources.lock, and otherwise says so. A refusal is a toast.
-export function PeerGroupResources({ group, notify = defaultNotify, fetchImpl = null }) {
+// groups.resources.lock, and otherwise says so. A refusal is a toast. A node
+// that does not show the group's roster (403), or has no such read (404),
+// shows no section; any other failure says so.
+export function PeerGroupResources({ group, notify = defaultNotify, fetchImpl = null, pollMs = peerResourcesPollMs }) {
   const node = group.fleet_node;
   const name = peerGroupName(group);
   const [state, setState] = useState({ resources: null, error: null });
   const reach = fetchImpl || nodeFetch(node?.id);
+  const current = useRef(0);
   const refresh = async () => {
+    const ticket = ++current.current;
     try {
-      setState({ resources: await loadPeerResources(name, reach), error: null });
+      const resources = await loadPeerResources(name, reach);
+      if (ticket === current.current) setState({ resources, error: null });
     } catch (error) {
-      setState({ resources: null, error });
+      if (ticket === current.current) setState({ resources: null, error });
     }
   };
-  useEffect(() => { void refresh(); }, [node?.id, name]);
-  const { resources } = state;
-  if (!resources) return null;
+  useEffect(() => {
+    void refresh();
+    const timer = pollMs > 0 ? setInterval(() => { void refresh(); }, pollMs) : null;
+    // A late answer for a previous node or group is dropped.
+    return () => { current.current++; if (timer) clearInterval(timer); };
+  }, [node?.id, name, pollMs]);
+  const { resources, error } = state;
+  if (!resources) {
+    if (!error || error.status === 403 || error.status === 404) return null;
+    return html`<div class="gp-empty ui-empty" data-peer-resources-error=${node?.id || ''}>Could not read the resources of ${name} on ${node?.name || 'its node'}: ${error.message}</div>`;
+  }
   const kinds = peerRows(resources);
   if (!kinds.length) return null;
   const peer = { fetchImpl: reach, allowed: !!resources.canLock, node: node?.name };

@@ -637,7 +637,7 @@ test('Both\'s Resources section lists the group\'s boards and pages with lock ch
 // tcl-i9elme: a peer's group lists its resources from that node; each lock
 // chip toggles only where that node grants this one groups.resources.lock,
 // says so otherwise, and a refusal is a toast, never silence.
-function peerFetch(resources, { lockStatus = 200 } = {}) {
+function peerFetch(resources, { lockStatus = 200, readStatus = 200 } = {}) {
   const calls = [];
   const fetchImpl = async (path, init = {}) => {
     calls.push({ path, method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null });
@@ -645,6 +645,7 @@ function peerFetch(resources, { lockStatus = 200 } = {}) {
       if (lockStatus !== 200) return { ok: false, status: lockStatus, json: async () => ({ code: 'permission', error: 'this node does not grant you groups.resources.lock for group:crew' }) };
       return { ok: true, status: 200, json: async () => ({ ok: true }) };
     }
+    if (readStatus !== 200) return { ok: false, status: readStatus, json: async () => ({ error: `read failed ${readStatus}` }) };
     return { ok: true, status: 200, json: async () => resources };
   };
   return { fetchImpl, calls };
@@ -663,7 +664,7 @@ async function mountPeerResources(t, resources, options) {
   const mod = await harness.importDashboardModule('js/groups-resources.js');
   const peer = peerFetch(resources, options);
   const notes = [];
-  const mounted = await harness.mount(harness.html`<${mod.PeerGroupResources} group=${PEER_GROUP} fetchImpl=${peer.fetchImpl}
+  const mounted = await harness.mount(harness.html`<${mod.PeerGroupResources} group=${PEER_GROUP} fetchImpl=${peer.fetchImpl} pollMs=${0}
     notify=${(text, error) => notes.push({ text, error: !!error })} />`);
   await settle(harness);
   return { harness, mod, root: mounted.container, peer, notes };
@@ -703,4 +704,17 @@ test('a peer refusing a lock toggle is a toast, not silence', async (t) => {
   assert.equal(notes.length, 1);
   assert.equal(notes[0].error, true);
   assert.match(notes[0].text, /Could not change the lock on Ship: this node does not grant you groups\.resources\.lock/);
+});
+
+for (const status of [403, 404]) {
+  test(`a peer group read refused with ${status} shows no resources and no error`, async (t) => {
+    const { root } = await mountPeerResources(t, PEER_RESOURCES, { readStatus: status });
+    assert.equal(root.querySelector('[data-peer-resources]'), null);
+    assert.equal(root.querySelector('[data-peer-resources-error]'), null, 'not shown or not served: silent');
+  });
+}
+
+test('any other peer group read failure says so', async (t) => {
+  const { root } = await mountPeerResources(t, PEER_RESOURCES, { readStatus: 502 });
+  assert.match(root.querySelector('[data-peer-resources-error]').textContent, /Could not read the resources of crew on bob: read failed 502/);
 });
