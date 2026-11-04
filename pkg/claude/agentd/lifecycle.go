@@ -2927,8 +2927,9 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 	// multi-generation actor's delete leaves nothing orphaned. The selector
 	// resolves a predecessor forward to the head before it reaches here, so
 	// `targetConv` is the head in the agent-delete case.
-	// Pages close while the agent ID still resolves (before the purge).
-	closeLivePagesForConv(targetConv)
+	// Pages close, and saved ones go, while the agent ID still resolves
+	// (before the purge).
+	deletePagesForConv(targetConv)
 	if _, err := removeAgentDirectoriesForConv(targetConv); err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"delete agent-owned directories: "+err.Error())

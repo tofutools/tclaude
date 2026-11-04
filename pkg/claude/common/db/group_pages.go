@@ -71,8 +71,10 @@ func SaveOpenGroupPage(p GroupPage) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	// Another saved page under the same owner and name in that group (one an
-	// adopting agent or a fresh show replaces) gives way to this one.
-	if _, err := tx.Exec(`DELETE FROM group_pages WHERE group_id = ? AND owner = ? AND name = ? AND id <> ?`,
+	// adopting agent or a fresh show replaces) gives way to this one, unless
+	// the operator locked it: then the upsert fails on the unique key and the
+	// locked row stays (callers refuse a locked name first).
+	if _, err := tx.Exec(`DELETE FROM group_pages WHERE group_id = ? AND owner = ? AND name = ? AND id <> ? AND agents_locked = 0`,
 		p.GroupID, p.Owner, p.Name, p.ID); err != nil {
 		return err
 	}
@@ -93,7 +95,8 @@ func SaveOpenGroupPage(p GroupPage) error {
 }
 
 // CloseGroupPage marks a saved page closed, with why, and drops the group's
-// oldest closed pages beyond GroupPageClosedKept. No row is not an error.
+// oldest closed pages beyond GroupPageClosedKept (a page the operator
+// locked is never dropped). No row is not an error.
 func CloseGroupPage(id, reason string) error {
 	d, err := Open()
 	if err != nil {
@@ -110,7 +113,7 @@ func CloseGroupPage(id, reason string) error {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM group_pages WHERE id IN (
-			SELECT id FROM group_pages WHERE state = 'closed'
+			SELECT id FROM group_pages WHERE state = 'closed' AND agents_locked = 0
 			  AND group_id = (SELECT group_id FROM group_pages WHERE id = ?)
 			ORDER BY closed_at DESC, id DESC LIMIT -1 OFFSET ?)`, id, GroupPageClosedKept); err != nil {
 		return err
@@ -209,4 +212,15 @@ func CloseOpenGroupPages(reason string) (int, error) {
 	}
 	n, _ := res.RowsAffected()
 	return int(n), nil
+}
+
+// DeleteGroupPagesOwnedBy removes every saved page an agent showed: the agent
+// is being deleted, so none of them can reopen.
+func DeleteGroupPagesOwnedBy(owner string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`DELETE FROM group_pages WHERE owner = ?`, owner)
+	return err
 }

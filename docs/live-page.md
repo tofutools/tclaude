@@ -64,7 +64,9 @@ rules.
   with why. **Reopen** there brings it back under the same id with a new
   origin, once its source is proved again: a port page needs its dev server
   answering, a static page its files still inside the agent's directories,
-  and the agent must still be active. An agent re-showing the same name in
+  and the agent must still be active and in the group. A page the operator
+  locked stays locked while closed, and no show replaces it. Deleting the
+  agent removes its saved pages. An agent re-showing the same name in
   that group reopens it too. **Delete** in the row's ⋯ menu removes it for
   good; archiving or deleting the group does as well. A group keeps its 64
   most recent closed pages. A private page (`--private`, or an agent in no

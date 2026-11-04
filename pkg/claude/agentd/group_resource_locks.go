@@ -138,6 +138,8 @@ func applyResourceLock(w http.ResponseWriter, r *http.Request, req resourceLockR
 			return
 		}
 	case resourceKindPage:
+		pageSaveMu.Lock()
+		defer pageSaveMu.Unlock()
 		livePages.mu.Lock()
 		p := livePages.byID[id]
 		label := ""

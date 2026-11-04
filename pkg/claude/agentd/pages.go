@@ -212,6 +212,8 @@ func closeLivePagesForConv(convID string) {
 	if err != nil || agentID == "" {
 		return
 	}
+	pageSaveMu.Lock()
+	defer pageSaveMu.Unlock()
 	for _, row := range livePages.closeOwner(agentID) {
 		savePageClosed(row.ID, row.GroupID, pageClosedRetired)
 	}
@@ -661,13 +663,12 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 	}
 	// A closed page saved in the group under this name is reopened by the
 	// show: it keeps its id and the operator's lock.
-	savedID, savedLocked := "", false
-	if adopt == nil {
-		savedID, savedLocked = savedPageReusable(groupID, agentID, name)
-	}
+	savedID, savedLocked := savedPageFor(groupID, agentID, name)
 
 	now := time.Now().UTC()
 	reg := livePages
+	pageSaveMu.Lock()
+	defer pageSaveMu.Unlock()
 	reg.mu.Lock()
 	existing := reg.byOwner[agentID][name]
 	if adopt != nil {
@@ -686,7 +687,9 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 		writeResourceLocked(w, "page "+name)
 		return
 	}
-	if existing == nil && savedLocked {
+	// The operator's lock on the saved page refuses any show that would
+	// replace it: one from another group, a takeover, or a fresh show.
+	if savedLocked && (existing == nil || existing.id != savedID) {
 		reg.mu.Unlock()
 		closeStageUpstream(up)
 		writeResourceLocked(w, "page "+name)
@@ -721,7 +724,7 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 		p.stage.notifyReload()
 	default:
 		p = &livePage{id: newPageID(), owner: agentID, name: name, shownAt: now}
-		if existing == nil && savedID != "" && reg.byID[savedID] == nil {
+		if existing == nil && adopt == nil && savedID != "" && reg.byID[savedID] == nil {
 			p.id = savedID
 		}
 		if existing != nil {
@@ -859,12 +862,16 @@ func handlePageClose(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	pageSaveMu.Lock()
 	closed, ok := livePages.closeByName(p.owner, p.name)
+	if ok {
+		savePageClosed(closed.id, closed.groupID, pageClosedByAgent)
+	}
+	pageSaveMu.Unlock()
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found", "the page is already closed")
 		return
 	}
-	savePageClosed(closed.id, closed.groupID, pageClosedByAgent)
 	if group == nil {
 		setAuditTargetLabel(r, "page "+p.name)
 		w.WriteHeader(http.StatusNoContent)
@@ -916,12 +923,16 @@ func handleDashboardPageClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	pageSaveMu.Lock()
 	p, ok := livePages.closeByID(id)
+	if ok {
+		savePageClosed(p.id, p.groupID, pageClosedByOperator)
+	}
+	pageSaveMu.Unlock()
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found", "no such page")
 		return
 	}
-	savePageClosed(p.id, p.groupID, pageClosedByOperator)
 	setAuditTargetLabel(r, "page "+p.name)
 	if convID := humanActionLiveConv(p.owner); convID != "" {
 		// Operator-authored: it quotes nothing but the agent's own page name

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -151,4 +152,49 @@ func TestPagePrivateIsNotSaved(t *testing.T) {
 	assert.Empty(t, e.groupPages(t, "crew"))
 	require.Equal(t, http.StatusNoContent, e.call(t, shower, http.MethodDelete, "/v1/pages/app", nil).Code)
 	assert.Empty(t, e.groupPages(t, "crew"))
+}
+
+// The operator's lock on a saved page holds against a show of the same name
+// from another group, and reopen needs the shower still in the group.
+func TestPageSavedLockAndMembershipHold(t *testing.T) {
+	e := newPageEnv(t)
+	require.NoError(t, config.Save(&config.Config{
+		Agent:    &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfPage}},
+		Features: &config.FeaturesConfig{Processes: true},
+	}))
+	shower := e.agent(t, "two-groups", true)
+	e.f.HaveGroup("crew")
+	e.f.HaveGroup("side")
+	e.f.HaveMember("crew", shower.conv)
+	e.f.HaveMember("side", shower.conv)
+	target := ":" + strconv.Itoa(devServer(t, "locked"))
+	show := func(group string) *httptest.ResponseRecorder {
+		return e.call(t, shower, http.MethodPost, "/v1/pages", map[string]any{"target": target, "name": "demo", "group": group})
+	}
+
+	rec := show("crew")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var p pageOut
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &p))
+	require.Equal(t, http.StatusOK, e.dash(t, http.MethodDelete, "/api/pages/"+p.ID).Code)
+	rec = e.dashJSON(t, http.MethodPost, "/api/resource-locks", map[string]any{"kind": "page", "id": p.ID, "locked": true})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	// Shown in side, then moved back into crew: the locked crew page stays.
+	require.Equal(t, http.StatusCreated, show("side").Code)
+	rec = show("crew")
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "resource_locked")
+	crew := e.groupPages(t, "crew")
+	require.Len(t, crew, 1)
+	assert.Equal(t, p.ID, crew[0].ID)
+	assert.True(t, crew[0].AgentsLocked)
+
+	// Out of the group, the page no longer reopens there.
+	g, err := db.GetAgentGroupByName("crew")
+	require.NoError(t, err)
+	require.NoError(t, db.RemoveAgentGroupMember(g.ID, shower.conv))
+	rec = e.dashJSON(t, http.MethodPost, "/api/pages/"+p.ID+"/reopen", nil)
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "not_member")
 }

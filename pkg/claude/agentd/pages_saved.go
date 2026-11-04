@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -38,6 +39,12 @@ func pageLifetimeRule(group string) string {
 	return "The page is saved with group " + group + ": closed (by you, the operator or a daemon restart), it stays in the group, " +
 		"and the operator's Reopen or your show of the same name reopens it with a new origin. Marks and live patches are not kept."
 }
+
+// pageSaveMu orders every change to the live registry that a saved row
+// follows with the row's write, so the two cannot interleave (a close landing
+// between a show's registry change and its save). Taken before
+// livePages.mu, never while holding it.
+var pageSaveMu sync.Mutex
 
 // savedPageRow is the row a live page is saved as. Caller holds livePages.mu
 // or owns p.
@@ -82,17 +89,34 @@ func closeSavedPagesAtStart() {
 	}
 }
 
-// savedPageReusable is the id and lock a show of name in groupID takes from a
-// closed saved page of the same owner and name: re-showing it reopens it.
-func savedPageReusable(groupID int64, owner, name string) (id string, locked bool) {
+// savedPageFor is the page owner saved in groupID under name, if any: a show
+// of that name reopens it (keeping its id), and an operator lock on it
+// refuses a show that would replace it. Zero when there is none.
+func savedPageFor(groupID int64, owner, name string) (id string, locked bool) {
 	if groupID == 0 {
 		return "", false
 	}
 	row, err := db.FindGroupPage(groupID, owner, name)
-	if err != nil || row == nil || row.State != db.GroupPageClosed {
+	if err != nil || row == nil {
 		return "", false
 	}
 	return row.ID, row.AgentsLocked
+}
+
+// deletePagesForConv closes the pages of the agent behind convID and removes
+// its saved ones: the agent is being deleted. Call it while the agent ID
+// still resolves.
+func deletePagesForConv(convID string) {
+	agentID, err := db.AgentIDForConv(convID)
+	if err != nil || agentID == "" {
+		return
+	}
+	pageSaveMu.Lock()
+	defer pageSaveMu.Unlock()
+	livePages.closeOwner(agentID)
+	if err := db.DeleteGroupPagesOwnedBy(agentID); err != nil {
+		slog.Warn("pages: could not remove a deleted agent's saved pages", "agent", agentID, "error", err)
+	}
 }
 
 // POST /api/pages/{id}/reopen — the operator reopens a closed saved page.
@@ -127,17 +151,21 @@ func handleDashboardPageReopen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setAuditTargetLabel(r, "page "+g.Name+"/"+row.Name)
+	if !isGroupPageOwner(row.Owner) && !pageOwnerInGroup(row.Owner, row.GroupID) {
+		writeError(w, http.StatusConflict, "not_member", "the agent that showed this page is no longer a member of "+g.Name+"; it cannot be reopened there")
+		return
+	}
 	p, status, kind, msg := reopenSavedPage(r, row)
 	if p == nil {
 		writeError(w, status, kind, msg)
 		return
 	}
-	livePages.mu.Lock()
 	v = p.view()
 	saved := savedPageRow(p)
 	livePages.mu.Unlock()
-	v.Group = g.Name
 	savePageOpen(saved)
+	pageSaveMu.Unlock()
+	v.Group = g.Name
 	if !isGroupPageOwner(row.Owner) {
 		if convID := humanActionLiveConv(row.Owner); convID != "" {
 			body := fmt.Sprintf("The operator reopened your live page %q from group %s. It has a new origin; marks and patches from before are not kept.",
@@ -152,7 +180,9 @@ func handleDashboardPageReopen(w http.ResponseWriter, r *http.Request) {
 }
 
 // reopenSavedPage builds a closed saved page's source again and opens it in
-// the registry under its id. nil with why when it cannot.
+// the registry under its id. nil with why when it cannot. On success it
+// returns holding pageSaveMu and livePages.mu, for the caller to save the
+// row before releasing them.
 func reopenSavedPage(r *http.Request, row *db.GroupPage) (*livePage, int, string, string) {
 	owner := row.Owner
 	var convID string
@@ -175,9 +205,11 @@ func reopenSavedPage(r *http.Request, row *db.GroupPage) (*livePage, int, string
 	}
 	now := time.Now().UTC()
 	reg := livePages
+	pageSaveMu.Lock()
 	reg.mu.Lock()
-	defer reg.mu.Unlock()
 	fail := func(status int, kind, msg string) (*livePage, int, string, string) {
+		reg.mu.Unlock()
+		pageSaveMu.Unlock()
 		closeStageUpstream(up)
 		return nil, status, kind, msg
 	}
@@ -216,8 +248,10 @@ func handleDashboardPageDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	pageSaveMu.Lock()
 	p, wasLive := livePages.closeByID(id)
 	removed, err := db.DeleteGroupPage(id)
+	pageSaveMu.Unlock()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -250,8 +284,16 @@ func savedClosedPages() map[int64][]processGroupPage {
 		slog.Warn("pages: saved pages unavailable", "error", err)
 		return out
 	}
+	livePages.mu.Lock()
+	live := map[string]bool{}
+	for id := range livePages.byID {
+		live[id] = true
+	}
+	livePages.mu.Unlock()
 	for _, row := range rows {
-		if row.State != db.GroupPageClosed {
+		// A row still marked open with no stage behind it (a write that
+		// failed) is closed in all but name: it lists, and reopens, as closed.
+		if live[row.ID] {
 			continue
 		}
 		v := processGroupPage{ID: row.ID, Name: row.Name, Title: row.Title, Owner: row.Owner, Kind: row.Kind,

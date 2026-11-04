@@ -158,9 +158,11 @@ func handleDashboardPageCreate(w http.ResponseWriter, r *http.Request) {
 	owner := groupPageOwner(g.ID)
 	// A closed page the group saved under this name is reopened, keeping its
 	// id and lock (pages_saved.go).
-	savedID, savedLocked := savedPageReusable(g.ID, owner, name)
+	savedID, savedLocked := savedPageFor(g.ID, owner, name)
 	now := time.Now().UTC()
 	reg := livePages
+	pageSaveMu.Lock()
+	defer pageSaveMu.Unlock()
 	reg.mu.Lock()
 	if reg.byOwner[owner][name] != nil {
 		reg.mu.Unlock()
@@ -254,10 +256,12 @@ func adoptGroupPageLocked(w http.ResponseWriter, reg *livePageRegistry, g *db.Ag
 // closeGroupPages closes the pages a group owns, when it is archived or
 // deleted: no member can reach them any more.
 func closeGroupPages(groupID int64) {
+	pageSaveMu.Lock()
 	closed := livePages.closeOwner(groupPageOwner(groupID))
 	for _, row := range closed {
 		savePageClosed(row.ID, row.GroupID, pageClosedArchived)
 	}
+	pageSaveMu.Unlock()
 	if len(closed) > 0 {
 		slog.Info("closed a removed group's pages", "group_id", groupID, "pages", len(closed))
 	}
