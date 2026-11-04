@@ -69,6 +69,7 @@ export function ProfileReapplyControl({ profileName, fetchImpl = globalThis.fetc
   const notes = [
     'Saving this profile changes new spawns only; each running agent keeps the copy it was spawned with.',
     ...(body?.grants_note ? [body.grants_note] : []),
+    ...(Array.isArray(body?.notes) ? body.notes : []),
   ];
   return html`<div class="profile-reapply" id="profile-editor-reapply">
     ${error && html`<div class="ui-error-box">${error}</div>`}

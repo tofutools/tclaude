@@ -38,7 +38,8 @@ type reapplyPreview struct {
 		Enabled bool   `json:"enabled"`
 		Reason  string `json:"reason"`
 	} `json:"apply"`
-	GrantsNote string `json:"grants_note"`
+	GrantsNote string   `json:"grants_note"`
+	Notes      []string `json:"notes"`
 }
 
 func profileReapplyPreview(t *testing.T, f *testharness.Flow, name string) reapplyPreview {
@@ -71,7 +72,7 @@ func TestProfileReapply_PreviewShowsPerAgentDiff(t *testing.T) {
 
 	// Saving says how many running agents keep their copy.
 	rec := humanReq(t, f, http.MethodPatch, "/v1/spawn-profiles/worker", map[string]any{
-		"name": "worker", "harness": "claude",
+		"name": "worker", "harness": "claude", "startup_context": "Be brief.",
 		"model": "sonnet", "peer_messaging": true, "auto_memory": true, "initial_message": "Start over.",
 		"permission_overrides": map[string]any{"human.notify": map[string]any{"effect": "grant"}},
 	})
@@ -86,6 +87,8 @@ func TestProfileReapply_PreviewShowsPerAgentDiff(t *testing.T) {
 	assert.False(t, preview.Apply.Enabled, "applying waits on relaunch reading the spawn copy")
 	assert.Contains(t, preview.Apply.Reason, "tcl-an26ed")
 	assert.Contains(t, preview.GrantsNote, "shown only, not applied")
+	require.Len(t, preview.Notes, 1)
+	assert.Contains(t, preview.Notes[0], "Usage profile links: not reapplied yet")
 	require.Len(t, preview.Agents, 2)
 
 	statuses := map[string]map[string]string{}
@@ -107,6 +110,7 @@ func TestProfileReapply_PreviewShowsPerAgentDiff(t *testing.T) {
 		"peer_messaging":  "changes",
 		"auto_memory":     "changes",
 		"initial_message": "not reapplied (spawn only)",
+		"startup_context": "not reapplied yet",
 	}, statuses[plain.AgentID])
 	assert.Equal(t, "kept (explicit)", statuses[pinned.AgentID]["peer_messaging"], "a value the spawn request set stays")
 	assert.Equal(t, "changes", statuses[pinned.AgentID]["auto_memory"])

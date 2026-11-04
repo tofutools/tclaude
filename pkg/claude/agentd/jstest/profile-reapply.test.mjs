@@ -14,6 +14,7 @@ const PREVIEW = {
   }],
   apply: { enabled: false, reason: 'Takes effect once relaunch reads the spawn copy (tcl-an26ed).' },
   grants_note: 'Grants: shown only, not applied.',
+  notes: ['Usage profile links: not reapplied yet.'],
 };
 
 function json(body, status = 200) {
@@ -44,6 +45,7 @@ test('profile re-apply: review shows the per-agent diff with Apply disabled and 
   assert.match(text, /kept \(fixed\)/);
   assert.match(text, /human\.notify: unset → grant/);
   assert.match(text, /Grants: shown only, not applied\./);
+  assert.match(text, /Usage profile links: not reapplied yet\./);
   const apply = button(view.container, 'Apply to selected');
   assert.ok(apply, 'Apply is visible');
   assert.equal(apply.disabled, true, 'and disabled');

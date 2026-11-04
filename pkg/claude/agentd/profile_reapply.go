@@ -38,7 +38,19 @@ const (
 	reapplyKeptExplict = "kept (explicit)"
 	reapplyKeptSticky  = "kept (relaunch override)"
 	reapplySpawnOnly   = "not reapplied (spawn only)"
+	reapplyNotYet      = "not reapplied yet"
 )
+
+// profileReapplyNotYet are spawn-copy fields the re-apply operation does not
+// carry yet (launch-uniform's follow-ups to tcl-an26ed). Marked so that a
+// change to one is never silently dropped.
+var profileReapplyNotYet = map[string]bool{
+	"include_group_context": true, "profile_env": true, "profile_startup_context": true, "roles": true,
+}
+
+// profileReapplyUsageNote covers the profile's usage-profile links, which live
+// in the usage rules store rather than the profile, so no field row shows them.
+const profileReapplyUsageNote = "Usage profile links: not reapplied yet. An agent keeps the usage profiles it was spawned with."
 
 // profileReapplyIgnored are a profile's own bookkeeping, not launch inputs.
 var profileReapplyIgnored = map[string]bool{
@@ -156,6 +168,8 @@ func profileReapplyFields(copied, current map[string]json.RawMessage, layers *db
 				row.Status = reapplyKeptSticky
 			case field.Layer == launchspec.LayerSpawnOnly:
 				row.Status = reapplySpawnOnly
+			case profileReapplyNotYet[field.Key]:
+				row.Status = reapplyNotYet
 			}
 		}
 		out = append(out, row)
@@ -289,6 +303,7 @@ func handleSpawnProfileRunningAgents(w http.ResponseWriter, r *http.Request) {
 		"agents":      agents,
 		"apply":       map[string]any{"enabled": false, "reason": profileReapplyBlocked},
 		"grants_note": profileReapplyGrantsNote,
+		"notes":       []string{profileReapplyUsageNote},
 	})
 }
 

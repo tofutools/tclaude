@@ -27,6 +27,10 @@ what re-applying the edited profile would change for each:
 - a value the spawn request set is **kept (explicit)**;
 - spawn-only values, such as the agent name or the initial message, are
   **not reapplied**: they were used once, at the first spawn.
+- the group context switch, profile environment, profile startup context and
+  roles are **not reapplied yet**: a re-apply does not carry them so far, and
+  the agent keeps its copy. The same holds for the profile's usage-profile
+  links.
 
 Grant changes (permission overrides, group owner and role grants) are listed,
 but a re-apply would not apply them. tclaude does not yet record which of an
