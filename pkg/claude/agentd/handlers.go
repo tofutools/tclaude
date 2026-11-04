@@ -2646,36 +2646,10 @@ func isValidInitialMessage(s string) bool {
 	return true
 }
 
-// isValidSpawnName enforces the agent-name charset at the spawn boundary
-// (handleGroupSpawn): ASCII letters, digits, '_' and '-' only — no
-// spaces, punctuation, or unicode — and a 1..agent.MaxSpawnNameLen length
-// when non-empty. An empty name is valid (the name is optional; the agent
-// gets an auto-generated label). The client-side mirror is
-// agent.isValidSpawnName, and both share agent.MaxSpawnNameLen so the caps
-// stay identical.
-//
-// This is intentionally stricter than isValidRenameTitle (which allows
-// spaces / brackets / parens): a spawn name doubles as a git worktree
-// branch name (the dashboard's name→branch sync), so it must be a safe
-// branch token, and the strict set is a clean subset of the rename
-// charset, so a non-empty name that passes here always clears the
-// downstream isValidRenameTitle gate that decides the post-spawn /rename.
-func isValidSpawnName(name string) bool {
-	if len(name) > agent.MaxSpawnNameLen {
-		return false
-	}
-	for _, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case r == '-' || r == '_':
-		default:
-			return false
-		}
-	}
-	return true
-}
+// isValidSpawnName is the daemon's name for the one spawn-name gate,
+// agent.IsValidSpawnName; the CLI calls the same function, and the dashboard
+// JS mirror is pinned to the same fixture (agentd/jstest/spawn-name-fixture.json).
+func isValidSpawnName(name string) bool { return agent.IsValidSpawnName(name) }
 
 // maxSpawnAttachments caps how many attachment paths a single spawn may carry.
 // The dashboard upload endpoint enforces its own per-batch caps; this is the
