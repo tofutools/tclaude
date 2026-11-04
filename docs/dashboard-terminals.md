@@ -8,6 +8,33 @@ background.
 A web terminal is the real thing, attached to the agent's tmux session. There is
 no read-only mode here: what you type lands in the agent's session.
 
+## The rail
+
+Down the left edge, the rail lists everything you can open here, in one place:
+- each group's resources, by group: its pages, boards, processes and shell;
+- then the agents' terminals, both the ones open here and the sessions
+  running in the background.
+
+Each item ends in its state:
+- **●** open here, as a tab or a window;
+- **–** minimized to the dock;
+- **bg** (or **live** for a page) running out of sight;
+- **closed** not live.
+
+These are the same states as the pills in a group's
+[Resources](dashboard-groups.md#resources).
+
+To use the rail:
+- **Find an item:** search by name or group, or narrow the list with the
+  chips: All, Open, Minimized, Background and Closed.
+- **Open it:** click it. An item that is already open comes forward; a closed
+  page reopens.
+- **Hover a tab:** pop it out, or close it.
+- **Hover a window:** minimize it, or close it.
+
+Closing a tab moves the item to Closed or Background, so it stays listed.
+**«** folds the rail to its icons; this browser remembers the choice.
+
 ## Opening a terminal
 
 - **From [Groups](dashboard-groups.md#opening-a-terminal):** the focus icon on a

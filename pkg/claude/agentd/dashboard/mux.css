@@ -713,3 +713,42 @@ body.wizard .mux-bg-pop { background: #1b1329; border-color: #4a3a6b; }
 :root[data-overlay-backdrop="both"] .mux-terminal-disconnect-overlay {
   backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
 }
+
+/* The Collab rail (collab-rail.js): one list of every resource and terminal
+   down the view's left edge, folding to its icons. The strip and panes keep
+   their layout beside it. */
+.terminal-shell-root.has-rail { position: relative; padding-left: 236px; }
+.terminal-shell-root.has-rail.rail-collapsed { padding-left: 40px; }
+.collab-rail { position: absolute; left: 0; top: 0; bottom: 0; width: 228px; display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 6px; box-sizing: border-box; border-right: 1px solid #30363d; background: #0d1117; overflow: hidden; z-index: 2; }
+.collab-rail.collapsed { width: 36px; padding: 8px 2px; }
+.collab-rail .cr-head { display: flex; gap: 4px; align-items: center; }
+.collab-rail .cr-search { flex: 1 1 auto; min-width: 0; font-size: 12px; padding: 4px 6px; border: 1px solid #30363d; border-radius: 6px;
+  background: #010409; color: var(--ui-body-text); }
+.collab-rail .cr-fold { flex: none; background: none; border: 0; color: var(--ui-muted-text); cursor: pointer; padding: 2px 6px; font-size: 13px; }
+.collab-rail.collapsed .cr-head { justify-content: center; }
+.collab-rail .cr-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.collab-rail .cr-chip { cursor: pointer; }
+.collab-rail .cr-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.collab-rail .cr-section-name { padding: 2px 6px; }
+.collab-rail .cr-item { display: flex; align-items: center; gap: 4px; border-radius: 6px; padding: 0 4px; min-height: 24px; }
+.collab-rail .cr-item:hover { background: #161b22; }
+.collab-rail .cr-name { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; background: none; border: 0; color: var(--ui-body-text);
+  cursor: pointer; font-size: 13px; text-align: left; padding: 3px 2px; }
+.collab-rail.collapsed .cr-name { justify-content: center; }
+.collab-rail .cr-glyph { flex: none; width: 14px; text-align: center; color: var(--ui-muted-text); }
+.collab-rail .cr-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.collab-rail .cr-closed .cr-title { color: var(--ui-muted-text); }
+.collab-rail .cr-tools { display: none; gap: 2px; }
+.collab-rail .cr-item:hover .cr-tools, .collab-rail .cr-item:focus-within .cr-tools { display: inline-flex; }
+.collab-rail .cr-tool { background: none; border: 0; color: var(--ui-muted-text); cursor: pointer; padding: 0 3px; font-size: 12px; }
+.collab-rail .cr-tool:hover { color: var(--ui-strong-text); }
+.collab-rail .cr-mark { flex: none; font-size: 11px; color: var(--ui-muted-text); }
+.collab-rail .cr-mark-open { color: #58a6ff; }
+.collab-rail .cr-mark-minimized { color: #d29922; }
+.collab-rail .cr-mark-background { color: #3fb950; }
+.collab-rail .cr-empty { margin: 4px 6px; }
+.collab-rail.collapsed .cr-name .cr-glyph { width: auto; }
+.collab-rail.collapsed .cr-item.cr-open .cr-glyph { color: #58a6ff; }
+.collab-rail.collapsed .cr-item.cr-minimized .cr-glyph { color: #d29922; }
+.collab-rail.collapsed .cr-item.cr-background .cr-glyph { color: #3fb950; }
