@@ -143,6 +143,22 @@ function peerRows(resources) {
 // again, so a lock changed on that node (or a new board) shows here too.
 export const peerResourcesPollMs = 20000;
 
+// A node's group cards read it one at a time: the peer view holds a few
+// requests per peer in flight (federation_peer_view.go), and a node showing
+// many groups must not crowd out the operator's own clicks there.
+const peerReadQueues = new Map();
+
+export function queuePeerRead(node, read) {
+  const key = node || '';
+  const run = (peerReadQueues.get(key) || Promise.resolve()).then(read, read);
+  const tail = run.catch(() => {});
+  peerReadQueues.set(key, tail);
+  void tail.then(() => { if (peerReadQueues.get(key) === tail) peerReadQueues.delete(key); });
+  return run;
+}
+
+const tabHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
+
 // PeerGroupResources is a peer's group's Resources, read from that node. Its
 // boards and pages are that node's own, so they are named rather than opened;
 // each wears its lock chip, which toggles only where the node grants this one
@@ -158,7 +174,7 @@ export function PeerGroupResources({ group, notify = defaultNotify, fetchImpl = 
   const refresh = async () => {
     const ticket = ++current.current;
     try {
-      const resources = await loadPeerResources(name, reach);
+      const resources = await queuePeerRead(node?.id, () => loadPeerResources(name, reach));
       if (ticket === current.current) setState({ resources, error: null });
     } catch (error) {
       if (ticket === current.current) setState({ resources: null, error });
@@ -166,9 +182,13 @@ export function PeerGroupResources({ group, notify = defaultNotify, fetchImpl = 
   };
   useEffect(() => {
     void refresh();
-    const timer = pollMs > 0 ? setInterval(() => { void refresh(); }, pollMs) : null;
+    // Cards start their polls at staggered times, and a hidden tab skips them.
+    let timer = null;
+    const start = pollMs > 0 ? setTimeout(() => {
+      timer = setInterval(() => { if (!tabHidden()) void refresh(); }, pollMs);
+    }, Math.floor(Math.random() * pollMs)) : null;
     // A late answer for a previous node or group is dropped.
-    return () => { current.current++; if (timer) clearInterval(timer); };
+    return () => { current.current++; if (start) clearTimeout(start); if (timer) clearInterval(timer); };
   }, [node?.id, name, pollMs]);
   const { resources, error } = state;
   if (!resources) {

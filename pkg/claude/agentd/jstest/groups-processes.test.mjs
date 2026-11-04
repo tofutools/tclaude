@@ -718,3 +718,19 @@ test('any other peer group read failure says so', async (t) => {
   const { root } = await mountPeerResources(t, PEER_RESOURCES, { readStatus: 502 });
   assert.match(root.querySelector('[data-peer-resources-error]').textContent, /Could not read the resources of crew on bob: read failed 502/);
 });
+
+test('a node\'s group cards read it one at a time', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-resources.js');
+  let inFlight = 0;
+  let most = 0;
+  const read = () => mod.queuePeerRead('inst_bob1234', async () => {
+    inFlight++;
+    most = Math.max(most, inFlight);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    inFlight--;
+  });
+  const failing = mod.queuePeerRead('inst_bob1234', async () => { throw new Error('boom'); });
+  await Promise.all([read(), read(), read(), failing.catch(() => {}), read()]);
+  assert.equal(most, 1, 'one read in flight per node, a failed one included');
+});
