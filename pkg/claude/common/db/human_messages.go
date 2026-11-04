@@ -46,6 +46,12 @@ type HumanMessage struct {
 	Recommended int
 	Decision    string
 	DecidedAt   time.Time
+	// DismissedAt marks a decision withdrawn without an answer, by
+	// DismissedBy (HumanDismissedByOperator or HumanDismissedByAgent), with an
+	// optional DismissReason. A decision is answered or dismissed, not both.
+	DismissedAt   time.Time
+	DismissedBy   string
+	DismissReason string
 	// Action is the one action link the message carries: a name from a fixed
 	// list ("terminal", "board:<id>", "pr:<url>", "tab:<name>"), which the
 	// daemon resolves when the operator clicks. "" for none.
@@ -455,20 +461,23 @@ func HumanMessageStats() (total, unread int, lastAt time.Time, err error) {
 
 // humanMessageCols is the column list scanHumanMessage reads, in order.
 const humanMessageCols = `id, from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at,
-		       process_run_id, process_node_id, process_command_id, options, recommended, decision, decided_at, action`
+		       process_run_id, process_node_id, process_command_id, options, recommended, decision, decided_at, action,
+		       dismissed_at, dismissed_by, dismiss_reason`
 
 func scanHumanMessage(row interface{ Scan(...any) error }) (*HumanMessage, error) {
 	var m HumanMessage
-	var created, readAt, decidedAt dbTimestamp
+	var created, readAt, decidedAt, dismissedAt dbTimestamp
 	var options string
 	if err := row.Scan(&m.ID, &m.FromConv, &m.FromAgent, &m.FromTitle, &m.GroupName,
 		&m.Subject, &m.Body, &created, &readAt, &m.ProcessRunID, &m.ProcessNodeID, &m.ProcessCommandID,
-		&options, &m.Recommended, &m.Decision, &decidedAt, &m.Action); err != nil {
+		&options, &m.Recommended, &m.Decision, &decidedAt, &m.Action,
+		&dismissedAt, &m.DismissedBy, &m.DismissReason); err != nil {
 		return nil, err
 	}
 	m.CreatedAt = created.Time()
 	m.ReadAt = readAt.Time()
 	m.DecidedAt = decidedAt.Time()
+	m.DismissedAt = dismissedAt.Time()
 	if options != "" {
 		_ = json.Unmarshal([]byte(options), &m.Options)
 	}
@@ -495,12 +504,52 @@ func DecideHumanMessage(id int64, decision string) (bool, error) {
 	res, err := d.Exec(`
 		UPDATE human_messages
 		SET decision = ?, decided_at = ?, read_at = COALESCE(read_at, ?)
-		WHERE id = ? AND options != '' AND decision = ''`, decision, now, now, id)
+		WHERE id = ? AND options != '' AND decision = '' AND dismissed_at IS NULL`, decision, now, now, id)
 	if err != nil {
 		return false, err
 	}
 	n, err := res.RowsAffected()
 	return n > 0, err
+}
+
+// Who dismissed a decision.
+const (
+	HumanDismissedByOperator = "operator"
+	HumanDismissedByAgent    = "agent"
+)
+
+// IsOpenDecision reports whether m is a decision still waiting on the
+// operator: neither answered nor dismissed.
+func (m *HumanMessage) IsOpenDecision() bool {
+	return m != nil && len(m.Options) > 0 && m.Decision == "" && m.DismissedAt.IsZero()
+}
+
+// DismissHumanMessage withdraws an open decision without an answer and marks
+// it read. Like an answer, only the first counts: it returns false when the
+// message is already answered or dismissed, or is not a decision.
+func DismissHumanMessage(id int64, by, reason string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	now := dbTime(time.Now())
+	res, err := d.Exec(`UPDATE human_messages
+		SET dismissed_at = ?, dismissed_by = ?, dismiss_reason = ?, read_at = COALESCE(read_at, ?)
+		WHERE id = ? AND options != '' AND decision = '' AND dismissed_at IS NULL`, now, by, reason, now, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// ListOpenDecisionsFrom returns the open decisions agentID put to the
+// operator, oldest first. A row from before senders were recorded by agent
+// matches on convID.
+func ListOpenDecisionsFrom(agentID, convID string) ([]*HumanMessage, error) {
+	return queryHumanMessages(`WHERE options != '' AND decision = '' AND dismissed_at IS NULL
+		AND ((from_agent != '' AND from_agent = ?) OR (from_agent = '' AND from_conv != '' AND from_conv = ?))
+		ORDER BY id`, agentID, convID)
 }
 
 // UndecideHumanMessage releases a decision whose pick could not be
@@ -517,7 +566,7 @@ func UndecideHumanMessage(id int64) error {
 // ListUndecidedHumanMessages returns the newest decisions still waiting on
 // the operator, at most limit.
 func ListUndecidedHumanMessages(limit int) ([]*HumanMessage, error) {
-	return queryHumanMessages(`WHERE options != '' AND decision = '' ORDER BY id DESC LIMIT ?`, limit)
+	return queryHumanMessages(`WHERE options != '' AND decision = '' AND dismissed_at IS NULL ORDER BY id DESC LIMIT ?`, limit)
 }
 
 func queryHumanMessages(tail string, args ...any) ([]*HumanMessage, error) {
@@ -681,7 +730,7 @@ func DeleteReadHumanMessages() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := d.Exec(`DELETE FROM human_messages WHERE read_at IS NOT NULL AND NOT (options != '' AND decision = '')`)
+	res, err := d.Exec(`DELETE FROM human_messages WHERE read_at IS NOT NULL AND NOT (options != '' AND decision = '' AND dismissed_at IS NULL)`)
 	if err != nil {
 		return 0, fmt.Errorf("delete read human messages: %w", err)
 	}
@@ -695,8 +744,8 @@ func DeleteReadHumanMessages() (int, error) {
 // agentd reconciler retries any failed removal.
 func DeleteReadHumanMessagesWithAttachments() (int, []string, error) {
 	return deleteHumanMessagesWithAttachments(
-		"read_at IS NOT NULL AND NOT (options != '' AND decision = '')",
-		"m.read_at IS NOT NULL AND NOT (m.options != '' AND m.decision = '')", nil)
+		"read_at IS NOT NULL AND NOT (options != '' AND decision = '' AND dismissed_at IS NULL)",
+		"m.read_at IS NOT NULL AND NOT (m.options != '' AND m.decision = '' AND m.dismissed_at IS NULL)", nil)
 }
 
 // DeleteHumanMessage hard-deletes a single message by id, regardless of

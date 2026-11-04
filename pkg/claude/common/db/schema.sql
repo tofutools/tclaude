@@ -451,7 +451,8 @@ CREATE TABLE "human_messages" (
 			body        TEXT NOT NULL,
 			created_at  INTEGER NOT NULL,
 			read_at     INTEGER
-		, from_agent TEXT NOT NULL DEFAULT '', process_run_id TEXT NOT NULL DEFAULT '', process_node_id TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', options TEXT NOT NULL DEFAULT '', recommended INTEGER NOT NULL DEFAULT 0, decision TEXT NOT NULL DEFAULT '', decided_at INTEGER, action TEXT NOT NULL DEFAULT '') STRICT;
+		, from_agent TEXT NOT NULL DEFAULT '', process_run_id TEXT NOT NULL DEFAULT '', process_node_id TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', options TEXT NOT NULL DEFAULT '', recommended INTEGER NOT NULL DEFAULT 0, decision TEXT NOT NULL DEFAULT '', decided_at INTEGER, action TEXT NOT NULL DEFAULT '', dismissed_at INTEGER, dismissed_by TEXT NOT NULL DEFAULT '', dismiss_reason TEXT NOT NULL DEFAULT ''
+				CHECK(length(CAST(dismiss_reason AS BLOB)) <= 2048)) STRICT;
 
 CREATE INDEX idx_human_messages_created
 			ON human_messages(created_at);

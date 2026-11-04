@@ -830,6 +830,11 @@ type dashboardHumanMessage struct {
 	Recommended int      `json:"recommended,omitempty"`
 	Decision    string   `json:"decision,omitempty"`
 	DecidedAt   string   `json:"decided_at,omitempty"`
+	// A decision dismissed without an answer: when, by whom ("operator" or
+	// "agent") and why.
+	DismissedAt   string `json:"dismissed_at,omitempty"`
+	DismissedBy   string `json:"dismissed_by,omitempty"`
+	DismissReason string `json:"dismiss_reason,omitempty"`
 	// Action is the message's one action link, a Collab surface like a
 	// decision. Not offered on a peer's view of this node.
 	Action *dashboardHumanMessageAction `json:"action,omitempty"`
@@ -1296,6 +1301,10 @@ func humanMessageViews(rows []*db.HumanMessage) ([]dashboardHumanMessage, int) {
 			view.Options, view.Recommended = m.Options, m.Recommended
 		}
 		view.Action = humanActionView(m, actionDirs)
+		if !m.DismissedAt.IsZero() {
+			view.DismissedAt = m.DismissedAt.Format(time.RFC3339)
+			view.DismissedBy, view.DismissReason = m.DismissedBy, m.DismissReason
+		}
 		if !m.DecidedAt.IsZero() {
 			view.DecidedAt = m.DecidedAt.Format(time.RFC3339)
 		}
@@ -1622,6 +1631,9 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		case orig.Decision != "":
 			writeError(w, http.StatusConflict, "decided", "already decided: "+orig.Decision)
 			return
+		case !orig.DismissedAt.IsZero():
+			writeError(w, http.StatusConflict, "dismissed", "this decision was dismissed")
+			return
 		}
 		decision = orig.Options[body.Choice-1]
 	}
@@ -1702,7 +1714,7 @@ func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "io", "record decision: "+err.Error())
 			} else {
-				writeError(w, http.StatusConflict, "decided", "this decision has already been answered")
+				writeError(w, http.StatusConflict, "decided", "this decision has already been answered or dismissed")
 			}
 			return
 		}

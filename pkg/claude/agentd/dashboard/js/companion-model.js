@@ -403,11 +403,12 @@ export function stewardSummonBody() {
 }
 
 // decisionsFor lists the decisions the given agent put to the operator
-// (`notify-human --option ...`) that are still unanswered, oldest first.
+// (`notify-human --option ...`) that are still open (neither answered nor
+// dismissed), oldest first.
 export function decisionsFor(snapshot, agent) {
   if (!agent) return [];
   return (snapshot?.messages || [])
-    .filter((m) => Array.isArray(m?.options) && m.options.length > 1 && !m.decision
+    .filter((m) => Array.isArray(m?.options) && m.options.length > 1 && !m.decision && !m.dismissed_at
       && (m.from_agent ? m.from_agent === agent.agentId : m.from_conv === agent.convId))
     .sort((a, b) => a.id - b.id);
 }
@@ -421,12 +422,12 @@ export function actionsFor(snapshot, agent) {
     .sort((a, b) => a.id - b.id);
 }
 
-// pendingDecisions lists every unanswered decision in the fleet, oldest
+// pendingDecisions lists every open (unanswered, undismissed) decision in the fleet, oldest
 // first: the companion's "to decide" queue, so the operator can answer them
 // all in one place whichever agent asked.
 export function pendingDecisions(snapshot) {
   return (snapshot?.messages || [])
-    .filter((m) => Array.isArray(m?.options) && m.options.length > 1 && !m.decision && (m.from_agent || m.from_conv))
+    .filter((m) => Array.isArray(m?.options) && m.options.length > 1 && !m.decision && !m.dismissed_at && (m.from_agent || m.from_conv))
     .sort((a, b) => a.id - b.id);
 }
 

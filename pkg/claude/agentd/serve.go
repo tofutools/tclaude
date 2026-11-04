@@ -1538,6 +1538,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/sudo/", handleSudoByID)
 	mux.HandleFunc("/v1/notify-human", handleNotifyHuman)
 	mux.HandleFunc("/v1/notify-human/attachment", handleNotifyHumanAttachment)
+	mux.HandleFunc("/v1/notify-human/dismiss", handleNotifyHumanDismiss)
 	mux.HandleFunc("/v1/clipboard", handleClipboard)
 	// Operator-only status and reset surface for the AWB ready pollers
 	// (`tclaude pickup`). Human-token gated; no agent path. Deliberately

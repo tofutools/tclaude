@@ -928,6 +928,7 @@ button.tool:where(:hover) { background: var(--ui-bg-hover); }
   border: 1px solid #1f6feb; border-radius: 6px; background: #0f1b2d;
 }
 .mail-decision.decided { border-color: #2a3340; background: #161b22; }
+.mail-decision.dismissed .mail-decision-label { font-style: italic; }
 .mail-decision-label { color: #8b949e; font-size: 12px; }
 /* The button an agent put on a message (notify-human --action). */
 .message-action { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }

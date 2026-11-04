@@ -30,6 +30,7 @@ import {
 import { useChipDrag } from './companion-chip-drag.js';
 import { chipReserve, compactWidth, footerChipReserve, measureFooterRoom, useFooterRest } from './companion-chip-footer.js';
 import { registerCompanionController } from './companion-facade.js';
+import { postDismiss } from './decision-dismiss.js';
 import { DecideTab, StartTab, stewardFreshNote, stewardReturnNote } from './companion-home.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
 import { overlayWindowsByStack, readPref, reducedMotion, setSnapAssistEnabled, writePref } from './overlay-window.js';
@@ -216,6 +217,15 @@ function DecisionCard({ decision, fetchImpl, notify, from = '' }) {
       setBusy(0);
     }
   }
+  async function dismiss() {
+    setBusy('dismiss');
+    try {
+      await postDismiss(fetchImpl, [decision.id]);
+    } catch (error) {
+      notify(`That decision could not be dismissed: ${error?.message || error}`, true);
+      setBusy(0);
+    }
+  }
   const question = decision.subject || 'Decision';
   return html`<div class="companion-decision" role="group" aria-label=${`Decision: ${question}`}>
     <div class="companion-approval-head"><b>${question}</b>${from && html`<span class="companion-decision-from">${from}</span>`}</div>
@@ -228,6 +238,8 @@ function DecisionCard({ decision, fetchImpl, notify, from = '' }) {
           ${busy === i + 1 ? 'Sending…' : option}${recommended && busy !== i + 1 ? html` <span class="companion-decision-rec">★</span>` : ''}
         <//>`;
       })}
+      <${Button} size="sm" class="companion-decision-dismiss" disabled=${!!busy} title="No longer relevant: take it off the list without answering; the agent is told"
+        onClick=${dismiss}>${busy === 'dismiss' ? 'Dismissing…' : 'Dismiss'}<//>
     </div>
     <input class="companion-decision-note" type="text" placeholder="Add a note (optional)" value=${note} disabled=${!!busy}
       aria-label="Note to send with your choice" onInput=${(event) => setNote(event.currentTarget.value)} />

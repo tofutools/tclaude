@@ -297,6 +297,15 @@ Decisions from every agent also wait in one queue: a **◆ N to decide** pill, a
 tab of the same name in the window. The same buttons are in the
 [Messages](dashboard-messages.md) reader, without the note.
 
+When a decision no longer matters, **Dismiss** takes it off the queue without an
+answer. **Dismiss all (N)** in the to-decide tab asks once, naming the count, then
+dismisses exactly the decisions listed there. Each agent that asked gets one inbox
+message naming its dismissed decisions, so it stops waiting. A dismissed decision stays in Messages, marked
+**Dismissed by you** (or by the agent, which can withdraw its own with
+`tclaude agent notify-human dismiss <id>` or `--all`, with a reason). An answer and a
+dismissal can't both happen: whichever comes first counts, and the other is refused.
+Decisions from a peer node are answered and dismissed on that node.
+
 ![A decision at the top of the Steward's tab, with one button per option, a star on the recommended option, and a field for a note](assets/companion-decision.png)
 
 ## Action links
