@@ -2173,8 +2173,9 @@ func handleWhoamiRename(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAgentRename injects `/rename <title>` into ANOTHER agent's CC
-// pane. Routed via handleAgentByConv. Auth: agent.rename slug OR caller
-// is owner of a group containing target.
+// pane. Routed via handleAgentByConv. Auth: requireCrossAgentPermission
+// (agent.rename, or groups.members.rename covering every active group
+// containing the target).
 func handleAgentRename(w http.ResponseWriter, r *http.Request, targetConv string) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
@@ -2313,9 +2314,9 @@ func handleWhoamiCompact(w http.ResponseWriter, r *http.Request) {
 
 // handleAgentCompact injects the target harness's compact command into
 // ANOTHER agent's pane. Routed via handleAgentByConv (the dispatcher
-// resolves targetConv from the URL). Auth: agent.compact slug OR caller
-// is owner of a group containing target. Same body shape as the self
-// variant.
+// resolves targetConv from the URL). Auth: agent.compact, or
+// groups.members.compact covering every active group containing the
+// target. Same body shape as the self variant.
 func handleAgentCompact(w http.ResponseWriter, r *http.Request, targetConv string) {
 	handleAgentSlash(w, r, PermAgentCompact, targetConv, compactToken, "compact")
 }
@@ -2717,8 +2718,9 @@ func handleWhoamiContext(w http.ResponseWriter, r *http.Request) {
 // manager-pattern read reached via /v1/agent/{selector}/context. Unlike
 // the directory read (ungated, see handleAgentDir), context usage is
 // gated like the other cross-agent verbs: the caller passes with the
-// agent.context-info slug, or by owning a group containing the target
-// (the owner bypass — a lead never needs a slug to watch its own team).
+// agent.context-info slug, or with groups.members.context-info covering
+// every active group containing the target (ownership contributes it, so
+// a lead never needs a slug to watch its own team).
 //
 // An explicit deny override is ALWAYS authoritative and suppresses the
 // owner bypass — the universal precedence resolvePermission /
