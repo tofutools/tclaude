@@ -58,9 +58,9 @@ func startPopupServer(bindHost string, port int) (*http.Server, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("bind dashboard listener %s: %w", bindAddr, err)
 	}
-	listeners := []net.Listener{ln}
 	addr := ln.Addr().(*net.TCPAddr)
-	registerStageDaemonPort(addr.Port)
+	ln = registerStageDaemonListener(ln)
+	listeners := []net.Listener{ln}
 	if !addr.IP.IsUnspecified() && !addr.IP.IsLoopback() {
 		loopbackAddr := net.JoinHostPort(defaultDashboardBind, strconv.Itoa(addr.Port))
 		loopback, loopbackErr := net.Listen("tcp", loopbackAddr)

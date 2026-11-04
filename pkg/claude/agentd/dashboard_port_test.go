@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,6 +62,24 @@ func TestStartPopupServer_RandomPort(t *testing.T) {
 	require.NotNil(t, srv)
 	t.Cleanup(func() { _ = srv.Close() })
 	assert.Regexp(t, `^http://127\.0\.0\.1:\d+$`, url)
+}
+
+// The dashboard's port is the daemon's own only while the listener is open:
+// once it closes the kernel may hand the port to an agent's dev server, which
+// a page must then be able to show.
+func TestStartPopupServer_ReleasesDaemonPortOnClose(t *testing.T) {
+	srv, base, err := startPopupServer(defaultDashboardBind, 0)
+	require.NoError(t, err)
+	u, err := url.Parse(base)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(u.Port())
+	require.NoError(t, err)
+	assert.True(t, isStageDaemonPort(port), "the dashboard port is the daemon's while open")
+	require.NoError(t, srv.Close())
+	// Serve closes a listener it had not started tracking yet on its own
+	// goroutine, so the release can trail srv.Close.
+	require.Eventually(t, func() bool { return !isStageDaemonPort(port) }, 5*time.Second, 10*time.Millisecond,
+		"a closed listener's port is no longer the daemon's")
 }
 
 // A fixed port that is free binds to exactly that port — the stable URL

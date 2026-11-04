@@ -56,15 +56,36 @@ func stageSourceMessage(err error) string {
 
 // --- the daemon's own ports ---
 
-var stageDaemonPorts sync.Map // int -> struct{}
+// stageDaemonPorts holds the TCP ports the daemon listens on. A page may
+// never target one, even where the ownership proof would refuse it anyway.
+var stageDaemonPorts sync.Map // int -> *stageDaemonListener, or struct{} from a test hook
 
-// registerStageDaemonPort records a TCP port the daemon listens on. A page
-// may never target one, even where the ownership proof would refuse it
-// anyway.
-func registerStageDaemonPort(port int) {
-	if port > 0 {
-		stageDaemonPorts.Store(port, struct{}{})
+// stageDaemonListener is a daemon TCP listener whose port stays in
+// stageDaemonPorts only while it is open. Once it closes the port is no
+// longer the daemon's, and the kernel may hand it to anything else, such as
+// the agent's own dev server.
+type stageDaemonListener struct {
+	net.Listener
+	port int
+	once sync.Once
+}
+
+// registerStageDaemonListener records ln's port as the daemon's own until ln
+// is closed. Serve on the listener it returns.
+func registerStageDaemonListener(ln net.Listener) net.Listener {
+	tcp, ok := ln.Addr().(*net.TCPAddr)
+	if !ok || tcp.Port <= 0 {
+		return ln
 	}
+	l := &stageDaemonListener{Listener: ln, port: tcp.Port}
+	stageDaemonPorts.Store(tcp.Port, l)
+	return l
+}
+
+func (l *stageDaemonListener) Close() error {
+	err := l.Listener.Close()
+	l.once.Do(func() { stageDaemonPorts.CompareAndDelete(l.port, l) })
+	return err
 }
 
 func isStageDaemonPort(port int) bool {

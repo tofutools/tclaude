@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -85,9 +84,7 @@ func startRemoteServer(bind string) (*http.Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bind %s: %w", bind, err)
 	}
-	if tcp, ok := ln.Addr().(*net.TCPAddr); ok {
-		registerStageDaemonPort(tcp.Port)
-	}
+	ln = registerStageDaemonListener(ln)
 
 	// The listener (tls.Listen) already terminates TLS, so srv.Serve over it
 	// is correct and srv.TLSConfig is intentionally NOT set (it would be
