@@ -71,13 +71,13 @@ function RowMenu({ label, items }) {
 // ResourceRow is one resource: glyph and name (the primary action too), what
 // it is, its state pill, the primary action, the kind's own action, ⋯, and
 // the agent lock at the row's end where the kind has one.
-function ResourceRow({ attrs, closed, glyph, label, meta, view, primary, action, menu, lock }) {
+function ResourceRow({ attrs, kind, closed, glyph, label, meta, view, primary, action, menu, lock }) {
   return html`<div class=${closed ? 'gr-row gr-closed' : 'gr-row'} ...${attrs}>
     <${Button} size="sm" variant="link" class="gr-name" title=${`${primary.label} ${label}`}
       onClick=${primary.run}><span class="gr-glyph" aria-hidden="true">${glyph}</span>${label}<//>
     <span class="gq-dim gr-meta">${meta}</span>
     <span class="gr-spacer"></span>
-    <${ResourcePill} view=${view} />
+    <${ResourcePill} view=${view} kind=${kind} />
     <${Button} size="sm" class="gr-primary" data-resource-primary=${primary.label} onClick=${primary.run}>${primary.label}<//>
     ${action && html`<${Button} size="sm" class="gr-action" title=${action.title} aria-label=${action.title} ...${action.attrs || {}}
       onClick=${action.run}>${action.glyph}<//>`}
@@ -130,7 +130,7 @@ function PageRow({ page, api, source, notify, confirm, nameOf, snapshotValue, gr
       notify(`Could not reload ${label}: ${cause.message}`, true);
     }
   };
-  return html`<${ResourceRow} attrs=${{ 'data-resource-page': page.id, 'data-page-state': view === 'closed' ? 'closed' : 'open' }}
+  return html`<${ResourceRow} kind="page" attrs=${{ 'data-resource-page': page.id, 'data-page-state': view === 'closed' ? 'closed' : 'open' }}
     closed=${view === 'closed'} glyph="◧" label=${label} meta=${pageMeta(page, nameOf)} view=${view}
     primary=${{ label: primaryLabel('page', view), run }}
     action=${view !== 'closed' && { glyph: '↻', title: `Reload ${label} in every view`, attrs: { 'data-page-reload': page.id }, run: reload }}

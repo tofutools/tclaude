@@ -13,9 +13,16 @@ export const RESOURCE_PILL = Object.freeze({
   'open-tab': 'open in Collab', floating: 'floating', minimized: 'minimized', running: 'running', background: 'background', closed: 'closed',
 });
 
+// pillLabel is a state's words for a kind: a page that runs open nowhere
+// here is "live" (background is a terminal's word); the rest read alike.
+export function pillLabel(view, kind = '') {
+  if (view === 'background' && kind === 'page') return 'live';
+  return RESOURCE_PILL[view] || view;
+}
+
 // ResourcePill reads the same on every row and kind.
-export function ResourcePill({ view }) {
-  return html`<span class=${`ui-tag gr-pill gr-pill-${view}`} data-resource-state=${view}>${RESOURCE_PILL[view] || view}<//>`;
+export function ResourcePill({ view, kind = '' }) {
+  return html`<span class=${`ui-tag gr-pill gr-pill-${view}`} data-resource-state=${view}>${pillLabel(view, kind)}<//>`;
 }
 
 // resourceView is a resource's state here: the snapshot's group_resources

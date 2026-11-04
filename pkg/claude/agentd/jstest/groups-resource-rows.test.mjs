@@ -45,6 +45,8 @@ test('resource rows: pill, primary action by state, per-kind action, delete behi
   const live = row('[data-resource-page="pg_live"]');
   assert.equal(state(live), 'background', 'a live page open nowhere here runs in the background');
   assert.equal(primary(live), 'Open');
+  assert.equal(live.querySelector('[data-resource-state]').textContent, 'live', 'a page says live, not background');
+  assert.equal(row('[data-resource-shell="crew"]').querySelector('[data-resource-state]').textContent, 'background');
   const shut = row('[data-resource-page="pg_shut"]');
   assert.equal(state(shut), 'closed');
   assert.equal(primary(shut), 'Reopen');

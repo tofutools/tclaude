@@ -468,7 +468,7 @@ Every row wears a state pill that reads the same for every kind:
 - **open in Collab**, **floating** or **minimized**: this browser shows it as
   a Collab tab, in an overlay window, or on the dock.
 - **running**: a process with an active run.
-- **background**: a live page or shell that runs, open nowhere here.
+- **live** (a page) or **background** (a shell): it runs, open nowhere here.
 - **closed**: it exists, and nothing of it is live.
 
 Open, floating and minimized are this browser's own: another browser of
