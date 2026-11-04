@@ -60,14 +60,9 @@ type fedPeerViewReply struct {
 	Body   []byte      `json:"body,omitempty"`
 }
 
-type fedPeerViewWaiter struct {
-	peer, request string
-	answer        chan proto.PeerViewAnswerPayload
-}
-
 type fedPeerViewState struct {
 	active  map[string]string
-	waiters map[string]fedPeerViewWaiter
+	waiters map[string]fedAnswerWaiter[proto.PeerViewAnswerPayload]
 	// freed is closed (and replaced) whenever a slot is released, waking
 	// outbound requests queued for one.
 	freed chan struct{}
@@ -75,7 +70,7 @@ type fedPeerViewState struct {
 
 func (rt *fedRuntime) peerViewsLocked() *fedPeerViewState {
 	if rt.peerViews == nil {
-		rt.peerViews = &fedPeerViewState{active: map[string]string{}, waiters: map[string]fedPeerViewWaiter{}, freed: make(chan struct{})}
+		rt.peerViews = &fedPeerViewState{active: map[string]string{}, waiters: map[string]fedAnswerWaiter[proto.PeerViewAnswerPayload]{}, freed: make(chan struct{})}
 	}
 	return rt.peerViews
 }
@@ -142,15 +137,9 @@ func (rt *fedRuntime) handlePeerViewAnswer(peer *db.FederationPeer, env *proto.E
 		return
 	}
 	rt.peerViewsMu.Lock()
-	waiter, ok := rt.peerViewsLocked().waiters[a.Stream]
+	w := rt.peerViewsLocked().waiters[a.Stream]
 	rt.peerViewsMu.Unlock()
-	if !ok || waiter.peer != peer.InstanceID || waiter.request != env.InReplyTo {
-		return
-	}
-	select {
-	case waiter.answer <- a:
-	default:
-	}
+	w.offer(peer.InstanceID, env.InReplyTo, a)
 }
 
 type fedPeerViewConn struct {
@@ -205,9 +194,9 @@ func (rt *fedRuntime) openPeerViewOnce(ctx context.Context, peer *db.FederationP
 	if err != nil {
 		return nil, err
 	}
-	ch := make(chan proto.PeerViewAnswerPayload, 1)
+	w := newFedAnswerWaiter[proto.PeerViewAnswerPayload](peer.InstanceID, env.ID)
 	rt.peerViewsMu.Lock()
-	rt.peerViewsLocked().waiters[sid] = fedPeerViewWaiter{peer.InstanceID, env.ID, ch}
+	rt.peerViewsLocked().waiters[sid] = w
 	rt.peerViewsMu.Unlock()
 	defer func() { rt.peerViewsMu.Lock(); delete(rt.peerViewsLocked().waiters, sid); rt.peerViewsMu.Unlock() }()
 	sealed, err := proto.Seal(rt.id, env, peer.PubKey)
@@ -222,7 +211,7 @@ func (rt *fedRuntime) openPeerViewOnce(ctx context.Context, peer *db.FederationP
 		return nil, errPeerViewOffline
 	}
 	select {
-	case a := <-ch:
+	case a := <-w.answer:
 		if !a.OK {
 			if a.Reason == "busy" {
 				return nil, errPeerViewBusy
