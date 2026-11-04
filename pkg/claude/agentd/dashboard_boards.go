@@ -666,6 +666,7 @@ func registerDashboardBoardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/pages/{id}", handleDashboardPageClose)
 	mux.HandleFunc("POST /api/pages/{id}/reopen", handleDashboardPageReopen)
 	mux.HandleFunc("POST /api/pages/{id}/delete", handleDashboardPageDelete)
+	mux.HandleFunc("POST /api/pages/{id}/reload", handleDashboardPageReload)
 	mux.HandleFunc("GET /api/pages/{id}/live", handleDashboardPageLive)
 	mux.HandleFunc("POST /api/pages/{id}/marks", handleDashboardPageMarks)
 	mux.HandleFunc("POST /api/boards", handleDashboardBoardCreate)

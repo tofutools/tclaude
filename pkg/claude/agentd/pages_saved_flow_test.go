@@ -198,3 +198,19 @@ func TestPageSavedLockAndMembershipHold(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "not_member")
 }
+
+// The operator reloads a live page in every view; a closed one has nothing
+// to reload.
+func TestPageReloadFromTheGroup(t *testing.T) {
+	e := newPageEnv(t)
+	pageShareDefaults(t, agentd.PermSelfPage)
+	shower := e.agent(t, "reloader", true)
+	e.f.HaveGroup("crew")
+	e.f.HaveMember("crew", shower.conv)
+	p, rec := e.show(t, shower, ":"+strconv.Itoa(devServer(t, "r")), "app", "")
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Equal(t, http.StatusOK, e.dashJSON(t, http.MethodPost, "/api/pages/"+p.ID+"/reload", nil).Code)
+	require.Equal(t, http.StatusOK, e.dash(t, http.MethodDelete, "/api/pages/"+p.ID).Code)
+	assert.Equal(t, http.StatusNotFound, e.dashJSON(t, http.MethodPost, "/api/pages/"+p.ID+"/reload", nil).Code)
+	assert.NotEqual(t, http.StatusOK, e.call(t, shower, http.MethodPost, "/api/pages/"+p.ID+"/reload", nil).Code, "no agent route")
+}

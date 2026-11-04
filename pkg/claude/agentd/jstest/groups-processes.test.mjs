@@ -609,7 +609,7 @@ test('Both\'s Resources section lists the group\'s boards and pages with lock ch
   const page = section(details('infra-crew')).querySelector('[data-resource-page="pg1"]');
   assert.ok(page, 'a group with only a page lists it');
   assert.equal(section(details('infra-crew')).querySelector('[data-resource-kind="boards"]'), null);
-  assert.match(page.textContent, /infra-lead · live/, 'the page names its shower');
+  assert.match(page.textContent, /live · infra-lead/, 'the page names its shower');
 
   const before = source.refreshes;
   await harness.act(() => harness.fireEvent(page.querySelector('[data-resource-lock="page:pg1"]'), 'click'));

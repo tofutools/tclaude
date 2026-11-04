@@ -21,15 +21,69 @@ import { nodeFetch } from './node-api.js';
 import { shellConfirm } from './shell-state.js';
 import { effect } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
+import { revealResourceOverlay } from './resource-places.js';
+import { ResourcePill, resourceView } from './resource-pill.js';
+import { openGroupWebTermPane } from './terminals-tab.js';
+import { killBackgroundTerminal } from './background-terminals.js';
 
 export { LockChip };
 
 const html = htm.bind(h);
 
 function pageMeta(page, nameOf) {
-  if (page.state === 'closed') return page.closedReason ? `closed · ${page.closedReason}` : 'closed';
-  if (page.groupOwned) return 'blank · no member has taken it over';
-  return `${nameOf(page.owner) || page.owner} · ${page.kind === 'static' ? 'static' : 'live'}`;
+  if (page.state === 'closed') return page.closedReason ? `page · closed · ${page.closedReason}` : 'page · closed';
+  if (page.groupOwned) return 'page · blank · no member has taken it over';
+  return `page · ${page.kind === 'static' ? 'static' : 'live'} · ${nameOf(page.owner) || page.owner}`;
+}
+
+// --- one state per resource (tcl-k6vici) ---
+
+// The primary action follows the state: what is open here comes forward
+// (Focus, or Restore from the dock), what runs out of sight opens (a shell
+// attaches), and what is closed opens (a page reopens, a shell starts).
+const PRIMARY = Object.freeze({
+  'open-tab': 'Focus', floating: 'Focus', minimized: 'Restore', running: 'Open', closed: 'Open',
+});
+
+function primaryLabel(kind, view) {
+  if (view === 'background') return kind === 'shell' ? 'Attach' : 'Open';
+  if (view === 'closed' && kind === 'page') return 'Reopen';
+  return PRIMARY[view] || 'Open';
+}
+
+// RowMenu is a row's ⋯: what is rarely wanted and cannot be undone sits here,
+// behind a confirm.
+function RowMenu({ label, items }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useDismissablePopover(ref, open, (why) => { if (why !== 'away') setOpen(false); });
+  if (!items.length) return null;
+  return html`<span class="gr-add" ref=${ref}>
+    <${Button} size="sm" variant="link" class="gq-link gr-more" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
+      title=${`More for ${label}`} onClick=${() => setOpen(!open)}>⋯<//>
+    ${open && html`<${Menu} size="sm" class="gr-add-menu">
+      ${items.map((item) => html`<${MenuItem} key=${item.label} danger=${item.danger} ...${item.attrs || {}}
+        onClick=${() => { setOpen(false); void item.run(); }}>${item.label}<//>`)}
+    <//>`}
+  </span>`;
+}
+
+// ResourceRow is one resource: glyph and name (the primary action too), what
+// it is, its state pill, the primary action, the kind's own action, ⋯, and
+// the agent lock at the row's end where the kind has one.
+function ResourceRow({ attrs, closed, glyph, label, meta, view, primary, action, menu, lock }) {
+  return html`<div class=${closed ? 'gr-row gr-closed' : 'gr-row'} ...${attrs}>
+    <${Button} size="sm" variant="link" class="gr-name" title=${`${primary.label} ${label}`}
+      onClick=${primary.run}><span class="gr-glyph" aria-hidden="true">${glyph}</span>${label}<//>
+    <span class="gq-dim gr-meta">${meta}</span>
+    <span class="gr-spacer"></span>
+    <${ResourcePill} view=${view} />
+    <${Button} size="sm" class="gr-primary" data-resource-primary=${primary.label} onClick=${primary.run}>${primary.label}<//>
+    ${action && html`<${Button} size="sm" class="gr-action" title=${action.title} aria-label=${action.title} ...${action.attrs || {}}
+      onClick=${action.run}>${action.glyph}<//>`}
+    <${RowMenu} label=${label} items=${menu} />
+    ${lock}
+  </div>`;
 }
 
 // reopenPage reopens a closed page saved with the group (POST
@@ -45,18 +99,17 @@ async function reopenPage(page, api, source, notify) {
   }
 }
 
-// PageMenu is a page row's ⋯: Delete, behind a confirm. Closing (the strip
-// or tab ×) keeps the page in the group; Delete removes it for good.
-function PageMenu({ page, api, source, notify, confirm }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useDismissablePopover(ref, open, (why) => { if (why !== 'away') setOpen(false); });
+// focusOr brings a resource's overlay forward, or runs open when it has none.
+const focusOr = (key, open) => () => { if (!revealResourceOverlay(key)) void open(); };
+
+function PageRow({ page, api, source, notify, confirm, nameOf, snapshotValue }) {
   const label = page.title || page.name;
+  const view = resourceView(snapshotValue, 'page', page.id, page.state === 'closed' ? 'closed' : 'running');
+  const run = view === 'closed' ? () => reopenPage(page, api, source, notify) : focusOr(`page:${page.id}`, () => openPagePane(page.id, label));
   const remove = async () => {
-    setOpen(false);
     const ok = await confirm({
       title: `Delete page ${label}?`,
-      body: page.state === 'closed'
+      body: view === 'closed'
         ? 'The page is removed from the group and cannot be reopened.'
         : 'The page closes for everyone viewing it and is removed from the group; it cannot be reopened.',
       okLabel: 'Delete',
@@ -70,50 +123,88 @@ function PageMenu({ page, api, source, notify, confirm }) {
       notify(`Could not delete ${label}: ${cause.message}`, true);
     }
   };
-  return html`<span class="gr-add" ref=${ref}>
-    <${Button} size="sm" variant="link" class="gq-link" data-page-menu=${page.id} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
-      title=${`More for ${label}`} onClick=${() => setOpen(!open)}>⋯<//>
-    ${open && html`<${Menu} size="sm" class="gr-add-menu">
-      <${MenuItem} danger data-page-delete=${page.id} onClick=${remove}>Delete…<//>
-    <//>`}
-  </span>`;
+  const reload = async () => {
+    try {
+      await api.reloadGroupPage(page.id);
+    } catch (cause) {
+      notify(`Could not reload ${label}: ${cause.message}`, true);
+    }
+  };
+  return html`<${ResourceRow} attrs=${{ 'data-resource-page': page.id, 'data-page-state': view === 'closed' ? 'closed' : 'open' }}
+    closed=${view === 'closed'} glyph="◧" label=${label} meta=${pageMeta(page, nameOf)} view=${view}
+    primary=${{ label: primaryLabel('page', view), run }}
+    action=${view !== 'closed' && { glyph: '↻', title: `Reload ${label} in every view`, attrs: { 'data-page-reload': page.id }, run: reload }}
+    menu=${[{ label: 'Delete…', danger: true, attrs: { 'data-page-delete': page.id }, run: remove }]}
+    lock=${html`<${LockChip} kind="page" id=${page.id} name=${label} locked=${!!page.agentsLocked} api=${api} source=${source} notify=${notify} />`} />`;
 }
 
-// GroupResources lists a group's boards and pages, each kind under its own
-// heading and only when it has any.
-export function GroupResources({ group, boards = [], pages = [], api, source, notify = defaultNotify, nameOf = () => '', confirm = shellConfirm }) {
-  if (!boards.length && !pages.length) return null;
+function BoardRow({ board, api, source, notify, confirm, snapshotValue }) {
+  const label = board.title || board.id;
+  const view = resourceView(snapshotValue, 'board', board.id);
+  const remove = async () => {
+    const ok = await confirm({ title: `Delete board ${label}?`, body: 'The board and everything drawn on it are deleted for everyone.', okLabel: 'Delete' });
+    if (!ok) return;
+    try {
+      await api.deleteBoard(board.id);
+      notify(`Deleted ${label}`);
+      void source?.refresh?.();
+    } catch (cause) {
+      notify(`Could not delete ${label}: ${cause.message}`, true);
+    }
+  };
+  return html`<${ResourceRow} attrs=${{ 'data-resource-board': board.id }} glyph="▦" label=${label}
+    meta=${board.editing > 0 ? `board · ${board.editing} editing` : 'board'} view=${view}
+    primary=${{ label: primaryLabel('board', view), run: focusOr(`board:${board.id}`, () => openBoardPane(board.id, label)) }}
+    menu=${[{ label: 'Delete…', danger: true, attrs: { 'data-board-delete': board.id }, run: remove }]}
+    lock=${html`<${LockChip} kind="board" id=${board.id} name=${label} locked=${!!board.agentsLocked} api=${api} source=${source} notify=${notify} />`} />`;
+}
+
+function ShellRow({ group, shell, notify, confirm, snapshotValue }) {
+  const view = resourceView(snapshotValue, 'shell', shell.id, shell.state);
+  const label = `${group.name} shell`;
+  const open = focusOr(`shell:${group.name}`, () => openGroupWebTermPane(group.name, label));
+  const kill = async () => {
+    const ok = await confirm({ title: `Kill ${label}?`, body: 'Whatever runs in the shell stops. Opening it again starts a fresh one.', okLabel: 'Kill' });
+    if (!ok) return;
+    const error = await killBackgroundTerminal({ kind: 'group_shell', tmux_session: shell.session });
+    notify(error ? `Could not kill ${label}: ${error}` : `Killed ${label}`, !!error);
+  };
+  return html`<${ResourceRow} attrs=${{ 'data-resource-shell': group.name }} closed=${view === 'closed'} glyph="▭" label="Group shell"
+    meta=${shell.detail ? `terminal · ${shell.detail}` : 'terminal'} view=${view}
+    primary=${{ label: primaryLabel('shell', view), run: open }}
+    action=${shell.state === 'running' && shell.session && { glyph: '×', title: `Kill ${label}`, attrs: { 'data-shell-kill': group.name }, run: kill }}
+    menu=${[]} lock=${null} />`;
+}
+
+// groupShellOf is the group's shell in the snapshot's group_resources.
+export function groupShellOf(snapshotValue, group) {
+  return (snapshotValue?.group_resources || []).find((r) => r.kind === 'shell' && r.group_id === group.id) || null;
+}
+
+// GroupResources lists a group's boards, pages and shell, each kind under its
+// own heading and only when it has any.
+export function GroupResources({ group, boards = [], pages = [], api, source, notify = defaultNotify, nameOf = () => '', confirm = shellConfirm,
+  snapshot = dashboardState.snapshot }) {
+  const snapshotValue = snapshot?.value;
+  const shell = groupShellOf(snapshotValue, group);
+  if (!boards.length && !pages.length && !shell) return null;
+  const props = { api, source, notify, confirm, snapshotValue };
   return html`<div class="gr-resources" data-group-resources=${group.name}>
     ${boards.length > 0 && html`<div class="gr-kind" data-resource-kind="boards">
       <span class="ui-eyebrow gr-kind-label">Boards</span>
-      ${boards.map((board) => html`<div key=${board.id} class="gr-row" data-resource-board=${board.id}>
-        <${Button} size="sm" variant="link" class="gr-name" title=${`Open ${board.title || board.id}`}
-          onClick=${() => openBoardPane(board.id, board.title || board.id)}><span class="gr-glyph" aria-hidden="true">▦</span>${board.title || board.id}<//>
-        <span class="gr-spacer"></span>
-        ${board.editing > 0 && html`<span class="gq-dim">${board.editing} editing</span>`}
-        <${LockChip} kind="board" id=${board.id} name=${board.title || board.id} locked=${!!board.agentsLocked} api=${api} source=${source} notify=${notify} />
-      </div>`)}
+      ${boards.map((board) => html`<${BoardRow} key=${board.id} board=${board} ...${props} />`)}
     </div>`}
     ${pages.length > 0 && html`<div class="gr-kind" data-resource-kind="pages">
       <span class="ui-eyebrow gr-kind-label">Pages</span>
-      ${pages.map((page) => {
-        const closed = page.state === 'closed';
-        return html`<div key=${page.id} class=${closed ? 'gr-row gr-closed' : 'gr-row'} data-resource-page=${page.id} data-page-state=${closed ? 'closed' : 'open'}>
-        <${Button} size="sm" variant="link" class="gr-name" title=${closed ? `Reopen ${page.title || page.name}` : `Open ${page.title || page.name}`}
-          onClick=${() => (closed ? reopenPage(page, api, source, notify) : openPagePane(page.id, page.title || page.name))}><span class="gr-glyph" aria-hidden="true">◧</span>${page.title || page.name}<//>
-        <span class="gr-spacer"></span>
-        <span class="gq-dim">${pageMeta(page, nameOf)}</span>
-        ${closed && html`<${Button} size="sm" variant="link" class="gq-link" data-page-reopen=${page.id} onClick=${() => reopenPage(page, api, source, notify)}>Reopen<//>`}
-        <${LockChip} kind="page" id=${page.id} name=${page.title || page.name} locked=${!!page.agentsLocked} api=${api} source=${source} notify=${notify} />
-        <${PageMenu} page=${page} api=${api} source=${source} notify=${notify} confirm=${confirm} />
-      </div>`;
-      })}
+      ${pages.map((page) => html`<${PageRow} key=${page.id} page=${page} nameOf=${nameOf} ...${props} />`)}
+    </div>`}
+    ${shell && html`<div class="gr-kind" data-resource-kind="shells">
+      <span class="ui-eyebrow gr-kind-label">Shell</span>
+      <${ShellRow} group=${group} shell=${shell} ...${props} />
     </div>`}
   </div>`;
 }
 
-// AddResource is the section's one ＋▾: a process (the Get started panel) or
-// a board linked to the group.
 // freePageName is the first of sketch, sketch-2, … the group has no page by.
 export function freePageName(pages = []) {
   const taken = new Set(pages.map((page) => page.name));
@@ -121,6 +212,9 @@ export function freePageName(pages = []) {
   for (let n = 2; ; n++) if (!taken.has(`sketch-${n}`)) return `sketch-${n}`;
 }
 
+// AddResource is the section's one ＋ New: a process (the Get started
+// panel), a board linked to the group, a blank live page, or the group's
+// shell, each with what it is in one line.
 export function AddResource({ group, pages = [], api, source, wizard = false, notify = defaultNotify, onAddProcess }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -153,13 +247,22 @@ export function AddResource({ group, pages = [], api, source, wizard = false, no
       notify(`Could not create the page: ${cause.message}`, true);
     }
   };
+  const cwd = (group.default_cwd || '').trim();
+  const addShell = () => {
+    setOpen(false);
+    const key = `shell:${group.name}`;
+    if (!revealResourceOverlay(key)) void openGroupWebTermPane(group.name, `${group.name} shell`);
+  };
+  const item = (attr, onClick, name, line, disabled = false) => html`<${MenuItem} ...${{ [attr]: true }} class="gr-new-item" onClick=${onClick}
+    disabled=${disabled}><span class="gr-new-name">${name}</span><span class="gr-new-line">${line}</span><//>`;
   return html`<span class="gr-add" ref=${ref}>
     <${Button} size="sm" variant="link" class="gq-link" data-resource-add=${group.name} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
-      title=${`Add a resource to ${group.name}`} onClick=${() => setOpen(!open)}>＋▾<//>
-    ${open && html`<${Menu} size="sm" class="gr-add-menu">
-      <${MenuItem} data-resource-add-process onClick=${() => { setOpen(false); onAddProcess(); }}>${wizard ? 'Rite' : 'Process'}<//>
-      <${MenuItem} data-resource-add-board onClick=${addBoard}>Board<//>
-      <${MenuItem} data-resource-add-page onClick=${addPage} title="A blank page you draw on; a member takes it over with its own source">Page<//>
+      title=${`Add a resource to ${group.name}`} onClick=${() => setOpen(!open)}>＋ New ▾<//>
+    ${open && html`<${Menu} size="sm" class="gr-add-menu gr-new-menu">
+      ${item('data-resource-add-process', () => { setOpen(false); onAddProcess(); }, wizard ? 'Rite' : 'Process', 'From a template, or start blank in the editor')}
+      ${item('data-resource-add-board', addBoard, 'Board', "A drawing board shared with the group's agents")}
+      ${item('data-resource-add-page', addPage, 'Live page', 'A blank page you draw on; a member takes it over with its own source')}
+      ${item('data-resource-add-shell', addShell, 'Shell', cwd ? `A terminal in ${cwd}` : 'Set the group\'s directory first', !cwd)}
     <//>`}
   </span>`;
 }

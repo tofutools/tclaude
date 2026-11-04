@@ -21,6 +21,8 @@ import { WorkflowExportButton } from './process-workflow-share.js';
 import { shellConfirm } from './shell-state.js';
 import { Button } from './ui-components.js';
 import { LockChip } from './resource-lock.js';
+import { ResourcePill, resourceView } from './resource-pill.js';
+import { dashboardState } from './snapshot-store.js';
 
 const html = htm.bind(h);
 
@@ -234,6 +236,7 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
           aria-label=${`Remove ${process.name} from ${group.name}`} title=${`Remove ${process.name} from ${group.name}'s processes`}
           onClick=${() => { setRemoving(true); setOpen(process.templateId); }}>×</button>
         <span class="gr-spacer"></span>
+        <${ResourcePill} view=${resourceView(dashboardState.snapshot.value, 'process', process.templateId)} />
         <${LockChip} kind="process" id=${process.templateId} name=${process.name} locked=${!!process.agentsLocked} api=${api} source=${source} notify=${notify} />
       </span>`)}
     </div>

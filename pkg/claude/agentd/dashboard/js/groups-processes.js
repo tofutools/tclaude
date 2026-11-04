@@ -34,7 +34,8 @@ import { processScribeSessions } from './process-scribe.js';
 import { viewToStepList } from './process-step-list.js';
 import { shellConfirm } from './shell-state.js';
 import { SavedProcesses } from './groups-saved-processes.js';
-import { AddResource, GroupResources, PeerGroupResources } from './groups-resources.js';
+import { AddResource, GroupResources, PeerGroupResources, groupShellOf } from './groups-resources.js';
+import { dashboardState } from './snapshot-store.js';
 import { MiniGraphEditor } from './groups-mini-editor.js';
 import { groupRoster } from './process-quickstart.js';
 import { handOffProcessDraft } from './process-draft-handoff.js';
@@ -612,6 +613,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     ${fused && html`<${GroupResources} group=${group} boards=${entry?.boards || []} pages=${entry?.pages || []} api=${api} source=${source}
       notify=${notify || defaultNotify} nameOf=${nameOf} />`}`;
   if (fused) {
+    const shell = groupShellOf(dashboardState.snapshot.value, group) ? 1 : 0;
     const shown = runs.length > 0 || planned.length > 0 || memberRuns.length > 0
       || (entry?.boards || []).length > 0 || (entry?.pages || []).length > 0;
     // The run controls head the open section's content on their own title
@@ -620,7 +622,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Heroes' : 'Agents'} count=${fused.count}
         actions=${fused.actions} closedActions=${fused.closedActions}>${fused.agents}<//>
       <${FusedSection} group=${group.name} section="processes" label="Resources"
-        count=${savedProcesses.length + (entry?.boards || []).length + (entry?.pages || []).length}
+        count=${savedProcesses.length + (entry?.boards || []).length + (entry?.pages || []).length + shell}
         actions=${html`${quick === 'pick' && html`<${Button} size="sm" class="gp-start" onClick=${() => setQuick(null)}>close<//>`}<${AddResource}
           group=${group} pages=${entry?.pages || []} api=${api} source=${source} wizard=${wizard} notify=${notify || defaultNotify}
           onAddProcess=${() => { setStarting(false); setQuick('pick'); }} />`}

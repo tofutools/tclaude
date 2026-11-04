@@ -18530,6 +18530,18 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-lock:disabled { cursor: not-allowed; opacity: 0.6; }
 /* A peer's resource is named, not opened: its board or page is that node's own. */
 .gr-row .gr-name-text { color: var(--ui-strong-text); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A group resource's state pill (resource-pill.js): one look per state. */
+.gr-row .gr-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.gr-pill { white-space: nowrap; }
+.gr-pill.gr-pill-open-tab, .gr-pill.gr-pill-floating { color: #58a6ff; border-color: #1f6feb; }
+.gr-pill.gr-pill-minimized { color: #d29922; border-color: #9e6a03; }
+.gr-pill.gr-pill-running { color: #a371f7; border-color: #6e40c9; }
+.gr-pill.gr-pill-background { color: #3fb950; border-color: #238636; }
+.gr-pill.gr-pill-closed { color: var(--ui-muted-text); }
+.gr-row .gr-primary, .gr-row .gr-action { min-width: 0; }
+.gr-new-menu .gr-new-item { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
+.gr-new-menu .gr-new-name { font-weight: 600; }
+.gr-new-menu .gr-new-line { color: var(--ui-muted-text); font-size: 11px; white-space: normal; text-align: left; }
 .gr-row.gr-closed .gr-name.ui-btn { color: var(--ui-muted-text); font-weight: 500; }
 .gr-add { position: relative; display: inline-flex; }
 .gr-add-menu { position: absolute; right: 0; top: 100%; z-index: var(--z-popover); min-width: 120px; }

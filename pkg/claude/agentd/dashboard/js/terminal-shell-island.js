@@ -1,3 +1,4 @@
+import { stripPaneKeys } from './resource-places.js';
 import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -2039,6 +2040,11 @@ export function mountTerminalShellIsland({
     remove: (ids) => state.removePanes(ids.map(pagePaneKey)),
   });
   const stopPageWatch = snapshot ? watchLivePages({ snapshot, notify: shellToast }) : () => {};
+  const stopStripKeys = effect(() => {
+    const keys = state.panes.value.map((pane) => pane.key);
+    const held = stripPaneKeys.peek();
+    if (keys.length !== held.length || keys.some((key, index) => key !== held[index])) stripPaneKeys.value = keys;
+  });
   const stopStripProcesses = effect(() => {
     const ids = state.panes.value.filter((pane) => pane.seed.process).map((pane) => pane.seed.process);
     const held = stripProcesses.peek();
@@ -2067,6 +2073,8 @@ export function mountTerminalShellIsland({
     stopPeerWatch();
     stopBackgroundPoll();
     stopStripProcesses();
+    stopStripKeys();
+    stripPaneKeys.value = [];
     stopPageWatch();
     unregisterPageStrip();
     unregisterProcessStrip();
