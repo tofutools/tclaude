@@ -633,3 +633,128 @@ test('Both\'s Resources section lists the group\'s boards and pages with lock ch
   await settle(harness);
   assert.deepEqual(created[1], ['page', 'infra-crew', 'sketch-2'], 'the group already has a sketch');
 });
+
+// tcl-i9elme: a peer's group lists its resources from that node; each lock
+// chip toggles only where that node grants this one groups.resources.lock,
+// says so otherwise, and a refusal is a toast, never silence.
+function peerFetch(resources, { lockStatus = 200, readStatus = 200 } = {}) {
+  const calls = [];
+  const fetchImpl = async (path, init = {}) => {
+    calls.push({ path, method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null });
+    if (path === '/api/resource-locks') {
+      if (lockStatus !== 200) return { ok: false, status: lockStatus, json: async () => ({ code: 'permission', error: 'this node does not grant you groups.resources.lock for group:crew' }) };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    }
+    if (readStatus !== 200) return { ok: false, status: readStatus, json: async () => ({ error: `read failed ${readStatus}` }) };
+    return { ok: true, status: 200, json: async () => resources };
+  };
+  return { fetchImpl, calls };
+}
+
+const PEER_GROUP = { name: 'crew@bob', fleet_node: { id: 'inst_bob1234', name: 'bob', local: false }, members: [] };
+const PEER_RESOURCES = {
+  group: 'crew', canLock: true,
+  processes: [{ templateId: 'ship', name: 'Ship', agentsLocked: true }],
+  boards: [{ id: 'plan', title: 'Plan' }],
+  pages: [],
+};
+
+async function mountPeerResources(t, resources, options) {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-resources.js');
+  const peer = peerFetch(resources, options);
+  const notes = [];
+  const mounted = await harness.mount(harness.html`<${mod.PeerGroupResources} group=${PEER_GROUP} fetchImpl=${peer.fetchImpl} pollMs=${0}
+    notify=${(text, error) => notes.push({ text, error: !!error })} />`);
+  await settle(harness);
+  return { harness, mod, root: mounted.container, peer, notes };
+}
+
+test('a peer group lists its resources by its own name and toggles a lock under the grant', async (t) => {
+  const { harness, mod, root, peer, notes } = await mountPeerResources(t, PEER_RESOURCES);
+  assert.equal(mod.peerGroupName(PEER_GROUP), 'crew');
+  assert.equal(peer.calls[0].path, '/api/groups/crew/resources', 'read from the node by the group\'s own name');
+  assert.deepEqual([...root.querySelectorAll('[data-resource-kind]')].map((k) => k.dataset.resourceKind), ['processes', 'boards'], 'an empty kind is hidden');
+  const board = root.querySelector('[data-resource-lock="board:plan"]');
+  assert.equal(board.disabled, false);
+  assert.equal(root.querySelector('[data-resource-lock="process:ship"]').textContent, '🔒 agents: read-only');
+  assert.equal(root.querySelector('[data-peer-resource="board:plan"] button.gr-name'), null, 'a peer board is named, not opened here');
+  await harness.act(() => harness.fireEvent(board, 'click'));
+  await settle(harness);
+  const lock = peer.calls.find((c) => c.path === '/api/resource-locks');
+  assert.deepEqual(lock.body, { kind: 'board', id: 'plan', locked: true });
+  assert.equal(lock.method, 'POST');
+  assert.ok(peer.calls.filter((c) => c.path === '/api/groups/crew/resources').length >= 2, 'the list is read again after a change');
+  assert.deepEqual(notes.map((n) => n.error), [false]);
+});
+
+test('without the grant a peer lock chip is disabled and says why', async (t) => {
+  const { root, peer } = await mountPeerResources(t, { ...PEER_RESOURCES, canLock: false });
+  const chip = root.querySelector('[data-resource-lock="board:plan"]');
+  assert.equal(chip.disabled, true);
+  assert.equal(chip.getAttribute('aria-disabled'), 'true');
+  assert.match(chip.title, /bob does not grant you groups\.resources\.lock/);
+  assert.equal(peer.calls.some((c) => c.path === '/api/resource-locks'), false);
+});
+
+test('a peer refusing a lock toggle is a toast, not silence', async (t) => {
+  const { harness, root, notes } = await mountPeerResources(t, PEER_RESOURCES, { lockStatus: 403 });
+  await harness.act(() => harness.fireEvent(root.querySelector('[data-resource-lock="process:ship"]'), 'click'));
+  await settle(harness);
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].error, true);
+  assert.match(notes[0].text, /Could not change the lock on Ship: this node does not grant you groups\.resources\.lock/);
+});
+
+for (const status of [403, 404]) {
+  test(`a peer group read refused with ${status} shows no resources and no error`, async (t) => {
+    const { root } = await mountPeerResources(t, PEER_RESOURCES, { readStatus: status });
+    assert.equal(root.querySelector('[data-peer-resources]'), null);
+    assert.equal(root.querySelector('[data-peer-resources-error]'), null, 'not shown or not served: silent');
+  });
+}
+
+test('any other peer group read failure says so', async (t) => {
+  const { root } = await mountPeerResources(t, PEER_RESOURCES, { readStatus: 502 });
+  assert.match(root.querySelector('[data-peer-resources-error]').textContent, /Could not read the resources of crew on bob: read failed 502/);
+});
+
+test('a node\'s group cards read it one at a time', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-resources.js');
+  let inFlight = 0;
+  let most = 0;
+  const read = () => mod.queuePeerRead('inst_bob1234', async () => {
+    inFlight++;
+    most = Math.max(most, inFlight);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    inFlight--;
+  });
+  const failing = mod.queuePeerRead('inst_bob1234', async () => { throw new Error('boom'); });
+  await Promise.all([read(), read(), read(), failing.catch(() => {}), read()]);
+  assert.equal(most, 1, 'one read in flight per node, a failed one included');
+});
+
+test('a peer group card reads again on the dashboard\'s snapshot tick once due, never on its own timer', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-resources.js');
+  const tick = harness.signals.signal(null);
+  const peer = peerFetch(PEER_RESOURCES);
+  const reads = () => peer.calls.filter((c) => c.path === '/api/groups/crew/resources').length;
+  await harness.mount(harness.html`<${mod.PeerGroupResources} group=${PEER_GROUP} fetchImpl=${peer.fetchImpl} pollMs=${1000} tick=${tick} />`);
+  await settle(harness);
+  assert.equal(reads(), 1, 'read once on mount');
+  await harness.act(() => { tick.value = Date.now(); });
+  await settle(harness);
+  assert.equal(reads(), 1, 'a tick before the card is due reads nothing');
+  const later = Date.now() + 5000;
+  await harness.act(() => { tick.value = later; });
+  await settle(harness);
+  assert.equal(reads(), 2, 'the first tick after it is due reads again');
+  await harness.act(() => { tick.value = later + 10; });
+  await settle(harness);
+  assert.equal(reads(), 2, 'and then waits a full period');
+  await harness.act(() => { tick.value = later + 1000; });
+  await settle(harness);
+  assert.equal(reads(), 3);
+});

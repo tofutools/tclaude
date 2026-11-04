@@ -18480,5 +18480,8 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-row .gr-name.ui-btn { color: var(--ui-strong-text); font-weight: 600; padding-left: 0; }
 .gr-spacer { flex: 1; }
 .gr-lock { cursor: pointer; white-space: nowrap; background: none; }
+.gr-lock:disabled { cursor: not-allowed; opacity: 0.6; }
+/* A peer's resource is named, not opened: its board or page is that node's own. */
+.gr-row .gr-name-text { color: var(--ui-strong-text); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gr-add { position: relative; display: inline-flex; }
 .gr-add-menu { position: absolute; right: 0; top: 100%; z-index: var(--z-popover); min-width: 120px; }
