@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -54,21 +55,9 @@ func startPopupServer(bindHost string, port int) (*http.Server, string, error) {
 		portStr = strconv.Itoa(port)
 	}
 	bindAddr := net.JoinHostPort(bindHost, portStr)
-	ln, err := net.Listen("tcp", bindAddr)
+	listeners, addr, err := bindDashboardListeners(bindAddr, port == 0)
 	if err != nil {
-		return nil, "", fmt.Errorf("bind dashboard listener %s: %w", bindAddr, err)
-	}
-	addr := ln.Addr().(*net.TCPAddr)
-	ln = registerStageDaemonListener(ln)
-	listeners := []net.Listener{ln}
-	if !addr.IP.IsUnspecified() && !addr.IP.IsLoopback() {
-		loopbackAddr := net.JoinHostPort(defaultDashboardBind, strconv.Itoa(addr.Port))
-		loopback, loopbackErr := net.Listen("tcp", loopbackAddr)
-		if loopbackErr != nil {
-			_ = ln.Close()
-			return nil, "", fmt.Errorf("bind mandatory loopback dashboard listener %s: %w", loopbackAddr, loopbackErr)
-		}
-		listeners = append(listeners, registerStageDaemonListener(loopback))
+		return nil, "", err
 	}
 	mux := http.NewServeMux()
 	// The dashboard is the one human-facing surface on this listener — a
@@ -110,6 +99,42 @@ func startPopupServer(bindHost string, port int) (*http.Server, string, error) {
 		urlHost = defaultDashboardBind
 	}
 	return srv, "http://" + net.JoinHostPort(urlHost, strconv.Itoa(addr.Port)), nil
+}
+
+// dashboardRandomPortAttempts bounds how often a random-port dashboard on a
+// concrete non-loopback bind looks for a port also free on loopback.
+const dashboardRandomPortAttempts = 8
+
+// dashboardListen opens a dashboard listener (a seam for the port-race test).
+var dashboardListen = net.Listen
+
+// bindDashboardListeners binds bindAddr and, for a concrete non-loopback
+// host, the mandatory loopback listener on the same port. The OS picks a
+// random port free on the non-loopback address only, so loopback can already
+// hold it: with a random port the pair is tried again on a fresh port, a
+// bounded number of times. A fixed port is the operator's, so a clash there
+// is an error at once.
+func bindDashboardListeners(bindAddr string, randomPort bool) ([]net.Listener, *net.TCPAddr, error) {
+	for attempt := 1; ; attempt++ {
+		ln, err := dashboardListen("tcp", bindAddr)
+		if err != nil {
+			return nil, nil, fmt.Errorf("bind dashboard listener %s: %w", bindAddr, err)
+		}
+		addr := ln.Addr().(*net.TCPAddr)
+		ln = registerStageDaemonListener(ln)
+		if addr.IP.IsUnspecified() || addr.IP.IsLoopback() {
+			return []net.Listener{ln}, addr, nil
+		}
+		loopbackAddr := net.JoinHostPort(defaultDashboardBind, strconv.Itoa(addr.Port))
+		loopback, loopbackErr := dashboardListen("tcp", loopbackAddr)
+		if loopbackErr == nil {
+			return []net.Listener{ln, registerStageDaemonListener(loopback)}, addr, nil
+		}
+		_ = ln.Close()
+		if !randomPort || attempt >= dashboardRandomPortAttempts || !errors.Is(loopbackErr, syscall.EADDRINUSE) {
+			return nil, nil, fmt.Errorf("bind mandatory loopback dashboard listener %s: %w", loopbackAddr, loopbackErr)
+		}
+	}
 }
 
 // dashboardURLHost maps a bind host to the host to put in the
