@@ -1102,11 +1102,12 @@ func (f *Flow) SpawnWith(group string, body map[string]any) SpawnResp {
 
 // ResumeResp parses POST /v1/agent/{conv}/resume.
 type ResumeResp struct {
-	ConvID string `json:"conv_id"`
-	Action string `json:"action"`
-	Detail string `json:"detail,omitempty"`
-	Code   int    `json:"-"`
-	Raw    []byte `json:"-"`
+	ConvID   string   `json:"conv_id"`
+	Action   string   `json:"action"`
+	Detail   string   `json:"detail,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
+	Code     int      `json:"-"`
+	Raw      []byte   `json:"-"`
 }
 
 // Resume drives POST /v1/agent/{conv}/resume.
@@ -1225,13 +1226,14 @@ func (f *Flow) Clear(label string) ClearResp {
 
 // ReincarnateResp parses POST /v1/agent/{conv}/reincarnate.
 type ReincarnateResp struct {
-	OldConv     string `json:"old_conv"`
-	NewConv     string `json:"new_conv"`
-	NewTitle    string `json:"new_title"`
-	Label       string `json:"label"`
-	TmuxSession string `json:"tmux_session"`
-	Code        int    `json:"-"`
-	Raw         []byte `json:"-"`
+	OldConv     string   `json:"old_conv"`
+	NewConv     string   `json:"new_conv"`
+	NewTitle    string   `json:"new_title"`
+	Label       string   `json:"label"`
+	TmuxSession string   `json:"tmux_session"`
+	Warnings    []string `json:"warnings,omitempty"`
+	Code        int      `json:"-"`
+	Raw         []byte   `json:"-"`
 }
 
 // TmuxTarget mirrors SpawnResp.TmuxTarget.

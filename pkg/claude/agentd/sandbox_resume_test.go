@@ -31,6 +31,36 @@ func TestResolveResumeSandboxPolicyRejectsAmbiguousMultiGroupAssignment(t *testi
 	assert.Contains(t, err.Error(), "cannot determine the sandbox source group")
 }
 
+// A relaunch whose re-read chain is ambiguous falls back to the stored policy
+// with a warning rather than failing (tcl-a2e791 slice 6a).
+func TestPrepareRelaunchSandboxFallsBackOnAmbiguousMultiGroupAssignment(t *testing.T) {
+	setupTestDB(t)
+	const convID = "ambiguous-relaunch-sandbox-conv"
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	stored := sandboxpolicy.EmptySnapshot()
+	stored.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{Name: "STORED", Value: "yes"}}
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &stored))
+	for _, name := range []string{"alpha", "beta"} {
+		groupID, err := db.CreateAgentGroup(name, "")
+		require.NoError(t, err)
+		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: groupID, ConvID: convID}))
+		_, err = db.CreateSandboxProfile(&db.SandboxProfile{Name: name + "-policy"})
+		require.NoError(t, err)
+		_, err = db.SetAgentGroupSandboxProfile(name, name+"-policy")
+		require.NoError(t, err)
+	}
+
+	prepared, fail := prepareRelaunchSandbox(relaunchSandboxRequest{convID: convID})
+	require.Nil(t, fail)
+	require.Len(t, prepared.warnings, 1)
+	assert.Contains(t, prepared.warnings[0], "cannot determine the sandbox source group")
+	assert.Contains(t, prepared.warnings[0], "stored at its last launch")
+	require.NotNil(t, prepared.effective)
+	assert.Contains(t, prepared.effective.Effective.Environment,
+		sandboxpolicy.EnvironmentEntry{Name: "STORED", Value: "yes"})
+}
+
 func TestResolveResumeSandboxPolicyDoesNotInferLegacyGroupFromStaleProfileID(t *testing.T) {
 	setupTestDB(t)
 	const convID = "stale-profile-id-resume-conv"

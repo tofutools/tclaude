@@ -789,9 +789,14 @@ Confinement is heritable, in one direction only. Resume, reincarnation, and
 agent-initiated child spawns can never weaken a deny or introduce a reopen the
 recorded parent lacked; both count as widening and are refused. The check is
 specificity-aware — a broad parent read above a deny does not "cover" a child's
-reopen beneath it. Launch snapshots are revalidated on resume, and drifted
-profile rows or spellings refuse with `sandbox_profile_changed`. Humans are the
-trust root and bypass lineage.
+reopen beneath it. A resume or reincarnation re-reads the agent's sandbox
+profiles and revalidates the result. If the re-read profiles cannot be
+applied (an explicit profile was deleted, the agent's groups now assign
+different profiles, or the rules no longer validate or cannot be enforced for
+this launch), it relaunches under the policy stored at the agent's last launch
+and returns a warning saying why. It refuses only when the stored policy
+cannot be launched either (on resume, as `sandbox_profile_changed`). Humans are the trust
+root and bypass lineage.
 
 A second guardrail closes the anchor-point escape: a sandboxed parent choosing
 a child cwd its own sandbox cannot write. agentd answers such a spawn with a

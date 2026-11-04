@@ -383,33 +383,6 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// the row is an agent's. Claim it for the whole orchestration, which is
 	// where that link lands — see agentLaunchIdentities.
 	defer claimAgentLaunchIdentity(label)()
-	relaunchPolicy, policyErr := resolveResumeSandboxPolicy(
-		target, relaunch.SSHWorkaround, label, relaunch.Harness,
-		relaunch.Sandbox, relaunch.activeSandboxImplementation())
-	if policyErr != nil {
-		writeEffectiveSandboxLoadError(w, &effectiveSandboxChangedError{err: policyErr})
-		return
-	}
-	if relaunchPolicy != nil && relaunchPolicy.Snapshot != nil {
-		refreshed, refreshErr := finalizeCodexSSHWorkaroundForRelaunch(
-			*relaunchPolicy.Snapshot, relaunchPolicy.SSHWorkaround)
-		if refreshErr != nil {
-			detail := "prepare SSH workaround: " + refreshErr.Error()
-			if cleanupErr := cleanupUncommittedResumeSandboxPolicy(relaunchPolicy); cleanupErr != nil {
-				detail += "; remove unused agent-owned directories: " + cleanupErr.Error()
-			}
-			writeError(w, http.StatusInternalServerError, "spawn",
-				detail)
-			return
-		}
-		relaunchPolicy.Snapshot = &refreshed
-	}
-	var effectiveSandbox *sandboxpolicy.Snapshot
-	if relaunchPolicy != nil {
-		effectiveSandbox = relaunchPolicy.Snapshot
-	}
-	stableEffectiveSandbox := effectiveSandbox
-
 	// 2. Spawn a fresh tclaude session in the same cwd, carrying the stable
 	// agent's durable model + reasoning effort. An unknown or removed model is
 	// omitted so the harness can use its default, preserving historical
@@ -431,9 +404,6 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// harness default — reincarnation must not weaken the sandbox.
 	reincarnateSandbox := relaunch.Sandbox
 	reincarnateSandboxImplementation := relaunch.activeSandboxImplementation()
-	if relaunch.TemporaryHarnessBuiltinMode {
-		effectiveSandbox = temporarySandboxLaunchSnapshot(relaunch.Harness, stableEffectiveSandbox)
-	}
 	// The successor inherits the posture, so it must also inherit the
 	// obligation to verify it. Reincarnation is initiated by the agent itself,
 	// with no human at a spawn dialog, which is exactly why it must not be the
@@ -443,39 +413,21 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
-	if fail := sandboxProfileCapabilityFailure(
-		relaunch.Harness,
-		reincarnateSandbox,
-		effectiveSandbox,
-		reincarnateSandboxImplementation,
-	); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+	// The same preparation, checks and stored-policy fallback as resume.
+	prepared, sandboxFail := prepareRelaunchSandbox(relaunchSandboxRequest{
+		convID: target, sshLaunchKey: label,
+		sshWorkaround: relaunch.SSHWorkaround, copilotAPI: relaunch.CopilotAPI,
+		harness: relaunch.Harness, builtinMode: reincarnateSandbox,
+		implementation: reincarnateSandboxImplementation,
+		temporaryBuiltinMode: relaunch.TemporaryHarnessBuiltinMode,
+		transport: session.ModelTransportLaunchContext{Model: model, Cwd: cwd},
+	})
+	if sandboxFail != nil {
+		writeError(w, sandboxFail.Status, sandboxFail.Kind, sandboxFail.Msg)
 		return
 	}
-	// The successor inherits the predecessor's drive, so it inherits the
-	// requirement that comes with it. Re-asked here rather than trusted from the
-	// spawn that admitted the predecessor: the profile can have been narrowed
-	// since, and a successor launched into a private network namespace would
-	// come back with a channel that can never connect.
-	if fail := copilotAPILoopbackFailure(
-		relaunch.CopilotAPI, effectiveSandbox, reincarnateSandboxImplementation,
-	); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
-	}
-	if _, fail := planSandboxProfileAccessForLaunch(
-		relaunch.Harness, reincarnateSandbox, effectiveSandbox,
-		reincarnateSandboxImplementation,
-		session.ModelTransportLaunchContext{Model: model, Cwd: cwd},
-		false,
-	); fail != nil {
-		detail := fail.Msg
-		if cleanupErr := cleanupUncommittedResumeSandboxPolicy(relaunchPolicy); cleanupErr != nil {
-			detail += "; remove unused agent-owned directories: " + cleanupErr.Error()
-		}
-		writeError(w, fail.Status, fail.Kind, detail)
-		return
-	}
+	relaunchPolicy, effectiveSandbox := prepared.policy, prepared.effective
+	relaunchWarnings := prepared.warnings
 	// Reincarnation refreshes the target's policy through the same resolver as
 	// resume. Persist it before launch so the actor's durable snapshot and the
 	// successor's launch snapshot move together; every failure before identity
@@ -1034,6 +986,9 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		"attach_cmd":       "tclaude session attach " + label,
 		"migrated":         []string{},
 		"switched_clients": switchedClients,
+	}
+	if len(relaunchWarnings) > 0 {
+		resp["warnings"] = relaunchWarnings
 	}
 	if caller != target {
 		resp["caller_conv"] = caller

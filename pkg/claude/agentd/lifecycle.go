@@ -1536,20 +1536,6 @@ func recoveryLaunchCommitLock(convID string) *sync.Mutex {
 	return lock.(*sync.Mutex)
 }
 
-type effectiveSandboxChangedError struct{ err error }
-
-func (e *effectiveSandboxChangedError) Error() string { return e.err.Error() }
-func (e *effectiveSandboxChangedError) Unwrap() error { return e.err }
-
-func writeEffectiveSandboxLoadError(w http.ResponseWriter, err error) {
-	var changed *effectiveSandboxChangedError
-	if errors.As(err, &changed) {
-		writeError(w, http.StatusConflict, "sandbox_profile_changed", changed.Error())
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "io", "load effective sandbox snapshot: "+err.Error())
-}
-
 func resumeOneConvLocked(convID string, recreateMissingDir bool) memberOpResult {
 	// Flag the whole attempt — including time queued on the launch lock — so
 	// dashboards render the multi-second wake as "waking" rather than a dead
@@ -1782,52 +1768,15 @@ func resumeOneConvUnderLaunchLockForTeleport(convID string, recreateMissingDir b
 	// which is still the most-recent until then.
 	remoteControl := launchConfig.RemoteControl
 	sshLaunchKey := generateSpawnLabel()
-	resumePolicy, snapshotErr := resolveResumeSandboxPolicy(
-		convID, launchConfig.SSHWorkaround, sshLaunchKey, launchConfig.Harness,
-		launchConfig.Sandbox, launchConfig.activeSandboxImplementation())
-	if snapshotErr != nil {
-		res.Action = "error"
-		res.Detail = "sandbox_profile_changed: " + snapshotErr.Error()
-		return res
-	}
-	if resumePolicy != nil && resumePolicy.Snapshot != nil {
-		refreshed, refreshErr := finalizeCodexSSHWorkaroundForRelaunch(
-			*resumePolicy.Snapshot, resumePolicy.SSHWorkaround)
-		if refreshErr != nil {
-			res.Action = "error"
-			res.Detail = "prepare SSH workaround: " + refreshErr.Error()
-			if cleanupErr := cleanupUncommittedResumeSandboxPolicy(resumePolicy); cleanupErr != nil {
-				res.Detail += "; remove unused agent-owned directories: " + cleanupErr.Error()
-			}
-			return res
-		}
-		resumePolicy.Snapshot = &refreshed
-	}
-	var effectiveSandbox *sandboxpolicy.Snapshot
-	if resumePolicy != nil {
-		effectiveSandbox = resumePolicy.Snapshot
-	}
-	if effectiveSandbox != nil {
-		validated, err := sandboxpolicy.RevalidateSnapshot(*effectiveSandbox)
-		if err != nil {
-			res.Action = "error"
-			res.Detail = "sandbox_profile_changed: " + err.Error()
-			return res
-		}
-		effectiveSandbox = &validated
-	}
-	stableEffectiveSandbox := effectiveSandbox
+	// Preserve the mode this conversation was launched under; the harness
+	// default would silently drop an enforced `sandbox on` posture on resume.
 	// Auto-review rides the durable relaunch profile with the approval it
 	// belongs to (relaunchProfileForSpawn records it; reconstructApproval
-	// re-validates it against the harness), so a relaunch keeps the guardian the
-	// agent was launched with. Preserve the mode this conversation was launched under; the harness
-	// default would silently drop an enforced `sandbox on` posture on resume.
+	// re-validates it against the harness), so a relaunch keeps the guardian
+	// the agent was launched with.
 	relaunchSandbox := launchConfig.Sandbox
 	harnessName := launchConfig.Harness
 	relaunchSandboxImplementation := launchConfig.activeSandboxImplementation()
-	if launchConfig.TemporaryHarnessBuiltinMode {
-		effectiveSandbox = temporarySandboxLaunchSnapshot(harnessName, stableEffectiveSandbox)
-	}
 	if session.CodexNativeRegistryApplicable(launchConfig.CodexAppServer, harnessName,
 		relaunchSandbox, relaunchSandboxImplementation) {
 		if err := codexNativeRegistryReadiness(); err != nil {
@@ -1849,47 +1798,25 @@ func resumeOneConvUnderLaunchLockForTeleport(convID string, recreateMissingDir b
 		res.Detail = "sandbox_posture_changed: " + fail.Msg
 		return res
 	}
-	if fail := sandboxProfileCapabilityFailure(
-		harnessName,
-		relaunchSandbox,
-		effectiveSandbox,
-		relaunchSandboxImplementation,
-	); fail != nil {
+	prepared, sandboxFail := prepareRelaunchSandbox(relaunchSandboxRequest{
+		convID: convID, sshLaunchKey: sshLaunchKey,
+		sshWorkaround: launchConfig.SSHWorkaround, copilotAPI: launchConfig.CopilotAPI,
+		harness: harnessName, builtinMode: relaunchSandbox, implementation: relaunchSandboxImplementation,
+		temporaryBuiltinMode: launchConfig.TemporaryHarnessBuiltinMode,
+		transport: session.ModelTransportLaunchContext{
+			Model: launchConfig.Model, ModelProxy: launchConfig.ModelProxy, Cwd: cwd},
+		revalidate: true,
+	})
+	if sandboxFail != nil {
 		res.Action = "error"
-		res.Detail = "sandbox_profile_changed: " + fail.Msg
-		return res
-	}
-	// Re-asked on every relaunch rather than trusted from the spawn that
-	// admitted it. The recorded drive is durable but the PROFILE is not: an
-	// operator can close network access between two launches, and resuming an
-	// API-driven agent into a private network namespace would bring back a pane
-	// whose channel can never connect. Refusing names the reason while the agent
-	// is still recoverable by widening the profile or dropping the drive.
-	if fail := copilotAPILoopbackFailure(
-		launchConfig.CopilotAPI, effectiveSandbox, relaunchSandboxImplementation,
-	); fail != nil {
-		res.Action = "error"
-		res.Detail = "sandbox_profile_changed: " + fail.Msg
-		return res
-	}
-	if _, fail := planSandboxProfileAccessForLaunch(
-		harnessName, relaunchSandbox, effectiveSandbox, relaunchSandboxImplementation,
-		session.ModelTransportLaunchContext{
-			Model:      launchConfig.Model,
-			ModelProxy: launchConfig.ModelProxy,
-			Cwd:        cwd,
-		},
-		false,
-	); fail != nil {
-		res.Action = "error"
-		res.Detail = "sandbox_profile_changed: " + fail.Msg
-		return res
-	}
-	if effectiveSandbox != nil {
-		for _, notice := range effectiveSandbox.Effective.AccessNotices {
-			res.Warnings = append(res.Warnings, notice.Detail)
+		res.Detail = "sandbox_profile_changed: " + sandboxFail.Msg
+		if sandboxFail.Kind == "spawn" {
+			res.Detail = sandboxFail.Msg
 		}
+		return res
 	}
+	resumePolicy, effectiveSandbox := prepared.policy, prepared.effective
+	res.Warnings = append(res.Warnings, prepared.warnings...)
 	// This is a continuation of authority admitted at the initial spawn. The
 	// session launcher derives any repository grants from the current cwd and
 	// applies the current operator-authored sandbox profile; resume does not
