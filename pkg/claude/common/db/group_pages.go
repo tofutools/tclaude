@@ -35,7 +35,10 @@ type GroupPage struct {
 	Worktree     string
 	Port         int
 	AgentsLocked bool
-	State        string
+	// TitleByOperator says the operator named the page: an agent's show
+	// without a title keeps it.
+	TitleByOperator bool
+	State           string
 	ClosedReason string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
@@ -43,17 +46,17 @@ type GroupPage struct {
 }
 
 const groupPageCols = `id, group_id, owner, name, title, kind, target, path, worktree, port,
-	agents_locked, state, closed_reason, created_at, updated_at, closed_at`
+	agents_locked, state, closed_reason, created_at, updated_at, closed_at, title_by_operator`
 
 func scanGroupPage(s rowScanner) (*GroupPage, error) {
 	var p GroupPage
-	var locked int
+	var locked, byOperator int
 	var created, updated, closed dbTimestamp
 	if err := s.Scan(&p.ID, &p.GroupID, &p.Owner, &p.Name, &p.Title, &p.Kind, &p.Target, &p.Path, &p.Worktree, &p.Port,
-		&locked, &p.State, &p.ClosedReason, &created, &updated, &closed); err != nil {
+		&locked, &p.State, &p.ClosedReason, &created, &updated, &closed, &byOperator); err != nil {
 		return nil, err
 	}
-	p.AgentsLocked = locked != 0
+	p.AgentsLocked, p.TitleByOperator = locked != 0, byOperator != 0
 	p.CreatedAt, p.UpdatedAt, p.ClosedAt = created.Time(), updated.Time(), closed.Time()
 	return &p, nil
 }
@@ -80,14 +83,15 @@ func SaveOpenGroupPage(p GroupPage) error {
 	}
 	now := time.Now()
 	_, err = tx.Exec(`INSERT INTO group_pages (`+groupPageCols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', '', ?, ?, NULL)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', '', ?, ?, NULL, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			group_id = excluded.group_id, owner = excluded.owner, name = excluded.name,
 			title = excluded.title, kind = excluded.kind, target = excluded.target, path = excluded.path,
 			worktree = excluded.worktree, port = excluded.port, agents_locked = excluded.agents_locked,
+			title_by_operator = excluded.title_by_operator,
 			state = 'open', closed_reason = '', updated_at = excluded.updated_at, closed_at = NULL`,
 		p.ID, p.GroupID, p.Owner, p.Name, p.Title, p.Kind, p.Target, p.Path, p.Worktree, p.Port,
-		boolToInt(p.AgentsLocked), dbTime(now), dbTime(now))
+		boolToInt(p.AgentsLocked), dbTime(now), dbTime(now), boolToInt(p.TitleByOperator))
 	if err != nil {
 		return err
 	}
@@ -223,4 +227,38 @@ func DeleteGroupPagesOwnedBy(owner string) error {
 	}
 	_, err = d.Exec(`DELETE FROM group_pages WHERE owner = ?`, owner)
 	return err
+}
+
+// SetGroupPageTitle is the operator renaming a saved page: the title is
+// theirs until an agent shows the page with one. No row is not an error.
+func SetGroupPageTitle(id, title string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE group_pages SET title = ?, title_by_operator = 1, updated_at = ? WHERE id = ?`, title, dbTime(time.Now()), id)
+	return err
+}
+
+// ErrGroupPageNameTaken is a move into a group that already keeps a page
+// under that owner and name.
+var ErrGroupPageNameTaken = errors.New("the group already has a page of that name")
+
+// MoveGroupPage moves a saved page to another group, under owner there (an
+// agent's page keeps its agent; a group's own page takes the new group's
+// key). It reports whether the page existed.
+func MoveGroupPage(id string, groupID int64, owner string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`UPDATE group_pages SET group_id = ?, owner = ?, updated_at = ? WHERE id = ?`, groupID, owner, dbTime(time.Now()), id)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			return false, ErrGroupPageNameTaken
+		}
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }

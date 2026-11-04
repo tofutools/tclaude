@@ -349,6 +349,30 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     async deleteBoard(id) {
       return processRequest(`/api/boards/${encodeURIComponent(id)}`, { method: 'DELETE' }, fetchImpl);
     },
+    // renameGroupPage sets a page's title, open or saved closed.
+    async renameGroupPage(id, title) {
+      return processRequest(`/api/pages/${encodeURIComponent(id)}/title`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }),
+      }, fetchImpl);
+    },
+    // moveGroupPage moves a page to another group its agent is in.
+    async moveGroupPage(id, group) {
+      return processRequest(`/api/pages/${encodeURIComponent(id)}/group`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group }),
+      }, fetchImpl);
+    },
+    // renameBoard sets a board's title.
+    async renameBoard(id, title) {
+      return processRequest(`/api/boards/${encodeURIComponent(id)}/title`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }),
+      }, fetchImpl);
+    },
+    // moveBoard links a board to another group.
+    async moveBoard(id, group) {
+      return processRequest(`/api/boards/${encodeURIComponent(id)}/group`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group }),
+      }, fetchImpl);
+    },
     // deleteGroupPage closes a page if open and removes it from its group.
     async deleteGroupPage(id) {
       return processRequest(`/api/pages/${encodeURIComponent(id)}/delete`, { method: 'POST' }, fetchImpl);

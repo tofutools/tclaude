@@ -94,7 +94,11 @@ A page shared in a group is saved with it: a closed one (closed by you or the
 operator, or by a daemon restart) stays in the group, the operator can reopen
 it, and your `show` of the same name in that group reopens it under the same
 id. A reopened page gets a new origin, and keeps its marks (`page marks` lists
-them as before) and live patches (applied again). A private page ends when it closes or the daemon restarts: run
+them as before) and live patches (applied again). The operator may rename a
+saved page (your `show` without `--title` keeps that name; with one, yours
+replaces it) or move it to another group
+you are in (the marks sent before are dropped); you get an inbox message
+either way. A private page ends when it closes or the daemon restarts: run
 `show` again to bring it back.
 
 ## When the operator draws on a page

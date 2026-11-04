@@ -233,6 +233,8 @@ var auditRoutes = []auditRoute{
 	{method: http.MethodPost, segs: []string{"groups", "import"}, verb: "group.import"},
 	{method: http.MethodDelete, segs: []string{"groups", "{name}"}, verb: "group.delete"},
 	{method: http.MethodDelete, segs: []string{"boards", "{id}"}, verb: "board.delete"},
+	{method: http.MethodPost, segs: []string{"boards", "{id}", "title"}, verb: "board.rename"},
+	{method: http.MethodPost, segs: []string{"boards", "{id}", "group"}, verb: "board.move"},
 	// Live pages: an agent showing or closing its own page (/v1/pages), and
 	// the operator closing one from the dashboard (/api/pages/{id}).
 	{method: http.MethodPost, segs: []string{"pages"}, verb: "page.show"},
@@ -240,6 +242,8 @@ var auditRoutes = []auditRoute{
 	{method: http.MethodPost, segs: []string{"pages", "{id}", "reopen"}, verb: "page.reopen"},
 	{method: http.MethodPost, segs: []string{"pages", "{id}", "delete"}, verb: "page.delete"},
 	{method: http.MethodPost, segs: []string{"pages", "{id}", "reload"}, verb: "page.reload"},
+	{method: http.MethodPost, segs: []string{"pages", "{id}", "title"}, verb: "page.rename"},
+	{method: http.MethodPost, segs: []string{"pages", "{id}", "group"}, verb: "page.move"},
 	// The operator sending marks on a page to its agent (/api/pages/{id}/marks).
 	{method: http.MethodPost, segs: []string{"pages", "{id}", "marks"}, verb: "page.marks"},
 	// An agent's page snapshot starts a browser on the host (/v1/pages/{name}/snapshot).

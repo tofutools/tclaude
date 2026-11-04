@@ -99,6 +99,9 @@ type livePage struct {
 	// agent, not even the shower, patches, evals, closes or re-shows the
 	// page while it is set. Guarded by livePages.mu.
 	agentsLocked bool
+	// titleByOperator says the operator named the page (pages_manage.go):
+	// a show without a title keeps it. Guarded by livePages.mu.
+	titleByOperator bool
 }
 
 type livePageRegistry struct {
@@ -665,10 +668,15 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 	// show: it keeps its id and the operator's lock.
 	savedID, savedLocked := savedPageFor(groupID, agentID, name)
 	var kept *db.GroupPageCollab
+	var savedRow *db.GroupPage
 	if savedID != "" {
+		row, err := db.GetGroupPage(savedID)
+		if err == nil {
+			savedRow = row
+		}
 		// Another kind of source starts again, as a live page re-shown
 		// from one does: what the old source's page kept is not its.
-		if row, err := db.GetGroupPage(savedID); err == nil && row != nil && row.Kind != t.kind {
+		if err == nil && row != nil && row.Kind != t.kind {
 			clearSavedCollabLocked(savedID)
 		} else {
 			kept = loadSavedCollab(savedID)
@@ -764,10 +772,35 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 		reg.byID[p.id] = p
 		resp.Created = existing == nil
 	}
+	// A title the operator gave the page stays through a show without one;
+	// an agent's own title replaces it, and the audit row says so.
+	operatorTitle := ""
+	switch {
+	case existing != nil && existing.titleByOperator:
+		operatorTitle = existing.title
+	case existing == nil && p.id == savedID && savedRow != nil && savedRow.TitleByOperator:
+		operatorTitle = savedRow.Title
+	}
+	switch {
+	case title == "" && operatorTitle != "":
+		title = operatorTitle
+		p.titleByOperator = true
+	case title != "" && operatorTitle != "" && title != operatorTitle:
+		setAuditDetail(r, fmt.Sprintf("replaced the operator's title %q", operatorTitle))
+		p.titleByOperator = false
+	case title != "":
+		p.titleByOperator = false
+	}
 	if title == "" {
 		title = name
 	}
 	p.title, p.target, p.kind, p.port, p.worktree = title, t.declared, t.kind, t.port, worktree
+	if regrouped {
+		// Before the new group's members can read the page.
+		pageCollab.mu.Lock()
+		forgetPageMarksLocked(p.id)
+		pageCollab.mu.Unlock()
+	}
 	p.path, p.groupID = start, groupID
 	p.state, p.rev, p.updated = pageStateOpen, reg.rev, now
 	resp.pageView = p.agentView()
@@ -776,9 +809,6 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 	savePageOpen(saved)
 	resp.Group = pageGroupName(resp.GroupID)
 	resp.ShareNote = shareNote
-	if regrouped {
-		forgetPageMarks(p.id)
-	}
 	if groupID != 0 {
 		// A page shown into its group from privately has patches nothing
 		// saved yet.

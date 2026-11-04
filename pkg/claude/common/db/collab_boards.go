@@ -470,3 +470,19 @@ func SetCollabBoardSnapshot(boardID string, version int64) error {
 	}
 	return nil
 }
+
+// SetCollabBoardTitle renames a board.
+func SetCollabBoardTitle(boardID, title string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	res, err := d.Exec(`UPDATE collab_boards SET title = ? WHERE id = ?`, title, boardID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrCollabBoardNotFound
+	}
+	return nil
+}

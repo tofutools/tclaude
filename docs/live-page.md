@@ -71,6 +71,10 @@ rules.
   good; archiving or deleting the group does as well. A group keeps its 64
   most recent closed pages. A private page (`--private`, or an agent in no
   group) is not saved: closing it, or restarting the daemon, ends it.
+  From the group's Resources row the operator can rename a page and move it
+  to another group you are a member of, which drops the marks sent before.
+  The operator's title stays when you show the page again without
+  `--title`; a show with `--title` replaces it.
   A saved page keeps its marks and live patches: a reopened page lists the
   operator's marks in `page marks` as before, and its patches are applied
   again. Shown into another group, it starts without the marks.
