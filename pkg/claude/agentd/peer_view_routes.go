@@ -324,6 +324,8 @@ var peerViewLocalRoutes = []string{
 	"POST /api/groups/{name}/process/advance",
 	"POST /api/groups/{name}/rebrief",
 	"POST /api/groups/{name}/spawn",
+	// Resolves a spawn without spawning, through the spawn handler.
+	"POST /api/groups/{name}/spawn-preview",
 	"POST /api/groups/{name}/stand-down",
 	"POST /api/groups/{name}/standing-orders/{id}",
 	"POST /api/mailbox/delete",

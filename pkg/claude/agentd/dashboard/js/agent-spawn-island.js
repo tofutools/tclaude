@@ -1159,11 +1159,19 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       if (!state.isCurrent(current.generation)) return;
       markTiming('attachments_ready_ms');
       // A local spawn leaves out a pre-filled toggle the operator did not set
-      // when the daemon resolves the same value; a remote one is filtered by
-      // remoteExplicit below, and one on another node sends what it shows
-      // (that node's default profile is not known here).
-      const request = buildSpawnRequest(next, context, worktreeSelection, attachmentPaths,
-        remote || away ? null : { operatorSet: operatorSet.current, profiles, dashboardDefault: actions.dashboardDefaultProfile() });
+      // when the daemon resolves the same value, which the spawn preview says
+      // (tcl-ezvrww); a remote one is filtered by remoteExplicit below, and
+      // one on another node sends what it shows. A preview that fails sends
+      // every shown toggle: the spawn itself reports a real refusal.
+      let omission = null;
+      if (!remote && !away && actions.previewSpawn) {
+        const probe = buildSpawnRequest(next, context, worktreeSelection, attachmentPaths,
+          { operatorSet: operatorSet.current, resolved: null });
+        const resolved = await actions.previewSpawn(probe).catch(() => null);
+        if (!state.isCurrent(current.generation)) return;
+        if (resolved) omission = { operatorSet: operatorSet.current, resolved };
+      }
+      const request = buildSpawnRequest(next, context, worktreeSelection, attachmentPaths, omission);
       if (policyDrifted()) throw new Error(STALE_POLICY_ERROR);
       setProgress('Launching agent…');
       markTiming('request_sent_ms');

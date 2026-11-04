@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -402,24 +403,51 @@ func resolveLaunchBoolFields(h *harness.Harness, tiers []launchProfileTier, res 
 // derived is then clamped to off for a harness with no Remote Access: a group
 // or default-profile setting must not fail a Codex spawn.
 func resolveRemoteControlLaunch(h *harness.Harness, tiers []launchProfileTier, groupPolicy, explicit *bool) (bool, string, *spawnFailure) {
+	value, _, note, fail := resolveRemoteControlLaunchSource(h, tiers, groupPolicy, explicit)
+	return value, note, fail
+}
+
+// Sources of a resolved remote-control value beyond a profile tier's.
+const (
+	provRemoteControlGroupPolicy    = "group remote-control policy"
+	provRemoteControlOff            = "default (off)"
+	provRemoteControlUnsupported    = "harness has no Remote Access"
+	provRemoteControlNonInteractive = "non-interactive spawn (off)"
+)
+
+// resolveRemoteControlLaunchSource is resolveRemoteControlLaunch with the
+// source of the value: explicit, the group policy, the profile tier that set
+// it, or the off default (the spawn preview shows it).
+func resolveRemoteControlLaunchSource(h *harness.Harness, tiers []launchProfileTier, groupPolicy, explicit *bool) (bool, string, string, *spawnFailure) {
 	spec := launchBoolFieldSpecs[launchBoolRemoteControl]
 	if explicit != nil {
 		if _, err := spec.validate(h)(*explicit); err != nil {
-			return false, "", &spawnFailure{http.StatusBadRequest, "invalid_remote_control", err.Error()}
+			return false, "", "", &spawnFailure{http.StatusBadRequest, "invalid_remote_control", err.Error()}
 		}
 	}
-	profileValue, profileSet, _, note, fail := resolveBoolLaunchField(spec.name, false, false, h.Name, tiers,
+	profileValue, profileSet, profileSource, note, fail := resolveBoolLaunchField(spec.name, false, false, h.Name, tiers,
 		spec.profile, spec.validate(h))
 	if fail != nil {
-		return false, note, fail
+		return false, "", note, fail
 	}
 	var profileDefault *bool
 	if profileSet {
 		profileDefault = &profileValue
 	}
 	value := resolveRemoteControlIntent(groupPolicy, profileDefault, explicit)
-	if value && !h.CanRemoteControl() {
-		value = false
+	var source string
+	switch {
+	case explicit != nil:
+		source = agent.ProvExplicit
+	case groupPolicy != nil:
+		source = provRemoteControlGroupPolicy
+	case profileSet:
+		source = profileSource
+	default:
+		source = provRemoteControlOff
 	}
-	return value, note, nil
+	if value && !h.CanRemoteControl() {
+		value, source = false, provRemoteControlUnsupported
+	}
+	return value, source, note, nil
 }

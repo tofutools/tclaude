@@ -132,6 +132,13 @@ type ResolvedLaunch struct {
 	// harness-builtin path, echoed as "(harness default)" like any unpinned
 	// field. See TCL-769.
 	SandboxImpl ResolvedField `json:"sandbox_implementation"`
+	// RemoteControl, AutoMemory and PeerMessaging are the launch toggles the
+	// dashboard's spawn dialog pre-fills, with the tier that decided each
+	// ("true"/"false"). The spawn preview reads them (tcl-ezvrww); nil on an
+	// echo from a daemon that does not resolve them here.
+	RemoteControl *ResolvedField `json:"remote_control,omitempty"`
+	AutoMemory    *ResolvedField `json:"auto_memory,omitempty"`
+	PeerMessaging *ResolvedField `json:"peer_messaging,omitempty"`
 	// SandboxPolicy exposes the frozen profile chain, canonical grants, and
 	// environment names. Environment values remain private in the snapshot.
 	SandboxPolicy *ResolvedSandboxPolicy `json:"sandbox_policy,omitempty"`

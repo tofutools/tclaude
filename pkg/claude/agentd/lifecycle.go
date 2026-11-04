@@ -4765,7 +4765,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// rather than losing it. That is what makes the toggle real for the agentd
 	// TUI, which names a profile and sends no flag of its own. The same
 	// resolver serves every other spawn path (TCL-1107).
-	remoteControl, remoteControlNote, rcFail := resolveRemoteControlLaunch(h, profileTiers, g.RemoteControl, body.RemoteControl)
+	remoteControl, remoteControlSource, remoteControlNote, rcFail := resolveRemoteControlLaunchSource(h, profileTiers, g.RemoteControl, body.RemoteControl)
 	if remoteControlNote != "" {
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes, remoteControlNote)
 	}
@@ -4774,8 +4774,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 	if body.NonInteractive {
-		remoteControl = false
+		remoteControl, remoteControlSource = false, provRemoteControlNonInteractive
 	}
+	resolvedLaunch.RemoteControl = resolvedToggle(remoteControl, remoteControlSource)
+	resolvedLaunch.AutoMemory = resolvedToggle(autoMemory, launchBools.Source[launchBoolAutoMemory])
+	resolvedLaunch.PeerMessaging = resolvedToggle(peerMessaging, launchBools.Source[launchBoolPeerMessaging])
 
 	// Validate an explicit task-reference link at the spawn boundary so a
 	// bad URL fails the request with a clear 400, rather than being
@@ -4792,6 +4795,16 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			writeError(w, http.StatusBadRequest, "invalid_task_label", err.Error())
 			return
 		}
+	}
+
+	// A spawn preview stops here, before the first side effect (the rate
+	// limit slot below): it has resolved and validated the request exactly as
+	// the spawn would, and answers with what it would launch. Nothing above
+	// this line may write, allocate or audit: TestSpawnPreview_HasNoSideEffects
+	// guards it.
+	if isSpawnPreview(r) {
+		writeJSON(w, http.StatusOK, spawnPreviewResponse{Resolved: resolvedLaunch})
+		return
 	}
 
 	// Rate limit (guardrail 3) — claimed only now, after every validation

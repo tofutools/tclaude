@@ -192,8 +192,12 @@ trigger worker and a process worker. Highest first:
    pre-fills the remote-control, auto-memory and peer-messaging checkboxes
    from the tiers below and leaves one out of the request when you did not
    change it and the daemon resolves the same value, so a box left as
-   pre-filled is not an explicit choice. A box the daemon would not resolve
-   the same way (a profile the dialog cannot see, say) is sent as shown
+   pre-filled is not an explicit choice. To know what the daemon resolves,
+   the dialog asks it: a spawn preview (`POST /api/groups/{name}/spawn-preview`,
+   the spawn request's body) runs the spawn's own resolution and validation,
+   stops before anything is launched, and answers with each launch field's
+   value and the tier that decided it. A box the daemon would not resolve the
+   same way is sent as shown, and so is every box when the preview fails
 2. the group's remote-control policy (`groups set-remote-control`; remote
    control only)
 3. the named profile (`--profile`, a template agent's inline or referenced

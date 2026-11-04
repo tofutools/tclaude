@@ -343,38 +343,43 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   assert.equal(localToLocal.initialMessage, '');
 });
 
-test('agent-spawn model sends a pre-filled toggle only when the operator set it', async (t) => {
+test('agent-spawn model sends a pre-filled toggle only when the operator set it or the daemon differs', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/agent-spawn-model.js');
   const context = { groups, harnesses, userDefaultModel: '', normalizeNames: true };
-  const omit = (operatorSet = new Set(), profiles = [], dashboardDefault = '') => ({ operatorSet, profiles, dashboardDefault });
+  const field = (value, source = 'x') => ({ value: String(value), source });
   // beta's policy is opt-in, so the form pre-fills remote control on.
   const draft = { ...model.createSpawnDraft({ groups, harnesses, groupName: 'beta' }), name: 'worker' };
   assert.equal(draft.remoteControl, true);
-  const untouched = model.buildSpawnRequest(draft, context, null, [], omit()).body;
+
+  // The request to preview leaves every untouched toggle to the daemon.
+  const probe = model.buildSpawnRequest(draft, context, null, [], { operatorSet: new Set(), resolved: null });
+  for (const key of Object.values(model.PREFILLED_TOGGLES)) {
+    assert.equal(key in probe.body, false, `${key} is left out of the preview request`);
+  }
+  assert.equal(model.spawnPreviewURL(probe.url), '/api/groups/beta/spawn-preview');
+
+  // The daemon resolves the same values: nothing is sent.
+  const same = { remote_control: field(true), auto_memory: field(!!draft.autoMemory), peer_messaging: field(!!draft.peerMessaging) };
+  const untouched = model.buildSpawnRequest(draft, context, null, [], { operatorSet: new Set(), resolved: same }).body;
   for (const key of Object.values(model.PREFILLED_TOGGLES)) {
     assert.equal(key in untouched, false, `${key} is left to the daemon, which resolves it the same way`);
   }
+  // The daemon would land elsewhere (a tier the pre-fill did not read): the
+  // shown value is sent, and so is one the echo does not carry.
+  const differs = model.buildSpawnRequest(draft, context, null, [],
+    { operatorSet: new Set(), resolved: { ...same, remote_control: field(false) } }).body;
+  assert.equal(differs.remote_control, true, 'the shown on is sent where the daemon would resolve off');
+  const older = model.buildSpawnRequest(draft, context, null, [], { operatorSet: new Set(), resolved: {} }).body;
+  assert.equal(older.remote_control, true, 'an echo without the field sends what is shown');
+
   const set = model.buildSpawnRequest({ ...draft, remoteControl: false, autoMemory: true }, context, null, [],
-    omit(new Set(['remoteControl', 'autoMemory']))).body;
+    { operatorSet: new Set(['remoteControl', 'autoMemory']), resolved: same }).body;
   assert.equal(set.remote_control, false, 'an operator choice is sent, and recorded as explicit');
   assert.equal(set.auto_memory, true);
   assert.equal('peer_messaging' in set, false);
   assert.equal(model.buildSpawnRequest(draft, context, null, []).body.remote_control, true,
     'without omission every shown toggle is sent');
-
-  // The daemon walks the named, group default and global default profiles: a
-  // pre-fill that read fewer tiers is sent rather than left to diverge.
-  const alpha = { ...model.createSpawnDraft({ groups, harnesses, groupName: 'alpha' }), name: 'worker' };
-  const profiles = [{ name: 'group-default' }, { name: 'global', auto_memory: true }];
-  const tiered = model.buildSpawnRequest(alpha, context, null, [], omit(new Set(), profiles, 'global')).body;
-  assert.equal(tiered.auto_memory, false, 'the global default would turn auto-memory on: the shown off is sent');
-  assert.equal('peer_messaging' in tiered, false, 'no tier sets it: off is the daemon default too');
-  const unseen = model.buildSpawnRequest(alpha, context, null, [], omit()).body;
-  assert.equal(unseen.auto_memory, false, 'a tier profile not visible here: the shown value is sent');
-  const foreign = [{ name: 'group-default', harness: 'codex', auto_memory: true }];
-  assert.equal('auto_memory' in model.buildSpawnRequest(alpha, context, null, [], omit(new Set(), foreign)).body, false,
-    'a profile for another harness does not speak, as on the daemon');
 });
 
 test('agent-spawn model normalizes names and builds exact launch bodies', async (t) => {
@@ -1478,6 +1483,39 @@ test('Preact agent-spawn owns attachment input, retry caching, removal, and obje
   assert.equal(uploadCalls, 1, 'a spawn-only retry reuses uploaded paths');
   assert.equal(attempts, 2);
   assert.deepEqual(revoked, ['blob:spawn-preview'], 'closing the dialog revokes live previews');
+  mounted.cleanup();
+});
+
+test('agent-spawn asks the daemon preview which pre-filled toggles to send (tcl-ezvrww)', async (t) => {
+  const previews = [];
+  const sent = [];
+  let remote = 'true';
+  const mounted = await mountSpawn(t, {
+    previewSpawn: async (request) => {
+      previews.push(request);
+      return { remote_control: { value: remote, source: 'group remote-control policy' } };
+    },
+    spawn: async (request) => { sent.push(request.body); return { conv_id: '1234567890' }; },
+  });
+  const { harness, host, state } = mounted;
+  const submit = async () => {
+    state.open({ groupName: 'beta' });
+    await flush(harness);
+    await settleWorktrees(harness);
+    const name = host.querySelector('#agent-spawn-name');
+    setValue(name, 'worker');
+    await harness.act(() => harness.fireEvent(name, 'input'));
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+  };
+  await submit();
+  assert.equal(previews.length, 1);
+  assert.equal('remote_control' in previews[0].body, false, 'the preview is asked without the untouched toggle');
+  assert.equal('remote_control' in sent[0], false, 'the daemon resolves the shown on itself, so it is left out');
+
+  remote = 'false';
+  await submit();
+  assert.equal(sent[1].remote_control, true, 'the daemon would resolve off: the shown on is sent');
   mounted.cleanup();
 });
 

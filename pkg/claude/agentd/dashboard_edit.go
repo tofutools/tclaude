@@ -750,6 +750,7 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/groups/{name}/retire", groupRoute(dashboardGroupRetire))
 	mux.HandleFunc("GET /api/groups/{name}/worktrees", groupRoute(dashboardGroupWorktrees))
 	mux.HandleFunc("POST /api/groups/{name}/spawn", groupRoute(dashboardSpawnInGroup))
+	mux.HandleFunc("POST /api/groups/{name}/spawn-preview", groupRoute(dashboardSpawnPreview))
 	mux.HandleFunc("/api/groups/{name}/spawn-harness-policy", groupRoute(handleDashboardGroupSpawnHarnessPolicy))
 	mux.HandleFunc("POST /api/groups/{name}/members", groupRoute(dashboardAddMember))
 	mux.HandleFunc("DELETE /api/groups/{name}/members/{conv}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
