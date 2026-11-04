@@ -132,6 +132,18 @@ func roleConferralFailure(caller string, before, after *db.Role) *spawnFailure {
 	for _, g := range after.Permissions {
 		grants[g.Slug] = db.PermissionOverride{Effect: db.PermEffectGrant, Scope: g.Scope}
 	}
+	if before != nil && before.Name != after.Name {
+		// A rename re-points every profile that already names the new name
+		// at this role, a reference that conferred nothing while it dangled.
+		// Those profiles gain all of the role's grants, so judge them all.
+		named, err := db.SpawnProfilesReferencingRole(after.Name)
+		if err != nil {
+			return &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if len(named) > 0 {
+			before = nil
+		}
+	}
 	if before != nil {
 		had := map[string]db.PermissionOverride{}
 		for _, g := range before.Permissions {

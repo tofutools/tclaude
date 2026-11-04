@@ -1223,23 +1223,6 @@ func importProfiles(caller string, env profileExportEnvelope, decisions []profil
 		if fail != nil {
 			return profileImportResult{}, fail
 		}
-		var before *db.SpawnProfile
-		if plan.action == "overwrite" {
-			existing, err := db.GetSpawnProfile(plan.target)
-			if err != nil {
-				return profileImportResult{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
-			}
-			before = existing
-		}
-		if fail := profileConferralFailure(nil, caller, before, p, "", libraryProfileReach); fail != nil {
-			return profileImportResult{}, fail
-		}
-	}
-	for _, plan := range plans {
-		p, fail := buildProfileFromJSON(plan.profile)
-		if fail != nil {
-			return profileImportResult{}, fail
-		}
 		existing, err := db.GetSpawnProfile(plan.target)
 		if err != nil {
 			return profileImportResult{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}

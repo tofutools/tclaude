@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/configbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -193,4 +194,64 @@ func TestLibraryConferral_ProfileImport(t *testing.T) {
 	}
 	assert.Equal(t, http.StatusOK, humanReq(t, f, http.MethodPost, "/v1/spawn-profiles/import", body).Code,
 		"the operator always may")
+}
+
+// Renaming a role onto a name a profile already references (one that dangled,
+// say from older data) hands that profile the role's grants, so the rename is
+// judged as conferring them all, through either rename route.
+func TestLibraryConferral_RoleRenameOntoAReferencedName(t *testing.T) {
+	f := libraryAgent(t)
+	_, err := db.CreateRole(&db.Role{Name: "conferral-admin",
+		Permissions: []db.PermissionGrant{{Slug: reviewerSlug}}})
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "dangling", Harness: "claude",
+		RoleRefs: []string{"conferral-target"}})
+	require.NoError(t, err)
+	patchRename := func(to string) int {
+		return agentReq(t, f, librarian, http.MethodPatch, "/v1/roles/conferral-admin",
+			map[string]any{"name": to, "permissions": []string{reviewerSlug}}).Code
+	}
+	libraryRename := func(from, to string) int {
+		return agentReq(t, f, librarian, http.MethodPost, "/v1/library/rename",
+			map[string]any{"kind": "roles", "name": from, "to": to}).Code
+	}
+	assert.Equal(t, http.StatusForbidden, patchRename("conferral-target"), "PATCH onto a referenced name")
+	assert.Equal(t, http.StatusForbidden, libraryRename("conferral-admin", "conferral-target"), "library rename onto a referenced name")
+	assert.Equal(t, http.StatusOK, libraryRename("conferral-admin", "conferral-elsewhere"),
+		"a rename no profile is waiting for adds nothing")
+
+	mayConfer(t)
+	assert.Equal(t, http.StatusOK, libraryRename("conferral-elsewhere", "conferral-target"), "with the authority to confer it")
+	got, err := db.GetRole("conferral-target")
+	require.NoError(t, err)
+	assert.NotNil(t, got)
+}
+
+// A config bundle is judged while it is planned, so a refused profile leaves
+// the bundle's other items unwritten too.
+func TestLibraryConferral_ConfigBundleRefusesBeforeApplying(t *testing.T) {
+	f := libraryAgent(t)
+	require.NoError(t, db.GrantAgentPermission(librarian, agentd.PermConfigImport, "test"))
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/roles",
+		map[string]any{"name": "conferral-bundled", "brief": "Review."}).Code)
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/spawn-profiles",
+		profileBody("bundled", grantsReviewer)).Code)
+	rec := humanReq(t, f, http.MethodGet, "/v1/config-bundle/export?only=roles/conferral-bundled&only=profiles/bundled", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var b configbundle.Bundle
+	testharness.DecodeJSON(t, rec, &b)
+	_, err := db.DeleteSpawnProfile("bundled")
+	require.NoError(t, err)
+	_, err = db.DeleteRole("conferral-bundled")
+	require.NoError(t, err)
+
+	rec = agentReq(t, f, librarian, http.MethodPost, "/v1/config-bundle/import", map[string]any{"bundle": b, "apply": true})
+	assert.NotEqual(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), agentd.PermPermissionsGrant)
+	role, err := db.GetRole("conferral-bundled")
+	require.NoError(t, err)
+	assert.Nil(t, role, "nothing in the bundle applies")
+
+	rec = humanReq(t, f, http.MethodPost, "/v1/config-bundle/import", map[string]any{"bundle": b, "apply": true})
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }

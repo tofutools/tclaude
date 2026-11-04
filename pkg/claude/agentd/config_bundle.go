@@ -456,7 +456,23 @@ func planConfigBundleItem(r *http.Request, caller, section string, item configbu
 		check.RoleRef = ""
 		check.RoleRefs = nil
 		check.PromptRefs = nil
-		if _, fail := buildProfileFromJSON(check); fail != nil {
+		judged, fail := buildProfileFromJSON(check)
+		if fail != nil {
+			return nil, bundleFailure(fail)
+		}
+		// Judge its overrides and is_owner at planning, before any item
+		// applies; a replace is judged against the profile it replaces. The
+		// grants of the roles it names are judged with their own items, and
+		// once more when importProfiles applies it.
+		var before *db.SpawnProfile
+		if replace {
+			current, err := db.GetSpawnProfile(item.Name)
+			if err != nil {
+				return nil, err
+			}
+			before = current
+		}
+		if fail := profileConferralFailure(r, caller, before, judged, "", libraryProfileReach); fail != nil {
 			return nil, bundleFailure(fail)
 		}
 		action := "create"
