@@ -3,6 +3,7 @@ package agentd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"reflect"
 	"sort"
@@ -112,6 +113,8 @@ type profileReapplyAgent struct {
 	CopiedAt string                `json:"copied_at,omitempty"`
 	Fields   []profileReapplyField `json:"fields"`
 	Grants   []profileReapplyGrant `json:"grants"`
+	// GrantsError replaces Grants when the copy's grants could not be read.
+	GrantsError string `json:"grants_error,omitempty"`
 }
 
 func compactJSON(raw json.RawMessage) string {
@@ -131,9 +134,32 @@ func profileJSONMap(raw []byte) map[string]json.RawMessage {
 	return out
 }
 
+// speaks reports whether a copied profile value sets the field: a launch takes
+// each field from the highest tier that speaks.
+func speaks(raw json.RawMessage) bool {
+	switch compactJSON(raw) {
+	case "", `""`, "[]", "{}":
+		return false
+	}
+	return true
+}
+
 // profileReapplyFields diffs an agent's copy of a profile against the profile
 // now, field by field, saying what a re-apply would do with each change.
-func profileReapplyFields(copied, current map[string]json.RawMessage, layers *db.AgentLaunchLayers) []profileReapplyField {
+// higher are the copies of the tiers above this profile's: a field one of them
+// sets is not taken from this profile, so an edit to it changes nothing.
+func profileReapplyFields(copied, current map[string]json.RawMessage, layers *db.AgentLaunchLayers, higher []db.SpawnCopyTier) []profileReapplyField {
+	shadowedBy := func(key string) string {
+		for _, t := range higher {
+			if speaks(profileJSONMap(t.Profile)[key]) {
+				if t.ProfileName != "" {
+					return t.ProfileName
+				}
+				return t.Tier
+			}
+		}
+		return ""
+	}
 	sticky := map[string]bool{}
 	for _, o := range layers.RelaunchOverrides {
 		if o.Source == "explicit" {
@@ -166,6 +192,8 @@ func profileReapplyFields(copied, current map[string]json.RawMessage, layers *db
 				row.Status = reapplyKeptExplict
 			case sticky[field.Key]:
 				row.Status = reapplyKeptSticky
+			case field.Layer == launchspec.LayerSpawnCopy && shadowedBy(key) != "":
+				row.Status = "kept (set by " + shadowedBy(key) + ")"
 			case field.Layer == launchspec.LayerSpawnOnly:
 				row.Status = reapplySpawnOnly
 			case profileReapplyNotYet[field.Key]:
@@ -227,32 +255,51 @@ func profileReapplyGrants(copied, current *db.SpawnProfile) []profileReapplyGran
 	return out
 }
 
+// copiedGrantInputs reads the grant inputs straight from a copied profile,
+// without the save-time validation that would refuse a copy naming a role or
+// saved prompt deleted since.
+func copiedGrantInputs(raw json.RawMessage) (*db.SpawnProfile, error) {
+	var copied agent.SpawnProfileJSON
+	if err := json.Unmarshal(raw, &copied); err != nil {
+		return nil, err
+	}
+	return &db.SpawnProfile{
+		RoleRef: copied.RoleRef, RoleRefs: copied.RoleRefs,
+		IsOwner: copied.IsOwner, PermissionOverrides: copied.PermissionOverrides,
+	}, nil
+}
+
 // profileReapplyPreview lists the active agents holding a copy of prof, with
-// what a re-apply would change for each.
-func profileReapplyPreview(prof *db.SpawnProfile) ([]profileReapplyAgent, error) {
+// what a re-apply would change for each. unreadable counts the agents found
+// whose launch layers could not be read, so the list and the save count agree.
+func profileReapplyPreview(prof *db.SpawnProfile) (out []profileReapplyAgent, unreadable int, err error) {
 	ids, err := db.AgentsWithSpawnCopyOf(prof.ID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	currentRaw, err := json.Marshal(profileToJSON(prof))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	current := profileJSONMap(currentRaw)
-	out := []profileReapplyAgent{}
+	out = []profileReapplyAgent{}
 	for _, id := range ids {
 		layers, err := db.AgentLaunchLayersFor(id)
 		if err != nil || layers == nil || layers.SpawnCopy == nil {
+			unreadable++
 			continue
 		}
 		var tier *db.SpawnCopyTier
+		var higher []db.SpawnCopyTier
 		for i := range layers.SpawnCopy.Tiers {
 			if layers.SpawnCopy.Tiers[i].ProfileID == prof.ID {
 				tier = &layers.SpawnCopy.Tiers[i]
+				higher = layers.SpawnCopy.Tiers[:i]
 				break
 			}
 		}
 		if tier == nil {
+			unreadable++
 			continue
 		}
 		row := profileReapplyAgent{AgentID: id, Tier: tier.Tier, Fields: []profileReapplyField{}, Grants: []profileReapplyGrant{}}
@@ -266,16 +313,16 @@ func profileReapplyPreview(prof *db.SpawnProfile) ([]profileReapplyAgent, error)
 				row.Title = agent.DisplayTitle(idx)
 			}
 		}
-		row.Fields = profileReapplyFields(profileJSONMap(tier.Profile), current, layers)
-		var copied agent.SpawnProfileJSON
-		if json.Unmarshal(tier.Profile, &copied) == nil {
-			if was, fail := buildProfileFromJSON(copied); fail == nil {
-				row.Grants = profileReapplyGrants(was, prof)
-			}
+		row.Fields = profileReapplyFields(profileJSONMap(tier.Profile), current, layers, higher)
+		was, err := copiedGrantInputs(tier.Profile)
+		if err != nil {
+			row.GrantsError = "this agent's copy of the profile could not be read"
+		} else {
+			row.Grants = profileReapplyGrants(was, prof)
 		}
 		out = append(out, row)
 	}
-	return out, nil
+	return out, unreadable, nil
 }
 
 // handleSpawnProfileRunningAgents is GET /v1/spawn-profiles/{name}/running-agents:
@@ -293,17 +340,22 @@ func handleSpawnProfileRunningAgents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "no such profile")
 		return
 	}
-	agents, err := profileReapplyPreview(prof)
+	agents, unreadable, err := profileReapplyPreview(prof)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	notes := []string{profileReapplyUsageNote}
+	if unreadable > 0 {
+		notes = append(notes, fmt.Sprintf("%d more agent(s) hold a copy of this profile, but their launch layers could not be read, so they are not listed.", unreadable))
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"profile":     prof.Name,
 		"agents":      agents,
+		"unreadable":  unreadable,
 		"apply":       map[string]any{"enabled": false, "reason": profileReapplyBlocked},
 		"grants_note": profileReapplyGrantsNote,
-		"notes":       []string{profileReapplyUsageNote},
+		"notes":       notes,
 	})
 }
 

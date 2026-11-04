@@ -25,6 +25,9 @@ what re-applying the edited profile would change for each:
   **changes**;
 - harness, model, effort and directory are **kept (fixed)**;
 - a value the spawn request set is **kept (explicit)**;
+- a field a higher tier sets is **kept (set by** that profile**)**: a launch
+  takes each field from the highest tier that sets it, so editing the global
+  default changes nothing where the agent's named profile sets the same field;
 - spawn-only values, such as the agent name or the initial message, are
   **not reapplied**: they were used once, at the first spawn.
 - the group context switch, profile environment, profile startup context and

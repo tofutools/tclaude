@@ -128,3 +128,36 @@ func TestProfileReapply_NeedsProfilesManage(t *testing.T) {
 	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermProfilesManage, "test"))
 	assert.Equal(t, http.StatusOK, agentReq(t, f, caller, http.MethodGet, "/v1/spawn-profiles/worker/running-agents", nil).Code)
 }
+
+// A field a higher tier sets is not taken from a lower one, so editing it in
+// the global default changes nothing for an agent whose named profile sets it.
+func TestProfileReapply_HigherTierKeepsItsField(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	for _, body := range []map[string]any{
+		{"name": "named", "harness": "claude", "auto_memory": true},
+		{"name": "global", "harness": "claude", "auto_memory": false, "peer_messaging": false},
+	} {
+		created := createProfile(t, f, body)
+		require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	}
+	require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "global").Code)
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "w", "profile": "named"})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+
+	rec := humanReq(t, f, http.MethodPatch, "/v1/spawn-profiles/global", map[string]any{
+		"name": "global", "harness": "claude", "auto_memory": true, "peer_messaging": true,
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	preview := profileReapplyPreview(t, f, "global")
+	require.Len(t, preview.Agents, 1)
+	assert.Equal(t, db.SpawnCopyTierGlobalDefault, preview.Agents[0].Tier)
+	got := map[string]string{}
+	for _, field := range preview.Agents[0].Fields {
+		got[field.Key] = field.Status
+	}
+	assert.Equal(t, map[string]string{
+		"auto_memory":    "kept (set by named)",
+		"peer_messaging": "changes",
+	}, got)
+}

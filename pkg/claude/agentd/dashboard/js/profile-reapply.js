@@ -46,7 +46,7 @@ export const reapplyColumns = Object.freeze([
   { key: 'tier', label: 'Copied as', render: (r) => (r.copied_at ? `${r.tier}, ${r.copied_at}` : r.tier) },
   { key: 'online', label: 'Running', render: (r) => (r.online ? 'yes' : 'no') },
   { key: 'fields', label: 'Re-apply would', render: (r) => html`<${FieldChanges} fields=${r.fields} />` },
-  { key: 'grants', label: 'Grants (shown only)', render: (r) => html`<${GrantChanges} grants=${r.grants} />` },
+  { key: 'grants', label: 'Grants (shown only)', render: (r) => (r.grants_error ? html`<span class="ui-hint">${r.grants_error}</span>` : html`<${GrantChanges} grants=${r.grants} />`) },
 ]);
 
 const rowKey = (r) => r.agent_id;
