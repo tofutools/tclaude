@@ -50,7 +50,7 @@ func testScopedLinearSession(operator, granted []string) *linearProxySession {
 		LinearProxy: &config.LinearProxyConfig{AllowedTeams: operator},
 	}}
 	policy := cfg.ResolvedLinearProxy()
-	s := &linearProxySession{policy: policy, grantTeams: lowerTeamKeys(granted)}
+	s := &linearProxySession{policy: policy, grantTeams: lowerScopeKeys(granted)}
 	for _, key := range policy.AllowedTeams {
 		if slices.Contains(s.grantTeams, key) {
 			s.teams = append(s.teams, key)
