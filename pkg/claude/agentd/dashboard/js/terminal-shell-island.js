@@ -1,4 +1,5 @@
 import { stripPaneKeys } from './resource-places.js';
+import { CollabRail, railCollapsed } from './collab-rail.js';
 import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -1776,8 +1777,13 @@ function TerminalTabs({
     current.panes, onComposeMessage, solo,
   ]);
 
+  // The rail lists everything beside the strip, on the dashboard's own
+  // Collab view only (collab-rail.js).
+  const rail = !solo && !!snapshot;
+  const rootClass = rail ? `terminal-shell-root has-rail${railCollapsed.value ? ' rail-collapsed' : ''}` : 'terminal-shell-root';
   return html`
-    <div ref=${shellRef} class="terminal-shell-root">
+    <div ref=${shellRef} class=${rootClass}>
+      ${rail ? html`<${CollabRail} panes=${current.panes} actions=${actions} snapshot=${snapshot} notify=${shellToast} />` : null}
       ${!solo ? html`
         <span id="terminal-tab-reorder-help" class="mux-tab-a11y">
           Drag tabs to reorder them, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow on a focused tab.

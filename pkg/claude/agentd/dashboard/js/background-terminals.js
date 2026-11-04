@@ -240,7 +240,7 @@ function boardRowView(row, snapshotValue) {
 
 // rowLabel prefers the roster's live title so a renamed agent reads right
 // before the next listing.
-function rowView(row, snapshotValue) {
+export function rowView(row, snapshotValue) {
   if (row.kind === 'board') return boardRowView(row, snapshotValue);
   const selector = selectorOf(row);
   const seed = row.node ? { remote: { peer: row.node.id, agent: row.agent_id } } : { agent: selector };
