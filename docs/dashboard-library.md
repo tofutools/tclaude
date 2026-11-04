@@ -53,6 +53,11 @@ default with **Set as default** on a card, or set one per group with 🧠 on the
 group. See
 [how the defaults combine](spawning-and-lifecycle.md).
 
+The profile editor's **On resume** row sets the profile's own
+[relaunch policy rows](launch-resolution.md#per-agent-overrides), which are
+copied into every agent spawned from it. **Edit…** opens the same editor as
+the spawn dialog; a row left at **Default** follows the global table.
+
 ## Saved prompts
 
 A saved prompt is reusable task text, such as a cold-review brief. A role, in

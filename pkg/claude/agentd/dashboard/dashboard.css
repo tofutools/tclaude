@@ -9314,14 +9314,11 @@ label.cfg-label { cursor: pointer; }
 .cfg-tool-list :is(th, td) { vertical-align: top; }
 .cfg-tool-list td:first-child code { white-space: nowrap; }
 @media (max-width: 640px) { .cfg-tool-list td:first-child code { white-space: normal; overflow-wrap: anywhere; } }
-/* Spawn dialog › On resume (spawn-on-resume.js); its pills reuse .rlp-pill-*. */
+/* Spawn dialog › On resume (spawn-on-resume.js) and the relaunch editor (relaunch-policy-dialog.js); pills reuse .rlp-pill-*. */
 .spawn-on-resume { display: flex; flex-direction: column; gap: 6px; }
 .spawn-on-resume-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.spawn-on-resume-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.spawn-on-resume-table :is(th, td) { text-align: left; vertical-align: top; }
-.spawn-on-resume-table thead th { font-weight: 600; color: #8b949e; }
-.spawn-on-resume-table .rlp-section th { font-size: 11px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: .04em; }
-.spawn-on-resume-table td:last-child { white-space: nowrap; }
+.relaunch-policy-layers { margin-top: 8px; font-size: 12px; color: #8b949e; }
+.relaunch-policy-layers ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
 /* Config › Launch: the relaunch policy table (relaunch-policy-table.js). */
 .rlp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .rlp-table thead th { text-align: left; font-weight: 600; color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }

@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -241,4 +242,45 @@ func TestRelaunchOverrides_FreeInheritedRowStaysWithItsSource(t *testing.T) {
 	require.Equalf(t, http.StatusOK, human.Code, "spawn body=%s", human.Raw)
 	assert.Equal(t, []db.RelaunchPolicyOverride{{Field: "harness_config", Mode: "explicit-wins", Source: "explicit"}},
 		launchLayers(t, human.ConvID).RelaunchOverrides, "a human's row is a deliberate pin")
+}
+
+func previewRelaunch(t *testing.T, f *testharness.Flow, query string) map[string]map[string]string {
+	t.Helper()
+	rec := humanReq(t, f, http.MethodGet, "/v1/relaunch-policy?preview=1&"+query, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body struct {
+		Resolved map[string]map[string]string `json:"resolved"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	return body.Resolved
+}
+
+// The dashboard's preview resolves with the spawn's own walk: explicit >
+// the named profile > the group's default profile > the global table.
+func TestRelaunchOverrides_Preview(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{
+		"name": "pinned-env", "relaunch_policy": map[string]string{"group_env": "reuse", "sandbox_profile_contents": "reuse"}})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	rec = profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{
+		"name": "crew-default", "relaunch_policy": map[string]string{"harness_config": "chain-wins"}})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	_, err := db.SetAgentGroupDefaultProfile("crew", "crew-default")
+	require.NoError(t, err)
+	setRelaunchPolicy(t, f, "group_remote_control", "reuse")
+
+	got := previewRelaunch(t, f, "group=crew&profile=pinned-env&explicit=sandbox_profile_contents=inherit")
+	assert.Equal(t, map[string]string{"value": "reuse", "source": "profile pinned-env"}, got["group_env"])
+	assert.Equal(t, map[string]string{"value": "re-resolve", "source": "global"}, got["sandbox_profile_contents"], "inherit follows the global table")
+	assert.Equal(t, map[string]string{"value": "chain-wins", "source": "profile crew-default"}, got["harness_config"], "the group's default profile")
+	assert.Equal(t, map[string]string{"value": "reuse", "source": "global"}, got["group_remote_control"])
+
+	got = previewRelaunch(t, f, "group=crew&explicit=group_env=re-resolve")
+	assert.Equal(t, map[string]string{"value": "re-resolve", "source": "this spawn"}, got["group_env"])
+
+	rec = humanReq(t, f, http.MethodGet, "/v1/relaunch-policy?preview=1&explicit=group_env=chain-wins", nil)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	rec = humanReq(t, f, http.MethodGet, "/v1/relaunch-policy?preview=1&profile=missing", nil)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
 }

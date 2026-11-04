@@ -1032,6 +1032,24 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       },
     });
   };
+  // The On resume row's Edit… (launch slice 11): this spawn's own relaunch
+  // rows, over what its profiles and the global table give (the daemon's
+  // preview, passed in by the row).
+  const openRelaunchPolicy = ({ rows, fields, inherited }) => {
+    const generation = current.generation;
+    actions.openRelaunchPolicy({
+      scope: 'spawn', rows, fields, inherited,
+      selection: draft.relaunchPolicy || {},
+      label: draft.name.trim(),
+      onSave: (kept) => {
+        if (!state.isCurrent(generation)) return;
+        touched.current.add('relaunchPolicy');
+        operatorSet.current.add('relaunchPolicy');
+        profileOverrides.current.add('relaunchPolicy');
+        setDraft((before) => ({ ...before, relaunchPolicy: { ...kept } }));
+      },
+    });
+  };
   const openContextFeatures = () => {
     const generation = current.generation;
     actions.openContextFeatures({
@@ -1793,7 +1811,8 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     ${/* What a resume does with this agent's launch inputs (launch slice 10).
           Below the autonomy rows, so it never parts a select from its warning.
           Read-only, and this node's policy, so a spawn on another node leaves it out. */
-      !remote && !away && html`<${SpawnOnResumeRow} busy=${busy} />`}
+      !remote && !away && html`<${SpawnOnResumeRow} busy=${busy} group=${draft.group} profile=${draft.profile}
+        selection=${draft.relaunchPolicy || {}} onEdit=${openRelaunchPolicy} />`}
     <label class="cron-create-enabled cron-check-aligned" id="agent-spawn-trust-dir-row" hidden=${!view.showTrustDir}
       title="Pre-trust the launch directory so the new agent doesn't freeze on the harness's trust-folder dialog.">
       <input id="agent-spawn-trust-dir" type="checkbox" checked=${draft.trustDir} disabled=${busy}

@@ -55,6 +55,10 @@ export function openContextFeaturesEditor(options = {}) {
   return requireController().openContextFeatures(options);
 }
 
+export function openRelaunchPolicyEditor(options = {}) {
+  return requireController().openRelaunchPolicy(options);
+}
+
 export function pickAgent(options = {}) {
   return requireController().pickAgent(options);
 }

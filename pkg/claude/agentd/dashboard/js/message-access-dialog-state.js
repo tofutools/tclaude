@@ -104,6 +104,19 @@ export function createMessageAccessDialogState({ canRestoreFocus = () => true } 
         selection: { ...(options.selection || {}) },
       });
     },
+    // Per-agent relaunch rows (launch slice 11). Buffered like the startup
+    // context trims: the spawn form or profile editor owns the rows and gets
+    // them back on save. rows, fields and inherited come from the daemon.
+    openRelaunchPolicy(options = {}) {
+      return open({
+        kind: 'relaunch-policy',
+        ...options,
+        rows: [...(options.rows || [])],
+        fields: [...(options.fields || [])],
+        selection: { ...(options.selection || {}) },
+        inherited: { ...(options.inherited || {}) },
+      });
+    },
     close, pickAgent, finishPicker, dispose,
   });
 }

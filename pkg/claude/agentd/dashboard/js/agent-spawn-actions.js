@@ -60,6 +60,7 @@ export function createAgentSpawnActions(dependencies = {}) {
   openProfileEditor,
   openPermissions,
   openContextFeatures,
+  openRelaunchPolicy = () => {},
   confirm,
   notify = () => {},
   refresh = () => {},
@@ -432,6 +433,12 @@ export function createAgentSpawnActions(dependencies = {}) {
     // dialog hands the trim map back through the caller's onSave.
     openContextFeatures(options) {
       return openContextFeatures(options);
+    },
+
+    // The On resume row's "Edit…" (launch slice 11): the same buffered
+    // pattern, for this spawn's relaunch rows.
+    openRelaunchPolicy(options) {
+      return openRelaunchPolicy(options);
     },
 
     confirmAutoName(name) {

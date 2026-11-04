@@ -243,7 +243,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
     body.model_proxy = draft.model_proxy;
   }
   if (local) {
-    for (const key of ['name', 'aliases', 'disabled', 'disabled_reason', 'agent_name', 'role', 'role_ref', 'role_refs', 'prompt_refs', 'descr', 'initial_message', 'sync_worktree', 'fetch_latest_worktree', 'auto_focus', 'include_group_default_context']) delete body[key];
+    for (const key of ['name', 'aliases', 'disabled', 'disabled_reason', 'agent_name', 'role', 'role_ref', 'role_refs', 'prompt_refs', 'descr', 'initial_message', 'sync_worktree', 'fetch_latest_worktree', 'auto_focus', 'include_group_default_context', 'relaunch_policy']) delete body[key];
   }
   return body;
 }

@@ -218,3 +218,82 @@ func profileRelaunchRowsFailure(caller string, before, after *db.SpawnProfile, w
 		"profile %q sets relaunch policy rows that keep old settings on its agents' relaunches (%s), which requires %s (%s)",
 		after.Name, strings.Join(added, ", "), PermRelaunchPolicyManage, why)}
 }
+
+// relaunchRowResolution is one configurable row as a spawn with given inputs
+// would get it: the mode its relaunches use, and where it comes from ("this
+// spawn", "profile <name>" or "global"). The per-field {value, source} shape
+// is the one a general spawn preview (tcl-ezvrww) will use for every field.
+type relaunchRowResolution struct {
+	Value  string `json:"value"`
+	Source string `json:"source"`
+}
+
+// resolveSpawnRelaunchRows is every configurable row a spawn with these
+// explicit rows and profile tiers would give its agent. It reads the same
+// walk the spawn records (resolveRelaunchOverrides), so the dashboard's
+// preview cannot disagree with what the spawn stores.
+func resolveSpawnRelaunchRows(explicit map[string]string, tiers []*db.SpawnProfile) map[string]relaunchRowResolution {
+	global := currentRelaunchPolicy()
+	out := map[string]relaunchRowResolution{}
+	for _, f := range launchspec.Fields {
+		if f.Configurable {
+			out[f.Key] = relaunchRowResolution{Value: string(global.Mode(f.Key)), Source: "global"}
+		}
+	}
+	for _, o := range resolveRelaunchOverrides(explicit, tiers) {
+		if o.Mode == string(launchspec.ModeInherit) {
+			continue // follows the global table, as above
+		}
+		source := "this spawn"
+		if name, ok := strings.CutPrefix(o.Source, relaunchSourceProfilePrefix); ok {
+			source = "profile " + name
+		}
+		out[o.Field] = relaunchRowResolution{Value: o.Mode, Source: source}
+	}
+	return out
+}
+
+// spawnRelaunchPreview answers GET /v1/relaunch-policy?preview=1: the rows a
+// spawn into group (by name) with profile (a handle; "" for none) and these
+// explicit rows (field=mode, comma-separated) would give its agent, resolved
+// with the spawn's own tiers: the named profile, the group's default
+// profile, the global default profile.
+func spawnRelaunchPreview(group, profile, explicitParam string) (map[string]relaunchRowResolution, *spawnFailure) {
+	explicit := map[string]string{}
+	for _, pair := range strings.Split(explicitParam, ",") {
+		if pair = strings.TrimSpace(pair); pair == "" {
+			continue
+		}
+		field, mode, ok := strings.Cut(pair, "=")
+		if !ok {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_relaunch_policy", fmt.Sprintf("explicit %q: want field=mode", pair)}
+		}
+		explicit[strings.TrimSpace(field)] = strings.TrimSpace(mode)
+	}
+	if err := launchspec.ValidateOverrides(explicit, true); err != nil {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_relaunch_policy", err.Error()}
+	}
+	var named *db.SpawnProfile
+	var g *db.AgentGroup
+	if handle := strings.TrimSpace(profile); handle != "" {
+		p, err := db.ResolveSpawnProfile(handle)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if p == nil {
+			return nil, &spawnFailure{http.StatusNotFound, "unknown_profile", fmt.Sprintf("no spawn profile %q", handle)}
+		}
+		named = p
+	}
+	if name := strings.TrimSpace(group); name != "" {
+		found, err := db.GetAgentGroupByName(name)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		g = found
+	}
+	// The spawn pipeline's own default-tier loader, so the preview reads the
+	// defaults exactly as a launch does (launch_resolver_guard_test.go).
+	groupProfile, globalProfile := launchDefaultProfiles(g, &spawnParams{})
+	return resolveSpawnRelaunchRows(explicit, []*db.SpawnProfile{named, groupProfile, globalProfile}), nil
+}
