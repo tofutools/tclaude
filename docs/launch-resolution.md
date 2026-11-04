@@ -139,10 +139,10 @@ profiles give:
 
 For an agent with a recorded spawn request, the explicit posture is not
 forgotten while another setting overrides it: switching back to explicit wins
-restores it on the agent's next relaunch. Clones, agents from before launch
-layers were recorded, and agents created by the pending-spawn sweeper or a
-group template have no such record, so a relaunch under chain wins drops their
-explicit posture for good.
+restores it on the agent's next relaunch. A clone carries its source's record.
+Agents from before launch layers were recorded, and agents created by the
+pending-spawn sweeper or a group template, have no such record, so a relaunch
+under chain wins drops their explicit posture for good.
 The harness-config repair (see [Sandboxing](sandboxing.md)) also follows the
 setting: it does not list an agent whose posture the setting gave up on
 purpose.

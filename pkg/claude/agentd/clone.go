@@ -172,6 +172,44 @@ func cloneSSHWorkaround(relaunch *durableRelaunchConfig) bool {
 	return relaunch.SSHWorkaround
 }
 
+// inheritLaunchRecord gives a clone what a first spawn records for a relaunch
+// to read: the source's launch layers (db.CopyAgentLaunchLayers), so what was
+// explicit for the source stays explicit for the clone, and the source's
+// startup snapshot, so a compaction re-injects the same group-context choice,
+// profile startup context and lineage. groupID is the group the clone was
+// placed in, when not the source's. The snapshot's briefing reference is the
+// clone's own handoff message (0 for none), since the source's briefing is in
+// the source's inbox. A source without either record leaves the clone
+// without it.
+func inheritLaunchRecord(sourceConv, cloneConv string, groupID, briefMsgID int64) error {
+	sourceAgentID, err := db.AgentIDForConv(sourceConv)
+	if err != nil {
+		return err
+	}
+	cloneAgentID, err := db.AgentIDForConv(cloneConv)
+	if err != nil {
+		return err
+	}
+	if sourceAgentID == "" || cloneAgentID == "" {
+		return nil
+	}
+	if _, err := db.CopyAgentLaunchLayers(sourceAgentID, cloneAgentID); err != nil {
+		return fmt.Errorf("copy launch layers: %w", err)
+	}
+	snapshot, err := db.GetAgentStartupSnapshot(sourceAgentID)
+	if err != nil || snapshot == nil {
+		return err
+	}
+	copied := *snapshot
+	copied.AgentID = cloneAgentID
+	copied.BriefMessageID = briefMsgID
+	copied.CreatedAt = time.Time{}
+	if groupID != 0 {
+		copied.SpawnGroupID = groupID
+	}
+	return db.UpsertAgentStartupSnapshot(copied)
+}
+
 func refreshCloneLaunchEnvironment(convID string, current, previous *sandboxpolicy.Snapshot) (*sandboxpolicy.Snapshot, error) {
 	if current == nil || previous == nil {
 		return current, nil
@@ -1864,6 +1902,14 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	}
 	if err := inheritEffectiveSandboxSnapshot(target, newConv); err != nil {
 		failClone(newAgentID, "io", "persist clone sandbox snapshot: "+err.Error())
+		return
+	}
+	launchGroupID := int64(0)
+	if extraGroup != nil {
+		launchGroupID = extraGroup.ID
+	}
+	if err := inheritLaunchRecord(target, newConv, launchGroupID, spawned.HandoffMsgID); err != nil {
+		failClone(newAgentID, "io", "persist clone launch record: "+err.Error())
 		return
 	}
 
