@@ -8031,6 +8031,18 @@ body.wizard #agent-spawn-role-add { background: #140f28; color: #f3e6c0; }
 .spawn-field-help-trigger:hover, .spawn-field-help-trigger:focus {
   color: #c9d1d9; border-color: #58a6ff;
 }
+/* In a dialog, a [?] beside a field or an add-row action is a square at the
+   dialog's button height (ui.css .ui-dialog .ui-btn), not a strip stretched
+   to its field (tcl-cg7tdi). The 18px [?] inside a section legend, mount
+   title or rule row is an inline icon in a heading and keeps its size. */
+.ui-dialog :is(.spawn-field-with-help, .sbx-effective-environment-help) { grid-template-columns: minmax(0, 1fr) var(--ui-dialog-btn-h, 30px); }
+.ui-dialog :is(.spawn-field-with-help, .sbx-add-row-help, .sbx-effective-environment-help) .spawn-field-help-trigger {
+  box-sizing: border-box; flex: 0 0 auto; width: var(--ui-dialog-btn-h, 30px); height: var(--ui-dialog-btn-h, 30px);
+  align-self: center; padding: 0; font-size: 13px; line-height: 1;
+}
+/* The effective-environment [?] heads a list that can run long: it stays at
+   the top of its column, as the container's align-items: start intends. */
+.ui-dialog .sbx-effective-environment-help .spawn-field-help-trigger { align-self: start; }
 /* A caveat that came out of the dialog body must not become invisible on the
    way. The warn trigger keeps the same size and column as [?] — the row does
    not reflow when the selection changes — and only changes colour and glyph,
@@ -8525,6 +8537,9 @@ body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:
   padding: 7px 9px; text-align: left; min-width: 0; flex-grow: 1;
 }
 .directory-picker-entry .ui-btn.directory-picker-entry-action { flex: 0 0 34px; justify-content: center; padding: 0; width: 34px; }
+/* In a dialog the rename / delete icon actions are squares at the dialog's
+   button height (ui.css .ui-dialog .ui-btn). */
+.ui-dialog .directory-picker-entry .ui-btn.ui-sm.directory-picker-entry-action { flex-basis: var(--ui-dialog-btn-h, 30px); width: var(--ui-dialog-btn-h, 30px); padding: 0; }
 .directory-picker-empty { margin: auto; }
 .directory-picker-error { min-height: 18px; }
 .directory-picker-modal .modal-buttons { border-top: 1px solid #2a3340; padding-top: 10px; }
