@@ -529,7 +529,7 @@ func resolveProcessPerformer(runID string, scope processRunScope, command engine
 			return processPerformerChoice{candidate: &matching[0], resolution: resolution}
 		}
 		action, profile := spec.Fallback()
-		waitReason := ""
+		waitReason, refusal, refusalKind, refusalDetail := "", "", "", ""
 		if action == model.FallbackSpawn {
 			if profile == "" {
 				profile = group.DefaultProfile
@@ -539,14 +539,26 @@ func resolveProcessPerformer(runID string, scope processRunScope, command engine
 			} else {
 				plan, status, detail := planProcessPerformerSpawn(runID, scope, group, command, profile, body)
 				if plan != nil {
+					rearmManagedProfileRefusal(processRefusalSource(runID, scope, group, command).Key)
 					return processPerformerChoice{spawn: plan}
 				}
 				waitReason = fmt.Sprintf("no member can take the node and spawning a %q performer was refused (%s): %s",
 					profile, status, detail)
+				// A spawn profile refusal repeats until someone changes the
+				// profile: fail the node with it rather than wait silently.
+				if isManagedProfileRefusal(status) {
+					refusal, refusalKind, refusalDetail = waitReason, status, detail
+				}
 			}
 		}
 		if reuse != nil {
 			return processPerformerChoice{candidate: reuse, resolution: resolution}
+		}
+		if refusal != "" {
+			// Announced only now: a node handed back to its previous
+			// performer above did not stop.
+			announceManagedProfileRefusal(processRefusalSource(runID, scope, group, command), refusalKind, refusalDetail)
+			return processPerformerChoice{failReason: refusal}
 		}
 		if action == model.FallbackFail {
 			return processPerformerChoice{failReason: processNoMemberReason(spec) + "; the step's fallback fails it"}
@@ -653,6 +665,20 @@ func planProcessPerformerSpawn(runID string, scope processRunScope, group *db.Ag
 	}
 	name := processPerformerSpawnName(command)
 	return planManagedSpawn(group, profile, nil, ownerConv, "process:"+runID, name, body, nil)
+}
+
+// processRefusalSource is the automation a refused performer spawn stopped,
+// for the first-refusal notice. Its latch is keyed on the run owner and the
+// group, not the run, so a template that starts runs often announces once
+// and the latch stays bounded; a performer spawn there re-arms it.
+func processRefusalSource(runID string, scope processRunScope, group *db.AgentGroup, command engine.Command) managedRefusalSource {
+	ownerConv := ""
+	if agentID, ok := strings.CutPrefix(scope.Owner, "agent:"); ok {
+		ownerConv, _ = db.CurrentConvForAgent(agentID)
+	}
+	return managedRefusalSource{Key: fmt.Sprintf("process:%s:%d", scope.Owner, group.ID),
+		Label: fmt.Sprintf("process run %s (node %s)", runID, command.NodeID), OwnerConv: ownerConv,
+		RunID: runID, NodeID: command.NodeID, CommandID: command.ID}
 }
 
 // processPerformerSpawnName derives a spawn-name-charset-safe agent name from

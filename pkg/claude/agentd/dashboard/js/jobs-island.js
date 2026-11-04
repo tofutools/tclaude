@@ -69,7 +69,7 @@ function CronSchedule({ job }) {
 
 function CronStatus({ status }) {
   if (!status) return html`<span class="state-pill state-offline" title="never run">never run</span>`;
-  const failed = /denied|failed|error|deadline|feature_disabled/.test(status);
+  const failed = /denied|failed|error|deadline|feature_disabled|profile_disabled|profile_operator_only/.test(status);
   const cls = cronRunSucceeded(status)
     ? 'state-working'
     : failed ? 'state-error' : 'state-awaiting';

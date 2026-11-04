@@ -202,7 +202,7 @@ function TriggerInspector({ rule, actions, onEdit }) {
                   const actionOutcome = firingField(action, 'outcome', 'Outcome');
                   const success = ['spawned', 'queued', 'ok'].includes(actionOutcome);
                   const failure = !success && (/denied|invalid|not_found|\bio\b|fail|error/.test(actionOutcome) ||
-                    ['max_live_workers', 'rate_limited'].includes(actionOutcome));
+                    ['max_live_workers', 'rate_limited', 'profile_disabled', 'profile_operator_only'].includes(actionOutcome));
                   return html`<div class="trigger-action-outcome" key=${firingField(action, 'id', 'ID')}>
                     <span class=${success ? 'trigger-pass' : failure ? 'trigger-fail' : 'trigger-warn'}>${success ? '✓' : failure ? '×' : '!'}</span>
                     <code>${firingField(action, 'action_type', 'ActionType')}</code>

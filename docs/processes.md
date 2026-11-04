@@ -664,6 +664,13 @@ retry and fail routing apply. Set it on a step, or once for the whole process
 with a top-level `fallback`; the step's own wins. A step with neither uses
 the legacy `spawn: allowed` (spawn with its `profile`), and otherwise waits.
 
+A spawn fallback that a spawn profile refuses fails the attempt with the reason,
+instead of waiting for a performer that cannot come. The refusing profile can be
+the step's own, the group's default or the global default: it is disabled, or it
+is operator-only and an agent owns the run. The first such refusal for a run
+owner in a group is also sent to that owner and to the operator; a performer
+spawned there again re-arms the notice.
+
 | Scope | Resolution |
 | --- | --- |
 | group | the explicit `assignee`, if it names a current member; else a member the selector admits (its `role`, anyone, or the `profile` role), idle first, then busy, then offline, and among equals the one holding the fewest open process steps; else the fallback — a spawn only when the run owner could spawn into the group |

@@ -5373,6 +5373,10 @@ type spawnParams struct {
 	// become the agent's launch layers at first spawn (spawnLaunchLayers).
 	// spawnCopyResolved marks that the default tiers were resolved for this
 	// launch (spawnCopyDefaultTiers may then be empty, meaning none took part).
+	// managedProfile is the named spawn profile of a launch the daemon
+	// composes (a trigger or process worker): applyDefaultProfile resolves it
+	// as the named tier, above the group and global default profiles.
+	managedProfile        *db.SpawnProfile
 	spawnCopyCallerTiers  []db.SpawnCopyTier
 	spawnCopyDefaultTiers []db.SpawnCopyTier
 	spawnCopyResolved     bool
@@ -6614,16 +6618,19 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	// resolves before its sandbox step, then executeSpawn runs it again), and
 	// each pass appends its disclosures; keep each note once.
 	defer func() { p.LaunchNotes = uniqueNotes(p.LaunchNotes) }()
-	// Both tiers here are default tiers — this path never sees a -p profile —
-	// so each is marked as such and carries the same provenance wording
-	// handleGroupSpawn uses, keeping any skip note readable if it is ever
-	// surfaced on this path (today it is discarded, as for every other field).
+	// The tiers are the group and global default profiles, beneath the named
+	// profile a managed launch (a trigger or process worker) carries in
+	// managedProfile. Each carries the provenance wording handleGroupSpawn
+	// uses, keeping any skip note readable if it is surfaced on this path.
+	groupProfile, globalProfile := groupDefaultProfile(g), globalDefaultProfile()
 	profiles := []struct {
-		profile *db.SpawnProfile
-		source  func(string) string
+		profile     *db.SpawnProfile
+		source      func(string) string
+		defaultTier bool
 	}{
-		{groupDefaultProfile(g), agent.ProvGroupProfileSource},
-		{globalDefaultProfile(), agent.ProvGlobalProfileSource},
+		{p.managedProfile, agent.ProvCLIProfileSource, false},
+		{groupProfile, agent.ProvGroupProfileSource, true},
+		{globalProfile, agent.ProvGlobalProfileSource, true},
 	}
 	// Captured BEFORE the tier loop can fill it: afterwards there is no way to
 	// tell a harness the caller pinned from one a default profile supplied.
@@ -6633,8 +6640,8 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	// later read.
 	if !p.spawnCopyResolved {
 		p.spawnCopyDefaultTiers = spawnCopyTiers(
-			spawnCopyTier(db.SpawnCopyTierGroupDefault, profiles[0].profile),
-			spawnCopyTier(db.SpawnCopyTierGlobalDefault, profiles[1].profile))
+			spawnCopyTier(db.SpawnCopyTierGroupDefault, groupProfile),
+			spawnCopyTier(db.SpawnCopyTierGlobalDefault, globalProfile))
 		p.spawnCopyResolved = true
 	}
 	tiers := make([]launchProfileTier, 0, len(profiles))
@@ -6646,7 +6653,7 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 			}
 			tierSource := profileSource(prof, tier.source)
 			tiers = append(tiers, launchProfileTier{
-				profile: prof, source: tierSource, defaultTier: true})
+				profile: prof, source: tierSource, defaultTier: tier.defaultTier})
 			if strings.TrimSpace(p.Harness) == "" {
 				p.Harness = harnessOrDefault(prof.Harness)
 				// Attributed where it is decided. The harness does not go through

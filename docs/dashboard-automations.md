@@ -47,6 +47,15 @@ Rules on PR opened, updated or merged, CI failed or succeeded, or an agent going
 idle or awaiting input. A rule starts an agent or sends a templated message, and is
 scoped globally or to a group. Each is armed, cooling or disabled.
 
+A worker launches from its spawn profile, then the group's default profile,
+then the global default profile, as a direct spawn naming that profile would.
+If any of those profiles is disabled, or is operator-only and an agent owns
+the job or rule, the run is refused: it shows as failed in the job's recent
+runs or the trigger's firing history (`profile_disabled` or
+`profile_operator_only`, with the profile's name). The first refusal also
+sends a notice to the owning agent and to your Messages tab. Later identical
+refusals are only recorded, until a run spawns again or the daemon restarts.
+
 ### Processes
 
 `/automations/processes` lists process templates and opens the graph editor. Runs
