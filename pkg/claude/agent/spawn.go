@@ -1547,7 +1547,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	toolGovernance := strings.TrimSpace(p.ToolGovernance)
 	askTimeout := strings.TrimSpace(p.AskUserQuestionTimeout)
 	autoCompactWindow := strings.TrimSpace(p.AutoCompactWindow)
-	contextWindowMax := merged.ContextWindowMax
+	// Like every launch field above, only the flag goes on the wire: the
+	// daemon resolves the named --profile itself, and a value folded in here
+	// would be recorded as the caller's explicit choice.
+	contextWindowMax := p.ContextWindowMax
 	sandboxImpl := strings.TrimSpace(p.SandboxImpl)
 	autoReview := p.AutoReview
 	trustDir := p.TrustDir
@@ -1746,19 +1749,20 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	}
 
 	req := SpawnRequest{
-		NoQueue:                p.NoQueue,
-		NonInteractive:         p.NonInteractive,
-		RunTimeoutSeconds:      runTimeoutSeconds,
-		Environment:            environment,
-		Profile:                strings.TrimSpace(p.Profile),
-		SandboxProfile:         strings.TrimSpace(p.SandboxProfile),
-		OmitSandboxProfiles:    p.OmitSandboxProfiles,
-		UsageProfiles:          trimmedNonEmpty(p.UsageProfiles),
-		HarnessConfig:          strings.TrimSpace(p.HarnessConfig),
-		Name:                   name,
-		Role:                   merged.Role,
-		RoleRef:                merged.RoleRef,
-		RoleRefs:               append([]string(nil), merged.RoleRefs...),
+		NoQueue:             p.NoQueue,
+		NonInteractive:      p.NonInteractive,
+		RunTimeoutSeconds:   runTimeoutSeconds,
+		Environment:         environment,
+		Profile:             strings.TrimSpace(p.Profile),
+		SandboxProfile:      strings.TrimSpace(p.SandboxProfile),
+		OmitSandboxProfiles: p.OmitSandboxProfiles,
+		UsageProfiles:       trimmedNonEmpty(p.UsageProfiles),
+		HarnessConfig:       strings.TrimSpace(p.HarnessConfig),
+		Name:                name,
+		// Roles are launch fields: the flags only, as above.
+		Role:                   strings.TrimSpace(p.Role),
+		RoleRef:                strings.TrimSpace(p.RoleRef),
+		RoleRefs:               trimmedNonEmpty([]string{p.RoleRef}),
 		Descr:                  merged.Descr,
 		TaskURL:                strings.TrimSpace(p.Task),
 		TaskLabel:              strings.TrimSpace(p.TaskLabel),
@@ -1863,10 +1867,14 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			req.FastMode = "inherit"
 		}
 	}
-	// Group context: --no-group-context forces exclude, else a --profile may set
-	// it; an omitted pointer means the daemon includes the group context by
-	// default (every other spawn path does). Resolved in mergeProfileIntoSpawn.
-	req.IncludeGroupContext = merged.IncludeGroupContext
+	// Group context: --no-group-context forces exclude. Otherwise the pointer
+	// stays nil and the daemon resolves it, from the --profile and the default
+	// tiers, then includes the group context by default (every other spawn path
+	// does). Only the flag goes on the wire, as for every launch field.
+	if p.NoGroupContext {
+		no := false
+		req.IncludeGroupContext = &no
+	}
 	if p.NonInteractive {
 		req.IncludeGroupContext = &p.GroupContext
 	}
