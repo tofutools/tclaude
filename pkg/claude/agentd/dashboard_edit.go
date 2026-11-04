@@ -311,6 +311,91 @@ func handleDashboardHideAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, hideAgentResp{ConvID: res.ConvID, Detached: n})
 }
 
+// dashboardAgentVerb is one /api/agents/{conv}/{verb} action. methods, when
+// set, is checked before serve and answers anything else with 405 and
+// "<METHOD> only" ("GET or POST only" for two); an empty list leaves the
+// method to the handler.
+type dashboardAgentVerb struct {
+	methods []string
+	serve   func(w http.ResponseWriter, r *http.Request, convSelector, verb string)
+}
+
+// dashboardAgentTwin adapts a handler of a resolved agent: it resolves the
+// selector, answering 404 "resolve agent: ..." when that fails.
+func dashboardAgentTwin(h func(w http.ResponseWriter, r *http.Request, convID string)) func(http.ResponseWriter, *http.Request, string, string) {
+	return func(w http.ResponseWriter, r *http.Request, convSelector, _ string) {
+		res, _, err := agent.ResolveSelector(convSelector)
+		if err != nil {
+			http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+			return
+		}
+		h(w, r, res.ConvID)
+	}
+}
+
+// bySelector adapts a handler that resolves the selector itself.
+func bySelector(h func(w http.ResponseWriter, r *http.Request, convSelector string)) func(http.ResponseWriter, *http.Request, string, string) {
+	return func(w http.ResponseWriter, r *http.Request, convSelector, _ string) { h(w, r, convSelector) }
+}
+
+var (
+	getOnly  = []string{http.MethodGet}
+	postOnly = []string{http.MethodPost}
+)
+
+// dashboardAgentVerbs are the dashboard's per-agent actions. Most are the
+// cookie-auth twins of a /v1/agent/{conv}/... route.
+var dashboardAgentVerbs = map[string]dashboardAgentVerb{
+	"status": {getOnly, func(w http.ResponseWriter, _ *http.Request, sel, _ string) {
+		writeDashboardTerminalAgentStatus(w, sel)
+	}},
+	"debug-export": {getOnly, dashboardAgentTwin(func(w http.ResponseWriter, _ *http.Request, convID string) {
+		writeAgentDebugExport(w, convID, true)
+	})},
+	"stop":            {postOnly, bySelector(dashboardStopAgent)},
+	"resume":          {postOnly, dashboardAgentTwin(dashboardResumeAgent)},
+	"restart":         {postOnly, bySelector(dashboardRestartAgent)},
+	"sandbox-restart": {postOnly, bySelector(dashboardSandboxRestartAgent)},
+	"fast-mode/enable": {postOnly, func(w http.ResponseWriter, r *http.Request, sel, _ string) {
+		dashboardSetCodexFastModeAgent(w, r, sel, true)
+	}},
+	"fast-mode/disable": {postOnly, func(w http.ResponseWriter, r *http.Request, sel, _ string) {
+		dashboardSetCodexFastModeAgent(w, r, sel, false)
+	}},
+	"sandbox-impl": {[]string{http.MethodGet, http.MethodPost}, bySelector(dashboardSandboxImplementationAgent)},
+	"clone":        {postOnly, dashboardAgentTwin(dashboardCloneAgent)},
+	// The operator's morph: the same handler and body as
+	// POST /v1/agent/{sel}/morph, with the dashboard human as actor.
+	"morph": {nil, func(w http.ResponseWriter, r *http.Request, sel, _ string) {
+		res, _, err := agent.ResolveSelector(sel)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "not_found", "resolve agent: "+err.Error())
+			return
+		}
+		handleAgentMorph(w, asDashboardHumanPeer(r), res.ConvID)
+	}},
+	"claude-subscription": {nil, bySelector(dashboardAgentClaudeSubscription)},
+	"reincarnate":         {postOnly, dashboardAgentTwin(dashboardReincarnateAgent)},
+	"compact":             {postOnly, dashboardAgentTwin(dashboardCompactAgent)},
+	"rename":              {postOnly, dashboardAgentTwin(dashboardRenameAgent)},
+	"worktree":            {getOnly, bySelector(dashboardAgentWorktree)},
+	"promote":             {nil, dashboardEnrollmentVerb},
+	"retire":              {nil, dashboardEnrollmentVerb},
+	"reinstate":           {nil, dashboardEnrollmentVerb},
+	"notify":              {postOnly, dashboardAgentTwin(dashboardSetAgentNotify)},
+	"tags":                {postOnly, dashboardAgentTwin(dashboardSetAgentTags)},
+	"task":                {postOnly, dashboardAgentTwin(dashboardSetAgentTask)},
+	"remote-control":      {postOnly, dashboardAgentTwin(dashboardRemoteControlAgent)},
+	"export":              {postOnly, bySelector(dashboardCreateExport)},
+	"exports": {[]string{http.MethodGet, http.MethodDelete}, func(w http.ResponseWriter, r *http.Request, sel, _ string) {
+		if r.Method == http.MethodGet {
+			dashboardListExports(w, sel)
+			return
+		}
+		dashboardClearExports(w, sel)
+	}},
+}
+
 // handleDashboardAgentsAPI dispatches:
 //
 //	DELETE /api/agents/{conv}              → wipe the conversation + orphan-clean
@@ -353,171 +438,18 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 	if u, err := url.PathUnescape(convSelector); err == nil {
 		convSelector = u
 	}
-	// Sub-verbs: stop / resume — thin pass-throughs to the per-conv
-	// helpers shared with the bulk groups.{stop,resume} paths.
 	if len(parts) > 1 && parts[1] != "" {
-		switch parts[1] {
-		case "status":
-			if r.Method != http.MethodGet {
-				http.Error(w, "GET only", http.StatusMethodNotAllowed)
-				return
-			}
-			writeDashboardTerminalAgentStatus(w, convSelector)
-			return
-		case "debug-export":
-			if r.Method != http.MethodGet {
-				http.Error(w, "GET only", http.StatusMethodNotAllowed)
-				return
-			}
-			res, _, err := agent.ResolveSelector(convSelector)
-			if err != nil {
-				http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
-				return
-			}
-			writeAgentDebugExport(w, res.ConvID, true)
-			return
-		case "stop":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardStopAgent(w, r, convSelector)
-			return
-		case "resume":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardResumeAgent(w, r, convSelector)
-			return
-		case "restart":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardRestartAgent(w, r, convSelector)
-			return
-		case "sandbox-restart":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardSandboxRestartAgent(w, r, convSelector)
-			return
-		case "fast-mode/enable", "fast-mode/disable":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardSetCodexFastModeAgent(w, r, convSelector, parts[1] == "fast-mode/enable")
-			return
-		case "sandbox-impl":
-			if r.Method != http.MethodGet && r.Method != http.MethodPost {
-				http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardSandboxImplementationAgent(w, r, convSelector)
-			return
-		case "clone":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardCloneAgent(w, r, convSelector)
-			return
-		case "morph":
-			// The operator's morph: the same handler and body as
-			// POST /v1/agent/{sel}/morph, with the dashboard human as actor.
-			res, _, err := agent.ResolveSelector(convSelector)
-			if err != nil {
-				writeError(w, http.StatusNotFound, "not_found", "resolve agent: "+err.Error())
-				return
-			}
-			handleAgentMorph(w, asDashboardHumanPeer(r), res.ConvID)
-			return
-		case "claude-subscription":
-			dashboardAgentClaudeSubscription(w, r, convSelector)
-			return
-		case "reincarnate":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardReincarnateAgent(w, r, convSelector)
-			return
-		case "compact":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardCompactAgent(w, r, convSelector)
-			return
-		case "rename":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardRenameAgent(w, r, convSelector)
-			return
-		case "worktree":
-			if r.Method != http.MethodGet {
-				http.Error(w, "GET only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardAgentWorktree(w, r, convSelector)
-			return
-		case "promote", "retire", "reinstate":
-			dashboardEnrollmentVerb(w, r, convSelector, parts[1])
-			return
-		case "notify":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardSetAgentNotify(w, r, convSelector)
-			return
-		case "tags":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardSetAgentTags(w, r, convSelector)
-			return
-		case "task":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardSetAgentTask(w, r, convSelector)
-			return
-		case "remote-control":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardRemoteControlAgent(w, r, convSelector)
-			return
-		case "export":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardCreateExport(w, r, convSelector)
-			return
-		case "exports":
-			switch r.Method {
-			case http.MethodGet:
-				dashboardListExports(w, convSelector)
-			case http.MethodDelete:
-				dashboardClearExports(w, convSelector)
-			default:
-				http.Error(w, "GET or DELETE only", http.StatusMethodNotAllowed)
-			}
-			return
-		default:
+		v, ok := dashboardAgentVerbs[parts[1]]
+		if !ok {
 			http.Error(w, "unknown subpath /api/agents/{conv}/"+parts[1], http.StatusNotFound)
 			return
 		}
+		if len(v.methods) > 0 && !slices.Contains(v.methods, r.Method) {
+			http.Error(w, strings.Join(v.methods, " or ")+" only", http.StatusMethodNotAllowed)
+			return
+		}
+		v.serve(w, r, convSelector, parts[1])
+		return
 	}
 	if r.Method != http.MethodDelete {
 		http.Error(w, "DELETE only", http.StatusMethodNotAllowed)
@@ -1332,17 +1264,12 @@ func dashboardStopAgent(w http.ResponseWriter, r *http.Request, convSelector str
 // The dashboard's Ctrl-drag handler uses this to clone a member into
 // a target group, naming the drop group as `group` so the clone and its
 // new membership land in one request.
-func dashboardCloneAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
-		return
-	}
+func dashboardCloneAgent(w http.ResponseWriter, r *http.Request, convID string) {
 	body, ok := decodeCloneBody(w, r)
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, r, res.ConvID, dashboardGranter, "", nil, body)
+	runCloneOrchestration(w, r, convID, dashboardGranter, "", nil, body)
 }
 
 // reincarnateMode* are the modes the dashboard reincarnate button
@@ -1383,12 +1310,7 @@ const (
 // force path's requireCrossAgentPermission sees a classHuman caller
 // (asDashboardHumanPeer sets DashboardHuman) and the audit trail records
 // the dashboard granter.
-func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
-		return
-	}
+func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convID string) {
 	// Peek at `mode` without consuming the body for the force path:
 	// handleAgentReincarnate re-decodes r.Body itself, so we buffer the
 	// raw bytes and hand them back verbatim. force-mode stays the
@@ -1418,20 +1340,20 @@ func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convSelec
 	}
 	switch mode {
 	case reincarnateModeSelf:
-		dashboardAskSelfReincarnate(w, res.ConvID, body.FocusHint)
+		dashboardAskSelfReincarnate(w, convID, body.FocusHint)
 	case reincarnateModeForce:
 		r.Body = io.NopCloser(bytes.NewReader(raw))
 		r.ContentLength = int64(len(raw))
-		handleAgentReincarnate(w, asDashboardHumanPeer(r), res.ConvID)
+		handleAgentReincarnate(w, asDashboardHumanPeer(r), convID)
 	case reincarnateModeClear:
-		followUp, err := json.Marshal(map[string]string{"follow_up": clearContextBrief(res.ConvID)})
+		followUp, err := json.Marshal(map[string]string{"follow_up": clearContextBrief(convID)})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(followUp))
 		r.ContentLength = int64(len(followUp))
-		handleAgentReincarnate(w, asDashboardHumanPeer(r), res.ConvID)
+		handleAgentReincarnate(w, asDashboardHumanPeer(r), convID)
 	default:
 		writeError(w, http.StatusBadRequest, "invalid_arg",
 			fmt.Sprintf("unknown reincarnate mode %q (want %q, %q or %q)",
@@ -1591,25 +1513,15 @@ func buildSelfReincarnateInstruction(focusHint string) (subject, body string) {
 // via the agent-rename skill / CLI. Cookie auth ≈ human, so
 // requireCrossAgentPermission sees a classHuman caller
 // (asDashboardHumanPeer sets DashboardHuman).
-func dashboardRenameAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	handleAgentRename(w, asDashboardHumanPeer(r), res.ConvID)
+func dashboardRenameAgent(w http.ResponseWriter, r *http.Request, convID string) {
+	handleAgentRename(w, asDashboardHumanPeer(r), convID)
 }
 
 // dashboardCompactAgent is the cookie-auth twin of POST
 // /v1/agent/{conv}/compact: the same handler, so the same harness gate and
 // dispatch, with the dashboard human as caller.
-func dashboardCompactAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	handleAgentCompact(w, asDashboardHumanPeer(r), res.ConvID)
+func dashboardCompactAgent(w http.ResponseWriter, r *http.Request, convID string) {
+	handleAgentCompact(w, asDashboardHumanPeer(r), convID)
 }
 
 // dashboardRemoteControlAgent is the cookie-auth twin of POST
@@ -1624,13 +1536,8 @@ func dashboardCompactAgent(w http.ResponseWriter, r *http.Request, convSelector 
 // owns the toggle direction + the disable confirm-Enter, the UI only sends
 // intent. Codex (no Remote Access) is rejected by the handler's
 // CanRemoteControl gate; the UI also hides the control for it.
-func dashboardRemoteControlAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	handleAgentRemoteControl(w, asDashboardHumanPeer(r), res.ConvID)
+func dashboardRemoteControlAgent(w http.ResponseWriter, r *http.Request, convID string) {
+	handleAgentRemoteControl(w, asDashboardHumanPeer(r), convID)
 }
 
 // dashboardResumeAgent is the cookie-auth twin of POST
@@ -1641,27 +1548,17 @@ func dashboardRemoteControlAgent(w http.ResponseWriter, r *http.Request, convSel
 // relaunch. Without it, a resume whose recorded cwd was deleted comes back
 // as `error:missing_cwd` (Detail = the path); the wake button then pops a
 // confirm and retries with ?recreate=1 so the agent can start.
-func dashboardResumeAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
-		return
-	}
+func dashboardResumeAgent(w http.ResponseWriter, r *http.Request, convID string) {
 	// Route through the shared handler under a synthetic human peer so the
 	// dashboard receives the same resume behavior as the CLI.
-	handleAgentResume(w, asDashboardHumanPeer(r), res.ConvID)
+	handleAgentResume(w, asDashboardHumanPeer(r), convID)
 }
 
 // dashboardSetAgentNotify sets (or clears) the per-agent OS-notification
 // override: POST /api/agents/{conv}/notify, body {mode}, where mode is
 // "on" (notify even when a containing group is muted), "off" (always
 // silent) or "inherit" (drop the override — follow group/global).
-func dashboardSetAgentNotify(w http.ResponseWriter, r *http.Request, convSelector string) {
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
-		return
-	}
+func dashboardSetAgentNotify(w http.ResponseWriter, r *http.Request, convID string) {
 	var body struct {
 		Mode string `json:"mode"`
 	}
@@ -1681,11 +1578,11 @@ func dashboardSetAgentNotify(w http.ResponseWriter, r *http.Request, convSelecto
 		http.Error(w, "invalid notify mode "+mode+" (want on, off or inherit)", http.StatusBadRequest)
 		return
 	}
-	if err := db.SetConvNotifyPref(res.ConvID, mode); err != nil {
+	if err := db.SetConvNotifyPref(convID, mode); err != nil {
 		http.Error(w, "set notify pref: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"conv": res.ConvID, "mode": mode})
+	writeJSON(w, http.StatusOK, map[string]any{"conv": convID, "mode": mode})
 }
 
 // dashboardSetAgentTags replaces an agent's tag set from the dashboard's
@@ -1695,12 +1592,7 @@ func dashboardSetAgentNotify(w http.ResponseWriter, r *http.Request, convSelecto
 // level (keyed on the stable agent_id), so they follow the actor across
 // groups; the write is a replace-set, validated + de-duped + count-capped
 // by db.ReplaceAgentTags. A bad tag is a 400 while a DB failure is a 500.
-func dashboardSetAgentTags(w http.ResponseWriter, r *http.Request, convSelector string) {
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
-		return
-	}
+func dashboardSetAgentTags(w http.ResponseWriter, r *http.Request, convID string) {
 	var body struct {
 		Tags []string `json:"tags"`
 	}
@@ -1708,7 +1600,7 @@ func dashboardSetAgentTags(w http.ResponseWriter, r *http.Request, convSelector 
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	agentID, err := db.AgentIDForConv(res.ConvID)
+	agentID, err := db.AgentIDForConv(convID)
 	if err != nil {
 		http.Error(w, "resolve agent id: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -1730,7 +1622,7 @@ func dashboardSetAgentTags(w http.ResponseWriter, r *http.Request, convSelector 
 		http.Error(w, "read tags: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"conv": res.ConvID, "tags": tags})
+	writeJSON(w, http.StatusOK, map[string]any{"conv": convID, "tags": tags})
 }
 
 // dashboardSetAgentTask is the cookie-authenticated human twin of POST
@@ -1741,13 +1633,8 @@ func dashboardSetAgentTags(w http.ResponseWriter, r *http.Request, convSelector 
 // persistence, and response shape shared with the CLI/API path. The dashboard
 // cookie is the operator-consent layer, so the synthetic peer is classified as
 // human and does not depend on the target agent's self.task permission.
-func dashboardSetAgentTask(w http.ResponseWriter, r *http.Request, convSelector string) {
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	handleAgentTask(w, asDashboardHumanPeer(r), res.ConvID)
+func dashboardSetAgentTask(w http.ResponseWriter, r *http.Request, convID string) {
+	handleAgentTask(w, asDashboardHumanPeer(r), convID)
 }
 
 // notificationsStateJSON is the shared GET/POST response shape for the
