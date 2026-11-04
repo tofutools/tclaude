@@ -23,14 +23,22 @@ func init() {
 		var out standaloneRelaunchResponse
 		err := DaemonRequestImpl(http.MethodPost, "/v1/relaunch-sandbox/prepare",
 			map[string]any{"conv_id": convID}, &out, DaemonOpts{NoRetry: true})
+		if err == nil {
+			return out.Changes, out.Warnings, nil
+		}
 		var refused *DaemonError
-		if err != nil && !errors.As(err, &refused) {
-			return nil, nil, conv.ErrAgentdUnreachable
+		switch {
+		case !errors.As(err, &refused):
+			return nil, nil, &conv.StandaloneRelaunchUnavailable{Warning: conv.AgentdNotRunning}
+		case refused.Status == http.StatusUnauthorized || refused.Status == http.StatusForbidden:
+			// The routes are the operator's. A caller agentd cannot confirm
+			// as the operator (no current operator token, or an agent's pane)
+			// still resumes, as it could before, under the stored policy.
+			return nil, nil, &conv.StandaloneRelaunchUnavailable{Warning: conv.AgentdNotOperator}
+		case refused.Status == http.StatusNotFound || refused.Status == http.StatusMethodNotAllowed:
+			return nil, nil, &conv.StandaloneRelaunchUnavailable{Warning: conv.AgentdTooOld}
 		}
-		if err != nil {
-			return nil, nil, err
-		}
-		return out.Changes, out.Warnings, nil
+		return nil, nil, err
 	}
 	conv.StandaloneRelaunchSettle = func(convID string, launched bool) []string {
 		var out standaloneRelaunchResponse

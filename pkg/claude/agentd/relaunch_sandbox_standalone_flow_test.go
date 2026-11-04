@@ -105,3 +105,19 @@ func TestStandaloneRelaunch_RefusesARunningConversation(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, rec.Code)
 	assert.Contains(t, rec.Body.String(), "agent_live")
 }
+
+// A snapshot recorded by another launch after prepare (agentd's own resume)
+// is not this relaunch's to restore.
+func TestStandaloneRelaunch_SettleLeavesALaterSnapshotAlone(t *testing.T) {
+	f, spawn := standaloneFixture(t)
+	standaloneCall(t, f, "prepare", map[string]any{"conv_id": spawn.ConvID})
+	later, err := db.AgentEffectiveSandboxConfigForConv(spawn.ConvID)
+	require.NoError(t, err)
+	later.LaunchEnvironmentOverrides = append(later.LaunchEnvironmentOverrides, db.SandboxEnvironmentEntry{Name: "LATER", Value: "1"})
+	agentID, err := db.AgentIDForConv(spawn.ConvID)
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, later))
+
+	standaloneCall(t, f, "settle", map[string]any{"conv_id": spawn.ConvID, "launched": false})
+	assert.Equal(t, "v2", storedGroupValue(t, spawn.ConvID), "the later snapshot stands")
+}

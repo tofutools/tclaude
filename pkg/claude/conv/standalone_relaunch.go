@@ -21,20 +21,29 @@ import (
 // a pane because agentd is down.
 
 // StandaloneRelaunchPrepare asks agentd to prepare convID's relaunch sandbox,
-// and returns what the relaunch changes and the warnings to show. It returns
-// ErrAgentdUnreachable when no daemon answered.
+// and returns what the relaunch changes and the warnings to show. It returns a
+// *StandaloneRelaunchUnavailable when agentd could not do it (not reachable,
+// not confirming the caller as the operator, too old for the route): the
+// launch then goes ahead under the stored policy. Any other error is agentd
+// refusing the relaunch.
 var StandaloneRelaunchPrepare func(convID string) (changes, warnings []string, err error)
 
 // StandaloneRelaunchSettle reports to agentd whether the prepared launch
 // started, and returns the warnings to show.
 var StandaloneRelaunchSettle func(convID string, launched bool) []string
 
-// ErrAgentdUnreachable is StandaloneRelaunchPrepare's answer when no daemon
-// is reachable.
-var ErrAgentdUnreachable = errors.New("agentd is not reachable")
+// StandaloneRelaunchUnavailable says agentd could not prepare the relaunch,
+// and what to tell the human.
+type StandaloneRelaunchUnavailable struct{ Warning string }
 
-// profilesNotReread is the warning for a launch under the stored policy.
-const profilesNotReread = "agentd is not running, so the sandbox profiles were not re-read and the stored policy is used. Start agentd (tclaude agentd), then resume again to apply profile changes."
+func (e *StandaloneRelaunchUnavailable) Error() string { return e.Warning }
+
+// Warnings for a launch under the stored policy, one per reason.
+const (
+	AgentdNotRunning = "agentd is not running, so the sandbox profiles were not re-read and the stored policy is used. Start agentd (tclaude agentd), then resume again to apply profile changes."
+	AgentdNotOperator = "agentd did not confirm this terminal as the operator, so the sandbox profiles were not re-read and the stored policy is used. Export TCLAUDE_HUMAN_TOKEN from agentd, then resume again to apply profile changes."
+	AgentdTooOld = "the running agentd predates sandbox re-reading for conv resume, so the stored policy is used. Restart agentd, then resume again to apply profile changes."
+)
 
 // standaloneRelaunch is a prepared relaunch to settle once the pane has, or
 // has not, started.
@@ -53,12 +62,13 @@ func prepareStandaloneRelaunch(convID string, out io.Writer) (*standaloneRelaunc
 		return r, err
 	}
 	if StandaloneRelaunchPrepare == nil {
-		r.warn(profilesNotReread)
+		r.warn(AgentdNotRunning)
 		return r, nil
 	}
 	changes, warnings, err := StandaloneRelaunchPrepare(convID)
-	if errors.Is(err, ErrAgentdUnreachable) {
-		r.warn(profilesNotReread)
+	var unavailable *StandaloneRelaunchUnavailable
+	if errors.As(err, &unavailable) {
+		r.warn(unavailable.Warning)
 		return r, nil
 	}
 	if err != nil {

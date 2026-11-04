@@ -28,7 +28,9 @@ func TestStandaloneRelaunch_DaemonDownLaunchesUnderTheStoredPolicy(t *testing.T)
 	require.NoError(t, err)
 	settled := false
 	withStandaloneRelaunchHooks(t,
-		func(string) ([]string, []string, error) { return nil, nil, ErrAgentdUnreachable },
+		func(string) ([]string, []string, error) {
+			return nil, nil, &StandaloneRelaunchUnavailable{Warning: AgentdNotRunning}
+		},
 		func(string, bool) []string { settled = true; return nil })
 
 	var out bytes.Buffer

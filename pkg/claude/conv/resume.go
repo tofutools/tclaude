@@ -314,6 +314,9 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 		return 1
 	}
 	launched = true
+	// Settled now, not when the attach below returns: the outcome is known,
+	// and a closed terminal would otherwise never settle it.
+	relaunch.settle(true)
 
 	// Get PID and save state (starts as idle, waiting for user input).
 	// Carry the resolved harness onto the saved row so a non-claude tag is

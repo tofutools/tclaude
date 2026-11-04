@@ -136,10 +136,19 @@ func handleStandaloneRelaunchSettle(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	lock := resumeLaunchLock(convID)
+	lock.Lock()
+	defer lock.Unlock()
 	standaloneRelaunches.Lock()
 	pending, found := standaloneRelaunches.byConv[convID]
 	delete(standaloneRelaunches.byConv, convID)
 	standaloneRelaunches.Unlock()
+	if found {
+		// Another launch (agentd's own resume) may have recorded its own
+		// snapshot since: that one is not this relaunch's to settle.
+		stored, err := db.AgentEffectiveSandboxConfigForConv(convID)
+		found = err == nil && sameSnapshot(stored, pending.effective)
+	}
 	if !found {
 		// Nothing was prepared, or the daemon restarted in between: the
 		// stored snapshot stands, as after a resume.
@@ -164,4 +173,10 @@ func handleStandaloneRelaunchSettle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, StandaloneRelaunchPrepared{Warnings: warnings})
+}
+
+func sameSnapshot(a, b *sandboxpolicy.Snapshot) bool {
+	ra, errA := json.Marshal(a)
+	rb, errB := json.Marshal(b)
+	return errA == nil && errB == nil && string(ra) == string(rb)
 }

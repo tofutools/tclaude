@@ -3465,6 +3465,7 @@ func createSessionForConv(conv *SessionEntry) error {
 		return err
 	}
 	launched = true
+	relaunch.settle(true)
 
 	pid := session.ParsePIDFromTmux(tmuxSession)
 	// Carry the resolved harness onto the saved row so a non-claude tag is not
