@@ -2363,6 +2363,9 @@ func importTemplateEnvelope(env templateExportEnvelope, asName string, update bo
 // a plain instantiate and "Mission" for a deploy (JOH-245) — the section
 // name is the only difference between the two paths' composed context.
 func composeInstantiationContext(templateContext, assignment, header string) string {
+	if strings.TrimSpace(header) == "" {
+		header = "Mission"
+	}
 	templateContext = strings.TrimSpace(templateContext)
 	assignment = strings.TrimSpace(assignment)
 	section := "## " + header + "\n\n" + assignment
@@ -2374,6 +2377,33 @@ func composeInstantiationContext(templateContext, assignment, header string) str
 	default:
 		return templateContext + "\n\n" + section
 	}
+}
+
+// joinContextBlocks joins non-blank startup-context blocks with a blank line,
+// the separator composeInstantiationContext and appendRoleBlock use.
+func joinContextBlocks(blocks ...string) string {
+	var out []string
+	for _, b := range blocks {
+		if b = strings.TrimSpace(b); b != "" {
+			out = append(out, b)
+		}
+	}
+	return strings.Join(out, "\n\n")
+}
+
+// groupStartupContext is the group context a new member is briefed with: the
+// group's standing context when includeStanding, then its mission block, which
+// every member gets whatever include_group_context says. For a legacy group the
+// mission block is empty, because the mission is still inside DefaultContext.
+func groupStartupContext(g *db.AgentGroup, includeStanding bool) string {
+	if g == nil {
+		return ""
+	}
+	standing := ""
+	if includeStanding {
+		standing = g.DefaultContext
+	}
+	return joinContextBlocks(standing, g.MissionBlock())
 }
 
 // appendRoleBlock folds a role's canonical brief into an agent's startup
@@ -3088,10 +3118,27 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		}
 	}
 
-	groupContext, err := normalizeGroupContext(composeInstantiationContext(baseContext, spec.assignment, spec.contextHeader))
-	if err != nil {
+	// The size check runs on the whole brief, as it always has; the two parts
+	// are then kept apart. groupContext is the group's standing context (what a
+	// new group stores as its default_context, and what include_group_context
+	// governs); assignmentContext is the mission/task, delivered to every member
+	// whatever that toggle says. A reinforce delivers the existing group's own
+	// mission block as well as the per-run task.
+	if _, err := normalizeGroupContext(composeInstantiationContext(baseContext, spec.assignment, spec.contextHeader)); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
+	}
+	// Trimmed, as the composed context always was.
+	groupContext, _ := normalizeGroupContext(strings.TrimSpace(baseContext))
+	assignmentContext, _ := normalizeGroupContext(composeInstantiationContext("", spec.assignment, spec.contextHeader))
+	if reinforce {
+		assignmentContext = joinContextBlocks(spec.intoExisting.MissionBlock(), assignmentContext)
+	}
+	// The mission is stored apart from the context only when it is the text
+	// this deploy briefs members with, which every create path guarantees.
+	missionHeader := ""
+	if m := normalizeAssignment(spec.mission); m != "" && m == normalizeAssignment(spec.assignment) {
+		missionHeader = spec.contextHeader
 	}
 	// Fold deploy-time profile selections before resolving the shared sandbox
 	// policy: they can select danger-full-access for otherwise-unconfigured
@@ -3169,6 +3216,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 
 	granter := granterLabel(spec.caller)
 
+	var err error
 	var g *db.AgentGroup
 	var gid int64
 	if reinforce {
@@ -3247,7 +3295,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		// blank source_template is the "not a deployed force" default, so a
 		// no-op write is harmless.
 		if spec.mission != "" || spec.sourceTemplate != "" {
-			if _, err := db.SetAgentGroupDeployMeta(spec.groupName, spec.mission, spec.sourceTemplate); err != nil {
+			if _, err := db.SetAgentGroupDeployMeta(spec.groupName, spec.mission, missionHeader, spec.sourceTemplate); err != nil {
 				slog.Warn("instantiate: set deploy meta failed", "group", spec.groupName, "error", err)
 			}
 		}
@@ -3279,7 +3327,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		g = &db.AgentGroup{
 			ID: gid, Name: spec.groupName, Descr: spec.descr, DefaultCwd: spec.cwd, DefaultContext: groupContext,
 			Environment: spec.environment,
-			Mission:     spec.mission, SourceTemplate: spec.sourceTemplate, OwnerScopesJSON: tmpl.OwnerScopesJSON,
+			Mission:     spec.mission, MissionHeader: missionHeader, SourceTemplate: spec.sourceTemplate, OwnerScopesJSON: tmpl.OwnerScopesJSON,
 		}
 
 		// Advisory process runtime (JOH-242): if the template carries a process,
@@ -3355,7 +3403,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	// via groupMemberNames in the runner). suppressOwner drops template owner
 	// flags in reinforce mode — ownership is never transferred into an existing
 	// group.
-	wr := spawnWaveAgents(g, waves[0].Agents, procPhases, groupContext, spec.cwd,
+	wr := spawnWaveAgents(g, waves[0].Agents, procPhases, groupContext, assignmentContext, spec.cwd,
 		spec.worktreePath, spec.worktreeBranch, spec.perAgentWorktrees,
 		spec.caller, granter, tmpl.Name, nil, reinforce, spec.proofToken, spec.proofDirs, spec.codexGitCommonDir,
 		&effectiveSandbox)
@@ -3393,6 +3441,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 			TemplateID:        tmpl.ID,
 			EffectiveSandbox:  &effectiveSandbox,
 			GroupContext:      groupContext,
+			AssignmentContext: assignmentContext,
 			Cwd:               spec.cwd,
 			WorktreePath:      spec.worktreePath,
 			WorktreeBranch:    spec.worktreeBranch,

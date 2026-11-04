@@ -107,7 +107,7 @@ func partitionWaves(agents []db.GroupTemplateAgent) []db.WaveGroup {
 // the agent is already spawned). Empty templateName skips the stamp — the seam
 // stays inert for any non-template caller of this path.
 func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process []db.ProcessPhase,
-	groupContext, cwd, sharedWorktreePath, sharedWorktreeBranch string, perAgentWorktrees *db.WavePerAgentWorktrees,
+	groupContext, assignmentContext, cwd, sharedWorktreePath, sharedWorktreeBranch string, perAgentWorktrees *db.WavePerAgentWorktrees,
 	caller, granter, templateName string, existing map[string]string, suppressOwner bool,
 	proofToken string, proofDirs []string, codexGitCommonDir string,
 	effectiveSandbox *sandboxpolicy.Snapshot) waveSpawnResult {
@@ -200,10 +200,13 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		templateNotes, templateInfo, templateWarnings := launch.Notes, launch.Info, launch.Warnings
 		// Fold the role brief ("## Role") + the template process ("## Process")
 		// into THIS agent's startup context — no-ops when absent.
-		agentContext := groupContext
-		if !launch.IncludeGroupContext {
-			agentContext = ""
+		// The group's standing context follows include_group_context; the
+		// mission/task, role and process blocks are always delivered.
+		agentContext := ""
+		if launch.IncludeGroupContext {
+			agentContext = groupContext
 		}
+		agentContext = joinContextBlocks(agentContext, assignmentContext)
 		for _, role := range roles {
 			agentContext = appendRoleBlock(agentContext, role.Brief)
 		}
@@ -788,7 +791,7 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 	wave := c.Waves[c.NextWave]
 	slog.Info("wave runner: spawning wave", "group", c.GroupName, "wave", wave.Wave,
 		"agents", len(wave.Agents), "index", c.NextWave, "of", len(c.Waves))
-	wr := spawnWaveAgents(g, wave.Agents, c.Process, c.GroupContext, c.Cwd,
+	wr := spawnWaveAgents(g, wave.Agents, c.Process, c.GroupContext, c.AssignmentContext, c.Cwd,
 		c.WorktreePath, c.WorktreeBranch, c.PerAgentWorktrees,
 		c.Caller, c.Granter, c.TemplateName, groupMemberNames(g), c.SuppressOwner,
 		c.ProofToken, c.ProofDirs, c.CodexGitCommonDir, effectiveSandboxForWave(c))

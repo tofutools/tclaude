@@ -82,11 +82,17 @@ tclaude agent task-force stand-down <group>
 ```
 
 `deploy` creates a fresh group (named from the mission unless `--group` is
-given), folds the mission into the group's shared context under
-`## Mission` so every spawned agent's startup briefing carries it, and
+given), records the mission on the group, briefs every spawned agent with it
+under `## Mission` after the group's shared context, and
 spawns the roster — staged by wave if the template defines waves. Long
 missions go in `--mission-file` (`-` reads stdin); a Linear epic/issue link
-is stored verbatim. With `--worktree <branch>` the whole force lands on its
+is stored verbatim. The mission is kept apart from the shared context, so it
+reaches every member (later direct spawns into the force and re-injection after
+compaction included) even when a profile turns the group context off with
+`include_group_default_context: false`; only the shared context follows that
+toggle. Forces deployed before this split keep the mission inside their shared
+context unless it could be moved out unchanged. The mission is set at deploy; editing the shared
+context (`groups set-context` or the dashboard) no longer changes it. With `--worktree <branch>` the whole force lands on its
 own branch in a git [worktree](worktrees.md), which becomes the force's
 working directory.
 

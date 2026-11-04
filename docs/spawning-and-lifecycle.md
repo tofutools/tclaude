@@ -188,7 +188,10 @@ trigger worker and a process worker. Highest first:
 5. the global default spawn profile
 6. off — except the group context, which falls back to the path's own
    default: included for direct spawns, deploys, trigger and process workers;
-   left out for scribes and `--non-interactive` one-shots
+   left out for scribes and `--non-interactive` one-shots. A deployed task
+   force's mission is not part of the group context for this toggle: every
+   member is briefed with it either way, like its role and process blocks
+   (a `--non-interactive` one-shot only when it includes the group context)
 
 Remote control is honoured for unattended trigger and process workers too, so
 a profile or group policy that turns it on makes those workers reachable from

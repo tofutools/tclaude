@@ -33,7 +33,7 @@ func TestMigrateV108toV109BackfillsStableRegistryReferences(t *testing.T) {
 	require.NoError(t, err)
 	_, err = SetAgentGroupDefaultProfile("legacy-group", "legacy-profile")
 	require.NoError(t, err)
-	_, err = SetAgentGroupDeployMeta("legacy-group", "", "legacy-template")
+	_, err = SetAgentGroupDeployMeta("legacy-group", "", "", "legacy-template")
 	require.NoError(t, err)
 	mustExec(t, d, `INSERT INTO roles (name, spawn_profile, permissions, created_at, updated_at)
 		VALUES ('legacy-ref-role', 'legacy-profile', '[]', 0, 0)`)

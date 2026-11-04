@@ -44,6 +44,13 @@ type AgentGroup struct {
 	// (the dashboard reads both-blank as "not a deployed force").
 	Mission        string
 	SourceTemplate string
+	// MissionHeader is the heading the mission is delivered under ("Mission"
+	// for a deploy, "Task" for a quick task force). Non-empty means the mission
+	// is kept apart from DefaultContext and delivered to every member as its
+	// own block, whatever include_group_context says (MissionBlock). Empty
+	// means legacy: a group deployed before the split, whose mission is folded
+	// into DefaultContext, or a group with no mission.
+	MissionHeader string
 	// SourceTemplateID is the durable provenance link. The name remains a
 	// historical display fallback if the source template is later deleted.
 	SourceTemplateID int64 `json:"-"`
@@ -1128,12 +1135,12 @@ func CreateAgentGroupFrom(name string, src AgentGroup) (int64, error) {
 		INSERT INTO agent_groups
 			(name, descr, default_cwd, default_context, default_profile, default_profile_id,
 			 sandbox_profile, sandbox_profile_id, max_members, notify_enabled, remote_control,
-			 attachment_url, attachment_label, mission, source_template, source_template_id,
+			 attachment_url, attachment_label, mission, mission_header, source_template, source_template_id,
 			 parent_id, created_at, owner_scopes_json, environment_json, reinject_after_compact, default_prompts)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		name, src.Descr, src.DefaultCwd, src.DefaultContext, src.DefaultProfile, defaultProfileID,
 		sandboxProfileName, sandboxProfileID, src.MaxMembers, src.NotifyEnabled, boolPtrToNull(src.RemoteControl),
-		src.AttachmentURL, src.AttachmentLabel, src.Mission, src.SourceTemplate, sourceTemplateID,
+		src.AttachmentURL, src.AttachmentLabel, src.Mission, src.MissionHeader, src.SourceTemplate, sourceTemplateID,
 		src.ParentGroupID,
 		dbTime(time.Now()), src.OwnerScopesJSON, environmentJSON, src.ReinjectAfterCompact, MarshalPromptRefs(src.DefaultPrompts))
 	if err != nil {
@@ -1182,7 +1189,7 @@ func SetAgentGroupDescr(name, descr string) (int64, error) {
 // template). Returns the number of rows affected — 0 means no group by
 // that name. Called best-effort right after CreateAgentGroup on the
 // deploy / instantiate path, mirroring SetAgentGroupDefaultCwd.
-func SetAgentGroupDeployMeta(name, mission, sourceTemplate string) (int64, error) {
+func SetAgentGroupDeployMeta(name, mission, missionHeader, sourceTemplate string) (int64, error) {
 	db, err := Open()
 	if err != nil {
 		return 0, err
@@ -1191,8 +1198,8 @@ func SetAgentGroupDeployMeta(name, mission, sourceTemplate string) (int64, error
 	if err != nil {
 		return 0, err
 	}
-	res, err := db.Exec(`UPDATE agent_groups SET mission = ?, source_template = ?, source_template_id = ? WHERE name = ?`,
-		mission, sourceTemplate, templateID, name)
+	res, err := db.Exec(`UPDATE agent_groups SET mission = ?, mission_header = ?, source_template = ?, source_template_id = ? WHERE name = ?`,
+		mission, missionHeader, sourceTemplate, templateID, name)
 	if err != nil {
 		return 0, err
 	}
@@ -1697,7 +1704,7 @@ const agentGroupSelect = `SELECT id, name, descr, default_cwd, default_spawn_gro
 	CASE WHEN sandbox_profile_id IS NULL THEN sandbox_profile
 	     ELSE COALESCE((SELECT name FROM sandbox_profiles WHERE id = sandbox_profile_id), '') END,
 	COALESCE(sandbox_profile_id, 0),
-	max_members, notify_enabled, remote_control, attachment_url, attachment_label, mission,
+	max_members, notify_enabled, remote_control, attachment_url, attachment_label, mission, mission_header,
 	CASE WHEN source_template_id IS NULL THEN source_template
 	     ELSE COALESCE((SELECT name FROM group_templates WHERE id = source_template_id), source_template) END,
 	COALESCE(source_template_id, 0),
@@ -1710,7 +1717,7 @@ const agentGroupAliasedSelect = `SELECT g.id, g.name, g.descr, g.default_cwd, g.
 	CASE WHEN g.sandbox_profile_id IS NULL THEN g.sandbox_profile
 	     ELSE COALESCE((SELECT name FROM sandbox_profiles WHERE id = g.sandbox_profile_id), '') END,
 	COALESCE(g.sandbox_profile_id, 0),
-	g.max_members, g.notify_enabled, g.remote_control, g.attachment_url, g.attachment_label, g.mission,
+	g.max_members, g.notify_enabled, g.remote_control, g.attachment_url, g.attachment_label, g.mission, g.mission_header,
 	CASE WHEN g.source_template_id IS NULL THEN g.source_template
 	     ELSE COALESCE((SELECT name FROM group_templates WHERE id = g.source_template_id), g.source_template) END,
 	COALESCE(g.source_template_id, 0),
@@ -4850,7 +4857,7 @@ func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultSpawnGroup, &g.DefaultContext,
 		&g.DefaultProfile, &g.SandboxProfile, &g.SandboxProfileID,
 		&g.MaxMembers, &g.NotifyEnabled, &remoteControl, &g.AttachmentURL, &g.AttachmentLabel, &g.Mission,
-		&g.SourceTemplate, &g.SourceTemplateID, &createdAt, &archivedAt, &parentID, &g.RouteGeneration,
+		&g.MissionHeader, &g.SourceTemplate, &g.SourceTemplateID, &createdAt, &archivedAt, &parentID, &g.RouteGeneration,
 		&g.OwnerScopesJSON, &environmentJSON, &g.ReinjectAfterCompact, &defaultPrompts); err != nil {
 		return nil, err
 	}
@@ -4965,4 +4972,35 @@ func ListActiveGroupMemberRoles() ([]ActiveGroupMemberRole, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// MissionBlock is the group's mission as the block every member is briefed
+// with ("## <MissionHeader>\n\n<mission>"), or "" for a group with no mission
+// or a legacy group whose mission is still folded into DefaultContext.
+func (g *AgentGroup) MissionBlock() string {
+	if g == nil {
+		return ""
+	}
+	header := strings.TrimSpace(g.MissionHeader)
+	mission := normalizeMissionText(g.Mission)
+	if header == "" || mission == "" {
+		return ""
+	}
+	return "## " + header + "\n\n" + mission
+}
+
+// normalizeMissionText trims a mission and normalizes its line endings, the
+// same way a deploy normalizes the text it briefs members with.
+func normalizeMissionText(mission string) string {
+	mission = strings.TrimSpace(mission)
+	mission = strings.ReplaceAll(mission, "\r\n", "\n")
+	return strings.ReplaceAll(mission, "\r", "\n")
+}
+
+// GetDefaultContext is DefaultContext, nil-safe.
+func (g *AgentGroup) GetDefaultContext() string {
+	if g == nil {
+		return ""
+	}
+	return g.DefaultContext
 }

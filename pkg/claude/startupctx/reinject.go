@@ -143,8 +143,14 @@ func ComposeReinjection(agentID string, boundary Boundary) (Reinjection, error) 
 
 	if boundary != BoundaryClear && !identityOnly {
 		groupContext := ""
-		if primary != nil && (snap == nil || snap.IncludeGroupContext) {
-			groupContext = primary.Group.DefaultContext
+		if primary != nil {
+			if snap == nil || snap.IncludeGroupContext {
+				groupContext = primary.Group.DefaultContext
+			}
+			// The mission is delivered whatever include_group_context said.
+			if mission := primary.Group.MissionBlock(); mission != "" {
+				groupContext = strings.TrimSpace(strings.TrimSpace(groupContext) + "\n\n" + mission)
+			}
 		}
 		profileContext := ""
 		if snap != nil {

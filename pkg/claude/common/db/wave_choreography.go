@@ -38,9 +38,14 @@ type WaveChoreography struct {
 	// template run starts. Later waves consume this snapshot after daemon
 	// restart without consulting mutable global/group profile assignments.
 	EffectiveSandbox *sandboxpolicy.Snapshot `json:"effective_sandbox,omitempty"`
-	// GroupContext is the already-composed, already-normalized group context
-	// (mission/task folded in) every spawned agent's briefing carries.
+	// GroupContext is the already-normalized group context every spawned
+	// agent's briefing carries, subject to include_group_context. A
+	// choreography persisted before the mission split has the mission/task
+	// folded in here and AssignmentContext empty.
 	GroupContext string `json:"group_context"`
+	// AssignmentContext is the mission/task block every spawned agent is
+	// briefed with whatever include_group_context says.
+	AssignmentContext string `json:"assignment_context,omitempty"`
 	// Cwd is the group's default working directory for every spawn.
 	Cwd string `json:"cwd,omitempty"`
 	// WorktreePath/WorktreeBranch optionally point spawned agents at a shared
