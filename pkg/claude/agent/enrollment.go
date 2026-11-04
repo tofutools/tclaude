@@ -25,9 +25,9 @@ import (
 //                 `agent delete`.
 //   - reinstate — return a retired agent to active status.
 //
-// Auth: promote/reinstate need the agent.promote slug, retire needs
-// agent.retire — OR being an owner of a group containing the target.
-// Humans always pass. Same shape as the other cross-agent verbs.
+// Auth: promote and reinstate are CrossAgentAuth("promote"), retire is
+// CrossAgentAuth("retire"). Humans always pass. Same shape as the other
+// cross-agent verbs.
 
 type promoteParams struct {
 	Selector string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
@@ -43,7 +43,7 @@ func promoteCmd() *cobra.Command {
 			"\n\n" +
 			"If the target is a retired agent, promote reinstates it. " +
 			"\n\n" +
-			"Auth: requires global agent.promote, or groups.members.promote covering every current active group containing the target. Ownership automatically contributes the latter for owned groups.",
+			"Auth: " + CrossAgentAuth("promote"),
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *promoteParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Selector).SetAlternativesFunc(completeConvSelectors)
@@ -123,7 +123,7 @@ func retireCmd() *cobra.Command {
 			"This is the non-destructive alternative to `tclaude agent " +
 			"delete`, which permanently wipes the conversation. " +
 			"\n\n" +
-			"Auth: requires global agent.retire, or groups.members.retire covering every current active group containing the target. Ownership automatically contributes the latter for owned groups.",
+			"Auth: " + CrossAgentAuth("retire"),
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *retireParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Selector).SetAlternativesFunc(completeConvSelectors)
@@ -251,8 +251,7 @@ func reinstateCmd() *cobra.Command {
 			"back — retire stripped those — so the reinstated agent starts " +
 			"fresh. " +
 			"\n\n" +
-			"Auth: requires the agent.promote permission OR being an owner " +
-			"of a group containing the target.",
+			"Auth: " + CrossAgentAuth("promote"),
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *reinstateParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Selector).SetAlternativesFunc(completeConvSelectors)

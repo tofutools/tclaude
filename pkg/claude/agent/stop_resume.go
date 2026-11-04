@@ -24,9 +24,9 @@ import (
 // interesting when the target is a DIFFERENT conv. So both verbs
 // require a positional selector.
 //
-// Auth: agent.stop / agent.resume slugs (default human-only) OR the
-// caller is an owner of a group containing the target. Same shape as
-// agent.compact / agent.rename / agent.reincarnate.
+// Auth: CrossAgentAuth("stop") / CrossAgentAuth("resume"); the agent.*
+// slugs are not default-granted. Same shape as agent.compact /
+// agent.rename / agent.reincarnate.
 
 type stopParams struct {
 	Selector string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
@@ -47,8 +47,7 @@ func stopCmd() *cobra.Command {
 			"Idempotent: agents already offline come back as " +
 			"`skipped:already_offline`. " +
 			"\n\n" +
-			"Auth: requires global agent.stop, or groups.members.stop covering " +
-			"every current active group containing the target. Ownership automatically contributes the latter for owned groups. The single-conv variant of " +
+			"Auth: " + CrossAgentAuth("stop") + " The single-conv variant of " +
 			"`tclaude agent groups stop`.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *stopParams, _ *cobra.Command) error {
@@ -134,8 +133,7 @@ func resumeCmd() *cobra.Command {
 			"Malformed, missing, or changed provenance also fails closed; a direct " +
 			"human resume or an approved `--ask-human` request may recapture it. " +
 			"\n\n" +
-			"Auth: requires global agent.resume, or groups.members.resume covering " +
-			"every current active group containing the target. Ownership automatically contributes the latter for owned groups. The single-conv variant of " +
+			"Auth: " + CrossAgentAuth("resume") + " The single-conv variant of " +
 			"`tclaude agent groups resume`.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *resumeParams, _ *cobra.Command) error {
@@ -218,8 +216,8 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 // kills the tmux session inline before deleting (mirrors the stop
 // endpoint's --force).
 //
-// Auth: requires the agent.delete permission (NOT default-granted —
-// destructive) OR being an owner of a group containing the target.
+// Auth: CrossAgentAuth("delete"); agent.delete is NOT default-granted
+// (destructive).
 // Self-delete via this command is refused; humans should use
 // `tclaude conv rm` instead.
 
@@ -240,8 +238,7 @@ func deleteCmd() *cobra.Command {
 			"Refuses when the target's tmux session is alive — pass --force " +
 			"to kill the session inline. " +
 			"\n\n" +
-			"Auth: requires the agent.delete permission (not default-granted) " +
-			"OR being an owner of every active group containing the target. Self-delete " +
+			"Auth: " + CrossAgentAuth("delete") + " agent.delete is not default-granted. Self-delete " +
 			"is refused via this command; use `tclaude conv rm` instead.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *deleteParams, _ *cobra.Command) error {

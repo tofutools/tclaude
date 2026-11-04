@@ -126,9 +126,9 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 //   - they hold the slug `perm` (granted via config defaults or
 //     per-conv SQLite grants — same dual-source check as
 //     requirePermission)
-//   - they own at least one group that contains targetConv (mirrors
-//     the owner-implicit-power semantics already used for messaging
-//     in db.CanSenderReachTarget)
+//   - they hold the slug's group sibling (groups.members.<verb>, from
+//     PermissionDefs) covering every current active group that contains
+//     targetConv; owning a group contributes that sibling for it
 //   - they sent X-Tclaude-Ask-Human: <duration> AND the human
 //     approves the cross-agent action via the loopback popup before
 //     the timeout expires (same escape hatch the self-targeted

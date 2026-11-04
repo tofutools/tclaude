@@ -59,9 +59,8 @@ func morphCmd() *cobra.Command {
 			"and otherwise waits until it next goes idle (at most 30 minutes). --now stops a " +
 			"busy or stuck agent immediately. A self-morph always waits for the current turn " +
 			"to end.\n\n" +
-			"Permissions: self.morph to morph yourself; agent.morph, or groups.members.morph " +
-			"(conferred by group ownership) covering every group of the target, to morph " +
-			"another agent. A grant scoped to spawn_profile allows only --profile morphs into " +
+			"Permissions: self.morph to morph yourself. To morph another agent: " +
+			CrossAgentAuth("morph") + " A grant scoped to spawn_profile allows only --profile morphs into " +
 			"those profiles. The operator needs no grant.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *morphParams, _ *cobra.Command) error {

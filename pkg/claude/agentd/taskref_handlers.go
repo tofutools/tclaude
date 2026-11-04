@@ -50,8 +50,9 @@ func handleWhoamiTask(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAgentTask reads (GET) or sets/clears (POST) ANOTHER agent's
-// task-reference link. Routed via handleAgentByConv. Auth: agent.task
-// slug OR caller owns a group containing the target.
+// task-reference link. Routed via handleAgentByConv. Auth:
+// requireCrossAgentPermission (agent.task, or groups.members.task
+// covering every active group containing the target).
 func handleAgentTask(w http.ResponseWriter, r *http.Request, targetConv string) {
 	switch r.Method {
 	case http.MethodGet, http.MethodPost:
