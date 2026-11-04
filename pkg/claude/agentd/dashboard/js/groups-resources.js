@@ -18,6 +18,7 @@ import { defaultNotify } from './groups-quickstart.js';
 import { Button, Menu, MenuItem } from './ui-components.js';
 import { LockChip } from './resource-lock.js';
 import { nodeFetch } from './node-api.js';
+import { shellConfirm } from './shell-state.js';
 import { effect } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
 
@@ -26,13 +27,61 @@ export { LockChip };
 const html = htm.bind(h);
 
 function pageMeta(page, nameOf) {
+  if (page.state === 'closed') return page.closedReason ? `closed · ${page.closedReason}` : 'closed';
   if (page.groupOwned) return 'blank · no member has taken it over';
   return `${nameOf(page.owner) || page.owner} · ${page.kind === 'static' ? 'static' : 'live'}`;
 }
 
+// reopenPage reopens a closed page saved with the group (POST
+// /api/pages/{id}/reopen) and opens it once the snapshot lists it.
+async function reopenPage(page, api, source, notify) {
+  try {
+    await api.reopenGroupPage(page.id);
+    notify(`Reopened ${page.title || page.name}`);
+    void source?.refresh?.();
+    expectPage(page.id);
+  } catch (cause) {
+    notify(`Could not reopen ${page.title || page.name}: ${cause.message}`, true);
+  }
+}
+
+// PageMenu is a page row's ⋯: Delete, behind a confirm. Closing (the strip
+// or tab ×) keeps the page in the group; Delete removes it for good.
+function PageMenu({ page, api, source, notify, confirm }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useDismissablePopover(ref, open, (why) => { if (why !== 'away') setOpen(false); });
+  const label = page.title || page.name;
+  const remove = async () => {
+    setOpen(false);
+    const ok = await confirm({
+      title: `Delete page ${label}?`,
+      body: page.state === 'closed'
+        ? 'The page is removed from the group and cannot be reopened.'
+        : 'The page closes for everyone viewing it and is removed from the group; it cannot be reopened.',
+      okLabel: 'Delete',
+    });
+    if (!ok) return;
+    try {
+      await api.deleteGroupPage(page.id);
+      notify(`Deleted ${label}`);
+      void source?.refresh?.();
+    } catch (cause) {
+      notify(`Could not delete ${label}: ${cause.message}`, true);
+    }
+  };
+  return html`<span class="gr-add" ref=${ref}>
+    <${Button} size="sm" variant="link" class="gq-link" data-page-menu=${page.id} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
+      title=${`More for ${label}`} onClick=${() => setOpen(!open)}>⋯<//>
+    ${open && html`<${Menu} size="sm" class="gr-add-menu">
+      <${MenuItem} danger data-page-delete=${page.id} onClick=${remove}>Delete…<//>
+    <//>`}
+  </span>`;
+}
+
 // GroupResources lists a group's boards and pages, each kind under its own
 // heading and only when it has any.
-export function GroupResources({ group, boards = [], pages = [], api, source, notify = defaultNotify, nameOf = () => '' }) {
+export function GroupResources({ group, boards = [], pages = [], api, source, notify = defaultNotify, nameOf = () => '', confirm = shellConfirm }) {
   if (!boards.length && !pages.length) return null;
   return html`<div class="gr-resources" data-group-resources=${group.name}>
     ${boards.length > 0 && html`<div class="gr-kind" data-resource-kind="boards">
@@ -47,13 +96,18 @@ export function GroupResources({ group, boards = [], pages = [], api, source, no
     </div>`}
     ${pages.length > 0 && html`<div class="gr-kind" data-resource-kind="pages">
       <span class="ui-eyebrow gr-kind-label">Pages</span>
-      ${pages.map((page) => html`<div key=${page.id} class="gr-row" data-resource-page=${page.id}>
-        <${Button} size="sm" variant="link" class="gr-name" title=${`Open ${page.title || page.name}`}
-          onClick=${() => openPagePane(page.id, page.title || page.name)}><span class="gr-glyph" aria-hidden="true">◧</span>${page.title || page.name}<//>
+      ${pages.map((page) => {
+        const closed = page.state === 'closed';
+        return html`<div key=${page.id} class=${closed ? 'gr-row gr-closed' : 'gr-row'} data-resource-page=${page.id} data-page-state=${closed ? 'closed' : 'open'}>
+        <${Button} size="sm" variant="link" class="gr-name" title=${closed ? `Reopen ${page.title || page.name}` : `Open ${page.title || page.name}`}
+          onClick=${() => (closed ? reopenPage(page, api, source, notify) : openPagePane(page.id, page.title || page.name))}><span class="gr-glyph" aria-hidden="true">◧</span>${page.title || page.name}<//>
         <span class="gr-spacer"></span>
         <span class="gq-dim">${pageMeta(page, nameOf)}</span>
+        ${closed && html`<${Button} size="sm" variant="link" class="gq-link" data-page-reopen=${page.id} onClick=${() => reopenPage(page, api, source, notify)}>Reopen<//>`}
         <${LockChip} kind="page" id=${page.id} name=${page.title || page.name} locked=${!!page.agentsLocked} api=${api} source=${source} notify=${notify} />
-      </div>`)}
+        <${PageMenu} page=${page} api=${api} source=${source} notify=${notify} confirm=${confirm} />
+      </div>`;
+      })}
     </div>`}
   </div>`;
 }

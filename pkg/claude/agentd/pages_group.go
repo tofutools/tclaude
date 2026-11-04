@@ -156,8 +156,13 @@ func handleDashboardPageCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	owner := groupPageOwner(g.ID)
+	// A closed page the group saved under this name is reopened, keeping its
+	// id and lock (pages_saved.go).
+	savedID, savedLocked := savedPageFor(g.ID, owner, name)
 	now := time.Now().UTC()
 	reg := livePages
+	pageSaveMu.Lock()
+	defer pageSaveMu.Unlock()
 	reg.mu.Lock()
 	if reg.byOwner[owner][name] != nil {
 		reg.mu.Unlock()
@@ -171,7 +176,10 @@ func handleDashboardPageCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	reg.rev++
 	p := &livePage{id: newPageID(), owner: owner, name: name, title: title, target: "scratch", kind: pageKindScratch,
-		path: "/", state: pageStateOpen, rev: reg.rev, shownAt: now, updated: now, groupID: g.ID}
+		path: "/", state: pageStateOpen, rev: reg.rev, shownAt: now, updated: now, groupID: g.ID, agentsLocked: savedLocked}
+	if savedID != "" && reg.byID[savedID] == nil {
+		p.id = savedID
+	}
 	p.stage = stagePages.open(owner, name, stageScratch{})
 	if reg.byOwner[owner] == nil {
 		reg.byOwner[owner] = map[string]*livePage{}
@@ -179,7 +187,9 @@ func handleDashboardPageCreate(w http.ResponseWriter, r *http.Request) {
 	reg.byOwner[owner][name] = p
 	reg.byID[p.id] = p
 	v := p.view()
+	saved := savedPageRow(p)
 	reg.mu.Unlock()
+	savePageOpen(saved)
 	v.Group = g.Name
 	setAuditTargetLabel(r, "page "+g.Name+"/"+name)
 	writeJSON(w, http.StatusCreated, v)
@@ -246,7 +256,13 @@ func adoptGroupPageLocked(w http.ResponseWriter, reg *livePageRegistry, g *db.Ag
 // closeGroupPages closes the pages a group owns, when it is archived or
 // deleted: no member can reach them any more.
 func closeGroupPages(groupID int64) {
-	if n := livePages.closeOwner(groupPageOwner(groupID)); n > 0 {
-		slog.Info("closed a removed group's pages", "group_id", groupID, "pages", n)
+	pageSaveMu.Lock()
+	closed := livePages.closeOwner(groupPageOwner(groupID))
+	for _, row := range closed {
+		savePageClosed(row.ID, row.GroupID, pageClosedArchived)
+	}
+	pageSaveMu.Unlock()
+	if len(closed) > 0 {
+		slog.Info("closed a removed group's pages", "group_id", groupID, "pages", len(closed))
 	}
 }

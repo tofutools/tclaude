@@ -192,17 +192,17 @@ func (r *livePageRegistry) closeByID(id string) (*livePage, bool) {
 	return p, true
 }
 
-// closeOwner closes every page an agent showed (its retirement).
-func (r *livePageRegistry) closeOwner(owner string) int {
+// closeOwner closes every page an agent showed (its retirement). It returns
+// the saved rows of the pages it closed.
+func (r *livePageRegistry) closeOwner(owner string) []db.GroupPage {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	pages := r.byOwner[owner]
-	n := 0
-	for _, p := range pages {
+	var closed []db.GroupPage
+	for _, p := range r.byOwner[owner] {
+		closed = append(closed, savedPageRow(p))
 		r.removeLocked(p)
-		n++
 	}
-	return n
+	return closed
 }
 
 // closeLivePagesForConv closes the pages of the agent behind convID. It is
@@ -212,7 +212,11 @@ func closeLivePagesForConv(convID string) {
 	if err != nil || agentID == "" {
 		return
 	}
-	livePages.closeOwner(agentID)
+	pageSaveMu.Lock()
+	defer pageSaveMu.Unlock()
+	for _, row := range livePages.closeOwner(agentID) {
+		savePageClosed(row.ID, row.GroupID, pageClosedRetired)
+	}
 }
 
 // ---- targets ----
@@ -490,7 +494,7 @@ func pageRules(kind, group string) []string {
 		"Cookies, IndexedDB and service workers do not work in the frame; an app behind a login needs a dev bypass or a fixture user.",
 		typed,
 		"The page's token is its only key and goes only to the operator's dashboard; you act on the page by name.",
-		"Pages end when the daemon restarts; show again to bring one back.",
+		pageLifetimeRule(group),
 		"Show again with the same --name to update this page in place; `tclaude agent page close <name>` closes it.",
 	}
 	if kind == pageKindStatic {
@@ -657,9 +661,14 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "target_unavailable", err.Error())
 		return
 	}
+	// A closed page saved in the group under this name is reopened by the
+	// show: it keeps its id and the operator's lock.
+	savedID, savedLocked := savedPageFor(groupID, agentID, name)
 
 	now := time.Now().UTC()
 	reg := livePages
+	pageSaveMu.Lock()
+	defer pageSaveMu.Unlock()
 	reg.mu.Lock()
 	existing := reg.byOwner[agentID][name]
 	if adopt != nil {
@@ -673,6 +682,14 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if existing != nil && existing.agentsLocked {
+		reg.mu.Unlock()
+		closeStageUpstream(up)
+		writeResourceLocked(w, "page "+name)
+		return
+	}
+	// The operator's lock on the saved page refuses any show that would
+	// replace it: one from another group, a takeover, or a fresh show.
+	if savedLocked && (existing == nil || existing.id != savedID) {
 		reg.mu.Unlock()
 		closeStageUpstream(up)
 		writeResourceLocked(w, "page "+name)
@@ -707,6 +724,9 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 		p.stage.notifyReload()
 	default:
 		p = &livePage{id: newPageID(), owner: agentID, name: name, shownAt: now}
+		if existing == nil && adopt == nil && savedID != "" && reg.byID[savedID] == nil {
+			p.id = savedID
+		}
 		if existing != nil {
 			// Another kind of source: a fresh origin (and token), so nothing
 			// the old origin's code holds can reach the new source.
@@ -738,7 +758,9 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 	p.path, p.groupID = start, groupID
 	p.state, p.rev, p.updated = pageStateOpen, reg.rev, now
 	resp.pageView = p.agentView()
+	saved := savedPageRow(p)
 	reg.mu.Unlock()
+	savePageOpen(saved)
 	resp.Group = pageGroupName(resp.GroupID)
 	resp.ShareNote = shareNote
 	if regrouped {
@@ -840,7 +862,13 @@ func handlePageClose(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, ok := livePages.closeByName(p.owner, p.name); !ok {
+	pageSaveMu.Lock()
+	closed, ok := livePages.closeByName(p.owner, p.name)
+	if ok {
+		savePageClosed(closed.id, closed.groupID, pageClosedByAgent)
+	}
+	pageSaveMu.Unlock()
+	if !ok {
 		writeError(w, http.StatusNotFound, "not_found", "the page is already closed")
 		return
 	}
@@ -895,7 +923,12 @@ func handleDashboardPageClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	pageSaveMu.Lock()
 	p, ok := livePages.closeByID(id)
+	if ok {
+		savePageClosed(p.id, p.groupID, pageClosedByOperator)
+	}
+	pageSaveMu.Unlock()
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found", "no such page")
 		return

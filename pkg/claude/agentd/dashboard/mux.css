@@ -599,6 +599,7 @@ body.wizard .mux-pane-xterm {
    sandboxed frame, in a strip tab, an overlay tab or a separate window. */
 .mux-pane-page { background: #0d1117; }
 .page-view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.page-view .page-not-kept { margin: 0; padding: 2px 10px; font-size: 12px; }
 .page-head {
   flex: none; display: flex; align-items: center; gap: 8px; padding: 4px 8px; min-width: 0;
   border-bottom: 1px solid var(--ui-line); background: #161b22; color: var(--ui-text); font-size: 12px;

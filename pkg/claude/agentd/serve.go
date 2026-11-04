@@ -717,6 +717,10 @@ func runServe(p *serveParams) error {
 	// audit_cleanup.go.
 	startAuditLogCleanup(cronStop)
 
+	// Pages saved with a group that the last run left open have no stage
+	// now: they show as closed and reopen on request (pages_saved.go).
+	closeSavedPagesAtStart()
+
 	// Subscription usage history retention. The current-value caches stay
 	// untouched; only 15-minute graph samples older than the default 90-day
 	// window are removed. See usage_history_cleanup.go.

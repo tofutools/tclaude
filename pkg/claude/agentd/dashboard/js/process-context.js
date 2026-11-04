@@ -337,6 +337,14 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group, name, title: name }),
       }, fetchImpl);
     },
+    // reopenGroupPage reopens a closed page saved with its group.
+    async reopenGroupPage(id) {
+      return processRequest(`/api/pages/${encodeURIComponent(id)}/reopen`, { method: 'POST' }, fetchImpl);
+    },
+    // deleteGroupPage closes a page if open and removes it from its group.
+    async deleteGroupPage(id) {
+      return processRequest(`/api/pages/${encodeURIComponent(id)}/delete`, { method: 'POST' }, fetchImpl);
+    },
     // boardIds lists every board's id: board ids are node-wide.
     async boardIds() {
       const body = await processRequest('/api/boards', {}, fetchImpl);

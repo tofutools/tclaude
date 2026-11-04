@@ -2313,3 +2313,25 @@ CREATE TABLE relaunch_policy (
 			updated_by TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (scope, field)
 		) STRICT;
+
+CREATE TABLE group_pages (
+			id            TEXT PRIMARY KEY,
+			group_id      INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			owner         TEXT NOT NULL,
+			name          TEXT NOT NULL,
+			title         TEXT NOT NULL DEFAULT '',
+			kind          TEXT NOT NULL,
+			target        TEXT NOT NULL DEFAULT '',
+			path          TEXT NOT NULL DEFAULT '',
+			worktree      TEXT NOT NULL DEFAULT '',
+			port          INTEGER NOT NULL DEFAULT 0,
+			agents_locked INTEGER NOT NULL DEFAULT 0,
+			state         TEXT NOT NULL CHECK(state IN ('open','closed')),
+			closed_reason TEXT NOT NULL DEFAULT '',
+			created_at    INTEGER NOT NULL,
+			updated_at    INTEGER NOT NULL,
+			closed_at     INTEGER,
+			UNIQUE (group_id, owner, name)
+		) STRICT;
+
+CREATE INDEX idx_group_pages_group ON group_pages(group_id, state);

@@ -57,8 +57,21 @@ rules.
 - **Lifecycle.** A page belongs to the agent ID, so it survives a
   reincarnation. Retiring or deleting the agent closes its pages. When the operator closes a
   page in the dashboard, the agent gets an inbox message `[page <name>] closed`.
-  Pages live in the daemon's memory only: restarting the daemon closes them, and
-  page tokens are never written to disk.
+  Page tokens are never written to disk.
+- **Saved with the group.** A page shared in a group is saved with it. Closing
+  it (the dashboard's Close or tab ×, the agent's `page close`, the agent
+  retiring, a daemon restart) keeps it in the group's Resources as closed,
+  with why. **Reopen** there brings it back under the same id with a new
+  origin, once its source is proved again: a port page needs its dev server
+  answering, a static page its files still inside the agent's directories,
+  and the agent must still be active and in the group. A page the operator
+  locked stays locked while closed, and no show replaces it. Deleting the
+  agent removes its saved pages. An agent re-showing the same name in
+  that group reopens it too. **Delete** in the row's ⋯ menu removes it for
+  good; archiving or deleting the group does as well. A group keeps its 64
+  most recent closed pages. A private page (`--private`, or an agent in no
+  group) is not saved: closing it, or restarting the daemon, ends it.
+  Marks and live patches are not saved yet: they end when the page closes.
 - **Limits.** An agent may have 8 pages open, and the daemon 64.
 
 The dashboard snapshot lists the open pages (`live_pages`), each with a revision
@@ -159,8 +172,10 @@ showed the page can read what you type in it. Then:
   grouped, dragged off the strip or onto an overlay window. A separate window
   is the dashboard's own page with the same frame in it: the page's origin
   never loads as a top-level page.
-- **Close**, or the tab's ×, closes the page for good. The agent is told in
-  its inbox. Moving a page between places does not close it.
+- **Close**, or the tab's ×, closes the page. The agent is told in its
+  inbox. A page shared in a group stays in the group's Resources, closed,
+  and reopens from there; a private page ends. Moving a page between places
+  does not close it.
 
 ### Drawing on top
 

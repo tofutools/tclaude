@@ -400,6 +400,7 @@ var peerViewOwnNodeRoutes = []string{
 	"DELETE /api/boards/{id}/sessions",
 	// Live pages are this node's own agents' stage origins.
 	"POST /api/pages", "DELETE /api/pages/{id}", "GET /api/pages/{id}/live", "POST /api/pages/{id}/marks",
+	"POST /api/pages/{id}/reopen", "POST /api/pages/{id}/delete",
 	// The operator's own Claude subscription token never serves a peer.
 	"GET /api/federation/claude-subscription",
 	"PUT /api/federation/claude-subscription",
