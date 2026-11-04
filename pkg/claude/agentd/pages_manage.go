@@ -63,7 +63,6 @@ func handleDashboardPageTitle(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	pageSaveMu.Lock()
-	defer pageSaveMu.Unlock()
 	livePages.mu.Lock()
 	p := livePages.byID[id]
 	if p != nil {
@@ -75,12 +74,14 @@ func handleDashboardPageTitle(w http.ResponseWriter, r *http.Request) {
 		if saved.GroupID != 0 {
 			savePageOpen(saved)
 		}
+		pageSaveMu.Unlock()
 		setAuditTargetLabel(r, "page "+name)
 		tellPageOwner(owner, name, "renamed", fmt.Sprintf("The operator renamed your live page %q to %q. Showing it again sets the title again: --title, or its name without one.", name, title))
 		writeJSON(w, http.StatusOK, map[string]any{"id": id, "title": title})
 		return
 	}
 	livePages.mu.Unlock()
+	defer pageSaveMu.Unlock()
 	row, err := db.GetGroupPage(id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -119,48 +120,56 @@ func handleDashboardPageGroup(w http.ResponseWriter, r *http.Request) {
 	group := strings.TrimSpace(req.Group)
 	id := r.PathValue("id")
 	pageSaveMu.Lock()
-	defer pageSaveMu.Unlock()
 
 	livePages.mu.Lock()
 	if p := livePages.byID[id]; p != nil {
 		owner, name, from := p.owner, p.name, p.groupID
 		livePages.mu.Unlock()
 		setAuditTargetLabel(r, "page "+name)
+		refuse := func(status int, kind, msg string) {
+			pageSaveMu.Unlock()
+			writeError(w, status, kind, msg)
+		}
 		switch {
 		case from == groupID:
+			pageSaveMu.Unlock()
 			writeJSON(w, http.StatusOK, map[string]any{"id": id, "group": group})
 			return
 		case from == 0:
-			writeError(w, http.StatusConflict, "private", "a private page is not shared in a group; its agent shows it into one")
+			refuse(http.StatusConflict, "private", "a private page is not shared in a group; its agent shows it into one")
 			return
 		case isGroupPageOwner(owner):
-			writeError(w, http.StatusConflict, "close_first", "a group's blank page moves while closed: close it, then move it")
+			refuse(http.StatusConflict, "close_first", "a group's blank page moves while closed: close it, then move it")
 			return
 		}
 		if fail := pageMoveFailure(id, owner, name, groupID, group); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			refuse(fail.Status, fail.Kind, fail.Msg)
 			return
 		}
 		livePages.mu.Lock()
 		p = livePages.byID[id]
 		if p == nil || p.groupID != from {
 			livePages.mu.Unlock()
-			writeError(w, http.StatusConflict, "changed", "the page changed meanwhile; try again")
+			refuse(http.StatusConflict, "changed", "the page changed meanwhile; try again")
 			return
 		}
+		// Like a re-show into another group: the marks were sent to the
+		// old group's audience, so they go before the new one can read it.
+		pageCollab.mu.Lock()
+		forgetPageMarksLocked(id)
+		pageCollab.mu.Unlock()
 		livePages.rev++
 		p.groupID, p.rev, p.updated = groupID, livePages.rev, time.Now().UTC()
 		saved := savedPageRow(p)
 		livePages.mu.Unlock()
 		savePageOpen(saved)
-		// Like a re-show into another group: the marks were sent to the
-		// old group's audience.
-		forgetPageMarks(id)
+		pageSaveMu.Unlock()
 		tellPageOwner(owner, name, "moved", fmt.Sprintf("The operator moved your live page %q to group %s. The marks sent before are dropped.", name, group))
 		writeJSON(w, http.StatusOK, map[string]any{"id": id, "group": group})
 		return
 	}
 	livePages.mu.Unlock()
+	defer pageSaveMu.Unlock()
 
 	row, err := db.GetGroupPage(id)
 	if err != nil {

@@ -769,6 +769,12 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 		title = name
 	}
 	p.title, p.target, p.kind, p.port, p.worktree = title, t.declared, t.kind, t.port, worktree
+	if regrouped {
+		// Before the new group's members can read the page.
+		pageCollab.mu.Lock()
+		forgetPageMarksLocked(p.id)
+		pageCollab.mu.Unlock()
+	}
 	p.path, p.groupID = start, groupID
 	p.state, p.rev, p.updated = pageStateOpen, reg.rev, now
 	resp.pageView = p.agentView()
@@ -777,9 +783,6 @@ func handlePageShow(w http.ResponseWriter, r *http.Request) {
 	savePageOpen(saved)
 	resp.Group = pageGroupName(resp.GroupID)
 	resp.ShareNote = shareNote
-	if regrouped {
-		forgetPageMarks(p.id)
-	}
 	if groupID != 0 {
 		// A page shown into its group from privately has patches nothing
 		// saved yet.
