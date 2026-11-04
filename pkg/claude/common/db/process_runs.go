@@ -1101,3 +1101,20 @@ func WipeProcessRuntimeData() (int64, error) {
 	}
 	return count, nil
 }
+
+// ListActiveProcessRunSummaries is ListProcessRunSummaries restricted to runs
+// that have not finished: one bounded ID-ordered metadata page.
+func ListActiveProcessRunSummaries(afterID string, limit int) ([]ProcessRunSummary, error) {
+	if afterID != "" && !validProcessRuntimeIdentifier(afterID, MaxProcessRunIDBytes, false) {
+		return nil, fmt.Errorf("%w: invalid active-run cursor", ErrProcessRunInvalid)
+	}
+	if limit <= 0 || limit > MaxProcessRunReadPage {
+		return nil, fmt.Errorf("%w: active-run page size must be 1..%d", ErrProcessRunInvalid, MaxProcessRunReadPage)
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	return queryProcessRunSummaries(d, `WHERE id > ? AND status NOT IN ('completed', 'failed', 'canceled') ORDER BY id LIMIT ?`,
+		limit, afterID, limit)
+}
