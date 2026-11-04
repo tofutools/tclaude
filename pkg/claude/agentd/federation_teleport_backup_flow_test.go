@@ -423,6 +423,89 @@ func TestFederation_TeleportBackupReturnWaitsForPersistedProcessAfterPaneLoss(t 
 	})
 }
 
+// TestFederation_TeleportBackupReturnOfDeletedAgent covers an agent deleted
+// after it reported home but before its stop ran. The return tells the origin
+// the remote confirmed it stopped, so it is sent only when the recorded
+// shutdown process is gone. Before, the lease sat in returning forever even
+// with that proof, and the origin fell back to lease-lost recovery without
+// the findings.
+func TestFederation_TeleportBackupReturnOfDeletedAgent(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		evidence bool
+	}{
+		{name: "verified exit returns home", evidence: true},
+		{name: "no shutdown evidence keeps waiting", evidence: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fh := newFedHarness(t)
+			d, a := fedLandedBackup(t, fh)
+			var pid int
+			var started string
+			if tc.evidence {
+				// A real process that has already exited stands in for the
+				// harness the report recorded.
+				child := exec.Command("true")
+				require.NoError(t, child.Start())
+				pid = child.Process.Pid
+				require.NoError(t, child.Wait())
+				started = "exited"
+			}
+			fh.f.Stop(a.CurrentConvID, true)
+			conv := a.CurrentConvID
+			_, err := db.DeleteAgentByConvID(conv)
+			require.NoError(t, err)
+			gone, err := db.GetAgent(a.AgentID)
+			require.NoError(t, err)
+			require.Nil(t, gone, "the agent row is deleted")
+			// The lease is revision-checked and the daemon may still be
+			// updating it, so re-read and retry until this write lands.
+			fedEventually(t, "lease marked returning", func() bool {
+				l, err := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
+				require.NoError(t, err)
+				l.State = "returning"
+				l.ReturnID = proto.NewEnvelopeID()
+				l.Findings = "Reported before deletion"
+				l.ShutdownPID = pid
+				l.ShutdownProcessStart = started
+				if tc.evidence {
+					l.ShutdownConv = conv
+				}
+				won, err := db.TransitionFederationTeleportLease(*l, "")
+				require.NoError(t, err)
+				return won
+			})
+			if !tc.evidence {
+				fedEventually(t, "unverifiable stop recorded", func() bool {
+					l, _ := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
+					return l != nil && strings.Contains(l.LastError, "cannot verify it stopped")
+				})
+				l, err := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
+				require.NoError(t, err)
+				require.Equal(t, "returning", l.State, "a missing agent row is not proof the harness exited")
+				for _, env := range fh.peer.envelopes(proto.KindTeleportLease) {
+					var f struct{ Op string }
+					require.NoError(t, env.DecodePayload(&f))
+					require.NotEqual(t, "return", f.Op)
+				}
+				return
+			}
+			fedEventually(t, "return with findings sent for the deleted agent", func() bool {
+				for _, env := range fh.peer.envelopes(proto.KindTeleportLease) {
+					var f struct{ Op, Findings, Offer string }
+					if env.DecodePayload(&f) == nil && f.Op == "return" && f.Offer == d.ID && f.Findings == "Reported before deletion" {
+						return true
+					}
+				}
+				return false
+			})
+			l, err := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
+			require.NoError(t, err)
+			require.Equal(t, "stopped", l.State)
+		})
+	}
+}
+
 func TestFederation_TeleportBackupUsesOriginCadenceWithDifferentReceiverDefaults(t *testing.T) {
 	fh := newFedHarness(t)
 	d, _ := fedLandedBackup(t, fh)

@@ -606,20 +606,42 @@ func (rt *fedRuntime) stopSupersededTeleport(l *db.FederationTeleportLease) {
 }
 func (rt *fedRuntime) stopReturningTeleport(l *db.FederationTeleportLease) {
 	a, err := db.GetAgent(l.TargetAgent)
-	if err != nil || a == nil {
+	if err != nil {
 		return
 	}
-	if !prepareTeleportShutdown(l, a.CurrentConvID) {
-		return
-	}
-	res, out := stopOneConvAndWait(a.CurrentConvID, false, db.AgentExitActionStop, "", 0)
-	if res.Action == "error" || out == softExitStuck || out == softExitUnattempted || teleportShutdownAlive(*l) {
-		l.LastError = res.Detail
-		if l.LastError == "" {
-			l.LastError = "pinned pane process still alive; waiting for verified exit"
+	if a == nil {
+		// The agent was deleted after it reported, so there is no conv left to
+		// stop. Not every delete stops the agent first (`tclaude conv rm` does
+		// not), so a missing row is not proof the harness exited. The return
+		// tells the origin "the remote confirmed it stopped", so it goes out
+		// only on proof: the shutdown process recorded at report time (or by an
+		// earlier stop attempt) is gone. Without that evidence the lease stays
+		// in returning, and the origin falls back to lease-lost recovery, which
+		// correctly warns that the remote may still be alive.
+		if l.ShutdownPID == 0 || teleportShutdownAlive(*l) {
+			msg := "agent deleted before its exit could be verified; waiting for verified exit"
+			if l.ShutdownPID == 0 {
+				msg = "agent deleted before its shutdown process was recorded; cannot verify it stopped"
+			}
+			if l.LastError != msg {
+				l.LastError = msg
+				_, _ = db.TransitionFederationTeleportLease(*l, "")
+			}
+			return
 		}
-		_, _ = db.TransitionFederationTeleportLease(*l, "")
-		return
+	} else {
+		if !prepareTeleportShutdown(l, a.CurrentConvID) {
+			return
+		}
+		res, out := stopOneConvAndWait(a.CurrentConvID, false, db.AgentExitActionStop, "", 0)
+		if res.Action == "error" || out == softExitStuck || out == softExitUnattempted || teleportShutdownAlive(*l) {
+			l.LastError = res.Detail
+			if l.LastError == "" {
+				l.LastError = "pinned pane process still alive; waiting for verified exit"
+			}
+			_, _ = db.TransitionFederationTeleportLease(*l, "")
+			return
+		}
 	}
 	if presence, err := db.GetAgentFederationPresence(l.TargetAgent); err != nil {
 		return
@@ -699,6 +721,19 @@ func beginTeleportReport(w http.ResponseWriter, r *http.Request, caller, finding
 		l.ReturnID = proto.NewEnvelopeID()
 		l.Findings = findings
 		l.State = "returning"
+		// Record the shutdown evidence now, while the caller's pane is live, so
+		// that a stop finding the agent deleted can still verify the harness
+		// exited (see stopReturningTeleport). Best effort: without it the stop
+		// captures it later, as before.
+		if l.ShutdownPID == 0 && l.ShutdownConv == "" {
+			if sess := pickAliveSession(caller); sess != nil {
+				if target, err := captureLifecycleTarget(sess); err == nil {
+					l.ShutdownPID = target.panePID
+					l.ShutdownProcessStart = moveProcessStart(target.panePID)
+					l.ShutdownConv = caller
+				}
+			}
+		}
 		won, e := db.TransitionFederationTeleportLease(*l, "")
 		if e != nil || !won {
 			writeError(w, 409, "lease", "lease changed")
