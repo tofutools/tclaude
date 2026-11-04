@@ -1,5 +1,7 @@
 import { stripPaneKeys } from './resource-places.js';
 import { CollabRail, railCollapsed } from './collab-rail.js';
+import { CollabHome } from './collab-home.js';
+import { railDrag } from './collab-rail-actions.js';
 import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -1423,6 +1425,9 @@ function TerminalTabs({
     setDropTarget(null);
   };
   const dropTab = (event, targetKey) => {
+    // An item dragged out of the rail or the home is theirs to place
+    // (collab-rail-actions.js), wherever on the strip it lands.
+    if (railDrag.peek()) return;
     event.preventDefault();
     event.stopPropagation();
     droppedRef.current = true;
@@ -1780,11 +1785,12 @@ function TerminalTabs({
   // The rail lists everything beside the strip, on the dashboard's own
   // Collab view only (collab-rail.js).
   const rail = !solo && !!snapshot && !onPeerPage();
+  const floatsOf = (key) => paneFloats(state.panes.peek().find((pane) => pane.key === key), snapshot?.value);
   const rootClass = rail ? `terminal-shell-root has-rail${railCollapsed.value ? ' rail-collapsed' : ''}` : 'terminal-shell-root';
   return html`
     <div ref=${shellRef} class=${rootClass}>
       ${rail ? html`<${CollabRail} panes=${current.panes} actions=${actions} snapshot=${snapshot} notify=${shellToast}
-        floatsOf=${(key) => paneFloats(state.panes.peek().find((pane) => pane.key === key), snapshot?.value)} />` : null}
+        floatsOf=${floatsOf} />` : null}
       ${!solo ? html`
         <span id="terminal-tab-reorder-help" class="mux-tab-a11y">
           Drag tabs to reorder them, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow on a focused tab.
@@ -1894,14 +1900,15 @@ function TerminalTabs({
       ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} groups=${current.groups}
         closeMenu=${closeTabMenu} focusAfterAction=${focusAfterTabMenuAction}
         focusAfterDismiss=${focusAfterTabMenuDismiss} onRenameGroup=${setRenamingGroup} />` : null}
-      ${!solo && !hasPanes ? html`
+      ${!solo && !hasPanes ? html`<${HomeOrHint} rail=${rail} panes=${current.panes} actions=${actions} snapshot=${snapshot}
+        notify=${shellToast} floatsOf=${floatsOf}>
         <div class="mux-bg-empty">
           <div class="mux-empty-title">No terminals open</div>
           ${hasBackground
             ? html`<div>${backgroundRows.length} tclaude ${backgroundRows.length === 1 ? 'session is' : 'sessions are'} still running without a tab open here. Hover the counter at the top right to attach or review them.</div>`
             : html`<div>Open one from an agent's ⚙ <code>terminals &amp; windows…</code> menu and pick a browser option.</div>`}
           ${snapshot ? html`<${BoardsGate}><div>Or open a board${snapshot.value?.processes_enabled === true ? ' or a process' : ''} from the ＋ above.</div><//>` : null}
-        </div>
+        </div><//>
       ` : null}
       ${hasPanes || !empty ? html`
         <div ref=${panesRef} class="mux-panes">
@@ -1968,6 +1975,12 @@ function TerminalTabs({
       ` : null}
     </div>
   `;
+}
+
+// HomeOrHint is the empty strip's body: the Collab home's tiles beside the
+// rail (collab-home.js), or the hint children give.
+function HomeOrHint({ rail, children, ...props }) {
+  return rail ? html`<${CollabHome} ...${props} fallback=${children} />` : children;
 }
 
 function hasRemotePane(state) {

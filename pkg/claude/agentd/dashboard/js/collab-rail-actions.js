@@ -1,0 +1,191 @@
+// collab-rail-actions.js -- what the Collab rail and its tile home do with an
+// item (tcl-lx7nb7, tcl-u58qst): open it, or bring it forward where it already
+// is; and, for an item dragged out of either, open it as a strip tab where it
+// is dropped on the strip, or float it in a window where it is dropped
+// anywhere else. The rail lists come from collab-rail-model.js.
+
+import { signal } from '@preact/signals';
+import { railItems } from './collab-rail-model.js';
+import { overlayResourceKey } from './resource-model.js';
+import { resourcePlaces, revealResourceOverlay } from './resource-places.js';
+import { openOverlayWindow, overlayTabs } from './overlay-instances.js';
+import { moveTabsToCollab } from './overlay-tab-moves.js';
+import { collabDropTarget, collabStripLanding } from './overlay-tab-drag.js';
+import { droppedAt } from './overlay-window-model.js';
+import { attachBackgroundTerminal, backgroundTerminals, rowView, visibleBackgroundTerminals } from './background-terminals.js';
+import { openBoardOverlay, openBoardPane } from './board-overlay-state.js';
+import { expectPage, openPageOverlay, openPagePane } from './page-place.js';
+import { openProcessOverlay, openProcessTab } from './process-editor-place.js';
+import { openGroupWebTermPane, placeTerminalPane } from './terminals-tab.js';
+
+// collabItems is everything the rail and the home list now: panes are the
+// strip's, snapshot the dashboard's.
+export function collabItems(panes, snapshot) {
+  const value = snapshot?.value;
+  return railItems({
+    resources: value?.group_resources || [], groups: value?.groups || [], places: resourcePlaces.value,
+    panes, overlays: overlayTabs.value, background: visibleBackgroundTerminals(backgroundTerminals.value, panes),
+    titleOf: (row) => rowView(row, value).label,
+  });
+}
+
+// overlayOf is the overlay tab holding an item, if one does.
+export const overlayOf = (item) => item.overlay || overlayTabs.peek().find((tab) => overlayResourceKey(tab) === item.key) || null;
+
+// openRailItem opens an item, or brings it forward where it already is.
+export async function openRailItem(item, { actions, snapshot, fetchImpl = (...args) => globalThis.fetch(...args), notify = () => {} }) {
+  if (item.view === 'open-tab' && item.paneKey) return actions?.activatePane?.(item.paneKey);
+  if (item.overlay) return openOverlayWindow(item.overlay);
+  if (item.row) return attachBackgroundTerminal(item.row, snapshot?.value);
+  const r = item.resource;
+  if (!r || revealResourceOverlay(item.key)) return null;
+  switch (r.kind) {
+    case 'page':
+      if (item.view !== 'closed') return openPagePane(r.id, item.title);
+      try {
+        const response = await fetchImpl(`/api/pages/${encodeURIComponent(r.id)}/reopen`, { method: 'POST', credentials: 'same-origin' });
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          notify(`Could not reopen ${item.title}: ${body?.error || response.status}`, true);
+          return null;
+        }
+        expectPage(r.id);
+      } catch (cause) {
+        notify(`Could not reopen ${item.title}: ${cause?.message || cause}`, true);
+      }
+      return null;
+    case 'board': return openBoardPane(r.id, item.title);
+    case 'process': return openProcessTab(r.id, item.title);
+    case 'shell': return openGroupWebTermPane(r.id, `${r.id} shell`);
+    default: return null;
+  }
+}
+
+// railItemToStrip opens an item as a strip tab, beside the tab landing names
+// (collabStripLanding), or at the end without one. A tab moves there; a window
+// gives its tab to the strip.
+export async function railItemToStrip(item, landing, ctx) {
+  const place = (key) => {
+    if (key && landing?.beside && landing.beside !== key) placeTerminalPane(key, landing.beside, { after: landing.after });
+  };
+  if (item.view === 'open-tab' && item.paneKey) return place(item.paneKey);
+  const tab = overlayOf(item);
+  if (tab) return moveTabsToCollab([tab.id], landing || {});
+  const opened = await openRailItem(item, ctx);
+  return place(opened?.key || item.paneKey);
+}
+
+// railItemToFloat floats an item in a window at the point at. A window already
+// holding it comes forward, or back from the dock. A strip tab floats if its
+// kind can; a closed page reopens, as a click does.
+export async function railItemToFloat(item, at, ctx) {
+  const tab = overlayOf(item);
+  if (tab) return openOverlayWindow(tab);
+  const floats = (key) => !!key && !!ctx.floatsOf?.(key);
+  if (item.view === 'open-tab') return floats(item.paneKey) ? ctx.actions?.openPaneInOverlay?.(item.paneKey, { at }) : null;
+  const r = item.resource;
+  if (r?.kind === 'page' && item.view !== 'closed') return openPageOverlay(r.id, item.title, at);
+  if (r?.kind === 'board') return openBoardOverlay(r.id, item.title, at);
+  if (r?.kind === 'process' && openProcessOverlay(r.id, item.title)) return null;
+  // A shell or a terminal floats from the tab it opens in.
+  const key = (await openRailItem(item, ctx))?.key || item.paneKey;
+  return floats(key) ? ctx.actions?.openPaneInOverlay?.(key, { at }) : null;
+}
+
+// pressable makes a role="button" span act on a click and on Enter or Space.
+// The rail and the home use spans, not buttons, as Firefox starts no drag from
+// a button inside a draggable item.
+export function pressable(run) {
+  return {
+    onClick: run,
+    onKeyDown: (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      run(event);
+    },
+  };
+}
+
+export const RAIL_ITEM_DRAG_MIME = 'application/x-tclaude-rail-item';
+
+// railDrag is the item in flight from the rail or the home: { key }. Otherwise null.
+export const railDrag = signal(null);
+
+// railDropZone is what a drop on target does: 'strip' (a tab there), 'home'
+// (the empty strip's tiles, also a tab), 'rail' (nothing), else 'float'.
+const elementOf = (target) => (target?.closest ? target : target?.parentElement) || null;
+
+export function railDropZone(target) {
+  const element = elementOf(target);
+  if (element?.closest?.('[data-collab-strip]')) return 'strip';
+  if (element?.closest?.('[data-collab-home]')) return 'home';
+  if (element?.closest?.('[data-collab-rail]')) return 'rail';
+  return 'float';
+}
+
+function landingAt(event, zone) {
+  if (zone === 'home') return { beside: '', after: false };
+  if (zone !== 'strip') return null;
+  return collabStripLanding(elementOf(event.target).closest('[data-collab-strip]'), event.clientX);
+}
+
+const sameLanding = (a, b) => a?.beside === b?.beside && a?.after === b?.after;
+
+// startRailDrag begins dragging an item out of the rail or the home. Until the
+// drag ends, the page takes the drop: the strip and the home open the item as a
+// tab there, the rest of the page floats it where it lands; the rail itself
+// does nothing. The strip shows where it would land. ctx is what openRailItem
+// takes, with floatsOf(paneKey).
+let endRailDrag = null;
+
+export function startRailDrag(event, item, ctx) {
+  endRailDrag?.();
+  const source = event.currentTarget;
+  const doc = source?.ownerDocument || globalThis.document;
+  event.dataTransfer?.setData(RAIL_ITEM_DRAG_MIME, item.key);
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+  const aim = (next) => {
+    if (!sameLanding(collabDropTarget.peek(), next)) collabDropTarget.value = next;
+  };
+  const over = (e) => {
+    const zone = railDropZone(e.target);
+    if (zone === 'rail') return aim(null);
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    aim(zone === 'strip' ? landingAt(e, zone) : null);
+  };
+  const finish = () => {
+    if (endRailDrag === finish) endRailDrag = null;
+    source?.removeEventListener?.('dragend', finish);
+    doc.removeEventListener('dragover', over, true);
+    doc.removeEventListener('drop', drop, true);
+    doc.removeEventListener('dragend', finish, true);
+    doc.body?.classList?.remove('rail-dragging');
+    aim(null);
+    railDrag.value = null;
+  };
+  function drop(e) {
+    const zone = railDropZone(e.target);
+    if (zone === 'rail') return;
+    e.preventDefault();
+    e.stopPropagation();
+    let landing = null;
+    try {
+      landing = landingAt(e, zone);
+    } finally {
+      finish();
+    }
+    const at = droppedAt(e);
+    void (landing ? railItemToStrip(item, landing, ctx) : railItemToFloat(item, at, ctx));
+  }
+  doc.addEventListener('dragover', over, true);
+  doc.addEventListener('drop', drop, true);
+  doc.addEventListener('dragend', finish, true);
+  // dragend goes to the source; one the list re-rendered away never reaches
+  // the document, so it is heard on the source too, and the next drag ends this one.
+  source?.addEventListener?.('dragend', finish);
+  endRailDrag = finish;
+  // A page's frame would swallow the drag; while it lasts, the frames let it through.
+  doc.body?.classList?.add('rail-dragging');
+  railDrag.value = { key: item.key };
+}
