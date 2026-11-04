@@ -18,7 +18,7 @@ import (
 // is a startup gate that makes the human approve a dir before the agent can
 // act.
 //
-// Callers reach this editor through the harness-agnostic EnsureDirTrusted
+// Callers reach this editor through the harness-agnostic EnsureDirTrustedForLaunch
 // (dir_trust.go). Three paths do so, all of them narrow: the scribe-summon
 // path (which spawns into a stable, daemon-created ~/.tclaude/scribe workdir),
 // the explicit trust-dir opt-in (dashboard checkbox / profile trust_dir /
@@ -26,7 +26,9 @@ import (
 // sibling worktrees. It is never a blanket default for an arbitrary cwd.
 //
 // Where Codex records dir trust in ~/.codex/config.toml, Claude Code records
-// it in ~/.claude.json as a per-path project entry:
+// it in .claude.json as a per-path project entry. For a tclaude-launched pane
+// that file is <state root>/.claude.json (CLAUDE_CONFIG_DIR, see
+// session.ApplyClaudeConfigDirEnv), never the top-level ~/.claude.json:
 //
 //	{
 //	  "projects": {
@@ -63,7 +65,7 @@ import (
 // worst case a single one-time dialog the human clears via the pane's focus
 // button.
 //
-// Unlike the surgical line-splice the Codex TOML editor uses, ~/.claude.json
+// Unlike the surgical line-splice the Codex TOML editor uses, .claude.json
 // is a large JSON state file Claude Code owns and rewrites wholesale on nearly
 // every turn, so a byte-preserving edit buys nothing (Claude Code reorders it
 // on its next write regardless). This editor therefore does a full
@@ -82,83 +84,64 @@ import (
 //     file Claude Code re-serialises anyway.)
 //   - Idempotent: a dir already trusted is a clean no-op — parsed but not
 //     rewritten.
-//   - Atomic: temp file in the same dir, fsync'd, renamed over the original
-//     (shared atomicWriteFile), so a reader (or a crash mid-write) never sees
-//     a partial config. On a spawn that actually WRITES, the edit is
-//     last-writer-wins against any concurrent Claude Code write in the
-//     read→encode→rename window: our rename reverts whatever CC wrote in that
-//     window. Usually that is CC-owned churn (a tip flag, a history entry), but
-//     do not read it as "never anything that matters" — a trust dialog accepted
-//     in ANOTHER CC instance during the window, or an oauthAccount refresh, is
-//     losable too.
-//
-//     Bounded and accepted. The bound is per-dir idempotence: a dir is written
-//     at most once ever, so the window is a single event per directory, not a
-//     recurring risk. Note the trigger count grew when the trust-dir opt-in
-//     stopped being Codex-only — it is no longer just the rare scribe summon
-//     but any opted-in spawn plus every default sibling worktree — so the
-//     number of one-time events tracks worktree creation now. Still acceptable:
-//     CC exposes no lock to coordinate on, and this is inherent to any external
-//     editor of a Claude-owned file.
+//   - Atomic and serialized: the write goes through editHarnessConfigFile,
+//     the editor every other harness's dir-trust seed uses. A temp file in the
+//     same dir is fsync'd and renamed over the original, so a reader (or a
+//     crash mid-write) never sees a partial config. A symlinked .claude.json
+//     (a dotfile manager's) is written through, not replaced. An advisory lock
+//     makes concurrent tclaude spawns seeding DIFFERENT dirs compose instead of
+//     dropping one entry. Claude Code does not take that lock, so after the
+//     temp file is staged the editor re-reads the config and, if Claude Code
+//     wrote in the meantime, re-plans on top of the new bytes. What remains is
+//     the one local rename between that recheck and the commit: a Claude Code
+//     write landing exactly there is still reverted. CC exposes no lock to
+//     coordinate on, so that residue is inherent to any external editor of a
+//     Claude-owned file; per-dir idempotence (a dir is written at most once)
+//     keeps it a one-time event per directory.
 //   - Fail-safe: a config whose `projects` (or the target entry) is bound to a
 //     non-object is refused rather than corrupted.
 
 // ClaudeConfigJSONName is the basename of Claude Code's global config / state
 // file — the file that carries oauthAccount, onboarding state and the
-// per-project trust flags. It sits directly in $HOME by default and inside
-// $CLAUDE_CONFIG_DIR when that variable relocates the config directory; the
-// basename is identical in both locations.
+// per-project trust flags. Claude Code reads it from $CLAUDE_CONFIG_DIR when
+// that variable is set and from $HOME otherwise; the basename is identical in
+// both locations.
 const ClaudeConfigJSONName = ".claude.json"
 
-// claudeConfigJSONPath returns ~/.claude.json, the global Claude Code config /
-// state file that carries the per-project trust flags.
-func claudeConfigJSONPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("cannot determine home dir: %w", err)
-	}
-	return filepath.Join(home, ClaudeConfigJSONName), nil
-}
-
 // claudeConfigJSONPathForLaunch resolves the config file the LAUNCH will
-// actually read: $CLAUDE_CONFIG_DIR/.claude.json when the launch environment
-// relocates the config directory — tclaude's constructed-root sandbox launches
-// do exactly that (see session.ApplyClaudeConfigDirEnv) — and the fixed
-// ~/.claude.json otherwise. Seeding the ambient location for a launch that
-// reads a relocated one would leave the pane parked on the trust dialog the
-// seed was supposed to clear.
+// actually read: $CLAUDE_CONFIG_DIR/.claude.json. Every tclaude-launched
+// Claude pane has CLAUDE_CONFIG_DIR pinned to its state root (see
+// session.ApplyClaudeConfigDirEnv), which is also where sandboxing expects the
+// file. A launch environment without it is a caller bug, and it is refused
+// rather than resolved to the top-level ~/.claude.json: that file is one
+// tclaude panes never open, so a trust entry written there would leave the
+// pane parked on the dialog it was meant to clear — and tclaude must not edit
+// the operator's own Claude config.
 func claudeConfigJSONPathForLaunch(getenv func(string) string) (string, error) {
+	var dir string
 	if getenv != nil {
-		if dir := strings.TrimSpace(getenv("CLAUDE_CONFIG_DIR")); dir != "" {
-			if !filepath.IsAbs(dir) {
-				return "", fmt.Errorf("claude dir-trust: CLAUDE_CONFIG_DIR %q is not absolute", dir)
-			}
-			return filepath.Join(filepath.Clean(dir), ClaudeConfigJSONName), nil
-		}
+		dir = strings.TrimSpace(getenv("CLAUDE_CONFIG_DIR"))
 	}
-	return claudeConfigJSONPath()
+	if dir == "" {
+		return "", fmt.Errorf("claude dir-trust: the launch environment sets no CLAUDE_CONFIG_DIR; " +
+			"refusing to write the top-level ~/.claude.json, which tclaude-launched panes do not read")
+	}
+	if !filepath.IsAbs(dir) {
+		return "", fmt.Errorf("claude dir-trust: CLAUDE_CONFIG_DIR %q is not absolute", dir)
+	}
+	return filepath.Join(filepath.Clean(dir), ClaudeConfigJSONName), nil
 }
 
-// EnsureClaudeDirTrusted pre-trusts projectDir for Claude Code by ensuring
-// ~/.claude.json carries projects[projectDir].hasTrustDialogAccepted = true.
-// projectDir must be the ABSOLUTE launch cwd — the same path Claude Code keys
-// its project entry on — or the entry won't match. Idempotent (already-trusted
-// → no write) and atomic (temp + rename).
+// EnsureClaudeDirTrustedForLaunch pre-trusts projectDir for Claude Code by
+// ensuring the launch's config file ($CLAUDE_CONFIG_DIR/.claude.json, see
+// claudeConfigJSONPathForLaunch) carries
+// projects[projectDir].hasTrustDialogAccepted = true. projectDir must be the
+// ABSOLUTE launch cwd — the same path Claude Code keys its project entry on —
+// or the entry won't match. Idempotent (already-trusted → no write) and atomic.
 //
-// Reached through EnsureDirTrusted (dir_trust.go), which gates on the harness.
 // Callers are limited to the scribe-summon path, the explicit trust-dir opt-in
 // and tclaude's verified default sibling worktrees; it is never a default for
 // an arbitrary cwd.
-func EnsureClaudeDirTrusted(projectDir string) error {
-	path, err := claudeConfigJSONPath()
-	if err != nil {
-		return err
-	}
-	return ensureClaudeDirTrustedInFile(path, projectDir)
-}
-
-// EnsureClaudeDirTrustedForLaunch is EnsureClaudeDirTrusted against the config
-// file the launch's environment selects (see claudeConfigJSONPathForLaunch).
 func EnsureClaudeDirTrustedForLaunch(getenv func(string) string, projectDir string) error {
 	path, err := claudeConfigJSONPathForLaunch(getenv)
 	if err != nil {
@@ -167,7 +150,7 @@ func EnsureClaudeDirTrustedForLaunch(getenv func(string) string, projectDir stri
 	return ensureClaudeDirTrustedInFile(path, projectDir)
 }
 
-// ensureClaudeDirTrustedInFile is EnsureClaudeDirTrusted with the config path
+// ensureClaudeDirTrustedInFile is EnsureClaudeDirTrustedForLaunch with the config path
 // injected, so tests drive it against a temp file. A missing config is treated
 // as empty — a minimal {"projects":{...}} is created (Claude Code fills the
 // rest of its defaults on first run), matching EnsureCodexDirTrusted's
@@ -176,31 +159,35 @@ func ensureClaudeDirTrustedInFile(configPath, projectDir string) error {
 	if !filepath.IsAbs(projectDir) {
 		return fmt.Errorf("claude dir-trust: project dir %q is not absolute", projectDir)
 	}
-	data, err := os.ReadFile(configPath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read Claude config: %w", err)
-	}
-
-	changed, out, err := planClaudeDirTrust(data, projectDir)
-	if err != nil {
-		return err
-	}
-	if !changed {
-		return nil // already trusted — clean no-op (idempotent)
-	}
-
-	// Preserve the existing file's mode — ~/.claude.json holds account-adjacent
-	// state and is typically 0600; a user who tightened it must not have it
-	// silently widened. Fall back to 0600 (not 0644) when creating it fresh,
-	// matching Claude Code's own conservative default for this file.
-	perm := os.FileMode(0o600)
-	if fi, statErr := os.Stat(configPath); statErr == nil {
-		perm = fi.Mode().Perm()
-	}
-	return atomicWriteFile(configPath, out, perm)
+	return editClaudeConfigFile(configPath, func(data []byte) (bool, []byte, error) {
+		return planClaudeDirTrust(data, projectDir)
+	}, prepareAtomicWriteFile)
 }
 
-// planClaudeDirTrust is the pure core: given the current ~/.claude.json bytes
+// editClaudeConfigFile is the read-modify-write of the launch's .claude.json
+// (<state root>/.claude.json), through the
+// same editor every other harness's dir-trust seed uses (Codex, Copilot,
+// Gemini, pi): an advisory lock against concurrent tclaude spawns, a symlinked
+// config written THROUGH rather than replaced by a plain file, the existing
+// file mode preserved, and a stale-read recheck after the temp file is staged
+// so a concurrent Claude Code write is re-planned on top of instead of reverted.
+//
+// The default mode for a fresh file is 0600 (not 0644): .claude.json holds
+// account-adjacent state, and Claude Code itself creates it 0600.
+//
+// prepare is injected so a test can land a concurrent write inside the
+// staging window; production passes prepareAtomicWriteFile. The lock
+// sidecar (.claude.json.tclaude.lock) sits beside the resolved file, inside
+// the state root, where a sandboxed writer can take it too.
+func editClaudeConfigFile(
+	configPath string,
+	plan func([]byte) (bool, []byte, error),
+	prepare func(string, []byte, os.FileMode) (*atomicFileReplacement, error),
+) error {
+	return editHarnessConfigFile("Claude config", configPath, 0o600, plan, prepare)
+}
+
+// planClaudeDirTrust is the pure core: given the current .claude.json bytes
 // and an absolute project dir, it returns whether a change is needed and the
 // new bytes. No filesystem access, so it is exhaustively unit-testable.
 //

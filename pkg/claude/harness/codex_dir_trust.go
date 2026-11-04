@@ -8,7 +8,7 @@ import (
 )
 
 // Codex directory trust (JOH-205 inc4 Part B). The harness-agnostic entry
-// points that reach this editor — ResolveTrustDir and EnsureDirTrusted — live
+// points that reach this editor — ResolveTrustDir and EnsureDirTrustedForLaunch — live
 // in dir_trust.go; Claude Code's equivalent store is claude_dir_trust.go.
 //
 // On first launch in a directory it has not seen, Codex shows a "do you

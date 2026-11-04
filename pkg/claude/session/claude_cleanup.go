@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
@@ -62,18 +61,18 @@ func SyncClaudeCleanupPeriod(cfg *config.Config) error {
 // the same raw-message merge shape as InstallHooks so unknown settings keys ride
 // through untouched.
 func applyClaudeCleanupPeriod(days int) error {
-	settingsPath := ClaudeSettingsPath()
-	if settingsPath == "" {
-		return fmt.Errorf("cannot determine Claude settings path")
-	}
+	return withClaudeSettingsLock(func(settingsTarget string) error {
+		return applyClaudeCleanupPeriodTo(settingsTarget, days)
+	})
+}
 
-	claudeDir := filepath.Dir(settingsPath)
-	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
-		return fmt.Errorf("failed to create .claude directory: %w", err)
-	}
-
+// applyClaudeCleanupPeriodTo is the edit itself, run under
+// withClaudeSettingsLock so it serializes with InstallHooks (the other tclaude
+// writer of this file) and writes the way InstallHooks does: atomically, with
+// the file's mode preserved, through a symlinked settings.json.
+func applyClaudeCleanupPeriodTo(settingsTarget string, days int) error {
 	settings := map[string]json.RawMessage{}
-	data, err := os.ReadFile(settingsPath)
+	data, err := os.ReadFile(settingsTarget)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("failed to read settings: %w", err)
@@ -102,7 +101,7 @@ func applyClaudeCleanupPeriod(days int) error {
 	if err != nil {
 		return fmt.Errorf("failed to serialize settings: %w", err)
 	}
-	if err := os.WriteFile(settingsPath, output, 0o644); err != nil {
+	if err := atomicWriteClaudeSettings(settingsTarget, output); err != nil {
 		return fmt.Errorf("failed to write settings: %w", err)
 	}
 	return nil

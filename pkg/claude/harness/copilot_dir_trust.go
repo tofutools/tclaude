@@ -73,7 +73,7 @@ import (
 // human's trust decision for ONE directory. It grants no tool, path or URL
 // approval — those gates are separate, still enforced, and measured to remain
 // enforced with a trusted folder (see docs/harnesses.md). Like the other two
-// harnesses it is reached only through EnsureDirTrusted, which is never a
+// harnesses it is reached only through EnsureDirTrustedForLaunch, which is never a
 // default: an explicit --trust-dir / profile / dashboard opt-in, the
 // daemon-created scribe workdir, or a tclaude-created default sibling worktree.
 
@@ -86,7 +86,7 @@ const copilotTrustedFoldersKey = "trustedFolders"
 // AMBIENT environment's COPILOT_HOME (or $HOME/.copilot). projectDir must be
 // the absolute launch cwd.
 //
-// Reached through EnsureDirTrusted (dir_trust.go). A launch whose environment
+// Reached through EnsureDirTrustedForLaunch (dir_trust.go). A launch whose environment
 // relocates COPILOT_HOME must use EnsureCopilotDirTrustedForLaunch instead —
 // seeding the ambient home for a launch that reads another one writes a file
 // the agent never opens.

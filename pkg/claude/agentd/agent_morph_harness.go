@@ -17,6 +17,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -606,13 +607,21 @@ func (cm *crossMorph) trustDirectory(convID string) {
 // trustAgentDirectory pre-trusts cwd in h's own trust store through the
 // agent's launch environment, so a relocated store (COPILOT_HOME,
 // CLAUDE_CONFIG_DIR) is the one written.
+//
+// CLAUDE_CONFIG_DIR is launch-owned (a profile cannot author it), so it is
+// never in the sandbox snapshot, and the daemon's own environment does not
+// carry it either. It is applied here exactly as the resumed pane's launch
+// applies it (session.ApplyClaudeConfigDirEnv); without it the trust entry
+// would miss the <state root>/.claude.json the morphed pane reads.
 func trustAgentDirectory(h *harness.Harness, convID, cwd string) error {
-	var env map[string]string
+	env := map[string]string{}
 	if snapshot, err := db.AgentEffectiveSandboxConfigForConv(convID); err == nil && snapshot != nil {
-		env = map[string]string{}
 		for _, entry := range sandboxpolicy.EnvironmentForLaunch(snapshot) {
 			env[entry.Name] = entry.Value
 		}
+	}
+	if err := session.ApplyClaudeConfigDirEnv(h.Name, env); err != nil {
+		return err
 	}
 	getenv := func(name string) string {
 		if v, ok := env[name]; ok {

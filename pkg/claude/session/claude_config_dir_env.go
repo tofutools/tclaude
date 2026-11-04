@@ -58,8 +58,8 @@ func ApplyClaudeConfigDirEnv(harnessName string, env map[string]string) error {
 // PretrustClaudeLaunchDir is the daemon-side pre-trust entry for dirs a Claude
 // agent is about to be spawned into: it seeds and resolves the same relocated
 // config file the launched pane will read, then records the trust entry there.
-// Calling harness.EnsureClaudeDirTrusted directly would write the ambient
-// ~/.claude.json — a file tclaude-launched panes no longer open.
+// The harness editor refuses a launch environment without CLAUDE_CONFIG_DIR,
+// so this is what supplies it for a daemon-side caller.
 func PretrustClaudeLaunchDir(projectDir string) error {
 	env := map[string]string{}
 	if err := ApplyClaudeConfigDirEnv(harness.DefaultName, env); err != nil {
