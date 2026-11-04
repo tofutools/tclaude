@@ -29,7 +29,9 @@ focus the sender's terminal, change read state, or **delete**. The ⤓ menu down
 message or does **Copy as Markdown**. **✓ mark all read** and **🗑 delete read** clean up
 Human notifications.
 
-A notification with [options](companion.md#decisions) shows a button per option.
+A notification with [options](companion.md#decisions) shows a button per option and
+**Dismiss**, for a decision that no longer matters. A dismissed one says who dismissed it
+and why.
 
 A notification can also carry one [action link](companion.md#action-links): a button
 that says what it does and, for a terminal, shows the directory.

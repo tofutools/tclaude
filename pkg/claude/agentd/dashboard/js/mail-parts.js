@@ -14,6 +14,7 @@ import { ImageAttachmentPreview } from './image-preview-overlay.js';
 import { VideoAttachmentPreview } from './video-preview-overlay.js';
 import { MarkdownAttachment } from './markdown-attachment.js';
 import { ROSTER_MAX } from './fused-mail-model.js';
+import { dismissedNote, postDismiss } from './decision-dismiss.js';
 import { MessageDownloadMenu } from './message-download-menu.js';
 import { openHumanReplyModal } from './message-access-dialog-controller.js';
 import { LockReason } from './lock-reason.js';
@@ -366,7 +367,12 @@ export function DecisionChoices({ message, toast, onDone, remote = false, fetchI
   const options = Array.isArray(message.options) ? message.options : [];
   // A decision is answered back to the agent that asked; without one there
   // is nobody to send the pick to.
-  if (options.length < 2 || (!message.from_conv && !message.from_agent && !message.decision)) return null;
+  if (options.length < 2 || (!message.from_conv && !message.from_agent && !message.decision && !message.dismissed_at)) return null;
+  if (message.dismissed_at) {
+    return html`<div class="mail-decision decided dismissed" role="group" aria-label="Decision">
+      <span class="mail-decision-label">${dismissedNote(message)}</span>
+    </div>`;
+  }
   if (message.decision) {
     return html`<div class="mail-decision decided" role="group" aria-label="Decision">
       <span class="mail-decision-label">Decided:</span> <b>${message.decision}</b>
@@ -391,6 +397,17 @@ export function DecisionChoices({ message, toast, onDone, remote = false, fetchI
       toast?.(`Decision failed: ${e?.message || e}`, true);
     }
   };
+  const dismiss = async () => {
+    setBusy('dismiss');
+    try {
+      await postDismiss(fetchImpl, [message.id]);
+      toast?.(`Dismissed; ${message.from_title || 'the agent'} is told`, false);
+      onDone?.();
+    } catch (e) {
+      setBusy(0);
+      toast?.(`Dismiss failed: ${e?.message || e}`, true);
+    }
+  };
   return html`<div class="mail-decision" role="group" aria-label="Decide">
     <span class="mail-decision-label">Decide:</span>
     ${options.map((option, i) => {
@@ -399,6 +416,8 @@ export function DecisionChoices({ message, toast, onDone, remote = false, fetchI
         title=${remote ? 'Answer this decision on the node it came from' : recommended ? 'The agent recommends this one' : 'Send this choice to the agent'}
         onClick=${() => choose(i + 1)}>${busy === i + 1 ? 'Sending…' : option}${recommended ? ' ★' : ''}<//>`;
     })}
+    ${!remote && html`<${Button} size="sm" disabled=${!!busy} title="No longer relevant: dismiss without answering; the agent is told"
+      onClick=${dismiss}>${busy === 'dismiss' ? 'Dismissing…' : 'Dismiss'}<//>`}
   </div>`;
 }
 

@@ -141,6 +141,22 @@ question it answers and any note they added — even if you are offline by
 then. Only the first answer counts. Keep working on what does not depend on
 the answer instead of waiting idle; one decision per message.
 
+When a decision you asked no longer matters (you settled it yourself, or the
+work moved on), withdraw it so it stops waiting on the human:
+
+```bash
+tclaude agent notify-human dismiss 123 --reason "went with tabs after all"
+tclaude agent notify-human dismiss --all   # every open decision of yours
+```
+
+It leaves the human's "to decide" queue and stays in Messages, marked
+dismissed with your reason. You can dismiss only decisions you asked; anyone
+else's reads as not found. An answered decision cannot be dismissed, and a
+dismissed one cannot be answered: whichever comes first counts. The human can
+dismiss your decisions too; you then get an inbox message "Decision #N
+dismissed by the operator" (one message per batch), so stop waiting for an
+answer.
+
 Decisions are part of Collab, which the operator can turn off. If `--option` is refused
 with `collab_disabled`, send the same message without it and list the choices in
 the body; the human answers with a reply.

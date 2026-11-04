@@ -432,6 +432,7 @@ var peerViewOwnNodeRoutes = []string{
 	"GET /api/peer-download/{node}",
 	"POST /api/peer-upload/{node}",
 	"/api/human-messages/",
+	"/api/human-messages/dismiss",
 	"/api/human-messages/read",
 	"/api/human-messages/reply",
 	"/api/slop/channel",

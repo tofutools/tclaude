@@ -529,6 +529,10 @@ body.solo .voice-wake { left: 40%; top: 4px; max-width: 58vw; padding: 2px 8px; 
   background: var(--cmp-bg); display: flex; flex-direction: column;
 }
 .companion-decide-queue .companion-decision { max-height: none; }
+.companion-decide-acts {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px;
+  padding: 6px 8px 0; color: var(--cmp-muted); font-size: 12px;
+}
 .companion-decision-from { margin-left: auto; color: var(--cmp-muted); font-weight: normal; font-size: 11.5px; }
 .companion-decide-mark { color: var(--cmp-blue); }
 .companion-chip-decide { border-color: var(--cmp-blue); }

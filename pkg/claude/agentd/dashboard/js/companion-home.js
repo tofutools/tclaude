@@ -3,12 +3,14 @@
 // A chat tab has the rest (chat-window.js).
 
 import { h } from 'preact';
+import { useState } from 'preact/hooks';
 import htm from 'htm';
 import { relativeAge } from './pr-review-model.js';
 import { windowControlsLook } from './overlay-window-controls.js';
 import { OverlayWindow } from './overlay-window.js';
 import { minimizeOverlayWindow } from './overlay-instances.js';
 import { Button } from './ui-components.js';
+import { postDismiss } from './decision-dismiss.js';
 
 const html = htm.bind(h);
 
@@ -58,9 +60,37 @@ export function StartTab({ instance, overlay, strip, close, minimize, snapshot, 
 }
 
 // DecideTab is every decision agents are waiting on, whoever asked.
+// DismissAll takes every decision in the queue off it, after a one-step
+// confirm that names the count. It sends the ids on screen, nothing else.
+export function DismissAll({ queue, fetchImpl, notify }) {
+  const [phase, setPhase] = useState('idle'); // idle | confirm | busy
+  const n = queue.length;
+  if (n === 0) return null;
+  const noun = `${n} decision${n === 1 ? '' : 's'}`;
+  async function run() {
+    setPhase('busy');
+    try {
+      const done = await postDismiss(fetchImpl, queue.map((d) => d.id));
+      notify(`Dismissed ${done} of ${noun}; each agent is told.`);
+    } catch (error) {
+      notify(`Could not dismiss: ${error?.message || error}`, true);
+    }
+    setPhase('idle');
+  }
+  if (phase === 'idle') {
+    return html`<div class="companion-decide-acts"><${Button} size="sm" onClick=${() => setPhase('confirm')}>Dismiss all (${n})<//></div>`;
+  }
+  return html`<div class="companion-decide-acts" role="group" aria-label="Confirm dismiss all">
+    <span>Dismiss ${noun} without answering?</span>
+    <${Button} size="sm" variant="danger" disabled=${phase === 'busy'} onClick=${run}>${phase === 'busy' ? 'Dismissing…' : `Dismiss ${n}`}<//>
+    <${Button} size="sm" disabled=${phase === 'busy'} onClick=${() => setPhase('idle')}>Cancel<//>
+  </div>`;
+}
+
 export function DecideTab({ instance, overlay, strip, close, minimize, snapshot, queue, askerName, fetchImpl, notify, DecisionCard }) {
   return html`<${HomeWindow} instance=${instance} overlay=${overlay} strip=${strip} close=${close} minimize=${minimize} snapshot=${snapshot} label="To decide">
     <div class="companion-decide-queue" role="region" aria-label="To decide">
+      <${DismissAll} queue=${queue} fetchImpl=${fetchImpl} notify=${notify} />
       ${queue.map((decision) => html`<${DecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} from=${askerName(decision)} />`)}
     </div>
   <//>`;
