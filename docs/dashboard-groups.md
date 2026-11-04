@@ -469,7 +469,16 @@ Each resource has a lock chip. Click it to switch between two states:
 
 Only you can toggle the lock. The same chip is on the resource's own header
 too: the process editor, the board and the page. See
-[Permissions › The operator's lock on a resource](permissions-and-audit.md#the-operators-lock-on-a-resource). Hover the view switch to choose which runs show:
+[Permissions › The operator's lock on a resource](permissions-and-audit.md#the-operators-lock-on-a-resource).
+
+A peer's group in the fused view lists its resources too, read from that
+node, once it shows you the group's roster. Its boards and pages are named
+but not opened here. Its lock chips toggle only where that node grants you
+`groups.resources.lock`; otherwise a chip is greyed out and its tooltip says
+so. If the node refuses a toggle, a toast says why. See
+[Connect and share](federation-peers.md).
+
+Hover the view switch to choose which runs show:
 **Running**, **Planned** and **Done**. See
 [Processes](processes.md#in-the-dashboard).
 

@@ -8,7 +8,7 @@
 // (POST /api/resource-locks). Only the operator's dashboard can.
 
 import { h } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { useDismissablePopover } from './hover-popover.js';
 import htm from 'htm';
 import { openBoardPane } from './board-overlay-state.js';
@@ -17,6 +17,7 @@ import { expectPage, openPagePane } from './page-place.js';
 import { defaultNotify } from './groups-quickstart.js';
 import { Button, Menu, MenuItem } from './ui-components.js';
 import { LockChip } from './resource-lock.js';
+import { nodeFetch } from './node-api.js';
 
 export { LockChip };
 
@@ -105,4 +106,70 @@ export function AddResource({ group, pages = [], api, source, wizard = false, no
       <${MenuItem} data-resource-add-page onClick=${addPage} title="A blank page you draw on; a member takes it over with its own source">Page<//>
     <//>`}
   </span>`;
+}
+
+// --- a peer's group (tcl-i9elme) ---
+
+// peerGroupName is a fused-view group's name on its own node (name@node
+// there is name).
+export function peerGroupName(group) {
+  const at = `@${group.fleet_node?.name || ''}`;
+  return group.fleet_node && group.name.endsWith(at) ? group.name.slice(0, -at.length) : group.name;
+}
+
+// loadPeerResources reads a peer's group resources through the peer view
+// (GET /api/groups/{name}/resources): its processes, boards and pages with
+// their locks, and whether that node lets this one change them (canLock).
+export async function loadPeerResources(name, fetchImpl) {
+  const response = await fetchImpl(`/api/groups/${encodeURIComponent(name)}/resources`, { credentials: 'same-origin' });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(body.message || body.error || `${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  return body;
+}
+
+function peerRows(resources) {
+  return [
+    ['processes', 'Processes', '⚙', 'process', (resources.processes || []).map((p) => ({ id: p.templateId, name: p.name || p.templateId, locked: !!p.agentsLocked }))],
+    ['boards', 'Boards', '▦', 'board', (resources.boards || []).map((b) => ({ id: b.id, name: b.title || b.id, locked: !!b.agentsLocked }))],
+    ['pages', 'Pages', '◧', 'page', (resources.pages || []).map((p) => ({ id: p.id, name: p.title || p.name, locked: !!p.agentsLocked }))],
+  ].filter(([, , , , rows]) => rows.length > 0);
+}
+
+// PeerGroupResources is a peer's group's Resources, read from that node. Its
+// boards and pages are that node's own, so they are named rather than opened;
+// each wears its lock chip, which toggles only where the node grants this one
+// groups.resources.lock, and otherwise says so. A refusal is a toast.
+export function PeerGroupResources({ group, notify = defaultNotify, fetchImpl = null }) {
+  const node = group.fleet_node;
+  const name = peerGroupName(group);
+  const [state, setState] = useState({ resources: null, error: null });
+  const reach = fetchImpl || nodeFetch(node?.id);
+  const refresh = async () => {
+    try {
+      setState({ resources: await loadPeerResources(name, reach), error: null });
+    } catch (error) {
+      setState({ resources: null, error });
+    }
+  };
+  useEffect(() => { void refresh(); }, [node?.id, name]);
+  const { resources } = state;
+  if (!resources) return null;
+  const kinds = peerRows(resources);
+  if (!kinds.length) return null;
+  const peer = { fetchImpl: reach, allowed: !!resources.canLock, node: node?.name };
+  return html`<div class="gr-resources" data-group-resources=${group.name} data-peer-resources=${node?.id || ''}>
+    ${kinds.map(([key, label, glyph, kind, rows]) => html`<div key=${key} class="gr-kind" data-resource-kind=${key}>
+      <span class="ui-eyebrow gr-kind-label">${label}</span>
+      ${rows.map((row) => html`<div key=${row.id} class="gr-row" data-peer-resource=${`${kind}:${row.id}`}>
+        <span class="gr-name-text" title=${row.name}><span class="gr-glyph" aria-hidden="true">${glyph}</span>${row.name}</span>
+        <span class="gr-spacer"></span>
+        <${LockChip} kind=${kind} id=${row.id} name=${row.name} locked=${row.locked} peer=${peer} notify=${notify}
+          source=${{ refresh }} />
+      </div>`)}
+    </div>`)}
+  </div>`;
 }

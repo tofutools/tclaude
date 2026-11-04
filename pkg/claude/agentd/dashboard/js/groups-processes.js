@@ -34,7 +34,7 @@ import { processScribeSessions } from './process-scribe.js';
 import { viewToStepList } from './process-step-list.js';
 import { shellConfirm } from './shell-state.js';
 import { SavedProcesses } from './groups-saved-processes.js';
-import { AddResource, GroupResources } from './groups-resources.js';
+import { AddResource, GroupResources, PeerGroupResources } from './groups-resources.js';
 import { MiniGraphEditor } from './groups-mini-editor.js';
 import { groupRoster } from './process-quickstart.js';
 import { handOffProcessDraft } from './process-draft-handoff.js';
@@ -710,7 +710,7 @@ export function GroupProcessBody({ group, fused = null }) {
   const perspective = useProcessesPerspective();
   const own = useProcessScope()(group);
   if (!perspective) return null;
-  if (!own) return html`<${UnsharedRuns} group=${group} wizard=${perspective.wizard} fused=${fused} />`;
+  if (!own) return html`<${UnsharedRuns} group=${group} wizard=${perspective.wizard} fused=${fused} notify=${perspective.notify} />`;
   return html`<${GroupRuns} group=${own} roster=${perspective.rosters.get(own.name)} context=${perspective.context}
     filter=${perspective.filter} wizard=${perspective.wizard} api=${perspective.api} source=${perspective.source}
     onFocusRun=${perspective.onFocusRun} notify=${perspective.notify} runApi=${perspective.runApi} fused=${fused} confirm=${perspective.confirm} scribes=${perspective.scribes} />`;
@@ -719,7 +719,7 @@ export function GroupProcessBody({ group, fused = null }) {
 // UnsharedRuns stands in for the runs of a group on a node whose run context
 // is not read here (a peer's group in the fused view). In Both the Agents
 // section stays as it is.
-function UnsharedRuns({ group, wizard, fused }) {
+function UnsharedRuns({ group, wizard, fused, notify }) {
   const node = group.fleet_node?.name || 'this node';
   // This node's own groups on a peer's page: their runs show on its own page.
   const text = group.fleet_node?.local
@@ -727,9 +727,12 @@ function UnsharedRuns({ group, wizard, fused }) {
     : (wizard ? `The rites of ${node} are not shared across realms.` : `Process runs on ${node} are not shared across nodes.`);
   const note = html`<div class="gp-empty gp-unshared ui-empty" data-process-unshared=${group.name}>${text}</div>`;
   if (!fused) return html`<div class="gp-group" data-process-group=${group.name}>${note}</div>`;
+  // A peer's group lists its resources from that node (tcl-i9elme): their
+  // locks change only under that node's grants to this one.
   return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Heroes' : 'Agents'} count=${fused.count}
       actions=${fused.actions} closedActions=${fused.closedActions}>${fused.agents}<//>
     ${note}
+    ${!group.fleet_node?.local && html`<${PeerGroupResources} group=${group} notify=${notify || defaultNotify} />`}
     ${fused.after}`;
 }
 
