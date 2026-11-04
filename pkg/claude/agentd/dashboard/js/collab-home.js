@@ -1,51 +1,55 @@
-// collab-home.js -- the Collab view's home (tcl-u58qst): with no tab open on
-// the strip, everything the rail lists shows as tiles, by group, then the
-// agents' terminals, each with its state pill. Clicking a tile opens it as the
-// rail does; dragging one onto the strip or the home opens it as a tab, and
-// dropping it anywhere else floats it (collab-rail-actions.js). With nothing to
-// list it shows fallback, the empty strip's own hint.
+// collab-home.js -- the Collab view's home (tcl-u58qst, tcl-8nfzbb): with no
+// tab open on the strip, what is alive, densely: the agents first (each with
+// its group and what it is doing), then the other live resources, then the
+// few most recently used closed ones and a line to show the rest. Clicking a
+// tile opens it as the panel does; dragging one onto the strip or the home
+// opens it as a tab, and dropping it anywhere else floats it
+// (collab-rail-actions.js). With nothing to list it shows fallback, the empty
+// strip's own hint.
 
 import { h } from 'preact';
+import { useState } from 'preact/hooks';
 import htm from 'htm';
-import { railGlyph } from './collab-rail-model.js';
+import { homeView, isAgentItem, itemState, railGlyph } from './collab-rail-model.js';
 import { collabItems, openRailItem, pressable, startRailDrag } from './collab-rail-actions.js';
-import { ResourcePill } from './resource-pill.js';
 
 const html = htm.bind(h);
 
-const KIND_LABEL = Object.freeze({ page: 'Live page', board: 'Board', process: 'Process', shell: 'Group shell', terminal: 'Terminal' });
-
 function Tile({ item, ctx }) {
-  return html`<div class=${`ui-card ui-inset ch-tile ch-is-${item.bucket}`} data-home-tile=${item.key} draggable="true"
+  const agent = isAgentItem(item);
+  const state = itemState(item);
+  const glyph = agent ? item.status.symbol : railGlyph(item.kind);
+  const cls = `ui-card ui-inset ch-tile ch-is-${item.bucket}${agent ? ` ch-agent ch-status-${item.status.className || 'unknown'}` : ''}`;
+  return html`<div class=${cls} data-home-tile=${item.key} draggable="true"
     onDragStart=${(event) => startRailDrag(event, item, ctx)}>
-    <span role="button" tabIndex="0" class="ch-open" title=${`Open ${item.title}, or drag it onto the strip or out to float it`}
+    <span role="button" tabIndex="0" class="ch-open" title=${[item.title, item.group, state].filter(Boolean).join(' · ')}
       ...${pressable(() => void openRailItem(item, ctx))}>
-      <span class="ch-glyph" aria-hidden="true">${railGlyph(item.kind)}</span>
-      <span class="ch-text">
-        <span class="ch-title">${item.title}</span>
-        <span class="ch-kind">${KIND_LABEL[item.kind] || item.kind}</span>
-      </span>
+      <span class="ch-glyph" aria-hidden="true">${glyph}</span>
+      <span class="ch-title">${item.title}</span>
+      ${state && html`<span class="ch-state">${state}</span>`}
+      ${item.group && html`<span class="ui-tag ch-group">${item.group}</span>`}
     </span>
-    <${ResourcePill} view=${item.view} kind=${item.kind} />
   </div>`;
 }
 
-// CollabHome shows the tiles, or fallback when there are none. ctx is what
-// openRailItem takes, with floatsOf(paneKey).
+// CollabHome shows the tiles, or fallback when there is nothing to list. ctx
+// is what openRailItem takes, with floatsOf(paneKey).
 export function CollabHome({ panes = [], actions, snapshot, notify = () => {}, floatsOf = () => false, fallback = null }) {
-  const { sections, terminals } = collabItems(panes, snapshot);
-  if (!sections.length && !terminals.length) return fallback;
+  const [showAll, setShowAll] = useState(false);
+  const { agents, live, recent, more } = homeView(collabItems(panes, snapshot), { showAll });
+  if (!agents.length && !live.length && !recent.length) return fallback;
   const ctx = { actions, snapshot, notify, floatsOf };
-  const section = (key, name, items) => html`<section key=${key} class="ch-section" data-home-group=${name}>
-    <div class="ui-eyebrow ch-section-name">${name}</div>
+  const section = (key, name, items) => items.length > 0 && html`<section key=${key} class="ch-section" data-home-section=${key}>
+    <h3 class="ui-eyebrow ch-section-name">${name}</h3>
     <div class="ch-grid">${items.map((item) => html`<${Tile} key=${item.key} item=${item} ctx=${ctx} />`)}</div>
   </section>`;
+  const quiet = !agents.length && !live.length;
   return html`<div class="collab-home" data-collab-home="">
-    <div class="ch-head">
-      <div class="mux-empty-title">Nothing open on the strip</div>
-      <div class="ch-hint">Click a tile to open it, drag it onto the strip above to open it as a tab, or drop it anywhere else to float it.</div>
-    </div>
-    ${sections.map((s) => section(s.id, s.name, s.items))}
-    ${terminals.length > 0 && section('terminals', "Agents' terminals", terminals)}
+    ${quiet && html`<p class="ui-empty ch-quiet">Nothing running.</p>`}
+    ${section('agents', 'Agents', agents)}
+    ${section('live', 'Running', live)}
+    ${section('recent', 'Recent', recent)}
+    ${(more > 0 || showAll) && html`<button data-ui-exempt type="button" class="ch-more" data-home-more=""
+      onClick=${() => setShowAll(!showAll)}>${showAll ? 'Show fewer' : `${more} more closed · show all`}</button>`}
   </div>`;
 }

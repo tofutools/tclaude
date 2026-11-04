@@ -585,13 +585,16 @@
     <div class="dock-head">
       <div class="dock-head-main">
         <span id="dock-actions-primary" class="dock-actions"></span>
-        <button id="dock-collapse" class="ui-btn ui-btn-ghost ui-sm dock-collapse" type="button" aria-controls="agent-dock" title="Hide the palette" aria-label="Hide the palette"><span class="tpl-word-regular">Hide ›</span><span class="tpl-word-wizard">Furl ›</span></button>
+        <button id="dock-collapse" class="ui-btn ui-btn-ghost ui-sm dock-collapse" type="button" aria-controls="agent-dock" title="Hide the panel" aria-label="Hide the panel"><span class="tpl-word-regular">Hide ›</span><span class="tpl-word-wizard">Furl ›</span></button>
       </div>
       <div id="dock-actions-profile" class="dock-actions-profile"></div>
     </div>
     <!-- The dock Preact island renders the three keyed <details> sections here
          off the live snapshot; open/collapsed state persists via dashPrefs. -->
     <div id="dock-body" class="dock-body"></div>
+    <!-- The Collab view's body in the same shell (side-panel.js): its list of
+         live agents and resources, rendered by the Collab view (collab-rail.js). -->
+    <div id="dock-collab-body" class="dock-body dock-collab-body" hidden></div>
   </div>
 </aside>
 <!-- Horizontal-scroll clearance spacer (JOH-388 req 3). An invisible, inert

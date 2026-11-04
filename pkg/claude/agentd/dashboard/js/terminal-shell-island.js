@@ -1,5 +1,5 @@
 import { stripPaneKeys } from './resource-places.js';
-import { CollabRail, railCollapsed } from './collab-rail.js';
+import { CollabRail } from './collab-rail.js';
 import { CollabHome } from './collab-home.js';
 import { railDrag } from './collab-rail-actions.js';
 import { h, render } from 'preact';
@@ -1782,11 +1782,11 @@ function TerminalTabs({
     current.panes, onComposeMessage, solo,
   ]);
 
-  // The rail lists everything beside the strip, on the dashboard's own
-  // Collab view only (collab-rail.js).
+  // The Collab panel lists what is live in the shared right side panel, on
+  // the dashboard's own Collab view only (collab-rail.js).
   const rail = !solo && !!snapshot && !onPeerPage();
   const floatsOf = (key) => paneFloats(state.panes.peek().find((pane) => pane.key === key), snapshot?.value);
-  const rootClass = rail ? `terminal-shell-root has-rail${railCollapsed.value ? ' rail-collapsed' : ''}` : 'terminal-shell-root';
+  const rootClass = 'terminal-shell-root';
   return html`
     <div ref=${shellRef} class=${rootClass}>
       ${rail ? html`<${CollabRail} panes=${current.panes} actions=${actions} snapshot=${snapshot} notify=${shellToast}

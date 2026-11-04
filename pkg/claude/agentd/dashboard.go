@@ -2012,6 +2012,9 @@ type dashboardAgent struct {
 	State       agentState `json:"state"`
 	Groups      []string   `json:"groups"`
 	OwnedGroups []string   `json:"owned_groups"` // subset of Groups the agent owns; UI tags these distinctly
+	// SpawnGroup is the one of Groups the agent was spawned into, if it is
+	// still a member there: the group the Collab view lists it under.
+	SpawnGroup string `json:"spawn_group,omitempty"`
 	// Effective is what the permission GATE would allow for this agent —
 	// computed by the gate's own resolver, so it covers sudo elevations
 	// and the structural owner bypass as well as defaults, group grants
@@ -3557,6 +3560,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// client tree keys off. Built from the same group set we're serializing,
 	// so a parent_id with no live group simply doesn't resolve (child stays
 	// top-level) — the FK's ON DELETE SET NULL should already prevent that.
+	spawnGroups, err := db.AgentSpawnGroupIDs()
+	if err != nil {
+		slog.Warn("dashboard: spawn groups unavailable", "error", err)
+	}
 	groupNameByID := make(map[int64]string, len(groups))
 	for _, g := range groups {
 		groupNameByID[g.ID] = g.Name
@@ -3668,6 +3675,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			// Agents/Ungrouped roster.
 			if a := addAgent(m.ConvID); a != nil {
 				a.Groups = append(a.Groups, g.Name)
+				if a.AgentID != "" && spawnGroups[a.AgentID] == g.ID {
+					a.SpawnGroup = g.Name
+				}
 				if ownerSet[m.ConvID] {
 					a.OwnedGroups = append(a.OwnedGroups, g.Name)
 				}

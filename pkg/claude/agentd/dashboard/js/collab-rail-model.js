@@ -1,14 +1,22 @@
-// collab-rail-model.js -- what the Collab rail lists (tcl-lx7nb7): every
-// group's resources, by group, then the agents' terminals, each in one of
-// four buckets the filter chips name. Pure: the rail (collab-rail.js) feeds
-// it the snapshot, this browser's places and its open panes, overlay tabs and
-// background sessions.
+// collab-rail-model.js -- what the Collab rail and its tile home list
+// (tcl-lx7nb7, tcl-8nfzbb): every group's resources and its agents'
+// terminals, by group, each in one of four buckets. Active (open here, on the
+// dock, or running out of sight) is what shows by default; closed items show
+// under the Closed chip and in a search. A group shell that is not running is
+// not listed at all: the Groups tab keeps it, where New → Shell starts it.
+// Pure: the rail (collab-rail.js) and the home (collab-home.js) feed it the
+// snapshot, this browser's places, its open panes, overlay tabs and
+// background sessions, and when each item was last used here.
 
 import { overlayResourceKey, resourceKey, resourceState, stripResourceKey } from './resource-model.js';
 
-export const RAIL_FILTERS = Object.freeze([
-  ['all', 'All'], ['open', 'Open'], ['minimized', 'Minimized'], ['background', 'Background'], ['closed', 'Closed'],
-]);
+// The rail's chips. Active is the default; Closed is the only way (besides a
+// search) to see what is not live. filterRail also takes a single bucket
+// (open, minimized, background).
+export const RAIL_FILTERS = Object.freeze([['active', 'Active'], ['closed', 'Closed']]);
+export const DEFAULT_RAIL_FILTER = 'active';
+const FILTER_KEYS = new Set(RAIL_FILTERS.map(([key]) => key));
+export const railFilterOK = (key) => FILTER_KEYS.has(key);
 
 // bucketOf is the chip a state counts under: open here (a tab or a window),
 // on the dock, running out of sight, or not live.
@@ -19,8 +27,27 @@ export function bucketOf(view) {
   return 'closed';
 }
 
-// The rail's mark at a row's end, per bucket.
-export const RAIL_MARK = Object.freeze({ open: '●', minimized: '–', background: 'bg', closed: 'closed' });
+// BUCKET_RANK orders items within a group: open here first, closed last.
+const BUCKET_RANK = Object.freeze({ open: 0, minimized: 1, background: 2, closed: 3 });
+
+// isAgentItem is a terminal with an agent behind it: the Collab view's main
+// thing, listed before a group's resources.
+export const isAgentItem = (item) => item.kind === 'terminal' && !!item.status?.agent;
+const itemTier = (item) => (item.bucket === 'closed' ? 2 : isAgentItem(item) ? 0 : 1);
+
+// itemState is the word or two an item's row ends with: what an agent is
+// doing, or where a resource is when that is not plain (a page live out of
+// sight, a window on the dock). A closed item says nothing: the Closed chip
+// and the Recent heading already do.
+export function itemState(item) {
+  if (isAgentItem(item)) return AGENT_STATE[item.status.key] || item.status.label || '';
+  if (item.bucket === 'minimized') return 'docked';
+  if (item.bucket === 'background') return item.kind === 'page' ? 'live' : '';
+  return '';
+}
+
+// AGENT_STATE is what an agent's row says it is doing, in a word or two.
+const AGENT_STATE = Object.freeze({ awaiting_permission: 'needs you', awaiting_input: 'needs you', waking: 'starting' });
 
 const KIND_GLYPH = Object.freeze({ page: '◧', board: '▦', process: '⚙', shell: '▭', terminal: '▭' });
 export const railGlyph = (kind) => KIND_GLYPH[kind] || '▭';
@@ -30,56 +57,85 @@ export function resourcePaneKey(resource) {
   return resource.kind === 'shell' ? `groupterm:${resource.id}` : resourceKey(resource);
 }
 
-// railItems builds the rail's sections: one per group that has a resource
-// (in the snapshot's group order), then the agents' terminals.
-export function railItems({ resources = [], groups = [], places = new Map(), panes = [], overlays = [], background = [], titleOf = (row) => row.label || row.tmux_session } = {}) {
+export const UNGROUPED = Object.freeze({ id: 'other', name: 'Not in a group' });
+
+// agentGroupName is the one group an agent is listed under: the group it was
+// spawned into while it is still a member, else its first group. '' for
+// none, or for a group not listed here.
+export function agentGroupName(agent, names) {
+  if (!agent) return '';
+  const groups = Array.isArray(agent.groups) ? agent.groups : [];
+  if (agent.spawn_group && groups.includes(agent.spawn_group) && names.has(agent.spawn_group)) return agent.spawn_group;
+  return groups.find((name) => names.has(name)) || '';
+}
+
+// railItems builds the sections: one per group with anything to list, then
+// Not in a group, ordered with what is in use first. Each item carries its
+// group's name ('' for none) and when it was last used here (usedAt, ms).
+//   statusOf(item) is a terminal item's terminalTabStatus (its agent and
+//   what it is doing), if any; the item keeps it as status.
+//   used is a Map of item key → the last time it was opened here.
+export function railItems({
+  resources = [], groups = [], places = new Map(), panes = [], overlays = [], background = [],
+  titleOf = (row) => row.label || row.tmux_session, statusOf = () => null, used = new Map(),
+} = {}) {
   const names = new Map(groups.map((g) => [g.id, g.name]));
+  const byName = new Map(groups.map((g) => [g.name, g.id]));
   const order = new Map(groups.map((g, index) => [g.id, index]));
   const byGroup = new Map();
+  const add = (groupID, item) => {
+    if (!byGroup.has(groupID)) byGroup.set(groupID, []);
+    byGroup.get(groupID).push(item);
+  };
+  const stamp = (item) => ({ ...item, usedAt: used.get(item.key) || 0 });
+
   for (const r of resources) {
     if (!r || !names.has(r.group_id)) continue;
     const view = resourceState(r, places);
-    const item = {
-      key: resourceKey(r), kind: r.kind, title: r.title || r.id, view, bucket: bucketOf(view), resource: r,
+    const bucket = bucketOf(view);
+    // A group shell nobody started is the Groups tab's, not the rail's.
+    if (r.kind === 'shell' && bucket === 'closed') continue;
+    // A group's shell is named for its group: "Group shell" twice says nothing.
+    const title = r.kind === 'shell' ? `${names.get(r.group_id)} shell` : r.title || r.id;
+    add(r.group_id, stamp({
+      key: resourceKey(r), kind: r.kind, title, view, bucket, resource: r,
       group: names.get(r.group_id), paneKey: resourcePaneKey(r),
-    };
-    if (!byGroup.has(r.group_id)) byGroup.set(r.group_id, []);
-    byGroup.get(r.group_id).push(item);
+    }));
   }
-  const sections = [...byGroup.entries()]
-    .sort(([a], [b]) => order.get(a) - order.get(b))
-    .map(([id, items]) => ({ id, name: names.get(id), items }));
 
   // A resource open here that no group lists (a board linked to none, a page
   // shown outside a group, a shell whose group was archived) still shows.
-  const listed = new Set(sections.flatMap((s) => s.items.map((item) => item.key)));
-  const others = [];
+  const listed = new Set([...byGroup.values()].flat().map((item) => item.key));
   for (const pane of panes) {
     const key = stripResourceKey(pane?.key);
     if (!key || listed.has(key)) continue;
     listed.add(key);
-    others.push({ key, kind: key.slice(0, key.indexOf(':')), title: pane.label || key, view: 'open-tab', bucket: 'open', paneKey: pane.key });
+    add(UNGROUPED.id, stamp({ key, kind: key.slice(0, key.indexOf(':')), title: pane.label || key, view: 'open-tab', bucket: 'open', group: '', paneKey: pane.key }));
   }
   for (const tab of overlays) {
     const key = overlayResourceKey(tab);
     if (!key || listed.has(key)) continue;
     listed.add(key);
     const view = tab.minimized ? 'minimized' : 'floating';
-    others.push({ key, kind: key.slice(0, key.indexOf(':')), title: tab.label || key, view, bucket: bucketOf(view), overlay: tab });
+    add(UNGROUPED.id, stamp({ key, kind: key.slice(0, key.indexOf(':')), title: tab.label || key, view, bucket: bucketOf(view), group: '', overlay: tab }));
   }
-  if (others.length) sections.push({ id: 'other', name: 'Not in a group', items: others });
 
-  // Terminals: the strip's agent and session panes, the overlay windows'
-  // terminal tabs, then the sessions running with nothing attached here.
-  const terminals = [];
+  // Terminals go under their agent's group: the strip's agent and session
+  // panes, the overlay windows' terminal tabs, then the sessions running with
+  // nothing attached here.
+  const terminal = (item) => {
+    const status = statusOf(item) || null;
+    const name = agentGroupName(status?.agent, byName);
+    add(name ? byName.get(name) : UNGROUPED.id, stamp({ ...item, kind: 'terminal', group: name, status }));
+  };
   for (const pane of panes) {
     if (!pane?.key || stripResourceKey(pane.key) || pane.seed?.page || pane.seed?.board || pane.seed?.process) continue;
-    terminals.push({ key: `pane:${pane.key}`, kind: 'terminal', title: pane.label || pane.key, view: 'open-tab', bucket: 'open', paneKey: pane.key });
+    terminal({ key: `pane:${pane.key}`, title: pane.label || pane.key, view: 'open-tab', bucket: 'open', paneKey: pane.key, pane });
   }
   for (const tab of overlays) {
     if (tab?.kind !== 'terminal' || String(tab.paneKey || '').startsWith('groupterm:')) continue;
     const view = tab.minimized ? 'minimized' : 'floating';
-    terminals.push({ key: `overlay:${tab.id}`, kind: 'terminal', title: tab.label || tab.id, view, bucket: bucketOf(view), overlay: tab });
+    terminal({ key: `overlay:${tab.id}`, title: tab.label || tab.id, view, bucket: bucketOf(view), overlay: tab });
   }
   // A background session counts once: not when an overlay window holds it
   // (a minimized one is detached, so the listing has it too), and only when
@@ -87,24 +143,68 @@ export function railItems({ resources = [], groups = [], places = new Map(), pan
   const held = new Set(overlays.map((tab) => tab?.paneKey).filter(Boolean));
   for (const row of background) {
     if (!row || !row.key || held.has(row.key) || row.kind === 'board' || row.kind === 'group_shell') continue;
-    terminals.push({ key: `bg:${row.node?.id || ''}:${row.tmux_session || row.key}`, kind: 'terminal', title: titleOf(row), view: 'background', bucket: 'background', row });
+    terminal({ key: `bg:${row.node?.id || ''}:${row.tmux_session || row.key}`, title: titleOf(row), view: 'background', bucket: 'background', row });
   }
-  return { sections, terminals };
+
+  const sections = [...byGroup.entries()].map(([id, items]) => {
+    const sorted = items.map((item, index) => ({ item, index }))
+      .sort((a, b) => itemTier(a.item) - itemTier(b.item) || BUCKET_RANK[a.item.bucket] - BUCKET_RANK[b.item.bucket]
+        || b.item.usedAt - a.item.usedAt || a.index - b.index)
+      .map(({ item }) => item);
+    return { id, name: id === UNGROUPED.id ? UNGROUPED.name : names.get(id), items: sorted };
+  });
+  return { sections: sortSections(sections, order) };
 }
 
-// filterRail keeps the items in the chosen bucket whose title or group holds
-// the query, dropping a section left empty. counts are before the bucket
-// filter, after the search.
-export function filterRail({ sections, terminals }, { bucket = 'all', query = '' } = {}) {
-  const q = query.trim().toLowerCase();
-  const matches = (item) => !q || item.title.toLowerCase().includes(q) || (item.group || '').toLowerCase().includes(q);
-  const counts = { all: 0, open: 0, minimized: 0, background: 0, closed: 0 };
+// sortSections puts a group with something open here first, then one with a
+// live agent, then one with anything active, then the rest; within each, the most recently used, then
+// the snapshot's group order. Not in a group goes last among its peers.
+function sortSections(sections, order) {
+  const live = (i) => i.bucket !== 'closed';
+  const tier = (s) => (s.items.some((i) => i.bucket === 'open') ? 0 : s.items.some((i) => live(i) && isAgentItem(i)) ? 1
+    : s.items.some(live) ? 2 : 3);
+  const recent = (s) => Math.max(0, ...s.items.map((i) => i.usedAt));
+  const rank = (s) => (s.id === UNGROUPED.id ? Infinity : order.get(s.id) ?? Infinity);
+  return [...sections].sort((a, b) => tier(a) - tier(b) || recent(b) - recent(a) || rank(a) - rank(b));
+}
+
+// matchesQuery is whether an item's title or group holds the query.
+export function matchesQuery(item, query) {
+  const q = String(query || '').trim().toLowerCase();
+  return !q || item.title.toLowerCase().includes(q) || (item.group || '').toLowerCase().includes(q);
+}
+
+const inFilter = (item, bucket) => (bucket === 'active' ? item.bucket !== 'closed' : item.bucket === bucket);
+
+// filterRail keeps the items in the chosen chip, dropping a section left
+// empty. A search finds everything, closed items included, whatever the
+// chip. counts are after the search, per chip.
+export function filterRail({ sections }, { bucket = DEFAULT_RAIL_FILTER, query = '' } = {}) {
+  const searching = !!String(query || '').trim();
+  const counts = { active: 0, open: 0, minimized: 0, background: 0, closed: 0 };
   const keep = (items) => items.filter((item) => {
-    if (!matches(item)) return false;
-    counts.all += 1;
+    if (!matchesQuery(item, query)) return false;
     counts[item.bucket] += 1;
-    return bucket === 'all' || item.bucket === bucket;
+    if (item.bucket !== 'closed') counts.active += 1;
+    return searching || inFilter(item, bucket);
   });
   const shown = sections.map((s) => ({ ...s, items: keep(s.items) })).filter((s) => s.items.length);
-  return { sections: shown, terminals: keep(terminals), counts };
+  return { sections: shown, counts };
+}
+
+// HOME_RECENT is how many closed items the home shows before "show all".
+export const HOME_RECENT = 8;
+
+// homeView is what the home shows: the agents (most recently used first),
+// the other live items, the closed ones most recently used first (the first
+// HOME_RECENT unless all are asked for), and how many more are closed.
+export function homeView({ sections }, { showAll = false } = {}) {
+  const flat = sections.flatMap((s) => s.items).map((item, index) => ({ item, index }));
+  const byUse = (a, b) => b.item.usedAt - a.item.usedAt || BUCKET_RANK[a.item.bucket] - BUCKET_RANK[b.item.bucket] || a.index - b.index;
+  const pick = (keep) => flat.filter(({ item }) => keep(item)).sort(byUse).map(({ item }) => item);
+  const agents = pick((item) => item.bucket !== 'closed' && isAgentItem(item));
+  const live = pick((item) => item.bucket !== 'closed' && !isAgentItem(item));
+  const closed = pick((item) => item.bucket === 'closed');
+  const recent = showAll ? closed : closed.slice(0, HOME_RECENT);
+  return { agents, live, recent, more: closed.length - recent.length };
 }

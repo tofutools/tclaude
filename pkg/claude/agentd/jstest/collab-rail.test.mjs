@@ -5,7 +5,12 @@ import { createPreactHarness } from './preact-harness.mjs';
 const wait = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const SNAPSHOT = {
-  groups: [{ id: 1, name: 'tclaude' }, { id: 2, name: 'home-lab' }],
+  groups: [{ id: 1, name: 'tclaude' }, { id: 2, name: 'home-lab' }, { id: 3, name: 'quiet' }],
+  agents: [
+    { agent_id: 'agt_x', conv_id: 'cx', title: 'launch-uniform', groups: ['home-lab', 'tclaude'], spawn_group: 'tclaude', online: true },
+    { agent_id: 'agt_y', conv_id: 'cy', title: 'relaunch-table', groups: ['home-lab', 'tclaude'], online: true },
+    { agent_id: 'agt_z', conv_id: 'cz', title: 'loner', groups: [], online: true },
+  ],
   group_resources: [
     { kind: 'board', id: 'launch', group_id: 1, title: 'Launch-resolution map', state: 'closed' },
     { kind: 'page', id: 'pg_dash', group_id: 1, title: 'Dashboard preview', state: 'running' },
@@ -14,10 +19,18 @@ const SNAPSHOT = {
     { kind: 'board', id: 'release', group_id: 1, title: 'Release planning', state: 'closed' },
     { kind: 'board', id: 'net', group_id: 2, title: 'Network diagram', state: 'closed' },
     { kind: 'page', id: 'pg_status', group_id: 2, title: 'Status page', state: 'closed' },
+    { kind: 'shell', id: 'home-lab', group_id: 2, title: 'Group shell', state: 'closed' },
+    { kind: 'shell', id: 'quiet', group_id: 3, title: 'Group shell', state: 'closed' },
   ],
 };
 
-test('rail model: resources by group in group order, then terminals, each in a bucket', async (t) => {
+// statusOf stands in for terminalTabStatus: each terminal's agent, by title.
+const statusOf = (item) => {
+  const agent = SNAPSHOT.agents.find((a) => a.title === item.title);
+  return agent ? { agent, key: 'idle', label: 'idle', symbol: '○', className: 'idle' } : null;
+};
+
+test('rail model: agents under their group first, live before closed, never-started group shells left out', async (t) => {
   const harness = await createPreactHarness(t);
   const m = await harness.importDashboardModule('js/collab-rail-model.js');
   const model = await harness.importDashboardModule('js/resource-model.js');
@@ -26,58 +39,72 @@ test('rail model: resources by group in group order, then terminals, each in a b
     overlays: [{ kind: 'page', page: 'pg_dash', minimized: true }, { kind: 'board', board: 'net', minimized: true }],
   });
   const all = m.railItems({
-    resources: SNAPSHOT.group_resources, groups: SNAPSHOT.groups, places,
+    resources: SNAPSHOT.group_resources, groups: SNAPSHOT.groups, places, statusOf,
     panes: [{ key: 'board:launch', seed: { board: 'launch' }, label: 'Launch' }, { key: 'agent:x', seed: { agent: 'x' }, label: 'launch-uniform' }],
-    overlays: [{ id: 'term:y', kind: 'terminal', paneKey: 'agent:y', label: 'relaunch-table', minimized: false }],
-    background: [{ kind: 'agent', key: 'agent:live', tmux_session: 'tc-live', label: 'live-page' }, { kind: 'group_shell', key: 'groupterm:tclaude', tmux_session: 'g' },
+    overlays: [{ id: 'term:y', kind: 'terminal', paneKey: 'agent:y', agent: 'agt_y', label: 'relaunch-table', minimized: false }],
+    background: [{ kind: 'agent', key: 'agent:z', tmux_session: 'tc-z', label: 'loner' }, { kind: 'group_shell', key: 'groupterm:tclaude', tmux_session: 'g' },
       { kind: 'shell', key: 'agent:y', tmux_session: 'held', label: 'held by a window' },
       { kind: 'agent', tmux_session: 'old-gen', label: 'superseded' }],
   });
-  assert.deepEqual(all.sections.map((s) => s.name), ['tclaude', 'home-lab']);
-  const buckets = Object.fromEntries(all.sections.flatMap((s) => s.items).map((i) => [i.key, i.bucket]));
-  assert.deepEqual(buckets, {
-    'board:launch': 'open', 'page:pg_dash': 'minimized', 'process:pr-review': 'background', 'shell:tclaude': 'background',
-    'board:release': 'closed', 'board:net': 'minimized', 'page:pg_status': 'closed',
-  });
-  assert.deepEqual(all.terminals.map((i) => [i.title, i.bucket]), [['launch-uniform', 'open'], ['relaunch-table', 'open'], ['live-page', 'background']],
-    'a strip agent pane, a floating terminal, a background session; a group shell is the group\'s, not a terminal');
+  assert.deepEqual(all.sections.map((s) => s.name), ['tclaude', 'home-lab', 'Not in a group'],
+    'groups with something open here first; a group with only a closed shell is not there');
+  const tclaude = all.sections[0].items.map((i) => i.key);
+  assert.equal(tclaude[0], 'pane:agent:x', 'the agent spawned into tclaude is listed there, first');
+  assert.ok(tclaude.includes('shell:tclaude'), 'a running group shell is listed');
+  const flat = all.sections.flatMap((s) => s.items);
+  assert.ok(!flat.some((i) => i.key === 'shell:home-lab' || i.key === 'shell:quiet'), 'a group shell nobody started is not');
+  assert.equal(tclaude.at(-1), 'board:release', 'closed items come last');
+  assert.equal(all.sections[1].items[0].key, 'overlay:term:y', 'an agent with no spawn group goes under its first group');
+  assert.deepEqual(all.sections[2].items.map((i) => [i.key, i.bucket]), [['bg::tc-z', 'background']], 'an agent in no group is under Not in a group');
+  assert.ok(!flat.some((i) => i.title === 'held by a window'), 'a session an overlay window holds is listed once');
+  assert.ok(!flat.some((i) => i.title === 'superseded'), 'a session that cannot be attached is not offered');
 
-  assert.ok(!all.terminals.some((i) => i.title === 'held by a window'), 'a session an overlay window holds is listed once');
-  assert.ok(!all.terminals.some((i) => i.title === 'superseded'), 'a session that cannot be attached is not offered');
+  const active = m.filterRail(all);
+  assert.deepEqual(active.counts, { active: 8, open: 3, minimized: 2, background: 3, closed: 2 });
+  assert.ok(!active.sections.flatMap((s) => s.items).some((i) => i.bucket === 'closed'), 'Active, the default, shows nothing closed');
+  const closed = m.filterRail(all, { bucket: 'closed' });
+  assert.deepEqual(closed.sections.flatMap((s) => s.items).map((i) => i.key), ['board:release', 'page:pg_status']);
+  const found = m.filterRail(all, { query: 'status' });
+  assert.deepEqual(found.sections.flatMap((s) => s.items).map((i) => i.key), ['page:pg_status'], 'a search finds a closed item whatever the chip');
+  assert.deepEqual(m.filterRail(all, { query: 'lab' }).sections.map((s) => s.name), ['home-lab'], 'search matches the group name too');
 
-  // Open here but in no group's list: it still shows, under Not in a group.
-  const loose = m.railItems({
-    resources: SNAPSHOT.group_resources, groups: SNAPSHOT.groups,
-    panes: [{ key: 'board:scratch', seed: { board: 'scratch' }, label: 'Scratch board' }],
-    overlays: [{ kind: 'page', page: 'pg_private', label: 'Private page', minimized: true }],
-  });
-  const other = loose.sections.find((s) => s.id === 'other');
-  assert.deepEqual(other.items.map((i) => [i.key, i.bucket]), [['board:scratch', 'open'], ['page:pg_private', 'minimized']]);
-
-  const open = m.filterRail(all, { bucket: 'open' });
-  assert.deepEqual(open.counts, { all: 10, open: 3, minimized: 2, background: 3, closed: 2 });
-  assert.deepEqual(open.sections.map((s) => s.name), ['tclaude'], 'a group with nothing open drops out');
-  const found = m.filterRail(all, { query: 'lab' });
-  assert.deepEqual(found.sections.map((s) => s.name), ['home-lab'], 'search matches the group name too');
-  assert.equal(found.counts.all, 2);
+  const home = m.homeView(all);
+  assert.deepEqual(home.agents.map((i) => i.title), ['launch-uniform', 'relaunch-table', 'loner']);
+  assert.ok(home.live.length > 0 && home.live.every((i) => i.bucket !== 'closed' && !m.isAgentItem(i)));
+  assert.deepEqual(home.recent.map((i) => i.key), ['board:release', 'page:pg_status']);
+  assert.equal(home.more, 0);
 });
 
-test('rail: lists, filters, opens an item, folds to icons', async (t) => {
+test('home view: the most recently used closed items, then how many more', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/collab-rail-model.js');
+  const resources = Array.from({ length: 12 }, (_, i) => ({ kind: 'board', id: `b${i}`, group_id: 1, title: `Board ${i}`, state: 'closed' }));
+  const all = m.railItems({ resources, groups: [{ id: 1, name: 'g' }], used: new Map([['board:b9', 2], ['board:b4', 1]]) });
+  const view = m.homeView(all);
+  assert.equal(view.recent.length, m.HOME_RECENT);
+  assert.deepEqual(view.recent.slice(0, 2).map((i) => i.key), ['board:b9', 'board:b4'], 'the most recently used first');
+  assert.equal(view.more, 12 - m.HOME_RECENT);
+  assert.equal(m.homeView(all, { showAll: true }).recent.length, 12);
+});
+
+test('rail: Active by default, Closed and search find the rest, a group header folds', async (t) => {
   const harness = await createPreactHarness(t);
   const [rail, places] = await Promise.all([
     harness.importDashboardModule('js/collab-rail.js'),
     harness.importDashboardModule('js/resource-places.js'),
   ]);
-  await harness.act(() => { places.stripPaneKeys.value = ['board:launch']; rail.setRailCollapsed(false); });
+  await harness.act(() => { places.stripPaneKeys.value = ['board:launch']; });
   const activated = [];
   const actions = { activatePane: (key) => activated.push(key), closePane: () => {}, popOutPane: () => {} };
   const { container } = await harness.mount(harness.html`<${rail.CollabRail}
     panes=${[{ key: 'board:launch', seed: { board: 'launch' }, label: 'Launch' }]} actions=${actions} snapshot=${{ value: SNAPSHOT }} />`);
   const root = container.querySelector('[data-collab-rail]');
-  assert.deepEqual([...root.querySelectorAll('[data-rail-group]')].map((el) => el.dataset.railGroup), ['tclaude', 'home-lab']);
-  assert.equal(root.querySelector('[data-rail-filter="open"]').textContent, 'Open 1');
-  assert.equal(root.querySelector('[data-rail-item="page:pg_dash"] .cr-mark').textContent, 'live', 'a page out of sight is live');
-  assert.equal(root.querySelector('[data-rail-item="shell:tclaude"] .cr-mark').textContent, 'bg');
+  const items = () => [...root.querySelectorAll('[data-rail-item]')].map((el) => el.dataset.railItem);
+  assert.deepEqual([...root.querySelectorAll('[data-rail-group]')].map((el) => el.dataset.railGroup), ['tclaude']);
+  assert.deepEqual(items(), ['board:launch', 'page:pg_dash', 'process:pr-review', 'shell:tclaude']);
+  assert.equal(root.querySelector('[data-rail-filter="closed"]').textContent, 'Closed 3');
+  assert.equal(root.querySelector('[data-rail-item="page:pg_dash"] .cr-state').textContent, 'live', 'a page out of sight is live');
+  assert.equal(root.querySelector('[data-rail-item="board:launch"] .cr-state'), null, 'an item open here needs no words');
 
   // A strip tab comes forward on click, and offers pop out and close.
   const launch = root.querySelector('[data-rail-item="board:launch"]');
@@ -86,15 +113,52 @@ test('rail: lists, filters, opens an item, folds to icons', async (t) => {
   assert.deepEqual(activated, ['board:launch']);
 
   await harness.act(() => harness.fireEvent(root.querySelector('[data-rail-filter="closed"]'), 'click'));
-  assert.deepEqual([...root.querySelectorAll('[data-rail-item]')].map((el) => el.dataset.railItem), ['board:release', 'board:net', 'page:pg_status']);
+  assert.deepEqual(items(), ['board:release', 'board:net', 'page:pg_status']);
   const search = root.querySelector('.cr-search');
-  await harness.act(() => { search.value = 'status'; harness.fireEvent(search, 'input'); });
-  assert.deepEqual([...root.querySelectorAll('[data-rail-item]')].map((el) => el.dataset.railItem), ['page:pg_status']);
+  await harness.act(() => { search.value = 'preview'; harness.fireEvent(search, 'input'); });
+  assert.deepEqual(items(), ['page:pg_dash'], 'a search finds a live item while Closed is picked');
+  await harness.act(() => { search.value = ''; harness.fireEvent(search, 'input'); });
 
-  await harness.act(() => harness.fireEvent(root.querySelector('[data-rail-fold]'), 'click'));
-  const folded = container.querySelector('[data-collab-rail]');
-  assert.ok(folded.classList.contains('collapsed'));
-  assert.equal(folded.querySelector('.cr-search'), null);
-  assert.equal(folded.querySelectorAll('[data-rail-item]').length, 7, 'folded, every item shows as its icon');
-  assert.equal(rail.railCollapsed.value, true);
+  await harness.act(() => harness.fireEvent(root.querySelector('[data-rail-filter="active"]'), 'click'));
+  await harness.act(() => harness.fireEvent(root.querySelector('[data-rail-group="tclaude"] .cr-section-head'), 'click'));
+  assert.deepEqual(items(), [], 'a folded group shows only its header');
+  assert.equal(root.querySelector('[data-rail-group="tclaude"] .cr-count').textContent, '4');
+});
+
+test('side panel: each tab has its own panel and state; Collab is folded by default and offered only while mounted', async (t) => {
+  const harness = await createPreactHarness(t);
+  const doc = harness.document;
+  for (const id of ['tab-groups', 'tab-terminals']) doc.body.appendChild(doc.createElement('section')).id = id;
+  const shell = doc.body.appendChild(doc.createElement('aside'));
+  shell.id = 'agent-dock';
+  shell.appendChild(doc.createElement('button')).id = 'dock-toggle';
+  shell.appendChild(doc.createElement('div')).id = 'dock-body';
+  shell.appendChild(doc.createElement('div')).id = 'dock-collab-body';
+  const side = await harness.importDashboardModule('js/side-panel.js');
+  side.registerSidePanel('groups', { pane: 'tab-groups', pref: 'test.groups.open', open: true, body: '#dock-body', titles: [['Hide', 'Hide'], ['Show', 'Show']] });
+  side.registerSidePanel('collab', { pane: 'tab-terminals', pref: 'test.collab.open', open: false, body: '#dock-collab-body', needsOffer: true,
+    titles: [['Hide C', 'Hide C'], ['Show C', 'Show C']] });
+  side.bindSidePanel(doc);
+  const body = doc.body;
+
+  doc.getElementById('tab-groups').classList.add('active');
+  side.applySidePanel(doc);
+  assert.ok(body.classList.contains('dock-tab') && body.classList.contains('dock-open'), 'the Groups palette opens by default');
+  assert.equal(body.dataset.dockPanel, 'groups');
+  assert.equal(doc.getElementById('dock-collab-body').hidden, true);
+
+  doc.getElementById('tab-groups').classList.remove('active');
+  doc.getElementById('tab-terminals').classList.add('active');
+  side.applySidePanel(doc);
+  assert.ok(!body.classList.contains('dock-tab'), 'Collab offers no panel until its view is mounted');
+  side.offerSidePanel('collab', true);
+  assert.ok(body.classList.contains('dock-tab') && !body.classList.contains('dock-open'), 'the Collab panel is folded by default');
+  assert.equal(doc.getElementById('dock-toggle').title, 'Show C');
+  harness.fireEvent(doc.getElementById('dock-toggle'), 'click');
+  assert.ok(body.classList.contains('dock-open'));
+  assert.equal(doc.getElementById('dock-body').hidden, true, 'the Collab body shows, not the palette');
+  assert.equal(doc.getElementById('dock-collab-body').hidden, false);
+  harness.fireEvent(doc.getElementById('dock-toggle'), 'click');
+  assert.equal(side.isSidePanelOpen('collab'), false);
+  assert.equal(side.isSidePanelOpen('groups'), true, 'each panel keeps its own state');
 });

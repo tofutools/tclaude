@@ -8,44 +8,44 @@ background.
 A web terminal is the real thing, attached to the agent's tmux session. There is
 no read-only mode here: what you type lands in the agent's session.
 
-## The rail
-
-Down the left edge, the rail lists everything you can open here, in one place:
-- each group's resources, by group: its pages, boards, processes and shell;
-- then the agents' terminals, both the ones open here and the sessions
-  running in the background.
-
-Each item ends in its state:
-- **●** open here, as a tab or a window;
-- **–** minimized to the dock;
-- **bg** (or **live** for a page) running out of sight;
-- **closed** not live.
-
-These are the same states as the pills in a group's
-[Resources](dashboard-groups.md#resources).
-
-To use the rail:
-- **Find an item:** search by name or group, or narrow the list with the
-  chips: All, Open, Minimized, Background and Closed.
-- **Open it:** click it. An item that is already open comes forward; a closed
-  page reopens.
-- **Drag it onto the tab strip:** it opens as a tab where you drop it. A tab
-  moves there; a window's tab joins the strip.
-- **Drag it anywhere else:** it floats in a window where you drop it. A
-  terminal that cannot float stays a tab.
-- **Hover a tab:** pop it out, or close it.
-- **Hover a window:** minimize it, or close it.
-
-Closing a tab moves the item to Closed or Background, so it stays listed.
-**«** folds the rail to its icons; this browser remembers the choice.
-
 ## The home
 
-With no tab open on the strip, the Collab view shows the same items as tiles,
-by group, each with its state pill. Click a tile to open it, or drag it the
-way you drag a rail item: onto the strip (or the tiles) for a tab, anywhere
-else for a window. With nothing to list, the view says how to open a
-terminal instead.
+With no tab open on the strip, the Collab view shows what is alive:
+- **Agents**: every agent with a session running, open here or in the
+  background. Each shows its group and what it is doing: working, idle, or
+  needs you.
+- **Running**: the other live items, such as a running group shell, a page out
+  of sight, or a window on the dock.
+- **Recent**: the eight closed items you used last, with a line to show the
+  rest.
+
+A group shell that was never started is not listed. Start it from its group on
+the [Groups](dashboard-groups.md#resources) tab. With nothing running, the home
+says so in one line.
+
+To use a tile:
+- **Open it:** click it. An item that is already open comes forward; a closed
+  page reopens.
+- **Drag it onto the tab strip:** it opens as a tab where you drop it.
+- **Drag it anywhere else:** it floats in a window where you drop it. A
+  terminal that cannot float stays a tab.
+
+## The side panel
+
+The same list, by group, is in the right side panel. This is the same panel
+and handle as the palette on the Groups tab. It starts folded: open it with the
+handle on the right edge. Each tab remembers its own panel's state.
+
+- **Active** (the default) lists what is alive. **Closed** lists the rest, and
+  a search finds everything, whatever chip is picked.
+- In each group, the agents come first and closed items come last. Groups with
+  something open here come first.
+- Each agent goes under one group: the group it was spawned into, or else its
+  first group. Agents in no group are under **Not in a group**.
+- Click a group's header to fold it. The panel remembers which groups are
+  folded.
+- Click, drag and drop an item as you would a tile. Hover a tab to pop it out
+  or close it, and hover a window to minimize it or close it.
 
 ## Opening a terminal
 

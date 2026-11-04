@@ -17,6 +17,48 @@ import { openBoardOverlay, openBoardPane } from './board-overlay-state.js';
 import { expectPage, openPageOverlay, openPagePane } from './page-place.js';
 import { openProcessOverlay, openProcessTab } from './process-editor-place.js';
 import { openGroupWebTermPane, placeTerminalPane } from './terminals-tab.js';
+import { terminalTabStatus } from './terminal-tab-status.js';
+import { remoteSessionAgents } from './remote-session-status.js';
+import { dashPrefs } from './prefs.js';
+
+const USED_PREF = 'tclaude.dash.collab.used';
+const USED_KEPT = 100;
+
+function readUsed() {
+  try {
+    const raw = JSON.parse(dashPrefs.getItem(USED_PREF) || '[]');
+    return new Map(Array.isArray(raw) ? raw.filter((e) => Array.isArray(e) && typeof e[0] === 'string' && Number.isFinite(e[1])) : []);
+  } catch {
+    return new Map();
+  }
+}
+
+// railUsed is when each rail item was last opened here, which the rail and
+// the home order by. It keeps the USED_KEPT most recent, in the dashboard's
+// prefs (prefs.js), so it survives a daemon restart. null until first read:
+// the prefs load after this module does.
+export const railUsed = signal(null);
+
+const usedNow = () => railUsed.value || readUsed();
+
+export function markRailUsed(key, at = Date.now()) {
+  if (!key) return;
+  const next = new Map(railUsed.peek() || readUsed());
+  next.delete(key);
+  next.set(key, at);
+  const entries = [...next].sort((a, b) => b[1] - a[1]).slice(0, USED_KEPT);
+  railUsed.value = new Map(entries);
+  dashPrefs.setItem(USED_PREF, JSON.stringify(entries));
+}
+
+// terminalStatus is what the agent behind a rail terminal item is doing, with
+// the agent itself; null for a terminal with no agent.
+function terminalStatus(item, value) {
+  const status = item.row ? rowView(item.row, value).status
+    : item.pane ? terminalTabStatus(item.pane, value, remoteSessionAgents.value)
+      : item.overlay?.agent ? terminalTabStatus({ seed: { agent: item.overlay.agent } }, value) : null;
+  return status?.agent ? status : null;
+}
 
 // collabItems is everything the rail and the home list now: panes are the
 // strip's, snapshot the dashboard's.
@@ -25,7 +67,7 @@ export function collabItems(panes, snapshot) {
   return railItems({
     resources: value?.group_resources || [], groups: value?.groups || [], places: resourcePlaces.value,
     panes, overlays: overlayTabs.value, background: visibleBackgroundTerminals(backgroundTerminals.value, panes),
-    titleOf: (row) => rowView(row, value).label,
+    titleOf: (row) => rowView(row, value).label, statusOf: (item) => terminalStatus(item, value), used: usedNow(),
   });
 }
 
@@ -34,6 +76,7 @@ export const overlayOf = (item) => item.overlay || overlayTabs.peek().find((tab)
 
 // openRailItem opens an item, or brings it forward where it already is.
 export async function openRailItem(item, { actions, snapshot, fetchImpl = (...args) => globalThis.fetch(...args), notify = () => {} }) {
+  markRailUsed(item.key);
   if (item.view === 'open-tab' && item.paneKey) return actions?.activatePane?.(item.paneKey);
   if (item.overlay) return openOverlayWindow(item.overlay);
   if (item.row) return attachBackgroundTerminal(item.row, snapshot?.value);
@@ -68,6 +111,7 @@ export async function railItemToStrip(item, landing, ctx) {
   const place = (key) => {
     if (key && landing?.beside && landing.beside !== key) placeTerminalPane(key, landing.beside, { after: landing.after });
   };
+  markRailUsed(item.key);
   if (item.view === 'open-tab' && item.paneKey) return place(item.paneKey);
   const tab = overlayOf(item);
   if (tab) return moveTabsToCollab([tab.id], landing || {});
@@ -79,6 +123,7 @@ export async function railItemToStrip(item, landing, ctx) {
 // holding it comes forward, or back from the dock. A strip tab floats if its
 // kind can; a closed page reopens, as a click does.
 export async function railItemToFloat(item, at, ctx) {
+  markRailUsed(item.key);
   const tab = overlayOf(item);
   if (tab) return openOverlayWindow(tab);
   const floats = (key) => !!key && !!ctx.floatsOf?.(key);
