@@ -1157,7 +1157,10 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       }
       if (!state.isCurrent(current.generation)) return;
       markTiming('attachments_ready_ms');
-      const request = buildSpawnRequest(next, context, worktreeSelection, attachmentPaths);
+      // A local spawn sends a pre-filled toggle only when the operator set it;
+      // a remote one is filtered by remoteExplicit below.
+      const request = buildSpawnRequest(next, context, worktreeSelection, attachmentPaths,
+        remote ? null : operatorSet.current);
       if (policyDrifted()) throw new Error(STALE_POLICY_ERROR);
       setProgress('Launching agent…');
       markTiming('request_sent_ms');

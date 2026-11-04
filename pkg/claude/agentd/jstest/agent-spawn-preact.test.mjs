@@ -343,6 +343,26 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   assert.equal(localToLocal.initialMessage, '');
 });
 
+test('agent-spawn model sends a pre-filled toggle only when the operator set it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = { groups, harnesses, userDefaultModel: '', normalizeNames: true };
+  // beta's policy is opt-in, so the form pre-fills remote control on.
+  const draft = { ...model.createSpawnDraft({ groups, harnesses, groupName: 'beta' }), name: 'worker' };
+  assert.equal(draft.remoteControl, true);
+  const untouched = model.buildSpawnRequest(draft, context, null, [], new Set()).body;
+  for (const key of Object.values(model.PREFILLED_TOGGLES)) {
+    assert.equal(key in untouched, false, `${key} is left to the daemon, which resolves it the same way`);
+  }
+  const set = model.buildSpawnRequest({ ...draft, remoteControl: false, autoMemory: true }, context, null, [],
+    new Set(['remoteControl', 'autoMemory'])).body;
+  assert.equal(set.remote_control, false, 'an operator choice is sent, and recorded as explicit');
+  assert.equal(set.auto_memory, true);
+  assert.equal('peer_messaging' in set, false);
+  assert.equal(model.buildSpawnRequest(draft, context, null, []).body.remote_control, true,
+    'without an operator set every shown toggle is sent');
+});
+
 test('agent-spawn model normalizes names and builds exact launch bodies', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/agent-spawn-model.js');

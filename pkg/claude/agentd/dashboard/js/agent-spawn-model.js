@@ -1248,7 +1248,19 @@ export function prepareSpawnDraft(
   return syncSpawnWorktree({ ...draft, name }, pickerUsable);
 }
 
-export function buildSpawnRequest(draft, context, worktreeSelection, attachmentPaths = []) {
+// PREFILLED_TOGGLES are the launch toggles the form pre-fills from the group
+// policy and the profile, which the daemon resolves the same way when the
+// request leaves them out. Given operatorSet (the draft keys the operator
+// changed), buildSpawnRequest sends one only when the operator set it, as the
+// CLI does: a pre-filled value is not an explicit choice, so it is not
+// recorded as one, and a later group policy can still reach the agent on
+// relaunch. Without operatorSet every shown toggle is sent.
+export const PREFILLED_TOGGLES = Object.freeze({
+  remoteControl: 'remote_control', autoMemory: 'auto_memory', peerMessaging: 'peer_messaging',
+});
+
+export function buildSpawnRequest(draft, context, worktreeSelection, attachmentPaths = [], operatorSet = null) {
+  const sendToggle = (key) => !operatorSet || operatorSet.has(key);
   const view = spawnCapabilityView(draft, context);
   const body = {
     name: text(draft.name).trim(),
@@ -1290,9 +1302,9 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   if (view.showTrustDir && draft.trustDirSpecified) {
     body.trust_dir = !!draft.trustDir;
   }
-  if (view.showRemoteControl) body.remote_control = !!draft.remoteControl;
-  if (view.showAutoMemory) body.auto_memory = !!draft.autoMemory;
-  if (view.showPeerMessaging) body.peer_messaging = !!draft.peerMessaging;
+  if (view.showRemoteControl && sendToggle('remoteControl')) body.remote_control = !!draft.remoteControl;
+  if (view.showAutoMemory && sendToggle('autoMemory')) body.auto_memory = !!draft.autoMemory;
+  if (view.showPeerMessaging && sendToggle('peerMessaging')) body.peer_messaging = !!draft.peerMessaging;
   // Sent as an explicit true/false for a Copilot launch — like auto_memory, the
   // modal is authoritative, so an unchecked box overrides a profile's opt-in.
   // Omitted entirely for every other harness, leaving the pointer nil.
