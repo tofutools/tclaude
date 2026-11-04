@@ -350,43 +350,120 @@ func defaultProfileConferralFailure(r *http.Request, caller, group, profileName 
 	if prof == nil {
 		return nil
 	}
-	const why = "a group's default spawn profile applies to every spawn into it, automations included"
-	if prof.IsOwner != nil && *prof.IsOwner {
-		ok, err := spawnerGrantCoversGroup(r, caller, PermGroupsOwnersManage, group)
+	return profileConferralFailure(r, caller, nil, prof, group,
+		"a group's default spawn profile applies to every spawn into it, automations included")
+}
+
+// profileConferralFailure refuses caller putting birth-time access it could
+// not confer itself into after, a profile that reaches spawns it does not
+// launch: is_owner takes groups.owners.manage covering group (every group
+// when group is ""), and grants, from its overrides or its roles, take
+// permissions.grant plus attenuation. When before is the profile as it was,
+// only what the write adds is judged, so an edit that leaves the access alone
+// needs no authority over it. why says how far the profile reaches.
+func profileConferralFailure(r *http.Request, caller string, before, after *db.SpawnProfile, group, why string) *spawnFailure {
+	if caller == "" || after == nil {
+		return nil
+	}
+	if isTrue(after.IsOwner) && (before == nil || !isTrue(before.IsOwner)) {
+		var ok bool
+		var err error
+		where := "every group"
+		if group == "" {
+			ok, err = spawnerGrantCoversEveryGroup(r, caller, PermGroupsOwnersManage)
+		} else {
+			where = "group " + group
+			ok, err = spawnerGrantCoversGroup(r, caller, PermGroupsOwnersManage, group)
+		}
 		if err != nil {
 			return &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 		}
 		if !ok {
 			return &spawnFailure{http.StatusForbidden, "forbidden", fmt.Sprintf(
-				"profile %q makes its spawns group owners, which requires %s for group %s (%s)",
-				prof.Name, PermGroupsOwnersManage, group, why)}
+				"profile %q makes its spawns group owners, which requires %s for %s (%s)",
+				after.Name, PermGroupsOwnersManage, where, why)}
 		}
 	}
+	roleGrants, err := profileRoleGrants(after)
+	if err != nil {
+		return &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	}
+	overrides := after.PermissionOverrides
+	if before != nil {
+		had, err := profileRoleGrants(before)
+		if err != nil {
+			return &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		for slug, override := range before.PermissionOverrides {
+			had[slug] = override
+		}
+		roleGrants, overrides = grantsNotIn(roleGrants, had), grantsNotIn(overrides, had)
+	}
+	// The spawns it would reach are not the caller's descendants. Denies
+	// only narrow, so they need no authority (ambient).
+	if fail, _ := spawnerMayConfer(caller, grantConferee{}, []overrideContribution{
+		{grants: roleGrants, ambient: true}, {grants: overrides, ambient: true}}); fail != nil {
+		return &spawnFailure{fail.Status, fail.Kind, fmt.Sprintf(
+			"profile %q confers permissions on its spawns: %s (%s)", after.Name, fail.Msg, why)}
+	}
+	return nil
+}
+
+// grantsNotIn is the grants in m that had does not already carry identically:
+// what a write adds or widens. Denies are left out, since a deny only narrows.
+func grantsNotIn(m, had map[string]db.PermissionOverride) map[string]db.PermissionOverride {
+	out := map[string]db.PermissionOverride{}
+	for slug, override := range m {
+		if override.Effect != db.PermEffectGrant {
+			continue
+		}
+		if prev, ok := had[slug]; ok && prev == override {
+			continue
+		}
+		out[slug] = override
+	}
+	return out
+}
+
+// spawnerGrantCoversEveryGroup is spawnerGrantCoversGroup for access that can
+// reach any group: only an unscoped grant of slug covers it.
+func spawnerGrantCoversEveryGroup(r *http.Request, spawner, slug string) (bool, error) {
+	if r == nil {
+		var err error
+		if r, err = http.NewRequest(http.MethodPost, "http://spawn.invalid", nil); err != nil {
+			return false, err
+		}
+	}
+	v := resolvePermissionVerdictForRequest(r, spawner, slug)
+	if v.Resolution != permAllow {
+		return false, nil
+	}
+	return evalPermissionScope(v, spawner, ActionContext{}).Unscoped, nil
+}
+
+func isTrue(b *bool) bool { return b != nil && *b }
+
+// profileRoleGrants is the grants a profile's named roles confer on its
+// spawns, keyed by slug. A role the library no longer has confers nothing.
+func profileRoleGrants(prof *db.SpawnProfile) (map[string]db.PermissionOverride, error) {
 	refs := prof.RoleRefs
 	if len(refs) == 0 && strings.TrimSpace(prof.RoleRef) != "" {
 		refs = []string{prof.RoleRef}
 	}
-	roleGrants := map[string]db.PermissionOverride{}
+	out := map[string]db.PermissionOverride{}
 	for _, ref := range cleanRoleRefs(refs) {
 		role, err := db.GetRole(ref)
 		if err != nil {
-			return &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+			return nil, err
 		}
 		if role == nil {
 			continue
 		}
 		for _, grant := range role.Permissions {
-			roleGrants[grant.Slug] = db.PermissionOverride{Effect: db.PermEffectGrant, Scope: grant.Scope}
+			out[grant.Slug] = db.PermissionOverride{Effect: db.PermEffectGrant, Scope: grant.Scope}
 		}
 	}
-	// The workers it would reach are not the setter's descendants. Denies
-	// only narrow, so they need no authority (ambient).
-	if fail, _ := spawnerMayConfer(caller, grantConferee{}, []overrideContribution{
-		{grants: roleGrants, ambient: true}, {grants: prof.PermissionOverrides, ambient: true}}); fail != nil {
-		return &spawnFailure{fail.Status, fail.Kind, fmt.Sprintf(
-			"profile %q confers permissions on its spawns: %s (%s)", prof.Name, fail.Msg, why)}
-	}
-	return nil
+	return out, nil
 }
 
 // defaultLaunchTiers is the tier stack beneath a named profile: the group's

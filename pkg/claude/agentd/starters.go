@@ -204,7 +204,8 @@ type starterInstallResult struct {
 // — never overwritten. Re-running install is therefore safe, and works on a
 // fresh empty DB (the demo path).
 func handleStarterInstall(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requirePermission(w, r, PermTemplatesManage); !ok {
+	caller, ok := requirePermission(w, r, PermTemplatesManage)
+	if !ok {
 		return
 	}
 	s, err := getStarter(r.PathValue("name"))
@@ -221,7 +222,7 @@ func handleStarterInstall(w http.ResponseWriter, r *http.Request) {
 	// Starters never overwrite: install is skip-or-rename, so update is always
 	// false. importTemplateEnvelope leaves an existing template untouched and
 	// reports the collision; we turn that into a friendly skip.
-	res, existed, fail := importTemplateEnvelope(s.Envelope, asName, false)
+	res, existed, fail := importTemplateEnvelope(caller, s.Envelope, asName, false)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return

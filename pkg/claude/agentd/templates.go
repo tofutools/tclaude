@@ -2129,7 +2129,7 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 // a hard failure. It runs BEFORE recreateMissingRoles, because a role's own
 // validation checks its referenced profile exists (buildRoleFromJSON), so the
 // profiles must be in place before the roles that name them.
-func recreateMissingProfiles(profiles []spawnProfileJSON) ([]string, *spawnFailure) {
+func recreateMissingProfiles(caller string, profiles []spawnProfileJSON) ([]string, *spawnFailure) {
 	warnings := []string{}
 	for _, pj := range profiles {
 		name := strings.TrimSpace(pj.Name)
@@ -2150,6 +2150,11 @@ func recreateMissingProfiles(profiles []spawnProfileJSON) ([]string, *spawnFailu
 			warnings = append(warnings, fmt.Sprintf(
 				"embedded spawn profile %q is invalid here (%s) — skipped; agents referencing it will use their own overrides",
 				name, fail.Msg))
+			continue
+		}
+		if fail := profileConferralFailure(nil, caller, nil, p, "", libraryProfileReach); fail != nil {
+			warnings = append(warnings, fmt.Sprintf(
+				"embedded spawn profile %q was not imported: %s", name, fail.Msg))
 			continue
 		}
 		if _, err := db.CreateSpawnProfile(p); errors.Is(err, db.ErrSpawnProfileNameTaken) {
@@ -2190,7 +2195,7 @@ func recreateMissingProfiles(profiles []spawnProfileJSON) ([]string, *spawnFailu
 //     template that fails later validation leaves the added roles behind; that
 //     is benign (roles stand alone, and a re-import is idempotent — "kept
 //     local").
-func recreateMissingRoles(roles []roleJSON) ([]string, *spawnFailure) {
+func recreateMissingRoles(caller string, roles []roleJSON) ([]string, *spawnFailure) {
 	warnings := []string{}
 	for _, rj := range roles {
 		name := strings.TrimSpace(rj.Name)
@@ -2211,6 +2216,11 @@ func recreateMissingRoles(roles []roleJSON) ([]string, *spawnFailure) {
 			warnings = append(warnings, fmt.Sprintf(
 				"embedded role %q is invalid here (%s) — skipped; agents referencing it will use their own overrides",
 				name, fail.Msg))
+			continue
+		}
+		if fail := roleConferralFailure(caller, nil, rl); fail != nil {
+			warnings = append(warnings, fmt.Sprintf(
+				"embedded role %q was not imported: %s", name, fail.Msg))
 			continue
 		}
 		if _, err := db.CreateRole(rl); errors.Is(err, db.ErrRoleNameTaken) {
@@ -2246,7 +2256,8 @@ func handleTemplateImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST")
 		return
 	}
-	if _, ok := requirePermission(w, r, PermTemplatesManage); !ok {
+	caller, ok := requirePermission(w, r, PermTemplatesManage)
+	if !ok {
 		return
 	}
 	var env templateExportEnvelope
@@ -2257,7 +2268,7 @@ func handleTemplateImport(w http.ResponseWriter, r *http.Request) {
 	asName := strings.TrimSpace(r.URL.Query().Get("as"))
 	update := r.URL.Query().Get("update") == "true"
 
-	res, existed, fail := importTemplateEnvelope(env, asName, update)
+	res, existed, fail := importTemplateEnvelope(caller, env, asName, update)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -2291,7 +2302,7 @@ func handleTemplateImport(w http.ResponseWriter, r *http.Request) {
 // write — the caller decides what the collision means: /v1/templates/import
 // reports a 409, a starter install reports a friendly skip. This is the single
 // importer both paths share (JOH-246) — there is no second import path.
-func importTemplateEnvelope(env templateExportEnvelope, asName string, update bool) (templateImportResult, bool, *spawnFailure) {
+func importTemplateEnvelope(caller string, env templateExportEnvelope, asName string, update bool) (templateImportResult, bool, *spawnFailure) {
 	if strings.TrimSpace(env.Format) != templateExportFormat {
 		return templateImportResult{}, false, &spawnFailure{http.StatusBadRequest, "invalid_format", fmt.Sprintf(
 			"not a tclaude task-force export (format=%q, expected %q)", env.Format, templateExportFormat)}
@@ -2319,7 +2330,7 @@ func importTemplateEnvelope(env templateExportEnvelope, asName string, update bo
 
 	// Re-create embedded roles first because an embedded spawn profile may
 	// select one through role_ref. Existing roles are never overwritten.
-	roleWarnings, rfail := recreateMissingRoles(env.Roles)
+	roleWarnings, rfail := recreateMissingRoles(caller, env.Roles)
 	if rfail != nil {
 		return templateImportResult{}, false, rfail
 	}
@@ -2332,7 +2343,7 @@ func importTemplateEnvelope(env templateExportEnvelope, asName string, update bo
 	// Re-create any embedded spawn profile that is missing locally before the
 	// sanitize pass checks agent profile references. Existing profiles are never
 	// overwritten (sacred edits).
-	profileWarnings, pfail := recreateMissingProfiles(env.Profiles)
+	profileWarnings, pfail := recreateMissingProfiles(caller, env.Profiles)
 	if pfail != nil {
 		return templateImportResult{}, false, pfail
 	}
