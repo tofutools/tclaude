@@ -45,10 +45,16 @@ func currentRelaunchPolicy() launchspec.RelaunchPolicy {
 
 const harnessConfigField = "harness_config"
 
-// relaunchPolicyRead are the configurable rows a relaunch reads today. The
-// others are listed but refuse a stored answer until their slice wires them,
-// so no setting is accepted that would silently do nothing.
-var relaunchPolicyRead = map[string]bool{harnessConfigField: true}
+// relaunchPolicyRead are the configurable rows a relaunch reads today
+// (resume and reincarnate; relaunch_policy_apply.go). A configurable row not
+// listed here would refuse a stored answer until a relaunch reads it, so no
+// setting is accepted that would silently do nothing.
+var relaunchPolicyRead = map[string]bool{
+	harnessConfigField:          true,
+	groupEnvField:               true,
+	groupRemoteControlField:     true,
+	sandboxProfileContentsField: true,
+}
 
 // harnessConfigNarrower reports whether the chain's posture is narrower than
 // the explicit one: only an explicit write over a chain that keeps the

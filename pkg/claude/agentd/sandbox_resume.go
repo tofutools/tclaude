@@ -18,6 +18,10 @@ type resumeSandboxPolicy struct {
 	Snapshot      *sandboxpolicy.Snapshot
 	Previous      *sandboxpolicy.Snapshot
 	SSHWorkaround bool
+	// Notes say where the relaunch policy could not be followed as set (a
+	// reuse row with nothing stored, or profiles that are now different
+	// ones). The relaunch shows them with its warnings.
+	Notes []string
 }
 
 // cleanupUncommittedResumeSandboxPolicy removes generation-specific roots
@@ -181,6 +185,11 @@ func resolveResumeSandboxPolicy(
 // the agent's private directories) is refreshed either way. It is the
 // fallback a relaunch takes when the re-read chain cannot be used
 // (prepareRelaunchSandbox).
+//
+// The relaunch policy can ask for stored values too: its
+// sandbox_profile_contents reuse row sets useStored (unless the agent's
+// profiles are now different ones), and its group_env reuse row keeps the
+// stored group environment instead of reading the group's current one.
 func resolveResumeSandboxPolicyFrom(
 	convID string,
 	sshWorkaround bool,
@@ -189,6 +198,21 @@ func resolveResumeSandboxPolicyFrom(
 ) (*resumeSandboxPolicy, error) {
 	var resolved, previous *sandboxpolicy.Snapshot
 	var err error
+	var notes []string
+	relaunchPolicy := currentRelaunchPolicy()
+	if !useStored && relaunchReuses(relaunchPolicy, sandboxProfileContentsField) {
+		// The sandbox_profile_contents reuse row: keep the contents stored at
+		// the last launch, as the fallback below does.
+		stored, storedErr := db.AgentEffectiveSandboxConfigForConv(convID)
+		if storedErr != nil {
+			return nil, storedErr
+		}
+		reuse, note := reuseStoredProfileContents(convID, stored)
+		useStored = reuse
+		if note != "" {
+			notes = append(notes, note)
+		}
+	}
 	if useStored {
 		previous, err = db.AgentEffectiveSandboxConfigForConv(convID)
 		if err == nil && previous != nil {
@@ -207,7 +231,8 @@ func resolveResumeSandboxPolicyFrom(
 	if err != nil || previous == nil {
 		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
 	}
-	current, err := composeRelaunchSandbox(convID, *resolved, previous, useStored)
+	current, err := composeRelaunchSandboxEnv(convID, *resolved, previous, useStored,
+		relaunchReuses(relaunchPolicy, groupEnvField))
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +240,7 @@ func resolveResumeSandboxPolicyFrom(
 		// Either a durable per-agent launch choice, or a mode that still
 		// cannot carry profiles; not an empty ambient resolution. Do not let
 		// later global/group assignments reappear on resume or reincarnation.
-		return &resumeSandboxPolicy{Snapshot: &current, Previous: previous}, nil
+		return &resumeSandboxPolicy{Snapshot: &current, Previous: previous, Notes: notes}, nil
 	}
 	sshWorkaround = sshWorkaround && codexSSHWorkaroundApplies(
 		harnessName, harnessBuiltinMode, sandboxImplementation, &current)
@@ -251,7 +276,7 @@ func resolveResumeSandboxPolicyFrom(
 		previous.Effective.AccessNotices,
 	)
 	return &resumeSandboxPolicy{
-		Snapshot: &current, Previous: previous, SSHWorkaround: sshWorkaround,
+		Snapshot: &current, Previous: previous, SSHWorkaround: sshWorkaround, Notes: notes,
 	}, nil
 }
 
@@ -266,7 +291,21 @@ func resolveResumeSandboxPolicyFrom(
 // (withChainHarnessConfig). An omitted-profiles snapshot gets the environment
 // only.
 func composeRelaunchSandbox(convID string, resolved sandboxpolicy.Snapshot, previous *sandboxpolicy.Snapshot, stored bool) (sandboxpolicy.Snapshot, error) {
-	current, err := refreshResumeGroupEnvironment(convID, resolved, previous)
+	return composeRelaunchSandboxEnv(convID, resolved, previous, stored, false)
+}
+
+// composeRelaunchSandboxEnv is composeRelaunchSandbox that, with
+// reuseGroupEnv (the relaunch policy's group_env reuse row, read by resume
+// and reincarnation), keeps the group environment stored at the last launch
+// instead of reading the group's current one. Every snapshot stores one.
+func composeRelaunchSandboxEnv(convID string, resolved sandboxpolicy.Snapshot, previous *sandboxpolicy.Snapshot, stored, reuseGroupEnv bool) (sandboxpolicy.Snapshot, error) {
+	var current sandboxpolicy.Snapshot
+	var err error
+	if reuseGroupEnv {
+		current = reuseStoredGroupEnvironment(resolved, previous)
+	} else {
+		current, err = refreshResumeGroupEnvironment(convID, resolved, previous)
+	}
 	if stored && isRelaunchChainUnusable(err) {
 		// The stored policy keeps its group environment when its group is
 		// the one that could not be determined; any other failure (a read
@@ -614,6 +653,7 @@ func prepareRelaunchSandboxFrom(req relaunchSandboxRequest, useStored bool) (*re
 	out := &relaunchSandbox{policy: policy, effective: effective}
 	if policy != nil {
 		out.changes = relaunchChanges(policy.Previous, policy.Snapshot)
+		out.warnings = append(out.warnings, policy.Notes...)
 	}
 	if effective != nil {
 		for _, notice := range effective.Effective.AccessNotices {

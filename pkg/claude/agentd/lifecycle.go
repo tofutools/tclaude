@@ -1778,7 +1778,13 @@ func resumeOneConvUnderLaunchLockForTeleport(convID string, recreateMissingDir b
 	// session row defaulting remote_control=0, so the freshest row reads OFF the
 	// moment the new pane reports in — the armed flag lives on the old/dead row,
 	// which is still the most-recent until then.
-	remoteControl := launchConfig.RemoteControl
+	// The relaunch policy's group_remote_control row may apply the group's
+	// current policy instead (relaunchRemoteControl).
+	remoteControl, remoteControlChange, remoteControlNote := relaunchRemoteControl(
+		convID, launchConfig.Harness, launchConfig.RemoteControl)
+	if remoteControlNote != "" {
+		res.Warnings = append(res.Warnings, remoteControlNote)
+	}
 	sshLaunchKey := generateSpawnLabel()
 	// Preserve the mode this conversation was launched under; the harness
 	// default would silently drop an enforced `sandbox on` posture on resume.
@@ -1953,6 +1959,9 @@ func resumeOneConvUnderLaunchLockForTeleport(convID string, recreateMissingDir b
 		// never persists its policy, and would repeat the same lines.
 		if !launchConfig.TemporaryHarnessBuiltinMode {
 			res.Changes = prepared.changes
+		}
+		if remoteControlChange != "" {
+			res.Changes = append(res.Changes, remoteControlChange)
 		}
 		if managedParams.ManagedInstructionsBody != "" {
 			if _, err := db.InsertAgentMessage(&db.AgentMessage{ToConv: convID, Subject: "Managed instructions (launch)", Body: managedParams.ManagedInstructionsBody}); err != nil {

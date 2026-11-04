@@ -392,7 +392,10 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// a reincarnation is a directed handoff of the same identity, so an agent
 	// the operator armed for phone access stays phone-reachable across it.
 	// False (and so omitted) for an unarmed source or a Codex predecessor.
-	remoteControl := relaunch.RemoteControl
+	// The relaunch policy's group_remote_control row may apply the group's
+	// current policy instead (relaunchRemoteControl).
+	remoteControl, remoteControlChange, remoteControlNote := relaunchRemoteControl(
+		target, relaunch.Harness, relaunch.RemoteControl)
 	// Reincarnate under the conversation's durable harness — a Codex agent must
 	// come back as Codex, not Claude Code.
 	// Reincarnation is a relaunch, so the experimental auto-review guardian is
@@ -428,6 +431,12 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	}
 	relaunchPolicy, effectiveSandbox := prepared.policy, prepared.effective
 	relaunchWarnings, relaunchChanged := prepared.warnings, prepared.changes
+	if remoteControlNote != "" {
+		relaunchWarnings = append(relaunchWarnings, remoteControlNote)
+	}
+	if remoteControlChange != "" {
+		relaunchChanged = append(relaunchChanged, remoteControlChange)
+	}
 	// Reincarnation refreshes the target's policy through the same resolver as
 	// resume. Persist it before launch so the actor's durable snapshot and the
 	// successor's launch snapshot move together; every failure before identity

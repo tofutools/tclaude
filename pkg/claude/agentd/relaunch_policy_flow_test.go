@@ -100,17 +100,20 @@ func TestRelaunchPolicy_ReadOpenSetGated(t *testing.T) {
 	assert.True(t, hc.Settable)
 	assert.False(t, hc.Set)
 	assert.NotEmpty(t, hc.Why)
-	require.Contains(t, rows, "group_env")
-	assert.False(t, view.Rows[rows["group_env"]].Settable, "a row no relaunch reads yet")
+	for _, field := range []string{"group_env", "group_remote_control", "sandbox_profile_contents"} {
+		require.Contains(t, rows, field)
+		assert.True(t, view.Rows[rows[field]].Settable, field)
+		assert.Equal(t, "re-resolve", view.Rows[rows[field]].Mode, field)
+	}
+	assert.NotContains(t, rows, "group_startup_context", "not a relaunch input")
 
 	body := map[string]any{"field": "harness_config", "mode": "chain-wins"}
 	assert.Equal(t, http.StatusForbidden, agentReq(t, f, caller, http.MethodPut, "/v1/relaunch-policy", body).Code)
 	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermRelaunchPolicyManage, "test"))
 	assert.Equal(t, http.StatusOK, agentReq(t, f, caller, http.MethodPut, "/v1/relaunch-policy", body).Code)
 
-	refused := humanReq(t, f, http.MethodPut, "/v1/relaunch-policy", map[string]any{"field": "group_env", "mode": "reuse"})
-	assert.Equal(t, http.StatusBadRequest, refused.Code)
-	assert.Contains(t, refused.Body.String(), "not_settable")
+	assert.Equal(t, http.StatusBadRequest, humanReq(t, f, http.MethodPut, "/v1/relaunch-policy",
+		map[string]any{"field": "group_startup_context", "mode": "reuse"}).Code, "a row the policy cannot set")
 	assert.Equal(t, http.StatusBadRequest, humanReq(t, f, http.MethodPut, "/v1/relaunch-policy",
 		map[string]any{"field": "harness_config", "mode": "reuse"}).Code, "a mode the row does not offer")
 

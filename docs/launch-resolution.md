@@ -92,15 +92,22 @@ it spawned itself. A disabled profile cannot be re-applied. They are also availa
 is its own audit entry. Retired agents are not listed.
 
 **What an agent references is read again.** A spawn can name a sandbox
-profile, a spawn profile can link usage profiles, and an agent can have roles.
-Which ones is kept. Their contents are not: an edit to a sandbox profile or a
-role takes effect on the agent's next relaunch, and usage rules are evaluated
-live.
+profile, and a spawn profile can link usage profiles. Which ones is kept.
+Their contents are not: an edit to a sandbox profile takes effect on the
+agent's next relaunch, and usage rules are evaluated live. A role's text is
+the exception: it is delivered in the opening brief, and re-injection after
+compaction repeats the text resolved at spawn, so an edited role reaches new
+spawns only.
 
-**Group and workspace settings are kept current.** The group's environment,
-remote-control policy, startup context and mission, and the group or workspace
-sandbox-profile assignment are read again on every relaunch. This holds for
-agents spawned before this table existed too.
+**Group and workspace settings are kept current.** The group's environment
+and remote-control policy, and the group or workspace sandbox-profile
+assignment, are read again on every relaunch. This holds for agents spawned
+before this table existed too. A group remote-control policy that is set
+applies on relaunch unless the spawn gave `--remote-control` explicitly; with
+no policy set, the agent keeps its last state, including a toggle made while
+it ran. The group's startup context and mission are not a launch input: a
+resume keeps the conversation that already holds them, and re-injection after
+compaction reads the group's current text.
 
 **Explicit values stay explicit.** A value given as a flag at spawn wins over
 every profile and stays the agent's value on every relaunch. A flag given at
@@ -130,10 +137,27 @@ members at once, without a relaunch.
 
 ## Relaunch policy
 
-Five rows can be switched between *re-resolve* (read the current value, the
-default) and *reuse* (keep the value stored at the last launch): group
-environment, group remote-control policy, group startup context and mission,
-sandbox profile contents, and role definitions.
+The relaunch policy is one global answer per configurable row. Show and
+change it in the dashboard's **Config** tab, under **Relaunch policy**, or
+with the CLI below.
+
+Three rows can be switched between two modes:
+
+| Row | Re-resolve (the default) | Reuse |
+|---|---|---|
+| Group environment | The group's current environment applies. | The group environment stored at the agent's last launch applies; later edits to the group's environment do not reach it. |
+| Group remote-control policy | A policy the group sets now applies, unless the spawn gave `--remote-control` explicitly. | The agent keeps its remote-control state from its last launch, whatever the group's policy says now. |
+| Sandbox profile contents | The current contents of the agent's sandbox profiles apply. | The profile contents stored at the last launch apply, even if a profile was edited or deleted since. Which profiles apply is still read again: when a group or the workspace now assigns a different profile, its current contents apply and the relaunch says so. |
+
+Re-resolve is what a relaunch did before the policy existed, except for
+remote control, which used to always keep the agent's last state. An agent spawned before launch records were kept has no record of an
+explicit `--remote-control`, so a group policy that would change its state is
+not applied; its resume says so.
+
+The group environment and sandbox profile contents rows act on resume,
+reincarnation, and watch mode and `conv resume` while agentd runs. The
+remote-control row acts on resume and reincarnation only. Clones do not read
+these rows yet (see below).
 
 The harness-config posture has three settings, because an explicit
 `--harness-config` choice can disagree with the posture the re-read sandbox
@@ -160,22 +184,23 @@ The harness-config repair (see [Sandboxing](sandboxing.md)) also follows the
 setting: it does not list an agent whose posture the setting gave up on
 purpose.
 
-The answer is one global setting per row. Every other row follows its layer
-and has no setting. Show and change it with:
+Every other row follows its layer and has no setting; the Config tab shows
+it read-only with the reason. Show and change the policy with:
 
 ```bash
 tclaude agent relaunch-policy show
+tclaude agent relaunch-policy set group_env reuse
 tclaude agent relaunch-policy set harness_config tighten-only
 ```
 
-`show` prints each row's mode, its default and why. Reading is open; `set`
-needs `relaunch-policy.manage`, which is not granted by default. Treat it like
-`sandbox-profiles.manage`: one answer can widen what a relaunch gives every
-agent. A change takes effect on each agent's next resume, reincarnate or
-clone. The API is `GET` and `PUT /v1/relaunch-policy` (`{"field", "mode"}`).
-The five re-resolve or reuse rows are listed but cannot be set yet: no
-relaunch reads them, so `set` refuses rather than store an answer that would
-do nothing.
+`show` prints each row's mode, its default and why. Reading is open; `set`,
+and editing the table in the Config tab, need `relaunch-policy.manage`, which
+is not granted by default. Without it the Config tab shows the table
+read-only. Treat it like `sandbox-profiles.manage`: one answer can widen what
+a relaunch gives every agent. A change takes effect on each agent's next
+resume or reincarnation (and, for harness_config, clone). The API is `GET`
+and `PUT /v1/relaunch-policy` (`{"field", "mode"}`; an empty mode resets the
+row to its default).
 
 ## Fields
 
@@ -218,6 +243,7 @@ do nothing.
 | Roles | `roles` | kept (copy) | yes | Which roles an agent has is part of the copy; their text is a referenced definition. |
 | Sandbox profile named at spawn | `explicit_sandbox_profile` | kept (copy) | yes | An explicit choice stays; the named profile's contents are re-read. |
 | Usage profiles named by the spawn or linked from its spawn profile | `usage_profile_links` | kept (copy) | yes | Which profiles is part of the copy; their rules are read live. |
+| Role definitions (text) | `role_contents` | kept (copy) | no | The role text is delivered in the opening brief, and re-injection after compaction repeats the text resolved at spawn, so an edit to a role reaches new spawns only. |
 
 ### Used by the first spawn only
 
@@ -238,8 +264,7 @@ do nothing.
 | Field | Key | On relaunch | Spawn flag | Why |
 |---|---|---|---|---|
 | Group environment | `group_env` | re-resolved, configurable | no | Group settings are kept current, for agents spawned before this table too (operator decision). |
-| Group remote-control policy | `group_remote_control` | re-resolved, configurable | no | Group settings are kept current; still clamped to what the harness supports. |
-| Group startup context and mission | `group_startup_context` | re-resolved, configurable | no | Group settings are kept current; re-injection after compaction reads them live. |
+| Group remote-control policy | `group_remote_control` | re-resolved, configurable | no | Group settings are kept current: a policy the group sets applies on relaunch, unless the spawn gave remote control explicitly; with no group policy the agent keeps its last state, live toggles included. Still clamped to what the harness supports. |
 | Group and workspace sandbox-profile assignment | `group_sandbox_assignment` | re-resolved | no | Which profile a group or the workspace assigns is a setting, kept current. |
 
 ### Contents of referenced profiles and roles
@@ -247,7 +272,6 @@ do nothing.
 | Field | Key | On relaunch | Spawn flag | Why |
 |---|---|---|---|---|
 | Sandbox profile contents | `sandbox_profile_contents` | re-read, configurable | no | Edits to a sandbox profile take effect on the next relaunch (operator decision). |
-| Role definitions (text) | `role_contents` | re-read, configurable | no | A role is a named entry in the shared registry; edits to it take effect on relaunch and re-injection. |
 | Harness config posture | `harness_config` | configurable: explicit-wins (default), tighten-only, chain-wins | yes | Default chosen for least surprise, not maximum security: an explicit posture stays like any explicit flag. Tighten-only, where a narrower sandbox-profile posture always applies, is the security option. |
 | Usage profile rules | `usage_profile_contents` | re-read | no | Usage rules are evaluated live, every few minutes. |
 
@@ -255,6 +279,7 @@ do nothing.
 
 | Field | Key | On relaunch | Spawn flag | Why |
 |---|---|---|---|---|
+| Group startup context and mission | `group_startup_context` | live | no | Delivered in the opening brief; a resume keeps the conversation that holds it, so there is nothing to relaunch. Re-injection after compaction reads the group's current text. |
 | Group and workspace usage-profile assignment | `usage_assignment` | live | no | Usage rules are evaluated live against the current assignments. |
 | Group permissions and owners | `group_access` | live | no | Applied to members at once; no relaunch needed. |
 | Member cap, notifications, re-injection after compaction | `group_runtime` | live | no | Read when used; not part of a launch. |
@@ -271,11 +296,10 @@ The rules above are the specification. These rows do not follow it yet:
 - **Reasoning effort** (`effort`): No resume path takes an effort flag yet; only a morph changes it.
 - **Model proxy** (`model_proxy`): Reincarnate and clone drop the model proxy. A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
 - **Roles** (`roles`): A re-applied spawn copy does not change it yet; the agent keeps the value from its first spawn.
-- **Group environment** (`group_env`): With agentd down, watch mode and conv resume reuse the stored group environment, and say so.
-- **Group remote-control policy** (`group_remote_control`): Resume reuses the remote-control setting stored at the last launch.
+- **Group environment** (`group_env`): With agentd down, watch mode and conv resume reuse the stored group environment, and say so; a clone re-reads it whatever the policy says.
+- **Group remote-control policy** (`group_remote_control`): Watch mode, conv resume and clone keep the remote-control state stored at the last launch, whatever the policy says (only resume and reincarnate read this row).
 - **Group and workspace sandbox-profile assignment** (`group_sandbox_assignment`): With agentd down, watch mode and conv resume reuse the stored sandbox policy, and say so.
-- **Sandbox profile contents** (`sandbox_profile_contents`): With agentd down, watch mode and conv resume reuse the stored contents, and say so.
-- **Role definitions (text)** (`role_contents`): Re-injection after compaction still uses the role text resolved at spawn.
+- **Sandbox profile contents** (`sandbox_profile_contents`): With agentd down, watch mode and conv resume reuse the stored contents, and say so; a clone re-reads them whatever the policy says.
 - **Harness config posture** (`harness_config`): With agentd down, watch mode and conv resume keep the stored posture, as does a resume that falls back to the stored policy when the profiles cannot be read at all; the setting applies on the agent's next ordinary resume.
 
 <!-- launch-gaps:end -->
