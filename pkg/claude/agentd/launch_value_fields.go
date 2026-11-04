@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"net/http"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -226,9 +227,11 @@ func resolveLaunchValueField(h *harness.Harness, tiers []launchProfileTier, f la
 }
 
 // The launch bool fields are the tri-state (unset/true/false) launch settings
-// that all three spawn paths resolve the same way: an explicit value wins,
-// else the first profile tier that sets the field and targets the resolved
-// harness, else the harness default (see resolveBoolLaunchField).
+// that every spawn path resolves the same way: an explicit value wins, else the
+// first profile tier that sets the field and targets the resolved harness, else
+// the harness default (see resolveBoolLaunchField). remote_control adds the
+// group's remote-control policy between the explicit value and the profiles;
+// see resolveRemoteControlLaunch.
 //
 // launchBoolFieldSpecs is the one place that names each field's profile column
 // and harness validator. Unlike the value fields, the three callers resolve
@@ -237,9 +240,14 @@ func resolveLaunchValueField(h *harness.Harness, tiers []launchProfileTier, f la
 // rather than imposing one: note order and first-failure precedence stay as
 // each caller had them.
 //
-// Not in this table on purpose: auto_memory, peer_messaging, remote_control
-// and include_group_context, which the callers do not resolve alike today
-// (TCL-1107), plus the caller-local auto_focus and is_owner.
+// Not in this table on purpose: the caller-local auto_focus and is_owner.
+//
+// auto_memory, peer_messaging, remote_control and include_group_context joined
+// with TCL-1107: before it, only the direct spawn consulted the default
+// profiles for them, and trigger/process/scribe workers never resolved them at
+// all. Every path now resolves them here, over its own tier stack; what each
+// path falls back to when no tier speaks stays its own (see spawnParams'
+// IncludeGroupContextDefault).
 type launchBoolField int
 
 const (
@@ -249,6 +257,10 @@ const (
 	launchBoolCodexAppServer
 	launchBoolFastMode
 	launchBoolSSHWorkaround
+	launchBoolAutoMemory
+	launchBoolPeerMessaging
+	launchBoolRemoteControl
+	launchBoolIncludeGroupContext
 	launchBoolFieldCount
 )
 
@@ -306,6 +318,44 @@ var launchBoolFieldSpecs = [launchBoolFieldCount]launchBoolFieldSpec{
 			return func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) }
 		},
 	},
+	// Unset everywhere resolves to FALSE, and false means tclaude injects
+	// CLAUDE_CODE_DISABLE_AUTO_MEMORY=1: Claude Code's per-project memory store
+	// is shared by every agent on the repo, so leaving it on cross-pollutes
+	// their notes. Only an opt-in turns it back on.
+	launchBoolAutoMemory: {
+		name:    "auto_memory",
+		profile: func(p *db.SpawnProfile) *bool { return p.AutoMemory },
+		validate: func(h *harness.Harness) func(bool) (bool, error) {
+			return func(v bool) (bool, error) { return harness.ResolveAutoMemory(h, &v) }
+		},
+	},
+	// Same fallback, closely related reason: Claude Code's own cross-session
+	// messaging is a second coordination channel with none of tclaude's group
+	// membership, permission slugs or audit trail.
+	launchBoolPeerMessaging: {
+		name:    "peer_messaging",
+		profile: func(p *db.SpawnProfile) *bool { return p.PeerMessaging },
+		validate: func(h *harness.Harness) func(bool) (bool, error) {
+			return func(v bool) (bool, error) { return harness.ResolvePeerMessaging(h, &v) }
+		},
+	},
+	// Resolve through resolveRemoteControlLaunch, not resolveLaunchBoolFields:
+	// the group policy sits between the explicit value and the profiles.
+	launchBoolRemoteControl: {
+		name:    "remote_control",
+		profile: func(p *db.SpawnProfile) *bool { return p.RemoteControl },
+		validate: func(h *harness.Harness) func(bool) (bool, error) {
+			return func(v bool) (bool, error) { return harness.ResolveRemoteControl(h, v) }
+		},
+	},
+	// Harness-agnostic (harnessAgnosticLaunchField): it decides what the new
+	// agent is TOLD, not how its harness runs. Unset at every tier falls back to
+	// the calling path's own default.
+	launchBoolIncludeGroupContext: {
+		name:     includeGroupContextField,
+		profile:  func(p *db.SpawnProfile) *bool { return p.IncludeGroupDefaultContext },
+		validate: func(*harness.Harness) func(bool) (bool, error) { return func(v bool) (bool, error) { return v, nil } },
+	},
 }
 
 // launchBoolResolution carries the launch bool fields in and out. Going in,
@@ -338,4 +388,38 @@ func resolveLaunchBoolFields(h *harness.Harness, tiers []launchProfileTier, res 
 		}
 	}
 	return notes, nil
+}
+
+// resolveRemoteControlLaunch resolves remote_control for every spawn path
+// (TCL-1107). Precedence, highest first:
+//
+//	explicit  >  group remote-control policy  >  profile tiers  >  off
+//
+// An explicit value is validated against the harness (an explicit opt-in for a
+// harness with no Remote Access is a 400). The profile tiers are walked even
+// when a higher layer wins, so a skipped or invalid profile value is disclosed
+// or refused the same way whoever decides. A value the policy or a profile
+// derived is then clamped to off for a harness with no Remote Access: a group
+// or default-profile setting must not fail a Codex spawn.
+func resolveRemoteControlLaunch(h *harness.Harness, tiers []launchProfileTier, groupPolicy, explicit *bool) (bool, string, *spawnFailure) {
+	spec := launchBoolFieldSpecs[launchBoolRemoteControl]
+	if explicit != nil {
+		if _, err := spec.validate(h)(*explicit); err != nil {
+			return false, "", &spawnFailure{http.StatusBadRequest, "invalid_remote_control", err.Error()}
+		}
+	}
+	profileValue, profileSet, _, note, fail := resolveBoolLaunchField(spec.name, false, false, h.Name, tiers,
+		spec.profile, spec.validate(h))
+	if fail != nil {
+		return false, note, fail
+	}
+	var profileDefault *bool
+	if profileSet {
+		profileDefault = &profileValue
+	}
+	value := resolveRemoteControlIntent(groupPolicy, profileDefault, explicit)
+	if value && !h.CanRemoteControl() {
+		value = false
+	}
+	return value, note, nil
 }
