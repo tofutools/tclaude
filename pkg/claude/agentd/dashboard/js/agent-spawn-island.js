@@ -6,6 +6,7 @@ import { dashboardState } from './snapshot-store.js';
 import { Fragment, h, render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { SpawnOnResumeRow } from './spawn-on-resume.js';
 import { Button, OptionalSelect, Select } from './ui-components.js';
 import { TransferTray } from './transfer-card.js';
 import { LockReason } from './lock-reason.js';
@@ -1781,6 +1782,10 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       onChange=${(event) => update('askTimeout', event.currentTarget.value)}
       help=${askTimeoutHelp} open=${helpOpen === 'agent-spawn-ask-timeout'} setOpen=${setHelpOpen}
       disabled=${!view.askTimeout.visible} busy=${busy} />
+    ${/* What a resume does with this agent's launch inputs (launch slice 10).
+          Below the autonomy rows, so it never parts a select from its warning.
+          Read-only, and this node's policy, so a spawn on another node leaves it out. */
+      !remote && !away && html`<${SpawnOnResumeRow} busy=${busy} />`}
     <label class="cron-create-enabled cron-check-aligned" id="agent-spawn-trust-dir-row" hidden=${!view.showTrustDir}
       title="Pre-trust the launch directory so the new agent doesn't freeze on the harness's trust-folder dialog.">
       <input id="agent-spawn-trust-dir" type="checkbox" checked=${draft.trustDir} disabled=${busy}

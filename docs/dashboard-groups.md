@@ -397,6 +397,7 @@ and press **Spawn** (Ctrl Enter, or ⌘ Enter on a Mac). The rest of the form ov
 | **Harness**, **Fast mode**, **Model**, **Effort**, **Auto-compact window**, **Context max**, **Usage from**, **Claude login** | What it runs on |
 | **Sandbox**, **Sandbox profile**, **Usage profile** | Confinement and spending limits |
 | **Approval policy** or **Permission mode**, **Approval reviewer**, **Tool governance**, **Question timeout** | How much it may do without asking. The dialog warns about high-autonomy choices. |
+| **On resume** | Read-only: what a later resume or reincarnation re-reads and what it keeps. **Show** lists the [relaunch policy](launch-resolution.md)'s rows with their global mode, then every other input by layer. Change the policy in [Config › Launch](dashboard-config.md#launch). Shown for a spawn on this node only. |
 | **CWD**, **Worktree repo**, **Worktree**, **New branch**, **Base branch** | Where it works. See [Git worktrees](worktrees.md). |
 | Checkboxes | Auto focus a terminal, include the group's context, start with remote control, and harness-specific options |
 
