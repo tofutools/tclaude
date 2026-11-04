@@ -24,11 +24,17 @@ type harnessConfigRepairRow struct {
 	Current   string `json:"current"`
 	Source    string `json:"source"`
 	Change    string `json:"change"`
+	Retired   bool   `json:"retired,omitempty"`
 }
 
 func listHarnessConfigRepairs(t *testing.T, f *testharness.Flow) map[string]harnessConfigRepairRow {
 	t.Helper()
-	rec := humanReq(t, f, http.MethodGet, "/v1/harness-config-repairs", nil)
+	return listHarnessConfigRepairsAt(t, f, "/v1/harness-config-repairs")
+}
+
+func listHarnessConfigRepairsAt(t *testing.T, f *testharness.Flow, path string) map[string]harnessConfigRepairRow {
+	t.Helper()
+	rec := humanReq(t, f, http.MethodGet, path, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var body struct {
 		Agents []harnessConfigRepairRow `json:"agents"`
@@ -129,6 +135,42 @@ func TestHarnessConfigRepair_FindAndRepin(t *testing.T) {
 	resumed, ok := f.World.SpawnSandboxPolicy(widenedConv)
 	require.True(t, ok)
 	assert.Equal(t, sandboxpolicy.HarnessConfigAccessRead, resumed.Effective.HarnessConfig)
+}
+
+// An install can hold thousands of retired agents: the finder skips them, and
+// the CLI's --include-retired lists them read-only, never re-pinned.
+func TestHarnessConfigRepair_SkipsRetiredAgents(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "chain", HarnessConfig: sandboxpolicy.HarnessConfigAccessWrite})
+	require.NoError(t, err)
+	require.NoError(t, db.SetGlobalSandboxProfile("chain"))
+
+	activeConv, active := spawnPinned(t, f, "active", "read")
+	retiredConv, retired := spawnPinned(t, f, "retired", "read")
+	loseThePin(t, activeConv, sandboxpolicy.HarnessConfigAccessWrite)
+	loseThePin(t, retiredConv, sandboxpolicy.HarnessConfigAccessWrite)
+	ok, err := db.RetireAgentByID(retired, "test", "done")
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	found := listHarnessConfigRepairs(t, f)
+	assert.Contains(t, found, active)
+	assert.NotContains(t, found, retired, "a retired agent is not checked")
+
+	all := listHarnessConfigRepairsAt(t, f, "/v1/harness-config-repairs?include_retired=1")
+	assert.False(t, all[active].Retired)
+	require.Contains(t, all, retired, "the opt-in lists it")
+	assert.True(t, all[retired].Retired)
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/harness-config-repairs",
+		map[string]any{"agent_ids": []string{retired}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"repinned":false`, "a retired agent is never re-pinned")
+	stored, err := db.AgentEffectiveSandboxConfigForConv(retiredConv)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, sandboxpolicy.HarnessConfigAccessWrite, stored.Effective.HarnessConfig)
 }
 
 func TestHarnessConfigRepair_NeedsSandboxProfilesManage(t *testing.T) {

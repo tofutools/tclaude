@@ -83,11 +83,12 @@ const (
 	groupMailboxPrefix = "group:"
 )
 
-// mailboxIncludeRetired reports whether the request opted into retired
-// agents (the Messages-tab "show retired agents" toggle). Default off:
+// includeRetiredParam reports whether the request opted into retired
+// agents (?include_retired=1: the Messages-tab "show retired agents" toggle,
+// the harness_config repair CLI's --include-retired). Default off:
 // the roster hides retired-agent folders and the "all" firehose omits
 // their traffic until the operator ticks the box.
-func mailboxIncludeRetired(r *http.Request) bool {
+func includeRetiredParam(r *http.Request) bool {
 	switch r.URL.Query().Get("include_retired") {
 	case "1", "true", "yes":
 		return true
@@ -245,7 +246,7 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	qv := r.URL.Query()
-	includeRetired := mailboxIncludeRetired(r)
+	includeRetired := includeRetiredParam(r)
 	includeEmpty := mailboxIncludeEmpty(r)
 	hidePrevGens := isTruthy(qv.Get("hide_prev_gens"))
 	filter := strings.ToLower(strings.TrimSpace(qv.Get("q")))
@@ -674,7 +675,7 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 		// operator opened it on purpose, so they see all of its mail. A
 		// lookup error fails the request (matches the roster handler)
 		// rather than silently falling open to the unfiltered firehose.
-		p, err := agentMailboxPage("", q, win, !mailboxIncludeRetired(r))
+		p, err := agentMailboxPage("", q, win, !includeRetiredParam(r))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -704,7 +705,7 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 		// current member's traffic and channel posts survive. A lookup error
 		// fails the request (matches the all branch) rather than silently
 		// falling open to the unfiltered group scope.
-		p, err := groupMailboxPage(g.ID, q, win, !mailboxIncludeRetired(r))
+		p, err := groupMailboxPage(g.ID, q, win, !includeRetiredParam(r))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return

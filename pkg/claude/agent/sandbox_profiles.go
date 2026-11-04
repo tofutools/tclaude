@@ -1050,7 +1050,8 @@ func writeSandboxProfileJSON(w, stderr io.Writer, value any) int {
 }
 
 type harnessConfigRepairsParams struct {
-	JSON bool `long:"json" help:"Emit the stable JSON object instead of a table"`
+	JSON           bool `long:"json" help:"Emit the stable JSON object instead of a table"`
+	IncludeRetired bool `long:"include-retired" help:"Also list retired agents (read-only: a retired agent is never re-pinned)"`
 }
 
 type harnessConfigRepairJSON struct {
@@ -1062,6 +1063,7 @@ type harnessConfigRepairJSON struct {
 	Source    string `json:"source,omitempty"`
 	Change    string `json:"change"`
 	Online    bool   `json:"online"`
+	Retired   bool   `json:"retired,omitempty"`
 }
 
 type harnessConfigRepairsJSON struct {
@@ -1075,7 +1077,8 @@ func sandboxProfilesHarnessConfigRepairsCmd() *cobra.Command {
 		Short: "List agents whose explicit harness_config was lost on a relaunch",
 		Long: "Read-only. Lists agents whose recorded launch no longer carries the --harness-config posture " +
 			"their spawn request asked for, a loss relaunches made before #3817. Restore them from the dashboard " +
-			"(Diagnostics › Doctor). Requires sandbox-profiles.manage.",
+			"(Diagnostics › Doctor). Retired agents are skipped; --include-retired lists them too, read-only. " +
+			"Requires sandbox-profiles.manage.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *harnessConfigRepairsParams, _ *cobra.Command, _ []string) {
 			os.Exit(runHarnessConfigRepairs(p, os.Stdout, os.Stderr))
@@ -1088,7 +1091,11 @@ func runHarnessConfigRepairs(p *harnessConfigRepairsParams, stdout, stderr io.Wr
 		return rc
 	}
 	var out harnessConfigRepairsJSON
-	if err := DaemonRequest(http.MethodGet, "/v1/harness-config-repairs", nil, &out, DaemonOpts{}); err != nil {
+	path := "/v1/harness-config-repairs"
+	if p.IncludeRetired {
+		path += "?include_retired=1"
+	}
+	if err := DaemonRequest(http.MethodGet, path, nil, &out, DaemonOpts{}); err != nil {
 		return printSandboxProfileDaemonError(stderr, err)
 	}
 	if p.JSON {
@@ -1106,6 +1113,9 @@ func runHarnessConfigRepairs(p *harnessConfigRepairsParams, stdout, stderr io.Wr
 			online := "no"
 			if a.Online {
 				online = "yes"
+			}
+			if a.Retired {
+				online = "retired"
 			}
 			source := a.Source
 			if source == "" {

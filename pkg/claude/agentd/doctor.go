@@ -56,7 +56,7 @@ func handleDashboardDoctor(w http.ResponseWriter, r *http.Request) {
 // lost on a relaunch (harness_config_repair.go). It is daemon state, not a
 // host probe, so it is checked here rather than in doctor.Run.
 func harnessConfigRepairChecks() []doctor.Check {
-	repairs, err := findHarnessConfigRepairs()
+	repairs, err := findHarnessConfigRepairs(false)
 	if err != nil || len(repairs) == 0 {
 		return nil
 	}

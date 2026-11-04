@@ -661,6 +661,8 @@ CREATE TRIGGER external_steward_retired
 			WHERE agent_id = NEW.agent_id AND revoked_at IS NULL;
 		END;
 
+CREATE INDEX idx_agents_active ON agents(agent_id) WHERE retired_at IS NULL;
+
 CREATE TABLE "agent_conversations" (
 			conv_id   TEXT PRIMARY KEY,
 			agent_id  TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,

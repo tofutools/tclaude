@@ -1,6 +1,7 @@
 package db
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -42,4 +43,84 @@ func TestReplaceAgentEffectiveSandboxConfigRefusesAChangedRecord(t *testing.T) {
 	stored, err = AgentEffectiveSandboxConfigForConv("launch-record-conv")
 	require.NoError(t, err)
 	assert.Equal(t, sandboxpolicy.HarnessConfigAccessRead, stored.Effective.HarnessConfig)
+}
+
+// Retired agents are skipped in the query itself, and that query is served by
+// idx_agents_active, so it never walks an install's retired history.
+func TestAgentLaunchRecordsSkipRetiredAgents(t *testing.T) {
+	setupTestDB(t)
+	snap := sandboxpolicy.EmptySnapshot()
+	record := func(conv string) string {
+		agentID, _, err := EnsureAgentForConv(conv, "spawn")
+		require.NoError(t, err)
+		require.NoError(t, SetAgentInitialSpawnConfig(agentID, `{"harness_config":"read"}`))
+		require.NoError(t, SetAgentEffectiveSandboxConfig(agentID, &snap))
+		return agentID
+	}
+	active, retired := record("active-conv"), record("retired-conv")
+	ok, err := RetireAgentByID(retired, "test", "done")
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	ids := func(recs []AgentLaunchRecord) map[string]bool {
+		out := map[string]bool{}
+		for _, r := range recs {
+			out[r.AgentID] = r.Retired
+		}
+		return out
+	}
+	recs, err := ListActiveAgentLaunchRecords()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{active: false}, ids(recs))
+	recs, err = ListAgentLaunchRecords(true)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{active: false, retired: true}, ids(recs), "the opt-in lists retired agents, marked")
+
+	got, err := ActiveAgentLaunchRecord(active)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "active-conv", got.ConvID)
+	got, err = ActiveAgentLaunchRecord(retired)
+	require.NoError(t, err)
+	assert.Nil(t, got, "a retired agent has no active launch record")
+}
+
+func TestActiveAgentScansUseTheActiveIndex(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err)
+	for _, q := range []struct {
+		name  string
+		query string
+		args  []any
+	}{
+		{"launch records", agentLaunchRecordsQuery(false), nil},
+		{"spawn copies of", agentsWithSpawnCopyOfQuery, []any{1}},
+	} {
+		name := q.name
+		rows, err := d.Query(`EXPLAIN QUERY PLAN `+q.query, q.args...)
+		require.NoError(t, err, name)
+		var plan []string
+		for rows.Next() {
+			var id, parent, notused int
+			var detail string
+			require.NoError(t, rows.Scan(&id, &parent, &notused, &detail))
+			plan = append(plan, detail)
+		}
+		require.NoError(t, rows.Close())
+		assert.Contains(t, strings.Join(plan, "\n"), "idx_agents_active", "%s: %v", name, plan)
+	}
+}
+
+func TestMigrateV306IsIdempotent(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err)
+	require.NoError(t, migrateV305toV306(d), "a re-run is a clean no-op")
+	var ver int
+	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
+	assert.Equal(t, 306, ver)
+	var n int
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_agents_active'`).Scan(&n))
+	assert.Equal(t, 1, n)
 }
