@@ -358,21 +358,28 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// takes that group's settings, whatever the policy: that is where it is
 	// being placed, not a relaunch of the source.
 	policy := currentRelaunchPolicy()
-	sameGroups := p.SandboxGroupID == 0
+	stored, err := db.AgentEffectiveSandboxConfigForConv(sourceConv)
+	if err != nil {
+		return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io", Msg: "read the source's stored sandbox policy: " + err.Error()}
+	}
+	// A group the clone joins that is the one its source already resolves
+	// its sandbox (or environment) from is no new placement.
+	sameSandbox, sameEnv := p.SandboxGroupID == 0, p.SandboxGroupID == 0
+	if stored != nil && p.SandboxGroupID != 0 {
+		envGroup, _ := stored.EnvironmentGroupID()
+		sameSandbox = p.SandboxGroupID == stored.ResolutionGroupID
+		sameEnv = p.SandboxGroupID == envGroup
+	}
 	// A clone that keeps its source's environment (KeepEnvironment) keeps
 	// it as the source's resume would, under the group_env row; one that
 	// keeps its source's sandbox (KeepSandbox) follows the contents row.
-	reuseGroupEnv := (sameGroups || p.KeepEnvironment) && relaunchReuses(policy, groupEnvField)
-	followsContents := !refreshGeneratedProfile && (sameGroups || p.KeepSandbox)
+	reuseGroupEnv := (sameEnv || p.KeepEnvironment) && relaunchReuses(policy, groupEnvField)
+	followsContents := !refreshGeneratedProfile && (sameSandbox || p.KeepSandbox)
 	// A clone placed in another group's sandbox starts from the stored
 	// snapshot, as it always has: the new group's chain replaces its
 	// profiles (cloneSandboxForGroup).
 	useStored := !refreshGeneratedProfile && !followsContents
 	if followsContents && relaunchReuses(policy, sandboxProfileContentsField) {
-		stored, err := db.AgentEffectiveSandboxConfigForConv(sourceConv)
-		if err != nil {
-			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io", Msg: "read the source's stored sandbox policy: " + err.Error()}
-		}
 		// As on resume: which profiles apply is still read again, so a
 		// changed assignment brings the new profiles' current contents.
 		reuse, note := reuseStoredProfileContents(sourceConv, stored)
@@ -437,7 +444,10 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		return launch, nil, false
 	}
 	effectiveSandbox, fail, unusable := buildSandbox(useStored)
-	if fail != nil && unusable && followsContents {
+	// As on resume, a re-read with nothing stored to fall back to (no
+	// snapshot, or omitted profiles) does not fall back.
+	canFallBack := useStored || (stored != nil && !stored.ProfilesOmitted)
+	if fail != nil && unusable && followsContents && canFallBack {
 		// A clone always works, as a resume does: the other source is tried.
 		if fallback, fallbackFail, _ := buildSandbox(!useStored); fallbackFail == nil {
 			from, to := "current sandbox profiles", "sandbox policy stored at the source's last launch"

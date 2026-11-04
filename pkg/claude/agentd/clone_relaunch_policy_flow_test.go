@@ -137,3 +137,24 @@ func TestCloneRelaunchPolicy_ReuseFollowsAChangedAssignment(t *testing.T) {
 	assert.Equal(t, "other", profileEnvValue(t, policy))
 	assert.Contains(t, string(clone.Raw), "so their current contents apply")
 }
+
+// A clone that joins the group its source already takes its sandbox from is
+// no new placement: under re-resolve it gets the group's current profile
+// contents, as a plain clone does.
+func TestCloneRelaunchPolicy_JoiningTheSourcesOwnGroupReReads(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "crew-profile",
+		Environment: []db.SandboxEnvironmentEntry{{Name: "PROFILE_ENV", Value: "v1"}}})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupSandboxProfile("crew", "crew-profile")
+	require.NoError(t, err)
+	conv, _ := spawnPinned(t, f, "group-source", "")
+	editProfileEnv(t, "crew-profile", "v2")
+
+	clone := f.AsHuman().CloneWith(conv, map[string]any{"no_copy_conv": true, "group": "crew"})
+	require.Equalf(t, http.StatusOK, clone.Code, "clone body=%s", clone.Raw)
+	policy, ok := f.World.SpawnSandboxPolicy(clone.NewConv)
+	require.True(t, ok)
+	assert.Equal(t, "v2", profileEnvValue(t, policy), "the group's current profile")
+}
