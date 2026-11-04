@@ -31,7 +31,7 @@ func TestDashboardResumeLifecycleErrorsUseErrorToast(t *testing.T) {
 		t.Error("missing-cwd recovery must run before generic error:* toast handling")
 		return
 	}
-	successAt := strings.Index(source[genericAt:], "toast(`wake ${label}: ${action || 'ok'}`);")
+	successAt := strings.Index(source[genericAt:], "toast(`wake ${label}: ${action || 'ok'}${notes.length")
 	if successAt < 0 {
 		t.Fatal("dashboard resume is missing its success-toast boundary")
 	}
