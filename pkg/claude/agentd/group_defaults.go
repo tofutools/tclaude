@@ -54,7 +54,7 @@ func sandboxGroupSourcesLine(snapshot *sandboxpolicy.Snapshot) string {
 // result is a freshly composed chain, whose private agent directories are
 // materialized later rather than validated as predecessor bindings.
 func cloneSandboxForGroup(sourceConv string, launch *sandboxpolicy.Snapshot, groupID int64,
-	keepSandbox, keepEnvironment, fresh bool) (*sandboxpolicy.Snapshot, bool, error) {
+	keepSandbox, keepEnvironment, reuseGroupEnv, fresh bool) (*sandboxpolicy.Snapshot, bool, error) {
 	if launch == nil || groupID == 0 || (keepSandbox && keepEnvironment) {
 		return launch, fresh, nil
 	}
@@ -81,7 +81,14 @@ func cloneSandboxForGroup(sourceConv string, launch *sandboxpolicy.Snapshot, gro
 	if !binding.IsZero() {
 		rebound.GroupBinding = &binding
 	}
+	// A kept environment under the relaunch policy's group_env reuse row is
+	// the one the launch already carries (stored at the source's last
+	// launch), not the group's current one.
+	keptStoredEnv := keepEnvironment && reuseGroupEnv
 	if rebound.ResolutionGroupID == launch.ResolutionGroupID || rebound.ProfilesOmitted {
+		if keptStoredEnv {
+			return &rebound, fresh, nil
+		}
 		refreshed, err := refreshCloneLaunchEnvironment(sourceConv, &rebound, &rebound)
 		return refreshed, fresh, err
 	}
@@ -92,7 +99,7 @@ func cloneSandboxForGroup(sourceConv string, launch *sandboxpolicy.Snapshot, gro
 	// The new group's chain, under what every relaunch lays over a chain:
 	// the source's explicit --harness-config is part of what it was launched
 	// with, and a new group's chain does not replace it (tcl-bmhpir).
-	composed, err := composeRelaunchSandbox(sourceConv, *resolved, &rebound, false)
+	composed, err := composeRelaunchSandbox(sourceConv, *resolved, &rebound, false, keptStoredEnv)
 	if err != nil {
 		return nil, fresh, err
 	}

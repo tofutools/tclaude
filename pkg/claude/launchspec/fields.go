@@ -216,7 +216,7 @@ var Fields = []Field{
 	{Key: "group_env", Label: "Group environment", Layer: LayerGroup, Configurable: true,
 		GroupFields: []string{"Environment"},
 		Why:         "Group settings are kept current, for agents spawned before this table too (operator decision).",
-		Gap:         "With agentd down, watch mode and conv resume reuse the stored group environment, and say so. A clone that joins another group for its sandbox takes that group's environment."},
+		Gap:         "With agentd down, watch mode and conv resume reuse the stored group environment, and say so. A clone that joins another group takes that group's environment, unless it keeps its source's."},
 	{Key: "group_remote_control", Label: "Group remote-control policy", Layer: LayerGroup, Configurable: true,
 		GroupFields: []string{"RemoteControl"},
 		Why: "Group settings are kept current: a policy the group sets applies on relaunch, unless the spawn set remote control explicitly " +
@@ -235,7 +235,7 @@ var Fields = []Field{
 	// --- contents of referenced profiles ---
 	{Key: "sandbox_profile_contents", Label: "Sandbox profile contents", Layer: LayerReferenced, Configurable: true,
 		Why: "Edits to a sandbox profile take effect on the next relaunch (operator decision).",
-		Gap: "With agentd down, watch mode and conv resume reuse the stored contents, and say so. A clone does not read this row: it keeps the contents stored at its source's last launch, except a Codex clone with a generated profile, which re-reads them."},
+		Gap: "With agentd down, watch mode and conv resume reuse the stored contents, and say so. A Codex clone with a generated profile always re-reads them, and a clone that joins another group for its sandbox takes that group's current profiles."},
 	{Key: "role_contents", Label: "Role definitions (text)", Layer: LayerSpawnCopy,
 		Why: "The role text is delivered in the opening brief, and re-injection after compaction repeats the text resolved at spawn, " +
 			"so an edit to a role reaches new spawns only."},

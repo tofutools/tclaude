@@ -213,7 +213,7 @@ func resolveResumeSandboxPolicyFrom(
 	if err != nil || previous == nil {
 		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
 	}
-	current, err := composeRelaunchSandboxEnv(convID, *resolved, previous, useStored,
+	current, err := composeRelaunchSandbox(convID, *resolved, previous, useStored,
 		relaunchReuses(relaunchPolicy, groupEnvField))
 	if err != nil {
 		return nil, err
@@ -272,15 +272,11 @@ func resolveResumeSandboxPolicyFrom(
 // so the chain's posture is read back for the policy to weigh
 // (withChainHarnessConfig). An omitted-profiles snapshot gets the environment
 // only.
-func composeRelaunchSandbox(convID string, resolved sandboxpolicy.Snapshot, previous *sandboxpolicy.Snapshot, stored bool) (sandboxpolicy.Snapshot, error) {
-	return composeRelaunchSandboxEnv(convID, resolved, previous, stored, false)
-}
-
-// composeRelaunchSandboxEnv is composeRelaunchSandbox that, with
-// reuseGroupEnv (the relaunch policy's group_env reuse row, read by resume
-// and reincarnation), keeps the group environment stored at the last launch
-// instead of reading the group's current one. Every snapshot stores one.
-func composeRelaunchSandboxEnv(convID string, resolved sandboxpolicy.Snapshot, previous *sandboxpolicy.Snapshot, stored, reuseGroupEnv bool) (sandboxpolicy.Snapshot, error) {
+//
+// With reuseGroupEnv (the relaunch policy's group_env reuse row), it keeps
+// the group environment stored at the last launch instead of reading the
+// group's current one. Every snapshot stores one.
+func composeRelaunchSandbox(convID string, resolved sandboxpolicy.Snapshot, previous *sandboxpolicy.Snapshot, stored, reuseGroupEnv bool) (sandboxpolicy.Snapshot, error) {
 	var current sandboxpolicy.Snapshot
 	var err error
 	if reuseGroupEnv {

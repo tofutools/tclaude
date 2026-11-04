@@ -236,6 +236,17 @@ func refreshCloneLaunchEnvironment(convID string, current, previous *sandboxpoli
 // Extracted from runCloneOrchestration so groups-clone and the export clone can
 // reuse the same race handling without duplicating it.
 func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSpawnError) {
+	// sandboxWarn says the clone fell back to its source's stored sandbox
+	// policy; it rides the result's warning.
+	var sandboxWarn string
+	defer func() {
+		if cerr == nil && sandboxWarn != "" {
+			if spawned.Warn != "" {
+				sandboxWarn += "; " + spawned.Warn
+			}
+			spawned.Warn = sandboxWarn
+		}
+	}()
 	sourceConv, cwd, noCopyConv := p.SourceConv, p.Cwd, p.NoCopyConv
 	managedResources, managedErr := managedCloneResources(sourceConv, p.ManagedGroups)
 	if managedErr != nil {
@@ -328,31 +339,57 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		refreshGeneratedProfile = true
 	}
 	// Either way the clone gets what a relaunch of the source lays over its
-	// chain (composeRelaunchSandboxEnv): the group's environment as the
+	// chain (composeRelaunchSandbox): the group's environment as the
 	// relaunch policy's group_env row decides, and the source's explicit
-	// --harness-config as the policy weighs it (tcl-bmhpir). Without a
-	// generated profile the clone keeps the profile contents stored at the
-	// source's last launch. A clone that joins another group for its sandbox
-	// (SandboxGroupID) takes that group's environment, whatever the policy:
-	// that is where it is being placed, not a relaunch of the source.
-	reuseGroupEnv := p.SandboxGroupID == 0 && relaunchReuses(currentRelaunchPolicy(), groupEnvField)
-	var previous *sandboxpolicy.Snapshot
-	if refreshGeneratedProfile {
-		effectiveSandbox, previous, err = resolveCurrentSandboxChainForConv(sourceConv)
-	} else {
-		effectiveSandbox, err = db.AgentEffectiveSandboxConfigForConv(sourceConv)
-		previous = effectiveSandbox
+	// --harness-config as the policy weighs it (tcl-bmhpir).
+	//
+	// The sandbox profile contents follow the policy's
+	// sandbox_profile_contents row, as on the source's resume: re-resolve
+	// re-reads the source's profiles, and when that chain cannot be used the
+	// clone launches under the contents stored at the source's last launch,
+	// with a warning (a clone always works, as a resume does). Reuse keeps
+	// the stored contents. A generated Codex profile always re-reads.
+	//
+	// A clone that joins another group for its sandbox (SandboxGroupID)
+	// takes that group's settings, whatever the policy: that is where it is
+	// being placed, not a relaunch of the source.
+	policy := currentRelaunchPolicy()
+	sameGroups := p.SandboxGroupID == 0
+	// A clone that keeps its source's environment (KeepEnvironment) keeps
+	// it as the source's resume would, under the group_env row.
+	reuseGroupEnv := (sameGroups || p.KeepEnvironment) && relaunchReuses(policy, groupEnvField)
+	useStored := !refreshGeneratedProfile && (sameGroups || p.KeepSandbox) && relaunchReuses(policy, sandboxProfileContentsField)
+	composeFrom := func(stored bool) (*sandboxpolicy.Snapshot, error) {
+		var launch, previous *sandboxpolicy.Snapshot
+		var err error
+		if stored {
+			launch, err = db.AgentEffectiveSandboxConfigForConv(sourceConv)
+			previous = launch
+		} else {
+			launch, previous, err = resolveCurrentSandboxChainForConv(sourceConv)
+		}
+		if err != nil || launch == nil {
+			return launch, err
+		}
+		composed, err := composeRelaunchSandbox(sourceConv, *launch, previous, stored, reuseGroupEnv)
+		if err != nil {
+			return nil, err
+		}
+		return &composed, nil
 	}
-	if err == nil && effectiveSandbox != nil {
-		var composed sandboxpolicy.Snapshot
-		if composed, err = composeRelaunchSandboxEnv(sourceConv, *effectiveSandbox, previous, !refreshGeneratedProfile, reuseGroupEnv); err == nil {
-			effectiveSandbox = &composed
+	effectiveSandbox, err = composeFrom(useStored)
+	freshChain := !useStored
+	if err != nil && !useStored && !refreshGeneratedProfile {
+		if fallback, fallbackErr := composeFrom(true); fallbackErr == nil {
+			sandboxWarn = "the source's current sandbox profiles could not be applied (" + err.Error() +
+				"); the clone launched under the sandbox policy stored at the source's last launch"
+			slog.Warn("clone: "+sandboxWarn, "source", short8(sourceConv))
+			effectiveSandbox, freshChain, err = fallback, false, nil
 		}
 	}
-	freshChain := refreshGeneratedProfile
 	if err == nil {
 		effectiveSandbox, freshChain, err = cloneSandboxForGroup(sourceConv, effectiveSandbox,
-			p.SandboxGroupID, p.KeepSandbox, p.KeepEnvironment, freshChain)
+			p.SandboxGroupID, p.KeepSandbox, p.KeepEnvironment, reuseGroupEnv, freshChain)
 	}
 	if err != nil {
 		return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}
