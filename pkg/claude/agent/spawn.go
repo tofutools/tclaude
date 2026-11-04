@@ -258,6 +258,14 @@ type SpawnRequest struct {
 	// sandbox.harness-config, and sandbox lineage still refuses a posture wider
 	// than the recorded parent's.
 	HarnessConfig string `json:"harness_config,omitempty"`
+
+	// RelaunchPolicy is this spawn's per-agent relaunch-policy rows (launchspec
+	// field key → mode, or "inherit" to follow the global table over a spawn
+	// profile's row). Copied into the agent's launch layers at spawn, where
+	// they override the global relaunch policy for this agent (launch slice
+	// 11). An agent caller needs relaunch-policy.manage for a row that keeps
+	// old settings (reuse, explicit-wins) where the agent would not inherit it.
+	RelaunchPolicy map[string]string `json:"relaunch_policy,omitempty"`
 	// OmitSandboxProfiles explicitly suppresses every tclaude sandbox-profile
 	// tier for this launch: global, group, and explicit. It is distinct from a
 	// blank SandboxProfile, which still inherits the ambient tiers, and is
@@ -871,6 +879,8 @@ type SpawnParams struct {
 	OmitSandboxProfiles       bool     `long:"omit-sandbox-profiles" help:"Human-only: omit all global, group, and explicit tclaude sandbox-profile values for this launch; mutually exclusive with --sandbox-profile"`
 	UsageProfiles             []string `long:"usage-profile" optional:"true" help:"Human-only: usage profile (budget and alerts, see 'tclaude usage rules') for this agent. Repeatable. Replaces the profiles its spawn profile, group or the global default would apply"`
 	HarnessConfig             string   `long:"harness-config" optional:"true" help:"Harness-config posture for this spawn: read (pin the read-only floor over the harness's own settings.json, hooks, skills, agents and commands) | write (lift it, letting the agent edit that surface). Unset = the sandbox-profile chain, whose own default is the floor. Needs the sandbox.harness-config permission for an agent caller (not default-granted, not implied by group ownership); sandbox lineage still refuses a posture wider than the parent's"`
+	RelaunchPolicy            []string `long:"relaunch-policy" optional:"true" help:"Per-agent relaunch policy row, field=mode (repeatable): what a later resume or reincarnation of this agent re-reads and keeps, over the global table (Config › Launch). Fields: group_env, group_remote_control, sandbox_profile_contents (re-resolve|reuse), harness_config (explicit-wins|tighten-only|chain-wins); mode 'inherit' follows the global table even where the spawn profile sets the row. Precedence: this flag > the spawn profiles' rows > the global table. A mode that applies the operator's current settings (re-resolve, tighten-only, chain-wins, inherit) is free; one that keeps old settings (reuse, explicit-wins), where the agent would not inherit it anyway, needs relaunch-policy.manage for an agent caller"`
+	RelaunchPolicyFile        string   `long:"relaunch-policy-file" optional:"true" help:"Per-agent relaunch policy rows from a JSON file in the relaunch-policy shape ({\"rows\":[{\"field\":...,\"mode\":...}]}, as GET /v1/relaunch-policy lists them; scope may be omitted). --relaunch-policy rows override the file's. The same permission rule as --relaunch-policy applies"`
 	IUnderstandBreakGlassRisk bool     `long:"i-understand-break-glass-risk" optional:"true" help:"REMOVED: break-glass no longer exists (TCL-791); passing this flag is an error"`
 
 	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and spawn the agent into it. The worktree is created in the repo containing --cwd (or the group's default directory, then the caller's cwd), unless --worktree-repo points elsewhere. Mirrors the dashboard spawn modal's worktree picker"`
@@ -1581,6 +1591,11 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			contextFeatures = parsed
 		}
 	}
+	relaunchPolicy, relaunchErr := relaunchPolicyFromFlags(p.RelaunchPolicy, p.RelaunchPolicyFile)
+	if relaunchErr != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", relaunchErr)
+		return nil, rcInvalidArg
+	}
 	clientHarness := strings.TrimSpace(p.Harness)
 	validationHarness := clientHarness
 	validateMergedProfile := false
@@ -1813,6 +1828,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	if contextFeaturesSet {
 		req.ContextFeatures = &contextFeatures
 	}
+	req.RelaunchPolicy = relaunchPolicy
 	req.autoReviewSpecified = p.AutoReview
 	req.trustDirSpecified = p.TrustDir
 	// --remote-control is opt-in only on the CLI: send &true when the flag is set,

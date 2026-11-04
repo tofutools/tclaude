@@ -30,6 +30,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/launchspec"
 	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/startupctx"
@@ -1784,6 +1785,9 @@ func resumeOneConvUnderLaunchLockForTeleport(convID string, recreateMissingDir b
 		convID, launchConfig.Harness, launchConfig.RemoteControl)
 	if remoteControlNote != "" {
 		res.Warnings = append(res.Warnings, remoteControlNote)
+	}
+	if note := relaunchOverridesNote(convID); note != "" {
+		res.Warnings = append(res.Warnings, note)
 	}
 	sshLaunchKey := generateSpawnLabel()
 	// Preserve the mode this conversation was launched under; the harness
@@ -3659,6 +3663,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if !validateSpawnHarnessConfig(w, r, body.HarnessConfig) {
 		return
 	}
+	if err := launchspec.ValidateOverrides(body.RelaunchPolicy, true); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_relaunch_policy", err.Error())
+		return
+	}
 	spawnUsageProfiles, usageOK := resolveSpawnUsageProfiles(w, r, body.UsageProfiles)
 	if !usageOK {
 		return
@@ -3843,6 +3851,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	namedProfileSource := profileSource(namedProfile, agent.ProvCLIProfileSource)
 	if namedProfile != nil && namedProfileHandle != namedProfile.Name {
 		namedProfileSource = fmt.Sprintf(`profile %q via alias %q`, namedProfile.Name, namedProfileHandle)
+	}
+	relaunchTiers := []*db.SpawnProfile{namedProfile, groupProfile, globalProfile}
+	relaunchExplicit, relaunchOK := gateSpawnRelaunchOverrides(w, r, body.RelaunchPolicy, relaunchTiers)
+	if !relaunchOK {
+		return
 	}
 	profileTiers := []launchProfileTier{
 		{profile: namedProfile, source: namedProfileSource},
@@ -5032,6 +5045,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		spawnCopyTier(db.SpawnCopyTierGlobalDefault, globalProfile))
 	p.spawnCopyResolved = true
 	p.explicitLaunch = explicitLaunch
+	p.relaunchOverrides = resolveRelaunchOverrides(relaunchExplicit, relaunchTiers)
 	// Taken last: a used-up grant drops out of the permission sources, and every
 	// check above must see the grant as it stood at the gate.
 	spawnUse, ok := takeSudoUse(w, spawnSudoGrant)
@@ -5183,10 +5197,13 @@ type spawnParams struct {
 	// sees one version of each.
 	defaultProfiles *pinnedDefaultProfiles
 	explicitLaunch  map[string]db.ExplicitLaunchValue
-	Arrival         *arrivalContext
-	RemoteJob       *federationJobLaunch // trusted internal remote job boundary
-	launchAuthority func() error
-	BundleHistory   *bundleHistoryLaunch // trusted internal bundle route only
+	// relaunchOverrides are the agent's per-agent relaunch-policy rows,
+	// resolved at the first spawn (resolveRelaunchOverrides).
+	relaunchOverrides []db.RelaunchPolicyOverride
+	Arrival           *arrivalContext
+	RemoteJob         *federationJobLaunch // trusted internal remote job boundary
+	launchAuthority   func() error
+	BundleHistory     *bundleHistoryLaunch // trusted internal bundle route only
 	// NoLaunch enrolls the agent and installs its history without starting a
 	// session: it lands offline and starts on resume. Trusted internal bundle
 	// route only, and only with BundleHistory.
@@ -6465,6 +6482,11 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 			spawnCopyTier(db.SpawnCopyTierGroupDefault, groupProfile),
 			spawnCopyTier(db.SpawnCopyTierGlobalDefault, globalProfile))
 		p.spawnCopyResolved = true
+		// The profile tiers' relaunch rows too (launch slice 11): a trigger,
+		// process or template worker has no explicit rows of its own.
+		if p.relaunchOverrides == nil {
+			p.relaunchOverrides = resolveRelaunchOverrides(nil, []*db.SpawnProfile{p.managedProfile, groupProfile, globalProfile})
+		}
 	}
 	tiers := make([]launchProfileTier, 0, len(profiles))
 	for _, tier := range profiles {

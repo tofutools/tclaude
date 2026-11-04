@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/launchspec"
 )
 
 // Spawn profiles — named, reusable bundles of the spawn-agent dialog
@@ -93,6 +95,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		IsOwner:                    p.IsOwner,
 		PermissionOverrides:        p.PermissionOverrides,
 		ContextFeatures:            p.ContextFeatures,
+		RelaunchPolicy:             maps.Clone(p.RelaunchPolicy),
 	}
 	if !p.CreatedAt.IsZero() {
 		out.CreatedAt = p.CreatedAt.Format(time.RFC3339)
@@ -351,6 +354,15 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_context_features", err.Error()}
 	}
+	// Per-agent relaunch rows: registry fields and modes only ("inherit" is a
+	// spawn's word for leaving a profile's row out; a profile just omits it).
+	if err := launchspec.ValidateOverrides(body.RelaunchPolicy, false); err != nil {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_relaunch_policy", err.Error()}
+	}
+	relaunchPolicy := maps.Clone(body.RelaunchPolicy)
+	if len(relaunchPolicy) == 0 {
+		relaunchPolicy = nil
+	}
 	environment, err := sandboxpolicy.NormalizeEnvironment(body.Environment)
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_environment", err.Error()}
@@ -428,6 +440,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		IsOwner:                    body.IsOwner,
 		PermissionOverrides:        permOverrides,
 		ContextFeatures:            contextFeatures,
+		RelaunchPolicy:             relaunchPolicy,
 	}, nil
 }
 
@@ -478,6 +491,11 @@ func buildInlineProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawn
 		return nil, reject("auto_focus")
 	case body.IncludeGroupDefaultContext != nil:
 		return nil, reject("include_group_default_context")
+	case len(body.RelaunchPolicy) != 0:
+		// Honoured from a saved spawn profile only (launch slice 11); a
+		// template-local profile is not one of the spawn's profile tiers.
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+			"profile_inline: relaunch_policy is only valid on a saved spawn profile"}
 	}
 	// A placeholder name satisfies buildProfileFromJSON's name rule; the stored
 	// inline profile is name-less by definition.
@@ -1316,6 +1334,20 @@ func seedProfileFromConv(convID string) (spawnProfileJSON, error) {
 		}
 		if len(overrides) > 0 {
 			seed.PermissionOverrides = overrides
+		}
+	}
+	// The agent's per-agent relaunch rows ride along (launch slice 11), so a
+	// profile saved from it relaunches its spawns the same way. "inherit"
+	// rows are left out: a profile follows the global table by omission.
+	if layers, err := db.AgentLaunchLayersForConv(convID); err == nil && layers != nil {
+		for _, o := range layers.RelaunchOverrides {
+			if o.Mode == string(launchspec.ModeInherit) {
+				continue
+			}
+			if seed.RelaunchPolicy == nil {
+				seed.RelaunchPolicy = map[string]string{}
+			}
+			seed.RelaunchPolicy[o.Field] = o.Mode
 		}
 	}
 	return seed, nil

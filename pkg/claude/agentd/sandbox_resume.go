@@ -194,7 +194,7 @@ func resolveResumeSandboxPolicyFrom(
 ) (*resumeSandboxPolicy, error) {
 	var resolved, previous *sandboxpolicy.Snapshot
 	var err error
-	relaunchPolicy := currentRelaunchPolicy()
+	relaunchPolicy, _ := relaunchPolicyFor(convID)
 	if useStored {
 		previous, err = db.AgentEffectiveSandboxConfigForConv(convID)
 		if err == nil && previous != nil {
@@ -311,7 +311,7 @@ func composeRelaunchSandbox(convID string, resolved sandboxpolicy.Snapshot, prev
 // the fallback for exactly that case.
 func withChainHarnessConfig(convID string, current sandboxpolicy.Snapshot, previous *sandboxpolicy.Snapshot) sandboxpolicy.Snapshot {
 	if explicitHarnessConfig(previous) == "" ||
-		currentRelaunchPolicy().Mode(harnessConfigField) == launchspec.ModeExplicitWins {
+		relaunchPolicyMode(convID, harnessConfigField) == launchspec.ModeExplicitWins {
 		return current
 	}
 	chain, err := resolveSandboxChainFrom(convID, previous)
@@ -475,7 +475,7 @@ func explicitHarnessConfig(previous *sandboxpolicy.Snapshot) string {
 // win over an explicit write; chain-wins takes the chain's. conv names the
 // agent whose spawn-time explicit posture to fall back to.
 func reapplyExplicitHarnessConfig(conv string, current sandboxpolicy.Snapshot, previous *sandboxpolicy.Snapshot) (sandboxpolicy.Snapshot, error) {
-	explicit := relaunchHarnessConfig(currentRelaunchPolicy().Mode(harnessConfigField),
+	explicit := relaunchHarnessConfig(relaunchPolicyMode(conv, harnessConfigField),
 		current.Effective.HarnessConfig, explicitHarnessConfigFor(conv, previous))
 	if explicit == "" {
 		return current, nil
@@ -539,7 +539,7 @@ func relaunchSandboxRequestFor(convID, cwd, sshLaunchKey string, cfg *durableRel
 // profiles are tried, so a resume still works (reuseStoredProfileContents
 // decides, and says when the agent's profiles are now different ones).
 func prepareRelaunchSandbox(req relaunchSandboxRequest) (*relaunchSandbox, *spawnFailure) {
-	if relaunchReuses(currentRelaunchPolicy(), sandboxProfileContentsField) {
+	if relaunchPolicyMode(req.convID, sandboxProfileContentsField) == launchspec.ModeReuse {
 		stored, err := db.AgentEffectiveSandboxConfigForConv(req.convID)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "io", "read the stored sandbox policy: " + err.Error()}
@@ -571,8 +571,8 @@ func prepareReusedRelaunchSandbox(req relaunchSandboxRequest) (*relaunchSandbox,
 	}
 	fallback.warnings = append([]string{fmt.Sprintf(
 		"the sandbox profile contents stored at the last launch could not be applied (%s); "+
-			"relaunched under the agent's current sandbox profiles, although the relaunch policy reuses stored contents",
-		fail.Msg)}, fallback.warnings...)
+			"relaunched under the agent's current sandbox profiles, although the relaunch policy (%s) reuses stored contents",
+		fail.Msg, relaunchPolicySource(req.convID, sandboxProfileContentsField))}, fallback.warnings...)
 	return fallback, nil
 }
 

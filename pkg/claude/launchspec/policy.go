@@ -140,3 +140,78 @@ func (p RelaunchPolicy) ReResolves(field string) bool {
 	}
 	return false
 }
+
+// Per-agent relaunch overrides (launch slice 11). A spawn profile, and a
+// spawn itself, can set a configurable row for the agents it launches; the
+// rows are copied into the agent's launch layers at spawn and override the
+// global table for that agent. Precedence per row, highest first: the
+// spawn's explicit row, the first spawn-profile tier (named, group default,
+// global default) that sets it, the global table, the row's default.
+
+// ModeInherit, on a spawn's explicit row, follows the global table for the
+// row even when a spawn profile sets it ("Follow global" in the dashboard).
+// It is not a stored mode: the row is simply not overridden.
+const ModeInherit RelaunchMode = "inherit"
+
+// ValidateOverrides checks a field → mode map of per-agent rows: each field a
+// configurable registry row, each mode one it offers, or inherit when
+// allowInherit (a spawn's explicit rows; a profile leaves a row out instead).
+func ValidateOverrides(rows map[string]string, allowInherit bool) error {
+	for field, mode := range rows {
+		f, ok := Lookup(field)
+		if !ok {
+			return fmt.Errorf("relaunch policy: unknown field %q", field)
+		}
+		if !f.Configurable {
+			return fmt.Errorf("relaunch policy: field %q is %s and cannot be configured", field, f.Layer)
+		}
+		if allowInherit && RelaunchMode(mode) == ModeInherit {
+			continue
+		}
+		if !slices.Contains(f.RelaunchModes(), RelaunchMode(mode)) {
+			want := f.RelaunchModes()
+			if allowInherit {
+				want = append([]RelaunchMode{ModeInherit}, want...)
+			}
+			return fmt.Errorf("relaunch policy: field %q: mode %q is not one of %v", field, mode, want)
+		}
+	}
+	return nil
+}
+
+// KeepsOldSettings reports whether mode makes a relaunch keep a value over
+// the operator's current settings: reuse keeps the stored value, and the
+// harness-config row's explicit-wins keeps an explicit posture over the
+// re-read sandbox-profile chain. Setting one for an agent, where it differs
+// from what the agent would inherit, takes relaunch-policy.manage: an
+// operator who tightens a group or profile later would not reach that agent.
+// Every other mode applies the operator's current settings and is free.
+func KeepsOldSettings(mode RelaunchMode) bool {
+	return mode == ModeReuse || mode == ModeExplicitWins
+}
+
+// WithOverrides is p with the given rows (field → mode) taking the place of
+// its global rows for those fields. Invalid rows are skipped.
+func (p RelaunchPolicy) WithOverrides(rows map[string]RelaunchMode) RelaunchPolicy {
+	valid := map[string]RelaunchMode{}
+	for field, mode := range rows {
+		if f, ok := Lookup(field); ok && slices.Contains(f.RelaunchModes(), mode) {
+			valid[field] = mode
+		}
+	}
+	if len(valid) == 0 {
+		return p
+	}
+	out := RelaunchPolicy{}
+	for _, r := range p.Rows {
+		if _, over := valid[r.Field]; !over || r.Scope != ScopeGlobal {
+			out.Rows = append(out.Rows, r)
+		}
+	}
+	for _, f := range Fields {
+		if mode, ok := valid[f.Key]; ok {
+			out.Rows = append(out.Rows, PolicyRow{Scope: ScopeGlobal, Field: f.Key, Mode: mode})
+		}
+	}
+	return out
+}

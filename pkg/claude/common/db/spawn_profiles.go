@@ -171,6 +171,13 @@ type SpawnProfile struct {
 	// Code's own default. Claude-Code-only, validated against the profile's
 	// harness through harness.ResolveContextFeatures. See TCL-597.
 	ContextFeatures map[string]string
+	// RelaunchPolicy is the profile's relaunch-policy rows (launchspec field
+	// key → mode, e.g. "group_env": "reuse"), stored as a JSON object in the
+	// relaunch_policy column ("" = none). A spawn copies them into the agent's
+	// launch layers, where they override the global relaunch policy for that
+	// agent (launch slice 11). Sparse: a row the profile does not set follows
+	// the global table.
+	RelaunchPolicy map[string]string
 
 	// Identity / enrollment fields (dialog-side). "" = unset.
 	AgentName      string   // the dialog's "Name" field (the spawned agent's display name)

@@ -298,6 +298,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			UsageSpawnProfile:           launch.UsageSpawnProfile,
 			spawnCopyCallerTiers:        launch.SpawnCopyTiers,
 			explicitLaunch:              templateRolesExplicit(a.Role, roles, time.Now()),
+			relaunchOverrides:           launch.RelaunchOverrides,
 			defaultProfiles:             launch.DefaultProfiles,
 			SSHWorkaround:               launch.SSHWorkaround,
 			SSHWorkaroundSet:            launch.SSHWorkaroundSet,

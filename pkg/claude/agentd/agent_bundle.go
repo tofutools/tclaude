@@ -159,6 +159,9 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 	if requested.InitialMessage == "" {
 		requested.InitialMessage = seed.InitialMessage
 	}
+	// Per-agent relaunch rows stay on this node: they are this node's policy
+	// for the agent, and an explicit "inherit" is no profile value anyway.
+	seed.RelaunchPolicy = nil
 	d := agentbundle.Definition{Name: name, Role: requested.Role, Description: requested.Descr, Harness: h.Name, ProfileName: requested.Profile, InitialMessage: requested.InitialMessage, StartupContext: seed.StartupContext, Paths: agentbundle.Paths{Cwd: requested.Cwd, Worktree: requested.WorktreePath, Branch: requested.WorktreeBranch}}
 	sessions, err := db.FindSessionsByConvID(convID)
 	if err != nil {

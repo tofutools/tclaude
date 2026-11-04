@@ -64,7 +64,7 @@ async function waitForCondition(harness, condition, message) {
 test('management model preserves full-replace profile and role semantics', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/management-model.js');
-  const original = { name: 'old', aliases: ['codex-reviewer'], harness: 'codex', approval: 'never', auto_review: true, model: 'gpt-5', role_refs: ['reviewer', 'go-maintainer'], disabled: false, disabled_reason: 'previous outage', operator_only: true };
+  const original = { name: 'old', aliases: ['codex-reviewer'], harness: 'codex', approval: 'never', auto_review: true, model: 'gpt-5', role_refs: ['reviewer', 'go-maintainer'], disabled: false, disabled_reason: 'previous outage', operator_only: true, relaunch_policy: { group_env: 'reuse' } };
   const draft = model.profileDraft(original, {}, catalog); draft.name = 'renamed'; draft.trust_dir = '1';
   assert.equal(draft.approval_reviewer, 'auto_review');
   assert.deepEqual(draft.role_refs, ['reviewer', 'go-maintainer']);
@@ -74,6 +74,7 @@ test('management model preserves full-replace profile and role semantics', async
   assert.equal(payload.disabled, false); assert.equal(payload.disabled_reason, 'previous outage');
   assert.equal(payload.operator_only, true);
   assert.deepEqual(payload.role_refs, ['reviewer', 'go-maintainer']);
+  assert.deepEqual(payload.relaunch_policy, { group_env: 'reuse' }, 'an edit carries the relaunch rows through');
   draft.approval_reviewer = 'human'; assert.equal(model.profilePayload(draft, original, catalog).auto_review, false);
   assert.deepEqual(payload.aliases, ['codex-reviewer', 'cold-reviewer']);
   draft.harness = 'claude'; draft.approval = 'plan'; draft.sandbox = 'on';

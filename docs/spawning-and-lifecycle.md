@@ -175,6 +175,11 @@ until one of those lifecycle actions.
 
 What every relaunch (resume, reincarnate, clone, morph) does with each launch
 field, and why, is listed in [Launch resolution](launch-resolution.md).
+A spawn can override the global relaunch policy for its agent with
+`--relaunch-policy field=mode` (repeatable) or `--relaunch-policy-file`, and a
+spawn profile can carry the same rows; see
+[Per-agent overrides](launch-resolution.md#per-agent-overrides), which also
+covers when an agent spawner needs `relaunch-policy.manage`.
 
 #### Remote control, auto memory, peer messaging and group context
 

@@ -357,7 +357,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// A clone that joins another group for its sandbox (SandboxGroupID)
 	// takes that group's settings, whatever the policy: that is where it is
 	// being placed, not a relaunch of the source.
-	policy := currentRelaunchPolicy()
+	policy, _ := relaunchPolicyFor(sourceConv)
 	stored, err := db.AgentEffectiveSandboxConfigForConv(sourceConv)
 	if err != nil {
 		return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io", Msg: "read the source's stored sandbox policy: " + err.Error()}

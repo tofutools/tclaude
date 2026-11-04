@@ -57,6 +57,9 @@ var snapshotMergeExemptFields = map[string]bool{
 	"AgentName": true, "Role": true, "RoleRef": true, "RoleRefs": true, "PromptRefs": true, "Descr": true, "InitialMessage": true,
 	// Spawn-dialog-only toggles: meaningless for a template deploy.
 	"SyncWorktree": true, "AutoFocus": true, "IncludeGroupDefaultContext": true,
+	// Per-agent relaunch rows are honoured from a saved spawn profile only;
+	// buildInlineProfileFromJSON refuses them on a template-local one.
+	"RelaunchPolicy": true,
 }
 
 // snapshotMergeTracedWinsFields are the fields the live group owns outright: the

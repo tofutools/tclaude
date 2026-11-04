@@ -42,7 +42,7 @@ var externalStewardSpawnFields = map[string]bool{
 	"AutoFocus": false, "AutoFocusWeb": false, "AutoMemory": false, "AutoReview": false,
 	"BreakGlassAcknowledged": false, "CallerCwd": false, "CodexAppServer": false, "CopilotAPI": false,
 	"Cwd": false, "Descr": false, "Effort": false, "Environment": false, "Harness": false,
-	"HarnessBuiltinMode": false, "HarnessConfig": false, "IsOwner": false, "Model": false,
+	"HarnessBuiltinMode": false, "HarnessConfig": false, "IsOwner": false, "Model": false, "RelaunchPolicy": false,
 	"ModelProxy": false, "NoQueue": false, "NonInteractive": false, "OmitSandboxProfiles": false, "PeerMessaging": false,
 	"PermissionOverrides": false, "PiDrive": false, "PromptRefs": false, "RemoteControl": false,
 	"ReplyTo": false, "Role": false, "RoleRef": false, "RoleRefs": false, "RunTimeoutSeconds": false,

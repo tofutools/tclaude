@@ -775,6 +775,9 @@ type templateAgentLaunch struct {
 	// referenced profile), recorded as the deployed agent's spawn copy above
 	// the group and global defaults.
 	SpawnCopyTiers []db.SpawnCopyTier
+	// RelaunchOverrides are the relaunch rows the referenced, group default
+	// and global default profiles give the deployed agent (launch slice 11).
+	RelaunchOverrides []db.RelaunchPolicyOverride
 	// DefaultProfiles are the group and global default profiles this
 	// resolution read; the spawn resolves its remaining fields from the same
 	// ones rather than reading them again.
@@ -1445,6 +1448,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 		UsageSpawnProfile:      refProfile,
 		DefaultProfiles:        &pinnedDefaultProfiles{group: groupProfile, global: globalProfile},
 		SpawnCopyTiers:         spawnCopyTiers(spawnCopyTier(db.SpawnCopyTierInline, inlineProfile), spawnCopyTier(db.SpawnCopyTierNamed, refProfile)),
+		RelaunchOverrides:      resolveRelaunchOverrides(nil, []*db.SpawnProfile{refProfile, groupProfile, globalProfile}),
 		SSHWorkaround:          sshWorkaround,
 		SSHWorkaroundSet:       sshWorkaroundSet,
 		ContextFeatures:        contextFeatures,
