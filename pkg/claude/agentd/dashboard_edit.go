@@ -311,34 +311,6 @@ func handleDashboardHideAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, hideAgentResp{ConvID: res.ConvID, Detached: n})
 }
 
-// handleDashboardAgentsAPI dispatches:
-//
-//	DELETE /api/agents/{conv}              → wipe the conversation + orphan-clean
-//	POST   /api/agents/{conv}/stop         → soft exit / force kill
-//	POST   /api/agents/{conv}/resume       → wake (resume tmux pane)
-//	POST   /api/agents/{conv}/restart      → stop + resume the same conversation
-//	POST   /api/agents/{conv}/clone        → fork a sibling (cookie-auth twin)
-//	POST   /api/agents/{conv}/reincarnate  → spawn successor + soft-exit original
-//	POST   /api/agents/{conv}/compact      → the harness's compact, as POST /v1/agent/{conv}/compact
-//	POST   /api/agents/{conv}/task         → set/clear task-reference link
-//	GET    /api/agents/{conv}/status       → compact standalone-terminal status
-//	GET    /api/agents/{conv}/debug-export → download recorded launch configuration
-//
-// Behaviour:
-//   - Runs conv.DeleteAgentAllGenerations (unlinks .jsonl, drops conv_index
-//     row, strips sessions-index.json, writes sync tombstone) — and when the
-//     conv is an agent's head generation, sweeps its predecessor generations
-//     too (JOH-26 PR3d), so a multi-generation actor leaves nothing orphaned.
-//   - Always: drops every agent_group_members / agent_group_owners /
-//     agent_permissions row referencing this conv-id, so the dashboard
-//     listing actually drops the row instead of leaving a "(unknown)"
-//     ghost. Without this, a re-delete attempt would 404 in the
-//     resolver (no conv-index row to match) and the entry would be
-//     un-removable.
-//
-// Accepts either the resolver-friendly selector (if the agent still
-// exists) or a raw UUID-shaped conv-id (for cleaning up orphans whose
-// conv-index row is already gone).
 // dashboardAgentVerb is one /api/agents/{conv}/{verb} action. methods, when
 // set, is checked before serve and answers anything else with 405 and
 // "<METHOD> only" ("GET or POST only" for two); an empty list leaves the
@@ -424,6 +396,34 @@ var dashboardAgentVerbs = map[string]dashboardAgentVerb{
 	}},
 }
 
+// handleDashboardAgentsAPI dispatches:
+//
+//	DELETE /api/agents/{conv}              → wipe the conversation + orphan-clean
+//	POST   /api/agents/{conv}/stop         → soft exit / force kill
+//	POST   /api/agents/{conv}/resume       → wake (resume tmux pane)
+//	POST   /api/agents/{conv}/restart      → stop + resume the same conversation
+//	POST   /api/agents/{conv}/clone        → fork a sibling (cookie-auth twin)
+//	POST   /api/agents/{conv}/reincarnate  → spawn successor + soft-exit original
+//	POST   /api/agents/{conv}/compact      → the harness's compact, as POST /v1/agent/{conv}/compact
+//	POST   /api/agents/{conv}/task         → set/clear task-reference link
+//	GET    /api/agents/{conv}/status       → compact standalone-terminal status
+//	GET    /api/agents/{conv}/debug-export → download recorded launch configuration
+//
+// Behaviour:
+//   - Runs conv.DeleteAgentAllGenerations (unlinks .jsonl, drops conv_index
+//     row, strips sessions-index.json, writes sync tombstone) — and when the
+//     conv is an agent's head generation, sweeps its predecessor generations
+//     too (JOH-26 PR3d), so a multi-generation actor leaves nothing orphaned.
+//   - Always: drops every agent_group_members / agent_group_owners /
+//     agent_permissions row referencing this conv-id, so the dashboard
+//     listing actually drops the row instead of leaving a "(unknown)"
+//     ghost. Without this, a re-delete attempt would 404 in the
+//     resolver (no conv-index row to match) and the entry would be
+//     un-removable.
+//
+// Accepts either the resolver-friendly selector (if the agent still
+// exists) or a raw UUID-shaped conv-id (for cleaning up orphans whose
+// conv-index row is already gone).
 func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
