@@ -4786,7 +4786,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 
 	// A spawn preview stops here, before the first side effect (the rate
 	// limit slot below): it has resolved and validated the request exactly as
-	// the spawn would, and answers with what it would launch.
+	// the spawn would, and answers with what it would launch. Nothing above
+	// this line may write, allocate or audit: TestSpawnPreview_HasNoSideEffects
+	// guards it.
 	if isSpawnPreview(r) {
 		writeJSON(w, http.StatusOK, spawnPreviewResponse{Resolved: resolvedLaunch})
 		return
