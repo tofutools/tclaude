@@ -1536,20 +1536,6 @@ func recoveryLaunchCommitLock(convID string) *sync.Mutex {
 	return lock.(*sync.Mutex)
 }
 
-type effectiveSandboxChangedError struct{ err error }
-
-func (e *effectiveSandboxChangedError) Error() string { return e.err.Error() }
-func (e *effectiveSandboxChangedError) Unwrap() error { return e.err }
-
-func writeEffectiveSandboxLoadError(w http.ResponseWriter, err error) {
-	var changed *effectiveSandboxChangedError
-	if errors.As(err, &changed) {
-		writeError(w, http.StatusConflict, "sandbox_profile_changed", changed.Error())
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "io", "load effective sandbox snapshot: "+err.Error())
-}
-
 func resumeOneConvLocked(convID string, recreateMissingDir bool) memberOpResult {
 	// Flag the whole attempt — including time queued on the launch lock — so
 	// dashboards render the multi-second wake as "waking" rather than a dead
