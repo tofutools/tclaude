@@ -36,7 +36,7 @@ export function GroupResources({ group, boards = [], pages = [], api, source, no
       <span class="ui-eyebrow gr-kind-label">Boards</span>
       ${boards.map((board) => html`<div key=${board.id} class="gr-row" data-resource-board=${board.id}>
         <${Button} size="sm" variant="link" class="gr-name" title=${`Open ${board.title || board.id}`}
-          onClick=${() => openBoardPane(board.id, board.title || board.id)}>▦ ${board.title || board.id}<//>
+          onClick=${() => openBoardPane(board.id, board.title || board.id)}><span class="gr-glyph" aria-hidden="true">▦</span>${board.title || board.id}<//>
         <span class="gr-spacer"></span>
         ${board.editing > 0 && html`<span class="gq-dim">${board.editing} editing</span>`}
         <${LockChip} kind="board" id=${board.id} name=${board.title || board.id} locked=${!!board.agentsLocked} api=${api} source=${source} notify=${notify} />
@@ -46,7 +46,7 @@ export function GroupResources({ group, boards = [], pages = [], api, source, no
       <span class="ui-eyebrow gr-kind-label">Pages</span>
       ${pages.map((page) => html`<div key=${page.id} class="gr-row" data-resource-page=${page.id}>
         <${Button} size="sm" variant="link" class="gr-name" title=${`Open ${page.title || page.name}`}
-          onClick=${() => openPagePane(page.id, page.title || page.name)}>◧ ${page.title || page.name}<//>
+          onClick=${() => openPagePane(page.id, page.title || page.name)}><span class="gr-glyph" aria-hidden="true">◧</span>${page.title || page.name}<//>
         <span class="gr-spacer"></span>
         <span class="gq-dim">${pageMeta(page, nameOf)}</span>
         <${LockChip} kind="page" id=${page.id} name=${page.title || page.name} locked=${!!page.agentsLocked} api=${api} source=${source} notify=${notify} />

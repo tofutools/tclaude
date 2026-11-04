@@ -595,6 +595,14 @@ test('Both\'s Resources section lists the group\'s boards and pages with lock ch
   assert.match(board.textContent, /2 editing/);
   assert.equal(board.querySelector('[data-resource-lock="board:sprint"]').textContent, '✎ agents can edit');
   assert.equal(feSection.querySelector('[data-resource-lock="process:ship"]').textContent, '🔒 agents: read-only');
+  // One style per kind: a heading, then rows ending in the lock chip; the
+  // runs stay with the processes, above the other kinds.
+  const shipRow = feSection.querySelector('[data-saved-process="ship"]');
+  assert.equal(shipRow.lastElementChild.dataset.resourceLock, 'process:ship', 'a process row ends in its lock');
+  assert.equal(board.lastElementChild.dataset.resourceLock, 'board:sprint', 'a board row ends in its lock');
+  assert.ok(feSection.querySelector('.gq-saved > .gr-kind-label'), 'Processes is a heading, as Boards is');
+  const lastRun = [...feSection.querySelectorAll('[data-process-run-card]')].pop();
+  assert.ok(lastRun.compareDocumentPosition(feRes) & 4 /* DOCUMENT_POSITION_FOLLOWING */, 'boards follow the runs');
 
   const infraSection = section(details('infra-crew'));
   assert.ok(infraSection.classList.contains('open'), 'a group with a resource opens its section');

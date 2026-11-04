@@ -210,16 +210,19 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
   useEffect(() => bindSavedProcessDnd(), []);
   useEffect(() => registerSavedProcessRemover(group.name, removeDropped));
   const current = processes.find((process) => process.templateId === open) || null;
+  // One row per process, under the kind's heading, as Resources lists its
+  // boards and pages (groups-resources.js): name, then actions, then the
+  // agent lock at the row's end.
   return html`<div class="gq-saved" data-saved-processes=${group.name}>
+    <span class="ui-eyebrow gq-saved-label gr-kind-label">${wizard ? 'Rites' : 'Processes'}</span>
     <div class="gq-saved-row">
-      <span class="ui-eyebrow gq-saved-label">${wizard ? 'Rites' : 'Processes'}</span>
       ${processes.map((process) => html`<span key=${process.templateId} class=${`gq-saved-chip${open === process.templateId ? ' open' : ''}`}
         data-saved-process=${process.templateId} draggable="true" data-saved-process-drag=${process.templateId}
         data-saved-process-group=${group.name} data-saved-process-name=${process.name}
         title=${`Drag onto the bin to remove ${process.name} from ${group.name}`}>
+        <span class="gr-glyph" aria-hidden="true">⧉</span>
         <span class="gq-saved-name" title=${process.listed ? 'Also in the template library' : `Saved to ${group.name} only`}>${process.name}</span>
         <span class="gq-dim">${plural(process.steps || 0, 'step')}</span>
-        <${LockChip} kind="process" id=${process.templateId} name=${process.name} locked=${!!process.agentsLocked} api=${api} source=${source} notify=${notify} />
         ${editing === process.templateId
     ? html`<span class="gq-saved-editing" data-saved-editing=${process.templateId}>✎ editing</span>`
     : html`<button data-ui-exempt type="button" class="gq-saved-edit" data-saved-edit-graph=${process.templateId} disabled=${!!loading || !!editing}
@@ -230,6 +233,8 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
         <button data-ui-exempt type="button" class="gq-saved-remove" data-saved-remove-chip=${process.templateId}
           aria-label=${`Remove ${process.name} from ${group.name}`} title=${`Remove ${process.name} from ${group.name}'s processes`}
           onClick=${() => { setRemoving(true); setOpen(process.templateId); }}>×</button>
+        <span class="gr-spacer"></span>
+        <${LockChip} kind="process" id=${process.templateId} name=${process.name} locked=${!!process.agentsLocked} api=${api} source=${source} notify=${notify} />
       </span>`)}
     </div>
     ${current && html`<${StartStrip} key=${current.templateId} removing=${removing} onRemoving=${setRemoving} editing=${editing}
