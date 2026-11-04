@@ -120,6 +120,9 @@ func resolveResumeSandboxPolicy(
 		// resume or reincarnation.
 		return &resumeSandboxPolicy{Snapshot: &current, Previous: previous}, nil
 	}
+	if current, err = reapplyExplicitHarnessConfig(current, previous); err != nil {
+		return nil, err
+	}
 	sshWorkaround = sshWorkaround && codexSSHWorkaroundApplies(
 		harnessName, harnessBuiltinMode, sandboxImplementation, &current)
 	current, err = configureCodexSSHWorkaroundDeclaration(current, sshWorkaround)
@@ -276,4 +279,37 @@ func resumeSandboxGroupID(convID string) (int64, error) {
 		return 0, nil
 	}
 	return groups[0].ID, nil
+}
+
+// explicitHarnessConfig returns the --harness-config posture a launch
+// selected explicitly, read back from its recorded snapshot. The selection
+// has no tier of its own: applySpawnHarnessConfig overwrites the composed
+// value and clears its provenance, and composition always records provenance
+// for a value it chose. So a posture with no provenance is the launch
+// contract. An omitted-profiles snapshot never carries one.
+func explicitHarnessConfig(previous *sandboxpolicy.Snapshot) string {
+	if previous == nil || previous.ProfilesOmitted {
+		return ""
+	}
+	if previous.Effective.HarnessConfig == sandboxpolicy.HarnessConfigAccessDefault ||
+		previous.Effective.Provenance.HarnessConfig != nil {
+		return ""
+	}
+	return string(previous.Effective.HarnessConfig)
+}
+
+// reapplyExplicitHarnessConfig carries an explicit --harness-config posture
+// across a relaunch that rebuilt the policy from the profile chain
+// (tcl-bmhpir). Without it a read pin over a write chain widens to write, and
+// a write selection over the floor reverts to the floor.
+func reapplyExplicitHarnessConfig(current sandboxpolicy.Snapshot, previous *sandboxpolicy.Snapshot) (sandboxpolicy.Snapshot, error) {
+	explicit := explicitHarnessConfig(previous)
+	if explicit == "" {
+		return current, nil
+	}
+	applied, fail := applySpawnHarnessConfig(current, explicit)
+	if fail != nil {
+		return current, fmt.Errorf("reapply the launch's harness_config %q: %s", explicit, fail.Msg)
+	}
+	return applied, nil
 }

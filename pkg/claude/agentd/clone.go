@@ -292,6 +292,14 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			effectiveSandbox, err = refreshCloneLaunchEnvironment(
 				sourceConv, effectiveSandbox, previous)
 		}
+		if err == nil && effectiveSandbox != nil {
+			// The source's explicit --harness-config is part of what it was
+			// launched with, and the clone inherits it (tcl-bmhpir).
+			var reapplied sandboxpolicy.Snapshot
+			if reapplied, err = reapplyExplicitHarnessConfig(*effectiveSandbox, previous); err == nil {
+				effectiveSandbox = &reapplied
+			}
+		}
 	} else {
 		effectiveSandbox, err = db.AgentEffectiveSandboxConfigForConv(sourceConv)
 		if err == nil {
