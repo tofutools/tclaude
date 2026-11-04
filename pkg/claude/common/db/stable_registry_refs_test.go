@@ -54,7 +54,7 @@ func TestTemplateReferenceSurvivesRename(t *testing.T) {
 	require.NoError(t, err)
 	groupID, err := CreateAgentGroup("crew", "")
 	require.NoError(t, err)
-	_, err = SetAgentGroupDeployMeta("crew", "ship", "original")
+	_, err = SetAgentGroupDeployMeta("crew", "ship", "", "original")
 	require.NoError(t, err)
 	require.NoError(t, UpsertWaveChoreography(&WaveChoreography{
 		GroupID: groupID, GroupName: "crew", TemplateName: "original", TemplateID: templateID,
@@ -120,7 +120,7 @@ func TestStableRegistryRefs_ReconcileLegacyNameOnlyWrites(t *testing.T) {
 	require.NoError(t, err)
 	_, err = SetAgentGroupDefaultProfile("legacy-write-group", "profile-one")
 	require.NoError(t, err)
-	_, err = SetAgentGroupDeployMeta("legacy-write-group", "", "template-one")
+	_, err = SetAgentGroupDeployMeta("legacy-write-group", "", "", "template-one")
 	require.NoError(t, err)
 	require.NoError(t, SetDashboardProfileRef(
 		"tclaude.dash.default_profile", "tclaude.dash.default_profile_id", "profile-one", p1))
@@ -157,7 +157,7 @@ func TestStableRegistryRefs_InsertPreservesAuthoritativeHistoricalID(t *testing.
 	require.NoError(t, err)
 	_, err = CreateAgentGroup("source", "")
 	require.NoError(t, err)
-	_, err = SetAgentGroupDeployMeta("source", "", "historical")
+	_, err = SetAgentGroupDeployMeta("source", "", "", "historical")
 	require.NoError(t, err)
 	_, err = DeleteGroupTemplate("historical")
 	require.NoError(t, err)

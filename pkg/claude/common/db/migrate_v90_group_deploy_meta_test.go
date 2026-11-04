@@ -64,7 +64,7 @@ func TestSetAgentGroupDeployMeta_RoundTrip(t *testing.T) {
 	_, err = CreateAgentGroup("force", "d")
 	require.NoError(t, err)
 
-	n, err := SetAgentGroupDeployMeta("force", "Ship the OAuth flow", "feature-team")
+	n, err := SetAgentGroupDeployMeta("force", "Ship the OAuth flow", "", "feature-team")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), n, "one group updated")
 
@@ -75,7 +75,7 @@ func TestSetAgentGroupDeployMeta_RoundTrip(t *testing.T) {
 	assert.Equal(t, "feature-team", g.SourceTemplate)
 
 	// A no-such-group update reports zero rows affected.
-	n, err = SetAgentGroupDeployMeta("ghost", "x", "y")
+	n, err = SetAgentGroupDeployMeta("ghost", "x", "", "y")
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), n)
 }

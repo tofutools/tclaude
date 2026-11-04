@@ -123,7 +123,7 @@ func TestGroupTemplate_InstantiateSpawnsTeam(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, g, "group phoenix created")
 	assert.Contains(t, g.DefaultContext, boilerplate, "group context keeps template boilerplate")
-	assert.Contains(t, g.DefaultContext, task, "group context carries the instantiation task")
+	assert.Contains(t, g.MissionBlock(), task, "the group's mission block carries the instantiation task")
 
 	members, err := db.ListAgentGroupMembers(g.ID)
 	require.NoError(t, err)
@@ -178,8 +178,8 @@ func TestGroupTemplate_InstantiateTaskRecordsMissionProvenance(t *testing.T) {
 	g, err := db.GetAgentGroupByName("pair-smoke")
 	require.NoError(t, err)
 	require.NotNil(t, g)
-	assert.Contains(t, g.DefaultContext, "## Task", "plain instantiate still renders a Task block")
-	assert.NotContains(t, g.DefaultContext, "## Mission", "plain instantiate does not become deploy semantics")
+	assert.Contains(t, g.MissionBlock(), "## Task", "plain instantiate still renders a Task block")
+	assert.NotContains(t, g.MissionBlock(), "## Mission", "plain instantiate does not become deploy semantics")
 }
 
 func TestGroupTemplate_InstantiatePerAgentWorktrees(t *testing.T) {
@@ -294,7 +294,7 @@ func TestGroupTemplate_InstantiateContextOverride(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, g, "group expedition created")
 	assert.Contains(t, g.DefaultContext, edited, "group context uses the edited override")
-	assert.Contains(t, g.DefaultContext, task, "group context still carries the task")
+	assert.Contains(t, g.MissionBlock(), task, "the mission block still carries the task")
 	assert.NotContains(t, g.DefaultContext, boilerplate,
 		"the override replaced the template boilerplate, not appended to it")
 

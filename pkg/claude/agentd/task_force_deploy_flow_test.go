@@ -86,10 +86,12 @@ func TestTaskForceDeploy_RendersMissionAndRecordsProvenance(t *testing.T) {
 	g, err := db.GetAgentGroupByName("raid")
 	require.NoError(t, err)
 	require.NotNil(t, g)
-	assert.Contains(t, g.DefaultContext, "## Mission", "mission renders under its own header")
-	assert.Contains(t, g.DefaultContext, mission, "group context carries the mission")
+	// Since the mission split the mission is stored apart from the standing
+	// context and delivered as its own block.
+	assert.Equal(t, "## Mission\n\n"+mission, g.MissionBlock(), "mission renders under its own header")
+	assert.NotContains(t, g.DefaultContext, mission, "the standing context no longer carries the mission")
 	assert.Contains(t, g.DefaultContext, boilerplate, "group context keeps template boilerplate")
-	assert.NotContains(t, g.DefaultContext, "## Task", "deploy uses Mission, not Task")
+	assert.NotContains(t, g.MissionBlock(), "## Task", "deploy uses Mission, not Task")
 
 	// Deployment provenance is readable back where the dashboard reads it.
 	assert.Equal(t, mission, g.Mission, "group row records the mission")
@@ -151,7 +153,7 @@ func TestTaskForceDeploy_MirroredSettingsCanNestUnderParent(t *testing.T) {
 	assert.Equal(t, "https://linear.app/acme/project/parent", g.AttachmentURL)
 	assert.Equal(t, "Parent project", g.AttachmentLabel)
 	assert.Contains(t, g.DefaultContext, "mirrored deploy context")
-	assert.Contains(t, g.DefaultContext, "## Mission")
+	assert.Contains(t, g.MissionBlock(), "## Mission")
 	assert.NotContains(t, g.DefaultContext, "template context should be replaced")
 }
 
@@ -227,7 +229,7 @@ func TestTaskForceDeploy_BareURLMissionFallsBackToTemplateName(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, g)
 	assert.Equal(t, url, g.Mission, "the Linear link is stored verbatim (no title pull)")
-	assert.Contains(t, g.DefaultContext, url, "the link renders into the mission section verbatim")
+	assert.Contains(t, g.MissionBlock(), url, "the link renders into the mission section verbatim")
 }
 
 // Scenario: an explicit group_name that is already taken is a hard 409 — the

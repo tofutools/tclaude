@@ -5165,8 +5165,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// path inherits the group context by default, the same way it
 	// inherits default_cwd; the dashboard sends false explicitly to opt
 	// out, and a profile's toggle spoke for it above.
-	if includeGroupContext {
-		p.GroupContext = g.DefaultContext
+	p.GroupContext = groupStartupContext(g, includeGroupContext)
+	if body.NonInteractive && !includeGroupContext {
+		// A one-shot is briefed by its prompt alone, as before the mission
+		// split: no group context means no mission either.
+		p.GroupContext = ""
 	}
 	setAuditSpawnResolved(r, spawnAuditResolution(p, resolvedLaunch, namedProfileHandle, map[string]*db.SpawnProfile{
 		"explicit":       namedProfile,
@@ -6836,10 +6839,7 @@ func applyDefaultLaunchToggles(g *db.AgentGroup, h *harness.Harness, tiers []lau
 		p.LaunchNotes = append(p.LaunchNotes, fmt.Sprintf("%s include_group_context = %v",
 			launchBools.Source[launchBoolIncludeGroupContext], includeGroupContext))
 	}
-	p.GroupContext = ""
-	if includeGroupContext && g != nil {
-		p.GroupContext = g.DefaultContext
-	}
+	p.GroupContext = groupStartupContext(g, includeGroupContext)
 	p.launchTogglesResolved = true
 	return nil
 }
@@ -9622,10 +9622,12 @@ func recordStartupSnapshot(agentID string, g *db.AgentGroup, p spawnParams, brie
 		spawnedByAgent, _ = db.AgentIDForConv(p.SpawnedByConv)
 	}
 	// The spawn opted out of the group context exactly when the group had one
-	// and none was folded in. Deriving it keeps every spawn path (including a
-	// replayed pending spawn) correct without threading another field.
-	includeGroupContext := g == nil || strings.TrimSpace(g.DefaultContext) == "" ||
-		strings.TrimSpace(p.GroupContext) != ""
+	// and it is not what the brief starts with (the mission, role and process
+	// blocks that follow are delivered either way). Deriving it keeps every
+	// spawn path (including a replayed pending spawn) correct without threading
+	// another field.
+	standing := strings.TrimSpace(g.GetDefaultContext())
+	includeGroupContext := standing == "" || strings.HasPrefix(strings.TrimSpace(p.GroupContext), standing)
 	if err := db.UpsertAgentStartupSnapshot(db.AgentStartupSnapshot{
 		AgentID:             agentID,
 		SpawnGroupID:        spawnGroupID(g),
