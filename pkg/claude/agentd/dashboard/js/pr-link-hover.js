@@ -250,7 +250,7 @@ function PRLinkCard({ url, prNumber, title = '', prState = '', className = '', l
   const rootRef = useRef(null);
   const panelRef = useRef(null);
   const instanceID = useId();
-  const { open, hovered, focused, tapped, close, rootProps, onTriggerClick } = useHoverPopover(rootRef);
+  const { open, hovered, focused, tapped, rootProps, onTriggerClick, onTriggerKeyDown } = useHoverPopover(rootRef);
   const [dwelled, setDwelled] = useState(false);
   const prURL = prCardBase(url);
   const gitlab = !!gitlabMRParts(prURL);
@@ -286,14 +286,7 @@ function PRLinkCard({ url, prNumber, title = '', prState = '', className = '', l
         aria-controls=${panelID}
         aria-label=${`${describe || (gitlab ? 'Merge request' : 'Pull request')} — opens it on ${gitlab ? 'GitLab' : 'GitHub'}.`}
         onClick=${onTriggerClick}
-        onKeyDown=${(event) => {
-          // A closed card leaves Escape to whatever surrounds the link, e.g.
-          // the footer PR popover closing itself.
-          if (event.key !== 'Escape' || !open) return;
-          event.preventDefault();
-          event.stopPropagation();
-          close();
-        }}
+        onKeyDown=${onTriggerKeyDown}
       >${label}</a>
       ${open ? html`
         <${PRDetailsPanel} prURL=${prURL} prNumber=${prNumber} title=${title} prState=${prState} state=${state}
