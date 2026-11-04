@@ -27,11 +27,7 @@ func TestDecodeAgentLaunchLayersDropsFoldedProfileValues(t *testing.T) {
 			"model":                 explicit(map[string]string{"Model": `"sonnet"`}),
 		},
 	}
-	raw, err := encodeAgentLaunchLayers(layers)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := decodeAgentLaunchLayers(raw)
+	got, err := decodeAgentLaunchLayers(legacyLaunchLayers(t, layers))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,11 +47,59 @@ func TestDecodeAgentLaunchLayersDropsFoldedProfileValues(t *testing.T) {
 
 	// A value that differs from the profile's was the user's.
 	layers.Explicit = map[string]ExplicitLaunchValue{"roles": explicit(map[string]string{"Role": `"lead"`})}
-	raw, err = encodeAgentLaunchLayers(layers)
+	if got, err = decodeAgentLaunchLayers(legacyLaunchLayers(t, layers)); err != nil || got.Explicit["roles"].Fields["Role"] == nil {
+		t.Errorf("a role differing from the profile's stays explicit: %+v, %v", got, err)
+	}
+}
+
+// legacyLaunchLayers encodes layers as a build before the fix wrote them,
+// without the Unfolded marker.
+func legacyLaunchLayers(t *testing.T, layers *AgentLaunchLayers) string {
+	t.Helper()
+	out := *layers
+	out.Version = AgentLaunchLayersVersion
+	raw, err := json.Marshal(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err = decodeAgentLaunchLayers(raw); err != nil || got.Explicit["roles"].Fields["Role"] == nil {
-		t.Errorf("a role differing from the profile's stays explicit: %+v, %v", got, err)
+	return string(raw)
+}
+
+// The repair is for rows written before the fix only. A row this build wrote
+// keeps an explicit value equal to its copy's: after a re-applied copy, an
+// explicit value the user typed can equal the new profile, and must stay
+// explicit so a later edit of the profile does not replace it.
+func TestDecodeAgentLaunchLayersKeepsExplicitValuesOfCurrentRows(t *testing.T) {
+	layers := &AgentLaunchLayers{
+		SpawnCopy: &AgentSpawnCopy{Tiers: []SpawnCopyTier{{Tier: SpawnCopyTierNamed, ProfileName: "kit",
+			Profile: json.RawMessage(`{"name":"kit","context_window_max":100000}`)}}},
+		Explicit: map[string]ExplicitLaunchValue{
+			"context_window": {Fields: map[string]json.RawMessage{"ContextWindowMax": json.RawMessage(`100000`)}, Provenance: ExplicitAtSpawn},
+		},
+	}
+	raw, err := encodeAgentLaunchLayers(layers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := decodeAgentLaunchLayers(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.Explicit["context_window"]; !ok {
+		t.Error("an explicit value of a current row stays explicit, even when it equals the copy")
+	}
+
+	// A repaired legacy row, written back, is not repaired again.
+	legacy, err := decodeAgentLaunchLayers(legacyLaunchLayers(t, &AgentLaunchLayers{
+		SpawnCopy: layers.SpawnCopy,
+		Explicit: map[string]ExplicitLaunchValue{
+			"model": {Fields: map[string]json.RawMessage{"Model": json.RawMessage(`"sonnet"`)}, Provenance: ExplicitAtSpawn},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !legacy.Unfolded {
+		t.Error("a repaired legacy row reads as unfolded, so writing it back persists the repair")
 	}
 }

@@ -56,6 +56,11 @@ type AgentLaunchLayers struct {
 	SpawnCopy         *AgentSpawnCopy                `json:"spawn_copy,omitempty"`
 	Explicit          map[string]ExplicitLaunchValue `json:"explicit,omitempty"`
 	RelaunchOverrides []RelaunchPolicyOverride       `json:"relaunch_overrides,omitempty"`
+	// Unfolded marks layers written by a build whose CLI no longer folds a
+	// --profile into the spawn request, so their explicit layer is accurate
+	// and dropFoldedProfileValues must not touch it. Every write sets it: a
+	// row is either new, or was decoded (and so repaired) before the write.
+	Unfolded bool `json:"unfolded,omitempty"`
 }
 
 // AgentSpawnCopy is the shallow copy of the spawn profiles that took part in
@@ -101,6 +106,7 @@ func encodeAgentLaunchLayers(l *AgentLaunchLayers) (string, error) {
 	}
 	out := *l
 	out.Version = AgentLaunchLayersVersion
+	out.Unfolded = true
 	raw, err := json.Marshal(out)
 	if err != nil {
 		return "", err
@@ -120,7 +126,10 @@ func decodeAgentLaunchLayers(raw string) (*AgentLaunchLayers, error) {
 		return nil, fmt.Errorf("agents.launch_layers version %d is newer than this build (%d)",
 			l.Version, AgentLaunchLayersVersion)
 	}
-	dropFoldedProfileValues(&l)
+	if !l.Unfolded {
+		dropFoldedProfileValues(&l)
+		l.Unfolded = true
+	}
 	return &l, nil
 }
 
@@ -137,7 +146,9 @@ var foldedProfileFields = map[string]map[string]string{
 // dropFoldedProfileValues repairs the explicit layer of agents spawned through
 // the CLI with --profile before it stopped folding the profile into the
 // request: such a value was recorded as explicit although the profile chose
-// it. An explicit value equal to the named profile's in the agent's own spawn
+// it. It runs only on rows written before that (AgentLaunchLayers.Unfolded),
+// against the copy recorded at spawn: the first write after it persists the
+// result, so a later re-applied copy never decides what was explicit. An explicit value equal to the named profile's in the agent's own spawn
 // copy is dropped. The value is the same either way, so the only effect is
 // that a re-applied copy may change it, as it would for a profile value.
 func dropFoldedProfileValues(l *AgentLaunchLayers) {
