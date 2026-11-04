@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -34,7 +35,7 @@ func doctorChecks(refresh bool) []doctor.Check {
 	if !refresh && doctorCached != nil && time.Since(doctorCachedAt) < doctorCacheTTL {
 		return doctorCached
 	}
-	doctorCached = doctor.Run(doctorProbes())
+	doctorCached = append(doctor.Run(doctorProbes()), harnessConfigRepairChecks()...)
 	doctorCachedAt = time.Now()
 	return doctorCached
 }
@@ -49,4 +50,33 @@ func handleDashboardDoctor(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"checks": doctorChecks(r.URL.Query().Get("refresh") == "1"),
 	})
+}
+
+// harnessConfigRepairChecks flags agents whose explicit harness_config was
+// lost on a relaunch (harness_config_repair.go). It is daemon state, not a
+// host probe, so it is checked here rather than in doctor.Run.
+func harnessConfigRepairChecks() []doctor.Check {
+	repairs, err := findHarnessConfigRepairs()
+	if err != nil || len(repairs) == 0 {
+		return nil
+	}
+	widened := 0
+	for _, r := range repairs {
+		if r.Change == harnessConfigRepairWidened {
+			widened++
+		}
+	}
+	severity := doctor.SeverityInfo
+	if widened > 0 {
+		severity = doctor.SeverityWarning
+	}
+	return []doctor.Check{{
+		ID: "harness-config-repair", Category: doctor.CategorySandbox, Severity: severity,
+		Title: fmt.Sprintf("%d agent(s) lost the harness_config posture they were spawned with", len(repairs)),
+		Detail: fmt.Sprintf("A relaunch before the fix in #3817 dropped an explicit --harness-config; %d of them now run "+
+			"without the read-only floor they asked for. Review them and restore the posture. Agents with no recorded spawn "+
+			"request (sweeper or group-template spawns) cannot be checked.", widened),
+		Fix:    "tclaude agent sandbox-profiles harness-config-repairs",
+		Action: doctor.ActionHarnessConfigRepair,
+	}}
 }

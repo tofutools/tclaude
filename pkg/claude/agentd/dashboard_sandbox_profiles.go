@@ -15,6 +15,7 @@ func registerDashboardSandboxProfileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/sandbox-profile-default", dashboardSandboxProfilesRoute(handleGlobalSandboxProfile))
 	mux.HandleFunc("/api/sandbox-impl-default", dashboardSandboxProfilesRoute(handleSandboxDefaultImplementation))
 	mux.HandleFunc("GET /api/doctor", handleDashboardDoctor)
+	mux.HandleFunc("/api/harness-config-repairs", dashboardSandboxProfilesRoute(handleHarnessConfigRepairs))
 	mux.HandleFunc("GET /api/sandbox-profiles/export", dashboardSandboxProfilesRoute(handleSandboxProfilesExport))
 	mux.HandleFunc("POST /api/sandbox-profiles/import/inspect", dashboardSandboxProfilesRoute(handleSandboxProfilesImportInspect))
 	mux.HandleFunc("POST /api/sandbox-profiles/import", dashboardSandboxProfilesRoute(handleSandboxProfilesImport))

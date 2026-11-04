@@ -25,7 +25,10 @@ something doesn't work. The default **Needs attention** view shows what matters,
 - ⚪ **info** and ✅ **ok**: optional extras and passing checks.
 
 A fix is a command to **copy** (`sudo apt install bubblewrap`, `tclaude setup`) or a
-button. The view never changes the host by itself. Results are cached for a minute;
+button. Some fixes open a batch preview: it lists what the fix would change, with
+every item selected. Deselect any you want left alone, then apply. One example is
+restoring agents that [lost their `--harness-config`](sandboxing.md#the-harness-config-floor)
+on a relaunch. The view never changes the host by itself. Results are cached for a minute;
 **Re-check** refreshes them.
 
 ## Audit

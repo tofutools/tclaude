@@ -3,6 +3,7 @@ import { useEffect } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { DOCTOR_CATEGORIES } from './doctor-state.js';
+import { HarnessConfigRepairControl } from './harness-config-repair.js';
 import { clipboardFailure, writeClipboard } from './insecure-origin.js';
 
 const html = htm.bind(h);
@@ -102,6 +103,7 @@ function CheckRow({ check, state, actions, notify }) {
       ${check.fix && html`<div class="doctor-fix"><code>${check.fix}</code>
         <${Button} size="sm" variant="link" class="doctor-copy" onClick=${() => copy(check.fix, notify)}>copy<//></div>`}
       ${check.action === 'sandbox-default' && html`<${SandboxDefaultControl} check=${check} state=${state} actions=${actions} />`}
+      ${check.action === 'harness-config-repair' && html`<${HarnessConfigRepairControl} notify=${notify} onDone=${() => actions.load({ refresh: true })} />`}
     </div>
   </div>`;
 }

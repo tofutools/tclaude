@@ -48,6 +48,10 @@ const (
 // (PUT /api/sandbox-impl-default with tclaude-layer or harness).
 const ActionSandboxDefault = "sandbox-default"
 
+// ActionHarnessConfigRepair asks the dashboard to open the harness_config
+// re-pin preview (GET/POST /api/harness-config-repairs).
+const ActionHarnessConfigRepair = "harness-config-repair"
+
 // Check is one diagnosed item.
 type Check struct {
 	ID       string   `json:"id"`
