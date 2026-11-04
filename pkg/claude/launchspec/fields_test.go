@@ -58,6 +58,11 @@ func TestRegistryCoversEveryLaunchInput(t *testing.T) {
 	}
 	for qualified := range launchspec.NotLaunchInputs {
 		name, field, _ := strings.Cut(qualified, ".")
+		known := false
+		for _, s := range structs {
+			known = known || s.name == name
+		}
+		assert.Truef(t, known, "NotLaunchInputs key %q names no known struct", qualified)
 		for _, s := range structs {
 			if s.name == name {
 				_, exists := s.typ.FieldByName(field)
