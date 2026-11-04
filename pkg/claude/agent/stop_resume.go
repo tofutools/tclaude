@@ -179,6 +179,7 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 		Action        string   `json:"action"`
 		Detail        string   `json:"detail,omitempty"`
 		Warnings      []string `json:"warnings,omitempty"`
+		Changes       []string `json:"changes,omitempty"`
 	}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -190,6 +191,9 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 	}
 	for _, warning := range resp.Warnings {
 		fmt.Fprintf(stdout, "  Warning: %s\n", warning)
+	}
+	for _, change := range resp.Changes {
+		fmt.Fprintf(stdout, "  Changed since last launch: %s\n", change)
 	}
 	// The recorded launch dir was deleted; the daemon did nothing rather than
 	// wedge the agent at startup. Point the human at the recreate opt-in.

@@ -40,6 +40,17 @@ or moving the agent.
 (a profile was deleted, or no longer suits the harness), the relaunch falls
 back to the value stored at the last launch and says so.
 
+**A relaunch says what changed.** A resume or reincarnation lists, under
+"Changed since last launch", what its sandbox differs in from the one stored
+at the last launch: which sandbox profiles apply and whether one was edited,
+filesystem rules added or removed, environment and group environment
+variables added, removed or changed, network access and rules, the
+filesystem root, the harness-config posture, and whether temporary
+filesystems, unix sockets, resource limits, pre-launch blocks or the macOS
+flags changed. It names variables, never their values. Only a relaunch that
+happened reports it. The dashboard's wake toast shows the list too, in error
+style only when the relaunch fell back to the stored policy.
+
 **Group permissions and owners are not launch inputs.** They apply to
 members at once, without a relaunch.
 

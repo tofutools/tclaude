@@ -1142,6 +1142,7 @@ func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer
 			Detail   string   `json:"detail,omitempty"`
 			TmuxSes  string   `json:"tmux_session,omitempty"`
 			Warnings []string `json:"warnings,omitempty"`
+			Changes  []string `json:"changes,omitempty"`
 		} `json:"members"`
 	}
 	// Both endpoints WAIT: stop holds until each agent's pane is actually gone,
@@ -1182,6 +1183,10 @@ func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer
 		for _, warning := range member.Warnings {
 			fmt.Fprintf(stdout, "Warning (%s): %s\n",
 				shortAgentID(member.AgentID, member.ConvID), warning)
+		}
+		for _, change := range member.Changes {
+			fmt.Fprintf(stdout, "Changed since last launch (%s): %s\n",
+				shortAgentID(member.AgentID, member.ConvID), change)
 		}
 	}
 	return rcOK

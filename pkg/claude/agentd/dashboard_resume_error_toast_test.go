@@ -31,7 +31,7 @@ func TestDashboardResumeLifecycleErrorsUseErrorToast(t *testing.T) {
 		t.Error("missing-cwd recovery must run before generic error:* toast handling")
 		return
 	}
-	successAt := strings.Index(source[genericAt:], "toast(`wake ${label}: ${action || 'ok'}`);")
+	successAt := strings.Index(source[genericAt:], "toast(`wake ${label}: ${action || 'ok'}${notes.length")
 	if successAt < 0 {
 		t.Fatal("dashboard resume is missing its success-toast boundary")
 	}
@@ -47,5 +47,17 @@ func TestDashboardResumeLifecycleErrorsUseErrorToast(t *testing.T) {
 	}
 	if strings.Contains(errorBranch, "refresh()") {
 		t.Error("generic lifecycle-error branch must not refresh as though resume succeeded")
+	}
+}
+
+// The wake toast picks out a relaunch's fallback warning by its wording, so
+// the two must not drift apart.
+func TestDashboardWakeToastMatchesTheFallbackWarning(t *testing.T) {
+	body, err := fs.ReadFile(dashboardAssetsFS, "js/dashboard-operations.js")
+	if err != nil {
+		t.Fatalf("read dashboard operations: %v", err)
+	}
+	if !strings.Contains(string(body), "w.includes('"+relaunchFallbackNote+"')") {
+		t.Errorf("the wake toast no longer matches the fallback warning %q", relaunchFallbackNote)
 	}
 }

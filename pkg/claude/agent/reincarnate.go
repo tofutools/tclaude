@@ -139,6 +139,7 @@ func runReincarnate(p *reincarnateParams, stdin io.Reader, stdout, stderr io.Wri
 		MessageID     int64    `json:"message_id,omitempty"`
 		Note          string   `json:"note,omitempty"`
 		Warnings      []string `json:"warnings,omitempty"`
+		Changes       []string `json:"changes,omitempty"`
 	}
 	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -168,6 +169,9 @@ func runReincarnate(p *reincarnateParams, stdin io.Reader, stdout, stderr io.Wri
 	}
 	for _, warning := range resp.Warnings {
 		fmt.Fprintf(stdout, "  Warning: %s\n", warning)
+	}
+	for _, change := range resp.Changes {
+		fmt.Fprintf(stdout, "  Changed since last launch: %s\n", change)
 	}
 	return rcOK
 }

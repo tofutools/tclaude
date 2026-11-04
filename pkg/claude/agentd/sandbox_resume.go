@@ -371,6 +371,9 @@ type relaunchSandbox struct {
 	policy    *resumeSandboxPolicy
 	effective *sandboxpolicy.Snapshot
 	warnings  []string
+	// changes is the per-field echo of what differs from the policy stored
+	// at the last launch (relaunchChanges).
+	changes []string
 }
 
 // prepareRelaunchSandbox resolves, validates and checks the sandbox a resume
@@ -403,10 +406,15 @@ func prepareRelaunchSandbox(req relaunchSandboxRequest) (*relaunchSandbox, *spaw
 		return nil, fail
 	}
 	fallback.warnings = append([]string{fmt.Sprintf(
-		"the agent's sandbox profiles could not be applied (%s); relaunched under the sandbox policy stored at its last launch",
+		"the agent's sandbox profiles could not be applied (%s); "+relaunchFallbackNote,
 		fail.Msg)}, fallback.warnings...)
 	return fallback, nil
 }
+
+// relaunchFallbackNote ends the warning of a relaunch that fell back to its
+// stored sandbox policy. The dashboard's wake toast matches on it to show
+// that warning, and only it, as an error.
+const relaunchFallbackNote = "relaunched under the sandbox policy stored at its last launch"
 
 // prepareRelaunchSandboxFrom reports, with a failure, whether it means the
 // sandbox profiles cannot be used for this launch (unusable), which is what
@@ -462,6 +470,9 @@ func prepareRelaunchSandboxFrom(req relaunchSandboxRequest, useStored bool) (*re
 		return nil, cleanup(fail), true
 	}
 	out := &relaunchSandbox{policy: policy, effective: effective}
+	if policy != nil {
+		out.changes = relaunchChanges(policy.Previous, policy.Snapshot)
+	}
 	if effective != nil {
 		for _, notice := range effective.Effective.AccessNotices {
 			out.warnings = append(out.warnings, notice.Detail)
