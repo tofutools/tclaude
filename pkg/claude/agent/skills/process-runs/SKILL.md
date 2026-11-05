@@ -7,7 +7,7 @@ description: >-
   record-outcome; report a node you were dispatched; and read event triggers
   via `tclaude agent triggers ls|show|explain`. Covers the
   process.runs.read/start/manage and self.process permissions (group ownership
-  confers read and group-scoped start only). Use when asked to run, kick off,
+  confers read and group- or member-scoped start, never manage). Use when asked to run, kick off,
   monitor, unblock, approve or cancel a process/workflow, when a process node
   arrives in your inbox, or to see which trigger rule would fire on a PR/CI or
   agent-state event. Not for authoring or editing templates (that is
