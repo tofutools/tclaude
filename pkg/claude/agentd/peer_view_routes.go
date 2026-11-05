@@ -12,8 +12,8 @@ import (
 // whenever a dashboard route is added.
 var peerViewLocalRoutes = []string{
 	// A one-step move between this node's groups, for an unrestricted peer.
-	// A restricted peer's fused view falls back to the member add and remove
-	// it is granted, which always applies the new group's defaults.
+	// A restricted peer cannot move a member between groups: no peer grant
+	// opens the member add and remove either, which take unrestricted trust.
 	"POST /api/groups/{name}/members/{conv}/move",
 	"GET /api/node/update/jobs/{id}",
 	"POST /api/node/update",

@@ -17,13 +17,21 @@ import (
 // A resumed managed Codex profile renders the recorded network posture and
 // write grants, as the fresh launch's profile does: the resume and
 // `session new` build it through the same session step.
+//
+// No network has a platform-specific shape. On Linux it is refused, because
+// Codex's restricted-network seccomp would also block the agentd Unix socket.
+// On macOS it is rendered as network enabled with Codex's managed network
+// proxy switched on and no domain allowlist: the Unix-socket allows need the
+// network switch on, and the proxy's empty, deny-by-default domain policy is
+// what keeps every other destination denied (codexAgentProfileContentForRules).
 func TestResumeCodexManagedProfileKeepsNetworkPostureAndGrants(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		access  sandboxpolicy.NetworkAccess
 		enabled string
 	}{
-		{"no network", sandboxpolicy.NetworkAccessNone, "enabled = false"},
+		// On macOS; Linux refuses it (below).
+		{"no network", sandboxpolicy.NetworkAccessNone, "enabled = true"},
 		{"internet", sandboxpolicy.NetworkAccessInternet, "enabled = true"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -66,6 +74,15 @@ func TestResumeCodexManagedProfileKeepsNetworkPostureAndGrants(t *testing.T) {
 			require.NoError(t, err)
 			content := string(raw)
 			assert.Regexp(t, `\.network\]\n`+tc.enabled+`\n`, content)
+			if tc.access == sandboxpolicy.NetworkAccessNone {
+				require.Equal(t, "darwin", runtime.GOOS, "only macOS renders an offline Codex profile")
+				assert.Contains(t, content, "network_proxy = true",
+					"offline on macOS routes through Codex's managed proxy")
+				assert.NotContains(t, content, ".network.domains]",
+					"the proxy keeps its empty, deny-by-default domain policy: no destination is allowed")
+				assert.Regexp(t, `\.network\.unix_sockets\]\n"[^"]+" = "allow"`, content,
+					"the network switch is on for the agentd Unix socket")
+			}
 			assert.Contains(t, content, `"`+canonicalWrite+`" = "write"`)
 		})
 	}

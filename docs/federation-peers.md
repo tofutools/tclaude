@@ -86,7 +86,8 @@ Towards that peer, local agents' unscoped grants (including group grants and
 config defaults) also count. `group=` scopes and group ownership never confer
 remote authority; denies still apply. **Interactive attach permits answering harness approvals and prompts, just
 as a keyboard at the target pane does.** `--ask-human` remains a local
-operator workflow; remote keyboard access does not grant its daemon API. Each side chooses its own level;
+operator workflow; remote keyboard access does not grant its daemon API (only
+an unrestricted peer answers it, from this node's human inbox). Each side chooses its own level;
 the hub cannot set it. Downgrading or untrusting affects subsequent authorization
 reads immediately, including reads by in-flight operations.
 

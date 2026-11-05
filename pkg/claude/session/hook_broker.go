@@ -1,14 +1,11 @@
 package session
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"time"
@@ -330,48 +327,14 @@ func truncateForBroker(s string) string {
 var errHookBrokerRefused = errors.New("agentd refused the brokered hook event")
 
 func postHookToDaemon(body []byte) (*BrokeredHookResponse, error) {
-	socks := agentipc.ClientSocketPaths()
-	if len(socks) == 0 {
-		return nil, fmt.Errorf("no agentd socket path resolved")
-	}
-	client := &http.Client{
-		Timeout: hookBrokerTimeout,
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				var lastErr error
-				for _, sock := range socks {
-					conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sock)
-					if err == nil {
-						return conn, nil
-					}
-					lastErr = err
-				}
-				return nil, lastErr
-			},
-		},
-	}
-	req, err := http.NewRequest(http.MethodPost, "http://tclaude/v1/whoami/hook", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	httpResp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = httpResp.Body.Close() }()
-	if httpResp.StatusCode != http.StatusOK {
-		preview, _ := io.ReadAll(io.LimitReader(httpResp.Body, 512))
-		err := fmt.Errorf("agentd returned %d: %s", httpResp.StatusCode, bytes.TrimSpace(preview))
-		if httpResp.StatusCode == http.StatusForbidden || httpResp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("%w: %w", errHookBrokerRefused, err)
-		}
-		return nil, err
-	}
 	var out BrokeredHookResponse
-	if err := json.NewDecoder(io.LimitReader(httpResp.Body, 1<<20)).Decode(&out); err != nil {
-		return nil, fmt.Errorf("decode broker response: %w", err)
+	err := agentipc.PostToBroker("/v1/whoami/hook", body, hookBrokerTimeout, &out)
+	if statusErr, ok := errors.AsType[*agentipc.BrokerStatusError](err); ok &&
+		(statusErr.Status == http.StatusForbidden || statusErr.Status == http.StatusUnauthorized) {
+		return nil, fmt.Errorf("%w: %w", errHookBrokerRefused, err)
+	}
+	if err != nil {
+		return nil, err
 	}
 	return &out, nil
 }

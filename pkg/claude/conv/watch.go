@@ -2698,7 +2698,9 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		if privateErr != nil {
 			return "", "", nil, privateErr
 		}
-		launchSpec, specErr := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
+		// The step `session new` takes, so the harness state and protected
+		// mountpoints the spec hides exist before bwrap starts.
+		launchSpec, specErr := session.PrepareTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
 			HarnessName:      h.Name,
 			StateRoot:        spec.HarnessStateDir,
 			Cwd:              resumeCwd,
@@ -2708,7 +2710,7 @@ func resumeLaunchCmdWithEffectiveSandbox(
 			HarnessReadPaths: harnessReadPaths,
 		})
 		if specErr != nil {
-			return "", "", nil, fmt.Errorf("build resumed tclaude’s sandbox launch spec: %w", specErr)
+			return "", "", nil, specErr
 		}
 		layerSpec = launchSpec
 	}
@@ -2716,22 +2718,21 @@ func resumeLaunchCmdWithEffectiveSandbox(
 	if err != nil {
 		return "", "", nil, fmt.Errorf("prepare %s host-control sandbox: %w", h.DisplayName, err)
 	}
-	gatewayCLIPath := clcommon.SelfTclaudePath()
+	// The step `session new` takes, with no loopback bind port: this resume
+	// renders no Codex app-server (resumeLaunchPosture records CodexAppServer as nil).
+	paneCommand := session.HarnessPaneCommandInput{SessionID: sessionID, Harness: h, Spec: spec}
 	if outerLayer {
-		gatewayCLIPath, err = session.HTTPProxyCLIForLayerSpec(&layerSpec)
-		if err != nil {
-			return "", "", nil, fmt.Errorf("resolve HTTP proxy resume CLI: %w", err)
-		}
+		paneCommand.LayerBinary = binary
+		paneCommand.LayerSpec = &layerSpec
 	}
-	cmd := session.HTTPProxySpawnCommand(sessionID, h, spec, gatewayCLIPath)
+	cmd, err := session.HarnessPaneCommand(paneCommand)
+	if err != nil {
+		return "", "", nil, err
+	}
+	// Only a managed Codex profile outside tclaude's sandbox has a file to
+	// remove, so the cleanup never lands inside the sandbox's wrap.
 	if cleanupPath != "" {
 		cmd = resumeCommandWithFileCleanup(cmd, cleanupPath)
-	}
-	if outerLayer {
-		cmd, err = session.WrapTclaudeLayerSpec(binary, layerSpec, cmd)
-		if err != nil {
-			return "", "", nil, fmt.Errorf("wrap resumed harness with tclaude’s sandbox: %w", err)
-		}
 	}
 	if effectiveSandboxOut != nil {
 		*effectiveSandboxOut = effectiveSandbox

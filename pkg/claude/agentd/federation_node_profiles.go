@@ -69,7 +69,7 @@ func normalizeFederationNodeProfile(p *db.FederationNodeProfile) error {
 	for i, g := range s.PeerGrants {
 		_, groupSlug := federationPeerSlugs[g.Slug]
 		instanceSlug := fedInstancePeerSlug(g.Slug)
-		if !groupSlug && !instanceSlug && (g.Slug != PermModelsProxy && g.Slug != PermModelsProxyLeased) {
+		if !groupSlug && !instanceSlug && !fedProxyPeerSlug(g.Slug) {
 			return fmt.Errorf("unsupported peer slug %s", g.Slug)
 		}
 		if instanceSlug && g.Scope != "" {
