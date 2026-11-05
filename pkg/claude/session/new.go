@@ -1312,42 +1312,67 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 			writeDirs = AppendUniqueDir(writeDirs, workspace)
 		}
 	}
-	// Codex needs the verified split-policy backend for exactly the shape it
-	// cannot otherwise honor: a narrower reopen beneath a denied ancestor. The
-	// shape is read from the RENDERED rules, not the authored profile — the
+	// The shape gate runs on the RENDERED rules, not the authored profile: the
 	// launch contract above adds reopens of its own, so `deny ~` on its own
-	// still emits a split policy and must still be probed and refused on macOS.
+	// still emits a split policy and must still be refused where Codex cannot
+	// enforce it. The conv resume runs the same gate in planResumeDirs.
+	if err := harness.ValidateSandboxReopenUnderDeny(harness.CodexName, harness.SandboxManagedProfile,
+		sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs)); err != nil {
+		return "", "", nil, err
+	}
+	return EnsureCodexManagedLaunchProfile(CodexManagedProfileRules{
+		ReadDirs: readDirs, WriteDirs: writeDirs, DenyDirs: denyDirs,
+	}, effectiveSandbox, launchID)
+}
+
+// CodexManagedProfileRules are the rendered directory lists a managed Codex
+// launch's permission profile is built from.
+type CodexManagedProfileRules struct {
+	ReadDirs, WriteDirs, DenyDirs []string
+}
+
+// EnsureCodexManagedLaunchProfile is the managed-Codex profile step that
+// `session new` and the conv resume share. When the rules reopen a path
+// beneath a denied ancestor, it verifies Codex's split-policy backend, the one
+// that can honor that shape, and adds the Codex executable to the reads when
+// the backend needs it. It then writes the launch-unique profile with the
+// snapshot's network posture and Unix-socket allowlist.
+//
+// The caller runs harness.ValidateSandboxReopenUnderDeny on the same rules
+// first, removes path after the pane exits, and revalidates a non-nil
+// capability immediately before the exec boundary, pinning its
+// ExecutablePath.
+func EnsureCodexManagedLaunchProfile(
+	rules CodexManagedProfileRules,
+	effectiveSandbox *sandboxpolicy.Snapshot,
+	launchID string,
+) (name, path string, capability *harness.CodexSplitPolicyCapability, err error) {
+	readDirs := append([]string(nil), rules.ReadDirs...)
 	requireSplitPolicy := sandboxpolicy.HasReopenUnderDeny(
-		sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs))
-	var splitCapability *harness.CodexSplitPolicyCapability
+		sandboxpolicy.GrantsFromDirs(readDirs, rules.WriteDirs, rules.DenyDirs))
 	if requireSplitPolicy {
-		if err := harness.ValidateSandboxReopenUnderDeny(harness.CodexName, harness.SandboxManagedProfile,
-			sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs)); err != nil {
-			return "", "", nil, err
-		}
 		verified, err := harness.VerifyCodexHomeSplitPolicy()
 		if err != nil {
 			return "", "", nil, err
 		}
-		splitCapability = &verified
+		capability = &verified
 		if verified.RequiresExecutableReopen {
 			readDirs = append(readDirs, verified.ExecutablePath)
 		}
 	}
-	networkAccess := sandboxSnapshotNetworkAccess(effectiveSandbox)
-	profileName, path, err := harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{
+	name, path, err = harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{
 		ReadDirs:    readDirs,
-		WriteDirs:   writeDirs,
-		DenyDirs:    denyDirs,
+		WriteDirs:   rules.WriteDirs,
+		DenyDirs:    rules.DenyDirs,
 		UnixSockets: sandboxSnapshotUnixSockets(effectiveSandbox),
 		MaterializedUnixSocketPaths: sandboxSnapshotMaterializedUnixSocketPaths(
 			effectiveSandbox),
 		RequireSplitPolicy: requireSplitPolicy,
-	}, networkAccess, launchID)
+	}, sandboxSnapshotNetworkAccess(effectiveSandbox), launchID)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, err)
+		return "", "", nil, fmt.Errorf("write managed Codex permission profile: %w", err)
 	}
-	return profileName, path, splitCapability, nil
+	return name, path, capability, nil
 }
 
 func denyNarrowedGitWriteDirs(cwd, gitCommonDir string, candidates []string) []string {

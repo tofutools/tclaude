@@ -2337,7 +2337,6 @@ func resumeLaunchCmdWithEffectiveSandbox(
 	var launchGrants []sandboxpolicy.FilesystemGrant
 	var tmpfsDirs []string
 	var agentDirPaths []string
-	networkAccess := sandboxpolicy.NetworkAccessInherit
 	if effectiveSandbox != nil {
 		validated, err := sandboxpolicy.RevalidateSnapshot(*effectiveSandbox)
 		if err != nil {
@@ -2392,7 +2391,6 @@ func resumeLaunchCmdWithEffectiveSandbox(
 				agentDirPaths = append(agentDirPaths, path)
 			}
 		}
-		networkAccess = validated.Effective.NetworkAccess
 		launchFilesystem, err := sandboxpolicy.FilesystemForLaunch(validated.Effective)
 		if err != nil {
 			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
@@ -2552,7 +2550,7 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		return "", "", nil, err
 	}
 	readDirs, writeDirs = dirs.read, dirs.write
-	renderedGrants, tclaudeLayerContractWriteDirs := dirs.rendered, dirs.tclaudeLayerContractWrite
+	tclaudeLayerContractWriteDirs := dirs.tclaudeLayerContractWrite
 	askTimeout, err := resumeAskTimeout(h, convID)
 	if err != nil {
 		return "", "", nil, err
@@ -2626,30 +2624,17 @@ func resumeLaunchCmdWithEffectiveSandbox(
 	cleanupPath := ""
 	var splitCapability *harness.CodexSplitPolicyCapability
 	if !outerLayer && h.Name == harness.CodexName && harnessBuiltinMode == harness.SandboxManagedProfile {
-		resumeWriteDirs := writeDirs
-		requireSplitPolicy := sandboxpolicy.HasReopenUnderDeny(renderedGrants)
-		if requireSplitPolicy {
-			verified, runtimeErr := harness.VerifyCodexHomeSplitPolicy()
-			if runtimeErr != nil {
-				return "", "", nil, runtimeErr
-			}
-			splitCapability = &verified
-			if verified.RequiresExecutableReopen {
-				readDirs = append(readDirs, verified.ExecutablePath)
-			}
-		}
-		profileName, profilePath, err := harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{
-			ReadDirs:    readDirs,
-			WriteDirs:   resumeWriteDirs,
-			DenyDirs:    denyDirs,
-			UnixSockets: effectiveProfile.UnixSockets,
-			MaterializedUnixSocketPaths: resumeMaterializedUnixSocketPaths(
-				effectiveSandbox),
-			RequireSplitPolicy: requireSplitPolicy,
-		}, networkAccess, session.GenerateSessionID())
+		// The step `session new` takes. planResumeDirs has already run the
+		// reopen-under-deny gate on these rendered rules, except for an
+		// unconfined implementation (off, resource-only), which it skips there
+		// as it did before this step was shared.
+		profileName, profilePath, capability, err := session.EnsureCodexManagedLaunchProfile(
+			session.CodexManagedProfileRules{ReadDirs: readDirs, WriteDirs: writeDirs, DenyDirs: denyDirs},
+			effectiveSandbox, session.GenerateSessionID())
 		if err != nil {
-			return "", "", nil, fmt.Errorf("prepare managed Codex resume profile: %w", err)
+			return "", "", nil, err
 		}
+		splitCapability = capability
 		spec.HarnessBuiltinMode = ""
 		spec.PermissionProfile = profileName
 		if splitCapability != nil {
@@ -3145,16 +3130,6 @@ func resumeEffectiveSandboxForState(convID string) *sandboxpolicy.Snapshot {
 		return nil
 	}
 	return snapshot
-}
-
-func resumeMaterializedUnixSocketPaths(
-	snapshot *sandboxpolicy.Snapshot,
-) *[]string {
-	if snapshot == nil || snapshot.UnixSocketMaterialization == nil {
-		return nil
-	}
-	paths := append([]string(nil), snapshot.UnixSocketMaterialization.Paths...)
-	return &paths
 }
 
 func resumeCommandWithFileCleanup(cmd, path string) string {
