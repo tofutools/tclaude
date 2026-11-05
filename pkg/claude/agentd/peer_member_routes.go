@@ -214,12 +214,7 @@ func peerAgentGrants(peer string, groups []*db.AgentGroup) map[string][]string {
 		return nil
 	}
 	holds := func(groupID int64, slug string) bool {
-		for _, g := range grants {
-			if g.Slug == slug && (g.Scope == "" || g.Scope == db.FederationGroupScope(groupID)) {
-				return true
-			}
-		}
-		return false
+		return fedExplicitGroupGrant(grants, groupID, slug) != nil
 	}
 	var ids []int64
 	for _, g := range groups {
