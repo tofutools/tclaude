@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
@@ -152,4 +153,43 @@ func mustJSONString(t *testing.T, s string) string {
 	raw, err := json.Marshal(s)
 	require.NoError(t, err)
 	return string(raw)
+}
+
+// A save that fails after a field was written keeps the sudo uses it spent:
+// the write landed, so the use that paid for it is not handed back.
+func TestGroupUpdate_AFailureAfterAWriteKeepsTheSpentSudoUses(t *testing.T) {
+	f := newFlow(t)
+	worker := sudoUsesWorker(t, f)
+	descr := haveLimitedSudo(t, worker, agentd.PermGroupsSettingsDescription, 2)
+	spawnTarget := haveLimitedSudo(t, worker, agentd.PermGroupsSettingsDefaultSpawnTarget, 2)
+
+	code := patchGroupAs(t, f, worker, "alpha", map[string]any{"descr": pinGroupDescr, "default_spawn_group": true})
+
+	require.Equal(t, http.StatusBadRequest, code, "alpha has no default directory")
+	g, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	assert.Equal(t, pinGroupDescr, g.Descr, "the description landed before the failure")
+	assert.Equal(t, int64(1), sudoUsesLeft(t, descr), "the spent use stays spent")
+	assert.Equal(t, int64(1), sudoUsesLeft(t, spawnTarget))
+}
+
+// Replacing the group's permissions is permission administration: holding the
+// member-permissions setting is not enough without permissions.grant, and the
+// refusal comes before any field is written. The worker holds the slug it
+// would confer, so only the permissions.grant gate refuses it.
+func TestGroupUpdate_PermissionsNeedPermissionAdministration(t *testing.T) {
+	f := newFlow(t)
+	worker := sudoUsesWorker(t, f)
+	for _, slug := range []string{agentd.PermGroupsSettingsDescription, agentd.PermGroupsSettingsMemberPermissions, agentd.PermPermissionsRevoke, agentd.PermSelfRename} {
+		require.NoError(t, db.SetAgentPermissionOverride(worker, slug, db.PermEffectGrant, "test"))
+	}
+
+	code := patchGroupAs(t, f, worker, "alpha", map[string]any{
+		"descr": pinGroupDescr, "permissions": []map[string]any{{"slug": agentd.PermSelfRename}},
+	})
+
+	assert.Equal(t, http.StatusForbidden, code)
+	g, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	assert.NotEqual(t, pinGroupDescr, g.Descr, "nothing is written")
 }
