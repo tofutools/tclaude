@@ -46,51 +46,14 @@ func RunMv(params *MvParams, stdout, stderr *os.File, stdin *os.File) int {
 	// Extract just the ID from autocomplete format (e.g., "0459cd73_[myproject]_prompt..." -> "0459cd73")
 	convID := clcommon.ExtractIDFromCompletion(params.ConvID)
 
-	var srcEntry *SessionEntry
-	var srcProjectPath string
 	dstProjectPath := GetClaudeProjectPath(params.DestPath)
 
-	if params.Global {
-		// Search all projects
-		projectsDir := ClaudeProjectsDir()
-		entries, err := os.ReadDir(projectsDir)
-		if err != nil {
-			fmt.Fprintf(stderr, "Error reading projects directory: %v\n", err)
-			return 1
-		}
-
-		for _, dirEntry := range entries {
-			if !dirEntry.IsDir() {
-				continue
-			}
-			projPath := projectsDir + "/" + dirEntry.Name()
-			index, err := LoadSessionsIndex(projPath)
-			if err != nil {
-				continue
-			}
-			if found, _ := FindSessionByID(index, convID); found != nil {
-				srcEntry = found
-				srcProjectPath = projPath
-				break
-			}
-		}
-	} else {
-		// Search current directory
-		cwd, err := os.Getwd()
-		if err != nil {
-			fmt.Fprintf(stderr, "Error getting current directory: %v\n", err)
-			return 1
-		}
-
-		srcProjectPath = GetClaudeProjectPath(cwd)
-		srcIndex, err := LoadSessionsIndex(srcProjectPath)
-		if err != nil {
-			fmt.Fprintf(stderr, "Error loading source sessions index: %v\n", err)
-			return 1
-		}
-
-		srcEntry, _ = FindSessionByID(srcIndex, convID)
+	src, err := FindSessionInProjects(convID, params.Global)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error %v\n", err)
+		return 1
 	}
+	srcEntry, srcProjectPath := src.Entry, src.ProjectPath
 
 	if srcEntry == nil {
 		fmt.Fprintf(stderr, "Conversation %s not found\n", convID)
