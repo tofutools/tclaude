@@ -53,8 +53,13 @@ The hub routes; it is never the authority over what an agent may do.
   what your operator granted it.
 - **Remote content is untrusted.** Every inbound remote body starts with a
   banner naming its origin, and the sender shows as `name@peer (remote)`.
-- **Approvals stay local.** Permission prompts, `--ask-human`, sudo and
-  grants are never actionable by a remote party.
+- **Approvals and grants stay with your operator.** A restricted peer never
+  answers permission prompts or `--ask-human` requests, and never changes
+  grants or sudo. The one exception is answering an access request once while
+  it is your away cover (`approvals.answer`). A peer you trust
+  **unrestricted** acts as your own operator does on most of the dashboard,
+  permissions, sudo and the human inbox included (see
+  [Connect and share](federation-peers.md)).
 
 Three layers decide what is allowed, and each one can only narrow:
 
