@@ -958,7 +958,7 @@ type SpawnParams struct {
 	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture for the new agent (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Gemini CLI approval mode: yolo|auto_edit|default|plan|inherit. pi: auto|ask|read-only. OpenCode: deny|ask|allow-tools. Copilot: inherit|allow-tools|yolo. Unset = filled by the profile chain, then the harness default (Codex: never; Claude: auto); an agent caller that cannot grant that default gets its own same-harness posture instead (disclosed in the resolved launch notes)"`
 
 	// ToolGovernance is OpenCode's independent built-in tool action.
-	ToolGovernance string `long:"tools" optional:"true" help:"OpenCode tool governance for bash/glob/grep/lsp/skill: allow | ask | deny; OpenCode sub-agents (task) are always off under tclaude. Unset = filled by the profile chain, then allow. Not applicable to claude/codex"`
+	ToolGovernance string `long:"tools" optional:"true" help:"OpenCode tool governance: allow | ask | deny for bash/glob/grep/lsp/skill, with other tools and sub-agents (task) off; or all, which allows every OpenCode tool, sub-agents included, with optional per-tool entries all,question=deny,plan=deny,env=allow (.env reads are denied under all unless env=allow). all needs sandbox-impl tclaude-layer or off and approval deny or allow-tools. Unset = filled by the profile chain, then allow. Not applicable to claude/codex"`
 
 	// AutoReview is a bool flag declared last (no explicit short) for the same
 	// reason as the fields above — boa's short-flag enricher must not steal a

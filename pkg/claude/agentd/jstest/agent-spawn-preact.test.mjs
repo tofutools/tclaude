@@ -66,8 +66,8 @@ const harnesses = [{
   sandbox_mode_help: { off: '⚠ No tclaude OS containment' },
   can_approval: false, approval_modes: [], default_approval: '',
   approval_mode_help: {},
-  can_tools: true, tools_modes: ['allow', 'ask', 'deny'], default_tools: 'allow',
-  tools_mode_help: { allow: 'allow tools', ask: 'ask for tools', deny: 'deny tools' },
+  can_tools: true, tools_modes: ['all', 'allow', 'ask', 'deny'], default_tools: 'allow',
+  tools_mode_help: { all: 'all tools', allow: 'allow tools', ask: 'ask for tools', deny: 'deny tools' },
   can_auto_review: false,
   can_ask_timeout: false, ask_timeout_modes: [], default_ask_timeout: '',
   can_remote_control: false, can_auto_memory: false, can_ssh_workaround: true,
@@ -1047,7 +1047,7 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   assert.equal(host.querySelector('#agent-spawn-sandbox-profile-row').hidden, false);
   const openCodeTools = host.querySelector('#agent-spawn-tools');
   assert.equal(openCodeTools.closest('.cron-create-row').hidden, false);
-  assert.deepEqual([...openCodeTools.options].map((option) => option.value), ['allow', 'ask', 'deny']);
+  assert.deepEqual([...openCodeTools.options].map((option) => option.value), ['all', 'allow', 'ask', 'deny']);
   assert.equal(selectedValue(openCodeTools), 'allow');
   setValue(harnessSelect, 'claude');
   await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
@@ -2442,4 +2442,46 @@ test('a field the operator holds keeps every key its handler marks', async (t) =
   assert.deepEqual(kept('wt-branch', ['worktreeBranch', 'syncWorktree']), ['syncWorktree', 'worktreeBranch']);
   assert.deepEqual(kept('harness', ['sandbox', 'approval']), ['approval', 'sandbox']);
   assert.deepEqual(kept('name', ['sandbox']), [], 'a field holds only its own');
+});
+
+test('OpenCode --tools all shows per-tool choices that compose the spawn value', async (t) => {
+  let sent = null;
+  const mounted = await mountSpawn(t, { spawn: async (request) => { sent = request.body; return { conv_id: 'abcdef1234' }; } });
+  const { harness, host, state } = mounted;
+  try {
+    state.open({ groupName: 'alpha' });
+    await flush(harness);
+    await settleWorktrees(harness);
+    const harnessSelect = host.querySelector('#agent-spawn-harness');
+    setValue(harnessSelect, 'opencode');
+    await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
+    assertAbsent(host.querySelector('#agent-spawn-tools-entries'), 'per-tool choices belong to all only');
+
+    const tools = host.querySelector('#agent-spawn-tools');
+    setValue(tools, 'all');
+    await harness.act(() => harness.fireEvent(tools, 'change'));
+    const entries = host.querySelector('#agent-spawn-tools-entries');
+    assert.ok(entries, 'all shows its per-tool choices');
+    const question = host.querySelector('#agent-spawn-tools-entries-question');
+    const env = host.querySelector('#agent-spawn-tools-entries-env');
+    assert.equal(question.hasAttribute('checked'), false, 'question is allowed by default');
+    assert.equal(env.hasAttribute('checked'), false, '.env reads are denied by default');
+    assert.equal(question.closest('label').className, 'ui-check');
+
+    Object.defineProperty(question, 'checked', { configurable: true, writable: true, value: true });
+    await harness.act(() => harness.fireEvent(question, 'change'));
+
+    const name = host.querySelector('#agent-spawn-name');
+    setValue(name, 'worker');
+    await harness.act(() => harness.fireEvent(name, 'input'));
+    await harness.act(() => host.querySelector('#agent-spawn-submit').click());
+    await flush(harness);
+    assert.equal(sent?.tools, 'all,question=deny');
+
+    setValue(tools, 'deny');
+    await harness.act(() => harness.fireEvent(tools, 'change'));
+    assertAbsent(host.querySelector('#agent-spawn-tools-entries'));
+  } finally {
+    mounted.cleanup();
+  }
 });

@@ -72,12 +72,65 @@ func OpenCodeWorktree(cwd string) string {
 //
 // The policy always ends by denying OpenCode's task tool, so sub-agents are
 // off under tclaude. See openCodeSubagentDenyRule for why.
+//
+// The exception is `--tools all` (openCodeAllToolsRules): no deny-all and no
+// task deny, so every tool runs and sub-agents work.
 func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermissionRule, error) {
 	rules, err := buildOpenCodePermissionRules(spec)
 	if err != nil {
 		return nil, err
 	}
+	if policy, _ := ParseOpenCodeToolGovernance(spec.ToolGovernance); policy.AllTools() {
+		return rules, nil
+	}
 	return append(rules, openCodeSubagentDenyRule), nil
+}
+
+// openCodeAllToolsRules is the `--tools all` policy. It has no deny-all
+// baseline and no tool allowlist: whatever OpenCode would run, runs. What it
+// does carry is only what the operator chose — approval for edits and
+// leaving the worktree, a closed network for the web tools, and the per-tool
+// entries — and every one of those is an allow or a deny, never an ask
+// (ValidateOpenCodeToolsCombination refuses approval ask). That matters
+// because OpenCode copies a parent session's deny rules, and only those, into
+// a sub-agent's session: the denies reach every helper, and what is left
+// falls to OpenCode's own defaults, which allow it, exactly as for the agent.
+func openCodeAllToolsRules(
+	approval string,
+	network sandboxpolicy.NetworkAccess,
+	policy OpenCodeToolsPolicy,
+) []OpenCodePermissionRule {
+	action := openCodeApprovalAction(approval)
+	rules := []OpenCodePermissionRule{
+		{Permission: "edit", Pattern: "*", Action: action},
+		{Permission: "external_directory", Pattern: "*", Action: action},
+	}
+	web := openCodeActionAllow
+	if network == sandboxpolicy.NetworkAccessNone {
+		web = openCodeActionDeny
+	}
+	for _, permission := range []string{"webfetch", "websearch"} {
+		rules = append(rules, OpenCodePermissionRule{Permission: permission, Pattern: "*", Action: web})
+	}
+	if policy.DenyQuestion {
+		rules = append(rules, OpenCodePermissionRule{Permission: "question", Pattern: "*", Action: openCodeActionDeny})
+	}
+	if policy.DenyPlan {
+		for _, permission := range []string{"plan_enter", "plan_exit"} {
+			rules = append(rules, OpenCodePermissionRule{Permission: permission, Pattern: "*", Action: openCodeActionDeny})
+		}
+	}
+	if policy.AllowEnv {
+		return append(rules,
+			OpenCodePermissionRule{Permission: "read", Pattern: "*.env", Action: openCodeActionAllow},
+			OpenCodePermissionRule{Permission: "read", Pattern: "*.env.*", Action: openCodeActionAllow},
+		)
+	}
+	return append(rules,
+		OpenCodePermissionRule{Permission: "read", Pattern: "*.env", Action: openCodeActionDeny},
+		OpenCodePermissionRule{Permission: "read", Pattern: "*.env.*", Action: openCodeActionDeny},
+		OpenCodePermissionRule{Permission: "read", Pattern: "*.env.example", Action: openCodeActionAllow},
+	)
 }
 
 // openCodeSubagentDenyRule turns OpenCode's task tool (its sub-agents) off.
@@ -109,7 +162,13 @@ var openCodeSubagentDenyRule = OpenCodePermissionRule{
 // OpenCodeSubagentsOffNote is the launch note every daemon OpenCode spawn (and its preview) carries.
 const OpenCodeSubagentsOffNote = "OpenCode sub-agents (its task tool) are off under tclaude: " +
 	"OpenCode gives a sub-agent only the deny rules of tclaude's permission policy, " +
-	"so it could not read or search files. The main agent does that work itself."
+	"so it could not read or search files. The main agent does that work itself. " +
+	"--tools all turns every OpenCode tool on, sub-agents included."
+
+// OpenCodeAllToolsNote is the launch note an OpenCode spawn with --tools all
+// carries instead of OpenCodeSubagentsOffNote.
+const OpenCodeAllToolsNote = "OpenCode --tools all: every OpenCode tool runs, including MCP and plugin tools, " +
+	"ones tclaude has not audited, and sub-agents; only your approval, network, and per-tool choices are applied."
 
 func buildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermissionRule, error) {
 	harnessBuiltinMode, err := (openCodeSandbox{}).ValidateMode(spec.HarnessBuiltinMode)
@@ -152,6 +211,13 @@ func buildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermis
 	worktree, err = validateOpenCodePolicyRoot("worktree", worktree)
 	if err != nil {
 		return nil, err
+	}
+
+	if policy, _ := ParseOpenCodeToolGovernance(toolGovernance); policy.AllTools() {
+		if err := ValidateOpenCodeToolsCombination(harnessBuiltinMode, approval, toolGovernance); err != nil {
+			return nil, err
+		}
+		return openCodeAllToolsRules(approval, network, policy), nil
 	}
 
 	rules := []OpenCodePermissionRule{{

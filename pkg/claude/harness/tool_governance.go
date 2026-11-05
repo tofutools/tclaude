@@ -35,6 +35,13 @@ func ToolGovernanceNotWider(h *Harness, limit, policy string) bool {
 	if !h.SupportsToolGovernance() {
 		return false
 	}
+	// A harness whose policies carry more than a mode (OpenCode's per-tool
+	// entries) compares them itself.
+	if comparer, ok := h.ToolGovernance.(interface {
+		PolicyNotWider(limit, policy string) bool
+	}); ok {
+		return comparer.PolicyNotWider(limit, policy)
+	}
 	modes := h.ToolGovernance.Modes()
 	at, bound := slices.Index(modes, strings.TrimSpace(policy)), slices.Index(modes, strings.TrimSpace(limit))
 	return at >= 0 && bound >= 0 && at >= bound

@@ -142,7 +142,7 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 		assert.NotEmpty(t, opencode.ApprovalModeHelp[mode], "help for %s", mode)
 	}
 	assert.True(t, opencode.CanTools)
-	assert.Equal(t, []string{"allow", "ask", "deny"}, opencode.ToolsModes)
+	assert.Equal(t, []string{"all", "allow", "ask", "deny"}, opencode.ToolsModes)
 	assert.Equal(t, "allow", opencode.DefaultTools)
 	for _, mode := range opencode.ToolsModes {
 		assert.NotEmpty(t, opencode.ToolsModeHelp[mode], "tool help for %s", mode)
