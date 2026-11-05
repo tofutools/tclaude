@@ -92,7 +92,7 @@ func prepareTclaudeLayerLaunch(in tclaudeLayerLaunchStepInput, undo *launchundo.
 	}
 	var layerSpec TclaudeLayerLaunchSpec
 	if in.outerLayer && tclaudeLayerWrapsPane(in.h.Name) {
-		spec, specErr := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		spec, specErr := PrepareTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
 			HarnessName:      in.h.Name,
 			StateRoot:        in.stateRoot,
 			Cwd:              in.cwd,
@@ -110,14 +110,27 @@ func prepareTclaudeLayerLaunch(in tclaudeLayerLaunchStepInput, undo *launchundo.
 			HarnessReadPaths:       in.harnessReadPaths,
 		})
 		if specErr != nil {
-			return TclaudeLayerLaunchSpec{}, fmt.Errorf("build tclaude’s sandbox launch spec: %w", specErr)
+			return TclaudeLayerLaunchSpec{}, specErr
 		}
 		layerSpec = spec
-		if prepareErr := PrepareTclaudeLayerHarnessState(layerSpec); prepareErr != nil {
-			return TclaudeLayerLaunchSpec{}, fmt.Errorf("prepare tclaude’s sandbox launch state: %w", prepareErr)
-		}
 	}
 	return layerSpec, nil
+}
+
+// PrepareTclaudeLayerLaunchSpec is the launch-spec step `session new` and the
+// conv resume share: it builds the frozen spec for tclaude's sandbox, then
+// materializes the harness state and protected mountpoints that spec names.
+// bwrap runs over a read-only root, so a hide or state target missing from the
+// host cannot be created at mount time; it has to exist before the pane starts.
+func PrepareTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLaunchSpec, error) {
+	spec, err := BuildTclaudeLayerLaunchSpec(input)
+	if err != nil {
+		return TclaudeLayerLaunchSpec{}, fmt.Errorf("build tclaude’s sandbox launch spec: %w", err)
+	}
+	if err := PrepareTclaudeLayerHarnessState(spec); err != nil {
+		return TclaudeLayerLaunchSpec{}, fmt.Errorf("prepare tclaude’s sandbox launch state: %w", err)
+	}
+	return spec, nil
 }
 
 // launchPaneCommandInput is what assembleLaunchPaneCommand turns into the
