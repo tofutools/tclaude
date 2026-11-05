@@ -102,9 +102,13 @@ func TestTermWS_TeardownDetachesOnlyItsOwnClient(t *testing.T) {
 	require.Eventually(t, func() bool { return teardowns.Load() == 1 },
 		5*time.Second, 20*time.Millisecond, "closed terminal never tore down")
 
-	remaining := tm.clients(t, session)
-	assert.Len(t, remaining, 1, "closing one web terminal must leave the other attached")
-	assert.NotContains(t, remaining, firstTTY, "the closed terminal's own client must be gone")
+	// tmux drops an exited client from its list asynchronously, so poll for
+	// the settled state: exactly one client left, and not the closed one.
+	require.Eventually(t, func() bool {
+		remaining := tm.clients(t, session)
+		return len(remaining) == 1 && remaining[0] != firstTTY
+	}, 5*time.Second, 20*time.Millisecond,
+		"closing one web terminal must leave the other attached and drop only its own client")
 }
 
 // A teardown whose client is already gone (displaced by another attach, or
