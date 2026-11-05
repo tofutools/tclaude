@@ -2606,6 +2606,12 @@ func resumeLaunchCmdWithEffectiveSandbox(
 					plannedAxes.Network, err)
 		}
 	}
+	// The posture gate every tclaude-layer launch boundary runs: a harness
+	// whose own sandbox the launch cannot turn off has it verified off, and a
+	// pass-through argument that would turn it back on is refused.
+	if err := session.GateTclaudeLayerHarnessPosture(h, outerLayer, effectiveSandbox, extraArgs); err != nil {
+		return "", "", nil, err
+	}
 	approvalState, err := resumeApprovalState(h, convID)
 	if err != nil {
 		return "", "", nil, err
