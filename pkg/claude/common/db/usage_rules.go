@@ -652,6 +652,10 @@ func ListUsageAgentOverrides() (map[string]*UsageAgentOverride, error) {
 			o.SnoozeUntil = time.Unix(0, snooze)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
