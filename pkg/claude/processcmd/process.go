@@ -41,11 +41,8 @@ func Cmd() *cobra.Command {
 			unavailableRuntimeCmd("repair", "Repair a process run"),
 		},
 		RunFunc: func(_ *Params, cmd *cobra.Command, _ []string) {
-			// Help is pure discoverability text; the sibling `runs` and
-			// `templates` parents already print it ungated. Enforcement of
-			// the feature flag lives on the leaf commands, daemon-side — the
-			// bare command must not read private config to decide whether to
-			// show its own help.
+			// Help is pure discoverability text, as on the sibling `runs`
+			// and `templates` parents.
 			_ = cmd.Help()
 		},
 	}.ToCobra()

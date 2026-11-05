@@ -86,8 +86,8 @@ Report what was filed, what was known, what stayed unsettled and which stops fai
 
 ## Running it on a schedule
 
-This is opt-in; nothing runs until someone adds the job. `--action spawn` needs
-`features.triggers`, and a worker keeps the build and the tour out of the Steward's
+This is opt-in; nothing runs until someone adds the job. A `--action spawn`
+worker keeps the build and the tour out of the Steward's
 context. Use a spawn profile whose directory is a checkout of this repository.
 
 ```bash
