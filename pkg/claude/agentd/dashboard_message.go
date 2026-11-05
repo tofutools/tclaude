@@ -109,7 +109,7 @@ func handleDashboardMessageCreate(w http.ResponseWriter, r *http.Request) {
 		Role:    body.Role,
 		Members: body.Members,
 	}
-	if !resolveStewardAddresses(w, req) {
+	if !resolveStewardAddresses(w, req, res.ConvID) {
 		return
 	}
 	dispatchSend(w, r, res.ConvID, req)
