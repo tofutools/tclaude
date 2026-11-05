@@ -218,12 +218,7 @@ func peerGroupGrants(peer string, groups []*db.AgentGroup) map[string][]string {
 		return nil
 	}
 	holds := func(groupID int64, slug string) bool {
-		for _, g := range grants {
-			if g.Slug == slug && (g.Scope == "" || g.Scope == db.FederationGroupScope(groupID)) {
-				return true
-			}
-		}
-		return false
+		return fedExplicitGroupGrant(grants, groupID, slug) != nil
 	}
 	out := map[string][]string{}
 	resolver := newFedGrantResolver().seedGroups(groups)
