@@ -40,22 +40,15 @@ func ListStewardRoster() ([]StewardRosterEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT agent_id, seat, since, set_by FROM steward_roster ORDER BY since, agent_id`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []StewardRosterEntry
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (StewardRosterEntry, error) {
 		var entry StewardRosterEntry
 		var since int64
 		if err := rows.Scan(&entry.AgentID, &entry.Seat, &since, &entry.SetBy); err != nil {
-			return nil, err
+			return StewardRosterEntry{}, err
 		}
 		entry.Since = time.Unix(0, since)
-		out = append(out, entry)
-	}
-	return out, rows.Err()
+		return entry, nil
+	}, `SELECT agent_id, seat, since, set_by FROM steward_roster ORDER BY since, agent_id`)
 }
 
 // PauseStewardStandbyJobs pauses what a Steward going on the roster owns: its
@@ -100,23 +93,16 @@ func StewardStandbyTargetGroups(agentID string) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT group_id FROM agent_cron_jobs WHERE owner_agent = ? AND disabled_reason = ? AND target_kind = ?
+	return queryRows(d, func(rows rowScanner) (int64, error) {
+		var group int64
+		if err := rows.Scan(&group); err != nil {
+			return 0, err
+		}
+		return group, nil
+	}, `SELECT group_id FROM agent_cron_jobs WHERE owner_agent = ? AND disabled_reason = ? AND target_kind = ?
 		UNION SELECT group_id FROM agent_standing_orders WHERE owner_agent = ? AND disabled_reason = ? AND target_kind = ?`,
 		agentID, CronDisabledReasonStewardStandby, CronTargetGroup,
 		agentID, StandingDisabledReasonStewardStandby, StandingTargetGroup)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var groups []int64
-	for rows.Next() {
-		var group int64
-		if err := rows.Scan(&group); err != nil {
-			return nil, err
-		}
-		groups = append(groups, group)
-	}
-	return groups, rows.Err()
 }
 
 // ResumeStewardStandbyJobs undoes PauseStewardStandbyJobs for an agent back in

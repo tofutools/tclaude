@@ -152,24 +152,11 @@ func ListAgentRoutes(groupID int64) ([]*AgentRoute, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT r.id, r.group_id, g.name, r.publisher_agent_id, r.publisher_conv_id,
+	return queryRows(d, scanAgentRoute, `SELECT r.id, r.group_id, g.name, r.publisher_agent_id, r.publisher_conv_id,
 		r.publisher_launch_generation, r.group_generation, r.name, r.transport, r.target, r.state,
 		r.created_at, r.withdrawn_at, r.withdraw_reason
 		FROM agent_routes r JOIN agent_groups g ON g.id = r.group_id
 		WHERE r.group_id = ? AND `+notFederationMirror+` ORDER BY r.created_at, r.id`, groupID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*AgentRoute
-	for rows.Next() {
-		route, err := scanAgentRoute(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, route)
-	}
-	return out, rows.Err()
 }
 
 // DashboardRouteHistoryPerGroup is the hard projection bound for route
@@ -491,17 +478,7 @@ func ListAgentRouteLeases(groupID int64, consumerAgentID, consumerConvID string)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT l.id, l.route_id, l.consumer_agent_id, l.consumer_conv_id,
-		l.consumer_launch_generation, l.group_generation, l.state, l.opened_at, l.closed_at
-		FROM agent_route_leases l JOIN agent_routes r ON r.id = l.route_id
-		WHERE r.group_id = ? AND l.consumer_agent_id = ? AND l.consumer_conv_id = ? AND `+notFederationProxy+`
-		ORDER BY l.opened_at, l.id`, groupID, consumerAgentID, consumerConvID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*AgentRouteLease
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (*AgentRouteLease, error) {
 		var lease AgentRouteLease
 		var openedAt, closedAt dbTimestamp
 		if err := rows.Scan(&lease.ID, &lease.RouteID, &lease.ConsumerAgentID, &lease.ConsumerConvID,
@@ -510,9 +487,12 @@ func ListAgentRouteLeases(groupID int64, consumerAgentID, consumerConvID string)
 		}
 		lease.OpenedAt = openedAt.Time()
 		lease.ClosedAt = closedAt.Time()
-		out = append(out, &lease)
-	}
-	return out, rows.Err()
+		return &lease, nil
+	}, `SELECT l.id, l.route_id, l.consumer_agent_id, l.consumer_conv_id,
+		l.consumer_launch_generation, l.group_generation, l.state, l.opened_at, l.closed_at
+		FROM agent_route_leases l JOIN agent_routes r ON r.id = l.route_id
+		WHERE r.group_id = ? AND l.consumer_agent_id = ? AND l.consumer_conv_id = ? AND `+notFederationProxy+`
+		ORDER BY l.opened_at, l.id`, groupID, consumerAgentID, consumerConvID)
 }
 
 // ListAgentRouteLeasesBatch returns a bounded lease projection grouped by route

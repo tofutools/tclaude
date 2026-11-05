@@ -314,24 +314,17 @@ func ListRetainedPermissionGroups(agentID string) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT r.group_id FROM agent_retained_group_permissions r
+	return queryRows(d, func(rows rowScanner) (int64, error) {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return 0, err
+		}
+		return id, nil
+	}, `SELECT r.group_id FROM agent_retained_group_permissions r
 		JOIN agent_groups g ON g.id = r.group_id AND g.archived_at IS NULL
 		WHERE r.agent_id = ? AND NOT EXISTS (
 			SELECT 1 FROM agent_group_members m WHERE m.group_id = r.group_id AND m.agent_id = r.agent_id)
 		ORDER BY r.retained_at, r.group_id`, agentID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
 }
 
 // ListRetainedPermissionHolders returns the current conversations of the
@@ -341,24 +334,11 @@ func ListRetainedPermissionHolders(groupID int64) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT a.current_conv_id FROM agent_retained_group_permissions r
+	return queryRows(d, scanString, `SELECT a.current_conv_id FROM agent_retained_group_permissions r
 		JOIN agents a ON a.agent_id = r.agent_id AND a.retired_at IS NULL
 		WHERE r.group_id = ? AND NOT EXISTS (
 			SELECT 1 FROM agent_group_members m WHERE m.group_id = r.group_id AND m.agent_id = r.agent_id)
 		ORDER BY r.retained_at, a.current_conv_id`, groupID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []string
-	for rows.Next() {
-		var conv string
-		if err := rows.Scan(&conv); err != nil {
-			return nil, err
-		}
-		out = append(out, conv)
-	}
-	return out, rows.Err()
 }
 
 // DropRetainedGroupPermissions ends an agent's kept permissions from groupID,
