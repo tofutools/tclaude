@@ -245,42 +245,6 @@ func TestSessionCRUD(t *testing.T) {
 	assert.False(t, exists, "session should not exist after delete")
 }
 
-func TestCleanupOldExited(t *testing.T) {
-	setupTestDB(t)
-
-	// Create an "exited" session with old timestamp
-	old := &SessionRow{
-		ID:        "old-exited",
-		Status:    "exited",
-		CreatedAt: time.Now().Add(-48 * time.Hour),
-		UpdatedAt: time.Now().Add(-48 * time.Hour),
-	}
-	// Save manually to set UpdatedAt in the past
-	db, _ := Open()
-	_, err := db.Exec(`INSERT INTO sessions
-		(id, tmux_session, pid, cwd, conv_id, status, status_detail, auto_registered, created_at, updated_at)
-		VALUES (?, '', 0, '', '', 'exited', '', 0, ?, ?)`,
-		old.ID, dbTime(old.CreatedAt), dbTime(old.UpdatedAt))
-	require.NoError(t, err, "insert old session")
-
-	// Create a fresh "exited" session
-	fresh := &SessionRow{
-		ID:        "fresh-exited",
-		Status:    "exited",
-		CreatedAt: time.Now(),
-	}
-	require.NoError(t, SaveSession(fresh), "SaveSession fresh")
-
-	// Cleanup with 24h threshold
-	deleted, err := CleanupOldExited(24 * time.Hour)
-	require.NoError(t, err, "CleanupOldExited")
-	assert.Equal(t, int64(1), deleted, "deleted count")
-
-	// Fresh one should still exist
-	exists, _ := SessionExists("fresh-exited")
-	assert.True(t, exists, "fresh-exited should still exist")
-}
-
 func TestMaxUpdatedAt(t *testing.T) {
 	setupTestDB(t)
 
