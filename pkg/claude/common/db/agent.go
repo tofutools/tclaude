@@ -2852,30 +2852,6 @@ func RemoveAgentGroupOwner(groupID int64, convID string) (int64, error) {
 	return n, nil
 }
 
-// RemoveAllAgentGroupOwnershipsForConv drops every ownership row
-// referencing convID, regardless of group. Bulk cleanup variant for
-// the conv-delete path. Idempotent — returns the number of rows
-// removed.
-func RemoveAllAgentGroupOwnershipsForConv(convID string) (int64, error) {
-	d, err := Open()
-	if err != nil {
-		return 0, err
-	}
-	agentID, err := AgentIDForConv(convID)
-	if err != nil {
-		return 0, err
-	}
-	if agentID == "" {
-		return 0, nil
-	}
-	res, err := d.Exec(`DELETE FROM agent_group_owners WHERE agent_id = ?`, agentID)
-	if err != nil {
-		return 0, err
-	}
-	n, _ := res.RowsAffected()
-	return n, nil
-}
-
 // IsAgentGroupOwner returns true when convID's actor owns groupID. Resolves
 // the conv to its stable agent_id (JOH-26), so ANY generation of the actor —
 // not just its current conv — answers correctly.
@@ -2924,36 +2900,6 @@ func OwnerHasGroupContaining(ownerConv, targetConv string) (bool, error) {
 		LIMIT 1
 	)`, ownerConv, targetConv).Scan(&exists)
 	return exists != 0, err
-}
-
-// ListOwnedGroupIDsContaining returns the ids of the groups ownerConv owns
-// whose membership includes targetConv — the exact set OwnerHasGroupContaining
-// tests for existence, enumerated instead of collapsed to a boolean.
-//
-// The caller needs the identities because the owner-implied bypass is narrowed
-// PER GROUP (TCL-1071): "does some owned group contain the target" is no longer
-// the whole question, since each of those groups may confine the bypass
-// differently. Same stable-agent resolution on both ends as the boolean form.
-func ListOwnedGroupIDsContaining(ownerConv, targetConv string) ([]int64, error) {
-	if ownerConv == "" || targetConv == "" {
-		return nil, nil
-	}
-	d, err := Open()
-	if err != nil {
-		return nil, err
-	}
-	return queryRows(d, func(rows rowScanner) (int64, error) {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return 0, err
-		}
-		return id, nil
-	}, `SELECT DISTINCT o.group_id
-		FROM agent_group_owners o
-		JOIN agent_group_members m ON m.group_id = o.group_id
-		WHERE o.agent_id = (SELECT agent_id FROM agent_conversations WHERE conv_id = ?)
-		  AND m.agent_id = (SELECT agent_id FROM agent_conversations WHERE conv_id = ?)`,
-		ownerConv, targetConv)
 }
 
 // ListAgentGroupOwners returns every owner row for the given group,
@@ -4100,27 +4046,6 @@ func CountAgentMessages() (int, error) {
 	return n, nil
 }
 
-// GroupMessageParticipants returns the distinct conv-ids that ever sent or
-// received a group-routed message for groupID — any agent_messages row with
-// group_id = groupID, taking both from_conv and to_conv (blank ids, e.g. a
-// multicast's empty to_conv, are dropped). It is the durable record of who
-// communicated *through* a group: unlike the agent_group_members rows, which
-// retire hard-deletes (retireAgentConv unjoins every group before flipping
-// the enrollment bit), a message's group_id survives the membership's
-// removal. The dashboard uses it to reconstruct a retired ex-member so its
-// folder can still nest under the group it used to belong to.
-func GroupMessageParticipants(groupID int64) ([]string, error) {
-	d, err := Open()
-	if err != nil {
-		return nil, err
-	}
-	return queryRows(d, scanString, `
-		SELECT from_conv FROM agent_messages WHERE group_id = ? AND from_conv != ''
-		UNION
-		SELECT to_conv   FROM agent_messages WHERE group_id = ? AND to_conv   != ''`,
-		groupID, groupID)
-}
-
 // MailboxFilter selects which agent_messages rows a dashboard mailbox
 // read returns — the backing query for the Messages tab's paginated,
 // searchable folder view.
@@ -4170,12 +4095,6 @@ type MailboxFilter struct {
 	// BeforeID is a keyset cursor: only rows older than it (id < BeforeID).
 	// Zero means no cursor. Callers counting a folder's total leave it unset.
 	BeforeID int64
-}
-
-// HasSearch reports whether f carries a search predicate beyond its folder
-// scope.
-func (f MailboxFilter) HasSearch() bool {
-	return f.Text != ""
 }
 
 // likeEscape escapes the LIKE metacharacters so the operator's search
