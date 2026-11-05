@@ -39,8 +39,8 @@ func TestFinishHarnessSpawnSpec(t *testing.T) {
 
 	claude := harness.MustGet(harness.DefaultName)
 	spec := harness.SpawnSpec{SessionID: "conv-claude"}
-	paths, err := finishHarnessSpawnSpec(claude, &spec, &NewParams{ManagedInstructionsRoot: "/managed"},
-		true, sandboxpolicy.RootConstructed, "")
+	paths, err := FinishHarnessSpawnSpec(claude, &spec, "/managed",
+		true, sandboxpolicy.RootConstructed, "", nil)
 	require.NoError(t, err)
 	assert.Empty(t, paths)
 	assert.Equal(t, harness.SpawnSpec{SessionID: "conv-claude"}, spec, "claude registers nothing here")
@@ -50,8 +50,8 @@ func TestFinishHarnessSpawnSpec(t *testing.T) {
 		t.Skip("pi has no status extension in this build")
 	}
 	spec = harness.SpawnSpec{SessionID: "conv-pi", TclaudeExecutable: "/usr/bin/tclaude"}
-	paths, err = finishHarnessSpawnSpec(pi, &spec, &NewParams{ManagedInstructionsRoot: "/managed"},
-		true, sandboxpolicy.RootConstructed, "")
+	paths, err = FinishHarnessSpawnSpec(pi, &spec, "/managed",
+		true, sandboxpolicy.RootConstructed, "", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "/managed", spec.ManagedInstructionsRoot)
 	assert.NotEmpty(t, spec.HarnessStateDir, "a walled pi runs against its own agent dir")
@@ -60,7 +60,7 @@ func TestFinishHarnessSpawnSpec(t *testing.T) {
 	assert.Equal(t, tclaudeLayerConstructedRootTclaudePath, spec.TclaudeExecutable)
 
 	spec = harness.SpawnSpec{SessionID: "conv-pi-host", TclaudeExecutable: "/usr/bin/tclaude"}
-	paths, err = finishHarnessSpawnSpec(pi, &spec, &NewParams{}, false, sandboxpolicy.RootHostInherited, "")
+	paths, err = FinishHarnessSpawnSpec(pi, &spec, "", false, sandboxpolicy.RootHostInherited, "", nil)
 	require.NoError(t, err)
 	assert.Empty(t, paths, "without tclaude's sandbox nothing needs mounting")
 	assert.Empty(t, spec.HarnessStateDir)
