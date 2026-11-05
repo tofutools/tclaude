@@ -26,6 +26,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/managedinstructions"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -2287,7 +2288,16 @@ func cloneHistory(sourceConv, cwd string, relaunch *durableRelaunchConfig, gitWr
 		if copyErr != nil {
 			return "", "", nil, copyErr
 		}
-		return copied.NewConvID, "", func() {}, nil
+		// A clone that never launches must not leave the copy behind as an
+		// orphan conversation: drop its transcript, side directory, index
+		// entry and rows, exactly as deleting the conversation would.
+		newConv := copied.NewConvID
+		return newConv, "", func() {
+			if _, err := conv.DeleteConvByID(newConv); err != nil {
+				slog.Warn("clone: removing the failed clone's copied conversation failed",
+					"conv", newConv, "error", err)
+			}
+		}, nil
 	}
 	if !h.SupportsHistoryTransfer() {
 		return "", "", nil, fmt.Errorf("harness %s cannot copy its conversation; clone with --no-copy-conv instead", h.Name)
