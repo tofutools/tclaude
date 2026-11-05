@@ -161,6 +161,7 @@ def main():
             for attempt in range(3):
                 print(f"  timing {attempt + 1}: {timing(profile, params, port)}")
             parts = forms(profile)
+            head = ["(version 1)", "(allow default)"]
             # The IP block (broad deny + localhost allows) and the unix-socket
             # outbound denies are separate: the unix ones reference -D params.
             net = [p for p in parts if p.startswith(("(deny network-outbound", "(allow network-outbound"))
@@ -168,12 +169,20 @@ def main():
             unix = [p for p in parts if p.startswith("(deny network-outbound") and "unix-socket" in p]
             rest = [p for p in parts if p not in net and not p.startswith("(version") and p != "(allow default)"]
             print(f"  forms: {len(net)} IP network, {len(unix)} unix-socket outbound denies, {len(rest)} other")
+            for name, value in sorted(params.items()):
+                kind_p = ("socket" if os.path.exists(value) and not os.path.isdir(value) and not os.path.isfile(value)
+                          else "dir" if os.path.isdir(value) else "file" if os.path.isfile(value)
+                          else "MISSING")
+                print(f"  param {name}={value} [{kind_p}]")
             for k, u in enumerate(unix):
+                pl = u.replace("(literal (param", "(path-literal (param")
+                for conn_name, fn, _ in connectors()[:2]:
+                    ok_pl, errs_pl = rate_with(fn, "\n".join(head + net + [pl]), params, port, 3)
+                    print(f"  pair: IP block + unix deny {k} as path-literal ({conn_name}): ok={ok_pl}/3 {errs_pl}")
                 for conn_name, fn, _ in connectors():
                     ok_u, errs_u = rate_with(fn, "\n".join(head + net + [u]), params, port, 3)
                     print(f"  pair: IP block + unix deny {k} ({conn_name}): ok={ok_u}/3 {errs_u}")
                 print("    " + u.replace("\n", "\n    ")[:600])
-            head = ["(version 1)", "(allow default)"]
             variants = {
                 "minimal network block only": head + net,
                 "network block moved to the end": head + rest + net,
