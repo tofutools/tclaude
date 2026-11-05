@@ -53,6 +53,12 @@ type FedReach struct {
 	// operation, and a restricted peer may still pass its gate inside
 	// another granted operation (see peerActionPassThroughs).
 	Pending bool
+	// SelfGate marks a group peer grant that also answers its own local gate
+	// on a peer-invoked group route (peerGrantGates); a grant otherwise
+	// answers only the gates whose reach goes via it.
+	SelfGate bool
+	// RequiresGroup marks a group peer grant that refuses to be unscoped.
+	RequiresGroup bool
 	// Sensitive marks a peer grant that lets the peer act on this node, not
 	// only read. The dashboard's grant picker shows it (PEER_SLUGS in
 	// dashboard/js/fleet-admin-model.js, which must agree).
@@ -88,8 +94,8 @@ var slugFederationReach = map[string]FedReach{
 	PermApprovalsAnswer:                   {Kind: FedPeerInstance, Sensitive: true},
 	PermModelsProxyLeased:                 {Kind: FedPeerProxy},
 	PermSelfTeleportPermissions:           {Kind: FedSender, Via: []string{PermAgentsReceivePermissions}},
-	PermAgentsReceivePermissions:          {Kind: FedPeerGroup, Cap: proto.CapAgentsReceivePermissions, Sensitive: true},
-	PermAgentsReceive:                     {Kind: FedPeerGroup, Cap: proto.CapAgentsReceive},
+	PermAgentsReceivePermissions:          {Kind: FedPeerGroup, Cap: proto.CapAgentsReceivePermissions, RequiresGroup: true, Sensitive: true},
+	PermAgentsReceive:                     {Kind: FedPeerGroup, Cap: proto.CapAgentsReceive, RequiresGroup: true},
 	PermGroupsVisibilityRead:              {Kind: FedPeerGroup, Cap: proto.CapGroupVisibility},
 	PermGroupsLinkAccept:                  {Kind: FedPeerGroup, Cap: proto.CapGroupLinkAccept, Sensitive: true},
 	PermGroupsRosterRead:                  {Kind: FedPeerGroup, Cap: proto.CapRoster},
@@ -151,7 +157,7 @@ var slugFederationReach = map[string]FedReach{
 	PermGroupsSettingsDescription:         {Kind: FedPeerAlias, Via: []string{PermGroupsSettings}},
 	PermGroupsSettingsDefaultDir:          {Kind: FedPeerAlias, Via: []string{PermGroupsSettings}},
 	PermGroupsSettingsDefaultContext:      {Kind: FedPeerAlias, Via: []string{PermGroupsSettings}},
-	PermGroupsSettingsEnvironment:         {Kind: FedPeerGroup, Cap: "group_environment", Sensitive: true},
+	PermGroupsSettingsEnvironment:         {Kind: FedPeerGroup, Cap: "group_environment", SelfGate: true, Sensitive: true},
 	PermGroupsSettingsDefaultSpawnTarget:  {Kind: FedPeerInstance, Pending: true, Sensitive: true},
 	PermGroupsSettingsDefaultProfile:      {Kind: FedPeerAlias, Via: []string{PermGroupsSettings}},
 	PermGroupsSettingsMaxMembers:          {Kind: FedPeerAlias, Via: []string{PermGroupsSettings}},
@@ -193,7 +199,7 @@ var slugFederationReach = map[string]FedReach{
 	PermTemplatesManage:                   {Kind: FedPeerInstance, Pending: true, Sensitive: true},
 	PermTemplatesUse:                      {Kind: FedPeerGroup, Pending: true, Sensitive: true},
 	PermSelfTeleport:                      {Kind: FedSender, Via: []string{PermAgentsReceive, PermAgentsTeleportReceive}},
-	PermAgentsTeleportReceive:             {Kind: FedPeerGroup, Cap: proto.CapTeleportReceive},
+	PermAgentsTeleportReceive:             {Kind: FedPeerGroup, Cap: proto.CapTeleportReceive, RequiresGroup: true},
 	PermAgentMove:                         {Kind: FedPeerGroup, Cap: "move", Sensitive: true},
 	PermAgentShare:                        {Kind: FedSender, Via: []string{PermAgentsReceive}},
 	PermAgentBundleExport:                 {Kind: FedPeerInstance, Pending: true, Sensitive: true},
@@ -282,17 +288,102 @@ var slugFederationReach = map[string]FedReach{
 	PermConfigOffer:                       {Kind: FedPeerInstance},
 }
 
-// peerActionPassThroughs record the gates a restricted peer passes inside
-// another granted operation (peerActionAuthority.allows) beyond the Via of
-// their reach: a move or teleport pulls the agent through its export and
-// retire, and a clone landing in another group joins it. The registry-driven
-// peer gate that replaces that switch must keep them.
-var peerActionPassThroughs = map[string][]string{
-	PermAgentRetire:       {PermAgentMove},
-	PermAgentShare:        {PermAgentMove},
-	PermSelfTeleport:      {PermAgentMove},
-	PermAgentBundleExport: {PermAgentMove},
-	PermGroupsMembersAdd:  {PermGroupsMembersClone},
+// peerPassThrough is a gate a restricted peer passes inside another granted
+// peer action, beyond the Via of the gate's own reach.
+type peerPassThrough struct {
+	// Via is the action's peer grant.
+	Via string
+	// Footprint is the peer grant then required in every group of the
+	// target agent, when it is not Via itself.
+	Footprint string
+	// InGroup checks Via in the group the gate names instead of the target
+	// agent's footprint, and answers only a gate without a target.
+	InGroup bool
+}
+
+// peerActionPassThroughs are those gates: a move or teleport pulls the agent
+// through its export, share and self-teleport, and through its retire under
+// the retire grant; a clone landing in another group joins it as a member
+// there.
+var peerActionPassThroughs = map[string][]peerPassThrough{
+	PermAgentRetire:       {{Via: PermAgentMove, Footprint: PermGroupsMembersRetire}},
+	PermAgentShare:        {{Via: PermAgentMove}},
+	PermSelfTeleport:      {{Via: PermAgentMove}},
+	PermAgentBundleExport: {{Via: PermAgentMove}},
+	PermGroupsMembersAdd:  {{Via: PermGroupsMembersClone, InGroup: true}},
+}
+
+// groupLocalGate reports a gate scoped to one group: its registry entry
+// declares the group scope dimension and is not itself a global agent.*
+// capability with a group sibling (groups.members.stop is group-local;
+// agent.stop is not). Peer-invoked group routes answer group-local gates; a
+// peer action on an agent answers the others.
+func groupLocalGate(slug string) bool {
+	for _, entry := range permissionRegistry {
+		if entry.Slug == slug {
+			return containsScopeDim(entry.ScopeDims, ScopeDimGroup) && entry.GroupSibling == ""
+		}
+	}
+	return false
+}
+
+// peerGateGrants are the peer grants that answer gate by its own reach: the
+// gate itself when it is a grantable peer slug, or the grants it goes via.
+func peerGateGrants(gate string) []string {
+	reach := slugFederationReach[gate]
+	switch {
+	case reach.peerGrantable():
+		return []string{gate}
+	case reach.Kind == FedPeerAlias && !reach.Pending:
+		return reach.Via
+	}
+	return nil
+}
+
+// peerActionFootprint resolves gate for a peer action under the rule's peer
+// grant: ok when the grant answers it, with the grant the target's footprint
+// must then hold (or, for an in-group pass-through, the group named).
+func peerActionFootprint(gate, rule string) (pass peerPassThrough, ok bool) {
+	if !groupLocalGate(gate) && slices.Contains(peerGateGrants(gate), rule) {
+		return peerPassThrough{Via: rule, Footprint: rule}, true
+	}
+	for _, p := range peerActionPassThroughs[gate] {
+		if p.Via == rule {
+			if p.Footprint == "" {
+				p.Footprint = rule
+			}
+			return p, true
+		}
+	}
+	return peerPassThrough{}, false
+}
+
+// peerGroupGateGrants maps each group peer grant to the group-local gates it
+// answers on a peer-invoked group route.
+var peerGroupGateGrants = derivePeerGroupGateGrants()
+
+func derivePeerGroupGateGrants() map[string][]string {
+	out := map[string][]string{}
+	for slug, reach := range slugFederationReach {
+		if reach.SelfGate && reach.peerGrantable() {
+			out[slug] = append(out[slug], slug)
+		}
+		if reach.Kind != FedPeerAlias || reach.Pending || !groupLocalGate(slug) {
+			continue
+		}
+		for _, via := range reach.Via {
+			out[via] = append(out[via], slug)
+		}
+	}
+	for grant := range out {
+		slices.Sort(out[grant])
+	}
+	return out
+}
+
+// fedPeerSlugRequiresGroup reports a peer grant that must be group-scoped.
+func fedPeerSlugRequiresGroup(slug string) bool {
+	return slugFederationReach[slug].RequiresGroup
 }
 
 // fedPeerSlugsOfKind lists the grantable peer slugs of kind.
@@ -349,6 +440,9 @@ func initFederationReach(registry []PermSlug, reachTable map[string]FedReach) {
 			if _, ok := reachTable[via]; !ok {
 				panic(fmt.Sprintf("slugFederationReach: %q goes via unknown slug %q", slug, via))
 			}
+		}
+		if (reach.SelfGate || reach.RequiresGroup) && reach.Kind != FedPeerGroup {
+			panic(fmt.Sprintf("slugFederationReach: %q: only a group peer slug is self-gating or requires a group", slug))
 		}
 		if (reach.Cap != "") != (reach.Kind == FedPeerGroup && !reach.Pending) {
 			panic(fmt.Sprintf("slugFederationReach: %q: only a grantable group peer slug carries a wire capability", slug))

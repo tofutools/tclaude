@@ -75,7 +75,7 @@ func normalizeFederationNodeProfile(p *db.FederationNodeProfile) error {
 		if instanceSlug && g.Scope != "" {
 			return fmt.Errorf("%s must be unscoped", g.Slug)
 		}
-		if (g.Slug == PermAgentsReceive || g.Slug == PermAgentsTeleportReceive) && g.Scope == "" {
+		if fedPeerSlugRequiresGroup(g.Slug) && g.Scope == "" {
 			return fmt.Errorf("%s requires a local group scope", g.Slug)
 		}
 		if g.Scope != "" && (g.Slug == PermModelsProxy || g.Slug == PermModelsProxyLeased) {

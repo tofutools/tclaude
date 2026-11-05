@@ -158,17 +158,14 @@ func TestPeerScopedSlugsHaveFederationReach(t *testing.T) {
 	}
 }
 
-// The peer grant families translate a peer grant into the local gates it
-// satisfies; each translated gate declares that alias.
-func TestPeerGrantFamiliesMatchFederationReach(t *testing.T) {
-	for grant, gates := range peerGrantFamilies {
-		assert.True(t, slugFederationReach[grant].peerGrantable(), "family %s is a grantable peer slug", grant)
+// A peer-invoked group route answers only group-local gates, and only
+// through grantable group peer slugs.
+func TestPeerGroupGateGrantsAreGroupLocal(t *testing.T) {
+	for grant, gates := range peerGroupGateGrants {
+		reach := slugFederationReach[grant]
+		assert.True(t, reach.Kind == FedPeerGroup && reach.peerGrantable(), "%s answers group gates, so it is a grantable group peer slug", grant)
 		for _, gate := range gates {
-			if gate == grant {
-				continue
-			}
-			reach := slugFederationReach[gate]
-			assert.True(t, reach.Kind == FedPeerAlias && slices.Contains(reach.Via, grant), "%s is satisfied by peer grant %s, so it declares FedPeerAlias via it", gate, grant)
+			assert.True(t, groupLocalGate(gate), "%s answers %s, which is not a group-local gate", grant, gate)
 		}
 	}
 }
@@ -256,14 +253,18 @@ func TestDashboardPeerSlugsMatchFederationReach(t *testing.T) {
 	}
 }
 
-// The peer action pass-throughs name grantable peer slugs, and gates that
-// would not reach a peer otherwise.
+// The peer action pass-throughs name grantable peer slugs, and gates their
+// own reach does not already answer through the same grant.
 func TestPeerActionPassThroughsArePeerGrants(t *testing.T) {
-	for gate, grants := range peerActionPassThroughs {
+	for gate, passes := range peerActionPassThroughs {
 		_, ok := slugFederationReach[gate]
 		assert.True(t, ok, "%s is a registered slug", gate)
-		for _, grant := range grants {
-			assert.True(t, slugFederationReach[grant].peerGrantable(), "%s passes through %s, a grantable peer slug", gate, grant)
+		for _, p := range passes {
+			assert.True(t, slugFederationReach[p.Via].peerGrantable(), "%s passes through %s, a grantable peer slug", gate, p.Via)
+			if p.Footprint != "" {
+				assert.True(t, slugFederationReach[p.Footprint].peerGrantable(), "%s footprint %s is a grantable peer slug", gate, p.Footprint)
+			}
+			assert.False(t, slices.Contains(peerGateGrants(gate), p.Via), "%s: %s already answers it by reach", gate, p.Via)
 		}
 	}
 }

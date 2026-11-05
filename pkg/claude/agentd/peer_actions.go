@@ -63,46 +63,23 @@ func (a *peerActionAuthority) allows(perm, target string, actx ActionContext) bo
 		g, err := db.GetAgentGroupByID(a.groupID)
 		return err == nil && g != nil && actx.Group == g.Name && perm == PermGroupsMembersSpawn && fedPeerAllows(a.peer, g.ID, PermGroupsMembersSpawn)
 	}
-	slug := a.permission
-	switch perm {
-	case PermAgentStop:
-		if slug != PermGroupsMembersStop {
-			return false
-		}
-	case PermAgentResume:
-		if slug != PermGroupsMembersResume {
-			return false
-		}
-	case PermAgentRetire:
-		if slug != PermGroupsMembersRetire && slug != PermAgentMove {
-			return false
-		}
-		slug = PermGroupsMembersRetire
-	case PermAgentClone:
-		if slug != PermGroupsMembersClone {
-			return false
-		}
-	case PermGroupsMembersAdd:
+	// The gate's federation reach (permission_federation_reach.go) says
+	// whether the action's grant answers it, and what the target must hold.
+	pass, ok := peerActionFootprint(perm, a.permission)
+	if !ok {
+		return false
+	}
+	if pass.InGroup {
 		// A clone placed in another group joins it as a member; the clone
 		// grant on that group covers it (checked again here, not only at the
 		// route, so the clone core's own gate stays authoritative).
-		if slug != PermGroupsMembersClone || target != "" {
+		if target != "" {
 			return false
 		}
 		g, err := db.GetAgentGroupByName(actx.Group)
-		return err == nil && g != nil && fedPeerAllows(a.peer, g.ID, PermGroupsMembersClone)
-	case PermAgentRename, PermAgentTask:
-		if slug != PermGroupsMembersManage {
-			return false
-		}
-	case PermSelfTeleport, PermAgentMove, PermAgentShare, PermAgentBundleExport:
-		if slug != PermAgentMove {
-			return false
-		}
-	default:
-		return false
+		return err == nil && g != nil && fedPeerAllows(a.peer, g.ID, pass.Via)
 	}
-	return peerAgentActionAllowed(a.peer, a.sourceConv, slug)
+	return peerAgentActionAllowed(a.peer, a.sourceConv, pass.Footprint)
 }
 func peerActionGate(w http.ResponseWriter, r *http.Request, a *peerActionAuthority, perm, target string, actx ActionContext) (string, bool) {
 	if !a.allows(perm, target, actx) {
