@@ -40,6 +40,23 @@ test('template model preserves the complete replace payload and stale references
   assert.deepEqual(model.moveItem(['a', 'b'], 1, -1), ['b', 'a']);
 });
 
+// Saving is a full replace, so a field the editor does not show still has to
+// go back as it came: a template's owner scopes (TCL-1071) survive an edit, and
+// a template without them sends none (tcl-cnua7d).
+test('template model sends back the owner scopes it was given, and none it was not', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/template-management-model.js');
+  const owner_scopes = { 'groups.members.spawn': { spawn_profile: ['p1'] } };
+  const scoped = { name: 'crew', agents: [{ name: 'lead' }], owner_scopes };
+  const draft = model.templateDraft(scoped);
+  draft.descr = 'edited';
+  const payload = model.templatePayload(draft);
+  assert.deepEqual(payload.owner_scopes, owner_scopes);
+  assert.notEqual(payload.owner_scopes, owner_scopes, 'a copy, not the snapshot\'s own object');
+  assert.equal('owner_scopes' in model.templatePayload(model.templateDraft({ name: 'plain', agents: [{ name: 'lead' }] })), false);
+  assert.equal('owner_scopes' in model.templatePayload(model.templateDraft()), false, 'a new template has none');
+});
+
 test('template actions keep starter requests ordered and preserve mutation payloads', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { createManagementActions }] =
