@@ -655,8 +655,12 @@ const (
 	everyoneOpenMRChunk = 5
 	// everyoneOpenMRMaxProjects caps the projects read per instance and
 	// poll: the ones agents work in first, then the busiest. With discovery,
-	// that bounds a poll at 9 requests per instance whatever the instance
-	// holds, each under its own authoredOpenMRTimeout.
+	// that bounds the project-wide read at 9 requests per instance whatever
+	// the instance holds, each under its own authoredOpenMRTimeout. On an
+	// instance that refuses discovery it is at most 10: a re-probe every
+	// everyoneOpenMRReprobe, up to everyoneOpenMRPages pages of the user's own
+	// merge requests when the Mine list was cut (fetchMineMRProjects, read
+	// afresh each poll), and the 4 project queries.
 	everyoneOpenMRMaxProjects = 20
 	// everyoneOpenMRReprobe is how long an instance that refused the
 	// instance-wide list is read project by project before it is asked again.
