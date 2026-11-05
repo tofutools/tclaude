@@ -75,11 +75,26 @@ func TestInboxWatchMessageViewIsTerminalSafe(t *testing.T) {
 	assertTerminalSafe(t, loaded.body)
 }
 
+// The inbox TUI quits on an inline message nudge and echoes it to the raw
+// terminal it was given; the nudge carries the sender's subject and body.
+func TestInboxWatchInlineNudgeEchoIsTerminalSafe(t *testing.T) {
+	nudge := "[system: new agent message #9 from peer; delivery: inline] " + hostileText
+	require.True(t, isInlineAgentMessageNudge(nudge))
+	var out bytes.Buffer
+	writeInboxWatchInlineNudge(&out, &inboxWatchModel{inlineNudge: nudge})
+	assertTerminalSafe(t, out.String())
+	assert.Contains(t, out.String(), "[system: new agent message #9")
+}
+
 // Every agent command prints through cliStdout and cliStderr, so nothing it
 // prints reaches a terminal uncleaned. The inbox TUI is the one exception: it
-// draws with escape sequences of its own and cleans what it renders.
+// is handed the raw terminal, because it draws with escape sequences of its
+// own, and cleans what it renders.
 func TestAgentCommandsPrintThroughTheTerminalWriters(t *testing.T) {
-	allowed := map[string]bool{"terminal_output.go": true, "inbox_watch.go": true}
+	allowed := map[string]bool{"terminal_output.go": true}
+	allowedLines := map[string]bool{
+		"inbox_watch.go\x00os.Exit(runInboxWatch(p, os.Stdout, os.Stderr))": true,
+	}
 	rawStdio := regexp.MustCompile(`\bos\.(Stdout|Stderr)\b|\bfmt\.Print(f|ln)?\(`)
 	files, err := filepath.Glob("*.go")
 	require.NoError(t, err)
@@ -93,7 +108,7 @@ func TestAgentCommandsPrintThroughTheTerminalWriters(t *testing.T) {
 			if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "//") {
 				continue
 			}
-			if rawStdio.MatchString(line) {
+			if rawStdio.MatchString(line) && !allowedLines[file+"\x00"+strings.TrimSpace(line)] {
 				t.Errorf("%s:%d prints to the raw terminal; use cliStdout/cliStderr: %s", file, i+1, strings.TrimSpace(line))
 			}
 		}

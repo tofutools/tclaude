@@ -68,8 +68,10 @@ func runInboxWatch(p *inboxWatchParams, stdout, stderr io.Writer) int {
 }
 
 func writeInboxWatchInlineNudge(w io.Writer, finalModel tea.Model) {
+	// The nudge carries the sender's subject and body, and w is the raw
+	// terminal the TUI was given.
 	if fm, ok := finalModel.(*inboxWatchModel); ok && fm.inlineNudge != "" {
-		fmt.Fprintln(w, fm.inlineNudge)
+		fmt.Fprintln(w, termtext.Clean(fm.inlineNudge))
 	}
 }
 
@@ -346,7 +348,7 @@ func (m *inboxWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case inboxReplySentMsg:
 		if msg.err != nil {
-			m.statusMsg = "reply failed: " + msg.err.Error()
+			m.statusMsg = "reply failed: " + termtext.Line(msg.err.Error())
 			// Keep the reply textarea open on failure so the user can
 			// retry / edit without re-typing.
 			return m, nil
@@ -361,7 +363,7 @@ func (m *inboxWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			// Restore the optimistically-removed entry by reloading;
 			// the next loadCmd brings it back if the daemon kept it.
-			m.statusMsg = fmt.Sprintf("delete #%d failed: %v", msg.id, msg.err)
+			m.statusMsg = fmt.Sprintf("delete #%d failed: %s", msg.id, termtext.Line(msg.err.Error()))
 			return m, m.loadCmd()
 		}
 		m.statusMsg = fmt.Sprintf("deleted #%d", msg.id)
