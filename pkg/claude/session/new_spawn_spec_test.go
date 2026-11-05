@@ -33,6 +33,9 @@ func TestFinishHarnessSpawnSpec(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("XDG_DATA_HOME", "")
+	// pi resolves its agent dir from this before HOME; a run inside a pi pane
+	// must not reach the real one.
+	t.Setenv(harness.PiAgentDirEnvVar, t.TempDir())
 
 	claude := harness.MustGet(harness.DefaultName)
 	spec := harness.SpawnSpec{SessionID: "conv-claude"}
