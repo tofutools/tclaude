@@ -757,148 +757,23 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	discloseUnconfinedAccessRules(sandboxImplementation, unconfined, launchSandbox, effectiveSandbox)
-	if !unconfined && launchSandbox != nil &&
-		(launchSandbox.Effective.Network != nil ||
-			launchSandbox.Effective.UnixSockets != nil ||
-			launchSandbox.Effective.FilesystemRoot == sandboxpolicy.FilesystemRootSeparate) {
-		axes, axesErr := sandboxpolicy.EffectiveAccessAxes(launchSandbox.Effective)
-		if axesErr != nil {
-			return fmt.Errorf("derive sandbox access axes: %w", axesErr)
-		}
-		caps, capsErr := harness.ResolveAccessEnforcement(
-			h, sandboxImplementation, axes, launchOSSandbox, effectiveHarnessBuiltinMode,
-		)
-		if capsErr != nil {
-			return capsErr
-		}
-		accessOptions := accessEnforcementOptionsFromLaunchNotices(
-			launchSandbox.Effective.AccessNotices)
-		rendered, notices, planErr := harness.PlanAccessEnforcement(
-			axes, caps, accessOptions,
-		)
-		if planErr != nil {
-			return planErr
-		}
-		renderedNetworkPosture, postureErr := sandboxpolicy.NetworkPostureForRules(
-			rendered.Network)
-		if postureErr != nil {
-			return postureErr
-		}
-		filteredEnforcing := renderedNetworkPosture == sandboxpolicy.NetworkFiltered &&
-			launchOSSandbox.FilteredNetwork
-		if runtime.GOOS == "linux" ||
-			(runtime.GOOS == "darwin" &&
-				!sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network)) {
-			notices = appendFilteredNetworkPrerequisiteNotice(
-				notices, outerLayer, axes.Network,
-				filteredEnforcing,
-				func() FilteredNetworkPrerequisite {
-					if filteredNetworkProbe != nil {
-						return *filteredNetworkProbe
-					}
-					return ProbeFilteredNetworkPrerequisite()
-				},
-			)
-		}
-		if tclaudeLayerPosture == sandboxpolicy.NetworkFiltered && !filteredEnforcing {
-			tclaudeLayerPosture = sandboxpolicy.NetworkHostOpen
-			// The root posture is re-derived rather than carried over: the
-			// filtered posture implied a constructed root, and dropping to
-			// host-open must not keep claiming one unless the profile's own
-			// socket axis still asks for it.
-			tclaudeLayerRoot, err = TclaudeLayerLaunchRootPosture(
-				h, sandboxImplementation, tclaudeLayerPosture,
-				launchSandbox.Effective)
-			if err != nil {
-				return fmt.Errorf("derive sandbox root posture: %w", err)
-			}
-			launchOSSandbox = TclaudeLayerLaunchOSSandboxForHarness(
-				h.Name, tclaudeLayerPosture, tclaudeLayerRoot, tclaudeLayerEngine)
-		}
-		if outerLayer {
-			plannedEffective := launchSandbox.Effective
-			plannedEffective.AccessNotices = replaceAccessDegradationNotices(
-				plannedEffective.AccessNotices, notices...,
-			)
-			resolvedModel := harness.ResolvedModelTransport{Model: model}
-			plannedAxes, plannedAxesErr := sandboxpolicy.PlannedEffectiveAccessAxes(
-				plannedEffective)
-			if plannedAxesErr != nil {
-				return plannedAxesErr
-			}
-			plannedNetworkPosture, plannedPostureErr :=
-				sandboxpolicy.NetworkPostureForRules(plannedAxes.Network)
-			if plannedPostureErr != nil {
-				return plannedPostureErr
-			}
-			// §7.4, from the same pre-injection environment the model-transport
-			// gate below inspects: the launcher discards exactly what the
-			// resolver saw, so the disclosure and the gate describe one launch.
-			// The planned posture is passed in for the same reason the gate
-			// below is conditioned on it: a policy that is not launching
-			// filtered runs no proxy and performs no override. The enclosing
-			// branch is already the tclaude-layer one, and the implementation
-			// is handed over anyway so both launch surfaces ask one predicate
-			// the same way rather than relying on where they sit.
-			if noProxyNotice := ProxyEngineNoProxyOverrideNotice(
-				runtime.GOOS, sandboxImplementation, plannedNetworkPosture,
-				plannedAxes.Network, plannedEffective.Environment,
-			); noProxyNotice != nil {
-				notices = append(notices, *noProxyNotice)
-			}
-			// Private routed open is default-accept: no destination list to
-			// resolve a route against, and nothing for pi to stay offline for.
-			networkFiltered = plannedNetworkPosture == sandboxpolicy.NetworkFiltered &&
-				!sandboxpolicy.NetworkRulesArePrivateRoutedOpen(plannedAxes.Network)
-			if networkFiltered {
-				var resolveModelErr error
-				resolvedModel, resolveModelErr = ResolveTclaudeLayerModelTransport(
-					h,
-					ModelTransportLaunchContext{
-						Model:       model,
-						ModelProxy:  params.ModelProxy,
-						Cwd:         cwd,
-						Environment: plannedEffective.Environment,
-						ExtraArgs:   extraArgs,
-					},
-				)
-				if resolveModelErr != nil {
-					return AnnotateDenyDrivenFilteredModelTransport(
-						plannedAxes.Network, resolveModelErr)
-				}
-			}
-			modelNotices, modelErr := ValidateTclaudeLayerNetwork(
-				h,
-				plannedEffective,
-				resolvedModel,
-			)
-			if modelErr != nil {
-				return AnnotateDenyDrivenFilteredModelTransport(
-					plannedAxes.Network, modelErr)
-			}
-			notices = append(notices, modelNotices...)
-		}
-		materialization := launchSandbox.UnixSocketMaterialization
-		if materialization == nil || rendered.UnixSockets.Mode != sandboxpolicy.AccessModeList {
-			var materializationErr error
-			materialization, materializationErr = sandboxpolicy.PrepareUnixSocketLaunch(
-				rendered.UnixSockets)
-			if materializationErr != nil {
-				return materializationErr
-			}
-		}
-		launchSandbox.Effective.AccessNotices = replaceAccessDegradationNotices(
-			launchSandbox.Effective.AccessNotices, notices...,
-		)
-		sandboxpolicy.SetUnixSocketLaunchMaterialization(launchSandbox, materialization)
-		if effectiveSandbox != nil {
-			effectiveSandbox.Effective.AccessNotices = replaceAccessDegradationNotices(
-				effectiveSandbox.Effective.AccessNotices, notices...,
-			)
-			sandboxpolicy.SetUnixSocketLaunchMaterialization(
-				effectiveSandbox, materialization)
-		}
+	access := launchAccessState{
+		posture: tclaudeLayerPosture, root: tclaudeLayerRoot,
+		osSandbox: launchOSSandbox, networkFiltered: networkFiltered,
 	}
+	if err := planLaunchAccessEnforcement(launchAccessPlanInput{
+		h: h, params: params, model: model, cwd: cwd, extraArgs: extraArgs,
+		sandboxImplementation: sandboxImplementation, effectiveHarnessBuiltinMode: effectiveHarnessBuiltinMode,
+		unconfined: unconfined, outerLayer: outerLayer,
+		layerEngine: tclaudeLayerEngine, filteredNetworkProbe: filteredNetworkProbe,
+		launchSandbox: launchSandbox, effectiveSandbox: effectiveSandbox,
+	}, &access); err != nil {
+		return err
+	}
+	// The plan's revised posture has no reader past this point: it is already
+	// folded into the root and the OS-sandbox verdict copied back here.
+	tclaudeLayerRoot = access.root
+	launchOSSandbox, networkFiltered = access.osSandbox, access.networkFiltered
 	if launchSandbox != nil {
 		for _, notice := range launchSandbox.Effective.AccessNotices {
 			fmt.Fprintf(os.Stdout, "Warning: %s\n", notice.Detail)
