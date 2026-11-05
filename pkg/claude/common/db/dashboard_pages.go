@@ -138,8 +138,8 @@ func nonAgentConvQ(q string) (string, []any) {
 
 // ListNonAgentConvIndexPage returns one newest-modified-first page of the
 // promotion-candidate conversations (non-agent conv_index rows), filtered by q
-// and windowed by offset/limit (limit <= 0 == no LIMIT). Reuses the
-// ListRecentConvIndex column list + scanConvIndexRows.
+// and windowed by offset/limit (limit <= 0 == no LIMIT). It selects the
+// conv_index columns scanConvIndexRows reads.
 func ListNonAgentConvIndexPage(q string, offset, limit int) ([]*ConvIndexRow, error) {
 	d, err := Open()
 	if err != nil {
