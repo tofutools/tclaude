@@ -226,22 +226,13 @@ function RailList({ panes, actions, snapshot, notify, floatsOf, menuRequest = nu
 // behind a folded panel either. The stylesheet shows it only on the Collab
 // tab and only while the panel is folded.
 export function useDockToggleCount(count, doc = globalThis.document) {
-  useEffect(() => {
-    const handle = doc?.getElementById?.('dock-toggle');
-    if (!handle) return undefined;
-    let badge = handle.querySelector('[data-dock-bg-count]');
-    if (!count) { badge?.remove(); return undefined; }
-    if (!badge) {
-      badge = doc.createElement('span');
-      badge.className = 'dock-toggle-count ui-badge ui-badge-corner';
-      badge.setAttribute('data-dock-bg-count', '');
-      handle.append(badge);
-    }
-    badge.textContent = String(count);
-    badge.title = `${count} running in the background with no terminal attached`;
-    return undefined;
-  }, [count, doc]);
-  useEffect(() => () => doc?.getElementById?.('dock-toggle')?.querySelector('[data-dock-bg-count]')?.remove(), [doc]);
+  const host = doc?.getElementById?.('dock-toggle-count') || null;
+  useLayoutEffect(() => {
+    if (!host) return;
+    render(count ? html`<span class="dock-toggle-count ui-badge ui-badge-corner" data-dock-bg-count=""
+      title=${`${count} running in the background with no terminal attached`}>${count}</span>` : null, host);
+  }, [count, host]);
+  useEffect(() => () => { if (host) render(null, host); }, [host]);
 }
 
 // CollabRail renders the panel body into the shared side panel's Collab slot

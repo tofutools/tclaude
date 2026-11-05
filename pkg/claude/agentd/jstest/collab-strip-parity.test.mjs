@@ -129,6 +129,7 @@ async function mountRail(t, { background = [], groups = GROUPS } = {}) {
   const { document } = harness;
   const handle = document.body.appendChild(document.createElement('button'));
   handle.id = 'dock-toggle';
+  handle.appendChild(document.createElement('span')).id = 'dock-toggle-count';
   const host = document.body.appendChild(document.createElement('div'));
   const [{ CollabRail }, bg] = await Promise.all([
     harness.importDashboardModule('js/collab-rail.js'),
