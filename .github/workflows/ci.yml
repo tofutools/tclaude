@@ -156,7 +156,19 @@ jobs:
         if: ${{ !cancelled() && runner.environment == 'self-hosted' }}
         continue-on-error: true
         shell: bash
-        run: python3 scripts/ci/seatbelt-loopback-probe.py 10 | tee -a "$GITHUB_STEP_SUMMARY"
+        env:
+          TCLAUDE_SANDBOX_V2_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+        run: |
+          python3 scripts/ci/seatbelt-loopback-probe.py 10 | tee -a "$GITHUB_STEP_SUMMARY"
+          dump="$RUNNER_TEMP/seatbelt-profile-dumps"
+          rm -rf "$dump" && mkdir -p "$dump"
+          go build -o "$RUNNER_TEMP/tclaude-sandbox-v2" .
+          TCLAUDE_TEMP_SEATBELT_PROFILE_DUMP_DIR="$dump" \
+            go test ./pkg/claude/session -run '^TestTclaudeLayerDarwinSmoke$' -count=1 -timeout=120s > "$RUNNER_TEMP/dump-smoke.log" 2>&1 || true
+          tail -3 "$RUNNER_TEMP/dump-smoke.log"
+          python3 scripts/ci/seatbelt-profile-replay.py "$dump" 10 | tee -a "$GITHUB_STEP_SUMMARY"
+          for sb in "$dump"/*.sb; do [ -e "$sb" ] || continue; echo "== $sb"; cat "$sb"; done
 
   test:
     needs: changes

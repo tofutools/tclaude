@@ -4,6 +4,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -423,6 +424,7 @@ func renderDarwinSeatbeltCommandWithRouteSlots(
 	if err != nil {
 		return "", err
 	}
+	tempDumpSeatbeltProfile(profile, params)
 
 	command := clcommon.ShellQuoteArg(binary) + " -p " + clcommon.ShellQuoteArg(profile)
 	for _, param := range params {
@@ -679,4 +681,25 @@ func tclaudeLayerOpenCodeLaunchOSSandbox() harness.LaunchOSSandbox {
 
 func validateTclaudeLayerHarness(harnessName string) error {
 	return nil
+}
+
+// tempDumpSeatbeltProfile is TEMPORARY (#3999, awb tcl-gejtfc; remove before
+// merge): with TCLAUDE_TEMP_SEATBELT_PROFILE_DUMP_DIR set, it writes each
+// rendered profile and its -D parameters there, so CI can replay the exact
+// profile against the macOS 27.2 localhost:N connect EPERM.
+func tempDumpSeatbeltProfile(profile string, params []seatbeltProfileParam) {
+	dir := os.Getenv("TCLAUDE_TEMP_SEATBELT_PROFILE_DUMP_DIR")
+	if dir == "" {
+		return
+	}
+	named := make(map[string]string, len(params))
+	for _, param := range params {
+		named[param.name] = param.path
+	}
+	data, err := json.Marshal(map[string]any{"profile": profile, "params": named})
+	if err != nil {
+		return
+	}
+	name := fmt.Sprintf("profile-%d-%d.json", os.Getpid(), time.Now().UnixNano())
+	_ = os.WriteFile(filepath.Join(dir, name), data, 0o600)
 }
