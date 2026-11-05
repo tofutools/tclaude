@@ -132,28 +132,69 @@ func normalizeOpenCodeRuntimeSandboxImplementation(raw string) (sandboxpolicy.Im
 func openCodeRuntimeSandboxSpec(
 	runtime db.OpenCodeRuntime,
 ) (*session.TclaudeLayerLaunchSpec, error) {
+	if needsSpec, err := openCodeRuntimeNeedsLayerSpec(runtime); err != nil || !needsSpec {
+		return nil, err
+	}
+	spec, err := decodeOpenCodeRuntimeLaunchSpec(runtime.SandboxLaunchSpecJSON)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateOpenCodeRuntimeStateContract(spec); err != nil {
+		return nil, err
+	}
+	if err := validateOpenCodeRuntimeLaunchAuthority(runtime, spec); err != nil {
+		return nil, err
+	}
+	effective, err := revalidateOpenCodeRuntimeEffective(spec.Effective)
+	if err != nil {
+		return nil, err
+	}
+	spec.Effective = effective
+	posture, err := session.TclaudeLayerNetworkPosture(spec.Effective)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateOpenCodeRuntimeControlPlane(runtime, spec, posture); err != nil {
+		return nil, err
+	}
+	if err := session.ValidateTclaudeLayerLaunchSpec(*spec); err != nil {
+		return nil, fmt.Errorf("validate OpenCode with tclaude’s sandbox renderer contract: %w", err)
+	}
+	return spec, nil
+}
+
+// openCodeRuntimeNeedsLayerSpec checks the runtime's transport authority and
+// sandbox implementation. Only a tclaude-layer runtime carries a launch
+// spec; every other implementation must carry none.
+func openCodeRuntimeNeedsLayerSpec(runtime db.OpenCodeRuntime) (bool, error) {
 	if err := db.ValidateOpenCodeRuntimeTransport(runtime); err != nil {
-		return nil, fmt.Errorf("OpenCode runtime transport authority: %w", err)
+		return false, fmt.Errorf("OpenCode runtime transport authority: %w", err)
 	}
 	implementation, err := normalizeOpenCodeRuntimeSandboxImplementation(
 		runtime.SandboxImplementation)
 	if err != nil {
-		return nil, fmt.Errorf("OpenCode runtime sandbox implementation: %w", err)
+		return false, fmt.Errorf("OpenCode runtime sandbox implementation: %w", err)
 	}
 	switch implementation {
 	case sandboxpolicy.ImplementationHarnessBuiltin, sandboxpolicy.ImplementationOff,
 		sandboxpolicy.ImplementationResourceOnly:
 		if strings.TrimSpace(runtime.SandboxLaunchSpecJSON) != "" {
-			return nil, fmt.Errorf(
+			return false, fmt.Errorf(
 				"OpenCode %s runtime unexpectedly carries a tclaude sandbox launch spec",
 				implementation)
 		}
-		return nil, nil
+		return false, nil
 	case sandboxpolicy.ImplementationTclaudeLayer:
 	default:
-		return nil, fmt.Errorf("unsupported OpenCode runtime sandbox implementation %q", implementation)
+		return false, fmt.Errorf("unsupported OpenCode runtime sandbox implementation %q", implementation)
 	}
-	raw := strings.TrimSpace(runtime.SandboxLaunchSpecJSON)
+	return true, nil
+}
+
+// decodeOpenCodeRuntimeLaunchSpec strictly decodes the persisted launch spec:
+// present, bounded, no unknown fields, one JSON value, a known version.
+func decodeOpenCodeRuntimeLaunchSpec(persisted string) (*session.TclaudeLayerLaunchSpec, error) {
+	raw := strings.TrimSpace(persisted)
 	if raw == "" {
 		return nil, fmt.Errorf(
 			"OpenCode with tclaude’s sandbox runtime has no persisted launch spec; refusing an unwrapped restart")
@@ -179,21 +220,28 @@ func openCodeRuntimeSandboxSpec(
 		spec.Version != session.TclaudeLayerUnixRelaySpecVersion {
 		return nil, fmt.Errorf("unsupported OpenCode with tclaude’s sandbox launch spec version %d", spec.Version)
 	}
+	return &spec, nil
+}
+
+// validateOpenCodeRuntimeStateContract checks the spec's state layout: it is
+// OpenCode's, its mutable state directories are inside the writable contract,
+// and its executable state is read-only in the rendered policy.
+func validateOpenCodeRuntimeStateContract(spec *session.TclaudeLayerLaunchSpec) error {
 	if spec.Contract.HarnessName != harness.OpenCodeName {
-		return nil, fmt.Errorf("OpenCode with tclaude’s sandbox launch spec names harness %q",
+		return fmt.Errorf("OpenCode with tclaude’s sandbox launch spec names harness %q",
 			spec.Contract.HarnessName)
 	}
 	if !filepath.IsAbs(spec.Contract.StateRoot) {
-		return nil, fmt.Errorf("OpenCode with tclaude’s sandbox launch spec state root %q is not absolute",
+		return fmt.Errorf("OpenCode with tclaude’s sandbox launch spec state root %q is not absolute",
 			spec.Contract.StateRoot)
 	}
 	if len(spec.Contract.StateDirs) == 0 {
-		return nil, fmt.Errorf("OpenCode with tclaude’s sandbox launch spec has no mutable state directories")
+		return fmt.Errorf("OpenCode with tclaude’s sandbox launch spec has no mutable state directories")
 	}
 	for _, stateDir := range spec.Contract.StateDirs {
 		stateDir = canonicalOpenCodeRuntimePath(stateDir)
 		if stateDir == "" {
-			return nil, fmt.Errorf("OpenCode with tclaude’s sandbox launch spec has a non-absolute state directory")
+			return fmt.Errorf("OpenCode with tclaude’s sandbox launch spec has a non-absolute state directory")
 		}
 		inWriteContract := false
 		for _, writeDir := range spec.Contract.WriteDirs {
@@ -203,14 +251,14 @@ func openCodeRuntimeSandboxSpec(
 			}
 		}
 		if !inWriteContract {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"OpenCode with tclaude’s sandbox state directory %q is not in the writable launch contract",
 				stateDir)
 		}
 	}
 	if len(spec.Contract.ReadOnlyStateDirs) == 0 &&
 		len(spec.Contract.ReadOnlyBinds) == 0 {
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"OpenCode with tclaude’s sandbox launch spec does not protect its executable state")
 	}
 	stateRoot := canonicalOpenCodeRuntimePath(spec.Contract.StateRoot)
@@ -218,26 +266,35 @@ func openCodeRuntimeSandboxSpec(
 		stateDir = canonicalOpenCodeRuntimePath(stateDir)
 		if stateDir == "" || stateDir == stateRoot ||
 			!sandboxpolicy.PathContainsOrEqual(stateRoot, stateDir) {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"OpenCode with tclaude’s sandbox launch spec has invalid read-only state directory %q",
 				stateDir)
 		}
 		access, covered := sandboxpolicy.EffectiveAccessAt(spec.Effective.Filesystem, stateDir)
 		if !covered || access != sandboxpolicy.AccessRead {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"OpenCode with tclaude’s sandbox read-only state directory %q is not protected in the rendered contract",
 				stateDir)
 		}
 	}
+	return nil
+}
+
+// validateOpenCodeRuntimeLaunchAuthority re-checks the launch contract the
+// spec version requires, the filtered provider authority, and that the
+// runtime's cwd is still a writable contract path.
+func validateOpenCodeRuntimeLaunchAuthority(
+	runtime db.OpenCodeRuntime, spec *session.TclaudeLayerLaunchSpec,
+) error {
 	if spec.Version == session.TclaudeLayerLaunchSpecVersion ||
 		spec.Version == session.TclaudeLayerUnixRelaySpecVersion {
 		if err := validateOpenCodeV3LaunchContract(
-			spec.Contract, openCodeProviderIsolatedSpec(&spec)); err != nil {
-			return nil, err
+			spec.Contract, openCodeProviderIsolatedSpec(spec)); err != nil {
+			return err
 		}
 	}
-	if err := validateOpenCodeFilteredProviderAuthority(&spec); err != nil {
-		return nil, fmt.Errorf(
+	if err := validateOpenCodeFilteredProviderAuthority(spec); err != nil {
+		return fmt.Errorf(
 			"revalidate OpenCode filtered provider authority: %w", err)
 	}
 	cwd := canonicalOpenCodeRuntimePath(runtime.Cwd)
@@ -249,19 +306,19 @@ func openCodeRuntimeSandboxSpec(
 		}
 	}
 	if cwd == "" || !hasCwd {
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"OpenCode with tclaude’s sandbox launch spec does not preserve runtime cwd %q as a writable contract path",
 			runtime.Cwd)
 	}
-	effective, err := revalidateOpenCodeRuntimeEffective(spec.Effective)
-	if err != nil {
-		return nil, err
-	}
-	spec.Effective = effective
-	posture, err := session.TclaudeLayerNetworkPosture(spec.Effective)
-	if err != nil {
-		return nil, err
-	}
+	return nil
+}
+
+// validateOpenCodeRuntimeControlPlane checks that the runtime's control
+// transport is the one its spec version and network posture allow.
+func validateOpenCodeRuntimeControlPlane(
+	runtime db.OpenCodeRuntime, spec *session.TclaudeLayerLaunchSpec,
+	posture sandboxpolicy.NetworkPosture,
+) error {
 	// Darwin keeps the authenticated loopback control transport when its
 	// filtered model path is carried by the proxy. This is the only filtered
 	// v3 replay shape; Linux remains on v4's inherited Unix relay below.
@@ -273,7 +330,7 @@ func openCodeRuntimeSandboxSpec(
 		runtime.Transport == db.OpenCodeTransportLoopbackTCP {
 		engine, engineErr := session.TclaudeLayerNetworkEngine(spec.Effective)
 		if engineErr != nil {
-			return nil, engineErr
+			return engineErr
 		}
 		darwinFilteredLoopback = engine == sandboxpolicy.NetworkEngineProxy
 	}
@@ -283,7 +340,7 @@ func openCodeRuntimeSandboxSpec(
 			runtime.Transport != db.OpenCodeTransportUnixRelay ||
 			spec.Contract.OpenCodeControl == nil ||
 			runtime.ControlSocketPath != spec.Contract.OpenCodeControl.SocketPath {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"OpenCode with tclaude’s sandbox v4 runtime does not match its Unix-relay authority")
 		}
 		agentID := filepath.Base(filepath.Dir(runtime.ControlSocketPath))
@@ -302,7 +359,7 @@ func openCodeRuntimeSandboxSpec(
 		// Wrapping rather than replacing: the outer sentence still says which
 		// contract failed, which is what this layer knows.
 		if authorityErr != nil {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"OpenCode with tclaude’s sandbox v4 runtime control authority could not be established: %w",
 				authorityErr)
 		}
@@ -311,20 +368,17 @@ func openCodeRuntimeSandboxSpec(
 			// against one exact socket path, not containment in a region, and
 			// containment language invites the operator to go looking for a
 			// directory boundary that was never consulted.
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"OpenCode with tclaude’s sandbox v4 runtime control path %q does not match its allocated agent authority %q",
 				runtime.ControlSocketPath, expectedControlPath)
 		}
 	} else if !darwinFilteredLoopback &&
 		(posture != sandboxpolicy.NetworkHostOpen ||
 			runtime.Transport == db.OpenCodeTransportUnixRelay) {
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"unsupported_sandbox_profile_network: OpenCode with tclaude’s sandbox restart requires the host-open loopback control plane and endpoint-ownership proof")
 	}
-	if err := session.ValidateTclaudeLayerLaunchSpec(spec); err != nil {
-		return nil, fmt.Errorf("validate OpenCode with tclaude’s sandbox renderer contract: %w", err)
-	}
-	return &spec, nil
+	return nil
 }
 
 // revalidateOpenCodeRuntimeEffective omits the generated agentd AF_UNIX socket
