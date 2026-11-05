@@ -125,7 +125,7 @@ func TestPermissionRegistry_MemberImpliedSet(t *testing.T) {
 			got = append(got, entry.Slug)
 		}
 	}
-	if want := []string{PermGroupsMessagesSchedule}; !slices.Equal(got, want) {
+	if want := []string{PermGroupsMessagesSchedule, PermGroupsResourcesRead, PermGroupsResourcesWrite}; !slices.Equal(got, want) {
 		t.Fatalf("member-implied slugs = %v, want %v", got, want)
 	}
 }

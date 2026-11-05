@@ -416,7 +416,8 @@ func boardPathID(w http.ResponseWriter, r *http.Request) (string, bool) {
 
 // ---- shared handlers (both surfaces) ----
 
-func serveBoardList(w http.ResponseWriter) {
+// serveBoardList lists the boards; keep, when set, picks which.
+func serveBoardList(w http.ResponseWriter, keep func(*db.CollabBoard) bool) {
 	boards, err := db.ListCollabBoards()
 	if err != nil {
 		writeBoardStoreError(w, err)
@@ -433,6 +434,9 @@ func serveBoardList(w http.ResponseWriter) {
 	}
 	out := make([]boardSummaryJSON, 0, len(boards))
 	for _, b := range boards {
+		if keep != nil && !keep(b) {
+			continue
+		}
 		out = append(out, boardSummaryJSON{
 			ID: b.ID, Title: b.Title, Version: b.Version, UpdatedAt: b.UpdatedAt,
 			ElementCount: b.ElementCount, Participants: b.Participants, Group: b.GroupName,
@@ -751,7 +755,7 @@ func handleDashboardBoardList(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
-	serveBoardList(w)
+	serveBoardList(w, nil)
 }
 
 func handleDashboardBoardCreate(w http.ResponseWriter, r *http.Request) {
@@ -1121,19 +1125,43 @@ func boardCaller(w http.ResponseWriter, convID string) (author, participant stri
 	return agentID, agentID, true
 }
 
+// GET /v1/boards — every board under boards.read; without it, the boards an
+// agent reads as a member of their group (groups.resources.read). An agent
+// with neither gets the shared gate's answer for boards.read.
 func handleBoardList(w http.ResponseWriter, r *http.Request) {
+	clearAuthorizedPermission(r)
+	if conv := confirmedAgentConv(r); conv != "" && !silentAgentAllows(r, conv, PermBoardsRead, ActionContext{}) {
+		readable := map[string]bool{}
+		groups, err := db.ListGroupsForConv(conv)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		for _, g := range groups {
+			if !g.IsArchived() && agentHoldsGroupResource(r, conv, g.Name, false) {
+				readable[g.Name] = true
+			}
+		}
+		if len(readable) > 0 {
+			serveBoardList(w, func(b *db.CollabBoard) bool { return readable[b.GroupName] })
+			return
+		}
+	} else if conv != "" {
+		serveBoardList(w, nil)
+		return
+	}
 	if _, ok := requirePermission(w, r, PermBoardsRead); !ok {
 		return
 	}
-	serveBoardList(w)
+	serveBoardList(w, nil)
 }
 
 func handleBoardRead(w http.ResponseWriter, r *http.Request) {
-	convID, ok := requirePermission(w, r, PermBoardsRead)
+	id, ok := boardPathID(w, r)
 	if !ok {
 		return
 	}
-	id, ok := boardPathID(w, r)
+	convID, ok := requireBoardAccess(w, r, id, false)
 	if !ok {
 		return
 	}
@@ -1150,16 +1178,35 @@ func handleBoardRead(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleBoardSnapshot(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requirePermission(w, r, PermBoardsRead); !ok {
+	id, ok := boardPathID(w, r)
+	if !ok {
 		return
 	}
-	if id, ok := boardPathID(w, r); ok {
+	if _, ok := requireBoardAccess(w, r, id, false); ok {
 		serveBoardSnapshot(w, r, id)
 	}
 }
 
+// POST /v1/boards — boards.write makes any board; a member makes one in its
+// group under groups.resources.write.
 func handleBoardCreate(w http.ResponseWriter, r *http.Request) {
-	convID, ok := requirePermission(w, r, PermBoardsWrite)
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid board: "+err.Error())
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	var peek struct {
+		Group string `json:"group"`
+	}
+	_ = json.Unmarshal(body, &peek)
+	group := ""
+	if name := strings.TrimSpace(peek.Group); name != "" {
+		if g, err := db.GetAgentGroupByName(name); err == nil && g != nil && !g.IsArchived() {
+			group = g.Name
+		}
+	}
+	convID, ok := requireGroupResourceAccess(w, r, PermBoardsWrite, group, true)
 	if !ok {
 		return
 	}
@@ -1171,11 +1218,11 @@ func handleBoardCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleBoardPatch(w http.ResponseWriter, r *http.Request) {
-	convID, ok := requirePermission(w, r, PermBoardsWrite)
+	id, ok := boardPathID(w, r)
 	if !ok {
 		return
 	}
-	id, ok := boardPathID(w, r)
+	convID, ok := requireBoardAccess(w, r, id, true)
 	if !ok {
 		return
 	}
@@ -1193,11 +1240,11 @@ func handleBoardPatch(w http.ResponseWriter, r *http.Request) {
 // meant: always the caller's own, which is what keeps an agent from closing
 // another's. A session belongs to an agent, so a caller without one has none.
 func boardSessionCaller(w http.ResponseWriter, r *http.Request) (id, agentID string, ok bool) {
-	convID, ok := requirePermission(w, r, PermBoardsWrite)
-	if !ok {
+	if id, ok = boardPathID(w, r); !ok {
 		return "", "", false
 	}
-	if id, ok = boardPathID(w, r); !ok {
+	convID, ok := requireBoardAccess(w, r, id, true)
+	if !ok {
 		return "", "", false
 	}
 	if _, agentID, ok = boardCaller(w, convID); !ok {

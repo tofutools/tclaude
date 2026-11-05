@@ -60,7 +60,7 @@ func runBoardFromFleet(p *boardFromFleetParams, boardID string, stdout, stderr i
 		if !errors.As(err, &de) || de.Status != http.StatusNotFound {
 			return boardErr(stderr, err)
 		}
-		if err := DaemonRequest(http.MethodPost, "/v1/boards", map[string]string{"id": boardID, "title": "Fleet"}, &boardDoc{}, DaemonOpts{}); err != nil {
+		if err := DaemonRequest(http.MethodPost, "/v1/boards", map[string]string{"id": boardID, "title": "Fleet"}, &boardDoc{}, boardOpts()); err != nil {
 			return boardErr(stderr, err)
 		}
 		doc = &boardDoc{ID: boardID}

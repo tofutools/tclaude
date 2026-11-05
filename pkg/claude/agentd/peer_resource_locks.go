@@ -31,10 +31,10 @@ import (
 // dashboard. Unrestricted trust holds it.
 const PermGroupsResourcesLock = "groups.resources.lock"
 
-// PermGroupsResourcesRead is the federation peer grant (group-scoped) to list
-// the group's resources (its saved processes, boards and live pages, with
-// their locks) on the peer's dashboard. Unrestricted trust holds it.
-const PermGroupsResourcesRead = "groups.resources.read"
+// PermGroupsResourcesRead (group_resource_access.go) is also the federation
+// peer grant (group-scoped) to list the group's resources (its saved
+// processes, boards and live pages, with their locks) on the peer's dashboard.
+// Unrestricted trust holds it.
 
 // resourceLockGroups returns the groups a resource belongs to: a board's
 // group, a page's group, or every group a process template is pinned to. It
