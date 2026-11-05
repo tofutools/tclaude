@@ -69,6 +69,7 @@ func TestResumeLaunchCmd_TclaudeLayerClaudeRunsTheResolvedExecutable(t *testing.
 
 	cmd, _, _, err := resumeLaunchCmd(harness.DefaultName, resumeConvClaude[:8], resumeConvClaude, nil)
 	require.NoError(t, err)
-	assert.Contains(t, cmd, real,
+	// The exec token, not merely a read grant for the file.
+	assert.Contains(t, cmd, real+" --resume "+resumeConvClaude,
 		"the resumed pane must run the resolved Claude executable, as a fresh launch does")
 }
