@@ -606,7 +606,7 @@ class WorkflowConsistency(unittest.TestCase):
         # anything the PR's commits say.
         block = self.job_block("changes")
         self.assertIn("HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}", block)
-        guard = ('if [ -n "$HEAD_REPO" ] && [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then\n'
+        guard = ('if [ "$GITHUB_REPOSITORY" = "tofutools/tclaude" ] && [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then\n'
                  '            runner_args=(--self-hosted-macos)\n'
                  '          fi\n')
         self.assertIn(guard, block)

@@ -81,7 +81,9 @@ jobs:
             labels=""
           fi
           runner_args=()
-          if [ -n "$HEAD_REPO" ] && [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
+          # The runner exists only in tofutools/tclaude: in a fork's own CI
+          # the opted-in macOS jobs stay on hosted macOS as well.
+          if [ "$GITHUB_REPOSITORY" = "tofutools/tclaude" ] && [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
             runner_args=(--self-hosted-macos)
           fi
           python3 scripts/ci/classify-changes.py "$BASE_SHA" HEAD \

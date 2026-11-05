@@ -169,7 +169,8 @@ when it comes from a fork. Main keeps hosted macOS: `release.yml` and
 
 - **Routing.** The `Changes` job passes `--self-hosted-macos` to the
   classifier only when `github.event.pull_request.head.repo.full_name` equals
-  `github.repository`. The classifier then gives the macOS test entries and the
+  `github.repository` and that is `tofutools/tclaude` (a fork's own CI has no
+  such runner). The classifier then gives the macOS test entries and the
   Seatbelt smoke (through its `macos_runner` output) the runner's default
   labels, `[self-hosted, macOS, ARM64]`, instead of `macos-latest`.
   `test_classify_changes.py` pins this.
