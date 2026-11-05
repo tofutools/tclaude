@@ -9,6 +9,7 @@ that turns the allowed connect into EPERM on macOS 27.2.
 Usage: seatbelt-profile-replay.py <dump-dir> [runs]
 """
 import json
+import os
 import pathlib
 import re
 import socket
@@ -86,6 +87,37 @@ def connect_py(profile, params, port):
     return res.stdout.strip() or res.stderr.strip()[-80:] or f"exit {res.returncode}"
 
 
+def connect_bin(binary):
+    """A dialer binary called as `<binary> 127.0.0.1 <port>`; exit 0 is ok."""
+    def fn(profile, params, port):
+        args = ["/usr/bin/sandbox-exec", "-p", profile]
+        args += [f"-D{k}={v}" for k, v in params.items()]
+        args += ["--", binary, "127.0.0.1", str(port)]
+        res = subprocess.run(args, capture_output=True, text=True, timeout=30)
+        if res.returncode == 0:
+            return "ok"
+        return (res.stderr or res.stdout).strip()[-80:] or f"exit {res.returncode}"
+    return fn
+
+
+def signature(binary):
+    res = subprocess.run(["/usr/bin/codesign", "-dv", binary], capture_output=True, text=True)
+    keep = [l for l in res.stderr.splitlines()
+            if l.startswith(("Identifier=", "Signature=", "Authority=", "TeamIdentifier=", "Platform", "flags", "CodeDirectory"))]
+    return "; ".join(keep[:5]) or res.stderr.strip()[:120]
+
+
+def connectors():
+    """(name, fn, binary) for every connector: python, nc, and the dialers in
+    $SEATBELT_DIALERS (name=path,...)."""
+    out = [("python", connect_py, sys.executable), ("nc", connect, "/usr/bin/nc")]
+    for item in filter(None, os.environ.get("SEATBELT_DIALERS", "").split(",")):
+        name, _, path = item.partition("=")
+        if os.path.exists(path):
+            out.append((name, connect_bin(path), path))
+    return out
+
+
 def rate_with(fn, profile, params, port, runs):
     results = [fn(profile, params, port) for _ in range(runs)]
     return sum(r == "ok" for r in results), sorted({r for r in results if r != "ok"})
@@ -129,8 +161,18 @@ def main():
             for attempt in range(3):
                 print(f"  timing {attempt + 1}: {timing(profile, params, port)}")
             parts = forms(profile)
-            net = [p for p in parts if p.startswith(("(deny network-outbound", "(allow network-outbound"))]
+            # The IP block (broad deny + localhost allows) and the unix-socket
+            # outbound denies are separate: the unix ones reference -D params.
+            net = [p for p in parts if p.startswith(("(deny network-outbound", "(allow network-outbound"))
+                   and "unix-socket" not in p]
+            unix = [p for p in parts if p.startswith("(deny network-outbound") and "unix-socket" in p]
             rest = [p for p in parts if p not in net and not p.startswith("(version") and p != "(allow default)"]
+            print(f"  forms: {len(net)} IP network, {len(unix)} unix-socket outbound denies, {len(rest)} other")
+            for k, u in enumerate(unix):
+                for conn_name, fn, _ in connectors():
+                    ok_u, errs_u = rate_with(fn, "\n".join(head + net + [u]), params, port, 3)
+                    print(f"  pair: IP block + unix deny {k} ({conn_name}): ok={ok_u}/3 {errs_u}")
+                print("    " + u.replace("\n", "\n    ")[:600])
             head = ["(version 1)", "(allow default)"]
             variants = {
                 "minimal network block only": head + net,
@@ -144,13 +186,34 @@ def main():
             # Confound matrix on the network block alone: connector (python
             # connect() vs nc), -D parameters, and the UDP allow line.
             tcp_only = [p for p in net if "remote udp" not in p]
-            for conn_name, fn in (("python", connect_py), ("nc", connect)):
+            for conn_name, fn, binary in connectors():
+                print(f"  signature: {conn_name}: {binary}: {signature(binary)}")
+            for conn_name, fn, _ in connectors():
                 for p_name, p_val in (("no -D", {}), ("-D", params)):
                     for u_name, block in (("tcp+udp", net), ("tcp only", tcp_only)):
                         ok_m, errs_m = rate_with(fn, "\n".join(head + block), p_val, port, 5)
                         print(f"  matrix: {conn_name:6} {p_name:5} {u_name:8} ok={ok_m}/5 {errs_m}")
             ok_f, errs_f = rate_with(connect_py, profile, params, port, 5)
             print(f"  matrix: python full profile with -D ok={ok_f}/5 {errs_f}")
+            # Port axis: the same network block with N rewritten, a listener
+            # on that port, python and nc.
+            for alt in (8080, 20000, 40000, 49151, 49152, 55000, 65000):
+                alt_block = [p.replace(f"localhost:{port}", f"localhost:{alt}") for p in net]
+                alt_listener = socket.socket()
+                try:
+                    alt_listener.bind(("127.0.0.1", alt))
+                except OSError as err:
+                    print(f"  port {alt}: cannot bind: {err}")
+                    continue
+                alt_listener.listen(16)
+                try:
+                    cells = []
+                    for conn_name, fn, _ in connectors():
+                        ok_p, _ = rate_with(fn, "\n".join(head + alt_block), params, alt, 3)
+                        cells.append(f"{conn_name}={ok_p}/3")
+                    print(f"  port {alt}: " + " ".join(cells))
+                finally:
+                    alt_listener.close()
             # Minimal pair: the passing network block, plus exactly one other
             # form of the rendered profile, appended after it; with and
             # without the -D parameters (the minimal probe passed none).
