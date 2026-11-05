@@ -153,7 +153,9 @@ func TestPeerScopedSlugsHaveFederationReach(t *testing.T) {
 		if !containsScopeDim(entry.ScopeDims, ScopeDimPeer) {
 			continue
 		}
-		assert.True(t, entry.Federation.peerGrantable() || entry.Federation.Kind == FedSender,
+		// An agent peer view route's slug is also a sender slug: the agent
+		// holds it peer-scoped to use the route (peer_view_agents.go).
+		assert.True(t, entry.Federation.peerGrantable() || entry.Federation.Kind == FedSender || slices.Contains(agentPeerViewSlugs(), entry.Slug),
 			"%s accepts peer= scope but is neither a grantable peer slug nor a sender slug", entry.Slug)
 	}
 }

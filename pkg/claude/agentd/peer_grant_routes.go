@@ -175,7 +175,7 @@ func servePeerInvoke(w http.ResponseWriter, r *http.Request, v *peerView, rule p
 	}
 	// Unrestricted trust acts as this node's operator does, every option of
 	// the route included, rather than within the peer grants' bounds.
-	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if v.unrestricted() {
 		peerDashboardMux().ServeHTTP(w, r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true)))
 		return
 	}

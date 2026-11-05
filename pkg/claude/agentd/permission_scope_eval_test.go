@@ -355,6 +355,16 @@ func TestContextFreeResolutionFailsClosedOnScopedAllow(t *testing.T) {
 // It is a review prompt, not a proof: it cannot verify the named gate. The
 // gap it closes is the one that shipped routes.publish/routes.consume with a
 // bespoke, scope-blind gate for the better part of a phase.
+// Every agent peer view route's slug takes a peer= scope, which
+// servePeerViewForAgent evaluates over the route's footprint on the peer.
+func init() {
+	for _, slug := range agentPeerViewSlugs() {
+		if scopedSlugEnforcementPaths[slug] == "" {
+			scopedSlugEnforcementPaths[slug] = "servePeerViewForAgent evaluates peer=<inst>/<group> over the route's footprint"
+		}
+	}
+}
+
 var scopedSlugEnforcementPaths = map[string]string{
 	PermJobsRun:                           "jobCallerAllowed / authorizeJobAccess evaluate concrete RemotePeer and RemoteGroup; list projects only authorized owned jobs",
 	PermAgentsStatusRead:                  "handleFederationReachable evaluates peer/group scope before projecting status",

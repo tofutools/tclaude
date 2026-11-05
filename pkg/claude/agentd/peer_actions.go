@@ -117,7 +117,7 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 	// Unrestricted trust runs an agent's lifecycle as the local operator
 	// does, every option included; a move or teleport always comes to the
 	// peer, through its own handling below.
-	if db.FederationPeerUnrestricted(v.peer.InstanceID) && !strings.HasSuffix(r.URL.Path, "/move") && !strings.HasSuffix(r.URL.Path, "/teleport") {
+	if v.unrestricted() && !strings.HasSuffix(r.URL.Path, "/move") && !strings.HasSuffix(r.URL.Path, "/teleport") {
 		servePeerAgentAsLocal(w, r, v, target)
 		return
 	}
@@ -333,7 +333,7 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 	// does (agent-spawn-actions.js forNode), marking it ?as=local: the
 	// regular spawn route and body. Without the mark the route keeps the
 	// remote spawn request, which the CLI and request mode send.
-	if r.URL.Query().Get("as") == "local" && db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if r.URL.Query().Get("as") == "local" && v.unrestricted() {
 		// The operator's own Claude subscription token rides in the encrypted
 		// request; lift it out before the body reaches the spawn route, its
 		// audit or an ask-human preview.
@@ -535,5 +535,9 @@ func auditPeerActionProxy(r *http.Request, peer, phase string, status int) {
 	if pattern == "" {
 		return
 	}
-	recordFederationAudit("federation.peer_view.out", "operator", "", "", fmt.Sprintf("phase=%s peer=%s route=%s", phase, peer, pattern), status)
+	actor := "operator"
+	if a := peerViewPrincipalFrom(r.Context()); a != nil {
+		actor = "agent:" + a.Name
+	}
+	recordFederationAudit("federation.peer_view.out", actor, "", "", fmt.Sprintf("phase=%s peer=%s route=%s", phase, peer, pattern), status)
 }

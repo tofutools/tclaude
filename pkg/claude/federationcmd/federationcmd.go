@@ -58,7 +58,7 @@ func Cmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			proposalsCmd(), boardsCmd(), hubCmd(), accessCmd(), actionCmd(), linksCmd(), statusCmd(), nodeRunCmd(), nodeScriptSettingsCmd(), identityCmd(), connectCmd(), joinCmd(), disconnectCmd(), auditCmd(),
-			jobsCmd(), reposCmd(), modelsCmd(), peersCmd(), trustCmd(), untrustCmd(), nodeProfilesCmd(), enrollTokenCmd(), enrollCmd(), enrollmentsCmd(),
+			jobsCmd(), reposCmd(), modelsCmd(), peersCmd(), trustCmd(), untrustCmd(), agentViewsCmd(), nodeProfilesCmd(), enrollTokenCmd(), enrollCmd(), enrollmentsCmd(),
 			grantCmd(), extendCmd(), revokeCmd(), grantsCmd(), sharesCmd(), remoteCmd(), peerViewCmd(), nodesCmd(), nodeLabelsCmd(), sessionsCmd(), fileCmd(), humanInboxCmd(), attachCmd(), viewersCmd(), kickCmd(),
 			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(), awayCmd(), returnCmd(), answerCmd(),
 			spawnRequestCmd(), requestsCmd(), offerConfigCmd(), offersCmd(), shareAgentCmd(), moveAgentCmd(), movesCmd(), teleportControlCmd(),
@@ -451,6 +451,36 @@ func untrustCmd() *cobra.Command {
 				os.Exit(rc)
 			}
 			fmt.Println("untrusted", p.Peer)
+		},
+	}.ToCobra()
+}
+
+type agentViewsParams struct {
+	Peer   string `pos:"true" help:"Peer label, name, or instance id"`
+	Policy string `pos:"true" optional:"true" help:"allow or deny; omit to show the current policy"`
+}
+
+func agentViewsCmd() *cobra.Command {
+	return boa.CmdT[agentViewsParams]{
+		Use:         "agent-views",
+		Short:       "Show or set whether a peer's agents may use peer views here (default allow; the peer's grants still bound them)",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *agentViewsParams, _ *cobra.Command, _ []string) {
+			var out struct {
+				Label  string `json:"label"`
+				Policy string `json:"policy"`
+			}
+			if p.Policy == "" {
+				if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+					os.Exit(rc)
+				}
+				if e := agent.DaemonGet("/v1/federation/peers/agent-views?peer="+url.QueryEscape(p.Peer), &out); e != nil {
+					os.Exit(fail(os.Stderr, e))
+				}
+			} else if rc := post(os.Stderr, "/v1/federation/peers/agent-views", map[string]any{"instance": p.Peer, "policy": p.Policy}, &out); rc != 0 {
+				os.Exit(rc)
+			}
+			fmt.Printf("agent views from %s: %s\n", out.Label, out.Policy)
 		},
 	}.ToCobra()
 }

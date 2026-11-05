@@ -69,6 +69,7 @@ type PermSlug struct {
 }
 
 func initPermissionRegistry() {
+	initAgentPeerViewScopes(permissionRegistry)
 	initPermissionRegistryEntries(permissionRegistry)
 	initFederationReach(permissionRegistry, slugFederationReach)
 }

@@ -49,7 +49,7 @@ func servePeerTeleportCredentials(w http.ResponseWriter, r *http.Request, v *pee
 			}
 		}
 	}
-	out.Any = db.FederationPeerUnrestricted(v.peer.InstanceID)
+	out.Any = v.unrestricted()
 	if out.Any {
 		out.Allowed = nil
 	}

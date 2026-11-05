@@ -1327,6 +1327,8 @@ func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/federation/join", handleFederationJoin)
 	mux.HandleFunc("/v1/federation/peers/trust", handleFederationTrust)
 	mux.HandleFunc("/v1/federation/peers/untrust", handleFederationUntrust)
+	mux.HandleFunc("GET /v1/federation/peers/agent-views", handleFederationPeerAgentViews)
+	mux.HandleFunc("POST /v1/federation/peers/agent-views", handleFederationPeerAgentViews)
 	mux.HandleFunc("POST /v1/federation/peers/trust-request", handleFederationTrustRequest)
 	mux.HandleFunc("POST /v1/federation/peers/trust-request/dismiss", handleFederationTrustRequest)
 	mux.HandleFunc("/v1/federation/identity/rotate", handleFederationIdentityRotate)

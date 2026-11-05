@@ -111,7 +111,7 @@ func peerCatalogQueryGroupVisible(r *http.Request, v *peerView) bool {
 // its spawn grant's pinned one.
 func peerCatalogEffectiveSandboxDir(r *http.Request, v *peerView) bool {
 	dir := strings.TrimSpace(r.URL.Query().Get("dir"))
-	if dir == "" || db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if dir == "" || v.unrestricted() {
 		return true
 	}
 	groups, err := db.ListAgentGroups()
@@ -138,7 +138,7 @@ func peerCatalogEffectiveSandboxDir(r *http.Request, v *peerView) bool {
 // group it can see; an unrestricted peer, which edits this node's profiles
 // in place, previews them as this node's operator does.
 func peerCatalogEnforcementDraft(r *http.Request, v *peerView) bool {
-	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if v.unrestricted() {
 		return true
 	}
 	raw, err := io.ReadAll(r.Body)

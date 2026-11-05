@@ -79,7 +79,7 @@ func servePeerSetDefaultProfile(w http.ResponseWriter, r *http.Request, v *peerV
 		writeError(w, http.StatusForbidden, "permission", "requires "+rule.requires)
 		return
 	}
-	if !db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if !v.unrestricted() {
 		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
 		var body struct {
 			Name string `json:"name"`
@@ -108,7 +108,7 @@ func servePeerProfileCreate(w http.ResponseWriter, r *http.Request, v *peerView,
 		writeError(w, http.StatusForbidden, "permission", "requires "+rule.requires)
 		return
 	}
-	if !db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if !v.unrestricted() {
 		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 		var body map[string]json.RawMessage
 		if err != nil || json.Unmarshal(raw, &body) != nil || body == nil {
@@ -143,7 +143,7 @@ func servePeerGroupCreate(w http.ResponseWriter, r *http.Request, v *peerView, r
 		writeError(w, http.StatusForbidden, "permission", "requires "+rule.requires)
 		return
 	}
-	if !db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if !v.unrestricted() {
 		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 		var body map[string]json.RawMessage
 		if err != nil || json.Unmarshal(raw, &body) != nil {

@@ -2740,3 +2740,17 @@ func CaptureApprovalPopupForTest(decision bool) (func() []ApprovalPopupFields, f
 			RequestHumanApprovalImpl = prev
 		}
 }
+
+// ResetAgentPeerViewLimitsForTest forgets every agent's peer view attempts.
+func ResetAgentPeerViewLimitsForTest() {
+	agentPeerViewLimits.mu.Lock()
+	defer agentPeerViewLimits.mu.Unlock()
+	agentPeerViewLimits.attempts, agentPeerViewLimits.inFlight = map[string][]time.Time{}, map[string]int{}
+}
+
+// SetAgentPeerViewClockForTest replaces the agent peer view limiter's clock.
+func SetAgentPeerViewClockForTest(now func() time.Time) func() {
+	prev := agentPeerViewNow
+	agentPeerViewNow = now
+	return func() { agentPeerViewNow = prev }
+}

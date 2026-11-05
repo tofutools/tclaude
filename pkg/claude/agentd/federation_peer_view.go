@@ -190,7 +190,7 @@ func (rt *fedRuntime) openPeerViewOnce(ctx context.Context, peer *db.FederationP
 	if err != nil {
 		return nil, err
 	}
-	env, err := proto.NewEnvelope(rt.id, proto.KindPeerViewOpen, proto.Endpoint{Name: rt.name}, proto.Endpoint{Instance: peer.InstanceID}, fedPeerViewTimeout+time.Minute, proto.PeerViewOpenPayload{Stream: sid, Key: kp.Pub})
+	env, err := proto.NewEnvelope(rt.id, proto.KindPeerViewOpen, proto.Endpoint{Name: rt.name}, proto.Endpoint{Instance: peer.InstanceID}, fedPeerViewTimeout+time.Minute, proto.PeerViewOpenPayload{Stream: sid, Key: kp.Pub, Agent: peerViewPrincipalFrom(ctx)})
 	if err != nil {
 		return nil, err
 	}
@@ -236,6 +236,12 @@ func (rt *fedRuntime) acceptPeerViewOpen(peer *db.FederationPeer, env *proto.Env
 	}
 	answer := func(ok bool, key []byte, reason string) {
 		rt.sendControl(peer.InstanceID, proto.KindPeerViewAnswer, env.ID, proto.PeerViewAnswerPayload{Stream: p.Stream, OK: ok, Key: key, Reason: reason})
+	}
+	// An agent principal must be well formed: it is audited as sent, and a
+	// malformed one must not fall back to the operator's view.
+	if p.Agent != nil && !p.Agent.Valid() {
+		answer(false, nil, "invalid agent principal")
+		return
 	}
 	key := "in:" + peer.InstanceID + ":" + p.Stream
 	if !rt.reservePeerView(key, peer.InstanceID) {
@@ -286,7 +292,7 @@ func (rt *fedRuntime) acceptPeerViewOpen(peer *db.FederationPeer, env *proto.Env
 		// operator token reaches the receiving node's authorization boundary.
 		req.Header = peerViewRequestHeaders(wire.Header)
 		out := &peerViewResponse{header: make(http.Header)}
-		PeerViewHandler(peer.InstanceID).ServeHTTP(out, req)
+		peerViewHandlerFor(peer.InstanceID, p.Agent).ServeHTTP(out, req)
 		if out.body.Len() > fedPeerViewResponseBodyLimit {
 			out = &peerViewResponse{header: make(http.Header)}
 			writeError(out, 502, "peer_response_too_large", "peer response exceeds limit")

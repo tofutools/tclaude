@@ -253,7 +253,7 @@ func servePeerSummary(w http.ResponseWriter, _ *http.Request, v *peerView, _ pee
 			waiting++
 		}
 	}
-	if v == nil || db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if v == nil || v.unrestricted() {
 		// Unrestricted visibility includes loose agents, which are deliberately
 		// absent from a restricted peer's group-scoped projection.
 		active, err := db.ListActiveAgents()
