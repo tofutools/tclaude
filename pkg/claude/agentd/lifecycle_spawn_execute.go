@@ -677,34 +677,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		return nil, fail
 	}
 
-	// Capacity-limited launches and async harnesses without launch enrollment
-	// may return before their pane or conv-id
-	// materialises. Reserve and persist the stable actor identity BEFORE the
-	// process starts, so an immediate hook/reaper enrollment can only bind this
-	// exact id. The row is atomically replaced by the actor binding once the conv
-	// appears; a genuinely pending response simply leaves it for back-fill.
-	//
-	// The deferred server-authoritative continuation already holds its
-	// reservation (pendingSpawnLabel) — it must NEVER re-reserve here, even
-	// when the legacy-injection revert turns launchEnroll off: re-minting
-	// would replace the row (INSERT OR REPLACE) with a second identity while
-	// the first was already returned to the caller. pendingHeld is the "some
-	// reservation exists for this label" predicate the shared claim/requeue/
-	// launch-marker sites key on.
-	reservedPending := (p.Async && !launchEnroll || p.nodeCapacityReserved ||
-		g != nil && preConvID == "" && routeHelperGeneration != "") && p.pendingSpawnLabel == ""
-	pendingHeld := reservedPending || p.pendingSpawnLabel != ""
-	if reservedPending {
-		if g == nil {
-			return nil, &spawnFailure{http.StatusInternalServerError, "spawn", "ungrouped asynchronous spawn is not supported"}
-		}
-		if p.AgentID == "" {
-			p.AgentID = db.NewAgentID()
-		}
-		if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, p, label)); err != nil {
-			return nil, &spawnFailure{http.StatusInternalServerError, "io",
-				"failed to reserve pending spawn " + label + ": " + err.Error()}
-		}
+	// A launch that may answer before its pane or conv-id exists reserves its
+	// stable identity first; see reserveLaunch.
+	reservedPending, pendingHeld, fail := reserveLaunch(g, &p, label, preConvID, routeHelperGeneration, launchEnroll)
+	if fail != nil {
+		return nil, fail
 	}
 
 	if reservedPending && !p.Async {
@@ -1247,6 +1224,44 @@ func spawnRowBelongsToLaunch(s *db.SessionRow, launchEnroll bool, preConvID stri
 		return preConvID != "" && s.ConvID == preConvID
 	}
 	return !s.CreatedAt.IsZero() && !s.CreatedAt.Before(launchedAt)
+}
+
+// reserveLaunch reserves the launch's pending row when it may answer before
+// its pane or conv-id exists: capacity-limited launches and async harnesses
+// without launch enrollment can return before either materialises. Reserve
+// and persist the stable actor identity BEFORE the
+// process starts, so an immediate hook/reaper enrollment can only bind this
+// exact id. The row is atomically replaced by the actor binding once the conv
+// appears; a genuinely pending response simply leaves it for back-fill.
+//
+// The deferred server-authoritative continuation already holds its
+// reservation (pendingSpawnLabel) — it must NEVER re-reserve here, even
+// when the legacy-injection revert turns launchEnroll off: re-minting
+// would replace the row (INSERT OR REPLACE) with a second identity while
+// the first was already returned to the caller. pendingHeld is the "some
+// reservation exists for this label" predicate the shared claim/requeue/
+// launch-marker sites key on.
+//
+// It returns whether this call reserved the row and whether any reservation
+// for the label exists.
+func reserveLaunch(g *db.AgentGroup, p *spawnParams, label, preConvID, routeHelperGeneration string,
+	launchEnroll bool) (reservedPending, pendingHeld bool, fail *spawnFailure) {
+	reservedPending = (p.Async && !launchEnroll || p.nodeCapacityReserved ||
+		g != nil && preConvID == "" && routeHelperGeneration != "") && p.pendingSpawnLabel == ""
+	pendingHeld = reservedPending || p.pendingSpawnLabel != ""
+	if reservedPending {
+		if g == nil {
+			return false, false, &spawnFailure{http.StatusInternalServerError, "spawn", "ungrouped asynchronous spawn is not supported"}
+		}
+		if p.AgentID == "" {
+			p.AgentID = db.NewAgentID()
+		}
+		if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, *p, label)); err != nil {
+			return false, false, &spawnFailure{http.StatusInternalServerError, "io",
+				"failed to reserve pending spawn " + label + ": " + err.Error()}
+		}
+	}
+	return reservedPending, pendingHeld, nil
 }
 
 // stageRouteHelper decides whether the launch carries a route helper and, when
