@@ -964,56 +964,24 @@ func runNew(params *NewParams) error {
 		// overwriting another launch's proof-scoped authority.
 		harnessCmd = commandWithFileCleanup(harnessCmd, launchProfilePath)
 	}
-	exitGuard, err := newExitLaunchGuard(sessionID, tmuxSession, exitGeneration)
-	if err != nil {
-		slog.Warn("exit audit: private launch setup unavailable; continuing without callback",
-			"session_id", sessionID, "tmux_session", tmuxSession, "error", err)
-		exitGuard = disabledExitLaunchGuard(sessionID, tmuxSession, exitGeneration)
-	} else if err := db.MarkSessionExitLaunchPending(sessionID, exitGeneration); err != nil {
-		slog.Warn("exit audit: launch gate state unavailable; continuing without callback",
-			"session_id", sessionID, "tmux_session", tmuxSession, "error", err)
-		exitGuard.abort()
-		exitGuard = disabledExitLaunchGuard(sessionID, tmuxSession, exitGeneration)
-	}
+	exitGuard := newLaunchExitGuard(sessionID, tmuxSession, exitGeneration)
 	defer exitGuard.abort()
 	// The existing cwd proof remains the outer bootstrap below so it can report
 	// readiness to the parent; the actual harness stays behind this private,
 	// bounded gate until its pane-local exit hook and durable binding are ready.
 	harnessCmd = exitGuard.wrap(harnessCmd)
-	proofReadyPath := ""
-	proofToken := params.CwdWriteProof
-	if proofToken == "" {
-		proofToken = params.DirWriteProof
+	harnessCmd, proofReadyPath, cleanupProofReady, err := guardLaunchWithDirProof(params, launchSandbox, harnessCmd)
+	if err != nil {
+		return err
 	}
-	profileWriteDirs := sandboxSnapshotHostDirs(launchSandbox, sandboxpolicy.AccessWrite)
-	profileWriteFiles := sandboxSnapshotHostFiles(launchSandbox, sandboxpolicy.AccessWrite)
-	if proofToken != "" || len(profileWriteDirs) > 0 || len(profileWriteFiles) > 0 {
-		path, cleanupProofReady, readyErr := newSpawnCwdReadinessFile()
-		if readyErr != nil {
-			return readyErr
-		}
-		defer cleanupProofReady()
-		proofReadyPath = path
-		harnessCmd = guardHarnessCommandWithDirProof(
-			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "",
-			params.GitWorktreeWriteDirs, profileWriteDirs, profileWriteFiles)
-	}
+	defer cleanupProofReady()
 
 	// The command is now fully assembled — every wrapper layer applied. Hand it
 	// to the rollback above so a launch that fails from here on says what it
 	// tried to run, and emit it at debug for a launch that fails in a way the
 	// rollback never sees.
 	launchPaneCommand = harnessCmd
-	if redacted, ok := RedactPaneCommand(
-		harnessCmd, envExports, authoredPaneCommandSecrets(effectiveSandbox)); ok {
-		slog.Debug("launching managed pane",
-			"session_id", sessionID, "tmux_session", tmuxSession,
-			"pane_command", redacted)
-	} else {
-		slog.Warn("launching managed pane; command withheld from the log",
-			"session_id", sessionID, "tmux_session", tmuxSession,
-			"reason", "environment prefix could not be located to redact")
-	}
+	logLaunchPaneCommand(harnessCmd, envExports, effectiveSandbox, sessionID, tmuxSession)
 
 	// Create the detached tmux session running the harness command. The
 	// managed Codex launch-profile path (when any) rides as an inert argv
@@ -1043,66 +1011,14 @@ func runNew(params *NewParams) error {
 		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
 		resourceCgroupCleanup()
 	}
-	exitGuard.armPaneHook()
-	exitGuard.bind()
-	if proofReadyPath != "" {
-		if err := waitForSpawnCwdReadiness(proofReadyPath); err != nil {
-			killLaunchPane()
-			return err
-		}
-	}
-	timing("pane_gate_and_directory_proof_complete")
-	resumeProvenance, err := captureLaunchProvenance(tmuxSession, sessionID, params.ManagedLaunch)
-	if err != nil {
-		killLaunchPane()
+	if err := settleLaunchedPane(launchSettleInput{
+		exitGuard: exitGuard, proofReadyPath: proofReadyPath, killLaunchPane: killLaunchPane, timing: timing,
+		tmuxSession: tmuxSession, sessionID: sessionID, params: params, h: h, state: state,
+		model: model, effort: effort, autoMemory: autoMemory, remoteControl: remoteControl,
+		contextFeatures: contextFeatures, autoCompactWindow: autoCompactWindow,
+		ordinaryNativeGeneration: ordinaryNativeGeneration, executionBoundaryJSON: executionBoundaryJSON,
+	}); err != nil {
 		return err
-	}
-	configureLaunchedPane(tmuxSession, sessionID, h)
-
-	// Get the PID of claude in the tmux session
-	pid := ParsePIDFromTmux(tmuxSession)
-
-	state.PID = pid
-	state.ResumeProvenance = resumeProvenance
-
-	if err := SaveSessionState(state); err != nil {
-		// Kill the pane like the sibling failure paths below: leaving it alive
-		// while the launch-row defer rolls the row back would orphan a live
-		// pane tclaude can no longer see.
-		killLaunchPane()
-		return fmt.Errorf("failed to save session state: %w", err)
-	}
-	if resumeProvenance != "" {
-		// SessionStart may have inserted this row before the launch parent got
-		// here. SaveSession deliberately never updates provenance on conflict;
-		// the launch boundary therefore owns this explicit post-upsert write.
-		if err := db.SetSessionResumeProvenance(sessionID, resumeProvenance); err != nil {
-			killLaunchPane()
-			return fmt.Errorf("persist managed launch resume provenance: %w", err)
-		}
-	}
-	recordLaunchPostureAndSeeds(sessionID, h, params, model, effort, autoMemory, remoteControl, contextFeatures, autoCompactWindow)
-	if err := exitGuard.release(); err != nil {
-		killLaunchPane()
-		return fmt.Errorf("bind managed pane exit audit: %w", err)
-	}
-	// Launch bookkeeping and exit attribution are durable. Publish successor
-	// readiness only at this final boundary: any earlier failure unregisters
-	// this generation and cannot prune a still-resumable predecessor.
-	if ordinaryNativeGeneration != "" {
-		if err := ActivateCodexNativePermissionProfile(ordinaryNativeGeneration); err != nil {
-			killLaunchPane()
-			return fmt.Errorf("activate generated Codex permission profile: %w", err)
-		}
-	}
-	if len(executionBoundaryJSON) > 0 {
-		// Publish only at the same successful launch-commit boundary as the row.
-		// Until here a relaunch retains its predecessor's last-known-good record;
-		// any persistence failure tears down this pane and leaves that record intact.
-		if err := db.SetSessionExecutionBoundary(sessionID, string(executionBoundaryJSON)); err != nil {
-			slog.Warn("could not persist launch execution boundary",
-				"session_id", sessionID, "error", err)
-		}
 	}
 
 	// The pane is up and bound; from here the row, the route claim, the
