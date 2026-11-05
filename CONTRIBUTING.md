@@ -175,6 +175,11 @@ when it comes from a fork. Main keeps hosted macOS: `release.yml` and
   Seatbelt smoke (through its `macos_runner` output) the runner's default
   labels, `[self-hosted, macOS, ARM64]`, instead of `macos-latest`.
   `test_classify_changes.py` pins this.
+- **Caches.** The runner keeps `~/go/pkg/mod` and `GOCACHE` between jobs,
+  and those local caches replace setup-go's: both composite actions pass
+  `cache: ${{ runner.environment != 'self-hosted' }}`, because restoring the
+  module cache over Go's read-only module files fails with "Can't unlink
+  already-existing object". Hosted runners still use setup-go's cache.
 - **Security.** This repository is public. A fork's pull request can run
   arbitrary code on any runner it reaches, so never let fork PRs reach
   self-hosted runners. The `CI-macOS: true` trailer is fork-controlled, which
