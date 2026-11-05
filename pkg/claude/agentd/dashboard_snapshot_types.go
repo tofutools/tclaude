@@ -1,9 +1,7 @@
 package agentd
 
 import (
-	"net/http"
 	"strings"
-	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -418,22 +416,6 @@ type dashboardTerminalAttach struct {
 type dashboardAuthSession struct {
 	MintedAt  string `json:"minted_at"`
 	ExpiresAt string `json:"expires_at,omitempty"`
-}
-
-func dashboardAuthSessionForRequest(r *http.Request) dashboardAuthSession {
-	if session, ok := r.Context().Value(remoteAuthedCtxKey{}).(remoteAuthSession); ok {
-		return dashboardAuthSession{
-			MintedAt:  session.MintedAt.Format(time.RFC3339),
-			ExpiresAt: session.ExpiresAt.Format(time.RFC3339),
-		}
-	}
-	mintedAt := dashboardSessionMintedAt
-	if mintedAt.IsZero() {
-		// Direct handler tests and embedders may install a session token
-		// without running the daemon bootstrap. Keep the wire valid there.
-		mintedAt = dashboardSessionNow()
-	}
-	return dashboardAuthSession{MintedAt: mintedAt.Format(time.RFC3339)}
 }
 
 // activityBotsView carries the resolved per-mode activity-bot style to the

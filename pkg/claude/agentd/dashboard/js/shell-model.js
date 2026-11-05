@@ -596,9 +596,10 @@ export function activityMemberTitle(member) {
 }
 
 function activityDetailState(member) {
-  // Keep the panel's sections aligned with the native pulse. dashboard.go can
-  // leave `recovered` on a live member while its status is still working or
-  // awaiting permission, so recovery belongs below as an annotation.
+  // Keep the panel's sections aligned with the native pulse. The agent state
+  // (dashboard_agent_state.go) can leave `recovered` on a live member while
+  // its status is still working or awaiting permission, so recovery belongs
+  // below as an annotation.
   return memberVariant(member);
 }
 
