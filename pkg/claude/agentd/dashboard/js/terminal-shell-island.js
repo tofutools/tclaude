@@ -41,6 +41,7 @@ import { boardOverlays, openBoardPane, openLinkedBoard, revealBoardWindow } from
 import { terminalWindowsShowing } from './terminal-window.js';
 import { agentSessionSeed, chatAgentOfPane, overlayablePane } from './terminal-window-model.js';
 import { droppedAt } from './overlay-window-model.js';
+import { collabSnapAim, collabSnapsAt } from './overlay-window.js';
 import { CHAT_WINDOW_KIND } from './chat-window-model.js';
 import { overlayTabs } from './overlay-instances.js';
 import { shellToast } from './shell-state.js';
@@ -145,6 +146,36 @@ const SAFE_REMOTE_AGENT = /^agt_[A-Za-z0-9]{4,64}$/;
 // prohibition sign while being perfectly willing to fire on release. Accepting
 // is scoped to a live terminal drag and never overrides a target that already
 // claimed the event, so the tab strip's own reorder edges keep their meaning.
+// useCollabSnapAim tells the overlay where a tab that can float is while it is
+// dragged clear of the strip, so the overlay shows what it would snap to there
+// (collabSnapAim). Inside the strip, a reorder shows none; over a window's strip
+// it joins that window, so it shows none there either; and leaving the browser
+// takes the aim away, so a release outside it is not a snap.
+function useCollabSnapAim(active, regionRef) {
+  useEffect(() => {
+    if (!active) return undefined;
+    const onDragOver = (event) => {
+      const off = !!collabDrag.peek()?.floats && !tabDropTarget.peek() && dragLeftRegion(event, regionRef.current);
+      const aim = off ? { x: event.clientX, y: event.clientY } : null;
+      const was = collabSnapAim.peek();
+      if (aim?.x !== was?.x || aim?.y !== was?.y) collabSnapAim.value = aim;
+    };
+    // Leaving the page reports a point on or past its edge (Chrome reports 0, 0).
+    const onDragLeave = (event) => {
+      const view = event.view || globalThis.window;
+      const { clientX: x, clientY: y } = event;
+      if (x <= 0 || y <= 0 || x >= (view?.innerWidth ?? Infinity) || y >= (view?.innerHeight ?? Infinity)) collabSnapAim.value = null;
+    };
+    document.addEventListener('dragover', onDragOver);
+    document.addEventListener('dragleave', onDragLeave);
+    return () => {
+      document.removeEventListener('dragover', onDragOver);
+      document.removeEventListener('dragleave', onDragLeave);
+      collabSnapAim.value = null;
+    };
+  }, [active]);
+}
+
 function useDragOutArmed(active, regionRef) {
   const [armed, setArmed] = useState(false);
   useEffect(() => {
@@ -1270,6 +1301,7 @@ function TerminalTabs({
   const [stripGap, setStripGap] = useState(null);
 
   const detachArmed = useDragOutArmed(Boolean(dragKey), tabsRef);
+  useCollabSnapAim(Boolean(dragKey), tabsRef);
   // A window's strip about to take the tab in flight, and overlay tabs about to
   // land on this strip.
   const joining = !!dragKey && !!tabDropTarget.value;
@@ -1382,6 +1414,7 @@ function TerminalTabs({
     const key = dragKeyRef.current;
     // Dropped on a window's strip, it joins that window there.
     const into = !droppedRef.current && collabDrag.peek()?.floats ? tabDropTarget.peek() : null;
+    const aim = collabSnapAim.peek();
     aimFromCollab(null);
     const detach = !into && !droppedRef.current && key && dragLeftRegion(event, tabsRef.current);
     clearDrag();
@@ -1391,7 +1424,7 @@ function TerminalTabs({
     }
     if (!detach) return;
     if (paneFloats(state.panes.value.find((pane) => pane.key === key), snapshot?.value)) {
-      void actions.openPaneInOverlay(key, { at: droppedAt(event) });
+      void actions.openPaneInOverlay(key, { at: droppedAt(event), snapAt: aim && collabSnapsAt(aim, globalThis.window) ? aim : null });
       return;
     }
     void actions.popOutPane(key, {

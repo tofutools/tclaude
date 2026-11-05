@@ -33,7 +33,7 @@ import { registerCompanionController } from './companion-facade.js';
 import { postDismiss } from './decision-dismiss.js';
 import { DecideTab, StartTab, stewardFreshNote, stewardReturnNote } from './companion-home.js';
 import { elementScreenPoint } from './terminal-drag-out.js';
-import { overlayWindowsByStack, readPref, reducedMotion, setSnapAssistEnabled, writePref } from './overlay-window.js';
+import { CollabSnapTargets, overlayWindowsByStack, readPref, reducedMotion, setSnapAssistEnabled, writePref } from './overlay-window.js';
 import { registerTabMoves } from './overlay-tab-moves.js';
 import { activateOverlayTab, closeOverlayTab, focusOverlayWindow, minimizeOverlayWindow, openOverlayWindow, openTabInWindow, overlayHostUp, overlayTabs, overlayWindows, swapOverlayTab, tearOverlayTabOut } from './overlay-instances.js';
 import { CHAT_WINDOW_KIND, DECIDE_WINDOW_KIND, START_WINDOW_KIND, chatTab, chatWindowId, decideTab, startTab } from './chat-window-model.js';
@@ -1276,6 +1276,7 @@ export function CompanionApp({
   return html`
     ${overlayWindows.value.map((window) => html`<${OverlayTabWindow} key=${window.id} window=${window} snapshot=${snapshot} prefs=${prefs} win=${win} kinds=${tabKinds} home=${home} add=${addTab} />`)}
     <${OverlayTabGhost} />
+    <${CollabSnapTargets} win=${win} />
     <${SnapAssist} win=${win} viewOf=${tabViewOf(tabKinds)} />
     <${OverlayTabMenu} notify=${notify} />
     ${chipSlots}

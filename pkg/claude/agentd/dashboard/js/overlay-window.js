@@ -19,7 +19,7 @@
 
 import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { computed, signal } from '@preact/signals';
+import { computed, effect, signal } from '@preact/signals';
 import htm from 'htm';
 import {
   clampPlacement, fitPlacement, freeEdges, parsePlacement, resizedPlacement, savedAfterResize, snappedResize, snapReach, snapZoneRects, viewportOf, zoneRect,
@@ -510,6 +510,30 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     toggleMaximize();
   }
 
+  // snapTo applies a drop's plan to a window that showed at from.
+  function snapTo(plan, from) {
+    setPlacement(snappedPlacement(plan.zone));
+    saveMovedWindow({ ...withSavedSize(from), snap: plan.zone });
+    if (plan.tree) saveSplit(prefs, plan.tree);
+    // Snapped alone into an empty room, the room around it is the cells it
+    // left. A saved split, even one all away, or another window snapped alone
+    // has its own say over the room.
+    const alone = !splitTree.peek() && ![...snappedWindows.peek().keys()].some((other) => other !== id);
+    offerSnapAssist(plan.tree || (alone ? roomTree([[id, plan.zone]]) : null), splitArea(), id);
+  }
+
+  // A drop asked for from outside the window's own drag, by a Collab tab let go
+  // as this window: it lands as a drag of this window let go there would.
+  useEffect(() => (id && snaps ? effect(() => {
+    const pointer = snapRequests.value.get(id);
+    if (!pointer) return;
+    const rest = new Map(snapRequests.peek());
+    rest.delete(id);
+    snapRequests.value = rest;
+    const plan = dropPlan(pointer, dragTargets());
+    if (plan) snapTo(plan, shownRef.current);
+  }) : undefined), [id, snaps]);
+
   function dragWindow(event) {
     if (event.button !== 0 || !windowRef.current) return;
     event.preventDefault();
@@ -526,14 +550,7 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
       setFloating(false);
       if (join?.drop()) return;
       if (plan) {
-        setPlacement(snappedPlacement(plan.zone));
-        saveMovedWindow({ ...withSavedSize(last), snap: plan.zone });
-        if (plan.tree) saveSplit(prefs, plan.tree);
-        // Snapped alone into an empty room, the room around it is the cells it
-        // left. A saved split, even one all away, or another window snapped alone
-        // has its own say over the room.
-        const alone = !splitTree.peek() && ![...snappedWindows.peek().keys()].some((other) => other !== id);
-        offerSnapAssist(plan.tree || (alone ? roomTree([[id, plan.zone]]) : null), splitArea(), id);
+        snapTo(plan, last);
       } else if (moved) {
         // A click shows the fitted placement, which is not the operator's to keep.
         saveMovedWindow(withSavedSize(last));
@@ -730,6 +747,37 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   const unitLevel = levelOf(cell ? SPLIT_UNIT : id);
   const splitFront = cell && overlayStack.value.findLast((other) => layout.rects[other]) === id;
   return { placement: shown, floating, targets, edges, level: unitLevel + (splitFront ? 1 : 0), linesLevel: unitLevel + 2, splitLines, onLinePointerDown, detachLine, win, guide, windowRef, openFrom, onTitlePointerDown, onTitleDoubleClick, onResizePointerDown, onWindowClick, releaseFocus, toggleMaximize, shrinkTo, dragWindow, cancelGesture: () => gesture.current?.() };
+}
+
+// Drops asked for by window id, each at a pointer, until the window takes it.
+const snapRequests = signal(new Map());
+
+// snapOverlayWindowAt drops window windowId at pointer, as a drag of it let go
+// there would, once it is open: onto the target there, or nowhere.
+export function snapOverlayWindowAt(windowId, pointer) {
+  snapRequests.value = new Map(snapRequests.peek()).set(windowId, pointer);
+}
+
+// A Collab tab dragged off its strip, on its way to floating as a window: the
+// pointer, or null. CollabSnapTargets shows what it would snap to there. The
+// window is not open yet, so it stands in for it under an id no window has.
+export const collabSnapAim = signal(null);
+const COLLAB_TAB = '\0collab';
+
+// collabSnapsAt reports whether a Collab tab let go at pointer would snap.
+export const collabSnapsAt = (pointer, win) => !!snapPlan(COLLAB_TAB, pointer, snapTargets(COLLAB_TAB, win), win);
+
+// CollabSnapTargets draws, while a Collab tab is off its strip, the targets a
+// window dragged there would show, the one under the pointer hot, and the snap
+// it would make.
+export function CollabSnapTargets({ win }) {
+  const aim = collabSnapAim.value;
+  if (!aim) return null;
+  const targets = snapTargets(COLLAB_TAB, win);
+  const hit = snapHit(aim, targets, win);
+  const guide = snapPlan(COLLAB_TAB, aim, targets, win)?.guide;
+  return html`<${SnapTargets} targets=${{ ...targets, hot: hit?.target || (hit?.edge && { edge: hit.edge.key }) || null }} />
+    ${guide && html`<div class="overlay-snap-guide" aria-hidden="true" style=${`left:${guide.x}px;top:${guide.y}px;width:${guide.w}px;height:${guide.h}px`}></div>`}`;
 }
 
 // SnapTargets are the drop targets of a window being dragged, drawn over every
