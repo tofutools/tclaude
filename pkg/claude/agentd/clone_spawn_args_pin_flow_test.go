@@ -96,11 +96,10 @@ func assertCloneBranchesShareThePosture(t *testing.T, noCopy, copied clcommon.Sp
 	assert.Equal(t, copiedConv, copied.ConvID, "copy resumes the copied conversation")
 	assert.Empty(t, copied.SessionID)
 	assert.False(t, copied.SandboxContinuation)
-	if noCopy.SessionID != "" {
-		assert.Equal(t, noCopyConv, noCopy.SessionID, "a preset no-copy session id is the clone's conv")
-	}
 
-	// Everything else is the same posture.
+	// Everything else is the same posture. The sandboxes compare equal only
+	// because these sources declare no per-agent directories: each branch
+	// materializes those under its own launch key (label, or the copied conv).
 	ncPosture, ncSandbox := clonePosture(t, noCopy)
 	cpPosture, cpSandbox := clonePosture(t, copied)
 	assert.Equal(t, ncPosture, cpPosture, "both clone branches launch with the same posture")
@@ -113,6 +112,7 @@ func TestCloneSpawnArgs_CodexBranchesShareTheSourcesPosture(t *testing.T) {
 		"approval": "never", "sandbox": "workspace-write", "auto_review": true,
 	})
 	assertCloneBranchesShareThePosture(t, noCopy, copied, ncConv, cpConv)
+	assert.Empty(t, noCopy.SessionID, "Codex mints its own id: a no-copy Codex clone presets none")
 	for _, a := range []clcommon.SpawnArgs{noCopy, copied} {
 		assert.Equal(t, "codex", a.Harness)
 		assert.Equal(t, "gpt-5.6-terra", a.Model)
@@ -131,6 +131,7 @@ func TestCloneSpawnArgs_ClaudeBranchesShareTheSourcesPosture(t *testing.T) {
 		"auto_memory": false, "ask_user_question_timeout": "5m",
 	})
 	assertCloneBranchesShareThePosture(t, noCopy, copied, ncConv, cpConv)
+	assert.Equal(t, ncConv, noCopy.SessionID, "a launch-enrolled no-copy clone presets its conv as the session id")
 	for _, a := range []clcommon.SpawnArgs{noCopy, copied} {
 		assert.Equal(t, "opus", a.Model)
 		assert.Equal(t, "high", a.Effort)
