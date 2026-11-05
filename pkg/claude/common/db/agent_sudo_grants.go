@@ -245,23 +245,10 @@ func ListActiveSudoGrantsByAgent(agentID string) ([]*SudoGrant, error) {
 		return nil, err
 	}
 	cutoff := dbTime(time.Now())
-	rows, err := d.Query(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.scope_json, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at, s.carried_id, s.uses_limit, s.uses_left
+	return queryRows(d, scanSudoGrant, `SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.scope_json, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at, s.carried_id, s.uses_limit, s.uses_left
 		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
 		WHERE s.agent_id = ? AND s.revoked_at IS NULL AND s.expires_at > ? AND (s.uses_limit = 0 OR s.uses_left > 0)
 		ORDER BY s.expires_at ASC`, agentID, cutoff)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*SudoGrant
-	for rows.Next() {
-		g, err := scanSudoGrant(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, g)
-	}
-	return out, rows.Err()
 }
 
 // ListAllActiveSudoGrants returns every active grant across all
@@ -274,23 +261,10 @@ func ListAllActiveSudoGrants() ([]*SudoGrant, error) {
 		return nil, err
 	}
 	cutoff := dbTime(time.Now())
-	rows, err := d.Query(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.scope_json, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at, s.carried_id, s.uses_limit, s.uses_left
+	return queryRows(d, scanSudoGrant, `SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.scope_json, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at, s.carried_id, s.uses_limit, s.uses_left
 		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
 		WHERE s.revoked_at IS NULL AND s.expires_at > ? AND (s.uses_limit = 0 OR s.uses_left > 0)
 		ORDER BY ag.current_conv_id ASC, s.expires_at ASC`, cutoff)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*SudoGrant
-	for rows.Next() {
-		g, err := scanSudoGrant(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, g)
-	}
-	return out, rows.Err()
 }
 
 // revokeSudoGrants ends the active rows matching where, and the stored grants

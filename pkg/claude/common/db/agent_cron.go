@@ -492,20 +492,7 @@ func ListAgentCronJobs() ([]*AgentCronJob, error) {
 }
 
 func listAgentCronJobs(d *sql.DB, query string) ([]*AgentCronJob, error) {
-	rows, err := d.Query(query)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*AgentCronJob
-	for rows.Next() {
-		j, err := scanAgentCronJob(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, j)
-	}
-	return out, rows.Err()
+	return queryRows(d, scanAgentCronJob, query)
 }
 
 // ListDueAgentCronJobs returns enabled jobs whose next-fire time has passed.
@@ -958,22 +945,15 @@ func ListAgentCronRunsForJob(jobID int64, limit int) ([]*AgentCronRun, error) {
 		q += ` LIMIT ?`
 		args = append(args, limit)
 	}
-	rows, err := d.Query(q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*AgentCronRun
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (*AgentCronRun, error) {
 		var r AgentCronRun
 		var fired dbTimestamp
 		if err := rows.Scan(&r.ID, &r.JobID, &fired, &r.Status, &r.ErrorMsg, &r.WorkerID, &r.WorkerAgent); err != nil {
 			return nil, err
 		}
 		r.FiredAt = fired.Time()
-		out = append(out, &r)
-	}
-	return out, rows.Err()
+		return &r, nil
+	}, q, args...)
 }
 
 func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {

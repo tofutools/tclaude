@@ -187,22 +187,15 @@ func ListHumanMessageAttachments() ([]*HumanMessageAttachment, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id, message_id, seq, filename, content_type, size_bytes, storage_path
-		FROM human_message_attachments`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var attachments []*HumanMessageAttachment
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (*HumanMessageAttachment, error) {
 		var a HumanMessageAttachment
 		if err := rows.Scan(&a.ID, &a.MessageID, &a.Seq, &a.Filename, &a.ContentType,
 			&a.SizeBytes, &a.StoragePath); err != nil {
 			return nil, err
 		}
-		attachments = append(attachments, &a)
-	}
-	return attachments, rows.Err()
+		return &a, nil
+	}, `SELECT id, message_id, seq, filename, content_type, size_bytes, storage_path
+		FROM human_message_attachments`)
 }
 
 // HumanMessageAttachmentUsage reports stored bytes and row counts globally and
@@ -269,22 +262,15 @@ func ListHumanMessageAttachmentsFor(messageID int64) ([]*HumanMessageAttachment,
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id, message_id, seq, filename, content_type, size_bytes, storage_path
-		FROM human_message_attachments WHERE message_id = ? ORDER BY seq, id`, messageID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*HumanMessageAttachment
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (*HumanMessageAttachment, error) {
 		var a HumanMessageAttachment
 		if err := rows.Scan(&a.ID, &a.MessageID, &a.Seq, &a.Filename, &a.ContentType,
 			&a.SizeBytes, &a.StoragePath); err != nil {
 			return nil, err
 		}
-		out = append(out, &a)
-	}
-	return out, rows.Err()
+		return &a, nil
+	}, `SELECT id, message_id, seq, filename, content_type, size_bytes, storage_path
+		FROM human_message_attachments WHERE message_id = ? ORDER BY seq, id`, messageID)
 }
 
 func attachHumanMessageArtifacts(d *sql.DB, messages []*HumanMessage) error {
