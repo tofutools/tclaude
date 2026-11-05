@@ -71,8 +71,17 @@ func TestTUIUpdate_MutationResults(t *testing.T) {
 		})
 		t.Run(kind.name+" done", func(t *testing.T) {
 			got, cmd := run(t, nil)
-			assert.NotEmpty(t, got.notice)
-			assert.NotContains(t, got.notice, "failed")
+			var summary string
+			switch msg := kind.msg(nil).(type) {
+			case tuiRetiredMsg:
+				summary = tuiRetireSummary(msg)
+			case tuiStoppedMsg:
+				summary = tuiStopSummary(msg)
+			case tuiResumedMsg:
+				summary = tuiResumeSummary(msg)
+			}
+			require.NotEmpty(t, summary)
+			assert.Equal(t, summary, got.notice, "the notice is the action's summary")
 			assert.True(t, got.refreshing, "the listing is refreshed at once")
 			assert.False(t, got.reconcilingMutation)
 			assert.NotNil(t, cmd)
