@@ -69,9 +69,8 @@ func TestRecoveredIdentityRollbackRestoresTakenOverAgent(t *testing.T) {
 	assert.Equal(t, "conv-rollback-old", a.CurrentConvID)
 	assert.False(t, a.Active())
 	assert.Equal(t, "parked", a.RetireReason)
-	has, err := HasAgentPermissionRow("conv-rollback-old", "agent.spawn")
-	require.NoError(t, err)
-	assert.True(t, has, "the taken-over agent keeps its grants")
+	assert.True(t, grantsSlug(t, "conv-rollback-old", "agent.spawn"),
+		"the taken-over agent keeps its grants")
 	p, err := GetAgentFederationPresence(id)
 	require.NoError(t, err)
 	assert.Nil(t, p, "an agent that had no presence gets none")

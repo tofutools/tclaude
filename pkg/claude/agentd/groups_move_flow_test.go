@@ -86,10 +86,10 @@ func TestGroupMove_KeepPermissionsIsOperatorOnlyAndDroppable(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	f.AssertNotGroupMember("alpha", conv)
 
-	held, err := db.HasAgentGroupPermissionForGroup(conv, alpha.ID, agentd.PermGroupsMembersAdd)
+	held, err := agentd.HoldsGroupBoundPermissionForTest(conv, agentd.PermGroupsMembersAdd, alpha.ID)
 	require.NoError(t, err)
 	assert.True(t, held, "alpha's grant still applies, bound to alpha")
-	held, err = db.HasAgentGroupPermissionForGroup(conv, beta.ID, agentd.PermGroupsMembersAdd)
+	held, err = agentd.HoldsGroupBoundPermissionForTest(conv, agentd.PermGroupsMembersAdd, beta.ID)
 	require.NoError(t, err)
 	assert.False(t, held, "and is not widened to beta")
 
@@ -121,7 +121,7 @@ func TestGroupMove_KeepPermissionsIsOperatorOnlyAndDroppable(t *testing.T) {
 		"/v1/groups/alpha/kept-permissions/"+conv, nil)))
 	require.Equal(t, http.StatusOK, drop.Code, "body=%s", drop.Body.String())
 	assert.Empty(t, whoami())
-	held, err = db.HasAgentGroupPermissionForGroup(conv, alpha.ID, agentd.PermGroupsMembersAdd)
+	held, err = agentd.HoldsGroupBoundPermissionForTest(conv, agentd.PermGroupsMembersAdd, alpha.ID)
 	require.NoError(t, err)
 	assert.False(t, held, "dropping ends alpha's permissions")
 	again := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodDelete,

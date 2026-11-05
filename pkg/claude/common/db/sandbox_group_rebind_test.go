@@ -267,9 +267,7 @@ func TestMoveAgentGroupMemberKeepsPermissions(t *testing.T) {
 	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: alpha, ConvID: convID}))
 	has := func(slug string, groupID int64) bool {
 		t.Helper()
-		ok, err := HasAgentGroupPermissionForGroup(convID, groupID, slug)
-		require.NoError(t, err)
-		return ok
+		return groupGrantsSlug(t, convID, groupID, slug)
 	}
 
 	_, err = MoveAgentGroupMember(convID, alpha, beta, MoveOptions{KeepPermissions: true, By: "operator"})
@@ -331,9 +329,8 @@ func TestRetireDropsKeptGroupPermissions(t *testing.T) {
 	require.NoError(t, err)
 	_, err = ReinstateAgentByID(agentID)
 	require.NoError(t, err)
-	held, err := HasAgentGroupPermissionForGroup(convID, alpha, "alpha.slug")
-	require.NoError(t, err)
-	assert.False(t, held, "a reinstated agent does not get kept permissions back")
+	assert.False(t, groupGrantsSlug(t, convID, alpha, "alpha.slug"),
+		"a reinstated agent does not get kept permissions back")
 	holders, err = ListRetainedPermissionHolders(alpha)
 	require.NoError(t, err)
 	assert.Empty(t, holders)

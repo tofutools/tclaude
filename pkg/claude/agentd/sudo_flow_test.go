@@ -59,10 +59,9 @@ func TestSudo_Approved_GrantsForDuration(t *testing.T) {
 		"freshly-inserted grant must be active; expires_at=%v revoked_at=%v",
 		got.ExpiresAt, got.RevokedAt)
 
-	// HasActiveSudoGrant — the hot path requirePermission calls.
-	ok, err := db.HasActiveSudoGrant(conv, "groups.members.spawn")
-	require.NoError(t, err, "HasActiveSudoGrant")
-	assert.True(t, ok, "HasActiveSudoGrant must return true for the freshly-granted slug")
+	// The permission evaluator allows the freshly-granted slug.
+	assert.True(t, agentd.HoldsPermissionForTest(conv, "groups.members.spawn"),
+		"the evaluator must allow the freshly-granted slug")
 
 	// PR3c: the listing endpoint (`sudo ls`) surfaces the stable agent_id so
 	// the CLI groups + labels its blocks by the rotation-immune handle.
@@ -224,9 +223,9 @@ func TestSudo_RevokedEarly_TakesEffectImmediately(t *testing.T) {
 	require.NotZero(t, resp.Grants[0].ID, "grant id")
 	grantID := resp.Grants[0].ID
 
-	// Pre-revoke: HasActiveSudoGrant returns true.
-	ok, _ := db.HasActiveSudoGrant(conv, "groups.members.spawn")
-	require.True(t, ok, "pre-revoke: grant should be active")
+	// Pre-revoke: the evaluator allows the slug.
+	require.True(t, agentd.HoldsPermissionForTest(conv, "groups.members.spawn"),
+		"pre-revoke: grant should be active")
 
 	// Revoke as human.
 	delPath := "/v1/sudo/" + itoa64(grantID)
@@ -235,10 +234,10 @@ func TestSudo_RevokedEarly_TakesEffectImmediately(t *testing.T) {
 	delRec := testharness.Serve(f.Mux, delReq)
 	require.Equal(t, http.StatusOK, delRec.Code, "DELETE body=%s", delRec.Body.String())
 
-	// Post-revoke: HasActiveSudoGrant returns false (no time travel
+	// Post-revoke: the evaluator denies the slug (no time travel
 	// needed — revoked_at filter does the work).
-	ok, _ = db.HasActiveSudoGrant(conv, "groups.members.spawn")
-	assert.False(t, ok, "post-revoke: grant must NOT be active")
+	assert.False(t, agentd.HoldsPermissionForTest(conv, "groups.members.spawn"),
+		"post-revoke: grant must NOT be active")
 }
 
 // Scenario: GET /v1/sudo from an agent returns its own active grants;

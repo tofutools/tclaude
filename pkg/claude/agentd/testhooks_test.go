@@ -2381,6 +2381,18 @@ func SetUsageRulesLiveSessionsForTest(fn func() (map[string]struct{}, error)) fu
 // HoldsPermissionForTest is the context-free check triggers and listings use.
 func HoldsPermissionForTest(convID, slug string) bool { return holdsPermission(convID, slug) }
 
+// HoldsGroupBoundPermissionForTest is the group-bound verdict a route gate
+// reads: whether convID holds slug through groupID itself, not through any
+// other group it belongs to.
+func HoldsGroupBoundPermissionForTest(convID, slug string, groupID int64) (bool, error) {
+	r, err := http.NewRequest(http.MethodGet, "/", nil)
+	if err != nil {
+		return false, err
+	}
+	verdict, err := resolveGroupBoundPermissionVerdictForRequest(r, convID, slug, groupID)
+	return verdict.Resolution == permAllow, err
+}
+
 // SudoCountabilityForTest maps every registered slug to why it takes no use limit.
 func SudoCountabilityForTest() map[string]string {
 	out := map[string]string{}
