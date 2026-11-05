@@ -19,6 +19,7 @@ import (
 //
 //go:embed skills/agent-board/SKILL.md
 //go:embed skills/agent-coord/SKILL.md skills/agent-rename/SKILL.md skills/agent-task/SKILL.md skills/agent-page/SKILL.md skills/present-pr-to-operator/SKILL.md skills/agent-lifecycle/SKILL.md skills/reincarnate/SKILL.md skills/agent-schedule/SKILL.md skills/agent-remote-control/SKILL.md skills/agent-dir/SKILL.md skills/agent-circles/SKILL.md skills/human-notify/SKILL.md skills/human-clipboard/SKILL.md skills/proxy-git/SKILL.md skills/proxy-linear/SKILL.md skills/proxy-awb/SKILL.md skills/proxy-http/SKILL.md skills/process-templates skills/tclaude-setup/SKILL.md skills/tclaude-fleet/SKILL.md
+//go:embed skills/process-runs/SKILL.md
 var skillsFS embed.FS
 
 // bundledSkills is the registry of generally useful skills shipped with
@@ -39,6 +40,7 @@ var bundledSkills = []string{
 	"human-notify",
 	"human-clipboard",
 	"process-templates",
+	"process-runs",
 	"tclaude-setup",
 	"tclaude-fleet",
 }

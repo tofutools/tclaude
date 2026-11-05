@@ -44,7 +44,8 @@ stored version, so two writers cannot silently clobber each other — a stale
 hash is a refused save, and the caller re-reads with `show` and merges. The
 bundled `process-templates` agent skill and the CLI's `--help` are the deep
 reference for the authoring shape and the safe show-edit-validate-save loop;
-this page does not repeat them.
+this page does not repeat them. The bundled `process-runs` skill is the agent
+reference for starting, watching and steering runs (see [Running](#running)).
 
 Two permissions govern authoring, and neither executes anything:
 
