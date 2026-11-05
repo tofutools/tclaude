@@ -2482,55 +2482,9 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		return "", "", nil, err
 	}
 	harnessBuiltinMode, resumeCwd := resumeSandboxState(convID)
-	// An implementation that confines nothing has nothing to reassert. The block
-	// below plans enforcement, and PlanAccessEnforcement correctly refuses a
-	// closed network that no mechanism can hold — which is the right answer for
-	// every caller that expected a wall, and the wrong question for one that
-	// declared it has none. Without this, resuming a resource-only conversation
-	// whose chain carries a modern deny-baseline `network:` block fails with
-	// sandbox_profile_changed, on both `tclaude conv resume` and watch's
-	// auto-resume, even though the same chain spawns fine.
-	//
-	// The rules are still disclosed, in the same words a fresh launch uses, so
-	// a resumed pane does not look quieter than the one it replaced.
-	if effectiveSandbox != nil && unconfined {
-		if notice, ok := sandboxpolicy.UnconfinedAccessRulesNotice(
-			implementation, effectiveProfile,
-		); ok {
-			effectiveProfile.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
-				effectiveProfile.AccessNotices, notice,
-			)
-			effectiveSandbox.Effective.AccessNotices = append(
-				[]sandboxpolicy.AccessNotice(nil), effectiveProfile.AccessNotices...)
-		}
-	}
-	if effectiveSandbox != nil && !outerLayer && !unconfined &&
-		(effectiveProfile.Network != nil || effectiveProfile.UnixSockets != nil) {
-		// Standalone conversation/watch resume does not pass through agentd's
-		// lifecycle planner. Reassert the persisted access intent here with no
-		// fresh-spawn authorization: a degradation notice records what the
-		// predecessor ran under, but is never itself permission to widen the
-		// successor's network boundary.
-		axes, axesErr := sandboxpolicy.EffectiveAccessAxes(effectiveProfile)
-		if axesErr != nil {
-			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", axesErr)
-		}
-		launchOSSandbox := harness.ResolveLaunchOSSandbox(
-			h, harnessBuiltinMode, resumeSandboxChosenBy(convID), resumeCwd)
-		caps, capsErr := harness.ResolveAccessEnforcement(
-			h, implementation, axes, launchOSSandbox, harnessBuiltinMode)
-		if capsErr != nil {
-			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", capsErr)
-		}
-		_, notices, planErr := harness.PlanAccessEnforcement(axes, caps)
-		if planErr != nil {
-			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", planErr)
-		}
-		effectiveProfile.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
-			effectiveProfile.AccessNotices, notices...,
-		)
-		effectiveSandbox.Effective.AccessNotices = append(
-			[]sandboxpolicy.AccessNotice(nil), effectiveProfile.AccessNotices...)
+	if err := reassertResumeAccessNotices(h, implementation, harnessBuiltinMode, convID, resumeCwd,
+		outerLayer, unconfined, effectiveSandbox, &effectiveProfile); err != nil {
+		return "", "", nil, err
 	}
 	networkFiltered := false
 	if outerLayer {
@@ -2581,26 +2535,12 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		// inside a profile that makes the database read-only.
 		resumeEnv[session.HookBrokerEnvVar] = session.HookBrokerAgentd
 	}
-	if h.Name == harness.GeminiName && harnessBuiltinMode == harness.GeminiSandboxSeatbelt {
-		// The spawn seam's Seatbelt checks (session/new.go), against the
-		// trust the spawn already recorded.
-		getenv := func(name string) string {
-			if value, ok := resumeEnv[name]; ok {
-				return value
-			}
-			return os.Getenv(name)
-		}
-		if err := harness.ValidateGeminiSeatbeltLaunch(getenv, resumeCwd); err != nil {
-			return "", "", nil, err
-		}
-		trustEnv, err := harness.GeminiSeatbeltLaunchEnv(getenv, resumeCwd, false)
-		if err != nil {
-			slog.Warn("gemini seatbelt: cannot read the trust store; the sandboxed pane may ask for folder trust",
-				"cwd", resumeCwd, "err", err)
-		}
-		for name, value := range trustEnv {
-			resumeEnv[name] = value
-		}
+	// The spawn seam's Seatbelt checks, against the trust the spawn already
+	// recorded (no new trust is granted on resume).
+	if err := session.ApplyGeminiSeatbeltLaunchEnv(
+		h, harnessBuiltinMode, effectiveSandbox, resumeCwd, false, resumeEnv,
+	); err != nil {
+		return "", "", nil, err
 	}
 	// A deny covering the workspace narrows the Git grants the same way the
 	// spawn path does: the historical repository container would reopen every

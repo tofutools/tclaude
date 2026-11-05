@@ -94,24 +94,8 @@ func baseLaunchEnv(
 		// throwaway database behind the wall.
 		additionalEnv[HookBrokerEnvVar] = HookBrokerAgentd
 	}
-	if h.Name == harness.GeminiName && harnessBuiltinMode == harness.GeminiSandboxSeatbelt {
-		// Gemini's Seatbelt profile hides its OAuth credentials and every
-		// trust store from the sandboxed CLI (gemini_seatbelt.go): refuse an
-		// auth type that cannot work in there, and carry the host's trust
-		// decision in as the environment Gemini honours ahead of the file.
-		seatbeltEnv := launchModelEnvironment(sandboxpolicy.EnvironmentForLaunch(effectiveSandbox))
-		getenv := func(name string) string { return seatbeltEnv[name] }
-		if err := harness.ValidateGeminiSeatbeltLaunch(getenv, cwd); err != nil {
-			return nil, err
-		}
-		trustEnv, err := harness.GeminiSeatbeltLaunchEnv(getenv, cwd, params.TrustDir)
-		if err != nil {
-			slog.Warn("gemini seatbelt: cannot read the trust store; the sandboxed pane may ask for folder trust",
-				"cwd", cwd, "err", err)
-		}
-		for name, value := range trustEnv {
-			additionalEnv[name] = value
-		}
+	if err := ApplyGeminiSeatbeltLaunchEnv(h, harnessBuiltinMode, effectiveSandbox, cwd, params.TrustDir, additionalEnv); err != nil {
+		return nil, err
 	}
 	return additionalEnv, nil
 }
@@ -173,4 +157,42 @@ func resolveOpenCodeLaunchServer() (openCodeLaunchServer, error) {
 		return openCodeLaunchServer{}, fmt.Errorf("invalid internal OpenCode transport")
 	}
 	return srv, nil
+}
+
+// ApplyGeminiSeatbeltLaunchEnv is the launch-boundary step for Gemini's own
+// Seatbelt mode. That profile hides Gemini's OAuth credentials and every trust
+// store from the sandboxed CLI (gemini_seatbelt.go), so the step refuses an
+// auth type that cannot work in there and carries the host's trust decision
+// in, as the environment Gemini honours ahead of the file, by adding it to
+// env. It reads the launch's own composed environment. Any other launch is a
+// no-op. `session new` and the conv resume paths both call it.
+func ApplyGeminiSeatbeltLaunchEnv(
+	h *harness.Harness,
+	harnessBuiltinMode string,
+	effectiveSandbox *sandboxpolicy.Snapshot,
+	cwd string,
+	trustDir bool,
+	env map[string]string,
+) error {
+	if h.Name != harness.GeminiName || harnessBuiltinMode != harness.GeminiSandboxSeatbelt {
+		return nil
+	}
+	// Gemini's Seatbelt profile hides its OAuth credentials and every
+	// trust store from the sandboxed CLI (gemini_seatbelt.go): refuse an
+	// auth type that cannot work in there, and carry the host's trust
+	// decision in as the environment Gemini honours ahead of the file.
+	seatbeltEnv := launchModelEnvironment(sandboxpolicy.EnvironmentForLaunch(effectiveSandbox))
+	getenv := func(name string) string { return seatbeltEnv[name] }
+	if err := harness.ValidateGeminiSeatbeltLaunch(getenv, cwd); err != nil {
+		return err
+	}
+	trustEnv, err := harness.GeminiSeatbeltLaunchEnv(getenv, cwd, trustDir)
+	if err != nil {
+		slog.Warn("gemini seatbelt: cannot read the trust store; the sandboxed pane may ask for folder trust",
+			"cwd", cwd, "err", err)
+	}
+	for name, value := range trustEnv {
+		env[name] = value
+	}
+	return nil
 }
