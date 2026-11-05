@@ -84,7 +84,7 @@ func handleDashboardOperatorMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	addressed := sendReq{To: req.To}
-	if !resolveStewardAddresses(w, &addressed) {
+	if !resolveOperatorStewardAddresses(w, &addressed) {
 		return
 	}
 	target, matches, err := agent.ResolveSelector(addressed.To)

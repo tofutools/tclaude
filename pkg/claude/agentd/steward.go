@@ -3,6 +3,7 @@ package agentd
 import (
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -774,11 +775,25 @@ func isStewardAddress(to string) bool {
 
 // resolveStewardAddresses turns the address "steward" into the active Steward,
 // in To and Cc alike, before any routing looks at them. A built-in Steward keeps
-// the address while it runs. With none online the fixed address goes to the one
-// external steward able to answer, but a name the operator gave the Steward still
-// means that Steward. It answers the request and returns false when nobody can
+// the address while it runs, unless an agent shares the name, which is refused
+// as ambiguous. With none online the fixed address goes to the one
+// external steward able to answer, unless a live peer of the sender is named
+// exactly that; a name the operator gave the Steward still means that Steward. It answers the request and returns false when nobody can
 // take it.
-func resolveStewardAddresses(w http.ResponseWriter, req *sendReq) bool {
+func resolveStewardAddresses(w http.ResponseWriter, req *sendReq, from string) bool {
+	return resolveStewardAddressesFor(w, req, from)
+}
+
+// resolveOperatorStewardAddresses is resolveStewardAddresses for the operator's
+// own message to their Steward, where the address only ever means the Steward:
+// an agent that shares its name neither takes it nor makes it ambiguous.
+func resolveOperatorStewardAddresses(w http.ResponseWriter, req *sendReq) bool {
+	return resolveStewardAddressesFor(w, req, "")
+}
+
+// resolveStewardAddressesFor resolves for the sender from; "" is the operator,
+// for whom no agent shares the address.
+func resolveStewardAddressesFor(w http.ResponseWriter, req *sendReq, from string) bool {
 	var steward string
 	resolve := func(address *string) bool {
 		if !isStewardAddress(*address) {
@@ -789,8 +804,30 @@ func resolveStewardAddresses(w http.ResponseWriter, req *sendReq) bool {
 				steward = ""
 			}
 		}
+		named, isNamed := "", false
+		if from != "" {
+			named, isNamed = peerNamed(from, *address)
+		}
 		if steward != "" {
+			// An agent sharing the running Steward's address could be either
+			// one; delivering to a guess is worse than asking.
+			if isNamed {
+				stewardID, _ := db.AgentIDForConv(steward)
+				if stewardID == "" {
+					stewardID = short8(steward)
+				}
+				writeError(w, http.StatusConflict, "ambiguous", fmt.Sprintf(
+					"%q is both the running Steward (%s) and agent %s; address one by agent_id", strings.TrimSpace(*address), stewardID, named))
+				return false
+			}
 			*address = steward
+			return true
+		}
+		// With no built-in Steward running, an agent whose name is exactly the
+		// address is who the sender means, most often a group's lead named
+		// "steward". Ordinary routing takes it from here, with its usual gate.
+		if isNamed {
+			*address = named
 			return true
 		}
 		if strings.EqualFold(strings.TrimSpace(*address), stewardAddress) {
@@ -816,6 +853,58 @@ func resolveStewardAddresses(w http.ResponseWriter, req *sendReq) bool {
 		}
 	}
 	return true
+}
+
+// peerNamed finds the one live agent the sender shares a group with (as a
+// member or an owner) whose display name is exactly address, the name a group
+// lists it by: a group's lead named "steward", say. Only peers count, so an agent
+// renamed to the address elsewhere neither takes it nor shows in an ambiguity,
+// and only an exact name, never a conversation-id or agent-id prefix. A Steward
+// is never a peer here, and generations of one agent count once.
+func peerNamed(from, address string) (agentID string, ok bool) {
+	address = strings.TrimSpace(address)
+	groups, err := db.ListGroupsForConv(from)
+	if err != nil {
+		return "", false
+	}
+	ids := make([]int64, 0, len(groups))
+	for _, g := range groups {
+		ids = append(ids, g.ID)
+	}
+	if owned, err := db.ListGroupsOwnedBy(from); err == nil {
+		ids = append(ids, owned...)
+	}
+	members, err := db.ListAgentGroupMembersBatch(ids)
+	if err != nil {
+		return "", false
+	}
+	pending, err := db.PendingNamesByConv()
+	if err != nil {
+		return "", false
+	}
+	stewards := stewardConvs()
+	found := map[string]bool{}
+	for _, group := range members {
+		for _, m := range group {
+			if m.ConvID == from || slices.Contains(stewards, m.ConvID) || pickAliveSession(m.ConvID) == nil {
+				continue
+			}
+			row, _ := db.GetConvIndex(m.ConvID)
+			if db.AgentDisplayTitle(row, pending[m.ConvID]) != address {
+				continue
+			}
+			id, err := db.AgentIDForConv(m.ConvID)
+			if err != nil || id == "" {
+				continue
+			}
+			if a, err := db.GetAgent(id); err != nil || a == nil || !a.RetiredAt.IsZero() {
+				continue
+			}
+			found[id] = true
+			agentID = id
+		}
+	}
+	return agentID, len(found) == 1
 }
 
 // isLiveSteward reports whether conv is a live Steward. Its mail is untrusted

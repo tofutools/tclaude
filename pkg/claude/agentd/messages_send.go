@@ -206,7 +206,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
-	if !resolveStewardAddresses(w, &req) {
+	if !resolveStewardAddresses(w, &req, fromID) {
 		return
 	}
 	if group, peer, ok := splitFederatedGroup(req.To); ok {
