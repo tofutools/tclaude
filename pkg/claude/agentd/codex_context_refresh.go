@@ -51,11 +51,19 @@ type codexStatusRefreshSnapshot struct {
 }
 
 type codexReadThroughSnapshot struct {
-	at                    time.Time
-	interruptedSubagents  map[string]struct{}
-	follower              *harness.CodexTelemetryFollower
-	refreshing            bool
-	checkpointLoaded      bool
+	at                   time.Time
+	interruptedSubagents map[string]struct{}
+	follower             *harness.CodexTelemetryFollower
+	refreshing           bool
+	checkpointLoaded     bool
+	codexRuntimeRefresh
+}
+
+// codexRuntimeRefresh is what one completed read-through refresh caches for a
+// session: the rollout checkpoint, the session generation it was read for, the
+// runtime context and Fast-mode state, the cost baseline, and the context
+// snapshot as last persisted.
+type codexRuntimeRefresh struct {
 	checkpointData        string
 	checkpointFailures    int
 	checkpointPersistedAt time.Time
@@ -789,49 +797,41 @@ func refreshCodexContextSnapshotOnReadBatched(
 		timing.contextWrite += time.Since(contextWriteStarted)
 	}
 
-	cachePersistedConvID := persistedConvID
-	cachePersistedCreatedAt := persistedCreatedAt
-	cachePersistedContext := persistedContext
-	cachePersistedHasContext := persistedHasContext
-	cachePersistedReset := persistedReset
-	if contextPersistenceDeferred {
-		cachePersistedConvID = beforePersistence.convID
-		cachePersistedCreatedAt = beforePersistence.createdAt
-		cachePersistedContext = beforePersistence.context
-		cachePersistedHasContext = beforePersistence.hasContext
-		cachePersistedReset = beforePersistence.reset
+	entry := codexRuntimeRefresh{
+		checkpointData:        checkpointData,
+		checkpointFailures:    checkpointFailures,
+		checkpointPersistedAt: checkpointPersistedAt,
+		sessionConvID:         sess.ConvID,
+		sessionCreatedAt:      sess.CreatedAt,
+		runtimeContext:        snap.Context,
+		runtimeHasContext:     snap.HasContext,
+		runtimeReset:          snap.ContextReset,
+		runtimeFastMode:       runtimeFastMode,
+		runtimeHasFastMode:    runtimeHasFastMode,
+		costBaselineConvID:    costBaselineConvID,
+		costBaselineCreatedAt: costBaselineCreatedAt,
+		costFastModeBaseline:  costFastModeBaseline,
+		hasCostFastBaseline:   hasCostFastBaseline,
+		costInheritedUntil:    costInheritedUntil,
+		persistedConvID:       persistedConvID,
+		persistedCreatedAt:    persistedCreatedAt,
+		persistedContext:      persistedContext,
+		persistedHasContext:   persistedHasContext,
+		persistedReset:        persistedReset,
+		persistedEffort:       persistedEffort,
+		persistedUsageAt:      persistedUsageAt,
+		persistedVirtualCost:  persistedVirtualCost,
+		persistedCostAuth:     persistedCostAuth,
+		persistedCostHistory:  persistedCostHistory,
 	}
-	cacheCodexRuntimeRefresh(
-		sess.ID,
-		time.Now(),
-		snap.InterruptedSubagents,
-		checkpointData,
-		checkpointFailures,
-		checkpointPersistedAt,
-		sess.ConvID,
-		sess.CreatedAt,
-		snap.Context,
-		snap.HasContext,
-		snap.ContextReset,
-		runtimeFastMode,
-		runtimeHasFastMode,
-		costBaselineConvID,
-		costBaselineCreatedAt,
-		costFastModeBaseline,
-		hasCostFastBaseline,
-		costInheritedUntil,
-		contextPersistenceDeferred,
-		cachePersistedConvID,
-		cachePersistedCreatedAt,
-		cachePersistedContext,
-		cachePersistedHasContext,
-		cachePersistedReset,
-		persistedEffort,
-		persistedUsageAt,
-		persistedVirtualCost,
-		persistedCostAuth,
-		persistedCostHistory,
-	)
+	if contextPersistenceDeferred {
+		entry.persistedConvID = beforePersistence.convID
+		entry.persistedCreatedAt = beforePersistence.createdAt
+		entry.persistedContext = beforePersistence.context
+		entry.persistedHasContext = beforePersistence.hasContext
+		entry.persistedReset = beforePersistence.reset
+	}
+	cacheCodexRuntimeRefresh(sess.ID, time.Now(), snap.InterruptedSubagents, entry, contextPersistenceDeferred)
 	completed = true
 	result := codexContextRefreshResult{
 		interruptedSubagents: snap.InterruptedSubagents,
@@ -1027,36 +1027,15 @@ func recordCodexCheckpointFailure(sessionID, checkpointData string) {
 	codexContextRefreshMu.last[sessionID] = prev
 }
 
+// cacheCodexRuntimeRefresh records a completed refresh for sessionID, marks
+// its checkpoint loaded, and leaves it refreshing when keepRefreshing (a
+// deferred context write is still to land).
 func cacheCodexRuntimeRefresh(
 	sessionID string,
 	now time.Time,
 	interrupted map[string]struct{},
-	checkpointData string,
-	checkpointFailures int,
-	checkpointPersistedAt time.Time,
-	sessionConvID string,
-	sessionCreatedAt time.Time,
-	runtimeContext harness.ContextTelemetry,
-	runtimeHasContext bool,
-	runtimeReset bool,
-	runtimeFastMode bool,
-	runtimeHasFastMode bool,
-	costBaselineConvID string,
-	costBaselineCreatedAt time.Time,
-	costFastModeBaseline bool,
-	hasCostFastBaseline bool,
-	costInheritedUntil time.Time,
+	refresh codexRuntimeRefresh,
 	keepRefreshing bool,
-	persistedConvID string,
-	persistedCreatedAt time.Time,
-	persistedContext harness.ContextTelemetry,
-	persistedHasContext bool,
-	persistedReset bool,
-	persistedEffort string,
-	persistedUsageAt time.Time,
-	persistedVirtualCost float64,
-	persistedCostAuth bool,
-	persistedCostHistory []harness.CodexTokenCostDailySnapshot,
 ) {
 	codexContextRefreshMu.Lock()
 	defer codexContextRefreshMu.Unlock()
@@ -1067,31 +1046,8 @@ func cacheCodexRuntimeRefresh(
 	prev.at = now
 	prev.interruptedSubagents = interrupted
 	prev.checkpointLoaded = true
-	prev.checkpointData = checkpointData
-	prev.checkpointFailures = checkpointFailures
-	prev.checkpointPersistedAt = checkpointPersistedAt
-	prev.sessionConvID = sessionConvID
-	prev.sessionCreatedAt = sessionCreatedAt
-	prev.runtimeContext = runtimeContext
-	prev.runtimeHasContext = runtimeHasContext
-	prev.runtimeReset = runtimeReset
-	prev.runtimeFastMode = runtimeFastMode
-	prev.runtimeHasFastMode = runtimeHasFastMode
-	prev.costBaselineConvID = costBaselineConvID
-	prev.costBaselineCreatedAt = costBaselineCreatedAt
-	prev.costFastModeBaseline = costFastModeBaseline
-	prev.hasCostFastBaseline = hasCostFastBaseline
-	prev.costInheritedUntil = costInheritedUntil
-	prev.persistedConvID = persistedConvID
-	prev.persistedCreatedAt = persistedCreatedAt
-	prev.persistedContext = persistedContext
-	prev.persistedHasContext = persistedHasContext
-	prev.persistedReset = persistedReset
-	prev.persistedEffort = persistedEffort
-	prev.persistedUsageAt = persistedUsageAt
-	prev.persistedVirtualCost = persistedVirtualCost
-	prev.persistedCostAuth = persistedCostAuth
-	prev.persistedCostHistory = append([]harness.CodexTokenCostDailySnapshot(nil), persistedCostHistory...)
+	refresh.persistedCostHistory = append([]harness.CodexTokenCostDailySnapshot(nil), refresh.persistedCostHistory...)
+	prev.codexRuntimeRefresh = refresh
 	prev.refreshing = keepRefreshing
 	codexContextRefreshMu.last[sessionID] = prev
 }
