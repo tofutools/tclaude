@@ -45,7 +45,7 @@ func groupsOwnersCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsOwnersParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsOwners(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsOwners(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -114,7 +114,7 @@ func groupsGrantOwnerCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsGrantOwnerParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsGrantOwner(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsGrantOwner(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -170,7 +170,7 @@ func groupsRevokeOwnerCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsRevokeOwnerParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsRevokeOwner(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsRevokeOwner(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

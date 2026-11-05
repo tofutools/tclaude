@@ -60,7 +60,7 @@ func relaunchPolicyShowCmd() *cobra.Command {
 		Short:       "Show each configurable field's relaunch mode, its default, and why",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *relaunchPolicyShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRelaunchPolicyShow(p, os.Stdout, os.Stderr))
+			os.Exit(runRelaunchPolicyShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -113,7 +113,7 @@ func relaunchPolicySetCmd() *cobra.Command {
 		Long:        "Set the relaunch mode of one configurable field, for every agent. It takes effect on each agent's next resume, reincarnate or clone. Setting a field to its default clears the stored answer.\n\n" + relaunchPolicyHarnessConfigHelp,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *relaunchPolicySetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRelaunchPolicySet(p, os.Stdout, os.Stderr))
+			os.Exit(runRelaunchPolicySet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

@@ -54,7 +54,7 @@ func remoteControlCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *remoteControlParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRemoteControl(p, os.Stdout, os.Stderr))
+			os.Exit(runRemoteControl(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

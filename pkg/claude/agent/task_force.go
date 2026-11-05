@@ -74,7 +74,7 @@ func taskForceDeployCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskForceDeployParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskForceDeploy(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runTaskForceDeploy(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -257,7 +257,7 @@ func taskForceStandDownCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskForceStandDownParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskForceStandDown(p, os.Stdout, os.Stderr))
+			os.Exit(runTaskForceStandDown(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

@@ -8,6 +8,8 @@ import (
 	"sync"
 	"text/tabwriter"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/termtext"
 )
 
 // allNodesGroup is one row of `groups ls --all-nodes`, the CLI side of the
@@ -156,12 +158,12 @@ func runGroupsLsAllNodes(asJSON bool, stdout, stderr io.Writer) int {
 	tw := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "GROUP@NODE\tMEMBERS\tONLINE")
 	for _, r := range rows {
-		fmt.Fprintf(tw, "%s\t%d\t%d\n", peerViewCell(r.Name), r.Members, r.Online)
+		fmt.Fprintf(tw, "%s\t%d\t%d\n", termtext.Cell(r.Name), r.Members, r.Online)
 	}
 	_ = tw.Flush()
 	for _, n := range nodes {
 		if n.Error != "" {
-			fmt.Fprintf(stdout, "%s: unreachable (%s)\n", peerViewCell(n.Name), peerViewCell(n.Error))
+			fmt.Fprintf(stdout, "%s: unreachable (%s)\n", termtext.Cell(n.Name), termtext.Cell(n.Error))
 		}
 	}
 	return rc

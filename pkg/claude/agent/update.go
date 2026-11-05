@@ -13,8 +13,8 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/termtext"
 	"github.com/tofutools/tclaude/pkg/common"
-	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/selfupdate"
 )
 
@@ -30,7 +30,7 @@ type updateParams struct {
 }
 
 func UpdateCmd() *cobra.Command {
-	return boa.CmdT[updateParams]{Use: "update", Short: "Check, apply or roll back a tclaude update (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *updateParams, _ *cobra.Command, _ []string) { os.Exit(runUpdate(p, os.Stdout, os.Stderr)) }}.ToCobra()
+	return boa.CmdT[updateParams]{Use: "update", Short: "Check, apply or roll back a tclaude update (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *updateParams, _ *cobra.Command, _ []string) { os.Exit(runUpdate(p, cliStdout, cliStderr)) }}.ToCobra()
 }
 func updateAPIPath(node, tail string) string {
 	if node == "" {
@@ -88,7 +88,7 @@ func runUpdate(p *updateParams, stdout, stderr io.Writer) int {
 		return fail(err)
 	}
 	for _, warning := range job.Warnings {
-		fmt.Fprintln(stderr, "Warning:", updateCell(warning))
+		fmt.Fprintln(stderr, "Warning:", termtext.Cell(warning))
 	}
 	if p.NoWait {
 		return printUpdateResult(p, raw, stdout, stderr)
@@ -98,7 +98,7 @@ func runUpdate(p *updateParams, stdout, stderr io.Writer) int {
 	unreachableSince := time.Time{}
 	for time.Now().Before(deadline) {
 		if job.Phase != phase {
-			fmt.Fprintf(stderr, "Update %s: %s\n", job.ID, updateCell(job.Phase))
+			fmt.Fprintf(stderr, "Update %s: %s\n", job.ID, termtext.Cell(job.Phase))
 			phase = job.Phase
 		}
 		if job.State == "succeeded" || job.State == "failed" {
@@ -132,7 +132,6 @@ func runUpdate(p *updateParams, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stderr, "Update still running; inspect with --job %s\n", job.ID)
 	return rcIOFailure
 }
-func updateCell(s string) string { return strings.Join(strings.Fields(proto.StripControls(s)), " ") }
 func printUpdateResult(p *updateParams, raw json.RawMessage, stdout, stderr io.Writer) int {
 	var job selfupdate.Job
 	if err := json.Unmarshal(raw, &job); err != nil {
@@ -144,16 +143,16 @@ func printUpdateResult(p *updateParams, raw json.RawMessage, stdout, stderr io.W
 			return rcIOFailure
 		}
 	} else {
-		fmt.Fprintf(stdout, "%s %s: %s (%s)\n", updateCell(job.Action), updateCell(job.Version), updateCell(job.State), updateCell(job.ID))
+		fmt.Fprintf(stdout, "%s %s: %s (%s)\n", termtext.Cell(job.Action), termtext.Cell(job.Version), termtext.Cell(job.State), termtext.Cell(job.ID))
 		if job.Action == "check" && job.State == "succeeded" {
 			available := "unknown"
 			if job.UpdateAvailable != nil {
 				available = fmt.Sprint(*job.UpdateAvailable)
 			}
-			fmt.Fprintf(stdout, "Current: %s; selected: %s; update available: %s\n", updateCell(job.CurrentVersion), updateCell(job.Version), available)
+			fmt.Fprintf(stdout, "Current: %s; selected: %s; update available: %s\n", termtext.Cell(job.CurrentVersion), termtext.Cell(job.Version), available)
 		}
 		if job.Error != "" {
-			fmt.Fprintln(stderr, updateCell(job.Error))
+			fmt.Fprintln(stderr, termtext.Cell(job.Error))
 		}
 	}
 	if job.State == "failed" {

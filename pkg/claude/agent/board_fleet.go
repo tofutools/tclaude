@@ -39,7 +39,7 @@ func boardFromFleetCmd() *cobra.Command {
 		Args:        cobra.ExactArgs(1),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardFromFleetParams, _ *cobra.Command, args []string) {
-			os.Exit(runBoardFromFleet(p, args[0], os.Stdout, os.Stderr))
+			os.Exit(runBoardFromFleet(p, args[0], cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

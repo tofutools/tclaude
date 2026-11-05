@@ -50,7 +50,7 @@ func resourcesLsCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *resourcesLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runResourcesLs(p, os.Stdout, os.Stderr))
+			os.Exit(runResourcesLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -143,7 +143,7 @@ func resourcesLockCmd(lock bool) *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *resourcesLockParams, _ *cobra.Command, _ []string) {
-			os.Exit(runResourcesLock(p, lock, os.Stdout, os.Stderr))
+			os.Exit(runResourcesLock(p, lock, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

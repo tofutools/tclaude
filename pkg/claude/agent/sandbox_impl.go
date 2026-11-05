@@ -59,7 +59,7 @@ func sandboxImplShowCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *sandboxImplShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSandboxImplShow(p, os.Stdout, os.Stderr))
+			os.Exit(runSandboxImplShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -104,7 +104,7 @@ func sandboxImplSetCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *sandboxImplSetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSandboxImplSet(p, os.Stdout, os.Stderr))
+			os.Exit(runSandboxImplSet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

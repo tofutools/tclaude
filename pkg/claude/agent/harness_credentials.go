@@ -13,6 +13,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/termtext"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/harnesscredentials"
 )
@@ -29,7 +30,7 @@ func harnessCredentialCommand() *cobra.Command {
 	commands := []*cobra.Command{}
 	for _, action := range []string{"push", "backup", "restore", "ls"} {
 		commands = append(commands, boa.CmdT[credentialParams]{Use: action, Short: map[string]string{"push": "Push your own credentials to a peer, backing up before replacement", "backup": "Back up local or peer credentials privately", "restore": "Restore a credential backup, backing up current files first", "ls": "List credential backup metadata"}[action], ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *credentialParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCredentialOperation(action, p, os.Stdout, os.Stderr))
+			os.Exit(runCredentialOperation(action, p, cliStdout, cliStderr))
 		}}.ToCobra())
 	}
 	return boa.CmdT[struct{}]{Use: "credentials", Short: "Push your credentials and manage private backups (operator only)", ParamEnrich: common.DefaultParamEnricher(), SubCmds: commands}.ToCobra()
@@ -100,10 +101,10 @@ func runCredentialOperation(action string, p *credentialParams, stdout, stderr i
 			}
 			if action == "ls" {
 				for _, b := range response.Backups {
-					fmt.Fprintf(stdout, "%s %s %s\n", updateCell(b.ID), b.CreatedAt.Format(time.RFC3339), updateCell(b.Location))
+					fmt.Fprintf(stdout, "%s %s %s\n", termtext.Cell(b.ID), b.CreatedAt.Format(time.RFC3339), termtext.Cell(b.Location))
 				}
 			} else {
-				fmt.Fprintf(stdout, "%s %s: backup %s (%s)\n", name, action, updateCell(response.Receipt.BackupID), updateCell(response.Receipt.BackupLocation))
+				fmt.Fprintf(stdout, "%s %s: backup %s (%s)\n", name, action, termtext.Cell(response.Receipt.BackupID), termtext.Cell(response.Receipt.BackupLocation))
 			}
 		}
 	}

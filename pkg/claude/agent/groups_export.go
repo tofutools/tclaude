@@ -54,7 +54,7 @@ func groupsExportCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsExportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsExport(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsExport(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -191,7 +191,7 @@ func groupsImportCmd() *cobra.Command {
 			"(default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *groupsImportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsImport(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsImport(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -525,7 +525,7 @@ func groupsTransfersCmd() *cobra.Command {
 			"Read-only; open to any caller.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *groupsTransfersParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsTransfers(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsTransfers(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

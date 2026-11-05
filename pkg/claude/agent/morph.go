@@ -68,7 +68,7 @@ func morphCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *morphParams, _ *cobra.Command, _ []string) {
-			os.Exit(runMorph(p, os.Stdout, os.Stderr))
+			os.Exit(runMorph(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -344,7 +344,7 @@ func morphHandoffCmd() *cobra.Command {
 			"earlier handoff. Keep it under 64 KiB and point at files for detail.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *morphHandoffParams, _ *cobra.Command, _ []string) {
-			os.Exit(runMorphHandoff(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runMorphHandoff(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

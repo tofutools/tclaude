@@ -43,7 +43,7 @@ func snapshotShareCmd() *cobra.Command {
 			"is refused: export it, run tclaude paf redact, and share the file with --file.\n\n" +
 			"  tclaude agent snapshot share before-refactor --board BOARD --to lab --expires 3d",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *snapshotShareParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSnapshotShare(p, os.Stdin, os.Stdout, os.Stderr, term.IsTerminal(int(os.Stdin.Fd()))))
+			os.Exit(runSnapshotShare(p, os.Stdin, cliStdout, cliStderr, term.IsTerminal(int(os.Stdin.Fd()))))
 		}}.ToCobra()
 }
 
@@ -146,7 +146,7 @@ func snapshotBoardCmd() *cobra.Command {
 			"untrusted. rm deletes a snapshot from the board (its publisher or a board owner) and this node's fetched\n" +
 			"copy; rm --local removes only the fetched copy. Fetched copies are also removed when the snapshot expires.",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *snapshotBoardParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSnapshotBoard(p, os.Stdout, os.Stderr))
+			os.Exit(runSnapshotBoard(p, cliStdout, cliStderr))
 		}}.ToCobra()
 }
 

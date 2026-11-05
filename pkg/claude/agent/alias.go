@@ -81,7 +81,7 @@ func aliasSetCmd() *cobra.Command {
 		Short:       "Anchor a handle to a conv (re-pointable)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *aliasSetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runAliasSet(p, os.Stdout, os.Stderr))
+			os.Exit(runAliasSet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -122,7 +122,7 @@ func aliasRmCmd() *cobra.Command {
 		Short:       "Remove a head alias",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *aliasRmParams, _ *cobra.Command, _ []string) {
-			os.Exit(runAliasRm(p, os.Stdout, os.Stderr))
+			os.Exit(runAliasRm(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -152,7 +152,7 @@ func aliasLsCmd() *cobra.Command {
 		Short:       "List every head alias and its current head conv",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *aliasLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runAliasLs(p, os.Stdout, os.Stderr))
+			os.Exit(runAliasLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -201,7 +201,7 @@ func aliasGetCmd() *cobra.Command {
 		Short:       "Resolve one head alias to its current head conv-id",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *aliasGetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runAliasGet(p, os.Stdout, os.Stderr))
+			os.Exit(runAliasGet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

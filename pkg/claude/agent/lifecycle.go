@@ -57,7 +57,7 @@ func compactCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *compactParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSlashWithOptionalTarget(p.FollowUp, p.Target, p.AskHuman, "compact", os.Stdout, os.Stderr))
+			os.Exit(runSlashWithOptionalTarget(p.FollowUp, p.Target, p.AskHuman, "compact", cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -83,7 +83,7 @@ func interruptCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *interruptParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSlashWithOptionalTarget("", p.Target, p.AskHuman, "interrupt", os.Stdout, os.Stderr))
+			os.Exit(runSlashWithOptionalTarget("", p.Target, p.AskHuman, "interrupt", cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -114,7 +114,7 @@ func contextInfoCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *contextInfoParams, _ *cobra.Command, _ []string) {
-			os.Exit(runContextInfo(p, os.Stdout, os.Stderr))
+			os.Exit(runContextInfo(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

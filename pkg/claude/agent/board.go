@@ -231,7 +231,7 @@ func boardLsCmd() *cobra.Command {
 		Args:        cobra.NoArgs,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runBoardLs(p, os.Stdout, os.Stderr))
+			os.Exit(runBoardLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -294,7 +294,7 @@ func boardShowCmd() *cobra.Command {
 		Args:        cobra.ExactArgs(1),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardShowParams, _ *cobra.Command, args []string) {
-			os.Exit(runBoardShow(p, args[0], os.Stdout, os.Stderr))
+			os.Exit(runBoardShow(p, args[0], cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -479,7 +479,7 @@ func boardSnapshotCmd() *cobra.Command {
 		Args:        cobra.ExactArgs(1),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardSnapshotParams, _ *cobra.Command, args []string) {
-			os.Exit(runBoardSnapshot(p, args[0], os.Stdout, os.Stderr))
+			os.Exit(runBoardSnapshot(p, args[0], cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -548,7 +548,7 @@ func boardCreateCmd() *cobra.Command {
 		Args:        cobra.ExactArgs(1),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardCreateParams, _ *cobra.Command, args []string) {
-			os.Exit(runBoardCreate(p, args[0], os.Stdout, os.Stderr))
+			os.Exit(runBoardCreate(p, args[0], cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -581,7 +581,7 @@ func boardOpenCmd() *cobra.Command {
 		Args:        cobra.ExactArgs(1),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, args []string) {
-			os.Exit(runBoardOpen(args[0], os.Stdout, os.Stderr))
+			os.Exit(runBoardOpen(args[0], cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -607,7 +607,7 @@ func boardCloseCmd() *cobra.Command {
 		Args:        cobra.ExactArgs(1),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, args []string) {
-			os.Exit(runBoardClose(args[0], os.Stdout, os.Stderr))
+			os.Exit(runBoardClose(args[0], cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -669,7 +669,7 @@ func boardAddCmd() *cobra.Command {
 		Args:        cobra.ExactArgs(2),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardAddParams, _ *cobra.Command, args []string) {
-			os.Exit(runBoardAdd(p, args[0], args[1], os.Stdout, os.Stderr))
+			os.Exit(runBoardAdd(p, args[0], args[1], cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1004,7 +1004,7 @@ func boardPatchCmd() *cobra.Command {
 		Args:        cobra.ExactArgs(1),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardPatchParams, _ *cobra.Command, args []string) {
-			os.Exit(runBoardPatch(p, args[0], os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runBoardPatch(p, args[0], os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1061,7 +1061,7 @@ func boardRmCmd() *cobra.Command {
 		Args:        cobra.MinimumNArgs(2),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, args []string) {
-			os.Exit(runBoardRm(args[0], args[1:], os.Stdout, os.Stderr))
+			os.Exit(runBoardRm(args[0], args[1:], cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1129,7 +1129,7 @@ func boardMoveCmd() *cobra.Command {
 		Args:        cobra.ExactArgs(2),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardMoveParams, _ *cobra.Command, args []string) {
-			os.Exit(runBoardMove(p, args[0], args[1], os.Stdout, os.Stderr))
+			os.Exit(runBoardMove(p, args[0], args[1], cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1182,7 +1182,7 @@ func boardTextCmd() *cobra.Command {
 		Args:        cobra.ExactArgs(2),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardTextParams, _ *cobra.Command, args []string) {
-			os.Exit(runBoardText(p, args[0], args[1], os.Stdout, os.Stderr))
+			os.Exit(runBoardText(p, args[0], args[1], cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

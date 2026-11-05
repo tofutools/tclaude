@@ -27,7 +27,7 @@ func presentPRCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *presentPRParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPresentPR(p, os.Stdout, os.Stderr))
+			os.Exit(runPresentPR(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

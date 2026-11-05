@@ -66,7 +66,7 @@ func groupsLinksAllCmd() *cobra.Command {
 		Short:       "List every inter-group link across all groups",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *groupsLinksAllParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsLinksAll(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsLinksAll(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -97,7 +97,7 @@ func groupsLinkLsCmd() *cobra.Command {
 		Short:       "List inter-group links touching the given group",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *groupsLinkLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsLinkLs(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsLinkLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -179,7 +179,7 @@ func groupsLinkAddCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsLinkAddParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsLinkAdd(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsLinkAdd(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -290,7 +290,7 @@ func groupsLinkSetModeCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsLinkSetModeParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsLinkSetMode(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsLinkSetMode(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -344,7 +344,7 @@ func groupsLinkRmCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsLinkRmParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsLinkRm(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsLinkRm(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -388,7 +388,7 @@ func groupsWhyCanMessageCmd() *cobra.Command {
 		Short:       "Explain which group / link authorises (or fails to authorise) a send to this target",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *whyCanMessageParams, _ *cobra.Command, _ []string) {
-			os.Exit(runWhyCanMessage(p, os.Stdout, os.Stderr))
+			os.Exit(runWhyCanMessage(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
