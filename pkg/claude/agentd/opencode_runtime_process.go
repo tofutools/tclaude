@@ -114,8 +114,9 @@ func openCodeServerPort(runtime *db.OpenCodeRuntime) (string, error) {
 }
 
 // startDirectOpenCodeServer starts the server as a child of this daemon,
-// placed in its resource cgroup, and registers it. The exit watcher retires
-// its workload group, records an OOM outcome and finishes the process.
+// placed in its resource cgroup, closes the parent's copies of extraFiles,
+// registers it and records its PID on runtime. The exit watcher retires its
+// workload group, records an OOM outcome and finishes the process.
 // closeCgroupFD is the caller's to run once the launch is settled.
 func startDirectOpenCodeServer(
 	runtime *db.OpenCodeRuntime, command string, args, serverEnvironment []string,
