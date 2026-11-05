@@ -115,7 +115,10 @@ test('no reveal with a button held, during a drag, on a coarse pointer, or when 
   for (const [why, run] of [
     ['a button held', (s) => s.atEdge({ buttons: 1 })],
     ['a button pressed during the dwell', (s) => { s.atEdge(); s.harness.fireEvent(s.content, 'pointerdown'); }],
-    ['an HTML5 drag under way', (s) => { s.harness.fireEvent(s.content, 'dragstart'); s.atEdge(); }],
+    // No pointer events fire during an HTML5 drag: a dwell under way stops at
+    // its start, and dragging over the edge zone is not a reveal.
+    ['an HTML5 drag under way', (s) => { s.atEdge(); s.harness.fireEvent(s.content, 'dragstart');
+      s.harness.fireEvent(s.content, 'dragover', { clientX: WIDTH - 4, clientY: 300 }); }],
     ['a touch pointer', (s) => s.atEdge({ pointerType: 'touch' })],
     ['the panel unfolded', (s) => { s.side.setSidePanelOpen(true, 'groups'); s.atEdge(); }],
   ]) {
@@ -179,6 +182,14 @@ test('it stays while it has focus, an open menu, or a drag that started in it', 
     s.timers.advance(s.hoverClose);
     assert.equal(s.revealed(), false, 'focus leaving, with the pointer away, lets it go');
   });
+  await t.test('but not the focus a click leaves on a button', async (t) => {
+    const s = await shell(t);
+    s.restAtEdge();
+    s.menuButton.focus();
+    s.move(s.content, 300);
+    s.timers.advance(s.hoverClose);
+    assert.equal(s.revealed(), false, 'a clicked button keeps focus in Chrome; that does not hold the panel');
+  });
   await t.test('an open menu', async (t) => {
     const s = await shell(t);
     s.restAtEdge();
@@ -196,6 +207,8 @@ test('it stays while it has focus, an open menu, or a drag that started in it', 
     s.restAtEdge();
     const menu = s.doc.body.appendChild(s.doc.createElement('div'));
     menu.setAttribute('role', 'menu');
+    // On screen: a context menu is rendered only while open, so it lays out.
+    menu.getClientRects = () => [{ width: 120, height: 80 }];
     s.move(s.content, 300);
     s.timers.advance(s.hoverClose);
     assert.equal(s.revealed(), true);
@@ -207,8 +220,11 @@ test('it stays while it has focus, an open menu, or a drag that started in it', 
   await t.test('a drag from it', async (t) => {
     const s = await shell(t);
     s.restAtEdge();
+    s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
+    // The card leaves the panel as it is dragged (the panel's leave), and the
+    // page sees no pointer events until the drop.
     s.harness.fireEvent(s.doc.getElementById('dock-body'), 'dragstart');
-    s.move(s.content, 300);
+    s.harness.fireEvent(s.dock, 'pointerleave');
     s.timers.advance(s.hoverClose);
     assert.equal(s.revealed(), true, 'a card dragged out of it onto a group keeps it until the drop');
     s.harness.fireEvent(s.doc.getElementById('dock-body'), 'dragend');
@@ -249,4 +265,123 @@ test('the config switch turns it off, and off takes a floating panel away', asyn
   s.reveal.setEdgeRevealEnabled(true, s.doc);
   s.restAtEdge();
   assert.equal(s.revealed(), true);
+});
+
+// The review's finds: each was a way to get stuck or to slide in at the wrong
+// moment, and each passed the pins above.
+
+test('closed menus the page keeps in the DOM do not hold it', async (t) => {
+  const s = await shell(t);
+  // Hidden by a class, not the hidden attribute, like .action-menu:not(.open).
+  const closed = s.doc.body.appendChild(s.doc.createElement('div'));
+  closed.className = 'ui-menu action-menu';
+  closed.setAttribute('role', 'menu');
+  closed.getClientRects = () => [];
+  s.restAtEdge();
+  s.move(s.content, 300);
+  s.timers.advance(s.hoverClose);
+  assert.equal(s.revealed(), false, 'it still goes');
+  s.restAtEdge();
+  s.harness.fireEvent(s.doc.body, 'keydown', { key: 'Escape' });
+  assert.equal(s.revealed(), false, 'and Escape still works');
+});
+
+test('a drag whose dragend never arrives does not leave the reveal dead', async (t) => {
+  const s = await shell(t);
+  // A drop that re-renders the dragged group header: no dragend reaches the
+  // document. The next pointer move proves the drag is over.
+  s.harness.fireEvent(s.content, 'dragstart');
+  s.restAtEdge();
+  assert.equal(s.revealed(), true, 'the next pointer move ends the drag, so resting at the edge reveals again');
+  await t.test('nor holds a panel it was dragged from', async (t) => {
+    const s = await shell(t);
+    s.restAtEdge();
+    s.harness.fireEvent(s.doc.getElementById('dock-body'), 'dragstart');
+    s.move(s.content, 300);
+    s.timers.advance(s.hoverClose);
+    assert.equal(s.revealed(), false);
+  });
+});
+
+test('resting on the folded handle does not slide the panel in under the click', async (t) => {
+  const s = await shell(t);
+  s.move(s.doc.getElementById('dock-toggle'), WIDTH - 4);
+  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS * 4);
+  assert.equal(s.revealed(), false);
+  s.harness.fireEvent(s.doc.getElementById('dock-toggle'), 'click');
+  assert.equal(s.side.isSidePanelOpen('groups'), true, 'the click pins it, as aimed');
+});
+
+test('a reveal does not carry over from one tab\'s panel to another\'s', async (t) => {
+  const s = await shell(t);
+  s.side.offerSidePanel('collab', true);
+  s.restAtEdge();
+  assert.equal(s.revealed(), true);
+  s.activate('tab-terminals');
+  assert.equal(s.revealed(), false, 'the Collab panel does not appear already floating');
+});
+
+test('leaving the panel straight into a frame still sends it away', async (t) => {
+  const s = await shell(t);
+  s.restAtEdge();
+  s.move(s.doc.getElementById('dock-body'), WIDTH - 100);
+  // Into an iframe: the page gets no further pointermove, only the panel's
+  // leave, which does not bubble.
+  s.dock.dispatchEvent(new s.harness.window.Event('pointerleave', { bubbles: false }));
+  s.timers.advance(s.hoverClose);
+  assert.equal(s.revealed(), false);
+});
+
+test('the edge zone is the panel\'s own height band', async (t) => {
+  const s = await shell(t);
+  s.dock.getBoundingClientRect = () => ({ top: 100, bottom: 600, left: WIDTH, right: WIDTH + 264, width: 264, height: 500 });
+  s.move(s.content, WIDTH - 4, { clientY: 50 });
+  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+  assert.equal(s.revealed(), false, 'above the panel (the top bar) is not the edge zone');
+  s.move(s.content, WIDTH - 4, { clientY: 300 });
+  s.timers.advance(s.reveal.EDGE_REVEAL_DWELL_MS);
+  assert.equal(s.revealed(), true);
+});
+
+// End to end over the real dashboard.html body: its closed menus are in the
+// DOM (the Groups filter bar's cog menu, hidden by a class), and the panel
+// still auto-hides and Escape still sends it away.
+test('end to end over the real dashboard markup: the panel auto-hides', async (t) => {
+  const { readFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const harness = await createPreactHarness(t);
+  const doc = harness.document;
+  const page = await readFile(fileURLToPath(new URL('../dashboard/dashboard.html', import.meta.url)), 'utf8');
+  doc.body.innerHTML = page.slice(page.indexOf('<body'), page.lastIndexOf('</body>')).replace(/^<body[^>]*>/, '').replace(/<script[\s\S]*?<\/script>/g, '');
+  assert.ok(doc.querySelector('.action-menu[role="menu"]'), 'fixture: a closed menu the page keeps in the DOM');
+  assert.ok(doc.getElementById('agent-dock') && doc.getElementById('dock-toggle') && doc.getElementById('tab-groups'), 'fixture: the real shell');
+  const win = doc.defaultView || globalThis;
+  const before = win.innerWidth;
+  win.innerWidth = WIDTH;
+  t.after(() => { win.innerWidth = before; });
+  const [side, reveal, watch] = await Promise.all([
+    harness.importDashboardModule('js/side-panel.js'),
+    harness.importDashboardModule('js/side-panel-reveal.js'),
+    harness.importDashboardModule('js/popover-watch.js'),
+  ]);
+  side.registerSidePanel('groups', { pane: 'tab-groups', pref: 'test.e2e.open', open: false, body: '#dock-body', autoReveal: true,
+    titles: [['Hide', 'Hide'], ['Show', 'Show']] });
+  const timers = fakeTimers();
+  side.bindSidePanel(doc);
+  reveal.bindEdgeReveal(doc, { timers, finePointer: () => true });
+  side.applySidePanel(doc);
+  const main = doc.getElementById('tab-groups');
+  const move = (target, clientX) => harness.fireEvent(target, 'pointermove', { clientX, clientY: 300, buttons: 0, pointerType: 'mouse' });
+
+  move(main, WIDTH - 4);
+  timers.advance(reveal.EDGE_REVEAL_DWELL_MS);
+  assert.ok(doc.body.classList.contains('dock-revealed'), 'it floats in');
+  move(doc.getElementById('dock-body'), WIDTH - 100);
+  move(main, 300);
+  timers.advance(watch.HOVER_CLOSE_MS);
+  assert.ok(!doc.body.classList.contains('dock-revealed'), 'and goes after the hover-out delay');
+  move(main, WIDTH - 4);
+  timers.advance(reveal.EDGE_REVEAL_DWELL_MS);
+  harness.fireEvent(doc.body, 'keydown', { key: 'Escape' });
+  assert.ok(!doc.body.classList.contains('dock-revealed'), 'Escape sends it away');
 });

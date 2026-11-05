@@ -36,6 +36,7 @@ export function registerSidePanel(name, { pane, pref, open = true, body, titles,
 // content. It never reflows the page and is never remembered: unfolding the
 // panel (its handle) is what pins it.
 let revealed = false;
+let revealedName = '';
 
 // isSidePanelRevealed reports whether the folded panel is floating in.
 export function isSidePanelRevealed() {
@@ -54,6 +55,7 @@ export function canRevealSidePanel(doc = globalThis.document) {
 export function revealSidePanel(doc = globalThis.document) {
   if (revealed || !canRevealSidePanel(doc)) return;
   revealed = true;
+  revealedName = activeSidePanel(doc).name;
   applySidePanel(doc);
 }
 
@@ -114,8 +116,9 @@ export function applySidePanel(doc = globalThis.document) {
   if (!doc?.body) return;
   const panel = activeSidePanel(doc);
   const open = !!panel && isSidePanelOpen(panel.name);
-  // A tab switch, an unfold or a panel that never opted in ends a reveal.
-  if (revealed && (!panel || open || !panel.autoReveal)) revealed = false;
+  // A tab switch (even to another panel that opted in), an unfold or a panel
+  // that never opted in ends a reveal.
+  if (revealed && (!panel || panel.name !== revealedName || open || !panel.autoReveal)) revealed = false;
   doc.body.classList.toggle('dock-tab', !!panel);
   doc.body.classList.toggle('dock-open', open);
   doc.body.classList.toggle('dock-revealed', revealed);

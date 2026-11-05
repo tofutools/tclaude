@@ -32,12 +32,29 @@ export function setEdgeRevealEnabled(on, doc = globalThis.document) {
   if (!enabled) concealSidePanel(doc);
 }
 
+// shownMenu is a menu actually on screen. The page keeps closed menus in the
+// DOM, hidden by a class (.action-menu:not(.open)) rather than the hidden
+// attribute, so only one that lays out counts.
+function shownMenu(menu) {
+  if (menu.hidden || menu.closest?.('[hidden]')) return false;
+  return menu.classList.contains('open') || (menu.getClientRects?.().length || 0) > 0;
+}
+
 // openMenu is a menu the panel has open: a menu button inside it showing its
-// menu, or any menu in the page (a row's context menu is placed outside the
+// menu, or any menu on screen (a row's context menu is placed outside the
 // panel, and only the panel's pointer could have opened it while it floats).
 function openMenu(dock, doc) {
   return !!dock?.querySelector('[aria-haspopup][aria-expanded="true"]')
-    || [...doc.querySelectorAll('[role="menu"]')].some((menu) => !menu.hidden);
+    || [...doc.querySelectorAll('[role="menu"]')].some(shownMenu);
+}
+
+// typing is a text-entry control: focus there (the Find box) holds the panel,
+// focus a click left on a button does not.
+function typing(el) {
+  if (el?.isContentEditable) return true;
+  const tag = el?.tagName;
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  return tag === 'INPUT' && !/^(button|checkbox|color|file|hidden|image|radio|range|reset|submit)$/.test(el.type || '');
 }
 
 // bindEdgeReveal watches the pointer for the reveal. timers and finePointer
@@ -64,7 +81,8 @@ export function bindEdgeReveal(doc = globalThis.document, {
   };
   const held = () => {
     const panel = dock();
-    return dragFromPanel || !!panel?.contains(doc.activeElement) || openMenu(panel, doc);
+    const focused = doc.activeElement;
+    return dragFromPanel || (!!panel?.contains(focused) && typing(focused)) || openMenu(panel, doc);
   };
   // scheduleHide sends a floating panel away after the hover-out delay, unless
   // it is held then; whatever ends the hold (the pointer moving on, focus
@@ -82,7 +100,19 @@ export function bindEdgeReveal(doc = globalThis.document, {
     return !rect?.height || (event.clientY >= rect.top && event.clientY <= rect.bottom);
   };
 
+  // No pointer events fire during an HTML5 drag, so a pointermove means any
+  // drag is over, even one whose dragend never reached the document because
+  // the drop re-rendered its source.
+  const dragOver = () => {
+    if (!dragging) return;
+    dragging = false;
+    if (!dragFromPanel) return;
+    dragFromPanel = false;
+    scheduleHide();
+  };
+
   doc.addEventListener('pointermove', (event) => {
+    dragOver();
     if (event.pointerType && event.pointerType !== 'mouse') return;
     if (isSidePanelRevealed()) {
       overPanel = !!dock()?.contains(event.target);
@@ -90,7 +120,10 @@ export function bindEdgeReveal(doc = globalThis.document, {
       else scheduleHide();
       return;
     }
-    if (!enabled || event.buttons || dragging || !inEdgeZone(event) || !finePointer() || !canRevealSidePanel(doc)) {
+    // The folded handle sits in the edge zone: aiming at it must not slide the
+    // panel in under the click.
+    const onHandle = !!doc.getElementById('dock-toggle')?.contains(event.target);
+    if (!enabled || event.buttons || dragging || onHandle || !inEdgeZone(event) || !finePointer() || !canRevealSidePanel(doc)) {
       cancelDwell();
       return;
     }
@@ -112,11 +145,19 @@ export function bindEdgeReveal(doc = globalThis.document, {
     cancelDwell();
     dragFromPanel = isSidePanelRevealed() && !!dock()?.contains(event.target);
   });
-  doc.addEventListener('dragend', () => {
-    dragging = false;
-    if (!dragFromPanel) return;
-    dragFromPanel = false;
+  doc.addEventListener('dragend', dragOver);
+  doc.addEventListener('drop', dragOver, true);
+  // The pointer can leave the panel straight into a frame (a page or a board),
+  // after which the page sees no pointermove: the panel's own leave says so.
+  const panel = dock();
+  panel?.addEventListener('pointerleave', () => {
+    overPanel = false;
     scheduleHide();
+  });
+  panel?.addEventListener('pointerenter', () => {
+    if (!isSidePanelRevealed()) return;
+    overPanel = true;
+    cancelHide();
   });
   doc.addEventListener('focusout', (event) => {
     if (dock()?.contains(event.target) && !overPanel) scheduleHide();
