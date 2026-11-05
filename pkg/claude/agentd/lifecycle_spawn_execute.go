@@ -910,10 +910,10 @@ type spawnSettle struct {
 // reported as a failure: the enrollment is preserved because the child may
 // still come up, and that child needs its routes. Revoking it would strand a
 // live agent without them.
-func (s spawnSettle) enrolledLaunch(tmuxSession string) (*spawnOutcome, *spawnFailure, bool) {
-	p, label, preConvID, preMsgID, briefingInlined := s.p, s.label, s.preConvID, s.preMsgID, s.briefingInlined
-	launchEnroll, launchedAt, pendingHeld := s.launchEnroll, s.launchedAt, s.pendingHeld
-	spawnHarness, spawnArgs, focus := s.harness, s.args, s.focus
+func (st spawnSettle) enrolledLaunch(tmuxSession string) (*spawnOutcome, *spawnFailure, bool) {
+	p, label, preConvID, preMsgID, briefingInlined := st.p, st.label, st.preConvID, st.preMsgID, st.briefingInlined
+	launchEnroll, launchedAt, pendingHeld := st.launchEnroll, st.launchedAt, st.pendingHeld
+	spawnHarness, spawnArgs, focus := st.harness, st.args, st.focus
 	// Copilot launch enrollment delivers the validated name as a native
 	// launch argument rather than through deliverRename. Mirror that accepted
 	// title into the shared conversation index now, just as its rename path
@@ -979,8 +979,8 @@ func (s spawnSettle) enrolledLaunch(tmuxSession string) (*spawnOutcome, *spawnFa
 
 // Conv-id resolved within the poll: finish enrollment inline (Codex, or CC
 // with the legacy-injection revert flag) and inject the rename + welcome.
-func (s spawnSettle) discoveredConv(convID, tmuxSession string) (*spawnOutcome, *spawnFailure, bool) {
-	g, p, label, pendingHeld, focus := s.g, s.p, s.label, s.pendingHeld, s.focus
+func (st spawnSettle) discoveredConv(convID, tmuxSession string) (*spawnOutcome, *spawnFailure, bool) {
+	g, p, label, pendingHeld, focus := st.g, st.p, st.label, st.pendingHeld, st.focus
 	if p.CodexAppServer && !awaitCodexAppServerLaunchReady(convID, label) {
 		stopFailedCodexAppServerLaunch(convID, label, label)
 		return nil, &spawnFailure{http.StatusServiceUnavailable, "codex_app_server_unavailable",
@@ -1038,9 +1038,9 @@ func (s spawnSettle) discoveredConv(convID, tmuxSession string) (*spawnOutcome, 
 // gate, and the sweeper back-fills the enrollment once the conv-id
 // appears. Restart-safe: the row carries everything finishSpawnEnrollment
 // needs.
-func (s spawnSettle) pendingAsync(tmuxSession string) (*spawnOutcome, *spawnFailure, bool) {
-	g, p, label, launchedAt, focus := s.g, s.p, s.label, s.launchedAt, s.focus
-	spawnHarness, pollBudget, backgroundBackfillBudget := s.harness, s.pollBudget, s.backgroundBackfillBudget
+func (st spawnSettle) pendingAsync(tmuxSession string) (*spawnOutcome, *spawnFailure, bool) {
+	g, p, label, launchedAt, focus := st.g, st.p, st.label, st.launchedAt, st.focus
+	spawnHarness, pollBudget, backgroundBackfillBudget := st.harness, st.pollBudget, st.backgroundBackfillBudget
 	focus.open(tmuxSession) // belt-and-suspenders: open the pane even if it came up slow
 	ps, err := db.GetPendingSpawn(label)
 	if err != nil {
@@ -1063,8 +1063,8 @@ func (s spawnSettle) pendingAsync(tmuxSession string) (*spawnOutcome, *spawnFail
 
 // Synchronous (template or process-performer) path: the caller needs the
 // conv-id now, so a timeout is a hard failure — unchanged from before inc2.
-func (s spawnSettle) timedOut() *spawnFailure {
-	label, pollBudget := s.label, s.pollBudget
+func (st spawnSettle) timedOut() *spawnFailure {
+	label, pollBudget := st.label, st.pollBudget
 	return &spawnFailure{http.StatusGatewayTimeout, "timeout",
 		"spawned session " + label + " but conv-id never materialised within " + pollBudget.String() +
 			" — the session may still come up; check `tclaude session attach " + label + "`"}
