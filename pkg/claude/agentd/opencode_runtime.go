@@ -163,41 +163,9 @@ func startOpenCodeRuntime(
 	sandboxSpec *session.TclaudeLayerLaunchSpec,
 	resourceCgroupDir string,
 ) (*openCodeLaunch, error) {
-	permissionJSON = strings.TrimSpace(permissionJSON)
-	if permissionJSON == "" {
-		return nil, fmt.Errorf("OpenCode permission policy is required")
-	}
-	if _, err := decodeOpenCodePermissionRules(permissionJSON); err != nil {
-		return nil, err
-	}
-	var err error
-	cwd, err = resolveOpenCodeLaunchCwd(cwd)
+	in, err := prepareOpenCodeRuntimeLaunch(cwd, permissionJSON, sandboxImplementation, sandboxSpec)
 	if err != nil {
 		return nil, err
-	}
-	// Freeze the executable bind before serializing the renderer input. The
-	// managed server, rather than its attach-only pane, is OpenCode's actual
-	// tool-executing boundary.
-	var authority openCodeLaunchAuthority
-	if sandboxSpec != nil {
-		authority, err = resolveOpenCodeLaunchAuthority(sandboxSpec)
-		if err != nil {
-			return nil, err
-		}
-	}
-	sandboxSpecJSON := ""
-	sandboxImplementation, sandboxSpecJSON, err = openCodeSandboxRecord(
-		sandboxImplementation, sandboxSpec)
-	if err != nil {
-		return nil, err
-	}
-	transport, controlPath, err := openCodeRuntimeTransportForSpec(sandboxSpec)
-	if err != nil {
-		return nil, err
-	}
-	existing, err := db.GetOpenCodeRuntime(sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("look up OpenCode runtime: %w", err)
 	}
 	reusedResourceCgroup := false
 	keepReusedResourceCgroup := false
@@ -209,40 +177,141 @@ func startOpenCodeRuntime(
 				"session", sessionID, "dir", resourceCgroupDir, "error", cleanupErr)
 		}
 	}()
+	reused, reusesCgroup, err := reuseOrRetireOpenCodeRuntime(sessionID, resourceCgroupDir, in)
+	if err != nil {
+		return nil, err
+	}
+	if reused != nil {
+		return reused, nil
+	}
+	reusedResourceCgroup = reusesCgroup
+	if err := retirePriorOpenCodeResumeRuntime(sessionID, resumeID); err != nil {
+		return nil, err
+	}
+	if in.authority.Executable == "" {
+		in.authority, err = resolveOpenCodeLaunchAuthority(sandboxSpec)
+		if err != nil {
+			return nil, err
+		}
+	}
+	executionBoundaryJSON, boundaryErr := buildOpenCodeExecutionBoundary(
+		in.sandboxImplementation, sandboxSpec, in.cwd, in.authority)
+	if boundaryErr != nil {
+		slog.Warn("could not record OpenCode server execution boundary",
+			"session_id", sessionID, "error", boundaryErr)
+		executionBoundaryJSON = ""
+	}
+	launch, err := launchOpenCodeServer(sessionID, title, resumeID, resourceCgroupDir,
+		executionBoundaryJSON, in, sandboxSpec)
+	if err != nil {
+		return nil, err
+	}
+	keepReusedResourceCgroup = true
+	return launch, nil
+}
+
+// openCodeRuntimeLaunchInputs is what every later launch step reads: the
+// validated permission policy, the resolved cwd, the frozen launch authority,
+// and the sandbox record and control transport to persist.
+type openCodeRuntimeLaunchInputs struct {
+	permissionJSON, cwd                    string
+	authority                              openCodeLaunchAuthority
+	sandboxImplementation, sandboxSpecJSON string
+	transport, controlPath                 string
+}
+
+// prepareOpenCodeRuntimeLaunch validates the permission policy, resolves the
+// cwd, freezes a sandboxed launch's executable authority, and serializes the
+// sandbox record and transport the runtime row will carry.
+func prepareOpenCodeRuntimeLaunch(
+	cwd, permissionJSON, sandboxImplementation string,
+	sandboxSpec *session.TclaudeLayerLaunchSpec,
+) (openCodeRuntimeLaunchInputs, error) {
+	permissionJSON = strings.TrimSpace(permissionJSON)
+	if permissionJSON == "" {
+		return openCodeRuntimeLaunchInputs{}, fmt.Errorf("OpenCode permission policy is required")
+	}
+	if _, err := decodeOpenCodePermissionRules(permissionJSON); err != nil {
+		return openCodeRuntimeLaunchInputs{}, err
+	}
+	var err error
+	cwd, err = resolveOpenCodeLaunchCwd(cwd)
+	if err != nil {
+		return openCodeRuntimeLaunchInputs{}, err
+	}
+	// Freeze the executable bind before serializing the renderer input. The
+	// managed server, rather than its attach-only pane, is OpenCode's actual
+	// tool-executing boundary.
+	var authority openCodeLaunchAuthority
+	if sandboxSpec != nil {
+		authority, err = resolveOpenCodeLaunchAuthority(sandboxSpec)
+		if err != nil {
+			return openCodeRuntimeLaunchInputs{}, err
+		}
+	}
+	sandboxSpecJSON := ""
+	sandboxImplementation, sandboxSpecJSON, err = openCodeSandboxRecord(
+		sandboxImplementation, sandboxSpec)
+	if err != nil {
+		return openCodeRuntimeLaunchInputs{}, err
+	}
+	transport, controlPath, err := openCodeRuntimeTransportForSpec(sandboxSpec)
+	if err != nil {
+		return openCodeRuntimeLaunchInputs{}, err
+	}
+	return openCodeRuntimeLaunchInputs{
+		permissionJSON: permissionJSON, cwd: cwd, authority: authority,
+		sandboxImplementation: sandboxImplementation, sandboxSpecJSON: sandboxSpecJSON,
+		transport: transport, controlPath: controlPath,
+	}, nil
+}
+
+// reuseOrRetireOpenCodeRuntime handles the session's existing runtime row, if
+// any. It refuses an invalid persisted runtime, reuses a healthy server for
+// the same cwd and sandbox, refuses to replace a live Unix runtime it cannot
+// prove it owns, and otherwise retires the old server. reusedCgroup reports
+// that the retired server's resource cgroup is kept for the replacement.
+func reuseOrRetireOpenCodeRuntime(
+	sessionID, resourceCgroupDir string, in openCodeRuntimeLaunchInputs,
+) (reused *openCodeLaunch, reusedCgroup bool, err error) {
+	existing, err := db.GetOpenCodeRuntime(sessionID)
+	if err != nil {
+		return nil, false, fmt.Errorf("look up OpenCode runtime: %w", err)
+	}
 	if existing != nil {
 		if _, validationErr := openCodeRuntimeSandboxSpec(*existing); validationErr != nil {
-			return nil, fmt.Errorf(
+			return nil, false, fmt.Errorf(
 				"refuse invalid persisted OpenCode runtime transport: %w", validationErr)
 		}
 		// OpenCode's permission paths and API instance are both rooted in cwd.
 		// Never reuse a healthy endpoint for a different directory identity:
 		// patching a policy compiled for cwd B through cwd A would be ambiguous
 		// and could silently target the wrong session instance.
-		sameCwd := strings.TrimSpace(existing.Cwd) != "" && existing.Cwd == cwd
+		sameCwd := strings.TrimSpace(existing.Cwd) != "" && existing.Cwd == in.cwd
 		existingImplementation, implementationErr := normalizeOpenCodeRuntimeSandboxImplementation(
 			existing.SandboxImplementation)
 		sameSandbox := implementationErr == nil &&
-			string(existingImplementation) == sandboxImplementation &&
-			existing.SandboxLaunchSpecJSON == sandboxSpecJSON &&
+			string(existingImplementation) == in.sandboxImplementation &&
+			existing.SandboxLaunchSpecJSON == in.sandboxSpecJSON &&
 			existing.ResourceCgroupDir == resourceCgroupDir &&
-			existing.Transport == transport &&
-			existing.ControlSocketPath == controlPath
+			existing.Transport == in.transport &&
+			existing.ControlSocketPath == in.controlPath
 		if sameCwd && sameSandbox && openCodeHealthyAfterRetries(*existing,
 			openCodeHealthAttempts, openCodeHealthRetryDelay) {
-			if existing.PermissionJSON != permissionJSON {
-				existing.PermissionJSON = permissionJSON
+			if existing.PermissionJSON != in.permissionJSON {
+				existing.PermissionJSON = in.permissionJSON
 				if err := db.UpsertOpenCodeRuntime(*existing); err != nil {
-					return nil, fmt.Errorf("persist refreshed OpenCode permission policy: %w", err)
+					return nil, false, fmt.Errorf("persist refreshed OpenCode permission policy: %w", err)
 				}
 			}
 			if err := ensureOpenCodeSessionPermission(*existing); err != nil {
-				return nil, fmt.Errorf("verify OpenCode session permission: %w", err)
+				return nil, false, fmt.Errorf("verify OpenCode session permission: %w", err)
 			}
 			ensureOpenCodeSSE(*existing)
-			return openCodeLaunchFromRuntime(*existing), nil
+			return openCodeLaunchFromRuntime(*existing), false, nil
 		}
 		if !openCodeRuntimeSafeToReplace(*existing) {
-			return nil, fmt.Errorf(
+			return nil, false, fmt.Errorf(
 				"refusing to replace live OpenCode Unix runtime without socket ownership proof")
 		}
 		reusesResourceCgroup := openCodeReplacementReusesResourceCgroup(
@@ -254,38 +323,41 @@ func startOpenCodeRuntime(
 			stopErr = stopOpenCodeRuntime(sessionID)
 		}
 		if stopErr != nil {
-			return nil, fmt.Errorf("retire prior OpenCode runtime: %w", stopErr)
+			return nil, false, fmt.Errorf("retire prior OpenCode runtime: %w", stopErr)
 		}
-		reusedResourceCgroup = reusesResourceCgroup
+		return nil, reusesResourceCgroup, nil
 	}
-	// A fresh launch is keyed by its temporary tclaude session label because
-	// the server has not minted the conversation ID yet. A later resume is
-	// keyed by the durable `ses_…` ID. Retire the old label-keyed runtime
-	// before starting the resume server so an immediate stop→resume never has
-	// two authoritative servers for the same conversation.
+	return nil, false, nil
+}
+
+// retirePriorOpenCodeResumeRuntime retires the label-keyed runtime of the
+// conversation a resume is about to serve.
+//
+// A fresh launch is keyed by its temporary tclaude session label because
+// the server has not minted the conversation ID yet. A later resume is
+// keyed by the durable `ses_…` ID. Retire the old label-keyed runtime
+// before starting the resume server so an immediate stop→resume never has
+// two authoritative servers for the same conversation.
+func retirePriorOpenCodeResumeRuntime(sessionID, resumeID string) error {
 	if resumeID != "" {
 		if prior, err := db.GetOpenCodeRuntimeByConvID(resumeID); err != nil {
-			return nil, fmt.Errorf("look up prior OpenCode runtime: %w", err)
+			return fmt.Errorf("look up prior OpenCode runtime: %w", err)
 		} else if prior != nil && prior.SessionID != sessionID {
 			if err := stopOpenCodeRuntime(prior.SessionID); err != nil {
-				return nil, fmt.Errorf("retire prior OpenCode runtime: %w", err)
+				return fmt.Errorf("retire prior OpenCode runtime: %w", err)
 			}
 		}
 	}
-	if authority.Executable == "" {
-		authority, err = resolveOpenCodeLaunchAuthority(sandboxSpec)
-		if err != nil {
-			return nil, err
-		}
-	}
-	executionBoundaryJSON, boundaryErr := buildOpenCodeExecutionBoundary(
-		sandboxImplementation, sandboxSpec, cwd, authority)
-	if boundaryErr != nil {
-		slog.Warn("could not record OpenCode server execution boundary",
-			"session_id", sessionID, "error", boundaryErr)
-		executionBoundaryJSON = ""
-	}
+	return nil
+}
 
+// launchOpenCodeServer starts the server on a fresh loopback port, retrying
+// up to three ports, then persists the runtime and mints or re-permits its
+// conversation. A resource-cgroup placement failure is not retried.
+func launchOpenCodeServer(
+	sessionID, title, resumeID, resourceCgroupDir, executionBoundaryJSON string,
+	in openCodeRuntimeLaunchInputs, sandboxSpec *session.TclaudeLayerLaunchSpec,
+) (*openCodeLaunch, error) {
 	password, err := randomOpenCodePassword()
 	if err != nil {
 		return nil, err
@@ -301,16 +373,16 @@ func startOpenCodeRuntime(
 			ConvID:                resumeID,
 			ServerURL:             serverURL,
 			Password:              password,
-			Cwd:                   cwd,
-			PermissionJSON:        permissionJSON,
-			SandboxImplementation: sandboxImplementation,
-			SandboxLaunchSpecJSON: sandboxSpecJSON,
+			Cwd:                   in.cwd,
+			PermissionJSON:        in.permissionJSON,
+			SandboxImplementation: in.sandboxImplementation,
+			SandboxLaunchSpecJSON: in.sandboxSpecJSON,
 			ExecutionBoundaryJSON: executionBoundaryJSON,
-			Transport:             transport,
-			ControlSocketPath:     controlPath,
+			Transport:             in.transport,
+			ControlSocketPath:     in.controlPath,
 			ResourceCgroupDir:     resourceCgroupDir,
 		}
-		process, err := startOpenCodeProcessWithAuthority(&runtime, sandboxSpec, authority)
+		process, err := startOpenCodeProcessWithAuthority(&runtime, sandboxSpec, in.authority)
 		if err != nil {
 			if errors.Is(err, errOpenCodeResourceCgroup) {
 				return nil, err
@@ -338,7 +410,6 @@ func startOpenCodeRuntime(
 			return nil, fmt.Errorf("reapply OpenCode session permission: %w", err)
 		}
 		ensureOpenCodeSSE(runtime)
-		keepReusedResourceCgroup = true
 		return openCodeLaunchFromRuntime(runtime), nil
 	}
 	return nil, fmt.Errorf("start OpenCode server after 3 port attempts: %w", lastErr)

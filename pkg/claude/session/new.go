@@ -538,7 +538,7 @@ func runNew(params *NewParams) error {
 	// Freeze which filesystem rules are concrete once for this launch. Keep the
 	// original snapshot for persistence; launchSandbox is the consistent set
 	// used by capability checks, write proofs, and the harness handoff.
-	launchSandbox, err := sandboxSnapshotForLaunch(effectiveSandbox)
+	launchSandbox, err := SandboxSnapshotForLaunch(effectiveSandbox)
 	if err != nil {
 		return err
 	}
@@ -748,7 +748,7 @@ func runNew(params *NewParams) error {
 	})
 	sandboxChosenBy, launchOSSandbox := osSandbox.chosenBy, osSandbox.launch
 	bwrapBinary, bwrapCapabilityErr := osSandbox.bwrapBinary, osSandbox.bwrapCapabilityErr
-	if err := gateTclaudeLayerHarnessPosture(h, outerLayer, launchSandbox, extraArgs); err != nil {
+	if err := GateTclaudeLayerHarnessPosture(h, outerLayer, launchSandbox, extraArgs); err != nil {
 		return err
 	}
 	discloseUnconfinedAccessRules(sandboxImplementation, unconfined, launchSandbox, effectiveSandbox)
@@ -1643,7 +1643,12 @@ func sandboxSnapshotTmpfs(snapshot *sandboxpolicy.Snapshot) []sandboxpolicy.Tmpf
 	return snapshot.Effective.Tmpfs
 }
 
-func sandboxSnapshotForLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.Snapshot, error) {
+// SandboxSnapshotForLaunch is the snapshot as a launch sees it: its
+// filesystem rules filtered by sandboxpolicy.FilesystemForLaunch, which drops
+// read and write rows whose paths do not exist yet. Gates that count or check
+// rules read this view, so a rule waiting for its path does not refuse the
+// launch.
+func SandboxSnapshotForLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.Snapshot, error) {
 	if snapshot == nil {
 		return nil, nil
 	}
@@ -1662,7 +1667,7 @@ func sandboxSnapshotForLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.
 // preparation: missing ordinary grants become inactive, while missing denies
 // fail closed.
 func SandboxSnapshotForOneShotLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.Snapshot, error) {
-	return sandboxSnapshotForLaunch(snapshot)
+	return SandboxSnapshotForLaunch(snapshot)
 }
 
 func commandWithFileCleanup(cmd, path string) string {

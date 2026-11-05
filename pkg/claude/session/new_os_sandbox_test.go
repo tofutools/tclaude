@@ -45,8 +45,8 @@ func TestGateTclaudeLayerHarnessPostureRunsOnlyForTheOuterLayer(t *testing.T) {
 		[]byte(`{"sandbox":{"enabled":true}}`), 0o600))
 	copilot := harness.MustGet(harness.CopilotName)
 
-	assert.Error(t, gateTclaudeLayerHarnessPosture(copilot, true, nil, nil))
-	assert.NoError(t, gateTclaudeLayerHarnessPosture(copilot, false, nil, nil))
+	assert.Error(t, GateTclaudeLayerHarnessPosture(copilot, true, nil, nil))
+	assert.NoError(t, GateTclaudeLayerHarnessPosture(copilot, false, nil, nil))
 }
 
 // An implementation that enforces nothing still discloses the rules it

@@ -88,10 +88,10 @@ func resolveLaunchOSSandbox(
 	}
 }
 
-// gateTclaudeLayerHarnessPosture verifies, for every tclaude-layer launch,
+// GateTclaudeLayerHarnessPosture verifies, for every tclaude-layer launch,
 // the posture of a harness whose own sandbox the launch cannot turn off, and
 // refuses pass-through arguments that would contradict it.
-func gateTclaudeLayerHarnessPosture(h *harness.Harness, outerLayer bool, launchSandbox *sandboxpolicy.Snapshot, extraArgs []string) error {
+func GateTclaudeLayerHarnessPosture(h *harness.Harness, outerLayer bool, launchSandbox *sandboxpolicy.Snapshot, extraArgs []string) error {
 	// A harness whose own sandbox cannot be turned off by the launch has its
 	// posture verified for EVERY tclaude-layer launch, not only for one that
 	// authored a policy.

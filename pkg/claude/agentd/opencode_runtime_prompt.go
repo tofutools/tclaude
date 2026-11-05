@@ -142,18 +142,9 @@ func sendOpenCodeStandingOrderNudge(
 	origin *db.StandingOrderAgentMessageOrigin,
 	nudge string,
 ) error {
-	if origin == nil {
-		return fmt.Errorf("standing-order OpenCode delivery requires trusted provenance")
-	}
-	if targetAgent == "" {
-		var err error
-		targetAgent, err = db.AgentIDForConv(convID)
-		if err != nil {
-			return fmt.Errorf("resolve standing-order target agent: %w", err)
-		}
-	}
-	if targetAgent == "" {
-		return fmt.Errorf("standing-order OpenCode delivery requires a stable target agent")
+	targetAgent, err := resolveStandingOrderNudgeTarget(convID, targetAgent, origin)
+	if err != nil {
+		return err
 	}
 	runtime, err := readyOpenCodeRuntime(convID)
 	if err != nil {
@@ -164,71 +155,116 @@ func sendOpenCodeStandingOrderNudge(
 		return err
 	}
 	if exists {
-		// A previous prompt_async attempt was accepted even if its response was
-		// lost. Never resubmit the same ID: OpenCode may reject the duplicate
-		// while the original remains queued. Reconcile its assistant from
-		// history so a completed turn does not create a phantom 24-hour pending
-		// marker when only the inbox delivery stamp was lost.
-		historyState, historyErr := openCodePromptTurnHistory(
-			*runtime, origin.OpenCodeMessageID)
-		if historyErr != nil {
-			return historyErr
+		return reconcileAcceptedStandingOrderPrompt(runtime, convID, targetAgent, origin)
+	}
+	return deliverStandingOrderPrompt(runtime, convID, targetAgent, origin, nudge)
+}
+
+// resolveStandingOrderNudgeTarget requires trusted provenance and a stable
+// target agent, resolving it from the conversation when the caller has none.
+func resolveStandingOrderNudgeTarget(
+	convID, targetAgent string, origin *db.StandingOrderAgentMessageOrigin,
+) (string, error) {
+	if origin == nil {
+		return "", fmt.Errorf("standing-order OpenCode delivery requires trusted provenance")
+	}
+	if targetAgent == "" {
+		var err error
+		targetAgent, err = db.AgentIDForConv(convID)
+		if err != nil {
+			return "", fmt.Errorf("resolve standing-order target agent: %w", err)
 		}
-		current, getErr := db.GetStandingOrderTurnOrigin(
-			targetAgent, convID, time.Now())
-		if getErr != nil {
-			return getErr
+	}
+	if targetAgent == "" {
+		return "", fmt.Errorf("standing-order OpenCode delivery requires a stable target agent")
+	}
+	return targetAgent, nil
+}
+
+// reconcileAcceptedStandingOrderPrompt settles the turn origin of a prompt
+// OpenCode already holds, from its history, without resubmitting it: a
+// completed turn clears the origin, an active one activates it (restoring it
+// first if it was lost), and a queued or not-yet-listed one keeps or restores
+// it as pending. It refuses while another standing-order turn is pending or
+// active.
+func reconcileAcceptedStandingOrderPrompt(
+	runtime *db.OpenCodeRuntime, convID, targetAgent string,
+	origin *db.StandingOrderAgentMessageOrigin,
+) error {
+	// A previous prompt_async attempt was accepted even if its response was
+	// lost. Never resubmit the same ID: OpenCode may reject the duplicate
+	// while the original remains queued. Reconcile its assistant from
+	// history so a completed turn does not create a phantom 24-hour pending
+	// marker when only the inbox delivery stamp was lost.
+	historyState, historyErr := openCodePromptTurnHistory(
+		*runtime, origin.OpenCodeMessageID)
+	if historyErr != nil {
+		return historyErr
+	}
+	current, getErr := db.GetStandingOrderTurnOrigin(
+		targetAgent, convID, time.Now())
+	if getErr != nil {
+		return getErr
+	}
+	if current != nil &&
+		(current.MessageID != origin.MessageID ||
+			current.OpenCodeMessageID != origin.OpenCodeMessageID) {
+		return fmt.Errorf("another standing-order turn is pending or active")
+	}
+	if historyState == openCodePromptTurnCompleted {
+		if current != nil && current.State == db.StandingOrderTurnOriginActive {
+			return db.CompleteStandingOrderTurnOrigin(targetAgent, convID)
 		}
-		if current != nil &&
-			(current.MessageID != origin.MessageID ||
-				current.OpenCodeMessageID != origin.OpenCodeMessageID) {
-			return fmt.Errorf("another standing-order turn is pending or active")
-		}
-		if historyState == openCodePromptTurnCompleted {
-			if current != nil && current.State == db.StandingOrderTurnOriginActive {
-				return db.CompleteStandingOrderTurnOrigin(targetAgent, convID)
-			}
-			if current != nil {
-				return db.CancelPendingStandingOrderTurnOrigin(
-					targetAgent, convID, origin.MessageID,
-					origin.OpenCodeMessageID)
-			}
-			return nil
-		}
-		if current == nil {
-			if armErr := db.ArmStandingOrderTurnOrigin(
-				targetAgent, convID, origin.MessageID, origin.OpenCodeMessageID,
-				time.Now(), standingOrderOriginActiveTTL); armErr != nil {
-				return fmt.Errorf("restore accepted standing-order turn origin: %w", armErr)
-			}
-			current = &db.StandingOrderTurnOrigin{
-				TargetAgent: targetAgent, TargetConv: convID,
-				MessageID: origin.MessageID, OpenCodeMessageID: origin.OpenCodeMessageID,
-				State: db.StandingOrderTurnOriginPending,
-			}
-		}
-		if historyState == openCodePromptTurnActive &&
-			current.State == db.StandingOrderTurnOriginPending {
-			_, activateErr := db.ActivateStandingOrderTurnOrigin(
-				targetAgent, convID, origin.OpenCodeMessageID,
-				time.Now(), standingOrderOriginActiveTTL)
-			return activateErr
-		}
-		if current.State == db.StandingOrderTurnOriginPending {
-			if refreshErr := db.RefreshPendingStandingOrderTurnOrigin(
-				targetAgent, convID, origin.MessageID, origin.OpenCodeMessageID,
-				time.Now(), standingOrderOriginActiveTTL); refreshErr != nil {
-				return refreshErr
-			}
+		if current != nil {
+			return db.CancelPendingStandingOrderTurnOrigin(
+				targetAgent, convID, origin.MessageID,
+				origin.OpenCodeMessageID)
 		}
 		return nil
 	}
+	if current == nil {
+		if armErr := db.ArmStandingOrderTurnOrigin(
+			targetAgent, convID, origin.MessageID, origin.OpenCodeMessageID,
+			time.Now(), standingOrderOriginActiveTTL); armErr != nil {
+			return fmt.Errorf("restore accepted standing-order turn origin: %w", armErr)
+		}
+		current = &db.StandingOrderTurnOrigin{
+			TargetAgent: targetAgent, TargetConv: convID,
+			MessageID: origin.MessageID, OpenCodeMessageID: origin.OpenCodeMessageID,
+			State: db.StandingOrderTurnOriginPending,
+		}
+	}
+	if historyState == openCodePromptTurnActive &&
+		current.State == db.StandingOrderTurnOriginPending {
+		_, activateErr := db.ActivateStandingOrderTurnOrigin(
+			targetAgent, convID, origin.OpenCodeMessageID,
+			time.Now(), standingOrderOriginActiveTTL)
+		return activateErr
+	}
+	if current.State == db.StandingOrderTurnOriginPending {
+		if refreshErr := db.RefreshPendingStandingOrderTurnOrigin(
+			targetAgent, convID, origin.MessageID, origin.OpenCodeMessageID,
+			time.Now(), standingOrderOriginActiveTTL); refreshErr != nil {
+			return refreshErr
+		}
+	}
+	return nil
+}
+
+// deliverStandingOrderPrompt arms a pending turn origin and submits the nudge
+// under the origin's stable message ID. A rejected prompt cancels the origin.
+// One whose response was lost is confirmed by an exact lookup; if the lookup
+// cannot confirm it, the pending origin is kept and the error returned.
+func deliverStandingOrderPrompt(
+	runtime *db.OpenCodeRuntime, convID, targetAgent string,
+	origin *db.StandingOrderAgentMessageOrigin, nudge string,
+) error {
 	if err := db.ArmStandingOrderTurnOrigin(
 		targetAgent, convID, origin.MessageID, origin.OpenCodeMessageID,
 		time.Now(), standingOrderOriginPendingTTL); err != nil {
 		return fmt.Errorf("arm standing-order turn origin: %w", err)
 	}
-	err = sendOpenCodePromptWithMessageID(&openCodeLaunch{
+	err := sendOpenCodePromptWithMessageID(&openCodeLaunch{
 		SessionID:           runtime.SessionID,
 		ConvID:              runtime.ConvID,
 		ServerURL:           runtime.ServerURL,

@@ -46,21 +46,12 @@ func startOpenCodeProcessWithAuthority(
 	authority openCodeLaunchAuthority,
 ) (*openCodeProcess, error) {
 	executable := authority.Executable
-	if sandboxSpec != nil {
-		if err := prepareOpenCodeTclaudeLayerState(sandboxSpec); err != nil {
-			return nil, fmt.Errorf("prepare OpenCode with tclaude’s sandbox state: %w", err)
-		}
-		if err := prepareOpenCodeReadOnlyConfigForPlatform(sandboxSpec); err != nil {
-			return nil, err
-		}
-	}
-	parsed, err := url.Parse(runtime.ServerURL)
-	if err != nil {
+	if err := prepareOpenCodeServeState(sandboxSpec); err != nil {
 		return nil, err
 	}
-	_, port, err := net.SplitHostPort(parsed.Host)
+	port, err := openCodeServerPort(runtime)
 	if err != nil {
-		return nil, fmt.Errorf("parse OpenCode server endpoint: %w", err)
+		return nil, err
 	}
 	command, args, extraFiles, unixHandshake, cleanup, err := openCodeServeProcessExecWithAuthority(
 		executable, port, runtime, sandboxSpec, authority.Launcher)
@@ -80,6 +71,57 @@ func startOpenCodeProcessWithAuthority(
 		return startOpenCodeProcessThroughTmux(
 			runtime, command, args, serverEnvironment, unixHandshake != nil)
 	}
+	process, stderr, closeCgroupFD, err := startDirectOpenCodeServer(
+		runtime, command, args, serverEnvironment, extraFiles)
+	if err != nil {
+		return nil, err
+	}
+	defer closeCgroupFD()
+	if err := awaitOpenCodeUnixLaunchAuthority(runtime, process, unixHandshake, stderr); err != nil {
+		return nil, err
+	}
+	if err := awaitOpenCodeServerHealthy(runtime, process, stderr); err != nil {
+		return nil, err
+	}
+	return process, nil
+}
+
+// prepareOpenCodeServeState readies a sandboxed launch's private state and
+// read-only configuration before the server command is built.
+func prepareOpenCodeServeState(sandboxSpec *session.TclaudeLayerLaunchSpec) error {
+	if sandboxSpec != nil {
+		if err := prepareOpenCodeTclaudeLayerState(sandboxSpec); err != nil {
+			return fmt.Errorf("prepare OpenCode with tclaude’s sandbox state: %w", err)
+		}
+		if err := prepareOpenCodeReadOnlyConfigForPlatform(sandboxSpec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// openCodeServerPort is the loopback port of the runtime's server endpoint.
+func openCodeServerPort(runtime *db.OpenCodeRuntime) (string, error) {
+	parsed, err := url.Parse(runtime.ServerURL)
+	if err != nil {
+		return "", err
+	}
+	_, port, err := net.SplitHostPort(parsed.Host)
+	if err != nil {
+		return "", fmt.Errorf("parse OpenCode server endpoint: %w", err)
+	}
+	return port, nil
+}
+
+// startDirectOpenCodeServer starts the server as a child of this daemon,
+// placed in its resource cgroup, closes the parent's copies of extraFiles,
+// registers it and records its PID on runtime. The exit watcher retires its
+// workload group, records an OOM outcome and finishes the process.
+// closeCgroupFD is the caller's to run once the launch is settled.
+func startDirectOpenCodeServer(
+	runtime *db.OpenCodeRuntime, command string, args, serverEnvironment []string,
+	extraFiles []*os.File,
+) (*openCodeProcess, *spawnStderrCapture, func(), error) {
 	cmd := exec.Command(command, args...)
 	configureOpenCodeProcessGroup(cmd)
 	cmd.Dir = runtime.Cwd
@@ -90,18 +132,18 @@ func startOpenCodeProcessWithAuthority(
 	cmd.ExtraFiles = extraFiles
 	closeCgroupFD, err := configureOpenCodeResourceCgroup(cmd, runtime.ResourceCgroupDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
-	defer closeCgroupFD()
 	// Snapshot before the server can contribute to the counter: this boundary is
 	// durable across relaunches, so kills already recorded belong to an earlier
 	// server and must not be attributed to this one's exit.
 	oomBaseline := session.ReadResourceCgroupOOMKills(runtime.ResourceCgroupDir)
 	if err := cmd.Start(); err != nil {
+		closeCgroupFD()
 		if runtime.ResourceCgroupDir != "" {
-			return nil, fmt.Errorf("%w: start server: %v", errOpenCodeResourceCgroup, err)
+			return nil, nil, nil, fmt.Errorf("%w: start server: %v", errOpenCodeResourceCgroup, err)
 		}
-		return nil, err
+		return nil, nil, nil, err
 	}
 	for _, file := range extraFiles {
 		_ = file.Close()
@@ -127,6 +169,17 @@ func startOpenCodeProcessWithAuthority(
 		// next PrepareResourceCgroup for the session reclaims it.
 	}()
 	runtime.PID = cmd.Process.Pid
+	return process, stderr, closeCgroupFD, nil
+}
+
+// awaitOpenCodeUnixLaunchAuthority completes a Unix-relay launch's authority
+// handshake: it reads the launcher's socket authority, persists it and
+// acknowledges it, stopping the server on any failure. A loopback launch
+// has no handshake.
+func awaitOpenCodeUnixLaunchAuthority(
+	runtime *db.OpenCodeRuntime, process *openCodeProcess,
+	unixHandshake *openCodeUnixLaunchHandshake, stderr *spawnStderrCapture,
+) error {
 	if unixHandshake != nil {
 		type authorityResult struct {
 			authority opencodeapi.UnixLaunchAuthority
@@ -146,26 +199,34 @@ func startOpenCodeProcessWithAuthority(
 				processErr = fmt.Errorf("unix launcher exited before authority handshake")
 			}
 			stopOpenCodeProcess(*runtime, process)
-			return nil, fmt.Errorf("OpenCode Unix launcher failed: %w: %s",
+			return fmt.Errorf("OpenCode Unix launcher failed: %w: %s",
 				processErr, stderr.String())
 		case <-time.After(openCodeStartupTimeout):
 			_ = unixHandshake.acknowledge.Close()
 			stopOpenCodeProcess(*runtime, process)
-			return nil, fmt.Errorf("OpenCode Unix launcher authority handshake timed out")
+			return fmt.Errorf("OpenCode Unix launcher authority handshake timed out")
 		}
 		if result.err != nil {
 			_ = unixHandshake.acknowledge.Close()
 			stopOpenCodeProcess(*runtime, process)
-			return nil, result.err
+			return result.err
 		}
 		if err := persistAndAcknowledgeOpenCodeUnixLaunch(
 			runtime, result.authority, unixHandshake.acknowledge); err != nil {
 			_ = unixHandshake.acknowledge.Close()
 			stopOpenCodeProcess(*runtime, process)
-			return nil, err
+			return err
 		}
 		_ = unixHandshake.acknowledge.Close()
 	}
+	return nil
+}
+
+// awaitOpenCodeServerHealthy waits for the server to answer healthy from its
+// own listener, stopping it if it exits first or the startup deadline passes.
+func awaitOpenCodeServerHealthy(
+	runtime *db.OpenCodeRuntime, process *openCodeProcess, stderr *spawnStderrCapture,
+) error {
 	deadline := time.Now().Add(openCodeStartupTimeout)
 	for time.Now().Before(deadline) {
 		select {
@@ -174,7 +235,7 @@ func startOpenCodeProcessWithAuthority(
 				err = fmt.Errorf("server exited before health check")
 			}
 			stopOpenCodeProcess(*runtime, process)
-			return nil, fmt.Errorf("OpenCode server failed during startup: %w: %s", err, stderr.String())
+			return fmt.Errorf("OpenCode server failed during startup: %w: %s", err, stderr.String())
 		default:
 		}
 		// Port allocation necessarily has a bind-close-exec gap because
@@ -182,7 +243,7 @@ func startOpenCodeProcessWithAuthority(
 		// password to that endpoint until the launched PID (or a child) is
 		// positively observed owning its listening socket.
 		if openCodeHealthy(*runtime) {
-			return process, nil
+			return nil
 		}
 		select {
 		case err := <-process.done:
@@ -190,12 +251,12 @@ func startOpenCodeProcessWithAuthority(
 				err = fmt.Errorf("server exited before health check")
 			}
 			stopOpenCodeProcess(*runtime, process)
-			return nil, fmt.Errorf("OpenCode server failed during startup: %w: %s", err, stderr.String())
+			return fmt.Errorf("OpenCode server failed during startup: %w: %s", err, stderr.String())
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
 	stopOpenCodeProcess(*runtime, process)
-	return nil, fmt.Errorf("OpenCode server at %s did not become healthy within %s",
+	return fmt.Errorf("OpenCode server at %s did not become healthy within %s",
 		runtime.ServerURL, openCodeStartupTimeout)
 }
 

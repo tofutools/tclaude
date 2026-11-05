@@ -90,8 +90,47 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 				"session", runtime.SessionID, "error", err)
 		}
 	}()
+	process, cancel, sseDone, projectorStopped := claimOpenCodeProcessForStop(runtime, known)
+	defer func() {
+		openCodeProcesses.Lock()
+		if openCodeProcesses.bySession[runtime.SessionID] == process {
+			delete(openCodeProcesses.bySession, runtime.SessionID)
+		}
+		openCodeProcesses.Unlock()
+		if projectorStopped {
+			scheduleOpenCodeConversationStateCleanup(runtime)
+		}
+	}()
+	if process != nil {
+		if joinOpenCodeSSEProjector(runtime, cancel, sseDone) {
+			projectorStopped = true
+		}
+		if process.tmuxSession != "" {
+			if stopTmuxHeldOpenCodeProcess(runtime, process) {
+				removeControlSocket = false
+			}
+			return
+		}
+		if process.cmd != nil && process.cmd.Process != nil {
+			if stopDirectOpenCodeServer(runtime, process) {
+				removeControlSocket = false
+			}
+			return
+		}
+	}
+	if stopRecoveredOpenCodeProcess(runtime) {
+		removeControlSocket = false
+	}
+}
+
+// claimOpenCodeProcessForStop marks the session's process (the known one,
+// the registered one, or a fresh tombstone) as stopping, and reads its SSE
+// cancel and done handles under the registry lock.
+func claimOpenCodeProcessForStop(runtime db.OpenCodeRuntime, known *openCodeProcess) (
+	process *openCodeProcess, cancel context.CancelFunc, sseDone chan struct{}, projectorStopped bool,
+) {
 	openCodeProcesses.Lock()
-	process := known
+	process = known
 	if process == nil {
 		process = openCodeProcesses.bySession[runtime.SessionID]
 	}
@@ -104,80 +143,91 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 	// temporarily missing entry as permission to launch a replacement SSE
 	// consumer during teardown.
 	process.stopping = true
-	cancel := process.cancel
-	sseDone := process.sseDone
-	projectorStopped := sseDone == nil
+	cancel = process.cancel
+	sseDone = process.sseDone
+	projectorStopped = sseDone == nil
 	openCodeProcesses.Unlock()
-	defer func() {
-		openCodeProcesses.Lock()
-		if openCodeProcesses.bySession[runtime.SessionID] == process {
-			delete(openCodeProcesses.bySession, runtime.SessionID)
-		}
-		openCodeProcesses.Unlock()
-		if projectorStopped {
-			scheduleOpenCodeConversationStateCleanup(runtime)
-		}
-	}()
-	if process != nil {
-		if cancel != nil {
-			cancel()
-		}
-		if sseDone != nil {
-			// Cancellation interrupts the in-flight HTTP request/scanner and
-			// every retry wait. Join the projector before clearing its
-			// in-memory state or allowing a resume with the same conv_id;
-			// otherwise the stale runtime can repopulate authoritative cost
-			// and activity after teardown.
-			select {
-			case <-sseDone:
-				projectorStopped = true
-			case <-time.After(openCodeProcessStopWait):
-				slog.Warn("OpenCode SSE projector did not stop before timeout",
-					"session", runtime.SessionID, "timeout", openCodeProcessStopWait)
-			}
-		}
-		if process.tmuxSession != "" {
-			killErr := clcommon.Default.Command(
-				"-N", "kill-session", "-t", clcommon.ExactTarget(process.tmuxSession)).Run()
-			select {
-			case <-process.done:
-			case <-time.After(openCodeProcessStopWait):
-				if !terminateOpenCodeProcessTree(runtime.PID, openCodeProcessStopWait) {
-					removeControlSocket = false
-					slog.Warn("OpenCode tmux process tree did not exit",
-						"session", runtime.SessionID, "pid", runtime.PID, "tmux_error", killErr)
-				}
-				process.finish(killErr)
-			}
-			return
-		}
-		if process.cmd != nil && process.cmd.Process != nil {
-			// Capture descendants before interrupting the bridge: its shell and
-			// server can otherwise be reparented when the bridge exits.
-			select {
-			case <-process.done:
-				process.killWorkloadGroup()
-				return
-			default:
-			}
-			recordedTree := opencodeapi.RecordedProcessSubtree(process.cmd.Process.Pid)
-			_ = process.cmd.Process.Signal(os.Interrupt)
-			select {
-			case <-process.done:
-			case <-time.After(openCodeProcessStopWait):
-			}
-			// The group outlives a promptly exiting bridge while its workload
-			// remains. Always retire it, including after a graceful leader exit.
-			process.killWorkloadGroup()
-			killOpenCodePIDs(recordedTree)
-			if !waitForOpenCodePIDsExit(recordedTree, openCodeProcessStopWait) {
-				removeControlSocket = false
-				slog.Warn("OpenCode process tree did not exit; control authority retained",
-					"session", runtime.SessionID, "pid", runtime.PID)
-			}
-			return
+	return process, cancel, sseDone, projectorStopped
+}
+
+// joinOpenCodeSSEProjector cancels the SSE consumer and waits, bounded, for
+// its projector to stop. stopped reports that it did.
+func joinOpenCodeSSEProjector(
+	runtime db.OpenCodeRuntime, cancel context.CancelFunc, sseDone chan struct{},
+) (stopped bool) {
+	if cancel != nil {
+		cancel()
+	}
+	if sseDone != nil {
+		// Cancellation interrupts the in-flight HTTP request/scanner and
+		// every retry wait. Join the projector before clearing its
+		// in-memory state or allowing a resume with the same conv_id;
+		// otherwise the stale runtime can repopulate authoritative cost
+		// and activity after teardown.
+		select {
+		case <-sseDone:
+			stopped = true
+		case <-time.After(openCodeProcessStopWait):
+			slog.Warn("OpenCode SSE projector did not stop before timeout",
+				"session", runtime.SessionID, "timeout", openCodeProcessStopWait)
 		}
 	}
+	return stopped
+}
+
+// stopTmuxHeldOpenCodeProcess kills the managed tmux session that holds the
+// server and, if the server does not exit, its process tree. retained reports
+// that the tree survived, so the control authority must be kept.
+func stopTmuxHeldOpenCodeProcess(runtime db.OpenCodeRuntime, process *openCodeProcess) (retained bool) {
+	killErr := clcommon.Default.Command(
+		"-N", "kill-session", "-t", clcommon.ExactTarget(process.tmuxSession)).Run()
+	select {
+	case <-process.done:
+	case <-time.After(openCodeProcessStopWait):
+		if !terminateOpenCodeProcessTree(runtime.PID, openCodeProcessStopWait) {
+			retained = true
+			slog.Warn("OpenCode tmux process tree did not exit",
+				"session", runtime.SessionID, "pid", runtime.PID, "tmux_error", killErr)
+		}
+		process.finish(killErr)
+	}
+	return retained
+}
+
+// stopDirectOpenCodeServer interrupts a server this daemon started, then
+// retires its workload group and kills the process tree recorded before the
+// interrupt. retained reports that the tree survived.
+func stopDirectOpenCodeServer(runtime db.OpenCodeRuntime, process *openCodeProcess) (retained bool) {
+	// Capture descendants before interrupting the bridge: its shell and
+	// server can otherwise be reparented when the bridge exits.
+	select {
+	case <-process.done:
+		process.killWorkloadGroup()
+		return false
+	default:
+	}
+	recordedTree := opencodeapi.RecordedProcessSubtree(process.cmd.Process.Pid)
+	_ = process.cmd.Process.Signal(os.Interrupt)
+	select {
+	case <-process.done:
+	case <-time.After(openCodeProcessStopWait):
+	}
+	// The group outlives a promptly exiting bridge while its workload
+	// remains. Always retire it, including after a graceful leader exit.
+	process.killWorkloadGroup()
+	killOpenCodePIDs(recordedTree)
+	if !waitForOpenCodePIDsExit(recordedTree, openCodeProcessStopWait) {
+		retained = true
+		slog.Warn("OpenCode process tree did not exit; control authority retained",
+			"session", runtime.SessionID, "pid", runtime.PID)
+	}
+	return retained
+}
+
+// stopRecoveredOpenCodeProcess stops a recorded server this daemon has no
+// handle for, killing it only once its endpoint ownership is proven.
+// retained reports that a proven tree survived.
+func stopRecoveredOpenCodeProcess(runtime db.OpenCodeRuntime) (retained bool) {
 	// No in-memory handle: this is a recovered PID (e.g. after an agentd
 	// restart). Only kill it once it is positively identified as our managed
 	// server via endpoint ownership. This closes the PID-reuse window the old
@@ -199,7 +249,7 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 				killOpenCodePIDs(recordedTree)
 			}
 			if !waitForOpenCodePIDsExit(recordedTree, openCodeProcessStopWait) {
-				removeControlSocket = false
+				retained = true
 				slog.Warn("OpenCode recovered process tree did not exit; control authority retained",
 					"session", runtime.SessionID, "pid", runtime.PID)
 			}
@@ -214,6 +264,7 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 				"endpoint", runtime.ServerURL)
 		}
 	}
+	return retained
 }
 
 func killOpenCodePIDs(pids []int) {
