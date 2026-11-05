@@ -23,6 +23,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/launchundo"
 	"github.com/tofutools/tclaude/pkg/claude/common/managedinstructions"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -744,17 +745,19 @@ func runNew(params *NewParams) error {
 	launchProfilePath := ""
 	var codexAppServerProfileOverrides []string
 	var launchCodexSplitCapability *harness.CodexSplitPolicyCapability
-	launchProfileOwnedByPane := false
+	// launchUndo holds what this launch creates and must undo on any
+	// return before the final commit: the Codex launch-profile file and its
+	// native generation, the darwin route claim, the session row and the
+	// private attachment dir. Each step registers once its state exists; the
+	// commit at the end hands them all to the live session. Rollbacks with
+	// another lifetime stay as their own defers: the snapshot file and the
+	// darwin slot reservation go on every return, and the resource cgroup
+	// passes to the pane when it launches.
+	var launchUndo launchundo.Undo
+	defer launchUndo.UnwindUnlessCommitted()
+	// ordinaryNativeGeneration is the native permission generation this
+	// launch registered, activated only at the final commit.
 	ordinaryNativeGeneration := ""
-	ordinaryNativeActivated := false
-	defer func() {
-		if launchProfilePath != "" && !launchProfileOwnedByPane {
-			_ = os.Remove(launchProfilePath)
-		}
-		if ordinaryNativeGeneration != "" && !ordinaryNativeActivated {
-			_ = UnregisterCodexNativePermissionProfile(ordinaryNativeGeneration)
-		}
-	}()
 	// Pin managed Codex sessions to agentd's canonical state-free socket. That
 	// socket lives outside the profile's denied ~/.tclaude private-state tree.
 	tclaudeLayerPosture, err := sandboxpolicy.NetworkPostureForAccess(networkAccess)
@@ -1218,6 +1221,7 @@ func runNew(params *NewParams) error {
 		}
 		launchPermissionProfile = profileName
 		launchProfilePath = profilePath
+		launchUndo.Add(func() { _ = os.Remove(profilePath) })
 		launchCodexSplitCapability = splitCapability
 		ownerConvID := fullConvID
 		if params.SessionID != "" && ownerConvID == "" {
@@ -1245,6 +1249,7 @@ func runNew(params *NewParams) error {
 				return fmt.Errorf("join installed Codex permission registry: %w", registerErr)
 			}
 			if registered {
+				launchUndo.Add(func() { _ = UnregisterCodexNativePermissionProfile(generation) })
 				ordinaryNativeGeneration = generation
 			}
 		}
@@ -1344,16 +1349,9 @@ func runNew(params *NewParams) error {
 		}
 	}
 	var darwinRouteReservation *DarwinRouteSlotReservation
-	darwinRouteRegistered := false
-	darwinRouteCommitted := false
 	defer func() {
 		if darwinRouteReservation != nil {
 			_ = darwinRouteReservation.Release()
-		}
-		if darwinRouteRegistered && !darwinRouteCommitted {
-			if err := db.DeleteDarwinRouteLaunch(params.DarwinRouteAgentID, rowConvID, exitGeneration); err != nil {
-				slog.Warn("Darwin route launch cleanup failed", "conv", rowConvID, "error", err)
-			}
 		}
 	}()
 	if params.DarwinRouteCapable {
@@ -1389,7 +1387,11 @@ func runNew(params *NewParams) error {
 			params.DarwinRouteAgentID, rowConvID, exitGeneration, darwinRouteReservation.Slots()); err != nil {
 			return fmt.Errorf("register Darwin route launch contract: %w", err)
 		}
-		darwinRouteRegistered = true
+		launchUndo.Add(func() {
+			if err := db.DeleteDarwinRouteLaunch(params.DarwinRouteAgentID, rowConvID, exitGeneration); err != nil {
+				slog.Warn("Darwin route launch cleanup failed", "conv", rowConvID, "error", err)
+			}
+		})
 	}
 
 	// A Codex launch that asks for no sandbox may still run in one: managed
@@ -1447,12 +1449,11 @@ func runNew(params *NewParams) error {
 		return fmt.Errorf("check for existing session row: %w", err)
 	}
 	launchRowOwned := priorRow == nil
-	launchRowCommitted := false
 	// launchPaneCommand is assigned once the pane command is fully assembled,
 	// so the rollback below can report what this launch actually tried to run.
 	launchPaneCommand := ""
-	defer func() {
-		if launchRowCommitted || !launchRowOwned {
+	launchUndo.Add(func() {
+		if !launchRowOwned {
 			return
 		}
 		// Rolling the row back also destroys the exit audit's only anchor: a
@@ -1484,7 +1485,7 @@ func runNew(params *NewParams) error {
 			slog.Warn("launch failed; could not remove its session row",
 				"session_id", sessionID, "error", derr)
 		}
-	}()
+	})
 	if err := SaveSessionStateForLaunch(state, exitGeneration, db.SessionExitGateUngated); err != nil {
 		return fmt.Errorf("prepare managed pane exit identity: %w", err)
 	}
@@ -1770,13 +1771,11 @@ func runNew(params *NewParams) error {
 				prepareErr,
 			)
 		}
-		defer func() {
-			if privateAttachmentDirCreated && !launchRowCommitted {
-				// Never recursively delete a root that gained an upload while
-				// launch was in flight; os.Remove succeeds only while empty.
-				_ = os.Remove(privateAttachmentDir)
-			}
-		}()
+		if privateAttachmentDirCreated {
+			// Never recursively delete a root that gained an upload while
+			// launch was in flight; os.Remove succeeds only while empty.
+			launchUndo.Add(func() { _ = os.Remove(privateAttachmentDir) })
+		}
 		privateWriteDirs = append(privateWriteDirs, TclaudeLayerPrivateWriteDir{
 			Parent:  common.SpawnAttachmentsPrivateBase(),
 			Current: privateAttachmentDir,
@@ -2049,11 +2048,9 @@ func runNew(params *NewParams) error {
 	timing("tmux_launched")
 	resourceCgroupOwnedByPane = true
 	// killLaunchPane tears the just-launched pane down on a late launch
-	// failure. It also reclaims launch-profile removal for the parent defer:
-	// a killed pane's shell never reaches its own cleanup trailer, so leaving
-	// launchProfileOwnedByPane set would strand the profile file on disk.
+	// failure. launchUndo, still uncommitted, then removes the launch-profile
+	// file: a killed pane's shell never reaches its own cleanup trailer.
 	killLaunchPane := func() {
-		launchProfileOwnedByPane = false
 		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
 		resourceCgroupCleanup()
 	}
@@ -2180,9 +2177,7 @@ func runNew(params *NewParams) error {
 			killLaunchPane()
 			return fmt.Errorf("activate generated Codex permission profile: %w", err)
 		}
-		ordinaryNativeActivated = true
 	}
-	launchProfileOwnedByPane = launchProfilePath != ""
 	if len(executionBoundaryJSON) > 0 {
 		// Publish only at the same successful launch-commit boundary as the row.
 		// Until here a relaunch retains its predecessor's last-known-good record;
@@ -2193,10 +2188,11 @@ func runNew(params *NewParams) error {
 		}
 	}
 
-	// The pane is up and bound; from here the row belongs to the live session
-	// (an attach failure below must not delete it).
-	launchRowCommitted = true
-	darwinRouteCommitted = true
+	// The pane is up and bound; from here the row, the route claim, the
+	// activated native generation and the launch-profile file (removed by the
+	// pane's own cleanup trailer) belong to the live session. An attach
+	// failure below must not undo them.
+	launchUndo.Commit()
 	return announceAndAttach(fmt.Sprintf("Created session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)
 }
 
