@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -523,499 +524,685 @@ type agentBundlePreview struct {
 }
 
 func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
-	authority := teleportLandingFromRequest(r)
-	if authority != nil {
-		if err := authority.check(); err != nil {
-			writeError(w, 403, "teleport_revoked", err.Error())
-			return
-		}
-	} else if !reviewingForApproval(r) {
-		if r.Context().Value(agentBundleDataContextKey{}) == nil {
-			asked := r
-			r = withApprovalFacts(r, func(body []byte) string { return agentImportApprovalFacts(asked, body) })
-		}
-		if _, ok := requirePermission(w, r, PermAgentBundleImport); !ok {
-			return
-		}
+	imp := &agentBundleImport{r: r}
+	defer imp.close()
+	if !imp.resolveSource(w) {
+		return
 	}
-	b, _ := r.Context().Value(agentBundleDataContextKey{}).(*agentbundle.Bundle)
+	if !imp.readLandingRequest(w) {
+		return
+	}
+	if !imp.sanitizeProfile(w) {
+		return
+	}
+	if !imp.selectKept(w) {
+		return
+	}
+	if !imp.applyReceiverPolicy(w) {
+		return
+	}
+	if !imp.scanFindings(w) {
+		return
+	}
+	if !imp.planPermissions(w) {
+		return
+	}
+	if !imp.checkPaths(w) {
+		return
+	}
+	if !imp.planHistory(w) {
+		return
+	}
+	if !imp.resolvePosture(w) {
+		return
+	}
+	if !imp.reviewManagedInstructions(w) {
+		return
+	}
+	if !imp.previewOrRefuse(w) {
+		return
+	}
+	if !imp.buildLaunchRequest(w) {
+		return
+	}
+	imp.spawnAndLand(w)
+}
+
+// agentBundleImport is one agent-bundle import's state, built up step by
+// step by handleAgentBundleImport. Each step writes its own response when it
+// stops the import and returns false.
+type agentBundleImport struct {
+	r         *http.Request
+	authority *teleportLandingAuthority
+	b         *agentbundle.Bundle
 	// neutral reads a PAF's neutral context while the archive file is open.
-	var neutral func(paf.ReadOptions) (*transcript.Transcript, error)
+	neutral func(paf.ReadOptions) (*transcript.Transcript, error)
 	// rescan scans a PAF's whole content, including the neutral context and
 	// attachments a lowered bundle does not carry.
-	var rescan func(int) ([]paf.Finding, error)
-	// direct is a file import by the caller, as opposed to a federation
-	// offer, move or teleport handing over an already decoded bundle.
-	direct := b == nil
+	rescan func(int) ([]paf.Finding, error)
+	direct bool
 	// handoff is the agent-written summary a PAF may carry, and fileLosses
 	// its own loss report.
-	var handoff string
-	var fileLosses *paf.Losses
+	handoff    string
+	fileLosses *paf.Losses
 	// fileDigest binds a human's confirmation to the file they previewed.
-	var fileDigest string
+	fileDigest string
 	// carriedWorkflows stay in the file: an agent import stores none of them.
-	var carriedWorkflows []paf.WorkflowItem
-	var signatures []pwfSignatureView
+	carriedWorkflows []paf.WorkflowItem
+	signatures       []pwfSignatureView
 	// archive is the file again, for a later popup's review.
-	var archive *io.SectionReader
-	if b == nil {
+	archive         *io.SectionReader
+	q               url.Values
+	apply           bool
+	noStart         bool
+	d               agentbundle.Definition
+	model           string
+	h               *harness.Harness
+	crossHarness    bool
+	profile         spawnProfileJSON
+	accepted        bool
+	movedHere       bool
+	fileEnvironment []sandboxpolicy.EnvironmentEntry
+	safe            configbundle.Bundle
+	values          map[string]string
+	missing         []configbundle.Placeholder
+	landingWarnings []string
+	offerList       *offerConfirmation
+	keep            importKeep
+	selection       importKeep
+	fileDrops       []fileDrop
+	landingProfile  string
+	findings        []agentbundle.Finding
+	carryPolicy     permissionCarryPolicy
+	carryDecisions  []carriedPermissionDecision
+	carryOverrides  map[string]db.PermissionOverride
+	settled         fileImportOutcome
+	preview         agentBundlePreview
+	pathError       string
+	landingModel    string
+	landing         *historyLanding
+	warnings        []string
+	needsConfirm    bool
+	managedDigest   string
+	managedCode     bool
+	group           *db.AgentGroup
+	inner           *http.Request
+	// cleanups are the handler's deferred closes, run in reverse by close.
+	cleanups []func()
+}
+
+// close runs the registered cleanups, last registered first, as the
+// handler's defers did.
+func (imp *agentBundleImport) close() {
+	for i := len(imp.cleanups) - 1; i >= 0; i-- {
+		imp.cleanups[i]()
+	}
+}
+
+// resolveSource authorizes the import (a teleport landing's authority, or the
+// import permission) and takes the bundle: decoded from the posted file, with its
+// digest, PAF context, handoff and losses, or handed over already decoded. It
+// records the arrival and refuses a teleport landing that does not match.
+func (imp *agentBundleImport) resolveSource(w http.ResponseWriter) bool {
+	imp.authority = teleportLandingFromRequest(imp.r)
+	if imp.authority != nil {
+		if err := imp.authority.check(); err != nil {
+			writeError(w, 403, "teleport_revoked", err.Error())
+			return false
+		}
+	} else if !reviewingForApproval(imp.r) {
+		if imp.r.Context().Value(agentBundleDataContextKey{}) == nil {
+			asked := imp.r
+			imp.r = withApprovalFacts(imp.r, func(body []byte) string { return agentImportApprovalFacts(asked, body) })
+		}
+		if _, ok := requirePermission(w, imp.r, PermAgentBundleImport); !ok {
+			return false
+		}
+	}
+	imp.b, _ = imp.r.Context().Value(agentBundleDataContextKey{}).(*agentbundle.Bundle)
+	// direct is a file import by the caller, as opposed to a federation
+	// offer, move or teleport handing over an already decoded bundle.
+	imp.direct = imp.b == nil
+	if imp.b == nil {
 		file, err := os.CreateTemp("", ".agent-import-archive-")
 		if err != nil {
 			writeError(w, 500, "archive", err.Error())
-			return
+			return false
 		}
-		defer func() { _ = file.Close(); _ = os.Remove(file.Name()) }()
+		imp.cleanups = append(imp.cleanups, func() { _ = file.Close(); _ = os.Remove(file.Name()) })
 		hash := sha256.New()
-		n, err := io.Copy(io.MultiWriter(file, hash), http.MaxBytesReader(w, r.Body, agentTransferLimit()+1))
-		fileDigest = hex.EncodeToString(hash.Sum(nil))
+		n, err := io.Copy(io.MultiWriter(file, hash), http.MaxBytesReader(w, imp.r.Body, agentTransferLimit()+1))
+		imp.fileDigest = hex.EncodeToString(hash.Sum(nil))
 		// A confirmation is for the one agent the human saw listed.
-		if key := r.URL.Query().Get("agent"); key != "" {
-			sum := sha256.Sum256([]byte(fileDigest + "\n" + key))
-			fileDigest = hex.EncodeToString(sum[:])
+		if key := imp.r.URL.Query().Get("agent"); key != "" {
+			sum := sha256.Sum256([]byte(imp.fileDigest + "\n" + key))
+			imp.fileDigest = hex.EncodeToString(sum[:])
 		}
 		if err != nil || n > agentTransferLimit() {
 			writeError(w, 400, "archive", fmt.Sprintf("archive exceeds or cannot be read within federation.agent_transfer_max_bytes=%d", agentTransferLimit()))
-			return
+			return false
 		}
-		archive = io.NewSectionReader(file, 0, n)
+		imp.archive = io.NewSectionReader(file, 0, n)
 		var info legacy.Info
-		b, info, err = legacy.DecodeBundleFile(file, legacy.DecodeLimits{MaxBytes: agentTransferLimit(), MaxRecordBytes: pafContextRecordLimit(), AgentKey: r.URL.Query().Get("agent")}, "")
+		imp.b, info, err = legacy.DecodeBundleFile(file, legacy.DecodeLimits{MaxBytes: agentTransferLimit(), MaxRecordBytes: pafContextRecordLimit(), AgentKey: imp.r.URL.Query().Get("agent")}, "")
 		if err != nil {
 			writeError(w, 400, "archive", err.Error())
-			return
+			return false
 		}
-		defer func() { _ = b.Close() }()
-		neutral, rescan, handoff, fileLosses = info.Context, info.Scan, info.Handoff, info.Losses
-		carriedWorkflows = info.Workflows
+		imp.cleanups = append(imp.cleanups, func() { _ = imp.b.Close() })
+		imp.neutral, imp.rescan, imp.handoff, imp.fileLosses = info.Context, info.Scan, info.Handoff, info.Losses
+		imp.carriedWorkflows = info.Workflows
 		if info.Signatures != nil {
-			signatures = pwfSignatureViews(info.Signatures)
+			imp.signatures = pwfSignatureViews(info.Signatures)
 		}
-		if foreign, _ := r.Context().Value(agentBundleForeignFileContextKey{}).(bool); foreign && fileLosses != nil {
-			l := paf.CountsOnly(*fileLosses)
-			fileLosses = &l
+		if foreign, _ := imp.r.Context().Value(agentBundleForeignFileContextKey{}).(bool); foreign && imp.fileLosses != nil {
+			l := paf.CountsOnly(*imp.fileLosses)
+			imp.fileLosses = &l
 		}
 	} else {
-		fileLosses, _ = r.Context().Value(agentBundleLossesContextKey{}).(*paf.Losses)
+		imp.fileLosses, _ = imp.r.Context().Value(agentBundleLossesContextKey{}).(*paf.Losses)
 	}
-	arrival, _ := r.Context().Value(arrivalContextKey{}).(*arrivalContext)
+	arrival, _ := imp.r.Context().Value(arrivalContextKey{}).(*arrivalContext)
 	if arrival == nil {
-		arrival = &arrivalContext{Operation: "bundle import", Source: b.Manifest.Agent, Reason: "explicit import path"}
-		r = r.WithContext(context.WithValue(r.Context(), arrivalContextKey{}, arrival))
+		arrival = &arrivalContext{Operation: "bundle import", Source: imp.b.Manifest.Agent, Reason: "explicit import path"}
+		imp.r = imp.r.WithContext(context.WithValue(imp.r.Context(), arrivalContextKey{}, arrival))
 	}
-	if err := teleportImportBundle(r, b); err != nil {
+	if err := teleportImportBundle(imp.r, imp.b); err != nil {
 		writeError(w, 409, "teleport_landing", err.Error())
-		return
+		return false
 	}
-	q := r.URL.Query()
-	apply := q.Get("apply") == "true"
+	return true
+}
+
+// readLandingRequest reads the import query (apply, start, name, role) and
+// resolves the landing harness, refusing one that takes command input.
+func (imp *agentBundleImport) readLandingRequest(w http.ResponseWriter) bool {
+	var err error
+	imp.q = imp.r.URL.Query()
+	imp.apply = imp.q.Get("apply") == "true"
 	// start=false lands the applied agent offline: enrolled with its
 	// conversation installed, started later by resume.
-	noStart := q.Get("start") == "false"
-	d := b.Manifest.Agent
-	if name := q.Get("name"); name != "" {
-		d.Name = name
+	imp.noStart = imp.q.Get("start") == "false"
+	imp.d = imp.b.Manifest.Agent
+	if name := imp.q.Get("name"); name != "" {
+		imp.d.Name = name
 	}
 	// A performer lands under the role this node's workflow asks for. The
 	// importer names it; the file only ever suggests one, so choosing an agent
 	// out of a file takes no role from it.
-	if q.Get("agent") != "" && direct {
-		d.Role = ""
+	if imp.q.Get("agent") != "" && imp.direct {
+		imp.d.Role = ""
 	}
-	if role := q.Get("role"); role != "" && direct {
-		d.Role = role
+	if role := imp.q.Get("role"); role != "" && imp.direct {
+		imp.d.Role = role
 	}
 	// The agent lands on its own harness unless the importer names another;
 	// the conversation then translates (see planHistoryLanding).
-	landingName, model := q.Get("harness"), q.Get("model")
+	var landingName string
+	landingName, imp.model = imp.q.Get("harness"), imp.q.Get("model")
 	if landingName == "" {
-		landingName = d.Harness
+		landingName = imp.d.Harness
 	}
-	h, err := harness.ResolveSpawnable(landingName)
-	if err != nil || h.UsesCommandInput() {
+	imp.h, err = harness.ResolveSpawnable(landingName)
+	if err != nil || imp.h.UsesCommandInput() {
 		msg := "unsupported agent harness"
-		if q.Get("harness") == "" && direct {
-			msg = fmt.Sprintf("harness %q is not available here; choose a landing harness with --harness", d.Harness)
+		if imp.q.Get("harness") == "" && imp.direct {
+			msg = fmt.Sprintf("harness %q is not available here; choose a landing harness with --harness", imp.d.Harness)
 		}
 		writeError(w, 400, "harness", msg)
-		return
+		return false
 	}
-	src, _ := harness.Resolve(d.Harness)
-	crossHarness := src == nil || src.Name != h.Name
+	return true
+}
+
+// sanitizeProfile decodes the file's profile, forces every access-bearing field
+// out, keeps a file's environment only for a move, and resolves the
+// placeholders against the --set bindings.
+func (imp *agentBundleImport) sanitizeProfile(w http.ResponseWriter) bool {
+	var err error
+	src, _ := harness.Resolve(imp.d.Harness)
+	imp.crossHarness = src == nil || src.Name != imp.h.Name
 	// Decode only the existing profile shape, then force every access-bearing
 	// field out even for a malicious hand-edited manifest.
-	var profile spawnProfileJSON
-	if err := json.Unmarshal(d.Profile, &profile); err != nil {
+	if err := json.Unmarshal(imp.d.Profile, &imp.profile); err != nil {
 		writeError(w, 400, "profile", err.Error())
-		return
+		return false
 	}
-	profile.Name = "agent"
-	profile.Harness = d.Harness
-	profile.RoleRef = ""
-	profile.RoleRefs = nil
-	profile.PromptRefs = nil
-	profile.IsOwner = nil
-	profile.PermissionOverrides = nil
-	profile.StartupContext = ""
-	profile.InitialMessage = ""
-	profile.AgentName = ""
-	profile.Aliases = nil
+	imp.profile.Name = "agent"
+	imp.profile.Harness = imp.d.Harness
+	imp.profile.RoleRef = ""
+	imp.profile.RoleRefs = nil
+	imp.profile.PromptRefs = nil
+	imp.profile.IsOwner = nil
+	imp.profile.PermissionOverrides = nil
+	imp.profile.StartupContext = ""
+	imp.profile.InitialMessage = ""
+	imp.profile.AgentName = ""
+	imp.profile.Aliases = nil
 	// A file's environment never lands, so nothing in it can demand a binding.
-	accepted, _ := r.Context().Value(acceptedMoveContextKey{}).(bool)
-	movedHere := authority != nil || accepted
-	fileEnvironment := profile.Environment
-	if !movedHere {
-		profile.Environment = nil
+	imp.accepted, _ = imp.r.Context().Value(acceptedMoveContextKey{}).(bool)
+	imp.movedHere = imp.authority != nil || imp.accepted
+	imp.fileEnvironment = imp.profile.Environment
+	if !imp.movedHere {
+		imp.profile.Environment = nil
 	}
-	rawProfile, _ := json.Marshal(profile)
-	safe := configbundle.Bundle{Sections: map[string][]configbundle.Item{"profiles": {{Name: "agent", Value: rawProfile}}}, Placeholders: b.Manifest.Placeholders}
-	values := map[string]string{}
-	for _, binding := range q["set"] {
+	rawProfile, _ := json.Marshal(imp.profile)
+	imp.safe = configbundle.Bundle{Sections: map[string][]configbundle.Item{"profiles": {{Name: "agent", Value: rawProfile}}}, Placeholders: imp.b.Manifest.Placeholders}
+	imp.values = map[string]string{}
+	for _, binding := range imp.q["set"] {
 		name, value, ok := strings.Cut(binding, "=")
 		if !ok || name == "" || name == "HOME" {
 			writeError(w, 400, "binding", "--set requires name=value; HOME is automatic")
-			return
+			return false
 		}
-		values[name] = value
+		imp.values[name] = value
 	}
-	if q.Get("keep_paths") == "true" {
-		values = safe.KeepPaths(values)
+	if imp.q.Get("keep_paths") == "true" {
+		imp.values = imp.safe.KeepPaths(imp.values)
 	}
-	missing, err := safe.Resolve(values)
+	imp.missing, err = imp.safe.Resolve(imp.values)
 	if err != nil {
 		writeError(w, 400, "binding", err.Error())
-		return
+		return false
 	}
-	d.Profile = safe.Sections["profiles"][0].Value
-	var landingWarnings []string
+	imp.d.Profile = imp.safe.Sections["profiles"][0].Value
+	return true
+}
+
+// selectKept reads what the file loses and what a human keeps of it, and
+// rebuilds the profile for a cross-harness or model-changing landing.
+func (imp *agentBundleImport) selectKept(w http.ResponseWriter) bool {
 	// What this file loses, and what a human may keep of it. Only a file import
 	// or an offer a human accepts reaches a selection: every other path here
 	// builds its own query.
-	offerList, _ := r.Context().Value(offerConfirmKey{}).(*offerConfirmation)
-	var keep importKeep
+	imp.offerList, _ = imp.r.Context().Value(offerConfirmKey{}).(*offerConfirmation)
 	switch {
-	case offerList != nil:
-		keep, fileDigest = offerList.keep, offerList.digest
-	case direct:
-		keep = readImportKeep(r)
+	case imp.offerList != nil:
+		imp.keep, imp.fileDigest = imp.offerList.keep, imp.offerList.digest
+	case imp.direct:
+		imp.keep = readImportKeep(imp.r)
 	}
-	selection := keep
-	if !apply {
-		selection = keep.preview()
+	imp.selection = imp.keep
+	if !imp.apply {
+		imp.selection = imp.keep.preview()
 	}
-	if offerList != nil && offerList.unrestricted && !keep.named {
+	if imp.offerList != nil && imp.offerList.unrestricted && !imp.keep.named {
 		// A request with no selection takes the list's ticks: all, from the
 		// operator's own nodes, and none from anyone else, whatever they hold.
-		selection = importKeep{human: true, named: true, all: true}
+		imp.selection = importKeep{human: true, named: true, all: true}
 	}
-	var fileDrops []fileDrop
-	if crossHarness || model != "" {
-		if err := json.Unmarshal(d.Profile, &profile); err != nil {
+	if imp.crossHarness || imp.model != "" {
+		if err := json.Unmarshal(imp.d.Profile, &imp.profile); err != nil {
 			writeError(w, 400, "profile", err.Error())
-			return
+			return false
 		}
-		if crossHarness {
+		if imp.crossHarness {
 			// Launch posture is harness specific: on another harness the
 			// receiver's defaults and normal spawn checks apply instead.
-			landingWarnings = append(landingWarnings, fmt.Sprintf("The launch posture recorded for %s is not applied on %s; receiver defaults and normal spawn checks apply.", d.Harness, h.Name))
-			profile = spawnProfileJSON{Name: "agent"}
-			missing = nil
+			imp.landingWarnings = append(imp.landingWarnings, fmt.Sprintf("The launch posture recorded for %s is not applied on %s; receiver defaults and normal spawn checks apply.", imp.d.Harness, imp.h.Name))
+			imp.profile = spawnProfileJSON{Name: "agent"}
+			imp.missing = nil
 		}
-		profile.Harness = h.Name
-		if model != "" {
-			profile.Model = model
+		imp.profile.Harness = imp.h.Name
+		if imp.model != "" {
+			imp.profile.Model = imp.model
 		}
-		d.Profile, _ = json.Marshal(profile)
+		imp.d.Profile, _ = json.Marshal(imp.profile)
 	}
-	d.Harness = h.Name
+	imp.d.Harness = imp.h.Name
 	// A teleport's landing authority names the profile its spawn takes below.
-	landingProfile := ""
-	if authority != nil && authority.record.Profile != nil {
-		landingProfile = authority.record.Profile.Name
+	imp.landingProfile = ""
+	if imp.authority != nil && imp.authority.record.Profile != nil {
+		imp.landingProfile = imp.authority.record.Profile.Name
 	}
-	if len(missing) == 0 {
-		if err := json.Unmarshal(d.Profile, &profile); err != nil {
+	return true
+}
+
+// applyReceiverPolicy, once every placeholder is bound, puts the profile under
+// the receiver's sandbox, approval and launch-field policy, recording what a
+// file drops, and refuses a profile that does not build.
+func (imp *agentBundleImport) applyReceiverPolicy(w http.ResponseWriter) bool {
+	if len(imp.missing) == 0 {
+		if err := json.Unmarshal(imp.d.Profile, &imp.profile); err != nil {
 			writeError(w, 400, "profile", err.Error())
-			return
+			return false
 		}
-		recordedSandbox := profile
-		profile = receiverSandboxProfile(profile, h, q.Get("group"), landingProfile)
+		recordedSandbox := imp.profile
+		imp.profile = receiverSandboxProfile(imp.profile, imp.h, imp.q.Get("group"), imp.landingProfile)
 		// The receiver owns a teleport or direct move, by landing authority or by
 		// accepting the offer, and dropping its posture could stall the agent on
 		// prompts nobody answers. Everything else is a file.
-		if !movedHere || offerList != nil {
-			landingWarnings = append(landingWarnings, droppedSandbox(recordedSandbox, profile, h, q.Get("group"), landingProfile)...)
+		if !imp.movedHere || imp.offerList != nil {
+			imp.landingWarnings = append(imp.landingWarnings, droppedSandbox(recordedSandbox, imp.profile, imp.h, imp.q.Get("group"), imp.landingProfile)...)
 			var drops []fileDrop
-			profile, drops = receiverApprovalDrops(profile, h, q.Get("group"), landingProfile)
-			fileDrops = append(fileDrops, drops...)
-			profile.Environment = make([]sandboxpolicy.EnvironmentEntry, len(fileEnvironment))
-			for i, entry := range fileEnvironment {
-				profile.Environment[i] = sandboxpolicy.EnvironmentEntry{Name: entry.Name, Value: fileEnvironmentValue(entry, safe.Placeholders, values)}
+			imp.profile, drops = receiverApprovalDrops(imp.profile, imp.h, imp.q.Get("group"), imp.landingProfile)
+			imp.fileDrops = append(imp.fileDrops, drops...)
+			imp.profile.Environment = make([]sandboxpolicy.EnvironmentEntry, len(imp.fileEnvironment))
+			for i, entry := range imp.fileEnvironment {
+				imp.profile.Environment[i] = sandboxpolicy.EnvironmentEntry{Name: entry.Name, Value: fileEnvironmentValue(entry, imp.safe.Placeholders, imp.values)}
 			}
 			// A teleport offer's route is no file's: its credential mode wrote it,
 			// checked against this receiver's landing policy.
 			route := ""
-			if offer, _ := r.Context().Value(teleportOfferContextKey{}).(*db.FederationBundleOffer); offer != nil && offer.Descriptor.Teleport != nil {
-				route, profile.ModelProxy = profile.ModelProxy, ""
+			if offer, _ := imp.r.Context().Value(teleportOfferContextKey{}).(*db.FederationBundleOffer); offer != nil && offer.Descriptor.Teleport != nil {
+				route, imp.profile.ModelProxy = imp.profile.ModelProxy, ""
 			}
-			profile, drops = receiverLaunchFieldsDrops(profile, h, q.Get("group"), landingProfile)
-			fileDrops = append(fileDrops, drops...)
+			imp.profile, drops = receiverLaunchFieldsDrops(imp.profile, imp.h, imp.q.Get("group"), imp.landingProfile)
+			imp.fileDrops = append(imp.fileDrops, drops...)
 			if route != "" {
-				profile.ModelProxy = route
+				imp.profile.ModelProxy = route
 			}
-		} else if accepted {
+		} else if imp.accepted {
 			// The grant trusts this peer with moves, and it says nothing about what
 			// the operator is accepting, so show what a file would have lost.
-			_, kept := receiverApprovalProfile(profile, h, q.Get("group"), landingProfile)
-			_, fields := receiverLaunchFieldsProfile(profile, h, q.Get("group"), landingProfile)
+			_, kept := receiverApprovalProfile(imp.profile, imp.h, imp.q.Get("group"), imp.landingProfile)
+			_, fields := receiverLaunchFieldsProfile(imp.profile, imp.h, imp.q.Get("group"), imp.landingProfile)
 			if kept = append(kept, fields...); len(kept) > 0 {
-				landingWarnings = append(landingWarnings, "This offer lands as a move from a peer holding agents.teleport.receive, so it keeps what a file would lose. As a file: "+strings.Join(kept, " "))
+				imp.landingWarnings = append(imp.landingWarnings, "This offer lands as a move from a peer holding agents.teleport.receive, so it keeps what a file would lose. As a file: "+strings.Join(kept, " "))
 			}
 		}
-		if _, fail := buildProfileFromJSON(profile); fail != nil {
+		if _, fail := buildProfileFromJSON(imp.profile); fail != nil {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
-			return
+			return false
 		}
 	}
-	var findings []agentbundle.Finding
-	if rescan != nil {
+	return true
+}
+
+// scanFindings scans the bundle (or a PAF's whole content) for findings.
+func (imp *agentBundleImport) scanFindings(w http.ResponseWriter) bool {
+	var err error
+	if imp.rescan != nil {
 		var fs []paf.Finding
-		fs, err = rescan(agentRecordLimit())
-		findings = bundleFindings(fs)
+		fs, err = imp.rescan(agentRecordLimit())
+		imp.findings = bundleFindings(fs)
 	} else {
-		findings, err = scanAgentBundle(b)
+		imp.findings, err = scanAgentBundle(imp.b)
 	}
 	if err != nil {
 		writeError(w, 400, "history", err.Error())
-		return
+		return false
 	}
-	carryPolicy, hasCarryPolicy := r.Context().Value(permissionCarryContextKey{}).(permissionCarryPolicy)
+	return true
+}
+
+// planPermissions settles permission carry: the policy (and its grant check on
+// apply), the 512-row cap, the carry decisions and overrides, the human's kept
+// permissions and file drops, and the receiver's worker-policy denies.
+func (imp *agentBundleImport) planPermissions(w http.ResponseWriter) bool {
+	var hasCarryPolicy bool
+	imp.carryPolicy, hasCarryPolicy = imp.r.Context().Value(permissionCarryContextKey{}).(permissionCarryPolicy)
 	if !hasCarryPolicy {
-		carryPolicy = permissionCarryPolicy{Group: q.Get("group"), Enabled: d.CarryPermissions && q.Get("carry_permissions") == "true", AllowSensitive: q.Get("allow_sensitive_permissions") == "true"}
-		if apply && carryPolicy.Enabled {
-			if archive != nil {
-				r.Body = io.NopCloser(archive)
+		imp.carryPolicy = permissionCarryPolicy{Group: imp.q.Get("group"), Enabled: imp.d.CarryPermissions && imp.q.Get("carry_permissions") == "true", AllowSensitive: imp.q.Get("allow_sensitive_permissions") == "true"}
+		if imp.apply && imp.carryPolicy.Enabled {
+			if imp.archive != nil {
+				imp.r.Body = io.NopCloser(imp.archive)
 			}
-			if _, ok := requirePermission(w, r, PermPermissionsGrant); !ok {
-				return
+			if _, ok := requirePermission(w, imp.r, PermPermissionsGrant); !ok {
+				return false
 			}
 		}
 	}
-	if carryPolicy.Enabled && len(d.Permissions) > 512 {
+	if imp.carryPolicy.Enabled && len(imp.d.Permissions) > 512 {
 		writeError(w, 400, "permissions", "permission carry exceeds 512 rows")
-		return
+		return false
 	}
-	carryDecisions, carryOverrides := planCarriedPermissions(d.Permissions, carryPolicy)
+	imp.carryDecisions, imp.carryOverrides = planCarriedPermissions(imp.d.Permissions, imp.carryPolicy)
 	// Permissions join the list last, since it leaves out what carry applies. A
 	// kept permission lands through the carry path, with its checks at launch.
 	keptPermissions := map[string]bool{}
-	if direct && !movedHere {
-		fileDrops = append(fileDrops, fileAgentPermissionDrops(d.Permissions, q.Get("group"), carryOverrides, keptPermissions)...)
+	if imp.direct && !imp.movedHere {
+		imp.fileDrops = append(imp.fileDrops, fileAgentPermissionDrops(imp.d.Permissions, imp.q.Get("group"), imp.carryOverrides, keptPermissions)...)
 	}
-	if offerList != nil {
-		for i := range fileDrops {
-			fileDrops[i].item.Default, fileDrops[i].item.Revealable = offerList.unrestricted, false
+	if imp.offerList != nil {
+		for i := range imp.fileDrops {
+			imp.fileDrops[i].item.Default, imp.fileDrops[i].item.Revealable = imp.offerList.unrestricted, false
 		}
 	}
-	settled := settleFileDrops(fileDrops, selection, &profile)
-	landingWarnings = append(landingWarnings, settled.warnings...)
+	imp.settled = settleFileDrops(imp.fileDrops, imp.selection, &imp.profile)
+	imp.landingWarnings = append(imp.landingWarnings, imp.settled.warnings...)
 	if len(keptPermissions) > 0 {
-		carried := slices.DeleteFunc(slices.Clone(d.Permissions), func(row agentbundle.Permission) bool {
-			_, applied := carryOverrides[row.Slug]
+		carried := slices.DeleteFunc(slices.Clone(imp.d.Permissions), func(row agentbundle.Permission) bool {
+			_, applied := imp.carryOverrides[row.Slug]
 			return !keptPermissions[row.Slug] && !applied
 		})
-		d.Permissions = carried
-		carryPolicy = permissionCarryPolicy{Group: q.Get("group"), Enabled: true, AllowSensitive: true}
-		carryDecisions, carryOverrides = planCarriedPermissions(d.Permissions, carryPolicy)
+		imp.d.Permissions = carried
+		imp.carryPolicy = permissionCarryPolicy{Group: imp.q.Get("group"), Enabled: true, AllowSensitive: true}
+		imp.carryDecisions, imp.carryOverrides = planCarriedPermissions(imp.d.Permissions, imp.carryPolicy)
 	}
-	if authority != nil && authority.record.WorkerDefaults != nil {
-		for i := range carryDecisions {
-			d := &carryDecisions[i]
-			if authority.record.WorkerDefaults.Permissions[d.Slug].Effect == "deny" && d.Effect != "deny" && d.Decision != "drop" {
+	if imp.authority != nil && imp.authority.record.WorkerDefaults != nil {
+		for i := range imp.carryDecisions {
+			d := &imp.carryDecisions[i]
+			if imp.authority.record.WorkerDefaults.Permissions[d.Slug].Effect == "deny" && d.Effect != "deny" && d.Decision != "drop" {
 				d.Decision, d.Reason = "drop", "receiver worker policy deny wins"
 			}
 		}
 	}
-	preview := agentBundlePreview{Permissions: carryDecisions, Findings: findings, Agent: d, Cwd: q.Get("cwd"), Worktree: q.Get("worktree"), Group: q.Get("group"), Unresolved: missing, Warnings: append([]string{}, b.Manifest.Warnings...), Security: "Permissions and ownership are advisory only; none will be copied. " + agentImportSecurityNote}
-	if carryPolicy.Enabled {
-		preview.Security = permissionCarrySummary(preview.Permissions) + " " + agentImportSecurityNote
+	return true
+}
+
+// checkPaths builds the preview and validates the working directory and
+// worktree it lands in, recording a path error as a warning.
+func (imp *agentBundleImport) checkPaths(w http.ResponseWriter) bool {
+	imp.preview = agentBundlePreview{Permissions: imp.carryDecisions, Findings: imp.findings, Agent: imp.d, Cwd: imp.q.Get("cwd"), Worktree: imp.q.Get("worktree"), Group: imp.q.Get("group"), Unresolved: imp.missing, Warnings: append([]string{}, imp.b.Manifest.Warnings...), Security: "Permissions and ownership are advisory only; none will be copied. " + agentImportSecurityNote}
+	if imp.carryPolicy.Enabled {
+		imp.preview.Security = permissionCarrySummary(imp.preview.Permissions) + " " + agentImportSecurityNote
 	}
-	if preview.Cwd == "" && q.Get("keep_paths") == "true" {
-		preview.Cwd = d.Paths.Cwd
-		if preview.Worktree == "" {
-			preview.Worktree = d.Paths.Worktree
+	if imp.preview.Cwd == "" && imp.q.Get("keep_paths") == "true" {
+		imp.preview.Cwd = imp.d.Paths.Cwd
+		if imp.preview.Worktree == "" {
+			imp.preview.Worktree = imp.d.Paths.Worktree
 		}
 	}
-	pathError := ""
-	if preview.Cwd == "" {
-		pathError = "set --cwd to remap the working directory, or use --keep-paths to reuse recorded paths"
+	imp.pathError = ""
+	if imp.preview.Cwd == "" {
+		imp.pathError = "set --cwd to remap the working directory, or use --keep-paths to reuse recorded paths"
 	} else {
-		cwd, err := filepath.Abs(preview.Cwd)
+		cwd, err := filepath.Abs(imp.preview.Cwd)
 		if err != nil {
-			pathError = err.Error()
+			imp.pathError = err.Error()
 		} else if st, err := os.Stat(cwd); err != nil || !st.IsDir() {
-			pathError = "working directory is missing or not a directory: " + cwd + "; use --cwd to remap it"
+			imp.pathError = "working directory is missing or not a directory: " + cwd + "; use --cwd to remap it"
 		} else {
-			preview.Cwd = cwd
+			imp.preview.Cwd = cwd
 		}
 	}
-	if preview.Worktree != "" {
-		abs, err := filepath.Abs(preview.Worktree)
+	if imp.preview.Worktree != "" {
+		abs, err := filepath.Abs(imp.preview.Worktree)
 		if err != nil {
-			pathError = err.Error()
+			imp.pathError = err.Error()
 		} else if st, err := os.Stat(abs); err != nil || !st.IsDir() {
-			pathError = "worktree hint is missing or not a directory: " + abs + "; use --worktree to remap it"
+			imp.pathError = "worktree hint is missing or not a directory: " + abs + "; use --worktree to remap it"
 		} else {
-			preview.Worktree = abs
+			imp.preview.Worktree = abs
 		}
 	}
-	if pathError != "" {
-		preview.Warnings = append(preview.Warnings, pathError)
+	if imp.pathError != "" {
+		imp.preview.Warnings = append(imp.preview.Warnings, imp.pathError)
 	}
-	preview.Warnings = append(preview.Warnings, landingWarnings...)
+	imp.preview.Warnings = append(imp.preview.Warnings, imp.landingWarnings...)
+	return true
+}
+
+// planHistory picks the landing model and plans how the conversation lands,
+// warning when an offline landing cannot apply a new model.
+func (imp *agentBundleImport) planHistory(w http.ResponseWriter) bool {
+	var err error
 	// Budget the conversation for the model the agent will launch with: the
 	// requested one, else the profile's, else on the same harness the model
 	// the source last ran.
-	landingModel := model
-	if landingModel == "" {
-		landingModel = profile.Model
+	imp.landingModel = imp.model
+	if imp.landingModel == "" {
+		imp.landingModel = imp.profile.Model
 	}
-	if landingModel == "" && !crossHarness && d.Origin != nil {
-		landingModel = d.Origin.Model
+	if imp.landingModel == "" && !imp.crossHarness && imp.d.Origin != nil {
+		imp.landingModel = imp.d.Origin.Model
 	}
-	landing, warnings, err := planHistoryLanding(b, h, landingModel, preview.Cwd, neutral, landingOptions{Skip: q.Get("skip_history") == "true", BudgetNative: direct && landsOnSmallerWindow(h, d.Origin, landingModel), Summary: handoff})
+	imp.landing, imp.warnings, err = planHistoryLanding(imp.b, imp.h, imp.landingModel, imp.preview.Cwd, imp.neutral, landingOptions{Skip: imp.q.Get("skip_history") == "true", BudgetNative: imp.direct && landsOnSmallerWindow(imp.h, imp.d.Origin, imp.landingModel), Summary: imp.handoff})
 	if err != nil {
 		writeError(w, 400, "history", err.Error())
-		return
+		return false
 	}
-	defer landing.close()
-	preview.Landing, preview.History = landing, landing.history != nil
-	if noStart && h.UsesAuthoritativeServer() && landing.Rung == landingNative && landingModel != "" &&
-		(d.Origin == nil || d.Origin.Model != landingModel) {
+	imp.cleanups = append(imp.cleanups, imp.landing.close)
+	imp.preview.Landing, imp.preview.History = imp.landing, imp.landing.history != nil
+	if imp.noStart && imp.h.UsesAuthoritativeServer() && imp.landing.Rung == landingNative && imp.landingModel != "" &&
+		(imp.d.Origin == nil || imp.d.Origin.Model != imp.landingModel) {
 		// Only the launch prompt names a model to this harness, and an offline
 		// landing sends none, so the imported conversation's model carries on.
-		preview.Warnings = append(preview.Warnings, fmt.Sprintf(
+		imp.preview.Warnings = append(imp.preview.Warnings, fmt.Sprintf(
 			"This offline landing records %s, but its conversation continues on the model it last used until you change it there. Start the import instead to apply the model now.",
-			landingModel))
+			imp.landingModel))
 	}
+	return true
+}
+
+// resolvePosture resolves the receiving group's launch posture, which a
+// recorded posture may tighten but not widen.
+func (imp *agentBundleImport) resolvePosture(w http.ResponseWriter) bool {
+	var err error
 	// The posture this import launches under: the receiver's, which a
 	// recorded posture can tighten but not widen.
 	var postureGroup *db.AgentGroup
-	if preview.Group != "" {
-		if postureGroup, err = db.GetAgentGroupByName(preview.Group); err != nil {
+	if imp.preview.Group != "" {
+		if postureGroup, err = db.GetAgentGroupByName(imp.preview.Group); err != nil {
 			writeError(w, 500, "group", err.Error())
-			return
+			return false
 		}
 	}
-	if pathError == "" && (postureGroup != nil || preview.Group == "") {
+	if imp.pathError == "" && (postureGroup != nil || imp.preview.Group == "") {
 		var environment []sandboxpolicy.EnvironmentEntry
 		if postureGroup != nil {
 			environment = postureGroup.Environment
 		}
-		kept := receiverSandboxProfile(profile, h, q.Get("group"), landingProfile)
-		preview.Posture, err = resolveLandingPosture(postureGroup, h.Name,
-			kept.SandboxImplementation, kept.Sandbox, landingModel, preview.Cwd, environment)
+		kept := receiverSandboxProfile(imp.profile, imp.h, imp.q.Get("group"), imp.landingProfile)
+		imp.preview.Posture, err = resolveLandingPosture(postureGroup, imp.h.Name,
+			kept.SandboxImplementation, kept.Sandbox, imp.landingModel, imp.preview.Cwd, environment)
 		if err != nil {
 			writeError(w, 500, "posture", err.Error())
-			return
+			return false
 		}
 	}
-	preview.Warnings = append(preview.Warnings, warnings...)
-	if direct {
+	imp.preview.Warnings = append(imp.preview.Warnings, imp.warnings...)
+	if imp.direct {
 		// A direct import already tried to land the neutral context; the
 		// landing warnings say why when it did not.
-		preview.Warnings = slices.DeleteFunc(preview.Warnings, func(s string) bool { return s == legacy.WarningContextOnly })
+		imp.preview.Warnings = slices.DeleteFunc(imp.preview.Warnings, func(s string) bool { return s == legacy.WarningContextOnly })
 	}
+	return true
+}
+
+// reviewManagedInstructions asks for a large history cut's confirmation,
+// prepares the carried managed instructions' previews, and fills the preview's
+// review fields, refusing an offer's stale selection.
+func (imp *agentBundleImport) reviewManagedInstructions(w http.ResponseWriter) bool {
 	// A large cut of a file import needs the importer's confirmation, as a
 	// morph's does. The full history is never lost: it stays in the file
 	// and is saved beside the agent.
-	needsConfirm := direct && landing.Losses != nil && landing.Losses.NeedsSummary && preview.History
-	if needsConfirm {
-		preview.Warnings = append(preview.Warnings, fmt.Sprintf("Cutting %d%% of the conversation needs confirmation: --confirm-history-loss.", landing.cutPercent()))
+	imp.needsConfirm = imp.direct && imp.landing.Losses != nil && imp.landing.Losses.NeedsSummary && imp.preview.History
+	if imp.needsConfirm {
+		imp.preview.Warnings = append(imp.preview.Warnings, fmt.Sprintf("Cutting %d%% of the conversation needs confirmation: --confirm-history-loss.", imp.landing.cutPercent()))
 	}
-	if !omitManagedInstructions(w, r, &b.ManagedInstructions, q.Get("omit_managed_instructions") == "true") {
-		return
+	if !omitManagedInstructions(w, imp.r, &imp.b.ManagedInstructions, imp.q.Get("omit_managed_instructions") == "true") {
+		return false
 	}
-	managedPreview, managedDigest, managedCode, managedErr := managedInstructionPreviews(b.ManagedInstructions)
+	var managedErr error
+	var managedPreview []managedInstructionPreview
+	managedPreview, imp.managedDigest, imp.managedCode, managedErr = managedInstructionPreviews(imp.b.ManagedInstructions)
 	if managedErr != nil {
 		writeError(w, 400, "managed_instructions", managedErr.Error())
-		return
+		return false
 	}
-	preview.ManagedInstructions, preview.ManagedInstructionDigest, preview.ManagedScriptApprovalRequired = managedPreview, managedDigest, managedCode
-	if (direct && !movedHere) || offerList != nil {
-		preview.Confirm = newImportConfirmation(fileDigest, fileDrops, keep.human, preview.Warnings)
+	imp.preview.ManagedInstructions, imp.preview.ManagedInstructionDigest, imp.preview.ManagedScriptApprovalRequired = managedPreview, imp.managedDigest, imp.managedCode
+	if (imp.direct && !imp.movedHere) || imp.offerList != nil {
+		imp.preview.Confirm = newImportConfirmation(imp.fileDigest, imp.fileDrops, imp.keep.human, imp.preview.Warnings)
 	}
-	preview.Kept, preview.Dropped = settled.kept, settled.dropped
-	preview.CarriedWorkflows, preview.Signatures = carriedWorkflows, signatures
-	if offerList != nil {
+	imp.preview.Kept, imp.preview.Dropped = imp.settled.kept, imp.settled.dropped
+	imp.preview.CarriedWorkflows, imp.preview.Signatures = imp.carriedWorkflows, imp.signatures
+	if imp.offerList != nil {
 		// Refused here too, so a stale selection reserves no launch.
-		if err := keep.check(fileDigest, fileImportItems(fileDrops)); err != nil {
+		if err := imp.keep.check(imp.fileDigest, fileImportItems(imp.fileDrops)); err != nil {
 			var refused *importKeepError
 			errors.As(err, &refused)
 			writeError(w, refused.status, refused.code, err.Error())
-			return
+			return false
 		}
 	}
-	if !apply {
-		writeJSON(w, 200, preview)
-		return
+	return true
+}
+
+// previewOrRefuse answers a preview, or refuses an apply that is not ready:
+// unapproved managed scripts, an unconfirmed history cut, unresolved paths, no
+// receiving group, a stale selection, or an offline landing with no
+// conversation.
+func (imp *agentBundleImport) previewOrRefuse(w http.ResponseWriter) bool {
+	var err error
+	if !imp.apply {
+		writeJSON(w, 200, imp.preview)
+		return false
 	}
-	if managedCode {
-		if q.Get("approve_managed_scripts") != managedDigest {
-			writeJSON(w, 409, map[string]any{"code": "managed_script_approval_required", "error": "Inspect the carried script files, then explicitly approve this transfer's digest or omit managed instructions.", "preview": preview})
-			return
+	if imp.managedCode {
+		if imp.q.Get("approve_managed_scripts") != imp.managedDigest {
+			writeJSON(w, 409, map[string]any{"code": "managed_script_approval_required", "error": "Inspect the carried script files, then explicitly approve this transfer's digest or omit managed instructions.", "preview": imp.preview})
+			return false
 		}
-		if !requireHuman(w, r, "managed instruction script approval or omission requires the receiving human") {
-			return
+		if !requireHuman(w, imp.r, "managed instruction script approval or omission requires the receiving human") {
+			return false
 		}
 	}
-	if needsConfirm && q.Get("confirm_history_loss") != "true" {
-		writeJSON(w, 409, map[string]any{"code": "history_confirmation_required", "preview": preview,
-			"error": fmt.Sprintf("landing on %s cuts about %d%% of the conversation. Confirm the cut with --confirm-history-loss (the full history stays in the file and is saved beside the agent), choose a model with a larger context window with --model, or import without the conversation with --skip-history.", landingModelLabel(h, landingModel), landing.cutPercent())})
-		return
+	if imp.needsConfirm && imp.q.Get("confirm_history_loss") != "true" {
+		writeJSON(w, 409, map[string]any{"code": "history_confirmation_required", "preview": imp.preview,
+			"error": fmt.Sprintf("landing on %s cuts about %d%% of the conversation. Confirm the cut with --confirm-history-loss (the full history stays in the file and is saved beside the agent), choose a model with a larger context window with --model, or import without the conversation with --skip-history.", landingModelLabel(imp.h, imp.landingModel), imp.landing.cutPercent())})
+		return false
 	}
-	if pathError != "" || len(missing) > 0 {
-		writeJSON(w, 409, map[string]any{"error": "resolve paths before applying", "code": "unresolved_paths", "preview": preview})
-		return
+	if imp.pathError != "" || len(imp.missing) > 0 {
+		writeJSON(w, 409, map[string]any{"error": "resolve paths before applying", "code": "unresolved_paths", "preview": imp.preview})
+		return false
 	}
-	if preview.Group == "" {
+	if imp.preview.Group == "" {
 		writeError(w, 400, "group", "--apply requires --group naming an existing receiving group, as with agent spawn")
-		return
+		return false
 	}
-	if err := keep.check(fileDigest, fileImportItems(fileDrops)); err != nil {
+	if err := imp.keep.check(imp.fileDigest, fileImportItems(imp.fileDrops)); err != nil {
 		var refused *importKeepError
 		errors.As(err, &refused)
 		writeError(w, refused.status, refused.code, err.Error())
-		return
+		return false
 	}
-	if noStart && !preview.History {
+	if imp.noStart && !imp.preview.History {
 		writeError(w, 400, "no_start", "only an agent whose conversation lands can be imported without starting; import and start it instead")
-		return
+		return false
 	}
-	var group *db.AgentGroup
-	if preview.Group != "" {
-		group, err = db.GetAgentGroupByName(preview.Group)
+	if imp.preview.Group != "" {
+		imp.group, err = db.GetAgentGroupByName(imp.preview.Group)
 		if err != nil {
 			writeError(w, 500, "group", err.Error())
-			return
+			return false
 		}
-		if group == nil {
+		if imp.group == nil {
 			writeError(w, 404, "group", "receiving group does not exist")
-			return
+			return false
 		}
 	}
-	wire, err := agentBundleSpawnWire(d, profile, preview)
+	return true
+}
+
+// buildLaunchRequest builds the spawn wire for the landing, merges the carried
+// permission overrides into the receiver's, and prepares the internal spawn
+// request's context.
+func (imp *agentBundleImport) buildLaunchRequest(w http.ResponseWriter) bool {
+	wire, err := agentBundleSpawnWire(imp.d, imp.profile, imp.preview)
 	if err != nil {
 		writeError(w, 400, "spawn", err.Error())
-		return
+		return false
 	}
-	if authority != nil {
+	if imp.authority != nil {
 		var shape map[string]any
 		_ = json.Unmarshal(wire, &shape)
-		if authority.record.Profile != nil {
-			shape["profile"] = authority.record.Profile.Name
+		if imp.authority.record.Profile != nil {
+			shape["profile"] = imp.authority.record.Profile.Name
 		}
-		if authority.record.WorkerDefaults != nil {
-			shape["permission_overrides"] = authority.record.WorkerDefaults.Permissions
+		if imp.authority.record.WorkerDefaults != nil {
+			shape["permission_overrides"] = imp.authority.record.WorkerDefaults.Permissions
 		}
 		wire, _ = json.Marshal(shape)
 	}
@@ -1028,12 +1215,12 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	if receiverOverrides == nil {
 		receiverOverrides = map[string]db.PermissionOverride{}
 	}
-	for slug, override := range carryOverrides {
+	for slug, override := range imp.carryOverrides {
 		if receiverOverrides[slug].Effect == "deny" && override.Effect != "deny" {
-			for i := range preview.Permissions {
-				if preview.Permissions[i].Slug == slug && preview.Permissions[i].Effect != "deny" {
-					preview.Permissions[i].Decision = "drop"
-					preview.Permissions[i].Reason = "receiver worker policy deny wins"
+			for i := range imp.preview.Permissions {
+				if imp.preview.Permissions[i].Slug == slug && imp.preview.Permissions[i].Effect != "deny" {
+					imp.preview.Permissions[i].Decision = "drop"
+					imp.preview.Permissions[i].Reason = "receiver worker policy deny wins"
 				}
 			}
 			continue
@@ -1041,52 +1228,59 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		receiverOverrides[slug] = override
 	}
 	launchShape["permission_overrides"] = receiverOverrides
-	if carryPolicy.Enabled {
+	if imp.carryPolicy.Enabled {
 		brief, _ := launchShape["initial_message"].(string)
-		launchShape["initial_message"] = permissionCarrySummary(preview.Permissions) + "\n\n" + brief
+		launchShape["initial_message"] = permissionCarrySummary(imp.preview.Permissions) + "\n\n" + brief
 	}
 	wire, _ = json.Marshal(launchShape)
-	inner := r.Clone(context.WithValue(r.Context(), permissionCarryLaunchContextKey{}, permissionCarryLaunch{Policy: carryPolicy, Rows: d.Permissions, Expected: carryOverrides}))
-	if a := arrivalFromRequest(inner); a != nil && carryPolicy.Enabled {
+	imp.inner = imp.r.Clone(context.WithValue(imp.r.Context(), permissionCarryLaunchContextKey{}, permissionCarryLaunch{Policy: imp.carryPolicy, Rows: imp.d.Permissions, Expected: imp.carryOverrides}))
+	if a := arrivalFromRequest(imp.inner); a != nil && imp.carryPolicy.Enabled {
 		copy := *a
-		copy.PermissionSummary = permissionCarrySummary(preview.Permissions)
-		inner = inner.WithContext(context.WithValue(inner.Context(), arrivalContextKey{}, &copy))
+		copy.PermissionSummary = permissionCarrySummary(imp.preview.Permissions)
+		imp.inner = imp.inner.WithContext(context.WithValue(imp.inner.Context(), arrivalContextKey{}, &copy))
 	}
-	inner = inner.WithContext(context.WithValue(inner.Context(), managedInstructionLaunchContextKey{}, b.ManagedInstructions))
-	inner.Method = http.MethodPost
-	inner.Body = io.NopCloser(bytes.NewReader(wire))
-	inner.ContentLength = int64(len(wire))
-	if preview.History {
-		inner = inner.WithContext(context.WithValue(inner.Context(), bundleHistoryContextKey{}, landing.history))
+	imp.inner = imp.inner.WithContext(context.WithValue(imp.inner.Context(), managedInstructionLaunchContextKey{}, imp.b.ManagedInstructions))
+	imp.inner.Method = http.MethodPost
+	imp.inner.Body = io.NopCloser(bytes.NewReader(wire))
+	imp.inner.ContentLength = int64(len(wire))
+	if imp.preview.History {
+		imp.inner = imp.inner.WithContext(context.WithValue(imp.inner.Context(), bundleHistoryContextKey{}, imp.landing.history))
 	}
-	if noStart {
-		inner = inner.WithContext(context.WithValue(inner.Context(), bundleNoLaunchContextKey{}, true))
+	if imp.noStart {
+		imp.inner = imp.inner.WithContext(context.WithValue(imp.inner.Context(), bundleNoLaunchContextKey{}, true))
 	}
-	res := serveInternalGroupSpawn(inner, group)
+	return true
+}
+
+// spawnAndLand spawns the agent into the receiving group, records the carried
+// permissions, saves the full history beside the agent, and answers.
+func (imp *agentBundleImport) spawnAndLand(w http.ResponseWriter) bool {
+	res := serveInternalGroupSpawn(imp.inner, imp.group)
 	if res.Status != 200 {
 		res.WriteTo(w)
-		return
+		return false
 	}
 	spawned, err := res.Response()
 	if err != nil {
 		writeError(w, 500, "spawn", err.Error())
-		return
+		return false
 	}
-	if carryPolicy.Enabled {
-		auditDecisions, _ := json.Marshal(preview.Permissions)
-		recordFederationAudit("agent.permissions.carry", carryPolicy.Peer, spawned.AgentID, preview.Group, string(auditDecisions), 200)
+	if imp.carryPolicy.Enabled {
+		auditDecisions, _ := json.Marshal(imp.preview.Permissions)
+		recordFederationAudit("agent.permissions.carry", imp.carryPolicy.Peer, spawned.AgentID, imp.preview.Group, string(auditDecisions), 200)
 	}
-	if landing.full != nil {
-		saveLandedHistory(spawned, landing, group)
+	if imp.landing.full != nil {
+		saveLandedHistory(spawned, imp.landing, imp.group)
 	}
-	if landing.history != nil {
-		recordConvLosses(spawned.ConvID, fileLosses, landing.Losses)
+	if imp.landing.history != nil {
+		recordConvLosses(spawned.ConvID, imp.fileLosses, imp.landing.Losses)
 	}
-	logKeptImportItems(settled.kept)
-	preview.Applied = true
-	preview.Offline = noStart
-	preview.Spawn = &spawned
-	writeJSON(w, 200, preview)
+	logKeptImportItems(imp.settled.kept)
+	imp.preview.Applied = true
+	imp.preview.Offline = imp.noStart
+	imp.preview.Spawn = &spawned
+	writeJSON(w, 200, imp.preview)
+	return true
 }
 
 func agentBundleSpawnWire(d agentbundle.Definition, p spawnProfileJSON, preview agentBundlePreview) ([]byte, error) {
