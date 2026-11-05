@@ -78,7 +78,7 @@ func sudoRequestCmd() *cobra.Command {
 		Short:       "Ask the human to elevate one or more slugs for a bounded duration (or, with --target, proactively grant)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *sudoRequestParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSudoRequest(p, os.Stdout, os.Stderr))
+			os.Exit(runSudoRequest(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -151,7 +151,7 @@ func sudoLsCmd() *cobra.Command {
 		Short:       "List active sudo grants (self by default, --all for everyone)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *sudoLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSudoLs(p, os.Stdout, os.Stderr))
+			os.Exit(runSudoLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -235,7 +235,7 @@ func sudoRevokeCmd() *cobra.Command {
 		Short:       "Revoke sudo grants (one by id, all for one conv, or every active)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *sudoRevokeParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSudoRevoke(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runSudoRevoke(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

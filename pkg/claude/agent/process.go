@@ -84,7 +84,7 @@ func processShowCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *processShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runProcessShow(p, os.Stdout, os.Stderr))
+			os.Exit(runProcessShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -169,7 +169,7 @@ func processAdvanceCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *processAdvanceParams, _ *cobra.Command, _ []string) {
-			os.Exit(runProcessAdvance(p, os.Stdout, os.Stderr))
+			os.Exit(runProcessAdvance(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

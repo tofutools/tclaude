@@ -8,14 +8,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/termtext"
 	"github.com/tofutools/tclaude/pkg/common"
-	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/nodeinfo"
 )
 
@@ -26,7 +25,7 @@ type harnessLsParams struct {
 }
 
 func HarnessCmd() *cobra.Command {
-	ls := boa.CmdT[harnessLsParams]{Use: "ls", Short: "List harness binaries available on the daemon's PATH (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *harnessLsParams, _ *cobra.Command, _ []string) { os.Exit(runHarnessLs(p, os.Stdout, os.Stderr)) }}.ToCobra()
+	ls := boa.CmdT[harnessLsParams]{Use: "ls", Short: "List harness binaries available on the daemon's PATH (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *harnessLsParams, _ *cobra.Command, _ []string) { os.Exit(runHarnessLs(p, cliStdout, cliStderr)) }}.ToCobra()
 	return boa.CmdT[struct{}]{Use: "harness", Short: "Inspect coding harness availability", ParamEnrich: common.DefaultParamEnricher(), SubCmds: append([]*cobra.Command{ls, harnessCredentialCommand()}, harnessOperationCommands()...)}.ToCobra()
 }
 func runHarnessLs(p *harnessLsParams, stdout, stderr io.Writer) int {
@@ -61,7 +60,6 @@ func runHarnessLs(p *harnessLsParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcIOFailure
 	}
-	cell := func(s string) string { return strings.Join(strings.Fields(proto.StripControls(s)), " ") }
 	flag := func(v *bool) string {
 		if v == nil {
 			return "unknown"
@@ -83,7 +81,7 @@ func runHarnessLs(p *harnessLsParams, stdout, stderr io.Writer) int {
 		if latest == "" {
 			latest = "unknown"
 		}
-		fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%s\t%s\t%s\t%s\n", cell(h.Name), h.Installed, cell(h.Path), cell(version), cell(latest), flag(h.UpdateAvailable), flag(h.CredentialPresent), flag(h.Usable))
+		fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%s\t%s\t%s\t%s\n", termtext.Cell(h.Name), h.Installed, termtext.Cell(h.Path), termtext.Cell(version), termtext.Cell(latest), flag(h.UpdateAvailable), flag(h.CredentialPresent), flag(h.Usable))
 	}
 	if err := tw.Flush(); err != nil {
 		return rcIOFailure

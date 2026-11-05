@@ -46,7 +46,7 @@ func boardFromProcessCmd() *cobra.Command {
 		Args:        cobra.ExactArgs(2),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *boardFromProcessParams, _ *cobra.Command, args []string) {
-			os.Exit(runBoardFromProcess(p, args[0], args[1], os.Stdout, os.Stderr))
+			os.Exit(runBoardFromProcess(p, args[0], args[1], cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

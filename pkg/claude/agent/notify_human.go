@@ -58,7 +58,7 @@ func notifyHumanCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *notifyHumanParams, _ *cobra.Command, _ []string) {
-			os.Exit(runNotifyHuman(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runNotifyHuman(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

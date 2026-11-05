@@ -194,7 +194,7 @@ func templatesLsCmd() *cobra.Command {
 		Long:        "Returns every group template, with its agent count and owner(s).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesLs(os.Stdout, os.Stderr))
+			os.Exit(runTemplatesLs(cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -239,7 +239,7 @@ func templatesShowCmd() *cobra.Command {
 		Long:        "Prints a template's context and per-agent specs. With --json, emits the raw wire JSON — the same shape 'create' / 'edit' accept via --file, so `templates show X --json` is the start of an edit loop.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesShow(p, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -493,7 +493,7 @@ func templatesCreateCmd() *cobra.Command {
 			"'templates from-group' or by editing another template's --json output.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesCreateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesCreate(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesCreate(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -534,7 +534,7 @@ func templatesEditCmd() *cobra.Command {
 			"edit x.json, 'templates edit X --file x.json'.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesEditParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesEdit(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesEdit(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -608,7 +608,7 @@ func templatesRmCmd() *cobra.Command {
 		Long:        "Removes a template blueprint. Groups already instantiated from it are left untouched — only the blueprint is deleted.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesRmParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesRm(p, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesRm(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -657,7 +657,7 @@ func templatesInstantiateCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *templatesInstantiateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesInstantiate(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesInstantiate(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -875,7 +875,7 @@ func templatesReinforceCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *templatesReinforceParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesReinforce(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesReinforce(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -979,7 +979,7 @@ func templatesFromGroupCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *templatesFromGroupParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesFromGroup(p, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesFromGroup(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1079,7 +1079,7 @@ func templatesExportCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *templatesExportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesExport(p, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesExport(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1153,7 +1153,7 @@ func templatesImportCmd() *cobra.Command {
 			"tclaude is rejected with an upgrade message.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesImportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesImport(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesImport(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1279,7 +1279,7 @@ func templatesStartersLsCmd() *cobra.Command {
 		Long:        "Lists every starter tclaude ships, with its agent count and a one-line description. Install one with 'templates starters install <name>'.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesStartersLs(os.Stdout, os.Stderr))
+			os.Exit(runTemplatesStartersLs(cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1318,7 +1318,7 @@ func templatesStartersShowCmd() *cobra.Command {
 		Long:        "Prints a starter's full blueprint — context, per-agent specs, work pattern, process phases, and rhythms — rendered exactly like 'templates show'. With --json, emits the raw template JSON.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesStartersShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesStartersShow(p, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesStartersShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1364,7 +1364,7 @@ func templatesStartersInstallCmd() *cobra.Command {
 			"is sacred) — pass --as <name> to install a fresh copy under a different name. Works on a fresh empty DB.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesStartersInstallParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesStartersInstall(p, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesStartersInstall(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

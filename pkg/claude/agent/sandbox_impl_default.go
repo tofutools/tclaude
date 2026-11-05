@@ -43,7 +43,7 @@ type sandboxImplDefaultShowParams struct {
 
 func sandboxImplDefaultShowCmd() *cobra.Command {
 	return boa.CmdT[sandboxImplDefaultShowParams]{Use: "show", Short: "Show the default sandbox implementation for new agents", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *sandboxImplDefaultShowParams, _ *cobra.Command, _ []string) {
-		os.Exit(runSandboxImplDefault(http.MethodGet, "", p.JSON, os.Stdout, os.Stderr))
+		os.Exit(runSandboxImplDefault(http.MethodGet, "", p.JSON, cliStdout, cliStderr))
 	}}.ToCobra()
 }
 
@@ -60,14 +60,14 @@ func sandboxImplDefaultSetCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *sandboxImplDefaultSetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSandboxImplDefault(http.MethodPut, p.Value, p.JSON, os.Stdout, os.Stderr))
+			os.Exit(runSandboxImplDefault(http.MethodPut, p.Value, p.JSON, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
 
 func sandboxImplDefaultClearCmd() *cobra.Command {
 	return boa.CmdT[sandboxImplDefaultShowParams]{Use: "clear", Short: "Return the default sandbox implementation to undecided", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *sandboxImplDefaultShowParams, _ *cobra.Command, _ []string) {
-		os.Exit(runSandboxImplDefault(http.MethodDelete, "", p.JSON, os.Stdout, os.Stderr))
+		os.Exit(runSandboxImplDefault(http.MethodDelete, "", p.JSON, cliStdout, cliStderr))
 	}}.ToCobra()
 }
 

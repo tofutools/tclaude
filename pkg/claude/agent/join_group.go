@@ -60,7 +60,7 @@ func RunJoinGroup(params *session.NewParams) error {
 		}
 	}
 	if !explicitGroup && !DaemonAvailable() {
-		return automaticDaemonFallback(os.Stdin, os.Stderr, term.IsTerminal(int(os.Stdin.Fd())))
+		return automaticDaemonFallback(os.Stdin, cliStderr, term.IsTerminal(int(os.Stdin.Fd())))
 	}
 	if !explicitGroup {
 		canonicalDir, err := canonicalGroupDir(launchDir(params))
@@ -75,7 +75,7 @@ func RunJoinGroup(params *session.NewParams) error {
 	carryInitialPromptAsBrief(params)
 
 	spawn := spawnParamsForJoinedSession(params, group)
-	resp, rc := RunSpawn(spawn, os.Stdout, os.Stderr, os.Stdin)
+	resp, rc := RunSpawn(spawn, cliStdout, cliStderr, os.Stdin)
 	if rc != rcOK {
 		return fmt.Errorf("spawn into group %q failed (exit %d)", group, rc)
 	}
@@ -83,7 +83,7 @@ func RunJoinGroup(params *session.NewParams) error {
 		return nil
 	}
 
-	fmt.Println("\nAttaching... (Ctrl+B D to detach)")
+	fmt.Fprintln(cliStdout, "\nAttaching... (Ctrl+B D to detach)")
 	return session.AttachToSession(resp.Label, resp.TmuxSession, false)
 }
 
@@ -255,7 +255,7 @@ func automaticGroupForDir(params *session.NewParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if rc := RequireDaemonOrExit(os.Stderr); rc != rcOK {
+	if rc := RequireDaemonOrExit(cliStderr); rc != rcOK {
 		return "", fmt.Errorf("daemon required to create directory group %q", name)
 	}
 	var created struct {
@@ -267,7 +267,7 @@ func automaticGroupForDir(params *session.NewParams) (string, error) {
 	}, &created, DaemonOpts{AskHuman: ask}); err != nil {
 		return "", fmt.Errorf("create group %q for %q: %w", name, cwd, err)
 	}
-	fmt.Printf("Created group %q for %s\n", created.Name, cwd)
+	fmt.Fprintf(cliStdout, "Created group %q for %s\n", created.Name, cwd)
 	params.Dir = cwd
 	return created.Name, nil
 }

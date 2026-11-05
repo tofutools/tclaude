@@ -794,7 +794,7 @@ func whoamiCmd() *cobra.Command {
 		Short:       "Print the current conversation's ID and display name",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *whoamiParams, _ *cobra.Command, _ []string) {
-			os.Exit(runWhoami(os.Stdout, os.Stderr))
+			os.Exit(runWhoami(cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -903,7 +903,7 @@ func lookupCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *lookupParams, _ *cobra.Command, _ []string) {
-			os.Exit(runLookup(p, os.Stdout, os.Stderr))
+			os.Exit(runLookup(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -983,7 +983,7 @@ func lsCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *lsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runLs(p, os.Stdout, os.Stderr))
+			os.Exit(runLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

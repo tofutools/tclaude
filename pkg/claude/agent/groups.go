@@ -99,7 +99,7 @@ func groupsLsCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsLs(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -273,7 +273,7 @@ func groupsCreateCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *GroupsCreateParams, _ *cobra.Command, _ []string) {
-			os.Exit(RunGroupsCreate(p, os.Stdout, os.Stderr))
+			os.Exit(RunGroupsCreate(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -457,7 +457,7 @@ func groupsRmCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsRmParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsRm(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsRm(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -503,7 +503,7 @@ func groupsMembersCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsMembersParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsMembers(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsMembers(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -650,7 +650,7 @@ func groupsAddCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsAddParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsAdd(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsAdd(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -707,7 +707,7 @@ func groupsRemoveCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsRemoveParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsRemove(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsRemove(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -765,7 +765,7 @@ func groupsMoveCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsMoveParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsMove(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsMove(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -839,7 +839,7 @@ func groupsDropKeptCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsDropKeptParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsDropKept(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsDropKept(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -882,7 +882,7 @@ func groupsStopCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsStopParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsStop(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsStop(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -929,7 +929,7 @@ func groupsResumeCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsResumeParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsResume(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsResume(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -982,7 +982,7 @@ func groupsRetireCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsRetireParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsRetire(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsRetire(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1088,7 +1088,7 @@ func groupsRebriefCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsRebriefParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsRebrief(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsRebrief(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1217,7 +1217,7 @@ func groupsUpdateMemberCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsUpdateMemberParams, cmd *cobra.Command, _ []string) {
-			os.Exit(runGroupsUpdateMember(p, cmd, os.Stdout, os.Stderr))
+			os.Exit(runGroupsUpdateMember(p, cmd, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1283,7 +1283,7 @@ func groupsArchiveCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsArchiveParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsArchiveOrUnarchive(p.Name, "archive", p.AskHuman, os.Stdout, os.Stderr))
+			os.Exit(runGroupsArchiveOrUnarchive(p.Name, "archive", p.AskHuman, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1300,7 +1300,7 @@ func groupsUnarchiveCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsArchiveParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsArchiveOrUnarchive(p.Name, "unarchive", p.AskHuman, os.Stdout, os.Stderr))
+			os.Exit(runGroupsArchiveOrUnarchive(p.Name, "unarchive", p.AskHuman, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1336,7 +1336,7 @@ func groupsNestCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsNestParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsNest(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsNest(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1420,7 +1420,7 @@ func groupsCloneCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsCloneParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsClone(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsClone(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1514,7 +1514,7 @@ func groupsRenameCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsRenameParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsRename(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsRename(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1579,7 +1579,7 @@ func groupsSetDescrCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetDescrParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetDescr(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetDescr(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1646,7 +1646,7 @@ func groupsSetDefaultDirCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetDefaultDirParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetDefaultDir(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetDefaultDir(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1724,7 +1724,7 @@ func groupsSetDefaultProfileCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetDefaultProfileParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetDefaultProfile(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetDefaultProfile(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1792,7 +1792,7 @@ func groupsSetRemoteControlCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetRemoteControlParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetRemoteControl(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetRemoteControl(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1860,7 +1860,7 @@ func groupsSetReinjectCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetReinjectParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetReinject(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetReinject(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1934,7 +1934,7 @@ func groupsSetOwnerScopesCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetOwnerScopesParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetOwnerScopes(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetOwnerScopes(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -2015,7 +2015,7 @@ func groupsSetEnvironmentCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetEnvironmentParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetEnvironment(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetEnvironment(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -2080,7 +2080,7 @@ func groupsSetContextCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetContextParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetContext(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetContext(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -2150,7 +2150,7 @@ func groupsSetMaxMembersCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetMaxMembersParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetMaxMembers(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetMaxMembers(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -2229,7 +2229,7 @@ func groupsSetNotificationsCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetNotificationsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetNotifications(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetNotifications(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

@@ -74,7 +74,7 @@ func seanceCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *seanceParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSeance(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runSeance(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

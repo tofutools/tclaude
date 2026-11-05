@@ -124,7 +124,7 @@ func routesPublishCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *routesPublishParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRoutesPublish(p, os.Stdout, os.Stderr))
+			os.Exit(runRoutesPublish(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -213,7 +213,7 @@ func routesOpenCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *routesOpenParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRoutesOpen(p, os.Stdout, os.Stderr))
+			os.Exit(runRoutesOpen(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -413,7 +413,7 @@ func routesLsCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *routesLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRoutesLs(p, os.Stdout, os.Stderr))
+			os.Exit(runRoutesLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -496,7 +496,7 @@ func routesCloseCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *routesCloseParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRoutesClose(p, os.Stdout, os.Stderr))
+			os.Exit(runRoutesClose(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

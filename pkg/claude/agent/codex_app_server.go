@@ -69,7 +69,7 @@ func codexAppServerStatusCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *codexAppServerStatusParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCodexAppServerStatus(p, os.Stdout, os.Stderr))
+			os.Exit(runCodexAppServerStatus(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

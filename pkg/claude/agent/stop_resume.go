@@ -56,7 +56,7 @@ func stopCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *stopParams, _ *cobra.Command, _ []string) {
-			os.Exit(runStop(p, os.Stdout, os.Stderr))
+			os.Exit(runStop(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -142,7 +142,7 @@ func resumeCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *resumeParams, _ *cobra.Command, _ []string) {
-			os.Exit(runResume(p, os.Stdout, os.Stderr))
+			os.Exit(runResume(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -250,7 +250,7 @@ func deleteCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *deleteParams, _ *cobra.Command, _ []string) {
-			os.Exit(runDelete(p, os.Stdout, os.Stderr, os.Stdin))
+			os.Exit(runDelete(p, cliStdout, cliStderr, os.Stdin))
 		},
 	}.ToCobra()
 }

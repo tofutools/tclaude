@@ -85,7 +85,7 @@ func knowledgeStatusCmd() *cobra.Command {
 		Long:        "Prints the running version and commit, whether the build is exact, dirty or unknown, and how the source stands. It never starts a download.\n\n" + knowledgeNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *knowledgeStatusParams, _ *cobra.Command, _ []string) {
-			os.Exit(runKnowledgeStatus(p, os.Stdout, os.Stderr))
+			os.Exit(runKnowledgeStatus(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -135,7 +135,7 @@ func knowledgeLsCmd() *cobra.Command {
 		Long:        "Lists what is directly under a directory. With no path, the top of the tree.\n\n" + knowledgeNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *knowledgeLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runKnowledgeLs(p, os.Stdout, os.Stderr))
+			os.Exit(runKnowledgeLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -181,7 +181,7 @@ func knowledgeReadCmd() *cobra.Command {
 			"A long file comes back in part, and says which lines to ask for next.\n\n" + knowledgeNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *knowledgeReadParams, _ *cobra.Command, _ []string) {
-			os.Exit(runKnowledgeRead(p, os.Stdout, os.Stderr))
+			os.Exit(runKnowledgeRead(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -265,7 +265,7 @@ func knowledgeSearchCmd() *cobra.Command {
 		Long:        "Prints matching lines as path:line:text, docs first.\n\n" + knowledgeNeeds,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *knowledgeSearchParams, _ *cobra.Command, _ []string) {
-			os.Exit(runKnowledgeSearch(p, os.Stdout, os.Stderr))
+			os.Exit(runKnowledgeSearch(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

@@ -74,7 +74,7 @@ func fleetCmd() *cobra.Command {
 			"Needs fleet.read (granted to the companion Steward).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *fleetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runFleet(p, os.Stdout, os.Stderr))
+			os.Exit(runFleet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

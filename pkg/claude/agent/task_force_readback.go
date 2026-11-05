@@ -180,7 +180,7 @@ func taskForceLsCmd() *cobra.Command {
 			"force block uses. Read-only.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *taskForceLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskForceLs(p, os.Stdout, os.Stderr))
+			os.Exit(runTaskForceLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -322,7 +322,7 @@ func taskForceStatusCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskForceStatusParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskForceStatus(p, os.Stdout, os.Stderr))
+			os.Exit(runTaskForceStatus(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

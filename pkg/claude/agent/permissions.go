@@ -149,7 +149,7 @@ func permissionsLsCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *permissionsLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPermissionsLs(p, os.Stdout, os.Stderr))
+			os.Exit(runPermissionsLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -501,7 +501,7 @@ func permissionsGrantCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *permissionsGrantParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPermissionsMutate("/v1/permissions/grant", "Granted", p.Target, p.Slug, p.Scope, p.AskHuman, os.Stdout, os.Stderr))
+			os.Exit(runPermissionsMutate("/v1/permissions/grant", "Granted", p.Target, p.Slug, p.Scope, p.AskHuman, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -529,7 +529,7 @@ func permissionsDenyCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *permissionsDenyParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPermissionsMutate("/v1/permissions/deny", "Denied", p.Target, p.Slug, nil, p.AskHuman, os.Stdout, os.Stderr))
+			os.Exit(runPermissionsMutate("/v1/permissions/deny", "Denied", p.Target, p.Slug, nil, p.AskHuman, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -554,7 +554,7 @@ func permissionsRevokeCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *permissionsRevokeParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPermissionsMutate("/v1/permissions/revoke", "Revoked", p.Target, p.Slug, nil, p.AskHuman, os.Stdout, os.Stderr))
+			os.Exit(runPermissionsMutate("/v1/permissions/revoke", "Revoked", p.Target, p.Slug, nil, p.AskHuman, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -643,7 +643,7 @@ func permissionsSlugsCmd() *cobra.Command {
 		Short:       "List known permission slugs and their descriptions",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *permissionsSlugsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPermissionsSlugs(p, os.Stdout, os.Stderr))
+			os.Exit(runPermissionsSlugs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

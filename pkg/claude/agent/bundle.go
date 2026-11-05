@@ -69,7 +69,7 @@ func PAFExportCmd() *cobra.Command {
 			"The conversation travels as the native history plus a harness-neutral copy, so it can land on any harness. " +
 			"Credential-shaped text refuses the export unless --allow-flagged. Needs agent.bundle.export.",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *pafExportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runBundleExport(&bundleExportParams{OmitManagedInstructions: p.OmitManagedInstructions, Agent: p.Agent, File: p.File, History: p.History, AllowFlagged: p.AllowFlagged, Format: "paf", NoNative: p.NoNative, NoContext: p.NoContext, WithSummary: p.WithSummary, SummaryWait: p.SummaryWait, CarriedWorkflowParams: p.CarriedWorkflowParams}, os.Stderr))
+			os.Exit(runBundleExport(&bundleExportParams{OmitManagedInstructions: p.OmitManagedInstructions, Agent: p.Agent, File: p.File, History: p.History, AllowFlagged: p.AllowFlagged, Format: "paf", NoNative: p.NoNative, NoContext: p.NoContext, WithSummary: p.WithSummary, SummaryWait: p.SummaryWait, CarriedWorkflowParams: p.CarriedWorkflowParams}, cliStderr))
 		}}.ToCobra()
 }
 
@@ -84,7 +84,7 @@ func PAFImportCmd() *cobra.Command {
 			"with --keep-defaults, --keep or --keep-all and the digest the preview prints; the sandbox and sudo are never kept. " +
 			"Needs agent.bundle.import.",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleImportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runBundleImport(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runBundleImport(p, os.Stdin, cliStdout, cliStderr))
 		}}.ToCobra()
 }
 
@@ -114,9 +114,9 @@ type bundleImportParams struct {
 
 func bundleCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{Use: "bundle", Short: "Transfer portable agent configuration and optional history", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{
-		boa.CmdT[bundleExportParams]{Use: "export", Short: "Export an agent to a portable .paf file (or a legacy v1 ZIP with --format v1)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleExportParams, _ *cobra.Command, _ []string) { os.Exit(runBundleExport(p, os.Stderr)) }}.ToCobra(),
+		boa.CmdT[bundleExportParams]{Use: "export", Short: "Export an agent to a portable .paf file (or a legacy v1 ZIP with --format v1)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleExportParams, _ *cobra.Command, _ []string) { os.Exit(runBundleExport(p, cliStderr)) }}.ToCobra(),
 		boa.CmdT[bundleImportParams]{Use: "import", Short: "Preview an agent bundle, or spawn it with --apply", Long: "Preview by default. --apply creates a fresh agent in --group through normal spawn checks. Permission carry requires --carry-permissions on export and import, and receiver authorization. What a file asks for beyond a spawn here is dropped unless a human keeps it (--keep-defaults, --keep, --keep-all). Ownership and source memberships never travel. Native history support depends on the harness.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleImportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runBundleImport(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runBundleImport(p, os.Stdin, cliStdout, cliStderr))
 		}}.ToCobra(),
 	}}.ToCobra()
 }

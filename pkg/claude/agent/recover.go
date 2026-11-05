@@ -54,7 +54,7 @@ func recoverCmd() *cobra.Command {
 			"  tclaude agent recover --recall agt_… --from peer:bob\n" +
 			"  tclaude agent recover --recall-id RECALL --group team",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *recoverParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRecover(p, os.Stdout, os.Stderr))
+			os.Exit(runRecover(p, cliStdout, cliStderr))
 		}}.ToCobra()
 }
 
