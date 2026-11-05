@@ -97,16 +97,7 @@ func fedBundleAdmitted(peer string, kind bundletransfer.Type, d bundletransfer.D
 	if kind.Name != bundletransfer.Snapshot.Name && db.FederationPeerUnrestricted(peer) {
 		return true
 	}
-	grants, err := db.ListEffectiveFederationPeerGrants(peer)
-	if err != nil {
-		return false
-	}
-	for _, g := range grants {
-		if g.Slug == kind.AdmissionSlug && g.Scope == "" {
-			return true
-		}
-	}
-	return false
+	return fedPeerHasUnscopedGrant(peer, kind.AdmissionSlug)
 }
 
 // Persisted group identity, rather than a mutable wire name, governs admission

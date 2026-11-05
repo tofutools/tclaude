@@ -251,6 +251,28 @@ func fedPeerAllows(peer string, groupID int64, slug string) bool {
 }
 func fedPeerGroupVisible(peer string, groupID int64) bool { return fedPeerAllows(peer, groupID, "") }
 
+// fedPeerHoldsUnscoped reports whether peer holds slug node-wide: under
+// unrestricted trust, or through an unscoped effective grant of slug. It is
+// the check for a slug that is never group-scoped; fedPeerAllows is the one
+// for a slug that can be.
+func fedPeerHoldsUnscoped(peer, slug string) bool {
+	return db.FederationPeerUnrestricted(peer) || fedPeerHasUnscopedGrant(peer, slug)
+}
+
+// fedPeerHasUnscopedGrant reports whether peer holds an unscoped effective
+// grant of slug, whatever its trust level; a caller that must not let
+// unrestricted trust stand in for the grant uses it directly. A failed grant
+// read denies.
+func fedPeerHasUnscopedGrant(peer, slug string) bool {
+	grants, err := db.ListEffectiveFederationPeerGrants(peer)
+	if err != nil {
+		return false
+	}
+	return slices.ContainsFunc(grants, func(g db.FederationPeerGrant) bool {
+		return g.Slug == slug && g.Scope == ""
+	})
+}
+
 type fedPeerGrantReq struct {
 	Peer        string                   `json:"peer"`
 	Slug        string                   `json:"slug"`
@@ -554,19 +576,7 @@ func fedPeerMailCoversScope(peer string, groupID int64) bool {
 	if groupID != 0 {
 		return fedPeerAllows(peer, groupID, PermMessageDirect)
 	}
-	if db.FederationPeerUnrestricted(peer) {
-		return true
-	}
-	grants, err := db.ListEffectiveFederationPeerGrants(peer)
-	if err != nil {
-		return false
-	}
-	for _, grant := range grants {
-		if grant.Slug == PermMessageDirect && grant.Scope == "" {
-			return true
-		}
-	}
-	return false
+	return fedPeerHoldsUnscoped(peer, PermMessageDirect)
 }
 
 func fedGrantMailCoversScope(peer, poolID string, groupID int64) bool {
