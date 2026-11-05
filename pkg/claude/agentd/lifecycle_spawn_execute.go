@@ -56,7 +56,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// defers rather than joining the stack:
 	//   - until the fork, on failure: imported history, and the private
 	//     OpenCode state discard (registered first so it runs last, after the
-	//     conversation is undone);
+	//     conversation is undone); a failure confirmed after the fork still
+	//     runs both, through launchFailed;
 	//   - until the fork, on any return that did not launch, a successful
 	//     offline landing included: the private attachment root and the
 	//     agent-directory tree;

@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,12 +28,15 @@ func TestSpawn_ManagedServerSetsTheConvOrRefuses(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFlow(t)
-			fakeOpenCodeStore(t)
 			f.HaveGroup("alpha")
+			// An OpenCode spawn continues in the background past a short grace;
+			// hold the answer inline so it carries the outcome. The grace is
+			// only an upper bound: the spawn answers as soon as it settles.
+			t.Cleanup(agentd.SetOpenCodeAsyncSpawnResponseGraceForTest(time.Minute))
 			const serverConv = "ses_0123456789abcdefghijklmnop"
-			var started int
+			var started atomic.Int32
 			t.Cleanup(agentd.SetOpenCodeRuntimeForTest(func(sessionID, _, _, _ string) (agentd.OpenCodeRuntimeFixture, error) {
-				started++
+				started.Add(1)
 				if tc.startErr != nil {
 					return agentd.OpenCodeRuntimeFixture{}, tc.startErr
 				}
@@ -40,7 +45,7 @@ func TestSpawn_ManagedServerSetsTheConvOrRefuses(t *testing.T) {
 			}))
 
 			spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "w", "harness": harness.OpenCodeName})
-			assert.Equal(t, 1, started, "one server start per spawn")
+			assert.Equal(t, int32(1), started.Load(), "one server start per spawn")
 			g, err := db.GetAgentGroupByName("alpha")
 			require.NoError(t, err)
 			members, err := db.ListAgentGroupMembers(g.ID)
