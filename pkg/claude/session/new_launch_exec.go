@@ -190,7 +190,7 @@ func planLaunchDirs(in launchDirsInput) (launchDirs, error) {
 	// an authored `deny ~` with no reopen of its own still renders as a split
 	// policy and must be gated as one.
 	// The LATE gate, over rendered rules rather than authored ones. It needs the
-	// same in.unconfined arm as its early twin above: the rendered shape is no more
+	// same unconfined arm as its early twin above: the rendered shape is no more
 	// enforceable than the authored one when nothing is enforcing.
 	if !in.outerLayer && !in.unconfined {
 		if err := harness.ValidateSandboxReopenUnderDeny(in.h.Name, in.effectiveHarnessBuiltinMode,
@@ -200,7 +200,7 @@ func planLaunchDirs(in launchDirsInput) (launchDirs, error) {
 	}
 	// The mirror-image shape, for the one harness whose path grants have no
 	// negative form: a deny nested INSIDE a granted root would be opened rather
-	// than merely unrepresented. The grant set includes Copilot's automatic in.cwd
+	// than merely unrepresented. The grant set includes Copilot's automatic cwd
 	// and system-temp grants, which no flag expresses and which are where this
 	// shape usually appears. Only without an outer wall to enforce the deny.
 	// The temp directory is resolved from the COMPOSED launch environment, not
