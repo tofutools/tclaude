@@ -244,13 +244,9 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 			"slugs[] is required (at least one slug to elevate)")
 		return
 	}
-	for _, slug := range body.Slugs {
-		if !IsKnownPermSlug(slug) {
-			writeError(w, http.StatusBadRequest, "unknown_slug",
-				fmt.Sprintf("unknown permission slug %q. Known slugs: %s.",
-					slug, strings.Join(knownSlugs(), ", ")))
-			return
-		}
+	if fail := unknownSudoSlugFailure(body.Slugs); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
 	}
 
 	// Two paths through this endpoint:
@@ -308,10 +304,8 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 	cfg, _ := config.Load()
 	policy := resolveSudoConfig(cfg, p.ConvID, agentID, title)
 
-	if blocked := blockedSlugs(body.Slugs, policy.Blocklist); len(blocked) > 0 {
-		writeError(w, http.StatusForbidden, "blocked",
-			fmt.Sprintf("slug(s) blocklisted from sudo (would enable permanent escalation): %s",
-				strings.Join(blocked, ", ")))
+	if fail := blockedSudoSlugFailure(body.Slugs, policy); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
 	dur, ok := resolveSudoDuration(w, body.Duration, policy)
@@ -403,10 +397,8 @@ func handleSudoProactiveGrant(w http.ResponseWriter, p *peer, body sudoRequestBo
 	cfg, _ := config.Load()
 	policy := resolveSudoConfig(cfg, targetConv, targetAgentID, title)
 
-	if blocked := blockedSlugs(body.Slugs, policy.Blocklist); len(blocked) > 0 {
-		writeError(w, http.StatusForbidden, "blocked",
-			fmt.Sprintf("slug(s) blocklisted from sudo (would enable permanent escalation): %s",
-				strings.Join(blocked, ", ")))
+	if fail := proactiveSudoGrantFailure(targetConv, body.Slugs, policy); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
 	dur, ok := resolveSudoDuration(w, body.Duration, policy)
@@ -415,6 +407,46 @@ func handleSudoProactiveGrant(w http.ResponseWriter, p *peer, body sudoRequestBo
 	}
 	out, status := insertSudoBundle(targetAgentID, targetConv, title, body.Slugs, nil, nil, dur, strings.TrimSpace(body.Reason), granter)
 	writeJSON(w, status, out)
+}
+
+// proactiveSudoGrantFailure is the grant policy both proactive surfaces
+// apply to a resolved target before writing anything: the CLI's
+// `sudo request --target` (handleSudoProactiveGrant) and the dashboard's
+// POST /api/sudo (handleDashboardSudoGrant). An external steward cannot
+// hold sudo (the evaluator ignores its sudo rows, so a grant would report
+// success and never take effect), every slug must be a known one, and a
+// blocklisted slug refuses the whole grant.
+func proactiveSudoGrantFailure(convID string, slugs []string, policy resolvedSudo) *spawnFailure {
+	if db.IsExternalStewardConv(convID) {
+		return &spawnFailure{http.StatusConflict, "external_steward", externalStewardSudoRefusal}
+	}
+	if fail := unknownSudoSlugFailure(slugs); fail != nil {
+		return fail
+	}
+	return blockedSudoSlugFailure(slugs, policy)
+}
+
+// unknownSudoSlugFailure refuses a slug no gate checks: a grant of it would
+// do nothing.
+func unknownSudoSlugFailure(slugs []string) *spawnFailure {
+	for _, slug := range slugs {
+		if !IsKnownPermSlug(slug) {
+			return &spawnFailure{http.StatusBadRequest, "unknown_slug",
+				fmt.Sprintf("unknown permission slug %q. Known slugs: %s.",
+					slug, strings.Join(knownSlugs(), ", "))}
+		}
+	}
+	return nil
+}
+
+// blockedSudoSlugFailure refuses a grant naming any slug on the policy's
+// blocklist, naming every blocked one.
+func blockedSudoSlugFailure(slugs []string, policy resolvedSudo) *spawnFailure {
+	if blocked := blockedSlugs(slugs, policy.Blocklist); len(blocked) > 0 {
+		return &spawnFailure{http.StatusForbidden, "blocked",
+			"slug(s) blocklisted from sudo (would enable permanent escalation): " + strings.Join(blocked, ", ")}
+	}
+	return nil
 }
 
 // maxSudoUses bounds a use limit. A larger one is no limit at all.
