@@ -153,6 +153,7 @@ func waveDeployFromChoreography(c *db.WaveChoreography) waveDeploy {
 // members).
 //
 // d carries what every wave of one deployment shares; see waveDeploy.
+// d carries what every wave of one deployment shares; see waveDeploy.
 func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, existing map[string]string, d waveDeploy) waveSpawnResult {
 	wr := waveSpawnResult{
 		Results:      []instantiateAgentResult{},
@@ -160,284 +161,341 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, existing 
 		SpawnedOrder: []string{},
 	}
 	for _, a := range agents {
-		finalName := g.Name + "-" + a.Name
-		res := instantiateAgentResult{Name: a.Name, FinalName: finalName}
-		// Restart idempotency: this agent already spawned in a prior (crashed)
-		// attempt at this wave — reuse its conv instead of spawning a duplicate.
-		if conv, ok := existing[finalName]; ok && conv != "" {
-			res.ConvID = conv
-			// Re-stamp on the restart-reuse path too: a crash between the prior
-			// attempt's spawn and its tag stamp would otherwise lose the tag.
-			// Idempotent (INSERT OR IGNORE), so re-stamping an already-tagged
-			// reused conv is a no-op.
-			stampTaskForceTag(conv, d.templateName)
-			wr.Spawned++
-			wr.SpawnedConvs[a.Name] = conv
-			wr.SpawnedOrder = append(wr.SpawnedOrder, conv)
-			wr.Results = append(wr.Results, res)
-			continue
-		}
-		agentCwd := d.cwd
-		agentWorktreePath := strings.TrimSpace(d.sharedWorktreePath)
-		agentWorktreeBranch := strings.TrimSpace(d.sharedWorktreeBranch)
-		if d.perAgentWorktrees != nil {
-			branch := perAgentBranchName(d.perAgentWorktrees.BranchPrefix, a.Name, finalName)
-			path, err := worktree.AddWorktreeIn(d.perAgentWorktrees.Repo, branch, d.perAgentWorktrees.FromBranch, "")
-			if err != nil {
-				res.Error = "create worktree: " + err.Error()
-				wr.failMember(res)
-				continue
-			}
-			agentWorktreePath = path
-			agentWorktreeBranch = branch
-			if d.perAgentWorktrees.WorktreeAsCwd {
-				agentCwd = path
-			}
-			res.WorktreePath = path
-			res.WorktreeBranch = branch
-		} else {
-			res.WorktreePath = agentWorktreePath
-			res.WorktreeBranch = agentWorktreeBranch
-		}
-		// Resolve the behavior/access role from the agent itself, or from its
-		// selected spawn profile when the agent leaves role_ref blank.
-		roles, rfail := resolveTemplateAgentRoles(a)
-		if rfail != nil {
-			res.ErrorKind = rfail.Kind
-			res.Error = rfail.Msg
+		res, spawned := spawnWaveAgent(g, a, existing, d)
+		if !spawned {
 			wr.failMember(res)
 			continue
 		}
-		launch, lfail := resolveTemplateAgentLaunch(g, a, nil, agentCwd, d.caller)
-		if lfail != nil {
-			res.ErrorKind = lfail.Kind
-			res.Error = lfail.Msg
-			// The failure is the case that MOST needs the attribution, and it was the
-			// one case that had none: this branch used to record the message alone.
-			// Since TCL-1110 the harness a member is judged against can come from the
-			// group's or the workspace's default profile, so `"opus" is a Claude Code
-			// model` can be the whole explanation an operator gets for a template that
-			// says nothing about Codex. The echo carries the tier that chose the
-			// harness, which is the sentence that makes the other one actionable.
-			res.Resolved = templateResolverFailureEcho(launch)
-			wr.failMember(res)
-			continue
-		}
-		// Resolve birth-time access before starting the harness. Role composition
-		// can fail (for example when two roles grant one slug under incompatible
-		// scopes); discovering that after executeSpawn would leave a live agent
-		// whose promised access was never applied.
-		owner, overrides, afail := resolveTemplateAgentAccess(a, roles)
-		if afail != nil {
-			res.ErrorKind = afail.Kind
-			res.Error = afail.Msg
-			res.Resolved = templateResolverFailureEcho(launch)
-			wr.failMember(res)
-			continue
-		}
-		// Held until the spawn returns its echo, which is where they belong: one
-		// per-agent disclosure channel, not a template-tier list beside a
-		// spawn-tier one. A spawn FAILURE still reports them below, since a
-		// disclosure about the tiers that produced the attempted launch is exactly
-		// what explains a failure like "that profile's model is not valid here".
-		templateNotes, templateInfo, templateWarnings := launch.Notes, launch.Info, launch.Warnings
-		// Fold the role brief ("## Role") + the template process ("## Process")
-		// into THIS agent's startup context — no-ops when absent.
-		// The group's standing context follows include_group_context; the
-		// mission/task, role and process blocks are always delivered.
-		agentContext := ""
-		if launch.IncludeGroupContext {
-			agentContext = d.groupContext
-		}
-		agentContext = joinContextBlocks(agentContext, d.assignmentContext)
-		for _, role := range roles {
-			agentContext = appendRoleBlock(agentContext, role.Brief)
-		}
-		agentContext = appendProcessBlock(agentContext, d.process, a.Role)
-		cwdProofToken := ""
-		spawnProofDirs := d.proofDirs
-		cleanupCwdProof := func() {}
-		if d.proofToken != "" && agentCwd == d.cwd {
-			cwdProofToken = d.proofToken
-		} else if d.proofToken != "" && d.perAgentWorktrees != nil && d.perAgentWorktrees.WorktreeAsCwd && agentCwd == agentWorktreePath {
-			resolvedAgentCwd, proofDirsWithAgentCwd, cleanup, err := preparePerAgentCwdWriteProof(d.proofToken, d.proofDirs, agentCwd)
-			if err != nil {
-				res.Error = "prepare cwd write-proof: " + err.Error()
-				wr.failMember(res)
-				continue
-			}
-			agentCwd = resolvedAgentCwd
-			agentWorktreePath = resolvedAgentCwd
-			res.WorktreePath = resolvedAgentCwd
-			spawnProofDirs = proofDirsWithAgentCwd
-			cleanupCwdProof = cleanup
-			cwdProofToken = d.proofToken
-		}
-		spawnCodexGitCommonDir := ""
-		spawnCodexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(
-			launch.Harness, launch.Sandbox, launch.SandboxImplementation)
-		if spawnCodexGitCommonDirPinned {
-			spawnCodexGitCommonDir = d.codexGitCommonDir
-		}
-		spawnSandbox := d.effectiveSandbox
-		if d.effectiveSandbox != nil {
-			copy := *d.effectiveSandbox
-			copy.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), launch.Environment...)
-			copy.RefreshGroupEnvironment = true
-			copy.LaunchEnvironmentOverrides = append(
-				[]sandboxpolicy.EnvironmentEntry(nil), launch.EnvironmentOverrides...)
-			copy.ResolutionGroupID = g.ID
-			spawnSandbox = &copy
-		}
-		initialMessage := a.InitialMessage
-		if len(launch.PromptRefs) > 0 && launch.Harness != harness.ShellName {
-			composed, pfail := composeSavedPrompts(launch.PromptRefs, initialMessage)
-			if pfail != nil {
-				cleanupCwdProof()
-				res.ErrorKind = pfail.Kind
-				res.Error = pfail.Msg
-				wr.failMember(res)
-				continue
-			}
-			initialMessage = composed
-		}
-		outcome, fail := executeSpawn(g, spawnParams{
-			EffectiveSandbox:            spawnSandbox,
-			Name:                        finalName,
-			Role:                        a.Role,
-			Descr:                       a.Descr,
-			InitialMessage:              initialMessage,
-			ProfileContext:              launch.StartupContext,
-			Cwd:                         agentCwd,
-			WorktreePath:                agentWorktreePath,
-			WorktreeBranch:              agentWorktreeBranch,
-			DirWriteProofDirs:           spawnProofDirs,
-			DirWriteProofToken:          d.proofToken,
-			CwdWriteProofToken:          cwdProofToken,
-			CodexGitCommonDir:           spawnCodexGitCommonDir,
-			CodexGitCommonDirPinned:     spawnCodexGitCommonDirPinned,
-			Harness:                     launch.Harness,
-			HarnessSource:               launch.HarnessSource,
-			Model:                       launch.Model,
-			ModelProxy:                  launch.ModelProxy,
-			ModelSource:                 launch.ModelSource,
-			Effort:                      launch.Effort,
-			EffortSource:                launch.EffortSource,
-			HarnessBuiltinMode:          launch.Sandbox,
-			HarnessBuiltinModeSource:    launch.SandboxSource,
-			SandboxImplementation:       launch.SandboxImplementation,
-			SandboxImplementationSource: launch.SandboxImplementationSource,
-			ApprovalPolicy:              launch.Approval,
-			ToolGovernance:              launch.ToolGovernance,
-			TrustDir:                    launch.TrustDir,
-			TrustDirSet:                 launch.TrustDirSet,
-			AutoReview:                  launch.AutoReview,
-			AutoReviewSet:               launch.AutoReviewSet,
-			RemoteControl:               launch.RemoteControl,
-			AutoMemory:                  launch.AutoMemory,
-			PeerMessaging:               launch.PeerMessaging,
-			launchTogglesResolved:       true,
-			UsageSpawnProfile:           launch.UsageSpawnProfile,
-			spawnCopyCallerTiers:        launch.SpawnCopyTiers,
-			explicitLaunch:              templateRolesExplicit(a.Role, roles, time.Now()),
-			relaunchOverrides:           launch.RelaunchOverrides,
-			defaultProfiles:             launch.DefaultProfiles,
-			SSHWorkaround:               launch.SSHWorkaround,
-			SSHWorkaroundSet:            launch.SSHWorkaroundSet,
-			SSHWorkaroundSource:         launch.SSHWorkaroundSource,
-			ContextFeatures:             launch.ContextFeatures,
-			AutoCompactWindow:           launch.AutoCompactWindow,
-			ContextWindowMax:            launch.ContextWindowMax,
-			ContextWindowMaxSource:      launch.ContextWindowMaxSource,
-			CopilotAPI:                  launch.CopilotAPI,
-			CopilotAPISet:               launch.CopilotAPISet,
-			CopilotAPISource:            launch.CopilotAPISource,
-			CodexAppServer:              launch.CodexAppServer,
-			CodexAppServerSet:           launch.CodexAppServerSet,
-			CodexAppServerSource:        launch.CodexAppServerSource,
-			FastMode:                    launch.FastMode,
-			FastModeSet:                 launch.FastModeSet,
-			FastModeSource:              launch.FastModeSource,
-			AskUserQuestionTimeout:      launch.AskUserQuestionTimeout,
-			GroupContext:                agentContext,
-			ReplyToConv:                 d.caller,
-			SpawnedByConv:               d.caller,
-		})
-		cleanupCwdProof()
-		if fail != nil {
-			res.ErrorKind = fail.Kind
-			res.Error = fail.Msg
-			res.Resolved = templateEchoFallback(templateNotes, templateInfo, templateWarnings)
-			wr.failMember(res)
-			continue
-		}
-		// The launch echo is built INSIDE the spawn, because the group/global
-		// default tiers are applied there: anything they decided is invisible to
-		// the template-tier resolution above. The template-tier notes ride the same
-		// object so one echo per agent tells the whole story.
-		res.Resolved = outcome.Resolved
-		if res.Resolved != nil {
-			// Template tiers first, then the spawn's own: the reader gets them in
-			// resolution order. Copied rather than appended in place, because
-			// templateNotes is the slice inside launch and append could otherwise
-			// write through its spare capacity.
-			// Deduplicated: a default-tier value the template walk skipped is
-			// skipped again by the spawn's own pass over the same pinned tiers.
-			res.Resolved.Notes = uniqueNotes(append(append([]string(nil), templateNotes...), res.Resolved.Notes...))
-			res.Resolved.Info = append(append([]string(nil), templateInfo...), res.Resolved.Info...)
-			res.Resolved.Warnings = append(append([]string(nil), templateWarnings...), res.Resolved.Warnings...)
-		} else {
-			res.Resolved = templateEchoFallback(templateNotes, templateInfo, templateWarnings)
-		}
-		res.ConvID = outcome.ConvID
 		wr.Spawned++
-		wr.SpawnedConvs[a.Name] = outcome.ConvID
-		wr.SpawnedOrder = append(wr.SpawnedOrder, outcome.ConvID)
-
-		// Auto-stamp the task-force tag (JOH-380). The synchronous template
-		// spawn has already run enrollSpawnedConv (inside executeSpawn), so the
-		// actor's agent_id exists and resolves here.
-		stampTaskForceTag(outcome.ConvID, d.templateName)
-
-		// Apply the already-validated birth-time access controls: owner +
-		// permission overrides from the referenced profile, composed with role
-		// grants and legacy inline grants.
-		if owner {
-			switch {
-			case d.suppressOwner:
-				// Reinforce mode: never transfer ownership of an existing group.
-				res.OwnerDropped = true
-			default:
-				if err := db.AddAgentGroupOwner(g.ID, outcome.ConvID, d.granter); err != nil {
-					slog.Warn("wave spawn: grant owner failed",
-						"group", g.Name, "conv", outcome.ConvID, "error", err)
-					res.Error = "spawned, but grant-owner failed: " + err.Error()
-				} else {
-					res.Owner = true
-				}
-			}
-		}
-		for _, ov := range overrides {
-			if err := db.SetAgentPermissionOverrideWithScope(outcome.ConvID, ov.Slug,
-				ov.Override.Effect, ov.Override.Scope, d.granter); err != nil {
-				slog.Warn("wave spawn: apply permission override failed",
-					"conv", outcome.ConvID, "slug", ov.Slug, "effect", ov.Override.Effect,
-					"scope", ov.Override.Scope, "error", err)
-				continue
-			}
-			if ov.Override.Effect == db.PermEffectGrant {
-				res.Granted = append(res.Granted, ov.Slug)
-			}
-		}
+		wr.SpawnedConvs[a.Name] = res.ConvID
+		wr.SpawnedOrder = append(wr.SpawnedOrder, res.ConvID)
 		wr.Results = append(wr.Results, res)
 	}
 	return wr
 }
 
-// templateEchoFallback carries the template-tier disclosures on their own when
-// there is no spawn echo to hang them on — a member whose spawn was REFUSED, or
-// (defensively) an outcome from a path that produced none. A refusal is exactly
-// when the tiers that produced the refused value are worth reading.
+// spawnWaveAgent decides one member of a wave. It reuses the conv a prior
+// attempt at this wave already spawned, or places the member, resolves its
+// roles, launch and access, briefs it and spawns it, then applies its access.
+// spawned is false for a refused member, whose res carries the refusal; it is
+// true for a reused or spawned member, whose res may still record a failed
+// owner grant.
+func spawnWaveAgent(g *db.AgentGroup, a db.GroupTemplateAgent, existing map[string]string, d waveDeploy) (res instantiateAgentResult, spawned bool) {
+	finalName := g.Name + "-" + a.Name
+	res = instantiateAgentResult{Name: a.Name, FinalName: finalName}
+	// Restart idempotency: this agent already spawned in a prior (crashed)
+	// attempt at this wave — reuse its conv instead of spawning a duplicate.
+	if conv, ok := existing[finalName]; ok && conv != "" {
+		res.ConvID = conv
+		// Re-stamp on the restart-reuse path too: a crash between the prior
+		// attempt's spawn and its tag stamp would otherwise lose the tag.
+		// Idempotent (INSERT OR IGNORE), so re-stamping an already-tagged
+		// reused conv is a no-op.
+		stampTaskForceTag(conv, d.templateName)
+		return res, true
+	}
+	place, err := placeWaveAgent(d, a.Name, finalName)
+	if err != nil {
+		res.Error = "create worktree: " + err.Error()
+		return res, false
+	}
+	res.WorktreePath, res.WorktreeBranch = place.worktreePath, place.worktreeBranch
+	// Resolve the behavior/access role from the agent itself, or from its
+	// selected spawn profile when the agent leaves role_ref blank.
+	roles, rfail := resolveTemplateAgentRoles(a)
+	if rfail != nil {
+		res.ErrorKind, res.Error = rfail.Kind, rfail.Msg
+		return res, false
+	}
+	launch, lfail := resolveTemplateAgentLaunch(g, a, nil, place.cwd, d.caller)
+	if lfail != nil {
+		res.ErrorKind, res.Error = lfail.Kind, lfail.Msg
+		// The failure is the case that MOST needs the attribution, and it was the
+		// one case that had none: this branch used to record the message alone.
+		// Since TCL-1110 the harness a member is judged against can come from the
+		// group's or the workspace's default profile, so `"opus" is a Claude Code
+		// model` can be the whole explanation an operator gets for a template that
+		// says nothing about Codex. The echo carries the tier that chose the
+		// harness, which is the sentence that makes the other one actionable.
+		res.Resolved = templateResolverFailureEcho(launch)
+		return res, false
+	}
+	// Resolve birth-time access before starting the harness. Role composition
+	// can fail (for example when two roles grant one slug under incompatible
+	// scopes); discovering that after executeSpawn would leave a live agent
+	// whose promised access was never applied.
+	owner, overrides, afail := resolveTemplateAgentAccess(a, roles)
+	if afail != nil {
+		res.ErrorKind, res.Error = afail.Kind, afail.Msg
+		res.Resolved = templateResolverFailureEcho(launch)
+		return res, false
+	}
+	proof, place, err := prepareWaveCwdProof(d, place)
+	if err != nil {
+		res.Error = "prepare cwd write-proof: " + err.Error()
+		return res, false
+	}
+	res.WorktreePath = place.worktreePath
+	initialMessage, pfail := waveInitialMessage(a.InitialMessage, launch)
+	if pfail != nil {
+		proof.cleanup()
+		res.ErrorKind, res.Error = pfail.Kind, pfail.Msg
+		return res, false
+	}
+	params := templateLaunchSpawnParams(launch)
+	params.Name, params.Role, params.Descr = finalName, a.Role, a.Descr
+	params.InitialMessage = initialMessage
+	params.GroupContext = waveAgentContext(launch, roles, a.Role, d)
+	params.Cwd, params.WorktreePath, params.WorktreeBranch = place.cwd, place.worktreePath, place.worktreeBranch
+	params.DirWriteProofDirs, params.DirWriteProofToken, params.CwdWriteProofToken = proof.dirs, d.proofToken, proof.cwdToken
+	params.CodexGitCommonDirPinned = spawnUsesPinnedGitCommonDir(launch.Harness, launch.Sandbox, launch.SandboxImplementation)
+	if params.CodexGitCommonDirPinned {
+		params.CodexGitCommonDir = d.codexGitCommonDir
+	}
+	params.EffectiveSandbox = waveSpawnSandbox(d.effectiveSandbox, launch, g.ID)
+	params.explicitLaunch = templateRolesExplicit(a.Role, roles, time.Now())
+	params.ReplyToConv, params.SpawnedByConv = d.caller, d.caller
+	outcome, fail := executeSpawn(g, params)
+	proof.cleanup()
+	if fail != nil {
+		res.ErrorKind, res.Error = fail.Kind, fail.Msg
+		res.Resolved = templateEchoFallback(launch.Notes, launch.Info, launch.Warnings)
+		return res, false
+	}
+	res.Resolved = mergeWaveSpawnEcho(outcome.Resolved, launch)
+	res.ConvID = outcome.ConvID
+
+	// Auto-stamp the task-force tag (JOH-380). The synchronous template
+	// spawn has already run enrollSpawnedConv (inside executeSpawn), so the
+	// actor's agent_id exists and resolves here.
+	stampTaskForceTag(outcome.ConvID, d.templateName)
+
+	// Apply the already-validated birth-time access controls: owner +
+	// permission overrides from the referenced profile, composed with role
+	// grants and legacy inline grants.
+	applyWaveAgentAccess(&res, g, outcome.ConvID, owner, overrides, d)
+	return res, true
+}
+
+// waveAgentPlacement is where one member works: its cwd, and the worktree it
+// is attached to (its own per-agent worktree, or the deployment's shared one).
+type waveAgentPlacement struct {
+	cwd            string
+	worktreePath   string
+	worktreeBranch string
+}
+
+// placeWaveAgent cuts the member's own worktree when the deployment asks for
+// per-agent worktrees, making it the cwd under worktree_as_cwd. Otherwise the
+// member works in the deployment's cwd and shared worktree.
+func placeWaveAgent(d waveDeploy, agentName, finalName string) (waveAgentPlacement, error) {
+	place := waveAgentPlacement{
+		cwd:            d.cwd,
+		worktreePath:   strings.TrimSpace(d.sharedWorktreePath),
+		worktreeBranch: strings.TrimSpace(d.sharedWorktreeBranch),
+	}
+	wt := d.perAgentWorktrees
+	if wt == nil {
+		return place, nil
+	}
+	branch := perAgentBranchName(wt.BranchPrefix, agentName, finalName)
+	path, err := worktree.AddWorktreeIn(wt.Repo, branch, wt.FromBranch, "")
+	if err != nil {
+		return waveAgentPlacement{}, err
+	}
+	place.worktreePath, place.worktreeBranch = path, branch
+	if wt.WorktreeAsCwd {
+		place.cwd = path
+	}
+	return place, nil
+}
+
+// waveCwdProof is the write-proof one member's spawn carries: the token proving
+// its cwd (empty when its cwd is not proofed), the proofed dirs, and a cleanup
+// that removes any marker planted for this member alone.
+type waveCwdProof struct {
+	cwdToken string
+	dirs     []string
+	cleanup  func()
+}
+
+// prepareWaveCwdProof proves the member's cwd. A member in the deployment's cwd
+// carries the deployment's token for it. A member whose cwd is its own
+// per-agent worktree gets a marker planted there, provided the worktree's
+// parent was proofed, and is re-placed at the worktree's resolved path. Any
+// other cwd goes unproofed.
+func prepareWaveCwdProof(d waveDeploy, place waveAgentPlacement) (waveCwdProof, waveAgentPlacement, error) {
+	proof := waveCwdProof{dirs: d.proofDirs, cleanup: func() {}}
+	switch {
+	case d.proofToken != "" && place.cwd == d.cwd:
+		proof.cwdToken = d.proofToken
+	case d.proofToken != "" && d.perAgentWorktrees != nil && d.perAgentWorktrees.WorktreeAsCwd && place.cwd == place.worktreePath:
+		resolved, dirs, cleanup, err := preparePerAgentCwdWriteProof(d.proofToken, d.proofDirs, place.cwd)
+		if err != nil {
+			return waveCwdProof{}, place, err
+		}
+		place.cwd, place.worktreePath = resolved, resolved
+		proof = waveCwdProof{cwdToken: d.proofToken, dirs: dirs, cleanup: cleanup}
+	}
+	return proof, place, nil
+}
+
+// waveInitialMessage puts the launch's saved prompts ahead of the member's own
+// initial message. A shell member takes no prompts.
+func waveInitialMessage(msg string, launch templateAgentLaunch) (string, *spawnFailure) {
+	if len(launch.PromptRefs) == 0 || launch.Harness == harness.ShellName {
+		return msg, nil
+	}
+	return composeSavedPrompts(launch.PromptRefs, msg)
+}
+
+// waveSpawnSandbox is the member's own copy of the deployment's effective
+// sandbox, carrying its launch environment and resolved against its group.
+// nil when the deployment has none.
+func waveSpawnSandbox(base *sandboxpolicy.Snapshot, launch templateAgentLaunch, groupID int64) *sandboxpolicy.Snapshot {
+	if base == nil {
+		return nil
+	}
+	copy := *base
+	copy.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), launch.Environment...)
+	copy.RefreshGroupEnvironment = true
+	copy.LaunchEnvironmentOverrides = append(
+		[]sandboxpolicy.EnvironmentEntry(nil), launch.EnvironmentOverrides...)
+	copy.ResolutionGroupID = groupID
+	return &copy
+}
+
+// templateLaunchSpawnParams is the spawn request a resolved template launch
+// asks for: harness, model, effort, sandbox, approval and every launch toggle,
+// with the tiers that chose them. The member's identity, placement, brief and
+// write-proof are the caller's to add.
+func templateLaunchSpawnParams(launch templateAgentLaunch) spawnParams {
+	return spawnParams{
+		ProfileContext:              launch.StartupContext,
+		Harness:                     launch.Harness,
+		HarnessSource:               launch.HarnessSource,
+		Model:                       launch.Model,
+		ModelProxy:                  launch.ModelProxy,
+		ModelSource:                 launch.ModelSource,
+		Effort:                      launch.Effort,
+		EffortSource:                launch.EffortSource,
+		HarnessBuiltinMode:          launch.Sandbox,
+		HarnessBuiltinModeSource:    launch.SandboxSource,
+		SandboxImplementation:       launch.SandboxImplementation,
+		SandboxImplementationSource: launch.SandboxImplementationSource,
+		ApprovalPolicy:              launch.Approval,
+		ToolGovernance:              launch.ToolGovernance,
+		TrustDir:                    launch.TrustDir,
+		TrustDirSet:                 launch.TrustDirSet,
+		AutoReview:                  launch.AutoReview,
+		AutoReviewSet:               launch.AutoReviewSet,
+		RemoteControl:               launch.RemoteControl,
+		AutoMemory:                  launch.AutoMemory,
+		PeerMessaging:               launch.PeerMessaging,
+		launchTogglesResolved:       true,
+		UsageSpawnProfile:           launch.UsageSpawnProfile,
+		spawnCopyCallerTiers:        launch.SpawnCopyTiers,
+		relaunchOverrides:           launch.RelaunchOverrides,
+		defaultProfiles:             launch.DefaultProfiles,
+		SSHWorkaround:               launch.SSHWorkaround,
+		SSHWorkaroundSet:            launch.SSHWorkaroundSet,
+		SSHWorkaroundSource:         launch.SSHWorkaroundSource,
+		ContextFeatures:             launch.ContextFeatures,
+		AutoCompactWindow:           launch.AutoCompactWindow,
+		ContextWindowMax:            launch.ContextWindowMax,
+		ContextWindowMaxSource:      launch.ContextWindowMaxSource,
+		CopilotAPI:                  launch.CopilotAPI,
+		CopilotAPISet:               launch.CopilotAPISet,
+		CopilotAPISource:            launch.CopilotAPISource,
+		CodexAppServer:              launch.CodexAppServer,
+		CodexAppServerSet:           launch.CodexAppServerSet,
+		CodexAppServerSource:        launch.CodexAppServerSource,
+		FastMode:                    launch.FastMode,
+		FastModeSet:                 launch.FastModeSet,
+		FastModeSource:              launch.FastModeSource,
+		AskUserQuestionTimeout:      launch.AskUserQuestionTimeout,
+	}
+}
+
+// mergeWaveSpawnEcho completes a spawned member's launch echo with the
+// template-tier disclosures from launch, so one echo per member tells the whole
+// story: one per-agent disclosure channel, not a template-tier list beside a
+// spawn-tier one. The echo is built INSIDE the spawn, because the group/global
+// default tiers are applied there: anything they decided is invisible to the
+// template-tier resolution. A refused spawn reports the template tiers alone
+// (templateEchoFallback), since a disclosure about the tiers that produced the
+// attempted launch is exactly what explains a failure like "that profile's
+// model is not valid here".
+func mergeWaveSpawnEcho(echo *agent.ResolvedLaunch, launch templateAgentLaunch) *agent.ResolvedLaunch {
+	if echo == nil {
+		return templateEchoFallback(launch.Notes, launch.Info, launch.Warnings)
+	}
+	// Template tiers first, then the spawn's own: the reader gets them in
+	// resolution order. Copied rather than appended in place, because
+	// launch.Notes is the template walk's own slice and append could otherwise
+	// write through its spare capacity.
+	// Deduplicated: a default-tier value the template walk skipped is
+	// skipped again by the spawn's own pass over the same pinned tiers.
+	echo.Notes = uniqueNotes(append(append([]string(nil), launch.Notes...), echo.Notes...))
+	echo.Info = append(append([]string(nil), launch.Info...), echo.Info...)
+	echo.Warnings = append(append([]string(nil), launch.Warnings...), echo.Warnings...)
+	return echo
+}
+
+// waveAgentContext composes a member's startup context from the deployment's
+// group and assignment contexts, its roles' briefs and the template process.
+func waveAgentContext(launch templateAgentLaunch, roles []*db.Role, memberRole string, d waveDeploy) string {
+	// Fold the role brief ("## Role") + the template process ("## Process")
+	// into THIS agent's startup context — no-ops when absent.
+	// The group's standing context follows include_group_context; the
+	// mission/task, role and process blocks are always delivered.
+	agentContext := ""
+	if launch.IncludeGroupContext {
+		agentContext = d.groupContext
+	}
+	agentContext = joinContextBlocks(agentContext, d.assignmentContext)
+	for _, role := range roles {
+		agentContext = appendRoleBlock(agentContext, role.Brief)
+	}
+	agentContext = appendProcessBlock(agentContext, d.process, memberRole)
+	return agentContext
+}
+
+// applyWaveAgentAccess applies a spawned member's already-validated
+// birth-time access: group ownership (dropped in reinforce mode) and the
+// permission overrides from its profile, roles and inline grants. A failure
+// only logs, or records on res: the member is already spawned.
+func applyWaveAgentAccess(res *instantiateAgentResult, g *db.AgentGroup, conv string,
+	owner bool, overrides []permOverride, d waveDeploy) {
+	if owner {
+		switch {
+		case d.suppressOwner:
+			// Reinforce mode: never transfer ownership of an existing group.
+			res.OwnerDropped = true
+		default:
+			if err := db.AddAgentGroupOwner(g.ID, conv, d.granter); err != nil {
+				slog.Warn("wave spawn: grant owner failed",
+					"group", g.Name, "conv", conv, "error", err)
+				res.Error = "spawned, but grant-owner failed: " + err.Error()
+			} else {
+				res.Owner = true
+			}
+		}
+	}
+	for _, ov := range overrides {
+		if err := db.SetAgentPermissionOverrideWithScope(conv, ov.Slug,
+			ov.Override.Effect, ov.Override.Scope, d.granter); err != nil {
+			slog.Warn("wave spawn: apply permission override failed",
+				"conv", conv, "slug", ov.Slug, "effect", ov.Override.Effect,
+				"scope", ov.Override.Scope, "error", err)
+			continue
+		}
+		if ov.Override.Effect == db.PermEffectGrant {
+			res.Granted = append(res.Granted, ov.Slug)
+		}
+	}
+}
+
 // failMember records a member that did NOT spawn, and blanks its worktree fields
 // on the way out. A per-agent worktree is created before the launch is resolved
 // and before the spawn is attempted, so a failed member can genuinely have one —
@@ -480,6 +538,10 @@ func templateResolverFailureEcho(partial templateAgentLaunch) *agent.ResolvedLau
 	}
 }
 
+// templateEchoFallback carries the template-tier disclosures on their own when
+// there is no spawn echo to hang them on — a member whose spawn was REFUSED, or
+// (defensively) an outcome from a path that produced none. A refusal is exactly
+// when the tiers that produced the refused value are worth reading.
 func templateEchoFallback(notes, info, warnings []string) *agent.ResolvedLaunch {
 	if len(notes) == 0 && len(info) == 0 && len(warnings) == 0 {
 		return nil
