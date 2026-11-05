@@ -76,6 +76,65 @@ func partitionWaves(agents []db.GroupTemplateAgent) []db.WaveGroup {
 	return out
 }
 
+// waveDeploy is what every wave of one template deployment spawns with: the
+// process and contexts each agent is briefed with, its working directory and
+// worktrees, who deploys it and who grants its permissions, the template
+// name, the owner policy, the write-proof, the pinned Codex git dir and the
+// effective sandbox. The runner rebuilds it from the stored choreography for
+// each later wave.
+type waveDeploy struct {
+	process              []db.ProcessPhase
+	groupContext         string
+	assignmentContext    string
+	cwd                  string
+	sharedWorktreePath   string
+	sharedWorktreeBranch string
+	perAgentWorktrees    *db.WavePerAgentWorktrees
+	caller               string
+	granter              string
+	// templateName drives the auto-stamped task-force tag (JOH-380): every agent
+	// this wave spawns gets the `tf:<templateName>` tag, so a group holding members
+	// from several template deployments (instantiate + reinforce) can tell them
+	// apart. Additive (a set — a re-deploy of the same template re-stamps the same
+	// tag, an INSERT OR IGNORE no-op) and best-effort (a failed stamp only logs;
+	// the agent is already spawned). Empty templateName skips the stamp — the seam
+	// stays inert for any non-template caller of this path.
+	templateName string
+	// suppressOwner drops the per-agent template owner flag: a template may mark an
+	// agent as a group owner, but when the roster is deployed INTO an existing group
+	// (reinforce mode) ownership is never transferred — the existing group already
+	// has its owner. A would-be owner is recorded with OwnerDropped instead of
+	// AddAgentGroupOwner. Permission grants still apply; only ownership is dropped.
+	// false for the create-new path (a fresh group's template owner IS its owner).
+	suppressOwner     bool
+	proofToken        string
+	proofDirs         []string
+	codexGitCommonDir string
+	effectiveSandbox  *sandboxpolicy.Snapshot
+}
+
+// waveDeployFromChoreography rebuilds a deployment's wave inputs from its
+// stored choreography, for the waves the runner spawns after the first.
+func waveDeployFromChoreography(c *db.WaveChoreography) waveDeploy {
+	return waveDeploy{
+		process:              c.Process,
+		groupContext:         c.GroupContext,
+		assignmentContext:    c.AssignmentContext,
+		cwd:                  c.Cwd,
+		sharedWorktreePath:   c.WorktreePath,
+		sharedWorktreeBranch: c.WorktreeBranch,
+		perAgentWorktrees:    c.PerAgentWorktrees,
+		caller:               c.Caller,
+		granter:              c.Granter,
+		templateName:         c.TemplateName,
+		suppressOwner:        c.SuppressOwner,
+		proofToken:           c.ProofToken,
+		proofDirs:            c.ProofDirs,
+		codexGitCommonDir:    c.CodexGitCommonDir,
+		effectiveSandbox:     effectiveSandboxForWave(c),
+	}
+}
+
 // spawnWaveAgents spawns one wave's agents via the shared executeSpawn core,
 // applying each agent's role behavior/access preset, launch profile, ownership
 // and permission grants. Extracted from runInstantiation so the inline first wave and the
@@ -93,25 +152,8 @@ func partitionWaves(agents []db.GroupTemplateAgent) []db.WaveGroup {
 // re-spawned. nil/empty for the inline first wave (a fresh group has no
 // members).
 //
-// suppressOwner drops the per-agent template owner flag: a template may mark an
-// agent as a group owner, but when the roster is deployed INTO an existing group
-// (reinforce mode) ownership is never transferred — the existing group already
-// has its owner. A would-be owner is recorded with OwnerDropped instead of
-// AddAgentGroupOwner. Permission grants still apply; only ownership is dropped.
-// false for the create-new path (a fresh group's template owner IS its owner).
-//
-// templateName drives the auto-stamped task-force tag (JOH-380): every agent
-// this wave spawns gets the `tf:<templateName>` tag, so a group holding members
-// from several template deployments (instantiate + reinforce) can tell them
-// apart. Additive (a set — a re-deploy of the same template re-stamps the same
-// tag, an INSERT OR IGNORE no-op) and best-effort (a failed stamp only logs;
-// the agent is already spawned). Empty templateName skips the stamp — the seam
-// stays inert for any non-template caller of this path.
-func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process []db.ProcessPhase,
-	groupContext, assignmentContext, cwd, sharedWorktreePath, sharedWorktreeBranch string, perAgentWorktrees *db.WavePerAgentWorktrees,
-	caller, granter, templateName string, existing map[string]string, suppressOwner bool,
-	proofToken string, proofDirs []string, codexGitCommonDir string,
-	effectiveSandbox *sandboxpolicy.Snapshot) waveSpawnResult {
+// d carries what every wave of one deployment shares; see waveDeploy.
+func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, existing map[string]string, d waveDeploy) waveSpawnResult {
 	wr := waveSpawnResult{
 		Results:      []instantiateAgentResult{},
 		SpawnedConvs: map[string]string{},
@@ -128,19 +170,19 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			// attempt's spawn and its tag stamp would otherwise lose the tag.
 			// Idempotent (INSERT OR IGNORE), so re-stamping an already-tagged
 			// reused conv is a no-op.
-			stampTaskForceTag(conv, templateName)
+			stampTaskForceTag(conv, d.templateName)
 			wr.Spawned++
 			wr.SpawnedConvs[a.Name] = conv
 			wr.SpawnedOrder = append(wr.SpawnedOrder, conv)
 			wr.Results = append(wr.Results, res)
 			continue
 		}
-		agentCwd := cwd
-		agentWorktreePath := strings.TrimSpace(sharedWorktreePath)
-		agentWorktreeBranch := strings.TrimSpace(sharedWorktreeBranch)
-		if perAgentWorktrees != nil {
-			branch := perAgentBranchName(perAgentWorktrees.BranchPrefix, a.Name, finalName)
-			path, err := worktree.AddWorktreeIn(perAgentWorktrees.Repo, branch, perAgentWorktrees.FromBranch, "")
+		agentCwd := d.cwd
+		agentWorktreePath := strings.TrimSpace(d.sharedWorktreePath)
+		agentWorktreeBranch := strings.TrimSpace(d.sharedWorktreeBranch)
+		if d.perAgentWorktrees != nil {
+			branch := perAgentBranchName(d.perAgentWorktrees.BranchPrefix, a.Name, finalName)
+			path, err := worktree.AddWorktreeIn(d.perAgentWorktrees.Repo, branch, d.perAgentWorktrees.FromBranch, "")
 			if err != nil {
 				res.Error = "create worktree: " + err.Error()
 				wr.failMember(res)
@@ -148,7 +190,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			}
 			agentWorktreePath = path
 			agentWorktreeBranch = branch
-			if perAgentWorktrees.WorktreeAsCwd {
+			if d.perAgentWorktrees.WorktreeAsCwd {
 				agentCwd = path
 			}
 			res.WorktreePath = path
@@ -166,7 +208,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			wr.failMember(res)
 			continue
 		}
-		launch, lfail := resolveTemplateAgentLaunch(g, a, nil, agentCwd, caller)
+		launch, lfail := resolveTemplateAgentLaunch(g, a, nil, agentCwd, d.caller)
 		if lfail != nil {
 			res.ErrorKind = lfail.Kind
 			res.Error = lfail.Msg
@@ -205,20 +247,20 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		// mission/task, role and process blocks are always delivered.
 		agentContext := ""
 		if launch.IncludeGroupContext {
-			agentContext = groupContext
+			agentContext = d.groupContext
 		}
-		agentContext = joinContextBlocks(agentContext, assignmentContext)
+		agentContext = joinContextBlocks(agentContext, d.assignmentContext)
 		for _, role := range roles {
 			agentContext = appendRoleBlock(agentContext, role.Brief)
 		}
-		agentContext = appendProcessBlock(agentContext, process, a.Role)
+		agentContext = appendProcessBlock(agentContext, d.process, a.Role)
 		cwdProofToken := ""
-		spawnProofDirs := proofDirs
+		spawnProofDirs := d.proofDirs
 		cleanupCwdProof := func() {}
-		if proofToken != "" && agentCwd == cwd {
-			cwdProofToken = proofToken
-		} else if proofToken != "" && perAgentWorktrees != nil && perAgentWorktrees.WorktreeAsCwd && agentCwd == agentWorktreePath {
-			resolvedAgentCwd, proofDirsWithAgentCwd, cleanup, err := preparePerAgentCwdWriteProof(proofToken, proofDirs, agentCwd)
+		if d.proofToken != "" && agentCwd == d.cwd {
+			cwdProofToken = d.proofToken
+		} else if d.proofToken != "" && d.perAgentWorktrees != nil && d.perAgentWorktrees.WorktreeAsCwd && agentCwd == agentWorktreePath {
+			resolvedAgentCwd, proofDirsWithAgentCwd, cleanup, err := preparePerAgentCwdWriteProof(d.proofToken, d.proofDirs, agentCwd)
 			if err != nil {
 				res.Error = "prepare cwd write-proof: " + err.Error()
 				wr.failMember(res)
@@ -229,17 +271,17 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			res.WorktreePath = resolvedAgentCwd
 			spawnProofDirs = proofDirsWithAgentCwd
 			cleanupCwdProof = cleanup
-			cwdProofToken = proofToken
+			cwdProofToken = d.proofToken
 		}
 		spawnCodexGitCommonDir := ""
 		spawnCodexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(
 			launch.Harness, launch.Sandbox, launch.SandboxImplementation)
 		if spawnCodexGitCommonDirPinned {
-			spawnCodexGitCommonDir = codexGitCommonDir
+			spawnCodexGitCommonDir = d.codexGitCommonDir
 		}
-		spawnSandbox := effectiveSandbox
-		if effectiveSandbox != nil {
-			copy := *effectiveSandbox
+		spawnSandbox := d.effectiveSandbox
+		if d.effectiveSandbox != nil {
+			copy := *d.effectiveSandbox
 			copy.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), launch.Environment...)
 			copy.RefreshGroupEnvironment = true
 			copy.LaunchEnvironmentOverrides = append(
@@ -270,7 +312,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			WorktreePath:                agentWorktreePath,
 			WorktreeBranch:              agentWorktreeBranch,
 			DirWriteProofDirs:           spawnProofDirs,
-			DirWriteProofToken:          proofToken,
+			DirWriteProofToken:          d.proofToken,
 			CwdWriteProofToken:          cwdProofToken,
 			CodexGitCommonDir:           spawnCodexGitCommonDir,
 			CodexGitCommonDirPinned:     spawnCodexGitCommonDirPinned,
@@ -318,8 +360,8 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			FastModeSource:              launch.FastModeSource,
 			AskUserQuestionTimeout:      launch.AskUserQuestionTimeout,
 			GroupContext:                agentContext,
-			ReplyToConv:                 caller,
-			SpawnedByConv:               caller,
+			ReplyToConv:                 d.caller,
+			SpawnedByConv:               d.caller,
 		})
 		cleanupCwdProof()
 		if fail != nil {
@@ -355,18 +397,18 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		// Auto-stamp the task-force tag (JOH-380). The synchronous template
 		// spawn has already run enrollSpawnedConv (inside executeSpawn), so the
 		// actor's agent_id exists and resolves here.
-		stampTaskForceTag(outcome.ConvID, templateName)
+		stampTaskForceTag(outcome.ConvID, d.templateName)
 
 		// Apply the already-validated birth-time access controls: owner +
 		// permission overrides from the referenced profile, composed with role
 		// grants and legacy inline grants.
 		if owner {
 			switch {
-			case suppressOwner:
+			case d.suppressOwner:
 				// Reinforce mode: never transfer ownership of an existing group.
 				res.OwnerDropped = true
 			default:
-				if err := db.AddAgentGroupOwner(g.ID, outcome.ConvID, granter); err != nil {
+				if err := db.AddAgentGroupOwner(g.ID, outcome.ConvID, d.granter); err != nil {
 					slog.Warn("wave spawn: grant owner failed",
 						"group", g.Name, "conv", outcome.ConvID, "error", err)
 					res.Error = "spawned, but grant-owner failed: " + err.Error()
@@ -377,7 +419,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		}
 		for _, ov := range overrides {
 			if err := db.SetAgentPermissionOverrideWithScope(outcome.ConvID, ov.Slug,
-				ov.Override.Effect, ov.Override.Scope, granter); err != nil {
+				ov.Override.Effect, ov.Override.Scope, d.granter); err != nil {
 				slog.Warn("wave spawn: apply permission override failed",
 					"conv", outcome.ConvID, "slug", ov.Slug, "effect", ov.Override.Effect,
 					"scope", ov.Override.Scope, "error", err)
@@ -799,10 +841,7 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 	wave := c.Waves[c.NextWave]
 	slog.Info("wave runner: spawning wave", "group", c.GroupName, "wave", wave.Wave,
 		"agents", len(wave.Agents), "index", c.NextWave, "of", len(c.Waves))
-	wr := spawnWaveAgents(g, wave.Agents, c.Process, c.GroupContext, c.AssignmentContext, c.Cwd,
-		c.WorktreePath, c.WorktreeBranch, c.PerAgentWorktrees,
-		c.Caller, c.Granter, c.TemplateName, groupMemberNames(g), c.SuppressOwner,
-		c.ProofToken, c.ProofDirs, c.CodexGitCommonDir, effectiveSandboxForWave(c))
+	wr := spawnWaveAgents(g, wave.Agents, groupMemberNames(g), waveDeployFromChoreography(c))
 
 	// Accumulate the spawns for the final work-pattern routing.
 	maps.Copy(c.SpawnedConvs, wr.SpawnedConvs)

@@ -1068,10 +1068,23 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	// via groupMemberNames in the runner). suppressOwner drops template owner
 	// flags in reinforce mode — ownership is never transferred into an existing
 	// group.
-	wr := spawnWaveAgents(g, waves[0].Agents, procPhases, groupContext, assignmentContext, spec.cwd,
-		spec.worktreePath, spec.worktreeBranch, spec.perAgentWorktrees,
-		spec.caller, granter, tmpl.Name, nil, reinforce, spec.proofToken, spec.proofDirs, spec.codexGitCommonDir,
-		&effectiveSandbox)
+	wr := spawnWaveAgents(g, waves[0].Agents, nil, waveDeploy{
+		process:              procPhases,
+		groupContext:         groupContext,
+		assignmentContext:    assignmentContext,
+		cwd:                  spec.cwd,
+		sharedWorktreePath:   spec.worktreePath,
+		sharedWorktreeBranch: spec.worktreeBranch,
+		perAgentWorktrees:    spec.perAgentWorktrees,
+		caller:               spec.caller,
+		granter:              granter,
+		templateName:         tmpl.Name,
+		suppressOwner:        reinforce,
+		proofToken:           spec.proofToken,
+		proofDirs:            spec.proofDirs,
+		codexGitCommonDir:    spec.codexGitCommonDir,
+		effectiveSandbox:     &effectiveSandbox,
+	})
 
 	resp := map[string]any{
 		"group":    spec.groupName,
