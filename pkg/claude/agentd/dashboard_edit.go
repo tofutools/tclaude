@@ -1968,7 +1968,7 @@ func handleDashboardSudoExtend(w http.ResponseWriter, r *http.Request, rawID str
 // every other dashboard mutate.
 //
 // Body shape and validation logic are shared with the daemon's
-// /v1/sudo POST path via insertSudoBundle / blockedSlugs /
+// /v1/sudo POST path via proactiveSudoGrantFailure / insertSudoBundle /
 // resolveSudoDuration. The granter label is
 // "<human-dashboard>:proactive" so audit can distinguish dashboard
 // grants from CLI grants and from agent-requested ones.
@@ -2013,8 +2013,8 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	convID := actor.CurrentConvID
-	if db.IsExternalStewardConv(convID) {
-		http.Error(w, externalStewardSudoRefusal, http.StatusConflict)
+	if fail := proactiveSudoGrantFailure(convID, body.Slugs, policy); fail != nil {
+		http.Error(w, fail.Msg, fail.Status)
 		return
 	}
 	if len(body.Carry) > 0 && !isLiveSteward(convID) {
@@ -2028,13 +2028,6 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if blocked := blockedSlugs(body.Slugs, policy.Blocklist); len(blocked) > 0 {
-		http.Error(w,
-			"slug(s) blocklisted from sudo (would enable permanent escalation): "+
-				strings.Join(blocked, ", "),
-			http.StatusForbidden)
-		return
-	}
 	scopes := map[string]string{}
 	for slug, raw := range body.Scopes {
 		if !slices.Contains(body.Slugs, slug) {
