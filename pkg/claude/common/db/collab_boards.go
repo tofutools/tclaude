@@ -244,7 +244,7 @@ func ListCollabBoardElements(id string, since int64) ([]CollabBoardElement, erro
 	return out, rows.Err()
 }
 
-// ApplyCollabBoardElements merges elements into the board with Excalidraw's
+// ApplyCollabBoardEdit merges elements into the board with Excalidraw's
 // reconciliation rule: an incoming element replaces the stored one when there
 // is none, when its version is higher, or when the versions tie and its nonce
 // is lower. When at least one element is accepted the board version is bumped
@@ -253,12 +253,9 @@ func ListCollabBoardElements(id string, since int64) ([]CollabBoardElement, erro
 // board session starts or refreshes there too. The patch is all-or-nothing:
 // one that would leave more than maxLive live elements, or more than maxStored
 // rows including tombstones, changes nothing.
-func ApplyCollabBoardElements(id, by, participant string, elems []CollabBoardElement, maxLive, maxStored int) (version int64, accepted int, err error) {
-	return ApplyCollabBoardEdit(id, by, participant, elems, nil, maxLive, maxStored)
-}
-
-// ApplyCollabBoardEdit is ApplyCollabBoardElements that also records history,
-// in the same transaction, so a step cannot outlive or miss its edit.
+//
+// history, when non-nil, is recorded in the same transaction, so a step
+// cannot outlive or miss its edit.
 func ApplyCollabBoardEdit(id, by, participant string, elems []CollabBoardElement, history *CollabBoardHistory, maxLive, maxStored int) (version int64, accepted int, err error) {
 	collabBoardWriteMu.Lock()
 	defer collabBoardWriteMu.Unlock()
