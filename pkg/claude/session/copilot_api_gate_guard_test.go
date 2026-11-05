@@ -206,17 +206,26 @@ func callIsUnconditional(fn *ast.FuncDecl, callee string) bool {
 // about to be refused must not bind and release a loopback port on the way, which
 // is the pointless exposure the ticket is about.
 func TestRunNewGatesTheDriveBeforeResolvingAPort(t *testing.T) {
-	fn := guardFunc(guardParse(t, "new.go", ""), "runNew")
-	require.NotNil(t, fn, "runNew must exist for this guard to mean anything")
+	run := guardFunc(guardParse(t, "new.go", ""), "runNew")
+	require.NotNil(t, run, "runNew must exist for this guard to mean anything")
+	// The gate lives in resolveNewLaunch, runNew's option-resolution step, so
+	// that step must run on every launch and its error must be checked.
+	require.True(t, callIsUnconditional(run, "resolveNewLaunch"),
+		"runNew must resolve its launch options, where the drive gate lives, on every launch")
+	require.True(t, errorResultIsBound(run, "resolveNewLaunch"),
+		"runNew must check resolveNewLaunch's error, which carries the gate's refusal")
+
+	fn := guardFunc(guardParse(t, "new_options.go", ""), "resolveNewLaunch")
+	require.NotNil(t, fn, "resolveNewLaunch must exist for this guard to mean anything")
 
 	order := callOrder(fn, "applyCopilotAPIDriveDecision", "ResolveCopilotAPIPort")
 	gate, gated := order["applyCopilotAPIDriveDecision"]
 	port, resolved := order["ResolveCopilotAPIPort"]
 
 	require.True(t, gated,
-		"runNew must consult applyCopilotAPIDriveDecision: without it a hand-typed "+
+		"resolveNewLaunch must consult applyCopilotAPIDriveDecision: without it a hand-typed "+
 			"--copilot-api binds an unauthenticated loopback endpoint nothing will dial")
-	require.True(t, resolved, "runNew must still resolve the port for the agentd case")
+	require.True(t, resolved, "resolveNewLaunch must still resolve the port for the agentd case")
 	assert.Less(t, int(gate), int(port),
 		"the gate must precede the port resolution, or a launch that is about to be "+
 			"refused allocates a port first")
@@ -615,8 +624,9 @@ func ResolveCopilotAPIPort(copilotAPI bool, requested int) (int, error) {
 // instead of a surprise: `session new --copilot-api --join-group <g>` is now
 // refused, where before it launched and silently ignored the flag.
 //
-// It is refused because the gate (new.go:941) precedes the --join-group handoff
-// (new.go:967), and a join-group launch is neither daemon-owned nor carrying. That
+// It is refused because the gate (in resolveNewLaunch, new_options.go) runs
+// before runNew's --join-group handoff, and a join-group launch is neither
+// daemon-owned nor carrying. That
 // is the right answer for this surface: agent.RunJoinGroup builds its SpawnRequest
 // with Name/Role/Descr/Cwd/Effort/Model/Harness/TimeoutSeconds and then sets only
 // FastMode and WriteProofToken — CopilotAPI is never forwarded — so the flag could
@@ -627,10 +637,15 @@ func ResolveCopilotAPIPort(copilotAPI bool, requested int) (int, error) {
 func TestTheDriveGatePrecedesTheJoinGroupHandoff(t *testing.T) {
 	fn := guardFunc(guardParse(t, "new.go", ""), "runNew")
 	require.NotNil(t, fn)
-	order := callOrder(fn, "applyCopilotAPIDriveDecision", "JoinGroupHandler")
-	gate, gated := order["applyCopilotAPIDriveDecision"]
+	// The gate runs inside resolveNewLaunch (pinned by
+	// TestRunNewGatesTheDriveBeforeResolvingAPort), so it precedes the handoff
+	// exactly when resolveNewLaunch does.
+	order := callOrder(fn, "resolveNewLaunch", "JoinGroupHandler")
+	gate, gated := order["resolveNewLaunch"]
 	join, handed := order["JoinGroupHandler"]
 	require.True(t, gated)
+	require.NotEmpty(t, callOrder(guardFunc(guardParse(t, "new_options.go", ""), "resolveNewLaunch"),
+		"applyCopilotAPIDriveDecision"), "resolveNewLaunch must run the drive gate")
 	require.True(t, handed, "runNew must still hand off --join-group")
 	assert.Less(t, int(gate), int(join),
 		"the gate must precede the join-group handoff: that surface drops --copilot-api "+
