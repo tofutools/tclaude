@@ -178,7 +178,7 @@ export function createDashboardState({ now = () => Date.now() } = {}) {
 export const dashboardState = createDashboardState();
 
 // SNAPSHOT_STATIC_KEYS are the registries a snapshot leaves out when the
-// request's static_version still matches (dashboard.go snapshotStaticVersion).
+// request's static_version still matches (dashboard_snapshot.go snapshotStaticVersion).
 const SNAPSHOT_STATIC_KEYS = ['slugs', 'templates', 'profiles', 'roles', 'saved_prompts', 'plugins_catalog', 'harnesses', 'sandbox_impl'];
 
 // restoreUnchangedStatics fills next's omitted registries from prev, the

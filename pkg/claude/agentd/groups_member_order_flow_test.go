@@ -91,7 +91,7 @@ func TestGroupMembers_DefaultSortByAgeNewestFirst(t *testing.T) {
 		"/v1 owner-only rows must carry created_at too")
 
 	// Surface 2: the dashboard snapshot's per-group members (a separate
-	// builder in dashboard.go) — order AND the created_at field it now
+	// builder in dashboard_snapshot.go) — order AND the created_at field it now
 	// carries for the Age column.
 	dash := agentd.BuildDashboardHandlerForTest()
 	snap := fetchDashSnapshot(t, dash)

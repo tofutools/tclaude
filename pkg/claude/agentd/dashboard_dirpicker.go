@@ -23,7 +23,7 @@ import (
 // while the dialog is open, then drops the path into the form field.
 //
 // Same threat model as the rest of /api/* — the dashboard cookie + Origin
-// pin is the human-consent layer (see dashboard.go's checkDashboardAuth).
+// pin is the human-consent layer (see dashboard_auth.go's checkDashboardAuth).
 // The endpoint neither reads nor mutates tclaude state; it only shows a
 // dialog and echoes back what the human picked.
 
