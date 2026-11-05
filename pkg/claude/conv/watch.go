@@ -17,7 +17,6 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/fsnotify/fsnotify"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
-	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -2461,34 +2460,9 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		}
 	}
 	if outerLayer {
-		// Mirror the spawn seam: hook callbacks go through agentd for a
-		// launch whose namespace hides the database (TCL-754). Applied after
-		// the recorded profile environment so a stale or hostile profile
-		// cannot unset the marker on resume.
-		resumeEnv[session.HookBrokerEnvVar] = session.HookBrokerAgentd
-		posture, err := session.TclaudeLayerNetworkPosture(effectiveProfile)
+		shellEnvironment, err = applyResumeLayerAgentEnv(h, effectiveProfile, resumeEnv, shellEnvironment)
 		if err != nil {
 			return "", "", nil, err
-		}
-		rootPosture, err := session.TclaudeLayerRootPosture(posture, effectiveProfile)
-		if err != nil {
-			return "", "", nil, err
-		}
-		if err := session.ApplyAgentSocketEnv(
-			h.Name,
-			"",
-			"",
-			rootPosture == sandboxpolicy.RootConstructed,
-			resumeEnv,
-		); err != nil {
-			return "", "", nil, err
-		}
-		if selected := resumeEnv[agentipc.SocketEnv]; selected != "" &&
-			rootPosture == sandboxpolicy.RootConstructed {
-			if shellEnvironment == nil {
-				shellEnvironment = map[string]string{}
-			}
-			shellEnvironment[agentipc.SocketEnv] = selected
 		}
 	}
 	// Rebuild the launch-posture environment the spawn path applied, from the
@@ -2560,50 +2534,9 @@ func resumeLaunchCmdWithEffectiveSandbox(
 	}
 	networkFiltered := false
 	if outerLayer {
-		resolvedModel := harness.ResolvedModelTransport{}
-		plannedAxes, axesErr := sandboxpolicy.PlannedEffectiveAccessAxes(
-			effectiveProfile)
-		if axesErr != nil {
-			return "", "", nil, axesErr
-		}
-		plannedNetworkPosture, postureErr := sandboxpolicy.NetworkPostureForRules(
-			plannedAxes.Network)
-		if postureErr != nil {
-			return "", "", nil, postureErr
-		}
-		// As in `session new`: private routed open is default-accept, so it
-		// has no route to resolve; resolving it here refused resumes of
-		// launches the spawn admitted.
-		if plannedNetworkPosture == sandboxpolicy.NetworkFiltered &&
-			!sandboxpolicy.NetworkRulesArePrivateRoutedOpen(plannedAxes.Network) {
-			networkFiltered = true
-			// pi resumes with the model its session records, so that is
-			// the route to resolve; the others resolve from config alone.
-			resumeModel := ""
-			if h.Name == harness.PiName {
-				resumeModel = harness.PiSessionModel(convID, resumeCwd)
-			}
-			resolvedModel, err = session.ResolveTclaudeLayerModelTransport(
-				h,
-				session.ModelTransportLaunchContext{
-					Model:       resumeModel,
-					Cwd:         resumeCwd,
-					Environment: effectiveProfile.Environment,
-					ExtraArgs:   extraArgs,
-				},
-			)
-			if err != nil {
-				return "", "", nil,
-					session.AnnotateDenyDrivenFilteredModelTransport(
-						plannedAxes.Network, err)
-			}
-		}
-		if _, err := session.ValidateTclaudeLayerNetwork(
-			h, effectiveProfile, resolvedModel,
-		); err != nil {
-			return "", "", nil,
-				session.AnnotateDenyDrivenFilteredModelTransport(
-					plannedAxes.Network, err)
+		networkFiltered, err = gateResumeLayerNetwork(h, effectiveProfile, convID, resumeCwd, extraArgs)
+		if err != nil {
+			return "", "", nil, err
 		}
 	}
 	// The posture gate every tclaude-layer launch boundary runs: a harness
@@ -2853,6 +2786,7 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		if postureErr != nil {
 			return "", "", nil, postureErr
 		}
+		// Post-ladder, deliberately: see applyResumeLayerAgentEnv.
 		root, rootErr := session.TclaudeLayerRootPosture(posture, effectiveProfile)
 		if rootErr != nil {
 			return "", "", nil, rootErr
