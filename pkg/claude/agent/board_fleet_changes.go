@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"slices"
 	"sort"
@@ -55,7 +56,7 @@ func boardFleetChangesCmd() *cobra.Command {
 
 func runBoardFleetChanges(p *boardFleetChangesParams, boardID string, stdout, stderr io.Writer) int {
 	var fleet fleetResp
-	if err := DaemonGet("/v1/fleet", &fleet); err != nil {
+	if err := DaemonRequest(http.MethodGet, "/v1/fleet", nil, &fleet, boardOpts()); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

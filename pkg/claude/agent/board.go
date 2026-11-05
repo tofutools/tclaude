@@ -25,10 +25,34 @@ import (
 // `tclaude agent board` — collab boards (tcl-4f86kp): a shared drawing board
 // the operator edits in the dashboard and agents read and write here. Its
 // elements are a subset of Excalidraw's element JSON. Reading needs
-// boards.read; creating and changing boards needs boards.write.
+// boards.read; creating and changing boards needs boards.write. A board linked
+// to a group is also its members' (groups.resources.read / .write).
+
+// boardAskHuman is the board commands' --ask-human, a persistent flag on
+// `board` so every subcommand takes it. It is checked as it is parsed.
+var boardAskHuman askHumanValue
+
+type askHumanValue struct {
+	raw string
+	d   time.Duration
+}
+
+func (v *askHumanValue) String() string { return v.raw }
+func (v *askHumanValue) Type() string   { return "duration" }
+func (v *askHumanValue) Set(s string) error {
+	d, err := ParseAskHuman(s)
+	if err != nil {
+		return err
+	}
+	v.raw, v.d = s, d
+	return nil
+}
+
+// boardOpts are the daemon options of a board command's request.
+func boardOpts() DaemonOpts { return DaemonOpts{AskHuman: boardAskHuman.d} }
 
 func boardCmd() *cobra.Command {
-	return boa.CmdT[struct{}]{
+	cmd := boa.CmdT[struct{}]{
 		Use:   "board",
 		Short: "Read and draw on shared collab boards",
 		Long: "Collab boards are shared drawing boards: the operator draws in the dashboard's board editor, and agents " +
@@ -36,6 +60,9 @@ func boardCmd() *cobra.Command {
 			"(rectangle, ellipse, diamond, arrow, line, freedraw, text), merged per element: a higher version wins, " +
 			"and a deletion is a tombstone (isDeleted).\n\n" +
 			"Reading (ls, show, snapshot) needs boards.read; create and every change need boards.write. " +
+			"A board linked to a group is its members' without either: membership confers groups.resources.read and " +
+			"groups.resources.write in that group, and `board ls` then lists the boards of your groups. " +
+			"Pass --ask-human <timeout> to ask the operator by popup when a slug is missing. " +
 			"Changing a board makes you a participant, so the operator's board activity reaches you as mail.\n\n" +
 			"Typical loop: `board show <id>` to read it, `board snapshot <id> -o board.png` to see the operator's last " +
 			"rendering, `board add` / `move` / `text` / `connect` / `rm` to draw, then `board show <id> --since <version>` for " +
@@ -48,6 +75,12 @@ func boardCmd() *cobra.Command {
 			boardAddCmd(), boardPatchCmd(), boardRmCmd(), boardMoveCmd(), boardTextCmd(), boardConnectCmd(), boardLayoutCmd(), boardFromProcessCmd(), boardFromFleetCmd(), boardFleetChangesCmd(),
 		},
 	}.ToCobra()
+	cmd.PersistentFlags().Var(&boardAskHuman, "ask-human",
+		"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny.")
+	_ = cmd.RegisterFlagCompletionFunc("ask-human", func(c *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return completeAskHumanDurations(c, args, toComplete), cobra.ShellCompDirectiveNoFileComp
+	})
+	return cmd
 }
 
 // ---- wire shapes ----
@@ -138,7 +171,7 @@ func fetchBoard(id string, since int64) (*boardDoc, error) {
 		path += "?since=" + strconv.FormatInt(since, 10)
 	}
 	var doc boardDoc
-	if err := DaemonRequest(http.MethodGet, path, nil, &doc, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodGet, path, nil, &doc, boardOpts()); err != nil {
 		return nil, err
 	}
 	return &doc, nil
@@ -151,7 +184,7 @@ type boardPatchResp struct {
 
 func patchBoard(id string, elements []json.RawMessage) (*boardPatchResp, error) {
 	var resp boardPatchResp
-	err := DaemonRequest(http.MethodPatch, boardPath(id), map[string]any{"elements": elements}, &resp, DaemonOpts{})
+	err := DaemonRequest(http.MethodPatch, boardPath(id), map[string]any{"elements": elements}, &resp, boardOpts())
 	return &resp, err
 }
 
@@ -205,7 +238,7 @@ func runBoardLs(p *boardLsParams, stdout, stderr io.Writer) int {
 	var resp struct {
 		Boards []boardSummary `json:"boards"`
 	}
-	if err := DaemonRequest(http.MethodGet, "/v1/boards", nil, &resp, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodGet, "/v1/boards", nil, &resp, boardOpts()); err != nil {
 		return boardErr(stderr, err)
 	}
 	if p.JSON {
@@ -513,7 +546,7 @@ func boardCreateCmd() *cobra.Command {
 
 func runBoardCreate(p *boardCreateParams, id string, stdout, stderr io.Writer) int {
 	var doc boardDoc
-	if err := DaemonRequest(http.MethodPost, "/v1/boards", map[string]string{"id": id, "title": p.Title, "group": p.Group}, &doc, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodPost, "/v1/boards", map[string]string{"id": id, "title": p.Title, "group": p.Group}, &doc, boardOpts()); err != nil {
 		return boardErr(stderr, err)
 	}
 	if doc.Group != "" {
@@ -546,7 +579,7 @@ func boardOpenCmd() *cobra.Command {
 
 func runBoardOpen(id string, stdout, stderr io.Writer) int {
 	var doc boardDoc
-	if err := DaemonRequest(http.MethodPost, boardPath(id, "session"), nil, &doc, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodPost, boardPath(id, "session"), nil, &doc, boardOpts()); err != nil {
 		return boardErr(stderr, err)
 	}
 	fmt.Fprintf(stdout, "Board session open on %s %q, at version %d. It lasts until `board close`, with or without a tab open.\n",
@@ -571,7 +604,7 @@ func boardCloseCmd() *cobra.Command {
 }
 
 func runBoardClose(id string, stdout, stderr io.Writer) int {
-	if err := DaemonRequest(http.MethodDelete, boardPath(id, "session"), nil, nil, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodDelete, boardPath(id, "session"), nil, nil, boardOpts()); err != nil {
 		return boardErr(stderr, err)
 	}
 	fmt.Fprintf(stdout, "Board session on %s closed.\n", id)

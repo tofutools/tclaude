@@ -56,7 +56,12 @@ set**, the union of:
   moment the agent leaves the group),
 - per-conversation grants,
 - active [sudo](#sudo-time-bounded-elevation) elevations,
-- grants contributed by group ownership (see below).
+- grants contributed by group ownership (see below),
+- slugs conferred by membership: a few group-scoped slugs are every active
+  member's in that group, checked live at each request. They are
+  `groups.messages.schedule`, and `groups.resources.read` /
+  `groups.resources.write` (read and change the group's boards; see
+  [Boards › Group boards are their members'](boards.md#group-boards-are-their-members)).
 
 An explicit per-agent **deny** beats everything except sudo. If no source
 supplies the slug, the request is refused.

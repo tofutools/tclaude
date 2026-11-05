@@ -183,8 +183,8 @@ board, in the dashboard's saved preferences.
 
 ## Permissions
 
-Boards are global, not scoped to a group: `boards.read` and `boards.write` cover
-every board, including a fleet map, whose cards show agents' tasks and PRs.
+`boards.read` and `boards.write` are global: they cover every board, including a
+fleet map, whose cards show agents' tasks and PRs.
 
 | Slug | Allows |
 |---|---|
@@ -197,6 +197,41 @@ Neither is default-granted, although a Steward gets both when summoned:
 tclaude agent permissions grant <agent> boards.read
 tclaude agent permissions grant <agent> boards.write
 ```
+
+### Group boards are their members'
+
+A board linked to a group belongs to that group's members, who need neither
+global slug for it. Active membership confers two group-scoped slugs in that
+group:
+
+| Slug | Allows, on the group's boards |
+|---|---|
+| `groups.resources.read` | `board show`, `board snapshot`; `board ls` lists them |
+| `groups.resources.write` | every change and `board open`/`close`, and `board create --group <group>`; implies read |
+
+Membership is checked at every request, so an agent that joins a group can use
+its boards at once, and one that leaves (or whose group is archived) loses
+them at once. An explicit deny of either slug for an agent wins over its
+membership:
+
+```bash
+tclaude agent permissions deny <agent> groups.resources.write   # keeps read
+```
+
+Membership and the global slugs are independent sources: denying an agent
+`boards.read` or `boards.write` does not keep it off its own groups' boards;
+deny `groups.resources.read` / `groups.resources.write` for that. Like every
+`groups.*` slug, both are also covered by `groups.admin`.
+
+A board linked to no group is reachable only through `boards.read` and
+`boards.write`. Without `boards.read`, `board ls` lists only the boards of the
+agent's groups. An operator lock on a board refuses an agent's change
+whatever its access: see
+[The operator's lock on a resource](permissions-and-audit.md#the-operators-lock-on-a-resource).
+
+Every board command takes `--ask-human <timeout>`: when the agent lacks the
+slug, the operator gets an approval popup instead of a refusal, as with other
+permission-gated commands (`board snapshot` excepted).
 
 An agent that changes a board becomes one of its participants. The operator
 can also add or remove participants from the dashboard.

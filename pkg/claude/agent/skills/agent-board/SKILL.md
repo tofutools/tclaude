@@ -9,8 +9,9 @@ description: >-
   the fleet). Use when the operator asks to "sketch it", "draw it on a board",
   "put it on the whiteboard", says "this"/"here" about a board, when a
   `[board <id>]` mail arrives in your inbox, or when agreeing a design, plan or
-  process with the operator visually. Needs `boards.read` / `boards.write`
-  (not default-granted). Not for showing a web page you serve (that is
+  process with the operator visually. A board of your group is yours to read
+  and draw on as a member; any other board needs `boards.read` /
+  `boards.write` (not default-granted). Not for showing a web page you serve (that is
   agent-page), not for editing a process template (process-templates), and not
   for federation content boards (`docs/federation-boards.md`).
 ---
@@ -30,10 +31,20 @@ Boards are global, not per group (a board can optionally belong to a group).
 | `boards.read` | `ls`, `show`, `snapshot`, `fleet-changes` (also needs `fleet.read`) |
 | `boards.write` | `create`, every change (`add`, `text`, `connect`, `move`, `layout`, `patch`, `rm`, `from-process`, `from-fleet`), `open`, `close` |
 
-Neither is default-granted (a Steward gets both). `from-process` also needs
-`process.templates.read`; `from-fleet` also needs `fleet.read`. A 403 names
-the missing slug: ask the operator for
-`tclaude agent permissions grant <you> boards.write` rather than retrying.
+Neither is default-granted (a Steward gets both). They cover every board.
+
+A board linked to a group (`group` in `show`/`ls`) is its members' without
+either: membership confers `groups.resources.read` (show, snapshot, ls) and
+`groups.resources.write` (every change, open/close, `create --group <yours>`)
+in that group, and stops the moment you leave it. Without `boards.read`,
+`ls` lists only your groups' boards.
+
+`from-process` also needs `process.templates.read`; `from-fleet` also needs
+`fleet.read`. A 403 names the missing slug: rather than retrying, rerun with
+`--ask-human 60s` (any board command) to ask the operator by popup, or ask for
+`tclaude agent permissions grant <you> boards.write`. A `resource_locked`
+refusal is the operator's lock on that board, not a missing slug: reads still
+work; wait for the operator to unlock it.
 
 ## Read
 

@@ -519,3 +519,25 @@ func TestBoardPatchRejectsAFileWithoutElements(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, list, 1)
 }
+
+func TestBoardAskHumanReachesEverySubcommandsRequest(t *testing.T) {
+	t.Cleanup(func() { boardAskHuman = askHumanValue{} })
+	var got []DaemonOpts
+	prev := DaemonRequestImpl
+	t.Cleanup(func() { DaemonRequestImpl = prev })
+	DaemonRequestImpl = func(method, path string, _, out any, opts DaemonOpts) error {
+		got = append(got, opts)
+		return json.Unmarshal([]byte(`{"boards":[]}`), out)
+	}
+	parse := func(args ...string) error {
+		sub, rest, err := boardCmd().Find(args)
+		require.NoError(t, err)
+		return sub.ParseFlags(rest)
+	}
+	require.NoError(t, parse("ls", "--ask-human", "45s"))
+	require.Equal(t, rcOK, runBoardLs(&boardLsParams{}, &bytes.Buffer{}, &bytes.Buffer{}))
+	require.Len(t, got, 1)
+	assert.Equal(t, "45s", got[0].AskHuman.String())
+
+	require.Error(t, parse("show", "plan", "--ask-human", "soon"), "an invalid timeout is refused as the flag is parsed")
+}

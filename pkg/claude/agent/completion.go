@@ -307,6 +307,8 @@ func completePermissionSlugs(_ *cobra.Command, _ []string, toComplete string) []
 			{"groups.pages.read", "Read a live page another member of its group showed"},
 			{"groups.pages.patch", "Live-patch a page another member of its group showed"},
 			{"groups.pages.manage", "Eval in or close a page another member of its group showed"},
+			{"groups.resources.read", "Read the boards of a group, as its member"},
+			{"groups.resources.write", "Change the boards of a group, as its member"},
 			{"auto-permit.enter-worktree", "Let tclaude answer Claude Code's EnterWorktree prompt"},
 			{"agent.reincarnate", "Reincarnate ANOTHER agent"},
 			{"agent.compact", "Compact ANOTHER agent"},
