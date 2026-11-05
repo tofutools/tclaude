@@ -748,7 +748,7 @@ func runNew(params *NewParams) error {
 	})
 	sandboxChosenBy, launchOSSandbox := osSandbox.chosenBy, osSandbox.launch
 	bwrapBinary, bwrapCapabilityErr := osSandbox.bwrapBinary, osSandbox.bwrapCapabilityErr
-	if err := gateTclaudeLayerHarnessPosture(h, outerLayer, launchSandbox, extraArgs); err != nil {
+	if err := GateTclaudeLayerHarnessPosture(h, outerLayer, launchSandbox, extraArgs); err != nil {
 		return err
 	}
 	discloseUnconfinedAccessRules(sandboxImplementation, unconfined, launchSandbox, effectiveSandbox)
