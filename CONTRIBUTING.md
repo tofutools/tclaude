@@ -163,7 +163,8 @@ save a build cache (the `agentd` and `sandbox` shards on each OS).
 #### Self-hosted macOS runners
 
 PR CI's opted-in macOS jobs run on the repository's self-hosted macOS runner
-when the PR's head branch is in this repository, and on hosted `macos-latest`
+(`mini`, in the runner group `tclaude-mac`, which only this repository can
+use) when the PR's head branch is in this repository, and on hosted `macos-latest`
 when it comes from a fork. Main keeps hosted macOS: `release.yml` and
 `manual-release.yml` are unchanged.
 
@@ -182,8 +183,8 @@ when it comes from a fork. Main keeps hosted macOS: `release.yml` and
   fork can edit `ci.yml` itself. The real safeguard is in the repository
   settings: require approval for all outside contributors' workflow runs
   (Settings › Actions › General), read a fork's changes to `.github/` and
-  `scripts/ci/` before approving, and keep the runner in a group restricted
-  to this repository.
+  `scripts/ci/` before approving, and keep the runner in its group
+  restricted to this repository.
 - **Ephemeral runners.** Prefer ephemeral runners (`config.sh --ephemeral`,
   one job per machine). The sandbox tests change their environment, and the
   Seatbelt smoke runs `npm install --global`, so a persistent runner carries
