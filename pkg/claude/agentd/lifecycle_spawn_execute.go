@@ -801,153 +801,17 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// without waiting on the hook. It still polls (rather than skipping
 	// straight through) so it confirms the pane actually came up and fires
 	// auto-focus, and so a genuine launch failure is caught below.
-	pollBudget := timeout
-	if p.Async && asyncSpawnInlineGrace < pollBudget {
-		pollBudget = asyncSpawnInlineGrace
+	pollBudget, backgroundBackfillBudget := spawnPollBudgets(p, spawnHarness, timeout)
+	polled := pollSpawnedSession(spawnPoll{
+		label: label, launchEnroll: launchEnroll, preConvID: preConvID, launchedAt: launchedAt,
+		deadline: launchedAt.Add(pollBudget), pendingHeld: pendingHeld, harness: spawnHarness,
+		args: spawnArgs, cwd: p.Cwd, wrapperFailure: wrapperFailure, focus: focus, timing: timing,
+	})
+	if polled.failure != nil {
+		return launchFailed(polled.failure)
 	}
-	backgroundBackfillBudget := pollBudget
-	if p.Async && spawnHarness.NeedsSpawnSeed() && codexAsyncSpawnResponseGrace > 0 && codexAsyncSpawnResponseGrace < pollBudget {
-		pollBudget = codexAsyncSpawnResponseGrace
-	}
-	deadline := launchedAt.Add(pollBudget)
-	var convID string
-	paneObserved := false
-	var lastDiscoveryScan time.Time
-	remoteArmed := false
-	pendingLaunchMarked := false
-	for time.Now().Before(deadline) {
-		// A wrapper that died after the fork reports here (the proofless path
-		// is fire-and-forget, so its failure never comes back as a return
-		// value). React exactly like a synchronous launch failure instead of
-		// polling out the budget and mistaking the timeout for a slow pane.
-		select {
-		case werr := <-wrapperFailure:
-			return launchFailed(werr)
-		default:
-		}
-		s, err := db.LoadSession(label)
-		if err == nil && s != nil {
-			if !spawnRowBelongsToLaunch(s, launchEnroll, preConvID, launchedAt) {
-				sleepSpawnPoll(deadline)
-				continue
-			}
-			if pendingHeld && !pendingLaunchMarked {
-				if err := db.MarkPendingSpawnLaunched(label); err != nil {
-					slog.Warn("spawn: failed to clear pending launch marker", "label", label, "error", err)
-				} else {
-					pendingLaunchMarked = true
-				}
-			}
-			// The session row is written before launchDetachedTmuxSession creates
-			// the tmux pane. In particular, a launch-enrolled Claude row already
-			// carries both its preset conv-id and tmux name at that point. Treating
-			// either field as pane readiness lets a fast terminal (observed with
-			// Ghostty on macOS) win the gap: `session attach` sees no tmux session,
-			// marks the row exited, and closes before the pane comes up.
-			//
-			// Publish/focus only after tmux itself proves the pane is alive. Keep
-			// polling otherwise; the child may still be between its row write and
-			// `tmux new-session`.
-			if s.TmuxSession == "" || !session.IsTmuxSessionAlive(s.TmuxSession) {
-				// A one-shot shell is expected to make its pane disappear when
-				// the command completes. Once the authenticated exit callback has
-				// recorded that terminal state, the preset conversation proves the
-				// launch happened; command exit (including non-zero) is completion,
-				// not a harness-startup failure.
-				if spawnHarness.UsesCommandInput() && spawnArgs.InitialPrompt != "" &&
-					s.Status == session.StatusExited && s.ConvID != "" {
-					tmuxSession = s.TmuxSession
-					convID = s.ConvID
-					break
-				}
-				// The shell callback may still be racing this observation. Do not
-				// classify its retained, cleanly-finished pane as a failed harness
-				// startup; wait for the authenticated terminal-state write above.
-				if spawnHarness.UsesCommandInput() && spawnArgs.InitialPrompt != "" {
-					sleepSpawnPoll(deadline)
-					continue
-				}
-				// A retained dead pane is definitive startup-failure evidence. Its
-				// callback also copies the bounded error tail into the Logs tab before
-				// cleanup; fail the spawn response instead of enrolling an offline
-				// actor and opening an attach command that can only close.
-				if s.TmuxSession != "" {
-					if detail, paneID, inspected := startupCorpseExitDetail(s.TmuxSession); inspected {
-						// Before launchFailed, which rolls back the enrollment
-						// and takes the session row with it.
-						logStartupCorpseOutput(label, s.TmuxSession, paneID, detail)
-						return launchFailed(fmt.Errorf("managed pane exited during startup (%s); see the Logs tab for its output", detail))
-					}
-				}
-				// The authenticated pane callback records before cleaning the
-				// retained corpse. If it won that race, an exit row created during
-				// this launch attempt is now the durable failure evidence. The time
-				// bound prevents a reused label from matching a predecessor's exit.
-				if exits, auditErr := db.ListAuditLog(db.AuditLogFilter{
-					Verb: db.AuditVerbAgentExit, SessionID: label, Limit: 1,
-				}); auditErr == nil && len(exits) == 1 && !exits[0].At.Before(launchedAt) {
-					detail := deadPaneExitDetail(exits[0].ExitCode, exits[0].Signal)
-					if detail == "" {
-						detail = "unknown exit status"
-					}
-					return launchFailed(fmt.Errorf("managed pane exited during startup (%s); see the Logs tab for its output", detail))
-				}
-				// The authenticated pane callback may already have recorded and
-				// cleaned the corpse before this poll observed it.
-				if s.Status == session.StatusExited {
-					return launchFailed(errors.New("managed pane exited during startup; see the Logs tab for its output"))
-				}
-				sleepSpawnPoll(deadline)
-				continue
-			}
-			if !paneObserved {
-				timing("pane_observed", "label", label)
-				paneObserved = true
-			}
-			tmuxSession = s.TmuxSession
-			focus.open(tmuxSession) // pane is up — open it now, conv-id or not
-			// Arm best-known remote-control on the row the moment it
-			// materialises (JOH-258). The --remote-control launch flag already
-			// turned CC's Remote Access on; this records tclaude's best-known
-			// state so the toggle's direction logic + the dashboard indicator
-			// start armed. Tagged out-of-band here, NOT in the hook's
-			// SaveSession — whose UPSERT must not clobber the flag and which has
-			// no spawn intent (JOH-256). Done once; a write failure is logged,
-			// not fatal: the launch flag already armed CC, so a missed tag is a
-			// best-known-state drift the human can re-toggle, never a broken spawn.
-			if spawnArgs.RemoteControl && !remoteArmed {
-				if err := db.SetSessionRemoteControl(label, true); err != nil {
-					slog.Warn("spawn: failed to arm remote-control on session row",
-						"label", label, "error", err)
-				} else {
-					remoteArmed = true
-				}
-			}
-			if s.ConvID != "" {
-				convID = s.ConvID
-				break
-			}
-		}
-		// Fallback for a lazy-hook harness: once a pane exists but no hook has
-		// reported a conv-id within the grace, ask the harness conv store.
-		// Throttled so the tree-walking scan doesn't run every 250ms. Skipped on
-		// the launch-enrollment path: that conv-id was preset (preConvID), so
-		// the scan could only ever rediscover it — or, worse, pick a sibling
-		// .jsonl in a busy shared cwd.
-		if !launchEnroll && tmuxSession != "" && time.Since(launchedAt) >= convStoreDiscoveryGrace &&
-			time.Since(lastDiscoveryScan) >= convStoreDiscoveryScanInterval {
-			lastDiscoveryScan = time.Now()
-			if id := discoverSpawnedConvID(spawnHarness, p.Cwd, launchedAt, label); id != "" {
-				if err := db.SetSessionConvID(label, id); err != nil {
-					slog.Warn("spawn: failed to persist discovered conv-id",
-						"label", label, "conv", id, "error", err)
-				}
-				convID = id
-				break
-			}
-		}
-		sleepSpawnPoll(deadline)
-	}
+	convID := polled.convID
+	tmuxSession = polled.tmuxSession
 
 	timing("conversation_poll_finished", "label", label, "conv", convID, "budget_ms", pollBudget.Milliseconds())
 
@@ -1153,6 +1017,195 @@ func spawnRowBelongsToLaunch(s *db.SessionRow, launchEnroll bool, preConvID stri
 		return preConvID != "" && s.ConvID == preConvID
 	}
 	return !s.CreatedAt.IsZero() && !s.CreatedAt.Before(launchedAt)
+}
+
+// spawnPollBudgets is how long executeSpawn polls for the launched session
+// (see pollSpawnedSession), and how long a pending seed-needing launch keeps
+// back-filling in the background once the response has gone out.
+func spawnPollBudgets(p spawnParams, spawnHarness *harness.Harness, timeout time.Duration) (pollBudget, backgroundBackfillBudget time.Duration) {
+	pollBudget = timeout
+	if p.Async && asyncSpawnInlineGrace < pollBudget {
+		pollBudget = asyncSpawnInlineGrace
+	}
+	backgroundBackfillBudget = pollBudget
+	if p.Async && spawnHarness.NeedsSpawnSeed() && codexAsyncSpawnResponseGrace > 0 && codexAsyncSpawnResponseGrace < pollBudget {
+		pollBudget = codexAsyncSpawnResponseGrace
+	}
+	return pollBudget, backgroundBackfillBudget
+}
+
+// spawnPoll is what pollSpawnedSession watches: the forked launch's session
+// row, its pane, and its wrapper-failure signal.
+type spawnPoll struct {
+	label, preConvID     string
+	launchEnroll         bool
+	launchedAt, deadline time.Time
+	pendingHeld          bool
+	harness              *harness.Harness
+	args                 clcommon.SpawnArgs
+	cwd                  string
+	wrapperFailure       chan error
+	focus                *spawnFocus
+	timing               func(string, ...any)
+}
+
+// spawnPollResult is the session the poll found: its conv-id once one
+// materialised, and its live tmux pane. A non-nil failure is a confirmed
+// launch failure (a dead wrapper, or a pane that exited during startup).
+type spawnPollResult struct {
+	convID, tmuxSession string
+	failure             error
+}
+
+// pollSpawnedSession polls the sessions table until the launch's conv-id
+// materialises or the deadline passes. It confirms the pane is alive before
+// counting it, opens auto-focus and arms remote control once it is, marks a
+// held reservation launched, discovers a harness's conv-id from its store
+// when no hook reports one, and detects a launch that died.
+func pollSpawnedSession(w spawnPoll) spawnPollResult {
+	label, launchEnroll, preConvID, launchedAt, deadline := w.label, w.launchEnroll, w.preConvID, w.launchedAt, w.deadline
+	pendingHeld, spawnHarness, spawnArgs := w.pendingHeld, w.harness, w.args
+	wrapperFailure, focus, timing := w.wrapperFailure, w.focus, w.timing
+	var tmuxSession string
+	var convID string
+	paneObserved := false
+	var lastDiscoveryScan time.Time
+	remoteArmed := false
+	pendingLaunchMarked := false
+	for time.Now().Before(deadline) {
+		// A wrapper that died after the fork reports here (the proofless path
+		// is fire-and-forget, so its failure never comes back as a return
+		// value). React exactly like a synchronous launch failure instead of
+		// polling out the budget and mistaking the timeout for a slow pane.
+		select {
+		case werr := <-wrapperFailure:
+			return spawnPollResult{failure: werr}
+		default:
+		}
+		s, err := db.LoadSession(label)
+		if err == nil && s != nil {
+			if !spawnRowBelongsToLaunch(s, launchEnroll, preConvID, launchedAt) {
+				sleepSpawnPoll(deadline)
+				continue
+			}
+			if pendingHeld && !pendingLaunchMarked {
+				if err := db.MarkPendingSpawnLaunched(label); err != nil {
+					slog.Warn("spawn: failed to clear pending launch marker", "label", label, "error", err)
+				} else {
+					pendingLaunchMarked = true
+				}
+			}
+			// The session row is written before launchDetachedTmuxSession creates
+			// the tmux pane. In particular, a launch-enrolled Claude row already
+			// carries both its preset conv-id and tmux name at that point. Treating
+			// either field as pane readiness lets a fast terminal (observed with
+			// Ghostty on macOS) win the gap: `session attach` sees no tmux session,
+			// marks the row exited, and closes before the pane comes up.
+			//
+			// Publish/focus only after tmux itself proves the pane is alive. Keep
+			// polling otherwise; the child may still be between its row write and
+			// `tmux new-session`.
+			if s.TmuxSession == "" || !session.IsTmuxSessionAlive(s.TmuxSession) {
+				// A one-shot shell is expected to make its pane disappear when
+				// the command completes. Once the authenticated exit callback has
+				// recorded that terminal state, the preset conversation proves the
+				// launch happened; command exit (including non-zero) is completion,
+				// not a harness-startup failure.
+				if spawnHarness.UsesCommandInput() && spawnArgs.InitialPrompt != "" &&
+					s.Status == session.StatusExited && s.ConvID != "" {
+					tmuxSession = s.TmuxSession
+					convID = s.ConvID
+					break
+				}
+				// The shell callback may still be racing this observation. Do not
+				// classify its retained, cleanly-finished pane as a failed harness
+				// startup; wait for the authenticated terminal-state write above.
+				if spawnHarness.UsesCommandInput() && spawnArgs.InitialPrompt != "" {
+					sleepSpawnPoll(deadline)
+					continue
+				}
+				// A retained dead pane is definitive startup-failure evidence. Its
+				// callback also copies the bounded error tail into the Logs tab before
+				// cleanup; fail the spawn response instead of enrolling an offline
+				// actor and opening an attach command that can only close.
+				if s.TmuxSession != "" {
+					if detail, paneID, inspected := startupCorpseExitDetail(s.TmuxSession); inspected {
+						// Before launchFailed, which rolls back the enrollment
+						// and takes the session row with it.
+						logStartupCorpseOutput(label, s.TmuxSession, paneID, detail)
+						return spawnPollResult{failure: fmt.Errorf("managed pane exited during startup (%s); see the Logs tab for its output", detail)}
+					}
+				}
+				// The authenticated pane callback records before cleaning the
+				// retained corpse. If it won that race, an exit row created during
+				// this launch attempt is now the durable failure evidence. The time
+				// bound prevents a reused label from matching a predecessor's exit.
+				if exits, auditErr := db.ListAuditLog(db.AuditLogFilter{
+					Verb: db.AuditVerbAgentExit, SessionID: label, Limit: 1,
+				}); auditErr == nil && len(exits) == 1 && !exits[0].At.Before(launchedAt) {
+					detail := deadPaneExitDetail(exits[0].ExitCode, exits[0].Signal)
+					if detail == "" {
+						detail = "unknown exit status"
+					}
+					return spawnPollResult{failure: fmt.Errorf("managed pane exited during startup (%s); see the Logs tab for its output", detail)}
+				}
+				// The authenticated pane callback may already have recorded and
+				// cleaned the corpse before this poll observed it.
+				if s.Status == session.StatusExited {
+					return spawnPollResult{failure: errors.New("managed pane exited during startup; see the Logs tab for its output")}
+				}
+				sleepSpawnPoll(deadline)
+				continue
+			}
+			if !paneObserved {
+				timing("pane_observed", "label", label)
+				paneObserved = true
+			}
+			tmuxSession = s.TmuxSession
+			focus.open(tmuxSession) // pane is up — open it now, conv-id or not
+			// Arm best-known remote-control on the row the moment it
+			// materialises (JOH-258). The --remote-control launch flag already
+			// turned CC's Remote Access on; this records tclaude's best-known
+			// state so the toggle's direction logic + the dashboard indicator
+			// start armed. Tagged out-of-band here, NOT in the hook's
+			// SaveSession — whose UPSERT must not clobber the flag and which has
+			// no spawn intent (JOH-256). Done once; a write failure is logged,
+			// not fatal: the launch flag already armed CC, so a missed tag is a
+			// best-known-state drift the human can re-toggle, never a broken spawn.
+			if spawnArgs.RemoteControl && !remoteArmed {
+				if err := db.SetSessionRemoteControl(label, true); err != nil {
+					slog.Warn("spawn: failed to arm remote-control on session row",
+						"label", label, "error", err)
+				} else {
+					remoteArmed = true
+				}
+			}
+			if s.ConvID != "" {
+				convID = s.ConvID
+				break
+			}
+		}
+		// Fallback for a lazy-hook harness: once a pane exists but no hook has
+		// reported a conv-id within the grace, ask the harness conv store.
+		// Throttled so the tree-walking scan doesn't run every 250ms. Skipped on
+		// the launch-enrollment path: that conv-id was preset (preConvID), so
+		// the scan could only ever rediscover it — or, worse, pick a sibling
+		// .jsonl in a busy shared cwd.
+		if !launchEnroll && tmuxSession != "" && time.Since(launchedAt) >= convStoreDiscoveryGrace &&
+			time.Since(lastDiscoveryScan) >= convStoreDiscoveryScanInterval {
+			lastDiscoveryScan = time.Now()
+			if id := discoverSpawnedConvID(spawnHarness, w.cwd, launchedAt, label); id != "" {
+				if err := db.SetSessionConvID(label, id); err != nil {
+					slog.Warn("spawn: failed to persist discovered conv-id",
+						"label", label, "conv", id, "error", err)
+				}
+				convID = id
+				break
+			}
+		}
+		sleepSpawnPoll(deadline)
+	}
+	return spawnPollResult{convID: convID, tmuxSession: tmuxSession}
 }
 
 // reserveLaunch reserves the launch's pending row when it may answer before
