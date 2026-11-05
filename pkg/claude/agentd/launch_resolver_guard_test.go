@@ -32,10 +32,14 @@ var launchTierWalkFiles = map[string]bool{
 	"launch_value_fields.go":               true, // the resolver itself
 	"launch_identity.go":                   true, // the identity and birth-time access resolver
 	"managed_launch.go":                    true, // the pipeline for daemon-composed launches
-	"lifecycle.go":                         true,
-	"sandbox_default_implementation.go":    true,
-	"spawn_launch_defaults.go":             true,
-	"templates.go":                         true,
+	// The spawn path that used to be the single lifecycle.go entry, split by
+	// a pure move (tcl-a2e791). One entry's worth of tier walk, not three.
+	"lifecycle_spawn_execute.go":        true,
+	"lifecycle_spawn_handler.go":        true,
+	"lifecycle_spawn_profile.go":        true,
+	"sandbox_default_implementation.go": true,
+	"spawn_launch_defaults.go":          true,
+	"templates.go":                      true,
 }
 
 // launchDefaultProfileDisplayFiles read the global default profile only to

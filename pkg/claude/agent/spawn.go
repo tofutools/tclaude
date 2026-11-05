@@ -25,7 +25,7 @@ import (
 // SpawnResponse is the daemon's response shape for
 // POST /v1/groups/{name}/spawn — used by both `tclaude agent spawn`
 // and `tclaude --join-group`. Mirrors the keys handleGroupSpawn writes
-// in pkg/claude/agentd/lifecycle.go.
+// in pkg/claude/agentd/lifecycle_spawn_handler.go.
 type SpawnResponse struct {
 	Group string `json:"group"`
 	// AgentID is the spawned agent's stable actor key — the canonical ID

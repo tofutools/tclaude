@@ -552,7 +552,7 @@ var clearInjectReadyDelay = 1 * time.Second
 // gate against keystroke injection ... not bypassable". The
 // carried name comes from conv_index.custom_title (parsed verbatim
 // from .jsonl files) or pending_name (stored even when invalid by
-// lifecycle.go) — neither is pre-checked by the strict gate, so the
+// lifecycle_spawn_enroll.go) — neither is pre-checked by the strict gate, so the
 // gate runs here.
 //
 // renameCommand is the harness's declared in-pane rename; empty means it has
