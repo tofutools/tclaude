@@ -19,7 +19,6 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
-	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/launchundo"
@@ -1127,15 +1126,7 @@ func runNew(params *NewParams) error {
 	if err != nil {
 		return err
 	}
-	shellEnvironment := sandboxSnapshotEnvironment(effectiveSandbox)
-	if outerLayer && tclaudeLayerRoot == sandboxpolicy.RootConstructed {
-		if selected := additionalEnv[agentipc.SocketEnv]; selected != "" {
-			if shellEnvironment == nil {
-				shellEnvironment = map[string]string{}
-			}
-			shellEnvironment[agentipc.SocketEnv] = selected
-		}
-	}
+	shellEnvironment := launchShellEnvironment(effectiveSandbox, outerLayer, tclaudeLayerRoot, additionalEnv)
 	spawnSpec := harness.SpawnSpec{
 		ModelProxy:                     params.ModelProxy,
 		ClaudeSubscription:             params.ClaudeSubscription,
@@ -1180,49 +1171,11 @@ func runNew(params *NewParams) error {
 		CopilotAPIPort:                 params.CopilotAPIPort,
 		InitialPrompt:                  params.InitialPrompt,
 	}
-	if h.Name == harness.PiName {
-		// Verified above; pi registers its skills and rules natively.
-		spawnSpec.ManagedInstructionsRoot = params.ManagedInstructionsRoot
+	extensionReadPaths, err := finishHarnessSpawnSpec(h, &spawnSpec, params, outerLayer, tclaudeLayerRoot, approvalPolicy)
+	if err != nil {
+		return err
 	}
-	if outerLayer && h.Name == harness.PiName {
-		// A walled pi runs against tclaude's walled agent directory, never
-		// the operator's (pi_walled_agent.go), and one of its own: the
-		// directory is keyed by the conversation it launches.
-		conversation := spawnSpec.ResumeID
-		if conversation == "" {
-			conversation = spawnSpec.SessionID
-		}
-		walled, err := harness.PreparePiWalledAgentDir(conversation)
-		if err != nil {
-			return err
-		}
-		spawnSpec.HarnessStateDir = walled
-	}
-	if h.StatusExtension != nil {
-		// The extension is the harness's only status channel. Failing to
-		// write it costs live status, not the launch: say so plainly.
-		path, err := h.StatusExtension()
-		if err != nil && h.Name == harness.PiName && approvalPolicy == harness.PiApprovalAsk {
-			// ask's gate is the permission extension written beside it.
-			return fmt.Errorf("pi's ask posture needs tclaude's permission extension: %w", err)
-		}
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: %s live status is unavailable for this session: %v\n", h.DisplayName, err)
-			slog.Warn("status extension unavailable", "harness", h.Name, "error", err, "module", "session")
-		} else {
-			spawnSpec.StatusExtensionPath = path
-			if outerLayer {
-				// The extension runs inside the pane, so tclaude's sandbox
-				// mounts it read-only (its directory holds only this
-				// version's file), and it reaches tclaude where the sandbox
-				// puts it.
-				harnessReadPaths = append(harnessReadPaths, filepath.Dir(path))
-				if tclaudeLayerRoot == sandboxpolicy.RootConstructed {
-					spawnSpec.TclaudeExecutable = tclaudeLayerConstructedRootTclaudePath
-				}
-			}
-		}
-	}
+	harnessReadPaths = append(harnessReadPaths, extensionReadPaths...)
 	spawnSpec.NetworkFiltered = networkFiltered
 	var privateWriteDirs []TclaudeLayerPrivateWriteDir
 	if outerLayer {
