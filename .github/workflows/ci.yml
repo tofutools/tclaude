@@ -148,43 +148,15 @@ jobs:
       - name: Sandbox v2 Seatbelt smoke
         uses: ./.github/actions/seatbelt-smoke
 
-      # TEMPORARY (#3999, remove before merge): the failure rate of the
-      # intermittent localhost:N connect EPERM seen on the self-hosted macOS
-      # 27.2 runner. It reports only; the job's outcome is the smoke above.
-      - name: "TEMP: TestTclaudeLayerDarwinSmoke x5"
+      # TEMPORARY (#3999, awb tcl-gejtfc; remove before merge): isolate the
+      # macOS 27.2 Seatbelt EPERM on an allowed localhost:N connect with
+      # minimal sandbox-exec profiles. Reports only; the job's outcome is the
+      # smoke above.
+      - name: "TEMP: Seatbelt loopback rule probe"
         if: ${{ !cancelled() && runner.environment == 'self-hosted' }}
         continue-on-error: true
         shell: bash
-        env:
-          TCLAUDE_SANDBOX_V2_SMOKE: "1"
-          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
-        run: |
-          # One go test per iteration, so each result carries its own time
-          # and the console's screen-lock state (the operator's hypothesis:
-          # the EPERM appears only while mini's screen is locked).
-          # The key is present (and true) only while the screen is locked.
-          locked() {
-            if ioreg -n Root -d1 -a 2>/dev/null | grep -A1 CGSSessionScreenIsLocked | grep -q '<true/>'; then
-              echo true
-            else
-              echo false
-            fi
-          }
-          pass=0 fail=0
-          for i in $(seq 1 5); do
-            log="$RUNNER_TEMP/darwin-smoke-$i.log"
-            when=$(date -u +%Y-%m-%dT%H:%M:%SZ) lock=$(locked)
-            if go test ./pkg/claude/session -run '^TestTclaudeLayerDarwinSmoke$' -count=1 -v -timeout=120s > "$log" 2>&1 &&
-              grep -q '^--- PASS: TestTclaudeLayerDarwinSmoke ' "$log"; then
-              pass=$((pass + 1)); result=PASS
-            else
-              fail=$((fail + 1)); result=FAIL
-            fi
-            eperm=$(grep -o -m1 'dial tcp4 [0-9.:]*: connect: operation not permitted' "$log" || true)
-            echo "run $i $when screen_locked=$lock $result ${eperm}"
-          done
-          echo "TestTclaudeLayerDarwinSmoke x5: pass=$pass fail=$fail"
-          echo "### TestTclaudeLayerDarwinSmoke x5: pass=$pass fail=$fail" >> "$GITHUB_STEP_SUMMARY"
+        run: python3 scripts/ci/seatbelt-loopback-probe.py 10 | tee -a "$GITHUB_STEP_SUMMARY"
 
   test:
     needs: changes
