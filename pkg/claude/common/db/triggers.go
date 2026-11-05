@@ -972,6 +972,10 @@ func InterruptRunningTriggerFirings(now time.Time) (int64, error) {
 		}
 		ids = append(ids, id)
 	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, err
+	}
 	if err := rows.Close(); err != nil {
 		return 0, err
 	}

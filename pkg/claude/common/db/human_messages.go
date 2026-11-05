@@ -839,6 +839,10 @@ func deleteHumanMessagesWithAttachments(where, joinWhere string, args []any) (in
 		}
 		paths = append(paths, path)
 	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, nil, err
+	}
 	if err := rows.Close(); err != nil {
 		return 0, nil, err
 	}
