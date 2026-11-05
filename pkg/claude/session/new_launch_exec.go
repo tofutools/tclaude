@@ -40,45 +40,19 @@ func resolveLaunchExecutable(params *NewParams, h *harness.Harness, outerLayer b
 	if params.ManagedInstructionsRoot != "" {
 		harnessReadPaths = append(harnessReadPaths, params.ManagedInstructionsRoot)
 	}
+	var pinned TclaudeLayerExecutable
+	pinnedExecutable := false
+	if codexSplit == nil && outerLayer {
+		if pinned, pinnedExecutable, err = ResolveTclaudeLayerExecutable(h.Name, tclaudeLayerRoot); err != nil {
+			return launchExecutable{}, err
+		}
+	}
 	if codexSplit != nil {
 		executablePath = codexSplit.ExecutablePath
-	} else if outerLayer && h.Name == harness.CodexName && runtime.GOOS == "linux" {
-		resolvedCodex, resolveErr := harness.ResolveCodexLaunchExecutable()
-		if resolveErr != nil {
-			return launchExecutable{}, fmt.Errorf("resolve Codex executable for tclaude’s sandbox: %w", resolveErr)
-		}
-		executablePath = resolvedCodex.Path
-		harnessReadPaths = append(harnessReadPaths, resolvedCodex.RuntimeRoot)
-	} else if outerLayer && h.Name == harness.DefaultName && runtime.GOOS == "linux" {
-		resolvedClaude, resolveErr := harness.ResolveClaudeLaunchExecutable()
-		if resolveErr != nil {
-			return launchExecutable{}, fmt.Errorf("resolve Claude executable for tclaude’s sandbox: %w", resolveErr)
-		}
-		executablePath = resolvedClaude.Path
-		harnessReadPaths = append(harnessReadPaths, resolvedClaude.Path)
-	} else if outerLayer && h.Name == harness.GeminiName && runtime.GOOS == "linux" &&
-		tclaudeLayerRoot == sandboxpolicy.RootConstructed {
-		// Only a constructed root needs this: a host-inherited one still sees
-		// the pane's own PATH, profile environment and pre-launch script, so a
-		// launch there keeps resolving `gemini` and `node` as it did before.
-		resolvedGemini, resolveErr := harness.ResolveGeminiLaunchExecutable()
-		if resolveErr != nil {
-			return launchExecutable{}, fmt.Errorf("resolve Gemini executable for tclaude’s sandbox: %w", resolveErr)
-		}
-		executablePath = resolvedGemini.Path
-		executableInterpreter = resolvedGemini.Interpreter
-		harnessReadPaths = append(harnessReadPaths, resolvedGemini.ReadPaths...)
-	} else if outerLayer && h.Name == harness.PiName && runtime.GOOS == "linux" &&
-		tclaudeLayerRoot == sandboxpolicy.RootConstructed {
-		// As for Gemini: pi is a Node CLI, absent from a constructed root
-		// unless started by absolute path with its runtime mounted.
-		resolvedPi, resolveErr := harness.ResolvePiLaunchExecutable()
-		if resolveErr != nil {
-			return launchExecutable{}, fmt.Errorf("resolve pi executable for tclaude’s sandbox: %w", resolveErr)
-		}
-		executablePath = resolvedPi.Path
-		executableInterpreter = resolvedPi.Interpreter
-		harnessReadPaths = append(harnessReadPaths, resolvedPi.ReadPaths...)
+	} else if pinnedExecutable {
+		executablePath = pinned.Path
+		executableInterpreter = pinned.Interpreter
+		harnessReadPaths = append(harnessReadPaths, pinned.ReadPaths...)
 	} else if h.Name == harness.OpenCodeName {
 		executablePath, err = harness.OpenCodeExecutable()
 		if err != nil {
@@ -115,6 +89,60 @@ func resolveLaunchExecutable(params *NewParams, h *harness.Harness, outerLayer b
 		}
 	}
 	return launchExecutable{path: executablePath, interpreter: executableInterpreter, readPaths: harnessReadPaths}, nil
+}
+
+// TclaudeLayerExecutable is a harness executable pinned for a launch behind
+// tclaude's sandbox: its absolute path, the interpreter that runs it (empty
+// for a native binary), and the paths the sandbox must leave readable for it
+// to start.
+type TclaudeLayerExecutable struct {
+	Path        string
+	Interpreter string
+	ReadPaths   []string
+}
+
+// ResolveTclaudeLayerExecutable pins the harness executable a launch behind
+// tclaude's sandbox starts, for the harnesses that need one on Linux: Codex
+// and Claude always, Gemini and pi only under a constructed root. ok is false
+// when the harness keeps resolving through PATH. `session new` and both conv
+// resume paths call it, so a resumed pane starts the same binary a new one
+// does.
+func ResolveTclaudeLayerExecutable(harnessName string, root sandboxpolicy.RootPosture) (TclaudeLayerExecutable, bool, error) {
+	if runtime.GOOS != "linux" {
+		return TclaudeLayerExecutable{}, false, nil
+	}
+	switch {
+	case harnessName == harness.CodexName:
+		resolvedCodex, resolveErr := harness.ResolveCodexLaunchExecutable()
+		if resolveErr != nil {
+			return TclaudeLayerExecutable{}, false, fmt.Errorf("resolve Codex executable for tclaude’s sandbox: %w", resolveErr)
+		}
+		return TclaudeLayerExecutable{Path: resolvedCodex.Path, ReadPaths: []string{resolvedCodex.RuntimeRoot}}, true, nil
+	case harnessName == harness.DefaultName:
+		resolvedClaude, resolveErr := harness.ResolveClaudeLaunchExecutable()
+		if resolveErr != nil {
+			return TclaudeLayerExecutable{}, false, fmt.Errorf("resolve Claude executable for tclaude’s sandbox: %w", resolveErr)
+		}
+		return TclaudeLayerExecutable{Path: resolvedClaude.Path, ReadPaths: []string{resolvedClaude.Path}}, true, nil
+	case harnessName == harness.GeminiName && root == sandboxpolicy.RootConstructed:
+		// Only a constructed root needs this: a host-inherited one still sees
+		// the pane's own PATH, profile environment and pre-launch script, so a
+		// launch there keeps resolving `gemini` and `node` as it did before.
+		resolvedGemini, resolveErr := harness.ResolveGeminiLaunchExecutable()
+		if resolveErr != nil {
+			return TclaudeLayerExecutable{}, false, fmt.Errorf("resolve Gemini executable for tclaude’s sandbox: %w", resolveErr)
+		}
+		return TclaudeLayerExecutable{Path: resolvedGemini.Path, Interpreter: resolvedGemini.Interpreter, ReadPaths: resolvedGemini.ReadPaths}, true, nil
+	case harnessName == harness.PiName && root == sandboxpolicy.RootConstructed:
+		// As for Gemini: pi is a Node CLI, absent from a constructed root
+		// unless started by absolute path with its runtime mounted.
+		resolvedPi, resolveErr := harness.ResolvePiLaunchExecutable()
+		if resolveErr != nil {
+			return TclaudeLayerExecutable{}, false, fmt.Errorf("resolve pi executable for tclaude’s sandbox: %w", resolveErr)
+		}
+		return TclaudeLayerExecutable{Path: resolvedPi.Path, Interpreter: resolvedPi.Interpreter, ReadPaths: resolvedPi.ReadPaths}, true, nil
+	}
+	return TclaudeLayerExecutable{}, false, nil
 }
 
 // launchDirsInput is what planLaunchDirs derives the launch's directory grants
