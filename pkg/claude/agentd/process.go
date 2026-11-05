@@ -33,7 +33,7 @@ import (
 
 // roleLabelMatches reports whether two role labels are the same, the
 // case-insensitive trimmed-equality rule the work-pattern --role routing uses
-// (handlers.go). Extracted so the process phase-role matcher and the message
+// (messages_send.go). Extracted so the process phase-role matcher and the message
 // router share ONE rule rather than inventing a second.
 func roleLabelMatches(a, b string) bool {
 	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))

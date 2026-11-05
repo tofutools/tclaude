@@ -950,7 +950,7 @@ func declaresChannelParam(fn *ast.FuncDecl) bool {
 var copilotAPIKeystrokeSinkFiles = map[string]string{
 	"pane_input_guard.go": "legacy spawn welcomes retry only human-input holds; every attempt refuses a selected managed drive",
 	// Converted: the lifecycle-command dispatch takes the Copilot branch first.
-	"handlers.go": "dispatchSlashCommand routes an API-driven conv to RPC before reaching send-keys",
+	"pane_inject.go": "dispatchSlashCommand routes an API-driven conv to RPC before reaching send-keys",
 	// Converted: inbox nudges.
 	"flush.go": "sendNudgeBracket routes an API-driven conv to session.send",
 	// Converted: the unread reminder, same family as the nudge.
@@ -975,7 +975,7 @@ var copilotAPIKeystrokeSinks = []string{
 	"injectTextAndSubmitWithOptions",
 	"injectMenuToggle",
 	// Found by cold review: it delegates to injectTextAndSubmitWithOptions and
-	// lives in handlers.go, so it was a real sink in an already-watched file that
+	// lives in pane_inject.go, so it was a real sink in an already-watched file that
 	// this list simply did not name. A guard whose header promises that a NEW
 	// sink trips it has to actually enumerate the existing ones.
 	"injectSoftExitTextSerializedBy",
@@ -1007,7 +1007,7 @@ func TestEveryKeystrokeSinkIsAccountedForAgainstTheCopilotAPIDrive(t *testing.T)
 				return true
 			}
 			// The declarations themselves and their internal delegation live in
-			// handlers.go, which is on the list anyway.
+			// pane_inject.go, which is on the list anyway.
 			found[name] = true
 			return true
 		})
