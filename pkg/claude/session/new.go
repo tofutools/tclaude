@@ -1,7 +1,6 @@
 package session
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -928,138 +927,23 @@ func runNew(params *NewParams) error {
 	}
 	harnessReadPaths = append(harnessReadPaths, extensionReadPaths...)
 	spawnSpec.NetworkFiltered = networkFiltered
-	var privateWriteDirs []TclaudeLayerPrivateWriteDir
-	if outerLayer {
-		if codexRuntimeDir != nil {
-			privateWriteDirs = append(privateWriteDirs, *codexRuntimeDir)
-		}
-		privateAttachmentDir, privateAttachmentDirCreated, prepareErr :=
-			common.PrepareSpawnAttachmentsPrivateDir(sessionID)
-		if prepareErr != nil {
-			return fmt.Errorf(
-				"prepare tclaude’s sandbox private attachment directory: %w",
-				prepareErr,
-			)
-		}
-		if privateAttachmentDirCreated {
-			// Never recursively delete a root that gained an upload while
-			// launch was in flight; os.Remove succeeds only while empty.
-			launchUndo.Add(func() { _ = os.Remove(privateAttachmentDir) })
-		}
-		privateWriteDirs = append(privateWriteDirs, TclaudeLayerPrivateWriteDir{
-			Parent:  common.SpawnAttachmentsPrivateBase(),
-			Current: privateAttachmentDir,
-		})
-		// A cross-harness morph left this agent's translated history there,
-		// and the agent is pointed at it on every later launch.
-		if rowConvID != "" {
-			if agentID, err := db.AgentIDForConv(rowConvID); err == nil {
-				if dir := common.ExistingMorphArtifactsDir(agentID); dir != "" {
-					privateWriteDirs = append(privateWriteDirs, TclaudeLayerPrivateWriteDir{
-						Parent: common.MorphArtifactsBase(), Current: dir,
-					})
-				}
-			}
-		}
-	}
-	var layerSpec TclaudeLayerLaunchSpec
-	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
-		spec, specErr := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
-			HarnessName:      h.Name,
-			StateRoot:        spawnSpec.HarnessStateDir,
-			Cwd:              cwd,
-			GitWriteDirs:     launchGitWriteDirs,
-			Snapshot:         launchSandbox,
-			PrivateWriteDirs: privateWriteDirs,
-			DarwinRouteSlots: func() []int {
-				if darwinRouteReservation == nil {
-					return nil
-				}
-				return darwinRouteReservation.Slots()
-			}(),
-			DarwinRouteReservation: darwinRouteReservation,
-			RouteHelper:            routeHelper,
-			HarnessReadPaths:       harnessReadPaths,
-		})
-		if specErr != nil {
-			return fmt.Errorf("build tclaude’s sandbox launch spec: %w", specErr)
-		}
-		layerSpec = spec
-		if prepareErr := PrepareTclaudeLayerHarnessState(layerSpec); prepareErr != nil {
-			return fmt.Errorf("prepare tclaude’s sandbox launch state: %w", prepareErr)
-		}
-	}
-	spawnSpec, err = h.PrepareHostControlSandboxLaunch(spawnSpec)
+	layerSpec, err := prepareTclaudeLayerLaunch(tclaudeLayerLaunchStepInput{
+		h: h, sessionID: sessionID, cwd: cwd, convID: rowConvID, outerLayer: outerLayer,
+		stateRoot: spawnSpec.HarnessStateDir, gitWriteDirs: launchGitWriteDirs, launchSandbox: launchSandbox,
+		codexRuntimeDir: codexRuntimeDir, darwinRouteReservation: darwinRouteReservation,
+		routeHelper: routeHelper, harnessReadPaths: harnessReadPaths,
+	}, &launchUndo)
 	if err != nil {
-		return fmt.Errorf("prepare %s host-control sandbox: %w", h.DisplayName, err)
-	}
-	versionProbeExecutable := spawnSpec.ExecutablePath
-	var versionEnvironment []sandboxpolicy.EnvironmentEntry
-	if effectiveSandbox != nil {
-		versionEnvironment = sandboxpolicy.EnvironmentForLaunch(effectiveSandbox)
-	}
-	timing("sandbox_and_command_prepared")
-	if err := verifyCodexAppServerLaunchVersion(
-		params, versionProbeExecutable, cwd, versionEnvironment); err != nil {
 		return err
 	}
-	timing("codex_version_checked")
-	gatewayCLIPath := clcommon.SelfTclaudePath()
-	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
-		gatewayCLIPath, err = HTTPProxyCLIForLayerSpec(&layerSpec)
-		if err != nil {
-			return fmt.Errorf("resolve HTTP proxy launch CLI: %w", err)
-		}
-	}
-	if err := db.RecordSessionModelProxy(sessionID, params.ModelProxy); err != nil {
-		return fmt.Errorf("record model gateway launch choice: %w", err)
-	}
-	harnessCmd := HTTPProxySpawnCommand(sessionID, h, spawnSpec, gatewayCLIPath)
-	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
-		harnessCmd, err = WrapTclaudeLayerSpecWithLoopbackBind(
-			bwrapBinary, layerSpec, codexAppServerLoopbackPort(params), harnessCmd)
-		if err != nil {
-			return fmt.Errorf("wrap harness with tclaude’s sandbox: %w", err)
-		}
-	}
-	boundaryInput := ExecutionBoundaryInput{
-		LaunchGeneration:      exitGeneration,
-		SandboxImplementation: string(sandboxImplementation),
-		HarnessName:           h.Name,
-		HarnessLookupName:     h.Spawn.Binary(),
-		HarnessExecutable:     spawnSpec.ExecutablePath,
-		HarnessRuntimeRoots:   harnessReadPaths,
-		Cwd:                   cwd,
-		Environment:           additionalEnv,
-	}
-	if effectiveSandbox != nil {
-		boundaryInput.PreLaunch = effectiveSandbox.Effective.PreLaunch
-	}
-	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
-		boundaryInput.LauncherBinary = bwrapBinary
-		boundaryInput.LauncherBinaryResolved = true
-		boundaryInput.LayerSpec = &layerSpec
-	}
-	var executionBoundaryJSON []byte
-	// OpenCode's authoritative tool-executing boundary belongs to its managed
-	// server, not this attach-only pane. agentd records that server boundary
-	// after both server and pane are live.
-	if h.Name != harness.OpenCodeName {
-		executionBoundary, boundaryErr := BuildExecutionBoundary(boundaryInput)
-		if boundaryErr != nil {
-			// Debug evidence must never become a launch prerequisite. A missing
-			// executable or other observation race is represented by the absent
-			// record and logged for the operator.
-			slog.Warn("could not record launch execution boundary",
-				"session_id", sessionID, "error", boundaryErr)
-		} else {
-			executionBoundaryJSON, err = json.Marshal(executionBoundary)
-			if err != nil {
-				slog.Warn("could not encode launch execution boundary",
-					"session_id", sessionID, "error", err)
-				executionBoundaryJSON = nil
-			}
-		}
+	harnessCmd, executionBoundaryJSON, err := assembleLaunchPaneCommand(launchPaneCommandInput{
+		h: h, params: params, spawnSpec: spawnSpec, layerSpec: &layerSpec, sessionID: sessionID, cwd: cwd,
+		exitGeneration: exitGeneration, outerLayer: outerLayer, sandboxImplementation: sandboxImplementation,
+		effectiveSandbox: effectiveSandbox, bwrapBinary: bwrapBinary, harnessReadPaths: harnessReadPaths,
+		additionalEnv: additionalEnv, timing: timing,
+	})
+	if err != nil {
+		return err
 	}
 	resourceCgroupCleanup := func() {}
 	resourceCgroupOwnedByPane := false
