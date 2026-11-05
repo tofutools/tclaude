@@ -39,7 +39,7 @@ func TestSpawnPreview_DisclosureNotesKeepTheirOrder(t *testing.T) {
 	pinned := func(field string) string {
 		return `group default profile "codex-kit" ` + field + " ignored (profile targets codex, launch is claude)"
 	}
-	assert.Equal(t, []string{
+	want := []string{
 		skip("sandbox"),
 		skip("approval"),
 		skip("tools"),
@@ -52,8 +52,14 @@ func TestSpawnPreview_DisclosureNotesKeepTheirOrder(t *testing.T) {
 		skip("auto_memory"),
 		skip("peer_messaging"),
 		skip("ssh_workaround"),
-		"SSH workaround disabled because this launch does not use the Codex managed sandbox or tclaude's sandbox",
-	}, got.Notes)
+	}
+	// The SSH workaround exists only where tclaude can give it (Linux), so
+	// only there is its default disabled with a note.
+	if claude, _ := harness.Resolve(harness.DefaultName); claude.CanSSHWorkaround() {
+		want = append(want,
+			"SSH workaround disabled because this launch does not use the Codex managed sandbox or tclaude's sandbox")
+	}
+	assert.Equal(t, want, got.Notes)
 	// Model and effort carry their note on the echoed field instead.
 	assert.Equal(t, pinned("model"), got.Model.Note)
 	assert.Equal(t, pinned("effort"), got.Effort.Note)
