@@ -751,29 +751,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	timing("launch_prepared", "label", label)
 	launchedAt := time.Now()
 	rememberHTTPProxyLaunchGroup(label, g, p.PermissionOverrides)
-	launch := SpawnDetachedTclaudeNew
-	if importedID != "" {
-		spawnArgs.ConvID = importedID
-		spawnArgs.SessionID = ""
-		launch = SpawnDetachedTclaudeResume
-	}
-	if p.launchAuthority != nil {
-		if err := p.launchAuthority(); err != nil {
-			return launchFailed(bundleLaunchPreparationFailed(spawnArgs, err))
-		}
-	}
-	if p.ClaudeSubscription.token != "" {
-		agentID := p.AgentID
-		if agentID == "" && preConvID != "" {
-			agentID, _ = db.AgentIDForConv(preConvID)
-		}
-		if agentID == "" {
-			return launchFailed(errors.New("could not resolve the agent identity that holds the Claude subscription token"))
-		}
-		if err := holdClaudeSubscription(agentID, p.ClaudeSubscription); err != nil {
-			return launchFailed(err)
-		}
-		spawnArgs.ClaudeSubscriptionAgentID = agentID
+	launch, err := prepareLaunchCommand(&p, &spawnArgs, importedID, preConvID)
+	if err != nil {
+		return launchFailed(err)
 	}
 	if err := launch(spawnArgs); err != nil {
 		return launchFailed(err)
@@ -793,55 +773,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 	}
 
-	// Auto-focus closure: when the caller asked for it, open a terminal
-	// window attached to the freshly-spawned agent — via `tclaude session
-	// attach`, never raw tmux, so the reattached session keeps its tclaude
-	// features. A detached spawn has no window of its own, so this is what
-	// lets the human watch and talk to the new agent right away and, for a
-	// pending Codex spawn, clear whatever startup gate (dir-trust /
-	// new-hooks-config / OpenAI auth modal) is holding its first turn.
-	//
-	// It is label-based and conv-id-independent, so it fires the moment the
-	// pane exists — before the conv-id, which is precisely when a gated pane
-	// needs a human at it. Fired at most once; best-effort, a failure to pop
-	// a window is logged, never bubbled.
-	focused := false
+	// Auto-focus opens the new agent's pane once it is up; see spawnFocus.
 	var tmuxSession string
-	// focusMode records what focusSpawn actually did, for the three
-	// spawnOutcome literals below to report back to the caller — see
-	// spawnOutcome.FocusMode. Left "" when AutoFocus is off or the pane
-	// never came up within the poll, so focusSpawn never ran.
-	focusMode := ""
-	focusSpawn := func() {
-		// A persisted tmux name is launch intent, not readiness: session new
-		// writes it before creating the pane. Every caller must first have
-		// observed that live pane and assigned tmuxSession.
-		if !p.AutoFocus || focused || tmuxSession == "" {
-			return
-		}
-		focused = true
-		if p.AutoFocusWeb {
-			// The requesting dashboard will attach the browser terminal from
-			// focus_ws in the spawn response. In particular, do not briefly pop
-			// a native window before handing the session back to the browser.
-			focusMode = "browser"
-			return
-		}
-		if err := openTerminal(openAttachCmd(label)); err != nil {
-			// No native window — headless agentd (no DISPLAY/WAYLAND_DISPLAY)
-			// or no terminal emulator installed. Don't just log and drop it:
-			// report "browser" so the caller (handleGroupSpawn) can point the
-			// dashboard at the in-browser terminal fallback, the same
-			// mode:"browser" handshake handleDashboardOpenWindowAPI already
-			// uses — otherwise auto-focus silently does nothing on a headless
-			// host while claiming success.
-			slog.Warn("spawn: auto-focus terminal failed to open natively; falling back to in-browser terminal",
-				"label", label, "error", err)
-			focusMode = "browser"
-			return
-		}
-		focusMode = "native"
-	}
+	focus := &spawnFocus{label: label, auto: p.AutoFocus, web: p.AutoFocusWeb}
 
 	// Poll the sessions table for the conv-id. The hook callback writes it
 	// shortly after the harness actually starts inside tmux — for Claude
@@ -971,7 +905,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				paneObserved = true
 			}
 			tmuxSession = s.TmuxSession
-			focusSpawn() // pane is up — open it now, conv-id or not
+			focus.open(tmuxSession) // pane is up — open it now, conv-id or not
 			// Arm best-known remote-control on the row the moment it
 			// materialises (JOH-258). The --remote-control launch flag already
 			// turned CC's Remote Access on; this records tclaude's best-known
@@ -1067,7 +1001,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			return nil, &spawnFailure{http.StatusGatewayTimeout, spawnUnconfirmedKind,
 				"launch enrollment was preserved, but no live tmux pane appeared before the startup deadline"}
 		}
-		focusSpawn()
+		focus.open(tmuxSession)
 		markBriefingConsumed(preConvID, preMsgID, briefingInlined)
 		// Deferred server-authoritative continuation: atomically replace the
 		// pending reservation with the (already-made) actor binding, so the
@@ -1093,8 +1027,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			outcomeTmux = label
 		}
 		routeHelperCommitted = true
-		return &spawnOutcome{AgentID: p.AgentID, ConvID: preConvID, Label: label, TmuxSession: outcomeTmux, FocusMode: focusMode,
-			Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
+		return launchedOutcome(p, label, preConvID, outcomeTmux, focus.mode), nil
 	}
 
 	// Conv-id resolved within the poll: finish enrollment inline (Codex, or CC
@@ -1125,8 +1058,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 						"pending spawn " + label + " was canceled or conflicted: " + detail}
 				}
 				routeHelperCommitted = true
-				return &spawnOutcome{AgentID: p.AgentID, ConvID: convID, Label: label, TmuxSession: tmuxSession, FocusMode: focusMode,
-					Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
+				return launchedOutcome(p, label, convID, tmuxSession, focus.mode), nil
 			}
 		}
 		if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
@@ -1146,14 +1078,12 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				slog.Warn("spawn: inline enrollment failed; requeued for sweeper back-fill",
 					"label", label, "conv", convID, "error", fail.Msg)
 				routeHelperCommitted = true
-				return &spawnOutcome{AgentID: p.AgentID, ConvID: convID, Label: label, TmuxSession: tmuxSession, FocusMode: focusMode,
-					Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
+				return launchedOutcome(p, label, convID, tmuxSession, focus.mode), nil
 			}
 			return nil, fail
 		}
 		routeHelperCommitted = true
-		return &spawnOutcome{AgentID: p.AgentID, ConvID: convID, Label: label, TmuxSession: tmuxSession, FocusMode: focusMode,
-			Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
+		return launchedOutcome(p, label, convID, tmuxSession, focus.mode), nil
 	}
 
 	// Conv-id did not materialise within the poll. An Async (dashboard) spawn
@@ -1164,7 +1094,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// appears. Restart-safe: the row carries everything finishSpawnEnrollment
 	// needs.
 	if p.Async {
-		focusSpawn() // belt-and-suspenders: open the pane even if it came up slow
+		focus.open(tmuxSession) // belt-and-suspenders: open the pane even if it came up slow
 		ps, err := db.GetPendingSpawn(label)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "io",
@@ -1182,8 +1112,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			})
 		}
 		routeHelperCommitted = true
-		return &spawnOutcome{AgentID: p.AgentID, ConvID: "", Label: label, TmuxSession: tmuxSession, FocusMode: focusMode,
-			Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
+		return launchedOutcome(p, label, "", tmuxSession, focus.mode), nil
 	}
 
 	// Synchronous (template or process-performer) path: the caller needs the
