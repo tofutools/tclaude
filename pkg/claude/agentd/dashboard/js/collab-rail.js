@@ -34,7 +34,7 @@ const FOLDED_PREF = 'tclaude.dash.collab.folded-groups';
 // The Collab view's panel in the shared right side panel: folded by default,
 // and offered only while the view is mounted (CollabRail below).
 registerSidePanel('collab', {
-  pane: 'tab-terminals', pref: OPEN_PREF, open: false, body: '#dock-collab-body', needsOffer: true,
+  pane: 'tab-terminals', pref: OPEN_PREF, open: false, body: '#dock-collab-body', needsOffer: true, autoReveal: true,
   titles: [['Hide the Collab panel', 'Hide the Collab panel'], ['Show the Collab panel', 'Show the Collab panel']],
 });
 

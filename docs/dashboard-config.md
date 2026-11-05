@@ -36,6 +36,7 @@ lives. Each section has its own address, such as `/config/notifications`. Bare
 | Header & rows | Toolbar follows the clicked group | `dashboard.fused_toolbar_fixed_node` | on (key is `false`) |
 | Header & rows | Collapse empty Usage views | `dashboard.usage_collapse_subviews` | off |
 | Header & rows | Open PRs indicator | `dashboard.always_show_open_prs`, `dashboard.recent_pr_window_days` | on; 3 days |
+| Header & rows | Side panel at the edge | `dashboard.side_panel_edge_reveal` | on (key is `false`) |
 | Slop mode 🎰 | Hide the pull lever | `slop.hide_pull_lever` | off |
 
 ## Terminals & windows

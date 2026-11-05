@@ -329,6 +329,11 @@ type snapshotPayload struct {
 	// off this each poll; CSS drops the chip unless the class is present. See
 	// Config.ShowGroupDescription.
 	ShowGroupDescription bool `json:"show_group_description"`
+	// SidePanelEdgeReveal mirrors config dashboard.side_panel_edge_reveal —
+	// whether a folded right side panel floats in when the pointer reaches the
+	// right edge. On by default; refresh.js hands it to side-panel-reveal.js
+	// each poll. See Config.SidePanelEdgeReveal.
+	SidePanelEdgeReveal bool `json:"side_panel_edge_reveal"`
 	// ShowFinalPRChecks mirrors config dashboard.show_final_pr_checks —
 	// whether merged/closed PRs keep a non-failing CI checks pill. Off by
 	// default; refresh.js toggles body.show-final-pr-checks off this each

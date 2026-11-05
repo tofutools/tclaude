@@ -24,6 +24,14 @@ The right side panel lists what you can open here, by group. It is the same
 panel and handle as the palette on the Groups tab. It starts folded: open it with the
 handle on the right edge. Each tab remembers its own panel's state.
 
+While a panel is folded, resting the pointer at the right edge for a moment
+(no button held) floats it in over the page, on this tab and on Groups. It goes
+again shortly after the pointer leaves it, but not while something in it has
+focus or one of its menus is open; **Esc** sends it away. Its handle still
+unfolds it for good. To turn this off, uncheck **Side panel at the edge** on the
+Config tab (`dashboard.side_panel_edge_reveal`). It does nothing on touch
+screens.
+
 - **Filter ▾** picks what is listed. Tick states (Needs you, Working, Idle,
   Background, Open, Closed) and kinds (Agents, Shells, Boards, Pages,
   Processes). By default everything but Closed is listed. The button shows a

@@ -95,7 +95,7 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	// use (see TestDashboardHTML_CommandPalette for the palette-side wiring). Both
 	// of those controls now route through the shared setDockOpen too.
 	must("export function setDockOpen(", "dock.js exports the shared open/collapse mutation for the palette")
-	must("doc.getElementById('dock-collapse')?.addEventListener('click', toggle)", "the edge tab + in-dock collapse route through the shared side panel (side-panel.js)")
+	must("doc.getElementById('dock-collapse')?.addEventListener('click', () => {", "the edge tab + in-dock collapse route through the shared side panel (side-panel.js); a floating panel's Hide only sends it away")
 	// The open/collapsed state persists server-side via dashPrefs, NOT
 	// localStorage (the random per-start port would reset it).
 	must("tclaude.dash.dock.open", "the open state persists via a dashPrefs key")
