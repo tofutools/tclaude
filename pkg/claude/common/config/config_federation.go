@@ -6,7 +6,6 @@ import (
 	"time"
 )
 
-// FederationConfig configures the outbound hub connection.
 // FederationAwayConfig is the operator's selected covering instance. Live
 // approval authority is deliberately not persisted across daemon restarts.
 type FederationAwayConfig struct {
@@ -60,6 +59,7 @@ type NodeScriptsConfig struct {
 	PIDs                *uint64  `json:"pids,omitempty"`
 }
 
+// FederationConfig configures the outbound hub connection.
 type FederationConfig struct {
 	// BoardUpdateNotify leaves a Messages note when a kept content-board item
 	// gets a newer version. Off by default; the dashboard badge works regardless.
