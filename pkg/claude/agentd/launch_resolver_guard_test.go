@@ -50,9 +50,9 @@ var launchTierWalkFiles = map[string]bool{
 // show which one is set, not to resolve a launch. They may use the loader and
 // nothing else from the tier walk.
 var launchDefaultProfileDisplayFiles = map[string]bool{
-	"dashboard_snapshot.go": true,
-	"peer_snapshot.go":      true,
-	"spawn_profiles.go":     true,
+	"dashboard_snapshot_collect.go": true,
+	"peer_snapshot.go":              true,
+	"spawn_profiles.go":             true,
 }
 
 func TestLaunchTierWalkStaysInListedFiles(t *testing.T) {
