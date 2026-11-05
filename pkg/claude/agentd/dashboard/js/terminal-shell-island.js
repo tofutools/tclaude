@@ -36,10 +36,12 @@ import { pendingApprovals } from './companion-model.js';
 import { companionAvailable, openInCompanion, reclaimInCompanion } from './companion-facade.js';
 import { BoardEditor, BoardList, BoardsGate } from './board-island.js';
 import { BoardDeleteHost, askDeleteBoard, boardDeleteRequest, onBoardDeleted } from './board-manage.js';
+import { LockBadge, knownLock, resourceLocked, setResourceLock } from './resource-lock.js';
 import { boardOverlays, openBoardPane, openLinkedBoard, revealBoardWindow } from './board-overlay-state.js';
 import { terminalWindowsShowing } from './terminal-window.js';
 import { agentSessionSeed, chatAgentOfPane, overlayablePane } from './terminal-window-model.js';
-import { droppedAt } from './overlay-window-model.js';
+import { droppedAt, viewportOf } from './overlay-window-model.js';
+import { collabSnapAim, collabSnapsAt } from './overlay-window.js';
 import { CHAT_WINDOW_KIND } from './chat-window-model.js';
 import { overlayTabs } from './overlay-instances.js';
 import { shellToast } from './shell-state.js';
@@ -133,6 +135,52 @@ function composeAgent(pane) {
   return pane?.seed?.agent || (SAFE_REMOTE_AGENT.test(pane?.seed?.remote?.agent || '') ? pane.seed.remote.agent : '');
 }
 const SAFE_REMOTE_AGENT = /^agt_[A-Za-z0-9]{4,64}$/;
+
+// useCollabSnapAim tells the overlay where a tab that can float is while it is
+// dragged clear of the strip, so the overlay shows what it would snap to there
+// (collabSnapAim). Inside the strip, a reorder shows none; over a window's strip
+// it joins that window, so it shows none there either; and leaving the browser
+// takes the aim away. It listens in the capture phase, ahead of the strip's tabs
+// and the windows' strips, which stop the drag's events going further, and a
+// window's strip taking the tab clears it at once.
+function useCollabSnapAim(active, regionRef) {
+  useEffect(() => {
+    if (!active) return undefined;
+    const joins = effect(() => {
+      if (tabDropTarget.value) collabSnapAim.value = null;
+    });
+    const onDragOver = (event) => {
+      const off = !!collabDrag.peek()?.floats && !tabDropTarget.peek() && dragLeftRegion(event, regionRef.current);
+      const aim = off ? { x: event.clientX, y: event.clientY } : null;
+      const was = collabSnapAim.peek();
+      if (aim?.x !== was?.x || aim?.y !== was?.y) collabSnapAim.value = aim;
+    };
+    // Leaving the page reports a point on or past its edge (Chrome reports 0, 0).
+    const onDragLeave = (event) => {
+      const view = event.view || globalThis.window;
+      const { clientX: x, clientY: y } = event;
+      if (x <= 0 || y <= 0 || x >= (view?.innerWidth ?? Infinity) || y >= (view?.innerHeight ?? Infinity)) collabSnapAim.value = null;
+    };
+    document.addEventListener('dragover', onDragOver, true);
+    document.addEventListener('dragleave', onDragLeave, true);
+    return () => {
+      joins();
+      document.removeEventListener('dragover', onDragOver, true);
+      document.removeEventListener('dragleave', onDragLeave, true);
+      collabSnapAim.value = null;
+    };
+  }, [active]);
+}
+
+// snapPointOf is where a drag that showed snap targets was let go, if a drop
+// there snaps: never past the page's edge, which a release outside the browser
+// reports, nor at 0, 0, which a cancelled drag does.
+function snapPointOf({ clientX: x, clientY: y }, win = globalThis.window) {
+  const { width, height } = viewportOf(win);
+  const inside = Number.isFinite(x) && Number.isFinite(y) && (x > 0 || y > 0) && x >= 0 && y >= 0 && x < width && y < height;
+  const at = inside ? { x, y } : null;
+  return at && collabSnapsAt(at, win) ? at : null;
+}
 
 // While a terminal drag is in flight, follow the pointer so the surface can say
 // "release here and this terminal leaves" before the user commits. The same
@@ -965,6 +1013,8 @@ function PaneTab({
       <${TabApproval} pane=${pane} snapshot=${snapshot} />
       <${NodePill} node=${scope?.node} compact />
       <span class="mux-tab-label">${paneTitle(pane)}</span>
+      ${(board || process || page) && html`<${LockBadge} kind=${board ? 'board' : process ? 'process' : 'page'}
+        locked=${resourceLocked(snapshot?.value, board ? 'board' : process ? 'process' : 'page', pane.seed.board || pane.seed.process || pane.seed.page)} />`}
       <${TerminalCosts} agent=${agentStatus.agent} />
       ${!pane.seed.remote && pane.seed.agent ? html`<${ProcessTabIcons} agentId=${pane.seed.agent}
         enabled=${processesAvailable(snapshot?.value)} />` : null}
@@ -1169,6 +1219,14 @@ function PaneContextMenu({
         ...(menu.process ? [item('Open in the Processes tab', () => dockProcessEditor(menu.process, menu.label), { refocus: false })] : []),
         item('Open in separate window', () => actions.popOutPane(menu.key, { floats: menu.floats })),
         separator,
+        ...(menu.board && knownLock('board', menu.boardId) !== undefined ? [(() => {
+          const locked = knownLock('board', menu.boardId);
+          return item(locked ? 'Unlock for agents' : 'Lock for agents', () => {
+            setResourceLock('board', menu.boardId, !locked).then(
+              () => shellToast(locked ? `Agents can edit ${menu.label} again` : `${menu.label} is read-only for agents`),
+              (cause) => shellToast(`Could not change the lock on ${menu.label}: ${cause.message}`, true));
+          });
+        })()] : []),
         ...(menu.board ? [item('Delete board…', () => askDeleteBoard({ id: menu.boardId, title: menu.label }), { className: 'ui-btn-danger mux-tab-menu-item danger', refocus: false })] : []),
         item('Close tab', () => actions.closePane(menu.key)),
         item('Close other tabs', () => actions.closeOtherPanes(menu.key)),
@@ -1259,6 +1317,7 @@ function TerminalTabs({
   const [stripGap, setStripGap] = useState(null);
 
   const detachArmed = useDragOutArmed(Boolean(dragKey), tabsRef);
+  useCollabSnapAim(Boolean(dragKey), tabsRef);
   // A window's strip about to take the tab in flight, and overlay tabs about to
   // land on this strip.
   const joining = !!dragKey && !!tabDropTarget.value;
@@ -1371,6 +1430,7 @@ function TerminalTabs({
     const key = dragKeyRef.current;
     // Dropped on a window's strip, it joins that window there.
     const into = !droppedRef.current && collabDrag.peek()?.floats ? tabDropTarget.peek() : null;
+    const aim = collabSnapAim.peek();
     aimFromCollab(null);
     const detach = !into && !droppedRef.current && key && dragLeftRegion(event, tabsRef.current);
     clearDrag();
@@ -1380,7 +1440,7 @@ function TerminalTabs({
     }
     if (!detach) return;
     if (paneFloats(state.panes.value.find((pane) => pane.key === key), snapshot?.value)) {
-      void actions.openPaneInOverlay(key, { at: droppedAt(event) });
+      void actions.openPaneInOverlay(key, { at: droppedAt(event), snapAt: aim ? snapPointOf(event) : null });
       return;
     }
     void actions.popOutPane(key, {
@@ -1396,7 +1456,13 @@ function TerminalTabs({
     const bounds = element.getBoundingClientRect();
     return event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
   };
+  // A drag over the strip's own tabs, gaps and pills is a reorder: no snap
+  // targets. Those stop the event short of the page's listener, so they say so.
+  const overStrip = () => {
+    if (collabSnapAim.peek()) collabSnapAim.value = null;
+  };
   const tabDragOver = (event, targetKey) => {
+    overStrip();
     const groupDrag = dragGroupIdRef.current;
     if (groupDrag) {
       // A stack cannot land on one of its own tabs.
@@ -1476,6 +1542,7 @@ function TerminalTabs({
   const groupMembers = (groupID) =>
     current.segments.find((segment) => segment.type === 'group' && segment.group.id === groupID)?.panes || [];
   const groupDragOver = (event, groupID) => {
+    overStrip();
     const groupDrag = dragGroupIdRef.current;
     if (groupDrag) {
       // Dropping one stack on another places it beside that stack, never inside.
@@ -1523,6 +1590,7 @@ function TerminalTabs({
   // gaps at the group boundaries close that hole: a drop parks the tab there,
   // ungrouped, beside the stack. `gap` is `${groupID}:before|after`.
   const gapDragOver = (event, gap) => {
+    overStrip();
     if ((!dragKeyRef.current && !dragGroupIdRef.current) || event.defaultPrevented) return;
     event.preventDefault();
     event.stopPropagation();
@@ -1572,6 +1640,7 @@ function TerminalTabs({
     return Boolean(key) && !(segment.type === 'pane' && segment.pane.key === key);
   };
   const endZoneDragOver = (event) => {
+    overStrip();
     if ((!dragKeyRef.current && !dragGroupIdRef.current) || event.defaultPrevented) return;
     if (!endZoneActive()) { if (stripGap === 'end') setStripGap(null); return; }
     event.preventDefault();

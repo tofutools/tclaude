@@ -1403,83 +1403,209 @@ func validateSpawnSandboxImplementation(h *harness.Harness, raw string) (string,
 // printed; the CLI wrapper just propagates the exit code. stdin backs
 // `--file -` (read the brief from a pipe).
 func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*SpawnResponse, int) {
-	if p.GroupContext && !p.NonInteractive {
-		fmt.Fprintln(stderr, "Error: --group-context requires --non-interactive")
-		return nil, rcInvalidArg
+	r := &spawnRun{p: p, stdout: stdout, stderr: stderr, stdin: stdin}
+	if !r.refuseFlagConflicts() {
+		return r.spawned, r.exitCode
 	}
-	if p.GroupContext && p.NoGroupContext {
-		fmt.Fprintln(stderr, "Error: --group-context and --no-group-context are mutually exclusive")
-		return nil, rcInvalidArg
+	if !r.readBrief() {
+		return r.spawned, r.exitCode
 	}
-	if !p.NonInteractive && strings.TrimSpace(p.Harness) == harness.ShellName &&
-		(p.InitialMessage != "" || p.File != "") {
-		fmt.Fprintln(stderr, "Error: --harness shell requires --non-interactive with --initial-message or --file")
-		return nil, rcInvalidArg
+	if !r.resolveTimeouts() {
+		return r.spawned, r.exitCode
 	}
-	if p.NonInteractive {
-		if strings.TrimSpace(p.InitialMessage) == "" && strings.TrimSpace(p.File) == "" && len(p.Prompts) == 0 {
-			fmt.Fprintln(stderr, "Error: --non-interactive requires --initial-message, --file or --prompt")
-			return nil, rcInvalidArg
+	if !r.requireDaemonAndGroup() {
+		return r.spawned, r.exitCode
+	}
+	if !r.foldProfile() {
+		return r.spawned, r.exitCode
+	}
+	if !r.collectLaunchFields() {
+		return r.spawned, r.exitCode
+	}
+	if !r.checkLaunchModes() {
+		return r.spawned, r.exitCode
+	}
+	if !r.gateHarnessFeatures() {
+		return r.spawned, r.exitCode
+	}
+	if !r.buildRequest() {
+		return r.spawned, r.exitCode
+	}
+	if !r.applyFlagOverrides() {
+		return r.spawned, r.exitCode
+	}
+	if !r.prepareWorktree() {
+		return r.spawned, r.exitCode
+	}
+	if !r.runNonInteractive() {
+		return r.spawned, r.exitCode
+	}
+	if !r.send() {
+		return r.spawned, r.exitCode
+	}
+	r.report()
+	return r.spawned, r.exitCode
+}
+
+// spawnRun is one `tclaude agent spawn`, built up step by step by RunSpawn.
+// Each step that ends the spawn sets its answer and returns false.
+type spawnRun struct {
+	p                     *SpawnParams
+	stdout                io.Writer
+	stderr                io.Writer
+	stdin                 io.Reader
+	explicitMessage       string
+	timeoutSeconds        int
+	runTimeoutSeconds     int64
+	prof                  *profileJSON
+	merged                resolvedSpawnFields
+	initialMessage        string
+	name                  string
+	ask                   time.Duration
+	effort                string
+	model                 string
+	harnessBuiltinMode    string
+	approvalPolicy        string
+	toolGovernance        string
+	askTimeout            string
+	autoCompactWindow     string
+	contextWindowMax      int64
+	sandboxImpl           string
+	autoReview            bool
+	trustDir              bool
+	remoteControl         bool
+	autoMemory            bool
+	peerMessaging         bool
+	copilotAPI            bool
+	codexAppServer        bool
+	fastMode              string
+	contextFeatures       map[string]string
+	contextFeaturesSet    bool
+	relaunchPolicy        map[string]string
+	clientHarness         string
+	validationHarness     string
+	validateMergedProfile bool
+	// h is the catalog a known harness's flags are checked against, and
+	// validationFields the fields checked: the flags, or the merged profile.
+	h                *harness.Harness
+	validationFields resolvedSpawnFields
+	callerCwd        string
+	cwd              string
+	req              SpawnRequest
+	createdWorktree  string
+	discardWorktree  string
+	resp             SpawnResponse
+	// spawned and exitCode are RunSpawn's answer: the daemon's response, nil on
+	// failure, and the CLI's exit code.
+	spawned  *SpawnResponse
+	exitCode int
+}
+
+// refuseFlagConflicts refuses, before the daemon is asked, flags that
+// contradict each other or need another, the first one tripped answering.
+func (r *spawnRun) refuseFlagConflicts() bool {
+	if r.p.GroupContext && !r.p.NonInteractive {
+		fmt.Fprintln(r.stderr, "Error: --group-context requires --non-interactive")
+		r.spawned, r.exitCode = nil, rcInvalidArg
+		return false
+	}
+	if r.p.GroupContext && r.p.NoGroupContext {
+		fmt.Fprintln(r.stderr, "Error: --group-context and --no-group-context are mutually exclusive")
+		r.spawned, r.exitCode = nil, rcInvalidArg
+		return false
+	}
+	if !r.p.NonInteractive && strings.TrimSpace(r.p.Harness) == harness.ShellName &&
+		(r.p.InitialMessage != "" || r.p.File != "") {
+		fmt.Fprintln(r.stderr, "Error: --harness shell requires --non-interactive with --initial-message or --file")
+		r.spawned, r.exitCode = nil, rcInvalidArg
+		return false
+	}
+	if r.p.NonInteractive {
+		if strings.TrimSpace(r.p.InitialMessage) == "" && strings.TrimSpace(r.p.File) == "" && len(r.p.Prompts) == 0 {
+			fmt.Fprintln(r.stderr, "Error: --non-interactive requires --initial-message, --file or --prompt")
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
-		if invalid := nonInteractiveUnsupportedOption(p); invalid != "" {
-			fmt.Fprintf(stderr, "Error: %s is not supported with --non-interactive\n", invalid)
-			return nil, rcInvalidArg
+		if invalid := nonInteractiveUnsupportedOption(r.p); invalid != "" {
+			fmt.Fprintf(r.stderr, "Error: %s is not supported with --non-interactive\n", invalid)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
 	}
-	if p.IUnderstandBreakGlassRisk {
-		fmt.Fprintln(stderr, "Error:", breakGlassFlagRemoved())
-		return nil, rcInvalidArg
+	if r.p.IUnderstandBreakGlassRisk {
+		fmt.Fprintln(r.stderr, "Error:", breakGlassFlagRemoved())
+		r.spawned, r.exitCode = nil, rcInvalidArg
+		return false
 	}
-	if p.OmitSandboxProfiles && strings.TrimSpace(p.SandboxProfile) != "" {
-		fmt.Fprintln(stderr, "Error: --omit-sandbox-profiles and --sandbox-profile are mutually exclusive")
-		return nil, rcInvalidArg
+	if r.p.OmitSandboxProfiles && strings.TrimSpace(r.p.SandboxProfile) != "" {
+		fmt.Fprintln(r.stderr, "Error: --omit-sandbox-profiles and --sandbox-profile are mutually exclusive")
+		r.spawned, r.exitCode = nil, rcInvalidArg
+		return false
 	}
-	if p.Owner && p.NoOwner {
-		fmt.Fprintln(stderr, "Error: --owner and --no-owner are mutually exclusive")
-		return nil, rcInvalidArg
+	if r.p.Owner && r.p.NoOwner {
+		fmt.Fprintln(r.stderr, "Error: --owner and --no-owner are mutually exclusive")
+		r.spawned, r.exitCode = nil, rcInvalidArg
+		return false
 	}
 	// --worktree-base / --worktree-repo are modifiers of --worktree;
 	// rejecting them up front beats silently ignoring a flag the user
 	// expected to take effect.
-	if strings.TrimSpace(p.Worktree) == "" {
-		if strings.TrimSpace(p.WorktreeBase) != "" {
-			fmt.Fprintln(stderr, "Error: --worktree-base requires --worktree")
-			return nil, rcInvalidArg
+	if strings.TrimSpace(r.p.Worktree) == "" {
+		if strings.TrimSpace(r.p.WorktreeBase) != "" {
+			fmt.Fprintln(r.stderr, "Error: --worktree-base requires --worktree")
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
-		if strings.TrimSpace(p.WorktreeRepo) != "" {
-			fmt.Fprintln(stderr, "Error: --worktree-repo requires --worktree")
-			return nil, rcInvalidArg
+		if strings.TrimSpace(r.p.WorktreeRepo) != "" {
+			fmt.Fprintln(r.stderr, "Error: --worktree-repo requires --worktree")
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
 	}
-	rawMessage, rc := resolveBodyInput(p.InitialMessage, p.File, "--initial-message", stdin, stderr)
+	return true
+}
+
+// readBrief reads --initial-message or --file (from stdin for -), with the
+// size cap on an explicit brief.
+func (r *spawnRun) readBrief() bool {
+	rawMessage, rc := resolveBodyInput(r.p.InitialMessage, r.p.File, "--initial-message", r.stdin, r.stderr)
 	if rc != rcOK {
-		return nil, rc
+		r.spawned, r.exitCode = nil, rc
+		return false
 	}
 	// Cap-check the explicitly-provided brief up front (fail-fast, no daemon
 	// needed). A profile-sourced brief was validated at save; the merged result
 	// is re-checked below once the profile is folded in.
-	explicitMessage := strings.TrimSpace(rawMessage)
-	if !isValidInitialMessage(explicitMessage) {
-		fmt.Fprintf(stderr, "Error: REJECTED. --initial-message must be at most %d characters.\n", MaxInitialMessageBytes)
-		fmt.Fprintln(stderr, "Newlines and tabs are allowed (the brief is delivered to the agent's")
-		fmt.Fprintln(stderr, "inbox, not typed into its pane), but other control characters are not.")
-		return nil, rcInvalidArg
+	r.explicitMessage = strings.TrimSpace(rawMessage)
+	if !isValidInitialMessage(r.explicitMessage) {
+		fmt.Fprintf(r.stderr, "Error: REJECTED. --initial-message must be at most %d characters.\n", MaxInitialMessageBytes)
+		fmt.Fprintln(r.stderr, "Newlines and tabs are allowed (the brief is delivered to the agent's")
+		fmt.Fprintln(r.stderr, "inbox, not typed into its pane), but other control characters are not.")
+		r.spawned, r.exitCode = nil, rcInvalidArg
+		return false
 	}
-	timeoutSeconds := 30
-	runTimeoutSeconds := int64(0)
-	if p.NonInteractive {
-		runTimeoutSeconds = 3600
+	return true
+}
+
+// resolveTimeouts reads --timeout into the startup budget, and for a
+// non-interactive spawn the run budget.
+func (r *spawnRun) resolveTimeouts() bool {
+	r.timeoutSeconds = 30
+	r.runTimeoutSeconds = int64(0)
+	if r.p.NonInteractive {
+		r.runTimeoutSeconds = 3600
 	}
-	if p.Timeout != "" {
-		d, err := parseDurationDays(p.Timeout)
+	if r.p.Timeout != "" {
+		d, err := parseDurationDays(r.p.Timeout)
 		if err != nil || d <= 0 {
-			fmt.Fprintf(stderr, "Error: invalid --timeout %q\n", p.Timeout)
-			return nil, rcInvalidArg
+			fmt.Fprintf(r.stderr, "Error: invalid --timeout %q\n", r.p.Timeout)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
-		if p.NonInteractive {
-			runTimeoutSeconds = int64(d.Seconds())
-			if runTimeoutSeconds < 1 {
-				runTimeoutSeconds = 1
+		if r.p.NonInteractive {
+			r.runTimeoutSeconds = int64(d.Seconds())
+			if r.runTimeoutSeconds < 1 {
+				r.runTimeoutSeconds = 1
 			}
 		} else {
 			// Cap mirrors the daemon's 5-minute hard limit.
@@ -1487,47 +1613,62 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			if secs > 300 {
 				secs = 300
 			}
-			timeoutSeconds = secs
+			r.timeoutSeconds = secs
 		}
 	}
-	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
-		return nil, rc
+	return true
+}
+
+// requireDaemonAndGroup needs a reachable daemon and a group to spawn into.
+func (r *spawnRun) requireDaemonAndGroup() bool {
+	if rc := RequireDaemonOrExit(r.stderr); rc != rcOK {
+		r.spawned, r.exitCode = nil, rc
+		return false
 	}
-	if p.Group == "" {
-		group, rc := implicitSpawnGroup(stderr)
+	if r.p.Group == "" {
+		group, rc := implicitSpawnGroup(r.stderr)
 		if rc != rcOK {
-			return nil, rc
+			r.spawned, r.exitCode = nil, rc
+			return false
 		}
-		p.Group = group
+		r.p.Group = group
 	}
 
+	return true
+}
+
+// foldProfile fetches a named --profile and folds it under the flags, then
+// checks the merged brief and validates or normalizes --name.
+func (r *spawnRun) foldProfile() bool {
 	// Fetch the named --profile (reads are open on the daemon) so its saved
 	// fields can pre-fill any blank the flags left. Only when --profile is set.
-	var prof *profileJSON
-	if strings.TrimSpace(p.Profile) != "" {
+	if strings.TrimSpace(r.p.Profile) != "" {
 		var frc int
-		if prof, frc = fetchSpawnProfile(strings.TrimSpace(p.Profile), stderr); frc != rcOK {
-			return nil, frc
+		if r.prof, frc = fetchSpawnProfile(strings.TrimSpace(r.p.Profile), r.stderr); frc != rcOK {
+			r.spawned, r.exitCode = nil, frc
+			return false
 		}
-		if profileDisabledValue(prof) {
-			fmt.Fprintf(stderr, "Error: spawn profile %q is disabled: %s\n", prof.Name, prof.DisabledReason)
-			return nil, rcInvalidArg
+		if profileDisabledValue(r.prof) {
+			fmt.Fprintf(r.stderr, "Error: spawn profile %q is disabled: %s\n", r.prof.Name, r.prof.DisabledReason)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
 	}
 	// Fold the profile under the explicit flags (flag > profile > blank). The
 	// daemon then fills any still-blank launch field from the group's default
 	// profile, global default profile, then the harness default.
-	merged := mergeProfileIntoSpawn(p, explicitMessage, prof)
+	r.merged = mergeProfileIntoSpawn(r.p, r.explicitMessage, r.prof)
 
 	// Effective brief: an explicit one was cap-checked above; a profile one was
 	// validated at save (buildProfileFromJSON runs the same isValidInitialMessage
 	// gate), so this re-check is belt-and-suspenders — it defends any future
 	// profile-sourced brief that reaches here unvalidated.
-	initialMessage := merged.InitialMessage
-	if !isValidInitialMessage(initialMessage) {
-		fmt.Fprintf(stderr, "Error: REJECTED. the profile's initial message must be at most %d characters, "+
+	r.initialMessage = r.merged.InitialMessage
+	if !isValidInitialMessage(r.initialMessage) {
+		fmt.Fprintf(r.stderr, "Error: REJECTED. the profile's initial message must be at most %d characters, "+
 			"with no control characters other than newlines and tabs.\n", MaxInitialMessageBytes)
-		return nil, rcInvalidArg
+		r.spawned, r.exitCode = nil, rcInvalidArg
+		return false
 	}
 
 	// Validate the effective --name (the flag, else the profile's agent_name)
@@ -1537,115 +1678,139 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	// a bad name is coerced to the safe charset — the same way the dashboard
 	// modal does — else it is rejected. The daemon re-validates/normalizes
 	// server-side (handleGroupSpawn) as the authoritative backstop.
-	name := strings.TrimSpace(merged.Name)
-	if p.NonInteractive {
+	r.name = strings.TrimSpace(r.merged.Name)
+	if r.p.NonInteractive {
 		// A profile's agent_name has no one-shot recipient; only an explicit
 		// --name applies, and it names the one-shot's tmux session.
-		name = strings.TrimSpace(p.Name)
+		r.name = strings.TrimSpace(r.p.Name)
 	}
-	if !IsValidSpawnName(name) {
+	if !IsValidSpawnName(r.name) {
 		if cfg, _ := config.Load(); cfg.SpawnNameNormalizeEnabled() {
-			name = NormalizeSpawnName(name)
+			r.name = NormalizeSpawnName(r.name)
 		}
 	}
-	if !IsValidSpawnName(name) {
-		fmt.Fprintf(stderr, "Error: REJECTED. --name must be 1-%d characters from [A-Za-z0-9_-]\n", MaxSpawnNameLen)
-		fmt.Fprintln(stderr, "(letters, digits, underscore, dash) — no spaces, punctuation, or unicode.")
-		fmt.Fprintln(stderr, "Pick a name that uses only the allowed characters.")
-		return nil, rcInvalidArg
+	if !IsValidSpawnName(r.name) {
+		fmt.Fprintf(r.stderr, "Error: REJECTED. --name must be 1-%d characters from [A-Za-z0-9_-]\n", MaxSpawnNameLen)
+		fmt.Fprintln(r.stderr, "(letters, digits, underscore, dash) — no spaces, punctuation, or unicode.")
+		fmt.Fprintln(r.stderr, "Pick a name that uses only the allowed characters.")
+		r.spawned, r.exitCode = nil, rcInvalidArg
+		return false
 	}
 
-	ask, err := ParseAskHuman(p.AskHuman)
+	return true
+}
+
+// collectLaunchFields reads --ask-human and the raw launch flags, parses
+// --context-features and the relaunch policy, and picks the harness the flags
+// are checked against, if one is known.
+func (r *spawnRun) collectLaunchFields() bool {
+	var err error
+	r.ask, err = ParseAskHuman(r.p.AskHuman)
 	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return nil, rcInvalidArg
+		fmt.Fprintf(r.stderr, "Error: %v\n", err)
+		r.spawned, r.exitCode = nil, rcInvalidArg
+		return false
 	}
 	// Harness-dependent validation is fail-fast only when the client knows the
 	// harness: an explicit --harness, or a named --profile that carries one.
 	// Otherwise group/global defaults can still select the vendor, so keep the
 	// raw launch fields on the wire and let the authoritative daemon resolve the
 	// full chain before validating them against the selected catalog.
-	effort := strings.TrimSpace(p.Effort)
-	model := strings.TrimSpace(p.Model)
-	harnessBuiltinMode := strings.TrimSpace(p.Sandbox)
-	approvalPolicy := strings.TrimSpace(p.Approval)
-	toolGovernance := strings.TrimSpace(p.ToolGovernance)
-	askTimeout := strings.TrimSpace(p.AskUserQuestionTimeout)
-	autoCompactWindow := strings.TrimSpace(p.AutoCompactWindow)
+	r.effort = strings.TrimSpace(r.p.Effort)
+	r.model = strings.TrimSpace(r.p.Model)
+	r.harnessBuiltinMode = strings.TrimSpace(r.p.Sandbox)
+	r.approvalPolicy = strings.TrimSpace(r.p.Approval)
+	r.toolGovernance = strings.TrimSpace(r.p.ToolGovernance)
+	r.askTimeout = strings.TrimSpace(r.p.AskUserQuestionTimeout)
+	r.autoCompactWindow = strings.TrimSpace(r.p.AutoCompactWindow)
 	// Like every launch field above, only the flag goes on the wire: the
 	// daemon resolves the named --profile itself, and a value folded in here
 	// would be recorded as the caller's explicit choice.
-	contextWindowMax := p.ContextWindowMax
-	sandboxImpl := strings.TrimSpace(p.SandboxImpl)
-	autoReview := p.AutoReview
-	trustDir := p.TrustDir
-	remoteControl := p.RemoteControl
-	autoMemory := p.AutoMemory
-	peerMessaging := p.PeerMessaging
-	copilotAPI := p.CopilotAPI
-	codexAppServer := p.CodexAppServer
-	fastMode := strings.TrimSpace(p.FastMode)
+	r.contextWindowMax = r.p.ContextWindowMax
+	r.sandboxImpl = strings.TrimSpace(r.p.SandboxImpl)
+	r.autoReview = r.p.AutoReview
+	r.trustDir = r.p.TrustDir
+	r.remoteControl = r.p.RemoteControl
+	r.autoMemory = r.p.AutoMemory
+	r.peerMessaging = r.p.PeerMessaging
+	r.copilotAPI = r.p.CopilotAPI
+	r.codexAppServer = r.p.CodexAppServer
+	r.fastMode = strings.TrimSpace(r.p.FastMode)
 	// --context-features is tri-state on the wire: unset leaves the map nil so the
 	// daemon's profile tier stack still speaks, while an explicit `none` sends an
 	// empty (non-nil) map, which is how the CLI says "ignore the profile, trim
 	// nothing". Everything else parses as a slug list.
-	var contextFeatures map[string]string
-	contextFeaturesSet := strings.TrimSpace(p.ContextFeatures) != ""
-	if contextFeaturesSet {
-		if strings.EqualFold(strings.TrimSpace(p.ContextFeatures), "none") {
-			contextFeatures = map[string]string{}
+	r.contextFeaturesSet = strings.TrimSpace(r.p.ContextFeatures) != ""
+	if r.contextFeaturesSet {
+		if strings.EqualFold(strings.TrimSpace(r.p.ContextFeatures), "none") {
+			r.contextFeatures = map[string]string{}
 		} else {
-			parsed, parseErr := harness.ParseContextFeatures(p.ContextFeatures)
+			parsed, parseErr := harness.ParseContextFeatures(r.p.ContextFeatures)
 			if parseErr != nil {
-				fmt.Fprintf(stderr, "Error: %v\n", parseErr)
-				return nil, rcInvalidArg
+				fmt.Fprintf(r.stderr, "Error: %v\n", parseErr)
+				r.spawned, r.exitCode = nil, rcInvalidArg
+				return false
 			}
 			if parsed == nil {
 				parsed = map[string]string{}
 			}
-			contextFeatures = parsed
+			r.contextFeatures = parsed
 		}
 	}
-	relaunchPolicy, relaunchErr := relaunchPolicyFromFlags(p.RelaunchPolicy, p.RelaunchPolicyFile)
+	var relaunchErr error
+	r.relaunchPolicy, relaunchErr = relaunchPolicyFromFlags(r.p.RelaunchPolicy, r.p.RelaunchPolicyFile)
 	if relaunchErr != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", relaunchErr)
-		return nil, rcInvalidArg
+		fmt.Fprintf(r.stderr, "Error: %v\n", relaunchErr)
+		r.spawned, r.exitCode = nil, rcInvalidArg
+		return false
 	}
-	clientHarness := strings.TrimSpace(p.Harness)
-	validationHarness := clientHarness
-	validateMergedProfile := false
-	if validationHarness == "" && prof != nil && strings.TrimSpace(prof.Harness) != "" {
-		validationHarness = strings.TrimSpace(prof.Harness)
-		validateMergedProfile = true
+	r.clientHarness = strings.TrimSpace(r.p.Harness)
+	r.validationHarness = r.clientHarness
+	r.validateMergedProfile = false
+	if r.validationHarness == "" && r.prof != nil && strings.TrimSpace(r.prof.Harness) != "" {
+		r.validationHarness = strings.TrimSpace(r.prof.Harness)
+		r.validateMergedProfile = true
 	}
-	if validationHarness != "" {
+	return true
+}
+
+// checkLaunchModes checks the launch modes against a known harness's
+// catalog: effort, model, sandbox, approval, tools, the ask timeout,
+// auto-compact, the context window and the sandbox implementation.
+func (r *spawnRun) checkLaunchModes() bool {
+	var err error
+	if r.validationHarness != "" {
 		// The daemon enforces the experimental opt-in; this process may not
 		// see the operator's config from inside a sandbox.
-		h, resolveErr := harness.ResolveSpawnCatalog(validationHarness)
+		var resolveErr error
+		r.h, resolveErr = harness.ResolveSpawnCatalog(r.validationHarness)
 		if resolveErr != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", resolveErr)
-			return nil, rcInvalidArg
+			fmt.Fprintf(r.stderr, "Error: %v\n", resolveErr)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
-		validationFields := resolvedSpawnFields{
-			ModelProxy: p.ModelProxy, Model: p.Model, Effort: p.Effort, Sandbox: p.Sandbox,
-			Approval: p.Approval, ToolGovernance: p.ToolGovernance,
-			AskUserQuestionTimeout: p.AskUserQuestionTimeout,
-			AutoCompactWindow:      p.AutoCompactWindow,
-			ContextWindowMax:       p.ContextWindowMax,
-			SandboxImpl:            p.SandboxImpl,
-			AutoReview:             p.AutoReview,
-			TrustDir:               p.TrustDir,
+		r.validationFields = resolvedSpawnFields{
+			ModelProxy: r.p.ModelProxy, Model: r.p.Model, Effort: r.p.Effort, Sandbox: r.p.Sandbox,
+			Approval: r.p.Approval, ToolGovernance: r.p.ToolGovernance,
+			AskUserQuestionTimeout: r.p.AskUserQuestionTimeout,
+			AutoCompactWindow:      r.p.AutoCompactWindow,
+			ContextWindowMax:       r.p.ContextWindowMax,
+			SandboxImpl:            r.p.SandboxImpl,
+			AutoReview:             r.p.AutoReview,
+			TrustDir:               r.p.TrustDir,
 		}
-		if validateMergedProfile {
-			validationFields = merged
+		if r.validateMergedProfile {
+			r.validationFields = r.merged
 		}
-		if _, err = h.Models.ValidateEffort(validationFields.Effort); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return nil, rcInvalidArg
+		if _, err = r.h.Models.ValidateEffort(r.validationFields.Effort); err != nil {
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
-		if _, err = validateSpawnModel(h, validationFields.Model); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return nil, rcInvalidArg
+		if _, err = validateSpawnModel(r.h, r.validationFields.Model); err != nil {
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
 		// Validate --sandbox (an explicit value / an inherited profile value) but do
 		// NOT apply the harness default here: a blank stays blank so the daemon's
@@ -1657,9 +1822,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		// An explicit `inherit` is carried through verbatim (a first-class sentinel)
 		// so the daemon won't let a profile override it. A mode for a harness with no
 		// launch sandbox flag is still rejected fast here.
-		if _, err = harness.ValidateHarnessBuiltinMode(h, validationFields.Sandbox); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return nil, rcInvalidArg
+		if _, err = harness.ValidateHarnessBuiltinMode(r.h, r.validationFields.Sandbox); err != nil {
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
 		// Validate --ask-for-approval the same way, and for the same reason: a blank
 		// defers to the daemon's group-default overlay + non-escalating default
@@ -1667,33 +1833,38 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		// an approval prompt, JOH-200), applied server-side by ResolveApprovalPolicy;
 		// an explicit `inherit` is preserved; a policy for a harness with no launch
 		// approval flag is rejected fast here.
-		if _, err = harness.ValidateApprovalPolicy(h, validationFields.Approval); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return nil, rcInvalidArg
+		if _, err = harness.ValidateApprovalPolicy(r.h, r.validationFields.Approval); err != nil {
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
-		if _, err = harness.ValidateToolGovernance(h, validationFields.ToolGovernance); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return nil, rcInvalidArg
+		if _, err = harness.ValidateToolGovernance(r.h, r.validationFields.ToolGovernance); err != nil {
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
 		// Resolve --ask-user-question-timeout: a Claude-Code-only settings.json
 		// override (never|60s|5m|10m), so a value for a harness with no
 		// AskUserQuestion dialog (Codex) fails fast here. inherit/blank → "" (no
 		// override). The daemon re-validates server-side.
-		if _, err = harness.ResolveAskTimeoutMode(h, validationFields.AskUserQuestionTimeout); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return nil, rcInvalidArg
+		if _, err = harness.ResolveAskTimeoutMode(r.h, r.validationFields.AskUserQuestionTimeout); err != nil {
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
 		// Resolve --auto-compact-window the same way: a Claude-Code-only env knob,
 		// so a value for a harness without it fails fast here, as does an
 		// unparseable or out-of-range token count. The daemon re-validates and
 		// re-normalizes server-side.
-		if _, err = harness.ResolveAutoCompactWindow(h, validationFields.AutoCompactWindow); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return nil, rcInvalidArg
+		if _, err = harness.ResolveAutoCompactWindow(r.h, r.validationFields.AutoCompactWindow); err != nil {
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
-		if _, err = harness.ResolveCopilotContextWindow(h, validationFields.ContextWindowMax); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return nil, rcInvalidArg
+		if _, err = harness.ResolveCopilotContextWindow(r.h, r.validationFields.ContextWindowMax); err != nil {
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
 		// Fail fast on a --sandbox-impl the value enum or this harness rejects.
 		// Only those two: whether the HOST can run tclaude-layer is deliberately
@@ -1701,215 +1872,255 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		// boundary, and refuses naming the missing capability — a client-side
 		// probe would answer for a machine that need not be this one, and a
 		// second opinion that can disagree with the authority is worse than none.
-		if _, err = validateSpawnSandboxImplementation(h, validationFields.SandboxImpl); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return nil, rcInvalidArg
+		if _, err = validateSpawnSandboxImplementation(r.h, r.validationFields.SandboxImpl); err != nil {
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
+	}
+	return true
+}
+
+// gateHarnessFeatures gates the opt-in features against a known harness,
+// keeping what each gate answers, and the context features.
+func (r *spawnRun) gateHarnessFeatures() bool {
+	var err error
+	if r.validationHarness != "" {
 		// Gate the experimental --auto-review opt-in: allowed only for a harness
 		// with an approvals subsystem (Codex); requesting it for claude fails fast
 		// here with a clear message. The daemon re-gates server-side.
-		if _, err = harness.ResolveAutoReview(h, validationFields.AutoReview); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return nil, rcInvalidArg
+		if _, err = harness.ResolveAutoReview(r.h, r.validationFields.AutoReview); err != nil {
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
 		// Resolve the effective trust-dir (explicit --trust-dir, then a named
 		// profile). false for any harness is always fine; a true for a harness
 		// with no trust dialog fails fast here. The daemon re-gates server-side.
-		if _, err = harness.ResolveTrustDir(h, validationFields.TrustDir); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return nil, rcInvalidArg
+		if _, err = harness.ResolveTrustDir(r.h, r.validationFields.TrustDir); err != nil {
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
 		// Gate --remote-control: arming Remote Access at launch is a Claude Code
 		// feature, so requesting it for a harness without it (Codex) fails fast here
 		// with a clear message. The daemon re-gates server-side. See JOH-258.
-		if remoteControl, err = harness.ResolveRemoteControl(h, p.RemoteControl); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return nil, rcInvalidArg
+		if r.remoteControl, err = harness.ResolveRemoteControl(r.h, r.p.RemoteControl); err != nil {
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
 		// Gate --auto-memory the same way: only a harness with an auto-memory
 		// system (Claude Code) can be asked to keep it on. The daemon re-gates
 		// server-side.
-		if autoMemory, err = harness.ResolveAutoMemory(h, &p.AutoMemory); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return nil, rcInvalidArg
+		if r.autoMemory, err = harness.ResolveAutoMemory(r.h, &r.p.AutoMemory); err != nil {
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
 		// Gate --peer-messaging the same way: only a harness with a
 		// cross-session messaging system (Claude Code) can be asked to keep it
 		// on. The daemon re-gates server-side.
-		if peerMessaging, err = harness.ResolvePeerMessaging(h, &p.PeerMessaging); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return nil, rcInvalidArg
+		if r.peerMessaging, err = harness.ResolvePeerMessaging(r.h, &r.p.PeerMessaging); err != nil {
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
 		// Gate --copilot-api the same way: only a harness with an API-backed mode
 		// (Copilot) can be asked for one. The daemon re-gates server-side.
-		if copilotAPI, err = harness.ResolveCopilotAPI(h, &p.CopilotAPI); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return nil, rcInvalidArg
+		if r.copilotAPI, err = harness.ResolveCopilotAPI(r.h, &r.p.CopilotAPI); err != nil {
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
-		if codexAppServer, err = harness.ResolveCodexAppServer(h, &p.CodexAppServer); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return nil, rcInvalidArg
+		if r.codexAppServer, err = harness.ResolveCodexAppServer(r.h, &r.p.CodexAppServer); err != nil {
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
-		if fastMode, err = harness.ResolveFastModeFlag(h, fastMode); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return nil, rcInvalidArg
+		if r.fastMode, err = harness.ResolveFastModeFlag(r.h, r.fastMode); err != nil {
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
 		// Gate --context-features the same way: unknown slugs, bad states, and
 		// trims asked of a harness with no steerable startup context all fail fast
 		// here with a clear message. The daemon re-gates server-side. When the flag
 		// is absent, validate the profile's map instead (the profile is what would
 		// then decide) so a bad saved profile is caught here too.
-		featuresToCheck := contextFeatures
-		if !contextFeaturesSet && validateMergedProfile && prof != nil {
-			featuresToCheck = prof.ContextFeatures
+		featuresToCheck := r.contextFeatures
+		if !r.contextFeaturesSet && r.validateMergedProfile && r.prof != nil {
+			featuresToCheck = r.prof.ContextFeatures
 		}
-		if _, err = harness.ResolveContextFeatures(h, featuresToCheck); err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return nil, rcInvalidArg
+		if _, err = harness.ResolveContextFeatures(r.h, featuresToCheck); err != nil {
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			r.spawned, r.exitCode = nil, rcInvalidArg
+			return false
 		}
 	}
+	return true
+}
+
+// buildRequest builds the spawn request from the flags, the caller's
+// directory and the environment.
+func (r *spawnRun) buildRequest() bool {
+	var err error
 	// A blank cwd stays blank: only the daemon can see the group's default.
-	callerCwd, _ := os.Getwd()
-	cwd := callerRelativePath(p.Cwd, callerCwd)
+	r.callerCwd, _ = os.Getwd()
+	r.cwd = callerRelativePath(r.p.Cwd, r.callerCwd)
 
-	environment, err := parseEnvironmentFlags(p.Environment)
+	environment, err := parseEnvironmentFlags(r.p.Environment)
 	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return nil, rcInvalidArg
+		fmt.Fprintf(r.stderr, "Error: %v\n", err)
+		r.spawned, r.exitCode = nil, rcInvalidArg
+		return false
 	}
 
-	req := SpawnRequest{
-		NoQueue:             p.NoQueue,
-		NonInteractive:      p.NonInteractive,
-		RunTimeoutSeconds:   runTimeoutSeconds,
+	r.req = SpawnRequest{
+		NoQueue:             r.p.NoQueue,
+		NonInteractive:      r.p.NonInteractive,
+		RunTimeoutSeconds:   r.runTimeoutSeconds,
 		Environment:         environment,
-		Profile:             strings.TrimSpace(p.Profile),
-		SandboxProfile:      strings.TrimSpace(p.SandboxProfile),
-		OmitSandboxProfiles: p.OmitSandboxProfiles,
-		UsageProfiles:       trimmedNonEmpty(p.UsageProfiles),
-		HarnessConfig:       strings.TrimSpace(p.HarnessConfig),
-		Name:                name,
+		Profile:             strings.TrimSpace(r.p.Profile),
+		SandboxProfile:      strings.TrimSpace(r.p.SandboxProfile),
+		OmitSandboxProfiles: r.p.OmitSandboxProfiles,
+		UsageProfiles:       trimmedNonEmpty(r.p.UsageProfiles),
+		HarnessConfig:       strings.TrimSpace(r.p.HarnessConfig),
+		Name:                r.name,
 		// Roles are launch fields: the flags only, as above.
-		Role:                   strings.TrimSpace(p.Role),
-		RoleRef:                strings.TrimSpace(p.RoleRef),
-		RoleRefs:               trimmedNonEmpty([]string{p.RoleRef}),
-		Descr:                  merged.Descr,
-		TaskURL:                strings.TrimSpace(p.Task),
-		TaskLabel:              strings.TrimSpace(p.TaskLabel),
-		InitialMessage:         initialMessage,
-		ReplyTo:                strings.TrimSpace(p.ReplyTo),
-		Cwd:                    cwd,
-		CallerCwd:              callerCwd,
-		TimeoutSeconds:         timeoutSeconds,
-		AutoFocus:              merged.AutoFocus,
-		Effort:                 effort,
-		Model:                  model,
-		ModelProxy:             p.ModelProxy,
-		Harness:                clientHarness,
-		HarnessBuiltinMode:     harnessBuiltinMode,
-		SandboxImplementation:  sandboxImpl,
-		AskUserQuestionTimeout: askTimeout,
-		AutoCompactWindow:      autoCompactWindow,
-		ContextWindowMax:       contextWindowMax,
-		ApprovalPolicy:         approvalPolicy,
-		ToolGovernance:         toolGovernance,
-		AutoReview:             autoReview,
-		TrustDir:               trustDir,
-		IsOwner:                merged.IsOwner,
-		PermissionOverrides:    merged.PermissionOverrides,
+		Role:                   strings.TrimSpace(r.p.Role),
+		RoleRef:                strings.TrimSpace(r.p.RoleRef),
+		RoleRefs:               trimmedNonEmpty([]string{r.p.RoleRef}),
+		Descr:                  r.merged.Descr,
+		TaskURL:                strings.TrimSpace(r.p.Task),
+		TaskLabel:              strings.TrimSpace(r.p.TaskLabel),
+		InitialMessage:         r.initialMessage,
+		ReplyTo:                strings.TrimSpace(r.p.ReplyTo),
+		Cwd:                    r.cwd,
+		CallerCwd:              r.callerCwd,
+		TimeoutSeconds:         r.timeoutSeconds,
+		AutoFocus:              r.merged.AutoFocus,
+		Effort:                 r.effort,
+		Model:                  r.model,
+		ModelProxy:             r.p.ModelProxy,
+		Harness:                r.clientHarness,
+		HarnessBuiltinMode:     r.harnessBuiltinMode,
+		SandboxImplementation:  r.sandboxImpl,
+		AskUserQuestionTimeout: r.askTimeout,
+		AutoCompactWindow:      r.autoCompactWindow,
+		ContextWindowMax:       r.contextWindowMax,
+		ApprovalPolicy:         r.approvalPolicy,
+		ToolGovernance:         r.toolGovernance,
+		AutoReview:             r.autoReview,
+		TrustDir:               r.trustDir,
+		IsOwner:                r.merged.IsOwner,
+		PermissionOverrides:    r.merged.PermissionOverrides,
 	}
-	if p.NonInteractive {
+	if r.p.NonInteractive {
 		// Identity defaults on a selected profile have no one-shot recipient.
-		req.Role, req.RoleRef, req.Descr = "", "", ""
-		req.RoleRefs = nil
-		req.PermissionOverrides = nil
-		req.IsOwner = false
-		req.AutoFocus = false
-		req.AutoReview = false
+		r.req.Role, r.req.RoleRef, r.req.Descr = "", "", ""
+		r.req.RoleRefs = nil
+		r.req.PermissionOverrides = nil
+		r.req.IsOwner = false
+		r.req.AutoFocus = false
+		r.req.AutoReview = false
 	}
+	return true
+}
+
+// applyFlagOverrides puts on the request only what a flag said: prompts,
+// the owner choice, context features, the relaunch policy, the opt-in-only
+// switches, fast mode and the group-context opt-out.
+func (r *spawnRun) applyFlagOverrides() bool {
 	// An explicit owner choice outranks the profile stack in either direction;
 	// omission leaves the daemon free to resolve group/global defaults.
-	if len(p.Prompts) > 0 {
-		req.StatePromptRefs(p.Prompts)
+	if len(r.p.Prompts) > 0 {
+		r.req.StatePromptRefs(r.p.Prompts)
 	}
-	if p.Owner {
-		req.StateIsOwner(true)
-	} else if p.NoOwner {
-		req.StateIsOwner(false)
+	if r.p.Owner {
+		r.req.StateIsOwner(true)
+	} else if r.p.NoOwner {
+		r.req.StateIsOwner(false)
 	}
 	// Send the map only when the flag spoke. An empty-but-non-nil map is a real
 	// instruction ("trim nothing") and must survive JSON, so it is set explicitly
 	// rather than left to omitempty.
-	if contextFeaturesSet {
-		req.ContextFeatures = &contextFeatures
+	if r.contextFeaturesSet {
+		r.req.ContextFeatures = &r.contextFeatures
 	}
-	req.RelaunchPolicy = relaunchPolicy
-	req.autoReviewSpecified = p.AutoReview
-	req.trustDirSpecified = p.TrustDir
+	r.req.RelaunchPolicy = r.relaunchPolicy
+	r.req.autoReviewSpecified = r.p.AutoReview
+	r.req.trustDirSpecified = r.p.TrustDir
 	// --remote-control is opt-in only on the CLI: send &true when the flag is set,
 	// and leave the pointer nil otherwise so the daemon's group/profile
 	// remote-control policy fills it (the dashboard form is the surface that sends
 	// an explicit false to override an inherited default). See SpawnRequest.RemoteControl.
 	// A --profile's remote_control is deliberately NOT applied here — the CLI can't
 	// see the group's remote-control policy, which must win (see mergeProfileIntoSpawn).
-	if remoteControl {
+	if r.remoteControl {
 		on := true
-		req.RemoteControl = &on
+		r.req.RemoteControl = &on
 	}
 	// --auto-memory follows the same opt-in-only discipline: send &true when the
 	// flag is set, leave nil otherwise so a profile default can still speak. The
 	// nil case resolves to off server-side, which is the recommended posture.
-	if autoMemory {
+	if r.autoMemory {
 		on := true
-		req.AutoMemory = &on
+		r.req.AutoMemory = &on
 	}
 	// --peer-messaging follows the same opt-in-only discipline, and for the same
 	// reason: leaving the pointer nil is what lets a profile tier speak, and the
 	// nil case resolves server-side to off — the recommended posture.
-	if peerMessaging {
+	if r.peerMessaging {
 		on := true
-		req.PeerMessaging = &on
+		r.req.PeerMessaging = &on
 	}
 	// --copilot-api follows the same opt-in-only discipline, and for the same
 	// reason: leaving the pointer nil is what lets a profile tier speak, and the
 	// nil case resolves server-side to off — the unchanged send-keys path.
-	if copilotAPI {
+	if r.copilotAPI {
 		on := true
-		req.CopilotAPI = &on
+		r.req.CopilotAPI = &on
 	}
-	if p.codexAppServerSpecified || codexAppServer {
-		selected := codexAppServer
-		req.CodexAppServer = &selected
+	if r.p.codexAppServerSpecified || r.codexAppServer {
+		selected := r.codexAppServer
+		r.req.CodexAppServer = &selected
 	}
-	if p.PiDrive {
+	if r.p.PiDrive {
 		on := true
-		req.PiDrive = &on
+		r.req.PiDrive = &on
 	}
-	if p.NonInteractive {
-		req.CodexAppServer = nil
-		req.CopilotAPI = nil
+	if r.p.NonInteractive {
+		r.req.CodexAppServer = nil
+		r.req.CopilotAPI = nil
 	}
-	if strings.TrimSpace(p.FastMode) != "" {
-		req.FastMode = fastMode
-		if req.FastMode == harness.FastModeInherit {
+	if strings.TrimSpace(r.p.FastMode) != "" {
+		r.req.FastMode = r.fastMode
+		if r.req.FastMode == harness.FastModeInherit {
 			// ResolveFastModeFlag normalizes inherit to the launch-layer empty
 			// sentinel. The daemon wire must retain the literal so an explicit
 			// CLI choice suppresses profile tiers rather than looking omitted.
-			req.FastMode = "inherit"
+			r.req.FastMode = "inherit"
 		}
 	}
 	// Group context: --no-group-context forces exclude. Otherwise the pointer
 	// stays nil and the daemon resolves it, from the --profile and the default
 	// tiers, then includes the group context by default (every other spawn path
 	// does). Only the flag goes on the wire, as for every launch field.
-	if p.NoGroupContext {
+	if r.p.NoGroupContext {
 		no := false
-		req.IncludeGroupContext = &no
+		r.req.IncludeGroupContext = &no
 	}
-	if p.NonInteractive {
-		req.IncludeGroupContext = &p.GroupContext
+	if r.p.NonInteractive {
+		r.req.IncludeGroupContext = &r.p.GroupContext
 	}
 
+	return true
+}
+
+// prepareWorktree has the daemon make or reuse --worktree, and places the
+// agent in it or, for a sub-repo of a monorepo, beside it.
+func (r *spawnRun) prepareWorktree() bool {
 	// Worktree handling. The daemon resolves the worktree — the same git
 	// operation the dashboard's worktree picker performs server-side, run
 	// outside the caller's sandbox (see spawn_worktree.go) — and the
@@ -1918,24 +2129,25 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	// non-empty only when a fresh worktree was made (vs an existing one
 	// reused), so a failed spawn can tear it back down rather than
 	// leaking an orphan.
-	createdWorktree, discardWorktree := "", ""
-	if wt := strings.TrimSpace(p.Worktree); wt != "" {
-		worktreeRepo := callerRelativePath(strings.TrimSpace(p.WorktreeRepo), callerCwd)
+	r.createdWorktree, r.discardWorktree = "", ""
+	if wt := strings.TrimSpace(r.p.Worktree); wt != "" {
+		worktreeRepo := callerRelativePath(strings.TrimSpace(r.p.WorktreeRepo), r.callerCwd)
 		if worktreeRepo == "" {
-			worktreeRepo = cwd
+			worktreeRepo = r.cwd
 		}
-		prepared, wtErr := resolveSpawnWorktree(p.Group, worktreeRepo, callerCwd, wt, p.WorktreeBase, ask)
+		prepared, wtErr := resolveSpawnWorktree(r.p.Group, worktreeRepo, r.callerCwd, wt, r.p.WorktreeBase, r.ask)
 		if wtErr != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", wtErr)
+			fmt.Fprintf(r.stderr, "Error: %v\n", wtErr)
 			// The failure now comes off the wire, so it carries the
 			// daemon's own classification: a permission refusal exits as
 			// an auth failure, an unreachable daemon as an I/O one, and
 			// only a genuinely bad branch/repo as a usage error.
-			return nil, MapDaemonErrorToRC(wtErr)
+			r.spawned, r.exitCode = nil, MapDaemonErrorToRC(wtErr)
+			return false
 		}
 		wtPath := prepared.Path
 		if prepared.Created {
-			createdWorktree, discardWorktree = wtPath, prepared.DiscardToken
+			r.createdWorktree, r.discardWorktree = wtPath, prepared.DiscardToken
 		}
 		// Clean both sides before comparing: a trailing slash or "/."
 		// on --worktree-repo must not mis-classify an in-place worktree
@@ -1943,46 +2155,60 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		// daemon's choice of launch dir, so that is in-place too. A blank cwd
 		// lands where the daemon says: this process cannot see the group's
 		// default, and an older daemon does not say.
-		launchDir := cmp.Or(cwd, prepared.LaunchDir, callerCwd)
+		launchDir := cmp.Or(r.cwd, prepared.LaunchDir, r.callerCwd)
 		if worktreeRepo != "" && filepath.Clean(worktreeRepo) != filepath.Clean(launchDir) {
 			// Monorepo sub-repo case: the agent launches in --cwd (the
 			// parent) and the worktree path/branch ride into its welcome.
-			req.WorktreePath = wtPath
-			req.WorktreeBranch = wt
+			r.req.WorktreePath = wtPath
+			r.req.WorktreeBranch = wt
 		} else {
 			// Common case: the agent launches inside the worktree.
-			req.Cwd = wtPath
+			r.req.Cwd = wtPath
 		}
 	}
 
-	if p.NonInteractive {
+	return true
+}
+
+// runNonInteractive runs a non-interactive spawn to its end, tearing down a
+// worktree made for it if it fails, and relays what it printed.
+func (r *spawnRun) runNonInteractive() bool {
+	if r.p.NonInteractive {
 		var result nonInteractiveSpawnResponse
-		err := DaemonRequestWithWriteProof(http.MethodPost, "/v1/groups/"+p.Group+"/spawn",
-			func(token string) any { req.WriteProofToken = token; return req }, &result,
-			DaemonOpts{Timeout: time.Duration(runTimeoutSeconds+30) * time.Second, AskHuman: ask})
+		err := DaemonRequestWithWriteProof(http.MethodPost, "/v1/groups/"+r.p.Group+"/spawn",
+			func(token string) any { r.req.WriteProofToken = token; return r.req }, &result,
+			DaemonOpts{Timeout: time.Duration(r.runTimeoutSeconds+30) * time.Second, AskHuman: r.ask})
 		if err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			if createdWorktree != "" {
-				undoSpawnWorktree(stderr, createdWorktree, discardWorktree, "spawn", ask)
+			fmt.Fprintf(r.stderr, "Error: %v\n", err)
+			if r.createdWorktree != "" {
+				undoSpawnWorktree(r.stderr, r.createdWorktree, r.discardWorktree, "spawn", r.ask)
 			}
-			return nil, MapDaemonErrorToRC(err)
+			r.spawned, r.exitCode = nil, MapDaemonErrorToRC(err)
+			return false
 		}
-		_, _ = io.WriteString(stdout, result.Stdout)
-		_, _ = io.WriteString(stderr, result.Stderr)
+		_, _ = io.WriteString(r.stdout, result.Stdout)
+		_, _ = io.WriteString(r.stderr, result.Stderr)
 		for _, note := range result.Notes {
-			fmt.Fprintf(stderr, "Note: %s\n", note)
+			fmt.Fprintf(r.stderr, "Note: %s\n", note)
 		}
-		return nil, result.ExitCode
+		r.spawned, r.exitCode = nil, result.ExitCode
+		return false
 	}
-	var resp SpawnResponse
-	if ask > 0 {
+	return true
+}
+
+// send asks the daemon for the spawn, answering its write-proof challenge,
+// and on a failure tears down a worktree made for it unless the session may
+// still be coming up in it.
+func (r *spawnRun) send() bool {
+	if r.ask > 0 {
 		// --ask-human is an authorization fallback, not a blanket trust-root
 		// override. An owner/already-granted caller may reach a later lineage
 		// denial without any popup being opened, so do not claim a human request
 		// is pending before the daemon has actually needed one.
-		fmt.Fprintf(stdout, "Human approval may be requested if authorization is needed (timeout %s).\n", ask)
+		fmt.Fprintf(r.stdout, "Human approval may be requested if authorization is needed (timeout %s).\n", r.ask)
 	}
-	path := "/v1/groups/" + p.Group + "/spawn"
+	path := "/v1/groups/" + r.p.Group + "/spawn"
 	// DaemonRequestWithWriteProof transparently answers the daemon's dir
 	// write-proof challenge (see writeproof.go): when the caller is a
 	// sandboxed agent, the daemon requires proof that this process can itself
@@ -1990,11 +2216,11 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	// there. The proof file creation runs inside the caller's own sandbox,
 	// which is exactly the capability being proven.
 	spawnReq := func(writeProofToken string) any {
-		req.WriteProofToken = writeProofToken
-		return req
+		r.req.WriteProofToken = writeProofToken
+		return r.req
 	}
-	if err := DaemonRequestWithWriteProof(http.MethodPost, path, spawnReq, &resp, DaemonOpts{AskHuman: ask}); err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
+	if err := DaemonRequestWithWriteProof(http.MethodPost, path, spawnReq, &r.resp, DaemonOpts{AskHuman: r.ask}); err != nil {
+		fmt.Fprintf(r.stderr, "Error: %v\n", err)
 		// The spawn failed after we created a worktree for it. Remove the
 		// now-orphaned worktree so a retry starts clean — except on a 504
 		// conv-id-poll timeout: there the spawn subprocess DID launch and
@@ -2011,60 +2237,68 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		// clean up either: it says so on stderr and leaves the worktree
 		// for the operator, rather than the CLI reaching into a directory
 		// its own sandbox may not be able to finish removing.
-		if createdWorktree != "" {
+		if r.createdWorktree != "" {
 			if de, ok := err.(*DaemonError); ok && de.Status == http.StatusGatewayTimeout {
-				fmt.Fprintf(stderr, "Note: kept the worktree %s — the session may still be coming up.\n",
-					createdWorktree)
+				fmt.Fprintf(r.stderr, "Note: kept the worktree %s — the session may still be coming up.\n",
+					r.createdWorktree)
 			} else {
-				undoSpawnWorktree(stderr, createdWorktree, discardWorktree, "spawn", ask)
+				undoSpawnWorktree(r.stderr, r.createdWorktree, r.discardWorktree, "spawn", r.ask)
 			}
 		}
-		return nil, MapDaemonErrorToRC(err)
+		r.spawned, r.exitCode = nil, MapDaemonErrorToRC(err)
+		return false
 	}
-	if resp.Queued {
+	return true
+}
+
+// report prints the queued or launched agent, and where it landed.
+func (r *spawnRun) report() bool {
+	if r.resp.Queued {
 		// The agent launches later from the queue, in the worktree made above.
-		fmt.Fprintf(stdout, "Queued spawn #%d in group %q at position %d (no ETA): %s\n",
-			resp.QueueID, resp.Group, resp.Position, resp.QueueReason)
-		fmt.Fprintf(stdout, "  It starts when capacity frees; you are told when it launches or fails.\n")
-		fmt.Fprintf(stdout, "  Inspect: tclaude agent queue ls   Cancel: tclaude agent queue rm %d\n", resp.QueueID)
-		return &resp, rcOK
+		fmt.Fprintf(r.stdout, "Queued spawn #%d in group %q at position %d (no ETA): %s\n",
+			r.resp.QueueID, r.resp.Group, r.resp.Position, r.resp.QueueReason)
+		fmt.Fprintf(r.stdout, "  It starts when capacity frees; you are told when it launches or fails.\n")
+		fmt.Fprintf(r.stdout, "  Inspect: tclaude agent queue ls   Cancel: tclaude agent queue rm %d\n", r.resp.QueueID)
+		r.spawned, r.exitCode = &r.resp, rcOK
+		return false
 	}
-	fmt.Fprintf(stdout, "Spawned %s in group %q\n", shortAgentID(resp.AgentID, resp.ConvID), resp.Group)
-	if resp.Label != "" {
-		fmt.Fprintf(stdout, "  Label:   %s\n", resp.Label)
+	fmt.Fprintf(r.stdout, "Spawned %s in group %q\n", shortAgentID(r.resp.AgentID, r.resp.ConvID), r.resp.Group)
+	if r.resp.Label != "" {
+		fmt.Fprintf(r.stdout, "  Label:   %s\n", r.resp.Label)
 	}
-	if resp.TmuxSession != "" {
-		fmt.Fprintf(stdout, "  Tmux:    %s\n", resp.TmuxSession)
+	if r.resp.TmuxSession != "" {
+		fmt.Fprintf(r.stdout, "  Tmux:    %s\n", r.resp.TmuxSession)
 	}
-	if resp.AttachCmd != "" {
-		fmt.Fprintf(stdout, "  Attach:  %s\n", resp.AttachCmd)
+	if r.resp.AttachCmd != "" {
+		fmt.Fprintf(r.stdout, "  Attach:  %s\n", r.resp.AttachCmd)
 	}
 	// Report the task link honestly (TCL-568): only a daemon-verified binding
 	// prints as a plain fact; a pending spawn's link is announced as deferred
 	// so the caller never reads success into a write that hasn't happened yet.
-	if resp.TaskRefURL != "" {
-		if resp.TaskRefState == "bound" {
-			fmt.Fprintf(stdout, "  Task:    %s\n", resp.TaskRefURL)
+	if r.resp.TaskRefURL != "" {
+		if r.resp.TaskRefState == "bound" {
+			fmt.Fprintf(r.stdout, "  Task:    %s\n", r.resp.TaskRefURL)
 		} else {
-			fmt.Fprintf(stdout, "  Task:    %s (pending — binds when the agent finishes registering)\n", resp.TaskRefURL)
+			fmt.Fprintf(r.stdout, "  Task:    %s (pending — binds when the agent finishes registering)\n", r.resp.TaskRefURL)
 		}
 	}
 	// Echo the resolved launch shape + provenance so a spawn that inherited a
 	// default profile's harness/model (the TCL-304 incident) is visible at a
 	// glance instead of needing `profiles default show` to reverse-engineer.
-	if resp.Resolved != nil {
-		printResolvedLaunch(stdout, resp.Resolved)
+	if r.resp.Resolved != nil {
+		printResolvedLaunch(r.stdout, r.resp.Resolved)
 	}
 	// Surface the worktree so the user can see where the agent landed
 	// (or, in the monorepo case, where its code work belongs).
-	if wt := strings.TrimSpace(p.Worktree); wt != "" {
-		wtPath := req.WorktreePath
+	if wt := strings.TrimSpace(r.p.Worktree); wt != "" {
+		wtPath := r.req.WorktreePath
 		if wtPath == "" {
-			wtPath = req.Cwd
+			wtPath = r.req.Cwd
 		}
-		fmt.Fprintf(stdout, "  Worktree: %s (branch %s)\n", wtPath, wt)
+		fmt.Fprintf(r.stdout, "  Worktree: %s (branch %s)\n", wtPath, wt)
 	}
-	return &resp, rcOK
+	r.spawned, r.exitCode = &r.resp, rcOK
+	return false
 }
 
 // callerRelativePath anchors a relative path flag on the caller's directory,

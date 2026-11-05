@@ -18549,6 +18549,9 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-spacer { flex: 1; }
 .gr-lock { cursor: pointer; white-space: nowrap; background: none; }
 .gr-lock:disabled { cursor: not-allowed; opacity: 0.6; }
+/* The small lock icon on a locked resource's tab name and Collab panel row
+   (resource-lock.js LockBadge); its tooltip explains it. */
+.res-lock-badge { font-size: 10px; line-height: 1; margin-left: 4px; opacity: 0.85; cursor: help; flex: none; }
 /* A peer's resource is named, not opened: its board or page is that node's own. */
 .gr-row .gr-name-text { color: var(--ui-strong-text); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A group resource's state pill (resource-pill.js): one look per state. */

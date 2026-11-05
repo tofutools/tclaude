@@ -3,6 +3,8 @@
 package sandboxassumptions
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -47,6 +49,14 @@ func TestSeatbeltAssumptions(t *testing.T) {
 		"session.appendSeatbeltNetworkDenyExceptAgentd and "+
 			"session.appendSeatbeltIsolatedNetworkRules",
 		assumeOutboundExceptionAndBindDeny)
+	runDarwinAssumption(t, "AllowAfterUnixSocketDeny",
+		"session.compileSeatbeltDenyRegions and session.renderSeatbeltProfile "+
+			"render every allow after every deny (seatbeltAllowsLastNote)",
+		assumeAllowAfterUnixSocketDeny)
+	runDarwinAssumption(t, "InsideDenyExceptionSurvivesLaterUnixSocketDeny",
+		"session.appendSeatbeltIsolatedNetworkRules require-not exceptions "+
+			"(proxy-floor TCP and allowlisted Unix sockets)",
+		assumeInsideDenyExceptionSurvivesLaterUnixSocketDeny)
 	runDarwinAssumption(t, "CaseAndNFCFollowFileIdentity",
 		"session.seatbeltSamePath, session.seatbeltPathContains, "+
 			"session.darwinSeatbeltLstatIdentity",
@@ -155,6 +165,117 @@ func assumeOutboundExceptionAndBindDeny(t *testing.T) {
 		"unix-connect-denied", map[string]string{"ASSUME_SOCKET": blocked}, nil)
 	runSeatbeltHelper(t, profile, params,
 		"unix-listen-denied", map[string]string{"ASSUME_SOCKET": listenPath}, nil)
+}
+
+// seatbeltOrderRuns is how often each rule-order case connects. The failure
+// it guards against is intermittent: on macOS 26.7.2 about 1 connect in 10
+// was refused, so one attempt per case would miss it most of the time.
+const seatbeltOrderRuns = 30
+
+// assumeAllowAfterUnixSocketDeny pins tcl-gejtfc. A later
+// (deny network-outbound (remote unix-socket ...)) intermittently overrides an
+// earlier TCP localhost allow, although it cannot match a TCP connect. So
+// tclaude renders every allow after every deny, and that order must connect
+// every time. The broken order is a known Apple quirk (Feedback filed), so it
+// is only reported here: if it ever stops failing, the log says so.
+func assumeAllowAfterUnixSocketDeny(t *testing.T) {
+	t.Helper()
+	addr := startTCPAcceptLoop(t)
+	unrelated := filepath.Join(shortDarwinTempDir(t), "unrelated.sock")
+	params := map[string]string{"UNRELATED": unrelated}
+	deny := "(deny network-outbound (remote ip \"*:*\"))\n"
+	allow := fmt.Sprintf("(allow network-outbound (remote tcp \"localhost:%d\"))\n", addr.Port)
+	unixDeny := "(deny network-outbound (remote unix-socket (literal (param \"UNRELATED\"))))\n"
+	head := "(version 1)\n(allow default)\n"
+
+	fixed := head + deny + unixDeny + allow
+	if ok, sample := countSeatbeltHelperPasses(t, fixed, params, "tcp-connect",
+		map[string]string{"ASSUME_ADDR": addr.String()}); ok != seatbeltOrderRuns {
+		t.Fatalf("allows after every deny: %d/%d connects succeeded, want all; a failure:\n%s",
+			ok, seatbeltOrderRuns, sample)
+	}
+	// The mirror: the allow now follows the unix-socket deny, so it must
+	// never reopen that socket. A live listener makes a leak observable.
+	stop := startUnixEchoServer(t, unrelated)
+	defer stop()
+	if ok, sample := countSeatbeltHelperPasses(t, fixed, params, "unix-connect-denied",
+		map[string]string{"ASSUME_SOCKET": unrelated}); ok != seatbeltOrderRuns {
+		t.Fatalf("a later localhost allow reopened the denied unix socket: denied %d/%d times; a failure:\n%s",
+			ok, seatbeltOrderRuns, sample)
+	}
+	broken := head + deny + allow + unixDeny
+	ok, sample := countSeatbeltHelperPasses(t, broken, params, "tcp-connect",
+		map[string]string{"ASSUME_ADDR": addr.String()})
+	t.Logf("known Apple quirk, reported only: an allow before a later unix-socket deny connected %d/%d times; a failure:\n%s",
+		ok, seatbeltOrderRuns, sample)
+}
+
+// assumeInsideDenyExceptionSurvivesLaterUnixSocketDeny covers the isolated
+// posture, which has no allows: its exceptions are require-not clauses inside
+// the deny itself. The proxy floor's TCP exception is followed by the
+// file-read hides' unix-socket connect denies in a real profile, the same
+// later rule that breaks a separate allow, so it must connect every time.
+func assumeInsideDenyExceptionSurvivesLaterUnixSocketDeny(t *testing.T) {
+	t.Helper()
+	addr := startTCPAcceptLoop(t)
+	unrelated := filepath.Join(shortDarwinTempDir(t), "unrelated.sock")
+	profile := fmt.Sprintf(`(version 1)
+(allow default)
+(deny network-outbound
+  (require-all
+    (require-not (remote tcp "localhost:%d"))))
+(deny network-outbound (remote unix-socket (literal (param "UNRELATED"))))
+`, addr.Port)
+	params := map[string]string{"UNRELATED": unrelated}
+	if ok, sample := countSeatbeltHelperPasses(t, profile, params, "tcp-connect",
+		map[string]string{"ASSUME_ADDR": addr.String()}); ok != seatbeltOrderRuns {
+		t.Fatalf("require-not exception before a unix-socket deny: %d/%d connects succeeded, want all; a failure:\n%s",
+			ok, seatbeltOrderRuns, sample)
+	}
+}
+
+// countSeatbeltHelperPasses runs one helper mode seatbeltOrderRuns times
+// under profile. It returns how many runs passed and the output of one
+// failed run, so a profile or helper error is not mistaken for a refusal.
+func countSeatbeltHelperPasses(
+	t *testing.T,
+	profile string,
+	params map[string]string,
+	mode string,
+	env map[string]string,
+) (int, string) {
+	t.Helper()
+	ok, sample := 0, ""
+	for range seatbeltOrderRuns {
+		passed, output := seatbeltHelperSucceeds(t, profile, params, mode, env)
+		if passed {
+			ok++
+		} else if sample == "" {
+			sample = output
+		}
+	}
+	return ok, sample
+}
+
+// startTCPAcceptLoop listens on 127.0.0.1 and closes every connection it
+// accepts, until the test ends.
+func startTCPAcceptLoop(t *testing.T) *net.TCPAddr {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen on loopback: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+	return listener.Addr().(*net.TCPAddr)
 }
 
 func assumeCaseAndNFCIdentity(t *testing.T) {
@@ -314,6 +435,12 @@ func TestSeatbeltAssumptionHelper(t *testing.T) {
 		}
 	case "unix-roundtrip":
 		seatbeltHelperUnixRoundTrip(t)
+	case "tcp-connect":
+		conn, err := net.DialTimeout("tcp4", os.Getenv("ASSUME_ADDR"), 2*time.Second)
+		if err != nil {
+			t.Fatalf("Seatbelt refused the TCP connect: %v", err)
+		}
+		_ = conn.Close()
 	case "unix-connect-denied":
 		socket := os.Getenv("ASSUME_SOCKET")
 		conn, err := net.DialTimeout("unix", socket, time.Second)
@@ -446,6 +573,36 @@ func runSeatbeltHelper(
 	}
 	cmd.ExtraFiles = extraFiles
 	runCommand(t, cmd, 10*time.Second)
+}
+
+// seatbeltHelperSucceeds runs one helper mode under profile, like
+// runSeatbeltHelper, but reports the outcome and output instead of failing
+// the test.
+func seatbeltHelperSucceeds(
+	t *testing.T,
+	profile string,
+	params map[string]string,
+	mode string,
+	env map[string]string,
+) (bool, string) {
+	t.Helper()
+	args := []string{"-p", profile}
+	for key, value := range params {
+		args = append(args, "-D"+key+"="+value)
+	}
+	args = append(args, "--", os.Args[0], "-test.run=^TestSeatbeltAssumptionHelper$")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, darwinSandboxExec, args...)
+	cmd.Env = append(os.Environ(), darwinAssumptionHelperEnv+"="+mode)
+	for key, value := range env {
+		cmd.Env = append(cmd.Env, key+"="+value)
+	}
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("%s timed out\n%s", darwinSandboxExec, output)
+	}
+	return err == nil, string(output)
 }
 
 func startUnixEchoServer(t *testing.T, path string) func() {

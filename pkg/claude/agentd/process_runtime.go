@@ -988,24 +988,21 @@ func handleProcessRuns(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// requireProcessRunReadPermission gates the read-only run surfaces (list,
-// show, events). The caller passes if it is the human, holds
-// process.runs.read (default / group grant / per-conv grant / sudo), clears
-// an --ask-human popup, or owns at least one group — a group owner is the
-// coordinating role that drives process validation, so it reads run status
-// and evidence without a per-read approval.
-//
-// The owner default is a structural bypass at the permUndecided level (via
-// requirePermissionEx), so the universal precedence holds: an explicit deny
-// override is authoritative and suppresses it too. Ownership confers reads
-// only; every mutating run verb keeps its plain requirePermission gate on
-// process.runs.manage.
-func requireProcessRunReadPermission(w http.ResponseWriter, r *http.Request) (string, bool) {
-	return requirePermission(w, r, PermProcessRunsRead)
-}
-
 func handleProcessRunList(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireProcessRunReadPermission(w, r); !ok {
+	// A member lists its group's runs (?group=) under groups.resources.read.
+	// Authorize before the filters resolve, so a miss tells an unauthorized
+	// caller nothing about which groups or agents exist.
+	group := ""
+	if ref := strings.TrimSpace(r.URL.Query().Get("group")); ref != "" {
+		if g, err := resolveGroupToken(ref); err == nil && g != nil && !g.IsArchived() {
+			group = g.Name
+		}
+	}
+	if _, ok := requireGroupResourceAccess(w, r, PermProcessRunsRead, group, false); !ok {
+		return
+	}
+	filter, ok := processRunListFilter(w, r)
+	if !ok {
 		return
 	}
 	limit := processRunListDefault
@@ -1018,10 +1015,6 @@ func handleProcessRunList(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 	after := strings.TrimSpace(r.URL.Query().Get("after"))
-	filter, ok := processRunListFilter(w, r)
-	if !ok {
-		return
-	}
 	runs, err := db.ListProcessRunSummaries(after, limit, filter)
 	if err != nil {
 		writeProcessRuntimeError(w, err)
@@ -1108,7 +1101,7 @@ func processRunCreateAuditDetail(request processRunCreateRequest) string {
 }
 
 func handleProcessRun(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireProcessRunReadPermission(w, r); !ok {
+	if _, ok := requireProcessRunRead(w, r, r.PathValue("id")); !ok {
 		return
 	}
 	view, err := loadProcessRunView(r.PathValue("id"))
@@ -1120,7 +1113,7 @@ func handleProcessRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleProcessRunEvents(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireProcessRunReadPermission(w, r); !ok {
+	if _, ok := requireProcessRunRead(w, r, r.PathValue("id")); !ok {
 		return
 	}
 	after := int64(0)

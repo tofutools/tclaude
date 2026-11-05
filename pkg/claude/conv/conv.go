@@ -25,6 +25,7 @@ var (
 	ClaudeProjectsDir            = convops.ClaudeProjectsDir
 	PathToProjectDir             = convops.PathToProjectDir
 	GetClaudeProjectPath         = convops.GetClaudeProjectPath
+	FindSessionInProjects        = convops.FindSessionInProjects
 	RemoveSessionsIndexEntry     = convops.RemoveSessionsIndexEntry
 	UpsertSessionsIndexEntry     = convops.UpsertSessionsIndexEntry
 	FindSessionByID              = convops.FindSessionByID

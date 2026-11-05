@@ -43,8 +43,12 @@ in that group, and stops the moment you leave it. Without `boards.read`,
 `fleet.read`. A 403 names the missing slug: rather than retrying, rerun with
 `--ask-human 60s` (any board command) to ask the operator by popup, or ask for
 `tclaude agent permissions grant <you> boards.write`. A `resource_locked`
-refusal is the operator's lock on that board, not a missing slug: reads still
-work; wait for the operator to unlock it.
+refusal is a lock on that board, not a missing slug: reads still work, and
+`board show`/`ls` say it is locked. Wait for the operator to unlock it. An
+agent the operator granted `groups.resources.lock` for the group may change a
+locked board and lock or unlock it:
+`tclaude agent resources lock|unlock board <id>`; `tclaude agent resources ls
+<group>` lists the group's resources with their locks.
 
 ## Read
 

@@ -350,7 +350,7 @@ func renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 		return "", nil, err
 	}
 	nodes := buildSeatbeltRegionTree(ordered, identity)
-	profile, params := compileSeatbeltDenyRegions(
+	profile, allows, params := compileSeatbeltDenyRegions(
 		nodes,
 		runtimeTempDir,
 		plan,
@@ -360,6 +360,9 @@ func renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 		identity,
 	)
 	profile, params = appendSeatbeltProtectedAncestorPins(profile, params, protected)
+	if allows != "" {
+		profile += seatbeltAllowsLastNote + allows
+	}
 	return profile, params, nil
 }
 
@@ -844,19 +847,22 @@ func compileSeatbeltDenyRegions(
 	loopbackBindPort int,
 	routeSlots []int,
 	identity seatbeltIdentityLookup,
-) (string, []seatbeltProfileParam) {
+) (denies, allows string, params []seatbeltProfileParam) {
 	var profile strings.Builder
+	// Every allow but the default goes to allowRules, which the caller
+	// renders after its last deny; see seatbeltAllowsLastNote.
+	var allowRules strings.Builder
 	profile.WriteString("(version 1)\n")
 	profile.WriteString("(allow default)\n\n")
 	if plan.DarwinAllowMachRegister {
-		profile.WriteString("; Optional compatibility capability for headless Chromium and similar helpers.\n")
-		profile.WriteString("(allow mach-register)\n\n")
+		allowRules.WriteString("; Optional compatibility capability for headless Chromium and similar helpers.\n")
+		allowRules.WriteString("(allow mach-register)\n")
 	}
 	profile.WriteString("; Filesystem policy is deny-only. Positive descendants are carved out\n")
 	profile.WriteString("; inside each deny predicate so plan precedence does not depend on\n")
 	profile.WriteString("; Seatbelt allow/deny rule selection.\n")
 
-	params := []seatbeltProfileParam{}
+	params = []seatbeltProfileParam{}
 	// The floor a plan builds, not the posture it names. TclaudeLayerFloorPosture
 	// is the same mapping the Linux launcher applies, and it says once — there
 	// rather than in a second switch here — that the proxy engine's floor IS the
@@ -870,7 +876,7 @@ func compileSeatbeltDenyRegions(
 			&profile, params, nodes, proxyEndpoint, loopbackBindPort, routeSlots)
 	case sandboxpolicy.NetworkFiltered:
 		appendSeatbeltLoopbackNetworkRules(
-			&profile, plan.FilteredNetwork, routeSlots, loopbackBindPort)
+			&profile, &allowRules, plan.FilteredNetwork, routeSlots, loopbackBindPort)
 	}
 	writeRules := seatbeltDenyStarts(nodes, func(mode sandboxpolicy.MountMode) bool {
 		return mode != sandboxpolicy.MountRW
@@ -956,8 +962,20 @@ func compileSeatbeltDenyRegions(
 			nodes,
 		)
 	}
-	return profile.String(), params
+	return profile.String(), allowRules.String(), params
 }
+
+// seatbeltAllowsLastNote heads the allows a profile renders after its last
+// deny. Seatbelt is commonly described as last-match-wins, but measured on
+// macOS 26.7.2 and 27.2 (awb tcl-gejtfc) a later
+// (deny network-outbound (remote unix-socket ...)) intermittently overrides an
+// EARLIER (allow network-outbound (remote tcp "localhost:N")), although the
+// unix-socket rule cannot match a TCP connect: about 10% of connects refused
+// on 26.7.2 and 85% on 27.2. Every allow rendered after every deny passed
+// 30/30 on both. So nothing but (allow default) may precede a deny; the
+// assumption suite's AllowAfterUnixSocketDeny case pins the measurement.
+const seatbeltAllowsLastNote = "\n; Allows follow every deny: Seatbelt does not reliably let an earlier\n" +
+	"; allow win over a later, unrelated deny (tcl-gejtfc).\n"
 
 // appendSeatbeltNetworkExceptionDescendants retains exact Unix-socket
 // exceptions even when a readable parent directory is already the first
@@ -1034,6 +1052,8 @@ func seatbeltDaemonReopenDescendants(
 // IP traffic, preserving the independently authored Unix-socket axis.
 // Port-scoped exceptions use the narrower TCP/UDP predicates so Seatbelt
 // selects them over the IP-wide deny; a portless rule uses the IP predicate.
+// The exceptions are written to allows, which the profile renders after every
+// deny, never directly after this deny (seatbeltAllowsLastNote).
 //
 // Seatbelt's network grammar accepts only "localhost" or "*" as the host. A
 // real-host M3.2 measurement established that localhost means every address
@@ -1094,7 +1114,7 @@ func seatbeltDaemonReopenDescendants(
 // the unbound socket's source address and Seatbelt treats localhost as matching
 // INADDR_ANY, which would admit every destination.
 func appendSeatbeltLoopbackNetworkRules(
-	profile *strings.Builder,
+	profile, allows *strings.Builder,
 	rules *sandboxpolicy.FilteredNetworkRuleSet,
 	routeSlots []int,
 	loopbackBindPort int,
@@ -1129,14 +1149,16 @@ func appendSeatbeltLoopbackNetworkRules(
 	profile.WriteString("; The grammar cannot narrow that token to a loopback interface.\n")
 	profile.WriteString("; Bind/inbound and Unix sockets retain their independently authored behavior.\n")
 	profile.WriteString("(deny network-outbound (remote ip \"*:*\"))\n")
+	// The exceptions go to allows, which the profile renders after its last
+	// deny (seatbeltAllowsLastNote).
 	if allowAllPorts {
-		profile.WriteString("(allow network-outbound (remote ip \"localhost:*\"))\n")
+		allows.WriteString("(allow network-outbound (remote ip \"localhost:*\"))\n")
 	} else {
 		for _, port := range ports {
-			fmt.Fprintf(profile,
+			fmt.Fprintf(allows,
 				"(allow network-outbound (remote tcp \"localhost:%d\"))\n", port)
 			if _, ok := udpPortSet[port]; ok {
-				fmt.Fprintf(profile,
+				fmt.Fprintf(allows,
 					"(allow network-outbound (remote udp \"localhost:%d\"))\n", port)
 			}
 		}

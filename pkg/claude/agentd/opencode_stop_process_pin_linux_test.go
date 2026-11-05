@@ -26,7 +26,7 @@ import (
 // the file named by PIN_CHILD_FILE.
 const stubbornOpenCodeScript = `#!/bin/sh
 exec python3 -c '
-import http.server, os, signal, subprocess, sys
+import http.server, os, signal, socketserver, subprocess, sys
 signal.signal(signal.SIGINT, signal.SIG_IGN)
 child = subprocess.Popen(["sleep", "60"], start_new_session=True)
 open(os.environ["PIN_CHILD_FILE"], "w").write(str(child.pid))
@@ -40,7 +40,7 @@ class H(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
     def log_message(self, *a):
         pass
-http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
+socketserver.TCPServer(("127.0.0.1", port), H).serve_forever()
 ' "$@"
 `
 

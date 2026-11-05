@@ -107,19 +107,30 @@ func requireGroupResourceAccess(w http.ResponseWriter, r *http.Request, global, 
 	clearAuthorizedPermission(r)
 	conv := confirmedAgentConv(r)
 	if conv == "" || group == "" {
-		return requirePermissionEx(w, r, global)
+		return requireGlobalAndRecord(w, r, global)
 	}
 	if silentAgentAllows(r, conv, global, ActionContext{}) || agentHoldsGroupResource(r, conv, group, write) {
 		return conv, true
 	}
 	if resolvePermissionVerdictForRequest(r, conv, global).Resolution != permUndecided {
-		return requirePermissionEx(w, r, global)
+		return requireGlobalAndRecord(w, r, global)
 	}
 	slug := PermGroupsResourcesRead
 	if write {
 		slug = PermGroupsResourcesWrite
 	}
 	return requirePermissionEx(w, r, slug, groupResourceContext(group))
+}
+
+// requireGlobalAndRecord runs the shared gate on the global slug and, when it
+// passes an agent, records the slug as the one that authorized the request,
+// so a later check (a save's metadata) does not ask the human again.
+func requireGlobalAndRecord(w http.ResponseWriter, r *http.Request, global string) (string, bool) {
+	conv, ok := requirePermissionEx(w, r, global)
+	if ok && conv != "" {
+		recordAuthorizedPermission(r, global, 0)
+	}
+	return conv, ok
 }
 
 // boardGroupName is the active group a stored board is linked to, "" when it
@@ -135,4 +146,235 @@ func boardGroupName(id string) string {
 // requireBoardAccess gates a read (or a write) of one board.
 func requireBoardAccess(w http.ResponseWriter, r *http.Request, id string, write bool) (string, bool) {
 	return requireGroupResourceAccess(w, r, boardGlobalSlug(write), boardGroupName(id), write)
+}
+
+// resourceLockContexts are the action contexts the lock slug must hold in for
+// a resource: one per group it belongs to, or a single empty one (which only
+// an unscoped grant satisfies) for a resource in no group. found is false when
+// there is no such resource.
+func resourceLockContexts(kind, id string) (ctxs []ActionContext, found bool) {
+	groups, found := resourceLockGroups(kind, id)
+	if kind == resourceKindProcess {
+		// A template pinned nowhere is still one; applyResourceLock checks
+		// that it exists.
+		found = true
+	}
+	for _, g := range groups {
+		ctxs = append(ctxs, groupResourceContext(g.Name))
+	}
+	if len(ctxs) == 0 {
+		ctxs = []ActionContext{{}}
+	}
+	return ctxs, found
+}
+
+// agentHoldsResourceLock reports, silently, whether the calling agent holds
+// groups.resources.lock for the resource: in every group it belongs to. Such
+// an agent may change the resource while it is locked.
+func agentHoldsResourceLock(r *http.Request, kind, id string) bool {
+	conv := confirmedAgentConv(r)
+	if conv == "" {
+		return false
+	}
+	ctxs, _ := resourceLockContexts(kind, id)
+	for _, ctx := range ctxs {
+		if allowed, _, err := permissionAllowsAction(r, conv, PermGroupsResourcesLock, ctx); err != nil || !allowed {
+			return false
+		}
+	}
+	return true
+}
+
+// POST /v1/resource-locks {kind, id, locked} — an agent locks or unlocks a
+// resource. It needs groups.resources.lock in every group the resource
+// belongs to (an unscoped grant for one in no group); the operator always
+// passes. kind is process, board or page, as on /api/resource-locks.
+func handleAgentResourceLock(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeResourceLock(w, r)
+	if !ok {
+		return
+	}
+	switch req.Kind {
+	case resourceKindProcess, resourceKindBoard, resourceKindPage:
+	default:
+		writeError(w, http.StatusBadRequest, "invalid_arg", "kind must be process, board or page")
+		return
+	}
+	ctxs, found := resourceLockContexts(req.Kind, req.ID)
+	if !found {
+		writeError(w, http.StatusNotFound, "not_found", "no such "+req.Kind)
+		return
+	}
+	for _, ctx := range ctxs {
+		if _, ok := requirePermission(w, r, PermGroupsResourcesLock, ctx); !ok {
+			return
+		}
+	}
+	applyResourceLock(w, r, req)
+}
+
+// GET /v1/groups/{name}/resources — a group's processes, boards and pages
+// with their locks, for a member (groups.resources.read) or the operator.
+// canLock says whether the caller may lock and unlock them there.
+func handleAgentGroupResources(w http.ResponseWriter, r *http.Request) {
+	g, err := db.GetAgentGroupByName(r.PathValue("name"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if g == nil || g.IsArchived() {
+		writeError(w, http.StatusNotFound, "not_found", "no active group "+guideText(r.PathValue("name"), 80))
+		return
+	}
+	clearAuthorizedPermission(r)
+	conv := confirmedAgentConv(r)
+	if conv == "" || !agentHoldsGroupResource(r, conv, g.Name, false) {
+		if _, ok := requireGroupPermission(w, r, PermGroupsResourcesRead, g); !ok {
+			return
+		}
+	}
+	canLock := conv == "" && callerIsHuman(r)
+	if conv != "" {
+		canLock, _, _ = permissionAllowsAction(r, conv, PermGroupsResourcesLock, groupResourceContext(g.Name))
+	}
+	boards, pages := groupResources()
+	out := peerGroupResources{
+		Group: g.Name, Processes: []peerGroupProcess{}, Boards: boards[g.ID], Pages: pages[g.ID], CanLock: canLock,
+	}
+	if out.Boards == nil {
+		out.Boards = []processGroupBoard{}
+	}
+	if out.Pages == nil {
+		out.Pages = []processGroupPage{}
+	}
+	for _, p := range processSavedTemplates().groupProcesses(r.Context(), g.ID) {
+		out.Processes = append(out.Processes, peerGroupProcess{TemplateID: p.TemplateID, Name: p.Name, AgentsLocked: p.AgentsLocked})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ---- process templates and runs ----
+//
+// A process template pinned to a group is one of that group's resources, and
+// so is a run scoped to it. Membership confers:
+//   - read: list and show the templates pinned to the group (any one of its
+//     groups suffices), and list (?group=), show and read the events of the
+//     runs scoped to it;
+//   - write: save a new version of a template pinned to the group, when the
+//     caller is a member of every group it is pinned to (a save changes it
+//     for all of them). The lock still refuses it.
+// Run mutations (pause, resume, decide, assign, reissue, resolve-blocked,
+// record-outcome, rescope) stay on process.runs.manage: they steer other
+// agents' work, beside program-profile authorization. Creating, deleting,
+// listing in the library and pinning stay on process.templates.manage.
+
+// processTemplateGroups names the active groups a template is pinned to.
+func processTemplateGroups(id string) []string {
+	pinned, err := db.ProcessTemplatePinnedGroups()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, name := range pinned[id] {
+		if g, err := db.GetAgentGroupByName(name); err == nil && g != nil && !g.IsArchived() {
+			out = append(out, g.Name)
+		}
+	}
+	return out
+}
+
+// requireGroupsResourceAccess is requireGroupResourceAccess for a resource
+// in several groups: a read passes through any one of them, a write needs
+// every one.
+func requireGroupsResourceAccess(w http.ResponseWriter, r *http.Request, global string, groups []string, write bool) (string, bool) {
+	if len(groups) <= 1 {
+		group := ""
+		if len(groups) == 1 {
+			group = groups[0]
+		}
+		return requireGroupResourceAccess(w, r, global, group, write)
+	}
+	clearAuthorizedPermission(r)
+	conv := confirmedAgentConv(r)
+	if conv == "" {
+		return requirePermissionEx(w, r, global)
+	}
+	if silentAgentAllows(r, conv, global, ActionContext{}) {
+		return conv, true
+	}
+	missing := ""
+	for _, g := range groups {
+		held := agentHoldsGroupResource(r, conv, g, write)
+		if held && !write {
+			return conv, true
+		}
+		if !held && missing == "" {
+			missing = g
+		}
+	}
+	if write && missing == "" {
+		return conv, true
+	}
+	if missing == "" {
+		missing = groups[0]
+	}
+	if resolvePermissionVerdictForRequest(r, conv, global).Resolution != permUndecided {
+		return requireGlobalAndRecord(w, r, global)
+	}
+	slug := PermGroupsResourcesRead
+	if write {
+		slug = PermGroupsResourcesWrite
+	}
+	return requirePermissionEx(w, r, slug, groupResourceContext(missing))
+}
+
+// requireProcessTemplateAccess gates a read (or a save) of one template.
+func requireProcessTemplateAccess(w http.ResponseWriter, r *http.Request, id string, write bool) (string, bool) {
+	global := PermProcessTemplatesRead
+	if write {
+		global = PermProcessTemplatesManage
+	}
+	return requireGroupsResourceAccess(w, r, global, processTemplateGroups(id), write)
+}
+
+// memberReadableProcessTemplates is, for an agent without the global read,
+// the templates it reads through its groups; nil when it has the global read
+// or is not an agent the membership source applies to.
+func memberReadableProcessTemplates(r *http.Request) (map[string]bool, bool) {
+	clearAuthorizedPermission(r)
+	conv := confirmedAgentConv(r)
+	if conv == "" || silentAgentAllows(r, conv, PermProcessTemplatesRead, ActionContext{}) {
+		return nil, false
+	}
+	pinned, err := db.ProcessTemplatePinnedGroups()
+	if err != nil {
+		return nil, false
+	}
+	readable := map[string]bool{}
+	held := map[string]bool{}
+	for id, groups := range pinned {
+		for _, name := range groups {
+			ok, seen := held[name]
+			if !seen {
+				g, err := db.GetAgentGroupByName(name)
+				ok = err == nil && g != nil && !g.IsArchived() && agentHoldsGroupResource(r, conv, name, false)
+				held[name] = ok
+			}
+			if ok {
+				readable[id] = true
+				break
+			}
+		}
+	}
+	return readable, true
+}
+
+// requireProcessRunRead gates the read of one run: process.runs.read, or the
+// group read slug in the group the run is scoped to.
+func requireProcessRunRead(w http.ResponseWriter, r *http.Request, runID string) (string, bool) {
+	group := ""
+	if scope, err := db.GetProcessRunScope(runID); err == nil && scope.Kind == db.ProcessRunScopeGroup {
+		group = scope.GroupName
+	}
+	return requireGroupResourceAccess(w, r, PermProcessRunsRead, group, false)
 }

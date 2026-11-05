@@ -226,23 +226,42 @@ authorizes a send.
 
 ### The operator's lock on a resource
 
-The operator can lock a process template, a collab board or a live page
-against every agent. While it is locked, any change an agent makes is refused
-with `resource_locked` (403), and no grant overrides that: not a slug, a sudo
-elevation, group ownership or `groups.admin`. Reads stay open. For a process
-template the lock refuses a save, a delete, a library-listing change, an
-unpin and an import over it; pinning it to another group is still allowed.
-For a board it refuses the agent's patches, and for a page it refuses
-patches, eval, close and a re-show, by the shower as well as by members.
+A process template, a collab board or a live page can be locked against
+agent changes. While it is locked, any change an agent makes is refused with
+`resource_locked` (403), and no grant overrides that (not a slug, a sudo
+elevation of another slug, group ownership or `groups.admin`), except
+`groups.resources.lock` itself. Reads stay open: a group's members still read
+a locked board. For a process template the lock refuses a save, a delete, a
+library-listing change, an unpin and an import over it; pinning it to
+another group is still allowed. For a board it refuses the agent's patches,
+and for a page it refuses patches, eval, close and a re-show, by the shower
+as well as by members.
 
-Only the operator sets or clears a lock, from the dashboard
-(`POST /api/resource-locks`). No agent route reaches it. An operator of a
-trusted federation peer can do it from their own dashboard only as far as
-this node's grants to that peer reach: the group-scoped peer grant
-`groups.resources.lock`, in every group the resource belongs to (each group
-a process template is pinned to). Unrestricted trust holds it; it is never
-granted by default, and an agent never holds it, on either node. Listing a
-group's resources there, with their locks, takes the separate peer grant
+The operator sets or clears a lock from the dashboard
+(`POST /api/resource-locks`). An agent does it with
+`tclaude agent resources lock|unlock <kind> <id>` (`POST /v1/resource-locks`)
+when it holds `groups.resources.lock` in every group the resource belongs to
+(each group a process template is pinned to); a resource in no group needs an
+unscoped grant. The same grant lets the agent change the resource while it
+is locked, with three exceptions that stay refused until it is unlocked: a
+re-show that replaces a locked page, adopting a locked group page, and a
+config-bundle import over a locked template. The slug is never default-granted, never conferred by ownership or
+membership and not covered by `groups.admin`: the operator grants it, for
+example scoped to one group:
+
+```bash
+tclaude agent permissions grant <agent> groups.resources.lock --scope group=design
+```
+
+`tclaude agent resources ls <group>` lists a group's processes, boards and
+pages with their locks, for its members (`groups.resources.read`).
+
+An operator of a trusted federation peer can lock from their own dashboard
+only as far as this node's grants to that peer reach: the group-scoped peer
+grant `groups.resources.lock`, in every group the resource belongs to.
+Unrestricted trust holds it; it is never granted by default. A federated
+agent never toggles a lock on another node. Listing a group's resources
+there, with their locks, takes the separate peer grant
 `groups.resources.read` (also held by unrestricted trust, never by default). A process or board
 lock is stored and is removed when its board or template is deleted, so a new
 resource with the same id starts unlocked. A page lock lasts until the page

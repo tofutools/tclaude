@@ -35,7 +35,7 @@ import { useDismissablePopover } from './hover-popover.js';
 import { shortcutText, withShortcut } from './keybindings.js';
 import { Button, Select } from './ui-components.js';
 import { onPeerPage } from './node-api.js';
-import { LockChip } from './resource-lock.js';
+import { LockChip, rememberLock } from './resource-lock.js';
 
 const html = htm.bind(h);
 
@@ -340,6 +340,7 @@ export function BoardEditor({
           group: board.group || '', groupMembers: Array.isArray(board.group_members) ? board.group_members : [],
           agentsLocked: !!board.agents_locked,
         });
+        rememberLock('board', boardId, board.agents_locked);
         if (board.title) onTitleRef.current?.(board.title);
         setPresence(new Map((board.presence?.agents || []).map((a) => [a.agent_id, a.state])));
         presenceShown = !!board.presence?.agents?.length;

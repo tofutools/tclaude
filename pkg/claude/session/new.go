@@ -921,7 +921,8 @@ func runNew(params *NewParams) error {
 		CopilotAPIPort:                 params.CopilotAPIPort,
 		InitialPrompt:                  params.InitialPrompt,
 	}
-	extensionReadPaths, err := finishHarnessSpawnSpec(h, &spawnSpec, params, outerLayer, tclaudeLayerRoot, approvalPolicy)
+	extensionReadPaths, err := FinishHarnessSpawnSpec(
+		h, &spawnSpec, params.ManagedInstructionsRoot, outerLayer, tclaudeLayerRoot, approvalPolicy, os.Stderr)
 	if err != nil {
 		return err
 	}

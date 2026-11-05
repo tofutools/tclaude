@@ -26,10 +26,14 @@ change a run in flight. Authoring templates is the process-templates skill.
 | Slug | Covers | How you get it |
 |---|---|---|
 | `process.runs.read` | `runs ls`, `show`, `events`, `reconcile` | group owners hold it; otherwise a grant |
+| `groups.resources.read` | `runs ls --group <g>`, `show`, `events` of runs scoped to your group | membership, live; no mutation |
 | `process.runs.manage` | every mutation: unscoped `run`, `pause`, `resume`, `decide`, `assign`, `resolve-blocked`, `reissue`, `record-outcome`; and any `run` with `--authorize-program-profile` | explicit grant only (can be scoped to a template), never via ownership |
 | `process.runs.start` | `run --group <g>` | group owners hold it for their groups |
 | `self.process` | `run --agent <self>` | default-granted |
 | `agent.process` / `groups.members.process` | `run --agent <other>` | grant / owners hold it for their members |
+
+Membership lets you read your group's runs, never steer them: every mutation
+above stays on `process.runs.manage`, for members too.
 
 `report` needs no slug: it is authenticated by your identity and must match
 the attempt dispatched to you. `rescope` is human-only. When a slug is

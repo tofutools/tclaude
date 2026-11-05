@@ -5,7 +5,9 @@ import { detachWindowFeatures, elementScreenPoint } from './terminal-drag-out.js
 import { terminalAttachConfig } from './terminal-attach-config.js';
 import { boardWindowId, openBoardOverlay } from './board-overlay-state.js';
 import { chatWindowId } from './chat-window-model.js';
-import { moveOverlayTab, openOverlayWindow, overlayTabs } from './overlay-instances.js';
+import { moveOverlayTab, openOverlayWindow, overlayTabs, overlayWindows } from './overlay-instances.js';
+import { snapOverlayWindowAt } from './overlay-window.js';
+import { windowHolding } from './overlay-tab-model.js';
 import { agentSessionSeed, overlayablePane, terminalWindowOf } from './terminal-window-model.js';
 import { companionAvailable, floatInCompanion } from './companion-facade.js';
 import { confirmProcessTabClose, floatProcessTab, floatingProcessEditor, processTabToWindow } from './process-editor-place.js';
@@ -278,13 +280,16 @@ export function createTerminalShellActions({
   // floating window. A board's editor saves what it holds as it goes, and a
   // shell's tmux session outlives the tab's view of it. An agent goes to its chat
   // window, which attaches only after this tab let go: the tab's own detach
-  // would drop a chat that got there first. at places a window dragged out, and
-  // into ({ windowId, index, groupId }) is a window's strip it was dropped on.
-  async function openPaneInOverlay(key, { at = null, into = null } = {}) {
+  // would drop a chat that got there first. at places a window dragged out,
+  // into ({ windowId, index, groupId }) is a window's strip it was dropped on,
+  // and snapAt is a pointer the window then drops at, as a drag of it would.
+  async function openPaneInOverlay(key, { at = null, into = null, snapAt = null } = {}) {
     const pane = state.panes.value.find((candidate) => candidate.key === key);
     if (disposed || !pane) return false;
     const floated = await floatPane(pane, at);
     if (into && floated && overlayTabs.peek().some((tab) => tab.id === floated)) moveOverlayTab(floated, into.windowId, into.index, into.groupId);
+    const holder = !into && snapAt && floated ? windowHolding(overlayWindows.peek(), floated) : null;
+    if (holder) snapOverlayWindowAt(holder.id, snapAt);
     return !!floated;
   }
 

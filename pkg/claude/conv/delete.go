@@ -49,53 +49,12 @@ func RunDelete(params *DeleteParams, stdout, stderr *os.File, stdin *os.File) in
 	// Extract just the ID from autocomplete format (e.g., "0459cd73_[myproject]_prompt..." -> "0459cd73")
 	convID := clcommon.ExtractIDFromCompletion(params.ConvID)
 
-	var entry *SessionEntry
-	var projectPath string
-	var index *SessionsIndex
-
-	if params.Global {
-		// Search all projects
-		projectsDir := ClaudeProjectsDir()
-		entries, err := os.ReadDir(projectsDir)
-		if err != nil {
-			fmt.Fprintf(stderr, "Error reading projects directory: %v\n", err)
-			return 1
-		}
-
-		for _, dirEntry := range entries {
-			if !dirEntry.IsDir() {
-				continue
-			}
-			projPath := projectsDir + "/" + dirEntry.Name()
-			idx, err := LoadSessionsIndex(projPath)
-			if err != nil {
-				continue
-			}
-			if found, _ := FindSessionByID(idx, convID); found != nil {
-				entry = found
-				projectPath = projPath
-				index = idx
-				break
-			}
-		}
-	} else {
-		// Search current directory
-		cwd, err := os.Getwd()
-		if err != nil {
-			fmt.Fprintf(stderr, "Error getting current directory: %v\n", err)
-			return 1
-		}
-
-		projectPath = GetClaudeProjectPath(cwd)
-		var err2 error
-		index, err2 = LoadSessionsIndex(projectPath)
-		if err2 != nil {
-			fmt.Fprintf(stderr, "Error loading sessions index: %v\n", err2)
-			return 1
-		}
-
-		entry, _ = FindSessionByID(index, convID)
+	src, err := FindSessionInProjects(convID, params.Global)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error %v\n", err)
+		return 1
 	}
+	entry, projectPath, index := src.Entry, src.ProjectPath, src.Index
 
 	// If not found in index, try to find matching .jsonl files on disk
 	var fullID string

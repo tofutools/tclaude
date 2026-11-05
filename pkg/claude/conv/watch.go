@@ -2602,28 +2602,26 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		// pi runs offline under a filtered network, as `session new` launched it.
 		NetworkFiltered: networkFiltered,
 	}
-	if outerLayer && h.Name == harness.PiName {
-		// As in `session new`: a walled pi runs against tclaude's walled
-		// agent directory, rebuilt from the operator's for this launch.
-		walled, err := harness.PreparePiWalledAgentDir(convID)
+	// Post-ladder, deliberately: see applyResumeLayerAgentEnv.
+	var layerPosture sandboxpolicy.NetworkPosture
+	var layerRoot sandboxpolicy.RootPosture
+	if outerLayer {
+		layerPosture, err = session.TclaudeLayerNetworkPosture(effectiveProfile)
 		if err != nil {
 			return "", "", nil, err
 		}
-		spec.HarnessStateDir = walled
-	}
-	// The status extension is a launch flag, not installed config: a resume
-	// that dropped it would leave the agent without live status.
-	statusExtensionDir := ""
-	if h.StatusExtension != nil {
-		if path, extErr := h.StatusExtension(); extErr != nil && h.Name == harness.PiName && approvalPolicy == harness.PiApprovalAsk {
-			// ask's gate is the permission extension written beside it.
-			return "", "", nil, fmt.Errorf("pi's ask posture needs tclaude's permission extension: %w", extErr)
-		} else if extErr != nil {
-			slog.Warn("status extension unavailable on resume", "harness", h.Name, "error", extErr, "module", "conv")
-		} else {
-			spec.StatusExtensionPath = path
-			statusExtensionDir = filepath.Dir(path)
+		layerRoot, err = session.TclaudeLayerRootPosture(layerPosture, effectiveProfile)
+		if err != nil {
+			return "", "", nil, err
 		}
+	}
+	// As in `session new`: a walled pi runs against tclaude's walled agent
+	// directory, and the status extension, a launch flag rather than
+	// installed config, is kept. No managed-instructions root, as below.
+	extensionReadPaths, err := session.FinishHarnessSpawnSpec(
+		h, &spec, "", outerLayer, layerRoot, approvalPolicy, nil)
+	if err != nil {
+		return "", "", nil, err
 	}
 	cleanupPath := ""
 	var splitCapability *harness.CodexSplitPolicyCapability
@@ -2669,15 +2667,6 @@ func resumeLaunchCmdWithEffectiveSandbox(
 	var layerSpec session.TclaudeLayerLaunchSpec
 	binary := ""
 	if outerLayer {
-		posture, postureErr := session.TclaudeLayerNetworkPosture(effectiveProfile)
-		if postureErr != nil {
-			return "", "", nil, postureErr
-		}
-		// Post-ladder, deliberately: see applyResumeLayerAgentEnv.
-		root, rootErr := session.TclaudeLayerRootPosture(posture, effectiveProfile)
-		if rootErr != nil {
-			return "", "", nil, rootErr
-		}
 		// The engine is part of the question, not a decoration on the answer:
 		// it maps a filtered posture onto the proxy floor, which needs strictly
 		// less than the packet gateway. Resolving without it would refuse a
@@ -2690,8 +2679,8 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		}
 		var resolveErr error
 		binary, _, resolveErr = resolveResumeTclaudeLayer(
-			posture, root, engine,
-			posture == sandboxpolicy.NetworkFiltered &&
+			layerPosture, layerRoot, engine,
+			layerPosture == sandboxpolicy.NetworkFiltered &&
 				engine == sandboxpolicy.NetworkEnginePacket)
 		if resolveErr != nil {
 			return "", "", nil, resolveErr
@@ -2699,7 +2688,7 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		// The same pinning `session new` performs, so a resumed pane starts the
 		// binary a new one would: a constructed root cannot see a harness
 		// installed under the home directory.
-		pinned, pinnedExecutable, pinErr := session.ResolveTclaudeLayerExecutable(h.Name, root)
+		pinned, pinnedExecutable, pinErr := session.ResolveTclaudeLayerExecutable(h.Name, layerRoot)
 		if pinErr != nil {
 			return "", "", nil, pinErr
 		}
@@ -2709,14 +2698,7 @@ func resumeLaunchCmdWithEffectiveSandbox(
 			spec.ExecutableInterpreter = pinned.Interpreter
 			harnessReadPaths = pinned.ReadPaths
 		}
-		if statusExtensionDir != "" {
-			// As in `session new`: mounted read-only, and reaching tclaude
-			// where the sandbox puts it.
-			harnessReadPaths = append(harnessReadPaths, statusExtensionDir)
-			if root == sandboxpolicy.RootConstructed {
-				spec.TclaudeExecutable = session.TclaudeLayerConstructedRootTclaudePath
-			}
-		}
+		harnessReadPaths = append(harnessReadPaths, extensionReadPaths...)
 		// The agent's own attachment and morph directories, as `session new`
 		// grants them: the wall hides their daemon-owned parents from every
 		// launch and reopens only these. An attachment directory created here
