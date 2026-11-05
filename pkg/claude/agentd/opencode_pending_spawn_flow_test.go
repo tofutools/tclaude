@@ -164,7 +164,8 @@ func TestOpenCodeAgent_SlowBootPreservesWebAutoFocus(t *testing.T) {
 	require.Equal(t, 200, resp.Code, "raw=%s", resp.Raw)
 	require.Empty(t, resp.ConvID, "cold launch should return Pending")
 	assert.Equal(t, "browser", resp.FocusMode)
-	assert.Equal(t, "/api/spawn-focus-ws/"+resp.Label, resp.FocusWS)
+	require.NotEmpty(t, resp.AgentID, "a pending spawn reserves its agent id")
+	assert.Equal(t, "/api/spawn-focus-ws/"+resp.Label+"?agent="+resp.AgentID, resp.FocusWS)
 	assert.False(t, openedNative)
 
 	// Start the web-terminal request while no pane exists. Hold the runtime

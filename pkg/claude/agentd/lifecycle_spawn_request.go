@@ -2109,7 +2109,7 @@ func (req *spawnRequest) spawnResponse(p *spawnParams, outcome *spawnOutcome) ma
 	if outcome.FocusMode != "" {
 		resp["focus_mode"] = outcome.FocusMode
 		if outcome.FocusMode == "browser" {
-			resp["focus_ws"] = spawnFocusWSPath(outcome.Label)
+			resp["focus_ws"] = spawnFocusWSPath(outcome.Label, aid)
 		}
 	}
 	return resp
