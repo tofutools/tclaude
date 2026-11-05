@@ -12,8 +12,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
-// Outside tclaude's sandbox there is no outer wall to build: the spec is the
-// zero value and no private directory is created or scheduled for removal.
+// Outside tclaude's sandbox there is no outer wall to build, so the spec is
+// the zero value.
 func TestPrepareTclaudeLayerLaunchIsANoOpWithoutTheOuterLayer(t *testing.T) {
 	var undo launchundo.Undo
 	spec, err := prepareTclaudeLayerLaunch(tclaudeLayerLaunchStepInput{
