@@ -3,12 +3,14 @@ package agentd
 import (
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"maps"
 	"net/http"
 	"slices"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -774,11 +776,23 @@ func isStewardAddress(to string) bool {
 
 // resolveStewardAddresses turns the address "steward" into the active Steward,
 // in To and Cc alike, before any routing looks at them. A built-in Steward keeps
-// the address while it runs. With none online the fixed address goes to the one
-// external steward able to answer, but a name the operator gave the Steward still
-// means that Steward. It answers the request and returns false when nobody can
+// the address while it runs, unless an agent shares the name, which is refused
+// as ambiguous. With none online the fixed address goes to the one
+// external steward able to answer, unless an agent is named exactly that, but a
+// name the operator gave the Steward still means that Steward. It answers the request and returns false when nobody can
 // take it.
 func resolveStewardAddresses(w http.ResponseWriter, req *sendReq) bool {
+	return resolveStewardAddressesFor(w, req, true)
+}
+
+// resolveOperatorStewardAddresses is resolveStewardAddresses for the operator's
+// own message to their Steward, where the address only ever means the Steward:
+// an agent that shares its name neither takes it nor makes it ambiguous.
+func resolveOperatorStewardAddresses(w http.ResponseWriter, req *sendReq) bool {
+	return resolveStewardAddressesFor(w, req, false)
+}
+
+func resolveStewardAddressesFor(w http.ResponseWriter, req *sendReq, byName bool) bool {
 	var steward string
 	resolve := func(address *string) bool {
 		if !isStewardAddress(*address) {
@@ -789,8 +803,27 @@ func resolveStewardAddresses(w http.ResponseWriter, req *sendReq) bool {
 				steward = ""
 			}
 		}
+		named, isNamed := "", false
+		if byName {
+			named, isNamed = agentNamed(*address)
+		}
 		if steward != "" {
+			// An agent sharing the running Steward's address could be either
+			// one; delivering to a guess is worse than asking.
+			if isNamed {
+				stewardID, _ := db.AgentIDForConv(steward)
+				writeError(w, http.StatusConflict, "ambiguous", fmt.Sprintf(
+					"%q is both the running Steward (%s) and agent %s; address one by agent_id", strings.TrimSpace(*address), stewardID, named))
+				return false
+			}
 			*address = steward
+			return true
+		}
+		// With no built-in Steward running, an agent whose name is exactly the
+		// address is who the sender means, most often a group's lead named
+		// "steward". Ordinary routing takes it from here, with its usual gate.
+		if isNamed {
+			*address = named
 			return true
 		}
 		if strings.EqualFold(strings.TrimSpace(*address), stewardAddress) {
@@ -816,6 +849,31 @@ func resolveStewardAddresses(w http.ResponseWriter, req *sendReq) bool {
 		}
 	}
 	return true
+}
+
+// agentNamed finds the one active agent, other than a Steward, that address
+// names as a send would resolve it: for a word like "steward" an exact display
+// name or handle, never a conversation-id prefix. An earlier Steward shares the
+// name and is left out, so it neither claims the address nor makes it ambiguous.
+// The cached resolver keeps a miss to SQLite lookups.
+func agentNamed(address string) (agentID string, ok bool) {
+	target, matches, err := agent.ResolveSelectorCached(strings.TrimSpace(address))
+	if err == nil && target != nil {
+		matches = []*agent.Resolved{target}
+	}
+	stewards := stewardConvs()
+	found := 0
+	for _, m := range matches {
+		if m == nil || m.AgentID == "" || slices.Contains(stewards, m.ConvID) {
+			continue
+		}
+		if a, err := db.GetAgent(m.AgentID); err != nil || a == nil || !a.RetiredAt.IsZero() {
+			continue
+		}
+		agentID = m.AgentID
+		found++
+	}
+	return agentID, found == 1
 }
 
 // isLiveSteward reports whether conv is a live Steward. Its mail is untrusted
