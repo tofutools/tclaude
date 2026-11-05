@@ -606,82 +606,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// read — the agent has the text, so it must never enter the nudge queue.
 	var briefingInlined bool
 	if launchEnroll {
-		if importedID != "" {
-			preConvID = importedID
-		} else if openCodeLaunch != nil {
-			preConvID = openCodeLaunch.ConvID
-		} else {
-			preConvID = convops.GenerateUUID()
-		}
-		// Decide the briefing's launch state before inserting its inbox copy.
-		// An inlined copy must be born delivered + read in the same INSERT;
-		// inserting it unread and fixing it up after launch leaves a window where
-		// the online-message flush can claim and inject a redundant nudge.
-		spawnContextBody := buildSpawnContextBody(groupName, p.GroupContext, p.ProfileContext, p.InitialMessage, p.Attachments, p.ManagedInstructionsBody)
-		inlineCap := spawnInlineMaxChars()
-		// An offline landing has no launch prompt to inline into: its briefing
-		// stays queued and is delivered when the agent first comes online.
-		briefingInlined = !p.NoLaunch && !spawnHarness.UsesCommandInput() && spawnContextBody != "" && spawnBriefingFitsLaunch(spawnContextBody, inlineCap)
-		mid, actorCreated, fail := enrollSpawnedConv(g, p, preConvID, briefingInlined)
+		var fail *spawnFailure
+		preConvID, preMsgID, briefingInlined, fail = enrollBeforeLaunch(g, &p, &spawnArgs, spawnHarness,
+			groupName, importedID, openCodeLaunch, undo)
 		if fail != nil {
-			// Enrollment can fail with partial state already committed (the
-			// actor row, membership, task-ref). Unwind it: the conv-id was
-			// preset and its pane will never start, so anything left behind is
-			// a ghost the operator would have to clear by hand.
-			rollbackSpawnEnrollment(g, preConvID, mid, actorCreated)
 			return nil, fail
-		}
-		preMsgID = mid
-		enrolledConvID := preConvID
-		undo.add(func() { rollbackSpawnEnrollment(g, enrolledConvID, mid, actorCreated) })
-		spawnArgs.SessionID = preConvID
-		if p.DarwinRouteCapable {
-			resolvedAgentID, resolveErr := db.AgentIDForConv(preConvID)
-			if resolveErr != nil {
-				return nil, &spawnFailure{http.StatusInternalServerError, "darwin_route_launch",
-					"resolve Darwin route agent identity: " + resolveErr.Error()}
-			}
-			if p.DarwinRouteAgentID != "" && p.DarwinRouteAgentID != resolvedAgentID {
-				return nil, &spawnFailure{http.StatusConflict, "darwin_route_launch",
-					"darwin route agent identity does not match conversation owner"}
-			}
-			p.DarwinRouteAgentID = resolvedAgentID
-			if p.DarwinRouteAgentID == "" {
-				return nil, &spawnFailure{http.StatusConflict, "darwin_route_launch",
-					"Darwin route-capable launch has no stable agent identity"}
-			}
-			spawnArgs.DarwinRouteAgentID = p.DarwinRouteAgentID
-		}
-		// Match the legacy path's title gate: a name that isn't a valid rename
-		// title is not applied as the launch --name (claude records it as the
-		// conversation title), but it is still kept as the pending name (set by
-		// enrollSpawnedConv) so the dashboard shows the intended name.
-		if p.Name != "" && isValidRenameTitle(p.Name) {
-			spawnArgs.Name = p.Name
-		} else if p.Name != "" {
-			slog.Warn("spawn: name not a valid rename title; skipping launch --name",
-				"conv", preConvID, "name", p.Name)
-		}
-		// Bake the welcome into the launch prompt. When the briefing is short
-		// enough it is inlined right after the welcome so the agent acts on its
-		// first turn (no `inbox read` round-trip); a long briefing keeps the
-		// pointer welcome and stays in the inbox. buildSpawnContextBody is the
-		// SAME assembly enrollSpawnedConv stored in the inbox, recomputed here
-		// (a cheap pure function of the same inputs) so the inlined copy is
-		// byte-identical to the inbox row — no shared mutable state to drift.
-		// The inline decision above uses the SAME body and cap the prompt build
-		// receives, so the inbox state matches what actually went into the launch
-		// turn. The non-empty check keeps briefingInlined strict: an empty
-		// briefing fits the launch prompt's clean "wait" welcome but has no inbox
-		// row to consume.
-		if spawnHarness.UsesCommandInput() {
-			// For the shell pseudo-harness the brief is executable command text,
-			// not an agent welcome. Empty means an interactive shell.
-			spawnArgs.InitialPrompt = p.InitialMessage
-		} else {
-			spawnArgs.InitialPrompt = buildSpawnLaunchPrompt(p.Name, p.Role, p.Descr, groupName,
-				preMsgID, p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
-				resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), inlineCap)
 		}
 	} else if spawnHarness.NeedsSpawnSeed() {
 		// Seed-needing harness (Codex): the conv-id can't be preset, so
@@ -1379,6 +1308,95 @@ func spawnRowBelongsToLaunch(s *db.SessionRow, launchEnroll bool, preConvID stri
 		return preConvID != "" && s.ConvID == preConvID
 	}
 	return !s.CreatedAt.IsZero() && !s.CreatedAt.Before(launchedAt)
+}
+
+// enrollBeforeLaunch enrolls a launch-enrollment spawn before its fork: it
+// presets the conversation id (an imported history's, the managed server's,
+// or a fresh one), enrolls the agent with its inbox briefing (born consumed
+// when it fits inline), registers the enrollment's rollback on undo, and
+// fills the launch args: session id, Darwin route identity, --name and the
+// launch prompt. It returns the conversation id, the briefing's message id and
+// whether the briefing rode the launch prompt inline.
+func enrollBeforeLaunch(g *db.AgentGroup, p *spawnParams, spawnArgs *clcommon.SpawnArgs,
+	spawnHarness *harness.Harness, groupName, importedID string, openCodeLaunch *openCodeLaunch,
+	undo *spawnUndo) (preConvID string, preMsgID int64, briefingInlined bool, fail *spawnFailure) {
+	if importedID != "" {
+		preConvID = importedID
+	} else if openCodeLaunch != nil {
+		preConvID = openCodeLaunch.ConvID
+	} else {
+		preConvID = convops.GenerateUUID()
+	}
+	// Decide the briefing's launch state before inserting its inbox copy.
+	// An inlined copy must be born delivered + read in the same INSERT;
+	// inserting it unread and fixing it up after launch leaves a window where
+	// the online-message flush can claim and inject a redundant nudge.
+	spawnContextBody := buildSpawnContextBody(groupName, p.GroupContext, p.ProfileContext, p.InitialMessage, p.Attachments, p.ManagedInstructionsBody)
+	inlineCap := spawnInlineMaxChars()
+	// An offline landing has no launch prompt to inline into: its briefing
+	// stays queued and is delivered when the agent first comes online.
+	briefingInlined = !p.NoLaunch && !spawnHarness.UsesCommandInput() && spawnContextBody != "" && spawnBriefingFitsLaunch(spawnContextBody, inlineCap)
+	mid, actorCreated, fail := enrollSpawnedConv(g, *p, preConvID, briefingInlined)
+	if fail != nil {
+		// Enrollment can fail with partial state already committed (the
+		// actor row, membership, task-ref). Unwind it: the conv-id was
+		// preset and its pane will never start, so anything left behind is
+		// a ghost the operator would have to clear by hand.
+		rollbackSpawnEnrollment(g, preConvID, mid, actorCreated)
+		return "", 0, false, fail
+	}
+	enrolledConvID := preConvID
+	undo.add(func() { rollbackSpawnEnrollment(g, enrolledConvID, mid, actorCreated) })
+	spawnArgs.SessionID = preConvID
+	if p.DarwinRouteCapable {
+		resolvedAgentID, resolveErr := db.AgentIDForConv(preConvID)
+		if resolveErr != nil {
+			return "", 0, false, &spawnFailure{http.StatusInternalServerError, "darwin_route_launch",
+				"resolve Darwin route agent identity: " + resolveErr.Error()}
+		}
+		if p.DarwinRouteAgentID != "" && p.DarwinRouteAgentID != resolvedAgentID {
+			return "", 0, false, &spawnFailure{http.StatusConflict, "darwin_route_launch",
+				"darwin route agent identity does not match conversation owner"}
+		}
+		p.DarwinRouteAgentID = resolvedAgentID
+		if p.DarwinRouteAgentID == "" {
+			return "", 0, false, &spawnFailure{http.StatusConflict, "darwin_route_launch",
+				"Darwin route-capable launch has no stable agent identity"}
+		}
+		spawnArgs.DarwinRouteAgentID = p.DarwinRouteAgentID
+	}
+	// Match the legacy path's title gate: a name that isn't a valid rename
+	// title is not applied as the launch --name (claude records it as the
+	// conversation title), but it is still kept as the pending name (set by
+	// enrollSpawnedConv) so the dashboard shows the intended name.
+	if p.Name != "" && isValidRenameTitle(p.Name) {
+		spawnArgs.Name = p.Name
+	} else if p.Name != "" {
+		slog.Warn("spawn: name not a valid rename title; skipping launch --name",
+			"conv", preConvID, "name", p.Name)
+	}
+	// Bake the welcome into the launch prompt. When the briefing is short
+	// enough it is inlined right after the welcome so the agent acts on its
+	// first turn (no `inbox read` round-trip); a long briefing keeps the
+	// pointer welcome and stays in the inbox. buildSpawnContextBody is the
+	// SAME assembly enrollSpawnedConv stored in the inbox, recomputed here
+	// (a cheap pure function of the same inputs) so the inlined copy is
+	// byte-identical to the inbox row — no shared mutable state to drift.
+	// The inline decision above uses the SAME body and cap the prompt build
+	// receives, so the inbox state matches what actually went into the launch
+	// turn. The non-empty check keeps briefingInlined strict: an empty
+	// briefing fits the launch prompt's clean "wait" welcome but has no inbox
+	// row to consume.
+	if spawnHarness.UsesCommandInput() {
+		// For the shell pseudo-harness the brief is executable command text,
+		// not an agent welcome. Empty means an interactive shell.
+		spawnArgs.InitialPrompt = p.InitialMessage
+	} else {
+		spawnArgs.InitialPrompt = buildSpawnLaunchPrompt(p.Name, p.Role, p.Descr, groupName,
+			mid, p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
+			resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), inlineCap)
+	}
+	return preConvID, mid, briefingInlined, nil
 }
 
 // prepareManagedServer readies a server-authoritative harness (OpenCode)
