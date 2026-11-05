@@ -669,3 +669,34 @@ test('a window torn out of the split and let go on the room\'s edge over its old
   assert.ok(snappedIn(mounted, 'a'));
   assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), PAIR, 'into the cell it left');
 });
+
+// A Collab tab on its way to floating sees the targets any window dragged
+// there sees, and a drop asked for at a target lands as that drag's would
+// (tcl-r58ap3).
+test('a Collab tab off its strip sees the targets a floating window sees there', async (t) => {
+  const { harness, overlay, mounted } = await setup(t, LEFT_AND_GAP);
+  const held = await hold(harness, mounted, 'c', { x: 20, y: 5 });
+  await held.move({ x: 700, y: 120 });
+  const dragged = targetsShown(held);
+  await held.up({ x: 700, y: 120 });
+  const layer = await harness.mount(harness.html`<${overlay.CollabSnapTargets} win=${harness.window} />`);
+  await harness.act(() => { overlay.collabSnapAim.value = { x: 700, y: 120 }; });
+  const shown = { all: (selector) => [...layer.container.querySelectorAll(selector)] };
+  assert.deepEqual(targetsShown(shown), dragged);
+  await harness.act(() => { overlay.collabSnapAim.value = null; });
+  assert.equal(layer.container.querySelector('.overlay-snap-targets'), null, 'with no aim, nothing shows');
+});
+
+test('a drop asked for at an empty cell\'s box fills the cell, and one at no target leaves the window floating', async (t) => {
+  const { harness, overlay, prefs, mounted } = await setup(t, LEFT_AND_GAP);
+  const held = await hold(harness, mounted, 'c', { x: 20, y: 5 });
+  await held.move({ x: 700, y: 120 });
+  const box = held.centre('.overlay-snap-target.gap');
+  await held.up({ x: 700, y: 120 });
+  await harness.act(() => overlay.snapOverlayWindowAt('c', { x: 900, y: 600 }));
+  assert.equal(snappedIn(mounted, 'c'), false, 'off every target it floats');
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), LEFT_AND_GAP);
+  await harness.act(() => overlay.snapOverlayWindowAt('c', box));
+  assert.ok(snappedIn(mounted, 'c'));
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), { ...LEFT_AND_GAP, b: { id: 'c' } }, 'the whole cell');
+});

@@ -79,7 +79,9 @@ pending permission request, a **🔑** opens the
   overlay tab's right-click menu has the same two. Dragging a separate window's header
   back works like its button back to the dashboard. A separate window offers **Open in overlay** only while the dashboard that
   opened it is there to take it, and a terminal that can't float any more lands in a tab.
-- **Drag a tab off the strip** to float it where you drop it. What can't float opens in
+- **Drag a tab off the strip** to float it where you drop it. Once clear of the strip,
+  the snap targets an overlay window's drag shows appear: let go on one, a room edge, an
+  empty cell's box or a window's marker, and it snaps there instead. What can't float opens in
   a separate window instead: a peer's terminal and an offline agent. Drop it on an overlay window's title bar instead to join that window,
   where a marker shows. Overlay tabs drag back the same way, onto this strip or onto
   **Collab** in the main nav.
