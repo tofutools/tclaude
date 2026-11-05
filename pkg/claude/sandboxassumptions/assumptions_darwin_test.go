@@ -189,12 +189,25 @@ func assumeAllowAfterUnixSocketDeny(t *testing.T) {
 	head := "(version 1)\n(allow default)\n"
 
 	fixed := head + deny + unixDeny + allow
-	if ok := countSeatbeltTCPConnects(t, fixed, params, addr); ok != seatbeltOrderRuns {
-		t.Fatalf("allows after every deny: %d/%d connects succeeded, want all", ok, seatbeltOrderRuns)
+	if ok, sample := countSeatbeltHelperPasses(t, fixed, params, "tcp-connect",
+		map[string]string{"ASSUME_ADDR": addr.String()}); ok != seatbeltOrderRuns {
+		t.Fatalf("allows after every deny: %d/%d connects succeeded, want all; a failure:\n%s",
+			ok, seatbeltOrderRuns, sample)
+	}
+	// The mirror: the allow now follows the unix-socket deny, so it must
+	// never reopen that socket. A live listener makes a leak observable.
+	stop := startUnixEchoServer(t, unrelated)
+	defer stop()
+	if ok, sample := countSeatbeltHelperPasses(t, fixed, params, "unix-connect-denied",
+		map[string]string{"ASSUME_SOCKET": unrelated}); ok != seatbeltOrderRuns {
+		t.Fatalf("a later localhost allow reopened the denied unix socket: denied %d/%d times; a failure:\n%s",
+			ok, seatbeltOrderRuns, sample)
 	}
 	broken := head + deny + allow + unixDeny
-	t.Logf("known Apple quirk, reported only: an allow before a later unix-socket deny connected %d/%d times",
-		countSeatbeltTCPConnects(t, broken, params, addr), seatbeltOrderRuns)
+	ok, sample := countSeatbeltHelperPasses(t, broken, params, "tcp-connect",
+		map[string]string{"ASSUME_ADDR": addr.String()})
+	t.Logf("known Apple quirk, reported only: an allow before a later unix-socket deny connected %d/%d times; a failure:\n%s",
+		ok, seatbeltOrderRuns, sample)
 }
 
 // assumeInsideDenyExceptionSurvivesLaterUnixSocketDeny covers the isolated
@@ -214,24 +227,34 @@ func assumeInsideDenyExceptionSurvivesLaterUnixSocketDeny(t *testing.T) {
 (deny network-outbound (remote unix-socket (literal (param "UNRELATED"))))
 `, addr.Port)
 	params := map[string]string{"UNRELATED": unrelated}
-	if ok := countSeatbeltTCPConnects(t, profile, params, addr); ok != seatbeltOrderRuns {
-		t.Fatalf("require-not exception before a unix-socket deny: %d/%d connects succeeded, want all",
-			ok, seatbeltOrderRuns)
+	if ok, sample := countSeatbeltHelperPasses(t, profile, params, "tcp-connect",
+		map[string]string{"ASSUME_ADDR": addr.String()}); ok != seatbeltOrderRuns {
+		t.Fatalf("require-not exception before a unix-socket deny: %d/%d connects succeeded, want all; a failure:\n%s",
+			ok, seatbeltOrderRuns, sample)
 	}
 }
 
-// countSeatbeltTCPConnects runs the tcp-connect helper seatbeltOrderRuns
-// times under profile and returns how many connects succeeded.
-func countSeatbeltTCPConnects(t *testing.T, profile string, params map[string]string, addr *net.TCPAddr) int {
+// countSeatbeltHelperPasses runs one helper mode seatbeltOrderRuns times
+// under profile. It returns how many runs passed and the output of one
+// failed run, so a profile or helper error is not mistaken for a refusal.
+func countSeatbeltHelperPasses(
+	t *testing.T,
+	profile string,
+	params map[string]string,
+	mode string,
+	env map[string]string,
+) (int, string) {
 	t.Helper()
-	ok := 0
+	ok, sample := 0, ""
 	for range seatbeltOrderRuns {
-		if seatbeltHelperSucceeds(t, profile, params, "tcp-connect",
-			map[string]string{"ASSUME_ADDR": addr.String()}) {
+		passed, output := seatbeltHelperSucceeds(t, profile, params, mode, env)
+		if passed {
 			ok++
+		} else if sample == "" {
+			sample = output
 		}
 	}
-	return ok
+	return ok, sample
 }
 
 // startTCPAcceptLoop listens on 127.0.0.1 and closes every connection it
@@ -553,14 +576,15 @@ func runSeatbeltHelper(
 }
 
 // seatbeltHelperSucceeds runs one helper mode under profile, like
-// runSeatbeltHelper, but reports the outcome instead of failing the test.
+// runSeatbeltHelper, but reports the outcome and output instead of failing
+// the test.
 func seatbeltHelperSucceeds(
 	t *testing.T,
 	profile string,
 	params map[string]string,
 	mode string,
 	env map[string]string,
-) bool {
+) (bool, string) {
 	t.Helper()
 	args := []string{"-p", profile}
 	for key, value := range params {
@@ -578,7 +602,7 @@ func seatbeltHelperSucceeds(
 	if ctx.Err() != nil {
 		t.Fatalf("%s timed out\n%s", darwinSandboxExec, output)
 	}
-	return err == nil
+	return err == nil, string(output)
 }
 
 func startUnixEchoServer(t *testing.T, path string) func() {
