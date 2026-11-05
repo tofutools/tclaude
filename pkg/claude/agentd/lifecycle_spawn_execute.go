@@ -49,6 +49,23 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		return nil, &spawnFailure{Status: http.StatusForbidden, Kind: externalStewardCeilingCode,
 			Msg: "an external steward starts workers only through its pinned agent.spawn grant"}
 	}
+	// Cleanup lifetimes. Only the pre-fork undos (the managed server's cgroup
+	// and runtime, the pre-fork enrollment) ride the spawnUndo stack below. The
+	// deferred cleanups registered along the way each have their own lifetime,
+	// and their registration order is load-bearing, so they stay as flag-gated
+	// defers rather than joining the stack:
+	//   - until the fork, on failure: imported history, and the private
+	//     OpenCode state discard (registered first so it runs last, after the
+	//     conversation is undone); a failure confirmed after the fork still
+	//     runs both, through launchFailed;
+	//   - until the fork, on any return that did not launch, a successful
+	//     offline landing included: the private attachment root and the
+	//     agent-directory tree;
+	//   - past the fork, until a successful return: the route-helper credential
+	//     and a synchronous launch's pending reservation;
+	//   - on every return: the managed-instructions overlay (kept when the
+	//     launch succeeded or started) and the dir write-proof markers (handed
+	//     to the deferred server continuation when there is one).
 	privateAttachmentsLaunched := false
 	// Registered first: a deferred launch hands its state over before the
 	// checks below, and the conversation is undone while its store still exists.
@@ -499,7 +516,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// before them, as the per-return unwinding it replaces did.
 	undo := &spawnUndo{}
 	defer undo.unwindUnlessCommitted()
-	installHistory := func() *spawnFailure {
+	// installHistory takes the harness because the managed-server step swaps
+	// in the agent's own before installing into it.
+	installHistory := func(spawnHarness *harness.Harness) *spawnFailure {
 		if p.BundleHistory == nil || importedID != "" {
 			return nil
 		}
@@ -516,118 +535,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	}
 	var openCodeLaunch *openCodeLaunch
 	if spawnHarness.UsesAuthoritativeServer() {
-		rememberHTTPProxyLaunchGroup(label, g, p.PermissionOverrides)
-		resolvedCwd, err := resolveOpenCodeLaunchCwd(p.Cwd)
-		if err != nil {
-			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
-		}
-		p.Cwd = resolvedCwd
-		spawnArgs.Cwd = resolvedCwd
-		permissionJSON, err := openCodePermissionJSONForLaunch(
-			p.Cwd, p.HarnessBuiltinMode, p.ApprovalPolicy, p.ToolGovernance, p.EffectiveSandbox)
-		if err != nil {
-			return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_opencode_permission_policy",
-				"could not build OpenCode access-control policy: " + err.Error()}
-		}
-		implementation, implementationErr := sandboxpolicy.NormalizeImplementation(
-			p.SandboxImplementation)
-		if implementationErr != nil {
-			return nil, &spawnFailure{http.StatusUnprocessableEntity,
-				"unsupported_sandbox_profile_network", implementationErr.Error()}
-		}
-		if implementation == sandboxpolicy.ImplementationTclaudeLayer {
-			if p.AgentID == "" {
-				p.AgentID = db.NewAgentID()
-			}
-			discard, allocationErr := claimPrivateOpenCodeState(p.AgentID)
-			if allocationErr != nil {
-				return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
-					"failed to allocate private OpenCode state: " + allocationErr.Error()}
-			}
-			if discard != nil {
-				discardPrivateOpenCodeState = discard
-			}
-			if discardState := discardPrivateOpenCodeState; discardState != nil {
-				// Not every failure below stops the server, and it must not
-				// outlive the state it serves from.
-				discardPrivateOpenCodeState = func() {
-					if openCodeLaunch != nil {
-						_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
-					}
-					discardState()
-				}
-			}
-		}
-		sandboxSpec, err := openCodeTclaudeLayerLaunchSpec(
-			p.SandboxImplementation,
-			p.Cwd,
-			p.GitWorktreeWriteDirs,
-			p.EffectiveSandbox,
-			p.AgentID,
-			label,
-		)
-		if err != nil {
-			return nil, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_network", err.Error()}
-		}
-		resourceCgroupDir, resourceCleanup, resourceErr := prepareManagedServerResourceCgroup(
-			label, p.EffectiveSandbox, p.SandboxImplementation, p.AllowUnenforcedSandbox, false)
-		if resourceErr != nil {
-			return nil, &spawnFailure{http.StatusUnprocessableEntity,
-				"unsupported_sandbox_profile_resource_limits", resourceErr.Error()}
-		}
-		resourceStep := undo.add(resourceCleanup)
-
-		if p.BundleHistory != nil {
-			if err = prepareOpenCodeTclaudeLayerState(sandboxSpec); err != nil {
-				return nil, &spawnFailure{http.StatusInternalServerError, "history", err.Error()}
-			}
-			spawnHarness, err = openCodeHistoryForAgent(spawnHarness, p.AgentID)
-			if err != nil {
-				return nil, &spawnFailure{http.StatusInternalServerError, "history", err.Error()}
-			}
-			if fail := installHistory(); fail != nil {
-				return nil, fail
-			}
-		}
-		// An offline landing's conversation is in its store now; its server
-		// starts at resume.
-		if p.NoLaunch {
-			resourceStep.run()
-		} else {
-			openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
-				label, p.Cwd, p.Name, importedID, permissionJSON,
-				p.SandboxImplementation, sandboxSpec, resourceCgroupDir)
-			if err != nil && resourceCgroupDir != "" &&
-				errors.Is(err, errOpenCodeResourceCgroup) &&
-				degradeManagedServerResourceCgroup(
-					p.EffectiveSandbox, p.SandboxImplementation, p.AllowUnenforcedSandbox, false, err) {
-				resourceStep.run()
-				resourceCgroupDir = ""
-				openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
-					label, p.Cwd, p.Name, importedID, permissionJSON,
-					p.SandboxImplementation, sandboxSpec, "")
-			}
-			if err != nil {
-				return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
-					"failed to start managed OpenCode server: " + err.Error()}
-			}
-			// The running server owns its cgroup now; stopping it is the undo.
-			resourceStep.release()
-			undo.add(func() { _ = stopOpenCodeRuntime(openCodeLaunch.SessionID) })
-			spawnArgs.OpenCodeServerURL = openCodeLaunch.ServerURL
-			spawnArgs.OpenCodeServerPassword = openCodeLaunch.Password
-			spawnArgs.OpenCodeTransport = openCodeLaunch.Transport
-			spawnArgs.OpenCodeControlSocketPath = openCodeLaunch.ControlSocketPath
-			spawnArgs.OpenCodeControlSocketDevice = openCodeLaunch.ControlSocketDevice
-			spawnArgs.OpenCodeControlSocketInode = openCodeLaunch.ControlSocketInode
-			spawnArgs.OpenCodeServerPID = openCodeLaunch.PID
-			spawnArgs.ResourceCgroupDir = resourceCgroupDir
-			if sandboxSpec != nil {
-				spawnArgs.OpenCodeEnvironment = append(
-					[]sandboxpolicy.EnvironmentEntry(nil), sandboxSpec.Contract.Environment...)
-				spawnArgs.OpenCodeStateIsolation = db.OpenCodeStatePrivate
-			}
-			spawnArgs.SessionID = openCodeLaunch.ConvID
+		var fail *spawnFailure
+		openCodeLaunch, spawnHarness, fail = prepareManagedServer(g, &p, &spawnArgs, spawnHarness, label, undo,
+			&discardPrivateOpenCodeState, installHistory, &importedID)
+		if fail != nil {
+			return nil, fail
 		}
 	}
 
@@ -656,7 +568,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 	}
 
-	if fail := installHistory(); fail != nil {
+	if fail := installHistory(spawnHarness); fail != nil {
 		return nil, fail
 	}
 	if importedID != "" {
@@ -1467,6 +1379,137 @@ func spawnRowBelongsToLaunch(s *db.SessionRow, launchEnroll bool, preConvID stri
 		return preConvID != "" && s.ConvID == preConvID
 	}
 	return !s.CreatedAt.IsZero() && !s.CreatedAt.Before(launchedAt)
+}
+
+// prepareManagedServer readies a server-authoritative harness (OpenCode)
+// before enrollment, since its server issues the conversation id the agent
+// enrolls under. It claims private server state for a tclaude-layer launch
+// (wrapping *discardPrivateOpenCodeState so the server never outlives it),
+// installs imported history into the server's store, and starts the server in
+// its resource cgroup, degrading to no cgroup when the host allows it. An
+// offline landing installs history but starts no server. The started server
+// lands in spawnArgs, and its stop is registered on undo. It returns the
+// launch (nil when none started) and the harness, which history installation
+// may swap for the agent's own.
+func prepareManagedServer(g *db.AgentGroup, p *spawnParams, spawnArgs *clcommon.SpawnArgs,
+	spawnHarness *harness.Harness, label string, undo *spawnUndo,
+	discardPrivateOpenCodeState *func(), installHistory func(*harness.Harness) *spawnFailure,
+	importedID *string) (*openCodeLaunch, *harness.Harness, *spawnFailure) {
+	var openCodeLaunch *openCodeLaunch
+	rememberHTTPProxyLaunchGroup(label, g, p.PermissionOverrides)
+	resolvedCwd, err := resolveOpenCodeLaunchCwd(p.Cwd)
+	if err != nil {
+		return nil, spawnHarness, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	}
+	p.Cwd = resolvedCwd
+	spawnArgs.Cwd = resolvedCwd
+	permissionJSON, err := openCodePermissionJSONForLaunch(
+		p.Cwd, p.HarnessBuiltinMode, p.ApprovalPolicy, p.ToolGovernance, p.EffectiveSandbox)
+	if err != nil {
+		return nil, spawnHarness, &spawnFailure{http.StatusUnprocessableEntity, "invalid_opencode_permission_policy",
+			"could not build OpenCode access-control policy: " + err.Error()}
+	}
+	implementation, implementationErr := sandboxpolicy.NormalizeImplementation(
+		p.SandboxImplementation)
+	if implementationErr != nil {
+		return nil, spawnHarness, &spawnFailure{http.StatusUnprocessableEntity,
+			"unsupported_sandbox_profile_network", implementationErr.Error()}
+	}
+	if implementation == sandboxpolicy.ImplementationTclaudeLayer {
+		if p.AgentID == "" {
+			p.AgentID = db.NewAgentID()
+		}
+		discard, allocationErr := claimPrivateOpenCodeState(p.AgentID)
+		if allocationErr != nil {
+			return nil, spawnHarness, &spawnFailure{http.StatusInternalServerError, "spawn",
+				"failed to allocate private OpenCode state: " + allocationErr.Error()}
+		}
+		if discard != nil {
+			*discardPrivateOpenCodeState = discard
+		}
+		if discardState := *discardPrivateOpenCodeState; discardState != nil {
+			// Not every failure below stops the server, and it must not
+			// outlive the state it serves from.
+			*discardPrivateOpenCodeState = func() {
+				if openCodeLaunch != nil {
+					_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+				}
+				discardState()
+			}
+		}
+	}
+	sandboxSpec, err := openCodeTclaudeLayerLaunchSpec(
+		p.SandboxImplementation,
+		p.Cwd,
+		p.GitWorktreeWriteDirs,
+		p.EffectiveSandbox,
+		p.AgentID,
+		label,
+	)
+	if err != nil {
+		return nil, spawnHarness, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_network", err.Error()}
+	}
+	resourceCgroupDir, resourceCleanup, resourceErr := prepareManagedServerResourceCgroup(
+		label, p.EffectiveSandbox, p.SandboxImplementation, p.AllowUnenforcedSandbox, false)
+	if resourceErr != nil {
+		return nil, spawnHarness, &spawnFailure{http.StatusUnprocessableEntity,
+			"unsupported_sandbox_profile_resource_limits", resourceErr.Error()}
+	}
+	resourceStep := undo.add(resourceCleanup)
+
+	if p.BundleHistory != nil {
+		if err = prepareOpenCodeTclaudeLayerState(sandboxSpec); err != nil {
+			return nil, spawnHarness, &spawnFailure{http.StatusInternalServerError, "history", err.Error()}
+		}
+		spawnHarness, err = openCodeHistoryForAgent(spawnHarness, p.AgentID)
+		if err != nil {
+			return nil, spawnHarness, &spawnFailure{http.StatusInternalServerError, "history", err.Error()}
+		}
+		if fail := installHistory(spawnHarness); fail != nil {
+			return nil, spawnHarness, fail
+		}
+	}
+	// An offline landing's conversation is in its store now; its server
+	// starts at resume.
+	if p.NoLaunch {
+		resourceStep.run()
+	} else {
+		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
+			label, p.Cwd, p.Name, *importedID, permissionJSON,
+			p.SandboxImplementation, sandboxSpec, resourceCgroupDir)
+		if err != nil && resourceCgroupDir != "" &&
+			errors.Is(err, errOpenCodeResourceCgroup) &&
+			degradeManagedServerResourceCgroup(
+				p.EffectiveSandbox, p.SandboxImplementation, p.AllowUnenforcedSandbox, false, err) {
+			resourceStep.run()
+			resourceCgroupDir = ""
+			openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
+				label, p.Cwd, p.Name, *importedID, permissionJSON,
+				p.SandboxImplementation, sandboxSpec, "")
+		}
+		if err != nil {
+			return nil, spawnHarness, &spawnFailure{http.StatusInternalServerError, "spawn",
+				"failed to start managed OpenCode server: " + err.Error()}
+		}
+		// The running server owns its cgroup now; stopping it is the undo.
+		resourceStep.release()
+		undo.add(func() { _ = stopOpenCodeRuntime(openCodeLaunch.SessionID) })
+		spawnArgs.OpenCodeServerURL = openCodeLaunch.ServerURL
+		spawnArgs.OpenCodeServerPassword = openCodeLaunch.Password
+		spawnArgs.OpenCodeTransport = openCodeLaunch.Transport
+		spawnArgs.OpenCodeControlSocketPath = openCodeLaunch.ControlSocketPath
+		spawnArgs.OpenCodeControlSocketDevice = openCodeLaunch.ControlSocketDevice
+		spawnArgs.OpenCodeControlSocketInode = openCodeLaunch.ControlSocketInode
+		spawnArgs.OpenCodeServerPID = openCodeLaunch.PID
+		spawnArgs.ResourceCgroupDir = resourceCgroupDir
+		if sandboxSpec != nil {
+			spawnArgs.OpenCodeEnvironment = append(
+				[]sandboxpolicy.EnvironmentEntry(nil), sandboxSpec.Contract.Environment...)
+			spawnArgs.OpenCodeStateIsolation = db.OpenCodeStatePrivate
+		}
+		spawnArgs.SessionID = openCodeLaunch.ConvID
+	}
+	return openCodeLaunch, spawnHarness, nil
 }
 
 // executeServerSpawnDeferred runs an async server-authoritative (OpenCode)
