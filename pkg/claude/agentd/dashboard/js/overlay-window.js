@@ -213,6 +213,89 @@ function snapTopOf(win) {
   }
 }
 
+// splitAreaOf is the room a split fills in win: below the nav bar, to the
+// bottom of a maximized window.
+function splitAreaOf(win) {
+  const viewport = viewportOf(win);
+  const y = snapTopOf(win);
+  return { x: 0, y, w: viewport.width, h: zoneRect('max', viewport, y).h };
+}
+
+const layoutIn = (tree, area) => (tree && fits(tree, area) ? splitLayout(tree, area) : null);
+
+// snapTargets is the targets a drag of window id in win shows, the same for the
+// whole drag (tcl-7uk9l6): the room's edge and corner strips, a box at the
+// centre of each empty cell and a marker on each free edge of a tiled window.
+// tree is the split those cells and windows are in. With no split, the windows
+// snapped alone make one for it, as Snap Assist sees the room around them. It
+// reads only the split and the windows shown, never the window's own state, so
+// a window that is not open yet gets the same targets as one being dragged.
+// A window torn out of the split has left it for the drag, so the cell it
+// left is an empty cell like any other, with its box and its strips.
+export function snapTargets(id, win) {
+  const viewport = viewportOf(win);
+  const bounds = splitAreaOf(win);
+  const { edge: reach } = snapReach(viewport);
+  const zones = snapZoneRects(viewport, snapTopOf(win));
+  const savedTree = splitTree.peek();
+  const shownNow = new Set(snappedWindows.peek().keys());
+  if (liveSplit.peek()) {
+    const edges = edgeTargets(savedTree, bounds, id, { here: shownNow, alive: keepsCell, zones });
+    return { edges, split: true, tree: savedTree, ...dropTargets(savedTree, bounds, id, { here: shownNow, alive: keepsCell, reach }) };
+  }
+  // Windows snapped alone are side panels, not a tiling: the room's own
+  // strips snap there, each with its kind of snap.
+  const edges = edgeTargets(null, bounds, id, { zones });
+  const inTree = (other) => leavesOf(savedTree).includes(other);
+  const loners = [...snappedWindows.peek()].filter(([other]) => other !== id && !inTree(other));
+  const tree = loners.length ? roomTree(loners.map(([other, { zone }]) => [other, zone])) : null;
+  const drawn = new Map(loners.map(([other, { rect }]) => [other, rect()]));
+  return { edges, tree, ...(tree ? dropTargets(tree, bounds, id, { here: shownNow, reach, drawn }) : { gaps: [], markers: [] }) };
+}
+
+// snapHit is the target or edge strip of targets under raw.
+export const snapHit = (raw, targets, win) => dragHit(raw, targets, splitAreaOf(win));
+
+// snapPlan is where a drop of window id at pointer lands: { zone, tree?, guide }, or null to float.
+// Over a target, a box fills its empty cell and a marker splits its window on
+// that side; they come first, over the room's edge too. On the room's edge it
+// snaps there: over a split, as the piece of the strip there says (edgeTargets),
+// or with windows snapped alone making a tree together, each keeping its kind
+// of snap. Anywhere else it floats: nearness to an empty cell or a window does
+// nothing. snapped is the placement a snap to a zone gives the window.
+export function snapPlan(id, raw, targets, win, snapped = (zone) => zoneRect(zone, viewportOf(win), snapTopOf(win))) {
+  const bounds = splitAreaOf(win);
+  const hit = snapHit(raw, targets, win);
+  const room = hit?.edge?.zone || '';
+  const plain = room ? { zone: room, guide: snapped(room) } : null;
+  const savedTree = splitTree.peek();
+  const others = [...snappedWindows.peek()].filter(([other]) => other !== id);
+  const here = new Set([...others.map(([other]) => other), id]);
+  const planned = (made, zone = '') => {
+    const tree = normalized(made);
+    const next = tree && layoutIn(keepingWindows(tree, here), bounds);
+    const rect = next?.rects[id];
+    return rect ? { zone: zone === 'top' ? 'top-left' : zone || rectZone(rect, bounds), tree, guide: rect } : null;
+  };
+  const target = hit?.target;
+  if (target?.gap) {
+    const { rect } = target.gap;
+    return planned(withinGap(targets.tree, target.gap, { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 }, id, '', bounds));
+  }
+  if (target) return planned(withWindow(targets.tree, target.window, target.zone, id), target.zone);
+  if (!room) return null;
+  // A window outside the split cannot start a tree of its own: there is one.
+  if (targets.split) {
+    const { edge } = hit;
+    return (edge.tree && planned(edge.tree, edge.window ? edge.zone : '')) || plain;
+  }
+  // Windows snapped alone are side panels, not a tiling: only their edges and
+  // the room's make one.
+  const inTree = (other) => leavesOf(savedTree).includes(other);
+  const alone = others.filter(([other]) => !inTree(other)).map(([other, { zone }]) => [other, zone]);
+  return (alone.length && planned(roomTree([...alone, [id, room]]), room)) || plain;
+}
+
 export function reducedMotion(win) {
   try {
     return !!win?.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
@@ -276,16 +359,8 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     joinOverlayStack(id, !!placement.snap);
   });
 
-  const splitArea = () => {
-    const viewport = viewportOf(win);
-    const y = snapTop();
-    return { x: 0, y, w: viewport.width, h: zoneRect('max', viewport, y).h };
-  };
-  const layoutOf = (tree) => {
-    if (!tree) return null;
-    const area = splitArea();
-    return fits(tree, area) ? splitLayout(tree, area) : null;
-  };
+  const splitArea = () => splitAreaOf(win);
+  const layoutOf = (tree) => layoutIn(tree, splitArea());
   const layout = layoutOf(liveSplit.value);
   const cell = layout?.rects[id];
   const shown = cell ? { ...cell, snap: placement.snap } : placement;
@@ -385,75 +460,9 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
     setPlacement(snappedPlacement(snap));
   }
 
-  // The targets a drag of this window shows, the same for the whole drag
-  // (tcl-7uk9l6): the room's edge and corner strips, a box at the centre of each
-  // empty cell and a marker on each free edge of a tiled window. tree is the
-  // split those cells and windows are in. With no split, the windows snapped
-  // alone make one for it, as Snap Assist sees the room around them.
-  // A window torn out of the split has left it for the drag, so the cell it
-  // left is an empty cell like any other, with its box and its strips.
-  function dragTargets() {
-    const viewport = viewportOf(win);
-    const bounds = splitArea();
-    const { edge: reach } = snapReach(viewport);
-    const zones = snapZoneRects(viewport, snapTop());
-    const savedTree = splitTree.peek();
-    const shownNow = new Set(snappedWindows.peek().keys());
-    if (liveSplit.peek()) {
-      const edges = edgeTargets(savedTree, bounds, id, { here: shownNow, alive: keepsCell, zones });
-      return { edges, split: true, tree: savedTree, ...dropTargets(savedTree, bounds, id, { here: shownNow, alive: keepsCell, reach }) };
-    }
-    // Windows snapped alone are side panels, not a tiling: the room's own
-    // strips snap there, each with its kind of snap.
-    const edges = edgeTargets(null, bounds, id, { zones });
-    const inTree = (other) => leavesOf(savedTree).includes(other);
-    const loners = [...snappedWindows.peek()].filter(([other]) => other !== id && !inTree(other));
-    const tree = loners.length ? roomTree(loners.map(([other, { zone }]) => [other, zone])) : null;
-    const drawn = new Map(loners.map(([other, { rect }]) => [other, rect()]));
-    return { edges, tree, ...(tree ? dropTargets(tree, bounds, id, { here: shownNow, reach, drawn }) : { gaps: [], markers: [] }) };
-  }
-
-  const hitAt = (raw, targets) => dragHit(raw, targets, splitArea());
-
-  // Where a drop at pointer lands: { zone, tree?, guide }, or null to float.
-  // Over a target, a box fills its empty cell and a marker splits its window on
-  // that side; they come first, over the room's edge too. On the room's edge it
-  // snaps there: over a split, as the piece of the strip there says (edgeTargets),
-  // or with windows snapped alone making a tree together, each keeping its kind
-  // of snap. Anywhere else it floats: nearness to an empty cell or a window does
-  // nothing.
-  function dropPlan(raw, targets) {
-    const bounds = splitArea();
-    const hit = hitAt(raw, targets);
-    const room = hit?.edge?.zone || '';
-    const plain = room ? { zone: room, guide: snappedPlacement(room) } : null;
-    const savedTree = splitTree.peek();
-    const others = [...snappedWindows.peek()].filter(([other]) => other !== id);
-    const here = new Set([...others.map(([other]) => other), id]);
-    const planned = (made, zone = '') => {
-      const tree = normalized(made);
-      const next = tree && layoutOf(keepingWindows(tree, here));
-      const rect = next?.rects[id];
-      return rect ? { zone: zone === 'top' ? 'top-left' : zone || rectZone(rect, bounds), tree, guide: rect } : null;
-    };
-    const target = hit?.target;
-    if (target?.gap) {
-      const { rect } = target.gap;
-      return planned(withinGap(targets.tree, target.gap, { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 }, id, '', bounds));
-    }
-    if (target) return planned(withWindow(targets.tree, target.window, target.zone, id), target.zone);
-    if (!room) return null;
-    // A window outside the split cannot start a tree of its own: there is one.
-    if (targets.split) {
-      const { edge } = hit;
-      return (edge.tree && planned(edge.tree, edge.window ? edge.zone : '')) || plain;
-    }
-    // Windows snapped alone are side panels, not a tiling: only their edges and
-    // the room's make one.
-    const inTree = (other) => leavesOf(savedTree).includes(other);
-    const alone = others.filter(([other]) => !inTree(other)).map(([other, { zone }]) => [other, zone]);
-    return (alone.length && planned(roomTree([...alone, [id, room]]), room)) || plain;
-  }
+  const dragTargets = () => snapTargets(id, win);
+  const hitAt = (raw, targets) => snapHit(raw, targets, win);
+  const dropPlan = (raw, targets) => snapPlan(id, raw, targets, win, snappedPlacement);
 
   // With onCancel, a cancelled pointer ends the gesture through it, and
   // otherwise like a release. Escape ends it through onEscape, which is onCancel
