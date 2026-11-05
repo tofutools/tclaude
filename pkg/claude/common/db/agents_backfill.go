@@ -189,6 +189,11 @@ func backfillTimestampValue(d *sql.DB, table, column, value string) (any, error)
 	}
 	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
+		// No row and an iteration error are different failures: report the
+		// error rather than claiming the column is missing.
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf("missing timestamp column %s.%s", table, column)
 	}
 	var declaredType string
