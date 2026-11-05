@@ -11,8 +11,8 @@ import (
 )
 
 // Group membership and ownership policy shared by the daemon socket
-// (handleGroupMembers* / handleGroupOwners* in handlers.go) and the
-// dashboard (dashboardAddMember and friends in dashboard_edit.go). Each
+// (handleGroupMembers* / handleGroupOwners* in group_member_handlers.go) and
+// the dashboard (dashboardAddMember and friends in dashboard_edit.go). Each
 // surface runs its own auth and its own pre-checks first, then calls one of
 // these, and writes the returned failure in its own wire format: JSON
 // {error, code} on the socket, plain text on the dashboard.
