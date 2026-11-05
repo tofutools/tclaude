@@ -72,7 +72,8 @@ type scopedGitLab struct {
 	listCalls   int
 	listStatus  int
 	projectRead [][]string
-	projectFail bool
+	// projectStatus, when set, is every project query's answer.
+	projectStatus int
 }
 
 func (g *scopedGitLab) do(_ context.Context, _, _ string, req glAPIRequest) (glAPIResult, error) {
@@ -97,8 +98,12 @@ func (g *scopedGitLab) do(_ context.Context, _, _ string, req glAPIRequest) (glA
 		res.Header = http.Header{}
 		return res, nil
 	}
-	if g.projectFail {
-		return glAPIResult{Status: http.StatusBadGateway, Body: []byte(`{"message":"bad gateway"}`), Header: http.Header{}}, nil
+	switch g.projectStatus {
+	case 0:
+	case http.StatusTooManyRequests:
+		return glAPIResult{Status: g.projectStatus, Header: http.Header{"Retry-After": {"90"}}}, nil
+	default:
+		return glAPIResult{Status: g.projectStatus, Body: []byte(`{"message":"bad gateway"}`), Header: http.Header{}}, nil
 	}
 	var payload struct {
 		Variables map[string]string `json:"variables"`
@@ -113,6 +118,9 @@ func (g *scopedGitLab) do(_ context.Context, _, _ string, req glAPIRequest) (glA
 		// GitLab finds a project whatever the case it is asked in, and
 		// answers with its own spelling.
 		full := map[string]string{"acme/mine": "acme/mine", "acme/allowed": "Acme/Allowed"}[strings.ToLower(path)]
+		if strings.HasPrefix(path, "many/") {
+			full = path
+		}
 		if full == "" {
 			data[alias] = nil
 			continue
@@ -147,20 +155,21 @@ func scopedWorld(t *testing.T, allowed ...string) *scopedGitLab {
 }
 
 func TestPollAuthoredOpenMRs_ARefusedInstanceListIsReadProjectByProject(t *testing.T) {
-	gl := scopedWorld(t, "gitlab.example.test/acme/allowed", "gitlab.example.test/acme/*")
+	gl := scopedWorld(t, "gitlab.example.test/acme/allowed", "gitlab.example.test/acme/*", "gitlab.example.test/acme/group")
 
 	_, err := pollAuthoredOpenMRs(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, 1, gl.listCalls)
 	require.Len(t, gl.projectRead, 1)
-	assert.Equal(t, []string{"acme/mine", "acme/allowed"}, gl.projectRead[0],
-		"the Mine project and the exact allowed_remotes one; the wildcard reads nothing")
+	assert.Equal(t, []string{"acme/mine", "acme/allowed", "acme/group"}, gl.projectRead[0],
+		"the Mine project and the exact allowed_remotes ones; the wildcard reads nothing")
 
 	view := authoredOpenMRsSnapshot(loadCfg(t), nil)
 	require.NotNil(t, view)
 	require.Len(t, view.Instances, 1)
 	assert.Empty(t, view.Instances[0].EveryoneError, "a refused instance-wide list alone is not an error")
-	assert.Equal(t, 2, view.Instances[0].EveryoneByProject, "the popover says how many projects were read individually")
+	assert.Equal(t, 2, view.Instances[0].EveryoneByProject,
+		"the popover says how many projects were read individually; a path GitLab has no project for does not count")
 	assert.Equal(t, 2, view.EveryoneTotal)
 	require.Len(t, view.Projects, 2)
 	var names []string
@@ -221,7 +230,7 @@ func TestPollAuthoredOpenMRs_ARefusedListWithNothingToReadIsAnError(t *testing.T
 
 func TestPollAuthoredOpenMRs_BothPathsFailingShowsBothReasons(t *testing.T) {
 	gl := scopedWorld(t)
-	gl.projectFail = true
+	gl.projectStatus = http.StatusBadGateway
 	_, err := pollAuthoredOpenMRs(context.Background())
 	require.NoError(t, err)
 	view := authoredOpenMRsSnapshot(loadCfg(t), nil)
@@ -240,4 +249,74 @@ func TestReadEveryoneOpenMRs_A401IsNotAFallback(t *testing.T) {
 	require.Error(t, err)
 	assert.Empty(t, gl.projectRead, "a bad token is not read project by project")
 	assert.Empty(t, refused)
+}
+
+func TestReadEveryoneOpenMRs_TheFallbackKeepsTheProjectCap(t *testing.T) {
+	gl := &scopedGitLab{listStatus: http.StatusForbidden}
+	t.Cleanup(SetGitLabTransportForTest(gl.do))
+	var known []string
+	for i := range everyoneOpenMRMaxProjects + 5 {
+		known = append(known, "many/p"+strconv.Itoa(i))
+	}
+	got, _, err := readEveryoneOpenMRs(context.Background(), testMRBase, "glpat", nil, known, map[string]everyoneRefusal{}, time.Now())
+	require.NoError(t, err)
+	assert.True(t, got.truncated, "projects past the cap make all a floor")
+	assert.Equal(t, everyoneOpenMRMaxProjects, got.byProject)
+	assert.Len(t, gl.projectRead, everyoneOpenMRMaxProjects/everyoneOpenMRChunk, "five to a query")
+}
+
+func TestReadEveryoneOpenMRs_ARateLimitedFallbackHonoursTheWait(t *testing.T) {
+	gl := &scopedGitLab{listStatus: http.StatusForbidden, projectStatus: http.StatusTooManyRequests}
+	t.Cleanup(SetGitLabTransportForTest(gl.do))
+	_, retry, err := readEveryoneOpenMRs(context.Background(), testMRBase, "glpat", nil, []string{"acme/mine"},
+		map[string]everyoneRefusal{}, time.Now())
+	require.Error(t, err)
+	assert.Equal(t, 90*time.Second, retry)
+	assert.Contains(t, err.Error(), "insufficient_granular_scope")
+	assert.Contains(t, err.Error(), "rate limit")
+}
+
+func TestReadEveryoneOpenMRs_ATransientReprobeFailureKeepsReadingProjects(t *testing.T) {
+	gl := &scopedGitLab{listStatus: http.StatusBadGateway}
+	t.Cleanup(SetGitLabTransportForTest(gl.do))
+	now := time.Now()
+	refused := map[string]everyoneRefusal{testMRBase: {at: now.Add(-everyoneOpenMRReprobe), reason: "insufficient_granular_scope"}}
+	got, _, err := readEveryoneOpenMRs(context.Background(), testMRBase, "glpat", nil, []string{"acme/mine"}, refused, now)
+	require.NoError(t, err, "a 5xx on the re-probe says nothing new about the token")
+	assert.Equal(t, 1, gl.listCalls)
+	assert.Equal(t, 1, got.byProject)
+	assert.Equal(t, now, refused[testMRBase].at, "and the next re-probe waits its interval")
+	assert.Equal(t, "insufficient_granular_scope", refused[testMRBase].reason)
+}
+
+func TestPollAuthoredOpenMRs_ANewTokenAsksTheInstanceWideListAgain(t *testing.T) {
+	gl := scopedWorld(t)
+	_, err := pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err)
+	_, err = pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, gl.listCalls, "remembered under the same token")
+
+	policy := loadCfg(t).ResolvedGitProxy()
+	require.NoError(t, os.WriteFile(policy.GitLabTokenFile, []byte("glpat-wider\n"), 0o600))
+	_, err = pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 2, gl.listCalls, "a refusal recorded for one token is not held against another")
+}
+
+func TestPollAuthoredOpenMRs_AnAgentsProjectIsReadFirstInTheFallback(t *testing.T) {
+	gl := scopedWorld(t, "gitlab.example.test/acme/allowed")
+	agents := []dashboardAgent{{AgentID: "agt_a", repoLinksView: repoLinksView{BranchURL: testMRBase + "/Acme/Allowed/-/tree/topic"}}}
+	// Every snapshot records the agents' projects for the poller.
+	openMRProjectsSnapshot(nil, agents)
+	_, err := pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err)
+	require.Len(t, gl.projectRead, 1)
+	assert.Equal(t, []string{"acme/allowed", "acme/mine"}, gl.projectRead[0],
+		"the agent's project first, and not again for its allowed_remotes entry")
+	view := authoredOpenMRsSnapshot(loadCfg(t), agents)
+	require.NotNil(t, view)
+	require.NotEmpty(t, view.Projects)
+	assert.Equal(t, "Acme/Allowed", view.Projects[0].Project)
+	assert.True(t, view.Projects[0].Agents)
 }
