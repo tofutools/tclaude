@@ -671,3 +671,47 @@ func ListActiveGroupMemberRoles() ([]ActiveGroupMemberRole, error) {
 		WHERE ag.retired_at IS NULL AND trim(m.role) != ''
 		GROUP BY m.group_id, m.role ORDER BY m.group_id, m.role`)
 }
+
+// FindAgentMembersBySelector returns every row whose conv_id matches
+// the selector. Used as a fallback by the agent CLI's target resolver:
+// a conv that was just added to a group via spawn lives in
+// agent_group_members before its .jsonl is scanned into conv_index, so
+// the conv_index-only resolver can't find it by title yet — but its
+// conv_id is already resolvable here.
+//
+// Match rules:
+//   - exact conv_id
+//   - prefix on conv_id (8+ chars typed, like the rest of tclaude)
+//
+// Returns rows in the order seen; the caller is responsible for
+// deduping by conv_id and reporting ambiguity.
+func FindAgentMembersBySelector(selector string) ([]*AgentGroupMember, error) {
+	if selector == "" {
+		return nil, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	// Membership is agent-keyed; match the selector against ANY of the actor's
+	// conversation generations (agent_conversations), then return its rows with
+	// the actor's current conv for the ConvID field. The IN-subquery (rather
+	// than a JOIN on agent_conversations) avoids fan-out when a prefix matches
+	// several generations of the same actor.
+	q := `SELECT m.group_id, ag.current_conv_id, m.role, m.descr, m.joined_at
+		FROM agent_group_members m
+		JOIN agents ag ON ag.agent_id = m.agent_id
+		WHERE m.agent_id IN (
+			SELECT agent_id FROM agent_conversations WHERE conv_id = ? OR conv_id LIKE ?
+		)
+		ORDER BY m.joined_at DESC`
+	return queryRows(d, func(rows rowScanner) (*AgentGroupMember, error) {
+		var m AgentGroupMember
+		var joined dbTimestamp
+		if err := rows.Scan(&m.GroupID, &m.ConvID, &m.Role, &m.Descr, &joined); err != nil {
+			return nil, err
+		}
+		m.JoinedAt = joined.Time()
+		return &m, nil
+	}, q, selector, selector+"%")
+}
