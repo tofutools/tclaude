@@ -2823,12 +2823,27 @@ func resumeLaunchCmdWithEffectiveSandbox(
 				spec.TclaudeExecutable = session.TclaudeLayerConstructedRootTclaudePath
 			}
 		}
+		// The agent's own attachment and morph directories, as `session new`
+		// grants them: the wall hides their daemon-owned parents from every
+		// launch and reopens only these. An attachment directory created here
+		// is left in place if a later step fails, unlike a fresh launch's
+		// undo: it is empty and keyed to this session row, and the attachment
+		// sweep removes it once stale.
+		//
+		// No managed-instructions read path, deliberately: that root is a
+		// per-launch directory agentd creates for `session new
+		// --managed-instructions-root`, and this resume never has one.
+		privateWriteDirs, _, privateErr := session.TclaudeLayerAgentPrivateWriteDirs(sessionID, convID)
+		if privateErr != nil {
+			return "", "", nil, privateErr
+		}
 		launchSpec, specErr := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
 			HarnessName:      h.Name,
 			StateRoot:        spec.HarnessStateDir,
 			Cwd:              resumeCwd,
 			GitWriteDirs:     tclaudeLayerContractWriteDirs,
 			Snapshot:         effectiveSandbox,
+			PrivateWriteDirs: privateWriteDirs,
 			HarnessReadPaths: harnessReadPaths,
 		})
 		if specErr != nil {

@@ -29,6 +29,44 @@ type tclaudeLayerLaunchStepInput struct {
 	harnessReadPaths       []string
 }
 
+// TclaudeLayerAgentPrivateWriteDirs is the agent's own share of the private
+// write dirs behind tclaude's sandbox, whose daemon-owned parents every launch
+// hides: the session's attachment directory, whose paths the agent is handed,
+// and any morph artifacts directory, which a cross-harness morph left for the
+// agent and points it at on every later launch. The attachment directory is
+// created when missing; createdAttachmentDir names it then, so a failed launch
+// can remove it again while it is still empty. `session new` and the conv
+// resume paths both call it, so a resumed pane sees what a fresh one does.
+func TclaudeLayerAgentPrivateWriteDirs(sessionID, convID string) (dirs []TclaudeLayerPrivateWriteDir, createdAttachmentDir string, err error) {
+	privateAttachmentDir, privateAttachmentDirCreated, prepareErr :=
+		common.PrepareSpawnAttachmentsPrivateDir(sessionID)
+	if prepareErr != nil {
+		return nil, "", fmt.Errorf(
+			"prepare tclaude’s sandbox private attachment directory: %w",
+			prepareErr,
+		)
+	}
+	if privateAttachmentDirCreated {
+		createdAttachmentDir = privateAttachmentDir
+	}
+	dirs = append(dirs, TclaudeLayerPrivateWriteDir{
+		Parent:  common.SpawnAttachmentsPrivateBase(),
+		Current: privateAttachmentDir,
+	})
+	// A cross-harness morph left this agent's translated history there,
+	// and the agent is pointed at it on every later launch.
+	if convID != "" {
+		if agentID, err := db.AgentIDForConv(convID); err == nil {
+			if dir := common.ExistingMorphArtifactsDir(agentID); dir != "" {
+				dirs = append(dirs, TclaudeLayerPrivateWriteDir{
+					Parent: common.MorphArtifactsBase(), Current: dir,
+				})
+			}
+		}
+	}
+	return dirs, createdAttachmentDir, nil
+}
+
 // prepareTclaudeLayerLaunch is runNew's outer-wall step. Under tclaude's
 // sandbox it collects the private write dirs (the Codex runtime dir, the
 // session's attachment dir, whose creation undo removes again while empty,
@@ -41,34 +79,16 @@ func prepareTclaudeLayerLaunch(in tclaudeLayerLaunchStepInput, undo *launchundo.
 		if in.codexRuntimeDir != nil {
 			privateWriteDirs = append(privateWriteDirs, *in.codexRuntimeDir)
 		}
-		privateAttachmentDir, privateAttachmentDirCreated, prepareErr :=
-			common.PrepareSpawnAttachmentsPrivateDir(in.sessionID)
+		agentDirs, createdAttachmentDir, prepareErr := TclaudeLayerAgentPrivateWriteDirs(in.sessionID, in.convID)
 		if prepareErr != nil {
-			return TclaudeLayerLaunchSpec{}, fmt.Errorf(
-				"prepare tclaude’s sandbox private attachment directory: %w",
-				prepareErr,
-			)
+			return TclaudeLayerLaunchSpec{}, prepareErr
 		}
-		if privateAttachmentDirCreated {
+		if createdAttachmentDir != "" {
 			// Never recursively delete a root that gained an upload while
 			// launch was in flight; os.Remove succeeds only while empty.
-			undo.Add(func() { _ = os.Remove(privateAttachmentDir) })
+			undo.Add(func() { _ = os.Remove(createdAttachmentDir) })
 		}
-		privateWriteDirs = append(privateWriteDirs, TclaudeLayerPrivateWriteDir{
-			Parent:  common.SpawnAttachmentsPrivateBase(),
-			Current: privateAttachmentDir,
-		})
-		// A cross-harness morph left this agent's translated history there,
-		// and the agent is pointed at it on every later launch.
-		if in.convID != "" {
-			if agentID, err := db.AgentIDForConv(in.convID); err == nil {
-				if dir := common.ExistingMorphArtifactsDir(agentID); dir != "" {
-					privateWriteDirs = append(privateWriteDirs, TclaudeLayerPrivateWriteDir{
-						Parent: common.MorphArtifactsBase(), Current: dir,
-					})
-				}
-			}
-		}
+		privateWriteDirs = append(privateWriteDirs, agentDirs...)
 	}
 	var layerSpec TclaudeLayerLaunchSpec
 	if in.outerLayer && tclaudeLayerWrapsPane(in.h.Name) {
