@@ -40,7 +40,7 @@ import { LockBadge, knownLock, resourceLocked, setResourceLock } from './resourc
 import { boardOverlays, openBoardPane, openLinkedBoard, revealBoardWindow } from './board-overlay-state.js';
 import { terminalWindowsShowing } from './terminal-window.js';
 import { agentSessionSeed, chatAgentOfPane, overlayablePane } from './terminal-window-model.js';
-import { droppedAt } from './overlay-window-model.js';
+import { droppedAt, viewportOf } from './overlay-window-model.js';
 import { collabSnapAim, collabSnapsAt } from './overlay-window.js';
 import { CHAT_WINDOW_KIND } from './chat-window-model.js';
 import { overlayTabs } from './overlay-instances.js';
@@ -136,24 +136,19 @@ function composeAgent(pane) {
 }
 const SAFE_REMOTE_AGENT = /^agt_[A-Za-z0-9]{4,64}$/;
 
-// While a terminal drag is in flight, follow the pointer so the surface can say
-// "release here and this terminal leaves" before the user commits. The same
-// geometry decides the gesture on dragend, so the hint never lies.
-//
-// The listener also accepts the drag across the rest of the page. A browser
-// draws the "no drop" cursor over anything that has not called preventDefault
-// on dragover, so without this the gesture spent its whole life under a
-// prohibition sign while being perfectly willing to fire on release. Accepting
-// is scoped to a live terminal drag and never overrides a target that already
-// claimed the event, so the tab strip's own reorder edges keep their meaning.
 // useCollabSnapAim tells the overlay where a tab that can float is while it is
 // dragged clear of the strip, so the overlay shows what it would snap to there
 // (collabSnapAim). Inside the strip, a reorder shows none; over a window's strip
 // it joins that window, so it shows none there either; and leaving the browser
-// takes the aim away, so a release outside it is not a snap.
+// takes the aim away. It listens in the capture phase, ahead of the strip's tabs
+// and the windows' strips, which stop the drag's events going further, and a
+// window's strip taking the tab clears it at once.
 function useCollabSnapAim(active, regionRef) {
   useEffect(() => {
     if (!active) return undefined;
+    const joins = effect(() => {
+      if (tabDropTarget.value) collabSnapAim.value = null;
+    });
     const onDragOver = (event) => {
       const off = !!collabDrag.peek()?.floats && !tabDropTarget.peek() && dragLeftRegion(event, regionRef.current);
       const aim = off ? { x: event.clientX, y: event.clientY } : null;
@@ -166,16 +161,37 @@ function useCollabSnapAim(active, regionRef) {
       const { clientX: x, clientY: y } = event;
       if (x <= 0 || y <= 0 || x >= (view?.innerWidth ?? Infinity) || y >= (view?.innerHeight ?? Infinity)) collabSnapAim.value = null;
     };
-    document.addEventListener('dragover', onDragOver);
-    document.addEventListener('dragleave', onDragLeave);
+    document.addEventListener('dragover', onDragOver, true);
+    document.addEventListener('dragleave', onDragLeave, true);
     return () => {
-      document.removeEventListener('dragover', onDragOver);
-      document.removeEventListener('dragleave', onDragLeave);
+      joins();
+      document.removeEventListener('dragover', onDragOver, true);
+      document.removeEventListener('dragleave', onDragLeave, true);
       collabSnapAim.value = null;
     };
   }, [active]);
 }
 
+// snapPointOf is where a drag that showed snap targets was let go, if a drop
+// there snaps: never past the page's edge, which a release outside the browser
+// reports, nor at 0, 0, which a cancelled drag does.
+function snapPointOf({ clientX: x, clientY: y }, win = globalThis.window) {
+  const { width, height } = viewportOf(win);
+  const inside = Number.isFinite(x) && Number.isFinite(y) && (x > 0 || y > 0) && x >= 0 && y >= 0 && x < width && y < height;
+  const at = inside ? { x, y } : null;
+  return at && collabSnapsAt(at, win) ? at : null;
+}
+
+// While a terminal drag is in flight, follow the pointer so the surface can say
+// "release here and this terminal leaves" before the user commits. The same
+// geometry decides the gesture on dragend, so the hint never lies.
+//
+// The listener also accepts the drag across the rest of the page. A browser
+// draws the "no drop" cursor over anything that has not called preventDefault
+// on dragover, so without this the gesture spent its whole life under a
+// prohibition sign while being perfectly willing to fire on release. Accepting
+// is scoped to a live terminal drag and never overrides a target that already
+// claimed the event, so the tab strip's own reorder edges keep their meaning.
 function useDragOutArmed(active, regionRef) {
   const [armed, setArmed] = useState(false);
   useEffect(() => {
@@ -1424,7 +1440,7 @@ function TerminalTabs({
     }
     if (!detach) return;
     if (paneFloats(state.panes.value.find((pane) => pane.key === key), snapshot?.value)) {
-      void actions.openPaneInOverlay(key, { at: droppedAt(event), snapAt: aim && collabSnapsAt(aim, globalThis.window) ? aim : null });
+      void actions.openPaneInOverlay(key, { at: droppedAt(event), snapAt: aim ? snapPointOf(event) : null });
       return;
     }
     void actions.popOutPane(key, {
@@ -1440,7 +1456,13 @@ function TerminalTabs({
     const bounds = element.getBoundingClientRect();
     return event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
   };
+  // A drag over the strip's own tabs, gaps and pills is a reorder: no snap
+  // targets. Those stop the event short of the page's listener, so they say so.
+  const overStrip = () => {
+    if (collabSnapAim.peek()) collabSnapAim.value = null;
+  };
   const tabDragOver = (event, targetKey) => {
+    overStrip();
     const groupDrag = dragGroupIdRef.current;
     if (groupDrag) {
       // A stack cannot land on one of its own tabs.
@@ -1520,6 +1542,7 @@ function TerminalTabs({
   const groupMembers = (groupID) =>
     current.segments.find((segment) => segment.type === 'group' && segment.group.id === groupID)?.panes || [];
   const groupDragOver = (event, groupID) => {
+    overStrip();
     const groupDrag = dragGroupIdRef.current;
     if (groupDrag) {
       // Dropping one stack on another places it beside that stack, never inside.
@@ -1567,6 +1590,7 @@ function TerminalTabs({
   // gaps at the group boundaries close that hole: a drop parks the tab there,
   // ungrouped, beside the stack. `gap` is `${groupID}:before|after`.
   const gapDragOver = (event, gap) => {
+    overStrip();
     if ((!dragKeyRef.current && !dragGroupIdRef.current) || event.defaultPrevented) return;
     event.preventDefault();
     event.stopPropagation();
@@ -1616,6 +1640,7 @@ function TerminalTabs({
     return Boolean(key) && !(segment.type === 'pane' && segment.pane.key === key);
   };
   const endZoneDragOver = (event) => {
+    overStrip();
     if ((!dragKeyRef.current && !dragGroupIdRef.current) || event.defaultPrevented) return;
     if (!endZoneActive()) { if (stripGap === 'end') setStripGap(null); return; }
     event.preventDefault();

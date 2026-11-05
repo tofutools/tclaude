@@ -523,15 +523,20 @@ export function useOverlayWindow({ id = '', win, prefs, prefKey, defaultPlacemen
   }
 
   // A drop asked for from outside the window's own drag, by a Collab tab let go
-  // as this window: it lands as a drag of this window let go there would.
+  // as this window: it lands as a drag of this window let go there would, with
+  // what this render knows.
+  const requested = useRef(null);
+  requested.current = (pointer) => {
+    const plan = dropPlan(pointer, dragTargets());
+    if (plan) snapTo(plan, shownRef.current);
+  };
   useEffect(() => (id && snaps ? effect(() => {
     const pointer = snapRequests.value.get(id);
     if (!pointer) return;
     const rest = new Map(snapRequests.peek());
     rest.delete(id);
     snapRequests.value = rest;
-    const plan = dropPlan(pointer, dragTargets());
-    if (plan) snapTo(plan, shownRef.current);
+    requested.current(pointer);
   }) : undefined), [id, snaps]);
 
   function dragWindow(event) {

@@ -1348,3 +1348,42 @@ scenario('a board dragged off the strip and let go on no target floats there', a
   const saved = JSON.parse(dashPrefs.getItem(`${island.BOARD_OVERLAY_PLACEMENT_PREF}.plan`));
   assert.deepEqual([saved.x, saved.y, saved.snap], [280, 286, '']);
 });
+
+// Back over the strip's own tabs, whose dragover stops there, the targets go:
+// the aim listens ahead of them. And a release past the page's edge, as one
+// outside the browser reports, floats though the last aim was on a target.
+scenario('a board dragged back over a strip tab shows no targets, and let go outside the page does not snap', async ({ harness, host, overlayState, island, dashPrefs }) => {
+  await harness.act(async () => { await overlayState.openBoardPane('plan', 'Release plan'); await overlayState.openBoardPane('map', 'Team map'); await wait(); await wait(); });
+  const strip = host.querySelector('.mux-tabs');
+  strip.getBoundingClientRect = () => ({ left: 0, top: 0, right: 400, bottom: 30, width: 400, height: 30 });
+  const tabOf = (label) => [...host.querySelectorAll('.mux-tab')].find((node) => node.textContent.includes(label));
+  const edges = () => [...harness.document.querySelectorAll('.overlay-snap-targets .overlay-snap-edge')];
+  const tab = tabOf('Release plan');
+  await harness.act(async () => { harness.fireEvent(tab, 'dragstart', { dataTransfer: { setData() {} } }); await wait(); });
+  await dragOver(harness, 600, 400);
+  assert.ok(edges().length > 0);
+  let reached = false;
+  const reach = () => { reached = true; };
+  harness.document.addEventListener('dragover', reach);
+  await harness.act(async () => { harness.fireEvent(tabOf('Team map'), 'dragover', { clientX: 200, clientY: 10, dataTransfer: { dropEffect: '' } }); await wait(); });
+  harness.document.removeEventListener('dragover', reach);
+  assert.equal(reached, false, 'the strip tab stops the event going further');
+  assert.equal(edges().length, 0, 'over a strip tab, no targets');
+  await dragOver(harness, 600, 400);
+  assert.ok(edges().length > 0);
+  // A window's strip taking the tab, as its title bar does on dragover, which
+  // also stops the event there: it joins that window, so no snap shows.
+  const { aimFromCollab } = await harness.importDashboardModule('js/overlay-tab-drag.js');
+  await harness.act(async () => { aimFromCollab({ windowId: 'board:map', index: 0, groupId: '' }); await wait(); });
+  assert.equal(edges().length, 0, 'joining a window\'s strip, no targets');
+  await harness.act(async () => { aimFromCollab(null); await wait(); });
+  const left = await (async () => { await dragOver(harness, 600, 400); return centreOf(edges().find((node) => node.dataset.snapZone === 'left')); })();
+  await dragOver(harness, left.x, left.y);
+  await harness.act(async () => {
+    harness.fireEvent(tab, 'dragend', { clientX: -40, clientY: left.y, screenX: -40, screenY: left.y });
+    await wait(5);
+    await wait(5);
+  });
+  const saved = JSON.parse(dashPrefs.getItem(`${island.BOARD_OVERLAY_PLACEMENT_PREF}.plan`));
+  assert.equal(saved.snap, '', 'let go outside the page, it floats');
+});
