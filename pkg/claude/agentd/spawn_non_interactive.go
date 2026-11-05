@@ -396,7 +396,7 @@ func wrapOneShotLayer(
 	if err := session.PrepareTclaudeLayerHarnessState(spec); err != nil {
 		return "", err
 	}
-	binary, _, err := session.ResolveTclaudeLayerServerForEngine(posture, root, spec.Contract.NetworkEngine)
+	binary, _, err := resolveOneShotLayerServer(posture, root, spec.Contract.NetworkEngine)
 	if err != nil {
 		return "", err
 	}
@@ -409,6 +409,11 @@ func wrapOneShotLayer(
 	}
 	return session.WrapTclaudeLayerServerSpec(binary, spec, command)
 }
+
+// resolveOneShotLayerServer finds the launcher binary for a one-shot behind
+// tclaude's sandbox. A variable so tests can render the command without
+// probing the host's bwrap.
+var resolveOneShotLayerServer = session.ResolveTclaudeLayerServerForEngine
 
 func quoteOneShotArgv(argv []string) string {
 	quoted := make([]string, len(argv))
