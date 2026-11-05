@@ -22,11 +22,11 @@ func (openCodeToolGovernance) Modes() []string {
 func (openCodeToolGovernance) ModeHelp(policy string) string {
 	switch strings.TrimSpace(policy) {
 	case OpenCodeToolsAllow:
-		return "Allow bash, glob, grep, lsp, task, and skill in every sandbox mode."
+		return "Allow bash, glob, grep, lsp, and skill in every sandbox mode. OpenCode sub-agents (task) are always off under tclaude."
 	case OpenCodeToolsAsk:
-		return "Ask before bash, glob, grep, lsp, task, or skill runs in every sandbox mode. ⚠ Detached agents can block waiting for a human response."
+		return "Ask before bash, glob, grep, lsp, or skill runs in every sandbox mode. OpenCode sub-agents (task) are always off under tclaude. ⚠ Detached agents can block waiting for a human response."
 	case OpenCodeToolsDeny:
-		return "Deny bash, glob, grep, lsp, task, and skill without prompting in every sandbox mode."
+		return "Deny bash, glob, grep, lsp, and skill without prompting in every sandbox mode. OpenCode sub-agents (task) are always off under tclaude."
 	default:
 		return ""
 	}

@@ -1288,7 +1288,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       })}
       help=${approvalHelp} open=${helpOpen === approvalID} setOpen=${setHelpOpen}
       disabled=${!hEntry?.can_approval || !showApprovalControls} />
-    <${HelpField} id=${toolsID} label="Tool governance" title="Uniform action for OpenCode's bash, glob, grep, lsp, task, and skill tools."
+    <${HelpField} id=${toolsID} label="Tool governance" title="Uniform action for OpenCode's bash, glob, grep, lsp, and skill tools. OpenCode sub-agents (task) are always off under tclaude."
       value=${draft.tools}
       options=${(hEntry?.tools_modes || []).map((value) => ({ value, label: value + (value === hEntry.default_tools ? ' (recommended)' : '') }))}
       onChange=${(event) => change(setDraft, 'tools', event.currentTarget.value)}

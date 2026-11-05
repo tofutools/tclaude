@@ -457,10 +457,24 @@ background refresh, so it may briefly report empty rather than guess.
 
 **Tool governance.** OpenCode gets an axis no other harness has:
 `--tools allow|ask|deny` applies one permission action uniformly to its
-built-in bash, glob, grep, LSP, task, and skill tools. `allow` (default) runs
+built-in bash, glob, grep, LSP, and skill tools. `allow` (default) runs
 them without prompting; `ask` prompts (and can stall a detached agent);
 `deny` blocks them. It is independent of the approval selector below and is
 preserved across clone, resume, and reincarnate.
+
+**Sub-agents are off.** OpenCode's task tool, which hands work to a
+sub-agent such as `explore` or `general`, is always denied under tclaude, in
+every sandbox mode and whatever the tool-governance setting. OpenCode then
+hides the tool, so the main agent reads and searches files itself, and every
+OpenCode spawn says so in its launch notes. The reason: tclaude's permission
+policy is a per-session rule list that starts by denying everything and then
+allows what the launch may do. When OpenCode (1.18.6) creates a sub-agent
+session, it copies only the parent's deny rules into it, so the sub-agent got
+the deny-all and none of the allows, and could not read a single file. The
+alternatives either widen the policy (moving it into OpenCode config, where a
+project or remote config can override it) or race OpenCode's own startup of
+the sub-agent, so tclaude turns sub-agents off until OpenCode can give a
+sub-agent its parent's full rules.
 
 **Sandbox — read this caveat.** OpenCode's `access-control` mode (the
 `--sandbox` default) compiles tclaude's path and permission rules into

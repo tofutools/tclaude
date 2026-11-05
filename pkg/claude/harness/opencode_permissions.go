@@ -69,7 +69,49 @@ func OpenCodeWorktree(cwd string) string {
 // BuildOpenCodePermissionRules renders the complete, ordered session policy.
 // It is intentionally allowlist-shaped: an unknown or newly added OpenCode
 // tool remains caught by the leading deny-all rule until it is audited.
+//
+// The policy always ends by denying OpenCode's task tool, so sub-agents are
+// off under tclaude. See openCodeSubagentDenyRule for why.
 func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermissionRule, error) {
+	rules, err := buildOpenCodePermissionRules(spec)
+	if err != nil {
+		return nil, err
+	}
+	return append(rules, openCodeSubagentDenyRule), nil
+}
+
+// openCodeSubagentDenyRule turns OpenCode's task tool (its sub-agents) off.
+//
+// tclaude's policy is a per-session ruleset, deliberately: the session rules
+// are evaluated after every config layer (global, project, remote org, and
+// per-agent config), so nothing the agent or a repo writes can widen them.
+// But when the task tool creates a sub-agent session, OpenCode 1.18.6 copies
+// only the parent session's deny and external_directory rules into it
+// (deriveSubagentSessionPermission). The child inherits the leading deny-all
+// rule and none of the allows, so it could not read, search, or run anything,
+// and the parent saw "permission denied" for work it had delegated.
+//
+// Neither repair gives the child exactly the parent's authority. Moving the
+// policy into config would let a colliding project or remote key reorder it
+// and widen it; patching the child after creation races OpenCode's prompt
+// loop, which snapshots the session permission when the child starts. A
+// trailing deny with pattern "*" makes OpenCode hide the tool altogether
+// (Permission.disabled), so the primary agent does that work itself.
+//
+// It is appended after tool governance on purpose: no governance setting can
+// produce a working sub-agent, so letting one re-enable task would only bring
+// the broken delegation back. Lift this once OpenCode can hand a child the
+// parent's full session ruleset.
+// OpenCodeSubagentsOffNote is the launch note every OpenCode spawn carries.
+const OpenCodeSubagentsOffNote = "OpenCode sub-agents (its task tool) are off under tclaude: " +
+	"OpenCode gives a sub-agent only the deny rules of tclaude's permission policy, " +
+	"so it could not read or search files. The main agent does that work itself."
+
+var openCodeSubagentDenyRule = OpenCodePermissionRule{
+	Permission: "task", Pattern: "*", Action: openCodeActionDeny,
+}
+
+func buildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermissionRule, error) {
 	harnessBuiltinMode, err := (openCodeSandbox{}).ValidateMode(spec.HarnessBuiltinMode)
 	if err != nil || harnessBuiltinMode == "" {
 		if err != nil {
@@ -209,11 +251,16 @@ func appendOpenCodeTclaudeLayerRules(
 	return appendOpenCodeWebRules(rules, approval, network)
 }
 
+// openCodeGovernedTools are the built-in tools the tool-governance setting
+// controls. OpenCode's task tool is absent: it is always denied.
+var openCodeGovernedTools = []string{"bash", "glob", "grep", "lsp", "skill"}
+
 func appendOpenCodeToolRules(
 	rules []OpenCodePermissionRule,
 	action string,
 ) []OpenCodePermissionRule {
-	for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
+	// task is governed by openCodeSubagentDenyRule, not here.
+	for _, permission := range openCodeGovernedTools {
 		rules = append(rules, OpenCodePermissionRule{
 			Permission: permission, Pattern: "*", Action: action,
 		})

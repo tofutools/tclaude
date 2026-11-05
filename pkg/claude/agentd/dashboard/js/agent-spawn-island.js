@@ -1797,7 +1797,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
       help=${reviewerHelp} open=${helpOpen === 'agent-spawn-approval-reviewer'} setOpen=${setHelpOpen}
       disabled=${!view.showApprovalReviewer || !showApprovalControls} busy=${busy} />
     <${HelpField} id="agent-spawn-tools" label="Tool governance"
-      title="Uniform action for OpenCode's bash, glob, grep, lsp, task, and skill tools."
+      title="Uniform action for OpenCode's bash, glob, grep, lsp, and skill tools. OpenCode sub-agents (task) are always off under tclaude."
       value=${draft.tools} options=${SettingOptions({ setting: view.tools })}
       onChange=${(event) => update('tools', event.currentTarget.value)}
       help=${toolsHelp} open=${helpOpen === 'agent-spawn-tools'} setOpen=${setHelpOpen}
