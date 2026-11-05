@@ -24,6 +24,23 @@ function fakeSource(harness, { status = 'ready', context = FIXTURE, error = '' }
   return source;
 }
 
+// startFrom opens a group's start form the way the operator does: ＋ New,
+// then the process item for that scope.
+async function startFrom(harness, el, scope = 'group') {
+  await harness.act(() => harness.fireEvent(el.querySelector('[data-resource-add]'), 'click'));
+  await harness.act(() => harness.fireEvent(el.querySelector(scope === 'agent' ? '[data-resource-add-process-agent]' : '[data-resource-add-process]'), 'click'));
+}
+
+// waitForCondition polls, instead of a fixed number of ticks, for state that
+// several chained async loads produce.
+async function waitForCondition(harness, condition, message) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    if (condition()) return;
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+  }
+  assert.ok(condition(), message);
+}
+
 async function settle(harness) {
   for (let i = 0; i < 3; i++) await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 }
@@ -128,7 +145,7 @@ test('+ start process starts a run scoped to the group and refreshes', async (t)
   };
   const { harness, group, source } = await mountFocus(t, { api });
   const fe = group('frontend-squad');
-  await harness.act(() => harness.fireEvent(fe.querySelector('[data-process-start="frontend-squad"]'), 'click'));
+  await startFrom(harness, fe);
   await settle(harness);
   const form = fe.querySelector('form.gp-start-form');
   assert.equal(form.getAttribute('aria-label'), 'Start a process in frontend-squad');
@@ -250,8 +267,9 @@ test('the start form asks for params and explicit program authorization', async 
   };
   const { harness, group } = await mountFocus(t, { api });
   const fe = group('frontend-squad');
-  await harness.act(() => harness.fireEvent(fe.querySelector('[data-process-start="frontend-squad"]'), 'click'));
-  await settle(harness);
+  await startFrom(harness, fe);
+  // The form reads the templates, then the chosen one's requirements.
+  await waitForCondition(harness, () => fe.querySelector('form.gp-start-form [data-start-param="issue"]'), 'the start form lists the template params');
   const form = fe.querySelector('form.gp-start-form');
   const submit = form.querySelector('button[type="submit"]');
   assert.ok(submit.disabled, 'a required param blocks the start');
@@ -437,7 +455,7 @@ test('the group row mirrors the Agents row: agent process, group process, resume
   await harness.act(async () => { fe.querySelector('[data-process-resume-all]').click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
   assert.deepEqual(calls.at(-1), ['resume', 'run_release']);
 
-  await harness.act(() => harness.fireEvent(fe.querySelector('[data-process-start-agent="frontend-squad"]'), 'click'));
+  await startFrom(harness, fe, 'agent');
   await settle(harness);
   const form = fe.querySelector('form.gp-start-form[data-start-scope="agent"]');
   assert.equal(form.getAttribute('aria-label'), 'Start a process for one agent in frontend-squad');
@@ -465,11 +483,16 @@ test('Both shows each group\'s members and runs as sections, each with its contr
     assert.equal(head(fe, 'agents').querySelector(`[data-act="${act}"]`), null, `${act} left the open Agents line`);
   }
   assert.equal(section(fe, 'agents').querySelector('[data-act="create-subgroup"]'), null, 'create subgroup left the Agents section');
-  assert.ok(head(fe, 'subgroups').querySelector('[data-act="create-subgroup"]'), 'create subgroup heads the Subgroups line');
+  // Every section's add button rides its line folded and heads its content open.
+  const subgroups = section(fe, 'subgroups');
+  const subgroupsHome = subgroups.classList.contains('open') ? subgroups.querySelector(':scope > .gf-title-row') : head(fe, 'subgroups');
+  assert.ok(subgroupsHome.querySelector('[data-act="create-subgroup"]'), 'create subgroup sits where the section shows it');
+  assert.equal(subgroups.querySelectorAll('[data-act="create-subgroup"]').length, 1, 'one create subgroup button at a time');
   const titleRow = section(fe, 'processes').querySelector('[data-process-group] > .gf-title-row');
-  assert.ok(titleRow.querySelector('[data-process-start-agent="frontend-squad"]'), 'process controls head the open runs');
+  assert.ok(titleRow.querySelector('[data-resource-add="frontend-squad"]'), '＋ New heads the open Resources');
+  assert.equal(section(fe, 'processes').querySelector('[data-process-start], [data-process-start-agent]'), null, 'the old start buttons are gone');
   assert.ok(titleRow.querySelector('[data-process-pause-all] [data-run-glyph="pause"]'), 'pause never wears the shutdown glyph');
-  assert.equal(head(fe, 'processes').querySelector('[data-process-start-agent]'), null, 'process controls left the open Processes line');
+  assert.equal(head(fe, 'processes').querySelector('[data-resource-add]'), null, '＋ New left the open Resources line');
   assert.equal(fe.querySelector(':scope > .subtable > .group-header-actions'), null, 'no separate action row');
 
   assert.ok(section(fe, 'agents').querySelector('table'), 'the member table shows');
@@ -482,9 +505,10 @@ test('Both shows each group\'s members and runs as sections, each with its contr
   const quiet = section(infra, 'processes');
   assert.equal(quiet.classList.contains('open'), false, 'a quiet group folds its runs to one line');
   assert.equal(quiet.querySelector('[data-process-group]'), null);
-  assert.ok(quiet.querySelector('.gf-section-actions [data-process-start="infra-crew"]'), 'a folded section keeps its controls');
+  assert.ok(quiet.querySelector('.gf-section-actions [data-resource-add="infra-crew"]'), 'a folded section keeps its controls');
   await harness.act(() => harness.fireEvent(quiet.querySelector('.gf-section-toggle'), 'click'));
-  assert.ok(section(infra, 'processes').querySelector('[data-quickstart-folded="infra-crew"]'), 'opened, Get started stays a line');
+  assert.equal(section(infra, 'processes').querySelector('[data-quickstart-folded]'), null, 'no Get started line: ＋ New does that');
+  assert.match(section(infra, 'processes').querySelector('[data-resources-empty="infra-crew"]').textContent, /^No resources yet\. ＋ New adds/);
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.processes.infra-crew'), '1', 'the choice is remembered');
   await harness.act(() => harness.fireEvent(section(fe, 'agents').querySelector('.gf-section-fill'), 'click'));
@@ -505,9 +529,15 @@ test('Both shows each group\'s members and runs as sections, each with its contr
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.agents.frontend-squad'), '1');
   await harness.act(() => harness.fireEvent(section(infra, 'processes').querySelector('.gf-section-toggle'), 'click'));
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.processes.infra-crew'), '0', 'Processes folded again');
-  await harness.act(() => harness.fireEvent(section(infra, 'processes').querySelector('.gf-section-actions [data-process-start="infra-crew"]'), 'click'));
+  await harness.act(() => harness.fireEvent(section(infra, 'processes').querySelector('.gf-section-actions [data-resource-add="infra-crew"]'), 'click'));
   await settle(harness);
-  assert.ok(section(infra, 'processes').classList.contains('open'), 'a process control on the folded line unfolds Processes');
+  assert.ok(section(infra, 'processes').classList.contains('open'), '＋ New on the folded line unfolds Resources');
+  // The menu survives the move to the title row.
+  assert.ok(section(infra, 'processes').querySelector('.gf-title-row [data-resource-add-process]'), 'the ＋ New menu stays open on the title row');
+  assert.equal(document.activeElement, section(infra, 'processes').querySelector('.gf-title-row [data-resource-add]'), 'focus follows the button to the title row');
+  await harness.act(() => harness.fireEvent(section(infra, 'processes').querySelector('[data-resource-add-process-agent]'), 'click'));
+  await settle(harness);
+  assert.ok(section(infra, 'processes').querySelector('form.gp-start-form[data-start-scope="agent"]'), 'Process for one agent opens the agent-scoped start form');
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.processes.infra-crew'), '1');
 });
 

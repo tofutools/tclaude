@@ -346,16 +346,6 @@ function MemberRuns({ entries, label, onOpen }) {
   </div>`;
 }
 
-// The run-control icons are small process graphs in the place of the Agents
-// row's person glyphs: a single lane (start, then one step) for a process
-// run by one agent, and a lane that forks into parallel steps for a process
-// the whole group runs.
-function RunIcon({ group = false }) {
-  return group
-    ? html`<svg class="subgroup-ico" viewBox="0 0 28 24" width="17" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="12" r="3"></circle><path d="M7 12h4M11 12l3-6h2M11 12l3 6h2"></path><rect x="17" y="3" width="9" height="6" rx="1.5"></rect><rect x="17" y="15" width="9" height="6" rx="1.5"></rect></svg>`
-    : html`<svg class="spawn-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="12" r="3"></circle><path d="M7 12h5"></path><path d="M10 9l3 3-3 3"></path><rect x="14" y="7" width="9" height="10" rx="1.5"></rect></svg>`;
-}
-
 // liveGroupRuns are the runs pause all / resume all act on: the group's own
 // live runs and its members' agent-scoped runs, whatever the run filter
 // shows, so the result never depends on what happens to be visible.
@@ -371,9 +361,9 @@ function plural(n, word) {
 }
 
 // RunControls is the Processes perspective's version of the Agents row
-// (spawn agent, create subgroup, power on, shutdown), in the same places:
-// start a process for one agent, start one for the group, resume every
-// paused run, pause every running one. Pause stands in for shutdown because
+// (spawn agent, power on, shutdown), in the same places: ＋ New (`add`, a
+// process for the group or one agent, and in Both a board, page or shell),
+// resume every paused run, pause every running one. Pause stands in for shutdown because
 // it is reversible: work in flight finishes, nothing new is dispatched until
 // resume. Ending runs (cancel) is deliberately not one click away. Pause and
 // resume wear ⏸/⏵ rather than the agent row's 🛑/🟢, so in Both, where the
@@ -387,7 +377,7 @@ function RunGlyph({ kind }) {
     : html`<path d="M3.2 1.8v8.4c0 .5.5.8.9.5l6.2-4.2c.4-.3.4-.8 0-1L4.1 1.3c-.4-.3-.9 0-.9.5z" />`}</svg>`;
 }
 
-function RunControls({ group, runs, agentIds, wizard, runApi, source, notify, onStart, inline = false }) {
+function RunControls({ group, runs, agentIds, runApi, source, notify, add, inline = false }) {
   const [busy, setBusy] = useState('');
   const pausable = runs.filter((run) => !run.paused);
   const resumable = runs.filter((run) => run.paused);
@@ -418,12 +408,7 @@ function RunControls({ group, runs, agentIds, wizard, runApi, source, notify, on
   const shared = { 'data-group': group.name };
   // Inline is Both's half-row beside the agent controls; otherwise the row.
   return html`<${inline ? 'span' : 'div'} class=${inline ? 'gp-run-controls gf-run-controls' : 'group-header-actions gp-run-controls'}>
-    <${Button} size="sm" variant="primary" class="spawn-btn" ...${shared} data-process-start-agent=${group.name} onClick=${() => onStart('agent')}
-      title=${wizard ? `Begin a rite for one hero of ${group.name}` : `Agent process: run a saved process, or build a new one, for one agent in ${group.name}`}
-      aria-label="Start a process for one agent in this group"><${RunIcon} /><span class="spawn-btn-label-wizard" aria-hidden="true">📜</span><//>
-    <${Button} size="sm" variant="primary" class="spawn-btn subgroup-btn" ...${shared} data-process-start=${group.name} onClick=${() => onStart('group')}
-      title=${wizard ? `Begin a rite bound to ${group.name}` : `Group process: run a saved process, or build a new one, for the whole group`}
-      aria-label="Start a process for this group"><${RunIcon} group=${true} /><span class="subgroup-icon-wizard" aria-hidden="true">⚔📜</span><//>
+    ${add}
     <span class="group-actions">
       <${Button} size="sm" ...${shared} data-process-resume-all=${group.name} disabled=${!!busy || !resumable.length}
         onClick=${() => bulk('resume', resumable)} aria-label="Resume every paused process in this group"
@@ -449,6 +434,9 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   // Both editors of a saved process carry `process` and `stored` (the view
   // it was opened at), so ☰ Steps / ◈ Graph switch over the same draft.
   const [quick, setQuick] = useState(null);
+  // The ＋ New menu, held here: a click on a folded section line opens the
+  // section, which moves the button to the title row (a new instance).
+  const [adding, setAdding] = useState(false);
   // dismissed only re-renders this group at once; the pref folds the rest.
   const [, setDismissed] = useState(false);
   // "Start in <group>" from the dock's library opens this group's start form
@@ -578,12 +566,15 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         onImport=${pickPwf}
         onReuse=${(templateId) => { setQuick(null); setStarting({ templateId }); }}
         onDismiss=${() => { markQuickStart('dismissed'); setQuick(null); setDismissed(true); }} />`
-      : fresh && folded && !starting && html`<div class="gp-empty gq-folded ui-empty" data-quickstart-folded=${group.name}>
+      : !fused && fresh && folded && !starting && html`<div class="gp-empty gq-folded ui-empty" data-quickstart-folded=${group.name}>
         ${wizard ? 'No rites yet' : 'No processes yet'} · <${Button} size="sm" variant="link" class="gq-link" data-quickstart-expand onClick=${() => setQuick('pick')}>Get started ▸<//></div>`;
   const startScope = (scope) => { setQuick(null); setStarting({ scope }); };
+  // In Both, ＋ New also makes the boards, pages and shell its section lists.
+  const add = html`<${AddResource} group=${group} pages=${entry?.pages || []} api=${api} source=${source} wizard=${wizard}
+    notify=${notify || defaultNotify} processesOnly=${!fused} open=${adding} onOpen=${setAdding} onAddProcess=${startScope} />`;
   const controls = (inline) => html`<${RunControls} group=${group} runs=${liveGroupRuns(context, entry, members)}
-    agentIds=${members.map((member) => member.agent_id).filter(Boolean)} wizard=${wizard} runApi=${runApi}
-    source=${source} notify=${notify} onStart=${startScope} inline=${inline} />`;
+    agentIds=${members.map((member) => member.agent_id).filter(Boolean)} runApi=${runApi}
+    source=${source} notify=${notify} add=${add} inline=${inline} />`;
   // Beside the body, not in it: Both's section unmounts its body when folded,
   // which would lose an open review and replay a dropped file on unfolding.
   const importer = html`<span ref=${importerRef}><${WorkflowImportButton} group=${group.name} id="" className="dock-process-import-hidden"
@@ -607,28 +598,31 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     ${runs.map((run) => html`<${RunCard} key=${run.runId} run=${run} entry=${entry} nameOf=${nameOf} wizard=${wizard} onOpen=${open} />`)}
     <${MemberRuns} entries=${memberRuns} label=${wizard ? 'Hero rites' : 'Member runs'} onOpen=${open} />
     ${planned.length > 0 && html`<div class="gp-planned-list">${planned.map((item) => html`<${PlannedRow} key=${item.id} item=${item} wizard=${wizard} />`)}</div>`}
-    ${!runs.length && !planned.length && !memberRuns.length && !fresh && html`<div class="gp-empty ui-empty">${!label
+    ${!fused && !runs.length && !planned.length && !memberRuns.length && !fresh && html`<div class="gp-empty ui-empty">${!label
       ? (wizard ? 'No rites in this party yet.' : 'No processes in this group yet.')
       : `No ${label} ${wizard ? 'rites' : 'processes'}.`}</div>`}
     ${fused && html`<${GroupResources} group=${group} boards=${entry?.boards || []} pages=${entry?.pages || []} api=${api} source=${source}
       notify=${notify || defaultNotify} nameOf=${nameOf} />`}`;
   if (fused) {
     const shell = groupShellOf(dashboardState.snapshot.value, group) ? 1 : 0;
-    const shown = runs.length > 0 || planned.length > 0 || memberRuns.length > 0
-      || (entry?.boards || []).length > 0 || (entry?.pages || []).length > 0 || shell > 0;
+    const listed = savedProcesses.length + (entry?.boards || []).length + (entry?.pages || []).length + shell;
+    const shown = runs.length > 0 || planned.length > 0 || memberRuns.length > 0 || listed > 0;
+    // One line only when the section holds nothing at all: the count is
+    // what it lists, and ＋ New is the one way to add (no "Get started ▸").
+    const empty = !shown && !starting && !quick && html`<div class="gp-empty ui-empty" data-resources-empty=${group.name}>${wizard
+      ? 'Nothing here yet. ＋ New adds a rite, board, page or shell.'
+      : 'No resources yet. ＋ New adds a process, board, page or shell.'}</div>`;
     // The run controls head the open section's content on their own title
     // row, where the Agents half has its table header; folded, they ride
     // the section line.
     return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Heroes' : 'Agents'} count=${fused.count}
         actions=${fused.actions} closedActions=${fused.closedActions}>${fused.agents}<//>
       <${FusedSection} group=${group.name} section="processes" label="Resources"
-        count=${savedProcesses.length + (entry?.boards || []).length + (entry?.pages || []).length + shell}
-        actions=${html`${quick === 'pick' && html`<${Button} size="sm" class="gp-start" onClick=${() => setQuick(null)}>close<//>`}<${AddResource}
-          group=${group} pages=${entry?.pages || []} api=${api} source=${source} wizard=${wizard} notify=${notify || defaultNotify}
-          onAddProcess=${() => { setStarting(false); setQuick('pick'); }} />`}
+        count=${listed}
+        actions=${quick === 'pick' ? html`<${Button} size="sm" class="gp-start" onClick=${() => setQuick(null)}>close<//>` : null}
         closedActions=${controls(true)}
         auto=${shown} force=${!!starting || !!quick} attrs=${{ 'data-fused-processes': group.name }}>
-        <div class=${`gp-group${pwfOver ? ' gp-pwf-over' : ''}`} data-process-group=${group.name} ...${pwfDrop}><div class="group-header-actions gf-title-row">${controls(true)}</div>${body}</div>
+        <div class=${`gp-group${pwfOver ? ' gp-pwf-over' : ''}`} data-process-group=${group.name} ...${pwfDrop}><div class="group-header-actions gf-title-row">${controls(true)}</div>${body}${empty}</div>
       <//>
       ${fused.after}
       ${importer}`;

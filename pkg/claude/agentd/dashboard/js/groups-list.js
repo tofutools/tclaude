@@ -567,9 +567,11 @@ function GroupActions({ group, actions, controls = true, fold = true }) {
     </span>`;
 }
 
-// CreateSubgroupButton heads the Subgroups line; the row action handler
-// opens the create dialog pinned to this group. Like any control on a folded
-// section line, a click unfolds the section, so the new subgroup lands in view.
+// CreateSubgroupButton rides the Subgroups line while it is folded and
+// heads the open section's title row, as every section's add buttons do; the
+// row action handler opens the create dialog pinned to this group. Like any
+// control on a folded section line, a click unfolds the section, so the new
+// subgroup lands in view.
 function CreateSubgroupButton({ group }) {
   return html`<${Button} size="sm" variant="primary" class="spawn-btn subgroup-btn" data-group=${group.name} data-label=${group.name} data-act="create-subgroup" title="Create subgroup — make a new group nested under this group" aria-label="Create a subgroup under this group"><${SpawnIcon} subgroup=${true} /><span class="subgroup-icon-wizard" aria-hidden="true">⚔＋</span><//>`;
 }
@@ -693,7 +695,8 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
     <div class="subtable">
       <${FusedSection} group=${group.name} section="subgroups" label=${wizard ? 'Sub-parties' : 'Subgroups'}
           count=${node.children.length} auto=${node.children.length > 0 && subgroupsSectionAuto(group)} onToggle=${rerenderGroupTree}
-          actions=${html`<${CreateSubgroupButton} group=${group} />`}>
+          closedActions=${html`<${CreateSubgroupButton} group=${group} />`}>
+        <div class="group-header-actions gf-title-row"><${CreateSubgroupButton} group=${group} /></div>
         ${node.children.length
           ? html`<div class="group-subgroups">${node.children.map((child) => html`<${GroupNode} key=${child.key} node=${child} snapshot=${snapshot} actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`)}</div>`
           : html`<div class="gf-empty ui-empty">${wizard ? '(no sub-parties yet)' : '(no subgroups yet)'}</div>`}

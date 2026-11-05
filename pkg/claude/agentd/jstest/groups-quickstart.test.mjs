@@ -513,7 +513,8 @@ test('a group with runs builds a new process from the start form instead of Get 
   const { root, click } = await mount(t, { context });
   assert.equal(root.querySelector('[data-quickstart]'), null);
   assert.equal(root.querySelector('[data-process-new]'), null, 'no separate new-process button');
-  await click(root.querySelector('[data-process-start="webshop"]'));
+  await click(root.querySelector('[data-resource-add="webshop"]'));
+  await click(root.querySelector('[data-resource-add-process]'));
   await click(root.querySelector('[data-process-new="webshop"]'));
   assert.ok(root.querySelector('[data-quickstart="webshop"]'));
   assert.equal(root.querySelector('.gp-start-form'), null, 'building replaces the start form');
@@ -1215,7 +1216,7 @@ for (const [name, options] of [
 
 // The group body's start form asks the same question.
 async function formStart(t, options = {}) {
-  const { actor = `agent:${SCRIBE.agent_id}`, online = true, moved = 0, opener = '[data-process-start]' } = options;
+  const { actor = `agent:${SCRIBE.agent_id}`, online = true, moved = 0, opener = '[data-resource-add-process]' } = options;
   const api = scribeApi({ stored: () => ({ ...SAVED_DRAFT, currentRef: DRAFT_REF, actor }) });
   api.listTemplates = async () => [{ id: 'tmpl_1', name: 'Ship it' }];
   let refusals = moved;
@@ -1225,6 +1226,7 @@ async function formStart(t, options = {}) {
     return startRun(request);
   };
   const view = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup({ label: '', online, status: 'idle', scope: 'tmpl_1' })] });
+  await view.click(view.root.querySelector('[data-resource-add]'));
   await view.click(view.root.querySelector(opener));
   await view.settle();
   const form = view.root.querySelector('.gp-start-form');
@@ -1262,7 +1264,7 @@ test('the start form opens the draft it asks about', async (t) => {
 });
 
 test('opening the draft from an agent-scoped form still starts it for that agent', async (t) => {
-  const { root, api, click, settle, harness } = await formStart(t, { opener: '[data-process-start-agent]' });
+  const { root, api, click, settle, harness } = await formStart(t, { opener: '[data-resource-add-process-agent]' });
   const agent = root.querySelector('[data-start-agent] option').getAttribute('value');
   assert.ok(agent);
   await click(root.querySelector('[data-start-draft-open]'));

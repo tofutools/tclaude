@@ -18567,3 +18567,4 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-add { position: relative; display: inline-flex; }
 .gr-add-menu { position: absolute; right: 0; top: 100%; z-index: var(--z-popover); min-width: 120px; }
 .gr-row .gr-rename { min-width: 12em; font: inherit; font-weight: 600; padding: 1px 6px; }
+.gr-add-menu.gr-new-menu { left: 0; right: auto; top: calc(100% + 2px); min-width: 260px; }
