@@ -770,7 +770,9 @@ func runNew(params *NewParams) error {
 	}, &access); err != nil {
 		return err
 	}
-	tclaudeLayerPosture, tclaudeLayerRoot = access.posture, access.root
+	// The plan's revised posture has no reader past this point: it is already
+	// folded into the root and the OS-sandbox verdict copied back here.
+	tclaudeLayerRoot = access.root
 	launchOSSandbox, networkFiltered = access.osSandbox, access.networkFiltered
 	if launchSandbox != nil {
 		for _, notice := range launchSandbox.Effective.AccessNotices {
