@@ -2,8 +2,6 @@ import { h } from 'preact';
 import htm from 'htm';
 import { OPENCODE_TOOLS_ALL, composeOpenCodeTools, parseOpenCodeTools } from './opencode-tools-model.js';
 
-export { openCodeToolsBase, withOpenCodeToolsBase } from './opencode-tools-model.js';
-
 const html = htm.bind(h);
 
 const TOGGLES = [

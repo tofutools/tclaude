@@ -42,7 +42,8 @@ import { LibraryBundleImportDialog, LibraryNameDialog } from './library-dialogs.
 import { SnapshotsDialog } from './snapshots-dialog.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpDisclosure, HelpField } from './help-field.js';
-import { OpenCodeToolEntries, openCodeToolsBase, withOpenCodeToolsBase } from './opencode-tools.js';
+import { OpenCodeToolEntries } from './opencode-tools.js';
+import { openCodeToolsBase, withOpenCodeToolsBase } from './opencode-tools-model.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
 import {
   sandboxPreLaunchEditorRows,

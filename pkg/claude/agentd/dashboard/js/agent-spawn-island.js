@@ -76,7 +76,8 @@ import {
 import { shellToast } from './shell-state.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpDisclosure, HelpField } from './help-field.js';
-import { OpenCodeToolEntries, openCodeToolsBase, withOpenCodeToolsBase } from './opencode-tools.js';
+import { OpenCodeToolEntries } from './opencode-tools.js';
+import { openCodeToolsBase, withOpenCodeToolsBase } from './opencode-tools-model.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
 import { isWizardActive } from './slop.js';
 import { shareHint, shareKey, shareOptions } from './usage-share-model.js';
