@@ -252,16 +252,14 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			spawned.Warn = strings.Join(sandboxWarn, "; ")
 		}
 	}()
-	sourceConv, cwd, noCopyConv := p.SourceConv, p.Cwd, p.NoCopyConv
+	r := &cloneRun{p: &p, cleanupManagedClone: func(bool) {}, releaseLaunchClaim: func() {}}
+	sourceConv, cwd := p.SourceConv, p.Cwd
 	managedResources, managedErr := managedCloneResources(sourceConv, p.ManagedGroups)
 	if managedErr != nil {
 		return cloneSpawnResult{}, &cloneSpawnError{Status: 409, Code: "managed_instructions", Msg: managedErr.Error()}
 	}
-	cleanupManagedClone := func(bool) {}
-	managedCloneStarted := false
-	defer func() { cleanupManagedClone(cerr == nil || managedCloneStarted) }()
-	proofToken, proofCwd, proofDirs := p.ProofToken, p.ProofCwd, p.ProofDirs
-	var newConv, newTmux, label, warn string
+	r.managedResources = managedResources
+	defer func() { r.cleanupManagedClone(cerr == nil || r.managedCloneStarted) }()
 	// The clone's session row and pane exist before its conversation is linked
 	// to an actor, so for that window nothing durable says the row is an
 	// agent's and the terminal console would list it — and offer to kill it —
@@ -269,28 +267,22 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// first, as early as it has one. A successful return hands the release to
 	// the caller, which holds it through EnsureAgentForConv; every error return
 	// releases here, so no error path can strand a claim.
-	releaseLaunchClaim := func() {}
 	defer func() {
 		if cerr == nil {
-			spawned.ReleaseLaunchClaim = releaseLaunchClaim
+			spawned.ReleaseLaunchClaim = r.releaseLaunchClaim
 			return
 		}
-		releaseLaunchClaim()
+		r.releaseLaunchClaim()
 	}()
 	launch, launchWarn, fail := resolveCloneLaunch(p)
 	if fail != nil {
 		return cloneSpawnResult{}, fail
 	}
 	sandboxWarn = append(sandboxWarn, launchWarn...)
+	r.launch = launch
 	relaunch, srcHarness, model := launch.relaunch, launch.relaunch.Harness, launch.relaunch.Model
 	effectiveSandbox := launch.effectiveSandbox
 	p.RouteHelperGroupIDs = launch.routeHelperGroupIDs
-	reassertFail := func() *cloneSpawnError {
-		if fail := reassertDirWriteProof(proofDirs); fail != nil {
-			return &cloneSpawnError{Status: fail.Status, Code: fail.Kind, Msg: fail.Msg}
-		}
-		return nil
-	}
 
 	// Launch enrollment (TCL-732) — the clone twin of TCL-731's reincarnation
 	// fix. A Claude Code clone can be born named, and (when the caller gave a
@@ -319,8 +311,8 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// no-task conversation without typing an orientation into its pane. Internal
 	// throwaway/export clones retain the existing optional-follow-up behavior.
 	cloneHarness, _ := harness.Resolve(srcHarness)
-	launchEnroll := cloneSupportsArgvEnrollment(cloneHarness) && !spawnUsesLegacyInjection() && (p.FollowUp != "" || p.Arrival)
-	res := cloneSpawnResult{LaunchEnrolled: launchEnroll}
+	r.launchEnroll = cloneSupportsArgvEnrollment(cloneHarness) && !spawnUsesLegacyInjection() && (p.FollowUp != "" || p.Arrival)
+	r.res = cloneSpawnResult{LaunchEnrolled: r.launchEnroll}
 	arrival := arrivalContext{Operation: "local clone", LocalClone: true, Reason: "inherited source cwd", Sandbox: effectiveSandbox}
 	if p.Arrival {
 		arrival.Source.Harness = srcHarness
@@ -354,17 +346,15 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			}
 		}
 	}
-	arrivalDelivered := false
-	var arrivalActorConv string
-	var arrivalActorCreated bool
+	r.arrival = arrival
 	defer func() {
 		if cerr != nil {
-			if arrivalActorCreated {
-				_, _ = db.DeleteAgentByConvID(arrivalActorConv)
+			if r.arrivalActorCreated {
+				_, _ = db.DeleteAgentByConvID(r.arrivalActorConv)
 			}
 			return
 		}
-		if p.Arrival && !arrivalDelivered && spawned.NewConv != "" {
+		if p.Arrival && !r.arrivalDelivered && spawned.NewConv != "" {
 			id, _, err := db.EnsureAgentForConv(spawned.NewConv, "clone")
 			if err != nil {
 				slog.Warn("clone arrival: identity unavailable", "error", err)
@@ -374,144 +364,413 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		}
 	}()
 
-	routeHelperPrepared := false
-	routeHelperCommitted := false
 	defer func() {
-		if routeHelperPrepared && !routeHelperCommitted {
-			_, _ = db.DeleteAgentByConvID(newConv)
-			revokeRouteHelperCredentials(newConv, "")
+		if r.routeHelperPrepared && !r.routeHelperCommitted {
+			_, _ = db.DeleteAgentByConvID(r.newConv)
+			revokeRouteHelperCredentials(r.newConv, "")
 		}
 	}()
-	prepareRouteHelper := func(args *clcommon.SpawnArgs) *cloneSpawnError {
-		if len(p.RouteHelperGroupIDs) == 0 {
-			return nil
-		}
-		agentID, _, ensureErr := db.EnsureAgentForConv(newConv, "clone")
-		if ensureErr != nil {
-			return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "route_authority", Msg: "reserve clone route identity: " + ensureErr.Error()}
-		}
-		credential, generation, credentialErr := mintRouteHelperCredential(agentID, newConv)
-		if credentialErr != nil {
-			_, _ = db.DeleteAgentByConvID(newConv)
-			return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "route_authority", Msg: "mint clone route helper credential: " + credentialErr.Error()}
-		}
-		args.RouteHelperAgentID = agentID
-		args.RouteHelperConvID = newConv
-		args.RouteHelperLaunchGeneration = generation
-		args.RouteHelperCredential = credential
-		args.RouteHelperGroupIDs = append([]int64(nil), p.RouteHelperGroupIDs...)
-		routeHelperPrepared = true
+	if p.NoCopyConv {
+		return r.spawnNoCopy()
+	}
+	return r.spawnCopy()
+}
+
+// cloneRun is one clone launch in flight: what both launch branches share
+// once the launch posture is resolved: the request, the posture, the result
+// being built, the clone's conv-id once it is known, and what the failure
+// cleanups need to know.
+//
+// The cleanups are deliberately not a launchundo stack. They do not share one
+// trigger: the managed resources and the copied history are undone only when
+// the launch never started (rollbackHandoff clears managedCloneStarted for a
+// launch treated as never having happened); the launch claim is released on
+// failure but handed to the caller on success; the arrival defer deletes its
+// actor on failure but delivers the handoff on success; the route helper is
+// revoked unless committed, and it commits before the success return; and the
+// agent-directory and handoff rollbacks run inline at the returns that need
+// them, and are skipped on purpose where a launch may still be coming up. One
+// stack would need an explicit Run or Release at most of the returns to keep
+// those semantics.
+type cloneRun struct {
+	p                    *cloneSpawnParams
+	launch               cloneLaunch
+	managedResources     []db.ManagedInstruction
+	launchEnroll         bool
+	arrival              arrivalContext
+	res                  cloneSpawnResult
+	newConv              string
+	managedCloneStarted  bool
+	cleanupManagedClone  func(success bool)
+	releaseLaunchClaim   func()
+	arrivalDelivered     bool
+	arrivalActorConv     string
+	arrivalActorCreated  bool
+	routeHelperPrepared  bool
+	routeHelperCommitted bool
+}
+
+// reassertFail re-checks the caller's directory write-proof just before a
+// launch.
+func (r *cloneRun) reassertFail() *cloneSpawnError {
+	proofDirs := r.p.ProofDirs
+	if fail := reassertDirWriteProof(proofDirs); fail != nil {
+		return &cloneSpawnError{Status: fail.Status, Code: fail.Kind, Msg: fail.Msg}
+	}
+	return nil
+}
+
+// prepareRouteHelper reserves the clone's route identity and mints its route
+// helper credential onto args, when the clone has route-helper groups.
+func (r *cloneRun) prepareRouteHelper(args *clcommon.SpawnArgs) *cloneSpawnError {
+	p := r.p
+	if len(p.RouteHelperGroupIDs) == 0 {
 		return nil
 	}
-	commitRouteHelper := func() { routeHelperCommitted = true }
-	// enrollLaunch stamps the clone's name and first-turn handoff onto the
-	// launch args once its conv-id is known — preset by the caller on the
-	// no-copy branch, minted by the jsonl fork on the copy branch.
-	prepareCloneManaged := func(args *clcommon.SpawnArgs, convID string) *cloneSpawnError {
-		if len(managedResources) == 0 {
-			return nil
+	agentID, _, ensureErr := db.EnsureAgentForConv(r.newConv, "clone")
+	if ensureErr != nil {
+		return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "route_authority", Msg: "reserve clone route identity: " + ensureErr.Error()}
+	}
+	credential, generation, credentialErr := mintRouteHelperCredential(agentID, r.newConv)
+	if credentialErr != nil {
+		_, _ = db.DeleteAgentByConvID(r.newConv)
+		return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "route_authority", Msg: "mint clone route helper credential: " + credentialErr.Error()}
+	}
+	args.RouteHelperAgentID = agentID
+	args.RouteHelperConvID = r.newConv
+	args.RouteHelperLaunchGeneration = generation
+	args.RouteHelperCredential = credential
+	args.RouteHelperGroupIDs = append([]int64(nil), p.RouteHelperGroupIDs...)
+	r.routeHelperPrepared = true
+	return nil
+}
+
+// commitRouteHelper keeps the clone's route identity: the clone came up.
+func (r *cloneRun) commitRouteHelper() { r.routeHelperCommitted = true }
+
+// prepareCloneManaged binds the source's managed instructions to the clone's
+// launch as a launch-scoped overlay, and arms their removal for a launch that
+// never starts.
+func (r *cloneRun) prepareCloneManaged(args *clcommon.SpawnArgs, convID string) *cloneSpawnError {
+	managedResources := r.managedResources
+	if len(managedResources) == 0 {
+		return nil
+	}
+	if convID == "" {
+		return &cloneSpawnError{Status: 409, Code: "managed_instructions", Msg: "this harness cannot bind a launch-scoped instruction overlay on a no-copy clone; use a history-copy clone"}
+	}
+	id, created, err := db.EnsureAgentForConv(convID, "clone")
+	if err != nil {
+		return &cloneSpawnError{Status: 500, Code: "managed_instructions", Msg: err.Error()}
+	}
+	overlay, err := managedinstructions.Materialize(managedResources)
+	if err != nil {
+		if created {
+			_, _ = db.DeleteAgentByConvID(convID)
 		}
-		if convID == "" {
-			return &cloneSpawnError{Status: 409, Code: "managed_instructions", Msg: "this harness cannot bind a launch-scoped instruction overlay on a no-copy clone; use a history-copy clone"}
+		return &cloneSpawnError{Status: 500, Code: "managed_instructions", Msg: err.Error()}
+	}
+	raw, err := json.Marshal(managedResources)
+	if err == nil {
+		err = db.SaveManagedInstructionLaunch(db.ManagedInstructionLaunch{AgentID: id, Root: overlay.Root, Body: overlay.Body, Resources: string(raw)})
+	}
+	if err != nil {
+		_ = managedinstructions.RemoveLaunchRoot(overlay.Root)
+		if created {
+			_, _ = db.DeleteAgentByConvID(convID)
 		}
-		id, created, err := db.EnsureAgentForConv(convID, "clone")
-		if err != nil {
-			return &cloneSpawnError{Status: 500, Code: "managed_instructions", Msg: err.Error()}
-		}
-		overlay, err := managedinstructions.Materialize(managedResources)
-		if err != nil {
-			if created {
-				_, _ = db.DeleteAgentByConvID(convID)
-			}
-			return &cloneSpawnError{Status: 500, Code: "managed_instructions", Msg: err.Error()}
-		}
-		raw, err := json.Marshal(managedResources)
-		if err == nil {
-			err = db.SaveManagedInstructionLaunch(db.ManagedInstructionLaunch{AgentID: id, Root: overlay.Root, Body: overlay.Body, Resources: string(raw)})
-		}
-		if err != nil {
+		return &cloneSpawnError{Status: 500, Code: "managed_instructions", Msg: err.Error()}
+	}
+	managedParams := spawnParams{ManagedInstructionsRoot: overlay.Root, ManagedInstructionsBody: overlay.Body}
+	r.cleanupManagedClone = func(success bool) {
+		if !success {
 			_ = managedinstructions.RemoveLaunchRoot(overlay.Root)
+			_ = db.DeleteManagedInstructionLaunch(id)
 			if created {
 				_, _ = db.DeleteAgentByConvID(convID)
 			}
-			return &cloneSpawnError{Status: 500, Code: "managed_instructions", Msg: err.Error()}
 		}
-		managedParams := spawnParams{ManagedInstructionsRoot: overlay.Root, ManagedInstructionsBody: overlay.Body}
-		cleanupManagedClone = func(success bool) {
-			if !success {
-				_ = managedinstructions.RemoveLaunchRoot(overlay.Root)
-				_ = db.DeleteManagedInstructionLaunch(id)
-				if created {
-					_, _ = db.DeleteAgentByConvID(convID)
+	}
+
+	args.AgentID = id
+	args.ManagedInstructionsRoot = managedParams.ManagedInstructionsRoot
+	if guidance := managedInstructionResumePrompt(managedParams); guidance != "" {
+		args.InitialPrompt += "\n\n" + guidance
+	}
+	return nil
+}
+
+// enrollLaunch stamps the clone's name and first-turn handoff onto the
+// launch args once its conv-id is known — preset by the caller on the
+// no-copy branch, minted by the jsonl fork on the copy branch.
+func (r *cloneRun) enrollLaunch(args *clcommon.SpawnArgs, convID string) {
+	sourceConv := r.p.SourceConv
+	cwd := r.p.Cwd
+	srcHarness := r.launch.relaunch.Harness
+	model := r.launch.relaunch.Model
+	launchEnroll := r.launchEnroll
+	arrival := r.arrival
+	p := r.p
+	if !launchEnroll {
+		return
+	}
+	// Match the spawn path's title gate: a name that isn't a valid rename
+	// title is not applied as the launch `--name`, since Claude Code records
+	// it verbatim as the conversation title.
+	if p.Title != "" && isValidRenameTitle(p.Title) {
+		args.Name = p.Title
+	} else if p.Title != "" {
+		slog.Warn("clone: title not a valid rename title; skipping launch --name",
+			"conv", convID, "title", p.Title)
+	}
+	// Read the inline cap ONCE and thread it through both the bookkeeping
+	// decision and the prompt build (spawn and reincarnate do the same):
+	// config.Load is uncached, so two reads could disagree and leave a row
+	// born delivered+read whose launch prompt only pointed at the inbox.
+
+	if p.Arrival {
+		id, created, err := db.EnsureAgentForConv(convID, "clone")
+		if err == nil {
+			r.arrivalActorConv, r.arrivalActorCreated = convID, created
+			p.FollowUp = buildArrivalBriefing(arrival, id, cwd, p.ArrivalGroup, srcHarness, model) + "\n\n" + p.FollowUp
+			r.arrivalDelivered = true
+		} else {
+			slog.Warn("clone arrival: identity unavailable", "error", err)
+		}
+	}
+	inlineCap := spawnInlineMaxChars()
+	r.res.HandoffInlined = spawnBriefingFitsLaunch(p.FollowUp, inlineCap)
+	r.res.HandoffMsgID = insertCloneHandoff(p.HandoffGroupID, p.HandoffFrom, convID, p.FollowUp, r.res.HandoffInlined)
+	// The prompt names the clone by the title it was ACTUALLY launched with
+	// (args.Name), not the raw one — a title the gate above rejected must
+	// not be echoed back at the agent as its own identity.
+	args.InitialPrompt = buildCloneLaunchPrompt(args.Name,
+		cloneHandoffAuthor(p.HandoffFrom, sourceConv), r.res.HandoffMsgID, p.FollowUp, inlineCap)
+}
+
+// rollbackHandoff removes the pre-fork handoff row when the launch never
+// happened, so a failed clone cannot strand an orphan inbox message
+// addressed to a conv-id that will never exist.
+func (r *cloneRun) rollbackHandoff() {
+	r.managedCloneStarted = false
+	if r.res.HandoffMsgID <= 0 {
+		return
+	}
+	if _, err := db.DeleteAgentMessagesByIDs([]int64{r.res.HandoffMsgID}); err != nil {
+		slog.Warn("clone: rollback of pre-fork handoff message failed",
+			"msg_id", r.res.HandoffMsgID, "error", err)
+	}
+	r.res.HandoffMsgID = 0
+}
+
+// spawnNoCopy launches the clone as a fresh `session new` and waits for its
+// session to come up, under a fresh label (and, when enrolled, a preset conv).
+func (r *cloneRun) spawnNoCopy() (cloneSpawnResult, *cloneSpawnError) {
+	cwd := r.p.Cwd
+	proofToken := r.p.ProofToken
+	proofCwd := r.p.ProofCwd
+	launch := r.launch
+	relaunch := r.launch.relaunch
+	launchEnroll := r.launchEnroll
+	p := r.p
+	effectiveSandbox := r.launch.effectiveSandbox
+	var newTmux, label string
+	label = generateSpawnLabel()
+	// No conv-id exists yet on this path; the row this launch writes is
+	// keyed by the label.
+	r.releaseLaunchClaim = claimAgentLaunchIdentity(label)
+	agentDirectoryCleanup := func() {}
+	if effectiveSandbox != nil {
+		materialized, cleanup, materializeErr := prepareCodexSSHWorkaroundForNewLaunch(
+			*effectiveSandbox, label, launch.ssh)
+		if materializeErr != nil {
+			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "spawn", Msg: materializeErr.Error()}
+		}
+		effectiveSandbox = &materialized
+		agentDirectoryCleanup = cleanup
+	}
+	// A clone preserves recorded approval and auto-review authority, but does
+	// not pre-trust the cwd (that edits ~/.codex/config.toml and remains a
+	// fresh-spawn opt-in).
+	if fail := r.reassertFail(); fail != nil {
+		agentDirectoryCleanup()
+		return cloneSpawnResult{}, fail
+	}
+	proofArgs := launch.spawnArgs(cwd, proofToken, proofCwd, effectiveSandbox)
+	proofArgs.Label = label
+	// A no-copy clone inherits the source agent's recorded posture through a
+	// `session new` fork with no -r, so it is a continuation for launch
+	// requirements the host may not be able to meet (see SandboxContinuation).
+	proofArgs.SandboxContinuation = true
+	// A launch-enrolled no-copy clone presets its conv-id so the name and
+	// handoff can ride the same argv, exactly as reincarnate's successor
+	// does. Without enrollment the id is whatever the harness mints, and the
+	// poll below discovers it.
+	presetConv := launchEnroll || len(p.RouteHelperGroupIDs) > 0
+	if presetConv {
+		r.newConv = convops.GenerateUUID()
+		proofArgs.SessionID = r.newConv
+	}
+	if routeErr := r.prepareRouteHelper(&proofArgs); routeErr != nil {
+		agentDirectoryCleanup()
+		return cloneSpawnResult{}, routeErr
+	}
+	r.enrollLaunch(&proofArgs, r.newConv)
+	if failure := r.prepareCloneManaged(&proofArgs, r.newConv); failure != nil {
+		agentDirectoryCleanup()
+		r.rollbackHandoff()
+		return cloneSpawnResult{}, failure
+	}
+	// A wrapper that dies before the pane exists (a bad executable, a
+	// rejected launch flag) would otherwise only surface as the poll
+	// timeout below. Watch for it so a failed launch rolls its pre-fork
+	// handoff row back promptly instead of stranding it.
+	wrapperFailure := registerWrapperFailureSignal(label)
+	defer unregisterWrapperFailureSignal(label)
+	if err := SpawnDetachedTclaudeNew(proofArgs); err != nil {
+		agentDirectoryCleanup()
+		r.rollbackHandoff()
+		return cloneSpawnResult{}, &cloneSpawnError{
+			Status: http.StatusInternalServerError, Code: "spawn",
+			Msg: "failed to launch tclaude session new: " + err.Error(),
+		}
+	}
+	r.managedCloneStarted = true
+	deadline := time.Now().Add(reincarnateSpawnTimeout)
+	for time.Now().Before(deadline) {
+		select {
+		case werr := <-wrapperFailure:
+			r.rollbackHandoff()
+			return cloneSpawnResult{}, &cloneSpawnError{
+				Status: http.StatusInternalServerError, Code: "spawn",
+				Msg: "the clone's session wrapper exited before its pane came up: " + werr.Error(),
+			}
+		default:
+		}
+		s, err := db.LoadSession(label)
+		if err == nil && s != nil {
+			newTmux = s.TmuxSession
+			// Without enrollment the session row IS the discovery channel for
+			// the harness-minted conv-id, so a non-empty ConvID is proof
+			// enough. With enrollment the row is born already carrying the
+			// preset id — `session new` writes it BEFORE it creates the tmux
+			// session — so the id alone proves nothing. Wait for the pane to
+			// actually register instead, the same gate reincarnate uses.
+			if launchEnroll {
+				if newTmux != "" && isConvOnline(r.newConv) {
+					if s.ConvID != "" && s.ConvID != r.newConv {
+						slog.Warn("clone: session row reports a different conv-id than the preset one",
+							"label", label, "preset", r.newConv, "row", s.ConvID)
+					}
+					if relaunch.CodexAppServer && !awaitCodexAppServerLaunchReady(r.newConv, label) {
+						stopFailedCodexAppServerLaunch(r.newConv, label, newTmux)
+						agentDirectoryCleanup()
+						r.rollbackHandoff()
+						return cloneSpawnResult{}, &cloneSpawnError{
+							Status: http.StatusServiceUnavailable, Code: "codex_app_server_unavailable",
+							Msg: "the clone's explicitly selected Codex app-server did not become ready; the failed clone was stopped",
+						}
+					}
+					if launch.remoteControl {
+						armRemoteControlOnNewRow(label)
+					}
+					r.res.NewConv, r.res.NewTmux, r.res.Label = r.newConv, newTmux, label
+					r.commitRouteHelper()
+					if rootErr := launch.persistCodexStateRoot(r.newConv, cwd); rootErr != nil {
+						return cloneSpawnResult{}, rootErr
+					}
+					return r.res, nil
 				}
+			} else if s.ConvID != "" {
+				// Tag the sibling row's best-known remote-control ON (JOH-261);
+				// the --remote-control launch flag already armed its pane.
+				// This branch IS the discovery channel for a harness-minted
+				// conv-id, so it is also the first moment this clone's launch
+				// facts — the drive it took and the port it was handed — have a
+				// conversation to be recorded against. No-ops for a non-Copilot
+				// clone. Fresh: a no-copy clone starts its sibling on an empty
+				// conversation by definition.
+				//
+				// Guarded on the id NOT having been preset, because this branch
+				// is reachable with one that was: the preset condition includes
+				// route helpers while the branch condition above does not, so a
+				// route-helper clone without launch enrollment arrives here
+				// having already completed its launch from the spawn facade.
+				// Completing it twice would run two bootstraps against the same
+				// id, and the second `session.create` would empty what the first
+				// had just set up. Inert today (route helpers are refused for
+				// every harness but Claude Code), and the seam is documented as
+				// one moment per launch, so it should be one.
+				if !presetConv {
+					completeCopilotAPILaunch(s.ConvID, copilotAPILaunchFresh, proofArgs)
+				}
+				if relaunch.CodexAppServer && !awaitCodexAppServerLaunchReady(s.ConvID, label) {
+					stopFailedCodexAppServerLaunch(s.ConvID, label, newTmux)
+					agentDirectoryCleanup()
+					r.rollbackHandoff()
+					return cloneSpawnResult{}, &cloneSpawnError{
+						Status: http.StatusServiceUnavailable, Code: "codex_app_server_unavailable",
+						Msg: "the clone's explicitly selected Codex app-server did not become ready; the failed clone was stopped",
+					}
+				}
+				if launch.remoteControl {
+					armRemoteControlOnNewRow(label)
+				}
+				r.res.NewConv, r.res.NewTmux, r.res.Label = s.ConvID, newTmux, label
+				r.commitRouteHelper()
+				if rootErr := launch.persistCodexStateRoot(s.ConvID, cwd); rootErr != nil {
+					return cloneSpawnResult{}, rootErr
+				}
+				return r.res, nil
 			}
 		}
-
-		args.AgentID = id
-		args.ManagedInstructionsRoot = managedParams.ManagedInstructionsRoot
-		if guidance := managedInstructionResumePrompt(managedParams); guidance != "" {
-			args.InitialPrompt += "\n\n" + guidance
-		}
-		return nil
+		time.Sleep(250 * time.Millisecond)
 	}
-	enrollLaunch := func(args *clcommon.SpawnArgs, convID string) {
-		if !launchEnroll {
-			return
-		}
-		// Match the spawn path's title gate: a name that isn't a valid rename
-		// title is not applied as the launch `--name`, since Claude Code records
-		// it verbatim as the conversation title.
-		if p.Title != "" && isValidRenameTitle(p.Title) {
-			args.Name = p.Title
-		} else if p.Title != "" {
-			slog.Warn("clone: title not a valid rename title; skipping launch --name",
-				"conv", convID, "title", p.Title)
-		}
-		// Read the inline cap ONCE and thread it through both the bookkeeping
-		// decision and the prompt build (spawn and reincarnate do the same):
-		// config.Load is uncached, so two reads could disagree and leave a row
-		// born delivered+read whose launch prompt only pointed at the inbox.
-
-		if p.Arrival {
-			id, created, err := db.EnsureAgentForConv(convID, "clone")
-			if err == nil {
-				arrivalActorConv, arrivalActorCreated = convID, created
-				p.FollowUp = buildArrivalBriefing(arrival, id, cwd, p.ArrivalGroup, srcHarness, model) + "\n\n" + p.FollowUp
-				arrivalDelivered = true
-			} else {
-				slog.Warn("clone arrival: identity unavailable", "error", err)
-			}
-		}
-		inlineCap := spawnInlineMaxChars()
-		res.HandoffInlined = spawnBriefingFitsLaunch(p.FollowUp, inlineCap)
-		res.HandoffMsgID = insertCloneHandoff(p.HandoffGroupID, p.HandoffFrom, convID, p.FollowUp, res.HandoffInlined)
-		// The prompt names the clone by the title it was ACTUALLY launched with
-		// (args.Name), not the raw one — a title the gate above rejected must
-		// not be echoed back at the agent as its own identity.
-		args.InitialPrompt = buildCloneLaunchPrompt(args.Name,
-			cloneHandoffAuthor(p.HandoffFrom, sourceConv), res.HandoffMsgID, p.FollowUp, inlineCap)
+	missing := "conv-id"
+	if launchEnroll {
+		missing = "a live pane"
 	}
-	// rollbackHandoff removes the pre-fork handoff row when the launch never
-	// happened, so a failed clone cannot strand an orphan inbox message
-	// addressed to a conv-id that will never exist.
-	rollbackHandoff := func() {
-		managedCloneStarted = false
-		if res.HandoffMsgID <= 0 {
-			return
-		}
-		if _, err := db.DeleteAgentMessagesByIDs([]int64{res.HandoffMsgID}); err != nil {
-			slog.Warn("clone: rollback of pre-fork handoff message failed",
-				"msg_id", res.HandoffMsgID, "error", err)
-		}
-		res.HandoffMsgID = 0
+	slog.Warn("clone: no-copy poll timed out; clone never came up",
+		"label", label, "missing", missing, "deadline", reincarnateSpawnTimeout)
+	// The pre-fork handoff is about to be rolled back, so do not leave a
+	// late-starting pane whose launch prompt points at that deleted row.
+	// This mirrors reincarnate's timeout cleanup; the generated label is
+	// unique to this launch.
+	tmuxToKill := newTmux
+	if tmuxToKill == "" {
+		tmuxToKill = label
 	}
+	if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxToKill)).Run(); err != nil {
+		slog.Warn("clone: timed-out no-copy launch kill failed",
+			"session", tmuxToKill, "error", err)
+	}
+	r.rollbackHandoff()
+	return cloneSpawnResult{NewTmux: newTmux, Label: label}, &cloneSpawnError{
+		Status: http.StatusGatewayTimeout, Code: "timeout",
+		Msg: "spawned session " + label + " but " + missing + " never materialised within " +
+			reincarnateSpawnTimeout.String() + "; the timed-out clone was stopped",
+	}
+}
 
+// spawnCopy copies the source's conversation onto a fresh conv (or forks a
+// Codex app-server thread), resumes it, and waits for the clone to come up.
+func (r *cloneRun) spawnCopy() (spawned cloneSpawnResult, cerr *cloneSpawnError) {
+	sourceConv := r.p.SourceConv
+	cwd := r.p.Cwd
+	proofToken := r.p.ProofToken
+	proofCwd := r.p.ProofCwd
+	launch := r.launch
+	relaunch := r.launch.relaunch
+	srcHarness := r.launch.relaunch.Harness
+	launchEnroll := r.launchEnroll
+	effectiveSandbox := r.launch.effectiveSandbox
+	var newTmux, label, warn string
 	// An API-driven Codex copy-clone uses Codex's own persisted thread fork.
 	// JSONL rewriting cannot preserve Codex's state-store identity, while a
 	// fresh/no-copy clone deliberately keeps the existing birth-prompt path.
 	// Fork only after every launch policy/provenance check above has passed.
 	codexThreadForked := false
-	if !noCopyConv && srcHarness == harness.CodexName && relaunch.CodexAppServer {
+	if srcHarness == harness.CodexName && relaunch.CodexAppServer {
 		forkedID, forkErr := forkCodexAppServerThread(sourceConv, cwd)
 		if forkErr != nil {
 			status := http.StatusServiceUnavailable
@@ -524,196 +783,19 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			return cloneSpawnResult{}, &cloneSpawnError{Status: status, Code: code,
 				Msg: "could not fork the verified Codex app-server thread: " + forkErr.Error()}
 		}
-		newConv = forkedID
+		r.newConv = forkedID
 		codexThreadForked = true
 		// Current Codex forks by reference (forked_from_id), so the new
 		// rollout holds no inherited usage. Older releases copied the
 		// parent's records into it at fork time; the boundary keeps those
 		// from being priced again under the clone. The fork already exists
 		// and cannot be retried safely, so a failure here only warns.
-		if err := harness.MarkConvCostInherited(newConv); err != nil {
+		if err := harness.MarkConvCostInherited(r.newConv); err != nil {
 			slog.Warn("clone: recording the forked thread's inherited-cost boundary failed",
-				"conv", newConv, "error", err)
+				"conv", r.newConv, "error", err)
 		}
 	}
 
-	if noCopyConv {
-		label = generateSpawnLabel()
-		// No conv-id exists yet on this path; the row this launch writes is
-		// keyed by the label.
-		releaseLaunchClaim = claimAgentLaunchIdentity(label)
-		agentDirectoryCleanup := func() {}
-		if effectiveSandbox != nil {
-			materialized, cleanup, materializeErr := prepareCodexSSHWorkaroundForNewLaunch(
-				*effectiveSandbox, label, launch.ssh)
-			if materializeErr != nil {
-				return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "spawn", Msg: materializeErr.Error()}
-			}
-			effectiveSandbox = &materialized
-			agentDirectoryCleanup = cleanup
-		}
-		// A clone preserves recorded approval and auto-review authority, but does
-		// not pre-trust the cwd (that edits ~/.codex/config.toml and remains a
-		// fresh-spawn opt-in).
-		if fail := reassertFail(); fail != nil {
-			agentDirectoryCleanup()
-			return cloneSpawnResult{}, fail
-		}
-		proofArgs := launch.spawnArgs(cwd, proofToken, proofCwd, effectiveSandbox)
-		proofArgs.Label = label
-		// A no-copy clone inherits the source agent's recorded posture through a
-		// `session new` fork with no -r, so it is a continuation for launch
-		// requirements the host may not be able to meet (see SandboxContinuation).
-		proofArgs.SandboxContinuation = true
-		// A launch-enrolled no-copy clone presets its conv-id so the name and
-		// handoff can ride the same argv, exactly as reincarnate's successor
-		// does. Without enrollment the id is whatever the harness mints, and the
-		// poll below discovers it.
-		presetConv := launchEnroll || len(p.RouteHelperGroupIDs) > 0
-		if presetConv {
-			newConv = convops.GenerateUUID()
-			proofArgs.SessionID = newConv
-		}
-		if routeErr := prepareRouteHelper(&proofArgs); routeErr != nil {
-			agentDirectoryCleanup()
-			return cloneSpawnResult{}, routeErr
-		}
-		enrollLaunch(&proofArgs, newConv)
-		if failure := prepareCloneManaged(&proofArgs, newConv); failure != nil {
-			agentDirectoryCleanup()
-			rollbackHandoff()
-			return cloneSpawnResult{}, failure
-		}
-		// A wrapper that dies before the pane exists (a bad executable, a
-		// rejected launch flag) would otherwise only surface as the poll
-		// timeout below. Watch for it so a failed launch rolls its pre-fork
-		// handoff row back promptly instead of stranding it.
-		wrapperFailure := registerWrapperFailureSignal(label)
-		defer unregisterWrapperFailureSignal(label)
-		if err := SpawnDetachedTclaudeNew(proofArgs); err != nil {
-			agentDirectoryCleanup()
-			rollbackHandoff()
-			return cloneSpawnResult{}, &cloneSpawnError{
-				Status: http.StatusInternalServerError, Code: "spawn",
-				Msg: "failed to launch tclaude session new: " + err.Error(),
-			}
-		}
-		managedCloneStarted = true
-		deadline := time.Now().Add(reincarnateSpawnTimeout)
-		for time.Now().Before(deadline) {
-			select {
-			case werr := <-wrapperFailure:
-				rollbackHandoff()
-				return cloneSpawnResult{}, &cloneSpawnError{
-					Status: http.StatusInternalServerError, Code: "spawn",
-					Msg: "the clone's session wrapper exited before its pane came up: " + werr.Error(),
-				}
-			default:
-			}
-			s, err := db.LoadSession(label)
-			if err == nil && s != nil {
-				newTmux = s.TmuxSession
-				// Without enrollment the session row IS the discovery channel for
-				// the harness-minted conv-id, so a non-empty ConvID is proof
-				// enough. With enrollment the row is born already carrying the
-				// preset id — `session new` writes it BEFORE it creates the tmux
-				// session — so the id alone proves nothing. Wait for the pane to
-				// actually register instead, the same gate reincarnate uses.
-				if launchEnroll {
-					if newTmux != "" && isConvOnline(newConv) {
-						if s.ConvID != "" && s.ConvID != newConv {
-							slog.Warn("clone: session row reports a different conv-id than the preset one",
-								"label", label, "preset", newConv, "row", s.ConvID)
-						}
-						if relaunch.CodexAppServer && !awaitCodexAppServerLaunchReady(newConv, label) {
-							stopFailedCodexAppServerLaunch(newConv, label, newTmux)
-							agentDirectoryCleanup()
-							rollbackHandoff()
-							return cloneSpawnResult{}, &cloneSpawnError{
-								Status: http.StatusServiceUnavailable, Code: "codex_app_server_unavailable",
-								Msg: "the clone's explicitly selected Codex app-server did not become ready; the failed clone was stopped",
-							}
-						}
-						if launch.remoteControl {
-							armRemoteControlOnNewRow(label)
-						}
-						res.NewConv, res.NewTmux, res.Label = newConv, newTmux, label
-						commitRouteHelper()
-						if rootErr := launch.persistCodexStateRoot(newConv, cwd); rootErr != nil {
-							return cloneSpawnResult{}, rootErr
-						}
-						return res, nil
-					}
-				} else if s.ConvID != "" {
-					// Tag the sibling row's best-known remote-control ON (JOH-261);
-					// the --remote-control launch flag already armed its pane.
-					// This branch IS the discovery channel for a harness-minted
-					// conv-id, so it is also the first moment this clone's launch
-					// facts — the drive it took and the port it was handed — have a
-					// conversation to be recorded against. No-ops for a non-Copilot
-					// clone. Fresh: a no-copy clone starts its sibling on an empty
-					// conversation by definition.
-					//
-					// Guarded on the id NOT having been preset, because this branch
-					// is reachable with one that was: the preset condition includes
-					// route helpers while the branch condition above does not, so a
-					// route-helper clone without launch enrollment arrives here
-					// having already completed its launch from the spawn facade.
-					// Completing it twice would run two bootstraps against the same
-					// id, and the second `session.create` would empty what the first
-					// had just set up. Inert today (route helpers are refused for
-					// every harness but Claude Code), and the seam is documented as
-					// one moment per launch, so it should be one.
-					if !presetConv {
-						completeCopilotAPILaunch(s.ConvID, copilotAPILaunchFresh, proofArgs)
-					}
-					if relaunch.CodexAppServer && !awaitCodexAppServerLaunchReady(s.ConvID, label) {
-						stopFailedCodexAppServerLaunch(s.ConvID, label, newTmux)
-						agentDirectoryCleanup()
-						rollbackHandoff()
-						return cloneSpawnResult{}, &cloneSpawnError{
-							Status: http.StatusServiceUnavailable, Code: "codex_app_server_unavailable",
-							Msg: "the clone's explicitly selected Codex app-server did not become ready; the failed clone was stopped",
-						}
-					}
-					if launch.remoteControl {
-						armRemoteControlOnNewRow(label)
-					}
-					res.NewConv, res.NewTmux, res.Label = s.ConvID, newTmux, label
-					commitRouteHelper()
-					if rootErr := launch.persistCodexStateRoot(s.ConvID, cwd); rootErr != nil {
-						return cloneSpawnResult{}, rootErr
-					}
-					return res, nil
-				}
-			}
-			time.Sleep(250 * time.Millisecond)
-		}
-		missing := "conv-id"
-		if launchEnroll {
-			missing = "a live pane"
-		}
-		slog.Warn("clone: no-copy poll timed out; clone never came up",
-			"label", label, "missing", missing, "deadline", reincarnateSpawnTimeout)
-		// The pre-fork handoff is about to be rolled back, so do not leave a
-		// late-starting pane whose launch prompt points at that deleted row.
-		// This mirrors reincarnate's timeout cleanup; the generated label is
-		// unique to this launch.
-		tmuxToKill := newTmux
-		if tmuxToKill == "" {
-			tmuxToKill = label
-		}
-		if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxToKill)).Run(); err != nil {
-			slog.Warn("clone: timed-out no-copy launch kill failed",
-				"session", tmuxToKill, "error", err)
-		}
-		rollbackHandoff()
-		return cloneSpawnResult{NewTmux: newTmux, Label: label}, &cloneSpawnError{
-			Status: http.StatusGatewayTimeout, Code: "timeout",
-			Msg: "spawned session " + label + " but " + missing + " never materialised within " +
-				reincarnateSpawnTimeout.String() + "; the timed-out clone was stopped",
-		}
-	}
 	// Copy path: copy the conversation onto a fresh native id first, then
 	// resume into it.
 	historyCleanup := func() {}
@@ -728,7 +810,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		// that never happened (rollbackHandoff clears managedCloneStarted), may
 		// leave the clone coming up: its conversation stays, as its managed
 		// resources do.
-		if !managedCloneStarted {
+		if !r.managedCloneStarted {
 			historyCleanup()
 		}
 		if reservedAgentID != "" {
@@ -740,18 +822,18 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	if !codexThreadForked {
 		copiedConv, reserved, cleanup, err := cloneHistory(sourceConv, cwd, relaunch, launch.git.writeDirs, effectiveSandbox)
 		if err != nil {
-			rollbackHandoff()
+			r.rollbackHandoff()
 			return cloneSpawnResult{}, &cloneSpawnError{
 				Status: http.StatusInternalServerError, Code: "copy",
 				Msg: "failed to copy the conversation: " + err.Error(),
 			}
 		}
-		newConv, historyCleanup = copiedConv, cleanup
+		r.newConv, historyCleanup = copiedConv, cleanup
 		if reserved != "" {
 			// The history landed in state private to this actor; the resume
 			// derives the same state from the conv's actor, so bind it first.
-			if _, _, err := db.EnsureAgentForConvWithID(newConv, reserved, "clone"); err != nil {
-				rollbackHandoff()
+			if _, _, err := db.EnsureAgentForConvWithID(r.newConv, reserved, "clone"); err != nil {
+				r.rollbackHandoff()
 				return cloneSpawnResult{}, &cloneSpawnError{
 					Status: http.StatusInternalServerError, Code: "io",
 					Msg: "bind clone identity: " + err.Error(),
@@ -765,33 +847,33 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// only discovered from the row afterwards. Without this the clone is a
 	// killable "(session)" row for the whole poll below whenever no sandbox
 	// snapshot triggers the early EnsureAgentForConv.
-	releaseLaunchClaim = claimAgentLaunchIdentity(newConv)
+	r.releaseLaunchClaim = claimAgentLaunchIdentity(r.newConv)
 	agentDirectoryCleanup := func() {}
 	if effectiveSandbox != nil {
 		materialized, cleanup, materializeErr := prepareCodexSSHWorkaroundForNewLaunch(
-			*effectiveSandbox, newConv, launch.ssh)
+			*effectiveSandbox, r.newConv, launch.ssh)
 		if materializeErr != nil {
 			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "spawn", Msg: materializeErr.Error()}
 		}
 		effectiveSandbox = &materialized
 		agentDirectoryCleanup = cleanup
 	}
-	if fail := reassertFail(); fail != nil {
+	if fail := r.reassertFail(); fail != nil {
 		agentDirectoryCleanup()
 		return cloneSpawnResult{}, fail
 	}
 	proofArgs := launch.spawnArgs(cwd, proofToken, proofCwd, effectiveSandbox)
-	proofArgs.ConvID = newConv
-	if routeErr := prepareRouteHelper(&proofArgs); routeErr != nil {
+	proofArgs.ConvID = r.newConv
+	if routeErr := r.prepareRouteHelper(&proofArgs); routeErr != nil {
 		agentDirectoryCleanup()
 		return cloneSpawnResult{}, routeErr
 	}
 	// The forked jsonl already fixes the clone's conv-id, so the copy path needs
 	// no --session-id: the name and handoff ride the resume argv directly.
-	enrollLaunch(&proofArgs, newConv)
-	if failure := prepareCloneManaged(&proofArgs, newConv); failure != nil {
+	r.enrollLaunch(&proofArgs, r.newConv)
+	if failure := r.prepareCloneManaged(&proofArgs, r.newConv); failure != nil {
 		agentDirectoryCleanup()
-		rollbackHandoff()
+		r.rollbackHandoff()
 		return cloneSpawnResult{}, failure
 	}
 	// A resume in argv shape, a FRESH conversation in fact: the id was minted
@@ -799,19 +881,19 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// spawnDetachedTclaudeResumeAs.
 	if err := spawnDetachedTclaudeResumeAs(proofArgs, copilotAPILaunchFresh); err != nil {
 		agentDirectoryCleanup()
-		rollbackHandoff()
+		r.rollbackHandoff()
 		return cloneSpawnResult{}, &cloneSpawnError{
 			Status: http.StatusInternalServerError, Code: "spawn",
 			Msg: "failed to launch tclaude session new -r: " + err.Error(),
 		}
 	}
-	managedCloneStarted = true
+	r.managedCloneStarted = true
 	// Persist the launch snapshot before waiting for the session row. The copy
 	// path already knows its conversation ID, and may return success with a
 	// warning if registration times out; retaining the snapshot here prevents a
 	// later resume from falling back to the source agent's generated dirs.
 	if effectiveSandbox != nil {
-		agentID, _, persistErr := db.EnsureAgentForConv(newConv, "clone")
+		agentID, _, persistErr := db.EnsureAgentForConv(r.newConv, "clone")
 		if persistErr == nil {
 			persistErr = db.SetAgentEffectiveSandboxConfig(agentID, effectiveSandbox)
 		}
@@ -824,7 +906,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	}
 	deadline := time.Now().Add(reincarnateSpawnTimeout)
 	for time.Now().Before(deadline) {
-		if s, err := db.FindSessionByConvID(newConv); err == nil && s != nil && s.TmuxSession != "" {
+		if s, err := db.FindSessionByConvID(r.newConv); err == nil && s != nil && s.TmuxSession != "" {
 			newTmux = s.TmuxSession
 			if s.ID != "" {
 				label = s.ID
@@ -834,14 +916,14 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			// harness has died at startup. Require the pane to survive before
 			// reporting success. Legacy clones keep their historical
 			// registration-only gate.
-			if launchEnroll && !isConvOnline(newConv) {
+			if launchEnroll && !isConvOnline(r.newConv) {
 				time.Sleep(250 * time.Millisecond)
 				continue
 			}
-			if relaunch.CodexAppServer && !awaitCodexAppServerLaunchReady(newConv, label) {
-				stopFailedCodexAppServerLaunch(newConv, label, newTmux)
+			if relaunch.CodexAppServer && !awaitCodexAppServerLaunchReady(r.newConv, label) {
+				stopFailedCodexAppServerLaunch(r.newConv, label, newTmux)
 				agentDirectoryCleanup()
-				rollbackHandoff()
+				r.rollbackHandoff()
 				return cloneSpawnResult{}, &cloneSpawnError{
 					Status: http.StatusServiceUnavailable, Code: "codex_app_server_unavailable",
 					Msg: "the clone's explicitly selected Codex app-server did not become ready; the failed clone was stopped",
@@ -854,12 +936,12 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			if launch.remoteControl && label != "" {
 				armRemoteControlOnNewRow(label)
 			}
-			res.NewConv, res.NewTmux, res.Label = newConv, newTmux, label
-			commitRouteHelper()
-			if rootErr := launch.persistCodexStateRoot(newConv, cwd); rootErr != nil {
+			r.res.NewConv, r.res.NewTmux, r.res.Label = r.newConv, newTmux, label
+			r.commitRouteHelper()
+			if rootErr := launch.persistCodexStateRoot(r.newConv, cwd); rootErr != nil {
 				return cloneSpawnResult{}, rootErr
 			}
-			return res, nil
+			return r.res, nil
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
@@ -870,10 +952,10 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 					"session", newTmux, "error", err)
 			}
 		}
-		rollbackHandoff()
-		return cloneSpawnResult{NewConv: newConv, NewTmux: newTmux, Label: label}, &cloneSpawnError{
+		r.rollbackHandoff()
+		return cloneSpawnResult{NewConv: r.newConv, NewTmux: newTmux, Label: label}, &cloneSpawnError{
 			Status: http.StatusGatewayTimeout, Code: "timeout",
-			Msg: "spawned session for " + short8(newConv) + " but a live pane never materialised within " +
+			Msg: "spawned session for " + short8(r.newConv) + " but a live pane never materialised within " +
 				reincarnateSpawnTimeout.String() + "; the timed-out clone was stopped",
 		}
 	}
@@ -884,15 +966,15 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// trap. Logs (~/.tclaude/output.log) and the captured subprocess
 	// stderr (see liveSpawnResume) tell the rest of the story.
 	warn = fmt.Sprintf("spawned tclaude session for %s but its tmux session never registered within %s — the new agent may still come online; check ~/.tclaude/data/output.log for subprocess errors",
-		short8(newConv), reincarnateSpawnTimeout)
+		short8(r.newConv), reincarnateSpawnTimeout)
 	slog.Warn("clone: copy-path poll timed out; tmux session never registered",
-		"new_conv", newConv, "deadline", reincarnateSpawnTimeout)
-	res.NewConv, res.NewTmux, res.Label, res.Warn = newConv, newTmux, label, warn
-	commitRouteHelper()
-	if rootErr := launch.persistCodexStateRoot(newConv, cwd); rootErr != nil {
+		"new_conv", r.newConv, "deadline", reincarnateSpawnTimeout)
+	r.res.NewConv, r.res.NewTmux, r.res.Label, r.res.Warn = r.newConv, newTmux, label, warn
+	r.commitRouteHelper()
+	if rootErr := launch.persistCodexStateRoot(r.newConv, cwd); rootErr != nil {
 		return cloneSpawnResult{}, rootErr
 	}
-	return res, nil
+	return r.res, nil
 }
 
 // cloneLaunch is the launch posture a clone takes from its source: the
