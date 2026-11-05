@@ -63,10 +63,14 @@ type PermSlug struct {
 	Countable bool `json:"countable,omitempty"`
 	// NotCountableWhy says why it cannot, for the editor to show.
 	NotCountableWhy string `json:"not_countable_why,omitempty"`
+	// Federation is what a federation peer can be granted for the slug,
+	// filled from slugFederationReach (permission_federation_reach.go).
+	Federation FedReach `json:"-"`
 }
 
 func initPermissionRegistry() {
 	initPermissionRegistryEntries(permissionRegistry)
+	initFederationReach(permissionRegistry, slugFederationReach)
 }
 
 func initPermissionRegistryEntries(registry []PermSlug) {
@@ -165,6 +169,7 @@ var permissionRegistry = []PermSlug{
 	{Slug: PermHumanInboxAnswer, Description: "Peer-only: reply to this node's agents' human notifications and answer their ask-human requests once (approve or deny). Held only through unrestricted federation trust; not grantable, not requestable."},
 	{Slug: PermApprovalsAnswer, Description: "Peer-only one-shot access-request answers while selected as away cover. Configure as an unscoped federation peer grant; ordinary agent grants do not authorize answers."},
 	{Slug: PermModelsProxyLeased, Description: "Peer-only access to requester-issued model gateway leases. Configure through federation peer grants."},
+	{Slug: PermConfigOffer, Description: "Peer-only: offer configuration bundles to this node for its operator to review; nothing is imported until they accept. Configure as an unscoped federation peer grant; ordinary agent grants do not authorize it."},
 	{Slug: PermSelfTeleportPermissions, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Opt in to carrying permissions on self-initiated teleport; requires peer scope and receiver approval. Default off."},
 	{Slug: PermAgentsReceivePermissions, Description: "Peer-only: allow opt-in permission carry into a receiving group, optionally limited to permission slugs. Does not transfer ownership or sensitive authority."},
 	{Slug: PermAgentsReceive, Description: "Peer-only admission for agent bundle offers into an explicitly granted receiving group. Configure through federation peer grants; ordinary agent grants do not authorize receipt."},
