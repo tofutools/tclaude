@@ -61,19 +61,7 @@ func fedPeerAnswers(peer string) bool {
 	if p, _ := db.GetFederationPeer(peer); p == nil {
 		return false
 	}
-	if db.FederationPeerUnrestricted(peer) {
-		return true
-	}
-	grants, err := db.ListEffectiveFederationPeerGrants(peer)
-	if err != nil {
-		return false
-	}
-	for _, g := range grants {
-		if g.Slug == PermApprovalsAnswer && g.Scope == "" {
-			return true
-		}
-	}
-	return false
+	return fedPeerHoldsUnscoped(peer, PermApprovalsAnswer)
 }
 
 // Serialize revocation with consumption of delegated decisions. Rotating after

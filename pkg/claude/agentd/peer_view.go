@@ -303,19 +303,7 @@ func (v *peerView) allows(rule peerViewRule, groupID int64) bool {
 	if rule.group {
 		return fedPeerAllows(v.peer.InstanceID, groupID, rule.requires)
 	}
-	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
-		return true
-	}
-	grants, err := db.ListEffectiveFederationPeerGrants(v.peer.InstanceID)
-	if err != nil {
-		return false
-	}
-	for _, g := range grants {
-		if g.Slug == rule.requires && g.Scope == "" {
-			return true
-		}
-	}
-	return false
+	return fedPeerHoldsUnscoped(v.peer.InstanceID, rule.requires)
 }
 func (v *peerView) metadata() peerViewMetadata {
 	out := peerViewMetadata{Peer: peerDisplay(v.peer), Level: db.FederationTrustRestricted, Included: []string{}, Omitted: []peerViewOmission{}}

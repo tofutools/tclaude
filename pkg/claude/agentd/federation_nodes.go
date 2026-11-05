@@ -22,19 +22,7 @@ func fedPeerReadsNode(peer string) bool {
 	if p, _ := db.GetFederationPeer(peer); p == nil {
 		return false
 	}
-	if db.FederationPeerUnrestricted(peer) {
-		return true
-	}
-	grants, err := db.ListEffectiveFederationPeerGrants(peer)
-	if err != nil {
-		return false
-	}
-	for _, g := range grants {
-		if g.Slug == PermNodeRead && g.Scope == "" {
-			return true
-		}
-	}
-	return false
+	return fedPeerHoldsUnscoped(peer, PermNodeRead)
 }
 func (rt *fedRuntime) wakeNodes() {
 	select {
