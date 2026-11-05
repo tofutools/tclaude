@@ -164,7 +164,10 @@ func TestSendOpenCodeStandingOrderNudge_FreshDelivery(t *testing.T) {
 		require.NoError(t, p.send())
 
 		require.Equal(t, 1, p.promptCount())
-		assert.Equal(t, pinOpenCodeMessageID, p.stub.prompts[0]["messageID"],
+		p.stub.Lock()
+		messageID := p.stub.prompts[0]["messageID"]
+		p.stub.Unlock()
+		assert.Equal(t, pinOpenCodeMessageID, messageID,
 			"the prompt carries the origin's stable message ID")
 		assert.Equal(t, db.StandingOrderTurnOriginPending, p.originState(t))
 	})

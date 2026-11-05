@@ -183,9 +183,10 @@ func resolveStandingOrderNudgeTarget(
 
 // reconcileAcceptedStandingOrderPrompt settles the turn origin of a prompt
 // OpenCode already holds, from its history, without resubmitting it: a
-// completed turn clears the origin, an active one activates it, and a queued
-// one keeps it pending. It refuses while another standing-order turn is
-// pending or active.
+// completed turn clears the origin, an active one activates it (restoring it
+// first if it was lost), and a queued or not-yet-listed one keeps or restores
+// it as pending. It refuses while another standing-order turn is pending or
+// active.
 func reconcileAcceptedStandingOrderPrompt(
 	runtime *db.OpenCodeRuntime, convID, targetAgent string,
 	origin *db.StandingOrderAgentMessageOrigin,
@@ -251,8 +252,9 @@ func reconcileAcceptedStandingOrderPrompt(
 }
 
 // deliverStandingOrderPrompt arms a pending turn origin and submits the nudge
-// under the origin's stable message ID. A rejected prompt cancels the origin;
-// one whose response was lost is confirmed by an exact lookup.
+// under the origin's stable message ID. A rejected prompt cancels the origin.
+// One whose response was lost is confirmed by an exact lookup; if the lookup
+// cannot confirm it, the pending origin is kept and the error returned.
 func deliverStandingOrderPrompt(
 	runtime *db.OpenCodeRuntime, convID, targetAgent string,
 	origin *db.StandingOrderAgentMessageOrigin, nudge string,
