@@ -31,9 +31,9 @@ func runAutoJoinCLI(t *testing.T, matchedGroup string, args ...string) autoJoinO
 	t.Helper()
 	t.Setenv("HOME", t.TempDir()) // session.auto_join_group unset
 
-	prevJoin, prevMatch, prevSolo, prevOut := JoinGroupHandler, AutomaticGroupMatcher, startSoloSession, autoJoinNoticeOut
+	prevJoin, prevMatch, prevSolo, prevOut := JoinGroupHandler, AutomaticGroupMatcher, soloLaunchHookForTest, autoJoinNoticeOut
 	t.Cleanup(func() {
-		JoinGroupHandler, AutomaticGroupMatcher, startSoloSession, autoJoinNoticeOut = prevJoin, prevMatch, prevSolo, prevOut
+		JoinGroupHandler, AutomaticGroupMatcher, soloLaunchHookForTest, autoJoinNoticeOut = prevJoin, prevMatch, prevSolo, prevOut
 	})
 	var out autoJoinOutcome
 	var notice bytes.Buffer
@@ -47,7 +47,7 @@ func runAutoJoinCLI(t *testing.T, matchedGroup string, args ...string) autoJoinO
 		out.params = &c
 		return errTestJoined
 	}
-	startSoloSession = func(p *NewParams, _ explicitLaunchFields) error {
+	soloLaunchHookForTest = func(p *NewParams) error {
 		c := *p
 		out.params = &c
 		return errTestSolo

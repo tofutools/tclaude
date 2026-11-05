@@ -137,6 +137,11 @@ func explicitSoloOnlyFlags(explicit explicitLaunchFields) []string {
 	return flags
 }
 
+// soloLaunchHookForTest, when set, replaces the solo tail of a terminal
+// launch so the CLI-level auto-join tests can observe "this launch went solo"
+// without starting tmux. Always nil in production.
+var soloLaunchHookForTest func(params *NewParams) error
+
 // autoJoinNoticeOut receives the "kept solo" notice; a variable for tests.
 var autoJoinNoticeOut io.Writer = os.Stderr
 
@@ -303,13 +308,10 @@ func runNewWithGlobalDefault(params *NewParams, explicit explicitLaunchFields) e
 			params.AutoJoinOrCreateGroup = false
 		}
 	}
-	return startSoloSession(params, explicit)
-}
-
-// startSoloSession is the solo tail of a terminal launch: everything after
-// group discovery has fallen through. A variable so the CLI-level auto-join
-// tests can observe "this launch went solo" without starting tmux.
-var startSoloSession = func(params *NewParams, explicit explicitLaunchFields) error {
+	// Everything below is the solo tail: group discovery has fallen through.
+	if soloLaunchHookForTest != nil {
+		return soloLaunchHookForTest(params)
+	}
 	if err := applyGlobalDefaultLaunchProfile(params, explicit); err != nil {
 		return err
 	}
