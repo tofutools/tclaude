@@ -21,6 +21,22 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case tuiModeHelp:
 		return m.handleHelpKey(msg)
 
+	case tuiModeConfirmQuit, tuiModeConfirmStop, tuiModeConfirmKillSession, tuiModeConfirmRetire:
+		return m.handleConfirmKey(msg)
+
+	case tuiModeSpawn:
+		return m.handleSpawnKey(msg)
+
+	case tuiModeShell:
+		return m.handleShellKey(msg)
+	}
+	return m.handleListKey(msg)
+}
+
+// handleConfirmKey answers the open confirm dialog: each goes through only on
+// its confirming key, and any other key cancels back to the list.
+func (m tuiModel) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch m.mode {
 	case tuiModeConfirmQuit:
 		// Only "y" or a second Ctrl-C confirms. Enter is the reflexive dismiss key and the
 		// prompt promises that anything other than "y" cancels — accepting
@@ -69,15 +85,12 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.lifecycleTarget = tuiListRow{}
 		}
 		return m, nil
-
-	case tuiModeSpawn:
-		return m.handleSpawnKey(msg)
-
-	case tuiModeShell:
-		return m.handleShellKey(msg)
 	}
+	return m, nil
+}
 
-	// List mode.
+// handleListKey handles a key in the list.
+func (m tuiModel) handleListKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	visible := m.visibleRows()
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
