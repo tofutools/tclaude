@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/launchundo"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -50,7 +51,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			Msg: "an external steward starts workers only through its pinned agent.spawn grant"}
 	}
 	// Cleanup lifetimes. Only the pre-fork undos (the managed server's cgroup
-	// and runtime, the pre-fork enrollment) ride the spawnUndo stack below. The
+	// and runtime, the pre-fork enrollment) ride the launchundo stack below. The
 	// deferred cleanups registered along the way each have their own lifetime,
 	// and their registration order is load-bearing, so they stay as flag-gated
 	// defers rather than joining the stack:
@@ -514,8 +515,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// registered once, when its state exists; a return before the fork commits
 	// undoes them newest first. Registered after the defers above so it runs
 	// before them, as the per-return unwinding it replaces did.
-	undo := &spawnUndo{}
-	defer undo.unwindUnlessCommitted()
+	undo := &launchundo.Undo{}
+	defer undo.UnwindUnlessCommitted()
 	// installHistory takes the harness because the managed-server step swaps
 	// in the agent's own before installing into it.
 	installHistory := func(spawnHarness *harness.Harness) *spawnFailure {
@@ -656,7 +657,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			}
 		}
 		// The landed conversation keeps its enrollment.
-		undo.commit()
+		undo.Commit()
 		return landSpawnOffline(p, spawnHarness, preConvID)
 	}
 	routeGeneration, fail := stageRouteHelper(g, &p, &spawnArgs, spawnHarness, label, preConvID,
@@ -724,7 +725,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 		// The enrollment ran before the fork and the managed server may be up;
 		// a confirmed failure undoes them even after the fork has committed.
-		undo.unwind()
+		undo.Unwind()
 		// A confirmed failure can come after the fork, when the deferred check
 		// no longer runs.
 		if discardPrivateOpenCodeState != nil {
@@ -760,7 +761,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	}
 	// Forked: the launched agent owns what undo holds. Only a confirmed
 	// failure (launchFailed) still undoes it.
-	undo.commit()
+	undo.Commit()
 	importedLaunched = true
 	managedStarted = true
 	timing("session_wrapper_dispatched", "label", label)
@@ -1384,7 +1385,7 @@ func stageRouteHelper(g *db.AgentGroup, p *spawnParams, spawnArgs *clcommon.Spaw
 // whether the briefing rode the launch prompt inline.
 func enrollBeforeLaunch(g *db.AgentGroup, p *spawnParams, spawnArgs *clcommon.SpawnArgs,
 	spawnHarness *harness.Harness, groupName, importedID string, openCodeLaunch *openCodeLaunch,
-	undo *spawnUndo) (preConvID string, preMsgID int64, briefingInlined bool, fail *spawnFailure) {
+	undo *launchundo.Undo) (preConvID string, preMsgID int64, briefingInlined bool, fail *spawnFailure) {
 	if importedID != "" {
 		preConvID = importedID
 	} else if openCodeLaunch != nil {
@@ -1411,7 +1412,7 @@ func enrollBeforeLaunch(g *db.AgentGroup, p *spawnParams, spawnArgs *clcommon.Sp
 		return "", 0, false, fail
 	}
 	enrolledConvID := preConvID
-	undo.add(func() { rollbackSpawnEnrollment(g, enrolledConvID, mid, actorCreated) })
+	undo.Add(func() { rollbackSpawnEnrollment(g, enrolledConvID, mid, actorCreated) })
 	spawnArgs.SessionID = preConvID
 	if p.DarwinRouteCapable {
 		resolvedAgentID, resolveErr := db.AgentIDForConv(preConvID)
@@ -1475,7 +1476,7 @@ func enrollBeforeLaunch(g *db.AgentGroup, p *spawnParams, spawnArgs *clcommon.Sp
 // launch (nil when none started) and the harness, which history installation
 // may swap for the agent's own.
 func prepareManagedServer(g *db.AgentGroup, p *spawnParams, spawnArgs *clcommon.SpawnArgs,
-	spawnHarness *harness.Harness, label string, undo *spawnUndo,
+	spawnHarness *harness.Harness, label string, undo *launchundo.Undo,
 	discardPrivateOpenCodeState *func(), installHistory func(*harness.Harness) *spawnFailure,
 	importedID *string) (*openCodeLaunch, *harness.Harness, *spawnFailure) {
 	var openCodeLaunch *openCodeLaunch
@@ -1538,7 +1539,7 @@ func prepareManagedServer(g *db.AgentGroup, p *spawnParams, spawnArgs *clcommon.
 		return nil, spawnHarness, &spawnFailure{http.StatusUnprocessableEntity,
 			"unsupported_sandbox_profile_resource_limits", resourceErr.Error()}
 	}
-	resourceStep := undo.add(resourceCleanup)
+	resourceStep := undo.Add(resourceCleanup)
 
 	if p.BundleHistory != nil {
 		if err = prepareOpenCodeTclaudeLayerState(sandboxSpec); err != nil {
@@ -1555,7 +1556,7 @@ func prepareManagedServer(g *db.AgentGroup, p *spawnParams, spawnArgs *clcommon.
 	// An offline landing's conversation is in its store now; its server
 	// starts at resume.
 	if p.NoLaunch {
-		resourceStep.run()
+		resourceStep.Run()
 	} else {
 		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
 			label, p.Cwd, p.Name, *importedID, permissionJSON,
@@ -1564,7 +1565,7 @@ func prepareManagedServer(g *db.AgentGroup, p *spawnParams, spawnArgs *clcommon.
 			errors.Is(err, errOpenCodeResourceCgroup) &&
 			degradeManagedServerResourceCgroup(
 				p.EffectiveSandbox, p.SandboxImplementation, p.AllowUnenforcedSandbox, false, err) {
-			resourceStep.run()
+			resourceStep.Run()
 			resourceCgroupDir = ""
 			openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
 				label, p.Cwd, p.Name, *importedID, permissionJSON,
@@ -1575,8 +1576,8 @@ func prepareManagedServer(g *db.AgentGroup, p *spawnParams, spawnArgs *clcommon.
 				"failed to start managed OpenCode server: " + err.Error()}
 		}
 		// The running server owns its cgroup now; stopping it is the undo.
-		resourceStep.release()
-		undo.add(func() { _ = stopOpenCodeRuntime(openCodeLaunch.SessionID) })
+		resourceStep.Release()
+		undo.Add(func() { _ = stopOpenCodeRuntime(openCodeLaunch.SessionID) })
 		spawnArgs.OpenCodeServerURL = openCodeLaunch.ServerURL
 		spawnArgs.OpenCodeServerPassword = openCodeLaunch.Password
 		spawnArgs.OpenCodeTransport = openCodeLaunch.Transport
