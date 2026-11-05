@@ -419,121 +419,17 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 	}
 
-	// Launch-enrollment path (Claude Code, unless reverted via config): the
-	// conv-id can be PRESET, so enroll the agent and bake its rename + welcome
-	// into the launch command — no post-connect tmux injection, no conv-id
-	// poll-wait. We generate the conv-id, enroll (group membership + inbox
-	// briefing) BEFORE the fork (the welcome must reference the briefing's
-	// message id), and forward the id/name/welcome as launch args. Harnesses
-	// that can't preset a conv-id (Codex) keep the inject-after-connect flow.
-	//
-	// Resolve (not Get) so a blank p.Harness normalises to the Claude Code
-	// default — callers like the template instantiator and the pending-spawn
-	// sweeper leave Harness unset, and those CC spawns must take the same
-	// launch-enrollment path as the HTTP spawn endpoint. Resolve also tolerates
-	// an unknown name (returns nil), and SupportsLaunchEnrollment is nil-safe,
-	// so a bad harness degrades to the legacy path rather than panicking.
-	launchEnroll := spawnHarness.SupportsLaunchEnrollment() && !spawnUsesLegacyInjection()
-	if p.AgentID != "" {
-		workerDefaults, err := db.GetFederationWorkerDefaults(p.AgentID)
-		if err != nil {
-			return nil, &spawnFailure{http.StatusInternalServerError, "worker_defaults", err.Error()}
-		}
-		if workerDefaults != nil && len(workerDefaults.Permissions) > 0 && !launchEnroll {
-			return nil, &spawnFailure{http.StatusBadRequest, "worker_defaults", "node-profile workers require a harness with enrollment before launch"}
-		}
-	}
-
-	if fail := installHistory(spawnHarness); fail != nil {
+	launchEnroll, routeEnabled, fail := resolveSpawnLaunchSeam(g, &p, spawnHarness, layeredLaunch, groupName, installHistory, &importedID)
+	if fail != nil {
 		return nil, fail
 	}
-	if importedID != "" {
-		launchEnroll = true
-	}
-	if p.DarwinRouteCapable && !launchEnroll {
-		return nil, &spawnFailure{http.StatusUnprocessableEntity, "darwin_route_launch",
-			"Darwin route-capable launches require the preset-conversation launch seam"}
-	}
-	routeEnabled := runtime.GOOS == "darwin" && p.DarwinRouteCapable && g != nil
-	if runtime.GOOS == "linux" && g != nil {
-		var routeErr error
-		routeEnabled, routeErr = db.IsAgentGroupRouteEnabled(g.ID, PermRoutesPublish, PermRoutesConsume)
-		if routeErr != nil {
-			return nil, &spawnFailure{http.StatusInternalServerError, "route_authority", "could not resolve group route capability: " + routeErr.Error()}
-		}
-		if routeEnabled && !layeredLaunch {
-			return nil, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_group_route_launch", "Linux group routes require a pane-authoritative launch with tclaude’s sandbox"}
-		}
-	}
-	if p.Arrival != nil {
-		if p.AgentID == "" {
-			p.AgentID = db.NewAgentID()
-		}
-		arrival := *p.Arrival
-		arrival.Sandbox = p.EffectiveSandbox
-		p.InitialMessage = buildArrivalBriefing(arrival, p.AgentID, p.Cwd, groupName, spawnHarness.Name, p.Model) + "\n\n" + p.InitialMessage
-		p.Arrival = nil // an async continuation must not add a second briefing
-	}
-	var preConvID string
-	var preMsgID int64
-	// briefingInlined records whether the launch-enrollment prompt baked the
-	// whole briefing inline (short enough to fit) rather than pointing at the
-	// inbox copy. When it did, the inbox copy is inserted already delivered and
-	// read — the agent has the text, so it must never enter the nudge queue.
-	var briefingInlined bool
-	if launchEnroll {
-		var fail *spawnFailure
-		preConvID, preMsgID, briefingInlined, fail = enrollBeforeLaunch(g, &p, &spawnArgs, spawnHarness,
-			groupName, importedID, openCodeLaunch, undo)
-		if fail != nil {
-			return nil, fail
-		}
-	} else if spawnHarness.NeedsSpawnSeed() {
-		// Seed-needing harness (Codex): the conv-id can't be preset, so
-		// enrollment + the inbox briefing happen post-connect. But the pane still
-		// needs a positional first-turn prompt to materialise its conv-id
-		// (JOH-205) — and that prompt IS the [system: ...] welcome, replacing the
-		// old inert "[tclaude] …" placeholder. A short/empty briefing rides in
-		// full (inline brief, or "wait"), so the agent gets a single greeting
-		// turn that looks like the Claude Code launch prompt and the post-connect
-		// welcome is skipped (finishSpawnEnrollment gates that on the same
-		// spawnBriefingFitsLaunch predicate). A long briefing's seed is a
-		// stand-by welcome; its inbox-pointer welcome is injected post-connect,
-		// once the inbox row + id exist. No conv-id is known here, so the welcome
-		// carries no inbox-message id (msgID 0). (CC on the legacy-injection
-		// revert reports its id via hook and needs no seed, so it is excluded.)
-		spawnContextBody := buildSpawnContextBody(groupName, p.GroupContext, p.ProfileContext, p.InitialMessage, p.Attachments, p.ManagedInstructionsBody)
-		spawnArgs.InitialPrompt = buildSpawnSeedPrompt(p.Name, p.Role, p.Descr, groupName,
-			p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
-			resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), spawnInlineMaxChars())
+	preConvID, preMsgID, briefingInlined, fail := enrollOrSeedSpawn(g, &p, &spawnArgs, spawnHarness,
+		groupName, importedID, openCodeLaunch, undo, launchEnroll)
+	if fail != nil {
+		return nil, fail
 	}
 	if p.NoLaunch {
-		// Landing offline keeps the subscription: the marker always, and the
-		// token when it came, so a later start never uses this node's login.
-		if p.ClaudeSubscription.peer != "" {
-			agentID := p.AgentID
-			if agentID == "" && preConvID != "" {
-				agentID, _ = db.AgentIDForConv(preConvID)
-			}
-			if agentID == "" {
-				return nil, &spawnFailure{http.StatusInternalServerError, "claude_subscription", "could not resolve the agent identity to mark for the Claude subscription"}
-			}
-			mark := func() error { return db.SetAgentClaudeSubscription(agentID, p.ClaudeSubscription.peer) }
-			if p.ClaudeSubscription.token != "" {
-				mark = func() error { return holdClaudeSubscription(agentID, p.ClaudeSubscription) }
-			}
-			if err := mark(); err != nil {
-				return nil, &spawnFailure{http.StatusInternalServerError, "claude_subscription", err.Error()}
-			}
-		}
-		if spawnHarness.UsesAuthoritativeServer() {
-			if err := recordOfflineResumeProfile(preConvID, spawnHarness.Name, p.Cwd); err != nil {
-				return nil, &spawnFailure{http.StatusInternalServerError, "history", err.Error()}
-			}
-		}
-		// The landed conversation keeps its enrollment.
-		undo.Commit()
-		return landSpawnOffline(p, spawnHarness, preConvID)
+		return landSpawnWithoutLaunch(&p, spawnHarness, preConvID, undo)
 	}
 	routeGeneration, fail := stageRouteHelper(g, &p, &spawnArgs, spawnHarness, label, preConvID,
 		routeEnabled, layeredLaunch, launchEnroll)
