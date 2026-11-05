@@ -4,7 +4,6 @@ package session
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -424,10 +423,6 @@ func renderDarwinSeatbeltCommandWithRouteSlots(
 	if err != nil {
 		return "", err
 	}
-	if os.Getenv("TCLAUDE_TEMP_SEATBELT_DENIES_FIRST") == "1" {
-		profile = tempDeniesFirstSeatbeltProfile(profile)
-	}
-	tempDumpSeatbeltProfile(profile, params)
 
 	command := clcommon.ShellQuoteArg(binary) + " -p " + clcommon.ShellQuoteArg(profile)
 	for _, param := range params {
@@ -684,73 +679,4 @@ func tclaudeLayerOpenCodeLaunchOSSandbox() harness.LaunchOSSandbox {
 
 func validateTclaudeLayerHarness(harnessName string) error {
 	return nil
-}
-
-// tempDumpSeatbeltProfile is TEMPORARY (#3999, awb tcl-gejtfc; remove before
-// merge): with TCLAUDE_TEMP_SEATBELT_PROFILE_DUMP_DIR set, it writes each
-// rendered profile and its -D parameters there, so CI can replay the exact
-// profile against the macOS 27.2 localhost:N connect EPERM.
-func tempDumpSeatbeltProfile(profile string, params []seatbeltProfileParam) {
-	dir := os.Getenv("TCLAUDE_TEMP_SEATBELT_PROFILE_DUMP_DIR")
-	if dir == "" {
-		return
-	}
-	named := make(map[string]string, len(params))
-	for _, param := range params {
-		named[param.name] = param.path
-	}
-	data, err := json.Marshal(map[string]any{"profile": profile, "params": named})
-	if err != nil {
-		return
-	}
-	name := fmt.Sprintf("profile-%d-%d.json", os.Getpid(), time.Now().UnixNano())
-	_ = os.WriteFile(filepath.Join(dir, name), data, 0o600)
-}
-
-// tempDeniesFirstSeatbeltProfile is TEMPORARY (#3999, awb tcl-gejtfc;
-// remove before merge): it regroups a rendered profile's top-level forms as
-// (version ...), (allow default), every other deny, then every other allow,
-// keeping the relative order within each group, to test the macOS 27.2
-// localhost:N EPERM against a deny-first ordering. Comments are dropped.
-func tempDeniesFirstSeatbeltProfile(profile string) string {
-	var head, denies, allows, other []string
-	depth, start := 0, -1
-	for i := 0; i < len(profile); i++ {
-		switch c := profile[i]; c {
-		case ';':
-			if depth == 0 {
-				for i < len(profile) && profile[i] != '\n' {
-					i++
-				}
-			}
-		case '"':
-			for i++; i < len(profile) && profile[i] != '"'; i++ {
-				if profile[i] == '\\' {
-					i++
-				}
-			}
-		case '(':
-			if depth == 0 {
-				start = i
-			}
-			depth++
-		case ')':
-			depth--
-			if depth == 0 && start >= 0 {
-				form := profile[start : i+1]
-				switch {
-				case strings.HasPrefix(form, "(version") || form == "(allow default)":
-					head = append(head, form)
-				case strings.HasPrefix(form, "(deny"):
-					denies = append(denies, form)
-				case strings.HasPrefix(form, "(allow"):
-					allows = append(allows, form)
-				default:
-					other = append(other, form)
-				}
-			}
-		}
-	}
-	all := append(append(append(append([]string{}, head...), other...), denies...), allows...)
-	return strings.Join(all, "\n") + "\n"
 }
