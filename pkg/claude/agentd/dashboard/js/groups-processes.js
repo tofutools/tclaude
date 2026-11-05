@@ -361,7 +361,7 @@ function plural(n, word) {
 }
 
 // RunControls is the Processes perspective's version of the Agents row
-// (spawn agent, power on, shutdown), in the same places: ＋ New (`add`, a
+// (spawn agent, power on, shutdown), in the same places: ＋ (`add`, a
 // process for the group or one agent, and in Both a board, page or shell),
 // resume every paused run, pause every running one. Pause stands in for shutdown because
 // it is reversible: work in flight finishes, nothing new is dispatched until
@@ -434,7 +434,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   // Both editors of a saved process carry `process` and `stored` (the view
   // it was opened at), so ☰ Steps / ◈ Graph switch over the same draft.
   const [quick, setQuick] = useState(null);
-  // The ＋ New menu, held here: a click on a folded section line opens the
+  // The ＋ menu, held here: a click on a folded section line opens the
   // section, which moves the button to the title row (a new instance).
   const [adding, setAdding] = useState(false);
   // dismissed only re-renders this group at once; the pref folds the rest.
@@ -569,7 +569,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
       : !fused && fresh && folded && !starting && html`<div class="gp-empty gq-folded ui-empty" data-quickstart-folded=${group.name}>
         ${wizard ? 'No rites yet' : 'No processes yet'} · <${Button} size="sm" variant="link" class="gq-link" data-quickstart-expand onClick=${() => setQuick('pick')}>Get started ▸<//></div>`;
   const startScope = (scope) => { setQuick(null); setStarting({ scope }); };
-  // In Both, ＋ New also makes the boards, pages and shell its section lists.
+  // In Both, ＋ also makes the boards, pages and shell its section lists.
   const add = html`<${AddResource} group=${group} pages=${entry?.pages || []} api=${api} source=${source} wizard=${wizard}
     notify=${notify || defaultNotify} processesOnly=${!fused} open=${adding} onOpen=${setAdding} onAddProcess=${startScope} />`;
   const controls = (inline) => html`<${RunControls} group=${group} runs=${liveGroupRuns(context, entry, members)}
@@ -608,10 +608,10 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     const listed = savedProcesses.length + (entry?.boards || []).length + (entry?.pages || []).length + shell;
     const shown = runs.length > 0 || planned.length > 0 || memberRuns.length > 0 || listed > 0;
     // One line only when the section holds nothing at all: the count is
-    // what it lists, and ＋ New is the one way to add (no "Get started ▸").
+    // what it lists, and the ＋ menu is the one way to add (no "Get started ▸").
     const empty = !shown && !starting && !quick && html`<div class="gp-empty ui-empty" data-resources-empty=${group.name}>${wizard
-      ? 'Nothing here yet. ＋ New adds a rite, board, page or shell.'
-      : 'No resources yet. ＋ New adds a process, board, page or shell.'}</div>`;
+      ? 'Nothing here yet. The ＋ menu adds a rite, board, page or shell.'
+      : 'No resources yet. The ＋ menu adds a process, board, page or shell.'}</div>`;
     // The run controls head the open section's content on their own title
     // row, where the Agents half has its table header; folded, they ride
     // the section line.

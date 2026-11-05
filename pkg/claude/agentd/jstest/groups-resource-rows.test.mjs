@@ -92,7 +92,7 @@ test('a process pill reads its own group\'s entry: one template pinned in two gr
   assert.equal(pill.resourceView(snap, 9, 'process', 'deploy'), 'running');
 });
 
-test('＋ New lists both process scopes, Board, Live page and Shell with a line each; Shell needs the group\'s directory', async (t) => {
+test('＋ lists both process scopes, Board, Live page and Shell with a line each; Shell needs the group\'s directory', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/groups-resources.js');
   const { container } = await harness.mount(harness.html`<div>
@@ -100,7 +100,13 @@ test('＋ New lists both process scopes, Board, Live page and Shell with a line 
     <${mod.AddResource} group=${{ id: 2, name: 'bare', default_cwd: '' }} api=${{}} onAddProcess=${() => {}} />
   </div>`);
   const [withDir, bare] = container.querySelectorAll('.gr-add');
-  await harness.act(() => harness.fireEvent(withDir.querySelector('[data-resource-add]'), 'click'));
+  const trigger = withDir.querySelector('[data-resource-add]');
+  // Icon-only, like the Agents section's spawn buttons: no visible word, but
+  // an accessible name and tooltip that say what it adds.
+  assert.equal(trigger.textContent.replace(/\s+/g, ''), '＋▾');
+  assert.equal(trigger.getAttribute('aria-label'), 'Add a resource to crew: a process, board, live page or shell');
+  assert.equal(trigger.getAttribute('title'), trigger.getAttribute('aria-label'));
+  await harness.act(() => harness.fireEvent(trigger, 'click'));
   const names = [...withDir.querySelectorAll('.gr-new-name')].map((el) => el.textContent);
   assert.deepEqual(names, ['Process for the group', 'Process for one agent', 'Board', 'Live page', 'Shell']);
   assert.match(withDir.querySelector('[data-resource-add-shell]').textContent, /A terminal in \/src\/crew/);
@@ -162,7 +168,7 @@ test('⋯ renames a row in place and moves it to another group', async (t) => {
   assert.deepEqual(notes, ['Renamed App to Checkout', 'Moved App to ops']);
 });
 
-test('＋ New hands each process item its scope, and processesOnly lists just those two', async (t) => {
+test('＋ hands each process item its scope, and processesOnly lists just those two', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/groups-resources.js');
   const scopes = [];

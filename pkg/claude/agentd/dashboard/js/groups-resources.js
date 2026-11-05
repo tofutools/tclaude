@@ -288,7 +288,7 @@ export function freePageName(pages = []) {
   for (let n = 2; ; n++) if (!taken.has(`sketch-${n}`)) return `sketch-${n}`;
 }
 
-// AddResource is the section's one ＋ New button: a process for the whole
+// AddResource is the section's one ＋ button (icon-only): a process for the whole
 // group or for one agent (the start form, which also builds a new one), a
 // board linked to the group, a blank live page, or the group's shell, each
 // with what it is in one line. `processesOnly` keeps just the two process
@@ -348,10 +348,14 @@ export function AddResource({ group, pages = [], api, source, wizard = false, no
   const item = (attr, onClick, name, line, disabled = false) => html`<${MenuItem} ...${{ [attr]: true }} class="gr-new-item" onClick=${onClick}
     disabled=${disabled}><span class="gr-new-name">${name}</span><span class="gr-new-line">${line}</span><//>`;
   const process = (scope) => () => { setOpen(false); onAddProcess(scope); };
+  // Icon-only, like the Agents section's spawn buttons beside it, so the
+  // name lives in the title and aria-label.
+  const addTitle = processesOnly
+    ? `Start a process in ${group.name}: for the group or for one agent`
+    : `Add a resource to ${group.name}: a process, board, live page or shell`;
   return html`<span class="gr-add" ref=${ref}>
     <${Button} size="sm" variant="primary" class="spawn-btn gr-add-btn" domRef=${trigger} data-resource-add=${group.name} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
-      title=${processesOnly ? `Start a process in ${group.name}` : `Add a resource to ${group.name}: a process, board, live page or shell`}
-      aria-label=${processesOnly ? `Start a process in ${group.name}` : `Add a resource to ${group.name}`} onClick=${() => setOpen(!open)}>＋ New ▾<//>
+      title=${addTitle} aria-label=${addTitle} onClick=${() => setOpen(!open)}><span class="gr-add-plus" aria-hidden="true">＋</span><span class="gr-add-caret" aria-hidden="true">▾</span><//>
     ${open && html`<${Menu} size="sm" class="gr-add-menu gr-new-menu">
       ${item('data-resource-add-process', process('group'), wizard ? 'Rite for the party' : 'Process for the group', wizard ? 'Begin a written rite, or shape a new one' : 'Run a saved process, or build a new one')}
       ${item('data-resource-add-process-agent', process('agent'), wizard ? 'Rite for one hero' : 'Process for one agent', wizard ? 'Pick a hero; its steps are that hero\'s labour' : 'Pick a member; its steps run as that agent')}

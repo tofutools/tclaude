@@ -24,7 +24,7 @@ function fakeSource(harness, { status = 'ready', context = FIXTURE, error = '' }
   return source;
 }
 
-// startFrom opens a group's start form the way the operator does: ＋ New,
+// startFrom opens a group's start form the way the operator does: ＋,
 // then the process item for that scope.
 async function startFrom(harness, el, scope = 'group') {
   await harness.act(() => harness.fireEvent(el.querySelector('[data-resource-add]'), 'click'));
@@ -489,10 +489,10 @@ test('Both shows each group\'s members and runs as sections, each with its contr
   assert.ok(subgroupsHome.querySelector('[data-act="create-subgroup"]'), 'create subgroup sits where the section shows it');
   assert.equal(subgroups.querySelectorAll('[data-act="create-subgroup"]').length, 1, 'one create subgroup button at a time');
   const titleRow = section(fe, 'processes').querySelector('[data-process-group] > .gf-title-row');
-  assert.ok(titleRow.querySelector('[data-resource-add="frontend-squad"]'), '＋ New heads the open Resources');
+  assert.ok(titleRow.querySelector('[data-resource-add="frontend-squad"]'), '＋ heads the open Resources');
   assert.equal(section(fe, 'processes').querySelector('[data-process-start], [data-process-start-agent]'), null, 'the old start buttons are gone');
   assert.ok(titleRow.querySelector('[data-process-pause-all] [data-run-glyph="pause"]'), 'pause never wears the shutdown glyph');
-  assert.equal(head(fe, 'processes').querySelector('[data-resource-add]'), null, '＋ New left the open Resources line');
+  assert.equal(head(fe, 'processes').querySelector('[data-resource-add]'), null, '＋ left the open Resources line');
   assert.equal(fe.querySelector(':scope > .subtable > .group-header-actions'), null, 'no separate action row');
 
   assert.ok(section(fe, 'agents').querySelector('table'), 'the member table shows');
@@ -507,8 +507,8 @@ test('Both shows each group\'s members and runs as sections, each with its contr
   assert.equal(quiet.querySelector('[data-process-group]'), null);
   assert.ok(quiet.querySelector('.gf-section-actions [data-resource-add="infra-crew"]'), 'a folded section keeps its controls');
   await harness.act(() => harness.fireEvent(quiet.querySelector('.gf-section-toggle'), 'click'));
-  assert.equal(section(infra, 'processes').querySelector('[data-quickstart-folded]'), null, 'no Get started line: ＋ New does that');
-  assert.match(section(infra, 'processes').querySelector('[data-resources-empty="infra-crew"]').textContent, /^No resources yet\. ＋ New adds/);
+  assert.equal(section(infra, 'processes').querySelector('[data-quickstart-folded]'), null, 'no Get started line: the ＋ menu does that');
+  assert.match(section(infra, 'processes').querySelector('[data-resources-empty="infra-crew"]').textContent, /^No resources yet\. The ＋ menu adds/);
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.processes.infra-crew'), '1', 'the choice is remembered');
   await harness.act(() => harness.fireEvent(section(fe, 'agents').querySelector('.gf-section-fill'), 'click'));
@@ -531,9 +531,9 @@ test('Both shows each group\'s members and runs as sections, each with its contr
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.processes.infra-crew'), '0', 'Processes folded again');
   await harness.act(() => harness.fireEvent(section(infra, 'processes').querySelector('.gf-section-actions [data-resource-add="infra-crew"]'), 'click'));
   await settle(harness);
-  assert.ok(section(infra, 'processes').classList.contains('open'), '＋ New on the folded line unfolds Resources');
+  assert.ok(section(infra, 'processes').classList.contains('open'), '＋ on the folded line unfolds Resources');
   // The menu survives the move to the title row.
-  assert.ok(section(infra, 'processes').querySelector('.gf-title-row [data-resource-add-process]'), 'the ＋ New menu stays open on the title row');
+  assert.ok(section(infra, 'processes').querySelector('.gf-title-row [data-resource-add-process]'), 'the ＋ menu stays open on the title row');
   assert.equal(document.activeElement, section(infra, 'processes').querySelector('.gf-title-row [data-resource-add]'), 'focus follows the button to the title row');
   await harness.act(() => harness.fireEvent(section(infra, 'processes').querySelector('[data-resource-add-process-agent]'), 'click'));
   await settle(harness);

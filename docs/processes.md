@@ -17,7 +17,7 @@ which half is which.
 ## Start here
 
 1. Create a template under **Automations › Processes**, or let **Edit with agent** draft it.
-2. Start a run from a group's Resources section: **＋ New ▾** › **Process for the group**.
+2. Start a run from a group's Resources section: the **＋** menu › **Process for the group**.
 3. Follow it in [Groups](dashboard-groups.md#agents-and-processes).
 
 [In the dashboard](#in-the-dashboard) covers all of this. The next sections are
@@ -321,7 +321,7 @@ All of it goes through the same daemon routes and permissions as the CLI.
 **Quick start** (Groups › Processes). Before your first process, a group
 with no processes shows *Get started* in its body; afterwards (or once you
 dismiss it) it folds to *No processes yet · Get started ▸*. In the Both view,
-*Get started* opens from the start form instead: **＋ New ▾** › *Process for
+*Get started* opens from the start form instead: the **＋** menu › *Process for
 the group* (or *for one agent*), then *or build a new one ▸*. From it, pick a starter (filled from the group's roles and
 members), reuse a library template, or begin a blank step list. Or describe
 the flow in plain words and press *Draft steps*: a process scribe drafts the
@@ -458,7 +458,7 @@ things there are specific to processes:
   *⇲ unwrap* inlines a body again.
 
 **Starting a run.** In Groups, in the **Both** or **Processes** focus, open
-**＋ New ▾** on the group and pick **Process for the group**, or **Process for
+the **＋** menu on the group and pick **Process for the group**, or **Process for
 one agent** for a run bound to one agent: pick a template, fill its params, and tick the
 program profiles you authorize it to run under (never pre-ticked). A group process
 is group-scoped (⌂) and an agent process is agent-scoped (◉). The CLI equivalent
