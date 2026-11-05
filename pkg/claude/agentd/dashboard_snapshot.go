@@ -133,329 +133,29 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	aliveSessions := sharedStatus.alive
 	span.mark("status_snapshot")
 
-	var (
-		groups               []*db.AgentGroup
-		sandboxProfiles      []*db.SandboxProfile
-		globalSandboxProfile *db.SandboxProfile
-		allGrants            map[string][]string
-		allOverrides         map[string]map[string]string
-		allOverrideScopes    map[string]map[string]string
-		cfg                  *config.Config
-		notifyPrefs          map[string]string
-		activeConvIDs        []string
-		retiredTotal         int
-		agentRosterErr       error
-		sudoGrants           []*db.SudoGrant
-	)
-	// The snapshot preload is a set of independent SQLite WAL reads plus one
-	// config-file read. Run them as one fan-out so its wall clock is the slowest
-	// read, not the sum of ~dozen fixed round trips (which dominated even with
-	// only a handful of agents).
-	span.addChildren("preload", runSnapshotNamedLoads(
-		snapshotNamedLoad{"groups", func() { groups, _ = db.ListAgentGroups() }},
-		snapshotNamedLoad{"sandbox_profiles", func() { sandboxProfiles, _ = db.ListSandboxProfiles() }},
-		snapshotNamedLoad{"global_sandbox", func() { globalSandboxProfile, _ = db.GetGlobalSandboxProfile() }},
-		snapshotNamedLoad{"permission_overrides", func() { allOverrides, _ = db.ListAllAgentPermissionOverrides() }},
-		snapshotNamedLoad{"permission_scopes", func() { allOverrideScopes, _ = db.ListAllAgentPermissionScopes() }},
-		snapshotNamedLoad{"config", func() { cfg, _ = config.Load() }},
-		snapshotNamedLoad{"notify_prefs", func() { notifyPrefs, _ = db.ListConvNotifyPrefs() }},
-		snapshotNamedLoad{"agent_roster", func() {
-			activeConvIDs, retiredTotal, agentRosterErr = db.ListAgentRosterState()
-		}},
-		snapshotNamedLoad{"sudo_grants", func() { sudoGrants, _ = db.ListAllActiveSudoGrants() }},
-	)...)
-	// The all-overrides read contains both grant and deny effects. Derive the
-	// grant-only compatibility view in memory instead of scanning and sorting
-	// the same permission table a second time on every poll.
-	allGrants = map[string][]string{}
-	for convID, effects := range allOverrides {
-		for slug, effect := range effects {
-			if effect == db.PermEffectGrant {
-				allGrants[convID] = append(allGrants[convID], slug)
-			}
-		}
-		sort.Strings(allGrants[convID])
-	}
-	defaults := []string{}
-	if cfg != nil && cfg.Agent != nil {
-		defaults = append(defaults, cfg.Agent.DefaultPermissions...)
-	}
-	sort.Strings(defaults)
-	groupsRouteMapEnabled := cfg.GroupsRouteMapEnabled()
-
-	// agentRows: union of (every group member) + (every conv-id with
-	// explicit grants). Keyed by conv-id so members appearing in
-	// multiple groups dedupe naturally.
-
-	// Load each group's members + owners ONCE. ListAgentGroupMembers used to
-	// run twice per group (the muted-notify pass below + the main group loop),
-	// and ListAgentGroupOwners once in the group loop; keying both by group id
-	// here lets inMutedGroup, the conv-set collect and the group loop all reuse
-	// a single read.
-	groupIDs := make([]int64, len(groups))
-	for i, group := range groups {
-		groupIDs[i] = group.ID
-	}
-	var (
-		membersByGroup        map[int64][]*db.AgentGroupMember
-		ownersByGroup         map[int64][]*db.AgentGroupOwner
-		routesByGroup         map[int64][]*db.AgentRoute
-		leasesByGroup         map[int64][]*db.AgentRouteLease
-		darwinLaunchesByGroup map[int64][]*db.DarwinRouteLaunch
-		membersErr            error
-		ownersErr             error
-		routesErr             error
-		leasesErr             error
-		darwinLaunchesErr     error
-	)
-	span.addChildren("preload", runSnapshotNamedLoads(
-		snapshotNamedLoad{"group_members", func() { membersByGroup, membersErr = db.ListAgentGroupMembersBatch(groupIDs) }},
-		snapshotNamedLoad{"group_owners", func() { ownersByGroup, ownersErr = db.ListAgentGroupOwnersBatch(groupIDs) }},
-		snapshotNamedLoad{"routes", func() {
-			if groupsRouteMapEnabled {
-				routesByGroup, routesErr = db.ListAgentRoutesBatch(groupIDs)
-			}
-		}},
-		snapshotNamedLoad{"route_leases", func() {
-			if groupsRouteMapEnabled {
-				leasesByGroup, leasesErr = db.ListAgentRouteLeasesBatch(groupIDs)
-			}
-		}},
-		snapshotNamedLoad{"darwin_route_launches", func() {
-			if groupsRouteMapEnabled && dashboardRouteMapPlatform == "darwin" {
-				darwinLaunchesByGroup, darwinLaunchesErr = db.ListActiveDarwinRouteLaunchesByGroup(groupIDs)
-			}
-		}},
-	)...)
-	if membersErr != nil {
-		slog.Warn("snapshot: failed to preload group members", "error", membersErr)
-	}
-	if ownersErr != nil {
-		slog.Warn("snapshot: failed to preload group owners", "error", ownersErr)
-	}
-	if routesErr != nil {
-		slog.Warn("snapshot: failed to preload group routes", "error", routesErr)
-	}
-	if leasesErr != nil {
-		slog.Warn("snapshot: failed to preload route leases", "error", leasesErr)
-	}
-	if darwinLaunchesErr != nil {
-		slog.Warn("snapshot: failed to preload Darwin route launch contracts", "error", darwinLaunchesErr)
-	}
-
-	// Notification-filter state: the per-agent overrides plus the set
-	// of convs sitting in at least one muted (non-archived) group.
-	// notifyEffective mirrors notify.AllowedForConv — agent pref wins,
-	// else any muted group silences — so the bells the dashboard
-	// renders agree with what the notify path will actually do.
-	inMutedGroup := map[string]bool{}
-	for _, g := range groups {
-		if g.IsArchived() || g.NotifyEnabled {
-			continue
-		}
-		for _, m := range membersByGroup[g.ID] {
-			inMutedGroup[m.ConvID] = true
-		}
-	}
-	notifyEffective := func(convID string) bool {
-		switch notifyPrefs[convID] {
-		case db.NotifyPrefOn:
-			return true
-		case db.NotifyPrefOff:
-			return false
-		}
-		return !inMutedGroup[convID]
-	}
-
-	// Every active ACTOR — the canonical roster (JOH-26 PR3b reads the
-	// agent-level roster, one row per live actor at its current conv). Unlike
-	// the old "online ungrouped session" probe, this includes OFFLINE agents: a
-	// conv that was an agent yesterday keeps showing after its tmux pane closed,
-	// instead of silently vanishing. Plain conversations that were never
-	// promoted are not here — they surface in out.Conversations.
-	// Active sudo grants across every agent were loaded in the initial fan-out;
-	// they are bucketed per conv-id below for O(1) per-agent rendering.
-
-	// Collect the full conv set the snapshot will render — group members ∪
-	// owners ∪ grant/override holders ∪ active agents ∪ sudo holders — then
-	// batch-load every per-conv table once (TCL-368/TCL-367). rc.viewFor(convID)
-	// returns a memoized row bundle so the member loop, addAgent and the owners
-	// pass share ONE computation instead of ~13 point queries each, and the
-	// location resolves from the batch without a per-poll .jsonl rescan.
-	convSetStart := time.Now()
-	convSet := map[string]struct{}{}
-	addConv := func(convID string) {
-		if convID != "" {
-			convSet[convID] = struct{}{}
-		}
-	}
-	for _, members := range membersByGroup {
-		for _, m := range members {
-			addConv(m.ConvID)
-		}
-	}
-	for _, owners := range ownersByGroup {
-		for _, o := range owners {
-			addConv(o.ConvID)
-		}
-	}
-	for convID := range allGrants {
-		addConv(convID)
-	}
-	for convID := range allOverrides {
-		addConv(convID)
-	}
-	for _, convID := range activeConvIDs {
-		addConv(convID)
-	}
-	for _, g := range sudoGrants {
-		addConv(g.ConvID)
-	}
-	convIDs := make([]string, 0, len(convSet))
-	for convID := range convSet {
-		convIDs = append(convIDs, convID)
-	}
-	span.addChildDuration("preload", "conv_set", time.Since(convSetStart))
-	var (
-		taskRefs          map[string]db.AgentTaskRef
-		presentedPRs      map[string][]db.AgentPR
-		cachedPRStates    prStateIndex
-		cachedPRTitles    map[string]string
-		allTags           map[string][]string
-		authoredOpenPRs   dashboardAuthoredOpenPRs
-		trackedPRAuthors  []dashboardAuthoredOpenPRs
-		branchPRCacheURLs []string
-	)
+	p := loadSnapshotPreload(span)
+	rows := loadSnapshotGroupRows(span, p.groups, p.groupsRouteMapEnabled)
+	notifyEffective := snapshotNotifyFilter(p.groups, rows.membersByGroup, p.notifyPrefs)
+	convIDs := collectSnapshotConvIDs(span, p, rows)
 	rc := newSnapshotRowCache(convIDs, sharedStatus, func(phases []perfPhase) {
 		span.addChildren("preload", phases...)
 	})
-	branchPRCacheURLs = make([]string, 0, len(convIDs)*3)
-	for _, convID := range convIDs {
-		links := rc.viewFor(convID).Links
-		// The statusline PR rides along so its badge gets the same cached
-		// checks, reviews, title and background refresh as a slot PR.
-		branchPRCacheURLs = append(branchPRCacheURLs, links.BranchPRURL, links.StartupPRURL, links.statuslinePR.URL)
-	}
-	visibleAgentIDs := make([]string, 0, len(rc.agents))
-	visibleAgentSet := make(map[string]struct{}, len(rc.agents))
-	for _, actor := range rc.agents {
-		if actor.AgentID == "" {
-			continue
-		}
-		if _, seen := visibleAgentSet[actor.AgentID]; seen {
-			continue
-		}
-		visibleAgentSet[actor.AgentID] = struct{}{}
-		visibleAgentIDs = append(visibleAgentIDs, actor.AgentID)
-	}
-	span.addChildren("preload", runSnapshotNamedLoads(
-		snapshotNamedLoad{"task_refs", func() {
-			taskRefs, _ = db.ListAgentTaskRefsByAgentIDs(visibleAgentIDs)
-		}},
-		snapshotNamedLoad{"presented_prs", func() { presentedPRs = preloadPresentedPRsForDashboard(time.Now()) }},
-		snapshotNamedLoad{"tags", func() { allTags, _ = db.ListAllAgentTags() }},
-		snapshotNamedLoad{"authored_open_prs", func() { authoredOpenPRs = loadAuthoredOpenPRsSnapshot(cfg) }},
-		snapshotNamedLoad{"tracked_pr_authors", func() { trackedPRAuthors = loadTrackedPRAuthorsSnapshot(cfg) }},
-	)...)
-	// Every PR visualization draws state and checks from these two canonical
-	// identity-keyed caches. Build the union first so branch/startup,
-	// explicitly presented and footer-only PRs share one bounded batch read.
-	allPRCacheURLs := append([]string(nil), branchPRCacheURLs...)
-	for _, rows := range presentedPRs {
-		for _, row := range rows {
-			allPRCacheURLs = append(allPRCacheURLs, row.PRURL)
-		}
-	}
-	localPRs := make([]locallyKnownPR, 0, len(allPRCacheURLs))
-	for _, rawURL := range branchPRCacheURLs {
-		localPRs = append(localPRs, locallyKnownPR{URL: rawURL})
-	}
-	for _, rows := range presentedPRs {
-		for _, row := range rows {
-			localPRs = append(localPRs, locallyKnownPR{URL: row.PRURL})
-		}
-	}
-	for _, list := range [][]dashboardAuthoredOpenPR{authoredOpenPRs.Items, authoredOpenPRs.Recent} {
-		for _, pr := range list {
-			allPRCacheURLs = append(allPRCacheURLs, pr.URL)
-		}
-	}
-	for _, view := range trackedPRAuthors {
-		for _, list := range [][]dashboardAuthoredOpenPR{view.Items, view.Recent} {
-			for _, pr := range list {
-				allPRCacheURLs = append(allPRCacheURLs, pr.URL)
-			}
-		}
-	}
-	span.addChildren("preload", runSnapshotNamedLoads(
-		snapshotNamedLoad{"pr_state_cache", func() { cachedPRStates, cachedPRTitles = cachedPresentedPRMetadata(allPRCacheURLs) }},
-	)...)
-
-	indexedPRs := make(map[string]bool, len(authoredOpenPRs.Items)+len(authoredOpenPRs.Recent))
-	for _, list := range [][]dashboardAuthoredOpenPR{authoredOpenPRs.Items, authoredOpenPRs.Recent} {
-		for _, pr := range list {
-			indexedPRs[prStateKey(pr.URL)] = true
-		}
-	}
-	for i := range localPRs {
-		key := prStateKey(localPRs[i].URL)
-		localPRs[i].Title = cachedPRTitles[key]
-		// Local discoveries may not be indexed by the authored search yet,
-		// or may belong to another author. Reuse the background metadata
-		// refresh; snapshot rendering itself never waits for GitHub.
-		if authoredOpenPRs.Available && strings.HasPrefix(key, "github:") &&
-			!indexedPRs[key] && !presentedPRTitleCacheFresh(localPRs[i].URL, time.Now()) {
-			schedulePresentedPRRefresh("", localPRs[i].URL)
-		}
-		indexedPRs[key] = true
-	}
-
+	prs := loadSnapshotPRIndex(span, rc, convIDs, p.cfg)
 	externalStewardParents := externalStewardChildNames()
-	taskRefFor := func(agentID string) taskRefView {
-		return taskRefViewFor(taskRefs[agentID])
-	}
-	presentedPRsFor := func(agentID string) []presentedPRView {
-		return presentedPRViews(presentedPRs[agentID])
-	}
-	// Resolve one freshest state per PR URL across every dashboard source.
-	// This deliberately crosses agent rows: a presented-PR poll on one row and
-	// an automatic branch link on another are observations of the same PR, not
-	// independent display state.
-	freshPRStates := make(prStateIndex)
-	addAuthoredOpenPRStates(freshPRStates, authoredOpenPRs)
-	for _, convID := range convIDs {
-		freshPRStates.addRepoLinks(rc.viewFor(convID).Links)
-	}
-	for key, candidate := range cachedPRStates {
-		current, ok := freshPRStates[key]
-		if !ok {
-			freshPRStates[key] = candidate
-			continue
-		}
-		state, updatedAt := newestPRState(
-			current.state, current.updatedAt, candidate.state, candidate.updatedAt)
-		freshPRStates[key] = prStateObservation{state: state, updatedAt: updatedAt}
-	}
-	for _, rows := range presentedPRs {
-		for _, row := range rows {
-			freshPRStates.add(row.PRURL, row.State, row.UpdatedAt)
-		}
-	}
-	// CI check summaries for every PR badge this snapshot will draw, in one
-	// batched cache read. Nothing here shells out: the blobs are written by
-	// the branch-link / presented-PR refreshes that already run `gh`, and by
-	// the hover endpoint. Presented PR URLs join the branch/startup ones so a
-	// presented badge gets the same indicator as an automatic one.
-	prChecks := prChecksIndexFor(allPRCacheURLs)
-	// Review status rides the same identity-keyed batch discipline; see
-	// prreviews.go. Written only by GitHub reads that already happen.
-	prReviews := prReviewsIndexFor(allPRCacheURLs)
-	// Same preload discipline as taskRefs: one ListAllAgentTags per snapshot,
-	// keyed by agent_id, looked up per row (not a query per member/agent in
-	// this 2s-polled path). The stored set is already sorted alphabetically.
-	tagsFor := func(agentID string) tagsView {
-		return tagsView{Tags: allTags[agentID]}
-	}
+
+	// The assembly below still reads the preloads as locals; the next steps
+	// take p, rows and prs directly and these bindings go away.
+	groups, cfg, defaults, groupsRouteMapEnabled := p.groups, p.cfg, p.defaults, p.groupsRouteMapEnabled
+	sandboxProfiles, globalSandboxProfile := p.sandboxProfiles, p.globalSandboxProfile
+	allGrants, allOverrides, allOverrideScopes := p.allGrants, p.allOverrides, p.allOverrideScopes
+	notifyPrefs, activeConvIDs, sudoGrants := p.notifyPrefs, p.activeConvIDs, p.sudoGrants
+	retiredTotal, agentRosterErr := p.retiredTotal, p.agentRosterErr
+	membersByGroup, ownersByGroup := rows.membersByGroup, rows.ownersByGroup
+	routesByGroup, leasesByGroup, darwinLaunchesByGroup := rows.routesByGroup, rows.leasesByGroup, rows.darwinLaunchesByGroup
+	cachedPRTitles, authoredOpenPRs, trackedPRAuthors := prs.cachedPRTitles, prs.authoredOpenPRs, prs.trackedPRAuthors
+	localPRs, freshPRStates, prChecks, prReviews := prs.localPRs, prs.freshPRStates, prs.prChecks, prs.prReviews
+	taskRefFor, presentedPRsFor, tagsFor := prs.taskRefFor, prs.presentedPRsFor, prs.tagsFor
+
 	// The preload warm loop above resolves EVERY conv the snapshot will render,
 	// so it — not the group loop — is where the un-batched per-row side reads
 	// are actually paid. Report them here, and exclude the Codex telemetry they
@@ -472,6 +172,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		groupNames[group.ID] = group.Name
 	}
 
+	// agentRows: union of (every group member) + (every conv-id with
+	// explicit grants). Keyed by conv-id so members appearing in
+	// multiple groups dedupe naturally.
 	agentRows := map[string]*dashboardAgent{}
 	addAgent := func(convID string) *dashboardAgent {
 		if existing, ok := agentRows[convID]; ok {
