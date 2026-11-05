@@ -57,11 +57,17 @@ func fedPeerModelAllows(peer, name string) bool {
 		return false
 	}
 	for _, g := range grants {
-		if g.Slug == PermModelsProxy && (g.Scope == "" || g.Scope == "http_proxy="+name) {
+		if g.Slug == PermModelsProxy && grantCoversProxy(g, name) {
 			return true
 		}
 	}
 	return false
+}
+
+// grantCoversProxy reports whether a model grant applies to gateway name:
+// it is unscoped (every gateway) or scoped to that gateway.
+func grantCoversProxy(g db.FederationPeerGrant, name string) bool {
+	return g.Scope == "" || g.Scope == db.FederationProxyScope(name)
 }
 
 // modelShareGrants are the peer's models.proxy grants covering gateway name
@@ -75,7 +81,7 @@ func modelShareGrants(peer, name string) []db.FederationPeerGrant {
 	}
 	var out []db.FederationPeerGrant
 	for _, g := range grants {
-		if g.Slug == PermModelsProxy && g.SpawnPolicy.MaxUSD > 0 && (g.Scope == "" || g.Scope == "http_proxy="+name) {
+		if g.Slug == PermModelsProxy && g.SpawnPolicy.MaxUSD > 0 && grantCoversProxy(g, name) {
 			out = append(out, g)
 		}
 	}

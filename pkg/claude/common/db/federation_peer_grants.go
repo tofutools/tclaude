@@ -102,6 +102,9 @@ type FederationPeerGrant struct {
 
 func FederationGroupScope(groupID int64) string { return "group=" + strconv.FormatInt(groupID, 10) }
 
+// FederationProxyScope is the scope of a grant limited to one model gateway.
+func FederationProxyScope(name string) string { return "http_proxy=" + name }
+
 func UpsertFederationPeerGrant(g FederationPeerGrant) error {
 	d, err := Open()
 	if err != nil {
