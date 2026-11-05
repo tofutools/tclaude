@@ -385,12 +385,18 @@ func explainIntersectionDrop(
 			notice.Reason != sandboxpolicy.AccessNoticeReasonPartialIntersection {
 			continue
 		}
+		// A tier whose lost entries were cut short might have allowed
+		// required beyond the cap, so it is named on neither side.
 		allowedBy := map[string]bool{}
+		unknown := map[string]bool{}
 		var allowing []string
 		for _, layer := range notice.Layers {
-			if networkRulesCoverDestination(layer.NotKept, required) {
+			switch {
+			case networkRulesCoverDestination(layer.NotKept, required):
 				allowedBy[layer.Tier] = true
 				allowing = append(allowing, layer.Tier)
+			case layer.More > 0:
+				unknown[layer.Tier] = true
 			}
 		}
 		if len(allowing) == 0 {
@@ -398,7 +404,7 @@ func explainIntersectionDrop(
 		}
 		var lacking []string
 		for _, tier := range notice.Tiers {
-			if !allowedBy[tier] {
+			if !allowedBy[tier] && !unknown[tier] {
 				lacking = append(lacking, tier)
 			}
 		}

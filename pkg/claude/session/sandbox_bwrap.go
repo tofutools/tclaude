@@ -1036,7 +1036,6 @@ func TclaudeLayerLaunchRootPosture(
 		posture, sockets, effective.FilesystemRoot), nil
 }
 
-// ValidateTclaudeLayerNetwork refuses an isolated whole-process launch unless
 // openCodeUnresolvedModelNotice says, at launch, what the silent pass-through
 // above used to leave unsaid: tclaude did not check the OpenCode model
 // endpoint against the filtered network, so a model that cannot be reached is
@@ -1050,7 +1049,11 @@ func openCodeUnresolvedModelNotice(
 	if mode == sandboxpolicy.AccessModeOpen {
 		fix = "remove or narrow the deny rule that matches the provider's API host"
 	}
-	detail := "Filtered network: tclaude could not resolve this OpenCode model's provider endpoint, so it did not check it against the network rules and added no model access. If OpenCode cannot reach its model, " + fix + ", or use network open. tclaude resolves only an explicit openai-compatible provider with options.baseURL in OPENCODE_CONFIG_CONTENT; see docs/harnesses.md#opencode-under-a-filtered-network."
+	what := "tclaude could not resolve this OpenCode model's provider endpoint"
+	if strings.TrimSpace(resolved.Model) == "" {
+		what = "no launch model was selected, so OpenCode picks its own default model and provider"
+	}
+	detail := "Filtered network: " + what + "; tclaude did not check that endpoint against the network rules and added no model access. If OpenCode cannot reach its model, " + fix + ", or use network open. tclaude resolves only an explicit openai-compatible provider with options.baseURL in OPENCODE_CONFIG_CONTENT; see docs/harnesses.md#opencode-under-a-filtered-network."
 	if reason := strings.TrimSpace(resolved.UnresolvedReason); reason != "" {
 		detail += " Resolution stopped at: " + reason
 	}
@@ -1063,6 +1066,7 @@ func openCodeUnresolvedModelNotice(
 	}
 }
 
+// ValidateTclaudeLayerNetwork refuses an isolated whole-process launch unless
 // both the harness descriptor and the operator's resolved profile assert a
 // model transport that functions across the selected platform's boundary
 // (a network namespace on Linux, Seatbelt network denies on Darwin).

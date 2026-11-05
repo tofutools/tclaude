@@ -1022,9 +1022,11 @@ func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *tes
 	openCode := harness.MustGet(harness.OpenCodeName)
 	notices, err := ValidateTclaudeLayerNetwork(
 		openCode, effective, harness.ResolvedModelTransport{})
-	require.NoError(t, err)
-	assert.Empty(t, notices,
+	require.NoError(t, err,
 		"without a selected model, OpenCode inference access is user-managed")
+	require.Len(t, notices, 1, "the launch still says the endpoint was not checked")
+	assert.Contains(t, notices[0].Detail, "no launch model was selected")
+	assert.NotContains(t, notices[0].Detail, "could not resolve")
 
 	notices, err = ValidateTclaudeLayerNetwork(claude, effective, harness.ResolvedModelTransport{
 		Model:            "claude-sonnet",

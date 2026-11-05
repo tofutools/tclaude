@@ -226,6 +226,9 @@ type AccessNotice struct {
 type AccessNoticeLayer struct {
 	Tier    string              `json:"tier"`
 	NotKept []NetworkAllowEntry `json:"not_kept"`
+	// More counts entries the tier also lost beyond the NotKept cap, so a
+	// reader knows NotKept is incomplete.
+	More int `json:"more,omitempty"`
 }
 
 // DeriveAccessAxes applies the forever-supported network_access compatibility
@@ -1435,7 +1438,9 @@ func partialIntersectionNotice(
 		if extra := dropped - len(notKept); extra > 0 {
 			names = append(names, fmt.Sprintf("%d more", extra))
 		}
-		lost = append(lost, AccessNoticeLayer{Tier: layer.tier, NotKept: notKept})
+		lost = append(lost, AccessNoticeLayer{
+			Tier: layer.tier, NotKept: notKept, More: dropped - len(notKept),
+		})
 		parts = append(parts, layer.tier+": "+strings.Join(names, ", "))
 	}
 	if len(lost) == 0 {
@@ -1486,6 +1491,7 @@ func cloneAccessNoticeLayers(in []AccessNoticeLayer) []AccessNoticeLayer {
 	out := make([]AccessNoticeLayer, len(in))
 	for i, layer := range in {
 		out[i].Tier = layer.Tier
+		out[i].More = layer.More
 		out[i].NotKept = make([]NetworkAllowEntry, len(layer.NotKept))
 		for j, entry := range layer.NotKept {
 			entry.Ports = append([]int(nil), entry.Ports...)

@@ -298,3 +298,27 @@ func TestModelTransportCoverageNamesTheLayerThatDroppedTheEndpoint(t *testing.T)
 	require.NoError(t, ValidateModelTransportCoverageWithNotices(h, rules, requirement,
 		[]sandboxpolicy.AccessNotice{notice}))
 }
+
+// A tier whose lost-entry list was cut short is not named as lacking the
+// endpoint: it may have allowed it beyond the cap.
+func TestModelTransportCoverageDoesNotBlameATruncatedLayer(t *testing.T) {
+	h := MustGet(DefaultName)
+	requirement := ModelTransportRequirement{Destinations: []sandboxpolicy.NetworkAllowEntry{
+		{Host: "api.anthropic.com", Ports: []int{443}},
+	}}
+	rules := sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeList}
+	notice := sandboxpolicy.AccessNotice{
+		Axis:   "network",
+		Reason: sandboxpolicy.AccessNoticeReasonPartialIntersection,
+		Tiers:  []string{`global "base"`, `group "dev"`, `explicit "x"`},
+		Layers: []sandboxpolicy.AccessNoticeLayer{
+			{Tier: `global "base"`, NotKept: []sandboxpolicy.NetworkAllowEntry{{Host: "other.example"}}, More: 5},
+			{Tier: `group "dev"`, NotKept: []sandboxpolicy.NetworkAllowEntry{{Host: "api.anthropic.com", Ports: []int{443}}}},
+		},
+	}
+	err := ValidateModelTransportCoverageWithNotices(h, rules, requirement,
+		[]sandboxpolicy.AccessNotice{notice})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `allowed by group "dev" but not by explicit "x";`)
+	assert.NotContains(t, err.Error(), `not by global`)
+}
