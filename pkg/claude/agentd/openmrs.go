@@ -1019,9 +1019,9 @@ func fetchOpenMRProjects(ctx context.Context, base, token string, projects []str
 	if err := json.Unmarshal(res.Body, &doc); err != nil {
 		return nil, 0, 0, fmt.Errorf("decode GitLab response: %w", err)
 	}
-	if len(doc.Errors) > 0 {
-		return nil, 0, 0, fmt.Errorf("GitLab GraphQL: %s", truncateAuthoredPRTitle(doc.Errors[0].Message))
-	}
+	// An error names one alias (a deleted project, one the token may not
+	// read) and leaves it null; the others' answers stand. Only a query no
+	// alias answered is an error.
 	var out []dashboardOpenMRProject
 	found := 0
 	for i, project := range projects {
@@ -1055,6 +1055,13 @@ func fetchOpenMRProjects(ctx context.Context, base, token string, projects []str
 		if entry.Total > 0 {
 			out = append(out, entry)
 		}
+	}
+	if len(doc.Errors) > 0 {
+		if found == 0 {
+			return nil, 0, 0, fmt.Errorf("GitLab GraphQL: %s", truncateAuthoredPRTitle(doc.Errors[0].Message))
+		}
+		slog.Debug("open-mrs: GitLab could not read some projects; keeping the others",
+			"host", gitlabBaseHost(base), "errors", len(doc.Errors), "error", truncateAuthoredPRTitle(doc.Errors[0].Message), "module", "agentd")
 	}
 	return out, found, 0, nil
 }

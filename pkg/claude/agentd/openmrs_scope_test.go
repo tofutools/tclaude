@@ -450,3 +450,41 @@ func TestReadEveryoneOpenMRs_NoPagingWhenTheMineListHeldEverything(t *testing.T)
 	require.NoError(t, err)
 	assert.Zero(t, gl.mineReads)
 }
+
+// One alias in a chunk erroring (a deleted project, or one the token may
+// not read) leaves the others' answers; only a chunk no alias answered fails.
+func TestFetchOpenMRProjects_OneErroringAliasKeepsTheOthers(t *testing.T) {
+	answer := ""
+	t.Cleanup(SetGitLabTransportForTest(func(_ context.Context, _, _ string, _ glAPIRequest) (glAPIResult, error) {
+		return glAPIResult{Status: http.StatusOK, Body: []byte(answer), Header: http.Header{}}, nil
+	}))
+	answer = `{"data":{"p0":{"fullPath":"acme/app","mergeRequests":{"count":1,"nodes":[` +
+		`{"iid":"1","title":"One","webUrl":"` + testMRBase + `/acme/app/-/merge_requests/1","author":{"username":"ann"}}]}},` +
+		`"p1":null},"errors":[{"message":"The resource that you are attempting to access does not exist","path":["p1"]}]}`
+	got, found, _, err := fetchOpenMRProjects(context.Background(), testMRBase, "glpat", []string{"acme/app", "acme/gone"}, "2026-11-05T00:00:00Z")
+	require.NoError(t, err, "one project's error does not drop the chunk")
+	require.Len(t, got, 1)
+	assert.Equal(t, "acme/app", got[0].Project)
+	assert.Equal(t, 1, found, "only the answered project counts")
+
+	answer = `{"data":{"p0":null,"p1":null},"errors":[{"message":"The resource that you are attempting to access does not exist","path":["p0"]}]}`
+	_, _, _, err = fetchOpenMRProjects(context.Background(), testMRBase, "glpat", []string{"acme/gone", "acme/also-gone"}, "2026-11-05T00:00:00Z")
+	require.Error(t, err, "no alias answered")
+	assert.Contains(t, err.Error(), "GitLab GraphQL: The resource")
+}
+
+func TestReadEveryoneOpenMRs_ErroringAliasesAreNotCounted(t *testing.T) {
+	gl := &scopedGitLab{listStatus: http.StatusForbidden}
+	t.Cleanup(SetGitLabTransportForTest(func(ctx context.Context, base, token string, req glAPIRequest) (glAPIResult, error) {
+		res, err := gl.do(ctx, base, token, req)
+		if req.GraphQL && err == nil && strings.Contains(string(res.Body), `"p1":null`) {
+			res.Body = []byte(strings.TrimSuffix(string(res.Body), "}") + `,"errors":[{"message":"not found","path":["p1"]}]}`)
+		}
+		return res, err
+	}))
+	got, _, err := readEveryoneOpenMRs(context.Background(), testMRBase, "glpat", nil,
+		everyoneKnown{mine: []string{"acme/mine"}, allowed: []string{"acme/gone"}}, map[string]everyoneRefusal{}, time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, 1, got.byProject)
+	require.Len(t, got.projects, 1)
+}
