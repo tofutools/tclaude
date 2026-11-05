@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -253,6 +254,12 @@ func TestAgentImport_FailedLandingLeavesNoPrivateState(t *testing.T) {
 			if tc.failPrompt {
 				t.Cleanup(agentd.SetOpenCodePromptErrorForTest(errors.New("server went away")))
 			}
+			// A started OpenCode import is an async spawn: past the response
+			// grace it answers 200 with a Pending row and finishes, failure
+			// and cleanup included, in the background. This test is about the
+			// failure the caller sees, so hold the answer inline. The grace is
+			// only an upper bound: a failing launch answers as soon as it fails.
+			t.Cleanup(agentd.SetOpenCodeAsyncSpawnResponseGraceForTest(time.Minute))
 			query := url.Values{"apply": {"true"}, "start": {tc.start}, "cwd": {testutil.CanonicalTempDir(t)}, "group": {"receiver"}}
 			r := agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/agent-bundle/import?"+query.Encode(), bytes.NewReader(rec.Body.Bytes())))
 			failed := httptest.NewRecorder()
