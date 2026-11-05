@@ -910,21 +910,6 @@ func BackfillDurableRelaunchProfilesFromLatestSession(convID string) error {
 	return tx.Commit()
 }
 
-// SetConversationResumeProvenance updates only conversation-owned physical
-// identity. Empty is meaningful: a failed controlled-stop capture invalidates
-// unattended resume without discarding the remaining conversation facts.
-func SetConversationResumeProvenance(convID, provenance string) error {
-	p, err := ConversationResumeProfileForConv(convID)
-	if err != nil {
-		return err
-	}
-	if p == nil {
-		return fmt.Errorf("conversation %q has no durable resume profile", convID)
-	}
-	p.ResumeProvenance = provenance
-	return SetConversationResumeProfile(convID, *p)
-}
-
 // projectSessionRelaunchProfilesTx copies a session's current launch snapshot
 // to the durable owners. This is the only session→profile bridge used after
 // migration. It is called in the same transaction as launch/status/toggle

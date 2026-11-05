@@ -206,34 +206,6 @@ func ListCodexNativePermissionProfiles() ([]CodexNativePermissionProfile, error)
 	return out, rows.Err()
 }
 
-// ListCodexNativePermissionProfileGenerationsForConv returns only tclaude's
-// exact managed generation keys. It never infers names from config.toml, which
-// keeps lifecycle cleanup inside the managed namespace.
-func ListCodexNativePermissionProfileGenerationsForConv(convID string) ([]string, error) {
-	d, err := Open()
-	if err != nil {
-		return nil, err
-	}
-	rows, err := d.Query(`SELECT DISTINCT profile.generation
-		FROM codex_native_permission_profiles profile
-		LEFT JOIN codex_app_server_runtimes runtime ON runtime.generation = profile.generation
-		WHERE profile.owner_conv_id = ? OR runtime.conv_id = ? ORDER BY profile.created_at ASC`,
-		strings.TrimSpace(convID), strings.TrimSpace(convID))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var generation string
-		if err := rows.Scan(&generation); err != nil {
-			return nil, err
-		}
-		out = append(out, generation)
-	}
-	return out, rows.Err()
-}
-
 // ListCodexNativePermissionProfileGenerationsForAgent returns every managed
 // generation owned by one stable actor, including predecessor conversations.
 func ListCodexNativePermissionProfileGenerationsForAgent(agentID string) ([]string, error) {

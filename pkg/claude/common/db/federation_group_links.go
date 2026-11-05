@@ -106,19 +106,3 @@ func RecordFederationGroupLinkRevoked(id, peer string) error {
 	_, err = d.Exec(`UPDATE federation_group_links SET local_state='revoked',remote_state='revoked',remote_state_at=?,updated_at=? WHERE id=? AND peer=?`, dbTime(time.Now()), dbTime(time.Now()), id, peer)
 	return err
 }
-
-func FederationMailLink(envelope string) (*FederationGroupLink, error) {
-	d, err := Open()
-	if err != nil {
-		return nil, err
-	}
-	var id string
-	err = d.QueryRow(`SELECT link_id FROM federation_link_mail WHERE envelope_id=?`, envelope).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return GetFederationGroupLink(id)
-}
