@@ -63,6 +63,12 @@ member's save as it does any agent's. See
 [Boards › Group boards are their members'](boards.md#group-boards-are-their-members)
 for how the membership source works.
 
+Pins say who edits a template, not who runs it: a run in any group may start
+any template, and a subprocess without a pinned version follows its head. So
+a member's save also changes what later runs of that template, elsewhere,
+execute. Program steps still need `--authorize-program-profile` when a run
+starts, so a save alone runs nothing on the host.
+
 ### Sharing workflows
 
 A process can be shared as a `.pwf` file that carries the template and every

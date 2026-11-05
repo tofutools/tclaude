@@ -54,6 +54,8 @@ func TestGroupProcessesAreMembersToReadAndEdit(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, agent(member, http.MethodGet, "/v1/process/runs?group=other", nil).Code)
 	assert.Equal(t, http.StatusForbidden, agent(member, http.MethodGet, "/v1/process/runs", nil).Code, "the unfiltered list stays process.runs.read's")
 	assert.Equal(t, http.StatusForbidden, agent(outsider, http.MethodGet, "/v1/process/runs/run_team", nil).Code)
+	assert.Equal(t, http.StatusForbidden, agent(outsider, http.MethodGet, "/v1/process/runs?group=no-such-group", nil).Code,
+		"an unauthorized caller learns nothing about which groups exist")
 	// Steering a run is not a member's by default.
 	rec = agent(member, http.MethodPost, "/v1/process/runs/run_team/pause", map[string]any{})
 	require.Equal(t, http.StatusForbidden, rec.Code)

@@ -989,18 +989,20 @@ func handleProcessRuns(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleProcessRunList(w http.ResponseWriter, r *http.Request) {
-	filter, ok := processRunListFilter(w, r)
-	if !ok {
-		return
-	}
 	// A member lists its group's runs (?group=) under groups.resources.read.
+	// Authorize before the filters resolve, so a miss tells an unauthorized
+	// caller nothing about which groups or agents exist.
 	group := ""
-	if filter.GroupID > 0 {
-		if g, err := db.GetAgentGroupByID(filter.GroupID); err == nil && g != nil && !g.IsArchived() {
+	if ref := strings.TrimSpace(r.URL.Query().Get("group")); ref != "" {
+		if g, err := resolveGroupToken(ref); err == nil && g != nil && !g.IsArchived() {
 			group = g.Name
 		}
 	}
 	if _, ok := requireGroupResourceAccess(w, r, PermProcessRunsRead, group, false); !ok {
+		return
+	}
+	filter, ok := processRunListFilter(w, r)
+	if !ok {
 		return
 	}
 	limit := processRunListDefault

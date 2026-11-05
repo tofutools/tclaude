@@ -107,19 +107,30 @@ func requireGroupResourceAccess(w http.ResponseWriter, r *http.Request, global, 
 	clearAuthorizedPermission(r)
 	conv := confirmedAgentConv(r)
 	if conv == "" || group == "" {
-		return requirePermissionEx(w, r, global)
+		return requireGlobalAndRecord(w, r, global)
 	}
 	if silentAgentAllows(r, conv, global, ActionContext{}) || agentHoldsGroupResource(r, conv, group, write) {
 		return conv, true
 	}
 	if resolvePermissionVerdictForRequest(r, conv, global).Resolution != permUndecided {
-		return requirePermissionEx(w, r, global)
+		return requireGlobalAndRecord(w, r, global)
 	}
 	slug := PermGroupsResourcesRead
 	if write {
 		slug = PermGroupsResourcesWrite
 	}
 	return requirePermissionEx(w, r, slug, groupResourceContext(group))
+}
+
+// requireGlobalAndRecord runs the shared gate on the global slug and, when it
+// passes an agent, records the slug as the one that authorized the request,
+// so a later check (a save's metadata) does not ask the human again.
+func requireGlobalAndRecord(w http.ResponseWriter, r *http.Request, global string) (string, bool) {
+	conv, ok := requirePermissionEx(w, r, global)
+	if ok && conv != "" {
+		recordAuthorizedPermission(r, global, 0)
+	}
+	return conv, ok
 }
 
 // boardGroupName is the active group a stored board is linked to, "" when it
@@ -308,7 +319,7 @@ func requireGroupsResourceAccess(w http.ResponseWriter, r *http.Request, global 
 		missing = groups[0]
 	}
 	if resolvePermissionVerdictForRequest(r, conv, global).Resolution != permUndecided {
-		return requirePermissionEx(w, r, global)
+		return requireGlobalAndRecord(w, r, global)
 	}
 	slug := PermGroupsResourcesRead
 	if write {

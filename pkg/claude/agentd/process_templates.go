@@ -162,7 +162,8 @@ func handleProcessTemplates(w http.ResponseWriter, r *http.Request) {
 	// A member without process.templates.read lists the templates pinned to
 	// its groups (groups.resources.read).
 	memberOnly, limited := memberReadableProcessTemplates(r)
-	if !limited || len(memberOnly) == 0 {
+	// An --ask-human caller asks for the whole library, so it gets the popup.
+	if !limited || len(memberOnly) == 0 || parseAskHumanHeader(r) > 0 {
 		memberOnly, limited = nil, false
 		if _, ok := requirePermission(w, r, PermProcessTemplatesRead); !ok {
 			return
@@ -511,7 +512,8 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 	}
 	// Membership saves the template's content only: its library listing and
 	// its pins stay process.templates.manage's.
-	if caller != "" && (body.Listed != nil || strings.TrimSpace(body.PinGroup) != "") {
+	if caller != "" && (body.Listed != nil || strings.TrimSpace(body.PinGroup) != "") &&
+		authorizedPermissionForRequest(r, "") != PermProcessTemplatesManage {
 		if allowed, _, _ := permissionAllowsAction(r, caller, PermProcessTemplatesManage, ActionContext{}); !allowed {
 			if _, ok := requirePermission(w, r, PermProcessTemplatesManage); !ok {
 				return
