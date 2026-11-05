@@ -16,6 +16,8 @@ import subprocess
 import sys
 
 ALLOW = re.compile(r'\(allow network-outbound \(remote tcp "localhost:(\d+)"\)\)')
+# The isolated/floor posture's exceptions: require-not inside the outbound deny.
+EXCEPT = re.compile(r'\(require-not \(remote tcp "localhost:(\d+)"\)\)')
 
 
 def forms(text):
@@ -54,6 +56,19 @@ def connect(profile, params, port):
     return msg[-1][-80:] if msg else f"exit {res.returncode}"
 
 
+def timing(profile, params, port):
+    """One sandbox, connects at 0, +100ms, +1s and +5s: does a refusal clear
+    with time (rules settling) or persist (profile content)?"""
+    script = ("for d in 0 0.1 1 5; do sleep $d; "
+              f"if /usr/bin/nc -z -G 2 127.0.0.1 {port} 2>/dev/null; "
+              "then printf 'ok@%s ' $d; else printf 'refused@%s ' $d; fi; done")
+    args = ["/usr/bin/sandbox-exec", "-p", profile]
+    args += [f"-D{k}={v}" for k, v in params.items()]
+    args += ["--", "/bin/sh", "-c", script]
+    res = subprocess.run(args, capture_output=True, text=True, timeout=60)
+    return res.stdout.strip() or res.stderr.strip()
+
+
 def rate(profile, params, port, runs):
     results = [connect(profile, params, port) for _ in range(runs)]
     return sum(r == "ok" for r in results), sorted({r for r in results if r != "ok"})
@@ -68,6 +83,10 @@ def main():
         data = json.loads(f.read_text())
         profile, params = data["profile"], data["params"]
         ports = [int(p) for p in ALLOW.findall(profile)]
+        kind = "allow"
+        if not ports:
+            ports = [int(p) for p in EXCEPT.findall(profile)]
+            kind = "require-not exception"
         if not ports:
             continue
         port = ports[0]
@@ -80,10 +99,24 @@ def main():
         listener.listen(64)
         try:
             ok, errs = rate(profile, params, port, runs)
-            print(f"{f.name}: allowed ports {ports}; full profile ok={ok}/{runs} {errs}")
+            print(f"{f.name}: {kind} ports {ports}; full profile ok={ok}/{runs} {errs}")
             if ok == runs:
                 continue
+            for attempt in range(3):
+                print(f"  timing {attempt + 1}: {timing(profile, params, port)}")
             parts = forms(profile)
+            net = [p for p in parts if p.startswith(("(deny network-outbound", "(allow network-outbound"))]
+            rest = [p for p in parts if p not in net and not p.startswith("(version") and p != "(allow default)"]
+            head = ["(version 1)", "(allow default)"]
+            variants = {
+                "minimal network block only": head + net,
+                "network block moved to the end": head + rest + net,
+                "network block + first other form after it": head + net + rest[:1],
+                "network block + all other forms after it (as rendered)": head + net + rest,
+            }
+            for label, chosen in variants.items():
+                ok_v, errs_v = rate("\n".join(chosen), params, port, 5)
+                print(f"  variant: {label}: ok={ok_v}/5 {errs_v}")
             for i, part in enumerate(parts):
                 if part.startswith("(version") or part == "(allow default)":
                     continue
