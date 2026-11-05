@@ -255,11 +255,6 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 	return nil
 }
 
-// prepareRouteHelperResumeArgs restores the namespace-local helper for every
-// known resume surface (group resume, recovery, reincarnation, and clone).
-// The resumed conversation already has a stable identity, so this path can
-// support both Claude and Codex; OpenCode's server boundary has no pane-local
-// helper and is refused when its group has opted into routes.
 // spawnWrapper is a started detached `tclaude session new` wrapper: the process,
 // its bounded stderr capture, and the two handoff cleanups the caller still owns
 // once it is running (the sandbox snapshot file and the route-helper credential
@@ -331,6 +326,11 @@ func startSpawnWrapper(a clcommon.SpawnArgs, argv func(clcommon.SpawnArgs) []str
 	return &spawnWrapper{cmd: cmd, stderr: stderr, cleanup: cleanup, routeCredentialCleanup: routeCredentialCleanup}, nil
 }
 
+// prepareRouteHelperResumeArgs restores the namespace-local helper for every
+// known resume surface (group resume, recovery, reincarnation, and clone).
+// The resumed conversation already has a stable identity, so this path can
+// support both Claude and Codex; OpenCode's server boundary has no pane-local
+// helper and is refused when its group has opted into routes.
 func prepareRouteHelperResumeArgs(a *clcommon.SpawnArgs) error {
 	if (runtime.GOOS != "linux" && runtime.GOOS != "darwin") || a == nil || strings.TrimSpace(a.ConvID) == "" {
 		return nil
