@@ -230,7 +230,7 @@ func TestCopilotAPICompactGoesOverHistoryCompactThenSendsTheFollowUp(t *testing.
 // The token here is deliberately one that could plausibly arrive at this sink
 // later (a model switch) rather than /exit: soft exit does not come through
 // dispatchSlashCommand at all, so using it would suggest this test pins the
-// soft-exit routing decision, which lives in lifecycle.go and is pinned by a
+// soft-exit routing decision, which lives in lifecycle_stop.go and is pinned by a
 // live test instead.
 func TestCopilotAPIUnmappedLifecycleCommandFailsClosed(t *testing.T) {
 	fixture := newCopilotAPIDriveFixture(t)
@@ -955,9 +955,8 @@ var copilotAPIKeystrokeSinkFiles = map[string]string{
 	"flush.go": "sendNudgeBracket routes an API-driven conv to session.send",
 	// Converted: the unread reminder, same family as the nudge.
 	"unread_reminder.go": "the reminder sweep routes an API-driven conv to session.send",
-	// Converted: the spawn welcome, which additionally waits for the bootstrap.
-	"lifecycle.go": "runSpawnPostInit routes an API-driven conv to session.send, and soft " +
-		"exit stays on keystrokes deliberately — no RPC ends the copilot process",
+	// Deliberate: soft exit stays on keystrokes.
+	"lifecycle_stop.go": "soft exit stays on keystrokes deliberately — no RPC ends the copilot process",
 	// Unreachable: remote control is gated on CanRemoteControl(), and Copilot's
 	// Lifecycle returns "" for RemoteControlCommand, so no Copilot agent — API
 	// or not — ever reaches this sink.

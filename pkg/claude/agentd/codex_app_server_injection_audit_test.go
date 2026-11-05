@@ -24,7 +24,7 @@ var codexAppServerKeystrokeSinkFiles = map[string]string{
 	"handlers.go":         "lifecycle commands route selected Codex conversations to typed RPC before pane input",
 	"flush.go":            "durable inbox nudges route selected Codex conversations to typed RPC and hold on failure",
 	"unread_reminder.go":  "unread reminders use the same typed route as their durable inbox nudge",
-	"lifecycle.go":        "spawn welcomes route to typed RPC; process exit deliberately remains signal-key driven because app-server cannot end the TUI process",
+	"lifecycle_stop.go":   "soft exit deliberately remains signal-key driven because app-server cannot end the TUI process",
 	"remote_control.go":   "gated by CanRemoteControl; Codex has no remote-control lifecycle command",
 	"codex_fast_mode.go":  "Codex 0.147 has no stable thread-settings RPC; the exact /fast token remains a TUI command on both drives",
 }

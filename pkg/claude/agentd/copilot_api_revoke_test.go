@@ -47,8 +47,8 @@ var copilotAPIPostureWriters = []struct {
 	// The baseline for a conversation with no recorded posture: legacy backfill
 	// when its resume profile went missing, and a group import's OpenCode
 	// landing, neither of which has a Copilot posture to demote.
-	{"lifecycle.go", "recordBaselineResumeProfile", "SetAgentRelaunchProfile"},
-	{"lifecycle.go", "recordBaselineResumeProfile", "SetConversationResumeProfile"},
+	{"lifecycle_resume.go", "recordBaselineResumeProfile", "SetAgentRelaunchProfile"},
+	{"lifecycle_resume.go", "recordBaselineResumeProfile", "SetConversationResumeProfile"},
 	// The first record of an OpenCode conversation an import just minted: there
 	// is no earlier profile to replace, and this harness has no Copilot drive.
 	{"agent_bundle.go", "recordOfflineResumeProfile", "SetConversationResumeProfile"},

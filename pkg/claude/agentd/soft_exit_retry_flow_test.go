@@ -485,7 +485,7 @@ func TestSoftExit_InitialProbeUnknownPreservesDeliveryWithoutRetry(t *testing.T)
 	// This fault is aimed at the SYNCHRONOUS post-send probe, and it reaches
 	// it for a structural reason rather than a lucky one: the hook runs inside
 	// injectSoftExitTarget, and scheduleSoftExitEscalation is not called until
-	// that returns (lifecycle.go), so no watchdog goroutine exists yet to take
+	// that returns (lifecycle_stop.go), so no watchdog goroutine exists yet to take
 	// the fault first. Moving the arming earlier — or adding any other
 	// concurrent issuer of display-message on this path — gives this scenario
 	// TCL-1028's bug verbatim, silently and on loaded runners only. The
