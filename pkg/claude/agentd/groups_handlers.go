@@ -1001,100 +1001,45 @@ func (u *groupUpdate) applyLaunchDefaults(w http.ResponseWriter) bool {
 		// it never breaks the single-line dashboard header. Empty
 		// stays empty — that clears the description.
 		descr := normalizeGroupDescr(*u.body.Descr)
-		n, err := db.SetAgentGroupDescr(u.g.Name, descr)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
+		if !u.writeField(w, "descr", func() (int64, error) { return db.SetAgentGroupDescr(u.g.Name, descr) }, descr) {
 			return false
 		}
-		// Zero rows: the group was renamed or deleted between the
-		// dispatcher's lookup and this update. Report not_found rather
-		// than a misleading 200.
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return false
-		}
-		u.resp["descr"] = descr
 	}
 
 	if u.body.DefaultCwd != nil {
-		n, err := db.SetAgentGroupDefaultCwd(u.g.Name, u.cwd)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
+		if !u.writeField(w, "default_cwd", func() (int64, error) { return db.SetAgentGroupDefaultCwd(u.g.Name, u.cwd) }, u.cwd) {
 			return false
 		}
-		// Zero rows: the group was renamed or deleted between the
-		// dispatcher's lookup and this update. Report not_found rather
-		// than a misleading 200.
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return false
-		}
-		u.resp["default_cwd"] = u.cwd
 	}
 
 	if u.body.DefaultSpawnGroup != nil {
-		n, err := db.SetAgentGroupDefaultSpawn(u.g.Name, *u.body.DefaultSpawnGroup)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_default_spawn_group", err.Error())
+		if !u.writeFieldOr(w, http.StatusBadRequest, "invalid_default_spawn_group", "default_spawn_group", func() (int64, error) { return db.SetAgentGroupDefaultSpawn(u.g.Name, *u.body.DefaultSpawnGroup) }, *u.body.DefaultSpawnGroup) {
 			return false
 		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return false
-		}
-		u.resp["default_spawn_group"] = *u.body.DefaultSpawnGroup
 	}
 
 	if u.body.DefaultContext != nil {
-		n, err := db.SetAgentGroupDefaultContext(u.g.Name, u.ctx)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
+		if !u.writeField(w, "default_context", func() (int64, error) { return db.SetAgentGroupDefaultContext(u.g.Name, u.ctx) }, u.ctx) {
 			return false
 		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return false
-		}
-		u.resp["default_context"] = u.ctx
 	}
 
 	if u.body.Environment != nil {
-		n, err := db.SetAgentGroupEnvironment(u.g.Name, u.normalizedEnvironment)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
+		if !u.writeField(w, "environment", func() (int64, error) { return db.SetAgentGroupEnvironment(u.g.Name, u.normalizedEnvironment) }, u.normalizedEnvironment) {
 			return false
 		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return false
-		}
-		u.resp["environment"] = u.normalizedEnvironment
 	}
 
 	if u.body.DefaultProfile != nil {
-		n, err := db.SetAgentGroupDefaultProfile(u.g.Name, u.profile)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
+		if !u.writeField(w, "default_profile", func() (int64, error) { return db.SetAgentGroupDefaultProfile(u.g.Name, u.profile) }, u.profile) {
 			return false
 		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return false
-		}
-		u.resp["default_profile"] = u.profile
 	}
 
 	if u.body.DefaultPrompts != nil {
-		n, err := db.SetAgentGroupDefaultPrompts(u.g.Name, u.defaultPrompts)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
+		if !u.writeField(w, "default_prompts", func() (int64, error) { return db.SetAgentGroupDefaultPrompts(u.g.Name, u.defaultPrompts) }, u.defaultPrompts) {
 			return false
 		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return false
-		}
-		u.resp["default_prompts"] = u.defaultPrompts
 	}
 
 	return true
@@ -1108,60 +1053,32 @@ func (u *groupUpdate) applyMembershipPolicy(w http.ResponseWriter) bool {
 		// db.SetAgentGroupMaxMembers clamps a negative value to 0
 		// (unlimited) rather than rejecting it, so a careless caller
 		// can never wedge a group with an impossible cap.
-		n, err := db.SetAgentGroupMaxMembers(u.g.Name, *u.body.MaxMembers)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return false
-		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return false
-		}
 		stored := *u.body.MaxMembers
 		if stored < 0 {
 			stored = 0
 		}
-		u.resp["max_members"] = stored
+		if !u.writeField(w, "max_members", func() (int64, error) { return db.SetAgentGroupMaxMembers(u.g.Name, *u.body.MaxMembers) }, stored) {
+			return false
+		}
 	}
 
 	if u.body.NotifyEnabled != nil {
-		n, err := db.SetAgentGroupNotifyEnabled(u.g.Name, *u.body.NotifyEnabled)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
+		if !u.writeField(w, "notify_enabled", func() (int64, error) { return db.SetAgentGroupNotifyEnabled(u.g.Name, *u.body.NotifyEnabled) }, *u.body.NotifyEnabled) {
 			return false
 		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return false
-		}
-		u.resp["notify_enabled"] = *u.body.NotifyEnabled
 	}
 
 	if u.body.RemoteControlPolicy != nil {
-		n, err := db.SetAgentGroupRemoteControl(u.g.Name, u.policy)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
+		if !u.writeField(w, "remote_control_policy", func() (int64, error) { return db.SetAgentGroupRemoteControl(u.g.Name, u.policy) }, remoteControlPolicyToWire(u.policy)) {
 			return false
 		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return false
-		}
-		u.resp["remote_control_policy"] = remoteControlPolicyToWire(u.policy)
 	}
 
 	if u.body.ReinjectAfterCompact != nil {
 		// Validated above, before any write landed.
-		n, err := db.SetAgentGroupReinjectAfterCompact(u.g.Name, u.reinjectMode)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
+		if !u.writeField(w, "reinject_after_compact", func() (int64, error) { return db.SetAgentGroupReinjectAfterCompact(u.g.Name, u.reinjectMode) }, u.reinjectMode) {
 			return false
 		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return false
-		}
-		u.resp["reinject_after_compact"] = u.reinjectMode
 	}
 
 	if u.body.Permissions != nil {
@@ -1183,19 +1100,36 @@ func (u *groupUpdate) applyMembershipPolicy(w http.ResponseWriter) bool {
 		// Same class as the allowlist above, and gated on the same pair. The
 		// canonical form was computed before any write landed, so this cannot
 		// fail on validation here.
-		n, err := db.SetAgentGroupOwnerScopes(u.g.Name, u.ownerScopes)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
+		if !u.writeField(w, "owner_scopes", func() (int64, error) { return db.SetAgentGroupOwnerScopes(u.g.Name, u.ownerScopes) }, ownerScopesWire(u.ownerScopes)) {
 			return false
 		}
-		if n == 0 {
-			writeError(w, http.StatusNotFound, "not_found", "no such group")
-			return false
-		}
-		u.resp["owner_scopes"] = ownerScopesWire(u.ownerScopes)
 	}
 
 	writeJSON(w, http.StatusOK, u.resp)
+	return true
+}
+
+// writeField makes one field's write and records the stored value in the
+// answer. An error is reported as io; zero rows means the group was renamed or
+// deleted between the dispatcher's lookup and this update, so it reports
+// not_found rather than a misleading 200.
+func (u *groupUpdate) writeField(w http.ResponseWriter, key string, write func() (int64, error), stored any) bool {
+	return u.writeFieldOr(w, http.StatusInternalServerError, "io", key, write, stored)
+}
+
+// writeFieldOr is writeField for a write whose error is the caller's to fix,
+// reported with the given status and code.
+func (u *groupUpdate) writeFieldOr(w http.ResponseWriter, errStatus int, errCode, key string, write func() (int64, error), stored any) bool {
+	n, err := write()
+	if err != nil {
+		writeError(w, errStatus, errCode, err.Error())
+		return false
+	}
+	if n == 0 {
+		writeError(w, http.StatusNotFound, "not_found", "no such group")
+		return false
+	}
+	u.resp[key] = stored
 	return true
 }
 
