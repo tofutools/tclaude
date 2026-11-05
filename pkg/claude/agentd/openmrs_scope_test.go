@@ -48,7 +48,7 @@ func TestEveryoneFallbackProjects_AgentsThenMineThenExactAllowedRemotes(t *testi
 		"gitlab.example.test/acme/allowed",    // listed twice
 	)
 	mine := []dashboardAuthoredOpenPR{{Repository: "acme/mine"}, {Repository: "acme/agent"}}
-	known := everyoneFallbackKnown(policy, testMRBase, mine)
+	known := everyoneFallbackKnown(policy, testMRBase, authoredOpenMRAnswer{items: mine})
 	agents := map[string]bool{
 		strings.ToLower(testMRBase + "/acme/agent"): true,
 		strings.ToLower(testMRBase + "/acme/zeta"):  true,
@@ -56,7 +56,7 @@ func TestEveryoneFallbackProjects_AgentsThenMineThenExactAllowedRemotes(t *testi
 		"https://github.com/acme/app":               true,
 		strings.ToLower(testMRBase + "/"):           true, // no project
 	}
-	got := everyoneFallbackProjects(testMRBase, agents, known)
+	got := everyoneFallbackProjects(testMRBase, agents, append(known.mine, known.allowed...))
 	assert.Equal(t, []string{
 		"acme/agent", "acme/zeta", // agents first, sorted
 		"acme/mine", // then the user's own merge requests
@@ -74,6 +74,11 @@ type scopedGitLab struct {
 	projectRead [][]string
 	// projectStatus, when set, is every project query's answer.
 	projectStatus int
+	// minePages, when set, are the pages of the user's open merge requests
+	// (one project path per merge request) the paging query reads; the Mine
+	// list then says it holds only the first.
+	minePages [][]string
+	mineReads int
 }
 
 func (g *scopedGitLab) do(_ context.Context, _, _ string, req glAPIRequest) (glAPIResult, error) {
@@ -90,12 +95,38 @@ func (g *scopedGitLab) do(_ context.Context, _, _ string, req glAPIRequest) (glA
 		return glAPIResult{Status: g.listStatus, Body: []byte(glRefusedBody), Header: http.Header{}}, nil
 	}
 	body, _ := json.Marshal(req.Body)
+	if strings.Contains(string(body), "pageInfo") {
+		g.mineReads++
+		var payload struct {
+			Variables struct {
+				After *string `json:"after"`
+			} `json:"variables"`
+		}
+		_ = json.Unmarshal(body, &payload)
+		page := 0
+		if payload.Variables.After != nil {
+			page, _ = strconv.Atoi(*payload.Variables.After)
+		}
+		var nodes []map[string]any
+		for i, path := range g.minePages[page] {
+			nodes = append(nodes, map[string]any{"webUrl": testMRBase + "/" + path + "/-/merge_requests/" + strconv.Itoa(page*100+i+1)})
+		}
+		more := page+1 < len(g.minePages)
+		out, _ := json.Marshal(map[string]any{"data": map[string]any{"currentUser": map[string]any{"authoredMergeRequests": map[string]any{
+			"pageInfo": map[string]any{"hasNextPage": more, "endCursor": strconv.Itoa(page + 1)}, "nodes": nodes}}}})
+		return glAPIResult{Status: http.StatusOK, Body: out, Header: http.Header{}}, nil
+	}
 	if strings.Contains(string(body), "authoredMergeRequests") {
 		var res glAPIResult
 		if strings.Contains(string(body), "mergeRequestInteraction") || strings.Contains(string(body), "mergedAt") {
 			res = glAPIResult{Status: http.StatusOK, Body: []byte(`{"data":{"currentUser":null}}`)}
 		} else {
-			res = glAPIResult{Status: http.StatusOK, Body: []byte(`{"data":{"currentUser":{"username":"jdoe","authoredMergeRequests":{"count":1,"nodes":[` +
+			count := 1
+			if len(g.minePages) > 0 {
+				count = 100 * len(g.minePages) // more than the one node on the page
+			}
+			res = glAPIResult{Status: http.StatusOK, Body: []byte(`{"data":{"currentUser":{"username":"jdoe","authoredMergeRequests":{"count":` +
+				strconv.Itoa(count) + `,"nodes":[` +
 				`{"iid":"7","title":"Mine","webUrl":"` + testMRBase + `/acme/mine/-/merge_requests/7"}]}}}}`)}
 		}
 		res.Header = http.Header{}
@@ -120,7 +151,7 @@ func (g *scopedGitLab) do(_ context.Context, _, _ string, req glAPIRequest) (glA
 		read = append(read, path)
 		// GitLab finds a project whatever the case it is asked in, and
 		// answers with its own spelling.
-		full := map[string]string{"acme/mine": "acme/mine", "acme/allowed": "Acme/Allowed"}[strings.ToLower(path)]
+		full := map[string]string{"acme/mine": "acme/mine", "acme/allowed": "Acme/Allowed", "acme/second": "acme/second"}[strings.ToLower(path)]
 		if strings.HasPrefix(path, "many/") {
 			full = path
 		}
@@ -248,7 +279,7 @@ func TestReadEveryoneOpenMRs_A401IsNotAFallback(t *testing.T) {
 	gl := &scopedGitLab{listStatus: http.StatusUnauthorized}
 	t.Cleanup(SetGitLabTransportForTest(gl.do))
 	refused := map[string]everyoneRefusal{}
-	_, _, err := readEveryoneOpenMRs(context.Background(), testMRBase, "glpat", nil, []string{"acme/mine"}, refused, time.Now())
+	_, _, err := readEveryoneOpenMRs(context.Background(), testMRBase, "glpat", nil, everyoneKnown{mine: []string{"acme/mine"}}, refused, time.Now())
 	require.Error(t, err)
 	assert.Empty(t, gl.projectRead, "a bad token is not read project by project")
 	assert.Empty(t, refused)
@@ -261,7 +292,8 @@ func TestReadEveryoneOpenMRs_TheFallbackKeepsTheProjectCap(t *testing.T) {
 	for i := range everyoneOpenMRMaxProjects + 5 {
 		known = append(known, "many/p"+strconv.Itoa(i))
 	}
-	got, _, err := readEveryoneOpenMRs(context.Background(), testMRBase, "glpat", nil, known, map[string]everyoneRefusal{}, time.Now())
+	got, _, err := readEveryoneOpenMRs(context.Background(), testMRBase, "glpat", nil, everyoneKnown{mine: known},
+		map[string]everyoneRefusal{}, time.Now())
 	require.NoError(t, err)
 	assert.True(t, got.truncated, "projects past the cap make all a floor")
 	assert.Equal(t, everyoneOpenMRMaxProjects, got.byProject)
@@ -271,7 +303,7 @@ func TestReadEveryoneOpenMRs_TheFallbackKeepsTheProjectCap(t *testing.T) {
 func TestReadEveryoneOpenMRs_ARateLimitedFallbackHonoursTheWait(t *testing.T) {
 	gl := &scopedGitLab{listStatus: http.StatusForbidden, projectStatus: http.StatusTooManyRequests}
 	t.Cleanup(SetGitLabTransportForTest(gl.do))
-	_, retry, err := readEveryoneOpenMRs(context.Background(), testMRBase, "glpat", nil, []string{"acme/mine"},
+	_, retry, err := readEveryoneOpenMRs(context.Background(), testMRBase, "glpat", nil, everyoneKnown{mine: []string{"acme/mine"}},
 		map[string]everyoneRefusal{}, time.Now())
 	require.Error(t, err)
 	assert.Equal(t, 90*time.Second, retry)
@@ -284,7 +316,7 @@ func TestReadEveryoneOpenMRs_ATransientReprobeFailureKeepsReadingProjects(t *tes
 	t.Cleanup(SetGitLabTransportForTest(gl.do))
 	now := time.Now()
 	refused := map[string]everyoneRefusal{testMRBase: {at: now.Add(-everyoneOpenMRReprobe), reason: "insufficient_granular_scope"}}
-	got, _, err := readEveryoneOpenMRs(context.Background(), testMRBase, "glpat", nil, []string{"acme/mine"}, refused, now)
+	got, _, err := readEveryoneOpenMRs(context.Background(), testMRBase, "glpat", nil, everyoneKnown{mine: []string{"acme/mine"}}, refused, now)
 	require.NoError(t, err, "a 5xx on the re-probe says nothing new about the token")
 	assert.Equal(t, 1, gl.listCalls)
 	assert.Equal(t, 1, got.byProject)
@@ -379,4 +411,42 @@ func TestPollAuthoredOpenMRs_ARateLimitedReprobeWithNothingToReadStillWaits(t *t
 	view := authoredOpenMRsSnapshot(loadCfg(t), nil)
 	require.NotNil(t, view)
 	assert.Contains(t, view.Instances[0].EveryoneError, "no project is known")
+}
+
+// The Mine list holds the first page of the user's open merge requests; a
+// project that only appears on a later page is still read, in its Mine place
+// ahead of allowed_remotes, and the paging stops at its cap.
+func TestPollAuthoredOpenMRs_AMineProjectOnlyOnALaterPageIsRead(t *testing.T) {
+	gl := scopedWorld(t, "gitlab.example.test/acme/allowed")
+	page1 := make([]string, 100)
+	for i := range page1 {
+		page1[i] = "acme/mine"
+	}
+	gl.minePages = [][]string{page1, {"acme/second"}}
+	_, err := pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 2, gl.mineReads, "both pages, and no more")
+	require.Len(t, gl.projectRead, 1)
+	assert.Equal(t, []string{"acme/mine", "acme/second", "acme/allowed"}, gl.projectRead[0])
+	view := authoredOpenMRsSnapshot(loadCfg(t), nil)
+	require.NotNil(t, view)
+	assert.Equal(t, 3, view.Instances[0].EveryoneByProject)
+
+	gl.mineReads = 0
+	gl.minePages = make([][]string, everyoneOpenMRPages+3)
+	for i := range gl.minePages {
+		gl.minePages[i] = []string{"acme/mine"}
+	}
+	_, err = pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, everyoneOpenMRPages, gl.mineReads, "paging is bounded like instance-wide discovery")
+}
+
+func TestReadEveryoneOpenMRs_NoPagingWhenTheMineListHeldEverything(t *testing.T) {
+	gl := &scopedGitLab{listStatus: http.StatusForbidden}
+	t.Cleanup(SetGitLabTransportForTest(gl.do))
+	_, _, err := readEveryoneOpenMRs(context.Background(), testMRBase, "glpat", nil,
+		everyoneKnown{mine: []string{"acme/mine"}}, map[string]everyoneRefusal{}, time.Now())
+	require.NoError(t, err)
+	assert.Zero(t, gl.mineReads)
 }

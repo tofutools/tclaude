@@ -391,7 +391,7 @@ func pollAuthoredOpenMRs(ctx context.Context) (time.Duration, error) {
 			// Everyone's merge requests only once the token has resolved a
 			// user here; a failure keeps the last good project lists.
 			all, retry, err := readEveryoneOpenMRs(ctx, base, token, agentProjects,
-				everyoneFallbackKnown(policy, base, answer.items), refused, time.Now())
+				everyoneFallbackKnown(policy, base, answer), refused, time.Now())
 			// A good read may still carry a wait: a re-probe that hit a 429
 			// before the per-project read answered.
 			wait = max(wait, retry)
@@ -677,7 +677,7 @@ func (e *errEveryoneRefused) Error() string { return e.reason }
 // merge requests and the exact projects allowed_remotes names (known). Only
 // when that fails too, or has no project to read, is the read an error, and
 // the error carries both reasons. refused is updated in place.
-func readEveryoneOpenMRs(ctx context.Context, base, token string, agentProjects map[string]bool, known []string,
+func readEveryoneOpenMRs(ctx context.Context, base, token string, agentProjects map[string]bool, known everyoneKnown,
 	refused map[string]everyoneRefusal, now time.Time) (authoredOpenMREveryone, time.Duration, error) {
 	refusal, wasRefused := refused[base]
 	var probeRetry time.Duration
@@ -701,7 +701,20 @@ func readEveryoneOpenMRs(ctx context.Context, base, token string, agentProjects 
 		}
 		refused[base] = refusal
 	}
-	projects := everyoneFallbackProjects(base, agentProjects, known)
+	mine := known.mine
+	if known.mineMore {
+		// The Mine list stopped at its page, so later projects of the user's
+		// own merge requests are found by paging; on a failure, the first
+		// page's projects are read alone.
+		more, retry, err := fetchMineMRProjects(ctx, base, token)
+		probeRetry = max(probeRetry, retry)
+		if err != nil {
+			slog.Debug("open-mrs: GitLab read of the rest of your merge requests failed; reading the first page's projects",
+				"host", gitlabBaseHost(base), "error", err, "module", "agentd")
+		}
+		mine = append(mine, more...)
+	}
+	projects := everyoneFallbackProjects(base, agentProjects, append(mine, known.allowed...))
 	if len(projects) == 0 {
 		return authoredOpenMREveryone{}, probeRetry, fmt.Errorf("%s: this token can't list the whole instance, and no project "+
 			"is known to read one by one (none an agent works in, none with your open merge requests, "+
@@ -720,18 +733,26 @@ func readEveryoneOpenMRs(ctx context.Context, base, token string, agentProjects 
 	return all, probeRetry, nil
 }
 
-// everyoneFallbackKnown is the part of a refused instance's project set the
-// poller knows besides the agents': the projects of the user's own open merge
-// requests on it, then every allowed_remotes entry that names one exact
-// project there (host/group/.../project, no wildcard). An entry naming a group
+// everyoneKnown is the part of a refused instance's project set the poller
+// knows besides the agents'. mine are the projects on the Mine list's page;
+// mineMore says the user has more open merge requests than it held.
+type everyoneKnown struct {
+	mine     []string
+	mineMore bool
+	allowed  []string
+}
+
+// everyoneFallbackKnown is that set: the projects of the user's own open merge
+// requests on the instance, then every allowed_remotes entry that names one
+// exact project there (host/group/.../project, no wildcard). An entry naming a group
 // with subgroups cannot be told from a project by its shape; GitLab answers
 // such a path with no project, and it is skipped. allowed_remotes is
 // lower-cased by ResolvedGitProxy, so these paths take GitLab's own spelling
 // only from the fullPath fetchOpenMRProjects asks for.
-func everyoneFallbackKnown(policy config.GitProxyConfig, base string, mine []dashboardAuthoredOpenPR) []string {
-	var out []string
-	for _, item := range mine {
-		out = append(out, item.Repository)
+func everyoneFallbackKnown(policy config.GitProxyConfig, base string, mine authoredOpenMRAnswer) everyoneKnown {
+	out := everyoneKnown{mineMore: mine.truncated}
+	for _, item := range mine.items {
+		out.mine = append(out.mine, item.Repository)
 	}
 	for _, pattern := range policy.AllowedRemotes {
 		segs := strings.Split(strings.Trim(pattern, "/"), "/")
@@ -741,9 +762,70 @@ func everyoneFallbackKnown(policy config.GitProxyConfig, base string, mine []das
 		if !strings.EqualFold(strings.TrimRight(policy.GitLabBase(segs[0]), "/"), base) {
 			continue
 		}
-		out = append(out, strings.TrimSuffix(strings.Join(segs[1:], "/"), ".git"))
+		out.allowed = append(out.allowed, strings.TrimSuffix(strings.Join(segs[1:], "/"), ".git"))
 	}
 	return out
+}
+
+// mineMRProjectsQuery pages through the user's open merge requests for their
+// projects alone.
+const mineMRProjectsQuery = `query($first: Int!, $after: String) {
+  currentUser {
+    authoredMergeRequests(state: opened, first: $first, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { webUrl }
+    }
+  }
+}`
+
+// fetchMineMRProjects lists the projects of the user's open merge requests on
+// one instance, in the order GitLab lists them, for a refused instance whose
+// Mine list was cut at its page. It reads at most everyoneOpenMRPages pages,
+// as instance-wide discovery does, each under its own timeout, and returns
+// what it found before any failure.
+func fetchMineMRProjects(ctx context.Context, base, token string) ([]string, time.Duration, error) {
+	var out []string
+	seen := map[string]bool{}
+	var after any
+	for range everyoneOpenMRPages {
+		var data struct {
+			CurrentUser *struct {
+				AuthoredMergeRequests struct {
+					PageInfo struct {
+						HasNextPage bool   `json:"hasNextPage"`
+						EndCursor   string `json:"endCursor"`
+					} `json:"pageInfo"`
+					Nodes []struct {
+						WebURL string `json:"webUrl"`
+					} `json:"nodes"`
+				} `json:"authoredMergeRequests"`
+			} `json:"currentUser"`
+		}
+		pageCtx, cancel := context.WithTimeout(ctx, authoredOpenMRTimeout)
+		err := glGraphQL(pageCtx, base, token, mineMRProjectsQuery,
+			map[string]any{"first": authoredOpenMRLimit, "after": after}, &data)
+		cancel()
+		if err != nil {
+			return out, glRetryFrom(err), err
+		}
+		if data.CurrentUser == nil {
+			return out, 0, errors.New("GitLab did not resolve the token to a user")
+		}
+		list := data.CurrentUser.AuthoredMergeRequests
+		for _, node := range list.Nodes {
+			ref, ok := gitlabMRRefFromURL(node.WebURL)
+			if !ok || !strings.EqualFold(ref.base, strings.TrimRight(base, "/")) || seen[strings.ToLower(ref.project)] {
+				continue
+			}
+			seen[strings.ToLower(ref.project)] = true
+			out = append(out, ref.project)
+		}
+		if !list.PageInfo.HasNextPage || list.PageInfo.EndCursor == "" {
+			break
+		}
+		after = list.PageInfo.EndCursor
+	}
+	return out, 0, nil
 }
 
 // everyoneFallbackProjects orders a refused instance's projects: the ones
