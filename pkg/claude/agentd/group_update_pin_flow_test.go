@@ -191,5 +191,40 @@ func TestGroupUpdate_PermissionsNeedPermissionAdministration(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, code)
 	g, err := db.GetAgentGroupByName("alpha")
 	require.NoError(t, err)
-	assert.NotEqual(t, pinGroupDescr, g.Descr, "nothing is written")
+	assert.Empty(t, g.Descr, "nothing is written")
+
+	// With permissions.grant as well, the same save goes through.
+	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermPermissionsGrant, db.PermEffectGrant, "test"))
+	code = patchGroupAs(t, f, worker, "alpha", map[string]any{
+		"descr": pinGroupDescr, "permissions": []map[string]any{{"slug": agentd.PermSelfRename}},
+	})
+	assert.Equal(t, http.StatusOK, code, "the permissions.grant gate was the only refusal")
+}
+
+// The other four fields, which need a profile and saved prompts to exist: the
+// answer carries the stored profile name, the resolved prompt set, the
+// permissions sorted by slug and the owner-scope map as an object.
+func TestGroupUpdate_WritesTheProfilePromptAndPermissionFields(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "pinned", Harness: "claude", Approval: "default"})
+	require.NoError(t, err)
+	haveSavedPrompts(t, f, map[string]string{"pin-rules": "Follow the pinned rules."})
+
+	rec := humanReq(t, f, http.MethodPatch, "/v1/groups/crew", map[string]any{
+		"default_profile": "pinned",
+		"default_prompts": []string{"pin-rules"},
+		"permissions":     []map[string]any{{"slug": agentd.PermSelfRename}, {"slug": agentd.PermHumanNotify}},
+		"owner_scopes":    map[string]any{agentd.PermGroupsMembersSpawn: map[string]any{"group": []string{"crew"}}},
+	})
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.JSONEq(t, `{
+		"group": "crew",
+		"default_profile": "pinned",
+		"default_prompts": ["pin-rules"],
+		"permissions": ["human.notify", "self.rename"],
+		"owner_scopes": {"groups.members.spawn": {"group": ["crew"]}}
+	}`, rec.Body.String())
+	assert.Equal(t, "pinned", pinGroup(t).DefaultProfile)
 }

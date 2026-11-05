@@ -640,48 +640,6 @@ func normalizeGroupDescr(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// handleGroupUpdate patches mutable group-level settings:
-//
-//   - descr — the group's own one-line description, shown next to the
-//     group name on the dashboard. Distinct from a per-member descr.
-//   - default_cwd — the working directory pre-filled into the spawn
-//     form (and substituted server-side by handleGroupSpawn when a
-//     spawn request leaves cwd blank).
-//   - default_context — a block of shared startup guidance delivered
-//     to the inbox of agents spawned into the group (see
-//     handleGroupSpawn).
-//   - default_profile — the spawn profile (JOH-210) whose launch fields
-//     fill blank spawn fields server-side (see executeSpawn /
-//     applyDefaultProfile), so a group can default its whole team onto a
-//     given harness+model+… without the Claude-only default_model gate.
-//     Validated only for existence; the profile carries its own validated
-//     launch fields. Replaces the retired default_model setting (#343).
-//   - max_members — the group's hard member cap (0 = unlimited); a
-//     spawn that would exceed it is refused by the spawn-guardrail
-//     layer. See checkSpawnGuardrails.
-//   - permissions — live additive grants held by every current member. These
-//     are membership policy, not spawn defaults, and are never copied into
-//     agent_permissions.
-//   - owner_scopes — the narrowing applied to this group's STRUCTURAL
-//     owner-implied permission bypass (TCL-1071), as a slug → scope map.
-//     {} / null clears it, restoring the unrestricted bypass. It never
-//     touches an explicit grant an owner holds.
-//
-// Partial-update contract, matching handleGroupMembersUpdate: only
-// fields present (non-nil) in the body are touched. descr / default_cwd
-// / default_context / default_profile are *string so a caller can clear
-// any of them by sending "" — distinct from omitting it; max_members is
-// *int and clears to "unlimited" with 0. An empty body (no field) is a
-// 400.
-//
-// Each independently meaningful setting has its own permission. This keeps a
-// default-directory grant from also authorizing a rename, context injection,
-// or a member-cap change. groups.admin is accepted centrally as an umbrella.
-//
-// permissions AND owner_scopes are permission administration and additionally
-// require permissions.grant + permissions.revoke — the same pair, because both
-// fields can widen (clearing a narrowing) and narrow (adding one) in a single
-// write.
 // groupUpdateBody is a group settings update; each field left out stays
 // unchanged.
 type groupUpdateBody struct {
@@ -724,6 +682,48 @@ type groupUpdateBody struct {
 	OwnerScopes *json.RawMessage `json:"owner_scopes,omitempty"`
 }
 
+// handleGroupUpdate patches mutable group-level settings:
+//
+//   - descr — the group's own one-line description, shown next to the
+//     group name on the dashboard. Distinct from a per-member descr.
+//   - default_cwd — the working directory pre-filled into the spawn
+//     form (and substituted server-side by handleGroupSpawn when a
+//     spawn request leaves cwd blank).
+//   - default_context — a block of shared startup guidance delivered
+//     to the inbox of agents spawned into the group (see
+//     handleGroupSpawn).
+//   - default_profile — the spawn profile (JOH-210) whose launch fields
+//     fill blank spawn fields server-side (see executeSpawn /
+//     applyDefaultProfile), so a group can default its whole team onto a
+//     given harness+model+… without the Claude-only default_model gate.
+//     Validated only for existence; the profile carries its own validated
+//     launch fields. Replaces the retired default_model setting (#343).
+//   - max_members — the group's hard member cap (0 = unlimited); a
+//     spawn that would exceed it is refused by the spawn-guardrail
+//     layer. See checkSpawnGuardrails.
+//   - permissions — live additive grants held by every current member. These
+//     are membership policy, not spawn defaults, and are never copied into
+//     agent_permissions.
+//   - owner_scopes — the narrowing applied to this group's STRUCTURAL
+//     owner-implied permission bypass (TCL-1071), as a slug → scope map.
+//     {} / null clears it, restoring the unrestricted bypass. It never
+//     touches an explicit grant an owner holds.
+//
+// Partial-update contract, matching handleGroupMembersUpdate: only
+// fields present (non-nil) in the body are touched. descr / default_cwd
+// / default_context / default_profile are *string so a caller can clear
+// any of them by sending "" — distinct from omitting it; max_members is
+// *int and clears to "unlimited" with 0. An empty body (no field) is a
+// 400.
+//
+// Each independently meaningful setting has its own permission. This keeps a
+// default-directory grant from also authorizing a rename, context injection,
+// or a member-cap change. groups.admin is accepted centrally as an umbrella.
+//
+// permissions AND owner_scopes are permission administration and additionally
+// require permissions.grant + permissions.revoke — the same pair, because both
+// fields can widen (clearing a narrowing) and narrow (adding one) in a single
+// write.
 func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	u := &groupUpdate{r: r, g: g}
 	defer u.close()
