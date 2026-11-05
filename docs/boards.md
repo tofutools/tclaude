@@ -11,8 +11,8 @@ exported as an `.excalidraw` file.
 
 ## In the dashboard
 
-The **＋** at the right of the Collab tab strip lists the boards, one line each
-(it has a *Processes* half too: see [Processes](processes.md)):
+**＋ New ▾** › **Board…** in the Collab side panel lists the boards, one line each
+(**Process…** beside it lists the processes: see [Processes](processes.md)):
 in their groups, newest first, with a green dot on a board an agent has a
 session on. Pick one to open it in a tab. The box at the top searches titles and groups;
 a new title makes a board with **Create** or Enter, and the title of one that

@@ -19,10 +19,7 @@
 // stay with their own node, so a peer never lists one, and a peer's per-node
 // view drops this node's, whose board routes the page would send to the peer.
 
-import { h } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
-import htm from 'htm';
 import {
   openGroupWebTermPane, openWebTermPane, openWebWindowPane, waitForTerminalSettled,
 } from './terminals-tab.js';
@@ -31,11 +28,6 @@ import { boardOverlays, openBoardPane } from './board-overlay-state.js';
 import { terminalTabStatus } from './terminal-tab-status.js';
 import { tickedNodes } from './fleet-scope.js';
 import { remoteSessionAgents } from './remote-session-status.js';
-import { LockReason } from './lock-reason.js';
-import { useDismissablePopover, useExclusivePopover } from './hover-popover.js';
-import { Button } from './ui-components.js';
-
-const html = htm.bind(h);
 
 export const BACKGROUND_TERMINALS_PATH = '/api/background-terminals';
 export const BACKGROUND_TERMINAL_KILL_PATH = '/api/background-terminals/kill';
@@ -203,28 +195,6 @@ export function visibleBackgroundTerminals(rows, panes, floating = boardOverlays
   return (rows || []).filter((row) => !row.key || !open.has(row.key));
 }
 
-const KIND_SECTIONS = Object.freeze([
-  ['agent', 'Agents'],
-  ['session', 'Sessions'],
-  ['shell', 'Shells'],
-  ['group_shell', 'Group shells'],
-  ['board', 'Boards'],
-  ['other', 'Other tmux sessions'],
-]);
-
-// backgroundSections groups this node's rows by kind, then each peer's rows
-// by kind under their node.
-function backgroundSections(rows) {
-  const sections = KIND_SECTIONS.map(([kind, title]) => ({ key: kind, title, node: null, items: rows.filter((row) => !row.node && row.kind === kind) }));
-  const peers = new Map();
-  for (const row of rows) {
-    if (!row.node) continue;
-    if (!peers.has(row.node.id)) peers.set(row.node.id, KIND_SECTIONS.map(([kind, title]) => ({ key: `peer:${row.node.id}:${kind}`, kind, title, node: row.node, items: [] })));
-    peers.get(row.node.id).find((section) => section.kind === row.kind)?.items.push(row);
-  }
-  return [...sections, ...[...peers.values()].flat()].filter((section) => section.items.length);
-}
-
 function selectorOf(row) {
   return row.agent_id || row.conv_id || '';
 }
@@ -329,35 +299,6 @@ export async function killBackgroundTerminal(row, {
   }
 }
 
-// KillButton asks for a second click before killing: whatever runs in the
-// session stops, and the popover is too small for a modal.
-function KillButton({ row, label }) {
-  const [armed, setArmed] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  useEffect(() => {
-    if (!armed) return undefined;
-    const timer = setTimeout(() => setArmed(false), 3000);
-    return () => clearTimeout(timer);
-  }, [armed]);
-  const onClick = async () => {
-    if (!armed) { setArmed(true); setError(''); return; }
-    setBusy(true);
-    const failure = await killBackgroundTerminal(row);
-    setBusy(false);
-    setArmed(false);
-    setError(failure);
-  };
-  const board = row.kind === 'board';
-  const verb = board ? 'End' : 'Kill';
-  const hint = board
-    ? (armed ? "Click again to end the agents' sessions on this board. The board stays" : 'End the board sessions on this board')
-    : (armed ? 'Click again to end this tmux session and whatever runs in it' : `End tmux session ${row.tmux_session}`);
-  return html`<${Button} size="sm" variant=${armed ? 'danger' : ''} class=${`mux-btn mux-bg-kill${armed ? ' armed' : ''}`} disabled=${busy}
-    onClick=${onClick} aria-label=${`${verb} ${label}`} title=${error || hint}>
-    ${busy ? (board ? 'Ending…' : 'Killing…') : armed ? `${verb}?` : error ? 'Failed' : verb}<//>`;
-}
-
 let attachAllRunning = false;
 
 // attachAllBackgroundTerminals brings the rows up ONE AT A TIME: each attach
@@ -387,92 +328,4 @@ export async function attachAllBackgroundTerminals(rows, snapshotValue, {
     attachAllRunning = false;
   }
   return opened;
-}
-
-function BackgroundIcon() {
-  return html`<svg class="mux-bg-icon" width="14" height="14" viewBox="0 0 16 16" fill="none"
-    stroke="currentColor" stroke-width="1.4" aria-hidden="true" focusable="false">
-    <rect x="1.5" y="2.5" width="13" height="9" rx="1.5" /><path d="M4 14h8" />
-    <path d="M5.5 7.5h5" stroke-linecap="round" /></svg>`;
-}
-
-// BackgroundTerminalsChip is the right-aligned counter beside the tab strip.
-// Hover peeks the breakdown; a click opens it too. Either way it goes when the
-// pointer stays away, on a press outside, or on Escape.
-export function BackgroundTerminalsChip({ rows, snapshot = null }) {
-  const [open, setOpen] = useState(false);
-  const [pinned, setPinned] = useState(false);
-  const rootRef = useRef(null);
-  const count = rows.length;
-
-  const close = () => { setOpen(false); setPinned(false); };
-  useExclusivePopover(rootRef, open, close, pinned);
-  useDismissablePopover(rootRef, open, close, { hoverOpened: () => !pinned });
-  useEffect(() => { if (!count) close(); }, [count]);
-  if (!count) return null;
-
-  const snapshotValue = snapshot?.value;
-  const attachable = rows.filter((row) => row.key);
-  const attach = (row) => {
-    attachBackgroundTerminal(row, snapshotValue);
-  };
-  const attachAll = () => {
-    void attachAllBackgroundTerminals(attachable, snapshotValue);
-    close();
-  };
-  const now = Date.now() / 1000;
-  const noun = count === 1 ? 'session' : 'sessions';
-
-  return html`
-    <div ref=${rootRef} class=${`mux-bg${open ? ' open' : ''}`}
-      onMouseEnter=${() => setOpen(true)}>
-      <button data-ui-exempt type="button" class="mux-bg-trigger" aria-expanded=${open ? 'true' : 'false'} aria-haspopup="dialog"
-        aria-label=${`${count} tclaude ${noun} running in the background without a terminal`}
-        title=${`${count} tclaude ${noun} still running with no terminal attached`}
-        onClick=${() => { if (pinned) close(); else { setOpen(true); setPinned(true); } }}>
-        <${BackgroundIcon} /><span class="mux-bg-count ui-badge">${count}</span>
-      </button>
-      ${open ? html`
-        <div class="mux-bg-pop" role="dialog" aria-label="Background terminals">
-          <div class="mux-bg-pop-head"><b>${count} running in background</b><span> · no terminal attached</span></div>
-          ${backgroundSections(rows).map(({ key, title, node, items }) => html`
-              <div class="mux-bg-sec" key=${key}>
-                <div class="mux-bg-sec-head">${node ? html`<span class="mux-node-pill" style=${`--nc:${node.color}`}>${node.name}</span>` : null}${title} · ${items.length}</div>
-                ${items.map((row) => {
-                  const view = rowView(row, snapshotValue);
-                  const idle = idleText(row.last_activity, now);
-                  // A shell's liveness is not its agent's status; only the
-                  // agent/session rows borrow the roster light.
-                  const conversation = row.kind === 'agent' || row.kind === 'session';
-                  const statusClass = conversation ? (view.status?.className || 'unknown') : 'shell';
-                  const verb = row.kind === 'board' ? 'Open' : 'Attach';
-                  return html`
-                    <div class="mux-bg-row" key=${row.key || row.tmux_session}>
-                      <span class=${`mux-tab-status mux-tab-status-${statusClass}`}
-                        title=${conversation && view.status?.agent ? view.status.description : ''}></span>
-                      ${row.key
-                        // The title attaches too, a bigger target than the
-                        // button; tabindex -1 keeps one tab stop per row.
-                        ? html`<button data-ui-exempt type="button" class="mux-bg-name mux-bg-name-attach" tabindex="-1"
-                            title=${`${verb} ${view.label}`} onClick=${() => attach(row)}>${view.label}</button>`
-                        : html`<span class="mux-bg-name" title=${view.label}>${view.label}</span>`}
-                      ${idle.text ? html`<span class=${`mux-bg-idle${idle.stale ? ' stale' : ''}`}>${idle.text}</span>` : null}
-                      ${row.key
-                        ? html`<${Button} size="sm" class="mux-btn mux-bg-attach" onClick=${() => attach(row)}
-                            aria-label=${`${verb} ${view.label}`}>${verb}<//>`
-                        : row.attachLock
-                          ? html`<${Button} size="sm" class="mux-btn mux-bg-attach" disabled aria-disabled="true"
-                              aria-label=${`Attach ${view.label}`}>Attach<//><${LockReason} why=${row.attachLock}/>`
-                          : html`<span class="mux-bg-noattach" title=${`Attach from a shell: tmux -L tclaude attach -t '${row.tmux_session}'`}>${row.superseded ? 'previous generation' : 'not a tclaude terminal'}</span>`}
-                      ${row.killable ? html`<${KillButton} row=${row} label=${view.label} />` : null}
-                    </div>`;
-                })}
-              </div>`)}
-          ${attachable.length > 1 ? html`
-            <div class="mux-bg-foot"><${Button} size="sm" class="mux-btn" onClick=${attachAll}>Attach all<//></div>
-          ` : null}
-        </div>
-      ` : null}
-    </div>
-  `;
 }

@@ -115,14 +115,14 @@ async function mountShell(t, snapshotValue = ON) {
 
 const tabLabels = (host) => [...host.querySelectorAll('.mux-tab .mux-tab-label')].map((node) => node.textContent);
 
-test('the ＋ menu lists processes by pinned group, filters them, and opens one as a tab', async (t) => {
+test('the panel\'s ＋ New lists processes by pinned group, filters them, and opens one as a tab', async (t) => {
   const requests = fakeDaemon(t);
   const env = await mountShell(t);
   const { harness, host, widgets, processes } = env;
-  await harness.act(async () => { harness.fireEvent(host.querySelector('.mux-board-add'), 'click'); await wait(); });
-  const switcher = host.querySelector('.mux-board-menu .mux-add-sections');
-  assert.ok(switcher, 'with Processes on, the menu offers Boards and Processes');
-  await harness.act(async () => { harness.fireEvent([...switcher.querySelectorAll('[role="tab"]')].find((tab) => tab.textContent === 'Processes'), 'click'); await wait(); });
+  await harness.act(async () => { harness.fireEvent(host.querySelector('.cr-new'), 'click'); await wait(); });
+  const kinds = [...host.querySelectorAll('[data-new-kind]')].map((node) => node.dataset.newKind);
+  assert.ok(kinds.includes('board') && kinds.includes('process'), 'with Processes on, the menu offers Boards and Processes');
+  await harness.act(async () => { harness.fireEvent(host.querySelector('[data-new-kind="process"]'), 'click'); await wait(); });
   await harness.act(() => wait());
   assert.ok(requests.includes('GET /v1/process/templates'));
   const sections = () => [...host.querySelectorAll('.process-menu-list .board-section')].map((section) => ({
@@ -265,12 +265,13 @@ test('a crafted seed cannot give a process tab a socket or a colliding key', asy
   assert.equal(seed.key, 'process:triage');
 });
 
-test('on a peer without Processes the ＋ menu is boards only', async (t) => {
+test('on a peer without Processes the ＋ New menu offers no processes', async (t) => {
   fakeDaemon(t);
   const env = await mountShell(t, { ...ON, peer_view: { level: 'restricted' } });
   const { harness, host } = env;
-  await harness.act(async () => { harness.fireEvent(host.querySelector('.mux-board-add'), 'click'); await wait(); });
-  assertAbsent(host.querySelector('.mux-add-sections'), 'no Processes half');
+  await harness.act(async () => { harness.fireEvent(host.querySelector('.cr-new'), 'click'); await wait(); });
+  assert.ok(host.querySelector('[data-new-kind="board"]'));
+  assertAbsent(host.querySelector('[data-new-kind="process"]'), 'no Processes entry');
   assertAbsent(host.querySelector('.process-menu-list'));
   env.stop();
 });

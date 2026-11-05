@@ -288,6 +288,44 @@ export function freePageName(pages = []) {
   for (let n = 2; ; n++) if (!taken.has(`sketch-${n}`)) return `sketch-${n}`;
 }
 
+// addGroupBoard creates a board linked to group, named for it, and opens it
+// as a tab. The Groups tab's ＋ and the Collab panel's ＋ New both make one.
+export async function addGroupBoard(group, { api, notify = defaultNotify, source } = {}) {
+  const title = `${group.name} board`;
+  try {
+    // Board ids are node-wide, so the free one is chosen among them all.
+    const taken = await api.boardIds();
+    const board = await api.createGroupBoard(group.name, title, freeBoardId(title, taken));
+    notify(`Created ${board.title || title} in ${group.name}`);
+    void source?.refresh?.();
+    openBoardPane(board.id, board.title || title);
+    return board;
+  } catch (cause) {
+    notify(`Could not create the board: ${cause.message}`, true);
+    return null;
+  }
+}
+
+// addGroupPage creates a blank page group owns; it opens, focused, when the
+// snapshot lists it (page-place.js).
+export async function addGroupPage(group, pages = [], { api, notify = defaultNotify, source } = {}) {
+  try {
+    const page = await api.createGroupPage(group.name, freePageName(pages));
+    notify(`Created a blank page in ${group.name}: draw on it, then a member takes it over`);
+    void source?.refresh?.();
+    expectPage(page.id);
+    return page;
+  } catch (cause) {
+    notify(`Could not create the page: ${cause.message}`, true);
+    return null;
+  }
+}
+
+// addGroupShell opens group's shell, or brings forward the overlay holding it.
+export function addGroupShell(group) {
+  if (!revealResourceOverlay(`shell:${group.name}`)) void openGroupWebTermPane(group.name, `${group.name} shell`);
+}
+
 // AddResource is the section's one ＋ button (icon-only): a process for the whole
 // group or for one agent (the start form, which also builds a new one), a
 // board linked to the group, a blank live page, or the group's shell, each
@@ -313,38 +351,10 @@ export function AddResource({ group, pages = [], api, source, wizard = false, no
   // The shared popover rule: a press outside, or Escape, closes the menu (a
   // click menu, so moving the pointer away does not).
   useDismissablePopover(ref, open, (why) => { if (why !== 'away') setOpen(false); });
-  const addBoard = async () => {
-    setOpen(false);
-    const title = `${group.name} board`;
-    try {
-      // Board ids are node-wide, so the free one is chosen among them all.
-      const taken = await api.boardIds();
-      const board = await api.createGroupBoard(group.name, title, freeBoardId(title, taken));
-      notify(`Created ${board.title || title} in ${group.name}`);
-      void source?.refresh?.();
-      openBoardPane(board.id, board.title || title);
-    } catch (cause) {
-      notify(`Could not create the board: ${cause.message}`, true);
-    }
-  };
-  const addPage = async () => {
-    setOpen(false);
-    try {
-      const page = await api.createGroupPage(group.name, freePageName(pages));
-      notify(`Created a blank page in ${group.name}: draw on it, then a member takes it over`);
-      void source?.refresh?.();
-      // It opens, focused, when the snapshot lists it (page-place.js).
-      expectPage(page.id);
-    } catch (cause) {
-      notify(`Could not create the page: ${cause.message}`, true);
-    }
-  };
+  const addBoard = () => { setOpen(false); void addGroupBoard(group, { api, notify, source }); };
+  const addPage = () => { setOpen(false); void addGroupPage(group, pages, { api, notify, source }); };
   const cwd = (group.default_cwd || '').trim();
-  const addShell = () => {
-    setOpen(false);
-    const key = `shell:${group.name}`;
-    if (!revealResourceOverlay(key)) void openGroupWebTermPane(group.name, `${group.name} shell`);
-  };
+  const addShell = () => { setOpen(false); addGroupShell(group); };
   const item = (attr, onClick, name, line, disabled = false) => html`<${MenuItem} ...${{ [attr]: true }} class="gr-new-item" onClick=${onClick}
     disabled=${disabled}><span class="gr-new-name">${name}</span><span class="gr-new-line">${line}</span><//>`;
   const process = (scope) => () => { setOpen(false); onAddProcess(scope); };

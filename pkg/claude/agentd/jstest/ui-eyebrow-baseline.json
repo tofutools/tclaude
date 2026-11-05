@@ -25,8 +25,5 @@
     ".usage-ov-heading",
     ".window-groups .roles-label",
     ".window-roles .roles-label"
-  ],
-  "mux.css": [
-    ".mux-bg-sec-head"
   ]
 }
