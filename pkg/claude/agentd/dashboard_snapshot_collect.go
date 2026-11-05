@@ -144,7 +144,6 @@ func attachSnapshotCollected(out *snapshotPayload, c snapshotCollected, p snapsh
 	// keep it (config dashboard.always_show_plugins_tab — the escape hatch to
 	// the install-from-catalog UI). Otherwise hide the empty tab.
 	out.PluginsTabVisible = len(out.Plugins) > 0 || out.PluginsError != "" || p.cfg.ShowPluginsTabAlways()
-
 }
 
 // attachSnapshotPRLists builds the footer's authored-PR, authored-MR and
@@ -220,5 +219,4 @@ func elideUnchangedStatics(out *snapshotPayload, r *http.Request) {
 			out.Permissions.ScopeDimOptions = nil
 		}
 	}
-
 }
