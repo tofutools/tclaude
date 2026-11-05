@@ -260,9 +260,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	cleanupManagedClone := func(bool) {}
 	managedCloneStarted := false
 	defer func() { cleanupManagedClone(cerr == nil || managedCloneStarted) }()
-	effort, model := p.Effort, p.Model
 	proofToken, proofCwd, proofDirs := p.ProofToken, p.ProofCwd, p.ProofDirs
-	codexGitCommonDir, gitWriteDirs := p.CodexGitCommonDir, p.GitWriteDirs
 	var newConv, newTmux, label, warn string
 	// The clone's session row and pane exist before its conversation is linked
 	// to an actor, so for that window nothing durable says the row is an
@@ -279,287 +277,19 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		}
 		releaseLaunchClaim()
 	}()
-	relaunch, err := durableRelaunchConfigForConv(sourceConv)
-	if err != nil {
-		state, stateErr := db.AgentState(sourceConv)
-		if stateErr != nil || state != db.AgentStateNone {
-			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusConflict, Code: "relaunch_profile", Msg: err.Error()}
-		}
-		// Standalone export/conv cloning predates agent enrollment and may have
-		// only a harness-native conversation. Preserve that plain CLI surface
-		// with conservative defaults; managed agents never take this branch.
-		h := harnessForConv(sourceConv).Name
-		approval, autoReview := approvalForRelaunch(sourceConv, h)
-		relaunch = &durableRelaunchConfig{
-			Harness: h, Cwd: cwd, Sandbox: sandboxForHarness(h),
-			Approval: approval, AutoReview: autoReview,
-			Effort: effort, Model: model,
-		}
-	}
-	if h, resolveErr := harness.Resolve(relaunch.Harness); resolveErr == nil && h.UsesCommandInput() {
-		return cloneSpawnResult{}, &cloneSpawnError{
-			Status: http.StatusUnprocessableEntity, Code: "unsupported_harness",
-			Msg: "clone is not supported for command-input harness " + relaunch.Harness,
-		}
-	}
-	effort, model = relaunch.Effort, relaunch.Model
-	var fastModeAtLaunch *bool
-	if relaunch.Harness == harness.CodexName && relaunch.CodexStateRoot != "" {
-		fastModeAtLaunch = codexFastModeAtLaunch(relaunch.FastMode, relaunch.CodexStateRoot)
-	}
-	persistCodexStateRoot := func(convID string) *cloneSpawnError {
-		if relaunch.Harness != harness.CodexName {
-			return nil
-		}
-		if relaunch.CodexStateRoot != "" {
-			if err := db.SetConversationCodexStateRoot(convID, relaunch.Harness, cwd,
-				relaunch.CodexStateRoot, relaunch.CodexStateRootSource); err != nil {
-				return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io",
-					Msg: "persist clone Codex state root: " + err.Error()}
-			}
-		}
-		if err := db.SetConversationFastModeAtLaunch(
-			convID, relaunch.Harness, cwd, fastModeAtLaunch); err != nil {
-			return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io",
-				Msg: "persist clone Fast-mode baseline: " + err.Error()}
-		}
-		if agentID, err := db.AgentIDForConv(convID); err == nil && agentID != "" {
-			if err := db.SetAgentFastModeAtLaunchForConv(convID, fastModeAtLaunch); err != nil {
-				return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io",
-					Msg: "persist clone agent Fast-mode baseline: " + err.Error()}
-			}
-		}
-		return nil
-	}
-	cloneSandbox, cloneSandboxSource := cloneSandboxPosture(relaunch)
-	// Every new process that renders a generated Codex profile resolves the
-	// current sandbox chain. Registry participation is a separate gate: the
-	// app-server+builtin combination requires setup, while ordinary launches
-	// register only when the exact managed registry is already installed.
-	var effectiveSandbox *sandboxpolicy.Snapshot
-	refreshGeneratedProfile := session.CodexNativeRegistryApplicable(relaunch.CodexAppServer,
-		relaunch.Harness, cloneSandbox, relaunch.SandboxImplementation)
-	if !refreshGeneratedProfile && relaunch.Harness == harness.CodexName &&
-		cloneSandbox == harness.SandboxManagedProfile {
-		refreshGeneratedProfile = true
-	}
-	// Either way the clone gets what a relaunch of the source lays over its
-	// chain (composeRelaunchSandbox): the group's environment as the
-	// relaunch policy's group_env row decides, and the source's explicit
-	// --harness-config as the policy weighs it (tcl-bmhpir).
-	//
-	// The sandbox profile contents follow the policy's
-	// sandbox_profile_contents row, as on the source's resume: re-resolve
-	// re-reads the source's profiles, and when that chain cannot be used the
-	// clone launches under the contents stored at the source's last launch,
-	// with a warning (a clone always works, as a resume does). Reuse keeps
-	// the stored contents. A generated Codex profile always re-reads.
-	//
-	// A clone that joins another group for its sandbox (SandboxGroupID)
-	// takes that group's settings, whatever the policy: that is where it is
-	// being placed, not a relaunch of the source.
-	policy, _ := relaunchPolicyFor(sourceConv)
-	stored, err := db.AgentEffectiveSandboxConfigForConv(sourceConv)
-	if err != nil {
-		return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io", Msg: "read the source's stored sandbox policy: " + err.Error()}
-	}
-	// A group the clone joins that is the one its source already resolves
-	// its sandbox (or environment) from is no new placement.
-	sameSandbox, sameEnv := p.SandboxGroupID == 0, p.SandboxGroupID == 0
-	if stored != nil && p.SandboxGroupID != 0 {
-		envGroup, _ := stored.EnvironmentGroupID()
-		sameSandbox = p.SandboxGroupID == stored.ResolutionGroupID
-		sameEnv = p.SandboxGroupID == envGroup
-	}
-	// A clone that keeps its source's environment (KeepEnvironment) keeps
-	// it as the source's resume would, under the group_env row; one that
-	// keeps its source's sandbox (KeepSandbox) follows the contents row.
-	reuseGroupEnv := (sameEnv || p.KeepEnvironment) && relaunchReuses(policy, groupEnvField)
-	followsContents := !refreshGeneratedProfile && (sameSandbox || p.KeepSandbox)
-	// A clone placed in another group's sandbox starts from the stored
-	// snapshot, as it always has: the new group's chain replaces its
-	// profiles (cloneSandboxForGroup).
-	useStored := !refreshGeneratedProfile && !followsContents
-	if followsContents && relaunchReuses(policy, sandboxProfileContentsField) {
-		// As on resume: which profiles apply is still read again, so a
-		// changed assignment brings the new profiles' current contents.
-		reuse, note := reuseStoredProfileContents(sourceConv, stored)
-		useStored = reuse
-		if note != "" {
-			sandboxWarn = append(sandboxWarn, note)
-		}
-	}
-	// buildSandbox prepares the clone's sandbox from the stored snapshot or
-	// the re-read chain, through the checks a launch needs. unusable says the
-	// failure is one a resume falls back from: a chain that cannot be used,
-	// or a launch gate it does not pass.
-	buildSandbox := func(stored bool) (sb *sandboxpolicy.Snapshot, fail *cloneSpawnError, unusable bool) {
-		var launch, previous *sandboxpolicy.Snapshot
-		var err error
-		if stored {
-			launch, err = db.AgentEffectiveSandboxConfigForConv(sourceConv)
-			previous = launch
-		} else {
-			launch, previous, err = resolveCurrentSandboxChainForConv(sourceConv)
-		}
-		if err == nil && launch != nil {
-			var composed sandboxpolicy.Snapshot
-			if composed, err = composeRelaunchSandbox(sourceConv, *launch, previous, stored, reuseGroupEnv); err == nil {
-				launch = &composed
-			}
-		}
-		fresh := !stored
-		if err == nil {
-			launch, fresh, err = cloneSandboxForGroup(sourceConv, launch,
-				p.SandboxGroupID, p.KeepSandbox, p.KeepEnvironment, reuseGroupEnv, fresh)
-		}
-		if err != nil {
-			return nil, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()},
-				isRelaunchChainUnusable(err)
-		}
-		if launch != nil {
-			if !fresh {
-				validated, err := ensureAgentDirectoriesForRelaunch(*launch)
-				if err != nil {
-					return nil, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}, false
-				}
-				launch = &validated
-			}
-			// A freshly resolved chain deliberately has declarations but no
-			// private directory paths yet. Both clone branches materialize
-			// those paths under the clone's new launch label below;
-			// validating them as predecessor bindings here would reject
-			// every managed cache directory.
-			if _, launchErr := sandboxpolicy.FilesystemForLaunch(launch.Effective); launchErr != nil {
-				return nil, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: launchErr.Error()}, true
-			}
-		}
-		// The clone inherits the source's drive and sandbox, so it is checked
-		// as any relaunch is: the profile may have been narrowed since the
-		// source was admitted.
-		if gate := relaunchSandboxGateFailure(relaunch.Harness, cloneSandbox, relaunch.SandboxImplementation,
-			launch, relaunch.CopilotAPI, session.ModelTransportLaunchContext{Model: model, Cwd: cwd},
-		); gate != nil {
-			return nil, &cloneSpawnError{Status: gate.Status, Code: gate.Kind, Msg: gate.Msg}, true
-		}
-		return launch, nil, false
-	}
-	effectiveSandbox, fail, unusable := buildSandbox(useStored)
-	// As on resume, a re-read with nothing stored to fall back to (no
-	// snapshot, or omitted profiles) does not fall back.
-	canFallBack := useStored || (stored != nil && !stored.ProfilesOmitted)
-	if fail != nil && unusable && followsContents && canFallBack {
-		// A clone always works, as a resume does: the other source is tried.
-		if fallback, fallbackFail, _ := buildSandbox(!useStored); fallbackFail == nil {
-			from, to := "current sandbox profiles", "sandbox policy stored at the source's last launch"
-			if useStored {
-				from, to = "sandbox profile contents stored at the source's last launch", "source's current sandbox profiles"
-			}
-			sandboxWarn = append(sandboxWarn, "the "+from+" could not be applied ("+fail.Msg+"); the clone launched under the "+to)
-			effectiveSandbox, fail = fallback, nil
-		}
-	}
+	launch, launchWarn, fail := resolveCloneLaunch(p)
 	if fail != nil {
 		return cloneSpawnResult{}, fail
 	}
+	sandboxWarn = append(sandboxWarn, launchWarn...)
+	relaunch, srcHarness, model := launch.relaunch, launch.relaunch.Harness, launch.relaunch.Model
+	effectiveSandbox := launch.effectiveSandbox
+	p.RouteHelperGroupIDs = launch.routeHelperGroupIDs
 	reassertFail := func() *cloneSpawnError {
 		if fail := reassertDirWriteProof(proofDirs); fail != nil {
 			return &cloneSpawnError{Status: fail.Status, Code: fail.Kind, Msg: fail.Msg}
 		}
 		return nil
-	}
-	// Clone under the same harness the source ran on — a Codex agent's
-	// clone must relaunch as Codex. "" for an untagged/claude source omits
-	// the flag (the default).
-	srcHarness := relaunch.Harness
-	// Carry the source's armed Remote Access to the sibling (JOH-261). A clone
-	// becoming a SECOND phone-reachable session alongside the still-running
-	// original is the operator-decided semantics — drive either from the phone.
-	// False (and so omitted) for an unarmed source or a Codex source. A clone
-	// in the source's groups follows the relaunch policy's
-	// group_remote_control row, as the source's own resume would
-	// (relaunchRemoteControl).
-	remoteControl := relaunch.RemoteControl
-	if p.SandboxGroupID == 0 {
-		var change, note string
-		remoteControl, change, note = relaunchRemoteControl(sourceConv, relaunch.Harness, relaunch.RemoteControl)
-		if change != "" {
-			slog.Info("clone: remote control by the relaunch policy", "source", short8(sourceConv), "change", change)
-		}
-		if note != "" {
-			sandboxWarn = append(sandboxWarn, note)
-		}
-	}
-	autoMemory := relaunch.AutoMemory
-	// Same reasoning again: a clone of an agent that opted into Claude Code's own
-	// messaging mesh keeps it, and a clone of a default agent stays closed.
-	peerMessaging := relaunch.PeerMessaging
-	// A clone is meant to be the same agent working alongside the original, so it
-	// inherits the source's startup-context shape too — a lean source must not
-	// produce a fat sibling.
-	contextFeatures := relaunch.ContextFeatures
-	// Same reasoning for the auto-compaction window: a source pinned to compact
-	// at 450K must not produce a sibling that runs to the model's full window.
-	autoCompactWindow := relaunch.AutoCompactWindow
-	// The temporary unlock belongs to the source's stable agent. A clone is a
-	// new agent and must inherit the preserved normal posture, otherwise one
-	// temporary debugging action would mint a permanently-unconfined sibling.
-	cloneSSH := cloneSSHWorkaround(relaunch)
-	// A clone inherits the source's launch CHOICE, never its verification. For
-	// a harness whose own OS sandbox lives in mutable configuration, the
-	// source's recorded single-boundary posture says only what was true when
-	// the source launched — and a clone is precisely where a stale check would
-	// be invisible, because nobody restates the sandbox choice.
-	if fail := sandboxImplementationPostureFailure(
-		srcHarness, relaunch.SandboxImplementation); fail != nil {
-		return cloneSpawnResult{}, &cloneSpawnError{
-			Status: fail.Status, Code: fail.Kind, Msg: fail.Msg,
-		}
-	}
-	// The relaunch gate ran with the sandbox above (buildSandbox), so a
-	// gate the re-read profiles fail falls back as a resume does.
-	cloneSSH = cloneSSH && codexSSHWorkaroundApplies(
-		srcHarness, cloneSandbox, relaunch.SandboxImplementation, effectiveSandbox)
-	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(
-		srcHarness, cloneSandbox, relaunch.SandboxImplementation)
-	if codexGitCommonDirPinned && gitWriteDirs == nil {
-		if home, err := os.UserHomeDir(); err == nil {
-			gitWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
-		}
-	}
-	var grantFail *spawnFailure
-	gitWriteDirs, grantFail = canonicalizeRepositoryWriteDirs(gitWriteDirs, proofDirs, proofToken)
-	if grantFail != nil {
-		return cloneSpawnResult{}, &cloneSpawnError{Status: grantFail.Status, Code: grantFail.Kind, Msg: grantFail.Msg}
-	}
-	exactGrantPinned := codexGitCommonDirPinned && proofToken != ""
-	if !exactGrantPinned {
-		gitWriteDirs = nil
-		codexGitCommonDir = ""
-		codexGitCommonDirPinned = false
-	}
-	// Preserve the source's per-agent AskUserQuestion timeout onto the sibling
-	// (schema v97). "" for a source
-	// that recorded none (a non-Claude or pre-column source).
-	askTimeout := relaunch.AskUserQuestionTimeout
-	approval, autoReview := relaunch.Approval, relaunch.AutoReview
-	if runtime.GOOS == "linux" && srcHarness == harness.DefaultName && hostPublishAllowed(p.SourceConv) && hostRouteHelperEligible(srcHarness, relaunch.SandboxImplementation, effectiveSandbox) {
-		p.RouteHelperGroupIDs = append(p.RouteHelperGroupIDs, 0)
-	}
-	if len(p.RouteHelperGroupIDs) > 0 {
-		if srcHarness != harness.DefaultName || relaunch.SandboxImplementation != string(sandboxpolicy.ImplementationTclaudeLayer) {
-			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "Linux group routes require a pane-authoritative clone with tclaude’s sandbox"}
-		}
-		if effectiveSandbox == nil {
-			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "Linux group routes require a frozen private network posture for the clone"}
-		}
-		posture, postureErr := session.TclaudeLayerNetworkPosture(effectiveSandbox.Effective)
-		if postureErr != nil {
-			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "resolve clone route posture: " + postureErr.Error()}
-		}
-		if posture == sandboxpolicy.NetworkHostOpen {
-			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "Linux group routes require a private network namespace in tclaude’s sandbox"}
-		}
 	}
 
 	// Launch enrollment (TCL-732) — the clone twin of TCL-731's reincarnation
@@ -815,7 +545,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		agentDirectoryCleanup := func() {}
 		if effectiveSandbox != nil {
 			materialized, cleanup, materializeErr := prepareCodexSSHWorkaroundForNewLaunch(
-				*effectiveSandbox, label, cloneSSH)
+				*effectiveSandbox, label, launch.ssh)
 			if materializeErr != nil {
 				return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "spawn", Msg: materializeErr.Error()}
 			}
@@ -829,40 +559,8 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			agentDirectoryCleanup()
 			return cloneSpawnResult{}, fail
 		}
-		proofArgs := clcommon.SpawnArgs{
-			DirWriteProof:    proofToken,
-			EffectiveSandbox: effectiveSandbox,
-		}
-		if proofCwd {
-			proofArgs.CwdWriteProof = proofToken
-			proofArgs.DirWriteProof = ""
-		}
+		proofArgs := launch.spawnArgs(cwd, proofToken, proofCwd, effectiveSandbox)
 		proofArgs.Label = label
-		proofArgs.Cwd = cwd
-		proofArgs.Effort = effort
-		proofArgs.Model = model
-		proofArgs.Harness = srcHarness
-		proofArgs.Sandbox = cloneSandbox
-		proofArgs.SandboxImplementation = relaunch.SandboxImplementation
-		proofArgs.SandboxChosenBy = cloneSandboxSource
-		proofArgs.CodexGitCommonDir = codexGitCommonDir
-		proofArgs.CodexGitCommonDirPinned = codexGitCommonDirPinned
-		proofArgs.GitWorktreeWriteDirs = gitWriteDirs
-		proofArgs.GitWorktreeWriteDirsPinned = exactGrantPinned
-		proofArgs.Approval = approval
-		proofArgs.ToolGovernance = relaunch.ToolGovernance
-		proofArgs.AutoReview = autoReview
-		proofArgs.AskUserQuestionTimeout = askTimeout
-		proofArgs.RemoteControl = remoteControl
-		proofArgs.AutoMemory = autoMemory
-		proofArgs.PeerMessaging = peerMessaging
-		proofArgs.ContextFeatures = contextFeatures
-		proofArgs.AutoCompactWindow = autoCompactWindow
-		proofArgs.ContextWindowMax = relaunch.ContextWindowMax
-		proofArgs.CopilotAPI = relaunch.CopilotAPI
-		proofArgs.CodexAppServer = relaunch.CodexAppServer
-		proofArgs.CodexStateRoot = relaunch.CodexStateRoot
-		proofArgs.FastMode = relaunch.FastMode
 		// A no-copy clone inherits the source agent's recorded posture through a
 		// `session new` fork with no -r, so it is a continuation for launch
 		// requirements the host may not be able to meet (see SandboxContinuation).
@@ -936,12 +634,12 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 								Msg: "the clone's explicitly selected Codex app-server did not become ready; the failed clone was stopped",
 							}
 						}
-						if remoteControl {
+						if launch.remoteControl {
 							armRemoteControlOnNewRow(label)
 						}
 						res.NewConv, res.NewTmux, res.Label = newConv, newTmux, label
 						commitRouteHelper()
-						if rootErr := persistCodexStateRoot(newConv); rootErr != nil {
+						if rootErr := launch.persistCodexStateRoot(newConv, cwd); rootErr != nil {
 							return cloneSpawnResult{}, rootErr
 						}
 						return res, nil
@@ -978,12 +676,12 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 							Msg: "the clone's explicitly selected Codex app-server did not become ready; the failed clone was stopped",
 						}
 					}
-					if remoteControl {
+					if launch.remoteControl {
 						armRemoteControlOnNewRow(label)
 					}
 					res.NewConv, res.NewTmux, res.Label = s.ConvID, newTmux, label
 					commitRouteHelper()
-					if rootErr := persistCodexStateRoot(s.ConvID); rootErr != nil {
+					if rootErr := launch.persistCodexStateRoot(s.ConvID, cwd); rootErr != nil {
 						return cloneSpawnResult{}, rootErr
 					}
 					return res, nil
@@ -1040,7 +738,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		}
 	}()
 	if !codexThreadForked {
-		copiedConv, reserved, cleanup, err := cloneHistory(sourceConv, cwd, relaunch, gitWriteDirs, effectiveSandbox)
+		copiedConv, reserved, cleanup, err := cloneHistory(sourceConv, cwd, relaunch, launch.git.writeDirs, effectiveSandbox)
 		if err != nil {
 			rollbackHandoff()
 			return cloneSpawnResult{}, &cloneSpawnError{
@@ -1071,7 +769,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	agentDirectoryCleanup := func() {}
 	if effectiveSandbox != nil {
 		materialized, cleanup, materializeErr := prepareCodexSSHWorkaroundForNewLaunch(
-			*effectiveSandbox, newConv, cloneSSH)
+			*effectiveSandbox, newConv, launch.ssh)
 		if materializeErr != nil {
 			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "spawn", Msg: materializeErr.Error()}
 		}
@@ -1082,40 +780,8 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		agentDirectoryCleanup()
 		return cloneSpawnResult{}, fail
 	}
-	proofArgs := clcommon.SpawnArgs{
-		DirWriteProof:    proofToken,
-		EffectiveSandbox: effectiveSandbox,
-	}
-	if proofCwd {
-		proofArgs.CwdWriteProof = proofToken
-		proofArgs.DirWriteProof = ""
-	}
+	proofArgs := launch.spawnArgs(cwd, proofToken, proofCwd, effectiveSandbox)
 	proofArgs.ConvID = newConv
-	proofArgs.Cwd = cwd
-	proofArgs.Effort = effort
-	proofArgs.Model = model
-	proofArgs.Harness = srcHarness
-	proofArgs.Sandbox = cloneSandbox
-	proofArgs.SandboxImplementation = relaunch.SandboxImplementation
-	proofArgs.SandboxChosenBy = cloneSandboxSource
-	proofArgs.CodexGitCommonDir = codexGitCommonDir
-	proofArgs.CodexGitCommonDirPinned = codexGitCommonDirPinned
-	proofArgs.GitWorktreeWriteDirs = gitWriteDirs
-	proofArgs.GitWorktreeWriteDirsPinned = exactGrantPinned
-	proofArgs.Approval = approval
-	proofArgs.ToolGovernance = relaunch.ToolGovernance
-	proofArgs.AutoReview = autoReview
-	proofArgs.AskUserQuestionTimeout = askTimeout
-	proofArgs.RemoteControl = remoteControl
-	proofArgs.AutoMemory = autoMemory
-	proofArgs.PeerMessaging = peerMessaging
-	proofArgs.ContextFeatures = contextFeatures
-	proofArgs.AutoCompactWindow = autoCompactWindow
-	proofArgs.ContextWindowMax = relaunch.ContextWindowMax
-	proofArgs.CopilotAPI = relaunch.CopilotAPI
-	proofArgs.CodexAppServer = relaunch.CodexAppServer
-	proofArgs.CodexStateRoot = relaunch.CodexStateRoot
-	proofArgs.FastMode = relaunch.FastMode
 	if routeErr := prepareRouteHelper(&proofArgs); routeErr != nil {
 		agentDirectoryCleanup()
 		return cloneSpawnResult{}, routeErr
@@ -1185,12 +851,12 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			// --remote-control launch flag (on the resume) already armed its
 			// pane. The copy path discovers the label from the row (s.ID), so
 			// tag only when it materialised — an empty label can't be keyed.
-			if remoteControl && label != "" {
+			if launch.remoteControl && label != "" {
 				armRemoteControlOnNewRow(label)
 			}
 			res.NewConv, res.NewTmux, res.Label = newConv, newTmux, label
 			commitRouteHelper()
-			if rootErr := persistCodexStateRoot(newConv); rootErr != nil {
+			if rootErr := launch.persistCodexStateRoot(newConv, cwd); rootErr != nil {
 				return cloneSpawnResult{}, rootErr
 			}
 			return res, nil
@@ -1223,10 +889,411 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		"new_conv", newConv, "deadline", reincarnateSpawnTimeout)
 	res.NewConv, res.NewTmux, res.Label, res.Warn = newConv, newTmux, label, warn
 	commitRouteHelper()
-	if rootErr := persistCodexStateRoot(newConv); rootErr != nil {
+	if rootErr := launch.persistCodexStateRoot(newConv, cwd); rootErr != nil {
 		return cloneSpawnResult{}, rootErr
 	}
 	return res, nil
+}
+
+// cloneLaunch is the launch posture a clone takes from its source: the
+// source's relaunch config, and what the clone resolves from it once, before
+// either launch branch runs: its sandbox, remote control, SSH workaround, Git
+// write grant and route-helper groups.
+type cloneLaunch struct {
+	relaunch            *durableRelaunchConfig
+	fastModeAtLaunch    *bool
+	sandbox             string
+	sandboxSource       string
+	effectiveSandbox    *sandboxpolicy.Snapshot
+	remoteControl       bool
+	ssh                 bool
+	git                 cloneGitGrant
+	routeHelperGroupIDs []int64
+}
+
+// resolveCloneLaunch resolves the clone's launch posture. warn says what the
+// relaunch policy did that the caller should know.
+func resolveCloneLaunch(p cloneSpawnParams) (cloneLaunch, []string, *cloneSpawnError) {
+	var warn []string
+	sourceConv := p.SourceConv
+	relaunch, fail := cloneRelaunchConfig(p)
+	if fail != nil {
+		return cloneLaunch{}, nil, fail
+	}
+	var fastModeAtLaunch *bool
+	if relaunch.Harness == harness.CodexName && relaunch.CodexStateRoot != "" {
+		fastModeAtLaunch = codexFastModeAtLaunch(relaunch.FastMode, relaunch.CodexStateRoot)
+	}
+	cloneSandbox, cloneSandboxSource := cloneSandboxPosture(relaunch)
+	effectiveSandbox, sandboxWarn, fail := resolveCloneSandbox(p, relaunch, cloneSandbox)
+	if fail != nil {
+		return cloneLaunch{}, nil, fail
+	}
+	warn = append(warn, sandboxWarn...)
+	// Clone under the same harness the source ran on — a Codex agent's
+	// clone must relaunch as Codex. "" for an untagged/claude source omits
+	// the flag (the default).
+	srcHarness := relaunch.Harness
+	// Carry the source's armed Remote Access to the sibling (JOH-261). A clone
+	// becoming a SECOND phone-reachable session alongside the still-running
+	// original is the operator-decided semantics — drive either from the phone.
+	// False (and so omitted) for an unarmed source or a Codex source. A clone
+	// in the source's groups follows the relaunch policy's
+	// group_remote_control row, as the source's own resume would
+	// (relaunchRemoteControl).
+	remoteControl := relaunch.RemoteControl
+	if p.SandboxGroupID == 0 {
+		var change, note string
+		remoteControl, change, note = relaunchRemoteControl(sourceConv, relaunch.Harness, relaunch.RemoteControl)
+		if change != "" {
+			slog.Info("clone: remote control by the relaunch policy", "source", short8(sourceConv), "change", change)
+		}
+		if note != "" {
+			warn = append(warn, note)
+		}
+	}
+	// The temporary unlock belongs to the source's stable agent. A clone is a
+	// new agent and must inherit the preserved normal posture, otherwise one
+	// temporary debugging action would mint a permanently-unconfined sibling.
+	cloneSSH := cloneSSHWorkaround(relaunch)
+	// A clone inherits the source's launch CHOICE, never its verification. For
+	// a harness whose own OS sandbox lives in mutable configuration, the
+	// source's recorded single-boundary posture says only what was true when
+	// the source launched — and a clone is precisely where a stale check would
+	// be invisible, because nobody restates the sandbox choice.
+	if fail := sandboxImplementationPostureFailure(
+		srcHarness, relaunch.SandboxImplementation); fail != nil {
+		return cloneLaunch{}, nil, &cloneSpawnError{
+			Status: fail.Status, Code: fail.Kind, Msg: fail.Msg,
+		}
+	}
+	// The relaunch gate ran with the sandbox above (buildSandbox), so a
+	// gate the re-read profiles fail falls back as a resume does.
+	cloneSSH = cloneSSH && codexSSHWorkaroundApplies(
+		srcHarness, cloneSandbox, relaunch.SandboxImplementation, effectiveSandbox)
+	git, fail := cloneGitWriteGrant(p, relaunch, cloneSandbox)
+	if fail != nil {
+		return cloneLaunch{}, nil, fail
+	}
+	routeHelperGroupIDs, fail := cloneRouteHelperGroups(p, relaunch, effectiveSandbox)
+	if fail != nil {
+		return cloneLaunch{}, nil, fail
+	}
+	return cloneLaunch{
+		relaunch: relaunch, fastModeAtLaunch: fastModeAtLaunch,
+		sandbox: cloneSandbox, sandboxSource: cloneSandboxSource, effectiveSandbox: effectiveSandbox,
+		remoteControl: remoteControl, ssh: cloneSSH, git: git, routeHelperGroupIDs: routeHelperGroupIDs,
+	}, warn, nil
+}
+
+// cloneRelaunchConfig is the source's durable relaunch config: what a relaunch
+// of the source would launch with, and so what its clone launches with.
+func cloneRelaunchConfig(p cloneSpawnParams) (*durableRelaunchConfig, *cloneSpawnError) {
+	relaunch, err := durableRelaunchConfigForConv(p.SourceConv)
+	if err != nil {
+		state, stateErr := db.AgentState(p.SourceConv)
+		if stateErr != nil || state != db.AgentStateNone {
+			return nil, &cloneSpawnError{Status: http.StatusConflict, Code: "relaunch_profile", Msg: err.Error()}
+		}
+		// Standalone export/conv cloning predates agent enrollment and may have
+		// only a harness-native conversation. Preserve that plain CLI surface
+		// with conservative defaults; managed agents never take this branch.
+		h := harnessForConv(p.SourceConv).Name
+		approval, autoReview := approvalForRelaunch(p.SourceConv, h)
+		relaunch = &durableRelaunchConfig{
+			Harness: h, Cwd: p.Cwd, Sandbox: sandboxForHarness(h),
+			Approval: approval, AutoReview: autoReview,
+			Effort: p.Effort, Model: p.Model,
+		}
+	}
+	if h, resolveErr := harness.Resolve(relaunch.Harness); resolveErr == nil && h.UsesCommandInput() {
+		return nil, &cloneSpawnError{
+			Status: http.StatusUnprocessableEntity, Code: "unsupported_harness",
+			Msg: "clone is not supported for command-input harness " + relaunch.Harness,
+		}
+	}
+	return relaunch, nil
+}
+
+// resolveCloneSandbox is the sandbox the clone launches under: the source's
+// stored or re-read chain as its relaunch policy decides, placed in the group
+// the clone joins, through the checks a relaunch needs, falling back to the
+// other chain as a resume does. warn says what the policy did.
+func resolveCloneSandbox(p cloneSpawnParams, relaunch *durableRelaunchConfig, cloneSandbox string) (
+	effectiveSandbox *sandboxpolicy.Snapshot, warn []string, fail *cloneSpawnError) {
+	sourceConv, cwd, model := p.SourceConv, p.Cwd, relaunch.Model
+	// Every new process that renders a generated Codex profile resolves the
+	// current sandbox chain. Registry participation is a separate gate: the
+	// app-server+builtin combination requires setup, while ordinary launches
+	// register only when the exact managed registry is already installed.
+	refreshGeneratedProfile := session.CodexNativeRegistryApplicable(relaunch.CodexAppServer,
+		relaunch.Harness, cloneSandbox, relaunch.SandboxImplementation)
+	if !refreshGeneratedProfile && relaunch.Harness == harness.CodexName &&
+		cloneSandbox == harness.SandboxManagedProfile {
+		refreshGeneratedProfile = true
+	}
+	// Either way the clone gets what a relaunch of the source lays over its
+	// chain (composeRelaunchSandbox): the group's environment as the
+	// relaunch policy's group_env row decides, and the source's explicit
+	// --harness-config as the policy weighs it (tcl-bmhpir).
+	//
+	// The sandbox profile contents follow the policy's
+	// sandbox_profile_contents row, as on the source's resume: re-resolve
+	// re-reads the source's profiles, and when that chain cannot be used the
+	// clone launches under the contents stored at the source's last launch,
+	// with a warning (a clone always works, as a resume does). Reuse keeps
+	// the stored contents. A generated Codex profile always re-reads.
+	//
+	// A clone that joins another group for its sandbox (SandboxGroupID)
+	// takes that group's settings, whatever the policy: that is where it is
+	// being placed, not a relaunch of the source.
+	policy, _ := relaunchPolicyFor(sourceConv)
+	stored, err := db.AgentEffectiveSandboxConfigForConv(sourceConv)
+	if err != nil {
+		return nil, nil, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io", Msg: "read the source's stored sandbox policy: " + err.Error()}
+	}
+	// A group the clone joins that is the one its source already resolves
+	// its sandbox (or environment) from is no new placement.
+	sameSandbox, sameEnv := p.SandboxGroupID == 0, p.SandboxGroupID == 0
+	if stored != nil && p.SandboxGroupID != 0 {
+		envGroup, _ := stored.EnvironmentGroupID()
+		sameSandbox = p.SandboxGroupID == stored.ResolutionGroupID
+		sameEnv = p.SandboxGroupID == envGroup
+	}
+	// A clone that keeps its source's environment (KeepEnvironment) keeps
+	// it as the source's resume would, under the group_env row; one that
+	// keeps its source's sandbox (KeepSandbox) follows the contents row.
+	reuseGroupEnv := (sameEnv || p.KeepEnvironment) && relaunchReuses(policy, groupEnvField)
+	followsContents := !refreshGeneratedProfile && (sameSandbox || p.KeepSandbox)
+	// A clone placed in another group's sandbox starts from the stored
+	// snapshot, as it always has: the new group's chain replaces its
+	// profiles (cloneSandboxForGroup).
+	useStored := !refreshGeneratedProfile && !followsContents
+	if followsContents && relaunchReuses(policy, sandboxProfileContentsField) {
+		// As on resume: which profiles apply is still read again, so a
+		// changed assignment brings the new profiles' current contents.
+		reuse, note := reuseStoredProfileContents(sourceConv, stored)
+		useStored = reuse
+		if note != "" {
+			warn = append(warn, note)
+		}
+	}
+	// buildSandbox prepares the clone's sandbox from the stored snapshot or
+	// the re-read chain, through the checks a launch needs. unusable says the
+	// failure is one a resume falls back from: a chain that cannot be used,
+	// or a launch gate it does not pass.
+	buildSandbox := func(stored bool) (sb *sandboxpolicy.Snapshot, fail *cloneSpawnError, unusable bool) {
+		var launch, previous *sandboxpolicy.Snapshot
+		var err error
+		if stored {
+			launch, err = db.AgentEffectiveSandboxConfigForConv(sourceConv)
+			previous = launch
+		} else {
+			launch, previous, err = resolveCurrentSandboxChainForConv(sourceConv)
+		}
+		if err == nil && launch != nil {
+			var composed sandboxpolicy.Snapshot
+			if composed, err = composeRelaunchSandbox(sourceConv, *launch, previous, stored, reuseGroupEnv); err == nil {
+				launch = &composed
+			}
+		}
+		fresh := !stored
+		if err == nil {
+			launch, fresh, err = cloneSandboxForGroup(sourceConv, launch,
+				p.SandboxGroupID, p.KeepSandbox, p.KeepEnvironment, reuseGroupEnv, fresh)
+		}
+		if err != nil {
+			return nil, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()},
+				isRelaunchChainUnusable(err)
+		}
+		if launch != nil {
+			if !fresh {
+				validated, err := ensureAgentDirectoriesForRelaunch(*launch)
+				if err != nil {
+					return nil, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}, false
+				}
+				launch = &validated
+			}
+			// A freshly resolved chain deliberately has declarations but no
+			// private directory paths yet. Both clone branches materialize
+			// those paths under the clone's new launch label below;
+			// validating them as predecessor bindings here would reject
+			// every managed cache directory.
+			if _, launchErr := sandboxpolicy.FilesystemForLaunch(launch.Effective); launchErr != nil {
+				return nil, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: launchErr.Error()}, true
+			}
+		}
+		// The clone inherits the source's drive and sandbox, so it is checked
+		// as any relaunch is: the profile may have been narrowed since the
+		// source was admitted.
+		if gate := relaunchSandboxGateFailure(relaunch.Harness, cloneSandbox, relaunch.SandboxImplementation,
+			launch, relaunch.CopilotAPI, session.ModelTransportLaunchContext{Model: model, Cwd: cwd},
+		); gate != nil {
+			return nil, &cloneSpawnError{Status: gate.Status, Code: gate.Kind, Msg: gate.Msg}, true
+		}
+		return launch, nil, false
+	}
+	effectiveSandbox, fail, unusable := buildSandbox(useStored)
+	// As on resume, a re-read with nothing stored to fall back to (no
+	// snapshot, or omitted profiles) does not fall back.
+	canFallBack := useStored || (stored != nil && !stored.ProfilesOmitted)
+	if fail != nil && unusable && followsContents && canFallBack {
+		// A clone always works, as a resume does: the other source is tried.
+		if fallback, fallbackFail, _ := buildSandbox(!useStored); fallbackFail == nil {
+			from, to := "current sandbox profiles", "sandbox policy stored at the source's last launch"
+			if useStored {
+				from, to = "sandbox profile contents stored at the source's last launch", "source's current sandbox profiles"
+			}
+			warn = append(warn, "the "+from+" could not be applied ("+fail.Msg+"); the clone launched under the "+to)
+			effectiveSandbox, fail = fallback, nil
+		}
+	}
+	if fail != nil {
+		return nil, nil, fail
+	}
+	return effectiveSandbox, warn, nil
+}
+
+// cloneGitGrant is the exact Git write grant a clone launches with: the pinned
+// Codex git common dir and the canonical worktree write dirs. Empty unless the
+// launch pins the common dir and the dirs are write-proofed.
+type cloneGitGrant struct {
+	commonDir       string
+	commonDirPinned bool
+	writeDirs       []string
+	exact           bool
+}
+
+// cloneGitWriteGrant resolves the clone's Git write grant from the caller's
+// dirs, or the defaults for its cwd, canonicalized against the write-proof.
+func cloneGitWriteGrant(p cloneSpawnParams, relaunch *durableRelaunchConfig, cloneSandbox string) (cloneGitGrant, *cloneSpawnError) {
+	codexGitCommonDir, gitWriteDirs := p.CodexGitCommonDir, p.GitWriteDirs
+	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(
+		relaunch.Harness, cloneSandbox, relaunch.SandboxImplementation)
+	if codexGitCommonDirPinned && gitWriteDirs == nil {
+		if home, err := os.UserHomeDir(); err == nil {
+			gitWriteDirs = harness.GitWorktreeWriteDirs(p.Cwd, codexGitCommonDir, home)
+		}
+	}
+	var grantFail *spawnFailure
+	gitWriteDirs, grantFail = canonicalizeRepositoryWriteDirs(gitWriteDirs, p.ProofDirs, p.ProofToken)
+	if grantFail != nil {
+		return cloneGitGrant{}, &cloneSpawnError{Status: grantFail.Status, Code: grantFail.Kind, Msg: grantFail.Msg}
+	}
+	exactGrantPinned := codexGitCommonDirPinned && p.ProofToken != ""
+	if !exactGrantPinned {
+		gitWriteDirs = nil
+		codexGitCommonDir = ""
+		codexGitCommonDirPinned = false
+	}
+	return cloneGitGrant{commonDir: codexGitCommonDir, commonDirPinned: codexGitCommonDirPinned,
+		writeDirs: gitWriteDirs, exact: exactGrantPinned}, nil
+}
+
+// cloneRouteHelperGroups is the clone's route-helper group ids: the caller's,
+// plus the host route (0) for an eligible Linux Claude Code clone. Any route
+// requires a pane-authoritative clone in a private network namespace of
+// tclaude's sandbox.
+func cloneRouteHelperGroups(p cloneSpawnParams, relaunch *durableRelaunchConfig,
+	effectiveSandbox *sandboxpolicy.Snapshot) ([]int64, *cloneSpawnError) {
+	groupIDs := p.RouteHelperGroupIDs
+	if runtime.GOOS == "linux" && relaunch.Harness == harness.DefaultName && hostPublishAllowed(p.SourceConv) && hostRouteHelperEligible(relaunch.Harness, relaunch.SandboxImplementation, effectiveSandbox) {
+		groupIDs = append(groupIDs, 0)
+	}
+	if len(groupIDs) > 0 {
+		if relaunch.Harness != harness.DefaultName || relaunch.SandboxImplementation != string(sandboxpolicy.ImplementationTclaudeLayer) {
+			return nil, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "Linux group routes require a pane-authoritative clone with tclaude’s sandbox"}
+		}
+		if effectiveSandbox == nil {
+			return nil, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "Linux group routes require a frozen private network posture for the clone"}
+		}
+		posture, postureErr := session.TclaudeLayerNetworkPosture(effectiveSandbox.Effective)
+		if postureErr != nil {
+			return nil, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "resolve clone route posture: " + postureErr.Error()}
+		}
+		if posture == sandboxpolicy.NetworkHostOpen {
+			return nil, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "Linux group routes require a private network namespace in tclaude’s sandbox"}
+		}
+	}
+	return groupIDs, nil
+}
+
+// spawnArgs is the launch both clone branches hand the spawner, under sandbox
+// (the effective sandbox as that branch materialized it). The branch adds only
+// what names the launch: a label for no-copy, the copied conv for copy.
+func (l cloneLaunch) spawnArgs(cwd, proofToken string, proofCwd bool, sandbox *sandboxpolicy.Snapshot) clcommon.SpawnArgs {
+	relaunch := l.relaunch
+	args := clcommon.SpawnArgs{
+		DirWriteProof:    proofToken,
+		EffectiveSandbox: sandbox,
+	}
+	if proofCwd {
+		args.CwdWriteProof = proofToken
+		args.DirWriteProof = ""
+	}
+	args.Cwd = cwd
+	args.Effort = relaunch.Effort
+	args.Model = relaunch.Model
+	args.Harness = relaunch.Harness
+	args.Sandbox = l.sandbox
+	args.SandboxImplementation = relaunch.SandboxImplementation
+	args.SandboxChosenBy = l.sandboxSource
+	args.CodexGitCommonDir = l.git.commonDir
+	args.CodexGitCommonDirPinned = l.git.commonDirPinned
+	args.GitWorktreeWriteDirs = l.git.writeDirs
+	args.GitWorktreeWriteDirsPinned = l.git.exact
+	args.Approval = relaunch.Approval
+	args.ToolGovernance = relaunch.ToolGovernance
+	args.AutoReview = relaunch.AutoReview
+	// Preserve the source's per-agent AskUserQuestion timeout onto the sibling
+	// (schema v97). "" for a source that recorded none (a non-Claude or
+	// pre-column source).
+	args.AskUserQuestionTimeout = relaunch.AskUserQuestionTimeout
+	args.RemoteControl = l.remoteControl
+	args.AutoMemory = relaunch.AutoMemory
+	// A clone of an agent that opted into Claude Code's own messaging mesh keeps
+	// it, and a clone of a default agent stays closed.
+	args.PeerMessaging = relaunch.PeerMessaging
+	// A clone is meant to be the same agent working alongside the original, so it
+	// inherits the source's startup-context shape too — a lean source must not
+	// produce a fat sibling.
+	args.ContextFeatures = relaunch.ContextFeatures
+	// The same goes for the auto-compaction window: a source pinned to compact
+	// at 450K must not produce a sibling that runs to the model's full window.
+	args.AutoCompactWindow = relaunch.AutoCompactWindow
+	args.ContextWindowMax = relaunch.ContextWindowMax
+	args.CopilotAPI = relaunch.CopilotAPI
+	args.CodexAppServer = relaunch.CodexAppServer
+	args.CodexStateRoot = relaunch.CodexStateRoot
+	args.FastMode = relaunch.FastMode
+	return args
+}
+
+// persistCodexStateRoot records a Codex clone's state root and Fast-mode
+// baseline on its conv, as its source's were. A no-op for other harnesses.
+func (l cloneLaunch) persistCodexStateRoot(convID, cwd string) *cloneSpawnError {
+	if l.relaunch.Harness != harness.CodexName {
+		return nil
+	}
+	if l.relaunch.CodexStateRoot != "" {
+		if err := db.SetConversationCodexStateRoot(convID, l.relaunch.Harness, cwd,
+			l.relaunch.CodexStateRoot, l.relaunch.CodexStateRootSource); err != nil {
+			return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io",
+				Msg: "persist clone Codex state root: " + err.Error()}
+		}
+	}
+	if err := db.SetConversationFastModeAtLaunch(
+		convID, l.relaunch.Harness, cwd, l.fastModeAtLaunch); err != nil {
+		return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io",
+			Msg: "persist clone Fast-mode baseline: " + err.Error()}
+	}
+	if agentID, err := db.AgentIDForConv(convID); err == nil && agentID != "" {
+		if err := db.SetAgentFastModeAtLaunchForConv(convID, l.fastModeAtLaunch); err != nil {
+			return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io",
+				Msg: "persist clone agent Fast-mode baseline: " + err.Error()}
+		}
+	}
+	return nil
 }
 
 // CloneHandoffSubject is the subject stamped on the follow-up a clone is born
