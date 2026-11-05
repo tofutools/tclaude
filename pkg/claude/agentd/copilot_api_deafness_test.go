@@ -605,7 +605,7 @@ func TestOnlyTheSweepsAttemptExitMayRecordAnObservation(t *testing.T) {
 // delivery is here.
 var copilotAPIObservationReaders = []struct{ file, function, reader string }{
 	{"copilot_api_drive.go", "copilotAPIChannelFailed", "ChannelFailed"},
-	{"dashboard.go", "stateForConvInSessionsBatched", "copilotAPIChannelFailed"},
+	{"dashboard_agent_state.go", "stateForConvInSessionsBatched", "copilotAPIChannelFailed"},
 	{"copilot_api_reconnect.go", "recoverCopilotAPIChannelAfterTransportFailure", "ChannelFailed"},
 }
 
