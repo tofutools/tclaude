@@ -198,7 +198,15 @@ func handleFederationNodeProfiles(w http.ResponseWriter, r *http.Request) {
 			writeFedErr(w, e)
 			return
 		}
-		writeJSON(w, 200, map[string]any{"profile": p, "applied_peers": peers})
+		// A profile stored before its validation refused a grant still holds
+		// it; the grant authorizes nothing, and the operator sees why.
+		warnings := []string{}
+		for _, g := range p.Definition.PeerGrants {
+			if why := fedPeerGrantInert(g); why != "" {
+				warnings = append(warnings, fmt.Sprintf("peer grant %s is inert: %s", g.Slug, why))
+			}
+		}
+		writeJSON(w, 200, map[string]any{"profile": p, "applied_peers": peers, "warnings": warnings})
 		return
 	}
 	if r.Method == http.MethodDelete {

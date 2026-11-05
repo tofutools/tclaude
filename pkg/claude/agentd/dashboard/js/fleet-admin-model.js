@@ -316,6 +316,7 @@ export function grantRows(grants, { ownPool = '', groups = null } = {}) {
       allGroups: !g.scope && info.kind === 'group',
       pool: g.pool_name && g.pool_name !== ownPool ? g.pool_name : '',
       deletedGroup,
+      inert: g.inert || '',
       groupID: g.group_id ?? null,
       revocable: !deletedGroup || stableIDs,
       maxLive: g.spawn_policy?.max_live || 0,
