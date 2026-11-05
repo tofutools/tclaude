@@ -4,6 +4,7 @@ package convops
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -1111,12 +1112,6 @@ func FormatTime() string {
 	return time.Now().Format(time.RFC3339)
 }
 
-// CopyConversationResult contains the result of copying a conversation
-type CopyConversationResult struct {
-	NewConvID      string
-	DstProjectPath string
-}
-
 // FoundSession is where FindSessionInProjects looked for a conversation, and
 // what it found there.
 type FoundSession struct {
@@ -1168,42 +1163,70 @@ func FindSessionInProjects(convID string, global bool) (*FoundSession, error) {
 	return &FoundSession{Entry: found, ProjectPath: projPath, Index: index}, nil
 }
 
+// CopyConversationResult contains the result of copying a conversation
+type CopyConversationResult struct {
+	OldConvID      string
+	NewConvID      string
+	DstProjectPath string
+}
+
+// ErrOverwriteDeclined is what CopyFoundConversation answers when
+// CopyOptions.ConfirmOverwrite declines to replace an existing file.
+var ErrOverwriteDeclined = errors.New("overwrite declined")
+
+// CopyOptions are the choices a caller of CopyFoundConversation can make.
+type CopyOptions struct {
+	// ConfirmOverwrite is asked when the copy's file already exists, which
+	// takes a UUID collision. Nil overwrites.
+	ConfirmOverwrite func() bool
+	// IndexWarning, when set, is told that the legacy sessions-index.json
+	// could not be updated, and the copy goes on; nil fails the copy.
+	IndexWarning func(dstProjectPath string, err error)
+}
+
 // CopyConversationToPath copies a conversation to a new project path
 func CopyConversationToPath(convID, destPath string, global bool) (*CopyConversationResult, error) {
 	src, err := FindSessionInProjects(convID, global)
 	if err != nil {
 		return nil, err
 	}
+	if src.Entry == nil {
+		return nil, os.ErrNotExist
+	}
+	return CopyFoundConversation(src, destPath, CopyOptions{})
+}
+
+// CopyFoundConversation copies the conversation FindSessionInProjects found
+// to destPath's project under a new id: its file with the session id
+// rewritten, its sidecar directory, a legacy sessions-index.json entry, and
+// a conv_index row, so the copy can be resolved at once.
+func CopyFoundConversation(src *FoundSession, destPath string, opts CopyOptions) (*CopyConversationResult, error) {
 	srcEntry, srcProjectPath := src.Entry, src.ProjectPath
 	dstProjectPath := GetClaudeProjectPath(destPath)
 
-	if srcEntry == nil {
-		return nil, os.ErrNotExist
-	}
-
-	// Create destination directory if needed
 	if err := os.MkdirAll(dstProjectPath, 0700); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating destination project directory: %w", err)
 	}
 
-	// Generate new UUID
 	newConvID := GenerateUUID()
 	oldConvID := srcEntry.SessionID
 
-	// Copy conversation file
 	srcConvFile := filepath.Join(srcProjectPath, oldConvID+".jsonl")
 	dstConvFile := filepath.Join(dstProjectPath, newConvID+".jsonl")
 
-	if err := CopyConversationFile(srcConvFile, dstConvFile, oldConvID, newConvID); err != nil {
-		return nil, err
+	if _, err := os.Stat(dstConvFile); err == nil && opts.ConfirmOverwrite != nil && !opts.ConfirmOverwrite() {
+		return nil, ErrOverwriteDeclined
 	}
 
-	// Copy conversation directory if exists
+	if err := CopyConversationFile(srcConvFile, dstConvFile, oldConvID, newConvID); err != nil {
+		return nil, fmt.Errorf("copying conversation file: %w", err)
+	}
+
 	srcConvDir := filepath.Join(srcProjectPath, oldConvID)
 	dstConvDir := filepath.Join(dstProjectPath, newConvID)
 	if info, err := os.Stat(srcConvDir); err == nil && info.IsDir() {
 		if err := CopyDir(srcConvDir, dstConvDir); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("copying conversation directory: %w", err)
 		}
 	}
 
@@ -1230,7 +1253,10 @@ func CopyConversationToPath(convID, destPath string, global bool) (*CopyConversa
 		IsSidechain:      srcEntry.IsSidechain,
 	}
 	if err := UpsertSessionsIndexEntry(dstProjectPath, newEntry); err != nil {
-		return nil, err
+		if opts.IndexWarning == nil {
+			return nil, err
+		}
+		opts.IndexWarning(dstProjectPath, err)
 	}
 
 	// Populate the SQLite conv_index for the new conv. Without this,
@@ -1242,6 +1268,7 @@ func CopyConversationToPath(convID, destPath string, global bool) (*CopyConversa
 	_ = ScanAndUpsertFile(dstConvFile)
 
 	return &CopyConversationResult{
+		OldConvID:      oldConvID,
 		NewConvID:      newConvID,
 		DstProjectPath: dstProjectPath,
 	}, nil

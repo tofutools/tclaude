@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
@@ -219,4 +220,21 @@ func TestRunDelete_AskedNoKeepsTheConversation(t *testing.T) {
 	assert.Equal(t, 0, rc)
 	assert.True(t, strings.HasSuffix(out, "\nDelete this conversation? [y/N]: Aborted.\n"), out)
 	assert.FileExists(t, filepath.Join(p.srcProj, pinConvID+".jsonl"))
+}
+
+// A copy is in conv_index as soon as cp returns, as the library copy that
+// clone and `worktree add` use already made it, so a lookup straight after
+// `conv cp` finds it without waiting for a rescan.
+func TestRunCp_TheCopyIsIndexedAtOnce(t *testing.T) {
+	p := haveConversation(t)
+
+	rc, _, errOut := runConv(t, "", func(o, e, i *os.File) int {
+		return RunCp(&CpParams{ConvID: "aaaaaaaa", DestPath: p.dst, Global: true}, o, e, i)
+	})
+
+	require.Equal(t, 0, rc, errOut)
+	row, err := db.GetConvIndex(copiedConvID(t, p))
+	require.NoError(t, err)
+	require.NotNil(t, row, "the copy is in conv_index")
+	assert.Equal(t, "Pinned", row.CustomTitle)
 }
