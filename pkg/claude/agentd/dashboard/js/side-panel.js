@@ -7,8 +7,9 @@
 // each panel remembers its own open or folded state per browser.
 //
 // The body classes are the shell's whole state, for CSS: dock-tab while a
-// panel is offered, dock-open while it is open, and data-dock-panel naming
-// which one.
+// panel is offered, dock-open while it is open, dock-revealed while a folded
+// panel floats in because the pointer reached the edge (side-panel-reveal.js),
+// and data-dock-panel naming which one.
 
 import { signal } from '@preact/signals';
 import { wizWord } from './slop.js';
@@ -24,9 +25,44 @@ export const sidePanelShown = signal({ name: '', open: false });
 // <section>; pref the dashPrefs key its open state persists under; open what
 // it defaults to; body the selector of its body inside the shell; titles the
 // handle's [hide, show] titles as [regular, wizard] pairs. needsOffer panels
-// show only while offerSidePanel has them on.
-export function registerSidePanel(name, { pane, pref, open = true, body, titles, needsOffer = false }) {
-  PANELS.set(name, { name, pane, pref, open, body, titles, needsOffer, offered: false });
+// show only while offerSidePanel has them on. autoReveal opts a panel in to
+// floating in, while folded, when the pointer reaches the right edge; a panel
+// that does not set it never does.
+export function registerSidePanel(name, { pane, pref, open = true, body, titles, needsOffer = false, autoReveal = false }) {
+  PANELS.set(name, { name, pane, pref, open, body, titles, needsOffer, autoReveal, offered: false });
+}
+
+// revealed is whether the active panel, folded, is floating in over the
+// content. It never reflows the page and is never remembered: unfolding the
+// panel (its handle) is what pins it.
+let revealed = false;
+let revealedName = '';
+
+// isSidePanelRevealed reports whether the folded panel is floating in.
+export function isSidePanelRevealed() {
+  return revealed;
+}
+
+// canRevealSidePanel is whether the active panel may float in: it opted in
+// and is folded.
+export function canRevealSidePanel(doc = globalThis.document) {
+  const panel = activeSidePanel(doc);
+  return !!panel && panel.autoReveal && !isSidePanelOpen(panel.name);
+}
+
+// revealSidePanel floats the folded active panel in; concealSidePanel takes it
+// away again. Neither touches the remembered open state.
+export function revealSidePanel(doc = globalThis.document) {
+  if (revealed || !canRevealSidePanel(doc)) return;
+  revealed = true;
+  revealedName = activeSidePanel(doc).name;
+  applySidePanel(doc);
+}
+
+export function concealSidePanel(doc = globalThis.document) {
+  if (!revealed) return;
+  revealed = false;
+  applySidePanel(doc);
 }
 
 // offerSidePanel turns a needsOffer panel on or off (its view mounted or
@@ -80,8 +116,12 @@ export function applySidePanel(doc = globalThis.document) {
   if (!doc?.body) return;
   const panel = activeSidePanel(doc);
   const open = !!panel && isSidePanelOpen(panel.name);
+  // A tab switch (even to another panel that opted in), an unfold or a panel
+  // that never opted in ends a reveal.
+  if (revealed && (!panel || panel.name !== revealedName || open || !panel.autoReveal)) revealed = false;
   doc.body.classList.toggle('dock-tab', !!panel);
   doc.body.classList.toggle('dock-open', open);
+  doc.body.classList.toggle('dock-revealed', revealed);
   if (panel) doc.body.dataset.dockPanel = panel.name;
   else delete doc.body.dataset.dockPanel;
   const handle = doc.getElementById('dock-toggle');
@@ -101,14 +141,18 @@ export function applySidePanel(doc = globalThis.document) {
 
 // bindSidePanel wires the handle and the Hide button to the active panel,
 // and re-applies on every tab switch: each tab's <section> gets an observer
-// on its class, which every switch path writes.
+// on its class, which every switch path writes. The handle of a floating
+// panel unfolds it, which pins it; its Hide button only sends it away.
 export function bindSidePanel(doc = globalThis.document) {
   const toggle = () => {
     const panel = activeSidePanel(doc);
     if (panel) setSidePanelOpen(!isSidePanelOpen(panel.name), panel.name);
   };
   doc.getElementById('dock-toggle')?.addEventListener('click', toggle);
-  doc.getElementById('dock-collapse')?.addEventListener('click', toggle);
+  doc.getElementById('dock-collapse')?.addEventListener('click', () => {
+    if (revealed) concealSidePanel(doc);
+    else toggle();
+  });
   const Observer = globalThis.MutationObserver;
   if (Observer) {
     for (const panel of PANELS.values()) {

@@ -595,6 +595,8 @@ function populateConfigForm(cfg) {
   // dashboard.always_show_open_prs:false unchecks it. The window field shows
   // its default (3) as a placeholder, so an absent key stays blank.
   $('#cfg-dashboard-always-show-open-prs').checked = !(cfg.dashboard && cfg.dashboard.always_show_open_prs === false);
+  // Side panel edge reveal. Default on; only an explicit false unchecks it.
+  $('#cfg-dashboard-side-panel-edge-reveal').checked = !(cfg.dashboard && cfg.dashboard.side_panel_edge_reveal === false);
   $('#cfg-dashboard-recent-pr-window-days').value = cfg.dashboard && cfg.dashboard.recent_pr_window_days != null
     ? cfg.dashboard.recent_pr_window_days : '';
 
@@ -1012,6 +1014,9 @@ function assembleConfig() {
   // resolver.
   if (!$('#cfg-dashboard-always-show-open-prs').checked) dashboard.always_show_open_prs = false;
   else delete dashboard.always_show_open_prs;
+  // side_panel_edge_reveal: on is the default, so store only the false.
+  if (!$('#cfg-dashboard-side-panel-edge-reveal').checked) dashboard.side_panel_edge_reveal = false;
+  else delete dashboard.side_panel_edge_reveal;
   // recent_pr_window_days: blank means "use the default" and drops the key; 0
   // is a meaningful value (filter off), so it is stored like any other number.
   // The daemon clamps out-of-range values, but keep the field honest here too.

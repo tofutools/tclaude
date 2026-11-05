@@ -466,6 +466,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-dashboard-always-show-open-prs" /> always show the footer's Open PRs indicator, even at zero</label>
           <label class="cfg-inline">show pull requests merged or closed in the last <${ConfigInput} type="number" id="cfg-dashboard-recent-pr-window-days" min="0" max="30" step="1" placeholder="3" aria-label="Recently closed pull request window (days)" style="width:6em" /> days</label>
         </${Setting}>
+        <${Setting} title="Side panel at the edge" k="dashboard.side_panel_edge_reveal"
+          summary="Show the folded side panel when the pointer reaches the right edge."
+          more=${html`On the <strong>Groups</strong> and <strong>Collab</strong> tabs, a folded right side panel floats in over the page when the pointer rests at the right edge (no button held, no drag under way), and goes again a moment after the pointer leaves it, unless something in it has focus or one of its menus is open. Its handle still unfolds it for good. Pointer only: nothing changes on touch screens or for the keyboard, which keep the handle. <strong>Checked</strong> (default) turns it on. Stored as <code>dashboard.side_panel_edge_reveal</code> (default true, so only <code>false</code> is written).`}>
+          <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-dashboard-side-panel-edge-reveal" /> show the side panel when the pointer reaches the right edge</label>
+        </${Setting}>
       </${Group}>
 
       <${Group} title="Slop mode 🎰">

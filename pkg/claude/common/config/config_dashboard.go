@@ -128,6 +128,13 @@ type DashboardConfig struct {
 	// out. A *bool so absent (the default) is distinguishable from an
 	// explicit false. See (*Config).AlwaysShowOpenPRs.
 	AlwaysShowOpenPRs *bool `json:"always_show_open_prs,omitempty"`
+	// SidePanelEdgeReveal floats a folded right side panel (the Groups
+	// palette, the Collab list) in over the content when the pointer reaches
+	// the right edge, and takes it away when the pointer leaves it. Default
+	// true; an explicit false keeps a folded panel folded until its handle is
+	// clicked. A *bool so absent is distinguishable from an explicit false.
+	// See (*Config).SidePanelEdgeReveal.
+	SidePanelEdgeReveal *bool `json:"side_panel_edge_reveal,omitempty"`
 	// RecentPRWindowDays bounds the footer popover's "Recently closed"
 	// filter: authored pull requests merged or closed within this many days
 	// back. Default 3 (absent / nil). 0 disables the filter entirely and the
@@ -790,6 +797,17 @@ func (c *Config) AlwaysShowOpenPRs() bool {
 		return true
 	}
 	return *c.Dashboard.AlwaysShowOpenPRs
+}
+
+// SidePanelEdgeReveal reports whether a folded right side panel floats in
+// when the pointer reaches the right edge — config
+// dashboard.side_panel_edge_reveal. Default true (absent block / nil
+// pointer); only an explicit false turns it off. Nil-safe on the receiver.
+func (c *Config) SidePanelEdgeReveal() bool {
+	if c == nil || c.Dashboard == nil || c.Dashboard.SidePanelEdgeReveal == nil {
+		return true
+	}
+	return *c.Dashboard.SidePanelEdgeReveal
 }
 
 // RecentPRWindowDays reports the lookback, in days, for the footer popover's

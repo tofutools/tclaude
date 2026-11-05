@@ -1179,6 +1179,14 @@ func TestUsageCollapseSubviews(t *testing.T) {
 	assert.NotContains(t, string(clean), "usage_collapse_subviews")
 }
 
+func TestSidePanelEdgeReveal(t *testing.T) {
+	off := false
+	assert.True(t, (*Config)(nil).SidePanelEdgeReveal(), "nil → on")
+	assert.True(t, (&Config{}).SidePanelEdgeReveal(), "no block → on")
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{}}).SidePanelEdgeReveal(), "absent key → on")
+	assert.False(t, (&Config{Dashboard: &DashboardConfig{SidePanelEdgeReveal: &off}}).SidePanelEdgeReveal(), "explicit false → off")
+}
+
 func TestShowGroupDescription(t *testing.T) {
 	// Default is false (chip hidden) for every "unset" shape.
 	assert.False(t, (*Config)(nil).ShowGroupDescription(), "nil → hidden")

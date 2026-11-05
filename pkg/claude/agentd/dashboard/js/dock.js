@@ -41,6 +41,7 @@ import { featureState } from './feature-state-registry.js';
 import { syncFullBleedBars } from './hscroll.js';
 import { syncChromeTopInset } from './chrome-inset.js';
 import { activeSidePanel, bindSidePanel, onSidePanelApply, registerSidePanel, setSidePanelOpen } from './side-panel.js';
+import { bindEdgeReveal } from './side-panel-reveal.js';
 // The compact one-line summaries live in the DATA modules (profiles.js /
 // roles.js); the editor/manager openers live in the MODAL modules. Importing
 // each from the module that actually exports it — a bad named import would
@@ -714,7 +715,7 @@ export function renderDock() {
 // by default (the dock is a discovery-worthy surface). The Collab view
 // registers its own (collab-rail.js).
 registerSidePanel('groups', {
-  pane: 'tab-groups', pref: DOCK_OPEN_KEY, open: true, body: '#dock-body',
+  pane: 'tab-groups', pref: DOCK_OPEN_KEY, open: true, body: '#dock-body', autoReveal: true,
   titles: [['Collapse the palette', 'Furl the grimoire'], ['Expand the palette', 'Unfurl the grimoire']],
 });
 
@@ -815,6 +816,7 @@ export function bindDock() {
   // panel, and wires the edge tab and the in-dock collapse (side-panel.js).
   onSidePanelApply(applyDockOpen);
   bindSidePanel(document);
+  bindEdgeReveal(document);
   // Enable the slide transition only AFTER the initial state is painted, so a
   // default-open dock doesn't flash-slide in on load (the CSS resting state is
   // collapsed). A rAF lands after the first paint of the applied state.
