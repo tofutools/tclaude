@@ -995,61 +995,16 @@ func runNew(params *NewParams) error {
 		}
 	}
 
-	// Ensure the managed profile file exists before launch (self-healing —
-	// works even if `tclaude setup` was never run). This lives after cwd
-	// resolution so the profile can add a narrow write grant for the launch
-	// repo's Git common dir, which linked worktrees need for `git commit`.
-	// Only the tclaude-owned profile is auto-created; any other name must
-	// already be defined by the user's own config.
 	if params.PermissionProfile == harness.CodexAgentProfile {
-		profileName, profilePath, splitCapability, err := ensureCodexManagedProfileWithSnapshot(params, cwd, exitGeneration, launchSandbox)
+		profile, err := prepareCodexAgentProfile(params, cwd, fullConvID, sessionID, exitGeneration, outerLayer, launchSandbox, &launchUndo)
 		if err != nil {
 			return err
 		}
-		launchPermissionProfile = profileName
-		launchProfilePath = profilePath
-		launchUndo.Add(func() { _ = os.Remove(profilePath) })
-		launchCodexSplitCapability = splitCapability
-		ownerConvID := fullConvID
-		if params.SessionID != "" && ownerConvID == "" {
-			ownerConvID = params.SessionID
-		}
-		ownerAgentID, ownerErr := db.AgentIDForConv(ownerConvID)
-		if ownerErr != nil {
-			return fmt.Errorf("resolve generated Codex profile owner: %w", ownerErr)
-		}
-		mandatoryNative := params.CodexAppServerSocket != "" && !outerLayer
-		if mandatoryNative {
-			if err := RegisterCodexNativePermissionProfile(
-				params.CodexAppServerGeneration, profileName, profilePath,
-			); err != nil {
-				return fmt.Errorf("register managed Codex app-server profile: %w", err)
-			}
-		} else {
-			generation := "launch:" + exitGeneration
-			registered, registerErr := RegisterCodexNativePermissionProfileIfInstalled(
-				db.CodexNativePermissionProfile{
-					Generation: generation, ProfileName: profileName,
-					OwnerAgentID: ownerAgentID, OwnerConvID: ownerConvID, LaunchID: sessionID,
-				}, profilePath)
-			if registerErr != nil {
-				return fmt.Errorf("join installed Codex permission registry: %w", registerErr)
-			}
-			if registered {
-				launchUndo.Add(func() { _ = UnregisterCodexNativePermissionProfile(generation) })
-				ordinaryNativeGeneration = generation
-			}
-		}
-		if params.CodexAppServerSocket != "" {
-			if outerLayer {
-				codexAppServerProfileOverrides, err = harness.CodexAppServerProfileOverrides(profilePath)
-			} else {
-				codexAppServerProfileOverrides, err = harness.CodexAppServerRegisteredProfileOverrides(profilePath)
-			}
-			if err != nil {
-				return fmt.Errorf("prepare managed Codex app-server profile: %w", err)
-			}
-		}
+		launchPermissionProfile = profile.name
+		launchProfilePath = profile.path
+		launchCodexSplitCapability = profile.splitCapability
+		ordinaryNativeGeneration = profile.nativeGeneration
+		codexAppServerProfileOverrides = profile.appServerOverrides
 	}
 
 	if err := prepareLaunchDirTrust(h, params, launchSandbox, additionalEnv, cwd); err != nil {
