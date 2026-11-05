@@ -68,3 +68,19 @@ func TestPrepareSpawnStateRootMintsAnAppServerAgentID(t *testing.T) {
 	require.Nil(t, prepareSpawnStateRoot(&p))
 	assert.NotEmpty(t, p.AgentID)
 }
+
+// A promotion that fails after the root was reserved hands back the root's
+// cleanup, so the deferred cleanup still removes the root this spawn created.
+func TestReserveSpawnLabelRemovesItsRootWhenPromotionFails(t *testing.T) {
+	resetTestDB(t) // no daemon staging root exists, so promotion fails
+	label, cleanup, fail := reserveSpawnLabel(&spawnParams{Attachments: []string{"upload.txt"}}, true, func() {})
+	require.NotNil(t, fail)
+	assert.Equal(t, http.StatusBadRequest, fail.Status)
+	assert.Equal(t, "invalid_attachments", fail.Kind)
+	root := tclcommon.SpawnAttachmentsPrivateDir(label)
+	_, err := os.Stat(root)
+	require.NoError(t, err, "the reserved root exists until the deferred cleanup runs")
+	cleanup()
+	_, err = os.Stat(root)
+	assert.True(t, os.IsNotExist(err), "the handed-back cleanup must remove the reserved root")
+}
