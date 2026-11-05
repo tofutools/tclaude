@@ -581,7 +581,8 @@ func spawnUsesPinnedGitCommonDir(harnessName, harnessBuiltinMode, sandboxImpleme
 // worktree — and may therefore be pre-trusted without an explicit operator
 // opt-in. It does double duty on the spawn path: it forces trust on for such a
 // dir, AND it is the sole exemption that lets an AGENT-initiated spawn request
-// trust_dir at all (see the trust_dir_restricted refusals in lifecycle.go).
+// trust_dir at all (see the trust_dir_restricted refusals in
+// lifecycle_spawn_handler.go and lifecycle_spawn_execute.go).
 //
 // Read what this actually guarantees. IsDefaultSiblingWorktree verifies LAYOUT
 // (naming, sibling position, a gitCommonDir resolved FROM cwd), not provenance

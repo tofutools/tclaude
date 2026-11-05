@@ -12,7 +12,8 @@ import (
 )
 
 // defaultSiblingWorktreeTrust decides two things at once: whether a launch dir
-// is auto-trusted, and (via the trust_dir_restricted refusals in lifecycle.go)
+// is auto-trusted, and (via the trust_dir_restricted refusals in
+// lifecycle_spawn_handler.go and lifecycle_spawn_execute.go)
 // whether an AGENT caller may request pre-trust for it at all. These unit tests
 // pin the harness axis directly, which the flow tests cannot reach for a
 // harness their simulator does not spawn.
