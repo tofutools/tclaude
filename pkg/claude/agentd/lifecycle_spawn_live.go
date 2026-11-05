@@ -30,60 +30,17 @@ import (
 func liveSpawnNew(a clcommon.SpawnArgs) error {
 	timing := config.StartupTiming("spawn_wrapper", "label", a.Label)
 	defer timing("dispatch_return")
-	var cleanup func()
-	var err error
-	a, cleanup, err = spawnArgsWithSandboxHandoff(a)
-	if err != nil {
-		return err
-	}
-	routeCredentialCleanup := func() {}
-	if a.RouteHelperCredential != "" {
-		a.RouteHelperCredentialHandoffSocketPath, routeCredentialCleanup, err = prepareRouteHelperCredentialHandoff(a.RouteHelperCredential)
-		if err != nil {
-			cleanup()
-			return err
-		}
-	}
 	label := a.Label
 	// effort, model, sandbox, approval, autoReview and trustDir are validated at
 	// the spawn boundary (handleGroupSpawn / the `agent spawn` CLI) before they
 	// reach here; the forked `tclaude session new` re-validates too, though by
 	// then a bad value would only surface as a non-zero exit in the daemon
 	// log. sessionNewArgs omits each flag entirely when its value is "" / false.
-	cmd := exec.Command("tclaude", sessionNewArgs(a)...)
-	cmd.Stdin = nil
-	cmd.Stdout = nil
-	// Capture stderr so a silent subprocess failure (PATH issue, bad
-	// cwd, broken tmux server, etc.) shows up in the daemon log
-	// instead of disappearing into /dev/null. Bounded so a runaway
-	// child can't grow the buffer unboundedly.
-	stderr := newSpawnStderrCapture()
-	cmd.Stderr = stderr
-	// Spawned agents must not inherit the human's operator token.
-	cmd.Env = environmentWithCodexStateRoot(spawnEnvWithoutOperatorToken(), a.CodexStateRoot)
-	if len(a.OpenCodeEnvironment) > 0 {
-		cmd.Env = openCodeAttachProcessEnvironment(cmd.Env)
-	}
-	if a.OpenCodeServerURL != "" {
-		cmd.Env = append(cmd.Env, "TCLAUDE_OPENCODE_SERVER_URL="+a.OpenCodeServerURL)
-	}
-	if a.OpenCodeServerPassword != "" {
-		cmd.Env = append(cmd.Env, "OPENCODE_SERVER_PASSWORD="+a.OpenCodeServerPassword)
-	}
-	appendOpenCodeTransportEnvironment(cmd, a)
-	for _, entry := range a.OpenCodeEnvironment {
-		cmd.Env = append(cmd.Env, entry.Name+"="+entry.Value)
-	}
-	if a.OpenCodeStateIsolation != "" {
-		cmd.Env = append(cmd.Env,
-			clcommon.OpenCodeStateIsolationEnv+"="+a.OpenCodeStateIsolation)
-	}
-	detachSpawn(cmd)
-	if err := cmd.Start(); err != nil {
-		routeCredentialCleanup()
-		cleanup()
+	wrapper, err := startSpawnWrapper(a, sessionNewArgs, func() {})
+	if err != nil {
 		return err
 	}
+	cmd, stderr, cleanup, routeCredentialCleanup := wrapper.cmd, wrapper.stderr, wrapper.cleanup, wrapper.routeCredentialCleanup
 	pid := cmd.Process.Pid
 	timing("process_started", "child_pid", pid)
 	waitStarted := time.Now()
@@ -264,36 +221,80 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 				[]sandboxpolicy.EnvironmentEntry(nil), sandboxSpec.Contract.Environment...)
 			allocation, allocationErr := requireOpenCodeStateAllocation(agentID)
 			if allocationErr != nil {
+				// The runtime is already serving this launch; stop it like every
+				// later failure below does, or it outlives a resume that never
+				// gets a pane.
+				_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
 				return allocationErr
 			}
 			a.OpenCodeStateIsolation = allocation.Mode
 		}
 	}
+	stopOpenCode := func() {
+		if openCodeLaunch != nil {
+			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+		}
+	}
+	convID := a.ConvID
+	wrapper, err := startSpawnWrapper(a, sessionResumeArgs, stopOpenCode)
+	if err != nil {
+		return err
+	}
+	cmd, stderr, cleanup, routeCredentialCleanup := wrapper.cmd, wrapper.stderr, wrapper.cleanup, wrapper.routeCredentialCleanup
+	pid := cmd.Process.Pid
+	defer cleanup()
+	if err := cmd.Wait(); err != nil {
+		routeCredentialCleanup()
+		stopOpenCode()
+		slog.Error("resume subprocess exited with error",
+			"conv", convID, "pid", pid, "err", err,
+			"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
+		return fmt.Errorf("resume session wrapper failed: %w: %s", err, stderr.String())
+	}
+	resumeLaunched = true
+	return nil
+}
+
+// spawnWrapper is a started detached `tclaude session new` wrapper: the process,
+// its bounded stderr capture, and the two handoff cleanups the caller still owns
+// once it is running (the sandbox snapshot file and the route-helper credential
+// rendezvous).
+type spawnWrapper struct {
+	cmd                    *exec.Cmd
+	stderr                 *spawnStderrCapture
+	cleanup                func()
+	routeCredentialCleanup func()
+}
+
+// startSpawnWrapper is the setup liveSpawnNew and liveSpawnResume share: hand
+// the sandbox snapshot and any route-helper credential off, build the wrapper
+// command from argv(a) with the launch environment, detach it and start it.
+// Every failure releases what was handed off so far and then runs onFail, which
+// lets a resume stop the OpenCode runtime it started for this launch.
+func startSpawnWrapper(a clcommon.SpawnArgs, argv func(clcommon.SpawnArgs) []string, onFail func()) (*spawnWrapper, error) {
 	var cleanup func()
 	var err error
 	a, cleanup, err = spawnArgsWithSandboxHandoff(a)
 	if err != nil {
-		if openCodeLaunch != nil {
-			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
-		}
-		return err
+		onFail()
+		return nil, err
 	}
 	routeCredentialCleanup := func() {}
 	if a.RouteHelperCredential != "" {
 		a.RouteHelperCredentialHandoffSocketPath, routeCredentialCleanup, err = prepareRouteHelperCredentialHandoff(a.RouteHelperCredential)
 		if err != nil {
 			cleanup()
-			if openCodeLaunch != nil {
-				_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
-			}
-			return err
+			onFail()
+			return nil, err
 		}
 	}
-	convID := a.ConvID
-	args := sessionResumeArgs(a)
-	cmd := exec.Command("tclaude", args...)
+	cmd := exec.Command("tclaude", argv(a)...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
+	// Capture stderr so a silent subprocess failure (PATH issue, bad
+	// cwd, broken tmux server, etc.) shows up in the daemon log
+	// instead of disappearing into /dev/null. Bounded so a runaway
+	// child can't grow the buffer unboundedly.
 	stderr := newSpawnStderrCapture()
 	cmd.Stderr = stderr
 	// Spawned agents must not inherit the human's operator token.
@@ -319,25 +320,10 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 	if err := cmd.Start(); err != nil {
 		routeCredentialCleanup()
 		cleanup()
-		if openCodeLaunch != nil {
-			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
-		}
-		return err
+		onFail()
+		return nil, err
 	}
-	pid := cmd.Process.Pid
-	defer cleanup()
-	if err := cmd.Wait(); err != nil {
-		routeCredentialCleanup()
-		if openCodeLaunch != nil {
-			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
-		}
-		slog.Error("resume subprocess exited with error",
-			"conv", convID, "pid", pid, "err", err,
-			"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
-		return fmt.Errorf("resume session wrapper failed: %w: %s", err, stderr.String())
-	}
-	resumeLaunched = true
-	return nil
+	return &spawnWrapper{cmd: cmd, stderr: stderr, cleanup: cleanup, routeCredentialCleanup: routeCredentialCleanup}, nil
 }
 
 // prepareRouteHelperResumeArgs restores the namespace-local helper for every
