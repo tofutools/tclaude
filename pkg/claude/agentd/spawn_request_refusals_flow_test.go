@@ -20,7 +20,7 @@ func TestSpawn_RequestRefusalsKeepTheirWireResponse(t *testing.T) {
 		name       string
 		body       map[string]any
 		code       string
-		message    string // exact, unless messagePfx is set
+		message    string // exact, unless messagePfx is set; neither set means any non-empty message
 		messagePfx string
 	}{
 		{
@@ -55,6 +55,30 @@ func TestSpawn_RequestRefusalsKeepTheirWireResponse(t *testing.T) {
 			messagePfx: `unknown permission slug "no.such.slug".`,
 		},
 		{
+			name: "missing worktree directory",
+			body: map[string]any{"name": "w", "worktree_path": "/nonexistent/tclaude-worktree"},
+			code: "invalid_worktree",
+		},
+		{
+			name: "group context for a shell one-shot",
+			body: map[string]any{"name": "w", "harness": "shell", "non_interactive": true,
+				"initial_message": "true", "include_group_context": true},
+			code:    "invalid_group_context",
+			message: "--group-context is not meaningful for a shell command",
+		},
+		{
+			name:    "pi drive on another harness",
+			body:    map[string]any{"name": "w", "harness": "claude", "pi_drive": true},
+			code:    "invalid_request",
+			message: `pi_drive is a pi-only drive; harness "claude" has none`,
+		},
+		{
+			name:    "interactive shell with a brief",
+			body:    map[string]any{"name": "w", "harness": "shell", "initial_message": "true"},
+			code:    "invalid_initial_message",
+			message: "shell spawn requires non_interactive when initial_message is set",
+		},
+		{
 			name:       "unresolvable reply_to",
 			body:       map[string]any{"name": "w", "reply_to": "agt_nosuchagent"},
 			code:       "invalid_reply_to",
@@ -74,7 +98,9 @@ func TestSpawn_RequestRefusalsKeepTheirWireResponse(t *testing.T) {
 			}
 			require.NoError(t, json.Unmarshal(spawn.Raw, &got), "body=%s", spawn.Raw)
 			assert.Equal(t, tc.code, got.Code)
-			if tc.messagePfx != "" {
+			if tc.message == "" && tc.messagePfx == "" {
+				assert.NotEmpty(t, got.Error)
+			} else if tc.messagePfx != "" {
 				assert.True(t, strings.HasPrefix(got.Error, tc.messagePfx), "message %q, want prefix %q", got.Error, tc.messagePfx)
 			} else {
 				assert.Equal(t, tc.message, got.Error)

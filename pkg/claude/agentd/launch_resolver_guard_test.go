@@ -33,10 +33,12 @@ var launchTierWalkFiles = map[string]bool{
 	"launch_identity.go":                   true, // the identity and birth-time access resolver
 	"managed_launch.go":                    true, // the pipeline for daemon-composed launches
 	// The spawn path that used to be the single lifecycle.go entry, split by
-	// a pure move (tcl-a2e791). One entry's worth of tier walk, not three.
+	// a pure move (tcl-a2e791), then handleGroupSpawn's resolution steps moved
+	// onto spawnRequest. One entry's worth of tier walk, not four.
 	"lifecycle_spawn_execute.go":        true,
 	"lifecycle_spawn_handler.go":        true,
 	"lifecycle_spawn_profile.go":        true,
+	"lifecycle_spawn_request.go":        true,
 	"sandbox_default_implementation.go": true,
 	"spawn_launch_defaults.go":          true,
 	"templates.go":                      true,
