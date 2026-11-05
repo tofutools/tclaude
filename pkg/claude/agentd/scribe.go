@@ -517,7 +517,11 @@ func summonScribe(name, titleBase string, overrides map[string]db.PermissionOver
 	}
 	out := &scribeOutcome{Name: p.Name, ConvID: outcome.ConvID, FocusMode: outcome.FocusMode}
 	if outcome.FocusMode == "browser" {
-		out.FocusWS = spawnFocusWSPath(outcome.Label)
+		aid := outcome.AgentID
+		if aid == "" {
+			aid = peerAgentID(outcome.ConvID)
+		}
+		out.FocusWS = spawnFocusWSPath(outcome.Label, aid)
 	}
 	if exclusive || focus != scribeFocusNative {
 		focusScribe(outcome.ConvID, out, focus)

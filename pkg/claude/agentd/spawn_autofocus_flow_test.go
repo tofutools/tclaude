@@ -155,8 +155,9 @@ func TestSpawn_AutoFocusFallsBackToBrowserWhenNoNativeWindow(t *testing.T) {
 
 	assert.Equal(t, "browser", spawn.FocusMode,
 		"a failed native open should report focus_mode:browser")
-	assert.Equal(t, "/api/spawn-focus-ws/"+spawn.Label, spawn.FocusWS,
-		"focus_ws should be the label-keyed spawn-focus-ws path")
+	require.NotEmpty(t, spawn.AgentID)
+	assert.Equal(t, "/api/spawn-focus-ws/"+spawn.Label+"?agent="+spawn.AgentID, spawn.FocusWS,
+		"focus_ws should be the label-keyed spawn-focus-ws path, bound to the spawned agent")
 }
 
 // Scenario: the dashboard's default-terminal preference is web, so its spawn
@@ -183,7 +184,8 @@ func TestSpawn_AutoFocusWebSkipsNativeWindow(t *testing.T) {
 
 	assert.False(t, opened, "web auto-focus must not open a native terminal")
 	assert.Equal(t, "browser", spawn.FocusMode)
-	assert.Equal(t, "/api/spawn-focus-ws/"+spawn.Label, spawn.FocusWS)
+	require.NotEmpty(t, spawn.AgentID)
+	assert.Equal(t, "/api/spawn-focus-ws/"+spawn.Label+"?agent="+spawn.AgentID, spawn.FocusWS)
 }
 
 // Scenario: a human spawns an agent without asking for auto focus —
