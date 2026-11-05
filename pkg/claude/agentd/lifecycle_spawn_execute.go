@@ -20,7 +20,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
-	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 // executeSpawn runs the validated spawn sequence: it forks a detached
@@ -233,60 +232,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// so that label is authoritative and must not be re-minted.
 	layeredLaunch := p.SandboxImplementation ==
 		string(sandboxpolicy.ImplementationTclaudeLayer)
-	label := p.pendingSpawnLabel
-	if label == "" && layeredLaunch {
-		nextLabel := spawnLabelSequence(p.Name)
-		var reserveErr error
-		label, privateAttachmentCleanup, reserveErr =
-			reserveUniqueSpawnPrivateAttachmentRootWith(nextLabel)
-		if reserveErr != nil {
-			return nil, &spawnFailure{
-				http.StatusInternalServerError,
-				"spawn",
-				"could not reserve private attachment root: " + reserveErr.Error(),
-			}
-		}
-	} else if label == "" {
-		label = spawnLabelSequence(p.Name)()
-	} else if layeredLaunch {
-		_, privateRootCreated, prepareErr :=
-			tclcommon.PrepareSpawnAttachmentsPrivateDir(label)
-		if prepareErr != nil {
-			return nil, &spawnFailure{
-				http.StatusInternalServerError,
-				"spawn",
-				"could not prepare private attachment root: " + prepareErr.Error(),
-			}
-		}
-		if !privateRootCreated && !p.privateAttachmentRootReserved {
-			return nil, &spawnFailure{
-				http.StatusConflict,
-				"spawn_label_collision",
-				"private attachment root is already owned by another spawn generation",
-			}
-		}
-		privateAttachmentCleanup = func() {
-			_ = os.Remove(tclcommon.SpawnAttachmentsPrivateDir(label))
-		}
-	}
-	if layeredLaunch {
-		if len(p.Attachments) > 0 {
-			promoted, batchCleanup, promoteErr :=
-				promoteSpawnAttachments(label, p.Attachments)
-			if promoteErr != nil {
-				return nil, &spawnFailure{
-					http.StatusBadRequest,
-					"invalid_attachments",
-					"could not promote daemon-staged attachments: " + promoteErr.Error(),
-				}
-			}
-			rootCleanup := privateAttachmentCleanup
-			privateAttachmentCleanup = func() {
-				batchCleanup()
-				rootCleanup()
-			}
-			p.Attachments = promoted
-		}
+	label, attachmentCleanup, fail := reserveSpawnLabel(&p, layeredLaunch, privateAttachmentCleanup)
+	privateAttachmentCleanup = attachmentCleanup
+	if fail != nil {
+		return nil, fail
 	}
 
 	// Agent-directory declarations are resolved only once a unique launch key
@@ -310,17 +259,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		p.EffectiveSandbox = &materialized
 		agentDirectoryCleanup = cleanup
 	}
-	if p.CodexAppServer && p.AgentID == "" {
-		p.AgentID = db.NewAgentID()
-	}
-	stateRoot, stateRootSource, stateRootErr := codexStateRootForLaunch(p.Harness, p.EffectiveSandbox)
-	if stateRootErr != nil {
-		return nil, &spawnFailure{http.StatusUnprocessableEntity, "codex_state_root", stateRootErr.Error()}
-	}
-	p.CodexStateRoot, p.CodexStateRootSource = stateRoot, stateRootSource
-	if harnessOrDefault(p.Harness) == harness.CodexName {
-		p.FastModeAtLaunch = codexFastModeAtLaunch(
-			fastModeLaunchValue(p.FastMode, p.FastModeSet), p.CodexStateRoot)
+	if fail := prepareSpawnStateRoot(&p); fail != nil {
+		return nil, fail
 	}
 
 	spawnArgs := clcommon.SpawnArgs{
