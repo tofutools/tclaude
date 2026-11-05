@@ -2624,10 +2624,10 @@ func resumeLaunchCmdWithEffectiveSandbox(
 	cleanupPath := ""
 	var splitCapability *harness.CodexSplitPolicyCapability
 	if !outerLayer && h.Name == harness.CodexName && harnessBuiltinMode == harness.SandboxManagedProfile {
-		// The step `session new` takes. planResumeDirs has already run the
-		// reopen-under-deny gate on these rendered rules, except for an
-		// unconfined implementation (off, resource-only), which it skips there
-		// as it did before this step was shared.
+		// The step `session new` takes. It runs the reopen-under-deny gate on
+		// these rendered rules itself, so an unconfined implementation (off,
+		// resource-only), whose gate planResumeDirs skips, is still refused a
+		// shape Codex cannot enforce, as `session new` refuses it.
 		profileLaunchID := session.GenerateSessionID()
 		profileName, profilePath, capability, err := session.EnsureCodexManagedLaunchProfile(
 			session.CodexManagedProfileRules{ReadDirs: readDirs, WriteDirs: writeDirs, DenyDirs: denyDirs},
