@@ -861,20 +861,6 @@ func SessionExists(id string) (bool, error) {
 	return count > 0, err
 }
 
-// CleanupOldExited deletes exited sessions older than maxAge and returns the count deleted.
-func CleanupOldExited(maxAge time.Duration) (int64, error) {
-	db, err := Open()
-	if err != nil {
-		return 0, err
-	}
-	cutoff := dbTime(time.Now().Add(-maxAge))
-	result, err := db.Exec(`DELETE FROM sessions WHERE status = 'exited' AND updated_at < ?`, cutoff)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 // MaxUpdatedAt returns the most recent updated_at across all sessions.
 // Returns zero time if no sessions exist.
 func MaxUpdatedAt() (time.Time, error) {

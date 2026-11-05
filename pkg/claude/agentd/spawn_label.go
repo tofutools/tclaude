@@ -30,9 +30,9 @@ import (
 // session_cost_daily, codex_telemetry_checkpoint, opencode_runtimes,
 // notify_state — so reusing a dead namesake's id would silently conflate two
 // different agents' costs and telemetry under one key. Any existing session
-// row therefore counts as taken, live or not. (Exited rows are eventually
-// reaped by db.CleanupOldExited, which is what keeps the suffixes from
-// climbing forever.)
+// row therefore counts as taken, live or not. Exited rows are never
+// reaped, so the "-N" ladder climbs as namesakes accumulate, and once it is
+// exhausted the random tier below takes over.
 
 const (
 	// spawnLabelMaxNumericSuffix bounds the "-N" ladder before the sequence
