@@ -41,7 +41,9 @@ var launchTierWalkFiles = map[string]bool{
 	"lifecycle_spawn_request.go":        true,
 	"sandbox_default_implementation.go": true,
 	"spawn_launch_defaults.go":          true,
-	"templates.go":                      true,
+	// resolveTemplateAgentLaunch, moved out of templates.go by a pure move
+	// (tcl-a2e791).
+	"templates_launch.go": true,
 }
 
 // launchDefaultProfileDisplayFiles read the global default profile only to
