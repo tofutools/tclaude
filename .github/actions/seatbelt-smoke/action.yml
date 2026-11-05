@@ -15,6 +15,10 @@ runs:
       uses: actions/setup-go@v7
       with:
         go-version-file: go.mod
+        # A self-hosted runner keeps ~/go/pkg/mod and GOCACHE between jobs,
+        # and restoring setup-go's cache over the read-only module files
+        # fails there; the local caches do that job. Hosted runners cache.
+        cache: ${{ runner.environment != 'self-hosted' }}
 
     - name: Set up Node for OpenCode smoke
       uses: actions/setup-node@v7
@@ -38,6 +42,16 @@ runs:
           @openai/codex@0.145.0
         claude --version | grep -qF '2.1.220'
         codex --version | grep -qF '0.145.0'
+
+    # The runner's macOS version and IPv4 interfaces: the smoke's loopback
+    # and same-port non-loopback controls depend on both, and a self-hosted
+    # runner's OS and network differ from the hosted image.
+    - name: Runner diagnostics
+      shell: bash
+      run: |
+        sw_vers
+        uname -a
+        ifconfig | grep -E '^[a-z]|inet ' || true
 
     - name: Probe Seatbelt deny-write support
       shell: bash
