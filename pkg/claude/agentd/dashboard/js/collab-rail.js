@@ -20,6 +20,7 @@ import { tabMoves } from './overlay-tab-moves.js';
 import { dashPrefs } from './prefs.js';
 import { offerSidePanel, registerSidePanel } from './side-panel.js';
 import { collabItems, openRailItem, overlayOf, pressable, startRailDrag } from './collab-rail-actions.js';
+import { LockBadge } from './resource-lock.js';
 import { ViewMenu, ViewMenuHeading, ViewMenuSep, ViewToggle } from './view-menu.js';
 
 export { openRailItem };
@@ -125,6 +126,7 @@ function RailItem({ item, actions, snapshot, notify, floatsOf }) {
       ...${pressable(() => void openRailItem(item, { actions, snapshot, notify }))}>
       <span class="cr-glyph" aria-hidden="true">${glyph}</span>
       <span class="cr-title">${item.title}</span>
+      <${LockBadge} kind=${item.kind} locked=${!!item.resource?.locked} />
     </span>
     <span class="cr-tools">${tools.map(([g, title, run]) => html`<button data-ui-exempt type="button" key=${g}
       class="cr-tool" title=${title} aria-label=${`${title}: ${item.title}`} onClick=${(event) => { event.stopPropagation(); void run(); }}>${g}</button>`)}</span>

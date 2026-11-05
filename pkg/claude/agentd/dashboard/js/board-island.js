@@ -1895,7 +1895,7 @@ export function BoardEditor({
 // -- the board list ---------------------------------------------------------------
 
 // BoardRow is one board on one line; its export and delete show on hover.
-function BoardRow({ board, onOpen, onExport, onDelete, onLockChanged, notify }) {
+function BoardRow({ board, onOpen, onExport, onDelete }) {
   const label = board.title || board.id;
   const agents = board.agents ?? board.participants?.length ?? 0;
   const elements = `${board.element_count ?? 0} element${board.element_count === 1 ? '' : 's'}`;
@@ -1907,7 +1907,6 @@ function BoardRow({ board, onOpen, onExport, onDelete, onLockChanged, notify }) 
       ${agents > 0 && html`<span class="board-row-agents">${agents} agent${agents === 1 ? '' : 's'}</span>`}
       <span class="board-row-age">${boardAge(board.updated_at)}</span>
     </button>
-    <${LockChip} kind="board" id=${board.id} name=${label} locked=${!!board.agents_locked} notify=${notify} onChanged=${onLockChanged} />
     <${Button} size="sm" icon=${true} class="board-row-action" title="Download as .excalidraw" aria-label=${`Export ${label}`} onClick=${() => onExport(board)}>⤓<//>
     <${Button} size="sm" icon=${true} variant="ghost danger" class="board-row-action" title="Delete this board" aria-label=${`Delete ${label}`} onClick=${() => onDelete(board)}>🗑<//>
   </li>`;
@@ -1995,7 +1994,6 @@ export function BoardList({ fetchImpl, notify, onOpen, onPicking = () => {}, com
         ${(name || groups.length > 1) && html`<h3 class="board-section-name"><span>${name || 'No group'}</span><span class="board-section-count">${rows.length}</span></h3>`}
         <ul class="board-rows">
           ${rows.map((board) => html`<${BoardRow} key=${board.id} board=${board} onOpen=${onOpen} onExport=${exportRow}
-            notify=${notify} onLockChanged=${() => void load()}
             onDelete=${() => askDeleteBoard({ id: board.id, title: board.title, onDeleted: load })} />`)}
         </ul>
       </div>`)}

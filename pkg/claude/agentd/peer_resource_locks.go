@@ -68,8 +68,16 @@ func resourceLockGroups(kind, id string) ([]*db.AgentGroup, bool) {
 			owner, groupID = p.owner, p.groupID
 		}
 		livePages.mu.Unlock()
-		if p == nil || !pageOwnerInGroup(owner, groupID) {
-			return nil, p != nil
+		if p == nil {
+			// A page saved with its group, closed now, keeps its lock.
+			row, err := db.GetGroupPage(id)
+			if err != nil || row == nil {
+				return nil, false
+			}
+			return byID(row.GroupID), true
+		}
+		if !pageOwnerInGroup(owner, groupID) {
+			return nil, true
 		}
 		return byID(groupID), true
 	case resourceKindProcess:

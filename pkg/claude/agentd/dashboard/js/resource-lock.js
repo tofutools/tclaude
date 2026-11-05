@@ -1,9 +1,10 @@
 // resource-lock.js -- the agent lock on a group resource (tcl-dwzsq0) as a
-// one-click toggle button: a lock icon and 'Locked' or 'Unlocked'. It sits on
-// each row of a group's Resources section, in the Collab ＋ list, and on the
-// resource's own header (process editor, board, page). The operator's
-// dashboard toggles it (POST /api/resource-locks); an agent does through its
-// own route under groups.resources.lock.
+// chip that is also its toggle: '🔒 agents: read-only' or '✎ agents can
+// edit'. It sits on each row of a group's Resources section and on the
+// resource's own header (process editor, board, page). In the Collab view a
+// locked resource also wears a small LockBadge on its tab name and side panel
+// row. The operator's dashboard toggles it (POST /api/resource-locks); an
+// agent does through its own route under groups.resources.lock.
 
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
@@ -14,21 +15,13 @@ const html = htm.bind(h);
 
 // lockLabel is the chip's text for a lock state.
 export function lockLabel(locked) {
-  return locked ? 'Locked' : 'Unlocked';
+  return locked ? '🔒 agents: read-only' : '✎ agents can edit';
 }
 
-// lockTitle is the button's tooltip: the state, what it means, the action.
+// lockTitle is the chip's tooltip: the state, what it means, the action.
 export const lockTitle = (locked, name) => (locked
   ? `Locked: members can read ${name} but not edit it. Click to unlock`
   : `Unlocked: members can read and edit ${name}. Click to lock`);
-
-// LockIcon is a closed or open padlock drawn in the current text colour.
-export function LockIcon({ locked }) {
-  return html`<svg class="gr-lock-icon" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"
-    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="5" y="11" width="14" height="10" rx="2" />
-    <path d=${locked ? 'M8 11V7a4 4 0 0 1 8 0v4' : 'M8 11V7a4 4 0 0 1 7.5-2'} /></svg>`;
-}
 
 // knownLocks remembers the last lock state a surface read, by "kind:id", so a
 // surface with no fetch of its own (a board tab's menu) can name the state.
@@ -41,6 +34,30 @@ export function rememberLock(kind, id, locked) {
 // knownLock is the remembered state, or undefined when none was read.
 export function knownLock(kind, id) {
   return knownLocks.get(`${kind}:${id}`);
+}
+
+const kindNoun = { board: 'board', page: 'page', process: 'process' };
+
+// lockBadgeTitle is the small lock icon's tooltip.
+export const lockBadgeTitle = (kind) => `Locked: members can read this ${kindNoun[kind] || 'resource'} but not edit it. `
+  + 'You, or an agent you granted groups.resources.lock, can unlock it.';
+
+// resourceLocked reports whether a resource is locked against agents, from
+// the snapshot's group resources, else from what a surface last read
+// (knownLock): a board linked to no group is not in the snapshot.
+export function resourceLocked(snapshotValue, kind, id) {
+  if (!kind || !id) return false;
+  const row = (snapshotValue?.group_resources || []).find((r) => r.kind === kind && r.id === id);
+  if (row) return !!row.locked;
+  return !!knownLock(kind, id);
+}
+
+// LockBadge is the small lock icon a tab name or a Collab panel row wears
+// while its resource is locked. Nothing shows while it is unlocked.
+export function LockBadge({ kind, locked }) {
+  if (!locked) return null;
+  const title = lockBadgeTitle(kind);
+  return html`<span class="res-lock-badge" role="img" aria-label=${title} title=${title} data-lock-badge=${kind}>🔒</span>`;
 }
 
 // setResourceLock is the lock toggle for a surface without the process api.
@@ -85,9 +102,10 @@ export function LockChip({ kind, id, name, locked, api = null, source = null, on
   const title = denied
     ? `${lockLabel(locked)}. ${peer.node || 'This node'} does not grant you groups.resources.lock here, so you cannot change it.`
     : lockTitle(locked, name);
-  // A bordered toggle button, amber while locked.
-  return html`<button type="button" class=${`ui-btn ui-sm gr-lock${locked ? ' gr-locked' : ''}`} data-resource-lock=${`${kind}:${id}`}
+  // A chip that is also the toggle: a .ui-tag pill, warn-coloured while
+  // locked. It is a real button, so it takes keyboard focus and Enter/Space.
+  return html`<button data-ui-exempt type="button" class=${`gr-lock ui-tag${locked ? ' ui-tag-warn' : ''}`} data-resource-lock=${`${kind}:${id}`}
     aria-pressed=${locked ? 'true' : 'false'} aria-label=${title} aria-disabled=${denied ? 'true' : undefined} aria-busy=${busy ? 'true' : undefined}
-    disabled=${busy || denied} title=${title} onClick=${toggle}><${LockIcon} locked=${locked} /><span>${lockLabel(locked)}</span></button>`;
+    disabled=${busy || denied} title=${title} onClick=${toggle}>${lockLabel(locked)}</button>`;
 }
 

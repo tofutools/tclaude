@@ -1310,29 +1310,18 @@ test('a change summary does not quote agent text the operator only moved', async
   assert.match(m.describeChanges(map, ['t'], new Map([['t', moved]])), /text “my words”/);
 });
 
-test('each board in the list wears its lock as a one-click toggle', async (t) => {
+test('a locked resource wears a small lock icon that explains itself', async (t) => {
   const harness = await createPreactHarness(t);
-  const { BoardList } = await harness.importDashboardModule('js/board-island.js');
-  let locked = true;
-  const posted = [];
-  harness.window.fetch = globalThis.fetch = async (url, init = {}) => {
-    if (String(url) === '/api/resource-locks') {
-      const body = JSON.parse(init.body);
-      posted.push(body);
-      locked = body.locked;
-      return ok(body);
-    }
-    throw new Error(`unexpected ${url}`);
-  };
-  const fetchImpl = async () => ok({ boards: [{ id: 'plan', title: 'Plan', group: 'design', agents_locked: locked }] });
-  const view = await harness.mount(harness.html`<${BoardList} compact fetchImpl=${fetchImpl} notify=${() => {}} onOpen=${() => {}} />`);
-  await harness.act(() => wait());
-  const toggle = () => view.container.querySelector('[data-resource-lock="board:plan"]');
-  assert.equal(toggle().textContent, 'Locked');
-  assert.match(toggle().title, /^Locked: members can read Plan but not edit it\. Click to unlock/);
-  assert.ok(toggle().classList.contains('ui-btn'), 'a bordered button, not a chip');
-  await harness.act(async () => { harness.fireEvent(toggle(), 'click'); await wait(); });
-  assert.deepEqual(posted, [{ kind: 'board', id: 'plan', locked: false }]);
-  await harness.act(() => wait());
-  assert.equal(toggle().textContent, 'Unlocked', 'the list reloads with the new state');
+  const { LockBadge, resourceLocked, rememberLock } = await harness.importDashboardModule('js/resource-lock.js');
+  const snap = { group_resources: [{ kind: 'board', id: 'plan', locked: true }, { kind: 'process', id: 'ship' }] };
+  assert.equal(resourceLocked(snap, 'board', 'plan'), true);
+  assert.equal(resourceLocked(snap, 'process', 'ship'), false);
+  assert.equal(resourceLocked(snap, 'board', 'loose'), false, 'nothing known is unlocked');
+  rememberLock('board', 'loose', true);
+  assert.equal(resourceLocked(snap, 'board', 'loose'), true, 'a board in no group: what the editor last read');
+  const view = await harness.mount(harness.html`<div><${LockBadge} kind="board" locked=${true} /><${LockBadge} kind="page" locked=${false} /></div>`);
+  const badges = view.container.querySelectorAll('[data-lock-badge]');
+  assert.equal(badges.length, 1, 'only a locked resource shows the icon');
+  assert.equal(badges[0].textContent, '🔒');
+  assert.match(badges[0].title, /^Locked: members can read this board but not edit it\./);
 });

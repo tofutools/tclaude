@@ -35,6 +35,9 @@ type groupResource struct {
 	Detail  string `json:"detail,omitempty"`
 	// Session is a shell's tmux session, which the dashboard kills it by.
 	Session string `json:"session,omitempty"`
+	// Locked is the lock against agent changes (group_resource_locks.go), for
+	// the Collab panel's and tab strip's lock icon.
+	Locked bool `json:"locked,omitempty"`
 }
 
 // groupResourcesSnapshot lists the resources of every active group. alive is
@@ -52,6 +55,18 @@ func groupResourcesSnapshot(groups []*db.AgentGroup, alive map[string]struct{}) 
 	out := groupPageResources(active)
 	out = append(out, groupBoardResources(active)...)
 	out = append(out, groupProcessResources(active)...)
+	for _, kind := range []string{resourceKindBoard, resourceKindProcess} {
+		locked, err := db.GroupResourceLocks(kind)
+		if err != nil {
+			slog.Warn("group resources: locks unavailable", "kind", kind, "error", err)
+			continue
+		}
+		for i := range out {
+			if out[i].Kind == kind && locked[out[i].ID] {
+				out[i].Locked = true
+			}
+		}
+	}
 	// A group's shell lists only while its tmux session is up. It has no
 	// saved state, so once it exits there is nothing left to show: a closed
 	// row would stay forever with no way to remove it. The ＋ menu starts a
@@ -76,7 +91,7 @@ func groupPageResources(active map[int64]*db.AgentGroup) []groupResource {
 	live := map[string]bool{}
 	for _, p := range livePages.list("") {
 		livePages.mu.Lock()
-		r := groupResource{Kind: resourceKindPage, ID: p.id, GroupID: p.groupID, Title: p.title, State: resourceStateRunning, Owner: p.owner}
+		r := groupResource{Kind: resourceKindPage, ID: p.id, GroupID: p.groupID, Title: p.title, State: resourceStateRunning, Owner: p.owner, Locked: p.agentsLocked}
 		livePages.mu.Unlock()
 		live[r.ID] = true
 		if active[r.GroupID] == nil || !pageOwnerInGroup(r.Owner, r.GroupID) {
@@ -99,7 +114,7 @@ func groupPageResources(active map[int64]*db.AgentGroup) []groupResource {
 			continue
 		}
 		r := groupResource{Kind: resourceKindPage, ID: row.ID, GroupID: row.GroupID, Title: row.Title, State: resourceStateClosed,
-			Owner: row.Owner, Detail: row.ClosedReason}
+			Owner: row.Owner, Detail: row.ClosedReason, Locked: row.AgentsLocked}
 		if isGroupPageOwner(r.Owner) {
 			r.Owner = ""
 		}

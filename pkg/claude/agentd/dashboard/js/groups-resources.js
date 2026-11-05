@@ -4,8 +4,8 @@
 // linked to the group and the live pages shown into it (context
 // groups[].boards / .pages, the operator's only). A kind with nothing in it
 // is hidden. Every resource wears the operator's agent lock as a chip:
-// 'Locked' or 'Unlocked' (resource-lock.js); clicking it toggles the lock
-// (POST /api/resource-locks).
+// '🔒 agents: read-only' or '✎ agents can edit'; clicking it toggles the lock
+// (POST /api/resource-locks). Only the operator's dashboard can.
 
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';

@@ -36,7 +36,7 @@ import { pendingApprovals } from './companion-model.js';
 import { companionAvailable, openInCompanion, reclaimInCompanion } from './companion-facade.js';
 import { BoardEditor, BoardList, BoardsGate } from './board-island.js';
 import { BoardDeleteHost, askDeleteBoard, boardDeleteRequest, onBoardDeleted } from './board-manage.js';
-import { knownLock, setResourceLock } from './resource-lock.js';
+import { LockBadge, knownLock, resourceLocked, setResourceLock } from './resource-lock.js';
 import { boardOverlays, openBoardPane, openLinkedBoard, revealBoardWindow } from './board-overlay-state.js';
 import { terminalWindowsShowing } from './terminal-window.js';
 import { agentSessionSeed, chatAgentOfPane, overlayablePane } from './terminal-window-model.js';
@@ -966,6 +966,8 @@ function PaneTab({
       <${TabApproval} pane=${pane} snapshot=${snapshot} />
       <${NodePill} node=${scope?.node} compact />
       <span class="mux-tab-label">${paneTitle(pane)}</span>
+      ${(board || process || page) && html`<${LockBadge} kind=${board ? 'board' : process ? 'process' : 'page'}
+        locked=${resourceLocked(snapshot?.value, board ? 'board' : process ? 'process' : 'page', pane.seed.board || pane.seed.process || pane.seed.page)} />`}
       <${TerminalCosts} agent=${agentStatus.agent} />
       ${!pane.seed.remote && pane.seed.agent ? html`<${ProcessTabIcons} agentId=${pane.seed.agent}
         enabled=${processesAvailable(snapshot?.value)} />` : null}

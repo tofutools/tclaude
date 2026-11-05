@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -99,6 +100,20 @@ func TestAgentsLockGroupResourcesUnderTheLockSlug(t *testing.T) {
 	_, _, err := db.EnsureAgentForConv(outsider, "test")
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusForbidden, agent(outsider, http.MethodGet, "/v1/groups/design/resources", nil).Code)
+	// A page saved with the group and closed now locks too.
+	g, err := db.GetAgentGroupByName("design")
+	require.NoError(t, err)
+	require.NoError(t, db.SaveOpenGroupPage(db.GroupPage{ID: "pg_saved", GroupID: g.ID, Owner: "group:" + strconv.FormatInt(g.ID, 10),
+		Name: "notes", Title: "Notes", Kind: "scratch"}))
+	require.NoError(t, db.CloseGroupPage("pg_saved", "closed in test"))
+	rec = agent(keeper, http.MethodPost, "/v1/resource-locks", map[string]any{"kind": "page", "id": "pg_saved", "locked": true})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	row, err := db.GetGroupPage("pg_saved")
+	require.NoError(t, err)
+	assert.True(t, row.AgentsLocked)
+	assert.Equal(t, http.StatusForbidden, agent(member, http.MethodPost, "/v1/resource-locks",
+		map[string]any{"kind": "page", "id": "pg_saved", "locked": false}).Code)
+
 	assert.Equal(t, http.StatusNotFound, agent(keeper, http.MethodPost, "/v1/resource-locks",
 		map[string]any{"kind": "board", "id": "nope", "locked": true}).Code)
 }

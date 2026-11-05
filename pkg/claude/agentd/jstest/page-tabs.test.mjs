@@ -176,9 +176,9 @@ test('a shown page opens unfocused with a dot and a toast, and its view is the h
   assert.match(chip.getAttribute('title'), /The agent that showed this page can read what you type in it\./);
   const labels = [...head.querySelectorAll('button')].map((b) => b.textContent);
   assert.deepEqual(labels.filter((l) => ['Reload', 'Open in overlay', 'Pop out', 'Close'].includes(l)), ['Reload', 'Open in overlay', 'Pop out', 'Close']);
-  // The lock toggle is a bordered ui-btn (resource-lock.js).
+  // The lock chip is a .ui-tag that toggles (data-ui-exempt, resource-lock.js).
   for (const button of head.querySelectorAll('button:not([data-ui-exempt])')) assert.ok(button.classList.contains('ui-btn'), `${button.textContent} is a ui-btn`);
-  assert.equal(head.querySelector('[data-resource-lock]').textContent, 'Unlocked', 'the page wears its agent lock');
+  assert.equal(head.querySelector('[data-resource-lock]').textContent, '✎ agents can edit', 'the page wears its agent lock');
   assert.equal(host.innerHTML.split(TOKEN).length, 2, 'the token is in the frame src only');
 
   await harness.act(async () => { harness.fireEvent([...head.querySelectorAll('button')].find((b) => b.textContent === 'Close'), 'click'); await wait(); });

@@ -18547,12 +18547,11 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gq-saved-chip .gr-glyph { margin-right: 0; }
 .gr-row .gr-name.ui-btn { color: var(--ui-strong-text); font-weight: 600; padding-left: 0; }
 .gr-spacer { flex: 1; }
-/* The lock toggle (resource-lock.js): a bordered button, amber while locked. */
-.gr-lock { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: var(--ui-muted-text); }
-.gr-lock.gr-locked { color: var(--ui-warn-text); border-color: color-mix(in srgb, var(--ui-warn-text) 55%, transparent);
-  background: color-mix(in srgb, var(--ui-warn-text) 12%, transparent); }
-.gr-lock.gr-locked:hover:not(:disabled) { color: var(--ui-warn-text); background: color-mix(in srgb, var(--ui-warn-text) 20%, transparent); }
-.gr-lock-icon { flex: none; }
+.gr-lock { cursor: pointer; white-space: nowrap; background: none; }
+.gr-lock:disabled { cursor: not-allowed; opacity: 0.6; }
+/* The small lock icon on a locked resource's tab name and Collab panel row
+   (resource-lock.js LockBadge); its tooltip explains it. */
+.res-lock-badge { font-size: 10px; line-height: 1; margin-left: 4px; opacity: 0.85; cursor: help; flex: none; }
 /* A peer's resource is named, not opened: its board or page is that node's own. */
 .gr-row .gr-name-text { color: var(--ui-strong-text); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A group resource's state pill (resource-pill.js): one look per state. */
