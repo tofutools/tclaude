@@ -703,7 +703,7 @@ func readEveryoneOpenMRs(ctx context.Context, base, token string, agentProjects 
 	}
 	projects := everyoneFallbackProjects(base, agentProjects, known)
 	if len(projects) == 0 {
-		return authoredOpenMREveryone{}, 0, fmt.Errorf("%s: this token can't list the whole instance, and no project "+
+		return authoredOpenMREveryone{}, probeRetry, fmt.Errorf("%s: this token can't list the whole instance, and no project "+
 			"is known to read one by one (none an agent works in, none with your open merge requests, "+
 			"no exact project in allowed_remotes)", refusal.reason)
 	}

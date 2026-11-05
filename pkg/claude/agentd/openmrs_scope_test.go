@@ -348,3 +348,35 @@ func TestPollAuthoredOpenMRs_ARateLimitedReprobeStillWaits(t *testing.T) {
 	assert.Empty(t, view.Instances[0].EveryoneError, "the projects were still read")
 	assert.Equal(t, 1, view.Instances[0].EveryoneByProject)
 }
+
+// A refused instance with no project to read, whose re-probe hits a 429,
+// still waits what GitLab asked for.
+func TestPollAuthoredOpenMRs_ARateLimitedReprobeWithNothingToReadStillWaits(t *testing.T) {
+	gl := scopedWorld(t, "gitlab.example.test/acme/*")
+	t.Cleanup(SetGitLabTransportForTest(func(ctx context.Context, base, token string, req glAPIRequest) (glAPIResult, error) {
+		body, _ := json.Marshal(req.Body)
+		if req.GraphQL && strings.Contains(string(body), "authoredMergeRequests") && !strings.Contains(string(body), "mergedAt") &&
+			!strings.Contains(string(body), "mergeRequestInteraction") {
+			return graphQLAnswer(t, "jdoe", 0), nil // no Mine merge request: nothing to read
+		}
+		return gl.do(ctx, base, token, req)
+	}))
+	_, err := pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err)
+	authoredOpenMRState.Lock()
+	refusal := authoredOpenMRState.refused[testMRBase]
+	refusal.at = refusal.at.Add(-everyoneOpenMRReprobe)
+	authoredOpenMRState.refused[testMRBase] = refusal
+	authoredOpenMRState.Unlock()
+	gl.mu.Lock()
+	gl.listStatus = http.StatusTooManyRequests
+	gl.mu.Unlock()
+
+	wait, err := pollAuthoredOpenMRs(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 2, gl.listCalls, "re-probed")
+	assert.Equal(t, 2*time.Minute, wait, "the re-probe's Retry-After is honoured with nothing to read too")
+	view := authoredOpenMRsSnapshot(loadCfg(t), nil)
+	require.NotNil(t, view)
+	assert.Contains(t, view.Instances[0].EveryoneError, "no project is known")
+}
