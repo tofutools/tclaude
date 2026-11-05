@@ -416,17 +416,13 @@ const inside = (pointer, rect) => !!rect && pointer.x >= rect.x && pointer.x < r
 
 // dropTree is what a drop of id at pointer does to the saved split, laid out in
 // area with the windows in here showing: { tree, zone } for the split it makes,
-// { float: true } back over vacated, the cell this drag tore the window out of,
 // or null where the drop is on nothing of the split. An empty cell takes the
 // window (withinGap), unless it is held for a window in alive that is away; on
 // a window, an edge or corner splits that window (withWindow). It reads nothing
 // but its arguments, so a split behaves the same however it was reached.
-export function dropTree(saved, area, pointer, id, { here, alive, room = '', vacated = null }) {
+export function dropTree(saved, area, pointer, id, { here, alive, room = '' }) {
   const live = keepingWindows(saved, here);
   if (!live || !fits(live, area)) return null;
-  // The cell just left is empty space now, even where it joined an empty
-  // neighbour into one larger cell.
-  if (inside(pointer, vacated)) return { float: true };
   const { rects, gaps } = splitLayout(live, area);
   const gap = gaps.find((cell) => inside(pointer, cell.rect) && !(cell.held && cell.held !== id && alive.has(cell.held)));
   if (gap) return { tree: withinGap(saved, gap, pointer, id, room, area), zone: '' };
@@ -484,7 +480,6 @@ export function splitMarkers(rect, area, reach) {
   return SPLIT_SIDES.filter((side) => !onRoomEdge[side]).map((zone) => ({ zone, rect: at[zone] }));
 }
 
-const holds = (rect, point) => !!rect && point.x >= rect.x && point.x < rect.x + rect.w && point.y >= rect.y && point.y < rect.y + rect.h;
 const centreOf = (rect) => ({ x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 });
 
 // asDrawn is an empty cell as it shows beside windows drawn elsewhere than the
@@ -509,12 +504,11 @@ function asDrawn(rect, cells, drawn) {
 // dropTargets is every target a drag of id shows over tree laid out in area,
 // with the windows in here showing: { gaps: [{ gap, rect }], markers: [{ window,
 // zone, rect }] }. Each is offered only where its drop makes a tree that fits.
-// A cell held for a window in alive that is away takes no drop, and neither does
-// the cell this drag tore the window out of (vacated): let go there, it floats.
+// A cell held for a window in alive that is away takes no drop.
 // drawn gives windows drawn elsewhere than tree lays them out, as windows
 // snapped alone are: their markers sit on them, and a box keeps clear of them.
 // It reads nothing but its arguments.
-export function dropTargets(tree, area, id, { here, alive = new Set(), vacated = null, reach = 0, drawn = null }) {
+export function dropTargets(tree, area, id, { here, alive = new Set(), reach = 0, drawn = null }) {
   const live = keepingWindows(tree, here);
   if (!live || !fits(live, area)) return { gaps: [], markers: [] };
   const { rects, gaps } = splitLayout(live, area);
@@ -527,7 +521,6 @@ export function dropTargets(tree, area, id, { here, alive = new Set(), vacated =
   return {
     gaps: gaps.filter((cell) => !(cell.held && cell.held !== id && alive.has(cell.held)))
       .map((gap) => ({ gap, rect: gapTarget(drawn ? asDrawn(gap.rect, rects, drawn) : gap.rect) }))
-      .filter(({ rect }) => !holds(vacated, centreOf(rect)))
       .filter(({ gap }) => fitsAfter(withinGap(tree, gap, centreOf(gap.rect), id, '', area))),
     markers: leavesOf(live).filter((other) => other !== id)
       .flatMap((other) => splitMarkers(shownAt(other), area, reach).map(({ zone, rect }) => ({ window: other, zone, rect })))
@@ -541,19 +534,6 @@ export function targetAt(pointer, { gaps = [], markers = [] } = {}) {
   if (gap) return { gap: gap.gap };
   const marker = markers.find(({ rect }) => inside(pointer, rect));
   return marker ? { window: marker.window, zone: marker.zone } : null;
-}
-
-// The parts of rect outside cut, as up to four rectangles.
-function without(rect, cut) {
-  const [left, top] = [Math.max(rect.x, cut.x), Math.max(rect.y, cut.y)];
-  const [right, bottom] = [Math.min(rect.x + rect.w, cut.x + cut.w), Math.min(rect.y + rect.h, cut.y + cut.h)];
-  if (left >= right || top >= bottom) return [rect];
-  return [
-    { x: rect.x, y: rect.y, w: rect.w, h: top - rect.y },
-    { x: rect.x, y: bottom, w: rect.w, h: rect.y + rect.h - bottom },
-    { x: rect.x, y: top, w: left - rect.x, h: bottom - top },
-    { x: right, y: top, w: rect.x + rect.w - right, h: bottom - top },
-  ].filter(({ w, h }) => w > 0 && h > 0);
 }
 
 const overlap = (a, b) => {
@@ -570,11 +550,10 @@ const overlap = (a, b) => {
 // the same drop and lighting together. Over a split shown in area, each strip
 // is cut at the cells it crosses, and each piece carries the tree its drop
 // makes: the room's zone of an empty cell (withinGap) or of a window (withWindow).
-// No piece lies over a cell held for a window that is away, the cell this drag
-// tore the window out of (vacated), or where its drop would not fit, so a drop
-// there floats. With no split shown, the strips are the room's own, and a drop
+// No piece lies over a cell held for a window that is away, or where its drop
+// would not fit, so a drop there floats. With no split shown, the strips are the room's own, and a drop
 // snaps to their zone. It reads nothing but its arguments.
-export function edgeTargets(tree, area, id, { here = new Set(), alive = new Set(), vacated = null, zones }) {
+export function edgeTargets(tree, area, id, { here = new Set(), alive = new Set(), zones }) {
   const plain = () => zones.flatMap(({ zone, rects }) => rects.map((rect) => ({ key: zone, zone, rect })));
   const live = tree && keepingWindows(tree, here);
   if (!live || !fits(live, area)) return plain();
@@ -591,8 +570,7 @@ export function edgeTargets(tree, area, id, { here = new Set(), alive = new Set(
   const out = [];
   for (const { zone, rects: strips } of zones) {
     for (const cell of cells) {
-      const pieces = strips.map((strip) => overlap(strip, cell.rect)).filter(Boolean)
-        .flatMap((piece) => (vacated ? without(piece, vacated) : [piece]));
+      const pieces = strips.map((strip) => overlap(strip, cell.rect)).filter(Boolean);
       if (!pieces.length) continue;
       const made = cell.gap ? withinGap(tree, cell.gap, centreOf(pieces[0]), id, zone, area) : withWindow(tree, cell.window, zone, id);
       if (!fitsAfter(made)) continue;
