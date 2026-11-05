@@ -408,9 +408,6 @@ func SetTriggerRuleEnabled(id, rowVersion int64, enabled bool) error {
 }
 
 func GetTriggerRule(id int64) (*TriggerRule, error) { return getTriggerRule(`WHERE id=?`, id) }
-func GetTriggerRuleByName(name string) (*TriggerRule, error) {
-	return getTriggerRule(`WHERE name=?`, strings.TrimSpace(name))
-}
 
 func getTriggerRule(where string, arg any) (*TriggerRule, error) {
 	d, err := Open()
@@ -1080,10 +1077,6 @@ func ListTriggerActionOutcomes(firingID int64) ([]TriggerActionOutcome, error) {
 		o.CreatedAt = ts.Time()
 		return o, nil
 	}, `SELECT id,firing_id,action_index,action_type,outcome,detail,spawned_agent,COALESCE(message_id,0),created_at FROM trigger_action_outcomes WHERE firing_id=? ORDER BY action_index`, firingID)
-}
-
-func CountLiveTriggerWorkers(ruleID int64, actionIndex int) (int, error) {
-	return CountLiveManagedWorkers(ruleID, 0, actionIndex)
 }
 
 // CountLiveManagedWorkers counts durable reservations as live capacity. Exactly

@@ -25,8 +25,8 @@ func MailboxRosterMatches(q string) ([]string, error) {
 		WHERE ac.agent_id LIKE ? ESCAPE '\'`, like, like, like)
 }
 
-// GroupMessageParticipantsAll is GroupMessageParticipants for every group
-// at once: group id -> the distinct conv-ids that sent or received a
+// GroupMessageParticipantsAll maps every group id, in one query, to the
+// distinct conv-ids that sent or received a
 // message routed through that group (blank ids dropped). One pass over
 // the covering idx_agent_messages_parties index instead of a query per
 // group.

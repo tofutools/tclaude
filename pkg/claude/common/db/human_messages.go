@@ -158,16 +158,6 @@ func InsertHumanMessageWithAttachments(m *HumanMessage, attachments []*HumanMess
 	return id, nil
 }
 
-// InsertHumanMessageAttachment records the artifact metadata for a message.
-// The caller writes the daemon-owned file first and removes it if this fails.
-func InsertHumanMessageAttachment(a *HumanMessageAttachment) error {
-	d, err := Open()
-	if err != nil {
-		return err
-	}
-	return insertHumanMessageAttachment(d, a)
-}
-
 func insertHumanMessageAttachment(exec humanMessageExecer, a *HumanMessageAttachment) error {
 	res, err := exec.Exec(`INSERT INTO human_message_attachments
 		(message_id, seq, filename, content_type, size_bytes, storage_path)
@@ -617,26 +607,6 @@ func GetHumanMessage(id int64) (*HumanMessage, error) {
 	return m, nil
 }
 
-// FindHumanMessageForProcessCommand returns the first matching process
-// notification. Deferred human dispatch uses it as an idempotency lookup after
-// a restart between notification persistence and process-state append.
-func FindHumanMessageForProcessCommand(commandID, subject string) (*HumanMessage, error) {
-	d, err := Open()
-	if err != nil {
-		return nil, err
-	}
-	row := d.QueryRow(`
-		SELECT `+humanMessageCols+`
-		FROM human_messages WHERE process_command_id = ? AND subject = ? ORDER BY id ASC LIMIT 1`, commandID, subject)
-	m, err := scanHumanMessage(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	} else if err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
 // CountUnreadHumanMessages returns how many human messages are unread —
 // what the dashboard renders as the Messages tab badge.
 func CountUnreadHumanMessages() (int, error) {
@@ -749,34 +719,6 @@ func DeleteHumanMessage(id int64) (bool, error) {
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
-}
-
-// DeleteHumanMessages hard-deletes the listed messages by id, regardless
-// of read state — the multi-select complement to DeleteHumanMessage on
-// the Messages tab. Non-existent ids are silently skipped. Returns how
-// many rows were actually removed.
-func DeleteHumanMessages(ids []int64) (int, error) {
-	if len(ids) == 0 {
-		return 0, nil
-	}
-	d, err := Open()
-	if err != nil {
-		return 0, err
-	}
-	placeholders := make([]string, len(ids))
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-	res, err := d.Exec(
-		`DELETE FROM human_messages WHERE id IN (`+strings.Join(placeholders, ",")+`)`,
-		args...)
-	if err != nil {
-		return 0, fmt.Errorf("delete human messages: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	return int(n), nil
 }
 
 // DeleteHumanMessagesWithAttachments is the attachment-aware dashboard delete.
