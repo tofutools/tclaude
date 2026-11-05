@@ -2036,12 +2036,13 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	if darwinRouteReservation != nil {
-		if err := db.ActivateDarwinRouteLaunch(params.DarwinRouteAgentID, rowConvID, exitGeneration); err != nil {
-			_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
-			return fmt.Errorf("activate Darwin route launch contract: %w", err)
-		}
-		if err := darwinRouteReservation.Release(); err != nil {
-			return fmt.Errorf("release Darwin route launch reservation: %w", err)
+		if err := handOffDarwinRouteAtLaunch(darwinRouteReservation,
+			func() error {
+				return db.ActivateDarwinRouteLaunch(params.DarwinRouteAgentID, rowConvID, exitGeneration)
+			},
+			func() { _ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run() },
+		); err != nil {
+			return err
 		}
 		darwinRouteReservation = nil
 	}
