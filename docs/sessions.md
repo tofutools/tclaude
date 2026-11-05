@@ -90,7 +90,8 @@ tclaude          # joins the project's group automatically
 Controls:
 
 - `--auto-join-group` — the directory matching described above. Default on;
-  config key `session.auto_join_group`.
+  config key `session.auto_join_group` (`tclaude config get` shows it,
+  `tclaude config set session.auto_join_group false` turns it off).
 - `--auto-join-or-create-group` — additionally creates a group when nothing
   matches, named after the directory basename (`repo`, then `repo-2`, …).
   Default off.
@@ -105,6 +106,32 @@ Controls:
   get an offer to continue solo instead).
 
 Resume, managed daemon launches, and `--shell` never do directory discovery.
+
+Some launch flags have no counterpart on a group spawn and keep a launch
+solo: `-l/--label`, `--session-id`, `--permission-profile`,
+`-w/--wait-for-rate-limit`, `-g/--global`, `--send-keys`. When the directory
+has a group, tclaude says so instead of skipping it quietly:
+
+```text
+--label keeps this session solo, so it won't join group "myrepo". To join with a custom name, use -n NAME instead of --label; to stay solo, pass --auto-join-group=false.
+```
+
+A group spawn has no tmux label of its own (agentd picks it), so `-n NAME`
+is the way to name a joined agent; with config `agent.spawn_label_from_name`
+on, the name also becomes its tmux session name.
+
+A flag is never dropped without a word. A group-only flag (`-i`, `--file`,
+`--sandbox-profile`, `--profile`, `--worktree`, `--role`, …) on a launch that
+ends up solo is refused, with an error naming what kept it solo (that
+includes `--resume` and `--shell`, which never join). A solo-only flag with
+`-j/--join-group` is refused the same way. An explicit `--auto-join-group`
+(or `--auto-join-or-create-group`) next to a solo-only flag is refused as a
+contradiction.
+
+`--initial-prompt` works on both kinds of launch. Solo, it is the harness's
+own first-turn prompt. When the launch joins a group it becomes the agent's
+startup brief, delivered with its welcome, exactly like `-i` and the
+dashboard spawn dialog's initial message; pass only one of the two.
 
 ## A resume keeps its recorded posture
 

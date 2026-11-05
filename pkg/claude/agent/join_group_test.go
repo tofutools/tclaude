@@ -208,3 +208,47 @@ func TestJoinedSessionPreservesModelProxyChoice(t *testing.T) {
 		require.Equal(t, ref, spawnParamsForJoinedSession(&session.NewParams{ModelProxy: ref}, "team").ModelProxy)
 	}
 }
+
+func TestAutomaticGroupMatcherWiredToDirectoryMatch(t *testing.T) {
+	setupTestDB(t)
+	dir := t.TempDir()
+	_, err := db.CreateAgentGroup("kivra", "")
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupDefaultCwd("kivra", dir)
+	require.NoError(t, err)
+
+	require.NotNil(t, session.AutomaticGroupMatcher)
+	got, err := session.AutomaticGroupMatcher(&session.NewParams{Dir: dir})
+	require.NoError(t, err)
+	assert.Equal(t, "kivra", got)
+	got, err = session.AutomaticGroupMatcher(&session.NewParams{Dir: t.TempDir()})
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+func TestRunJoinGroupLabelPointsAtName(t *testing.T) {
+	err := RunJoinGroup(&session.NewParams{JoinGroup: "kivra", Label: "binder"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--label names a solo session")
+	assert.Contains(t, err.Error(), "use -n NAME instead")
+}
+
+func TestRunJoinGroupRefusesTwoBriefs(t *testing.T) {
+	for _, params := range []*session.NewParams{
+		{JoinGroup: "kivra", InitialPrompt: "a", InitialMessage: "b"},
+		{JoinGroup: "kivra", InitialPrompt: "a", File: "brief.md"},
+	} {
+		err := RunJoinGroup(params)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--initial-prompt and --")
+		assert.Contains(t, err.Error(), "pass only one")
+	}
+}
+
+func TestInitialPromptBecomesSpawnBrief(t *testing.T) {
+	params := &session.NewParams{InitialPrompt: "review PR 12"}
+	carryInitialPromptAsBrief(params)
+	spawn := spawnParamsForJoinedSession(params, "kivra")
+	assert.Equal(t, "review PR 12", spawn.InitialMessage)
+	assert.Empty(t, params.InitialPrompt, "the harness prompt slot stays agentd's")
+}

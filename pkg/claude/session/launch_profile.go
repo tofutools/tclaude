@@ -3,7 +3,9 @@ package session
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -62,15 +64,36 @@ func RunNewFromCommand(params *NewParams, cmd *cobra.Command) error {
 			return fmt.Errorf("--no-daemon: %w", err)
 		}
 	}
+	if strings.TrimSpace(params.JoinGroup) != "" {
+		// An explicit join hands off to the spawn wire, which has no field for
+		// a solo-only flag: refuse it rather than lose it (--permission-profile
+		// would otherwise vanish from a Codex agent without a word).
+		if solo := explicitSoloOnlyFlags(explicit); len(solo) > 0 {
+			return fmt.Errorf("%s %s to a solo session and can't be used with --join-group. %s",
+				joinFlags(solo), pluralVerb(solo, "applies", "apply"), soloJoinHint(solo))
+		}
+	}
 	if strings.TrimSpace(params.JoinGroup) == "" {
 		if automaticGroupEligible(params, explicit) {
 			cfg, _ := config.Load()
 			resolveAutomaticGroupConfig(params, explicit, cfg)
+			if err := resolveSoloLaunchFlags(params, explicit, autoJoinNoticeOut); err != nil {
+				return err
+			}
 		} else {
 			// The struct's default:true keeps help honest, but direct-only modes
 			// (resume, shell, pass-through, managed children) must remain solo.
 			params.AutoJoinGroup = false
 			params.AutoJoinOrCreateGroup = false
+			// A human typing a group-only flag on one of these would lose it.
+			// Only typed flags count: a managed child's argv is agentd's, and a
+			// resume may have its posture filled in from the record.
+			if !params.ManagedLaunch {
+				if typed := explicitGroupSpawnOnlyFlags(params, explicit); len(typed) > 0 {
+					return fmt.Errorf("%s only %s when a launch joins a group, and a resume, shell or pass-through launch never does; drop %s",
+						joinFlags(typed), pluralVerb(typed, "applies", "apply"), joinFlags(typed))
+				}
+			}
 		}
 	}
 	return runNewWithGlobalDefault(params, explicit)
@@ -88,18 +111,156 @@ func automaticGroupEligible(params *NewParams, explicit explicitLaunchFields) bo
 		hasResumePassthroughArg(clcommon.ExtractClaudeExtraArgs()) {
 		return false
 	}
-	// These are deliberately solo/direct-session controls with no counterpart
-	// on the group spawn wire. Their explicit use preserves historical behavior
-	// instead of silently discarding them during an automatic match.
-	for _, flag := range []string{
-		"label", "wait-for-rate-limit", "global", "permission-profile",
-		"initial-prompt", "session-id", "send-keys", "copilot-api-port",
-	} {
+	return true
+}
+
+// soloOnlyLaunchFlags are direct-session controls with no counterpart on the
+// group spawn wire. An explicit one keeps a launch solo rather than being
+// discarded by an automatic group match; resolveSoloLaunchFlags says so.
+//
+// --label is here because the spawn request carries no label: agentd mints
+// it (from the agent's name under agent.spawn_label_from_name), so -n is the
+// group-launch equivalent. --initial-prompt is NOT here: on a group launch
+// RunJoinGroup carries it as the startup brief, the same as -i.
+var soloOnlyLaunchFlags = []string{
+	"label", "wait-for-rate-limit", "global", "permission-profile",
+	"session-id", "send-keys", "copilot-api-port",
+}
+
+func explicitSoloOnlyFlags(explicit explicitLaunchFields) []string {
+	var flags []string
+	for _, flag := range soloOnlyLaunchFlags {
 		if explicit.has(flag) {
-			return false
+			flags = append(flags, "--"+flag)
 		}
 	}
-	return true
+	return flags
+}
+
+// soloLaunchHookForTest, when set, replaces the solo tail of a terminal
+// launch so the CLI-level auto-join tests can observe "this launch went solo"
+// without starting tmux. Always nil in production.
+var soloLaunchHookForTest func(params *NewParams) error
+
+// autoJoinNoticeOut receives the "kept solo" notice; a variable for tests.
+var autoJoinNoticeOut io.Writer = os.Stderr
+
+// AutomaticGroupMatcher names the active group whose default directory
+// matches this launch's directory ("" when none). Set by the agent package,
+// which owns directory matching; nil leaves the solo-flag notice group-less.
+var AutomaticGroupMatcher func(params *NewParams) (string, error)
+
+// resolveSoloLaunchFlags runs once directory auto-join is resolved from flags
+// and config. It is where a launch that would have joined a group but is kept
+// solo by a solo-only flag says so, and where a group-spawn flag that a solo
+// launch would drop is refused instead of ignored:
+//
+//   - an explicit --auto-join-group / --auto-join-or-create-group together
+//     with a solo-only flag is a contradiction and an error;
+//   - a group-spawn flag (-i, --sandbox-profile, ...) on a launch that cannot
+//     join is an error naming what keeps it solo;
+//   - otherwise a solo-only flag switches auto-join off for this launch, with
+//     a one-line notice when a group would have been joined or created.
+func resolveSoloLaunchFlags(params *NewParams, explicit explicitLaunchFields, stderr io.Writer) error {
+	solo := explicitSoloOnlyFlags(explicit)
+	spawnOnly := groupSpawnOnlyFlags(params)
+	joining := params.AutoJoinGroup || params.AutoJoinOrCreateGroup
+	if !joining {
+		if len(spawnOnly) > 0 {
+			return fmt.Errorf("%s only %s when this launch joins a group, but auto-join is off (--auto-join-group=false or config session.auto_join_group). To join, pass --join-group GROUP; to stay solo, drop %s",
+				joinFlags(spawnOnly), pluralVerb(spawnOnly, "applies", "apply"), joinFlags(spawnOnly))
+		}
+		return nil
+	}
+	if len(solo) == 0 {
+		return nil
+	}
+	subject := fmt.Sprintf("%s %s this session solo", joinFlags(solo), pluralVerb(solo, "keeps", "keep"))
+	for _, request := range []struct {
+		flag string
+		on   bool
+	}{
+		{"auto-join-group", params.AutoJoinGroup},
+		{"auto-join-or-create-group", params.AutoJoinOrCreateGroup},
+	} {
+		if request.on && explicit.has(request.flag) {
+			return fmt.Errorf("--%s asks to join a group, but %s. %s; to stay solo, drop --%s",
+				request.flag, subject, soloJoinHint(solo), request.flag)
+		}
+	}
+
+	group := ""
+	if AutomaticGroupMatcher != nil {
+		// A lookup failure (say, an ambiguous directory) only costs the notice
+		// its group name: this launch stays solo either way.
+		group, _ = AutomaticGroupMatcher(params)
+	}
+	consequence := ""
+	switch {
+	case group != "":
+		consequence = fmt.Sprintf(", so it won't join group %q", group)
+	case params.AutoJoinOrCreateGroup:
+		consequence = ", so no group is created for this directory"
+	}
+	params.AutoJoinGroup = false
+	params.AutoJoinOrCreateGroup = false
+
+	if len(spawnOnly) > 0 && consequence == "" {
+		// Nothing to join here even without the solo flag, so a "to join" hint
+		// would only lead to the no-match error.
+		return fmt.Errorf("%s %s a group launch, but %s and no group matches this directory; pass --join-group GROUP without %s, or drop %s",
+			joinFlags(spawnOnly), pluralVerb(spawnOnly, "needs", "need"), subject, joinFlags(solo), joinFlags(spawnOnly))
+	}
+	if len(spawnOnly) > 0 {
+		return fmt.Errorf("%s %s a group launch, but %s%s. %s; to stay solo, drop %s",
+			joinFlags(spawnOnly), pluralVerb(spawnOnly, "needs", "need"), subject, consequence,
+			soloJoinHint(solo), joinFlags(spawnOnly))
+	}
+	if consequence != "" {
+		fmt.Fprintf(stderr, "%s%s. %s; to stay solo, pass --auto-join-group=false.\n",
+			subject, consequence, soloJoinHint(solo))
+	}
+	return nil
+}
+
+// soloJoinHint is the "how to join instead" half of a solo-flag message.
+// --label maps to -n, the agent name a group launch derives its label from.
+func soloJoinHint(solo []string) string {
+	var drop []string
+	label := false
+	for _, flag := range solo {
+		if flag == "--label" {
+			label = true
+			continue
+		}
+		drop = append(drop, flag)
+	}
+	switch {
+	case label && len(drop) == 0:
+		return "To join with a custom name, use -n NAME instead of --label"
+	case label:
+		return fmt.Sprintf("To join, drop %s and use -n NAME instead of --label", joinFlags(drop))
+	default:
+		return fmt.Sprintf("To join, drop %s", joinFlags(drop))
+	}
+}
+
+func joinFlags(flags []string) string {
+	switch len(flags) {
+	case 0:
+		return ""
+	case 1:
+		return flags[0]
+	default:
+		return strings.Join(flags[:len(flags)-1], ", ") + " and " + flags[len(flags)-1]
+	}
+}
+
+func pluralVerb(flags []string, one, many string) string {
+	if len(flags) == 1 {
+		return one
+	}
+	return many
 }
 
 // RunNew is the exported programmatic entry point. Programmatic callers retain
@@ -147,6 +308,10 @@ func runNewWithGlobalDefault(params *NewParams, explicit explicitLaunchFields) e
 			params.AutoJoinOrCreateGroup = false
 		}
 	}
+	// Everything below is the solo tail: group discovery has fallen through.
+	if soloLaunchHookForTest != nil {
+		return soloLaunchHookForTest(params)
+	}
 	if err := applyGlobalDefaultLaunchProfile(params, explicit); err != nil {
 		return err
 	}
@@ -182,35 +347,60 @@ func resolveAutomaticGroupConfig(params *NewParams, explicit explicitLaunchField
 	}
 }
 
+// groupSpawnOnlyFlags lists, in a stable order, the dashboard/agent-spawn
+// flags this launch carries that only a group spawn can honour. A solo launch
+// would drop them, so every solo fall-through refuses them instead.
+func groupSpawnOnlyFlags(params *NewParams) []string {
+	used := []struct {
+		flag    string
+		present bool
+	}{
+		{"--profile", strings.TrimSpace(params.Profile) != ""},
+		{"--sandbox-profile", strings.TrimSpace(params.SandboxProfile) != ""},
+		{"--omit-sandbox-profiles", params.OmitSandboxProfiles},
+		{"--worktree", strings.TrimSpace(params.Worktree) != ""},
+		{"--worktree-base", strings.TrimSpace(params.WorktreeBase) != ""},
+		{"--worktree-repo", strings.TrimSpace(params.WorktreeRepo) != ""},
+		{"--initial-message", strings.TrimSpace(params.InitialMessage) != ""},
+		{"--file", strings.TrimSpace(params.File) != ""},
+		{"--reply-to", strings.TrimSpace(params.ReplyTo) != ""},
+		{"--timeout", strings.TrimSpace(params.SpawnTimeout) != ""},
+		{"--ask-human", strings.TrimSpace(params.AskHuman) != ""},
+		{"--auto-focus", params.AutoFocus},
+		{"--no-group-context", params.NoGroupContext},
+		{"--task", strings.TrimSpace(params.Task) != ""},
+		{"--task-label", strings.TrimSpace(params.TaskLabel) != ""},
+		{"--owner", params.Owner},
+		{"--no-owner", params.NoOwner},
+		{"--role", strings.TrimSpace(params.Role) != ""},
+		{"--descr", strings.TrimSpace(params.Descr) != ""},
+	}
+	var flags []string
+	for _, u := range used {
+		if u.present {
+			flags = append(flags, u.flag)
+		}
+	}
+	return flags
+}
+
+func explicitGroupSpawnOnlyFlags(params *NewParams, explicit explicitLaunchFields) []string {
+	var typed []string
+	for _, flag := range groupSpawnOnlyFlags(params) {
+		if explicit.has(strings.TrimPrefix(flag, "--")) {
+			typed = append(typed, flag)
+		}
+	}
+	return typed
+}
+
 // validateUnmatchedGroupSpawnFlags prevents a dashboard/agent-spawn-compatible
 // flag from being silently ignored when automatic discovery legitimately
 // falls through to a solo session.
 func validateUnmatchedGroupSpawnFlags(params *NewParams) error {
-	used := map[string]bool{
-		"--profile":               strings.TrimSpace(params.Profile) != "",
-		"--sandbox-profile":       strings.TrimSpace(params.SandboxProfile) != "",
-		"--omit-sandbox-profiles": params.OmitSandboxProfiles,
-		"--worktree":              strings.TrimSpace(params.Worktree) != "",
-		"--worktree-base":         strings.TrimSpace(params.WorktreeBase) != "",
-		"--worktree-repo":         strings.TrimSpace(params.WorktreeRepo) != "",
-		"--initial-message":       strings.TrimSpace(params.InitialMessage) != "",
-		"--file":                  strings.TrimSpace(params.File) != "",
-		"--reply-to":              strings.TrimSpace(params.ReplyTo) != "",
-		"--timeout":               strings.TrimSpace(params.SpawnTimeout) != "",
-		"--ask-human":             strings.TrimSpace(params.AskHuman) != "",
-		"--auto-focus":            params.AutoFocus,
-		"--no-group-context":      params.NoGroupContext,
-		"--task":                  strings.TrimSpace(params.Task) != "",
-		"--task-label":            strings.TrimSpace(params.TaskLabel) != "",
-		"--owner":                 params.Owner,
-		"--no-owner":              params.NoOwner,
-		"--role":                  strings.TrimSpace(params.Role) != "",
-		"--descr":                 strings.TrimSpace(params.Descr) != "",
-	}
-	for flag, present := range used {
-		if present {
-			return fmt.Errorf("%s applies to a group spawn, but no group matches this directory; pass --join-group, enable --auto-join-or-create-group, or omit the flag", flag)
-		}
+	if flags := groupSpawnOnlyFlags(params); len(flags) > 0 {
+		return fmt.Errorf("%s %s to a group spawn, but no group matches this directory; pass --join-group, enable --auto-join-or-create-group, or omit %s",
+			joinFlags(flags), pluralVerb(flags, "applies", "apply"), pluralVerb(flags, "the flag", "the flags"))
 	}
 	return nil
 }

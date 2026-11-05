@@ -137,6 +137,9 @@ Everything still lands in [Messages](dashboard-messages.md). See
 | Naming | Name the tmux session | `agent.spawn_label_from_name` | off |
 | Permissions | Default permissions | `agent.default_permissions` | empty |
 
+The two terminal startup keys and `agent.spawn_label_from_name` can also be read and changed from the CLI:
+`tclaude config get` and `tclaude config set <key> true|false|default`.
+
 ## Launch
 
 `/config/launch`: the relaunch policy, what a resume or reincarnation does with

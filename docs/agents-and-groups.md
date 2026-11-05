@@ -294,7 +294,11 @@ tclaude            # joins that group as a new member
 Per launch, `--auto-join-group=false` disables it and
 `--auto-join-or-create-group` creates a group named after the directory
 basename; the config keys are `session.auto_join_group` and
-`session.auto_join_or_create_group`. When several groups share a default
+`session.auto_join_or_create_group` (`tclaude config get|set` shows and
+changes them). Solo-only flags such as `--label` keep a launch solo, with a
+notice; see [Sessions](sessions.md#group-auto-join-on-launch).
+`groups ls --json` includes each group's `default_cwd` (to a human caller).
+When several groups share a default
 dir, the tie is broken by a default group marked in the
 [dashboard](dashboard.md)'s group settings menu (there is no CLI verb for
 that mark).

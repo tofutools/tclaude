@@ -78,7 +78,7 @@ type NewParams struct {
 	Resume                     string   `long:"resume" short:"r" optional:"true" help:"Resume an existing conversation by ID, or an agent by name or agent ID"`
 	ResumeLast                 bool     `long:"resume-last" help:"Resume the newest conversation in the current directory, skipping retired ones (Claude Code only)"`
 	Global                     bool     `short:"g" help:"Search for conversation across all projects (with --resume)"`
-	Label                      string   `long:"label" optional:"true" help:"Custom label for the session"`
+	Label                      string   `long:"label" optional:"true" help:"Custom tmux label for a solo session. Keeps the launch solo (no directory auto-join, a notice says so); to join a group with a custom name use -n NAME instead"`
 	Detached                   bool     `long:"detached" short:"d" help:"Start detached (don't attach to session)"`
 	WaitForRateLimit           bool     `long:"wait-for-rate-limit" short:"w" help:"Wait for rate limit (5-hour and 7-day) to reset before starting session"`
 
@@ -343,7 +343,7 @@ type NewParams struct {
 	// Automatic group discovery is resolved from explicit CLI flags over the
 	// config file in RunNewFromCommand. Programmatic RunNew callers retain their
 	// historical solo-session behavior because these zero values stay false.
-	AutoJoinGroup         bool `long:"auto-join-group" default:"true" help:"Automatically join an active group whose configured default directory matches the normalized launch directory (default: config session.auto_join_group, then true). Pass --auto-join-group=false to disable"`
+	AutoJoinGroup         bool `long:"auto-join-group" default:"true" help:"Automatically join an active group whose configured default directory matches the normalized launch directory (default: config session.auto_join_group, see 'tclaude config get', then true). Solo-only flags (--label, --session-id, --permission-profile, --wait-for-rate-limit, --global, --send-keys) keep a launch solo; passing this flag explicitly with one is an error. Pass --auto-join-group=false to stay solo"`
 	AutoJoinOrCreateGroup bool `long:"auto-join-or-create-group" help:"When directory auto-join finds no group, create one for the normalized launch directory and join it (default: config session.auto_join_or_create_group, then false)"`
 	NoDaemon              bool `long:"no-daemon" help:"Start a solo session without agentd-backed group discovery or agent features; useful for non-interactive launches when agentd is unavailable"`
 
@@ -356,7 +356,7 @@ type NewParams struct {
 	Worktree            string `long:"worktree" optional:"true" help:"Create or reuse this git worktree branch for a group-joined launch"`
 	WorktreeBase        string `long:"worktree-base" optional:"true" help:"Base branch for a newly-created --worktree"`
 	WorktreeRepo        string `long:"worktree-repo" optional:"true" help:"Repository in which to create --worktree when it differs from the launch directory"`
-	InitialMessage      string `long:"initial-message" optional:"true" help:"Task brief delivered to a group-joined agent's inbox"`
+	InitialMessage      string `long:"initial-message" optional:"true" help:"Task brief for a group-joined agent, delivered with its welcome (the dashboard spawn dialog's initial message). Refused on a launch that stays solo"`
 	File                string `long:"file" optional:"true" help:"Read --initial-message from this file ('-' reads stdin)"`
 	ReplyTo             string `long:"reply-to" optional:"true" help:"Recipient for replies to the group-joined agent's startup brief"`
 	SpawnTimeout        string `long:"timeout" optional:"true" help:"How long to wait for a group-joined agent to register (default 30s, max 5m)"`
@@ -376,7 +376,7 @@ type NewParams struct {
 	// (JOH-205); a direct human `session new` leaves it empty and types
 	// their own first message. Ignored by a harness that reports its conv-id
 	// at launch (Claude Code) and on a --resume. See codexSpawner.BuildCommand.
-	InitialPrompt string `long:"initial-prompt" optional:"true" help:"First-turn prompt the harness submits itself at launch (its positional [prompt]). Daemon spawns set it automatically (Claude Code: the agent welcome; Codex: a conv-id seed)"`
+	InitialPrompt string `long:"initial-prompt" optional:"true" help:"First-turn prompt the harness submits itself at launch (its positional [prompt]). When this launch joins a group it becomes the agent's startup brief instead, like -i (pass only one of the two). Daemon spawns set it automatically (Claude Code: the agent welcome; Codex: a conv-id seed)"`
 
 	// SessionID pins the conversation id for a FRESH launch of a harness that
 	// accepts a preset id — Claude Code (`claude --session-id <uuid>`) and
