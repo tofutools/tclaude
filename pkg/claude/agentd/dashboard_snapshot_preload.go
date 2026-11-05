@@ -181,7 +181,7 @@ func snapshotNotifyFilter(groups []*db.AgentGroup, membersByGroup map[int64][]*d
 // Collect the full conv set the snapshot will render — group members ∪
 // owners ∪ grant/override holders ∪ active agents ∪ sudo holders — then
 // batch-load every per-conv table once (TCL-368/TCL-367). rc.viewFor(convID)
-// returns a memoized row bundle so the member loop, addAgent and the owners
+// returns a memoized row bundle so the member loop, agents.add and the owners
 // pass share ONE computation instead of ~13 point queries each, and the
 // location resolves from the batch without a per-poll .jsonl rescan.
 func collectSnapshotConvIDs(span *perfSpan, p snapshotPreload, rows snapshotGroupRows) []string {
