@@ -645,7 +645,7 @@ func templatesInstantiateCmd() *cobra.Command {
 }
 
 // instantiateAgentResult / instantiateResponse mirror the daemon's
-// instantiate response (see agentd/templates.go).
+// instantiate response (see agentd/templates_instantiate.go).
 type instantiateAgentResult struct {
 	Name         string   `json:"name"`
 	FinalName    string   `json:"final_name"`
