@@ -1160,6 +1160,12 @@ func (req *spawnRequest) resolveHarnessModes() *spawnFailure {
 	if tgErr != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_tools", tgErr.Error()}
 	}
+	if h.Name == harness.OpenCodeName {
+		// Said on every OpenCode launch, so an agent that never delegates is
+		// not a mystery: the session policy always denies the task tool.
+		resolvedLaunch.Notes = append(resolvedLaunch.Notes,
+			harness.OpenCodeSubagentsOffNote)
+	}
 	// Both axes are final here (profile overlay, harness default, caller
 	// narrowing), which is the only point where "autonomous but unconfined" is
 	// a true statement about the launch that is about to happen. Warn, don't

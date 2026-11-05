@@ -179,7 +179,7 @@ type spawnParams struct {
 	// --ask-for-approval <policy>`. See JOH-200.
 	ApprovalPolicy string
 	// ToolGovernance is OpenCode's resolved uniform action for the
-	// bash/glob/grep/lsp/task/skill block. It forwards as --tools.
+	// bash/glob/grep/lsp/skill block. It forwards as --tools.
 	ToolGovernance string
 	// AutoReview opts the spawn into the harness's guardian subagent (Codex's
 	// `-c approvals_reviewer=auto_review` — auto-decides approval prompts in
