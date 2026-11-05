@@ -22,7 +22,7 @@
 // item kind slots in by adding one SECTIONS entry.
 //
 // Data rides the 2s poll: the daemon carries the profile / template / role
-// registries on the snapshot (dashboard_snapshot.go), so renderDock() publishes
+// registries on the snapshot (dashboard_snapshot_collect.go), so renderDock() publishes
 // lastSnapshot into the keyed Preact island — a manager edit shows up on the
 // next tick, and selections/scroll survive the render. The shell (#agent-dock)
 // + the edge toggle are STATIC markup in dashboard.html; only #dock-body's

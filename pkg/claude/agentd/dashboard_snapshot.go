@@ -208,207 +208,29 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Agents, out.Ungrouped = finishSnapshotRoster(agents, out.Permissions, sudoByAgent)
 	span.mark("assemble")
 
-	// The collectors below still read these as locals; S3 passes p and prs
-	// into its steps and the bindings go away.
-	groups, cfg, sandboxProfiles := p.groups, p.cfg, p.sandboxProfiles
-	authoredOpenPRs, trackedPRAuthors, localPRs := prs.authoredOpenPRs, prs.trackedPRAuthors, prs.localPRs
-	freshPRStates, prChecks, prReviews := prs.freshPRStates, prs.prChecks, prs.prReviews
-
 	// The retired / conversations / replaced lists are no longer embedded in
 	// the snapshot — the dashboard fetches them from their own paginated
 	// endpoints (GET /api/retired, /api/conversations, /api/replaced). The
 	// snapshot still guards the roster using actor state carried by the existing
 	// AgentsByConv row-cache batch above.
-	var (
-		pending          []dashboardPending
-		cron             []dashboardCronJob
-		exportJobsActive int
-		links            []dashboardLink
-		usage            dashboardUsage
-		hasRealCost      bool
-		costErr          error
-		templates        []templateJSON
-		profiles         []spawnProfileJSON
-		defaultProfile   *db.SpawnProfile
-		roles            []roleJSON
-		savedPrompts     []db.SavedPrompt
-		queuedSpawns     []queuedSpawnJSON
-		capacityQueue    *spawnQueueListJSON
-		messages         []dashboardHumanMessage
-		messagesUnread   int
-		plugins          []dashboardPlugin
-		pluginsWarn      int
-		pluginsErr       error
-		usagePhases      []perfPhase
-		openCodeActivity bool
-	)
-	// These collectors do not depend on each other. Most are one or two small
-	// SQLite reads; serial execution made their fixed per-query overhead add up
-	// to >10 ms even on tiny rosters.
-	collectorPhases := runSnapshotNamedLoads(
-		snapshotNamedLoad{"pending", func() { pending = collectPendingSnapshot(aliveSessions, groupNames) }},
-		snapshotNamedLoad{"cron", func() { cron = collectCronSnapshot() }},
-		snapshotNamedLoad{"export_jobs", func() { exportJobsActive, _ = db.CountActiveExportJobs() }},
-		snapshotNamedLoad{"links", func() { links = collectLinksSnapshot(groupNames) }},
-		snapshotNamedLoad{"usage", func() {
-			showWhatIf := cfg != nil && cfg.Cost != nil && cfg.Cost.ShowOnSubscription
-			usage, hasRealCost, usagePhases, costErr = collectUsageSnapshot(cfg.ResolvedUsageIdleTimeout(), showWhatIf, cfg)
-		}},
-		snapshotNamedLoad{"opencode_usage_activity", func() {
-			openCodeActivity, _ = db.HasOpenCodeUsageActivitySince(time.Now().Add(-db.OpenCodeUsageActivityRetention))
-		}},
-		snapshotNamedLoad{"templates", func() { templates = collectTemplatesSnapshot() }},
-		snapshotNamedLoad{"profiles", func() { profiles = collectProfilesSnapshot() }},
-		snapshotNamedLoad{"default_profile", func() { defaultProfile = globalDefaultProfile() }},
-		snapshotNamedLoad{"roles", func() { roles = collectRolesSnapshot() }},
-		snapshotNamedLoad{"saved_prompts", func() {
-			if savedPrompts, _ = db.ListSavedPrompts(); savedPrompts == nil {
-				savedPrompts = []db.SavedPrompt{}
-			}
-		}},
-		snapshotNamedLoad{"queued_spawns", func() { queuedSpawns = collectQueuedSpawnsSnapshot() }},
-		snapshotNamedLoad{"capacity_queue", func() { capacityQueue = collectCapacityQueueSnapshot() }},
-		snapshotNamedLoad{"messages", func() { messages, messagesUnread = buildHumanMessagesSnapshot() }},
-		snapshotNamedLoad{"plugins", func() { plugins, pluginsWarn, pluginsErr = collectPluginsSnapshot() }},
-	)
-	for i := range collectorPhases {
-		if collectorPhases[i].Name == "usage" {
-			for j := range collectorPhases[i].Children {
-				if collectorPhases[i].Children[j].Name == "run" {
-					collectorPhases[i].Children[j].Children = usagePhases
-					break
-				}
-			}
-			break
-		}
-	}
-	span.addChildren("collectors", collectorPhases...)
-	out.Pending = pending
-	out.Cron = cron
-	// Badge-only: the Jobs tab's row window comes from /api/jobs, not the
-	// snapshot. A count read error degrades to 0 (no badge), never a failed poll.
-	out.ExportJobsActive = exportJobsActive
-	out.Links = links
-	out.Usage = usage
-	out.AuthoredOpenPRs = associateAuthoredOpenPRs(
-		withAuthoredPRReviews(withoutArchivedPRs(unionLocallyKnownOpenPRs(
-			reconcileAuthoredOpenPRs(authoredOpenPRs, freshPRStates, prChecks, time.Now()),
-			localPRs,
-			freshPRStates,
-			prChecks,
-		)), prReviews),
-		out.Agents,
-	)
-	out.AuthoredOpenMRs = authoredOpenMRsSnapshot(cfg, out.Agents)
-	for _, view := range trackedPRAuthors {
-		out.TrackedPRAuthors = append(out.TrackedPRAuthors, associateAuthoredOpenPRs(
-			withAuthoredPRReviews(withoutArchivedPRs(
-				reconcileAuthoredOpenPRs(view, freshPRStates, prChecks, time.Now())), prReviews),
-			out.Agents,
-		))
-	}
-	// Costs-tab visibility: show when there is real pay-per-token spend to
-	// display, OR a subscription account has opted into the WHAT-IF view
-	// (cost.show_on_subscription). A subscription-only account with the opt-in
-	// off hides the tab — it would only show an empty chart. The opt-in also
-	// reveals per-agent hypothetical badges. /api/costs always selects real
-	// versus WHAT-IF per row and reports kind metadata; the front-end renders a
-	// warning whenever hypothetical values contribute. A DB error
-	// degrades to "no real cost" (the opt-in still governs), matching how the
-	// cost figures themselves degrade to 0.
-	if costErr != nil {
-		slog.Debug("snapshot: cost visibility read failed; treating as no real cost", "error", costErr)
-	}
-	showOnSub := cfg != nil && cfg.Cost != nil && cfg.Cost.ShowOnSubscription
-	out.CostTabVisible = hasRealCost || showOnSub
-	out.CostTabWhatIf = showOnSub
-	out.BrokerRefusalsTotal, out.BrokerRefusalsUnplaceable = brokerRefusals.counts()
-	out.UsageTabVisible = usage.historyAvailable || openCodeActivity
-	stewardState := permissionsState{
-		Defaults:  out.Permissions.Defaults,
-		Grants:    out.Permissions.Grants,
-		Overrides: out.Permissions.Overrides,
-	}
-	out.StewardElevated = stewardElevations(cfg, stewardState)
-	out.StewardAccess = stewardAccessView(cfg, stewardState)
-	out.StewardRoster = stewardRosterView()
-	if len(out.StewardRoster) > 0 && out.StewardRoster[0].Seat == db.StewardSeatActive {
-		out.StewardActive = out.StewardRoster[0].AgentID
-	}
-	source := newKnowledgeSourceView(cfg)
-	out.KnowledgeSource = &source
-	out.CompanionCues = activeCompanionCues()
+	c := runSnapshotCollectors(span, p.cfg, aliveSessions, groupNames)
+	attachSnapshotCollected(&out, c, p)
+	attachSnapshotPRLists(&out, prs, p.cfg)
+	attachSnapshotLiveState(&out, p.cfg)
 	// The origins are the pages' keys: the local dashboard only, never a
 	// peer's snapshot, restricted or not.
 	if !isPeerSnapshot(r) {
 		out.LivePages = livePagesSnapshotFor(r)
-		out.GroupResources = groupResourcesSnapshot(groups, aliveSessions)
+		out.GroupResources = groupResourcesSnapshot(p.groups, aliveSessions)
 	}
-	out.Templates = templates
-	out.Profiles = profiles
-	var httpProxyNames []string
-	if cfg != nil && cfg.Agent != nil {
-		for name := range cfg.Agent.HTTPProxies {
-			httpProxyNames = append(httpProxyNames, name)
-		}
-	}
-	out.Permissions.ScopeDimOptions = scopeDimOptionsSnapshot(
-		groups, profiles, sandboxProfiles,
-		cfg.ResolvedLinearProxy().AllowedTeams, cfg.ResolvedAWBProxy().AllowedWorkspaces, httpProxyNames)
-	if defaultProfile != nil {
-		out.SpawnProfileDefault = defaultProfile.Name
-	}
-	out.Roles = roles
-	out.SavedPrompts = savedPrompts
-	out.QueuedSpawns = queuedSpawns
-	out.CapacityQueue = capacityQueue
-	out.Messages, out.MessagesUnread = messages, messagesUnread
-	out.AccessRequests = approvals.dashboardSnapshot()
-	// Only the actionable (pending) ones drive the blink/banner/badge — the
-	// list also carries recently-handled history, which must not count.
-	out.AccessRequestsPending = approvals.pendingCount()
-	out.Plugins, out.PluginsWarn = plugins, pluginsWarn
-	if pluginsErr != nil {
-		out.PluginsError = pluginsErr.Error()
-	}
-	out.PluginsCatalog = pluginCatalog()
-	// Plugins-tab visibility mirrors the Costs-tab rule: show it when there's
-	// something to manage (≥1 installed plugin), when plugins.json is broken
-	// (so the human can see + fix the error), or when they've opted to always
-	// keep it (config dashboard.always_show_plugins_tab — the escape hatch to
-	// the install-from-catalog UI). Otherwise hide the empty tab.
-	out.PluginsTabVisible = len(out.Plugins) > 0 || out.PluginsError != "" || cfg.ShowPluginsTabAlways()
 
 	// Display-only cost compensation, applied as the final step over the
 	// fully-assembled payload (cfg was loaded once at the top). The DB
 	// rows feeding these figures stay raw — see config.CostConfig.
-	applyCostDisplayFactor(&out, cfg)
+	applyCostDisplayFactor(&out, p.cfg)
 	span.mark("collectors")
 
-	// The large registries below change only after an explicit management
-	// action (or a binary upgrade for the built-in registries). Hash them into
-	// the dynamic snapshot and omit their contents when the browser proves it
-	// already has this exact version. We still collect them before hashing so a
-	// mutation is visible on the very next 2-second tick.
-	out.StaticVersion = snapshotStaticVersion(out)
-	if r.URL.Query().Get("static_version") == out.StaticVersion {
-		out.StaticUnchanged = true
-		out.Slugs = nil
-		out.Templates = nil
-		out.Profiles = nil
-		out.Roles = nil
-		out.SavedPrompts = nil
-		out.PluginsCatalog = nil
-		// Page JS comes from the viewing node and this snapshot may go to a peer's
-		// older page, which restores only the fields above. A page that restores
-		// these too says so.
-		if r.URL.Query().Get("static_catalogs") == "1" {
-			out.Harnesses = nil
-			out.SandboxImpl = dashboardSandboxImpl{}
-			out.Permissions.ScopeDimOptions = nil
-		}
-	}
-
+	elideUnchangedStatics(&out, r)
 	writeJSON(w, http.StatusOK, out)
 }
 
