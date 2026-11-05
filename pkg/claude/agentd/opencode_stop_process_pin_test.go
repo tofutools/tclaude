@@ -3,10 +3,8 @@ package agentd
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -20,11 +18,12 @@ import (
 )
 
 // These pin stopOpenCodeProcess's three teardown branches by their end state:
-// a server this daemon started directly (graceful, and one that ignores the
-// interrupt and has a child), a server held in a managed tmux session, and a
-// recovered PID proven to be ours (killed directly, or through its tmux pane).
-// Every branch leaves no registered process. The resource-cgroup reap has no
-// seam here; KillResourceCgroupMembers has its own test.
+// a server this daemon started directly, a server held in a managed tmux
+// session, and a recovered PID proven to be ours (killed directly, or through
+// its tmux pane). Every branch leaves no registered process. The Linux-only
+// pins (an escaped child, the Unix control socket) are in the _linux file.
+// The resource-cgroup reap has no seam here; KillResourceCgroupMembers has its
+// own test.
 
 // stopPinTmux answers each tmux command through reply and records it.
 type stopPinTmux struct {
@@ -85,6 +84,19 @@ func reapedSleeper(t *testing.T) int {
 	return cmd.Process.Pid
 }
 
+// killOnCleanup is the safety net for a regressed stop: whatever the test
+// started is killed even if the stop under test left it running.
+func killOnCleanup(t *testing.T, pids ...int) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, pid := range pids {
+			if process, err := os.FindProcess(pid); err == nil {
+				_ = process.Kill()
+			}
+		}
+	})
+}
+
 func requirePython(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("python3"); err != nil {
@@ -97,54 +109,12 @@ func TestStopOpenCodeProcess_ADirectServerIsStoppedAndDeregistered(t *testing.T)
 	runtime, authority := openCodeProcessPin(t, healthyOpenCodeScript)
 	process, err := startOpenCodeProcessWithAuthority(&runtime, nil, authority)
 	require.NoError(t, err)
+	killOnCleanup(t, runtime.PID)
 
 	stopOpenCodeProcess(runtime, process)
 
 	eventuallyDead(t, runtime.PID, "the server exited")
 	assert.Nil(t, registeredOpenCodeProcess(runtime.SessionID), "the process is deregistered")
-}
-
-// stubbornOpenCodeScript serves health like healthyOpenCodeScript, but ignores
-// the interrupt and keeps a child in its own session (outside the server's
-// process group, as an escaped descendant would be), whose PID it writes to
-// the file named by PIN_CHILD_FILE.
-const stubbornOpenCodeScript = `#!/bin/sh
-exec python3 -c '
-import http.server, os, signal, subprocess, sys
-signal.signal(signal.SIGINT, signal.SIG_IGN)
-child = subprocess.Popen(["sleep", "60"], start_new_session=True)
-open(os.environ["PIN_CHILD_FILE"], "w").write(str(child.pid))
-port = int(sys.argv[sys.argv.index("--port") + 1])
-class H(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        body = b"{\"healthy\":true}"
-        self.send_response(200)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-    def log_message(self, *a):
-        pass
-http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
-' "$@"
-`
-
-func TestStopOpenCodeProcess_AServerIgnoringInterruptIsKilledWithItsChild(t *testing.T) {
-	requirePython(t)
-	childFile := filepath.Join(t.TempDir(), "child.pid")
-	t.Setenv("PIN_CHILD_FILE", childFile)
-	runtime, authority := openCodeProcessPin(t, stubbornOpenCodeScript)
-	process, err := startOpenCodeProcessWithAuthority(&runtime, nil, authority)
-	require.NoError(t, err)
-	raw, err := os.ReadFile(childFile)
-	require.NoError(t, err)
-	child, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	require.NoError(t, err)
-
-	stopOpenCodeProcess(runtime, process)
-
-	eventuallyDead(t, runtime.PID, "the server that ignored the interrupt was killed")
-	eventuallyDead(t, child, "the escaped child recorded before the interrupt was killed too")
-	assert.Nil(t, registeredOpenCodeProcess(runtime.SessionID))
 }
 
 func TestStopOpenCodeProcess_ATmuxHeldServerIsKilledThroughItsSession(t *testing.T) {
