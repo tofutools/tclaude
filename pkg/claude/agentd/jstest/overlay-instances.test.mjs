@@ -295,16 +295,16 @@ async function dragBar(harness, mounted, id, from, to, during = () => {}) {
   await harness.act(() => bar.dispatchEvent(event('pointerup', to)));
 }
 
-test('a window torn out of the split floats where it is let go, even over the cell it left', async (t) => {
+test('a window torn out of the split floats where it is let go off a target, even in the cell it left', async (t) => {
   const { harness, overlay, prefs, mounted } = await setup(t, PAIR);
   const frame = (id) => mounted.container.querySelector(`.w-${id}`);
   assert.ok(frame('a').classList.contains('snapped'), 'a starts in the left cell');
   let previewed = false;
-  await dragBar(harness, mounted, 'a', { x: 100, y: 10 }, { x: 300, y: 400 }, () => {
+  await dragBar(harness, mounted, 'a', { x: 100, y: 10 }, { x: 300, y: 700 }, () => {
     previewed = frame('a').classList.contains('overlay-window-floating');
   });
   assert.ok(previewed, 'while held, it shows that it will float');
-  assert.equal(frame('a').classList.contains('snapped'), false, 'let go inside its old cell, it floats');
+  assert.equal(frame('a').classList.contains('snapped'), false, 'let go in its old cell but off its box, it floats');
   assert.equal(frame('a').classList.contains('overlay-window-floating'), false, 'and the preview ends with the drag');
   assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), { ...PAIR, a: { gap: true } }, 'its cell stays empty');
   assert.ok(frame('b').classList.contains('snapped'), 'b keeps its cell');
@@ -356,13 +356,6 @@ test('no new window takes the id of one on the dock, whose cell waits for it', a
   assert.ok(!ids().includes('a'), `tab a torn out takes another id: ${ids()}`);
   await harness.act(() => instances.openOverlayWindow({ id: 'x', kind: 'k', label: 'X' }));
   assert.ok(ids().includes('a'), 'x comes back as window a, to its cell');
-});
-
-test('a tear-off let go at the room\'s edge, still over the cell it left, floats rather than snapping alone', async (t) => {
-  const { harness, overlay, prefs, mounted } = await setup(t, PAIR);
-  await dragBar(harness, mounted, 'a', { x: 100, y: 10 }, { x: 10, y: 400 });
-  assert.equal(mounted.container.querySelector('.w-a').classList.contains('snapped'), false);
-  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), { ...PAIR, a: { gap: true } });
 });
 
 test('a floating window dropped on an empty cell\'s box later takes the cell', async (t) => {
@@ -627,4 +620,52 @@ test('a lone snap beside another window snapped alone asks nothing, rather than 
   await dragBar(s.harness, s.mounted, 'b', { x: 400, y: 210 }, { x: 1, y: 60 });
   assert.ok(s.snapped('b'), 'b snapped to the corner');
   assert.deepEqual(s.cards(), [], 'a has the left half');
+});
+
+// Stateless drop targets: a window dragged out of the split leaves the layout
+// for the drag, and its targets are the layout's without it, the cell it left
+// included. Let go on a target, the target applies, its own old spot too.
+const targetsShown = (held) => held.all('.overlay-snap-targets [data-snap-gap], .overlay-snap-targets [data-snap-window], .overlay-snap-edge')
+  .map((node) => [node.dataset.snapGap ?? '', node.dataset.snapWindow ?? '', node.dataset.snapSide ?? '', node.dataset.snapZone ?? '',
+    node.style.left, node.style.top, node.style.width, node.style.height].join('|')).sort();
+
+test('a window torn out of the split sees the targets of the layout without it, its old cell\'s box included', async (t) => {
+  const { harness, overlay, prefs, mounted } = await setup(t, PAIR);
+  const out = await hold(harness, mounted, 'a', { x: 100, y: 10 });
+  await out.move({ x: 300, y: 300 });
+  await out.move({ x: 600, y: 300 });
+  assert.equal(out.all('.overlay-snap-target.gap').length, 1, 'the cell it left has its box');
+  assert.equal(out.all('.overlay-snap-target[data-snap-window="a"]').length, 0, 'and it has no markers of its own');
+  const torn = targetsShown(out);
+  await out.up({ x: 600, y: 300 });
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), { ...PAIR, a: { gap: true } }, 'let go off a target, it floats');
+  const floating = await hold(harness, mounted, 'c', { x: 20, y: 5 });
+  await floating.move({ x: 600, y: 300 });
+  assert.deepEqual(torn, targetsShown(floating), 'the same targets a floating window sees over that layout');
+  await floating.up({ x: 600, y: 300 });
+});
+
+test('a window torn out of the split and let go on its old cell\'s box goes back into it', async (t) => {
+  const { harness, overlay, prefs, mounted } = await setup(t, PAIR);
+  const held = await hold(harness, mounted, 'a', { x: 100, y: 10 });
+  await held.move({ x: 300, y: 300 });
+  const box = held.centre('.overlay-snap-target.gap');
+  await held.move(box);
+  assert.deepEqual(held.hot(), ['overlay-snap-target gap hot']);
+  assert.ok(held.guide(), 'the fill shows');
+  await held.up(box);
+  assert.ok(snappedIn(mounted, 'a'), 'it is back in its cell');
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), PAIR);
+});
+
+test('a window torn out of the split and let go on the room\'s edge over its old cell snaps there', async (t) => {
+  const { harness, overlay, prefs, mounted } = await setup(t, PAIR);
+  const held = await hold(harness, mounted, 'a', { x: 100, y: 10 });
+  await held.move({ x: 300, y: 300 });
+  const strip = held.centre('.overlay-snap-edge[data-snap-zone="left"]');
+  await held.move(strip);
+  assert.ok(held.guide(), 'the snap shows');
+  await held.up(strip);
+  assert.ok(snappedIn(mounted, 'a'));
+  assert.deepEqual(JSON.parse(prefs.getItem(overlay.OVERLAY_SPLIT_PREF)), PAIR, 'into the cell it left');
 });

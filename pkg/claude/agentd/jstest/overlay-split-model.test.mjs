@@ -438,20 +438,19 @@ test('the same split, however it was reached, offers the same drops', async (t) 
   assert.deepEqual(dropsOver(m, halves[1]), leftDrops);
 });
 
-test('a window torn off floats where it left, even where its cell joined an empty one', async (t) => {
+test('a window torn off is dropped like any other, even where its cell joined an empty one', async (t) => {
   const { dropTree, withoutWindow } = await model(t);
   const saved = { x: 0.5, y: 0.5, cells: [{ id: 'a' }, { id: 'b' }, { id: 'c' }, gap] };
   const torn = withoutWindow(saved, 'b');
   assert.deepEqual(torn, { axis: 'x', at: 0.5, a: pair('y', 'a', 'c'), b: gap }, 'b\u2019s quarter and the empty one are one half now');
-  const vacated = { x: 500, y: 100, w: 500, h: 400 };
   const here = new Set(['a', 'c']);
-  assert.deepEqual(dropTree(torn, room, { x: 520, y: 150 }, 'b', { here, alive: here, vacated }), { float: true });
-  assert.deepEqual(dropTree(torn, room, { x: 750, y: 700 }, 'b', { here, alive: here, vacated }).tree.cells, [{ id: 'a' }, gap, { id: 'c' }, { id: 'b' }], 'below it, the rest of the half takes it');
+  assert.deepEqual(dropTree(torn, room, { x: 520, y: 150 }, 'b', { here, alive: here }).tree.cells, [{ id: 'a' }, { id: 'b' }, { id: 'c' }, gap], 'where it was, it goes back');
+  assert.deepEqual(dropTree(torn, room, { x: 750, y: 700 }, 'b', { here, alive: here }).tree.cells, [{ id: 'a' }, gap, { id: 'c' }, { id: 'b' }], 'below it, the rest of the half takes it');
 });
 
 // Explicit drop targets (tcl-7uk9l6): a box in each empty cell, markers on the
 // free edges of tiled windows, and only a pointer over one counts.
-test('targets: a box centred in each empty cell, none in a cell held for a window away or the one just left', async (t) => {
+test('targets: a box centred in each empty cell, none in a cell held for a window away', async (t) => {
   const { dropTargets, gapTarget, GAP_TARGET } = await model(t);
   const tree = { x: 0.5, y: 0.5, cells: [{ id: 'a' }, { gap: true }, { gap: true, held: 'z' }, { gap: true }] };
   const all = dropTargets(tree, AREA, 'c', { here: new Set(['a']) });
@@ -459,8 +458,6 @@ test('targets: a box centred in each empty cell, none in a cell held for a windo
   assert.deepEqual(all.gaps[0].rect, { x: 1200 - GAP_TARGET.w / 2, y: 240 - GAP_TARGET.h / 2, w: GAP_TARGET.w, h: GAP_TARGET.h });
   const held = dropTargets(tree, AREA, 'c', { here: new Set(['a']), alive: new Set(['z']) });
   assert.deepEqual(held.gaps.map(({ gap }) => gap.path), [[1], [3]], 'held for a window that is away');
-  const left = dropTargets(tree, AREA, 'c', { here: new Set(['a']), vacated: { x: 800, y: 440, w: 800, h: 400 } });
-  assert.deepEqual(left.gaps.map(({ gap }) => gap.path), [[1], [2]], 'the cell the window was torn out of floats it');
   assert.deepEqual(gapTarget({ x: 0, y: 0, w: 40, h: 30 }), { x: 4, y: 4, w: 32, h: 22 }, 'a box stays inside a small cell');
 });
 
@@ -515,7 +512,7 @@ test('targets: a tear-off that merges into an empty neighbour leaves that space 
   const { dropTargets, withoutWindow } = await model(t);
   const quadWithGap = { x: 0.5, y: 0.5, cells: [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { gap: true }] };
   const torn = withoutWindow(quadWithGap, 'b');
-  const { gaps } = dropTargets(torn, AREA, 'b', { here: new Set(['a', 'c']), vacated: { x: 800, y: 40, w: 800, h: 400 } });
+  const { gaps } = dropTargets(torn, AREA, 'b', { here: new Set(['a', 'c']) });
   assert.equal(gaps.length, 1, 'the merged half keeps a box, though it straddles the quarter just left');
 });
 
@@ -627,15 +624,15 @@ test('edge strips: an empty cell has strips of its own', async (t) => {
   assert.ok(edges.some(({ window }) => !window), 'the gap’s side has strips of its own');
 });
 
-test('edge strips: none over the cell the drag tore its window out of, or a cell held for one away', async (t) => {
+test('edge strips: one over the cell the drag tore its window out of, none over a cell held for one away', async (t) => {
   const m = await edgeModels(t);
   const area = edgeRoom(m);
   const zones = m.snapZoneRects(EDGE_VIEWPORT, EDGE_TOP);
   const tree = { axis: 'x', at: 0.5, a: { id: 'a' }, b: { gap: true } };
   const here = new Set(['a']);
-  const vacated = m.splitLayout(tree, area).gaps[0].rect;
-  const torn = m.edgeTargets(tree, area, 'z', { here, alive: here, vacated, zones });
-  assert.ok(torn.length && torn.every(({ rect }) => !meets(rect, vacated)), 'the cell just left floats');
+  const left = m.splitLayout(tree, area).gaps[0].rect;
+  const torn = m.edgeTargets(tree, area, 'z', { here, alive: here, zones });
+  assert.ok(torn.some(({ rect, window }) => !window && meets(rect, left)), 'the cell just left has strips like any empty cell');
   const held = m.edgeTargets(pair('x', 'a', 'b'), area, 'z', { here, alive: new Set(['a', 'b']), zones });
   assert.ok(held.every(({ window }) => window === 'a'), 'b is away: its cell waits for it');
 });
