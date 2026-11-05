@@ -492,6 +492,13 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			importedCleanup()
 		}
 	}()
+	// undo holds what the launch creates from here to the fork (the managed
+	// server's cgroup and runtime, the pre-fork enrollment). Each step is
+	// registered once, when its state exists; a return before the fork commits
+	// undoes them newest first. Registered after the defers above so it runs
+	// before them, as the per-return unwinding it replaces did.
+	undo := &spawnUndo{}
+	defer undo.unwindUnlessCommitted()
 	installHistory := func() *spawnFailure {
 		if p.BundleHistory == nil || importedID != "" {
 			return nil
@@ -568,26 +575,24 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			return nil, &spawnFailure{http.StatusUnprocessableEntity,
 				"unsupported_sandbox_profile_resource_limits", resourceErr.Error()}
 		}
+		resourceStep := undo.add(resourceCleanup)
 
 		if p.BundleHistory != nil {
 			if err = prepareOpenCodeTclaudeLayerState(sandboxSpec); err != nil {
-				resourceCleanup()
 				return nil, &spawnFailure{http.StatusInternalServerError, "history", err.Error()}
 			}
 			spawnHarness, err = openCodeHistoryForAgent(spawnHarness, p.AgentID)
 			if err != nil {
-				resourceCleanup()
 				return nil, &spawnFailure{http.StatusInternalServerError, "history", err.Error()}
 			}
 			if fail := installHistory(); fail != nil {
-				resourceCleanup()
 				return nil, fail
 			}
 		}
 		// An offline landing's conversation is in its store now; its server
 		// starts at resume.
 		if p.NoLaunch {
-			resourceCleanup()
+			resourceStep.run()
 		} else {
 			openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
 				label, p.Cwd, p.Name, importedID, permissionJSON,
@@ -596,17 +601,19 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				errors.Is(err, errOpenCodeResourceCgroup) &&
 				degradeManagedServerResourceCgroup(
 					p.EffectiveSandbox, p.SandboxImplementation, p.AllowUnenforcedSandbox, false, err) {
-				resourceCleanup()
+				resourceStep.run()
 				resourceCgroupDir = ""
 				openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
 					label, p.Cwd, p.Name, importedID, permissionJSON,
 					p.SandboxImplementation, sandboxSpec, "")
 			}
 			if err != nil {
-				resourceCleanup()
 				return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 					"failed to start managed OpenCode server: " + err.Error()}
 			}
+			// The running server owns its cgroup now; stopping it is the undo.
+			resourceStep.release()
+			undo.add(func() { _ = stopOpenCodeRuntime(openCodeLaunch.SessionID) })
 			spawnArgs.OpenCodeServerURL = openCodeLaunch.ServerURL
 			spawnArgs.OpenCodeServerPassword = openCodeLaunch.Password
 			spawnArgs.OpenCodeTransport = openCodeLaunch.Transport
@@ -681,7 +688,6 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	}
 	var preConvID string
 	var preMsgID int64
-	var preActorCreated bool
 	// briefingInlined records whether the launch-enrollment prompt baked the
 	// whole briefing inline (short enough to fit) rather than pointing at the
 	// inbox copy. When it did, the inbox copy is inserted already delivered and
@@ -711,29 +717,24 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			// preset and its pane will never start, so anything left behind is
 			// a ghost the operator would have to clear by hand.
 			rollbackSpawnEnrollment(g, preConvID, mid, actorCreated)
-			if openCodeLaunch != nil {
-				_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
-			}
 			return nil, fail
 		}
 		preMsgID = mid
-		preActorCreated = actorCreated
+		enrolledConvID := preConvID
+		undo.add(func() { rollbackSpawnEnrollment(g, enrolledConvID, mid, actorCreated) })
 		spawnArgs.SessionID = preConvID
 		if p.DarwinRouteCapable {
 			resolvedAgentID, resolveErr := db.AgentIDForConv(preConvID)
 			if resolveErr != nil {
-				rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
 				return nil, &spawnFailure{http.StatusInternalServerError, "darwin_route_launch",
 					"resolve Darwin route agent identity: " + resolveErr.Error()}
 			}
 			if p.DarwinRouteAgentID != "" && p.DarwinRouteAgentID != resolvedAgentID {
-				rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
 				return nil, &spawnFailure{http.StatusConflict, "darwin_route_launch",
 					"darwin route agent identity does not match conversation owner"}
 			}
 			p.DarwinRouteAgentID = resolvedAgentID
 			if p.DarwinRouteAgentID == "" {
-				rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
 				return nil, &spawnFailure{http.StatusConflict, "darwin_route_launch",
 					"Darwin route-capable launch has no stable agent identity"}
 			}
@@ -798,7 +799,6 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				agentID, _ = db.AgentIDForConv(preConvID)
 			}
 			if agentID == "" {
-				rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
 				return nil, &spawnFailure{http.StatusInternalServerError, "claude_subscription", "could not resolve the agent identity to mark for the Claude subscription"}
 			}
 			mark := func() error { return db.SetAgentClaudeSubscription(agentID, p.ClaudeSubscription.peer) }
@@ -806,16 +806,16 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				mark = func() error { return holdClaudeSubscription(agentID, p.ClaudeSubscription) }
 			}
 			if err := mark(); err != nil {
-				rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
 				return nil, &spawnFailure{http.StatusInternalServerError, "claude_subscription", err.Error()}
 			}
 		}
 		if spawnHarness.UsesAuthoritativeServer() {
 			if err := recordOfflineResumeProfile(preConvID, spawnHarness.Name, p.Cwd); err != nil {
-				rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
 				return nil, &spawnFailure{http.StatusInternalServerError, "history", err.Error()}
 			}
 		}
+		// The landed conversation keeps its enrollment.
+		undo.commit()
 		return landSpawnOffline(p, spawnHarness, preConvID)
 	}
 	groupRoutesEnabled := routeEnabled
@@ -855,7 +855,6 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			agentID = p.AgentID
 		}
 		if agentErr != nil || strings.TrimSpace(agentID) == "" {
-			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
 			return nil, &spawnFailure{http.StatusInternalServerError, "route_authority", "could not resolve route helper identity"}
 		}
 		var routeCredential, routeGeneration string
@@ -866,10 +865,6 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			routeCredential, routeGeneration, credentialErr = mintRouteHelperCredential(agentID, preConvID)
 		}
 		if credentialErr != nil {
-			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
-			if openCodeLaunch != nil {
-				_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
-			}
 			return nil, &spawnFailure{http.StatusInternalServerError, "route_authority", "could not mint route helper credential: " + credentialErr.Error()}
 		}
 		spawnArgs.RouteHelperAgentID = agentID
@@ -899,12 +894,6 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// caught here rather than launched into. Only proof-verified spawns carry
 	// DirWriteProofDirs, so human / exempt / no-override spawns are untouched.
 	if fail := reassertDirWriteProof(p.DirWriteProofDirs); fail != nil {
-		if launchEnroll {
-			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
-		}
-		if openCodeLaunch != nil {
-			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
-		}
 		return nil, fail
 	}
 
@@ -927,18 +916,12 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	pendingHeld := reservedPending || p.pendingSpawnLabel != ""
 	if reservedPending {
 		if g == nil {
-			if openCodeLaunch != nil {
-				_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
-			}
 			return nil, &spawnFailure{http.StatusInternalServerError, "spawn", "ungrouped asynchronous spawn is not supported"}
 		}
 		if p.AgentID == "" {
 			p.AgentID = db.NewAgentID()
 		}
 		if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, p, label)); err != nil {
-			if openCodeLaunch != nil {
-				_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
-			}
 			return nil, &spawnFailure{http.StatusInternalServerError, "io",
 				"failed to reserve pending spawn " + label + ": " + err.Error()}
 		}
@@ -982,14 +965,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 					"label", label, "error", deleteErr)
 			}
 		}
-		if launchEnroll {
-			// The enrollment ran before the fork; roll it back so a failed
-			// launch doesn't strand a group member + orphan briefing.
-			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
-		}
-		if openCodeLaunch != nil {
-			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
-		}
+		// The enrollment ran before the fork and the managed server may be up;
+		// a confirmed failure undoes them even after the fork has committed.
+		undo.unwind()
 		// A confirmed failure can come after the fork, when the deferred check
 		// no longer runs.
 		if discardPrivateOpenCodeState != nil {
@@ -1043,6 +1021,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	if err := launch(spawnArgs); err != nil {
 		return launchFailed(err)
 	}
+	// Forked: the launched agent owns what undo holds. Only a confirmed
+	// failure (launchFailed) still undoes it.
+	undo.commit()
 	importedLaunched = true
 	managedStarted = true
 	timing("session_wrapper_dispatched", "label", label)
