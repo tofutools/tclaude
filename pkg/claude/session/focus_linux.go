@@ -117,9 +117,7 @@ func isWSL() bool {
 // exercised even when the test host IS WSL — yamzz (the human)
 // develops on WSL2, and a test that only runs under CI's
 // ubuntu-latest fails to guard the dev loop where the regression
-// would land first. (Any other isWSL call site here is an
-// internal-to-WSL helper that only runs AFTER the WSL branch is taken,
-// so threading the seam past this entry-point check is unnecessary.)
+// would land first.
 var isWSLFn = isWSL
 
 // focusWTTab tries to focus a Windows Terminal tab by title.

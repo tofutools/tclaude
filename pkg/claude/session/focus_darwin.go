@@ -187,22 +187,6 @@ end tell
 	return err == nil && strings.TrimSpace(string(output)) == "true"
 }
 
-// detectTerminalFromTmux tries to find which terminal is running the current tmux client.
-func detectTerminalFromTmux() string {
-	// Get the tmux client tty
-	cmd := clcommon.TmuxCommand("display-message", "-p", "#{client_tty}")
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	tty := strings.TrimSpace(string(output))
-	if tty == "" {
-		return ""
-	}
-
-	return terminalFromTTY(tty)
-}
-
 // terminalFromTTY finds the terminal app owning a TTY.
 func terminalFromTTY(tty string) string {
 	// Try to find the process owning this tty using lsof
