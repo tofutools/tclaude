@@ -9,7 +9,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -148,7 +147,6 @@ func TestPeerViewInstanceGrantsAndUnrestricted(t *testing.T) {
 	// A route with no peer grant of its own works for unrestricted trust as
 	// for the local operator: the snapshot advertises triggers and their
 	// route answers.
-	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), `"triggers_enabled":true`)

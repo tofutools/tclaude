@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const FIXTURE = JSON.parse(readFileSync(new URL('./process-context-fixture.json', import.meta.url), 'utf8'));
-const ON = { processes_enabled: true };
+const ON = {};
 
 function fakeSource(harness, { status = 'ready', context = FIXTURE } = {}) {
   return {
@@ -39,7 +39,7 @@ test('group header graphs show one glyph per state, loudest first; a quiet group
     <div id="fe"><${mod.GroupProcessGraphs} group=${{ name: 'frontend-squad' }} snapshot=${ON} source=${source} /></div>
     <div id="infra"><${mod.GroupProcessGraphs} group=${{ name: 'infra-crew' }} snapshot=${ON} source=${source} /></div>
     <div id="unknown"><${mod.GroupProcessGraphs} group=${{ name: 'nowhere' }} snapshot=${ON} source=${source} /></div>
-    <div id="off"><${mod.GroupProcessGraphs} group=${{ name: 'frontend-squad' }} snapshot=${{}} source=${source} /></div>
+    <div id="off"><${mod.GroupProcessGraphs} group=${{ name: 'frontend-squad' }} snapshot=${{ peer_view: { level: 'restricted' } }} source=${source} /></div>
   </div>`);
   const graphs = [...mounted.container.querySelectorAll('#fe .gpi-graph')].map((g) => [g.dataset.groupProcesses, g.getAttribute('aria-label'), g.textContent]);
   assert.deepEqual(graphs, [['needs-you', '2 needs you', '2'], ['running', '3 running', '3'], ['planned', '1 planned', '']],
@@ -48,7 +48,7 @@ test('group header graphs show one glyph per state, loudest first; a quiet group
   assert.ok(mounted.container.querySelector('#fe .gpi-graph.gpi-state-waiting svg.gpi-flow'), 'each state is a flow-graph glyph');
   assert.equal(mounted.container.querySelector('#infra').innerHTML, '');
   assert.equal(mounted.container.querySelector('#unknown').innerHTML, '');
-  assert.equal(mounted.container.querySelector('#off').innerHTML, '', 'nothing while processes are off');
+  assert.equal(mounted.container.querySelector('#off').innerHTML, '', 'nothing on a peer that does not offer processes');
 });
 
 test('graphs stay hidden until the context has loaded', async (t) => {

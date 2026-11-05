@@ -188,9 +188,9 @@ on the group; without it the path is dimmed and its tooltip says why.
 
 ## Processes in terminals
 
-With `features.processes` on, a pane whose agent is in a process run shows run
-icons at its top right and on its tab. An icon opens the run's mini-graph, with
-actions to decide, reassign, promote, pause and resume. See
+A pane whose agent is in a process run shows run icons at its top right and on
+its tab. An icon opens the run's mini-graph, with actions to decide, reassign,
+promote, pause and resume. See
 [Processes](processes.md#in-the-dashboard).
 
 ## Dictation

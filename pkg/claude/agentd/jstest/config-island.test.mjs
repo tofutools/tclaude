@@ -320,37 +320,33 @@ test('Config keeps recorded sandbox details default-off with an explicit opt-in'
   await mounted.unmount();
 });
 
-test('Config keeps triggers default-off with an explicit opt-in', async (t) => {
+test('Config drops the graduated processes and triggers flags and keeps the unsigned-workflow policy', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
     harness.importDashboardModule('js/config-state.js'),
     harness.importDashboardModule('js/config-island.js'),
     harness.importDashboardModule('js/config-form-adapter.js'),
   ]);
-  let raw = '{}';
+  const raw = JSON.stringify({
+    features: { processes: true, triggers: false, groups_route_map: true },
+    processes: { refuse_unsigned_imports: true },
+  });
   const state = createConfigState({ activeTab: harness.signals.signal('groups') });
   const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
     fetchImpl: async () => ({ ok: true, json: async () => ({ raw }) }),
   }} />`);
 
   await adapter.loadConfigTab();
-  const checkbox = mounted.container.querySelector('#cfg-feature-triggers');
-  assert.equal(checkbox.checked, false, 'absent key loads as unchecked');
-  assert.equal(adapter.assembleConfig().features?.triggers, undefined,
-    'unchecked default stays omitted');
-
-  raw = JSON.stringify({ features: { triggers: true } });
-  await adapter.loadConfigTab();
-  assert.equal(checkbox.checked, true, 'explicit true loads as checked');
-  assert.equal(adapter.assembleConfig().features.triggers, true,
-    'checked persists the explicit opt-in');
-
-  await harness.act(() => {
-    checkbox.checked = false;
-    harness.fireEvent(checkbox, 'input');
-  });
-  assert.equal(adapter.assembleConfig().features?.triggers, undefined,
-    'unchecking removes the opt-in');
+  assert.equal(mounted.container.querySelector('#cfg-feature-processes'), null, 'no Processes flag');
+  assert.equal(mounted.container.querySelector('#cfg-feature-triggers'), null, 'no Triggers flag');
+  const refuse = mounted.container.querySelector('#cfg-processes-refuse-unsigned');
+  assert.equal(refuse.closest('[data-cfg-panel]')?.dataset.cfgPanel, 'processes', 'the policy lives under Config › Processes');
+  assert.equal(refuse.checked, true);
+  const saved = adapter.assembleConfig();
+  assert.equal(saved.features.processes, undefined, 'the old flag goes on save');
+  assert.equal(saved.features.triggers, undefined, 'the old flag goes on save');
+  assert.equal(saved.features.groups_route_map, true, 'the remaining flags stay');
+  assert.equal(saved.processes.refuse_unsigned_imports, true);
   await mounted.unmount();
 });
 
@@ -864,7 +860,7 @@ test('Config search filters individual settings across panels', async (t) => {
 
   // A matching panel title keeps the whole panel.
   await search('experimental');
-  assert.equal(rowFor('cfg-feature-triggers').hidden, false);
+  assert.equal(rowFor('cfg-feature-groups-route-map').hidden, false);
 
   await search('zzzz-nothing');
   assert.equal(root.querySelector('#cfg-filter-empty').hidden, false);

@@ -5,6 +5,10 @@ const self = { id: 'inst_self', name: 'desk', color: '#58a6ff', local: true };
 const forge = { id: 'inst_forge', name: 'forge', color: '#f0883e', local: false };
 const lab = { id: 'inst_lab', name: 'lab', color: '#39c5cf', local: false };
 const group = (name, extra = {}) => ({ name, members: [], online: 0, ...extra });
+// This node always has Triggers, so the fused view reads its rules; tests
+// about snapshot polling answer that read without recording it.
+const triggersRead = (url) => /\/triggers(\?|$)/.test(url);
+const noTriggers = () => ({ ok: true, status: 200, json: async () => ({ triggers: [] }) });
 
 test('merge names groups group@node, keeps parents per node, and marks stale peers', async (t) => {
   const harness = await createPreactHarness(t);
@@ -86,7 +90,7 @@ test('the merged view polls peers only while shown, renders group@node, and guar
   const snapshot = harness.signals.signal({ groups: [group('ops')], agents: [] });
   const timers = fakeTimers(); const calls = []; const toasts = []; const switched = []; const opened = [];
   const inits = [];
-  const fetchImpl = async (url, init) => { calls.push(url); inits.push(init); return { ok: true, status: 200, json: async () => ({ groups: [group('build')], agents: [], peer_view: { included: ['agents.status'] } }) }; };
+  const fetchImpl = async (url, init) => { if (triggersRead(url)) return noTriggers(); calls.push(url); inits.push(init); return { ok: true, status: 200, json: async () => ({ groups: [group('build')], agents: [], peer_view: { included: ['agents.status'] } }) }; };
   const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${snapshot} fetchImpl=${fetchImpl} timers=${timers} remote="" toast=${(m) => toasts.push(m)} switchNode=${(id) => switched.push(id)} openTerminal=${(o) => opened.push(o)} />`);
   assert.equal(timers.queue.length, 0, 'one node shown: polls nothing');
@@ -142,7 +146,7 @@ test('a peer poll sends the static_version it holds and keeps the registries an 
     { groups: [group('build')], agents: [], static_version: 'v1', roles: [{ name: 'reviewer' }] },
     { groups: [group('build')], agents: [], static_version: 'v1', static_unchanged: true, roles: null },
   ];
-  const fetchImpl = async (url) => { calls.push(url); const body = replies.shift(); return { ok: true, status: 200, json: async () => body }; };
+  const fetchImpl = async (url) => { if (triggersRead(url)) return noTriggers(); calls.push(url); const body = replies.shift(); return { ok: true, status: 200, json: async () => body }; };
   const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${snapshot} fetchImpl=${fetchImpl} timers=${timers} remote="" toast=${() => {}} switchNode=${() => {}} />`);
   await harness.act(() => { state.setFused('all'); });
@@ -228,7 +232,7 @@ test('fused Groups shows each node\'s triggers in its own groups, read from node
   const activeTab = harness.signals.signal('groups');
   const state = stateMod.createFleetState({ activeTab, search: '?nodes=all' });
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }, { instance_id: 'inst_lab', label: 'lab', trusted: true, online: true }] });
-  const snapshot = harness.signals.signal({ groups: [group('ops')], agents: [], triggers_enabled: true });
+  const snapshot = harness.signals.signal({ groups: [group('ops')], agents: [] });
   const rules = {
     self: [{ id: 1, name: 'desk-global', scope: 'global', source: 'pr.opened', enabled: true }],
     forge: [{ id: 1, name: 'forge-ops', scope: 'group', group: 'ops', source: 'pr.merged', enabled: true }],
@@ -435,8 +439,8 @@ test('fused Groups shows only the ticked nodes; on a peer\'s page that peer is t
   // The page shows forge (?node=): its snapshot is the page's.
   const snapshot = harness.signals.signal({ groups: [group('build')], agents: [] });
   const timers = fakeTimers(); const proxied = []; const local = [];
-  const fetchImpl = async (url) => { proxied.push(url); return { ok: true, status: 200, json: async () => ({ groups: [], agents: [] }) }; };
-  const localFetch = async (url) => { local.push(url); return { ok: true, status: 200, json: async () => ({ groups: [group('ops')], agents: [] }) }; };
+  const fetchImpl = async (url) => { if (triggersRead(url)) return noTriggers(); proxied.push(url); return { ok: true, status: 200, json: async () => ({ groups: [], agents: [] }) }; };
+  const localFetch = async (url) => { if (triggersRead(url)) return noTriggers(); local.push(url); return { ok: true, status: 200, json: async () => ({ groups: [group('ops')], agents: [] }) }; };
   const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${snapshot} fetchImpl=${fetchImpl} localFetch=${localFetch} timers=${timers} remote="inst_forge" />`);
   assert.equal(timers.queue.length, 1, 'only this node is read: forge is the page, lab is not ticked');
@@ -477,7 +481,7 @@ test('a wide fused view keeps at most four snapshot reads in flight', async (t) 
   const ids = ['a', 'b', 'c', 'd', 'e', 'f'].map((x) => `inst_${x}0000`);
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: ids.map((id) => ({ instance_id: id, label: id.slice(5, 6), trusted: true, online: true })) });
   const timers = fakeTimers(); let open = 0; let peak = 0; const release = [];
-  const fetchImpl = () => { open += 1; peak = Math.max(peak, open); return new Promise((r) => release.push(() => { open -= 1; r({ ok: true, status: 200, json: async () => ({ groups: [], agents: [] }) }); })); };
+  const fetchImpl = (url) => { if (triggersRead(url)) return Promise.resolve(noTriggers()); open += 1; peak = Math.max(peak, open); return new Promise((r) => release.push(() => { open -= 1; r({ ok: true, status: 200, json: async () => ({ groups: [], agents: [] }) }); })); };
   const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${harness.signals.signal({ groups: [], agents: [] })} fetchImpl=${fetchImpl} timers=${timers} remote="" />`);
   const ticks = timers.queue.splice(0);

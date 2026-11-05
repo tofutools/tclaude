@@ -11,6 +11,7 @@ import {
   safeFilename, spawnableHarnesses,
 } from './paf-model.js';
 import { downloadBlob } from './download.js';
+import { processesAvailable } from './feature-availability.js';
 
 const html = htm.bind(h);
 
@@ -76,7 +77,7 @@ function RedactPanel({ actions, source, filename, onDone }) {
   </div>`;
 }
 
-function processesOn() { return dashboardState.snapshot.value?.processes_enabled === true; }
+function processesOn() { return processesAvailable(dashboardState.snapshot.value); }
 
 // AgentExportDialog exports one agent as a PAF (agent ⚙ → export (PAF)…).
 // An export the credential scan flags is refused until the human either
@@ -290,7 +291,7 @@ export function CarriedWorkflows({ workflows, file }) {
   const names = workflows.map((w) => w.root.split('@')[0]);
   return html`<div class="paf-box ui-card ui-inset" id="paf-carried-workflows"><b>Also carries ${names.length === 1 ? 'a workflow' : `${names.length} workflows`}</b>
     <div>${names.join(', ')}. This import stores none of them.</div>
-    ${dashboardState.snapshot.value?.processes_enabled && html`<${WorkflowImportButton} from=${file} id="" label="Review workflows…" className="" />`}</div>`;
+    ${processesOn() && html`<${WorkflowImportButton} from=${file} id="" label="Review workflows…" className="" />`}</div>`;
 }
 
 export function AgentImportPreview({ preview, choices, setChoices, overrides, setOverrides, reveal }) {

@@ -267,20 +267,6 @@ func TestCronSpawnRestartEvidencePreventsDuplicateAndDenialIsNotRetried(t *testi
 	})
 }
 
-func TestCronSpawnFeatureGateLeavesMessageCronAvailable(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
-	spawn := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/cron", map[string]any{
-		"target": "group:alpha", "interval": "1h", "action_kind": "spawn",
-		"spawn_profile": "scanner", "spawn_instruction_template": "scan",
-	})))
-	assert.Equal(t, http.StatusNotFound, spawn.Code)
-	message := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/cron", map[string]any{
-		"target": "group:alpha", "interval": "1h", "body": "still works",
-	})))
-	assert.Equal(t, http.StatusOK, message.Code, message.Body.String())
-}
-
 func TestCronSpawnGlobalPermissionScopesAndForeignGroupAuthority(t *testing.T) {
 	setup := func(t *testing.T, scope string) (*testharness.Flow, int64) {
 		t.Helper()

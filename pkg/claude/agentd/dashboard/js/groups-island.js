@@ -15,6 +15,7 @@ import { GroupsProcessesFocus } from './groups-processes.js';
 import { processContext } from './process-context.js';
 import { ViewMenu, ViewMenuHeading, ViewMenuSep, ViewToggle } from './view-menu.js';
 import { Button, Input } from './ui-components.js';
+import { processesAvailable, triggersAvailable } from './feature-availability.js';
 
 const html = htm.bind(h);
 
@@ -261,7 +262,7 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
   const focus = effectiveGroupsFocus(state);
   const [triggers, setTriggers] = useState([]);
   const current = state.view.value;
-  const triggersEnabled = state.snapshot.value?.triggers_enabled === true;
+  const triggersEnabled = triggersAvailable(state.snapshot.value);
 
   useEffect(() => {
     syncBotAnimations();
@@ -285,7 +286,7 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
 
   // Both lenses read the process context: Processes for its cards, Agents for
   // the G1 header chips and row badges. One fetch per snapshot poll.
-  const processesEnabled = state.snapshot.value?.processes_enabled === true;
+  const processesEnabled = processesAvailable(state.snapshot.value);
   useEffect(() => {
     if (!processesEnabled) return undefined;
     const source = processSource || processContext;
@@ -294,9 +295,9 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
     document.addEventListener('tclaude:snapshot', poll);
     return () => document.removeEventListener('tclaude:snapshot', poll);
   }, [processesEnabled, processSource]);
-  // The Process member column is available only while processes are on
+  // The Process member column is available only where processes are
   // (body.hide-processes, which signals cannot track), so the column menu's
-  // cached options recompute when the feature flips.
+  // cached options recompute when that flips, as on a switch to a peer.
   const processesSeen = useRef(processesEnabled);
   useEffect(() => {
     if (processesSeen.current === processesEnabled) return;

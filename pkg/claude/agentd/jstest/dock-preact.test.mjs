@@ -310,6 +310,8 @@ function memoryPrefs() {
 
 test('Dock search filters cards and sections; the card menu carries the library rows and pins', async (t) => {
   const harness = await createPreactHarness(t);
+  // Processes always has a dock section; give it an empty library.
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => ({ templates: [] }) }));
   const [{ createDockState }, { Dock }] = await Promise.all([
     harness.importDashboardModule('js/dock-state.js'),
     harness.importDashboardModule('js/dock-island.js'),
@@ -395,7 +397,7 @@ test('Dock search filters cards and sections; the card menu carries the library 
   await harness.act(() => harness.fireEvent(search, 'input'));
   await harness.act(() => harness.fireEvent(host.querySelector('details[data-key="profiles"] [data-dock-act="new-item"]'), 'click'));
   await harness.act(() => harness.fireEvent(host.querySelector('details[data-key="profiles"] [data-dock-act="section-menu"]'), 'click'));
-  await harness.act(() => harness.fireEvent(getByRole(host, 'menuitem', { name: 'Export all' }), 'click'));
+  await harness.act(() => harness.fireEvent(getByRole(host.querySelector('details[data-key="profiles"]'), 'menuitem', { name: 'Export all' }), 'click'));
   assert.deepEqual(calls.slice(-2), [['new'], ['export-all']]);
 });
 
@@ -406,7 +408,7 @@ test('Dock draws Processes after the snapshot sections and an afterProcesses sec
     harness.importDashboardModule('js/dock-island.js'),
   ]);
   const state = createDockState();
-  state.publish({ processes_enabled: true, profiles: [] });
+  state.publish({ profiles: [] });
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   host.getBoundingClientRect = () => ({ top: 0, bottom: 800 });
   const last = { ...section([]), key: 'sandbox_profiles', afterProcesses: true };

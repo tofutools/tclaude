@@ -245,7 +245,7 @@ func TestAgentCarriesWorkflows(t *testing.T) {
 	missing := pwfRaw(t, f, http.MethodPost, "/v1/process/import?workflow=nope", file)
 	require.Equal(t, http.StatusUnprocessableEntity, missing.Code, missing.Body.String())
 
-	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{"features":{"processes":true},"processes":{"refuse_unsigned_imports":true}}`), 0o644))
+	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{"processes":{"refuse_unsigned_imports":true}}`), 0o644))
 	view = envelopeReview(t, f, file, "")
 	assert.Contains(t, view.Refused, "without a valid signature", "the policy reads the envelope's signature")
 }
@@ -264,18 +264,9 @@ func TestWorkflowEnvelopeSignaturePassesThePolicy(t *testing.T) {
 	_, err = w.Close(paf.Producer{Name: "test"}, key)
 	require.NoError(t, err)
 
-	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{"features":{"processes":true},"processes":{"refuse_unsigned_imports":true}}`), 0o644))
+	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{"processes":{"refuse_unsigned_imports":true}}`), 0o644))
 	view := envelopeReview(t, f, buf.Bytes(), "")
 	assert.Empty(t, view.Refused)
-}
-
-// With processes off an export cannot carry workflows.
-func TestCarriedWorkflowsNeedProcessesOn(t *testing.T) {
-	f := envelopeFlow(t)
-	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{"features":{"processes":false}}`), 0o644))
-	rec := pwfRaw(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+envelopeReviewer+"&workflow=pwf-ship", nil)
-	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "processes_disabled")
 }
 
 // A group carries its saved processes. Importing the group stores none of them

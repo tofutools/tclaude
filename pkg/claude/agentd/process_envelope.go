@@ -48,16 +48,12 @@ func carriedWorkflowsFromQuery(q url.Values) carriedWorkflows {
 func (c carriedWorkflows) any() bool { return c.Own || len(c.IDs) > 0 }
 
 // loadCarriedWorkflows answers an export's request to carry workflows: the
-// feature must be on and the caller allowed to export them, whatever it holds
+// caller must be allowed to export them, whatever it holds
 // on the agent or group. own lists the exported thing's own template ids. It
 // writes the error itself.
 func loadCarriedWorkflows(w http.ResponseWriter, r *http.Request, c carriedWorkflows, own func() ([]string, error)) ([]pwf.Bundle, bool) {
 	if !c.any() {
 		return nil, true
-	}
-	if !processRoutesEnabled() {
-		writeError(w, http.StatusBadRequest, processDisabledCode, "processes are off here, so an export cannot carry workflows")
-		return nil, false
 	}
 	if _, ok := requirePermission(w, r, PermProcessTemplatesRead); !ok {
 		return nil, false

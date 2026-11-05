@@ -669,7 +669,7 @@ export function buildCommands(snapshot) {
     });
   }
   // Processes is an Automations subtab, so its nav anchor is always hidden and
-  // the loop above skips it; offer it explicitly while the feature is on.
+  // the loop above skips it; offer it explicitly where processes are.
   const processesTab = $$('nav [data-tab="processes"]')[0];
   if (processesTab && !document.body.classList.contains('hide-processes')) {
     cmds.push({
@@ -686,7 +686,7 @@ export function buildCommands(snapshot) {
     keywords: 'search find grep conversation conversations transcript content text history scrolls',
     run: openConversationSearch,
   });
-  // The Groups Both | Agents | Processes focus switch (features.processes only).
+  // The Groups Both | Agents | Processes focus switch (where processes are).
   if (processesTab && !document.body.classList.contains('hide-processes') && featureState('groups')?.setFocus) {
     for (const [focus, plain, arcane, words] of [
       ['both', 'Both', 'Whole party', 'both fused combined agents processes heroes rites'],

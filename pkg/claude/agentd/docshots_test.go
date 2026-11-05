@@ -259,7 +259,6 @@ func seedDocFleet(t *testing.T, f *testharness.Flow) {
 	if err := config.Save(&config.Config{
 		Cost:       &config.CostConfig{ShowOnSubscription: true},
 		Federation: &config.FederationConfig{Name: "dev@box"},
-		Features:   &config.FeaturesConfig{Processes: true},
 	}); err != nil {
 		t.Fatalf("cost config: %v", err)
 	}

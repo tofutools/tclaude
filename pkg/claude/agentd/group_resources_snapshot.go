@@ -38,9 +38,8 @@ type groupResource struct {
 }
 
 // groupResourcesSnapshot lists the resources of every active group. alive is
-// the snapshot's set of live tmux sessions; processes says whether the
-// processes feature is on.
-func groupResourcesSnapshot(groups []*db.AgentGroup, alive map[string]struct{}, processes bool) []groupResource {
+// the snapshot's set of live tmux sessions.
+func groupResourcesSnapshot(groups []*db.AgentGroup, alive map[string]struct{}) []groupResource {
 	active := map[int64]*db.AgentGroup{}
 	for _, g := range groups {
 		if g != nil && !g.IsArchived() {
@@ -52,9 +51,7 @@ func groupResourcesSnapshot(groups []*db.AgentGroup, alive map[string]struct{}, 
 	}
 	out := groupPageResources(active)
 	out = append(out, groupBoardResources(active)...)
-	if processes {
-		out = append(out, groupProcessResources(active)...)
-	}
+	out = append(out, groupProcessResources(active)...)
 	// A group's shell: running while its tmux session is up, closed (opening
 	// starts it) while the group has a directory to start it in.
 	for _, g := range active {

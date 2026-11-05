@@ -154,9 +154,6 @@ func fireCronJobAndRecord(j *db.AgentCronJob, now time.Time) (string, error) {
 }
 
 func fireCronSpawn(j *db.AgentCronJob, runID int64, now time.Time) (string, string, int64, string) {
-	if !triggerRoutesEnabled() {
-		return "feature_disabled", "features.triggers is disabled", 0, ""
-	}
 	if !j.IsGroupTarget() || j.GroupID <= 0 {
 		return "spawn_failed", "spawn jobs require a group target", 0, ""
 	}

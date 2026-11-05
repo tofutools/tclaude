@@ -129,9 +129,6 @@ func kickProcessAgentDispatch(runID string) {
 // After a daemon restart this is what picks in-flight dispatches back up: a
 // delivered dispatch simply stays delivered, so nothing is re-sent.
 func sweepProcessAgentDispatches() {
-	if !processRoutesEnabled() {
-		return
-	}
 	runs := map[string]struct{}{}
 	after := ""
 	for {

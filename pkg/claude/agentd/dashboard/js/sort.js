@@ -175,7 +175,7 @@ const MEMBER_COLS = [
   { key: 'id',     label: 'ID',          col: 'id',     hideable: true, defaultHidden: true },
   { key: 'title',  label: 'Name',        col: 'title' },
   { key: 'state',  label: 'State',       col: 'state',  hideable: true },
-  // Process badges (G1): only offered while features.processes is on, and
+  // Process badges (G1): offered where processes are available, and
   // opt-in: the table is already wide, and Both shows the runs beside it.
   { key: 'process', label: 'Process',    wizardLabel: 'Rite', hideable: true, defaultHidden: true, processes: true },
   { key: 'last',   label: 'Last',        col: 'last',   hideable: true },

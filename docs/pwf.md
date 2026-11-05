@@ -173,7 +173,8 @@ none of the agents: they are listed in the review, and each lands through the
 ### Refusing unsigned files
 
 An unsigned file imports by default. To refuse it, turn on *Refuse unsigned
-workflows* in Config › Experimental, or set it in `config.json`:
+workflows* in [Config › Processes](dashboard-config.md#processes), or set it in
+`config.json`:
 
 ```json
 {"processes": {"refuse_unsigned_imports": true}}

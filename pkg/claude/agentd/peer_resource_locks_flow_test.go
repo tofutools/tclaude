@@ -53,7 +53,7 @@ func newPeerLockEnv(t *testing.T) *peerLockEnv {
 	fh := newFedHarness(t)
 	f := fh.f
 	require.NoError(t, os.MkdirAll(filepath.Dir(config.ConfigPath()), 0o755))
-	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{"features":{"processes":true}}`), 0o644))
+	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{}`), 0o644))
 	t.Cleanup(agentd.SetProcessStoreRootForTest(filepath.Join(f.World.HomeDir, ".tclaude", "processes")))
 	const origin = "http://localhost:12345"
 	t.Cleanup(agentd.SetPopupBaseURLForTest(origin))

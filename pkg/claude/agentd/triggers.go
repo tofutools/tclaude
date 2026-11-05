@@ -80,10 +80,6 @@ func startTriggerSourcePollers(stop <-chan struct{}) {
 				case <-t.C:
 				}
 			}
-			if !triggerRoutesEnabled() {
-				delay = recentlyMergedPRPollInterval
-				continue
-			}
 			enabled, enabledErr := db.HasEnabledTriggerSource(db.TriggerSourcePRMerged)
 			if enabledErr != nil {
 				slog.Warn("triggers: inspect merged PR watchers", "error", enabledErr)
@@ -137,15 +133,13 @@ func initializeTriggerCIWatchState() {
 	triggerCIWatchState.Lock()
 	defer triggerCIWatchState.Unlock()
 	triggerCIWatchState.identities = make(map[string]struct{})
-	if triggerRoutesEnabled() {
-		prs, err := db.ListTriggerCIWatchPRs(0)
-		if err != nil {
-			triggerCIWatchState.initialized = false
-			return
-		}
-		for _, watch := range triggerCIIdentityWatches(prs) {
-			triggerCIWatchState.identities[watch.key] = struct{}{}
-		}
+	prs, err := db.ListTriggerCIWatchPRs(0)
+	if err != nil {
+		triggerCIWatchState.initialized = false
+		return
+	}
+	for _, watch := range triggerCIIdentityWatches(prs) {
+		triggerCIWatchState.identities[watch.key] = struct{}{}
 	}
 	triggerCIWatchState.initialized = true
 }
@@ -176,18 +170,7 @@ func markTriggerCIIdentityWatched(key string) {
 	triggerCIWatchState.Unlock()
 }
 
-func clearTriggerCIWatchSet() {
-	triggerCIWatchState.Lock()
-	triggerCIWatchState.identities = make(map[string]struct{})
-	triggerCIWatchState.initialized = true
-	triggerCIWatchState.Unlock()
-}
-
 func pollTriggerCITransitions(now time.Time) {
-	if !triggerRoutesEnabled() {
-		clearTriggerCIWatchSet()
-		return
-	}
 	prs, err := db.ListTriggerCIWatchPRs(0)
 	if err != nil {
 		slog.Warn("triggers: list CI-watched PRs", "error", err)
@@ -259,9 +242,6 @@ func pollTriggerCITransitions(now time.Time) {
 func PollTriggerCITransitionsForTest(now time.Time) { pollTriggerCITransitions(now) }
 
 func runTriggerTick(now time.Time) {
-	if !triggerRoutesEnabled() {
-		return
-	}
 	if _, err := db.InterruptRunningTriggerFirings(now); err != nil {
 		slog.Warn("triggers: close interrupted firings", "error", err)
 		return

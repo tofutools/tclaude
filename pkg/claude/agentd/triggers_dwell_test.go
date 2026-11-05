@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -62,7 +61,6 @@ func TestObserveTriggerAgentAwaitingInputRequiresReadyCodexAppServer(t *testing.
 
 func TestTriggerDwellFiresOnceAcrossTicksAndRearmsOnlyAfterFalse(t *testing.T) {
 	setupTestDB(t)
-	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))
 	agentID, _, err := db.EnsureAgentForConv("dwell-live-conv", "test")
 	require.NoError(t, err)
 	now := time.Now().UTC().Add(time.Second)

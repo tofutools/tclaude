@@ -85,7 +85,7 @@ test('a G3 card opens its run in the single-run focus', async (t) => {
   const mounted = await harness.mount(harness.html`<${interactions.GroupsInteractionProvider}><${() => harness.html`<${mod.GroupsProcessesFocus} groups=${GROUPS} allGroups=${GROUPS}
     source=${source} filter="running" runApi=${api} focusedRun=${focused.value}
     onFocusRun=${(value) => { opened.push(value); focused.value = value; }}>
-    <${list.GroupsNativeList} groups=${GROUPS} snapshot=${{ processes_enabled: true }} actions=${{}} />
+    <${list.GroupsNativeList} groups=${GROUPS} snapshot=${{}} actions=${{}} />
   <//>`} /><//>`);
   await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-process-open="run_release"]'), 'click'));
   await settle(harness);
@@ -372,7 +372,7 @@ test('a member badge opens its run; a header chip goes back to the cards', async
   });
   t.after(registerFeatureState('groups', state));
   const source = fakeSource(harness);
-  const on = { processes_enabled: true };
+  const on = {};
   const mounted = await harness.mount(harness.html`<div>
     <${indicators.MemberProcessCell} member=${{ agent_id: 'agt_fe_lead' }} group=${GROUPS[0]} snapshot=${on} source=${source} />
     <${indicators.GroupProcessGraphs} group=${GROUPS[0]} snapshot=${on} source=${source} />

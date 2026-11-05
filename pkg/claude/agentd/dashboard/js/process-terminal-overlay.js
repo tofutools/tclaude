@@ -10,8 +10,8 @@
 // terminal stays usable underneath: nothing here takes focus or traps keys.
 //
 // Data comes from GET /v1/process/context (the read model), polled by ONE
-// shared poller however many panes subscribe, and only while the snapshot
-// says features.processes is on.
+// shared poller however many panes subscribe, and only where processes are
+// available.
 
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';

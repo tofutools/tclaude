@@ -593,7 +593,7 @@ body.wizard .mux-pane-xterm {
 }
 /* A board pane brings its own header: none of the terminal chrome. */
 .mux-pane-board { background: #0d1117; }
-/* The ＋ menu's Boards | Processes switch (features.processes). */
+/* The ＋ menu's Boards | Processes switch. */
 .mux-board-menu .mux-add-sections { margin: 10px 10px 0; }
 /* A live page (page-view.js): who showed it and under which rules, then the
    sandboxed frame, in a strip tab, an overlay tab or a separate window. */

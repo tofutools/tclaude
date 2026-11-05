@@ -150,11 +150,10 @@ Permissions: `self.schedule` (default-granted) covers self-targeted jobs;
 cross-agent jobs need `agent.schedule`; group-targeted jobs need
 `groups.messages.schedule`, which membership or ownership confers per group.
 
-### Spawning on a schedule (experimental)
+### Spawning on a schedule
 
 `cron add --action spawn` fires one managed worker per tick instead of a
-message. It is experimental, gated behind `features.triggers=true`, and
-requires a group target, a `--spawn-profile`, and an `--instruction`
+message. It requires a group target, a `--spawn-profile`, and an `--instruction`
 template (`{{fire_time}}` expands to the scheduled firing time). Overlap is
 controlled Kubernetes-style with `--concurrency Forbid|Replace|Allow` plus
 `--max-live-workers`, and `--worker-deadline` bounds each worker's run. The
@@ -170,8 +169,8 @@ name, and the first such refusal is sent to the owner and to the operator.
 Where cron fires on a wall clock, **triggers** fire on facts: PR and CI edge
 events, plus the dwell-based agent-state facts `agent.idle` and
 `agent.awaiting_input` (fired once per continuously-true episode). Trigger
-rules are experimental (`features.triggers=true`) and are created and edited
-through the dashboard / REST API; the CLI is read-only:
+rules are created and edited through the dashboard / REST API; the CLI is
+read-only:
 
 ```bash
 tclaude agent triggers ls

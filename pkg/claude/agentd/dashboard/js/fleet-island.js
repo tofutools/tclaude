@@ -40,8 +40,8 @@ function defaultNavigate(tab) {
   let anchor = document.querySelector(`nav [data-tab="${tab}"]`);
   // A remembered per-node tab can have been hidden since (Terminals with no
   // pane, Debug switched off); Groups is always there. Processes' anchor is
-  // always hidden (it is reached through Automations), so only its feature
-  // flag decides.
+  // always hidden (it is reached through Automations), so only
+  // body.hide-processes decides.
   const hidden = tab === 'processes'
     ? document.body.classList.contains('hide-processes')
     : !anchor || anchor.offsetParent === null;

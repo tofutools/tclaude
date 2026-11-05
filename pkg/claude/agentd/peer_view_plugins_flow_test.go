@@ -67,7 +67,7 @@ func TestFederationPeerProxyReachesTheProcessAPI(t *testing.T) {
 	}
 
 	// The peer's side: its template library only under unrestricted trust.
-	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{"features":{"processes":true}}`), 0o644))
+	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{}`), 0o644))
 	view := agentd.PeerViewHandler(fh.peer.id.ID())
 	rec := testharness.Serve(view, testharness.JSONRequest(t, "GET", "/v1/process/templates", nil))
 	require.Equal(t, 403, rec.Code, rec.Body.String())

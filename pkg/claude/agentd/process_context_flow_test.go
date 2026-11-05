@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -235,16 +234,6 @@ func TestProcessContextBoundsAndOrphans(t *testing.T) {
 	assert.Equal(t, []string{"run_busy_00"}, view.Groups[0].Done, "a finished run moves to done")
 	assert.Equal(t, "completed", view.Runs["run_busy_00"].Status)
 	assert.Equal(t, 9, view.Groups[0].NeedsYouCount)
-}
-
-// Scenario: the read model is part of the processes feature; with the flag
-// off the route is the same stable 404 as every other process route.
-func TestProcessContextFeatureGated(t *testing.T) {
-	f := scopedRunFlow(t)
-	require.NoError(t, config.Save(&config.Config{}))
-	rec := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/context", nil)
-	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "processes_disabled")
 }
 
 func mapKeysOf[V any](m map[string]V) []string {

@@ -6,7 +6,8 @@
 // icon buttons beside the group filter, with count badges and the run-kind
 // checklist floating off the lenses that show runs. It is remembered as a
 // dashboard pref, deep-linkable as /groups (Both), /groups/agents and
-// /groups/processes, and only offered while `features.processes` is on.
+// /groups/processes, and offered wherever processes are available (always on
+// this node; a peer page only when that peer shares them).
 //
 // The Processes lens itself (the G3 run cards) lives in groups-processes.js;
 // GroupsProcessesPlaceholder stands in while this agentd serves no run context.
@@ -18,6 +19,7 @@ import {
   RUN_KINDS, RUN_KIND_LABELS, activeRunCount, normalizeRunFilter, processContext, runFilterHas, runKindCounts,
   toggleRunKind,
 } from './process-context.js';
+import { processesAvailable } from './feature-availability.js';
 
 const html = htm.bind(h);
 
@@ -38,11 +40,11 @@ export function restoreGroupsFocus(prefs) {
 }
 
 export function processesFocusAvailable(snapshot) {
-  return snapshot?.processes_enabled === true;
+  return processesAvailable(snapshot);
 }
 
 // effectiveGroupsFocus is the lens actually shown: any remembered lens reads
-// as Agents while the feature is off or the Route map is up.
+// as Agents where processes are unavailable or while the Route map is up.
 export function effectiveGroupsFocus(state) {
   if (!processesFocusAvailable(state.snapshot.value) || state.subview.value === 'routes') return 'agents';
   return normalizeGroupsFocus(state.focus.value);

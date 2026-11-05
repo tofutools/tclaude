@@ -20,6 +20,7 @@ import { shellConfirm, shellToast } from './shell-state.js';
 import { LockReason } from './lock-reason.js';
 import { Pager } from './pager.js';
 import { Button, Input, SortTh } from './ui-components.js';
+import { triggersAvailable } from './feature-availability.js';
 
 const html = htm.bind(h);
 
@@ -140,7 +141,7 @@ function CronRow({ job, actions, triggersEnabled }) {
       <div class="rowname">${job.name}</div>
       ${job.subject && html`<div class="muted">${job.subject}</div>`}
       <${CronActionSummary} job=${job} />
-      ${editBlocked && html`<div class="cron-feature-note">features.triggers is off · editing unavailable</div>`}
+      ${editBlocked && html`<div class="cron-feature-note">Triggers are off on this node · editing unavailable</div>`}
     </td>
     <td>
       <${CronTarget} job=${job} />
@@ -156,9 +157,9 @@ function CronRow({ job, actions, triggersEnabled }) {
       <${Button} size="sm" onClick=${toggleRuns} aria-expanded=${expanded ? 'true' : 'false'} aria-controls=${`cron-run-inspector-${job.id}`}
         title="Show recorded run outcomes">${expanded ? 'hide logs' : 'logs'}<//>
       <${Button} size="sm" disabled=${editBlocked} onClick=${() => actions.openCronEdit(job)}
-        title=${editBlocked ? 'Enable features.triggers to edit this spawn job' : 'Edit this cron job'}>edit<//>
+        title=${editBlocked ? 'This node has Triggers off, so its spawn jobs cannot be edited' : 'Edit this cron job'}>edit<//>
       <${Button} size="sm" disabled=${editBlocked} onClick=${() => actions.openCronDuplicate(job)}
-        title=${editBlocked ? 'Enable features.triggers to duplicate this spawn job' : 'Duplicate this cron job'}>duplicate<//>
+        title=${editBlocked ? 'This node has Triggers off, so its spawn jobs cannot be duplicated' : 'Duplicate this cron job'}>duplicate<//>
       <${Button} size="sm" class=${job.enabled ? 'warn' : ''} onClick=${() => actions.toggleCron(job)}
         title=${job.enabled ? 'Pause this cron job' : 'Re-enable this cron job'}>
         ${job.enabled ? 'disable' : 'enable'}
@@ -397,7 +398,7 @@ function FusedPeerJobs({ state, fleet, active, triggersEnabled, confirm, notify,
 export function JobsApp({ state, actions, fleet = fleetState, activeTab = dashboardState.activeTab, confirm = shellConfirm, notify = shellToast, fetchFor = undefined }) {
   const current = state.view.value;
   const triggersKnown = current.dashboard != null;
-  const triggersEnabled = current.dashboard?.triggers_enabled === true;
+  const triggersEnabled = triggersAvailable(current.dashboard);
   const subnavEntries = automationsSubnavEntries(current.dashboard);
   const displayKind = triggersKnown && !triggersEnabled && current.kind === 'trigger' ? 'all' : current.kind;
   // A fused view lists the other ticked nodes' automations after this node's.

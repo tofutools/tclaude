@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/cronexpr"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -460,10 +459,6 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actionKind == db.CronActionSpawn {
-		if !triggerRoutesEnabled() {
-			writeError(w, http.StatusNotFound, triggerDisabledCode, config.TriggersDisabledMessage)
-			return
-		}
 		if strings.TrimSpace(body.SpawnProfile) == "" || strings.TrimSpace(body.SpawnInstructionTemplate) == "" {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "spawn_profile and spawn_instruction_template are required for spawn jobs")
 			return
@@ -1039,10 +1034,6 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 	patch := decoded.patch
-	if job.ActionKind == db.CronActionSpawn && !triggerRoutesEnabled() {
-		writeError(w, http.StatusNotFound, triggerDisabledCode, config.TriggersDisabledMessage)
-		return
-	}
 	// Resolve user-facing selectors before taking cronAuthorityMu: the normal
 	// resolver may refresh the conversation index from project files. Errors are
 	// deliberately held until after the common locked boundary so an agent
@@ -1179,10 +1170,6 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 			}
 		}
 		proposedJob := applyCronPatch(job, patch)
-		if proposedJob.ActionKind == db.CronActionSpawn && !triggerRoutesEnabled() {
-			writeError(w, http.StatusNotFound, triggerDisabledCode, config.TriggersDisabledMessage)
-			return
-		}
 		if proposedJob.ActionKind == db.CronActionSpawn {
 			profile, err := db.ResolveSpawnProfile(proposedJob.SpawnProfile)
 			if err != nil {

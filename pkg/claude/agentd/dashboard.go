@@ -332,7 +332,7 @@ func dashboardProcessRoute(next http.HandlerFunc) http.HandlerFunc {
 	// dashboard has a separate mux, so apply the same durable boundary here,
 	// after dashboard auth has stamped the request as the human operator. That
 	// peer identity is part of the idempotency fingerprint.
-	guarded := idempotencyRequests(processRoute(next))
+	guarded := idempotencyRequests(next)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !checkDashboardAuth(w, r) {
 			return
@@ -1083,10 +1083,13 @@ type snapshotPayload struct {
 	// Plugins nav button + section entirely — the "don't show an empty
 	// Plugins tab" rule for the majority of users who never define one.
 	PluginsTabVisible bool `json:"plugins_tab_visible"`
-	// ProcessesEnabled gates both the experimental tab chrome and its REST
-	// surface. It is re-read on every snapshot so changing config takes effect
-	// without restarting agentd, matching processRoute.
+	// ProcessesEnabled and TriggersEnabled are always true. They once carried
+	// the retired features.processes / features.triggers flags. The dashboard
+	// reads them only from a peer's snapshot (feature-availability.js): an
+	// older peer may still have the feature off, and a restricted peer gets
+	// them denied (false) because it is shared neither.
 	ProcessesEnabled bool `json:"processes_enabled"`
+	TriggersEnabled  bool `json:"triggers_enabled"`
 	// StewardsDisabled is the steward opt-out (steward.disabled): the
 	// companion offers no Steward, though its windows stay. Re-read on
 	// every snapshot so a Config-tab change takes effect without a restart.
@@ -1107,10 +1110,6 @@ type snapshotPayload struct {
 	StewardAccess *stewardAccess `json:"steward_access,omitempty"`
 	// KnowledgeSource is the source download's question and progress.
 	KnowledgeSource *knowledgeSourceView `json:"knowledge_source,omitempty"`
-	// TriggersEnabled gates the experimental Automations subview and compact
-	// Groups projection. Re-read on every snapshot so Config changes take
-	// effect without restarting agentd, matching triggerRoute.
-	TriggersEnabled bool `json:"triggers_enabled"`
 	// GroupsRouteMapEnabled gates the experimental Members | Route map Groups
 	// subview and its bounded route projection. Re-read on every snapshot so a
 	// Config-tab change takes effect without restarting agentd.
@@ -3082,9 +3081,6 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(defaults)
 	groupsRouteMapEnabled := cfg.GroupsRouteMapEnabled()
-	// Only an unrestricted peer gets this snapshot, and it reaches the trigger
-	// routes as the local operator does (servePeerAsLocal).
-	triggersEnabled := cfg.TriggersEnabled()
 
 	// agentRows: union of (every group member) + (every conv-id with
 	// explicit grants). Keyed by conv-id so members appearing in
@@ -3499,11 +3495,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		StayOnTerminalsAfterLastClose: cfg.StayOnTerminalsAfterLastClose(),
 		FusedToolbarFixedNode:         cfg.FusedToolbarFixedNode(),
 		UsageCollapseSubviews:         cfg.UsageCollapseSubviews(),
-		ProcessesEnabled:              cfg.ProcessesEnabled(),
+		ProcessesEnabled:              true,
+		TriggersEnabled:               true,
 		StewardsDisabled:              !cfg.StewardsEnabled(),
 		Voice:                         cfg.Voice(),
 		StewardName:                   cfg.StewardName(),
-		TriggersEnabled:               triggersEnabled,
 		GroupsRouteMapEnabled:         groupsRouteMapEnabled,
 		GroupAttachmentsMode:          cfg.GroupAttachmentsMode(),
 		TerminalPaletteShortcut:       cfg.TerminalCommandPaletteShortcutEnabled(),
@@ -4045,7 +4041,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// peer's snapshot, restricted or not.
 	if !isPeerSnapshot(r) {
 		out.LivePages = livePagesSnapshotFor(r)
-		out.GroupResources = groupResourcesSnapshot(groups, aliveSessions, cfg.ProcessesEnabled())
+		out.GroupResources = groupResourcesSnapshot(groups, aliveSessions)
 	}
 	out.Templates = templates
 	out.Profiles = profiles

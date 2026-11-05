@@ -2,12 +2,7 @@
 
 Processes are reusable, versioned workflow templates — task chains, decisions,
 parallel fan-out, retries, human approvals — authored once and executed as
-daemon-owned runs with durable state and an auditable evidence trail. The
-feature is experimental and off by default: enable it with the
-`features.processes` config flag (**Processes** under
-[Config › Experimental](dashboard-config.md#experimental), or in config.json). While the flag is off, every process route in the daemon
-returns 404 with the code `processes_disabled` and a message pointing at the
-flag.
+daemon-owned runs with durable state and an auditable evidence trail.
 
 The runtime is partially implemented: a substantial subset of the engine is
 live, and the rest of the CLI surface is stubbed. This page states exactly
@@ -21,10 +16,9 @@ which half is which.
 
 ## Start here
 
-1. Turn on **Processes** under [Config › Experimental](dashboard-config.md#experimental).
-2. Create a template under **Automations › Processes**, or let **Edit with agent** draft it.
-3. Start a run with the **Group process** button on a group's Resources section.
-4. Follow it in [Groups](dashboard-groups.md#agents-and-processes).
+1. Create a template under **Automations › Processes**, or let **Edit with agent** draft it.
+2. Start a run with the **Group process** button on a group's Resources section.
+3. Follow it in [Groups](dashboard-groups.md#agents-and-processes).
 
 [In the dashboard](#in-the-dashboard) covers all of this. The next sections are
 reference for the format, the engine and the CLI.
@@ -320,7 +314,7 @@ itself. Visibility is unchanged:
 
 ## In the dashboard
 
-With `features.processes` on, the dashboard covers the whole loop: authoring,
+The dashboard covers the whole loop: authoring,
 starting a run in a group or for one agent, following it, and acting on it.
 All of it goes through the same daemon routes and permissions as the CLI.
 

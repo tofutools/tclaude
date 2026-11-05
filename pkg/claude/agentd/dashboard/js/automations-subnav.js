@@ -12,6 +12,7 @@ import { featureState } from './feature-state-registry.js';
 import { toPath } from './nav-history-core.js';
 import { clickNavExactly } from './automations-nav.js';
 import { JOBS_KINDS, jobsLocation } from './jobs-state.js';
+import { processesAvailable, triggersAvailable } from './feature-availability.js';
 
 const html = htm.bind(h);
 
@@ -26,13 +27,12 @@ const LABELS = {
   [PROCESSES_SUBTAB]: 'Processes',
 };
 
-// automationsSubnavEntries lists the visible entries in display order.
-// Triggers and Processes default off, so a snapshot that has not arrived yet
-// (null) shows neither: they must not flash before the server confirms a flag.
+// automationsSubnavEntries lists the visible entries in display order. A
+// peer that does not offer Triggers or Processes shows neither.
 export function automationsSubnavEntries(snapshot) {
-  const kinds = snapshot?.triggers_enabled === true
+  const kinds = triggersAvailable(snapshot)
     ? JOBS_KINDS : JOBS_KINDS.filter((kind) => kind !== 'trigger');
-  return snapshot?.processes_enabled ? [...kinds, PROCESSES_SUBTAB] : kinds;
+  return processesAvailable(snapshot) ? [...kinds, PROCESSES_SUBTAB] : kinds;
 }
 
 function entryHref(key) {

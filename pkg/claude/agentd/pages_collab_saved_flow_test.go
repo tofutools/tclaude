@@ -39,8 +39,7 @@ func (e *pageEnv) patchNumbers(t *testing.T, a pageAgent, name string) []int64 {
 func TestPageSavedKeepsMarksAndPatchesAcrossReopen(t *testing.T) {
 	e := newPageEnv(t)
 	require.NoError(t, config.Save(&config.Config{
-		Agent:    &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfPage, agentd.PermGroupsPagesPatch}},
-		Features: &config.FeaturesConfig{Processes: true},
+		Agent: &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfPage, agentd.PermGroupsPagesPatch}},
 	}))
 	shower := e.agent(t, "keeper", true)
 	e.f.HaveGroup("crew")
@@ -97,8 +96,7 @@ func TestPageSavedKeepsMarksAndPatchesAcrossReopen(t *testing.T) {
 func TestPageSavedStartsAgainFromAnotherKindOfSource(t *testing.T) {
 	e := newPageEnv(t)
 	require.NoError(t, config.Save(&config.Config{
-		Agent:    &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfPage, agentd.PermGroupsPagesPatch}},
-		Features: &config.FeaturesConfig{Processes: true},
+		Agent: &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfPage, agentd.PermGroupsPagesPatch}},
 	}))
 	shower := e.agent(t, "switcher", true)
 	e.f.HaveGroup("crew")

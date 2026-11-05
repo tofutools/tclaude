@@ -5,14 +5,12 @@ import (
 	"bytes"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -213,11 +211,6 @@ func TestProcessGroupProcesses_SaveToGroupPublishPinAndList(t *testing.T) {
 	rec = processTemplateRequest(t, f, http.MethodDelete, "/v1/process/templates/"+ship, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Empty(t, saved("webshop"))
-
-	// Behind features.processes like every process surface.
-	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{"features":{"processes":false}}`), 0o644))
-	rec = processTemplateRequest(t, f, http.MethodPost, "/v1/process/groups/infra/processes", map[string]any{"templateId": nightly})
-	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 // Scenario: an agent may pin only to a group it is a member or owner of.

@@ -638,10 +638,10 @@ func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive, fileDig
 // pwfRefusedUnsigned applies the operator's policy. A signature that does not
 // verify proves nothing, so it counts as none; a valid one by an unknown key
 // passes, since the policy asks for a signature, not for a known signer. A
-// config that cannot be read never gets here: processRoute takes the route down.
+// config that cannot be read refuses: the policy it may hold is unknown.
 func pwfRefusedUnsigned(a *pwf.Archive) bool {
 	cfg, err := config.Load()
-	if err != nil || !cfg.RefuseUnsignedWorkflows() {
+	if err == nil && !cfg.RefuseUnsignedWorkflows() {
 		return false
 	}
 	return !slices.ContainsFunc(a.Signatures, func(s paf.SignatureResult) bool { return s.Status == paf.SignatureValid })

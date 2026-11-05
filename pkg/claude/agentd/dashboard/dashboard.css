@@ -10068,9 +10068,9 @@ body.wizard .usage-ov-agents { background: #140f28; border-color: #3a2a63; }
 body.hide-plugins nav [data-tab="plugins"],
 body.hide-plugins #tab-plugins { display: none; }
 
-/* Processes is a dark-launched feature. The page starts with hide-processes
-   on <body>; refresh.js removes it only when the server snapshot confirms the
-   feature flag, preventing a flash of experimental chrome while config loads. */
+/* hide-processes: a peer page whose node does not offer Processes (a
+   restricted peer, or an older one with them switched off). processes.js
+   sets it from each snapshot; this node always offers them. */
 body.hide-processes nav [data-tab="processes"],
 body.hide-processes #tab-processes { display: none; }
 

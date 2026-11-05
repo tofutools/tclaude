@@ -182,18 +182,6 @@ type FeaturesConfig struct {
 	// additional snapshot reads stay absent until an operator opts in.
 	GroupsRouteMap bool `json:"groups_route_map,omitempty"`
 
-	// Processes enables the in-development Processes feature — BPMN-lite
-	// repeatable process graphs (drag-and-drop template editor, long-running
-	// instantiated runs, live viewer). While in development the flag gates the
-	// feature's user-visible surfaces (dashboard tab, CLI command, daemon
-	// routes) as they land.
-	Processes bool `json:"processes,omitempty"`
-
-	// Triggers enables the in-development event-to-action automation engine.
-	// It defaults off while trigger sources, actions, and dashboard controls
-	// are landing in bounded slices.
-	Triggers bool `json:"triggers,omitempty"`
-
 	// GroupAttachments selects how the in-development persistent http(s)
 	// attachment control appears on group titles. It defaults off while the
 	// interaction design is being refined. Disabling it hides the dashboard
@@ -233,18 +221,6 @@ const (
 	GroupAttachmentsFixed GroupAttachmentsMode = "fixed"
 )
 
-// ProcessesDisabledMessage is the stable operator-facing text surfaced when
-// the experimental Processes feature flag is off. The daemon is the sole
-// authority on the flag (it reads private config; sandboxed agent clients
-// never do), so both the daemon's process-route gate and the process CLI's
-// daemon capability probe render this exact wording — enabled/disabled reads
-// identically regardless of which layer detected it.
-const ProcessesDisabledMessage = "process commands are disabled; set features.processes=true in tclaude config to use this experimental surface"
-
-// TriggersDisabledMessage is the stable response returned by daemon trigger
-// routes while the experimental feature is disabled.
-const TriggersDisabledMessage = "trigger commands are disabled; set features.triggers=true in tclaude config to use this experimental surface"
-
 // ProcessesConfig is operator policy for processes.
 type ProcessesConfig struct {
 	// RefuseUnsignedImports refuses to import a .pwf workflow file without a
@@ -256,19 +232,6 @@ type ProcessesConfig struct {
 // RefuseUnsignedWorkflows reports whether importing an unsigned .pwf is refused.
 func (c *Config) RefuseUnsignedWorkflows() bool {
 	return c != nil && c.Processes != nil && c.Processes.RefuseUnsignedImports
-}
-
-// ProcessesEnabled reports whether the opt-in Processes feature flag is set.
-// Nil-safe on both the config and the features block, so callers can gate on
-// a bare Load() result without nil checks.
-func (c *Config) ProcessesEnabled() bool {
-	return c != nil && c.Features != nil && c.Features.Processes
-}
-
-// TriggersEnabled reports whether the opt-in Triggers feature flag is set.
-// It is nil-safe and defaults off.
-func (c *Config) TriggersEnabled() bool {
-	return c != nil && c.Features != nil && c.Features.Triggers
 }
 
 // GroupsRouteMapEnabled reports whether the opt-in Groups Members | Route map

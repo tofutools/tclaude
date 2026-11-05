@@ -96,10 +96,6 @@ func dashboardProcessSnippetRoute(next http.HandlerFunc) http.HandlerFunc {
 		if !checkDashboardAuth(w, r) {
 			return
 		}
-		if !processRoutesEnabled() {
-			http.NotFound(w, r)
-			return
-		}
 		next(w, r)
 	}
 }

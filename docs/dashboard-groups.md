@@ -54,8 +54,8 @@ overrides **show offline** for that group: click 💤 to cycle through the tab
 default, shown and hidden.
 
 Below them, **Columns** lists what you can hide: ID, State, Process, Last, Age,
-CWD, Branch, Role, Task link and Description. ID is off by default, and Process
-only exists with `features.processes` on. Click a column header to sort.
+CWD, Branch, Role, Task link and Description. ID is off by default. Click a
+column header to sort.
 
 ### Bottom of the page
 
@@ -432,9 +432,8 @@ for phases act on the whole team. See
 
 ## Agents and processes
 
-This section applies with `features.processes` on; see
-[Config › Experimental](dashboard-config.md#experimental). The view switch
-changes what each group shows, and each choice has its own address.
+The view switch changes what each group shows, and each choice has its own
+address.
 
 - **Both** (`/groups`, the default) shows **Agents** and **Resources** sections
   together. Hover an agent to draw dashed lines to the steps it performs, and

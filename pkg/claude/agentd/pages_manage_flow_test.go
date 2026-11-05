@@ -19,8 +19,7 @@ import (
 func TestPageRenameAndMoveFromTheGroup(t *testing.T) {
 	e := newPageEnv(t)
 	require.NoError(t, config.Save(&config.Config{
-		Agent:    &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfPage}},
-		Features: &config.FeaturesConfig{Processes: true},
+		Agent: &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfPage}},
 	}))
 	shower := e.agent(t, "mover", true)
 	e.f.HaveGroup("crew")
