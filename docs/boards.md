@@ -218,6 +218,11 @@ membership:
 tclaude agent permissions deny <agent> groups.resources.write   # keeps read
 ```
 
+Membership and the global slugs are independent sources: denying an agent
+`boards.read` or `boards.write` does not keep it off its own groups' boards;
+deny `groups.resources.read` / `groups.resources.write` for that. Like every
+`groups.*` slug, both are also covered by `groups.admin`.
+
 A board linked to no group is reachable only through `boards.read` and
 `boards.write`. Without `boards.read`, `board ls` lists only the boards of the
 agent's groups. An operator lock on a board refuses an agent's change

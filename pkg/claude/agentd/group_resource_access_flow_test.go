@@ -103,6 +103,13 @@ func TestGroupBoardsAreMembersToReadAndWrite(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, draw(member, "ux", "a", 5).Code)
 
+	// A deny of read stops reading although write is still the member's.
+	require.NoError(t, db.SetAgentPermissionOverride(member, agentd.PermGroupsResourcesRead, db.PermEffectDeny, "test"))
+	assert.Equal(t, http.StatusForbidden, agent(member, http.MethodGet, "/v1/boards/ux", nil).Code)
+	_, err = db.RevokeAgentPermission(member, agentd.PermGroupsResourcesRead)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, agent(member, http.MethodGet, "/v1/boards/ux", nil).Code)
+
 	// Leaving the group revokes the access at once.
 	require.NoError(t, db.RemoveAgentGroupMember(g.ID, member))
 	assert.Equal(t, http.StatusForbidden, agent(member, http.MethodGet, "/v1/boards/ux", nil).Code)

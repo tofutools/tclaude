@@ -50,7 +50,7 @@ func runBoardFromFleet(p *boardFromFleetParams, boardID string, stdout, stderr i
 		path += "?group=" + url.QueryEscape(g)
 	}
 	var fleet fleetResp
-	if err := DaemonGet(path, &fleet); err != nil {
+	if err := DaemonRequest(http.MethodGet, path, nil, &fleet, boardOpts()); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

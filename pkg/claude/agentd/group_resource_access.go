@@ -84,6 +84,11 @@ func agentHoldsGroupResource(r *http.Request, convID, group string, write bool) 
 	if group == "" {
 		return false
 	}
+	// write implies read, but not past an explicit deny of read: the write
+	// slug's membership source would otherwise bring read straight back.
+	if !write && resolvePermissionVerdictForRequest(r, convID, PermGroupsResourcesRead).Resolution == permDeny {
+		return false
+	}
 	for _, slug := range groupResourceSlugs(write) {
 		if silentAgentAllows(r, convID, slug, groupResourceContext(group)) {
 			return true
