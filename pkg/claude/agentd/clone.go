@@ -1775,166 +1775,271 @@ func decodeCloneBody(w http.ResponseWriter, r *http.Request) (cloneBody, bool) {
 //     AGENT caller must additionally pass the dir write-proof for it
 //     (see below).
 func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, caller, perm string, authorizedGroups []string, body cloneBody) {
-	followUp, noCopyConv, cwdOverride := body.FollowUp, body.NoCopyConv, body.Cwd
+	co := &cloneOrchestration{r: r, target: target, caller: caller, perm: perm, authorizedGroups: authorizedGroups, body: body}
+	defer co.close()
+	if !co.resolveSource(w) {
+		return
+	}
+	if !co.resolveCwdAuthority(w) {
+		return
+	}
+	if !co.collectGroups(w) {
+		return
+	}
+	if !co.checkPolicy(w) {
+		return
+	}
+	if !co.planIdentity(w) {
+		return
+	}
+	if !co.spawn(w) {
+		return
+	}
+	if !co.landIdentity(w) {
+		return
+	}
+	co.enrollAndAnswer(w)
+}
+
+// cloneOrchestration is one clone's state, built up step by step by
+// runCloneOrchestration. Each step writes its own response when it stops the
+// clone and returns false.
+type cloneOrchestration struct {
+	r                   *http.Request
+	target              string
+	caller              string
+	perm                string
+	authorizedGroups    []string
+	body                cloneBody
+	followUp            string
+	noCopyConv          bool
+	cwdOverride         string
+	relaunch            *durableRelaunchConfig
+	cwd                 string
+	proofDirs           []string
+	proofToken          string
+	srcHarness          string
+	codexGitCommonDir   string
+	gitWriteDirs        []string
+	extraGroup          *db.AgentGroup
+	copyOwnership       bool
+	oldGroups           []*db.AgentGroup
+	oldMembers          []*db.AgentGroupMember
+	routeHelperGroupIDs []int64
+	oldOwnedIDs         []int64
+	oldPerms            []db.AgentPermission
+	newTitle            string
+	handoffGroupID      int64
+	effort              string
+	model               string
+	managedGroups       []*db.AgentGroup
+	sandboxGroupID      int64
+	spawned             cloneSpawnResult
+	newConv             string
+	newTmux             string
+	label               string
+	warn                string
+	failClone           func(agentID string, code string, msg string)
+	copied              []string
+	// cleanups are the handler's deferred closes, run in reverse by close.
+	cleanups []func()
+}
+
+// close runs the registered cleanups, last registered first, as the
+// handler's defers did.
+func (co *cloneOrchestration) close() {
+	// Deferred one by one, so a cleanup that panics still lets the earlier
+	// ones run, exactly as separate defers would.
+	for _, cleanup := range co.cleanups {
+		defer cleanup()
+	}
+}
+
+// resolveSource snapshots the source: its live session, its durable relaunch
+// config (refusing a shell agent), and the working directory the clone starts in.
+func (co *cloneOrchestration) resolveSource(w http.ResponseWriter) bool {
+	co.followUp, co.noCopyConv, co.cwdOverride = co.body.FollowUp, co.body.NoCopyConv, co.body.Cwd
 	// 1. Snapshot target state. Same shape as reincarnate's snapshot
 	// pass.
-	oldSess := pickAliveSession(target)
+	oldSess := pickAliveSession(co.target)
 	if oldSess == nil {
 		writeError(w, http.StatusServiceUnavailable, "no_tmux",
-			"target conv "+short8(target)+" has no live tmux session; can't clone without a cwd to spawn the sibling into")
-		return
+			"target conv "+short8(co.target)+" has no live tmux session; can't clone without a cwd to spawn the sibling into")
+		return false
 	}
-	relaunch, relaunchErr := durableRelaunchConfigForConv(target)
+	var relaunchErr error
+	co.relaunch, relaunchErr = durableRelaunchConfigForConv(co.target)
 	if relaunchErr != nil {
 		writeError(w, http.StatusConflict, "relaunch_profile", relaunchErr.Error())
-		return
+		return false
 	}
-	if cloneHarness, err := harness.Resolve(relaunch.Harness); err == nil && cloneHarness.UsesCommandInput() {
+	if cloneHarness, err := harness.Resolve(co.relaunch.Harness); err == nil && cloneHarness.UsesCommandInput() {
 		writeError(w, http.StatusUnprocessableEntity, "unsupported_harness",
 			"shell agents cannot be cloned; start a new shell agent with the desired command")
-		return
+		return false
 	}
-	cwd := oldSess.Cwd
-	if cwdOverride == "" {
+	co.cwd = oldSess.Cwd
+	if co.cwdOverride == "" {
 		var cwdErr error
-		cwd, cwdErr = livePaneCwd(oldSess.TmuxSession)
+		co.cwd, cwdErr = livePaneCwd(oldSess.TmuxSession)
 		if cwdErr != nil {
 			writeError(w, http.StatusInternalServerError, "io", cwdErr.Error())
-			return
+			return false
 		}
 	}
-	var proofDirs []string
-	var proofToken string
-	srcHarness := relaunch.Harness
-	cloneSandbox, _ := cloneSandboxPosture(relaunch)
-	if cwdOverride != "" {
-		resolved, err := resolveSpawnCwd(cwdOverride)
+	return true
+}
+
+// resolveCwdAuthority resolves a requested working directory, the git dirs the
+// clone's sandbox may write, and a non-human caller's authority over the
+// directory, consuming its proof.
+func (co *cloneOrchestration) resolveCwdAuthority(w http.ResponseWriter) bool {
+	co.srcHarness = co.relaunch.Harness
+	cloneSandbox, _ := cloneSandboxPosture(co.relaunch)
+	if co.cwdOverride != "" {
+		resolved, err := resolveSpawnCwd(co.cwdOverride)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
-			return
+			return false
 		}
-		cwd = resolved
+		co.cwd = resolved
 	}
-	codexGitCommonDir, gerr := spawnGitCommonDir(
-		srcHarness, cloneSandbox, relaunch.SandboxImplementation, cwd)
+	var gerr error
+	co.codexGitCommonDir, gerr = spawnGitCommonDir(
+		co.srcHarness, cloneSandbox, co.relaunch.SandboxImplementation, co.cwd)
 	if gerr != nil {
 		writeError(w, http.StatusInternalServerError, "io", gerr.Error())
-		return
+		return false
 	}
-	var gitWriteDirs []string
 	if spawnUsesPinnedGitCommonDir(
-		srcHarness, cloneSandbox, relaunch.SandboxImplementation) {
+		co.srcHarness, cloneSandbox, co.relaunch.SandboxImplementation) {
 		if home, err := os.UserHomeDir(); err == nil {
-			gitWriteDirs = harness.GitWorktreeWriteDirs(cwd, codexGitCommonDir, home)
+			co.gitWriteDirs = harness.GitWorktreeWriteDirs(co.cwd, co.codexGitCommonDir, home)
 		}
 	}
 	// Cloning the target in place carries only authority the target already
 	// holds, so the lifecycle permission is sufficient. A caller-selected cwd
 	// is the one scope-changing input: prove it and the repository roots derived
 	// from it, while retaining the target's sandbox-profile roots unchanged.
-	if !isHumanCloneCaller(caller) && cwdOverride != "" {
-		dirs := appendUniqueDirs([]string{cwd}, gitWriteDirs...)
+	if !isHumanCloneCaller(co.caller) && co.cwdOverride != "" {
+		dirs := appendUniqueDirs([]string{co.cwd}, co.gitWriteDirs...)
 		if len(dirs) > 0 {
-			proofed, ok := requireDirWriteProof(w, r, caller, body.WriteProofToken, dirs)
+			proofed, ok := requireDirWriteProof(w, co.r, co.caller, co.body.WriteProofToken, dirs)
 			if !ok {
-				return
+				return false
 			}
 			if proofed != nil {
-				proofToken = strings.TrimSpace(body.WriteProofToken)
-				if v := proofed[cwd]; v != "" {
-					cwd = v
+				co.proofToken = strings.TrimSpace(co.body.WriteProofToken)
+				if v := proofed[co.cwd]; v != "" {
+					co.cwd = v
 				}
-				for i, dir := range gitWriteDirs {
+				for i, dir := range co.gitWriteDirs {
 					if v := proofed[dir]; v != "" {
-						gitWriteDirs[i] = v
+						co.gitWriteDirs[i] = v
 					}
 				}
-				proofDirs = make([]string, 0, len(dirs))
+				co.proofDirs = make([]string, 0, len(dirs))
 				for _, raw := range dirs {
-					proofDirs = appendUniqueDirs(proofDirs, proofed[raw])
+					co.proofDirs = appendUniqueDirs(co.proofDirs, proofed[raw])
 				}
 			}
 		}
 	}
-	if proofToken != "" {
-		defer cleanupDirWriteProofMarkers(proofToken, proofDirs)
+	if co.proofToken != "" {
+		// The markers to clean up are the ones proved now, as the defer's
+		// arguments were.
+		token, dirs := co.proofToken, co.proofDirs
+		co.cleanups = append(co.cleanups, func() { cleanupDirWriteProofMarkers(token, dirs) })
 	}
 
+	return true
+}
+
+// collectGroups resolves the optional extra group (gated like adding a member),
+// and reads the source's groups, memberships, route-helper groups and owned
+// groups.
+func (co *cloneOrchestration) collectGroups(w http.ResponseWriter) bool {
+	var err error
 	// The optional extra group passes the same gate as adding a member to it,
 	// before anything is spawned.
-	var extraGroup *db.AgentGroup
-	if body.Group != "" {
-		g, err := db.GetAgentGroupByName(body.Group)
+	if co.body.Group != "" {
+		g, err := db.GetAgentGroupByName(co.body.Group)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", "resolve group: "+err.Error())
-			return
+			return false
 		}
 		if g == nil {
-			writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("group %q not found", body.Group))
-			return
+			writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("group %q not found", co.body.Group))
+			return false
 		}
-		if !isHumanCloneCaller(caller) {
-			if _, ok := requireGroupPermission(w, r, PermGroupsMembersAdd, g); !ok {
-				return
+		if !isHumanCloneCaller(co.caller) {
+			if _, ok := requireGroupPermission(w, co.r, PermGroupsMembersAdd, g); !ok {
+				return false
 			}
 		}
 		if !requireGroupActive(w, g) || !routeMembershipMutationAllowed(w, g) {
-			return
+			return false
 		}
-		extraGroup = g
+		co.extraGroup = g
 	}
-	copyOwnership := body.CopyOwnership != nil && *body.CopyOwnership
+	co.copyOwnership = co.body.CopyOwnership != nil && *co.body.CopyOwnership
 
 	// Snapshot group membership up-front — before the rate-limit claim and
 	// spawn — so the clone can inherit the source's identity consistently.
-	oldGroups, err := db.ListGroupsForConv(target)
+	co.oldGroups, err = db.ListGroupsForConv(co.target)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"snapshot groups: "+err.Error())
-		return
+		return false
 	}
-	oldMembers := make([]*db.AgentGroupMember, 0, len(oldGroups))
-	for _, g := range oldGroups {
-		m, err := db.FindMemberInGroup(g.ID, target)
+	co.oldMembers = make([]*db.AgentGroupMember, 0, len(co.oldGroups))
+	for _, g := range co.oldGroups {
+		m, err := db.FindMemberInGroup(g.ID, co.target)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io",
 				"snapshot membership: "+err.Error())
-			return
+			return false
 		}
 		if m != nil {
-			oldMembers = append(oldMembers, m)
+			co.oldMembers = append(co.oldMembers, m)
 		}
 	}
-	var routeHelperGroupIDs []int64
 	if runtime.GOOS == "linux" {
-		for _, group := range oldGroups {
+		for _, group := range co.oldGroups {
 			enabled, enabledErr := db.IsAgentGroupRouteEnabled(group.ID, PermRoutesPublish, PermRoutesConsume)
 			if enabledErr != nil {
 				writeError(w, http.StatusInternalServerError, "route_authority", "could not resolve clone route capability: "+enabledErr.Error())
-				return
+				return false
 			}
 			if enabled {
-				routeHelperGroupIDs = append(routeHelperGroupIDs, group.ID)
+				co.routeHelperGroupIDs = append(co.routeHelperGroupIDs, group.ID)
 			}
 		}
 	}
-	oldOwnedIDs, err := db.ListGroupsOwnedBy(target)
+	co.oldOwnedIDs, err = db.ListGroupsOwnedBy(co.target)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"snapshot ownerships: "+err.Error())
-		return
+		return false
 	}
+	return true
+}
+
+// checkPolicy builds the destination policy groups, refuses an authorization
+// footprint that changed since the caller was authorized, and applies the
+// harness policy, the usage block and a non-human caller's gates.
+func (co *cloneOrchestration) checkPolicy(w http.ResponseWriter) bool {
 	// The clone inherits memberships, and ownerships when copy_ownership asks
 	// for them. Build the union of
 	// those destination groups so an owner-only relationship cannot evade a
 	// group-local deny. Keep oldGroups unchanged because membership copy and
 	// handoff routing intentionally use membership rows only.
-	policyGroups := append([]*db.AgentGroup(nil), oldGroups...)
-	seenPolicyGroup := make(map[int64]struct{}, len(policyGroups)+len(oldOwnedIDs))
+	policyGroups := append([]*db.AgentGroup(nil), co.oldGroups...)
+	seenPolicyGroup := make(map[int64]struct{}, len(policyGroups)+len(co.oldOwnedIDs))
 	for _, g := range policyGroups {
 		seenPolicyGroup[g.ID] = struct{}{}
 	}
-	for _, groupID := range oldOwnedIDs {
+	for _, groupID := range co.oldOwnedIDs {
 		if _, seen := seenPolicyGroup[groupID]; seen {
 			continue
 		}
@@ -1942,14 +2047,14 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io",
 				"snapshot owned group: "+err.Error())
-			return
+			return false
 		}
 		if g != nil {
 			policyGroups = append(policyGroups, g)
 			seenPolicyGroup[groupID] = struct{}{}
 		}
 	}
-	if authorizedGroups != nil {
+	if co.authorizedGroups != nil {
 		actual := make([]string, 0, len(policyGroups))
 		for _, group := range policyGroups {
 			if group != nil && !group.IsArchived() {
@@ -1957,36 +2062,36 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 			}
 		}
 		sort.Strings(actual)
-		if !slices.Equal(actual, authorizedGroups) {
+		if !slices.Equal(actual, co.authorizedGroups) {
 			writeError(w, http.StatusConflict, "authorization_footprint_changed",
 				"the target's current group footprint changed during clone authorization; retry the request")
-			return
+			return false
 		}
 	}
-	if !copyOwnership {
-		oldOwnedIDs = nil
-		policyGroups = append([]*db.AgentGroup(nil), oldGroups...)
+	if !co.copyOwnership {
+		co.oldOwnedIDs = nil
+		policyGroups = append([]*db.AgentGroup(nil), co.oldGroups...)
 	}
-	if extraGroup != nil && !slices.ContainsFunc(policyGroups, func(g *db.AgentGroup) bool { return g.ID == extraGroup.ID }) {
-		policyGroups = append(policyGroups, extraGroup)
+	if co.extraGroup != nil && !slices.ContainsFunc(policyGroups, func(g *db.AgentGroup) bool { return g.ID == co.extraGroup.ID }) {
+		policyGroups = append(policyGroups, co.extraGroup)
 	}
 	// A clone is a fresh agent process even though it inherits the target's
 	// conversation and identity settings. For an agent caller, require every
 	// destination membership's effective group/global cross-harness edge to
 	// allow caller-harness → target-harness. An ungrouped clone uses global
 	// policy. Human dashboard/CLI clone callers retain their normal bypass.
-	policyCaller := caller
-	if isHumanCloneCaller(caller) {
+	policyCaller := co.caller
+	if isHumanCloneCaller(co.caller) {
 		policyCaller = ""
 	}
-	if fail := spawnHarnessPolicyFailureForGroups(policyGroups, policyCaller, srcHarness); fail != nil {
+	if fail := spawnHarnessPolicyFailureForGroups(policyGroups, policyCaller, co.srcHarness); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
+		return false
 	}
 	// A clone is a new agent, so a usage limit blocking spawns blocks it too.
 	if fail := checkUsageSpawnBlockForGroups(policyGroups); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
+		return false
 	}
 
 	// Rate limit: refuse a second clone of the same source within
@@ -2002,30 +2107,38 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	// both shapes. Manager *agents* cloning peers via agent.clone still
 	// have a real conv-id as caller and stay limited. Atomic at the DB
 	// layer so two concurrent claim attempts can't both pass.
-	if !isHumanCloneCaller(caller) {
-		if err := db.ClaimCloneSlot(target, CloneCooldown, time.Now().UTC()); err != nil {
+	if !isHumanCloneCaller(co.caller) {
+		if err := db.ClaimCloneSlot(co.target, CloneCooldown, time.Now().UTC()); err != nil {
 			if errors.Is(err, db.ErrCloneRateLimited) {
 				writeError(w, http.StatusTooManyRequests, "rate_limited",
-					"clone of "+short8(target)+" too recent; cooldown is "+CloneCooldown.String()+
+					"clone of "+short8(co.target)+" too recent; cooldown is "+CloneCooldown.String()+
 						" between consecutive clones of the same source conv")
-				return
+				return false
 			}
 			writeError(w, http.StatusInternalServerError, "io",
 				"clone rate-limit check: "+err.Error())
-			return
+			return false
 		}
 	}
 
+	return true
+}
+
+// planIdentity reads what the clone inherits: the source's permission rows,
+// a unique title, the handoff group, the launch settings and the groups that
+// manage the launch.
+func (co *cloneOrchestration) planIdentity(w http.ResponseWriter) bool {
+	var err error
 	// Copy the full permission posture — grant AND deny overrides, WITH
 	// their scopes — so the clone inherits the source's lockdown, not just
 	// its grants. Dropping the scope here would let any agent holding the
 	// default-granted self.clone mint an unscoped copy of a grant an
 	// operator deliberately narrowed.
-	oldPerms, err := db.ListAgentPermissionOverrideRowsForConv(target)
+	co.oldPerms, err = db.ListAgentPermissionOverrideRowsForConv(co.target)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"snapshot perms: "+err.Error())
-		return
+		return false
 	}
 
 	// Resolve the original's display title so the clone's title can be
@@ -2040,18 +2153,17 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	// launch argument, so it has to exist before the fork rather than being
 	// injected once the pane answers.
 	originalTitle := ""
-	if t, ok := harnessNativeTitle(target); ok {
+	if t, ok := harnessNativeTitle(co.target); ok {
 		originalTitle = t
-	} else if row := agent.FreshConvRowResolved(target); row != nil {
+	} else if row := agent.FreshConvRowResolved(co.target); row != nil {
 		originalTitle = agent.DisplayTitle(row)
 	}
-	newTitle := uniqueCloneTitle(originalTitle)
+	co.newTitle = uniqueCloneTitle(originalTitle)
 	// Route the handoff through the first group the source belongs to; the
 	// clone joins exactly that set below. group_id 0 — a solo clone with no
 	// groups — is a direct message, the universal-inbox transport.
-	var handoffGroupID int64
-	if len(oldMembers) > 0 {
-		handoffGroupID = oldMembers[0].GroupID
+	if len(co.oldMembers) > 0 {
+		co.handoffGroupID = co.oldMembers[0].GroupID
 	}
 
 	// 2. Mint the clone's conv-id (and optionally its jsonl). The
@@ -2059,52 +2171,58 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	// groups-clone orchestration can reuse the same code path without
 	// duplicating it. The clone is launched with the source agent's durable
 	// model + effort; "" falls back to the harness default.
-	effort, model := relaunch.Effort, relaunch.Model
-	managedGroups := append([]*db.AgentGroup(nil), oldGroups...)
-	if extraGroup != nil {
-		managedGroups = append(managedGroups, extraGroup)
+	co.effort, co.model = co.relaunch.Effort, co.relaunch.Model
+	co.managedGroups = append([]*db.AgentGroup(nil), co.oldGroups...)
+	if co.extraGroup != nil {
+		co.managedGroups = append(co.managedGroups, co.extraGroup)
 	}
-	var sandboxGroupID int64
-	if extraGroup != nil {
-		sandboxGroupID = extraGroup.ID
+	if co.extraGroup != nil {
+		co.sandboxGroupID = co.extraGroup.ID
 	}
-	spawned, spawnErr := cloneSpawnOnce(cloneSpawnParams{
-		ManagedGroups:       managedGroups,
+	return true
+}
+
+// spawn launches the clone once, copies the conversation unless asked not to,
+// and registers the launch claim's release.
+func (co *cloneOrchestration) spawn(w http.ResponseWriter) bool {
+	var spawnErr *cloneSpawnError
+	co.spawned, spawnErr = cloneSpawnOnce(cloneSpawnParams{
+		ManagedGroups:       co.managedGroups,
 		Arrival:             true,
-		SandboxGroupID:      sandboxGroupID,
-		KeepSandbox:         body.KeepSandbox,
-		KeepEnvironment:     body.KeepEnvironment,
-		SourceConv:          target,
-		Cwd:                 cwd,
-		NoCopyConv:          noCopyConv,
-		Effort:              effort,
-		Model:               model,
-		ProofToken:          proofToken,
-		ProofCwd:            proofToken != "",
-		ProofDirs:           proofDirs,
-		CodexGitCommonDir:   codexGitCommonDir,
-		GitWriteDirs:        gitWriteDirs,
-		Title:               newTitle,
-		FollowUp:            followUp,
-		HandoffFrom:         caller,
-		HandoffGroupID:      handoffGroupID,
-		RouteHelperGroupIDs: routeHelperGroupIDs,
+		SandboxGroupID:      co.sandboxGroupID,
+		KeepSandbox:         co.body.KeepSandbox,
+		KeepEnvironment:     co.body.KeepEnvironment,
+		SourceConv:          co.target,
+		Cwd:                 co.cwd,
+		NoCopyConv:          co.noCopyConv,
+		Effort:              co.effort,
+		Model:               co.model,
+		ProofToken:          co.proofToken,
+		ProofCwd:            co.proofToken != "",
+		ProofDirs:           co.proofDirs,
+		CodexGitCommonDir:   co.codexGitCommonDir,
+		GitWriteDirs:        co.gitWriteDirs,
+		Title:               co.newTitle,
+		FollowUp:            co.followUp,
+		HandoffFrom:         co.caller,
+		HandoffGroupID:      co.handoffGroupID,
+		RouteHelperGroupIDs: co.routeHelperGroupIDs,
 	})
 	if spawnErr != nil {
 		spawnErr.write(w)
-		return
+		return false
 	}
-	newConv, newTmux, label, warn := spawned.NewConv, spawned.NewTmux, spawned.Label, spawned.Warn
-	if !noCopyConv {
+	co.newConv, co.newTmux, co.label, co.warn = co.spawned.NewConv, co.spawned.NewTmux, co.spawned.Label, co.spawned.Warn
+	if !co.noCopyConv {
 		// The copy is a native one, so the source's conversions are its own.
-		recordConvLosses(newConv, storedConvLosses(target), nil)
+		recordConvLosses(co.newConv, storedConvLosses(co.target), nil)
 	}
 	// Take over the launch claim rather than re-claiming: releasing in
 	// cloneSpawnOnce and claiming again here would leave the new row briefly
 	// indistinguishable from a plain session, which is the window the claim
 	// exists to close. It runs out at the end of this handler, well after
 	// EnsureAgentForConv below has made the clone an agent for good.
-	defer spawned.ReleaseLaunchClaim()
+	co.cleanups = append(co.cleanups, co.spawned.ReleaseLaunchClaim)
 
 	// A clone is an agent in its own right. The identity copy below
 	// registers it via the group/grant DB hooks when the original had
@@ -2118,11 +2236,11 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	// failClone stops a clone that launched but cannot be given its identity:
 	// an agent missing some of its source's groups or permissions is worse
 	// than no clone, so the caller gets an error and nothing keeps running.
-	failClone := func(agentID, code, msg string) {
+	co.failClone = func(agentID, code, msg string) {
 		// A pane that never registered is still addressed by its launch label.
-		tmuxToKill := newTmux
+		tmuxToKill := co.newTmux
 		if tmuxToKill == "" {
-			tmuxToKill = label
+			tmuxToKill = co.label
 		}
 		stopped := "; the clone was stopped"
 		if tmuxToKill == "" {
@@ -2130,9 +2248,9 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		} else if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxToKill)).Run(); err != nil {
 			slog.Warn("clone: stopping failed clone", "session", tmuxToKill, "error", err)
 		}
-		if spawned.HandoffMsgID > 0 {
-			if _, err := db.DeleteAgentMessagesByIDs([]int64{spawned.HandoffMsgID}); err != nil {
-				slog.Warn("clone: rollback of handoff message failed", "msg_id", spawned.HandoffMsgID, "error", err)
+		if co.spawned.HandoffMsgID > 0 {
+			if _, err := db.DeleteAgentMessagesByIDs([]int64{co.spawned.HandoffMsgID}); err != nil {
+				slog.Warn("clone: rollback of handoff message failed", "msg_id", co.spawned.HandoffMsgID, "error", err)
 			}
 		}
 		if agentID != "" {
@@ -2142,32 +2260,40 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		}
 		writeError(w, http.StatusInternalServerError, code, msg+stopped)
 	}
-	newAgentID, _, err := db.EnsureAgentForConv(newConv, "clone")
+	return true
+}
+
+// landIdentity registers the clone and gives it the source's sandbox snapshot,
+// launch record, groups, permissions and usage profiles, failing the clone
+// (and stopping it) if any of that does not land.
+func (co *cloneOrchestration) landIdentity(w http.ResponseWriter) bool {
+	var err error
+	newAgentID, _, err := db.EnsureAgentForConv(co.newConv, "clone")
 	if err != nil {
-		failClone("", "identity", "register clone: "+err.Error())
-		return
+		co.failClone("", "identity", "register clone: "+err.Error())
+		return false
 	}
 	// A launch-enrolled handoff row was written BEFORE the clone's actor
 	// existed, so it landed with to_agent "" and would drop out of the
 	// actor-keyed inbox at the next rotation. Re-derive its companions now that
 	// EnsureAgentForConv has minted one.
-	if spawned.HandoffMsgID > 0 {
-		if err := db.RederiveAgentMessageActorRefs(spawned.HandoffMsgID); err != nil {
+	if co.spawned.HandoffMsgID > 0 {
+		if err := db.RederiveAgentMessageActorRefs(co.spawned.HandoffMsgID); err != nil {
 			slog.Warn("clone: failed to re-derive handoff actor refs",
-				"conv", newConv, "msg_id", spawned.HandoffMsgID, "error", err)
+				"conv", co.newConv, "msg_id", co.spawned.HandoffMsgID, "error", err)
 		}
 	}
-	if err := inheritEffectiveSandboxSnapshot(target, newConv); err != nil {
-		failClone(newAgentID, "io", "persist clone sandbox snapshot: "+err.Error())
-		return
+	if err := inheritEffectiveSandboxSnapshot(co.target, co.newConv); err != nil {
+		co.failClone(newAgentID, "io", "persist clone sandbox snapshot: "+err.Error())
+		return false
 	}
 	launchGroupID := int64(0)
-	if extraGroup != nil {
-		launchGroupID = extraGroup.ID
+	if co.extraGroup != nil {
+		launchGroupID = co.extraGroup.ID
 	}
-	if err := inheritLaunchRecord(target, newConv, launchGroupID, spawned.HandoffMsgID); err != nil {
-		failClone(newAgentID, "io", "persist clone launch record: "+err.Error())
-		return
+	if err := inheritLaunchRecord(co.target, co.newConv, launchGroupID, co.spawned.HandoffMsgID); err != nil {
+		co.failClone(newAgentID, "io", "persist clone launch record: "+err.Error())
+		return false
 	}
 
 	// 3. Copy identity to the new conv. Crucially, this is ADD-only —
@@ -2177,29 +2303,35 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	// is authorization state (@self-spawned / @descendants), and a clone must
 	// not gain or confer authority that way.
 	granter := "system:clone"
-	if caller != target {
-		granter = "system:clone:by=" + auditedCallerWithSudoGrant(caller, perm,
-			authorizedSudoGrantIDForRequest(r))
-	} else if grantID, _ := db.LookupActiveSudoGrantID(caller, perm); grantID > 0 {
+	if co.caller != co.target {
+		granter = "system:clone:by=" + auditedCallerWithSudoGrant(co.caller, co.perm,
+			authorizedSudoGrantIDForRequest(co.r))
+	} else if grantID, _ := db.LookupActiveSudoGrantID(co.caller, co.perm); grantID > 0 {
 		// Self-clone via sudo: no :by= (it's just the target itself)
 		// but still surface the via-sudo annotation so forensics can
 		// tie the new conv's grants back to the elevation window.
 		granter = fmt.Sprintf("system:clone:via-sudo:grant-id=%d", grantID)
 	}
-	members := oldMembers
-	if extraGroup != nil && !slices.ContainsFunc(members, func(m *db.AgentGroupMember) bool { return m.GroupID == extraGroup.ID }) {
-		members = append(append([]*db.AgentGroupMember(nil), members...), &db.AgentGroupMember{GroupID: extraGroup.ID})
+	members := co.oldMembers
+	if co.extraGroup != nil && !slices.ContainsFunc(members, func(m *db.AgentGroupMember) bool { return m.GroupID == co.extraGroup.ID }) {
+		members = append(append([]*db.AgentGroupMember(nil), members...), &db.AgentGroupMember{GroupID: co.extraGroup.ID})
 	}
-	copied, err := applyClonedIdentity(newAgentID, granter, members, oldPerms, oldOwnedIDs)
+	co.copied, err = applyClonedIdentity(newAgentID, granter, members, co.oldPerms, co.oldOwnedIDs)
 	if err != nil {
-		failClone(newAgentID, "identity", "copy the source's groups and permissions to the clone: "+err.Error())
-		return
+		co.failClone(newAgentID, "identity", "copy the source's groups and permissions to the clone: "+err.Error())
+		return false
 	}
-	if err := copyAgentUsageAssignments(target, newAgentID); err != nil {
-		failClone(newAgentID, "identity", "copy the source's usage profiles to the clone: "+err.Error())
-		return
+	if err := copyAgentUsageAssignments(co.target, newAgentID); err != nil {
+		co.failClone(newAgentID, "identity", "copy the source's usage profiles to the clone: "+err.Error())
+		return false
 	}
 
+	return true
+}
+
+// enrollAndAnswer sends the clone its startup message, delivers a follow-up,
+// and answers with the clone's identity.
+func (co *cloneOrchestration) enrollAndAnswer(w http.ResponseWriter) bool {
 	// 4. Settle the follow-up's inbox row, then run post-init.
 	//
 	// Launch-enrollment path: the row was inserted BEFORE the fork (its id is
@@ -2230,12 +2362,12 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	// never-messaged clone ends up an orphan, the same trap that bit `tclaude
 	// agent spawn` before bc7ec81.
 	var msgID int64
-	if spawned.LaunchEnrolled {
-		msgID = spawned.HandoffMsgID
-		if msgID > 0 && !spawned.HandoffInlined {
+	if co.spawned.LaunchEnrolled {
+		msgID = co.spawned.HandoffMsgID
+		if msgID > 0 && !co.spawned.HandoffInlined {
 			if err := db.MarkAgentMessageDelivered(msgID); err != nil {
 				slog.Warn("clone: failed to mark launch-delivered handoff",
-					"conv", newConv, "msg_id", msgID, "error", err)
+					"conv", co.newConv, "msg_id", msgID, "error", err)
 			}
 		}
 		// The handoff itself needs no nudge, but other mail may already be
@@ -2244,19 +2376,19 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		// moment tmux new-session returns — i.e. inside the very pre-TUI window
 		// this change is about — and any nudge is still send-keys.
 		goBackground(func() {
-			if !waitForConvAlive(newConv) {
+			if !waitForConvAlive(co.newConv) {
 				slog.Warn("clone: new conv never came online; queued mail left for the next drain",
-					"conv", newConv)
+					"conv", co.newConv)
 				return
 			}
-			enqueueDeliveryForConv(newConv)
+			enqueueDeliveryForConv(co.newConv)
 		})
 	} else {
-		if followUp != "" {
-			msgID = insertCloneHandoff(handoffGroupID, caller, newConv, followUp, false)
+		if co.followUp != "" {
+			msgID = insertCloneHandoff(co.handoffGroupID, co.caller, co.newConv, co.followUp, false)
 		}
 		goBackground(func() {
-			runClonePostInit(newConv, newTitle, target, caller)
+			runClonePostInit(co.newConv, co.newTitle, co.target, co.caller)
 		})
 	}
 
@@ -2264,47 +2396,48 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	// reincarnate.
 
 	resp := map[string]any{
-		"old_conv":     target,
-		"new_conv":     newConv,
-		"label":        label,
-		"tmux_session": newTmux,
-		"copied":       copied,
-		"copy_conv":    !noCopyConv,
+		"old_conv":     co.target,
+		"new_conv":     co.newConv,
+		"label":        co.label,
+		"tmux_session": co.newTmux,
+		"copied":       co.copied,
+		"copy_conv":    !co.noCopyConv,
 	}
-	if caller != target {
-		resp["caller_conv"] = caller
-		stampCallerAgentID(resp, caller)
+	if co.caller != co.target {
+		resp["caller_conv"] = co.caller
+		stampCallerAgentID(resp, co.caller)
 	}
-	if newTmux != "" && label != "" {
-		resp["attach_cmd"] = "tclaude session attach " + label
+	if co.newTmux != "" && co.label != "" {
+		resp["attach_cmd"] = "tclaude session attach " + co.label
 	} else {
-		resp["attach_cmd"] = "tclaude session resume " + newConv
+		resp["attach_cmd"] = "tclaude session resume " + co.newConv
 	}
-	if followUp != "" {
-		resp["follow_up"] = followUp
+	if co.followUp != "" {
+		resp["follow_up"] = co.followUp
 		// Say which way the follow-up actually reached the clone: a launch-
 		// enrolled clone already took it as its first turn, so "queued" would
 		// misdescribe a message that is done.
 		delivery := "queued as message"
-		if spawned.LaunchEnrolled {
+		if co.spawned.LaunchEnrolled {
 			delivery = "launched with the clone as its first turn; saved as message"
 		}
 		if msgID > 0 {
 			resp["message_id"] = msgID
 			resp["note"] = fmt.Sprintf("clone %s spawned alongside original %s; follow-up %s #%d",
-				short8(newConv), short8(target), delivery, msgID)
+				short8(co.newConv), short8(co.target), delivery, msgID)
 		} else {
 			resp["note"] = fmt.Sprintf("clone %s spawned alongside original %s; follow-up will be injected into the new pane once it's ready",
-				short8(newConv), short8(target))
+				short8(co.newConv), short8(co.target))
 		}
 	} else {
 		resp["note"] = fmt.Sprintf("clone %s spawned alongside original %s; both are now running",
-			short8(newConv), short8(target))
+			short8(co.newConv), short8(co.target))
 	}
-	if warn != "" {
-		resp["warning"] = warn
+	if co.warn != "" {
+		resp["warning"] = co.warn
 	}
 	writeJSON(w, http.StatusOK, resp)
+	return true
 }
 
 func inheritEffectiveSandboxSnapshot(sourceConv, targetConv string) error {
