@@ -148,12 +148,14 @@ test('a crafted seed cannot give a board a socket or a colliding key', async (t)
   assert.equal(seed.key, 'board:plan');
 });
 
-test('the + menu lists boards and opens one in a tab', async (t) => {
+test('the panel\'s ＋ New lists boards and opens one in a tab', async (t) => {
   const requests = fakeDaemon(t);
   const env = await mountShell(t, COLLAB_ON);
   const cleanup = await start(env);
   const { harness, host } = env;
-  await harness.act(async () => { harness.fireEvent(host.querySelector('.mux-board-add'), 'click'); await wait(); });
+  assertAbsent(host.querySelector('.mux-board-add'), 'the strip no longer carries a ＋');
+  await harness.act(async () => { harness.fireEvent(host.querySelector('.cr-new'), 'click'); await wait(); });
+  await harness.act(async () => { harness.fireEvent(host.querySelector('[data-new-kind="board"]'), 'click'); await wait(); });
   await harness.act(() => wait());
   const cards = host.querySelectorAll('.mux-board-menu .board-row-open');
   assert.equal(cards.length, 2);

@@ -37,7 +37,13 @@ screens.
   Processes). By default everything but Closed is listed. The button shows a
   count of the boxes changed from the default, and **Reset** puts them back.
   The browser remembers the filter. A search finds everything, whatever the
-  filter is.
+  filter is. It also counts the [background sessions](#background-sessions).
+- **＋ New ▾** makes something: **Agent…** (the spawn dialog), **Shell…** and
+  **Page…** (pick the group), **Board…** (the board list: open one, or create
+  one), **Process…** (the process list, with Processes on) and **Import
+  board…** (an `.excalidraw` file). Each group's header has a **＋** that opens
+  the same menu for that group: a **Shell** in its directory, a **Board** and a
+  **Page** in the group, and an agent spawned into it.
 - In each group, the agents come first, in a fixed order: needs you, working
   (green light), idle (amber), then by name. Closed items come last.
 - A group with an agent that needs you comes first, then groups with something
@@ -52,6 +58,10 @@ screens.
   tab.
 - Hover a tab to pop it out or close it, and hover a window to minimize it or
   close it.
+- **⋯** on a row, or a right click, opens its menu: **Attach** or **Open**,
+  **Kill session…** for a background session or a group's shell, and on a
+  board **Download .excalidraw**, **End agents' sessions…** and **Delete
+  board…**. Each destructive one asks first.
 - A board, page or process row has a lock at its right end: an amber closed
   lock, always shown, while agents can only read it, and a dim open lock on
   hover or keyboard focus while they can edit it. Click it to lock or unlock;
@@ -171,22 +181,27 @@ When the last tab closes, the dashboard moves to Groups, unless you turn on
 
 ## Background sessions
 
-The counter at the right of the tab strip shows sessions running with no terminal
-attached, so idle ones aren't left running by accident. It's hidden at zero. Hover
-to peek, or click to pin it open.
+Sessions running with no terminal attached are counted on the side panel, so
+idle ones aren't left running by accident: on its **Filter ▾** button, on the
+**Background** box in it, and, while the panel is folded, on its handle. The
+count is hidden at zero.
 
-Its sections are `Agents`, `Sessions`, `Shells`, `Group shells`, `Boards` and
-`Other tmux sessions`. Each row shows the idle time.
+The panel lists them, with **Background** ticked, under their agent's group,
+each with its idle time (amber after a few hours).
 
-- **Attach** (or click the title) opens it as a tab. **Attach all** appears with
-  two or more.
-- **Kill** ends a shell or a leftover session. It asks again as `Kill?` for three
-  seconds.
-- **Open** and **End** on a board row open the board, or remove its
-  [board sessions](boards.md#board-sessions) and leave it.
+- Click one, or **Attach** in its menu, to open it as a tab. **Attach all
+  background** at the bottom of the Filter menu opens every one that can be
+  attached, one at a time.
+- **Kill session…** in its menu ends it, after asking.
+- A board with [board sessions](boards.md#board-sessions) has **End agents'
+  sessions…** in its menu, which removes them and leaves the board.
+- Sessions the dashboard cannot attach (an earlier generation, a tmux session
+  tclaude did not start, or one that is locked) are listed last, under **Other
+  sessions**. Their tooltip has the `tmux attach` command to reach them from a
+  shell, and their menu can kill them.
 
-With linked nodes, peers' unattached agents and shells appear under each node's
-pill; which ones depends on your [grants from that peer](fleet-ui.md).
+With linked nodes, peers' unattached agents and shells are listed too; which ones
+depends on your [grants from that peer](fleet-ui.md).
 
 ## Terminals on other nodes
 

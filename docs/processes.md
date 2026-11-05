@@ -449,8 +449,8 @@ things there are specific to processes:
   the editor you last clicked in. Closing a floating editor, from the dock
   or with its window's close button, asks first when it has unsaved edits. A reload reopens an
   overlay tab on the last saved version.
-- **In a Collab tab.** The **＋** at the right of the Collab
-  tab strip has a *Processes* half beside *Boards*: every template, under the
+- **In a Collab tab.** **＋ New ▾** › **Process…** in the Collab side panel
+  lists every template, under the
   groups it is pinned to (*Not pinned* last), with a box that searches names,
   ids, descriptions and groups. Pick one to open its editor as a Collab tab, or
   type a new name and *＋ New process* stores a blank template and opens it.
@@ -460,7 +460,7 @@ things there are specific to processes:
   menu have *Open in overlay*, *Open in the Processes tab* and *Open in
   separate window*; an overlay tab has *Open in the Collab tab*. The editor
   moves as it does between the other places, draft and all, and an editor open
-  in the Processes tab moves to the strip when you pick it from the **＋**.
+  in the Processes tab moves to the strip when you pick it from **Process…**.
   Closing a process tab asks first when it has unsaved edits. Back to the Processes tab's URL of a template in a Collab tab brings
   the editor back there.
 - **Subprocesses.** A ▣ node runs a nested graph (see
