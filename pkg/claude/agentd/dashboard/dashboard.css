@@ -18565,6 +18565,11 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-new-menu .gr-new-line { color: var(--ui-muted-text); font-size: 11px; white-space: normal; text-align: left; }
 .gr-row.gr-closed .gr-name.ui-btn { color: var(--ui-muted-text); font-weight: 500; }
 .gr-add { position: relative; display: inline-flex; }
+/* Icon-only, like the Agents section's spawn buttons beside it: the ＋ glyph
+   and a smaller caret that says it opens a menu. */
+.gr-add-btn { gap: 2px; }
+.gr-add-btn .gr-add-plus { font-size: 12px; line-height: 1; }
+.gr-add-btn .gr-add-caret { font-size: 9px; line-height: 1; opacity: 0.85; }
 .gr-add-menu { position: absolute; right: 0; top: 100%; z-index: var(--z-popover); min-width: 120px; }
 .gr-row .gr-rename { min-width: 12em; font: inherit; font-weight: 600; padding: 1px 6px; }
 .gr-add-menu.gr-new-menu { left: 0; right: auto; top: calc(100% + 2px); min-width: 260px; }
