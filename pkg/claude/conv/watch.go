@@ -2682,8 +2682,8 @@ func resumeLaunchCmdWithEffectiveSandbox(
 	}
 	if outerLayer {
 		if workspace := canonicalResumeWorkspace(resumeCwd); workspace != "" {
-			writeDirs = appendUniqueResumeDir(writeDirs, workspace)
-			tclaudeLayerContractWriteDirs = appendUniqueResumeDir(tclaudeLayerContractWriteDirs, workspace)
+			writeDirs = session.AppendUniqueDir(writeDirs, workspace)
+			tclaudeLayerContractWriteDirs = session.AppendUniqueDir(tclaudeLayerContractWriteDirs, workspace)
 		}
 	}
 	if workspaceDenied {
@@ -2693,7 +2693,7 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		// WRITE on every harness — not just Codex — or a resumed agent in a plain
 		// directory silently loses write access it had at spawn.
 		if workspace := canonicalResumeWorkspace(resumeCwd); workspace != "" {
-			writeDirs = appendUniqueResumeDir(writeDirs, workspace)
+			writeDirs = session.AppendUniqueDir(writeDirs, workspace)
 		}
 	}
 	// Launch contract: pair explicit read reopens for everything tclaude
@@ -2964,7 +2964,7 @@ func canonicalResumeWorkspace(cwd string) string {
 // reached through a symlinked ancestor must be resolved before comparison or a
 // covering deny goes undetected and the workspace is never reopened.
 func resumeDenyCoversPath(grants []sandboxpolicy.FilesystemGrant, path string) bool {
-	path = canonicalResumeSandboxPath(path)
+	path = session.CanonicalSandboxPath(path)
 	if path == "" {
 		return false
 	}
@@ -2997,36 +2997,14 @@ func resumeLaunchContractReadDirs(grants []sandboxpolicy.FilesystemGrant, agentD
 	for _, candidate := range all {
 		// Emit the canonical form: the rule must name the path the sandbox will
 		// actually see, and must be comparable to the canonical deny above.
-		candidate = canonicalResumeSandboxPath(candidate)
+		candidate = session.CanonicalSandboxPath(candidate)
 		if candidate == "" || !resumeDenyCoversPath(grants, candidate) {
 			continue
 		}
-		out = appendUniqueResumeDir(out, candidate)
+		out = session.AppendUniqueDir(out, candidate)
 	}
 	sort.Strings(out)
 	return out
-}
-
-// canonicalResumeSandboxPath mirrors session.canonicalSandboxPath: resolve when
-// possible, fall back to the lexical form otherwise.
-func canonicalResumeSandboxPath(path string) string {
-	path = filepath.Clean(strings.TrimSpace(path))
-	if path == "." || !filepath.IsAbs(path) {
-		return ""
-	}
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		return filepath.Clean(resolved)
-	}
-	return path
-}
-
-func appendUniqueResumeDir(dirs []string, dir string) []string {
-	for _, existing := range dirs {
-		if existing == dir {
-			return dirs
-		}
-	}
-	return append(dirs, dir)
 }
 
 func resumeSandboxState(convID string) (mode, cwd string) {
@@ -3300,14 +3278,14 @@ func resumeGitWorktreeWriteDirs(cwd string, strictHome bool) ([]string, error) {
 	// Git common/admin descendants only.
 	var narrow []string
 	if workspace := canonicalResumeWorkspace(cwd); workspace != "" {
-		narrow = appendUniqueResumeDir(narrow, workspace)
+		narrow = session.AppendUniqueDir(narrow, workspace)
 	}
 	commonDir = filepath.Clean(commonDir)
-	narrow = appendUniqueResumeDir(narrow, commonDir)
+	narrow = session.AppendUniqueDir(narrow, commonDir)
 	for _, dir := range dirs {
 		dir = filepath.Clean(dir)
 		if sandboxpolicy.PathContainsOrEqual(commonDir, dir) {
-			narrow = appendUniqueResumeDir(narrow, dir)
+			narrow = session.AppendUniqueDir(narrow, dir)
 		}
 	}
 	return narrow, nil

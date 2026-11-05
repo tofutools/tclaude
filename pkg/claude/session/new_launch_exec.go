@@ -162,10 +162,10 @@ func planLaunchDirs(in launchDirsInput) (launchDirs, error) {
 		// The Codex harness must be able to create the socket/pid/log; under
 		// tclaude's sandbox the outer wall gets the narrower private-parent
 		// hide/reopen contract below.
-		launchWriteDirs = appendUniqueDir(launchWriteDirs, codexRuntimeDir.Current)
+		launchWriteDirs = AppendUniqueDir(launchWriteDirs, codexRuntimeDir.Current)
 	}
 	if in.outerLayer {
-		launchWriteDirs = appendUniqueDir(launchWriteDirs, canonicalSandboxPath(in.cwd))
+		launchWriteDirs = AppendUniqueDir(launchWriteDirs, CanonicalSandboxPath(in.cwd))
 	}
 	// A temporary filesystem really is writable inside the namespace, so the
 	// harness has to be told so. These lists become the harness's OWN view —
@@ -176,12 +176,12 @@ func planLaunchDirs(in launchDirsInput) (launchDirs, error) {
 	// implementation ValidateTmpfsSupport has already refused.
 	if sandboxpolicy.SupportsTmpfsMounts(in.sandboxImplementation, runtime.GOOS) {
 		for _, mount := range sandboxSnapshotTmpfs(in.launchSandbox) {
-			launchWriteDirs = appendUniqueDir(launchWriteDirs, mount.Path)
+			launchWriteDirs = AppendUniqueDir(launchWriteDirs, mount.Path)
 		}
 	}
 	launchReadDirs := append(sandboxSnapshotDirs(in.launchSandbox, sandboxpolicy.AccessRead), launchContractReadDirs...)
 	if in.params.ManagedInstructionsRoot != "" {
-		launchReadDirs = appendUniqueDir(launchReadDirs, in.params.ManagedInstructionsRoot)
+		launchReadDirs = AppendUniqueDir(launchReadDirs, in.params.ManagedInstructionsRoot)
 	}
 	launchDenyDirs := sandboxSnapshotDirs(in.launchSandbox, sandboxpolicy.AccessDeny)
 	// Re-run the capability gate on the RULES THAT WILL BE EMITTED. The early

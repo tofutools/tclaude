@@ -222,7 +222,7 @@ func foldTclaudeLayerRequirements(
 			}
 			out.ContractWriteDirs = append(out.ContractWriteDirs, path)
 			if requirement.PolicyGrant {
-				out.LaunchWriteDirs = appendUniqueDir(out.LaunchWriteDirs, path)
+				out.LaunchWriteDirs = AppendUniqueDir(out.LaunchWriteDirs, path)
 			}
 		case requirement.Kind == harness.LayerPathDirectory &&
 			requirement.Access == harness.LayerPathRead && requirement.MayCreate:
@@ -244,7 +244,7 @@ func foldTclaudeLayerRequirements(
 			requirement.Access == harness.LayerPathWrite:
 			// Socket nodes need writable access for connect(2), but are live
 			// endpoints rather than directories the launch may materialize.
-			out.LaunchWriteDirs = appendUniqueDir(out.LaunchWriteDirs, path)
+			out.LaunchWriteDirs = AppendUniqueDir(out.LaunchWriteDirs, path)
 		default:
 			return tclaudeLayerRequirementBuckets{}, fmt.Errorf(
 				"tclaude’s sandbox requirement %q (%s) has unsupported shape: kind %q, access %q, may-create %t",
