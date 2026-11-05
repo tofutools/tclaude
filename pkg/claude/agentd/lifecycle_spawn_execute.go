@@ -533,25 +533,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		briefingInlined: briefingInlined, launchEnroll: launchEnroll, launchedAt: launchedAt,
 		pendingHeld: pendingHeld, harness: spawnHarness, args: spawnArgs, focus: focus,
 		pollBudget: pollBudget, backgroundBackfillBudget: backgroundBackfillBudget}
-	var keepRouteHelper bool
-	switch {
-	case launchEnroll:
-		// Final wrapper-failure check: distinguish a reported wrapper failure
-		// from a pane that is merely too slow to confirm. A wrapper that fails
-		// after this point is out of signal reach; the unconfirmed path below
-		// preserves its enrollment so the operator can inspect or retire it.
-		select {
-		case werr := <-wrapperFailure:
-			return launchFailed(werr)
-		default:
-		}
-		outcome, failure, keepRouteHelper = settle.enrolledLaunch(tmuxSession)
-	case convID != "":
-		outcome, failure, keepRouteHelper = settle.discoveredConv(convID, tmuxSession)
-	case p.Async:
-		outcome, failure, keepRouteHelper = settle.pendingAsync(tmuxSession)
-	default:
-		failure = settle.timedOut()
+	outcome, failure, keepRouteHelper, wrapperErr := settle.conclude(convID, tmuxSession, wrapperFailure)
+	if wrapperErr != nil {
+		return launchFailed(wrapperErr)
 	}
 	if keepRouteHelper {
 		routeHelperCommitted = true
@@ -779,6 +763,36 @@ func (st spawnSettle) timedOut() *spawnFailure {
 	return &spawnFailure{http.StatusGatewayTimeout, "timeout",
 		"spawned session " + label + " but conv-id never materialised within " + pollBudget.String() +
 			" — the session may still come up; check `tclaude session attach " + label + "`"}
+}
+
+// conclude is how executeSpawn's launch settles, one of four ways: an
+// enrolled launch, a discovered conversation, a pending async spawn, or a
+// timeout. It reports whether the route-helper credential stays with the
+// launch. An enrolled launch whose wrapper reported a failure before settling
+// returns that failure as wrapperErr instead, for executeSpawn's confirmed-
+// failure unwind.
+func (st spawnSettle) conclude(convID, tmuxSession string, wrapperFailure chan error) (
+	outcome *spawnOutcome, failure *spawnFailure, keepRouteHelper bool, wrapperErr error) {
+	switch {
+	case st.launchEnroll:
+		// Final wrapper-failure check: distinguish a reported wrapper failure
+		// from a pane that is merely too slow to confirm. A wrapper that fails
+		// after this point is out of signal reach; the unconfirmed path below
+		// preserves its enrollment so the operator can inspect or retire it.
+		select {
+		case werr := <-wrapperFailure:
+			return nil, nil, false, werr
+		default:
+		}
+		outcome, failure, keepRouteHelper = st.enrolledLaunch(tmuxSession)
+	case convID != "":
+		outcome, failure, keepRouteHelper = st.discoveredConv(convID, tmuxSession)
+	case st.p.Async:
+		outcome, failure, keepRouteHelper = st.pendingAsync(tmuxSession)
+	default:
+		failure = st.timedOut()
+	}
+	return outcome, failure, keepRouteHelper, nil
 }
 
 // spawnPollBudgets is how long executeSpawn polls for the launched session
