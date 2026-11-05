@@ -2698,7 +2698,9 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		if privateErr != nil {
 			return "", "", nil, privateErr
 		}
-		launchSpec, specErr := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
+		// The step `session new` takes, so the harness state and protected
+		// mountpoints the spec hides exist before bwrap starts.
+		launchSpec, specErr := session.PrepareTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
 			HarnessName:      h.Name,
 			StateRoot:        spec.HarnessStateDir,
 			Cwd:              resumeCwd,
@@ -2708,7 +2710,7 @@ func resumeLaunchCmdWithEffectiveSandbox(
 			HarnessReadPaths: harnessReadPaths,
 		})
 		if specErr != nil {
-			return "", "", nil, fmt.Errorf("build resumed tclaude’s sandbox launch spec: %w", specErr)
+			return "", "", nil, specErr
 		}
 		layerSpec = launchSpec
 	}
