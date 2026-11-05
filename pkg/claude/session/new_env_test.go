@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -41,6 +42,18 @@ func TestBaseLaunchEnvCarriesTheLaunchKeysAndBrokersWalledHooks(t *testing.T) {
 	env, err = baseLaunchEnv(&NewParams{}, claude, "", nil, true, "spwn-env", "gen-1", t.TempDir())
 	require.NoError(t, err)
 	assert.Equal(t, HookBrokerAgentd, env[HookBrokerEnvVar], "an outer-layer launch routes hooks through agentd")
+
+	// The marker goes on after the profile's environment, so a profile cannot
+	// unset it and send a walled pane's hooks into the throwaway database.
+	profile := &sandboxpolicy.Snapshot{}
+	profile.Effective.Environment = []sandboxpolicy.EnvironmentEntry{
+		{Name: HookBrokerEnvVar, Value: "direct"},
+		{Name: "PROFILE_VAR", Value: "kept"},
+	}
+	env, err = baseLaunchEnv(&NewParams{}, claude, "", profile, true, "spwn-env", "gen-1", t.TempDir())
+	require.NoError(t, err)
+	assert.Equal(t, "kept", env["PROFILE_VAR"], "the profile's environment reaches the pane")
+	assert.Equal(t, HookBrokerAgentd, env[HookBrokerEnvVar], "the profile cannot unset the hook broker")
 }
 
 func TestResolveOpenCodeLaunchServerValidatesTheInternalAuthority(t *testing.T) {
