@@ -364,7 +364,7 @@ func ListAgentGroupPermissionSlugsForConv(convID string) ([]string, error) {
 	if err != nil || agentID == "" {
 		return nil, err
 	}
-	rows, err := d.Query(`
+	return queryRows(d, scanString, `
 		SELECT DISTINCT gp.slug
 		FROM agent_group_permissions gp
 		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at IS NULL
@@ -372,19 +372,6 @@ func ListAgentGroupPermissionSlugsForConv(convID string) ([]string, error) {
 		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at IS NULL
 		WHERE gm.agent_id = ?
 		ORDER BY gp.slug`, agentID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []string
-	for rows.Next() {
-		var slug string
-		if err := rows.Scan(&slug); err != nil {
-			return nil, err
-		}
-		out = append(out, slug)
-	}
-	return out, rows.Err()
 }
 
 // ListAgentGroupPermissionRowsForConv returns every active group grant for an
@@ -399,7 +386,15 @@ func ListAgentGroupPermissionRowsForConv(convID string) ([]AgentGroupPermission,
 	if err != nil || agentID == "" {
 		return nil, err
 	}
-	rows, err := d.Query(`
+	return queryRows(d, func(rows rowScanner) (AgentGroupPermission, error) {
+		var grant AgentGroupPermission
+		var grantedAt dbTimestamp
+		if err := rows.Scan(&grant.GroupID, &grant.GroupName, &grant.Slug, &grant.ScopeJSON, &grantedAt, &grant.GrantedBy, &grant.Retained); err != nil {
+			return AgentGroupPermission{}, err
+		}
+		grant.GrantedAt = grantedAt.Time()
+		return grant, nil
+	}, `
 		SELECT gp.group_id, g.name, gp.slug, gp.scope_json, gp.granted_at, gp.granted_by, gm.retained
 		FROM agent_group_permissions gp
 		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at IS NULL
@@ -407,21 +402,6 @@ func ListAgentGroupPermissionRowsForConv(convID string) ([]AgentGroupPermission,
 		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at IS NULL
 		WHERE gm.agent_id = ?
 		ORDER BY gp.slug, gp.group_id`, agentID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []AgentGroupPermission
-	for rows.Next() {
-		var grant AgentGroupPermission
-		var grantedAt dbTimestamp
-		if err := rows.Scan(&grant.GroupID, &grant.GroupName, &grant.Slug, &grant.ScopeJSON, &grantedAt, &grant.GrantedBy, &grant.Retained); err != nil {
-			return nil, err
-		}
-		grant.GrantedAt = grantedAt.Time()
-		out = append(out, grant)
-	}
-	return out, rows.Err()
 }
 
 // HasAgentGroupPermissionForGroup reports whether convID is a current member
@@ -1936,24 +1916,17 @@ func ListAgentGroupRenames(groupID int64) ([]AgentGroupAudit, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(
-		`SELECT id, group_id, old_name, new_name, by_conv, at, by_agent
-		 FROM agent_group_audit WHERE group_id = ? ORDER BY id DESC`, groupID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []AgentGroupAudit
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (AgentGroupAudit, error) {
 		var a AgentGroupAudit
 		var at dbTimestamp
 		if err := rows.Scan(&a.ID, &a.GroupID, &a.OldName, &a.NewName, &a.ByConv, &at, &a.ByAgent); err != nil {
-			return nil, err
+			return AgentGroupAudit{}, err
 		}
 		a.At = exportTimestamp(at)
-		out = append(out, a)
-	}
-	return out, rows.Err()
+		return a, nil
+	},
+		`SELECT id, group_id, old_name, new_name, by_conv, at, by_agent
+		 FROM agent_group_audit WHERE group_id = ? ORDER BY id DESC`, groupID)
 }
 
 // AgentGroupAudit is one row in agent_group_audit, recording a single
@@ -3075,25 +3048,18 @@ func ListOwnedGroupIDsContaining(ownerConv, targetConv string) ([]int64, error) 
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT DISTINCT o.group_id
+	return queryRows(d, func(rows rowScanner) (int64, error) {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return 0, err
+		}
+		return id, nil
+	}, `SELECT DISTINCT o.group_id
 		FROM agent_group_owners o
 		JOIN agent_group_members m ON m.group_id = o.group_id
 		WHERE o.agent_id = (SELECT agent_id FROM agent_conversations WHERE conv_id = ?)
 		  AND m.agent_id = (SELECT agent_id FROM agent_conversations WHERE conv_id = ?)`,
 		ownerConv, targetConv)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
 }
 
 // ListAgentGroupOwners returns every owner row for the given group,
@@ -3103,27 +3069,20 @@ func ListAgentGroupOwners(groupID int64) ([]*AgentGroupOwner, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(
-		`SELECT o.group_id, o.agent_id, ag.current_conv_id, o.granted_at, o.granted_by
-		 FROM agent_group_owners o JOIN agents ag ON ag.agent_id = o.agent_id
-		 WHERE o.group_id = ?
-		 ORDER BY o.granted_at DESC`,
-		groupID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*AgentGroupOwner
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (*AgentGroupOwner, error) {
 		var o AgentGroupOwner
 		var grantedAt dbTimestamp
 		if err := rows.Scan(&o.GroupID, &o.AgentID, &o.ConvID, &grantedAt, &o.GrantedBy); err != nil {
 			return nil, err
 		}
 		o.GrantedAt = grantedAt.Time()
-		out = append(out, &o)
-	}
-	return out, rows.Err()
+		return &o, nil
+	},
+		`SELECT o.group_id, o.agent_id, ag.current_conv_id, o.granted_at, o.granted_by
+		 FROM agent_group_owners o JOIN agents ag ON ag.agent_id = o.agent_id
+		 WHERE o.group_id = ?
+		 ORDER BY o.granted_at DESC`,
+		groupID)
 }
 
 // OwnedGroupScopes is one owned group's identity plus the only field the
@@ -3148,24 +3107,17 @@ func ListOwnedGroupScopes(convID string) ([]OwnedGroupScopes, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT g.id, g.name, g.owner_scopes_json
+	return queryRows(d, func(rows rowScanner) (OwnedGroupScopes, error) {
+		var g OwnedGroupScopes
+		if err := rows.Scan(&g.ID, &g.Name, &g.OwnerScopesJSON); err != nil {
+			return OwnedGroupScopes{}, err
+		}
+		return g, nil
+	}, `SELECT g.id, g.name, g.owner_scopes_json
 		FROM agent_group_owners o
 		JOIN agent_groups g ON g.id = o.group_id
 		WHERE o.agent_id = (SELECT agent_id FROM agent_conversations WHERE conv_id = ?)
 		  AND g.archived_at IS NULL`, convID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []OwnedGroupScopes
-	for rows.Next() {
-		var g OwnedGroupScopes
-		if err := rows.Scan(&g.ID, &g.Name, &g.OwnerScopesJSON); err != nil {
-			return nil, err
-		}
-		out = append(out, g)
-	}
-	return out, rows.Err()
 }
 
 // ListGroupsOwnedBy returns every group_id convID owns. Used by the
@@ -3186,20 +3138,13 @@ func ListGroupsOwnedBy(convID string) ([]int64, error) {
 	if agentID == "" {
 		return nil, nil
 	}
-	rows, err := d.Query(`SELECT group_id FROM agent_group_owners WHERE agent_id = ?`, agentID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []int64
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (int64, error) {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			return nil, err
+			return 0, err
 		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
+		return id, nil
+	}, `SELECT group_id FROM agent_group_owners WHERE agent_id = ?`, agentID)
 }
 
 // CanSenderReachTarget returns the routing group when a message from
@@ -3317,22 +3262,15 @@ func FindAgentMembersBySelector(selector string) ([]*AgentGroupMember, error) {
 			SELECT agent_id FROM agent_conversations WHERE conv_id = ? OR conv_id LIKE ?
 		)
 		ORDER BY m.joined_at DESC`
-	rows, err := d.Query(q, selector, selector+"%")
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*AgentGroupMember
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (*AgentGroupMember, error) {
 		var m AgentGroupMember
 		var joined dbTimestamp
 		if err := rows.Scan(&m.GroupID, &m.ConvID, &m.Role, &m.Descr, &joined); err != nil {
 			return nil, err
 		}
 		m.JoinedAt = joined.Time()
-		out = append(out, &m)
-	}
-	return out, rows.Err()
+		return &m, nil
+	}, q, selector, selector+"%")
 }
 
 // MarkAgentMessageDelivered sets delivered_at = now for the given message ID.
@@ -3415,20 +3353,7 @@ func ListUndeliveredAgentMessagesFor(toConv string) ([]*AgentMessage, error) {
 		FROM agent_messages
 		WHERE to_conv = ? AND delivered_at IS NULL AND read_at IS NULL AND nudge_cancelled_at IS NULL
 		ORDER BY id ASC`
-	rows, err := db.Query(q, toConv)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*AgentMessage
-	for rows.Next() {
-		m, err := scanAgentMessage(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return queryRows(db, scanAgentMessage, q, toConv)
 }
 
 // ListUndeliveredForAgent returns undelivered, head-following messages for an
@@ -3451,20 +3376,7 @@ func ListUndeliveredForAgent(agentID string) ([]*AgentMessage, error) {
 		FROM agent_messages
 		WHERE to_agent = ? AND pin_gen = 0 AND delivered_at IS NULL AND read_at IS NULL AND nudge_cancelled_at IS NULL
 		ORDER BY id ASC`
-	rows, err := db.Query(q, agentID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*AgentMessage
-	for rows.Next() {
-		m, err := scanAgentMessage(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return queryRows(db, scanAgentMessage, q, agentID)
 }
 
 // ListUndeliveredForExactConv returns undelivered messages addressed to a
@@ -3487,20 +3399,7 @@ func ListUndeliveredForExactConv(convID string) ([]*AgentMessage, error) {
 		FROM agent_messages
 		WHERE to_conv = ? AND (pin_gen = 1 OR to_agent = '') AND delivered_at IS NULL AND read_at IS NULL AND nudge_cancelled_at IS NULL
 		ORDER BY id ASC`
-	rows, err := db.Query(q, convID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*AgentMessage
-	for rows.Next() {
-		m, err := scanAgentMessage(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return queryRows(db, scanAgentMessage, q, convID)
 }
 
 // CountUndeliveredForAgent returns how many head-following messages are queued
@@ -3550,21 +3449,8 @@ func ListAllUndeliveredAgentMessages() ([]*AgentMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT ` + agentMessageColumns + ` FROM agent_messages
+	return queryRows(d, scanAgentMessage, `SELECT `+agentMessageColumns+` FROM agent_messages
 		WHERE delivered_at IS NULL AND read_at IS NULL AND nudge_cancelled_at IS NULL ORDER BY id ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*AgentMessage
-	for rows.Next() {
-		m, err := scanAgentMessage(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
 }
 
 // ListDeliveredUnreadAgentMessages returns every message that has been
@@ -3589,20 +3475,7 @@ func ListDeliveredUnreadAgentMessages() ([]*AgentMessage, error) {
 		FROM agent_messages
 		WHERE to_conv != '' AND delivered_at IS NOT NULL AND read_at IS NULL
 		ORDER BY id ASC`
-	rows, err := db.Query(q)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*AgentMessage
-	for rows.Next() {
-		m, err := scanAgentMessage(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return queryRows(db, scanAgentMessage, q)
 }
 
 type AgentMessageNudgeClaim struct {
@@ -4188,20 +4061,7 @@ func listAgentMessagesForActor(convCol, agentCol, conv, agent, filter string, li
 		q += ` LIMIT ?`
 		args = append(args, limit)
 	}
-	rows, err := db.Query(q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*AgentMessage
-	for rows.Next() {
-		m, err := scanAgentMessage(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return queryRows(db, scanAgentMessage, q, args...)
 }
 
 // listAgentMessagesByCol shares the read/scan path between the inbox
@@ -4360,24 +4220,11 @@ func GroupMessageParticipants(groupID int64) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`
+	return queryRows(d, scanString, `
 		SELECT from_conv FROM agent_messages WHERE group_id = ? AND from_conv != ''
 		UNION
 		SELECT to_conv   FROM agent_messages WHERE group_id = ? AND to_conv   != ''`,
 		groupID, groupID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []string
-	for rows.Next() {
-		var conv string
-		if err := rows.Scan(&conv); err != nil {
-			return nil, err
-		}
-		out = append(out, conv)
-	}
-	return out, rows.Err()
 }
 
 // MailboxFilter selects which agent_messages rows a dashboard mailbox
@@ -5025,23 +4872,16 @@ func ListActiveGroupMemberRoles() ([]ActiveGroupMemberRole, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT m.group_id, m.role, COUNT(*)
+	return queryRows(db, func(rows rowScanner) (ActiveGroupMemberRole, error) {
+		var r ActiveGroupMemberRole
+		if err := rows.Scan(&r.GroupID, &r.Role, &r.Count); err != nil {
+			return ActiveGroupMemberRole{}, err
+		}
+		return r, nil
+	}, `SELECT m.group_id, m.role, COUNT(*)
 		FROM agent_group_members m JOIN agents ag ON ag.agent_id = m.agent_id
 		WHERE ag.retired_at IS NULL AND trim(m.role) != ''
 		GROUP BY m.group_id, m.role ORDER BY m.group_id, m.role`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []ActiveGroupMemberRole
-	for rows.Next() {
-		var r ActiveGroupMemberRole
-		if err := rows.Scan(&r.GroupID, &r.Role, &r.Count); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
 }
 
 // MissionBlock is the group's mission as the block every member is briefed
