@@ -815,12 +815,16 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 
 	timing("conversation_poll_finished", "label", label, "conv", convID, "budget_ms", pollBudget.Milliseconds())
 
-	// Launch-enrollment path: the conv-id was PRESET and enrollment ran before
-	// the fork. Return it only after tmux has proved a live pane. A slow or
-	// missing pane remains enrolled because it may still materialise; rolling
-	// that state back could strand a live, named, greeted, group-less pane. But
-	// it is reported as unconfirmed, never as a successful attachable spawn.
-	if launchEnroll {
+	// The launch settles one of four ways; see spawnSettle. Each ending says
+	// whether the route-helper credential stays with the launch, and the
+	// revoke defer above keys on that.
+	settle := spawnSettle{g: g, p: p, label: label, preConvID: preConvID, preMsgID: preMsgID,
+		briefingInlined: briefingInlined, launchEnroll: launchEnroll, launchedAt: launchedAt,
+		pendingHeld: pendingHeld, harness: spawnHarness, args: spawnArgs, focus: focus,
+		pollBudget: pollBudget, backgroundBackfillBudget: backgroundBackfillBudget}
+	var keepRouteHelper bool
+	switch {
+	case launchEnroll:
 		// Final wrapper-failure check: distinguish a reported wrapper failure
 		// from a pane that is merely too slow to confirm. A wrapper that fails
 		// after this point is out of signal reach; the unconfirmed path below
@@ -830,160 +834,18 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			return launchFailed(werr)
 		default:
 		}
-		// Copilot launch enrollment delivers the validated name as a native
-		// launch argument rather than through deliverRename. Mirror that accepted
-		// title into the shared conversation index now, just as its rename path
-		// does. Copilot's cold ConvStore sync is demand-driven, so without this
-		// write a long-lived named agent can retain an empty custom_title until
-		// somebody happens to run a conversation listing. Claude Code is excluded:
-		// its transcript follower owns this cache, and a speculative stamp can
-		// mask a subsequent authoritative rename until another filesystem refresh.
-		if spawnHarness.Name == harness.CopilotName && spawnArgs.Name != "" {
-			cacheDeliveredTitle(preConvID, spawnArgs.Name, spawnHarness.Name)
-		}
-		// The row may have landed just after the last poll iteration. Preserve
-		// the final best-effort focus, but apply the same tmux-readiness proof as
-		// the loop above; a late row alone is still not a pane.
-		if tmuxSession == "" {
-			if s, err := db.LoadSession(label); err == nil && s != nil &&
-				spawnRowBelongsToLaunch(s, launchEnroll, preConvID, launchedAt) &&
-				s.TmuxSession != "" {
-				if session.IsTmuxSessionAlive(s.TmuxSession) ||
-					(spawnHarness.UsesCommandInput() && spawnArgs.InitialPrompt != "" &&
-						s.Status == session.StatusExited && s.ConvID == preConvID) {
-					tmuxSession = s.TmuxSession
-				}
-			}
-		}
-		if tmuxSession == "" {
-			// The child may merely be slow, so preserve its pre-fork enrollment,
-			// briefing, launch-owned directories, and route credentials. But an
-			// unobserved pane is not a successful spawn: returning a conv-id here
-			// makes fast terminal clients attach to a session that may never exist.
-			routeHelperCommitted = true
-			markBriefingConsumed(preConvID, preMsgID, briefingInlined)
-			return nil, &spawnFailure{http.StatusGatewayTimeout, spawnUnconfirmedKind,
-				"launch enrollment was preserved, but no live tmux pane appeared before the startup deadline"}
-		}
-		focus.open(tmuxSession)
-		markBriefingConsumed(preConvID, preMsgID, briefingInlined)
-		// Deferred server-authoritative continuation: atomically replace the
-		// pending reservation with the (already-made) actor binding, so the
-		// dashboard's Pending row promotes into the enrolled agent. A claim
-		// miss is benign — the sweeper saw the session row first and cleared
-		// the reservation against the same enrollment; a claim error leaves
-		// the row for the sweeper's idempotent already-enrolled path.
-		if pendingHeld {
-			if _, err := db.ClaimPendingSpawnAndBindAgent(label, preConvID, p.AgentID, "spawn"); err != nil {
-				slog.Warn("spawn: failed to claim deferred pending reservation; leaving it for the sweeper",
-					"label", label, "conv", preConvID, "error", err)
-			}
-		}
-		// The tmux name is the label ONLY until `session new` has to
-		// disambiguate it (UniqueTmuxSessionName appends "-N" when the base is
-		// already alive). That is unreachable for a random label but reachable
-		// for a name-derived one racing a tmux session created after the label
-		// was minted, so prefer the name the child actually recorded on the
-		// session row; the label is the fallback for a row that has not landed
-		// yet, which is what this branch is written for.
-		outcomeTmux := tmuxSession
-		if outcomeTmux == "" {
-			outcomeTmux = label
-		}
-		routeHelperCommitted = true
-		return launchedOutcome(p, label, preConvID, outcomeTmux, focus.mode), nil
+		outcome, failure, keepRouteHelper = settle.enrolledLaunch(tmuxSession)
+	case convID != "":
+		outcome, failure, keepRouteHelper = settle.discoveredConv(convID, tmuxSession)
+	case p.Async:
+		outcome, failure, keepRouteHelper = settle.pendingAsync(tmuxSession)
+	default:
+		failure = settle.timedOut()
 	}
-
-	// Conv-id resolved within the poll: finish enrollment inline (Codex, or CC
-	// with the legacy-injection revert flag) and inject the rename + welcome.
-	if convID != "" {
-		if p.CodexAppServer && !awaitCodexAppServerLaunchReady(convID, label) {
-			stopFailedCodexAppServerLaunch(convID, label, label)
-			return nil, &spawnFailure{http.StatusServiceUnavailable, "codex_app_server_unavailable",
-				"Codex app-server was explicitly selected but the verified control handle did not become ready"}
-		}
-		if pendingHeld {
-			claimed, err := db.ClaimPendingSpawnAndBindAgent(label, convID, p.AgentID, "spawn")
-			if err != nil {
-				return nil, &spawnFailure{http.StatusInternalServerError, "identity",
-					"failed to bind reserved agent " + p.AgentID + " to spawned conv " + convID + ": " + err.Error()}
-			}
-			if !claimed {
-				// A concurrent pending back-fill claimed the row and owns the
-				// one-shot enrollment side effects. The actor binding is already
-				// visible, so returning its identity is safe.
-				bound, lookupErr := db.AgentIDForConv(convID)
-				if lookupErr != nil || bound != p.AgentID {
-					detail := fmt.Sprintf("reservation disappeared before binding (bound=%q)", bound)
-					if lookupErr != nil {
-						detail = lookupErr.Error()
-					}
-					return nil, &spawnFailure{http.StatusConflict, "identity",
-						"pending spawn " + label + " was canceled or conflicted: " + detail}
-				}
-				routeHelperCommitted = true
-				return launchedOutcome(p, label, convID, tmuxSession, focus.mode), nil
-			}
-		}
-		if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
-			if pendingHeld {
-				// The agent process is already running and its identity bound;
-				// a hard failure here would tell the caller the spawn failed —
-				// the CLI would even remove a just-created worktree under the
-				// live agent — and the claimed reservation would be gone, so
-				// nothing would ever retry. Requeue the durable intent instead
-				// (the sweeper re-runs the enrollment tail exactly as after a
-				// daemon restart) and report the spawn with its real conv-id;
-				// the response's task_ref_state read-back stays honest about
-				// anything not yet bound.
-				ps := pendingSpawnFromParams(g, p, label)
-				ps.Launching = false
-				requeuePendingSpawn(label, ps)
-				slog.Warn("spawn: inline enrollment failed; requeued for sweeper back-fill",
-					"label", label, "conv", convID, "error", fail.Msg)
-				routeHelperCommitted = true
-				return launchedOutcome(p, label, convID, tmuxSession, focus.mode), nil
-			}
-			return nil, fail
-		}
+	if keepRouteHelper {
 		routeHelperCommitted = true
-		return launchedOutcome(p, label, convID, tmuxSession, focus.mode), nil
 	}
-
-	// Conv-id did not materialise within the poll. An Async (dashboard) spawn
-	// records its full enrollment intent in pending_spawns and returns a
-	// PENDING outcome (empty conv-id) — the operator can already see + focus
-	// the pane (auto-focus fired above as soon as it came up) to clear the
-	// gate, and the sweeper back-fills the enrollment once the conv-id
-	// appears. Restart-safe: the row carries everything finishSpawnEnrollment
-	// needs.
-	if p.Async {
-		focus.open(tmuxSession) // belt-and-suspenders: open the pane even if it came up slow
-		ps, err := db.GetPendingSpawn(label)
-		if err != nil {
-			return nil, &spawnFailure{http.StatusInternalServerError, "io",
-				"failed to verify pending spawn reservation " + label + ": " + err.Error()}
-		}
-		if ps == nil || ps.AgentID != p.AgentID {
-			return nil, &spawnFailure{http.StatusConflict, "identity",
-				"pending spawn " + label + " was canceled before its response"}
-		}
-		slog.Info("spawn: conv-id not yet materialised; recorded pending spawn",
-			"label", label, "group", g.Name, "harness", p.Harness)
-		if spawnHarness.NeedsSpawnSeed() && backgroundBackfillBudget > pollBudget {
-			goBackground(func() {
-				backfillPendingSpawnInline(g, p, label, spawnHarness, launchedAt, backgroundBackfillBudget)
-			})
-		}
-		routeHelperCommitted = true
-		return launchedOutcome(p, label, "", tmuxSession, focus.mode), nil
-	}
-
-	// Synchronous (template or process-performer) path: the caller needs the
-	// conv-id now, so a timeout is a hard failure — unchanged from before inc2.
-	return nil, &spawnFailure{http.StatusGatewayTimeout, "timeout",
-		"spawned session " + label + " but conv-id never materialised within " + pollBudget.String() +
-			" — the session may still come up; check `tclaude session attach " + label + "`"}
+	return outcome, failure
 }
 
 // derivedGroupSpawnName gives unnamed group agents a readable, valid title.
@@ -1017,6 +879,195 @@ func spawnRowBelongsToLaunch(s *db.SessionRow, launchEnroll bool, preConvID stri
 		return preConvID != "" && s.ConvID == preConvID
 	}
 	return !s.CreatedAt.IsZero() && !s.CreatedAt.Before(launchedAt)
+}
+
+// spawnSettle settles a forked launch once the poll is over: an enrolled
+// launch confirms its pane, a discovered conversation finishes enrollment, an
+// async launch goes pending, and a synchronous one times out. Each ending
+// returns the outcome or failure and whether the route-helper credential stays
+// with the launch.
+type spawnSettle struct {
+	g                                    *db.AgentGroup
+	p                                    spawnParams
+	label, preConvID                     string
+	preMsgID                             int64
+	briefingInlined, launchEnroll        bool
+	launchedAt                           time.Time
+	pendingHeld                          bool
+	harness                              *harness.Harness
+	args                                 clcommon.SpawnArgs
+	focus                                *spawnFocus
+	pollBudget, backgroundBackfillBudget time.Duration
+}
+
+// Launch-enrollment path: the conv-id was PRESET and enrollment ran before
+// the fork. Return it only after tmux has proved a live pane. A slow or
+// missing pane remains enrolled because it may still materialise; rolling
+// that state back could strand a live, named, greeted, group-less pane. But
+// it is reported as unconfirmed, never as a successful attachable spawn.
+//
+// An unconfirmed pane keeps its route-helper credential although it is
+// reported as a failure: the enrollment is preserved because the child may
+// still come up, and that child needs its routes. Revoking it would strand a
+// live agent without them.
+func (s spawnSettle) enrolledLaunch(tmuxSession string) (*spawnOutcome, *spawnFailure, bool) {
+	p, label, preConvID, preMsgID, briefingInlined := s.p, s.label, s.preConvID, s.preMsgID, s.briefingInlined
+	launchEnroll, launchedAt, pendingHeld := s.launchEnroll, s.launchedAt, s.pendingHeld
+	spawnHarness, spawnArgs, focus := s.harness, s.args, s.focus
+	// Copilot launch enrollment delivers the validated name as a native
+	// launch argument rather than through deliverRename. Mirror that accepted
+	// title into the shared conversation index now, just as its rename path
+	// does. Copilot's cold ConvStore sync is demand-driven, so without this
+	// write a long-lived named agent can retain an empty custom_title until
+	// somebody happens to run a conversation listing. Claude Code is excluded:
+	// its transcript follower owns this cache, and a speculative stamp can
+	// mask a subsequent authoritative rename until another filesystem refresh.
+	if spawnHarness.Name == harness.CopilotName && spawnArgs.Name != "" {
+		cacheDeliveredTitle(preConvID, spawnArgs.Name, spawnHarness.Name)
+	}
+	// The row may have landed just after the last poll iteration. Preserve
+	// the final best-effort focus, but apply the same tmux-readiness proof as
+	// the loop above; a late row alone is still not a pane.
+	if tmuxSession == "" {
+		if s, err := db.LoadSession(label); err == nil && s != nil &&
+			spawnRowBelongsToLaunch(s, launchEnroll, preConvID, launchedAt) &&
+			s.TmuxSession != "" {
+			if session.IsTmuxSessionAlive(s.TmuxSession) ||
+				(spawnHarness.UsesCommandInput() && spawnArgs.InitialPrompt != "" &&
+					s.Status == session.StatusExited && s.ConvID == preConvID) {
+				tmuxSession = s.TmuxSession
+			}
+		}
+	}
+	if tmuxSession == "" {
+		// The child may merely be slow, so preserve its pre-fork enrollment,
+		// briefing, launch-owned directories, and route credentials. But an
+		// unobserved pane is not a successful spawn: returning a conv-id here
+		// makes fast terminal clients attach to a session that may never exist.
+		// Reported unconfirmed, yet the route-helper credential stays: true.
+		markBriefingConsumed(preConvID, preMsgID, briefingInlined)
+		return nil, &spawnFailure{http.StatusGatewayTimeout, spawnUnconfirmedKind,
+			"launch enrollment was preserved, but no live tmux pane appeared before the startup deadline"}, true
+	}
+	focus.open(tmuxSession)
+	markBriefingConsumed(preConvID, preMsgID, briefingInlined)
+	// Deferred server-authoritative continuation: atomically replace the
+	// pending reservation with the (already-made) actor binding, so the
+	// dashboard's Pending row promotes into the enrolled agent. A claim
+	// miss is benign — the sweeper saw the session row first and cleared
+	// the reservation against the same enrollment; a claim error leaves
+	// the row for the sweeper's idempotent already-enrolled path.
+	if pendingHeld {
+		if _, err := db.ClaimPendingSpawnAndBindAgent(label, preConvID, p.AgentID, "spawn"); err != nil {
+			slog.Warn("spawn: failed to claim deferred pending reservation; leaving it for the sweeper",
+				"label", label, "conv", preConvID, "error", err)
+		}
+	}
+	// The tmux name is the label ONLY until `session new` has to
+	// disambiguate it (UniqueTmuxSessionName appends "-N" when the base is
+	// already alive). That is unreachable for a random label but reachable
+	// for a name-derived one racing a tmux session created after the label
+	// was minted, so prefer the name the child actually recorded on the
+	// session row; the label is the fallback for a row that has not landed
+	// yet, which is what this branch is written for.
+	outcomeTmux := tmuxSession
+	if outcomeTmux == "" {
+		outcomeTmux = label
+	}
+	return launchedOutcome(p, label, preConvID, outcomeTmux, focus.mode), nil, true
+}
+
+// Conv-id resolved within the poll: finish enrollment inline (Codex, or CC
+// with the legacy-injection revert flag) and inject the rename + welcome.
+func (s spawnSettle) discoveredConv(convID, tmuxSession string) (*spawnOutcome, *spawnFailure, bool) {
+	g, p, label, pendingHeld, focus := s.g, s.p, s.label, s.pendingHeld, s.focus
+	if p.CodexAppServer && !awaitCodexAppServerLaunchReady(convID, label) {
+		stopFailedCodexAppServerLaunch(convID, label, label)
+		return nil, &spawnFailure{http.StatusServiceUnavailable, "codex_app_server_unavailable",
+			"Codex app-server was explicitly selected but the verified control handle did not become ready"}, false
+	}
+	if pendingHeld {
+		claimed, err := db.ClaimPendingSpawnAndBindAgent(label, convID, p.AgentID, "spawn")
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "identity",
+				"failed to bind reserved agent " + p.AgentID + " to spawned conv " + convID + ": " + err.Error()}, false
+		}
+		if !claimed {
+			// A concurrent pending back-fill claimed the row and owns the
+			// one-shot enrollment side effects. The actor binding is already
+			// visible, so returning its identity is safe.
+			bound, lookupErr := db.AgentIDForConv(convID)
+			if lookupErr != nil || bound != p.AgentID {
+				detail := fmt.Sprintf("reservation disappeared before binding (bound=%q)", bound)
+				if lookupErr != nil {
+					detail = lookupErr.Error()
+				}
+				return nil, &spawnFailure{http.StatusConflict, "identity",
+					"pending spawn " + label + " was canceled or conflicted: " + detail}, false
+			}
+			return launchedOutcome(p, label, convID, tmuxSession, focus.mode), nil, true
+		}
+	}
+	if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
+		if pendingHeld {
+			// The agent process is already running and its identity bound;
+			// a hard failure here would tell the caller the spawn failed —
+			// the CLI would even remove a just-created worktree under the
+			// live agent — and the claimed reservation would be gone, so
+			// nothing would ever retry. Requeue the durable intent instead
+			// (the sweeper re-runs the enrollment tail exactly as after a
+			// daemon restart) and report the spawn with its real conv-id;
+			// the response's task_ref_state read-back stays honest about
+			// anything not yet bound.
+			ps := pendingSpawnFromParams(g, p, label)
+			ps.Launching = false
+			requeuePendingSpawn(label, ps)
+			slog.Warn("spawn: inline enrollment failed; requeued for sweeper back-fill",
+				"label", label, "conv", convID, "error", fail.Msg)
+			return launchedOutcome(p, label, convID, tmuxSession, focus.mode), nil, true
+		}
+		return nil, fail, false
+	}
+	return launchedOutcome(p, label, convID, tmuxSession, focus.mode), nil, true
+}
+
+// Conv-id did not materialise within the poll. An Async (dashboard) spawn
+// records its full enrollment intent in pending_spawns and returns a
+// PENDING outcome (empty conv-id) — the operator can already see + focus
+// the pane (auto-focus fired above as soon as it came up) to clear the
+// gate, and the sweeper back-fills the enrollment once the conv-id
+// appears. Restart-safe: the row carries everything finishSpawnEnrollment
+// needs.
+func (s spawnSettle) pendingAsync(tmuxSession string) (*spawnOutcome, *spawnFailure, bool) {
+	g, p, label, launchedAt, focus := s.g, s.p, s.label, s.launchedAt, s.focus
+	spawnHarness, pollBudget, backgroundBackfillBudget := s.harness, s.pollBudget, s.backgroundBackfillBudget
+	focus.open(tmuxSession) // belt-and-suspenders: open the pane even if it came up slow
+	ps, err := db.GetPendingSpawn(label)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io",
+			"failed to verify pending spawn reservation " + label + ": " + err.Error()}, false
+	}
+	if ps == nil || ps.AgentID != p.AgentID {
+		return nil, &spawnFailure{http.StatusConflict, "identity",
+			"pending spawn " + label + " was canceled before its response"}, false
+	}
+	slog.Info("spawn: conv-id not yet materialised; recorded pending spawn",
+		"label", label, "group", g.Name, "harness", p.Harness)
+	if spawnHarness.NeedsSpawnSeed() && backgroundBackfillBudget > pollBudget {
+		goBackground(func() {
+			backfillPendingSpawnInline(g, p, label, spawnHarness, launchedAt, backgroundBackfillBudget)
+		})
+	}
+	return launchedOutcome(p, label, "", tmuxSession, focus.mode), nil, true
+}
+
+// Synchronous (template or process-performer) path: the caller needs the
+// conv-id now, so a timeout is a hard failure — unchanged from before inc2.
+func (s spawnSettle) timedOut() *spawnFailure {
+	label, pollBudget := s.label, s.pollBudget
+	return &spawnFailure{http.StatusGatewayTimeout, "timeout",
+		"spawned session " + label + " but conv-id never materialised within " + pollBudget.String() +
+			" — the session may still come up; check `tclaude session attach " + label + "`"}
 }
 
 // spawnPollBudgets is how long executeSpawn polls for the launched session
