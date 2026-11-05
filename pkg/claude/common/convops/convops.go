@@ -1117,24 +1117,29 @@ type CopyConversationResult struct {
 	DstProjectPath string
 }
 
-// CopyConversationToPath copies a conversation to a new project path
-func CopyConversationToPath(convID, destPath string, global bool) (*CopyConversationResult, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
+// FoundSession is where FindSessionInProjects looked for a conversation, and
+// what it found there.
+type FoundSession struct {
+	// Entry is the conversation's index entry; nil when it was not found.
+	Entry *SessionEntry
+	// ProjectPath is the Claude project directory Entry is in. When nothing
+	// was found it is the current directory's project, or empty with global.
+	ProjectPath string
+	// Index is ProjectPath's sessions index; nil when nothing was found with
+	// global.
+	Index *SessionsIndex
+}
 
-	var srcEntry *SessionEntry
-	var srcProjectPath string
-	dstProjectPath := GetClaudeProjectPath(destPath)
-
+// FindSessionInProjects looks convID up in the current directory's project
+// or, with global, in every project. Not finding it is not an error: Entry is
+// then nil.
+func FindSessionInProjects(convID string, global bool) (*FoundSession, error) {
 	if global {
 		projectsDir := ClaudeProjectsDir()
 		entries, err := os.ReadDir(projectsDir)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("reading projects directory: %w", err)
 		}
-
 		for _, dirEntry := range entries {
 			if !dirEntry.IsDir() {
 				continue
@@ -1145,19 +1150,32 @@ func CopyConversationToPath(convID, destPath string, global bool) (*CopyConversa
 				continue
 			}
 			if found, _ := FindSessionByID(index, convID); found != nil {
-				srcEntry = found
-				srcProjectPath = projPath
-				break
+				return &FoundSession{Entry: found, ProjectPath: projPath, Index: index}, nil
 			}
 		}
-	} else {
-		srcProjectPath = GetClaudeProjectPath(cwd)
-		srcIndex, err := LoadSessionsIndex(srcProjectPath)
-		if err != nil {
-			return nil, err
-		}
-		srcEntry, _ = FindSessionByID(srcIndex, convID)
+		return &FoundSession{}, nil
 	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("getting current directory: %w", err)
+	}
+	projPath := GetClaudeProjectPath(cwd)
+	index, err := LoadSessionsIndex(projPath)
+	if err != nil {
+		return nil, fmt.Errorf("loading sessions index: %w", err)
+	}
+	found, _ := FindSessionByID(index, convID)
+	return &FoundSession{Entry: found, ProjectPath: projPath, Index: index}, nil
+}
+
+// CopyConversationToPath copies a conversation to a new project path
+func CopyConversationToPath(convID, destPath string, global bool) (*CopyConversationResult, error) {
+	src, err := FindSessionInProjects(convID, global)
+	if err != nil {
+		return nil, err
+	}
+	srcEntry, srcProjectPath := src.Entry, src.ProjectPath
+	dstProjectPath := GetClaudeProjectPath(destPath)
 
 	if srcEntry == nil {
 		return nil, os.ErrNotExist
