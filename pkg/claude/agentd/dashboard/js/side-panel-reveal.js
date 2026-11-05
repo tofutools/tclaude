@@ -134,6 +134,8 @@ export function bindEdgeReveal(doc = globalThis.document, {
       }, EDGE_REVEAL_DWELL_MS);
     }
   });
+  // A press cancels a reveal still waiting out its dwell. It closes nothing,
+  // so it is not the shared outside-press rule (ui-popover-dismiss.test.mjs).
   doc.addEventListener('pointerdown', cancelDwell);
   doc.documentElement?.addEventListener('pointerleave', () => {
     cancelDwell();
