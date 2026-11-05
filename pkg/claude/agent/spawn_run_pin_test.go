@@ -15,7 +15,7 @@ import (
 // before the daemon is asked is the first one the flags trip, with its exact
 // message, and asks nothing; a spawn that fails after a worktree was made for
 // it tears that worktree down, except on a 504, where the session may still be
-// coming up in it; and a harness gate's answer is what goes on the wire.
+// coming up in it; and a harness gate refuses before any request.
 
 // spawnDaemon fakes the daemon for RunSpawn and records every request.
 type spawnDaemon struct {
@@ -147,9 +147,11 @@ func TestRunSpawn_ASpawnThatTimesOutKeepsItsWorktree(t *testing.T) {
 	assert.Equal(t, []string{"available", "/v1/worktrees/prepare", "/v1/groups/alpha/spawn"}, d.calls, "nothing is discarded")
 }
 
-// A harness gate's answer is what is sent: --remote-control for Claude Code
-// goes on the wire as true, and for a harness without it is refused before the
-// daemon is asked.
+// --remote-control for Claude Code goes on the wire as true, and for a harness
+// without it the gate refuses before the daemon is asked. The gate passes an
+// accepted value through unchanged, so only the refusal tests the gate itself;
+// a gate whose answer differs from its input, --fast-mode inherit, is pinned by
+// TestRunSpawn_ExplicitFastModeInheritStaysOnWire.
 func TestRunSpawn_AHarnessGateDecidesWhatIsSent(t *testing.T) {
 	d := &spawnDaemon{}
 	useSpawnDaemon(t, d)
