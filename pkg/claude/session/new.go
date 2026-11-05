@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/tofutools/tclaude/pkg/common/harnesspath"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -857,166 +856,21 @@ func runNew(params *NewParams) error {
 		return bwrapCapabilityErr
 	}
 
-	if launchCodexSplitCapability != nil {
-		if err := harness.RevalidateCodexHomeSplitPolicyCapability(*launchCodexSplitCapability); err != nil {
-			return fmt.Errorf("revalidate strict-Home Codex launch capability: %w", err)
-		}
-	}
-	executablePath := ""
-	executableInterpreter := ""
-	var harnessReadPaths []string
-	if params.ManagedInstructionsRoot != "" {
-		harnessReadPaths = append(harnessReadPaths, params.ManagedInstructionsRoot)
-	}
-	if launchCodexSplitCapability != nil {
-		executablePath = launchCodexSplitCapability.ExecutablePath
-	} else if outerLayer && h.Name == harness.CodexName && runtime.GOOS == "linux" {
-		resolvedCodex, resolveErr := harness.ResolveCodexLaunchExecutable()
-		if resolveErr != nil {
-			return fmt.Errorf("resolve Codex executable for tclaude’s sandbox: %w", resolveErr)
-		}
-		executablePath = resolvedCodex.Path
-		harnessReadPaths = append(harnessReadPaths, resolvedCodex.RuntimeRoot)
-	} else if outerLayer && h.Name == harness.DefaultName && runtime.GOOS == "linux" {
-		resolvedClaude, resolveErr := harness.ResolveClaudeLaunchExecutable()
-		if resolveErr != nil {
-			return fmt.Errorf("resolve Claude executable for tclaude’s sandbox: %w", resolveErr)
-		}
-		executablePath = resolvedClaude.Path
-		harnessReadPaths = append(harnessReadPaths, resolvedClaude.Path)
-	} else if outerLayer && h.Name == harness.GeminiName && runtime.GOOS == "linux" &&
-		tclaudeLayerRoot == sandboxpolicy.RootConstructed {
-		// Only a constructed root needs this: a host-inherited one still sees
-		// the pane's own PATH, profile environment and pre-launch script, so a
-		// launch there keeps resolving `gemini` and `node` as it did before.
-		resolvedGemini, resolveErr := harness.ResolveGeminiLaunchExecutable()
-		if resolveErr != nil {
-			return fmt.Errorf("resolve Gemini executable for tclaude’s sandbox: %w", resolveErr)
-		}
-		executablePath = resolvedGemini.Path
-		executableInterpreter = resolvedGemini.Interpreter
-		harnessReadPaths = append(harnessReadPaths, resolvedGemini.ReadPaths...)
-	} else if outerLayer && h.Name == harness.PiName && runtime.GOOS == "linux" &&
-		tclaudeLayerRoot == sandboxpolicy.RootConstructed {
-		// As for Gemini: pi is a Node CLI, absent from a constructed root
-		// unless started by absolute path with its runtime mounted.
-		resolvedPi, resolveErr := harness.ResolvePiLaunchExecutable()
-		if resolveErr != nil {
-			return fmt.Errorf("resolve pi executable for tclaude’s sandbox: %w", resolveErr)
-		}
-		executablePath = resolvedPi.Path
-		executableInterpreter = resolvedPi.Interpreter
-		harnessReadPaths = append(harnessReadPaths, resolvedPi.ReadPaths...)
-	} else if h.Name == harness.OpenCodeName {
-		executablePath, err = harness.OpenCodeExecutable()
-		if err != nil {
-			return fmt.Errorf("find OpenCode executable: %w", err)
-		}
-	}
-	if h.Name == harness.CopilotName && params.ModelProxy != "" {
-		executablePath, err = exec.LookPath("copilot")
-		if err != nil {
-			return fmt.Errorf("find Copilot gateway executable: %w", err)
-		}
-		if err = validateCopilotModelProxyVersion(executablePath); err != nil {
-			return err
-		}
-	}
-	if params.ClaudeSubscription {
-		binary := executablePath
-		if binary == "" {
-			binary = harnesspath.ManagedExecutable(h.Spawn.Binary())
-		}
-		if err = validateClaudeSubscriptionVersion(binary); err != nil {
-			return err
-		}
-	}
-	if h.CheckVersion != nil {
-		binary := executablePath
-		if binary == "" {
-			if binary, err = exec.LookPath(h.Spawn.Binary()); err != nil {
-				return fmt.Errorf("find %s executable: %w", h.DisplayName, err)
-			}
-		}
-		if err := h.CheckVersion(binary); err != nil {
-			return err
-		}
-	}
-	codexRuntimeDir, err := codexAppServerPrivateWriteDir(params)
+	exe, err := resolveLaunchExecutable(params, h, outerLayer, tclaudeLayerRoot, launchCodexSplitCapability)
 	if err != nil {
 		return err
 	}
-	launchGitWriteDirs := gitWorktreeWriteDirs(params, h.Name, harnessBuiltinMode, cwd)
-	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
-		// Derive repository grants for the outer wall independently of the
-		// harness-native mode.
-		launchGitWriteDirs = gitWorktreeWriteDirs(params, harness.DefaultName, harness.ClaudeSandboxOn, cwd)
-	}
-	if sandboxDenyCoversPath(launchSandbox, cwd) {
-		launchGitWriteDirs = denyNarrowedGitWriteDirs(cwd, params.CodexGitCommonDir, launchGitWriteDirs)
-	}
-	launchContractReadDirs := sandboxLaunchContractReadDirs(launchSandbox, append([]string{cwd}, launchGitWriteDirs...)...)
-	launchWriteDirs := append(launchGitWriteDirs, sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessWrite)...)
-	if codexRuntimeDir != nil {
-		// The Codex harness must be able to create the socket/pid/log; under
-		// tclaude's sandbox the outer wall gets the narrower private-parent
-		// hide/reopen contract below.
-		launchWriteDirs = appendUniqueDir(launchWriteDirs, codexRuntimeDir.Current)
-	}
-	if outerLayer {
-		launchWriteDirs = appendUniqueDir(launchWriteDirs, canonicalSandboxPath(cwd))
-	}
-	// A temporary filesystem really is writable inside the namespace, so the
-	// harness has to be told so. These lists become the harness's OWN view —
-	// Claude Code's permission settings, Copilot's --add-dir roots — and a
-	// scratch directory the operator mounted but the harness treats as
-	// out-of-bounds would prompt on every write to space it was given on
-	// purpose. Gated on the capability so this is a no-op on every
-	// implementation ValidateTmpfsSupport has already refused.
-	if sandboxpolicy.SupportsTmpfsMounts(sandboxImplementation, runtime.GOOS) {
-		for _, mount := range sandboxSnapshotTmpfs(launchSandbox) {
-			launchWriteDirs = appendUniqueDir(launchWriteDirs, mount.Path)
-		}
-	}
-	launchReadDirs := append(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessRead), launchContractReadDirs...)
-	if params.ManagedInstructionsRoot != "" {
-		launchReadDirs = appendUniqueDir(launchReadDirs, params.ManagedInstructionsRoot)
-	}
-	launchDenyDirs := sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)
-	// Re-run the capability gate on the RULES THAT WILL BE EMITTED. The early
-	// gate saw only the authored profile, but the launch contract above adds
-	// reopens beneath a deny (workspace, Git admin paths, agent directories), so
-	// an authored `deny ~` with no reopen of its own still renders as a split
-	// policy and must be gated as one.
-	// The LATE gate, over rendered rules rather than authored ones. It needs the
-	// same unconfined arm as its early twin above: the rendered shape is no more
-	// enforceable than the authored one when nothing is enforcing.
-	if !outerLayer && !unconfined {
-		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveHarnessBuiltinMode,
-			sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)); err != nil {
-			return err
-		}
-	}
-	// The mirror-image shape, for the one harness whose path grants have no
-	// negative form: a deny nested INSIDE a granted root would be opened rather
-	// than merely unrepresented. The grant set includes Copilot's automatic cwd
-	// and system-temp grants, which no flag expresses and which are where this
-	// shape usually appears. Only without an outer wall to enforce the deny.
-	// The temp directory is resolved from the COMPOSED launch environment, not
-	// from tclaude's own: a profile that sets TMPDIR moves the directory
-	// Copilot grants, and a gate reading tclaude's ambient temp root would
-	// inspect one directory while the pane was handed another. Same resolver
-	// the Copilot sandbox baseline uses, for the same reason.
-	var copilotGateEnvironment []sandboxpolicy.EnvironmentEntry
-	if launchSandbox != nil {
-		copilotGateEnvironment = sandboxpolicy.EnvironmentForLaunch(launchSandbox)
-	}
-	if err := harness.ValidateCopilotAddDirGrants(
-		h.Name, cwd,
-		CopilotLaunchTempDir(launchModelEnvironment(copilotGateEnvironment)),
-		launchReadDirs, launchWriteDirs, launchDenyDirs, outerLayer); err != nil {
+	executablePath, executableInterpreter, harnessReadPaths := exe.path, exe.interpreter, exe.readPaths
+	dirs, err := planLaunchDirs(launchDirsInput{
+		params: params, h: h, cwd: cwd, launchSandbox: launchSandbox,
+		harnessBuiltinMode: harnessBuiltinMode, effectiveHarnessBuiltinMode: effectiveHarnessBuiltinMode,
+		sandboxImplementation: sandboxImplementation, outerLayer: outerLayer, unconfined: unconfined,
+	})
+	if err != nil {
 		return err
 	}
+	codexRuntimeDir, launchGitWriteDirs := dirs.codexRuntime, dirs.gitWrite
+	launchWriteDirs, launchReadDirs, launchDenyDirs := dirs.write, dirs.read, dirs.deny
 	// Rendered from the same snapshot ShellEnvironment reads, so what the pane
 	// runs and what the harness is told about agree by construction.
 	preLaunchScript, err := RenderPreLaunchScript(effectiveSandbox)
