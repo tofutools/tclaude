@@ -217,7 +217,7 @@ func (m tuiModel) selectedAgent() (tuiAgentRow, bool) {
 // restoreCursor puts the cursor back on the row it was on, by row key, after
 // a refresh has replaced the listing under it. A row that is no longer listed
 // (an agent retired, a session ended, or either filtered out) leaves the
-// cursor where it was, for the clamp above to bring back into range.
+// cursor where it was, for Update's clamp to bring back into range.
 //
 // The listing re-sorts on every poll — online agents first, then by name, then
 // the sessions — so an index alone does not name a row for longer than two

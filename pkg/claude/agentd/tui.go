@@ -124,7 +124,7 @@ func tuiEndedNormally(err error) bool {
 	return errors.Is(err, tea.ErrProgramKilled) || errors.Is(err, tea.ErrInterrupted)
 }
 
-// ---- API seam + in-process client -----------------------------------------
+// ---- API seam (the in-process client is in tui_inprocess_api.go) ----------
 
 // tuiCapabilities names the operations that depend on the console sharing the
 // daemon host and process lifetime. API-backed operations (list, spawn, retire,
@@ -149,7 +149,7 @@ type tuiCapabilities struct {
 }
 
 // tuiAPI is the terminal dashboard's only data/control dependency. The
-// in-process implementation below dispatches directly into the daemon mux;
+// in-process implementation (inProcessTUIAPI) dispatches directly into the daemon mux;
 // remoteTUIAPI uses HTTP. Keeping the model on this deliberately small
 // interface makes the two transports share all rendering and interaction
 // behavior without pretending host-local actions work remotely.
@@ -806,7 +806,7 @@ func (m tuiModel) deliverPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// ---- view ------------------------------------------------------------------
+// ---- view (the rendering helpers are in tui_view.go) ----------------------
 
 func (m tuiModel) View() tea.View {
 	switch m.mode {
