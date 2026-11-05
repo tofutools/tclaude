@@ -67,8 +67,9 @@ func peerGrantFromRequest(r *http.Request) *peerGrantAuthority {
 // peerGrantGates lists the local gate slugs peer's grants cover in group.
 func peerGrantGates(peer string, groupID int64) map[string]bool {
 	// A grant answers the group-local gates whose federation reach goes via
-	// it (peerGroupGateGrants): groups.settings the ordinary settings, the
-	// environment grant its own gate. Settings that every spawn into the
+	// it (peerGroupGateGrants): groups.settings the ordinary settings,
+	// groups.members.manage the member settings, the environment grant its
+	// own gate. Settings that every spawn into the
 	// group inherits need the peer's say over that part of a spawn as well
 	// (handleGroupUpdate).
 	gates := map[string]bool{}

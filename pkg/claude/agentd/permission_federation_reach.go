@@ -302,8 +302,9 @@ type peerPassThrough struct {
 }
 
 // peerActionPassThroughs are those gates: a move or teleport pulls the agent
-// through its export and share, and through its retire under the retire
-// grant; a clone landing in another group joins it as a member there.
+// through its export, share and self-teleport, and through its retire under
+// the retire grant; a clone landing in another group joins it as a member
+// there.
 var peerActionPassThroughs = map[string][]peerPassThrough{
 	PermAgentRetire:       {{Via: PermAgentMove, Footprint: PermGroupsMembersRetire}},
 	PermAgentShare:        {{Via: PermAgentMove}},
@@ -312,9 +313,11 @@ var peerActionPassThroughs = map[string][]peerPassThrough{
 	PermGroupsMembersAdd:  {{Via: PermGroupsMembersClone, InGroup: true}},
 }
 
-// groupLocalGate reports a gate on one group's own settings or membership:
-// group-scoped, with no global agent.* form. Peer-invoked group routes answer
-// these; a peer action on an agent answers the others.
+// groupLocalGate reports a gate scoped to one group: its registry entry
+// declares the group scope dimension and is not itself a global agent.*
+// capability with a group sibling (groups.members.stop is group-local;
+// agent.stop is not). Peer-invoked group routes answer group-local gates; a
+// peer action on an agent answers the others.
 func groupLocalGate(slug string) bool {
 	for _, entry := range permissionRegistry {
 		if entry.Slug == slug {
