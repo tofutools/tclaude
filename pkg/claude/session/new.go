@@ -1,7 +1,6 @@
 package session
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,13 +10,11 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -27,7 +24,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/managedinstructions"
-	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
@@ -639,142 +635,24 @@ func runNew(params *NewParams) error {
 		return err
 	}
 
-	// Self-guard: a Claude Code instance must not directly launch
-	// another Claude Code session. Placed after the --join-group and
-	// pass-through branches on purpose: --join-group delegates to the
-	// agentd daemon (gated there by the `groups.members.spawn` permission), and
-	// pass-through only prints `claude --help`/`--version`. Daemon-forked
-	// spawns are unaffected — see GuardAgainstNestedSpawn.
-	if err := GuardAgainstNestedSpawn(); err != nil {
-		return err
-	}
-
-	// Check tmux is installed
-	if err := CheckTmuxInstalled(); err != nil {
-		return err
-	}
-
-	// Check if hooks are installed (warn if not)
-	EnsureHooksInstalled(false, os.Stdout, os.Stderr)
-
-	// Sync the configured Claude Code transcript-retention override
-	// (claude_cleanup_period_days) into ~/.claude/settings.json. No-op unless
-	// set; logs and continues on failure.
-	_ = EnsureClaudeCleanupPeriod()
-
-	// Determine working directory
-	cwd, err := resolveSessionDir(params.Dir)
+	cwd, err := preflightNewLaunch(params.Dir)
 	if err != nil {
 		return err
 	}
-
-	// Set up signal handling for clean shutdown
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-
-	// Bridge sigCh into a context so WaitForRateLimit can be interrupted by Ctrl-C.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
-
-	// Extract just the ID from autocomplete format (e.g.,
-	// "0459cd73_[title]_prompt..." -> "0459cd73"). OpenCode's native
-	// server-issued IDs contain an underscore themselves (`ses_…`), so a
-	// managed resume carrying the full ID must not go through the historical
-	// underscore-delimited completion decoder.
-	shortID := resumeIDFromParam(h, params.Resume)
-
-	// Resolve to full UUID and get project path, via the harness's
-	// conversation source (CC's cwd-indexed resolver, or another harness's
-	// ConvStore — e.g. Codex's rollout/state DB).
-	var fullConvID string
-	var convProjectPath string
-	if shortID != "" {
-		var err error
-		fullConvID, convProjectPath, err = resolveResumeConv(h, shortID, params.Global, cwd)
-		if err != nil {
-			return err
-		}
-		// Use conversation's project directory instead of cwd
-		if convProjectPath != "" {
-			cwd = convProjectPath
-		}
-	}
-
-	// The session row's primary key carries the FULL identity — never a
-	// truncation. On resume that's the conversation's full UUID (already in
-	// sessions.conv_id); collapsing it to 8 chars made two conversations
-	// sharing a hex prefix collide on the PK (SaveSession's ON CONFLICT(id)
-	// silently overwrote the row → wrong-session reattach + conflated
-	// notify_state / session_cost_daily). See JOH-248.
-	// Priority: explicit label > resumed conv UUID > random synthetic.
-	sessionID := GenerateSessionID()
-	if fullConvID != "" {
-		sessionID = fullConvID
-	}
-	if params.Label != "" {
-		sessionID = params.Label
-	}
-
-	timing("validated", "session_id", sessionID)
-
-	// When resuming, reserve the conversation before launching. This both
-	// rejects an already-live conv AND serializes against a concurrent resume:
-	// two `session new -r` of the same conv that both pass a bare read-guard
-	// would otherwise both run `claude --resume` on the same .jsonl (interleaved
-	// appends → corruption), because the disambiguated tmux name no longer makes
-	// the second `new-session` clean-fail. Keyed on conv_id, it catches the live
-	// session whatever its PK shape (full-UUID / synthetic / old convID[:8]).
-	// The lock is held (defer) until the session row is written and runNew
-	// returns; the OS frees it if this process dies. The PK guard below still
-	// backstops a reused --label. See JOH-332.
-	if fullConvID != "" {
-		release, reject := ReserveConvForLaunch(fullConvID)
-		if reject != nil {
-			return reject
-		}
-		defer release()
-		if !params.ManagedLaunch {
-			if err := ReinstateRetiredForResume(fullConvID, cwd); err != nil {
-				return err
-			}
-		}
-	}
-
-	// The session PK is now final (priority above: label > resumed conv UUID >
-	// random synthetic). Reject if a LIVE session already owns it. The tmux
-	// name is disambiguated below (UniqueTmuxSessionName), so without this
-	// guard SaveSessionState's ON CONFLICT(id) would silently overwrite that
-	// live session's row. Before JOH-248 the PK and tmux name were identical,
-	// so the duplicate `new-session` clean-failed; this restores that now that
-	// the names diverge. A row owned only by a DEAD session is fine to reuse.
-	// (This PK guard primarily backstops a reused --label; the resumed-conv
-	// case is covered by the conv_id guard above. See JOH-332.)
-	owner, err := liveOwnerConflict(sessionID, params.Label)
+	ctx, stopLaunchContext := newLaunchContext()
+	defer stopLaunchContext()
+	id, err := resolveLaunchIdentity(h, params, cwd)
 	if err != nil {
 		return err
 	}
-	if owner != nil {
-		return fmt.Errorf("session %s already exists for this conversation; attach with: tclaude session attach %s", owner.TmuxSession, owner.TmuxSession)
+	timing("validated", "session_id", id.sessionID)
+	releaseLaunchIdentity, err := claimLaunchIdentity(ctx, params, &id)
+	if err != nil {
+		return err
 	}
-
-	// The tmux session name is the short, human-facing handle (tmux status
-	// line, `session ls`, attach target). Render it short here while the PK
-	// stays full, and keep it unique among live tmux sessions.
-	tmuxSession := UniqueTmuxSessionName(TmuxNameBase(sessionID, params.Label, cwd))
-
-	if params.WaitForRateLimit {
-		if ratelimit.WaitForRateLimit(ctx, os.Stdout, sessionID, cwd) {
-			return fmt.Errorf("interrupted")
-		}
-	}
+	defer releaseLaunchIdentity()
+	fullConvID, sessionID, tmuxSession := id.fullConvID, id.sessionID, id.tmuxSession
+	cwd = id.cwd
 
 	// TCLAUDE_SESSION_ID is the stable session-row/routing key consumed by
 	// hooks, statusline, focus, and resume flows. It is caller-controlled
