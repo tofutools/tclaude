@@ -418,7 +418,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		if err != nil {
 			return &cloneSpawnError{Status: 500, Code: "managed_instructions", Msg: err.Error()}
 		}
-		launch, err := managedinstructions.Materialize(managedResources)
+		overlay, err := managedinstructions.Materialize(managedResources)
 		if err != nil {
 			if created {
 				_, _ = db.DeleteAgentByConvID(convID)
@@ -427,19 +427,19 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		}
 		raw, err := json.Marshal(managedResources)
 		if err == nil {
-			err = db.SaveManagedInstructionLaunch(db.ManagedInstructionLaunch{AgentID: id, Root: launch.Root, Body: launch.Body, Resources: string(raw)})
+			err = db.SaveManagedInstructionLaunch(db.ManagedInstructionLaunch{AgentID: id, Root: overlay.Root, Body: overlay.Body, Resources: string(raw)})
 		}
 		if err != nil {
-			_ = managedinstructions.RemoveLaunchRoot(launch.Root)
+			_ = managedinstructions.RemoveLaunchRoot(overlay.Root)
 			if created {
 				_, _ = db.DeleteAgentByConvID(convID)
 			}
 			return &cloneSpawnError{Status: 500, Code: "managed_instructions", Msg: err.Error()}
 		}
-		managedParams := spawnParams{ManagedInstructionsRoot: launch.Root, ManagedInstructionsBody: launch.Body}
+		managedParams := spawnParams{ManagedInstructionsRoot: overlay.Root, ManagedInstructionsBody: overlay.Body}
 		cleanupManagedClone = func(success bool) {
 			if !success {
-				_ = managedinstructions.RemoveLaunchRoot(launch.Root)
+				_ = managedinstructions.RemoveLaunchRoot(overlay.Root)
 				_ = db.DeleteManagedInstructionLaunch(id)
 				if created {
 					_, _ = db.DeleteAgentByConvID(convID)
