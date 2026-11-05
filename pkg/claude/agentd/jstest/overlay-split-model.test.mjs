@@ -377,7 +377,7 @@ function dropsOver({ dropTree, normalized, leavesOf }, tree) {
     for (let y = room.y + 5; y < room.y + room.h; y += room.h / 16) {
       for (const zone of zones) {
         const drop = dropTree(tree, room, { x, y }, 'z', { here: ids, alive: ids, room: zone });
-        out.push(drop?.tree ? JSON.stringify(normalized(drop.tree)) : String(drop?.float || null));
+        out.push(drop?.tree ? JSON.stringify(normalized(drop.tree)) : 'null');
       }
     }
   }
@@ -508,12 +508,12 @@ test('targets: none whose drop would not fit, so nothing lights up that does not
   assert.deepEqual(markers.map(({ window, zone }) => `${window}:${zone}`), ['a:top', 'b:top'], 'three across do not fit in 900px; one above another does');
 });
 
-test('targets: a tear-off that merges into an empty neighbour leaves that space its box', async (t) => {
+test('targets: a tear-off that merges into an empty neighbour makes one cell with one box', async (t) => {
   const { dropTargets, withoutWindow } = await model(t);
   const quadWithGap = { x: 0.5, y: 0.5, cells: [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { gap: true }] };
   const torn = withoutWindow(quadWithGap, 'b');
   const { gaps } = dropTargets(torn, AREA, 'b', { here: new Set(['a', 'c']) });
-  assert.equal(gaps.length, 1, 'the merged half keeps a box, though it straddles the quarter just left');
+  assert.equal(gaps.length, 1, 'the merged half, the quarter just left included, has one box');
 });
 
 test('targets: windows drawn elsewhere than the tree lays them out get their markers where they are, and the box keeps clear of them', async (t) => {

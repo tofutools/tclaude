@@ -360,8 +360,8 @@ test('no new window takes the id of one on the dock, whose cell waits for it', a
 
 test('a floating window dropped on an empty cell\'s box later takes the cell', async (t) => {
   const { harness, overlay, prefs, mounted } = await setup(t, PAIR);
-  await dragBar(harness, mounted, 'a', { x: 100, y: 10 }, { x: 300, y: 400 });
-  assert.equal(mounted.container.querySelector('.w-a').classList.contains('snapped'), false);
+  await dragBar(harness, mounted, 'a', { x: 100, y: 10 }, { x: 300, y: 700 });
+  assert.equal(mounted.container.querySelector('.w-a').classList.contains('snapped'), false, 'let go off its old cell\'s box, it floats');
   const held = await hold(harness, mounted, 'a', { x: 20, y: 5 });
   await held.move({ x: 600, y: 300 });
   const box = held.centre('.overlay-snap-target.gap');

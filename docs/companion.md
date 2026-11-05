@@ -82,9 +82,11 @@ blocking it, and comes back when you reload the tab.
   other lines of a nested split or a quad stay as they are. A window that leaves
   never moves the others. Minimized or maximized, it keeps its cell and goes back into
   it. Closed or dragged out, by its title bar or by its tab when it has only one, it
-  leaves its cell empty and floats where you let it go, even over the cell it left: a
-  dashed outline shows that it will float. A later drag can drop any window on the
-  empty cell's box. The last window stays where it is. Pairs fill the room while it holds both windows at their
+  leaves its cell empty. While you drag, that cell is an empty cell like any other:
+  let go on its box, or on the room's edge over it, and the window goes back in.
+  Let go anywhere else off a target and it floats where you let it go: a dashed
+  outline shows that it will float. A later drag can drop any window on the empty
+  cell's box. The last window stays where it is. Pairs fill the room while it holds both windows at their
   minimum size.
 - **Snap it** by dragging against the left, right or bottom edge to make a side
   panel or drawer, or into a corner to fill a quarter. Pull a snapped window's free
