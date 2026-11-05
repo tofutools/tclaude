@@ -13,6 +13,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/managedinstructions"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/launchspec"
@@ -1719,4 +1720,462 @@ func (req *spawnRequest) validateTaskRef() *spawnFailure {
 	}
 
 	return nil
+}
+
+// queueOrClaimRateSlot queues a spawn that does not fit the node's capacity,
+// answering with the queued state, or else claims the spawn's rate-limit slot.
+func (req *spawnRequest) queueOrClaimRateSlot(w http.ResponseWriter, r *http.Request) *spawnFailure {
+	body := &req.body
+	g := req.g
+	attachments := req.attachments
+	cwd := req.cwd
+	externalSpawn := req.externalSpawn
+	proofDirs := req.proofDirs
+	proofToken := req.proofToken
+	requestedSpawnConfigJSON := req.requestedSpawnConfigJSON
+	spawnSudoGrant := req.spawnSudoGrant
+	spawnerConvID := req.spawnerConvID
+	// Rate limit (guardrail 3) — claimed only now, after every validation
+	// gate: a request refused above (bad arg, sandbox lineage, missing dir
+	// write-proof / its challenge round-trip) costs no slot, while anything
+	// past this point counts even if the spawn itself then fails — the
+	// intended runaway-prevention behaviour.
+	// Grant-authorized federation auto-spawns resolve launch settings as the
+	// operator but retain the spawn rate limit under a durable daemon principal.
+	//
+	// Capacity comes first: a spawn that does not fit and may wait is queued
+	// here, after every validation gate, and claims its rate slot when queued.
+	// Its later launch from the queue claims none.
+	if queueSpawnIfFull(w, r, g, spawnQueueCandidate{
+		body: body, rawBody: requestedSpawnConfigJSON, spawnerConv: spawnerConvID, sudoGrant: spawnSudoGrant,
+		proofToken: proofToken, proofDirs: proofDirs, cwd: cwd, attachments: attachments, externalPeer: externalSpawn,
+	}) {
+		return errSpawnResponseWritten
+	}
+	if remotePrincipal, _ := r.Context().Value(federationSpawnRateKey{}).(string); remotePrincipal != "" {
+		if fail := claimDaemonSpawnRateSlot(remotePrincipal); fail != nil {
+			return fail
+		}
+	} else if spawnQueueReplayFrom(r) == nil {
+		if fail := claimSpawnRateSlot(spawnerConvID); fail != nil {
+			return fail
+		}
+	}
+	return nil
+}
+
+// buildSpawnParams assembles the spawnParams executeSpawn launches from: the
+// resolved request, the launch authorities the request context carries
+// (teleport, permission carry, federation identity), the group context, and the
+// audit record of what was resolved.
+func (req *spawnRequest) buildSpawnParams(r *http.Request) (*spawnParams, *spawnFailure) {
+	body := &req.body
+	g := req.g
+	approvalPolicy := req.approvalPolicy
+	askTimeout := req.askTimeout
+	attachments := req.attachments
+	autoCompactWindow := req.autoCompactWindow
+	autoMemory := req.autoMemory
+	autoReview := req.autoReview
+	autoReviewSet := req.autoReviewSet
+	codexAppServer := req.codexAppServer
+	codexAppServerSet := req.codexAppServerSet
+	codexAppServerSource := req.codexAppServerSource
+	codexGitCommonDir := req.codexGitCommonDir
+	codexGitCommonDirPinned := req.codexGitCommonDirPinned
+	contextFeatures := req.contextFeatures
+	contextWindowMaxSource := req.contextWindowMaxSource
+	copilotAPI := req.copilotAPI
+	copilotAPISet := req.copilotAPISet
+	copilotAPISource := req.copilotAPISource
+	cwd := req.cwd
+	effectiveSandbox := req.effectiveSandbox
+	effort := req.effort
+	effortSource := req.effortSource
+	externalSpawn := req.externalSpawn
+	fastMode := req.fastMode
+	fastModeSet := req.fastModeSet
+	fastModeSource := req.fastModeSource
+	gitWorktreeWriteDirs := req.gitWorktreeWriteDirs
+	globalProfile := req.globalProfile
+	groupProfile := req.groupProfile
+	h := req.h
+	harnessBuiltinMode := req.harnessBuiltinMode
+	harnessSource := req.harnessSource
+	identity := req.identity
+	includeGroupContext := req.includeGroupContext
+	model := req.model
+	modelSource := req.modelSource
+	namedProfile := req.namedProfile
+	namedProfileHandle := req.namedProfileHandle
+	peerMessaging := req.peerMessaging
+	piDrive := req.piDrive
+	profileContext := req.profileContext
+	proofDirs := req.proofDirs
+	proofToken := req.proofToken
+	remoteControl := req.remoteControl
+	replyToConv := req.replyToConv
+	requestedSpawnConfigJSON := req.requestedSpawnConfigJSON
+	resolvedLaunch := req.resolvedLaunch
+	sandboxImplSource := req.sandboxImplSource
+	sandboxSource := req.sandboxSource
+	spawnerConvID := req.spawnerConvID
+	sshWorkaroundIntent := req.sshWorkaroundIntent
+	sshWorkaroundSource := req.sshWorkaroundSource
+	teleportAuthority := req.teleportAuthority
+	timeout := req.timeout
+	toolGovernance := req.toolGovernance
+	trustDir := req.trustDir
+	trustDirSet := req.trustDirSet
+	worktreeBranch := req.worktreeBranch
+	worktreePath := req.worktreePath
+	// Hand the validated request to the shared spawn core. executeSpawn
+	// owns the label → subprocess → conv-id poll → membership →
+	// post-init sequence; the group-template instantiator drives the
+	// same function in a loop. handleGroupSpawn keeps only the HTTP
+	// shape — decode + validate above, error/JSON mapping below.
+	p := spawnParams{
+		Arrival:                    arrivalFromRequest(r),
+		AgentID:                    reservedAgentIDFromContext(r.Context()),
+		ClaudeSubscription:         claudeSubscriptionForSpawn(r.Context()),
+		EffectiveSandbox:           &effectiveSandbox,
+		Name:                       body.Name,
+		Role:                       body.Role,
+		Descr:                      body.Descr,
+		TaskURL:                    strings.TrimSpace(body.TaskURL),
+		TaskLabel:                  strings.TrimSpace(body.TaskLabel),
+		InitialMessage:             body.InitialMessage,
+		ProfileContext:             profileContext,
+		Attachments:                attachments,
+		Cwd:                        cwd,
+		WorktreePath:               worktreePath,
+		WorktreeBranch:             worktreeBranch,
+		DirWriteProofDirs:          proofDirs,
+		DirWriteProofToken:         proofToken,
+		CwdWriteProofToken:         proofToken,
+		CleanupDirWriteProof:       true,
+		CodexGitCommonDir:          codexGitCommonDir,
+		CodexGitCommonDirPinned:    codexGitCommonDirPinned,
+		GitWorktreeWriteDirs:       gitWorktreeWriteDirs,
+		GitWorktreeWriteDirsPinned: codexGitCommonDirPinned,
+		AutoFocus:                  body.AutoFocus,
+		AutoFocusWeb:               body.AutoFocusWeb,
+		Effort:                     effort,
+		Model:                      model,
+		ModelProxy:                 body.ModelProxy,
+		Harness:                    h.Name,
+		// This boundary resolves a tier applyDefaultProfile cannot see — the CLI's
+		// named --profile — so seeding its attributions is what keeps the launch's
+		// own echo (and the drive-acquisition log built from it) naming `profile
+		// "x"` rather than the "explicit" artifact a re-resolution would produce.
+		HarnessSource:               harnessSource,
+		ModelSource:                 modelSource,
+		EffortSource:                effortSource,
+		ContextWindowMaxSource:      contextWindowMaxSource,
+		FastModeSource:              fastModeSource,
+		SandboxImplementationSource: sandboxImplSource,
+		SSHWorkaround:               sshWorkaroundIntent,
+		SSHWorkaroundSet:            true,
+		SSHWorkaroundSource:         sshWorkaroundSource,
+		HarnessBuiltinMode:          harnessBuiltinMode,
+		HarnessBuiltinModeSource:    sandboxSource,
+		SandboxImplementation:       body.SandboxImplementation,
+		AllowUnenforcedSandbox:      body.AllowUnenforcedSandbox,
+		AskUserQuestionTimeout:      askTimeout,
+		ApprovalPolicy:              approvalPolicy,
+		ToolGovernance:              toolGovernance,
+		AutoReview:                  autoReview,
+		AutoReviewSet:               autoReviewSet,
+		TrustDir:                    trustDir,
+		TrustDirSet:                 trustDirSet,
+		RemoteControl:               remoteControl,
+		AutoMemory:                  autoMemory,
+		PeerMessaging:               peerMessaging,
+		launchTogglesResolved:       true, // resolved above over the full tier stack
+		ContextFeatures:             contextFeatures,
+		AutoCompactWindow:           autoCompactWindow,
+		ContextWindowMax:            body.ContextWindowMax,
+		CopilotAPI:                  copilotAPI,
+		CopilotAPISet:               copilotAPISet,
+		CopilotAPISource:            copilotAPISource,
+		PiDrive:                     piDrive,
+		CodexAppServer:              codexAppServer,
+		CodexAppServerSet:           codexAppServerSet,
+		CodexAppServerSource:        codexAppServerSource,
+		FastMode:                    fastMode,
+		FastModeSet:                 fastModeSet,
+		ReplyToConv:                 replyToConv,
+		SpawnedByConv:               spawnerConvID,
+		externalStewardGated:        externalSpawn,
+		IsOwner:                     identity.isOwner,
+		PermissionOverrides:         identity.overrides,
+		PermissionSources:           identity.overrideSources,
+		Timeout:                     timeout,
+		// Verbatim decoded request captured at the HTTP boundary, before the
+		// working body was resolved or normalized. enrollSpawnedConv persists it
+		// as the durable "what did the caller request" record.
+		SpawnConfigJSON: requestedSpawnConfigJSON,
+		// The HTTP spawn endpoint (dashboard + `tclaude agent spawn`) is
+		// non-blocking: a spawn whose conv-id does not materialise within the
+		// inline grace becomes a PENDING agent rather than hanging the request
+		// — the JOH-205 spawn-freeze fix. The group-template instantiator
+		// builds its own params and leaves this false, so it stays synchronous
+		// (it needs the conv-id for owner/permission grants).
+		Async: true,
+	}
+	p.capacityQueueHead = spawnQueueReplayFrom(r) != nil
+	p.BundleHistory, _ = r.Context().Value(bundleHistoryContextKey{}).(*bundleHistoryLaunch)
+	p.ManagedInstructionResources, _ = r.Context().Value(managedInstructionLaunchContextKey{}).([]db.ManagedInstruction)
+	p.NoLaunch, _ = r.Context().Value(bundleNoLaunchContextKey{}).(bool)
+	// A worker on a peer's Claude subscription whose token has not arrived
+	// lands offline: it never starts on this node's own login.
+	if p.ClaudeSubscription.peer != "" && p.ClaudeSubscription.token == "" {
+		p.NoLaunch = true
+	}
+	p.capacityPreAdmitted, _ = r.Context().Value(capacityPreAdmittedKey{}).(bool)
+	if teleportAuthority != nil {
+		p.launchAuthority = teleportAuthority.check
+		p.nodeCapacityReserved = true
+		p.capacityPreAdmitted = true
+	} else if offer, _ := r.Context().Value(teleportOfferContextKey{}).(*db.FederationBundleOffer); offer != nil && offer.Descriptor.Teleport != nil {
+		// The admitting teleport row already holds this agent's capacity.
+		p.capacityPreAdmitted = true
+		row, err := db.GetFederationTeleport("in", offer.Peer, offer.Descriptor.ID)
+		if err != nil || row == nil {
+			return nil, &spawnFailure{503, "teleport_provenance", "teleport provenance unavailable"}
+		}
+		p.launchAuthority = func() error {
+			if teleportFrozen() {
+				return errors.New("teleports are frozen by the operator")
+			}
+			if !fedPeerAllows(offer.Peer, g.ID, PermAgentsReceive) && !fedPeerAllows(offer.Peer, g.ID, PermAgentsTeleportReceive) {
+				return errors.New("teleport receive authority revoked")
+			}
+			if _, err := pendingTeleportCredentials(offer.Peer, offer.Descriptor.Teleport.Credentials); err != nil {
+				return err
+			}
+			return checkTeleportRepo(row, g.ID)
+		}
+	}
+	if carry, ok := r.Context().Value(permissionCarryLaunchContextKey{}).(permissionCarryLaunch); ok && carry.Policy.Enabled {
+		priorCheck := p.launchAuthority
+		p.launchAuthority = func() error {
+			if priorCheck != nil {
+				if err := priorCheck(); err != nil {
+					return err
+				}
+			}
+			return carry.check()
+		}
+	}
+	if identity, ok := r.Context().Value(federationIdentityLaunchKey{}).(federationIdentityLaunch); ok {
+		prior := p.launchAuthority
+		p.launchAuthority = func() error {
+			if prior != nil {
+				if e := prior(); e != nil {
+					return e
+				}
+			}
+			return db.ValidateFederationArrival(identity.Agent, identity.Offer)
+		}
+	}
+	// An omitted include_group_context flag means opt-in — every spawn
+	// path inherits the group context by default, the same way it
+	// inherits default_cwd; the dashboard sends false explicitly to opt
+	// out, and a profile's toggle spoke for it above.
+	p.GroupContext = groupStartupContext(g, includeGroupContext)
+	if body.NonInteractive && !includeGroupContext {
+		// A one-shot is briefed by its prompt alone, as before the mission
+		// split: no group context means no mission either.
+		p.GroupContext = ""
+	}
+	setAuditSpawnResolved(r, spawnAuditResolution(p, resolvedLaunch, namedProfileHandle, map[string]*db.SpawnProfile{
+		"explicit":       namedProfile,
+		"group_default":  groupProfile,
+		"global_default": globalProfile,
+	}))
+	if p.ClaudeSubscription.peer != "" {
+		if body.NonInteractive || (p.Harness != "" && p.Harness != harness.DefaultName) {
+			return nil, &spawnFailure{400, "claude_subscription", "a peer's Claude subscription runs an ordinary Claude Code worker only"}
+		}
+		if p.ModelProxy != "" && p.ModelProxy != "off" {
+			return nil, &spawnFailure{400, "claude_subscription", "a worker on a peer's Claude subscription cannot also use a model gateway"}
+		}
+		p.ModelProxy = ""
+	}
+	return &p, nil
+}
+
+// serveOneShot runs a non-interactive spawn and answers the request itself: a
+// one-shot bypasses executeSpawn, and holds its sudo grant use until the
+// response is written.
+func (req *spawnRequest) serveOneShot(w http.ResponseWriter, r *http.Request, p *spawnParams) {
+	body := &req.body
+	g := req.g
+	oneShotName := req.oneShotName
+	spawnSudoGrant := req.spawnSudoGrant
+	managed, managedErr := managedinstructions.Resolve([]*db.AgentGroup{g})
+	if managedErr != nil {
+		writeError(w, 409, "managed_instructions", managedErr.Error())
+		return
+	}
+	if p.Harness != harness.ShellName && len(managed) != 0 {
+		writeError(w, 409, "managed_instructions", "one-shot runs with managed instructions are not supported yet; use an ordinary worker")
+		return
+	}
+	p.OneShotName = oneShotName
+	p.RemoteJob, _ = r.Context().Value(federationJobContextKey{}).(*federationJobLaunch)
+	if p.RemoteJob != nil {
+		p.RemoteJob.Harness = p.Harness
+		p.RemoteJob.Permissions = p.PermissionOverrides
+	}
+	// One-shots bypass executeSpawn but spend just the same.
+	if failure := checkUsageSpawnBlock(g); failure != nil {
+		writeError(w, failure.Status, failure.Kind, failure.Msg)
+		return
+	}
+	spawnUse, ok := takeSudoUse(w, spawnSudoGrant)
+	if !ok {
+		return
+	}
+	defer spawnUse.release()
+	p.onLaunchAttempt = spawnUse.keep
+	result, runErr := runNonInteractiveSpawn(r.Context(), *p, body.RunTimeoutSeconds)
+	if runErr != nil {
+		writeError(w, runErr.Status, runErr.Kind, runErr.Msg)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// finishSpawnParams adds what only the interactive launch carries: the usage
+// profiles, the spawn-copy tiers, the explicit launch values and the relaunch
+// overrides.
+func (req *spawnRequest) finishSpawnParams(p *spawnParams) {
+	explicitLaunch := req.explicitLaunch
+	globalProfile := req.globalProfile
+	groupProfile := req.groupProfile
+	namedProfile := req.namedProfile
+	relaunchExplicit := req.relaunchExplicit
+	relaunchTiers := req.relaunchTiers
+	spawnUsageProfiles := req.spawnUsageProfiles
+	p.UsageProfileIDs, p.UsageSpawnProfile = spawnUsageProfiles, namedProfile
+	p.spawnCopyCallerTiers = spawnCopyTiers(spawnCopyTier(db.SpawnCopyTierNamed, namedProfile))
+	p.spawnCopyDefaultTiers = spawnCopyTiers(spawnCopyTier(db.SpawnCopyTierGroupDefault, groupProfile),
+		spawnCopyTier(db.SpawnCopyTierGlobalDefault, globalProfile))
+	p.spawnCopyResolved = true
+	p.explicitLaunch = explicitLaunch
+	p.relaunchOverrides = resolveRelaunchOverrides(relaunchExplicit, relaunchTiers)
+}
+
+// reconcileLaunchEcho corrects the launch echo to what executeSpawn actually
+// launched, and records the final resolution in the audit.
+func (req *spawnRequest) reconcileLaunchEcho(r *http.Request, p *spawnParams, outcome *spawnOutcome) {
+	globalProfile := req.globalProfile
+	groupProfile := req.groupProfile
+	namedProfile := req.namedProfile
+	namedProfileHandle := req.namedProfileHandle
+	resolvedLaunch := req.resolvedLaunch
+	// executeSpawn intentionally re-reads default profiles as a safety net for
+	// non-HTTP callers. If state changed after the handler snapshot, report the
+	// values that actually reached the spawner and label the late fill honestly.
+	//
+	// Compared against executeSpawn's OWN echo rather than three loose strings,
+	// so this covers every echoed field: before TCL-1097 a late fill of the
+	// Copilot drive, the sandbox implementation, fast mode or the context cap
+	// changed the launch and left this response describing the snapshot.
+	// The relabel prefers the tier the final resolution NAMES and falls back to
+	// the anonymous launch-default label. A difference is not always a race: for
+	// fast_mode an explicit "inherit" clears the Set bit, so the overlay re-reads
+	// the profile tiers the handler deliberately suppressed and a group default
+	// legitimately wins here (that override is TCL-1109 and is not this echo's
+	// doing). Whatever the cause, an operator needs the profile's NAME to go and
+	// change it — "default profile (applied at launch)" names no tier at all, and
+	// is kept only for a final source that names nothing usable either.
+	launched := outcome.Resolved
+	if launched == nil {
+		launched = &agent.ResolvedLaunch{}
+	}
+	for field, final := range map[*agent.ResolvedField]agent.ResolvedField{
+		&resolvedLaunch.Harness:          launched.Harness,
+		&resolvedLaunch.Model:            launched.Model,
+		&resolvedLaunch.Effort:           launched.Effort,
+		&resolvedLaunch.ContextWindowMax: launched.ContextWindowMax,
+		&resolvedLaunch.CopilotAPI:       launched.CopilotAPI,
+		&resolvedLaunch.CodexAppServer:   launched.CodexAppServer,
+		&resolvedLaunch.FastMode:         launched.FastMode,
+		&resolvedLaunch.SandboxImpl:      launched.SandboxImpl,
+	} {
+		if field.Value != final.Value {
+			field.Value = final.Value
+			field.Source = agent.ProvLaunchDefault
+			if named := strings.TrimSpace(final.Source); named != "" && named != agent.ProvExplicit {
+				// Both halves, in the two places built to carry them: the tier goes in
+				// Source because that is what an operator acts on, and the fact that it
+				// landed late goes in Note because that is what explains the response
+				// differing from what the request looked like it would produce.
+				field.Source = final.Source
+				field.Note = agent.ProvLaunchFillNote
+			}
+		}
+	}
+	setAuditSpawnResolved(r, spawnAuditResolution(*p, resolvedLaunch, namedProfileHandle, map[string]*db.SpawnProfile{
+		"explicit":       namedProfile,
+		"group_default":  groupProfile,
+		"global_default": globalProfile,
+	}))
+}
+
+// spawnResponse is the success body: where the agent landed, how to attach,
+// its stable id, the resolved launch, and the task-link and focus state.
+func (req *spawnRequest) spawnResponse(p *spawnParams, outcome *spawnOutcome) map[string]any {
+	g := req.g
+	resolvedLaunch := req.resolvedLaunch
+	resp := map[string]any{
+		"group":        g.Name,
+		"conv_id":      outcome.ConvID,
+		"label":        outcome.Label,
+		"tmux_session": outcome.TmuxSession,
+		// Echo the fully-resolved launch shape + per-field provenance so the
+		// caller can see WHERE harness/model/effort came from — the TCL-304
+		// mistake-preventer for a blank spawn silently inheriting a default
+		// profile's vendor. Values come from executeSpawn's final params so the
+		// echo remains truthful even if a default profile changed mid-request.
+		"resolved": resolvedLaunch,
+	}
+	if outcome.Label != "" {
+		// An offline landing has no session to attach to.
+		resp["attach_cmd"] = "tclaude session attach " + outcome.Label
+	}
+	// Lead with the spawned actor's stable id. Pending Codex spawns reserve it
+	// before their harness conv-id materialises; inline spawns resolve it from
+	// the enrolled conversation as before.
+	aid := outcome.AgentID
+	if aid == "" {
+		aid = peerAgentID(outcome.ConvID)
+	}
+	if aid != "" {
+		resp["agent_id"] = aid
+	}
+	// Echo the requested task-reference link with its verified binding
+	// state (TCL-568): "bound" only when the link is readable back off the
+	// enrolled actor, "pending" when the spawn went pending (the persisted
+	// pending row carries the link; the sweeper binds it at enrollment) or
+	// the binding couldn't be confirmed. Never claim linkage that wasn't
+	// verifiably written.
+	if p.TaskURL != "" {
+		resp["task_ref_url"] = p.TaskURL
+		resp["task_ref_state"] = taskRefBindState(outcome.ConvID, p.TaskURL)
+	}
+	// FocusMode is only ever non-empty when the caller asked for auto-focus.
+	// "browser" means the dashboard explicitly targeted a web terminal or
+	// openTerminal couldn't pop a native window; in either case the spawn modal
+	// points at focus_ws (see spawnOutcome.FocusMode).
+	if outcome.FocusMode != "" {
+		resp["focus_mode"] = outcome.FocusMode
+		if outcome.FocusMode == "browser" {
+			resp["focus_ws"] = spawnFocusWSPath(outcome.Label)
+		}
+	}
+	return resp
 }
