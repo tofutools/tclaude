@@ -1760,7 +1760,7 @@ func dispatchSlashCommandOn(
 // dispatchSlashCommand at all (it goes through injectSoftExitTarget, which
 // needs the harness's prefix keys). The soft-exit decision and the measurements
 // behind it live where soft exit actually is, next to that branch in
-// lifecycle.go.
+// lifecycle_stop.go.
 func dispatchCopilotAPISlashCommand(sess *db.SessionRow, line, followUp, reason string) bool {
 	if sess == nil {
 		return false
