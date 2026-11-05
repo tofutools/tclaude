@@ -3232,32 +3232,20 @@ func costRowsUpTo(withIgnored bool) string {
 	return `day <= ?`
 }
 
-// costRowQuerier is the part of *sql.DB and *sql.Tx the ledger reads use.
-type costRowQuerier interface {
-	Query(query string, args ...any) (*sql.Rows, error)
-}
-
 // scanCostDailyRows returns the rows of query, without their carry.
-func scanCostDailyRows(q costRowQuerier, query string, args ...any) ([]CostDailyRow, error) {
-	rows, err := q.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []CostDailyRow
-	for rows.Next() {
+func scanCostDailyRows(q rowQuerier, query string, args ...any) ([]CostDailyRow, error) {
+	return queryRows(q, func(rows rowScanner) (CostDailyRow, error) {
 		var r CostDailyRow
 		var updatedAt dbTimestamp
 		if err := rows.Scan(&r.SessionID, &r.Day, &r.ConvID, &r.CostUSD, &r.VirtualCostUSD, &updatedAt, &r.Model, &r.Harness); err != nil {
-			return nil, err
+			return CostDailyRow{}, err
 		}
 		r.UpdatedAtNS = updatedAt.UnixNano()
-		out = append(out, r)
-	}
-	return out, rows.Err()
+		return r, nil
+	}, query, args...)
 }
 
-func queryCostDailyRows(q costRowQuerier, query string, args ...any) ([]CostDailyRow, error) {
+func queryCostDailyRows(q rowQuerier, query string, args ...any) ([]CostDailyRow, error) {
 	out, err := scanCostDailyRows(q, query, args...)
 	if err != nil {
 		return nil, err

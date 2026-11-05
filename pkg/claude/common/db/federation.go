@@ -109,22 +109,15 @@ func ListFederationPeers() ([]FederationPeer, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT instance_id, pubkey, label, name, trusted_at, trust_level FROM federation_peers ORDER BY label, instance_id`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []FederationPeer
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (FederationPeer, error) {
 		var p FederationPeer
 		var at dbTimestamp
 		if err := rows.Scan(&p.InstanceID, &p.PubKey, &p.Label, &p.Name, &at, &p.TrustLevel); err != nil {
-			return nil, err
+			return FederationPeer{}, err
 		}
 		p.TrustedAt = at.Time()
-		out = append(out, p)
-	}
-	return out, rows.Err()
+		return p, nil
+	}, `SELECT instance_id, pubkey, label, name, trusted_at, trust_level FROM federation_peers ORDER BY label, instance_id`)
 }
 
 // GetFederationPeer returns a trusted peer or nil.
@@ -781,20 +774,13 @@ func ListFederationSpawnRequests(limit int) ([]*FederationSpawnRequest, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT `+fedSpawnColumns+` FROM federation_spawn_requests ORDER BY id DESC LIMIT ?`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*FederationSpawnRequest
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (*FederationSpawnRequest, error) {
 		r, err := scanFedSpawn(rows.Scan)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
+		return r, nil
+	}, `SELECT `+fedSpawnColumns+` FROM federation_spawn_requests ORDER BY id DESC LIMIT ?`, limit)
 }
 
 // DecideFederationSpawnRequest moves a request from status `from` to
