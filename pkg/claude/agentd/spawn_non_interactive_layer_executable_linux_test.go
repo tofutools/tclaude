@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -147,6 +148,8 @@ func TestWrapOneShotLayer_ClaudeAndCodexPinTheResolvedExecutable(t *testing.T) {
 		{"claude-constructed", harness.DefaultName,
 			sandboxpolicy.Profile{Name: "separate", FilesystemRoot: sandboxpolicy.FilesystemRootSeparate}},
 		{"codex-host", harness.CodexName, sandboxpolicy.Profile{Name: "host"}},
+		{"codex-constructed", harness.CodexName,
+			sandboxpolicy.Profile{Name: "separate", FilesystemRoot: sandboxpolicy.FilesystemRootSeparate}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newOneShotLayerFixture(t)
@@ -207,6 +210,10 @@ func TestWrapOneShotLayer_PiAndGeminiPinOnlyUnderAConstructedRoot(t *testing.T) 
 				require.NoError(t, err)
 				if constructed {
 					assert.Contains(t, command, entry+" -p hello", "the resolved executable is the exec token")
+					if name == harness.PiName {
+						assert.Regexp(t, `exec env `+harness.PiAgentDirEnvVar+`=\S+ `+regexp.QuoteMeta(entry)+` -p hello`, command,
+							"the walled agent dir env still precedes the pinned pi")
+					}
 					assert.Contains(t, command, "--ro-bind "+entry+" "+entry, "and it is mounted read-only")
 				} else {
 					assert.Contains(t, command, " "+h.Spawn.Binary()+" -p hello", "the bare name resolves on the host's PATH")
@@ -215,4 +222,21 @@ func TestWrapOneShotLayer_PiAndGeminiPinOnlyUnderAConstructedRoot(t *testing.T) 
 			})
 		}
 	}
+}
+
+// A séance may already have put an absolute Codex path in argv[0]; the
+// splice replaces it rather than a later "codex" token, as overwriting
+// argv[0] always did.
+func TestSpliceOneShotExecutableReplacesAnAbsoluteArgv0(t *testing.T) {
+	pinned := session.TclaudeLayerExecutable{Path: "/pinned/bin/codex"}
+	got, err := spliceOneShotExecutable(
+		[]string{"/split/bin/codex", "-p", "codex", "exec", "codex"}, "codex", pinned)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/pinned/bin/codex", "-p", "codex", "exec", "codex"}, got)
+
+	got, err = spliceOneShotExecutable(
+		[]string{"env", "A=1", "gemini", "-p", "x"}, "gemini",
+		session.TclaudeLayerExecutable{Path: "/g/gemini.js", Interpreter: "/n/node"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"env", "A=1", "/n/node", "/g/gemini.js", "-p", "x"}, got)
 }
