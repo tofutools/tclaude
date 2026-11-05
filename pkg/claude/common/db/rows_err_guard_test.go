@@ -6,17 +6,25 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
 )
 
+// migrationStepFile matches the frozen per-version migration steps
+// (migrate_v123_name.go), not the migration runner in migrate.go or its
+// helpers, which are live code like any other.
+var migrationStepFile = regexp.MustCompile(`^migrate_v\d+_.*\.go$`)
+
 // TestEveryRowsLoopChecksErr fails when a function in this package iterates
 // `for x.Next()` without calling x.Err(). database/sql reports an error that
 // ends iteration only through Rows.Err: Close does not return it. A loop that
 // skips Err silently returns, deletes or updates from a truncated list.
-// Migrations (migrate*.go) are skipped: they are frozen history, run once on
-// old databases and not edited after release.
+// A single-row read, `if !x.Next()`, counts too: there an iteration error
+// would otherwise read as "no row". Migration steps (migrationStepFile) are
+// skipped: they are frozen history, run once on old databases and not edited
+// after release.
 func TestEveryRowsLoopChecksErr(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -25,7 +33,7 @@ func TestEveryRowsLoopChecksErr(t *testing.T) {
 	fset := token.NewFileSet()
 	var missing []string
 	for _, name := range files {
-		if strings.HasSuffix(name, "_test.go") || strings.HasPrefix(name, "migrate") {
+		if strings.HasSuffix(name, "_test.go") || migrationStepFile.MatchString(name) {
 			continue
 		}
 		src, err := os.ReadFile(name)
@@ -48,7 +56,7 @@ func TestEveryRowsLoopChecksErr(t *testing.T) {
 	}
 	sort.Strings(missing)
 	if len(missing) > 0 {
-		t.Fatalf("these functions loop over %s.Next() without checking %s.Err(); add `if err := rows.Err(); err != nil { return ... }` after the loop:\n  %s",
+		t.Fatalf("these functions read %s.Next() without checking %s.Err(); add `if err := rows.Err(); err != nil { return ... }` after the loop:\n  %s",
 			"rows", "rows", strings.Join(missing, "\n  "))
 	}
 }
@@ -65,6 +73,12 @@ func rowsWithoutErr(body *ast.BlockStmt) []string {
 		case *ast.ForStmt:
 			if id := methodReceiver(n.Cond, "Next"); id != "" {
 				looped[id]++
+			}
+		case *ast.IfStmt:
+			if not, ok := n.Cond.(*ast.UnaryExpr); ok && not.Op == token.NOT {
+				if id := methodReceiver(not.X, "Next"); id != "" {
+					looped[id]++
+				}
 			}
 		case *ast.CallExpr:
 			if id := methodReceiver(n, "Err"); id != "" {
