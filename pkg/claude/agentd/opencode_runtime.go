@@ -82,9 +82,7 @@ type openCodeProcess struct {
 }
 
 var beforeOpenCodeTUICommandStatusCheckForTest func()
-
 var openCodeConversationStateCleanupDelay = 2 * openCodeSSERetryDelay
-
 var openCodeTmuxProbeInterval = time.Second
 
 var openCodeProcesses = struct {
@@ -126,7 +124,6 @@ var openCodeHTTPClient = &http.Client{Timeout: 5 * time.Second}
 // runs with. Real-OpenCode smokes raise it so a failure leaves the server's
 // own account of where it stalled in its log directory.
 var openCodeServeLogLevel = "ERROR"
-
 var openCodeHealthHTTPClient = &http.Client{Timeout: time.Second}
 
 // openCodeSSEHTTPClient is the bounded client for the long-lived /event stream.
@@ -537,15 +534,4 @@ func reapOrphanedOpenCodeRuntimes(states []*session.SessionState) {
 			}
 		}
 	}
-}
-
-// killWorkloadGroup retires the launch-owned group once. The waiter calls it
-// immediately at leader exit, before publishing done; later teardown must not
-// signal a cached group ID after a long-dead leader could have been reused.
-func (process *openCodeProcess) killWorkloadGroup() {
-	process.groupKillOnce.Do(func() {
-		if process.cmd != nil {
-			killOpenCodeProcessGroup(process.cmd)
-		}
-	})
 }

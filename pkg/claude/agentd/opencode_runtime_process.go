@@ -410,3 +410,14 @@ func randomOpenCodePassword() (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
 }
+
+// killWorkloadGroup retires the launch-owned group once. The waiter calls it
+// immediately at leader exit, before publishing done; later teardown must not
+// signal a cached group ID after a long-dead leader could have been reused.
+func (process *openCodeProcess) killWorkloadGroup() {
+	process.groupKillOnce.Do(func() {
+		if process.cmd != nil {
+			killOpenCodeProcessGroup(process.cmd)
+		}
+	})
+}
