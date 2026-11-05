@@ -49,6 +49,55 @@ def profile(form, port):
     raise ValueError(form)
 
 
+UNIX_DENY_CASES = ("unix-literal", "unix-path-literal", "unix-literal-param", "unix-path-literal-param")
+
+
+def unix_profile(case, port, sock_path):
+    """The passing allow-after-deny pair, then one unix-socket outbound deny
+    naming sock_path, inline or through a -D param, as literal or
+    path-literal."""
+    head = ("(version 1)\n(allow default)\n"
+            '(deny network-outbound (remote ip "*:*"))\n'
+            f'(allow network-outbound (remote tcp "localhost:{port}"))\n')
+    filt = "path-literal" if "path-literal" in case else "literal"
+    target = '(param "SOCK")' if case.endswith("-param") else f'"{sock_path}"'
+    return head + f"(deny network-outbound\n  (remote unix-socket ({filt} {target})))\n"
+
+
+def unix_case(case, present):
+    """One sandboxed TCP connect under unix_profile, with the unix socket
+    path present (a bound listener) or absent."""
+    import os
+    import tempfile
+    base = tempfile.mkdtemp(prefix="sbp", dir="/tmp")
+    sock_path = os.path.join(base, "agentd.sock")
+    unix = None
+    if present:
+        unix = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        unix.bind(sock_path)
+        unix.listen(4)
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(8)
+    port = listener.getsockname()[1]
+    try:
+        args = ["/usr/bin/sandbox-exec", "-p", unix_profile(case, port, sock_path)]
+        if case.endswith("-param"):
+            args.append(f"-DSOCK={sock_path}")
+        args += [sys.executable, "-c", CONNECT, str(port)]
+        out = subprocess.run(args, capture_output=True, text=True, timeout=20)
+        return out.stdout.strip() or out.stderr.strip()[-100:] or "no-output"
+    finally:
+        listener.close()
+        if unix is not None:
+            unix.close()
+        try:
+            os.unlink(sock_path)
+        except OSError:
+            pass
+        os.rmdir(base)
+
+
 def lan_address():
     probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -92,6 +141,12 @@ def one(form, same_port):
 
 
 def main():
+    for case in UNIX_DENY_CASES:
+        for present in (False, True):
+            results = [unix_case(case, present) for _ in range(RUNS)]
+            ok = sum(r == "ok" for r in results)
+            others = sorted({r for r in results if r != "ok"})
+            print(f"{case:24} socket_present={str(present):5} ok={ok}/{RUNS} {others}")
     for form in ("allow-after-deny", "allow-ip-form", "inside-deny"):
         for same_port in (False, True):
             results = [one(form, same_port) for _ in range(RUNS)]

@@ -186,9 +186,11 @@ def main():
                         if not path or os.path.exists(path):
                             continue
                         parent = os.path.dirname(path)
-                        if not os.path.isdir(parent):
+                        try:
                             os.makedirs(parent, exist_ok=True)
-                            created_dirs.append(parent)
+                        except OSError as err:
+                            print(f"  exist-test: cannot create {parent}: {err}")
+                            continue
                         try:
                             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                             sock.bind(path)
