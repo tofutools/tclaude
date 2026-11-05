@@ -335,6 +335,7 @@ type boardSummaryJSON struct {
 	Group        string    `json:"group,omitempty"`
 	Agents       int       `json:"agents"`           // on it, invited or through its group
 	Active       bool      `json:"active,omitempty"` // an agent holds a session on it
+	AgentsLocked bool      `json:"agents_locked,omitempty"`
 }
 
 type boardJSON struct {
@@ -352,7 +353,8 @@ type boardJSON struct {
 	// board (GroupMembers) without an invitation (tcl-4yhow7).
 	Group        string   `json:"group,omitempty"`
 	GroupMembers []string `json:"group_members,omitempty"`
-	// AgentsLocked is the operator's lock on the board (group_resource_locks.go).
+	// AgentsLocked is the lock on the board against agent changes
+	// (group_resource_locks.go).
 	AgentsLocked bool `json:"agents_locked,omitempty"`
 }
 
@@ -428,6 +430,10 @@ func serveBoardList(w http.ResponseWriter, keep func(*db.CollabBoard) bool) {
 		writeBoardStoreError(w, err)
 		return
 	}
+	locked, err := db.GroupResourceLocks(db.GroupResourceBoard)
+	if err != nil {
+		locked = map[string]bool{}
+	}
 	active := make(map[string]bool, len(sessions))
 	for _, s := range sessions {
 		active[s.BoardID] = true
@@ -440,7 +446,7 @@ func serveBoardList(w http.ResponseWriter, keep func(*db.CollabBoard) bool) {
 		out = append(out, boardSummaryJSON{
 			ID: b.ID, Title: b.Title, Version: b.Version, UpdatedAt: b.UpdatedAt,
 			ElementCount: b.ElementCount, Participants: b.Participants, Group: b.GroupName,
-			Agents: len(boardAudience(b)), Active: active[b.ID],
+			Agents: len(boardAudience(b)), Active: active[b.ID], AgentsLocked: locked[b.ID],
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"boards": out})

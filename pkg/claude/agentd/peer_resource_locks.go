@@ -24,7 +24,9 @@ import (
 //
 // Only the peer's operator reaches the peer view (its own dashboard, behind
 // its dashboard login); no agent on either node has a route to it, so a
-// federated agent never toggles a lock, whatever it is granted.
+// federated agent never toggles a lock this way. A local agent locks through
+// its own route, POST /v1/resource-locks, under its own groups.resources.lock
+// grant (group_resource_access.go).
 
 // PermGroupsResourcesLock is the federation peer grant (group-scoped) to lock
 // and unlock the group's resources against agent changes from the peer's

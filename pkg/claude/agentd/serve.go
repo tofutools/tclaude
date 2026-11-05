@@ -1391,6 +1391,8 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/boards/{id}/snapshot", handleBoardSnapshot)
 	mux.HandleFunc("POST /v1/boards/{id}/session", handleBoardSessionOpen)
 	mux.HandleFunc("DELETE /v1/boards/{id}/session", handleBoardSessionClose)
+	mux.HandleFunc("POST /v1/resource-locks", handleAgentResourceLock)
+	mux.HandleFunc("GET /v1/groups/{name}/resources", handleAgentGroupResources)
 	mux.HandleFunc("GET /v1/pages", handlePageList)
 	mux.HandleFunc("POST /v1/pages", handlePageShow)
 	mux.HandleFunc("DELETE /v1/pages/{name}", handlePageClose)

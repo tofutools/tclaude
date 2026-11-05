@@ -237,9 +237,11 @@ func TestPeerViewResourceLockUnrestrictedTrust(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 
-// No agent toggles a lock, whatever it holds: not a member of the group with
-// every grant (the peer slug included), and not an agent asking its own node
-// to reach a peer's lock through the peer proxy.
+// No agent toggles a lock through the operator's routes, whatever it holds:
+// not a member of the group with every grant (the lock slug included), and
+// not an agent asking its own node to reach a peer's lock through the peer
+// proxy. (Its own route, /v1/resource-locks, is
+// TestAgentsLockGroupResourcesUnderTheLockSlug.)
 func TestResourceLockNeverReachesAFederatedAgent(t *testing.T) {
 	e := newPeerLockEnv(t)
 	f := e.fh.f
@@ -256,7 +258,6 @@ func TestResourceLockNeverReachesAFederatedAgent(t *testing.T) {
 	for _, path := range []string{
 		"/api/resource-locks",
 		"/api/peer/" + e.fh.peer.id.ID() + "/api/resource-locks",
-		"/v1/resource-locks",
 	} {
 		rec := agent(http.MethodPost, path, body)
 		assert.NotEqual(t, http.StatusOK, rec.Code, "%s: %s", path, rec.Body.String())
