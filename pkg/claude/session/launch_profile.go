@@ -64,6 +64,15 @@ func RunNewFromCommand(params *NewParams, cmd *cobra.Command) error {
 			return fmt.Errorf("--no-daemon: %w", err)
 		}
 	}
+	if strings.TrimSpace(params.JoinGroup) != "" {
+		// An explicit join hands off to the spawn wire, which has no field for
+		// a solo-only flag: refuse it rather than lose it (--permission-profile
+		// would otherwise vanish from a Codex agent without a word).
+		if solo := explicitSoloOnlyFlags(explicit); len(solo) > 0 {
+			return fmt.Errorf("%s %s to a solo session and can't be used with --join-group. %s",
+				joinFlags(solo), pluralVerb(solo, "applies", "apply"), soloJoinHint(solo))
+		}
+	}
 	if strings.TrimSpace(params.JoinGroup) == "" {
 		if automaticGroupEligible(params, explicit) {
 			cfg, _ := config.Load()
@@ -76,6 +85,15 @@ func RunNewFromCommand(params *NewParams, cmd *cobra.Command) error {
 			// (resume, shell, pass-through, managed children) must remain solo.
 			params.AutoJoinGroup = false
 			params.AutoJoinOrCreateGroup = false
+			// A human typing a group-only flag on one of these would lose it.
+			// Only typed flags count: a managed child's argv is agentd's, and a
+			// resume may have its posture filled in from the record.
+			if !params.ManagedLaunch {
+				if typed := explicitGroupSpawnOnlyFlags(params, explicit); len(typed) > 0 {
+					return fmt.Errorf("%s only %s when a launch joins a group, and a resume, shell or pass-through launch never does; drop %s",
+						joinFlags(typed), pluralVerb(typed, "applies", "apply"), joinFlags(typed))
+				}
+			}
 		}
 	}
 	return runNewWithGlobalDefault(params, explicit)
@@ -182,6 +200,12 @@ func resolveSoloLaunchFlags(params *NewParams, explicit explicitLaunchFields, st
 	params.AutoJoinGroup = false
 	params.AutoJoinOrCreateGroup = false
 
+	if len(spawnOnly) > 0 && consequence == "" {
+		// Nothing to join here even without the solo flag, so a "to join" hint
+		// would only lead to the no-match error.
+		return fmt.Errorf("%s %s a group launch, but %s and no group matches this directory; pass --join-group GROUP without %s, or drop %s",
+			joinFlags(spawnOnly), pluralVerb(spawnOnly, "needs", "need"), subject, joinFlags(solo), joinFlags(spawnOnly))
+	}
 	if len(spawnOnly) > 0 {
 		return fmt.Errorf("%s %s a group launch, but %s%s. %s; to stay solo, drop %s",
 			joinFlags(spawnOnly), pluralVerb(spawnOnly, "needs", "need"), subject, consequence,
@@ -356,6 +380,16 @@ func groupSpawnOnlyFlags(params *NewParams) []string {
 		}
 	}
 	return flags
+}
+
+func explicitGroupSpawnOnlyFlags(params *NewParams, explicit explicitLaunchFields) []string {
+	var typed []string
+	for _, flag := range groupSpawnOnlyFlags(params) {
+		if explicit.has(strings.TrimPrefix(flag, "--")) {
+			typed = append(typed, flag)
+		}
+	}
+	return typed
 }
 
 // validateUnmatchedGroupSpawnFlags prevents a dashboard/agent-spawn-compatible

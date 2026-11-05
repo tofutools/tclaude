@@ -154,6 +154,25 @@ func TestAutoJoinCLISoloFlagEdges(t *testing.T) {
 		require.ErrorIs(t, got.err, errTestSolo)
 		assert.Empty(t, got.notice)
 	})
+	t.Run("no matching group: label with initial-message gives no false join hint", func(t *testing.T) {
+		got := runAutoJoinCLI(t, "", "-l", "x", "-i", "brief")
+		require.Error(t, got.err)
+		assert.Nil(t, got.params)
+		assert.Equal(t, "--initial-message needs a group launch, but --label keeps this session solo and no group matches this directory; "+
+			"pass --join-group GROUP without --label, or drop --initial-message", got.err.Error())
+	})
+	t.Run("explicit join-group refuses a solo-only flag", func(t *testing.T) {
+		got := runAutoJoinCLI(t, "", "--join-group", "kivra", "--permission-profile", "locked")
+		require.Error(t, got.err)
+		assert.Nil(t, got.params)
+		assert.Equal(t, "--permission-profile applies to a solo session and can't be used with --join-group. To join, drop --permission-profile", got.err.Error())
+	})
+	t.Run("shell launch refuses a typed group-only flag", func(t *testing.T) {
+		got := runAutoJoinCLI(t, "kivra", "--shell", "-i", "brief")
+		require.Error(t, got.err)
+		assert.Nil(t, got.params)
+		assert.Contains(t, got.err.Error(), "--initial-message only applies when a launch joins a group, and a resume, shell or pass-through launch never does")
+	})
 	t.Run("no matching group: initial-message keeps the unmatched error", func(t *testing.T) {
 		got := runAutoJoinCLI(t, "", "-i", "brief")
 		require.Error(t, got.err)

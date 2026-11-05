@@ -122,9 +122,11 @@ on, the name also becomes its tmux session name.
 
 A flag is never dropped without a word. A group-only flag (`-i`, `--file`,
 `--sandbox-profile`, `--profile`, `--worktree`, `--role`, …) on a launch that
-ends up solo is refused, with an error naming what kept it solo. An explicit
-`--auto-join-group` (or `--auto-join-or-create-group`) next to a solo-only
-flag is refused as a contradiction.
+ends up solo is refused, with an error naming what kept it solo (that
+includes `--resume` and `--shell`, which never join). A solo-only flag with
+`-j/--join-group` is refused the same way. An explicit `--auto-join-group`
+(or `--auto-join-or-create-group`) next to a solo-only flag is refused as a
+contradiction.
 
 `--initial-prompt` works on both kinds of launch. Solo, it is the harness's
 own first-turn prompt. When the launch joins a group it becomes the agent's
