@@ -424,6 +424,9 @@ func renderDarwinSeatbeltCommandWithRouteSlots(
 	if err != nil {
 		return "", err
 	}
+	if os.Getenv("TCLAUDE_TEMP_SEATBELT_DENIES_FIRST") == "1" {
+		profile = tempDeniesFirstSeatbeltProfile(profile)
+	}
 	tempDumpSeatbeltProfile(profile, params)
 
 	command := clcommon.ShellQuoteArg(binary) + " -p " + clcommon.ShellQuoteArg(profile)
@@ -702,4 +705,52 @@ func tempDumpSeatbeltProfile(profile string, params []seatbeltProfileParam) {
 	}
 	name := fmt.Sprintf("profile-%d-%d.json", os.Getpid(), time.Now().UnixNano())
 	_ = os.WriteFile(filepath.Join(dir, name), data, 0o600)
+}
+
+// tempDeniesFirstSeatbeltProfile is TEMPORARY (#3999, awb tcl-gejtfc;
+// remove before merge): it regroups a rendered profile's top-level forms as
+// (version ...), (allow default), every other deny, then every other allow,
+// keeping the relative order within each group, to test the macOS 27.2
+// localhost:N EPERM against a deny-first ordering. Comments are dropped.
+func tempDeniesFirstSeatbeltProfile(profile string) string {
+	var head, denies, allows, other []string
+	depth, start := 0, -1
+	for i := 0; i < len(profile); i++ {
+		switch c := profile[i]; c {
+		case ';':
+			if depth == 0 {
+				for i < len(profile) && profile[i] != '\n' {
+					i++
+				}
+			}
+		case '"':
+			for i++; i < len(profile) && profile[i] != '"'; i++ {
+				if profile[i] == '\\' {
+					i++
+				}
+			}
+		case '(':
+			if depth == 0 {
+				start = i
+			}
+			depth++
+		case ')':
+			depth--
+			if depth == 0 && start >= 0 {
+				form := profile[start : i+1]
+				switch {
+				case strings.HasPrefix(form, "(version") || form == "(allow default)":
+					head = append(head, form)
+				case strings.HasPrefix(form, "(deny"):
+					denies = append(denies, form)
+				case strings.HasPrefix(form, "(allow"):
+					allows = append(allows, form)
+				default:
+					other = append(other, form)
+				}
+			}
+		}
+	}
+	all := append(append(append(append([]string{}, head...), other...), denies...), allows...)
+	return strings.Join(all, "\n") + "\n"
 }

@@ -60,6 +60,12 @@ def unix_profile(case, port, sock_path):
     head = "(version 1)\n(allow default)\n"
     if case == "fix-allow-last":
         return head + deny_ip + unix_deny + allow_tcp
+    if case == "fix-all-denies-first":
+        unix4 = "".join(
+            f'(deny network-outbound\n  (remote unix-socket (literal "{sock_path}.{k}")))\n'
+            for k in range(4))
+        return head + deny_ip + unix4 + allow_tcp + (
+            f'(allow network-outbound (remote udp "localhost:{port}"))\n')
     if case == "fix-require-any":
         return head + deny_ip + allow_tcp + (
             "(deny network-outbound\n  (require-any\n"
@@ -116,6 +122,29 @@ def unix_case(case, present):
         os.rmdir(base)
 
 
+def delay_case(pre):
+    import os
+    import tempfile
+    base = tempfile.mkdtemp(prefix="sbd", dir="/tmp")
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(16)
+    port = listener.getsockname()[1]
+    script = (f"sleep {pre}; for d in 0 0.1 1 5; do sleep $d; "
+              f"if /usr/bin/nc -z -G 2 127.0.0.1 {port} 2>/dev/null; "
+              "then printf 'ok@%s ' $d; else printf 'refused@%s ' $d; fi; done")
+    try:
+        out = subprocess.run(
+            ["/usr/bin/sandbox-exec", "-p",
+             unix_profile("unix-literal", port, os.path.join(base, "agentd.sock")),
+             "/bin/sh", "-c", script],
+            capture_output=True, text=True, timeout=60)
+        return out.stdout.strip() or out.stderr.strip()
+    finally:
+        listener.close()
+        os.rmdir(base)
+
+
 def lan_address():
     probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -164,11 +193,16 @@ def main():
     # The minimal pair, then the candidate fixes; (a) needs >= 30 runs to
     # count as fixed for an intermittent failure.
     for case, runs in (("unix-literal", 30), ("fix-allow-last", 30),
-                       ("fix-require-any", 30), ("fix-ip-allow", 30)):
+                       ("fix-all-denies-first", 30), ("fix-require-any", 30),
+                       ("fix-ip-allow", 30)):
         results = [unix_case(case, False) for _ in range(runs)]
         ok = sum(r == "ok" for r in results)
         others = sorted({r for r in results if r != "ok"})
         print(f"{case:24} ok={ok}/{runs} {others}")
+    # (e) delay: in one sandbox, sleep `pre` seconds, then connect at 0,
+    # +100ms, +1s and +5s, under the minimal pair.
+    for pre in (0, 1, 5):
+        print(f"delay pre={pre}s: {delay_case(pre)}")
     if "--pair-only" in sys.argv:
         return
     for form in ("allow-after-deny", "allow-ip-form", "inside-deny"):

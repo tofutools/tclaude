@@ -161,77 +161,33 @@ jobs:
           TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
         run: |
           python3 scripts/ci/seatbelt-loopback-probe.py 10 | tee -a "$GITHUB_STEP_SUMMARY" || true
-          dump="$RUNNER_TEMP/seatbelt-profile-dumps"
-          rm -rf "$dump" && mkdir -p "$dump"
           go build -o "$RUNNER_TEMP/tclaude-sandbox-v2" .
-          TCLAUDE_TEMP_SEATBELT_PROFILE_DUMP_DIR="$dump" \
-            go test ./pkg/claude/session -run '^TestTclaudeLayerDarwinSmoke$' -count=1 -timeout=120s > "$RUNNER_TEMP/dump-smoke.log" 2>&1 || true
-          tail -3 "$RUNNER_TEMP/dump-smoke.log"
-          # Dialers for the connector axis, each called as `<bin> 127.0.0.1 <port>`.
-          dialers="$RUNNER_TEMP/seatbelt-dialers"
-          rm -rf "$dialers" && mkdir -p "$dialers/go"
-          cat > "$dialers/go/main.go" <<'GO'
-          package main
-
-          import (
-          	"fmt"
-          	"net"
-          	"os"
-          	"time"
-          )
-
-          func main() {
-          	conn, err := net.DialTimeout("tcp4", net.JoinHostPort(os.Args[1], os.Args[2]), 2*time.Second)
-          	if err != nil {
-          		fmt.Fprintln(os.Stderr, err)
-          		os.Exit(1)
-          	}
-          	_ = conn.Close()
+          locked() {
+            if ioreg -n Root -d1 -a 2>/dev/null | grep -A1 CGSSessionScreenIsLocked | grep -q '<true/>'; then
+              echo true
+            else
+              echo false
+            fi
           }
-          GO
-          (cd "$dialers/go" && printf 'module dialer\n\ngo 1.24\n' > go.mod && GOTOOLCHAIN=local go build -o "$dialers/go-dialer" .) || echo "go dialer build failed"
-          cat > "$dialers/dial.c" <<'C'
-          #include <arpa/inet.h>
-          #include <errno.h>
-          #include <netinet/in.h>
-          #include <stdio.h>
-          #include <stdlib.h>
-          #include <string.h>
-          #include <sys/socket.h>
-          #include <unistd.h>
-
-          int main(int argc, char **argv) {
-            struct sockaddr_in addr;
-            memset(&addr, 0, sizeof addr);
-            addr.sin_family = AF_INET;
-            addr.sin_port = htons((unsigned short)atoi(argv[2]));
-            inet_pton(AF_INET, argv[1], &addr.sin_addr);
-            int fd = socket(AF_INET, SOCK_STREAM, 0);
-            if (connect(fd, (struct sockaddr *)&addr, sizeof addr) != 0) {
-              fprintf(stderr, "connect: %s\n", strerror(errno));
-              return 1;
-            }
-            close(fd);
-            return 0;
-          }
-          C
-          cc -O1 -o "$dialers/c-dialer" "$dialers/dial.c" || echo "c dialer build failed"
-          export SEATBELT_DIALERS="go=$dialers/go-dialer,c=$dialers/c-dialer"
-          if ioreg -n Root -d1 -a 2>/dev/null | grep -A1 CGSSessionScreenIsLocked | grep -q '<true/>'; then
-            echo "screen_locked=true at $(date -u +%H:%M:%SZ)"
-          else
-            echo "screen_locked=false at $(date -u +%H:%M:%SZ)"
-          fi
-          python3 scripts/ci/seatbelt-profile-replay.py "$dump" 10 | tee -a "$GITHUB_STEP_SUMMARY" || true
-          for sb in "$dump"/*.sb; do [ -e "$sb" ] || continue; echo "== $sb"; cat "$sb"; done
-          echo "== kernel Sandbox denials (network), last 4 minutes"
-          log show --last 6m --style compact --predicate 'sender == "Sandbox"' > "$RUNNER_TEMP/sandbox-log.txt" 2>&1 || true
-          echo "-- denials by process and operation:"
-          grep -oE 'Sandbox: [^(]+\([0-9]+\) deny\([0-9]+\) [a-z-]+ [^ ]*' "$RUNNER_TEMP/sandbox-log.txt" |
-            sed -E 's/\([0-9]+\)//' | sort | uniq -c | sort -rn | head -40 || true
-          echo "-- non-nc network denials:"
-          grep 'network' "$RUNNER_TEMP/sandbox-log.txt" | grep -v ' nc(' | tail -20 || true
-
+          # The live smoke 30x as rendered, then 30x with tclaude's profile
+          # regrouped deny-first (TCLAUDE_TEMP_SEATBELT_DENIES_FIRST).
+          for order in rendered denies-first; do
+            pass=0 fail=0
+            for i in $(seq 1 30); do
+              log="$RUNNER_TEMP/smoke-$order-$i.log"
+              when=$(date -u +%H:%M:%SZ) lock=$(locked)
+              if [ "$order" = denies-first ]; then export TCLAUDE_TEMP_SEATBELT_DENIES_FIRST=1; else unset TCLAUDE_TEMP_SEATBELT_DENIES_FIRST; fi
+              if go test ./pkg/claude/session -run '^TestTclaudeLayerDarwinSmoke$' -count=1 -v -timeout=120s > "$log" 2>&1 &&
+                grep -q '^--- PASS: TestTclaudeLayerDarwinSmoke ' "$log"; then
+                pass=$((pass + 1)); result=PASS
+              else
+                fail=$((fail + 1)); result=FAIL
+              fi
+              why=$(grep -o -m1 'dial tcp4 [0-9.:]*: connect: operation not permitted\|Error:.*' "$log" | head -1 || true)
+              echo "smoke $order $i $when screen_locked=$lock $result $why"
+            done
+            echo "SMOKE $order: pass=$pass fail=$fail" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
   test:
     needs: changes
     if: needs.changes.outputs.run_test == 'true'
