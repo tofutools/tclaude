@@ -17,8 +17,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/cronexpr"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
-	"github.com/tofutools/tclaude/pkg/claude/remoteaccess"
-	"github.com/tofutools/tclaude/pkg/common/buildversion"
 )
 
 // handleDashboardSnapshot returns one JSON blob covering everything
@@ -143,19 +141,6 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	prs := loadSnapshotPRIndex(span, rc, convIDs, p.cfg)
 	externalStewardParents := externalStewardChildNames()
 
-	// The assembly below still reads the preloads as locals; the next steps
-	// take p, rows and prs directly and these bindings go away.
-	groups, cfg, defaults, groupsRouteMapEnabled := p.groups, p.cfg, p.defaults, p.groupsRouteMapEnabled
-	sandboxProfiles, globalSandboxProfile := p.sandboxProfiles, p.globalSandboxProfile
-	allGrants, allOverrides, allOverrideScopes := p.allGrants, p.allOverrides, p.allOverrideScopes
-	notifyPrefs, activeConvIDs, sudoGrants := p.notifyPrefs, p.activeConvIDs, p.sudoGrants
-	retiredTotal, agentRosterErr := p.retiredTotal, p.agentRosterErr
-	membersByGroup, ownersByGroup := rows.membersByGroup, rows.ownersByGroup
-	routesByGroup, leasesByGroup, darwinLaunchesByGroup := rows.routesByGroup, rows.leasesByGroup, rows.darwinLaunchesByGroup
-	cachedPRTitles, authoredOpenPRs, trackedPRAuthors := prs.cachedPRTitles, prs.authoredOpenPRs, prs.trackedPRAuthors
-	localPRs, freshPRStates, prChecks, prReviews := prs.localPRs, prs.freshPRStates, prs.prChecks, prs.prReviews
-	taskRefFor, presentedPRsFor, tagsFor := prs.taskRefFor, prs.presentedPRsFor, prs.tagsFor
-
 	// The preload warm loop above resolves EVERY conv the snapshot will render,
 	// so it — not the group loop — is where the un-batched per-row side reads
 	// are actually paid. Report them here, and exclude the Codex telemetry they
@@ -167,494 +152,48 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	codexAfterPreload := rc.codexTelemetryTiming.total
 	span.markExcluding("preload", codexAfterPreload)
 	payloadStart := time.Now()
-	groupNames := make(map[int64]string, len(groups))
-	for _, group := range groups {
+	groupNames := make(map[int64]string, len(p.groups))
+	for _, group := range p.groups {
 		groupNames[group.ID] = group.Name
 	}
-
-	// agentRows: union of (every group member) + (every conv-id with
-	// explicit grants). Keyed by conv-id so members appearing in
-	// multiple groups dedupe naturally.
-	agentRows := map[string]*dashboardAgent{}
-	addAgent := func(convID string) *dashboardAgent {
-		if existing, ok := agentRows[convID]; ok {
-			return existing
-		}
-		// TCL-369: a retired/superseded conv never becomes an agent row, so
-		// skip its resolution entirely instead of building it and dropping it
-		// in the output loop. Callers that use the return value nil-check it.
-		if rc.inactiveActor(convID) {
-			return nil
-		}
-		b := rc.viewFor(convID)
-		links := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
-			withFreshestPRStates(freshPRStates).
-			withPRChecks(prChecks).
-			withPRTitles(cachedPRTitles).
-			withPRReviews(prReviews)
-		a := &dashboardAgent{
-			AgentID:           b.AgentID,
-			ConvID:            convID,
-			Title:             b.Title,
-			agentLocationView: b.Loc,
-			repoLinksView:     links,
-			taskRefView:       taskRefFor(b.AgentID),
-			tagsView:          tagsFor(b.AgentID),
-			Online:            b.Online,
-			Waking:            !b.Online && isConvWaking(convID),
-			State:             b.State,
-			ExternalSteward:   db.IsExternalStewardConv(convID),
-
-			SpawnedByExternalSteward: externalStewardParents[b.AgentID],
-			// init non-nil so JSON serializes [] not null;
-			// the dashboard's JS does .length / .map without a guard.
-			Groups:          []string{},
-			OwnedGroups:     []string{},
-			Effective:       []string{},
-			Notify:          notifyPrefs[convID],
-			NotifyEffective: notifyEffective(convID),
-		}
-		agentRows[convID] = a
-		return a
+	rowInputs := snapshotRowInputs{
+		rc:                     rc,
+		prs:                    prs,
+		notifyPrefs:            p.notifyPrefs,
+		notifyEffective:        notifyEffective,
+		externalStewardParents: externalStewardParents,
 	}
-
-	// Host-catalog reads, measured. These look like plain struct fields, but
-	// two of them reach the host:
-	//
-	//   - buildSandboxImplCatalog FORKS bwrap to probe namespace availability
-	//     (twice — interactive and server boundary — plus a pidfd probe)
-	//     whenever its 60 s disclosure cache expires. At a 2 s poll that is one poll in thirty paying a
-	//     multi-fork bill: exactly the shape of an occasional
-	//     multi-hundred-ms spike in an otherwise ~13 ms request.
-	//   - buildHarnessCatalog used to cost ~500 ms whenever OpenCode's model
-	//     catalog went stale, because building it EXECUTED `opencode models`.
-	//     That read is now served from cache and refreshed in the background,
-	//     so this should stay in the microseconds; if it ever does not, a
-	//     harness descriptor has started doing work on the read path again.
-	//
-	// Both sat inside the "groups" window unmeasured, so their cost was charged
-	// to a group loop whose own sub-phases never exceed a fraction of a
-	// millisecond.
-	var payloadPhases []perfPhase
-	payloadMeasured := time.Duration(0)
-	payloadPhase := func(name string, fn func()) {
-		start := time.Now()
-		fn()
-		d := time.Since(start)
-		payloadMeasured += d
-		payloadPhases = append(payloadPhases, perfPhase{Name: name, Ms: durMs(d)})
-	}
-	var (
-		authSession dashboardAuthSession
-		userModel   string
-		harnesses   []dashboardHarness
-		sandboxImpl dashboardSandboxImpl
-		raRunning   bool
-		raBind      string
-		raMaterial  bool
-	)
-	payloadPhase("auth_session", func() { authSession = dashboardAuthSessionForRequest(r) })
-	payloadPhase("user_model", func() { userModel = readUserDefaultModel() })
-	payloadPhase("harness_catalog", func() { harnesses = buildHarnessCatalog() })
-	payloadPhase("sandbox_impl", func() { sandboxImpl = buildSandboxImplCatalog() })
-	payloadPhase("remote_access", func() {
-		raRunning, raBind = remoteListenerStatus()
-		raMaterial = remoteaccess.Exists()
-	})
-	terminalAttachMode, terminalInitialDelay, terminalRepairDelay, terminalPreAttachDelay := cfg.ResolvedTerminalAttach()
-	out := snapshotPayload{
-		GeneratedAt:          time.Now().Format(time.RFC3339),
-		Version:              buildversion.AppVersion(),
-		AssetsVersion:        dashboardAssetsVersion,
-		AuthSession:          authSession,
-		PopupBase:            popupBaseURL,
-		UserDefaultModel:     userModel,
-		Harnesses:            harnesses,
-		SandboxImpl:          sandboxImpl,
-		NotificationsEnabled: cfg != nil && cfg.Notifications != nil && cfg.Notifications.Enabled,
-		SpawnNameNormalize:   cfg.SpawnNameNormalizeEnabled(),
-		VegasInRegularMode:   cfg.ShowVegasInRegularMode(),
-		HidePullLever:        cfg.HidePullLever(),
-		ActivityBots: activityBotsView{
-			Regular: cfg.ActivityBotsRegular(),
-			Slop:    cfg.ActivityBotsSlop(),
-			Wizard:  cfg.ActivityBotsWizard(),
-		},
-		HScrollFollow:     cfg.HScrollFollow(),
-		GroupQuickOptions: cfg.GroupQuickOptions(),
-		OverlayBackdrop:   cfg.OverlayBackdrop(),
-		WindowControls:    cfg.WindowControls(),
-		SnapAssist:        cfg.SnapAssist(),
-		DefaultTerminal:   cfg.DefaultTerminal(),
-		TerminalAttach: dashboardTerminalAttach{
-			Mode:                 terminalAttachMode,
-			InitialResizeDelayMS: terminalInitialDelay,
-			RepairDelayMS:        terminalRepairDelay,
-			PreAttachDelayMS:     terminalPreAttachDelay,
-		},
-		DefaultDirectoryPicker:        cfg.DefaultDirectoryPicker(),
-		ShowAgentHideButton:           cfg.ShowAgentHideButton(),
-		ShowGroupDescription:          cfg.ShowGroupDescription(),
-		ShowFinalPRChecks:             cfg.ShowFinalPRChecks(),
-		StayOnTerminalsAfterLastClose: cfg.StayOnTerminalsAfterLastClose(),
-		FusedToolbarFixedNode:         cfg.FusedToolbarFixedNode(),
-		UsageCollapseSubviews:         cfg.UsageCollapseSubviews(),
-		ProcessesEnabled:              true,
-		TriggersEnabled:               true,
-		StewardsDisabled:              !cfg.StewardsEnabled(),
-		Voice:                         cfg.Voice(),
-		StewardName:                   cfg.StewardName(),
-		GroupsRouteMapEnabled:         groupsRouteMapEnabled,
-		GroupAttachmentsMode:          cfg.GroupAttachmentsMode(),
-		TerminalPaletteShortcut:       cfg.TerminalCommandPaletteShortcutEnabled(),
-		Keybindings:                   cfg.DashboardKeybindings(),
-		RecordedSandboxDetails:        cfg.RecordedSandboxDetailsEnabled(),
-		AgentRosterAuthoritative:      agentRosterErr == nil,
-		Permissions: snapshotPermissionsView{
-			Defaults:         defaults,
-			Grants:           map[string][]string{},
-			Overrides:        map[string]map[string]string{},
-			UnreadableScopes: map[string][]string{},
-		},
-		Slugs: visiblePermissionRegistry(configuredProxyVisibility()),
-	}
-	out.RetiredTotal = retiredTotal
-	sort.Slice(out.Slugs, func(i, j int) bool { return out.Slugs[i].Slug < out.Slugs[j].Slug })
-
-	// Remote-access runtime state for the Config tab's guidance (JOH-227): has
-	// setup generated the material, and is the listener live in this process.
-	// Read above, with the rest of the host catalog, so its cost is measured.
-	out.RemoteAccess = dashboardRemoteAccess{
-		MaterialExists: raMaterial,
-		Running:        raRunning,
-		RunningBind:    raBind,
-	}
-
-	// Initialise slices empty (not nil) so JSON serializes [] instead
-	// of null — the dashboard's JS does .length on members directly,
-	// which would crash on null.
-	out.Groups = []dashboardGroup{}
-	out.SandboxProfiles, out.SandboxProfilesRev = sandboxProfileNamesRev(sandboxProfiles)
-	if globalSandboxProfile != nil {
-		out.SandboxProfileDefault = globalSandboxProfile.Name
-	}
-	out.Agents = []dashboardAgent{}
-	// Close the payload preamble before the group loop starts, so "groups" is
-	// the loop and nothing else. "other" is the rest of this window — the
-	// groupNames map, the ~20 cfg accessors in the literal above, the slug copy
-	// and sort, the sandbox-profile names — named rather than left as an
-	// unexplained gap between the parent and its children, which is the very
-	// problem this phase exists to remove.
-	payloadPhases = append(payloadPhases, perfPhase{
-		Name: "other",
-		Ms:   durMs(max(time.Since(payloadStart)-payloadMeasured, 0)),
-	})
-	span.addChildren("payload", payloadPhases...)
+	agents := newSnapshotAgentRows(rowInputs)
+	out := assembleSnapshotPayload(r, span, p, payloadStart)
 	// 1: exclude only the Codex telemetry that accrued in THIS window. Zero
 	// today (nothing here resolves a conv row), but keeping the split
 	// consistent means a future row read moved into the preamble cannot make
 	// groups subtract telemetry it never paid.
 	codexAfterPayload := rc.codexTelemetryTiming.total
 	span.markExcluding("payload", codexAfterPayload-codexAfterPreload)
-	// id→name for resolving each group's parent_id to a parent NAME the
-	// client tree keys off. Built from the same group set we're serializing,
-	// so a parent_id with no live group simply doesn't resolve (child stays
-	// top-level) — the FK's ON DELETE SET NULL should already prevent that.
-	spawnGroups, err := db.AgentSpawnGroupIDs()
-	if err != nil {
-		slog.Warn("dashboard: spawn groups unavailable", "error", err)
-	}
-	groupNameByID := make(map[int64]string, len(groups))
-	for _, g := range groups {
-		groupNameByID[g.ID] = g.Name
-	}
-	// The groups phase was a single opaque number while its p99/max ran orders
-	// of magnitude above its p50: the loop below fires three point queries PER
-	// GROUP plus a per-conv row assembly, and nothing said which of them
-	// stalled. gt accumulates each part so /api/perf can name the culprit.
-	gt := newGroupsPhaseTimer(rc)
-	var groupFedLinks map[int64][]groupFederationLink
-	if !isPeerSnapshot(r) {
-		groupFedLinks = gatherGroupFederationLinks()
-	}
-	for _, g := range groups {
-		groupMark := gt.begin()
-		groupPermissions := []string{}
-		groupPermissionScopes := map[string]PermissionScope{}
-		groupUnreadablePermissionScopes := []string{}
-		gt.track(&gt.perms, func() {
-			rows, _ := db.ListAgentGroupPermissionRows(g.ID)
-			for _, row := range rows {
-				groupPermissions = append(groupPermissions, row.Slug)
-				if scope := permissionScopeFromJSON(row.ScopeJSON); len(scope) > 0 {
-					groupPermissionScopes[row.Slug] = scope
-				} else if row.ScopeJSON != "" {
-					groupUnreadablePermissionScopes = append(groupUnreadablePermissionScopes, row.Slug)
-				}
-			}
-		})
-		attachment := groupAttachmentViewFor(g)
-		dg := dashboardGroup{ID: g.ID, Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultSpawnGroup: g.DefaultSpawnGroup, DefaultContext: g.DefaultContext, Environment: append([]sandboxpolicy.EnvironmentEntry(nil), g.Environment...), DefaultProfile: g.DefaultProfile, DefaultPrompts: g.DefaultPrompts, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, PermissionScopes: groupPermissionScopes, UnreadablePermissionScopes: groupUnreadablePermissionScopes, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), ReinjectAfterCompact: g.EffectiveReinjectAfterCompact(), OwnerScopes: ownerScopesWire(g.OwnerScopesJSON), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}
-		if g.ParentGroupID != nil {
-			dg.Parent = groupNameByID[*g.ParentGroupID]
-		}
-		dg.FederationLinks = groupFedLinks[g.ID]
-		// Advisory process state (JOH-242): attach the current phase + phase map
-		// + transition log so the group view can render a phase chip + advance
-		// control. nil for a group with no process.
-		gt.track(&gt.process, func() {
-			if st, trs, perr := loadGroupProcess(g.ID); perr == nil && st != nil {
-				pv := processStateToJSON(st, trs)
-				dg.Process = &pv
-			}
-		})
-		// Staged-spawn choreography status (JOH-244): a "wave N/M pending" chip
-		// while later waves are still deferred. nil when the deploy is complete.
-		gt.track(&gt.waves, func() {
-			if wv := loadWaveStatus(g.ID); wv != nil {
-				dg.Waves = wv
-			}
-		})
-		members := membersByGroup[g.ID]
-		// Pre-load the owner set so we can tag members who are also
-		// owners. Mirrors handleGroupMembersList in group_member_handlers.go.
-		ownerSet := map[string]bool{}
-		for _, o := range ownersByGroup[g.ID] {
-			ownerSet[o.ConvID] = true
-		}
-		memberSet := map[string]bool{}
-		memberMark := gt.begin()
-		subscriptions := snapshotClaudeSubscriptions()
-		for _, m := range members {
-			memberSet[m.ConvID] = true
-			b := rc.viewFor(m.ConvID)
-			var routeHealth string
-			if groupsRouteMapEnabled {
-				routeHealth = dashboardRouteHealth(g, groupPermissions, b, darwinLaunchesByGroup[g.ID])
-			}
-			links := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
-				withFreshestPRStates(freshPRStates).
-				withPRChecks(prChecks).
-				withPRTitles(cachedPRTitles).
-				withPRReviews(prReviews)
-			presence, _ := db.ProjectedAgentFederationPresence(b.AgentID)
-			online := b.Online
-			if presence != nil && presence.State == "away" {
-				online = false
-			}
-			dg.Members = append(dg.Members, dashboardMember{
-				FederationPresence: presence,
-				ClaudeSubscription: subscriptions.forAgent(b.AgentID),
-				AgentID:            b.AgentID,
-				ConvID:             m.ConvID,
-				Title:              b.Title,
-				CreatedAt:          b.Created,
-				Role:               m.Role,
-				Descr:              m.Descr,
-				agentLocationView:  b.Loc,
-				repoLinksView:      links,
-				taskRefView:        taskRefFor(b.AgentID),
-				tagsView:           tagsFor(b.AgentID),
-				Online:             online,
-				Waking:             !b.Online && isConvWaking(m.ConvID),
-				ExternalSteward:    db.IsExternalStewardConv(m.ConvID),
-
-				SpawnedByExternalSteward: externalStewardParents[b.AgentID],
-
-				Owner:           ownerSet[m.ConvID],
-				State:           b.State,
-				Notify:          notifyPrefs[m.ConvID],
-				NotifyEffective: notifyEffective(m.ConvID),
-				RouteHealth:     routeHealth,
-			})
-			if online {
-				dg.Online++
-			}
-			// addAgent returns nil for a retired/superseded member (TCL-369):
-			// its member row above still renders, but it never joins the
-			// Agents/Ungrouped roster.
-			if a := addAgent(m.ConvID); a != nil {
-				a.Groups = append(a.Groups, g.Name)
-				if a.AgentID != "" && spawnGroups[a.AgentID] == g.ID {
-					a.SpawnGroup = g.Name
-				}
-				if ownerSet[m.ConvID] {
-					a.OwnedGroups = append(a.OwnedGroups, g.Name)
-				}
-			}
-		}
-		gt.end(&gt.memberRows, memberMark)
-		// Surface owners who aren't members so the list stays
-		// comprehensive. Same shape as the CLI:
-		// role="owner", no descr.
-		ownerMark := gt.begin()
-		for ownerConv := range ownerSet {
-			if memberSet[ownerConv] {
-				continue
-			}
-			b := rc.viewFor(ownerConv)
-			var routeHealth string
-			if groupsRouteMapEnabled {
-				routeHealth = dashboardRouteHealth(g, groupPermissions, b, darwinLaunchesByGroup[g.ID])
-			}
-			ownerLinks := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
-				withFreshestPRStates(freshPRStates).
-				withPRChecks(prChecks).
-				withPRTitles(cachedPRTitles).
-				withPRReviews(prReviews)
-			presence, _ := db.ProjectedAgentFederationPresence(b.AgentID)
-			ownerOnline := b.Online && (presence == nil || presence.State != "away")
-			dg.Members = append(dg.Members, dashboardMember{
-				AgentID:         b.AgentID,
-				ConvID:          ownerConv,
-				Title:           b.Title,
-				CreatedAt:       b.Created,
-				Role:            "owner",
-				ExternalSteward: db.IsExternalStewardConv(ownerConv),
-
-				SpawnedByExternalSteward: externalStewardParents[b.AgentID],
-
-				agentLocationView:  b.Loc,
-				repoLinksView:      ownerLinks,
-				taskRefView:        taskRefFor(b.AgentID),
-				tagsView:           tagsFor(b.AgentID),
-				Online:             ownerOnline,
-				FederationPresence: presence,
-				Waking:             !b.Online && isConvWaking(ownerConv),
-				Owner:              true,
-				State:              b.State,
-				Notify:             notifyPrefs[ownerConv],
-				NotifyEffective:    notifyEffective(ownerConv),
-				RouteHealth:        routeHealth,
-			})
-			// Pure-owners are reachable via this group too — surface
-			// the group on the agent's row in the Agents view so
-			// "what groups can this conv see?" matches reality. nil for a
-			// retired/superseded owner (TCL-369).
-			if a := addAgent(ownerConv); a != nil {
-				a.Groups = append(a.Groups, g.Name)
-				a.OwnedGroups = append(a.OwnedGroups, g.Name)
-			}
-		}
-		gt.end(&gt.ownerRows, ownerMark)
-		// Default ordering: newest-first by creation time (the Age
-		// column; the JS column sort treats this as the natural order it
-		// falls back to). Mirrors handleGroupMembersList.
-		sortMark := gt.begin()
-		sortMembersByAge(dg.Members,
-			func(m dashboardMember) string { return m.CreatedAt },
-			func(m dashboardMember) string { return m.ConvID })
-		gt.end(&gt.sortMembers, sortMark)
-		out.Groups = append(out.Groups, dg)
-		gt.observeGroup(g.Name, groupMark)
-	}
+	out.Groups = buildSnapshotGroups(r, span, p.groups, rowInputs, rows, agents, p.groupsRouteMapEnabled)
 	codexAfterGroups := rc.codexTelemetryTiming.total
-	span.addChildren("groups", gt.phases()...)
 	span.markExcluding("groups", codexAfterGroups-codexAfterPayload)
 	// Route rows and leases were read alongside the roster. Resolve their
 	// friendly labels only after group member rows are assembled so this
 	// projection adds no per-route/per-member database work to the poll.
-	if groupsRouteMapEnabled {
-		routeMap := buildDashboardRouteMap(groups, out.Groups, routesByGroup, leasesByGroup, darwinLaunchesByGroup)
+	if p.groupsRouteMapEnabled {
+		routeMap := buildDashboardRouteMap(p.groups, out.Groups, rows.routesByGroup, rows.leasesByGroup, rows.darwinLaunchesByGroup)
 		appendDashboardHostPublications(&routeMap)
 		out.RouteMap = &routeMap
 	}
-	for convID, slugs := range allGrants {
-		addAgent(convID)
-		copySlice := append([]string{}, slugs...)
-		sort.Strings(copySlice)
-		out.Permissions.Grants[convID] = copySlice
-	}
-	// Full tri-state overrides (grant AND deny) for the editor modal.
-	// A conv with only a deny override is still an agent — surface it.
-	for convID, slugEffects := range allOverrides {
-		addAgent(convID)
-		copyMap := make(map[string]string, len(slugEffects))
-		for slug, effect := range slugEffects {
-			copyMap[slug] = effect
-		}
-		out.Permissions.Overrides[convID] = copyMap
-	}
-	// The scope each override carries, decoded. A row this build cannot decode
-	// is reported separately rather than as unscoped: the gate refuses such a
-	// row (evalPermissionScope), so showing it as unconditional would be the
-	// widest possible reading of a grant that authorizes nothing.
-	for convID, bySlug := range allOverrideScopes {
-		for slug, raw := range bySlug {
-			scope := permissionScopeFromJSON(raw)
-			if len(scope) == 0 {
-				if strings.TrimSpace(raw) != "" {
-					addAgent(convID)
-					out.Permissions.UnreadableScopes[convID] = append(
-						out.Permissions.UnreadableScopes[convID], slug)
-				}
-				continue
-			}
-			addAgent(convID)
-			if out.Permissions.Scopes == nil {
-				out.Permissions.Scopes = map[string]map[string]PermissionScope{}
-			}
-			if out.Permissions.Scopes[convID] == nil {
-				out.Permissions.Scopes[convID] = map[string]PermissionScope{}
-			}
-			out.Permissions.Scopes[convID][slug] = scope
-		}
-	}
+	registerSnapshotPermissions(&out.Permissions, p, agents)
 
 	// Register every active actor's current conv on the roster. The set was
 	// loaded up front (activeConvIDs) so its conv-ids could join the batch; here
-	// we just fold them into agentRows. addAgent skips a retired/superseded conv
-	// (TCL-369) — harmless here, its return value is unused.
-	for _, convID := range activeConvIDs {
-		addAgent(convID)
+	// we just fold them into the agent rows. agents.add skips a retired/superseded
+	// conv (TCL-369) — harmless here, its return value is unused.
+	for _, convID := range p.activeConvIDs {
+		agents.add(convID)
 	}
 
-	// Bucket the active sudo grants (loaded up front) per stable agent id so the
-	// per-agent Active rendering is O(1) inside the output loop. The same rows
-	// feed the top-level Sudo[] for the dedicated tab.
-	sudoByAgent := map[string][]dashboardSudoEntry{}
-	out.Sudo = []dashboardSudoEntry{}
-	sudoNow := time.Now()
-	for _, g := range sudoGrants {
-		// Grantee name from the batch-loaded conv_index cache — custom
-		// title > pending name > summary > first prompt, no .jsonl
-		// rescan. The pending-name tier covers a just-spawned
-		// grantee before its first index event; "(unknown)" means
-		// nothing resolved, which this surface renders as blank.
-		title := rc.titleFor(g.ConvID)
-		if title == agent.UnknownTitle {
-			title = ""
-		}
-		remaining := int64(0)
-		if rem := g.ExpiresAt.Sub(sudoNow); rem > 0 {
-			remaining = int64(rem.Seconds())
-		}
-		topEntry := dashboardSudoEntry{
-			ID:               g.ID,
-			AgentID:          g.AgentID,
-			ConvID:           g.ConvID,
-			ConvTitle:        title,
-			Slug:             g.Slug,
-			ScopeJSON:        g.ScopeJSON,
-			Carried:          g.CarriedID > 0,
-			UsesLimit:        g.UsesLimit,
-			UsesLeft:         g.UsesLeft,
-			GrantedAt:        g.GrantedAt.Format(time.RFC3339Nano),
-			ExpiresAt:        g.ExpiresAt.Format(time.RFC3339Nano),
-			GrantedBy:        g.GrantedBy,
-			Reason:           g.Reason,
-			RemainingSeconds: remaining,
-		}
-		out.Sudo = append(out.Sudo, topEntry)
-		// On the per-agent slice we omit ConvID — the agent row's
-		// own ConvID already identifies who holds the grant. Saves
-		// bytes on agents with many grants and keeps the JSON
-		// readable in browser devtools.
-		rowEntry := topEntry
-		rowEntry.ConvID = ""
-		rowEntry.AgentID = "" // the agent row already identifies the holder
-		sudoByAgent[g.AgentID] = append(sudoByAgent[g.AgentID], rowEntry)
-	}
+	sudo, sudoByAgent := buildSnapshotSudo(p.sudoGrants, rc)
+	out.Sudo = sudo
 	// All calls to rc.viewFor (group rows plus the grants/active-agent roster)
 	// have completed, so this nested metric is the request's total Codex
 	// telemetry cost rather than only the grouped subset.
@@ -666,56 +205,14 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	span.addChildren("codex_telemetry", rc.codexTelemetryTiming.perfPhases()...)
 	span.markExcluding("roster", rc.codexTelemetryTiming.total-codexAfterGroups)
 
-	out.Ungrouped = []dashboardAgent{}
-	for _, a := range agentRows {
-		// Defensive: a retired conv must never appear on the roster,
-		// even if a partially-applied retire left a stale group/grant
-		// row that the passes above picked up.
-		if rc.inactiveActor(a.ConvID) {
-			continue
-		}
-		// Effective comes from the same routine the permission GATE uses
-		// (effectivePermsFor → resolvePermissionVerdict), so this column
-		// cannot drift from what the daemon will actually allow. It used
-		// to be a third hand-rolled union here, which omitted active sudo
-		// elevations and the structural owner bypass.
-		merged, _, _, _ := effectivePermsFor(permissionsState{
-			Defaults:  out.Permissions.Defaults,
-			Grants:    out.Permissions.Grants,
-			Overrides: out.Permissions.Overrides,
-		}, a.ConvID, ownerImpliedSlugsFor(a.ConvID))
-		sort.Strings(merged)
-		a.Effective = merged
-		sort.Strings(a.Groups)
-		sort.Strings(a.OwnedGroups)
-		if rows := sudoByAgent[a.AgentID]; len(rows) > 0 {
-			a.ActiveSudo = rows
-		}
-		out.Agents = append(out.Agents, *a)
-		// An agent with no group memberships is "ungrouped" — surfaces
-		// in the dedicated array so the dashboard can render the
-		// virtual "Ungrouped" group (and feed the `+ add member`
-		// overlay) without re-deriving the membership state. Effective
-		// perms still come from the broader Agents row, so the
-		// dashboard uses Ungrouped purely as a candidate-set hint.
-		//
-		// Online and offline alike: the virtual "Ungrouped" group is a
-		// membership-management surface, so a freshly-promoted offline
-		// conversation must show up there to be dragged into a group.
-		// The `+ add member` overlay applies its own online filter, so
-		// including offline rows here doesn't leak them into that
-		// live-roster picker.
-		if len(a.Groups) == 0 {
-			out.Ungrouped = append(out.Ungrouped, *a)
-		}
-	}
-	sort.Slice(out.Agents, func(i, j int) bool {
-		return out.Agents[i].Title < out.Agents[j].Title
-	})
-	sort.Slice(out.Ungrouped, func(i, j int) bool {
-		return out.Ungrouped[i].Title < out.Ungrouped[j].Title
-	})
+	out.Agents, out.Ungrouped = finishSnapshotRoster(agents, out.Permissions, sudoByAgent)
 	span.mark("assemble")
+
+	// The collectors below still read these as locals; S3 passes p and prs
+	// into its steps and the bindings go away.
+	groups, cfg, sandboxProfiles := p.groups, p.cfg, p.sandboxProfiles
+	authoredOpenPRs, trackedPRAuthors, localPRs := prs.authoredOpenPRs, prs.trackedPRAuthors, prs.localPRs
+	freshPRStates, prChecks, prReviews := prs.freshPRStates, prs.prChecks, prs.prReviews
 
 	// The retired / conversations / replaced lists are no longer embedded in
 	// the snapshot — the dashboard fetches them from their own paginated

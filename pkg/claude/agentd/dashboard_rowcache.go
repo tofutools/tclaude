@@ -13,7 +13,7 @@ import (
 // snapshotRowCache batches every per-conv read the dashboard snapshot needs
 // (TCL-368/TCL-367). Building one member/agent/owner row used to fire ~13
 // SQLite point queries, and the snapshot rebuilds the same conv 2-3× per poll
-// (member loop, addAgent, owners pass) every 2s. On top of that,
+// (member loop, agents.add, owners pass) every 2s. On top of that,
 // agent.ResolveLocation FULLY REPARSED a busy agent's .jsonl on nearly every
 // poll (the fsnotify 500ms debounce keeps conv_index stale while an agent
 // streams).
@@ -25,7 +25,7 @@ import (
 // (no DB, no .jsonl, no git — this is the TCL-367 fix), collects the branch-link
 // cache keys those locations need and loads git_cache in one more batch. viewFor
 // then assembles a conv's full row bundle from memory and memoizes it, so the
-// member loop, addAgent and the owners pass share a single computation.
+// member loop, agents.add and the owners pass share a single computation.
 type snapshotRowCache struct {
 	status     *statusSnapshot
 	alive      map[string]struct{}
@@ -214,7 +214,7 @@ func (rc *snapshotRowCache) createdFor(convID string) string {
 }
 
 // viewFor assembles (and memoizes) a conv's full row bundle from the batch. A
-// second call for the same conv — the member loop and addAgent both resolve the
+// second call for the same conv — the member loop and agents.add both resolve the
 // same conv, and a conv in several groups recurs — returns the cached bundle.
 func (rc *snapshotRowCache) viewFor(convID string) *convRowBundle {
 	if b, ok := rc.memo[convID]; ok {
