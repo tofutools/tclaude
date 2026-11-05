@@ -313,7 +313,7 @@ export function grantRows(grants, { ownPool = '', groups = null } = {}) {
       key: `${g.pool_id || ''}|${g.slug}|${g.scope || ''}`,
       slug: g.slug, scope: g.scope || '', group, what: info.what, sensitive: !!info.sensitive,
       gateway: String(g.scope || '').startsWith('http_proxy=') ? String(g.scope).slice(11) : '',
-      allGroups: !g.scope && info.kind === 'group',
+      allGroups: !g.scope && info.kind === 'group' && !g.inert,
       pool: g.pool_name && g.pool_name !== ownPool ? g.pool_name : '',
       deletedGroup,
       inert: g.inert || '',

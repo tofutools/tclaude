@@ -55,7 +55,7 @@ func peerHasAccess(peer string) bool {
 	for _, g := range grants {
 		// Public node summaries, obsolete slugs, and grants on deleted groups do
 		// not constitute access that may be used to solicit more authority.
-		if !slices.Contains(meaningful, g.Slug) {
+		if !slices.Contains(meaningful, g.Slug) || fedPeerGrantInert(g) != "" {
 			continue
 		}
 		if g.Scope == "" || (g.Slug == PermModelsProxy || g.Slug == PermModelsProxyLeased) && strings.HasPrefix(g.Scope, "http_proxy=") {

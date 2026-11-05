@@ -174,8 +174,8 @@ its spawn launch policy. Revoking the scoped row leaves any unscoped grant
 in force. `agents.receive`, `agents.teleport.receive` and
 `agents.receive.permissions` require a group scope. An unscoped one, which a
 node profile saved by an older tclaude can still hold, authorizes nothing:
-`federation grants`, the dashboard's grant list and the profile show it as
-inert until it is granted per group.
+`federation grants` and the dashboard's grant list mark it inert, and
+`federation profile show` warns about it, until it is granted per group.
 
 Nothing is granted by default; agent defaults and group ownership never grant
 peer authority. Any grant covering a live group makes it visible in the peer's
